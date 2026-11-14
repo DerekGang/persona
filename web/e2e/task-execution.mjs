@@ -91,8 +91,37 @@ try {
   assert.deepEqual(overflow,[],"form controls stay inside the dialog at twice the text size");
   await page.screenshot({path:join(shots,`task-execution-${width}-${theme}-large.png`)});
   assert.equal(reads.some(s=>s.includes("launcher.codex/models")),true);
+  // A historical source task may clear its saved computer pin, but cannot keep it while continuing that chat.
+  task={...task,title:"Review project files",session_id:"origin",execution_machine_id:"box",launcher:"",model:"",effort:"",cwd:""};
+  await page.goto(`${base}/routines`);
+  await page.getByRole("button",{name:/Review project files/}).first().click();
+  await page.getByText("Execution options",{exact:true}).click();
+  await page.getByRole("textbox",{name:"Title",exact:true}).fill("Updated source task");
+  const saveSource=page.getByRole("dialog").getByRole("button",{name:"Save",exact:true});
+  assert(await saveSource.isDisabled(),"source chat and a computer pin cannot be saved together");
+  const sourceSwitch=page.getByRole("switch",{name:"Continue the original chat",exact:true});
+  await sourceSwitch.click();
+  assert(await saveSource.isEnabled());
+  await sourceSwitch.click();
+  assert(await saveSource.isDisabled(),"restoring the source revalidates saved execution values");
+  const originWarning=page.getByRole("alert").filter({hasText:"Turn off “Continue the original chat”"}).first();
+  await originWarning.scrollIntoViewIfNeeded();
+  await page.screenshot({path:join(shots,`task-origin-${width}-${theme}.png`)});
+  await page.evaluate(()=>document.documentElement.style.setProperty("--text-scale","2"));
+  await originWarning.scrollIntoViewIfNeeded();
+  assert(await saveSource.isDisabled());
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
+  await page.screenshot({path:join(shots,`task-origin-${width}-${theme}-large.png`)});
+  await page.evaluate(()=>document.documentElement.style.setProperty("--text-scale","1"));
+  assert.equal(writes.length,1,"invalid source edits must not send a save");
+  await page.getByRole("combobox",{name:"Computer",exact:true}).selectOption("");
+  assert(await saveSource.isEnabled());
+  await saveSource.click();
+  assert.equal(writes.length,2);
+  assert.equal(writes[1].patch.session_id,"origin");
+  assert.equal(writes[1].patch.execution_machine_id,"");
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme}: select, save, reopen, directory, model discovery and text scaling`);
+  console.log(`PASS ${width} ${theme}: select/save/reopen, text scaling, source validation/toggle/clear and no invalid save`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}

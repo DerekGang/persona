@@ -219,6 +219,7 @@ func TestRoutineNotReadySkipsNeverPush(t *testing.T) {
 func TestRoutineWaitsOnlyForWhatItNeeds(t *testing.T) {
 	f := newFakeHub().withMachine()
 	f.sessions["laptop"] = []proto.Session{{SessionID: "c1"}}
+	f.known["c1"] = true // the listed source conversation has a resumable transcript
 	f.devices = []Device{{ID: "server", Name: "server"}, {ID: "laptop", Name: "laptop", Online: true, Reachable: true}}
 	f.settings = &Settings{Timezone: "UTC"}
 	s := newStorelessService(t, f)

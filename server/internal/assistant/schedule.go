@@ -1694,14 +1694,18 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		t.SessionID = ""
 	}
 	if t.SessionID != "" {
-		if m, ok := s.device(ctx, t.MachineID); ok {
+		if m, ok := s.device(ctx, t.MachineID); ok && m.Online {
 			// A follow-up the assistant scheduled for itself is a turn of that conversation: it keeps the
 			// conversation's launcher like a message from the phone does. On the task's category launcher (Agents
 			// then) it moved the main conversation onto another one (plain claude, not logged in there) for good (#1518).
-			params := map[string]any{"session_id": t.SessionID, "text": taskPrompt(t, due, now, loc, manual, kb, false), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode}
+			params := map[string]any{"session_id": t.SessionID, "text": taskPrompt(t, due, now, loc, manual, kb, false), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true}
 			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
+			unsent := err != nil // model preparation has not sent the task's message
 			if err == nil {
 				err = s.call(ctx, m.ID, DeviceAssistantSend, params, nil)
+				// Offline/no-device errors are pre-dispatch; gone is the node's resume-only preflight refusal.
+				// A lost RPC answer or closed link says nothing about whether the turn already started.
+				unsent = errors.Is(err, apierr.ErrOffline) || errors.Is(err, ErrNoDevice) || (err != nil && taskConversationUnavailable(err, t.SessionID))
 			}
 			if err == nil {
 				run.MachineID, run.SessionID = t.MachineID, t.SessionID
@@ -1715,11 +1719,15 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 				s.startScheduledRun(run, t, &m)
 				return proto.Session{MachineID: t.MachineID, SessionID: t.SessionID}, nil
 			}
-			run.Status, run.Error = runFailed, err.Error()
-			s.recordRun(run)
-			s.oneOffNotStarted(ctx, t, run)
-			return proto.Session{}, err
+			if !unsent {
+				run.Status, run.Error = runFailed, err.Error()
+				s.recordRun(run)
+				s.oneOffFailed(ctx, t, run)
+				return proto.Session{}, err // uncertain delivery cannot be retried in another turn or conversation
+			}
+			s.logf("task %s into %s refused before delivery: %v; using its own conversation", t.ID, t.SessionID, err)
 		}
+		run.ConversationReason = "source_unavailable"
 	}
 	ex, err := s.taskExecution(ctx, t, true, binding)
 	run.Execution = &ex
@@ -1830,13 +1838,8 @@ func (s *Service) resumeOwn(ctx context.Context, machine, sid string, params map
 	return err
 }
 
-// oneOffNotStarted: a one-off's scheduled run could not even start (its machine offline, the launcher not starting, no
-// model). A one-off is off as soon as it is due and has no next time, so this was its only run: recorded as failed and
-// nothing else, the follow-up the user counted on was gone without a word (#5030). The user is told, as a run whose turn
-// failed is (watchScheduledRun), and it is tried once more after runRetryDelay, as the task is then (deleted: not). A
-// failed retry is told too, and not tried again. A repeating task runs again at its next time and has its streak notice
-// (#4658); Run now is answered in the app.
-func (s *Service) oneOffNotStarted(ctx context.Context, t Task, run ScheduleRun) {
+// oneOffFailed keeps the failure notice even when delivery is unknown and retrying is unsafe.
+func (s *Service) oneOffFailed(ctx context.Context, t Task, run ScheduleRun) {
 	if t.Repeat != repeatOnce || run.Manual {
 		return
 	}
@@ -1846,7 +1849,17 @@ func (s *Service) oneOffNotStarted(ctx context.Context, t Task, run ScheduleRun)
 		name, _ = healthNotice(l)
 	}
 	s.push(ctx, Notification{Title: i18n.T(l, "assistant-schedule.run_failed", i18n.Args{"name": name}), Body: clip(oneLine(run.Error), 300)})
-	if run.Retried {
+}
+
+// oneOffNotStarted: a one-off's scheduled run could not even start (its machine offline, the launcher not starting, no
+// model). A one-off is off as soon as it is due and has no next time, so this was its only run: recorded as failed and
+// nothing else, the follow-up the user counted on was gone without a word (#5030). The user is told, as a run whose turn
+// failed is (watchScheduledRun), and it is tried once more after runRetryDelay, as the task is then (deleted: not). A
+// failed retry is told too, and not tried again. A repeating task runs again at its next time and has its streak notice
+// (#4658); Run now is answered in the app.
+func (s *Service) oneOffNotStarted(ctx context.Context, t Task, run ScheduleRun) {
+	s.oneOffFailed(ctx, t, run)
+	if t.Repeat != repeatOnce || run.Manual || run.Retried {
 		return
 	}
 	delay := runRetryDelay

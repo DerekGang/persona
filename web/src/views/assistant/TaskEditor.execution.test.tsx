@@ -95,3 +95,36 @@ it('keeps a directory draft after a refused save',async()=>{
  expect(onSaved).not.toHaveBeenCalled();expect(onClose).not.toHaveBeenCalled();
  expect(field(t('assistant-taskeditor.execution_directory')).value).toBe('/work/missing');
 });
+
+it('blocks a pinned inherited computer with a source chat and validates toggling the source back on',async()=>{
+ saved={...saved,session_id:'origin',machine_id:'box'};
+ await render();
+ await change(field(t('assistant-taskeditor.execution_computer')),'box');
+ const save=()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===t('common.save'))!;
+ expect(save().disabled).toBe(true);
+ expect(document.body.textContent).toContain(t('assistant-taskeditor.execution_own_chat'));
+ const toggle=()=>document.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${t('assistant-taskeditor.resume_chat')}"]`)!;
+ await act(async()=>toggle().click());await flush();
+ expect(save().disabled).toBe(false);
+ await act(async()=>toggle().click());await flush();
+ expect(save().disabled).toBe(true);
+ expect(writes).toEqual([]);
+ await change(field(t('assistant-taskeditor.execution_computer')),'');
+ await change(field(t('assistant-taskeditor.title_label')),'Updated source task');
+ expect(save().disabled).toBe(false);
+ await click(t('common.save'));
+ expect(writes[0].session_id).toBe('origin');
+ expect(writes[0]).not.toHaveProperty('execution_machine_id');
+});
+
+it('lets a historical source task clear a saved execution choice back to inheritance',async()=>{
+ saved={...saved,session_id:'origin',execution_machine_id:'box'};
+ await render();
+ await change(field(t('assistant-taskeditor.title_label')),'Updated source task');
+ const save=[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===t('common.save'))!;
+ expect(save.disabled).toBe(true);
+ await change(field(t('assistant-taskeditor.execution_computer')),'');
+ expect(save.disabled).toBe(false);
+ await click(t('common.save'));
+ expect(writes[0]).toMatchObject({session_id:'origin',execution_machine_id:''});
+});

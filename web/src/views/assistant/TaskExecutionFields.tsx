@@ -5,7 +5,7 @@ import { modelPurpose, type ModelPurpose } from "../../lib/model-config";
 import { defaultModel, effortChoices, machineLaunchers, providerModels, takesEffort, type MachineLaunchers } from "../../lib/launcher-models";
 import { launcherTitle } from "../../lib/provider-names";
 import { shownManager } from "../../lib/manager-choice";
-import { taskExecutionSummary, type Task } from "../../lib/routines";
+import { taskExecutionNeedsOwnChat, taskExecutionSummary, type Task } from "../../lib/routines";
 import { useStore } from "../../lib/store";
 import { ModelPicker, type ModelList } from "../../ui/ModelPicker";
 import { Button } from "../../ui/atoms";
@@ -63,7 +63,7 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
   const defaultEffort = inherited.effort || selectedModel?.default_effort;
   const defaultModelID = selectedModel?.resolved || (selectedModel?.id !== "default" ? selectedModel?.id : "");
   const summary = taskExecutionSummary({ launcher, agent, model: model || defaultModelID, effort: draft.effort || defaultEffort }, known, defaultLabel);
-  const incompatibleOrigin = !!draft.session_id && !!(draft.launcher || draft.model || draft.effort || draft.cwd || draft.execution_machine_id);
+  const incompatibleOrigin = taskExecutionNeedsOwnChat(draft);
   return <details onToggle={(e) => setExpanded(e.currentTarget.open)} className="rounded-card bg-inset p-3 shadow-hairline">
     <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px] font-medium text-ink [&::-webkit-details-marker]:hidden">
       <Icon name="chevron" size={13} className={expanded ? "shrink-0" : "shrink-0 -rotate-90"} />

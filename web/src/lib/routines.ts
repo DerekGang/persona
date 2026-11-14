@@ -326,10 +326,16 @@ function pastUntil(d: Task, now: Date): string | null {
   return t("lib-routines.error_until");
 }
 
+/** A source chat keeps its execution context; only empty task choices can follow it. */
+export function taskExecutionNeedsOwnChat(d: Task): boolean {
+  return !!d.session_id && [d.launcher?.trim(), d.model?.trim(), d.effort?.trim(), d.execution_machine_id?.trim(), d.cwd].some(Boolean);
+}
+
 /** What the editor checks before saving (the hub checks the same and says why in Chinese): null = fine. */
 export function validateTask(d: Task, now: Date): string | null {
   if (d.repeat !== "once" && !d.title.trim()) return t("lib-routines.error_title");
   if (!d.prompt.trim()) return t("lib-routines.error_prompt");
+  if (taskExecutionNeedsOwnChat(d)) return t("assistant-taskeditor.execution_own_chat");
   switch (d.repeat) {
     case "daily":
       if (!HHMM.test(d.time ?? "")) return t("lib-routines.error_time");

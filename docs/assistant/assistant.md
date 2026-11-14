@@ -865,6 +865,9 @@ a different provider starts from its own defaults. A model or effort override pi
 Main chat switch cannot pair it with another agent. Task-specific choices require the task's own conversation;
 turn off **Continue the original chat** first. Agent means a real headless-capable launcher, including compatible
 runtime launchers, rather than an orchestration role. Work-only computers remain excluded.
+This includes pinning the computer already inherited from Assistant. The editor shows a validation error and
+disables Save and Run now while source-chat continuation and explicit execution choices coexist. Empty patches
+can clear historical choices without requiring a live computer; toggling continuation back on revalidates them.
 
 The shared `TaskExecution` contract (`assistant/schedule_execution.go`, web `lib/routines.ts`) is returned as task
 `execution` and stored on each dispatched run as `execution`. It contains `machine_id`, `launcher`, `agent`, `model`,
@@ -887,8 +890,12 @@ The scheduler and **Run now** share `runTask` and the frozen resolved binding. A
 computer, launcher/agent, model/effort/runtime fingerprint and physical directory. Permission changes are applied
 on the next send. An unknown legacy context with explicit choices starts fresh. Replacements preserve previous
 conversations and run history; each run records `conversation` (`source`, `resumed`, `new`) and, when replaced,
-`conversation_reason`. Offline computers, unavailable models and missing directories fail with their reason, with
+`conversation_reason`. For task-owned execution, offline computers, unavailable models and missing directories fail with their reason, with
 no substitute computer, model or directory. A failed send with uncertain delivery is not sent again as a new chat.
+An unconfigured source-chat follow-up can use its own conversation when the source computer is missing/offline,
+model preparation fails before sending, or the node confirms the source is gone. Source sends use `resume_only`;
+the fallback records `source_unavailable`. A timeout, closed link or other unclassified send failure records failure
+without a replacement send or automatic one-off retry. The one-off failure notice is still pushed.
 Scheduled headless runs retain bounded same-model transient recovery but never advance to another model.
 
 The web advertises this editor through the `task_execution` feature and shows run configuration under each history

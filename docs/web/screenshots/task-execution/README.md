@@ -19,5 +19,10 @@ that form controls stay inside the dialog. Screenshots have been visually inspec
 its footer remains available. Native selects and the shared model picker keep full values available even when their
 collapsed text is truncated at the largest size.
 
+The source-conversation regression also opens a historical task with a saved computer pin, changes its title,
+toggles **Continue the original chat** off and back on, and checks the warning and disabled Save without a request.
+Clearing the pin restores inheritance and permits a save. `task-origin-*.png` captures the validation at both widths,
+themes and text sizes.
+
 The form reuses the existing dialog, fields, native selects, model picker and semantic tokens. Advanced options are
 collapsed by default. This extends a secondary form and leaves primary screens and themes unchanged.

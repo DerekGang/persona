@@ -30,6 +30,10 @@ func (s *Service) taskMachine(ctx context.Context, t Task) string {
 	return cmp.Or(t.ExecutionMachineID, s.settings(ctx).MachineID)
 }
 
+func taskExecutionNeedsOwnChat(t Task, override ModelBinding) bool {
+	return t.SessionID != "" && (t.ExecutionMachineID != "" || t.Cwd != "" || override != (ModelBinding{}))
+}
+
 func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, binding ...ModelBinding) (TaskExecution, error) {
 	machine := s.taskMachine(ctx, t)
 	ex := TaskExecution{MachineID: machine, Cwd: t.Cwd, PermissionMode: cmp.Or(t.PermissionMode, s.settings(ctx).DefaultPermissionMode, "bypassPermissions")}
@@ -132,13 +136,7 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 			changed = true
 		}
 	}
-	if !changed {
-		return nil, nil
-	}
-	if t.SessionID != "" {
-		return nil, errTaskModelNeedsOwnConversation
-	}
-	if v, ok := raw["model_revision"]; ok {
+	if v, ok := raw["model_revision"]; changed && ok {
 		var rev int64
 		if err := json.Unmarshal(v, &rev); err != nil {
 			return nil, err
@@ -150,6 +148,19 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 	b, err := patchModel(old.Binding, patch)
 	if err != nil {
 		return nil, err
+	}
+	if taskExecutionNeedsOwnChat(*t, b) {
+		return nil, i18n.Err("assistant-schedule.execution_own_chat")
+	}
+	if !changed {
+		return nil, nil
+	}
+	if t.SessionID != "" {
+		// Clearing overrides restores the source conversation's context, even while its computer is offline.
+		if b == old.Binding {
+			return nil, nil
+		}
+		return &modelRecord{Revision: old.Revision + 1, Binding: b}, nil
 	}
 	p := ModelPurpose{ID: "task." + t.ID, Kind: "launcher", CategoryID: "assistant", Parent: "assistant", MachineID: s.taskMachine(ctx, *t)}
 	base, _, err := s.modelBaseline(ctx, p)
@@ -229,6 +240,15 @@ func (s *Service) taskRunSnapshot(ctx context.Context, t Task) (Task, ModelBindi
 		t = sc.tasks[i]
 	}
 	sc.mu.Unlock()
+	if t.SessionID != "" {
+		r, err := s.modelRecord(ctx, "task."+t.ID)
+		if err != nil {
+			return t, ModelBinding{}, err
+		}
+		if taskExecutionNeedsOwnChat(t, r.Binding) {
+			return t, ModelBinding{}, i18n.Err("assistant-schedule.execution_own_chat")
+		}
+	}
 	b, err := s.resolveModel(ctx, "task."+t.ID)
 	return t, b, err
 }
