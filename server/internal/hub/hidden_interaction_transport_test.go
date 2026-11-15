@@ -63,6 +63,9 @@ func TestHiddenDirectoryFleetUpRetainsPendingCard(t *testing.T) {
 		}
 	})
 	eventually(t, 5*time.Second, "pending card at hub", func() bool { return len(h.pendingInteractions()) == 1 })
+	for len(app.out) > 0 {
+		<-app.out
+	}
 	save := func(body string) {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -127,11 +130,8 @@ func TestHiddenDirectoryFleetUpRetainsPendingCard(t *testing.T) {
 	if !retained {
 		t.Fatal("unhide lost the actionable card")
 	}
-	allow, _ := json.Marshal(proto.Resolution{Allow: new(true)})
-	answer := httptest.NewRecorder()
-	a.svc.ServeHTTP(answer, httptest.NewRequest("POST", "/api/v1/interactions/"+ix.ID+"/resolve", strings.NewReader(string(allow))))
-	if answer.Code != 200 {
-		t.Fatalf("answer: %d %s", answer.Code, answer.Body)
+	if err := h.resolve(ix.ID, proto.Resolution{Allow: new(true)}); err != nil {
+		t.Fatal(err)
 	}
 	select {
 	case r := <-result:

@@ -80,3 +80,33 @@ func TestDirectoryHiddenSearchDoesNotLeakThroughVisibleParent(t *testing.T) {
 		t.Fatalf("explicit inspection lost child: %+v %v", p, err)
 	}
 }
+
+// Both independently introduced filters must survive the merge: revealing
+// directory-hidden agents never reveals Persona or private conversations.
+func TestDirectoryVisibilityWithAgentsOnly(t *testing.T) {
+	var index Index
+	visible, hidden, assistant, private := testItem("visible", 1), testItem("hidden", 2), testItem("assistant", 3), testItem("private", 4)
+	hidden.HiddenByDirectory = true
+	assistant.Assistant = true
+	private.Private = true
+	index.Replace("machine-a", []Item{visible, hidden, assistant, private})
+	for _, include := range []bool{false, true} {
+		opts := Options{AgentsOnly: true, IncludeHidden: include}
+		page := mustQuery(t, &index, opts)
+		want := 1
+		if include {
+			want = 2
+		}
+		if page.Total != want || len(page.Sessions) != want {
+			t.Fatalf("include_hidden=%v: %+v", include, page)
+		}
+		counts, err := index.Counts(opts)
+		if err != nil || counts.Total != want {
+			t.Fatalf("counts: %+v %v", counts, err)
+		}
+		places, err := index.PlaceCounts(opts)
+		if err != nil || places.Total != want {
+			t.Fatalf("catalog: %+v %v", places, err)
+		}
+	}
+}
