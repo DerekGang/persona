@@ -402,8 +402,9 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	}
 	if recovery == nil && id != "" && !execution.Strict {
 		askedModel := execution.Model
+		// The fallback that answered (#3788). holdExpired is declared apart: ":=" would shadow execution in this block.
 		var holdExpired bool
-		execution, holdExpired = n.heldFallbackWithExpiry(id, launcher, execution) // the fallback that answered (#3788)
+		execution, holdExpired = n.heldFallbackWithExpiry(id, launcher, execution)
 		execution = n.applyModelRecoveryReturn(ctx, id, askedModel, execution, holdExpired)
 	}
 	if execution.Model != "" {
