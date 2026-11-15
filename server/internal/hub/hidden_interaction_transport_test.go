@@ -3,17 +3,65 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"net/http/httptest"
 	"os"
-	"strings"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistant"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/db/dbtest"
 	"github.com/nwverse/persona/server/internal/proto"
 )
+
+// hubAgentDirs keeps hidden Agent folders for the assistant the tests connect, as the devices do: per machine, the
+// assistant told after each change.
+type hubAgentDirs struct {
+	mu      sync.Mutex
+	rules   map[string][]proto.HiddenAgentDir
+	changed func(machine string)
+}
+
+func (d *hubAgentDirs) HiddenAgentDirs(_ context.Context, id string) ([]proto.HiddenAgentDir, string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.rules[id]), "", nil
+}
+
+func (d *hubAgentDirs) EditHiddenAgentDirs(_ context.Context, id string, edit func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error)) ([]proto.HiddenAgentDir, error) {
+	d.mu.Lock()
+	next, err := edit(slices.Clone(d.rules[id]))
+	if err == nil {
+		d.rules[id] = slices.Clone(next)
+	}
+	changed := d.changed
+	d.mu.Unlock()
+	if err == nil && changed != nil {
+		changed(id)
+	}
+	return next, err
+}
+
+// testAgentDirs are the hidden folders the tests' assistants read, by hub (dialAssistant passes them on).
+var testAgentDirs sync.Map
+
+func testAgentDirsOf(h *Hub) assistant.AgentDirs {
+	if d, ok := testAgentDirs.Load(h); ok {
+		return d.(*hubAgentDirs)
+	}
+	return nil
+}
+
+// withAgentDirs gives the assistant connected to h from now on hidden Agent folders the test changes.
+func withAgentDirs(t *testing.T, h *Hub) *hubAgentDirs {
+	t.Helper()
+	d := &hubAgentDirs{rules: map[string][]proto.HiddenAgentDir{}}
+	testAgentDirs.Store(h, d)
+	t.Cleanup(func() { testAgentDirs.Delete(h) })
+	return d
+}
 
 // Real manager and hub connected over the bus: omission from FleetUp is an
 // authoritative resolution, so hiding must never remove the pending card there.
@@ -45,6 +93,7 @@ func hiddenDirectoryCardRoundTrip(t *testing.T, previouslyOmitted bool) {
 	m := newMachine(h, MachineConfig{ID: "box", Name: "Computer"})
 	registerMachine(h, m)
 	m.sessions = []proto.Session{{MachineID: "box", SessionID: "blocked", Cwd: "/work/noisy", Status: proto.StatusBlocked}}
+	dirs := withAgentDirs(t, h)
 	a := connectAssistant(t, h, database)
 	app := &client{out: make(chan []byte, 256), subs: map[[2]string]bool{}, role: roleFull}
 	h.mu.Lock()
@@ -76,15 +125,14 @@ func hiddenDirectoryCardRoundTrip(t *testing.T, previouslyOmitted bool) {
 	for len(app.out) > 0 {
 		<-app.out
 	}
-	save := func(body string) {
+	// Saved as the computer's settings page saves: the devices store the rules, then tell the assistant.
+	save := func(rules ...proto.HiddenAgentDir) {
 		t.Helper()
-		w := httptest.NewRecorder()
-		a.svc.ServeHTTP(w, httptest.NewRequest("PUT", "/api/v1/assistant/hidden-agent-dirs", strings.NewReader(body)))
-		if w.Code != 200 {
-			t.Fatalf("save: %d %s", w.Code, w.Body)
+		if _, err := dirs.EditHiddenAgentDirs(ctx, "box", func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error) { return rules, nil }); err != nil {
+			t.Fatalf("save: %v", err)
 		}
 	}
-	save(`{"rules":[{"machine_id":"box","pattern":"/work/noisy","enabled":true}]}`)
+	save(proto.HiddenAgentDir{Pattern: "/work/noisy", Enabled: true})
 	// The ordered bus places a following marker after FleetUp, avoiding a sleep
 	// that could check hub state before the authoritative snapshot arrived.
 	a.svc.FleetUp(ctx)
@@ -123,7 +171,7 @@ func hiddenDirectoryCardRoundTrip(t *testing.T, previouslyOmitted bool) {
 			t.Fatal("legacy omission fixture did not remove the cards")
 		}
 	}
-	save(`{"rules":[]}`)
+	save()
 	received := false
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()

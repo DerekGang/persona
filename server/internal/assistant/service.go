@@ -37,6 +37,8 @@ type Options struct {
 	// Trust says which computers wait to be confirmed (machine_trust.go): the devices, from the hub's handover; nil
 	// (unit tests): none.
 	Trust MachineTrust
+	// AgentDirs keeps each computer's hidden Agent folders (hidden_agent_dirs.go): the devices; nil: nothing hidden.
+	AgentDirs AgentDirs
 	// SecretKey is the path of the key the model providers' keys are sealed with (the manager's own secret.key,
 	// models_launchers.go); "" makes one for this run only (tests).
 	SecretKey string
@@ -52,7 +54,8 @@ type Options struct {
 
 // Service is the assistant. It implements Handler.
 type Service struct {
-	hiddenDirs hiddenDirBook
+	// agentDirs keeps each computer's hidden Agent folders (hidden_agent_dirs.go); nil: none.
+	agentDirs AgentDirs
 	// inboxExt is what the extensions wrote for the Inbox, read at most once a minute (extension_context.go).
 	inboxExt inboxExtensionCache
 	// extTr are the extensions' transcription jobs running now (extension_transcribe.go).
@@ -262,7 +265,7 @@ var _ Handler = (*Service)(nil)
 // New makes the assistant; nothing runs until the hub calls it.
 func New(o Options) *Service {
 	s := &Service{hub: o.Hub, store: o.Store, logf: o.Logf, mux: http.NewServeMux(), epoch: randomHex(8), tasks: newTasksState(), born: time.Now(),
-		devs: o.Devices, trustSrc: o.Trust, id: o.ID, build: o.Build, repositoryConfig: o.RepositoryConfig}
+		devs: o.Devices, trustSrc: o.Trust, agentDirs: o.AgentDirs, id: o.ID, build: o.Build, repositoryConfig: o.RepositoryConfig}
 	s.inbox.lang = func() i18n.Lang { return s.lang(context.Background()) }
 	if s.store == nil {
 		s.store = func() Store { return nil }
@@ -305,7 +308,6 @@ func New(o Options) *Service {
 	s.briefRoutes()
 	s.todoRoutes()
 	s.agentRoutes()
-	s.hiddenDirRoutes()
 	s.workspaceBoardRoutes()
 	s.channelRoutes()
 	s.companionRoutes()

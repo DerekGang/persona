@@ -3,129 +3,218 @@ package assistant
 import (
 	"context"
 	"encoding/json"
-	"net/http/httptest"
+	"errors"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-func TestHiddenDirectoryMatching(t *testing.T) {
-	for _, tc := range []struct {
-		cwd, home, pattern string
-		want               bool
-	}{
-		{"/home/user/.automation/work/a", "/home/user", "~/.automation", true},
-		{"/home/user/.automation-copy", "/home/user", "~/.automation", false},
-		{"/home/other/.automation", "/home/user", "~/.automation", false},
-		{"/home/user/.automation", "", "~/.automation", false},
-		{"~/work/a", "/home/user", "~/work", true},
-		{"/work/team/a/src", "", "/work/*/a", true},
-		{"/work/a", "", "/work/**/a", true},
-		{"/work/team/deep/a/src", "", "/work/**/a", true},
-		{"/work/team/deep/b", "", "/work/**/a", false},
-		{"/work/a/../b", "", "/work/a", false},
-		{`C:\Users\user\work\a`, `C:\Users\user`, "~/work", true},
-		{"", "/home/user", "~", false},
-	} {
-		if got := directoryMatches(tc.cwd, tc.home, tc.pattern); got != tc.want {
-			t.Errorf("%q home %q pattern %q: %v", tc.cwd, tc.home, tc.pattern, got)
-		}
+// memAgentDirs keeps hidden Agent folders like the devices do (internal/devices agentdirs.go): per machine, one edit at
+// a time, the assistant told after each change.
+type memAgentDirs struct {
+	mu      sync.Mutex
+	rules   map[string][]proto.HiddenAgentDir
+	err     error
+	changed func(machine string)
+}
+
+func (f *memAgentDirs) HiddenAgentDirs(_ context.Context, id string) ([]proto.HiddenAgentDir, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, "", f.err
+	}
+	return slices.Clone(f.rules[id]), "", nil
+}
+
+func (f *memAgentDirs) EditHiddenAgentDirs(_ context.Context, id string, edit func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error)) ([]proto.HiddenAgentDir, error) {
+	f.mu.Lock()
+	next, err := edit(slices.Clone(f.rules[id]))
+	if err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	f.rules[id] = slices.Clone(next)
+	f.mu.Unlock()
+	if f.changed != nil {
+		f.changed(id)
+	}
+	return next, nil
+}
+
+// set replaces machine's rules, as a PUT from the settings page does.
+func (f *memAgentDirs) set(t *testing.T, machine string, rules ...proto.HiddenAgentDir) {
+	t.Helper()
+	if _, err := f.EditHiddenAgentDirs(context.Background(), machine, func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error) { return rules, nil }); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestHiddenDirectoryRulesRoutesAndPersistence(t *testing.T) {
-	s := newTestService(t, newFakeHub().withMachine())
-	endpoint := "/api/v1/assistant/hidden-agent-dirs"
-	if w := serve(s, "GET", endpoint, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"rules":[]`) {
-		t.Fatalf("defaults: %d %s", w.Code, w.Body)
+func useAgentDirs(s *Service) *memAgentDirs {
+	f := &memAgentDirs{rules: map[string][]proto.HiddenAgentDir{}, changed: s.HiddenAgentDirsChanged}
+	s.agentDirs = f
+	return f
+}
+
+func hideExposureDirectory(s *Service, machine, pattern string) {
+	f, ok := s.agentDirs.(*memAgentDirs)
+	if !ok {
+		f = useAgentDirs(s)
 	}
-	body := `{"rules":[{"machine_id":"box","pattern":"/work/*","enabled":true}]}`
-	if w := serve(s, "PUT", endpoint, body); w.Code != 200 {
-		t.Fatalf("save: %d %s", w.Code, w.Body)
+	f.mu.Lock()
+	f.rules[machine] = []proto.HiddenAgentDir{{Pattern: pattern, Enabled: true}}
+	f.mu.Unlock()
+}
+
+// The rules are per computer, cover every runtime, use the blocked folders' pattern syntax on the working folder and
+// what is under it, and a rule switched off hides nothing.
+func TestHiddenDirectoryRules(t *testing.T) {
+	ft := newFleetTest(t)
+	if ft.s.hiddenByDirectory("mac", proto.Session{Cwd: "/work/a"}) {
+		t.Fatal("no rules source hid a session")
 	}
+	f := useAgentDirs(ft.s)
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/work/*", Enabled: true}, proto.HiddenAgentDir{Pattern: "~/.automation", Enabled: true},
+		proto.HiddenAgentDir{Pattern: "*multiremi*", Enabled: true})
 	for _, agent := range []string{"claude", "codex", "pi"} {
-		c := proto.Session{SessionID: "ambient", Cwd: "/work/a", Agent: agent, StartedByPersona: true}
-		if !s.hiddenByDirectory("box", c) || s.hiddenByDirectory("other", c) {
+		c := proto.Session{SessionID: "ambient", Cwd: "/work/a/src", Agent: agent, StartedByPersona: true}
+		if !ft.s.hiddenByDirectory("mac", c) || ft.s.hiddenByDirectory("other", c) {
 			t.Fatalf("runtime/machine policy: %s", agent)
 		}
 	}
-	again := New(Options{Store: s.store})
-	if v, err := again.readHiddenDirs(context.Background()); err != nil || len(v.Rules) != 1 {
-		t.Fatalf("restart: %+v %v", v, err)
-	}
-	r := httptest.NewRequest("PUT", endpoint, strings.NewReader(`{"rules":[]}`))
-	r.Header.Set(RoleHeader, "answer")
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if w.Code != 403 {
-		t.Fatalf("read-only write: %d", w.Code)
-	}
-	for _, bad := range []string{`{"rules":[{"machine_id":"box","pattern":"relative","enabled":true}]}`, `{"rules":[{"machine_id":"box","pattern":"/work/[","enabled":true}]}`} {
-		if w := serve(s, "PUT", endpoint, bad); w.Code != 400 {
-			t.Fatalf("invalid: %d %s", w.Code, w.Body)
+	for cwd, want := range map[string]bool{
+		"/home/u/.automation/job/1":              true, // ~ is that computer's home
+		"/home/u/.automation-copy":               false,
+		"/home/u/.remi/multiremi/workspaces/x/y": true, // a folder name glob anywhere in the path
+		"/work":                                  false,
+		"/code/app":                              false,
+		"":                                       false,
+	} {
+		if got := ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: cwd}); got != want {
+			t.Errorf("%q: %v", cwd, got)
 		}
 	}
-	if w := serve(s, "PUT", endpoint, strings.Replace(body, `"enabled":true`, `"enabled":false`, 1)); w.Code != 200 {
-		t.Fatal(w.Body)
+	if ft.s.hiddenByDirectory("mac", proto.Session{Cwd: "/work/a", Assistant: true}) {
+		t.Fatal("an assistant conversation was hidden")
 	}
-	if s.hiddenByDirectory("box", proto.Session{Cwd: "/work/a"}) {
-		t.Fatal("disabled rule still hides")
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/work/*", Enabled: false})
+	if ft.s.hiddenByDirectory("mac", proto.Session{Cwd: "/work/a"}) {
+		t.Fatal("a rule switched off still hides")
+	}
+	// A failed read keeps ambient context out rather than exposing what may be hidden.
+	f.mu.Lock()
+	f.err = errors.New("database away")
+	f.mu.Unlock()
+	if !ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: "/code/app"}) {
+		t.Fatal("a failed rules read exposed ambient sessions")
 	}
 }
 
+func settingsTool(s *Service, args string) proto.ToolResult {
+	return s.Tool(context.Background(), ToolCall{Name: "persona_settings", MachineID: "server", SessionID: "c1", Arguments: json.RawMessage(args)})
+}
+
+// Changes made through persona_settings wait for the user's own approval on the phone, like agents.blocked_claude_dirs.
 func TestHiddenDirectorySettingConfirmation(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		t.Run(map[bool]string{false: "declined", true: "approved"}[allow], func(t *testing.T) {
-			s := newTestService(t, newFakeHub().withMachine())
+			ft := newFleetTest(t)
+			f := useAgentDirs(ft.s)
 			go func() {
-				q, ok := awaitCard(s)
+				q, ok := awaitCard(ft.s)
 				if !ok {
 					t.Error("missing phone confirmation")
 					return
 				}
+				if !strings.Contains(q.Summary, "/work") || !strings.Contains(q.Summary, "Mac") {
+					t.Errorf("card does not say what changes where: %q", q.Summary)
+				}
 				raw, _ := json.Marshal(proto.Resolution{Allow: &allow})
-				if _, err := s.Action(context.Background(), Action{Op: "answer", InteractionID: q.ID, Answer: raw}); err != nil {
+				if _, err := ft.s.Action(context.Background(), Action{Op: "answer", InteractionID: q.ID, Answer: raw}); err != nil {
 					t.Error(err)
 				}
 			}()
-			result := s.Tool(context.Background(), ToolCall{Name: "persona_settings", MachineID: "server", SessionID: "c1", Arguments: json.RawMessage(`{"action":"set","key":"agents.hidden_dirs","value":{"rules":[{"machine_id":"box","pattern":"/work","enabled":true}]}}`)})
+			result := settingsTool(ft.s, `{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"/work/"}}`)
 			if result.IsError {
 				t.Fatalf("tool: %+v", result)
 			}
-			v, err := s.readHiddenDirs(context.Background())
-			if err != nil || (len(v.Rules) == 1) != allow {
-				t.Fatalf("approval=%v rules=%+v error=%v", allow, v, err)
+			rules, _, _ := f.HiddenAgentDirs(context.Background(), "mac")
+			if want := []proto.HiddenAgentDir{{Pattern: "/work", Enabled: true}}; slices.Equal(rules, want) != allow {
+				t.Fatalf("approval=%v rules=%+v", allow, rules)
 			}
 		})
 	}
 }
 
-func TestHiddenDirectoryApprovalDoesNotOverwriteNewerRules(t *testing.T) {
-	s := newTestService(t, newFakeHub())
-	change, err := s.hiddenDirSetting().set(context.Background(), json.RawMessage(`{"rules":[{"machine_id":"box","pattern":"/work","enabled":true}]}`))
-	if err != nil {
-		t.Fatal(err)
+// get lists every computer's rules; add switches an existing rule; remove takes "<machine id>:<pattern>" like the
+// blocked folders' setting; nothing to change asks nothing.
+func TestHiddenDirectorySettingActions(t *testing.T) {
+	ft := newFleetTest(t)
+	f := useAgentDirs(ft.s)
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/work", Enabled: true})
+	ft.d.setSessions("mac", []proto.Session{{SessionID: "a", Cwd: "/work/a"}, {SessionID: "b", Cwd: "/code"}})
+	got := settingsTool(ft.s, `{"action":"get","key":"agents.hidden_dirs"}`)
+	if got.IsError || !strings.Contains(got.Content[0].Text, "/work (on; matches 1 sessions)") {
+		t.Fatalf("get: %+v", got)
 	}
-	v := hiddenAgentDirs{Rules: []hiddenAgentDir{{MachineID: "box", Pattern: "/other", Enabled: true}}}
-	if err = s.saveHiddenDirs(context.Background(), v, nil); err != nil {
-		t.Fatal(err)
+	if got := settingsTool(ft.s, `{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"/work"}}`); got.IsError || !strings.Contains(got.Content[0].Text, "already") {
+		t.Fatalf("no-op add: %+v", got)
 	}
-	if _, err = change.apply(context.Background()); err == nil {
-		t.Fatal("stale approval overwrote newer settings")
+	approve := func() {
+		go func() {
+			q, ok := awaitCard(ft.s)
+			if !ok {
+				t.Error("missing phone confirmation")
+				return
+			}
+			yes := true
+			raw, _ := json.Marshal(proto.Resolution{Allow: &yes})
+			_, _ = ft.s.Action(context.Background(), Action{Op: "answer", InteractionID: q.ID, Answer: raw})
+		}()
+	}
+	approve()
+	if got := settingsTool(ft.s, `{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"/work","enabled":false}}`); got.IsError {
+		t.Fatalf("switch off: %+v", got)
+	}
+	if rules, _, _ := f.HiddenAgentDirs(context.Background(), "mac"); !slices.Equal(rules, []proto.HiddenAgentDir{{Pattern: "/work", Enabled: false}}) {
+		t.Fatalf("switched off: %+v", rules)
+	}
+	approve()
+	if got := settingsTool(ft.s, `{"action":"remove","key":"agents.hidden_dirs","id":"mac:/work"}`); got.IsError {
+		t.Fatalf("remove: %+v", got)
+	}
+	if rules, _, _ := f.HiddenAgentDirs(context.Background(), "mac"); len(rules) != 0 {
+		t.Fatalf("removed: %+v", rules)
+	}
+	for _, bad := range []string{
+		`{"action":"remove","key":"agents.hidden_dirs","id":"mac:/work"}`,
+		`{"action":"add","key":"agents.hidden_dirs","value":{"machine":"nope","pattern":"/work"}}`,
+		`{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"relative"}}`,
+		`{"action":"set","key":"agents.hidden_dirs","value":{}}`,
+	} {
+		if got := settingsTool(ft.s, bad); !got.IsError {
+			t.Errorf("%s: %+v", bad, got)
+		}
 	}
 }
 
-func TestHiddenDirectoryDatabasePersistence(t *testing.T) {
-	database := taskRecoveryDatabase(t)
-	s := newServiceOn(t, newFakeHub().withMachine(), database)
-	v := hiddenAgentDirs{Rules: []hiddenAgentDir{{MachineID: "box", Pattern: "/work", Enabled: true}}}
-	if err := s.saveHiddenDirs(context.Background(), v, nil); err != nil {
+// An approval applies its own change to the rules as they are then: a rule added while the card waited stays.
+func TestHiddenDirectoryApprovalDoesNotOverwriteNewerRules(t *testing.T) {
+	ft := newFleetTest(t)
+	f := useAgentDirs(ft.s)
+	change, err := ft.s.changeHiddenAgentDirs(context.Background(), "add", json.RawMessage(`{"machine":"mac","pattern":"/work"}`))
+	if err != nil {
 		t.Fatal(err)
 	}
-	restarted := newServiceOn(t, newFakeHub().withMachine(), database)
-	got, err := restarted.readHiddenDirs(context.Background())
-	if err != nil || len(got.Rules) != 1 || got.Rules[0] != v.Rules[0] {
-		t.Fatalf("Postgres restart: %+v %v", got, err)
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/other", Enabled: true})
+	if _, err = change.apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rules, _, _ := f.HiddenAgentDirs(context.Background(), "mac")
+	if want := []proto.HiddenAgentDir{{Pattern: "/other", Enabled: true}, {Pattern: "/work", Enabled: true}}; !slices.Equal(rules, want) {
+		t.Fatalf("got %+v", rules)
 	}
 }

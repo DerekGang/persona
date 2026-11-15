@@ -1,9 +1,8 @@
 {
-  "title": "隐藏 Agent 文件夹",
-  "confirm": "修改隐藏的 Agent 文件夹？匹配的会话将不出现在 Agents 和助手观察中。正在督办的任务仍然可见。关闭规则即可恢复显示。\n修改前：{before}\n修改后：{after}",
-  "too_many": "最多可配置 100 条目录规则。",
-  "invalid": "请选择电脑，并输入绝对目录路径或以 ~/ 开头的 glob。",
-  "duplicate": "这条目录规则已存在。",
-  "changed": "等待确认期间目录规则已改变。请读取当前规则后重试。",
-  "forbidden": "此设备无权修改隐藏目录规则。"
+  "title": "隐藏的 Agent 文件夹",
+  "hide": "在 {machine} 上隐藏 {path} 中的 Agent 会话，不在 Agents 和 Persona 的视图中显示（会话照常运行并继续记录；正在督办的任务仍然可见）",
+  "add_off": "在 {machine} 上添加隐藏文件夹 {path}，先保持关闭（打开前不会隐藏任何会话）",
+  "switch_on": "打开 {machine} 上的隐藏文件夹 {path}（其中的会话不再出现在 Agents 和 Persona 的视图中）",
+  "switch_off": "关闭 {machine} 上的隐藏文件夹 {path}（其中的会话重新显示，规则保留）",
+  "remove": "删除 {machine} 上的隐藏文件夹 {path}（其中的会话重新显示）"
 }

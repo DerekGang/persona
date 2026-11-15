@@ -3,272 +3,66 @@ package assistant
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"path"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+// Hidden Agent folders: per computer, folders whose sessions stay collected but are left out of Agents and the
+// assistant's view (agents_list, live snapshots, tasks, pushes). The rules live with the computer beside its blocked
+// Claude config folders (internal/devices agentdirs.go); this file decides what they hide. The authoritative pending
+// interaction inventory is never filtered by them (pendingInteractions): hiding is a view, not a lifecycle change.
+
 const hiddenAgentDirsKey = "agents.hidden_dirs"
 
-type hiddenAgentDir struct {
-	MachineID string `json:"machine_id"`
-	Pattern   string `json:"pattern"`
-	Enabled   bool   `json:"enabled"`
-}
-type hiddenAgentDirs struct {
-	Rules []hiddenAgentDir `json:"rules"`
-}
-type hiddenDirBook struct {
-	mu     sync.Mutex
-	loaded bool
-	at     time.Time
-	value  hiddenAgentDirs
+// AgentDirs is where each computer's hidden Agent folders are kept (internal/devices.Devices).
+type AgentDirs interface {
+	// HiddenAgentDirs are machine id's rules and its home ("" before its node said); an unknown machine has none.
+	HiddenAgentDirs(ctx context.Context, id string) ([]proto.HiddenAgentDir, string, error)
+	// EditHiddenAgentDirs replaces machine id's rules by what edit makes of the current ones, one edit at a time.
+	EditHiddenAgentDirs(ctx context.Context, id string, edit func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error)) ([]proto.HiddenAgentDir, error)
 }
 
-func (s *Service) readHiddenDirs(ctx context.Context) (hiddenAgentDirs, error) {
-	b := &s.hiddenDirs
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if !b.loaded || time.Since(b.at) > 5*time.Second {
-		v := hiddenAgentDirs{Rules: []hiddenAgentDir{}}
-		if s.store != nil {
-			if st := s.store(); st != nil {
-				if _, err := st.Setting(ctx, hiddenAgentDirsKey, &v); err != nil {
-					return v, err
-				}
-			}
-		}
-		b.value, b.loaded, b.at = v, true, time.Now()
-	}
-	v := b.value
-	v.Rules = slices.Clone(v.Rules)
-	if v.Rules == nil {
-		v.Rules = []hiddenAgentDir{}
-	}
-	return v, nil
-}
-
-// Paths are interpreted on the named computer, never on the manager's host.
-// A literal or glob matches a directory and its descendants; ** spans components.
-func directoryMatches(cwd, home, pattern string) bool {
-	normalize := func(v string) string { return strings.ReplaceAll(v, "\\", "/") }
-	expand := func(v string) string {
-		v = normalize(v)
-		if v == "~" || strings.HasPrefix(v, "~/") {
-			if home == "" {
-				return ""
-			}
-			v = strings.TrimRight(normalize(home), "/") + strings.TrimPrefix(v, "~")
-		}
-		if v == "" {
-			return ""
-		}
-		return path.Clean(v)
-	}
-	cwd, pattern = expand(cwd), expand(pattern)
-	if cwd == "" || pattern == "" {
-		return false
-	}
-	var memo map[[2]int]bool
-	var visited map[[2]int]bool
-	var matches func([]string, []string) bool
-	matches = func(p, d []string) (result bool) {
-		key := [2]int{len(p), len(d)}
-		if visited[key] {
-			return memo[key]
-		}
-		visited[key] = true
-		defer func() { memo[key] = result }()
-		if len(p) == 0 {
-			return len(d) == 0
-		}
-		if p[0] == "**" {
-			return matches(p[1:], d) || len(d) > 0 && matches(p, d[1:])
-		}
-		if len(d) == 0 {
-			return false
-		}
-		ok, _ := path.Match(p[0], d[0])
-		return ok && matches(p[1:], d[1:])
-	}
-	for {
-		memo, visited = map[[2]int]bool{}, map[[2]int]bool{}
-		if matches(strings.Split(pattern, "/"), strings.Split(cwd, "/")) {
-			return true
-		}
-		parent := path.Dir(cwd)
-		if parent == cwd || parent == "." {
-			return false
-		}
-		cwd = parent
-	}
-}
-
-func validateHiddenDirs(v *hiddenAgentDirs) error {
-	if len(v.Rules) > 100 {
-		return i18n.Err("assistant-hidden_dirs.too_many")
-	}
-	seen := map[[2]string]bool{}
-	for i := range v.Rules {
-		r := &v.Rules[i]
-		r.MachineID, r.Pattern = strings.TrimSpace(r.MachineID), strings.TrimSpace(r.Pattern)
-		p := strings.ReplaceAll(r.Pattern, "\\", "/")
-		absolute := strings.HasPrefix(p, "/") || p == "~" || strings.HasPrefix(p, "~/") || len(p) > 2 && p[1:3] == ":/"
-		_, err := path.Match(p, "")
-		if r.MachineID == "" || !absolute || err != nil || len(p) > 2048 || strings.ContainsAny(p, "\x00\r\n") {
-			return i18n.Err("assistant-hidden_dirs.invalid")
-		}
-		k := [2]string{r.MachineID, r.Pattern}
-		if seen[k] {
-			return i18n.Err("assistant-hidden_dirs.duplicate")
-		}
-		seen[k] = true
-	}
-	if v.Rules == nil {
-		v.Rules = []hiddenAgentDir{}
-	}
-	return nil
-}
-
-func (s *Service) saveHiddenDirs(ctx context.Context, v hiddenAgentDirs, expected *hiddenAgentDirs) error {
-	if err := validateHiddenDirs(&v); err != nil {
-		return err
-	}
-	b := &s.hiddenDirs
-	b.mu.Lock()
-	if expected != nil {
-		current := hiddenAgentDirs{}
-		if st := s.store(); st != nil {
-			if _, err := st.Setting(ctx, hiddenAgentDirsKey, &current); err != nil {
-				b.mu.Unlock()
-				return err
-			}
-		}
-		if !slices.Equal(current.Rules, expected.Rules) {
-			b.mu.Unlock()
-			return i18n.Err("assistant-hidden_dirs.changed")
-		}
-	}
-	if err := s.putSetting(ctx, hiddenAgentDirsKey, v); err != nil {
-		b.mu.Unlock()
-		return err
-	}
-	b.value, b.loaded, b.at = v, true, time.Now()
-	b.mu.Unlock()
+// HiddenAgentDirsChanged shows the machine's sessions again by its new rules (devices.Options.HiddenAgentDirsChanged):
+// session rows reach the clients before their pending cards are replayed, so a card of a session shown again finds
+// its row.
+func (s *Service) HiddenAgentDirsChanged(machine string) {
 	s.snapshotStale()
-	for _, m := range s.fleetMachines() {
-		s.sessionsChanged(m.ID)
-	}
-	// Session rows reach clients before their pending cards are replayed.
+	s.sessionsChanged(machine)
 	s.refreshPendingCards()
 	s.boardChanged()
-	return nil
 }
 
 // Active supervised tasks stay visible: hiding ambient activity must never sever
 // a task's supervision. Merely having been started by Persona is not an exemption.
 func (s *Service) hiddenByDirectory(machine string, sess proto.Session) bool {
-	if sess.Assistant {
+	if sess.Assistant || s.agentDirs == nil {
 		return false
 	}
-	v, err := s.readHiddenDirs(context.Background())
-	matched := err != nil // Do not expose ambient context after a failed settings read.
-	if len(v.Rules) == 0 && err == nil {
+	rules, home, err := s.agentDirs.HiddenAgentDirs(context.Background(), machine)
+	patterns := proto.HiddenAgentDirPatterns(rules)
+	if len(patterns) == 0 && err == nil {
 		return false
 	}
 	m, _ := s.fleetMachine(machine)
 	if m.isAssistant(sess) {
 		return false
 	}
-	for _, r := range v.Rules {
-		if r.Enabled && r.MachineID == machine && directoryMatches(sess.Cwd, m.Home, r.Pattern) {
-			matched = true
-			break
-		}
+	if home == "" {
+		home = m.Home
 	}
+	// Do not expose ambient context after a failed rules read.
+	matched := err != nil || proto.DirPatternMatchedBy(sess.Cwd, home, patterns) != ""
 	return matched && !s.directorySessionSupervised(machine, sess.SessionID)
 }
 
 func (s *Service) directoryHiddenSession(machine, sid string) bool {
 	sess, ok := s.nodeSession(machine, sid)
 	return ok && s.hiddenByDirectory(machine, sess)
-}
-
-func (s *Service) hiddenDirSetting() ownSetting {
-	return ownSetting{Setting: Setting{Key: hiddenAgentDirsKey, Title: i18n.T(i18n.Default, "assistant-hidden_dirs.title"), Actions: []string{"get", "set"},
-		About: "Hide ambient Agent sessions by working directory on each computer; all runtimes. Active supervised tasks remain visible. Disabling a rule restores visibility; collection continues.",
-		Value: "{rules:[{machine_id,pattern,enabled}]}; complete replacement; absolute paths or ~/ globs (*, ?, [], **); directory descendants included"},
-		get: func(ctx context.Context) (string, error) {
-			v, err := s.readHiddenDirs(ctx)
-			if err != nil {
-				return "", err
-			}
-			b, err := json.Marshal(v)
-			return string(b), err
-		},
-		set: func(ctx context.Context, raw json.RawMessage) (*ownChange, error) {
-			var v hiddenAgentDirs
-			if err := json.Unmarshal(raw, &v); err != nil {
-				return nil, err
-			}
-			if err := validateHiddenDirs(&v); err != nil {
-				return nil, err
-			}
-			before, err := s.readHiddenDirs(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if slices.Equal(before.Rules, v.Rules) {
-				return &ownChange{summary: "Directory visibility rules are unchanged."}, nil
-			}
-			old, _ := json.Marshal(before)
-			next, _ := json.Marshal(v)
-			return &ownChange{summary: "Directory visibility rules updated", cardText: func(l i18n.Lang) string {
-				return i18n.T(l, "assistant-hidden_dirs.confirm", i18n.Args{"before": string(old), "after": string(next)})
-			},
-				apply: func(ctx context.Context) (string, error) {
-					err := s.saveHiddenDirs(ctx, v, &before)
-					return "Directory visibility rules updated. Restore the previous rules to undo.", err
-				}}, nil
-		}}
-}
-
-func (s *Service) hiddenDirRoutes() {
-	s.handle("GET /api/v1/assistant/hidden-agent-dirs", func(w http.ResponseWriter, r *http.Request) {
-		v, err := s.readHiddenDirs(r.Context())
-		if err != nil {
-			apierr.Write(w, http.StatusServiceUnavailable, err)
-			return
-		}
-		apierr.WriteJSON(w, v)
-	})
-	s.handle("PUT /api/v1/assistant/hidden-agent-dirs", func(w http.ResponseWriter, r *http.Request) {
-		if !fullRole(r) {
-			apierr.Write(w, http.StatusForbidden, i18n.Err("assistant-hidden_dirs.forbidden"))
-			return
-		}
-		var v hiddenAgentDirs
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<18)).Decode(&v); err != nil {
-			apierr.Write(w, http.StatusBadRequest, err)
-			return
-		}
-		if err := validateHiddenDirs(&v); err != nil {
-			apierr.Write(w, http.StatusBadRequest, err)
-			return
-		}
-		if err := s.saveHiddenDirs(r.Context(), v, nil); err != nil {
-			apierr.Write(w, http.StatusServiceUnavailable, err)
-			return
-		}
-		apierr.WriteJSON(w, v)
-	})
 }
 
 func visibleDirectorySessions(list []proto.Session) []proto.Session {
@@ -291,4 +85,143 @@ func (s *Service) directorySessionSupervised(machine, sid string) bool {
 	defer s.todos.mu.RUnlock()
 	t := s.todos.todos[s.todos.activeBySession[key]]
 	return t != nil && t.DoneAt == nil && t.Supervision != nil && t.Supervision.Supervisor != ""
+}
+
+// hiddenDirSetting is persona_settings agents.hidden_dirs, the same get / add / remove as
+// agents.blocked_claude_dirs beside it; add also switches an existing rule on or off.
+func (s *Service) hiddenDirSetting() ownSetting {
+	return ownSetting{Setting: Setting{Key: hiddenAgentDirsKey, Title: i18n.T(i18n.Default, "assistant-hidden_dirs.title"), Actions: []string{"get", "add", "remove"},
+		About: "per machine, folders whose Agent sessions (every runtime) stay collected but are left out of Agents and your view " +
+			"(agents_list, snapshots, tasks, notifications); active supervised tasks stay visible. A rule switched off keeps its place and hides nothing. " +
+			"Unlike agents.blocked_claude_dirs, nothing stops being collected. get lists each machine's rules and how many sessions each hides now",
+		Value: `add: {"machine": machine id, "pattern": a path or glob starting with / or ~/ (~ is that machine's home), or a folder name glob ` +
+			`starting with *, e.g. "~/.automation/workspaces/*", "enabled": true (default) or false to switch an existing rule off}; remove: "<machine id>:<pattern>"`},
+		get: s.getHiddenAgentDirs, change: s.changeHiddenAgentDirs}
+}
+
+func (s *Service) getHiddenAgentDirs(ctx context.Context) (string, error) {
+	if s.agentDirs == nil {
+		return "No machines.", nil
+	}
+	var b strings.Builder
+	for _, m := range s.fleetMachines() {
+		rules, home, err := s.agentDirs.HiddenAgentDirs(ctx, m.ID)
+		if err != nil {
+			return "", err
+		}
+		if home == "" {
+			home = m.Home
+		}
+		fmt.Fprintf(&b, "%s (%s):", m.ID, m.Name)
+		if len(rules) == 0 {
+			b.WriteString(" no hidden folders\n")
+			continue
+		}
+		b.WriteByte('\n')
+		var sessions []proto.Session
+		if s.devs != nil {
+			sessions, _ = s.devs.Sessions(m.ID)
+		}
+		for _, r := range rules {
+			if !r.Enabled {
+				fmt.Fprintf(&b, "  - %s (off)\n", r.Pattern)
+				continue
+			}
+			n := 0
+			for _, sess := range sessions {
+				if proto.DirPatternMatchedBy(sess.Cwd, home, []string{r.Pattern}) != "" {
+					n++
+				}
+			}
+			fmt.Fprintf(&b, "  - %s (on; matches %d sessions)\n", r.Pattern, n)
+		}
+	}
+	if b.Len() == 0 {
+		return "No machines.", nil
+	}
+	return b.String(), nil
+}
+
+func (s *Service) changeHiddenAgentDirs(ctx context.Context, action string, v json.RawMessage) (*ownChange, error) {
+	if s.agentDirs == nil {
+		return nil, errors.New("hidden Agent folders are kept with the computers, and this manager carries none")
+	}
+	var machine, pattern string
+	enabled := true
+	switch action {
+	case "add":
+		var a struct {
+			Machine string `json:"machine"`
+			Pattern string `json:"pattern"`
+			Enabled *bool  `json:"enabled"`
+		}
+		if err := json.Unmarshal(v, &a); err != nil {
+			return nil, errors.New(`value must be {"machine", "pattern", "enabled"?}`)
+		}
+		machine, pattern = a.Machine, a.Pattern
+		if a.Enabled != nil {
+			enabled = *a.Enabled
+		}
+	case "remove":
+		var id string
+		if err := json.Unmarshal(v, &id); err != nil {
+			return nil, errors.New(`remove takes "<machine id>:<pattern>"`)
+		}
+		var ok bool
+		if machine, pattern, ok = strings.Cut(id, ":"); !ok {
+			return nil, fmt.Errorf(`remove takes "<machine id>:<pattern>", got %q`, id)
+		}
+	}
+	m, ok := s.fleetMachine(strings.TrimSpace(machine))
+	if !ok {
+		return nil, fmt.Errorf("no machine %q", machine)
+	}
+	p, ok := proto.CleanDirPattern(pattern)
+	if !ok || !proto.ValidDirPattern(p) {
+		return nil, fmt.Errorf("bad pattern %q: a path or glob starting with / or ~/, or a folder name glob starting with *", pattern)
+	}
+	rules, _, err := s.agentDirs.HiddenAgentDirs(ctx, m.ID)
+	if err != nil {
+		return nil, err
+	}
+	at := slices.IndexFunc(rules, func(r proto.HiddenAgentDir) bool { return r.Pattern == p })
+	name := m.Name
+	if name == "" {
+		name = m.ID
+	}
+	args := i18n.Args{"machine": name, "path": p}
+	var key string
+	var edit func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error)
+	switch {
+	case action == "remove" && at < 0:
+		return nil, fmt.Errorf("%s is not a hidden folder on %s (get lists the rules)", p, m.ID)
+	case action == "remove":
+		key = "remove"
+		edit = func(now []proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error) {
+			return slices.DeleteFunc(now, func(r proto.HiddenAgentDir) bool { return r.Pattern == p }), nil
+		}
+	case at >= 0 && rules[at].Enabled == enabled:
+		return &ownChange{summary: fmt.Sprintf("%s is already a hidden folder on %s, %s.", p, m.ID, map[bool]string{true: "on", false: "off"}[enabled])}, nil
+	default:
+		key = map[bool]string{true: "hide", false: "add_off"}[enabled]
+		if at >= 0 {
+			key = map[bool]string{true: "switch_on", false: "switch_off"}[enabled]
+		}
+		edit = func(now []proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error) {
+			if i := slices.IndexFunc(now, func(r proto.HiddenAgentDir) bool { return r.Pattern == p }); i >= 0 {
+				now[i].Enabled = enabled
+				return now, nil
+			}
+			return append(now, proto.HiddenAgentDir{Pattern: p, Enabled: enabled}), nil
+		}
+	}
+	return &ownChange{summary: "Hidden Agent folder " + p + " on " + m.ID + ": " + key,
+		cardText: func(l i18n.Lang) string { return i18n.T(l, "assistant-hidden_dirs."+key, args) },
+		apply: func(ctx context.Context) (string, error) {
+			// The edit is made on the rules as they are then, so a change made meanwhile is kept.
+			if _, err := s.agentDirs.EditHiddenAgentDirs(ctx, m.ID, edit); err != nil {
+				return "", err
+			}
+			return "Done (" + key + " " + p + " on " + m.ID + "). The same action with the opposite switch, or remove, undoes it.", nil
+		}}, nil
 }

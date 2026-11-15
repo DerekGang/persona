@@ -229,9 +229,13 @@ func (s *Service) toolPersonaSettings(ctx context.Context, call ToolCall, args j
 		Action string          `json:"action"`
 		Key    string          `json:"key"`
 		Value  json.RawMessage `json:"value"`
+		ID     string          `json:"id"` // remove's, as the hub's own settings take it
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return proto.TextResult(fmt.Sprintf("invalid arguments: %v", err), true)
+	}
+	if a.Action == "remove" && len(a.Value) == 0 && a.ID != "" {
+		a.Value, _ = json.Marshal(a.ID)
 	}
 	if a.Key == standingAuthorizationsKey && a.Action == "set" && (call.SessionID == "" || call.SessionID != s.settings(ctx).Main || call.MachineID != s.settings(ctx).MachineID) {
 		return proto.TextResult("only the main conversation may change standing authorizations", true)

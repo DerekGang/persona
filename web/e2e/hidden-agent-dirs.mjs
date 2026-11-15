@@ -13,13 +13,13 @@ try {
   await ctx.addInitScript((theme) => { localStorage.setItem("persona.token", "synthetic-token"); localStorage.setItem("persona.language", "en"); localStorage.setItem("persona.theme", theme); }, theme);
   const visible = { machine_id: "example", session_id: "visible", title: "Visible project", cwd: "/example/projects", state: "idle", status: "idle", updated_at: "2026-01-01T00:00:00Z" };
   const hidden = { ...visible, session_id: "hidden", title: "Background workspace", cwd: "/example/workspaces/demo", hidden_by_directory: true };
-  let rules = [{ machine_id: "example", pattern: "~/workspaces/*", enabled: true }];
+  let rules = [{ pattern: "~/workspaces/*", enabled: true }];
   await ctx.route("**/api/v1/**", async (route) => {
    const req = route.request(), url = new URL(req.url()), path = url.pathname.replace(/^\/api\/v1/, "");
    let body = {};
-   if (path === "/assistant/hidden-agent-dirs") {
+   if (path === "/machines/example/agent-dirs/hidden") {
     if (req.method() === "PUT") rules = req.postDataJSON().rules;
-    body = { rules };
+    body = { rules, home: "/example" };
    } else {
     assert.equal(req.method(), "GET", `unexpected write ${path}`);
     if (path === "/machines") body = { machines: [{ id: "example", name: "Example computer", online: true, os: "linux" }] };

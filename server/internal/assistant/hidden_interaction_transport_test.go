@@ -19,19 +19,19 @@ func TestHiddenDirectoryPendingCardTransportTransitions(t *testing.T) {
 	ft.s.fleet.mu.Lock()
 	ft.s.fleet.interactions = map[string]*pending{ix.ID: {ix: ix, told: false}}
 	ft.s.fleet.mu.Unlock()
-	on := hiddenAgentDirs{Rules: []hiddenAgentDir{{MachineID: "mac", Pattern: "/work/noisy", Enabled: true}}}
-	off := hiddenAgentDirs{Rules: []hiddenAgentDir{{MachineID: "mac", Pattern: "/work/noisy", Enabled: false}}}
+	dirs := useAgentDirs(ft.s)
+	on := []proto.HiddenAgentDir{{Pattern: "/work/noisy", Enabled: true}}
+	off := []proto.HiddenAgentDir{{Pattern: "/work/noisy", Enabled: false}}
 	for _, step := range []struct {
 		name  string
-		rules hiddenAgentDirs
-	}{{"add", on}, {"disable", off}, {"enable", on}, {"remove", hiddenAgentDirs{Rules: []hiddenAgentDir{}}}} {
+		rules []proto.HiddenAgentDir
+	}{{"add", on}, {"disable", off}, {"enable", on}, {"remove", nil}} {
 		t.Run(step.name, func(t *testing.T) {
 			ft.f.mu.Lock()
 			ft.f.told = nil
 			ft.f.mu.Unlock()
-			if err := ft.s.saveHiddenDirs(context.Background(), step.rules, nil); err != nil {
-				t.Fatal(err)
-			}
+			// Saved as the settings page saves: the devices store the rules, then tell the assistant.
+			dirs.set(t, "mac", step.rules...)
 			if len(ft.s.pendingInteractions()) != 1 {
 				t.Fatal("authoritative inventory lost the pending card")
 			}

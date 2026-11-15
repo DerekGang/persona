@@ -12,14 +12,6 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-func hideExposureDirectory(s *Service, machine, pattern string) {
-	s.hiddenDirs.mu.Lock()
-	s.hiddenDirs.value = hiddenAgentDirs{Rules: []hiddenAgentDir{{MachineID: machine, Pattern: pattern, Enabled: true}}}
-	s.hiddenDirs.loaded = true
-	s.hiddenDirs.at = time.Now()
-	s.hiddenDirs.mu.Unlock()
-}
-
 func TestHiddenDirectoryAmbientExposure(t *testing.T) {
 	for _, runtime := range []string{"claude", "codex"} {
 		t.Run(runtime, func(t *testing.T) {

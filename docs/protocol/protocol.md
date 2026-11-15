@@ -4980,18 +4980,33 @@ New Agent starts do not take a speed setting.
 
 ## Agent directory visibility
 
-`GET /api/v1/assistant/hidden-agent-dirs` returns `{rules: [{machine_id, pattern, enabled}]}`.
-`PUT` replaces that object (full app role required). `persona_settings` exposes the same value as
-`agents.hidden_dirs`, with `get` and `set`; changes use the existing phone confirmation, show before/after,
-and reject an approval if rules changed while the card was waiting. Restore the previous list or disable a
-rule to undo. Empty rules are the default. These settings live in the manager's Postgres settings store.
+Hidden Agent folders are the parallel list to blocked Claude config directories
+(`docs/integrations/claude-integration.md`, "Blocking configuration directories"): both are per computer, kept in
+the devices layer's settings beside each other (`claude_dirs_blocked/<machine id>`, `agent_dirs_hidden/<machine id>`),
+and use one pattern syntax and matcher (`proto.DirPatternMatchedBy`). They differ in what they do:
 
-Each enabled rule matches only its named computer's session `cwd`, for every runtime. Paths and globs match
-a directory and its descendants, on directory boundaries. `*`, `?` and `[]` match within one component;
-`**` spans zero or more components. `~` uses the computer's reported home, never the manager's home; until
-home is known, a tilde rule does not match. Separators are normalized to `/`, including Windows paths;
-matching is case-sensitive and lexical, without resolving symlinks on a remote filesystem. Up to 100 rules
-are accepted. No scan or recording is stopped, unlike `agents.blocked_claude_dirs`.
+| | Blocked Claude config directories | Hidden Agent folders |
+| --- | --- | --- |
+| Matches | a Claude Code `CLAUDE_CONFIG_DIR` | a session's working directory (`cwd`), any runtime |
+| Effect | the node does not scan it; its sessions are never collected | sessions stay collected and recorded; the manager leaves them out of Agents and the assistant's view |
+| Switch | delete the rule | each rule has `enabled`; off keeps the rule and hides nothing |
+| HTTP | `GET /api/v1/machines/{mid}/claude-dirs`, `PUT …/claude-dirs/blocked {"blocked": [...]}` | `GET /api/v1/machines/{mid}/agent-dirs/hidden`, `PUT …/agent-dirs/hidden {"rules": [...]}` |
+| `persona_settings` | `agents.blocked_claude_dirs` get / add / remove | `agents.hidden_dirs` get / add / remove |
+
+`GET /api/v1/machines/{mid}/agent-dirs/hidden` returns `{rules: [{pattern, enabled}], home?}` (`home` is the
+computer's home for showing `~`, absent before its node first said). `PUT` replaces the computer's whole list and
+returns the new state; an answer-only device cannot call it. Offline computers can be set up. A rule is a path or
+`filepath.Match` glob starting with `/` or `~/` (`~` is that computer's home, never the manager's; until it is
+known a `~/` rule does not match), or a folder name glob starting with `*` (`*multiremi*`) that matches a folder of
+that name anywhere in the path. A rule matches the folder and everything under it. Trailing slashes are dropped;
+patterns that would cover home or the root, invalid globs, duplicates and more than 100 rules are refused (400).
+Matching is lexical and case-sensitive; symlinks on the remote computer are not resolved. Empty is the default.
+
+`persona_settings` `agents.hidden_dirs` takes the same values as `agents.blocked_claude_dirs`: `add`
+`{"machine", "pattern", "enabled"?}` (default on; on an existing rule it switches it), `remove`
+`"<machine id>:<pattern>"`, and `get` lists each computer's rules with how many sessions each hides now. Every
+change waits for the user's approval on the phone and is applied to the rules as they are then, so a change made
+meanwhile is kept; the opposite switch or `remove` undoes it.
 
 The Assistant manager annotates session rows with `hidden_by_directory: true` (otherwise omitted).
 Bounded lists, counts, catalog and ranked search exclude those rows by default. Legacy app inventories
@@ -5003,8 +5018,9 @@ This is a visibility preference, not access control or transcript deletion.
 
 Pending interactions have a separate authoritative inventory. `fleet.interactions` on reconnect always carries
 all pending cards, including directory-hidden sessions: an omitted card means resolved to the hub. Assistant,
-Feishu and attention summaries use a visibility projection instead. Saving any directory-rule change publishes
-the updated session rows, then replays pending `fleet.interaction` cards to connected clients. Replays preserve
+Feishu and attention summaries use a visibility projection instead. Saving any hidden-folder change (the devices
+tell the assistant, `devices.Options.HiddenAgentDirsChanged`) publishes the computer's updated session rows, then
+replays pending `fleet.interaction` cards to connected clients. Replays preserve
 delegation state and do not send notifications; a pending card stays actionable after revealing its session.
 
 
@@ -5016,8 +5032,10 @@ rule applies again. Assistant conversations themselves are exempt so their appro
 The first visibility check loads persisted task ownership before classifying a session. If supervision state
 cannot be read, matching sessions remain visible until it can be read again.
 
-Web: Settings' Agent section contains the shared directory rules; Agents offers temporary inspection.
+Web: Settings › Agents starts with Hidden Agent folders (a computer picker, then that computer's rules), above the
+per-runtime sections where Claude Code's blocked config directories are; Agents offers temporary inspection.
 Apple: Settings › Agent › Hidden Agent Folders and the Agents menu's temporary reveal use the same contract.
+Android has the blocked list only for now.
 New labels and confirmation text ship in English, Simplified Chinese and Japanese.
 ### Optional Todo repository metadata
 

@@ -1,6 +1,6 @@
 {
   "title": "隐藏 Agent 目录",
-  "footer": "规则对所选电脑上的所有运行时生效。路径隐藏该目录及其子目录，glob 按工作目录匹配。~ 代表该电脑的主目录。会话继续记录，Persona 正在督办的任务保持可见。关闭规则即可恢复显示。",
+  "footer": "所选电脑上在这些文件夹中工作的会话（任何 Agent）会继续记录，但不会出现在 Agents 和 Persona 的视图中。路径包含该文件夹及其所有子文件夹；~ 表示那台电脑的主目录；*name* 匹配任意位置的文件夹名。正在督办的 Persona 任务仍然可见。关闭规则即可重新显示其中的会话。若要完全不收集某个 Claude Code 配置文件夹，请使用 Claude Code 下的“屏蔽的配置目录”。",
   "machine": "电脑",
   "pattern": "目录或 glob",
   "enabled": "对 Agents 和助手隐藏",
@@ -15,5 +15,9 @@
   "close": "关闭",
   "more": "加载更多",
   "hidden": "已隐藏",
-  "normal": "可见"
+  "normal": "可见",
+  "placeholder": "~/workspaces/*",
+  "pattern_prefix": "以 / 或 ~/ 开头（~ 是那台电脑的主目录），或用 * 匹配文件夹名",
+  "pattern_root": "不能隐藏整个主目录或根目录",
+  "pattern_exists": "已在列表中"
 }

@@ -86,6 +86,9 @@ type Options struct {
 	Event func(machine, event string, params json.RawMessage) (forward bool)
 	// Detached: a machine's node connection ended (not for another one taking over): what waited on it ends.
 	Detached func(machine string)
+	// HiddenAgentDirsChanged is told after a machine's hidden Agent folders changed (agentdirs.go), outside every
+	// lock of the devices: the assistant shows the sessions again by the new rules.
+	HiddenAgentDirsChanged func(machine string)
 	// Location is the user's time zone ("today" of the token usage); nil: the machine's.
 	Location func() *time.Location
 	// ConfigFile is the manager's manager.json (internal/managerconf): its usage section (the account-pool gateways

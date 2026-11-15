@@ -2,7 +2,8 @@
 
 Synthetic browser fixtures only; no production hub, user sessions or credentials.
 
-`web/e2e/hidden-agent-dirs.mjs` exercises per-computer rule toggling and the temporary
+`web/e2e/hidden-agent-dirs.mjs` exercises per-computer rule toggling (one computer's list at
+`/api/v1/machines/{mid}/agent-dirs/hidden`, beside its blocked Claude config directories) and the temporary
 inspection list against an exclusively owned loopback Vite server. Every hub HTTP
 and WebSocket request is intercepted with synthetic data. The switch is enabled,
 disabled, then enabled again; the inspection view includes a hidden session while

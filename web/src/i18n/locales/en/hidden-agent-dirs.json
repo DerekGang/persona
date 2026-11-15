@@ -1,6 +1,6 @@
 {
   "title": "Hidden Agent folders",
-  "footer": "Rules apply to every runtime on the selected computer. Paths hide that folder and its descendants; globs match working directories. ~ means that computer’s home. Sessions keep recording. Active supervised Persona tasks remain visible. Turn a rule off to show its sessions again.",
+  "footer": "Sessions working in these folders on the selected computer, with any Agent, stay recorded but leave Agents and Persona's view. A path covers that folder and everything in it; ~ is that computer's home; *name* matches a folder name anywhere. Active supervised Persona tasks stay visible. Switch a rule off to show its sessions again. To stop collecting a Claude Code config folder altogether, use Blocked config directories under Claude Code.",
   "machine": "Computer",
   "pattern": "Folder or glob",
   "enabled": "Hidden from Agents and Assistant",
@@ -15,5 +15,9 @@
   "close": "Close",
   "more": "Load more",
   "hidden": "Hidden",
-  "normal": "Visible"
+  "normal": "Visible",
+  "placeholder": "~/workspaces/*",
+  "pattern_prefix": "Start with / or ~/ (~ is that computer's home), or * for a folder name",
+  "pattern_root": "Can't hide the whole home or root folder",
+  "pattern_exists": "Already in the list"
 }

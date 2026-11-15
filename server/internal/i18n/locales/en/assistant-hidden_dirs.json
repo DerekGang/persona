@@ -1,9 +1,8 @@
 {
   "title": "Hidden Agent folders",
-  "confirm": "Change hidden Agent folders? Matching sessions disappear from Agents and Assistant observations. Active supervised tasks stay visible. Disable a rule to restore visibility.\nBefore: {before}\nAfter: {after}",
-  "too_many": "Use no more than 100 folder rules.",
-  "invalid": "Choose a computer and enter an absolute folder path or a glob starting with ~/.",
-  "duplicate": "This folder rule already exists.",
-  "changed": "Folder rules changed while confirmation was pending. Read the current rules and try again.",
-  "forbidden": "This device cannot change hidden folder rules."
+  "hide": "Hide Agent sessions in {path} on {machine} from Agents and Persona's view (they keep running and stay recorded; active supervised tasks stay visible)",
+  "add_off": "Add hidden folder {path} on {machine}, switched off (nothing is hidden until you switch it on)",
+  "switch_on": "Switch on hidden folder {path} on {machine} (its sessions leave Agents and Persona's view)",
+  "switch_off": "Switch off hidden folder {path} on {machine} (its sessions show again; the rule stays)",
+  "remove": "Delete hidden folder {path} on {machine} (its sessions show again)"
 }
