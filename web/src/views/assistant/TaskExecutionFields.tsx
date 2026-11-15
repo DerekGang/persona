@@ -65,13 +65,13 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
   const summary = taskExecutionSummary({ launcher, agent, model: model || defaultModelID, effort: draft.effort || defaultEffort }, known, defaultLabel);
   const incompatibleOrigin = taskExecutionNeedsOwnChat(draft);
   return <details onToggle={(e) => setExpanded(e.currentTarget.open)} className="rounded-card bg-inset p-3 shadow-hairline">
-    <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px] font-medium text-ink [&::-webkit-details-marker]:hidden">
+    <summary className="flex cursor-pointer list-none items-center gap-2 text-meta font-medium text-ink [&::-webkit-details-marker]:hidden">
       <Icon name="chevron" size={13} className={expanded ? "shrink-0" : "shrink-0 -rotate-90"} />
       <span className="shrink-0">{t("assistant-taskeditor.execution_options")}</span>
-      <span className="min-w-0 flex-1 truncate text-[12px] font-normal text-ink-2" title={summary}>{summary}</span>
+      <span className="min-w-0 flex-1 truncate text-label font-normal text-ink-2" title={summary}>{summary}</span>
     </summary>
     <div className="mt-3 flex flex-col gap-3">
-      <p className="text-[11.5px] leading-relaxed text-ink-3">{t("assistant-taskeditor.execution_inheritance")}</p>
+      <p className="text-submeta leading-relaxed text-ink-3">{t("assistant-taskeditor.execution_inheritance")}</p>
       <Field label={t("assistant-taskeditor.execution_computer")}>
         <select className={inputClass} value={draft.execution_machine_id ?? ""} disabled={disabled} onChange={(e) => onChange({ execution_machine_id: e.target.value })}>
           <option value="">{t("assistant-taskeditor.computer_default", { name: machines.find((m) => m.id === main?.machine_id)?.name || main?.machine_id || "…" })}</option>
@@ -87,10 +87,10 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
         </select>
       </Field>
       <div>
-        <span className="mb-1 block text-[12px] font-medium text-ink-2">{t("settings-modelconfiguration.specific_model")}</span>
+        <span className="mb-1 block text-label font-medium text-ink-2">{t("settings-modelconfiguration.specific_model")}</span>
         <fieldset className="min-w-0" disabled={disabled}><ModelPicker models={models} model={draft.model || ""} followed={inherited} defaultLabel={defaultLabel} open={open} onToggle={() => setOpen((v) => !v)} query={query} onQuery={setQuery} search={search}
           onPick={(model) => { if (!disabled) { onChange({ model }); setOpen(false); } }} onReload={() => setReload((v) => v + 1)} custom failedNote={t("settings-modelconfiguration.list_failed")} /></fieldset>
-        {models.status === "error" && <p role="alert" className="mt-1 break-words text-[12px] text-red">{models.error}</p>}
+        {models.status === "error" && <p role="alert" className="mt-1 break-words text-label text-red">{models.error}</p>}
       </div>
       <Field label={t("settings-modelconfiguration.effort")}>
         <select className={inputClass} value={draft.effort ?? ""} disabled={disabled} onChange={(e) => onChange({ effort: e.target.value })}>
@@ -102,9 +102,9 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
       <Field label={t("assistant-taskeditor.execution_directory")} note={t("assistant-taskeditor.directory_hint")}>
         <input className={inputClass} value={draft.cwd ?? ""} disabled={disabled} placeholder={t("assistant-taskeditor.directory_follow")} spellCheck={false} autoComplete="off" onChange={(e) => onChange({ cwd: e.target.value })} />
       </Field>
-      <p className="text-[11.5px] leading-relaxed text-ink-3">{t("assistant-taskeditor.execution_sessions")}</p>
-      {incompatibleOrigin && <p role="alert" className="text-[12px] text-red">{t("assistant-taskeditor.execution_own_chat")}</p>}
-      {(problem || draft.execution_error) && <div role="alert" className="text-[12px] text-red">{problem || draft.execution_error}<Button tone="quiet" onClick={() => setReload((v) => v + 1)}>{t("settings-modelconfiguration.retry")}</Button></div>}
+      <p className="text-submeta leading-relaxed text-ink-3">{t("assistant-taskeditor.execution_sessions")}</p>
+      {incompatibleOrigin && <p role="alert" className="text-label text-red">{t("assistant-taskeditor.execution_own_chat")}</p>}
+      {(problem || draft.execution_error) && <div role="alert" className="text-label text-red">{problem || draft.execution_error}<Button tone="quiet" onClick={() => setReload((v) => v + 1)}>{t("settings-modelconfiguration.retry")}</Button></div>}
     </div>
   </details>;
 }

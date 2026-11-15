@@ -1296,7 +1296,7 @@ The web Agent close action uses `capabilities.close`, with terminal-only closing
 
 An Agent has one close action in the web's menus, **Close…** (#7125), where **Close agent…** and **Archive and close…** used to sit side by side. It is rung 2: not busy, it archives and closes, the button says **Archive and close**, and the toast offers Undo. A busy Agent's Close… is not greyed out: the confirmation starts with one line in `--red` naming what closing interrupts (an answer it waits for, its work, a loop, a server), and the destructive button reads **Close anyway**. **Archive** stays separate and waits while the Agent is busy, saying why, because it only hides the Agent. A pane with an Agent closes through the same confirmation, so no second path closes a working Agent without the warning; Close pane sits with the pane's own actions (New pane, Git), not in a danger group of its own.
 
-Clearing the main chat's context (**Clear context** in its ⋯ menu and `/clear`, #5095; the web first, iOS and Android in #5100) is on the reversible rung without an Undo toast, a user-requested alignment with Cindy's `/clear`: it runs at once from the menu or the command, and its only feedback is the chat emptying in place (the same top bar, an empty middle, the composer still at the bottom; no jump to the centered new-chat page). Nothing is deleted: the old chat is archived as "Old main chat · until <date>" and comes back when it is sent to. Failure is a toast with the reason, and the `/clear` goes back into the box. **New main chat…** keeps its sheet, since it has a choice to make (carry a summary).
+Clearing the main chat's context (**Clear context** in its ⋯ menu and `/clear`, #5095; the web, Android, and iOS — on iOS the avatar menu, the sidebar main-chat long press, and `/clear`, #5100) is on the reversible rung without an Undo toast, a user-requested alignment with Cindy's `/clear`: it runs at once from the menu or the command, and its only feedback is the chat emptying in place (the same top bar, an empty middle, the composer still at the bottom; no jump to the centered new-chat page). Nothing is deleted: the old chat is archived as "Old main chat · until <date>" and comes back when it is sent to. Failure is a toast with the reason, and the `/clear` goes back into the box. **New main chat…** keeps its sheet, since it has a choice to make (carry a summary).
 
 A blocked terminal card on the web offers **Close Agent**, including when no choices can be parsed from the screen.
 Its footer reuses `Button`, explains that the pending confirmation is cancelled and the conversation kept, and
@@ -1378,7 +1378,10 @@ Tool execution is one summary line, never opens by itself, shows the latest text
 `createCompletedWorkGroup`). A summary that holds intermediate narration opens to cindy's timeline: the narration in
 order, and each run of work between two pieces of it an inner summary of its own, "Worked for 12s" from the words
 before it to the words after it, the live one "Working…" with its clock. Without intermediate narration it holds its
-rows directly. Inner summaries open together with the outer one and then keep their own open / closed state, so
+rows directly. If tools follow the latest progress message, the expanded Web timeline also shows that message at its
+original position; the collapsed view still shows it in the latest-text slot. The work headers explain their clocks:
+the outer clock covers the whole exchange; inner clocks start at the preceding message or start of work and end at
+the next message, the last activity in a finished run, or now in a live run. Inner summaries open together with the outer one and then keep their own open / closed state, so
 opening a summary shows every tool call. On the web a long finished summary fills in as it opens: the first 60 steps
 (its inner summaries' included) come with the tap and the rest follow in batches of 60 while the page is idle, so the
 tap is answered at once and every call is still drawn a moment later, none left out or behind a "Show more"; rows
@@ -2783,3 +2786,54 @@ Assistant inheritance option remains selectable. Selecting it explicitly clears 
 discovery alone never changes saved choices.
 Run history has a separate disclosure for its execution configuration, outside the button opening the conversation.
 This is a secondary form extension; primary screens, themes and chat input remain unchanged.
+
+## Optional repository associations
+
+Coding-work metadata belongs in the Web to-do detail's **Repositories and
+work** group; creation carries the same editor, folded, under its own optional
+button. Ordinary to-dos still require only a title. On the detail the group is
+read first and drawn in the existing grouped-row geometry: one row per saved
+repository with its provider's own mark, project address and a `Pill` of its
+link count, and one link row per issue or pull request. `RepositoryMark` reuses
+the bundled GitHub asset and adds GitLab's mark without extending the unrelated
+connector vocabulary. Repository names and addresses share one line; the
+association store has no physical workspace path, so directory aliases are not
+presented as filesystem paths. A link carries its complete source title as one
+hyperlink, wrapping at narrow widths, followed by its number and an external
+mark. An unknown title falls back to the localized kind and number. GitHub PRs
+use the pull-request mark, GitLab MRs the merge mark and issues the existing
+issue mark. The associations an agent keeps show without an editor. Editing is
+the existing `Dialog` with a compact text button (**Manage links**), never an
+always-open form. `TaskRepositoryBindingsEditor` is the controlled editor;
+`TodoRepositoryBindings` owns existing-todo reads and writes and
+`NewTodoRepositoryBindings` contributes a draft to the parent's single creation
+request. These reuse `Group`, `Row`, `Pill`, `Button`, `IconButton`, `Menu`,
+`Dialog`, `Collapse`, `SearchField`, `Loading`, `RowFailed`, shared settings
+inputs, semantic tokens and toast Undo for draft removal. There is no new page
+or workspace control.
+
+Repositories are added through the search picker (name, path or host; ↑ ↓,
+Home/End, Enter takes the first match, Escape closes and returns the focus to
+its button), not a native `select`. Each repository's issues and PRs are link
+rows with their own **Add issue or PR** field: Enter adds, Escape cancels, and a
+URL of another repository is refused inline by `repositoryLinkView`, the same
+rule the manager applies. Directory aliases and source refs stay in the
+per-repository **Source options** disclosure; empty aliases and default branches
+need no setup. Saved-source changes (`removed`, `identity_changed`) and
+`unlisted` rows inferred from agent-added links are explained beneath their
+repository while the saved source stays. A to-do's `pr_url` is drawn inside
+this group as a link row with one line saying it predates the store, and never
+beside it, so one place holds a task's issues and PRs. That row is a fallback
+for a hub whose route is missing only: a successful store answer is
+authoritative even when it is empty, because the manager imports the legacy
+history once and honours an explicit removal, so an empty answer after the last
+repository was removed must not resurrect the old PR.
+
+Controls have labels, action groups wrap at narrow widths, and saving disables
+edits. Failed saves keep input; conflicts offer explicit **Discard edits and
+reload**, which reads the store again rather than reusing the stale draft, and
+opening the editor always reads the newest store value and catalog because an
+agent may have added a link. Manager/Todo/credential changes retire old results.
+New copy ships in English, Simplified Chinese and Japanese. Evidence:
+`web/src/ui/TaskRepositoryBindingsEditor.test.tsx` and
+`web/e2e/todo-repositories-browser.py`.

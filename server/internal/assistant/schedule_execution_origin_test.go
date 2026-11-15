@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
@@ -109,24 +110,35 @@ func TestTaskSourceFallbackDeliveryBoundary(t *testing.T) {
 				own.Add(1)
 				return map[string]string{"session_id": "own"}, nil
 			})
-			setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatOnce, Enabled: true, At: time.Now().Add(-time.Minute), MachineID: "server", SessionID: "origin"})
-			got, err := runNow(t, s, "job")
+			// The fixture's HTTP server stays outside the virtual-time bubble.
+			check := func(t *testing.T) {
+				setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatOnce, Enabled: true, At: time.Now().Add(-time.Minute), MachineID: "server", SessionID: "origin"})
+				task, _ := taskByID(s, "job")
+				now := time.Now()
+				got, err := s.runTask(task, now, now, false, false)
+				if tc.fallback {
+					if err != nil || got.SessionID != "own" || own.Load() != 1 {
+						t.Fatalf("safe fallback: %+v %v source=%d own=%d", got, err, source.Load(), own.Load())
+					}
+				} else {
+					if err == nil || own.Load() != 0 {
+						t.Fatalf("uncertain send replaced: %+v %v own=%d", got, err, own.Load())
+					}
+					if len(f.pushed()) == 0 {
+						t.Fatal("uncertain delivery lost the failure notice")
+					}
+					// Advance past the delayed retry on the virtual clock; uncertain sends must stay single.
+					<-time.After(10 * s.runRetry)
+					synctest.Wait()
+					if source.Load() != 1 || own.Load() != 0 {
+						t.Fatalf("uncertain source retried: source=%d own=%d", source.Load(), own.Load())
+					}
+				}
+			}
 			if tc.fallback {
-				if err != nil || got.SessionID != "own" || own.Load() != 1 {
-					t.Fatalf("safe fallback: %+v %v source=%d own=%d", got, err, source.Load(), own.Load())
-				}
+				check(t)
 			} else {
-				if err == nil || own.Load() != 0 {
-					t.Fatalf("uncertain send replaced: %+v %v own=%d", got, err, own.Load())
-				}
-				if len(f.pushed()) == 0 {
-					t.Fatal("uncertain delivery lost the failure notice")
-				}
-				// The delayed one-off retry must not duplicate an uncertain source send either.
-				time.Sleep(100 * time.Millisecond)
-				if source.Load() != 1 || own.Load() != 0 {
-					t.Fatalf("uncertain source retried: source=%d own=%d", source.Load(), own.Load())
-				}
+				synctest.Test(t, check)
 			}
 		})
 	}
