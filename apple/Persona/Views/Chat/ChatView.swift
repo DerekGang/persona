@@ -4013,7 +4013,9 @@ struct ChatView: View {
     /// A permission mode picked in the header or the composer's model menu: asks first where `SessionModes.confirmation`
     /// says so (into Allow Everything; out of it when the agent cannot come back), else switches at once.
     private func requestMode(_ mode: String) {
-        guard mode != session?.permissionMode, !modeChanging else { return }
+        // Against the mode it runs in as the menus tick it: a session that lists its own modes (#8261) is in its own
+        // approval when it reports none.
+        guard mode != SessionModes.current(session), !modeChanging else { return }
         if let kind = SessionModes.confirmation(session, to: mode) {
             modeConfirm = ModeConfirm(mode: mode, kind: kind)
         } else {
@@ -5336,6 +5338,8 @@ struct Composer: View, Equatable {
     /// last model while the picker has not answered (the 11-13 Haiku/Opus divergence fix).
     private var assistantEffective: AssistantModelChoice.Effective? {
         guard isMainAssistantChat else { return nil }
+        // The response cache is unobserved; this small revision is the redraw signal after a fresh hub answer.
+        _ = model.assistantLauncherRevision
         return AssistantModelChoice.effective(session: model.session(key), response: model.cachedAssistantLaunchers(key.machineRef))
     }
     /// The model name the composer title and the modes menu row both show for the main chat, from the one effective
@@ -5613,6 +5617,7 @@ struct Composer: View, Equatable {
                                  stop: status.isActive && model.session(key)?.canInterrupt == true ? { Task { await model.interrupt(key) } } : nil,
                                  voice: voiceEntry,
                                  modesTitle: modesTitle,
+                                 modesDisclosure: assistantModelPickAvailable,
                                  quotes: contexts,
                                  alwaysOpen: ChatComposerKind.macCard,
                                  history: key.path,
@@ -5652,7 +5657,8 @@ struct Composer: View, Equatable {
                                      assistantModelName: assistantEffectiveName, pick: pickMode)
                 }
             } else if AppStyle.current.usesBeautifulUI {
-                // The BeautifulUI style's prompt bar; every other style keeps the original input line.
+                // The BeautifulUI style's prompt bar; every other style keeps the original input line. Its direct
+                // model action opens the main chat's Change Model sheet, including on macOS (#6542).
                 PromptComposer(placeholder: status.isActive ? String(localized: "Add a note (queued)") : (suggestion ?? placeholder ?? String(localized: "Message Claude")),
                                text: textBinding, selection: $selection, focused: $focused,
                                hasAttachments: hasAttachments,
@@ -5663,6 +5669,8 @@ struct Composer: View, Equatable {
                                commands: promptCommands,
                                models: canPickModel ? PromptItems.composerModels(running: model.session(key)?.model, list: runningModels) : [],
                                modelID: PromptItems.runningModelID(model.session(key)?.model, list: runningModels),
+                               assistantModelName: assistantModelPickAvailable ? (assistantEffectiveName ?? String(localized: "Change Model…")) : nil,
+                               assistantPick: assistantModelPickAvailable ? { showAssistantModel = true } : nil,
                                pickModel: { id in
                                    switch PromptItems.modelPick(id, running: model.session(key)?.model, list: runningModels) {
                                    case .typeID: typingModel = true // #1644: through …/modes
@@ -5898,10 +5906,11 @@ struct Composer: View, Equatable {
             }
         }
         // Keep the effective Main chat model fresh so the composer title matches what the next message runs (#6542):
-        // re-read when the conversation is replaced (/clear) or Model Settings change.
-        .task(id: "\(key.sessionID)-\(model.launchersRevision)") {
+        // re-read when the conversation changes or Model/Assistant settings change. A transcript rev would cancel this
+        // request every streaming tick, so the AppModel invalidates the cache from assistant snapshots instead.
+        .task(id: "\(key.sessionID)-\(model.assistantLauncherRequestRevision)") {
             guard assistantModelPickAvailable else { return }
-            _ = try? await model.assistantLaunchers(key.machineRef)
+            _ = try? await model.assistantLaunchers(key.machineRef, refresh: true)
         }
         .onChange(of: picks) { _, items in
             guard !items.isEmpty else { return }
@@ -6844,7 +6853,8 @@ struct SessionInfoSheet: View {
                         }
                         row("shippingbox", agent, info.version)
                         if let route = session?.codexRoute { routeRow(route, note: session?.codexRouteNote) }
-                        row("lock.open", String(localized: "Permissions"), SessionModes.modeLabel(info.permissionMode))
+                        // A session that lists its own modes (#8261) in its own words: no mode is its own approval.
+                        row("lock.open", String(localized: "Permissions"), SessionModes.infoLabel(info.permissionMode, session: model.session(key) ?? session))
                         row(Theme.Icon.effort, String(localized: "Thinking Effort"), SessionModes.effortLabel(info.effort))
                         // Claude Code's ultracode (#1307): on, off, or unknown (no evidence yet, an older node).
                         if let s = model.session(key) ?? session, Ultracode.infoShown(s, features: model.features(key.group)) {
@@ -6852,15 +6862,24 @@ struct SessionInfoSheet: View {
                                 .accessibilityIdentifier("session-ultracode")
                         }
                     }
-                    Section("Usage") {
-                        row(Theme.Icon.context, String(localized: "Context"), Self.tokens(info.contextTokens) + " tokens")
-                        // The share of the window, live from the session list (#3289); nil while the window is unknown.
-                        if let usage = ContextUsage(model.session(key) ?? session) { ContextUsageRow(usage: usage) }
-                        if info.compactions > 0 { row(Theme.Icon.collapseAll, String(localized: "Compactions"), String(localized: "\(info.compactions) times")) }
-                        row(Theme.Icon.conversation, String(localized: "Chat"), String(localized: "\(info.turns) turns"))
-                        row("text.word.spacing", String(localized: "Output"), Self.tokens(info.outputTokens) + " tokens")
-                        if let started = info.startedAt, started.isMeaningful {
-                            row(Theme.Icon.time, String(localized: "Started"), started.formatted(date: .abbreviated, time: .shortened))
+                    // Counts nobody gives (#8261, `usage_unknown`: Paseo's agents that are not Claude Code's) are left out,
+                    // not shown as zeros; the section goes when nothing is left in it.
+                    let counted = info.usageUnknown != true
+                    // The share of the window, live from the session list (#3289); nil while the window is unknown.
+                    let usage = ContextUsage(model.session(key) ?? session)
+                    let started = info.startedAt.flatMap { $0.isMeaningful ? $0 : nil }
+                    if counted || usage != nil || started != nil {
+                        Section("Usage") {
+                            if counted { row(Theme.Icon.context, String(localized: "Context"), Self.tokens(info.contextTokens) + " tokens") }
+                            if let usage { ContextUsageRow(usage: usage) }
+                            if counted, info.compactions > 0 { row(Theme.Icon.collapseAll, String(localized: "Compactions"), String(localized: "\(info.compactions) times")) }
+                            if counted {
+                                row(Theme.Icon.conversation, String(localized: "Chat"), String(localized: "\(info.turns) turns"))
+                                row("text.word.spacing", String(localized: "Output"), Self.tokens(info.outputTokens) + " tokens")
+                            }
+                            if let started {
+                                row(Theme.Icon.time, String(localized: "Started"), started.formatted(date: .abbreviated, time: .shortened))
+                            }
                         }
                     }
                     Section("Location") {
