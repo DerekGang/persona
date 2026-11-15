@@ -180,7 +180,7 @@ func (s *Service) fleetInputsInto(kept map[string][]proto.Session) ([]fleetInput
 			})
 		}
 	}
-	ixs, told := s.pendingCards()
+	ixs, told := s.visiblePendingCards()
 	return agents, ixs, told
 }
 

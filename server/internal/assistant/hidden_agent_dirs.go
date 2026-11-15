@@ -166,6 +166,9 @@ func (s *Service) saveHiddenDirs(ctx context.Context, v hiddenAgentDirs, expecte
 	for _, m := range s.fleetMachines() {
 		s.sessionsChanged(m.ID)
 	}
+	// Session rows reach clients before their pending cards are replayed.
+	s.refreshPendingCards()
+	s.boardChanged()
 	return nil
 }
 

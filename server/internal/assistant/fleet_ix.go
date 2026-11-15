@@ -789,7 +789,8 @@ func (s *Service) finished(p *pending) {
 	s.publishSessions(p.ix.MachineID)
 }
 
-// pendingInteractions are the pending interactions, oldest first, with the task each agent works for.
+// pendingInteractions is the authoritative pending inventory for transport and lifecycle operations.
+// Visibility projections must never remove cards from reconnect snapshots.
 func (s *Service) pendingInteractions() []proto.Interaction {
 	out, _ := s.pendingCards()
 	return out
@@ -807,12 +808,42 @@ func (s *Service) pendingCards() ([]proto.Interaction, map[string]bool) {
 		}
 	}
 	s.fleet.mu.Unlock()
-	out = slices.DeleteFunc(out, func(ix proto.Interaction) bool { return s.directoryHiddenSession(ix.MachineID, ix.SessionID) })
 	for i := range out {
 		out[i] = s.withTask(out[i])
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, told
+}
+
+// visiblePendingCards is the ambient projection, never the authoritative transport inventory.
+func (s *Service) visiblePendingCards() ([]proto.Interaction, map[string]bool) {
+	out, told := s.pendingCards()
+	out = slices.DeleteFunc(out, func(ix proto.Interaction) bool {
+		if !s.directoryHiddenSession(ix.MachineID, ix.SessionID) {
+			return false
+		}
+		delete(told, ix.ID)
+		return true
+	})
+	return out, told
+}
+
+func (s *Service) visiblePendingInteractions() []proto.Interaction {
+	out, _ := s.visiblePendingCards()
+	return out
+}
+
+// refreshPendingCards replays actionable state after session visibility changes.
+// It neither marks a card as told nor sends pushes or delegates it again. Holding
+// the queue lock across the enqueue prevents a resolved card from being resurrected.
+func (s *Service) refreshPendingCards() {
+	for _, ix := range s.pendingInteractions() {
+		s.fleet.mu.Lock()
+		if p := s.fleet.interactions[ix.ID]; p != nil && !p.claimed {
+			s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: ix})
+		}
+		s.fleet.mu.Unlock()
+	}
 }
 
 // pendingIx is one pending interaction; false when it is not pending.

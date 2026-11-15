@@ -238,7 +238,7 @@ func (s *Service) statusCard(ctx context.Context, t botTarget) (*feishubot.Card,
 	card.Markdown(line)
 
 	var pending []proto.Interaction
-	for _, ix := range s.pendingInteractions() {
+	for _, ix := range s.visiblePendingInteractions() {
 		if ix.MachineID == rt.machine && ix.SessionID == sess.SessionID && pendingQuestion(ix) != "" {
 			pending = append(pending, ix)
 		}

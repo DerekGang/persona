@@ -183,7 +183,7 @@ func (s *Service) workbenchCount(ctx context.Context, now time.Time) (wbCounts, 
 	}
 	order := map[string]int{proto.StateNeedsYou: 0, proto.StateWorking: 1, proto.StateUnread: 2}
 	slices.SortStableFunc(busy, func(a, b wbAgent) int { return order[a.sess.State] - order[b.sess.State] })
-	c.pending = len(s.pendingInteractions())
+	c.pending = len(s.visiblePendingInteractions())
 	for _, it := range s.workbenchInbox() {
 		if wbNeedsYou(it) {
 			c.inboxNeed++

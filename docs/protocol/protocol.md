@@ -4986,6 +4986,13 @@ not expose the rows to Assistant: `agents_list`, live snapshots, ambient triage,
 needs-you cards and reminders exclude them. Hidden children do not affect visible parents' folded counts.
 This is a visibility preference, not access control or transcript deletion.
 
+Pending interactions have a separate authoritative inventory. `fleet.interactions` on reconnect always carries
+all pending cards, including directory-hidden sessions: an omitted card means resolved to the hub. Assistant,
+Feishu and attention summaries use a visibility projection instead. Saving any directory-rule change publishes
+the updated session rows, then replays pending `fleet.interaction` cards to connected clients. Replays preserve
+delegation state and do not send notifications; a pending card stays actionable after revealing its session.
+
+
 **Supervision boundary:** a session attached to an open task with an active supervisor stays visible even if
 its directory matches. Its supervision and existing notification policy (including main-task quiet mode)
 continue. This covers `task_plan`, supervised `agent_start` and adopted supervised agents; having once been
