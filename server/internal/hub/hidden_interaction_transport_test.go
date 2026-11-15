@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/db/dbtest"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -17,6 +18,15 @@ import (
 // Real manager and hub connected over the bus: omission from FleetUp is an
 // authoritative resolution, so hiding must never remove the pending card there.
 func TestHiddenDirectoryFleetUpRetainsPendingCard(t *testing.T) {
+	hiddenDirectoryCardRoundTrip(t, false)
+}
+
+func TestHiddenDirectoryUnhideRestoresPreviouslyOmittedCard(t *testing.T) {
+	hiddenDirectoryCardRoundTrip(t, true)
+}
+
+func hiddenDirectoryCardRoundTrip(t *testing.T, previouslyOmitted bool) {
+	t.Helper()
 	base := os.Getenv(dbtest.Env)
 	if base == "" {
 		t.Skip(dbtest.Env + " not set")
@@ -104,6 +114,13 @@ func TestHiddenDirectoryFleetUpRetainsPendingCard(t *testing.T) {
 		_ = json.Unmarshal(event, &p)
 		if p.Type == "interaction_resolved" && p.ID == ix.ID {
 			t.Fatal("hiding/reconnect resolved the blocked agent's card")
+		}
+	}
+	if previouslyOmitted {
+		// State left behind by the older visibility-filtered reconnect snapshot.
+		h.takeFleetInteractionsFrom(assistantwire.AssistantID, nil)
+		if len(h.pendingInteractions()) != 0 {
+			t.Fatal("legacy omission fixture did not remove the cards")
 		}
 	}
 	save(`{"rules":[]}`)
