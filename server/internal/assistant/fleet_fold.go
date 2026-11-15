@@ -36,7 +36,9 @@ type tabKey struct{ kind, space, slot string }
 // fold under counts them all, whatever their depth, by their own states, how many of them are its workers, and how
 // many are side sessions, by their own states.
 func foldSessions(list []proto.Session, hidden map[string]bool) sessionFold {
-	listed := func(s *proto.Session) bool { return (!s.Archived || s.Assistant) && !hidden[s.SessionID] }
+	listed := func(s *proto.Session) bool {
+		return (!s.Archived || s.Assistant) && !s.HiddenByDirectory && !hidden[s.SessionID]
+	}
 	if !mayFold(list, listed) {
 		return sessionFold{} // what the walk below finds for such a list, without the index it builds
 	}

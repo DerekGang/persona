@@ -49,6 +49,7 @@ func (c *ownChange) card(l i18n.Lang) string {
 func (s *Service) ownSettings() []ownSetting {
 	getSet := []string{"get", "set"}
 	return []ownSetting{
+		s.hiddenDirSetting(),
 		{Setting: Setting{Key: standingAuthorizationsKey, Title: "Standing authorizations", Actions: getSet,
 			About: "user-confirmed actions for one computer and absolute directory tree; only the main conversation may set them, and every change requires the user’s own permission approval",
 			Value: "{revision, authorizations: [{id?, machine_id, directory, actions, conditions, quote, source, reversible}]}; get first; retain existing entries unchanged or remove them; omit id for new grants; granted_at is set by the server"},

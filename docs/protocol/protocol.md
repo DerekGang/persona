@@ -2338,12 +2338,13 @@ A machine's session list has hundreds of sessions at about 1 KB each, and a push
 
 #### Opt-in parameters (both session collections)
 
-Any of `limit`, `cursor`, `since`, `summary`, `state`, `project`, `group`, or `counts` opts into the bounded API. `pane_source`, `roots`, `parent_session_id`, `place`, `space`, `catalog`, `todo`, `waiting` and `exclude_pane_source` also opt in, but are supported only by the runtime collection (see below). Without them, legacy requests and response shapes remain unchanged: runtime `machine_id` filtering still returns the complete list; personal-agent `source`/`provider` filtering still returns the complete list; personal-agent `q` alone still searches messages and returns `items`.
+Any of `limit`, `cursor`, `since`, `summary`, `state`, `project`, `group`, or `counts` opts into the bounded API. `pane_source`, `roots`, `parent_session_id`, `place`, `space`, `catalog`, `todo`, `waiting`, `exclude_pane_source` and `include_hidden` also opt in, but are supported only by the runtime collection (see below). Without them, legacy requests and response shapes remain unchanged: runtime `machine_id` filtering still returns the complete list; personal-agent `source`/`provider` filtering still returns the complete list; personal-agent `q` alone still searches messages and returns `items`.
 
 | Parameter | Contract |
 | --- | --- |
 | `limit` | Integer 1–200, default **50**. Full and delta pages both use it. A delta removal consumes one slot, just like an upsert. |
 | `cursor` | Opaque `next_cursor` from a preceding page. URL-encode it and repeat all original filters, `summary` and `since`; `limit` may change. Empty/invalid cursor is rejected, not treated as a first page. |
+| `include_hidden` | `1`/`true` includes directory-hidden runtime rows for temporary user inspection; default false. Applies before rows, totals, counts, catalog and search, binds cursors and deltas, and never changes saved rules or Assistant observations. |
 | `summary` | `1`/`true` for list-row summaries, `0`/`false` for complete rows; default false. Does not change row identity or filter membership. |
 | `state` | Exact unified state: `needs_you`, `working`, `unread`, `idle`, `offline`, or `unknown`. Omit for all states. No user-specific mute/pin ordering is implied. |
 | `machine_id` | Exact runtime machine id. Personal-agent sources do not expose a machine, so this filter matches no personal-agent rows. |
@@ -4960,3 +4961,37 @@ gets 501 `assistant_service_tier_manager_outdated` before relaying an explicit o
 Resumed sends and non-Codex starts return coded 409 refusals; a native refusal returns
 `assistant_service_tier_refused`, stops the unused new process and persists no conversation before the first turn.
 New Agent starts do not take a speed setting.
+
+
+## Agent directory visibility
+
+`GET /api/v1/assistant/hidden-agent-dirs` returns `{rules: [{machine_id, pattern, enabled}]}`.
+`PUT` replaces that object (full app role required). `persona_settings` exposes the same value as
+`agents.hidden_dirs`, with `get` and `set`; changes use the existing phone confirmation, show before/after,
+and reject an approval if rules changed while the card was waiting. Restore the previous list or disable a
+rule to undo. Empty rules are the default. These settings live in the manager's Postgres settings store.
+
+Each enabled rule matches only its named computer's session `cwd`, for every runtime. Paths and globs match
+a directory and its descendants, on directory boundaries. `*`, `?` and `[]` match within one component;
+`**` spans zero or more components. `~` uses the computer's reported home, never the manager's home; until
+home is known, a tilde rule does not match. Separators are normalized to `/`, including Windows paths;
+matching is case-sensitive and lexical, without resolving symlinks on a remote filesystem. Up to 100 rules
+are accepted. No scan or recording is stopped, unlike `agents.blocked_claude_dirs`.
+
+The Assistant manager annotates session rows with `hidden_by_directory: true` (otherwise omitted).
+Bounded lists, counts, catalog and ranked search exclude those rows by default. Legacy app inventories
+retain annotated rows so clients can inspect them; updated clients filter before their grouping and attention
+counts. Exact user session access remains available. Temporary inspection uses `include_hidden=1` and does
+not expose the rows to Assistant: `agents_list`, live snapshots, ambient triage, completion notifications,
+needs-you cards and reminders exclude them. Hidden children do not affect visible parents' folded counts.
+This is a visibility preference, not access control or transcript deletion.
+
+**Supervision boundary:** a session attached to an open task with an active supervisor stays visible even if
+its directory matches. Its supervision and existing notification policy (including main-task quiet mode)
+continue. This covers `task_plan`, supervised `agent_start` and adopted supervised agents; having once been
+started by Persona is not enough. Once the task closes or the session is released, the ordinary directory
+rule applies again. Assistant conversations themselves are exempt so their approval cards remain usable.
+
+Web: Settings' Agent section contains the shared directory rules; Agents offers temporary inspection.
+Apple: Settings › Agent › Hidden Agent Folders and the Agents menu's temporary reveal use the same contract.
+New labels and confirmation text ship in English, Simplified Chinese and Japanese.

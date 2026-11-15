@@ -275,7 +275,7 @@ func (s *Service) snapshotAgents(ctx context.Context, devices []Device, web stri
 	for _, m := range devices {
 		list, off, _ := s.sessionsMuted(ctx, m.ID)
 		for _, c := range list {
-			if c.Assistant {
+			if c.Assistant || c.HiddenByDirectory {
 				continue
 			}
 			a := prompts.SnapshotAgent{Label: agentLabel(c), Machine: m.ID, Session: short(c.SessionID),

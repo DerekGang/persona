@@ -330,6 +330,9 @@ func (s *Service) decorateInventory(machine string, list []proto.Session, comple
 	}
 	s.decorateTodos(machine, list)
 	for i := range list {
+		list[i].HiddenByDirectory = s.hiddenByDirectory(machine, list[i])
+	}
+	for i := range list {
 		// The todos' alone, stripped before push to client (#762).
 		list[i].SpawnFrom, list[i].Chat, list[i].Topic, list[i].Dispatched = "", "", "", nil
 	}
@@ -355,6 +358,7 @@ func (s *Service) decoratedSession(machine, sid string) (proto.Session, bool) {
 	if !ok {
 		return proto.Session{}, false
 	}
+	row.HiddenByDirectory = s.hiddenByDirectory(machine, row)
 	one := []proto.Session{row}
 	s.foldSubset(machine, one) // what the last complete list folded it as, as for a row the node lists
 	return one[0], true

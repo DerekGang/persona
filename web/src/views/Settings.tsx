@@ -29,6 +29,7 @@ import { SavedPrompts } from "./settings/SavedPrompts";
 import { SourcesUI } from "./subscriptions/SourcesUI";
 import { useInboxSourcesShown } from "../lib/subscriptions";
 import { ModelConfiguration } from "./settings/ModelConfiguration";
+import { HiddenAgentDirs } from "./settings/HiddenAgentDirs";
 import { AgentSettings } from "./settings/AgentSettings";
 import { SidebarPagesGroup } from "./settings/SidebarPages";
 import { AgentGroup } from "./settings/AgentGroup";
@@ -436,6 +437,7 @@ function AgentSections({ section }: { section: SettingsSection | null }) {
   };
   return (
     <>
+      <HiddenAgentDirs />
       {AGENT_KINDS.map((id) => {
         const shown = !closed.has(id);
         return (

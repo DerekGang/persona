@@ -1,0 +1,4 @@
+{
+  "title": "Hidden Agent folders",
+  "confirm": "Change hidden Agent folders? Matching sessions disappear from Agents and Assistant observations. Active supervised tasks stay visible. Disable a rule to restore visibility.\nBefore: {before}\nAfter: {after}"
+}

@@ -1652,3 +1652,13 @@ drawn at all and Settings adds no row. The line used to read "Main conversation 
 users, and named the host, container and harness when they were known (web usability audit 2026-11-14, item 80;
 `web/src/lib/main-runtime.ts`, `web/src/views/assistant/MainRuntimeBadge.tsx`,
 `web/src/views/settings/AssistantSettings.tsx`).
+
+
+### Hiding ambient Agent sessions
+
+For people using Agents with noisy workspace trees, `agents.hidden_dirs` is a reversible per-computer
+visibility preference, shared across runtimes. Rules live in advanced Agent settings and default to empty.
+The manager retains all sessions but excludes matched ambient sessions from Assistant observations and
+reminders. Open supervised task agents remain visible, preserving the supervisor's completion and approval
+flow; after supervision ends, the rule applies again. See `docs/protocol/protocol.md` ("Agent directory visibility")
+for matching, persistence, app inspection and the confirmed `persona_settings` contract.

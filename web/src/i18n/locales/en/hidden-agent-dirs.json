@@ -1,0 +1,19 @@
+{
+  "title": "Hidden Agent folders",
+  "footer": "Rules apply to every runtime on the selected computer. Paths hide that folder and its descendants; globs match working directories. ~ means that computer’s home. Sessions keep recording. Active supervised Persona tasks remain visible. Turn a rule off to show its sessions again.",
+  "machine": "Computer",
+  "pattern": "Folder or glob",
+  "enabled": "Hidden from Agents and Assistant",
+  "disabled": "Rule off · sessions visible",
+  "empty": "No hidden folders on this computer.",
+  "add": "Add rule",
+  "remove": "Remove",
+  "failed": "Could not save or load rules: {error}",
+  "retry": "Retry",
+  "inspect": "Include hidden sessions",
+  "inspect_hint": "Temporary view only. Assistant visibility and rules stay unchanged.",
+  "close": "Close",
+  "more": "Load more",
+  "hidden": "Hidden",
+  "normal": "Visible"
+}

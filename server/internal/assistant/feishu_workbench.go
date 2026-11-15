@@ -164,7 +164,7 @@ func (s *Service) workbenchCount(ctx context.Context, now time.Time) (wbCounts, 
 		}
 		list, _ := s.sessions(ctx, d.ID)
 		for _, sess := range list {
-			if sess.Assistant {
+			if sess.Assistant || sess.HiddenByDirectory {
 				continue
 			}
 			switch sess.State {

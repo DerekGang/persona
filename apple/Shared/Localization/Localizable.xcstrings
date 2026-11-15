@@ -1,6 +1,138 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Hidden Agent Folders": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hidden Agent Folders"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "非表示のエージェントフォルダ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐藏 Agent 目录"
+          }
+        }
+      }
+    },
+    "Folder path or glob": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Folder path or glob"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダのパスまたは glob"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目录路径或 glob"
+          }
+        }
+      }
+    },
+    "Add hidden folder": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add hidden folder"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "非表示フォルダを追加"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加隐藏目录"
+          }
+        }
+      }
+    },
+    "Hide directory matches": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide directory matches"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダに一致するセッションを隠す"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐藏匹配目录的会话"
+          }
+        }
+      }
+    },
+    "Show hidden sessions": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show hidden sessions"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "非表示のセッションを表示"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示隐藏会话"
+          }
+        }
+      }
+    },
+    "Matches stay recorded but leave Agents and Assistant observations. Use a folder path or glob; ~ means this computer's home. Turn a rule off to restore sessions. Active supervised tasks remain visible. Show hidden sessions in the Agents menu temporarily.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matches stay recorded but leave Agents and Assistant observations. Use a folder path or glob; ~ means this computer's home. Turn a rule off to restore sessions. Active supervised tasks remain visible. Show hidden sessions in the Agents menu temporarily."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一致したセッションは記録を続けますが、Agents とアシスタントの観察から除外されます。フォルダのパスまたは glob を指定してください。~ はこのコンピュータのホームです。ルールをオフにすると再表示されます。監督中のタスクは引き続き表示されます。Agents メニューで非表示のセッションを一時的に表示できます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匹配的会话仍会记录，但不会出现在 Agents 和助手观察中。可填写目录路径或 glob；~ 表示这台电脑的主目录。关闭规则即可恢复显示。正在督办的任务保持可见。可在 Agents 菜单中临时显示隐藏会话。"
+          }
+        }
+      }
+    },
     "" : {
       "shouldTranslate" : false,
       "localizations" : {

@@ -106,6 +106,10 @@ func (s *Service) elicitationReachable(ix proto.Interaction) bool {
 // card goes to its supervisor first when leaders are configured (ask_route.go); a question the assistant may answer for
 // the user goes to it first (fleet_delegate.go).
 func (s *Service) announce(ix proto.Interaction) {
+	if s.directoryHiddenSession(ix.MachineID, ix.SessionID) {
+		s.tellApps(ix) // Retain the card for explicit inspection without routing it into Assistant context.
+		return
+	}
 	if s.approveStandingInteraction(ix) {
 		return
 	}
@@ -123,6 +127,9 @@ func (s *Service) announce(ix proto.Interaction) {
 // for a quiet task.
 func (s *Service) tell(ix proto.Interaction) {
 	ix = s.tellApps(ix)
+	if s.directoryHiddenSession(ix.MachineID, ix.SessionID) {
+		return
+	}
 	if s.quietSession(ix.MachineID, ix.SessionID) {
 		// A quiet task's question is no push, bot card or channel message: the main conversation is told (#1731).
 		go s.InteractionRaised(context.Background(), InteractionRaised{Interaction: ix})
@@ -145,6 +152,9 @@ func (s *Service) tellApps(ix proto.Interaction) proto.Interaction {
 // tellUser rings card ix, already on the apps: the push (push false: one of several going out as one push, ask_route.go)
 // and the topic of the agent's todo unless the agent is muted, and the Feishu bot and the channels.
 func (s *Service) tellUser(ix proto.Interaction, push bool) {
+	if s.directoryHiddenSession(ix.MachineID, ix.SessionID) {
+		return
+	}
 	s.recordConfirmationNotification(ix)
 	if push && !s.muted(ix.MachineID, ix.SessionID) {
 		s.notifyInteraction(ix, s.machineName(ix.MachineID), s.linkCovers(ix))
@@ -797,6 +807,7 @@ func (s *Service) pendingCards() ([]proto.Interaction, map[string]bool) {
 		}
 	}
 	s.fleet.mu.Unlock()
+	out = slices.DeleteFunc(out, func(ix proto.Interaction) bool { return s.directoryHiddenSession(ix.MachineID, ix.SessionID) })
 	for i := range out {
 		out[i] = s.withTask(out[i])
 	}

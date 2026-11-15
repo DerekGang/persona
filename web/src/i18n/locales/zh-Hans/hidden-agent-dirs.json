@@ -1,0 +1,19 @@
+{
+  "title": "隐藏 Agent 目录",
+  "footer": "规则对所选电脑上的所有运行时生效。路径隐藏该目录及其子目录，glob 按工作目录匹配。~ 代表该电脑的主目录。会话继续记录，Persona 正在督办的任务保持可见。关闭规则即可恢复显示。",
+  "machine": "电脑",
+  "pattern": "目录或 glob",
+  "enabled": "对 Agents 和助手隐藏",
+  "disabled": "规则已关闭 · 会话可见",
+  "empty": "这台电脑没有隐藏目录。",
+  "add": "添加规则",
+  "remove": "移除",
+  "failed": "无法保存或读取规则：{error}",
+  "retry": "重试",
+  "inspect": "包括隐藏的会话",
+  "inspect_hint": "仅临时查看，不改变规则或助手可见性。",
+  "close": "关闭",
+  "more": "加载更多",
+  "hidden": "已隐藏",
+  "normal": "可见"
+}

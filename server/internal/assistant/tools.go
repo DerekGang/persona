@@ -1101,6 +1101,9 @@ func (s *Service) findAgent(ctx context.Context, machine, id string) (Device, pr
 		}
 		list, _ := s.sessions(ctx, m.ID)
 		for _, c := range list {
+			if c.HiddenByDirectory {
+				continue
+			}
 			if c.SessionID == id || strings.HasPrefix(c.SessionID, id) {
 				if found != nil {
 					return Device{}, proto.Session{}, fmt.Errorf("session_id %s is ambiguous; use the full id and machine", id)
@@ -1159,7 +1162,7 @@ func (s *Service) describeAgents(ctx context.Context, state, machine, query stri
 		}
 		list, muted, _ := s.sessionsMuted(ctx, m.ID)
 		for _, c := range list {
-			if c.Assistant {
+			if c.Assistant || c.HiddenByDirectory {
 				continue
 			}
 			// Archived ones are out of the apps' lists: only "archived" lists them, and "all" with them marked.

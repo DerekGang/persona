@@ -43,21 +43,27 @@ struct AgentsListMenu: View {
         /// launch arguments the release check looks for (TestFlight 50 stopped on one).
         private var onMachines: () -> Void = {}
         private var onTerminals: () -> Void = {}
+        private(set) var showingHidden = false
+        private var toggleHidden: () -> Void = {}
 
         /// `sections`: the fold ids of what the list shows now.
         func update(sections: [String], foldAll: @escaping ([String]) -> Void, unfoldAll: @escaping () -> Void,
-                    onMachines: @escaping () -> Void, onTerminals: @escaping () -> Void = {}) {
+                    onMachines: @escaping () -> Void, onTerminals: @escaping () -> Void = {},
+                    showingHidden: Bool = false, toggleHidden: @escaping () -> Void = {}) {
             self.sections = sections
             self.foldAll = foldAll
             self.unfoldAll = unfoldAll
             self.onMachines = onMachines
             self.onTerminals = onTerminals
+            self.showingHidden = showingHidden
+            self.toggleHidden = toggleHidden
         }
 
         func collapse() { foldAll(sections) }
         func expand() { unfoldAll() }
         func machinesPage() { onMachines() }
         func terminalsPage() { onTerminals() }
+        func toggleHiddenSessions() { toggleHidden() }
     }
 
     @StoredValue("dev.machineFilter") private var machineFilter = ""
@@ -138,6 +144,9 @@ struct AgentsListMenu: View {
                     }
                 }
             }
+            Button(actions.showingHidden ? String(localized: "Hide directory matches") : String(localized: "Show hidden sessions")) {
+                actions.toggleHiddenSessions()
+            }.lineLimit(1)
             Picker("Machines", selection: $machineFilter) {
                 Label("All Machines", systemImage: Theme.Icon.allMachines).tag("")
                 ForEach(machines.filter { m in HubFilter.matches(hubFilter, MachineRef(path: m.id).group) }) { m in

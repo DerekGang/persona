@@ -52,6 +52,7 @@ type Options struct {
 
 // Service is the assistant. It implements Handler.
 type Service struct {
+	hiddenDirs hiddenDirBook
 	// inboxExt is what the extensions wrote for the Inbox, read at most once a minute (extension_context.go).
 	inboxExt inboxExtensionCache
 	// extTr are the extensions' transcription jobs running now (extension_transcribe.go).
@@ -302,6 +303,7 @@ func New(o Options) *Service {
 	s.briefRoutes()
 	s.todoRoutes()
 	s.agentRoutes()
+	s.hiddenDirRoutes()
 	s.workspaceBoardRoutes()
 	s.channelRoutes()
 	s.companionRoutes()
