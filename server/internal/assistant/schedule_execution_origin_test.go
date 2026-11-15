@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
+	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
@@ -86,6 +87,7 @@ func TestTaskSourceFallbackDeliveryBoundary(t *testing.T) {
 	}{
 		{"gone", fmt.Errorf("conversation origin is gone"), true},
 		{"offline before dispatch", fmt.Errorf("source: %w", apierr.ErrOffline), true},
+		{"old node before dispatch", fmt.Errorf("source: %w", &rpc.Error{Code: proto.CodeNodeOutdated, Message: "update the node"}), true},
 		{"link closed", rpc.ErrClosed, false},
 		{"reply lost", context.DeadlineExceeded, false},
 		{"other refusal", errors.New("send failed"), false},
@@ -127,6 +129,39 @@ func TestTaskSourceFallbackDeliveryBoundary(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTaskSourceOnOlderNodeFallsBackBeforeDelivery(t *testing.T) {
+	f := newFakeHub().withMachine()
+	f.devices = []Device{{ID: "server", Online: true}, {ID: "old", Online: true}}
+	f.setSessions("old", proto.Session{SessionID: "origin", Launcher: "claude", Model: "source-model"})
+	s := newTestService(t, f)
+	var source, own atomic.Int32
+	f.answerNode(DeviceAssistantSend, func(machine string, raw json.RawMessage) (any, error) {
+		var p map[string]any
+		_ = json.Unmarshal(raw, &p)
+		if machine == "old" {
+			source.Add(1)
+			if p["session_id"] != "origin" || p["resume_only"] != true || p["model"] != "source-model" {
+				t.Errorf("source request did not exercise the model capability gate: %+v", p)
+			}
+			// devices.Machine.callOnce refuses model parameters on a pre-model-configuration node before RPC dispatch.
+			return nil, &rpc.Error{Code: proto.CodeNodeOutdated, Message: "update the node"}
+		}
+		own.Add(1)
+		if machine != "server" || p["session_id"] == "origin" || p["resume_only"] == true {
+			t.Errorf("fallback reused the unavailable source: %s %+v", machine, p)
+		}
+		return map[string]string{"session_id": "own"}, nil
+	})
+	setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true, MachineID: "old", SessionID: "origin"})
+	got, err := runNow(t, s, "job")
+	if err != nil || got.MachineID != "server" || got.SessionID != "own" || source.Load() != 1 || own.Load() != 1 {
+		t.Fatalf("old source fallback: %+v %v source=%d own=%d", got, err, source.Load(), own.Load())
+	}
+	if run := waitRuns(t, s, 1)[0]; run.Conversation != "new" || run.ConversationReason != "source_unavailable" || run.Execution.MachineID != "server" {
+		t.Fatalf("fallback execution missing from history: %+v", run)
 	}
 }
 

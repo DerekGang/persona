@@ -12,6 +12,7 @@ import { t } from "../../i18n";
 beforeAll(() => loadPages(),60_000);
 let host:HTMLDivElement, root:Root;
 let saved:Task, writes:Record<string,unknown>[], reject:boolean;
+let catalog:'available'|'missing'|'failed'|'omitted';
 const onSaved=vi.fn(), onClose=vi.fn();
 const flush=async()=>{for(let i=0;i<12;i++) await act(async()=>{await Promise.resolve();});};
 const field=(label:string)=>[...document.querySelectorAll('label')].find((el)=>el.textContent?.startsWith(label))!.querySelector<HTMLInputElement|HTMLSelectElement>('input,select')!;
@@ -27,7 +28,7 @@ const click=async(label:string)=>{
  expect(button).toBeTruthy();await act(async()=>button.click());await flush();
 };
 beforeEach(()=>{
- writes=[];reject=false;onSaved.mockClear();onClose.mockClear();
+ writes=[];reject=false;catalog='available';onSaved.mockClear();onClose.mockClear();
  saved={...blankTask(),id:'job',title:'Check files',prompt:'Summarize files',model_revision:0};
  Object.assign(getState(),{features:['task_execution'],machines:[{id:'box',name:'Computer',online:true}]});
  vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
@@ -35,7 +36,12 @@ beforeEach(()=>{
   const reply=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status});
   if(path.includes('/model-config/purposes/assistant'))return reply({purpose:{id:'assistant',machine_id:'box',effective:{provider:'launcher.claude',model:'main-model',effort:'high'},override:{}},providers:[]});
   if(path.includes('/models'))return reply({agent:path.includes('codex')?'codex':'claude',models:[{id:'agent-default',name:'Agent default',default:true,efforts:['low','high'],default_effort:'high'},{id:'test-model',name:'Test model',efforts:['low','high']}]});
-  if(path.includes('/launchers'))return reply({launchers:[{name:'claude',display_name:'Assistant',agent:'claude'},{name:'codex',display_name:'agents',agent:'codex'}]});
+  if(path.includes('/launchers')){
+   if(catalog==='failed')return reply({error:'Launcher discovery unavailable'},503);
+   if(catalog==='missing')return reply({launchers:[]});
+   if(catalog==='omitted')return reply({});
+   return reply({launchers:[{name:'claude',display_name:'Assistant',agent:'claude'},{name:'codex',display_name:'agents',agent:'codex'}]});
+  }
   if(path.includes('/runs'))return reply({runs:[]});
   if(path.includes('/assistant/tasks')){
    const body=JSON.parse(String(init?.body));writes.push(body);
@@ -127,4 +133,40 @@ it('lets a historical source task clear a saved execution choice back to inherit
  expect(save.disabled).toBe(false);
  await click(t('common.save'));
  expect(writes[0]).toMatchObject({session_id:'origin',execution_machine_id:''});
+});
+
+it.each(['missing','failed','omitted'] as const)('clears a saved launcher to inheritance with a %s catalog and reopens the cleared values',async(status)=>{
+ catalog=status;
+ saved={...saved,session_id:'origin',launcher:'unavailable-agent',model:'saved-model',effort:'high'};
+ await render();
+ const agent=field(t('assistant-taskeditor.execution_agent')) as HTMLSelectElement;
+ expect(agent.value).toBe('unavailable-agent');
+ expect(agent.selectedOptions[0].textContent).toContain(t('assistant-taskeditor.execution_unavailable'));
+ const save=()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===t('common.save'))!;
+ expect(save().disabled).toBe(true);
+ expect(writes).toEqual([]);
+ expect(agent.disabled).toBe(false);
+ if(status==='failed')expect(document.body.textContent).toContain('Launcher discovery unavailable');
+ await change(agent,'');
+ expect(save().disabled).toBe(false);
+ expect(document.querySelector('summary')!.textContent).toContain('claude · main-model · high');
+ await click(t('common.save'));
+ expect(writes).toEqual([expect.objectContaining({session_id:'origin',launcher:'',model:'',effort:''})]);
+ expect(onSaved).toHaveBeenCalledOnce();
+ await render(saved,'reopen-cleared');
+ expect(field(t('assistant-taskeditor.execution_agent')).value).toBe('');
+ expect(field(t('settings-modelconfiguration.effort')).value).toBe('');
+ expect(document.body.textContent).not.toContain('saved-model');
+ expect(document.body.textContent).not.toContain('unavailable-agent');
+});
+
+it('preserves saved launcher, model and effort after discovery fails until the user clears them',async()=>{
+ catalog='failed';
+ saved={...saved,launcher:'codex',model:'saved-model',effort:'high'};
+ await render();
+ expect(field(t('assistant-taskeditor.execution_agent')).value).toBe('codex');
+ await change(field(t('assistant-taskeditor.title_label')),'Updated title');
+ await click(t('common.save'));
+ for(const key of ['launcher','model','effort'])expect(writes[0]).not.toHaveProperty(key);
+ expect(saved).toMatchObject({launcher:'codex',model:'saved-model',effort:'high'});
 });

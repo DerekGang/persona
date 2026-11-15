@@ -80,7 +80,7 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
         </select>
       </Field>
       <Field label={t("assistant-taskeditor.execution_agent")}>
-        <select className={inputClass} value={draft.launcher ?? ""} disabled={disabled || !launchers} onChange={(e) => onChange({ launcher: e.target.value, model: "", effort: "" })}>
+        <select className={inputClass} value={draft.launcher ?? ""} disabled={disabled} onChange={(e) => onChange({ launcher: e.target.value, model: "", effort: "" })}>
           <option value="">{t("assistant-taskeditor.agent_default", { name: launcherTitle(inheritedLauncher, known) || "…" })}</option>
           {draft.launcher && !known.some((l) => l.name === draft.launcher) && <option value={draft.launcher}>{draft.launcher} · {t("assistant-taskeditor.execution_unavailable")}</option>}
           {known.map((l) => <option key={l.name} value={l.name}>{launcherTitle(l.name, known)}{l.agent ? ` · ${l.agent}` : ""}</option>)}

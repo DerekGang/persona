@@ -20,6 +20,7 @@ try {
   let task={id:"job",title:"Review project files",prompt:"Summarize the project files.",repeat:"interval",every_minutes:30,enabled:true,model_revision:0};
   const viewTask=()=>({...task,execution:{machine_id:"box",launcher:task.launcher||"assistant",agent:task.launcher==="codex"?"codex":"claude",model:task.model||"main-model",effort:task.effort||"high"}});
   const writes=[], reads=[];
+  let launcherCatalog="available";
   await context.route("**/api/v1/**",async(route)=>{
    const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api\/v1/,"");
    reads.push(`${req.method()} ${path}`);
@@ -31,7 +32,12 @@ try {
    else if(path==="/assistant/runs")body={runs:[]};
    else if(path==="/model-config")body={providers:[{id:"launcher.assistant",name:"Assistant",agent:"claude"},{id:"launcher.codex",name:"agents",agent:"codex"}]};
    else if(path==="/model-config/purposes/assistant")body={purpose:{id:"assistant",machine_id:"box",effective:{provider:"launcher.assistant",model:"main-model",effort:"high"},override:{}},providers:[]};
-   else if(path==="/machines/box/launchers")body={launchers:[{name:"assistant",display_name:"Assistant",agent:"claude"},{name:"codex",display_name:"agents",agent:"codex"}]};
+   else if(path==="/machines/box/launchers") {
+    if(launcherCatalog==="failed") {
+     await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Launcher discovery unavailable"})});return;
+    }
+    body={launchers:launcherCatalog==="missing"?[]:[{name:"assistant",display_name:"Assistant",agent:"claude"},{name:"codex",display_name:"agents",agent:"codex"}]};
+   }
    else if(path.startsWith("/model-config/providers/"))body={agent:path.includes("codex")?"codex":"claude",models:[{id:"test-model",name:"Example model",efforts:["low","high"],default_effort:"high"}]};
    else if(path==="/assistant/tasks/job"&&req.method()==="PUT") {const patch=req.postDataJSON();writes.push({path,patch});task={...task,...patch,model_revision:1};body={task:viewTask()};}
    else if(path==="/extensions/ui")body={slots:[]};
@@ -52,6 +58,10 @@ try {
   await page.getByText("Execution options",{exact:true}).click();
   await page.getByRole("combobox",{name:"Agent",exact:true}).selectOption("codex");
   const dialog=page.getByRole("dialog");
+  const closed=async()=>{
+   await dialog.waitFor({state:"hidden"});
+   await page.waitForFunction(()=>!history.state?.personaOverlay);
+  };
   // Inspect the actual rendered model picker and choose the advertised model.
   await dialog.getByRole("button",{expanded:false}).filter({hasText:/Default|model/i}).first().click();
   await dialog.getByRole("option",{name:/Example model/}).click();
@@ -120,8 +130,42 @@ try {
   assert.equal(writes.length,2);
   assert.equal(writes[1].patch.session_id,"origin");
   assert.equal(writes[1].patch.execution_machine_id,"");
+  await closed(); // a phone sheet removes its history entry asynchronously before another navigation
+  for(const catalog of ["missing","failed"]) {
+   launcherCatalog=catalog;
+   task={...task,session_id:"origin",execution_machine_id:"",launcher:"gone-agent",model:"saved-model",effort:"high",cwd:""};
+   const count=writes.length;
+   await page.goto(`${base}/routines`);
+   await page.getByRole("button",{name:/Updated source task/}).first().click();
+   await page.getByText("Execution options",{exact:true}).click();
+   const agent=page.getByRole("combobox",{name:"Agent",exact:true});
+   assert(await agent.isEnabled(),"inheritance remains selectable when discovery is unavailable");
+   assert.equal(await agent.inputValue(),"gone-agent");
+   await agent.getByRole("option",{selected:true}).filter({hasText:/Unavailable/i}).waitFor({state:"attached"});
+   const save=page.getByRole("dialog").getByRole("button",{name:"Save",exact:true});
+   assert(await save.isDisabled(),"source execution validation remains active");
+   if(catalog==="failed")await page.getByRole("alert").filter({hasText:"Launcher discovery unavailable"}).waitFor();
+   assert.equal(writes.length,count,"discovery cannot clear saved choices");
+   await agent.scrollIntoViewIfNeeded();
+   await page.screenshot({path:join(shots,`task-launcher-${catalog}-${width}-${theme}.png`)});
+   await page.evaluate(()=>document.documentElement.style.setProperty("--text-scale","2"));
+   await agent.scrollIntoViewIfNeeded();
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
+   await page.screenshot({path:join(shots,`task-launcher-${catalog}-${width}-${theme}-large.png`)});
+   await agent.selectOption("");
+   assert(await save.isEnabled());
+   await save.click();
+   await closed();
+   assert.equal(writes.length,count+1);
+   assert.deepEqual({launcher:writes[count].patch.launcher,model:writes[count].patch.model,effort:writes[count].patch.effort},{launcher:"",model:"",effort:""});
+   await page.getByRole("button",{name:/Updated source task/}).first().click();
+   await page.getByText("Execution options",{exact:true}).click();
+   assert.equal(await agent.inputValue(),"");
+   await page.getByRole("dialog").getByRole("button",{name:"Cancel",exact:true}).click();
+   await closed();
+  }
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme}: select/save/reopen, text scaling, source validation/toggle/clear and no invalid save`);
+  console.log(`PASS ${width} ${theme}: select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear and no invalid save`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}

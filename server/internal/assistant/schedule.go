@@ -1704,9 +1704,9 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			unsent := err != nil // model preparation has not sent the task's message
 			if err == nil {
 				err = s.call(ctx, m.ID, DeviceAssistantSend, params, nil)
-				// Offline/no-device errors are pre-dispatch; gone is the node's resume-only preflight refusal.
+				// Offline/no-device and capability-gate errors are pre-dispatch; gone is a resume-only preflight refusal.
 				// A lost RPC answer or closed link says nothing about whether the turn already started.
-				unsent = errors.Is(err, apierr.ErrOffline) || errors.Is(err, ErrNoDevice) || (err != nil && taskConversationUnavailable(err, t.SessionID))
+				unsent = errors.Is(err, apierr.ErrOffline) || errors.Is(err, ErrNoDevice) || nodeOutdated(err) || (err != nil && taskConversationUnavailable(err, t.SessionID))
 			}
 			if err == nil {
 				run.MachineID, run.SessionID = t.MachineID, t.SessionID
