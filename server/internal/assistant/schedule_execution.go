@@ -74,13 +74,19 @@ func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, bind
 	if err := checkModelID(b.Model); err != nil {
 		return ex, err
 	}
-	if err := s.validateModel(ctx, p, b, s.modelProviders(ctx)); err != nil {
+	providers := s.modelProviders(ctx)
+	if strings.HasPrefix(b.Provider, "launcher.") && launcherName.MatchString(ex.Launcher) && !slices.ContainsFunc(providers, func(v ModelProvider) bool { return v.ID == b.Provider }) {
+		// A saved launcher can be absent from discovery while its node's list is unavailable. mainChatFit still
+		// refuses a confirmed missing/incompatible launcher; an unknown one runs the exact saved binding (#6884).
+		providers = append(providers, ModelProvider{ID: b.Provider, Kind: "launcher"})
+	}
+	if err := s.validateModel(ctx, p, b, providers); err != nil {
 		return ex, err
 	}
 	if err := s.checkTaskModelCapabilities(ctx, machine, b); err != nil {
 		return ex, err
 	}
-	ex.Agent = agentKind(s.launcherAgent(ctx, machine, ex.Launcher))
+	ex.Agent = s.launcherAgent(withUnhidden(ctx, ex.Launcher), machine, ex.Launcher)
 	if ex.Cwd != "" {
 		var result struct {
 			Cwd string `json:"cwd"`

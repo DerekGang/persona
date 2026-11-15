@@ -21,6 +21,7 @@ func TestTaskExecutionOriginEdits(t *testing.T) {
 		want        int
 		own         bool
 	}{
+		{"inherit computer only", `"execution_machine_id":""`, http.StatusOK, false},
 		{"clear defaults", `"execution_machine_id":"","cwd":"","launcher":"","model":"","effort":""`, http.StatusOK, false},
 		{"pin inherited computer", `"execution_machine_id":"server"`, http.StatusBadRequest, false},
 		{"set directory", `"cwd":"/work/project"`, http.StatusBadRequest, false},
@@ -32,8 +33,9 @@ func TestTaskExecutionOriginEdits(t *testing.T) {
 			s := newTestService(t, f)
 			setTasks(s, Task{ID: "job", Title: "Check", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true, MachineID: "server", SessionID: "origin"})
 			sessionID := "origin"
+			machine := ""
 			if tc.own {
-				sessionID = ""
+				sessionID, machine = "", "server"
 			}
 			body := fmt.Sprintf(`{"title":"Check","prompt":"Check files","repeat":"interval","every_minutes":30,"enabled":true,"session_id":%q,%s}`, sessionID, tc.patch)
 			r := request(s, "PUT", "/api/v1/assistant/tasks/job", body)
@@ -42,6 +44,13 @@ func TestTaskExecutionOriginEdits(t *testing.T) {
 			}
 			if tc.want == http.StatusBadRequest && !strings.Contains(r.Body.String(), "execution_own_chat") && !strings.Contains(r.Body.String(), "原来的对话") {
 				t.Fatalf("unrelated validation: %s", r.Body.String())
+			}
+			got, _ := taskByID(s, "job")
+			if got.Title != "Check" || got.Prompt != "Check files" || got.Repeat != repeatInterval || got.EveryMinutes != 30 || !got.Enabled {
+				t.Fatalf("execution edit changed task content or schedule: %+v", got)
+			}
+			if got.SessionID != sessionID || got.ExecutionMachineID != machine {
+				t.Fatalf("execution edit changed the wrong context: %+v", got)
 			}
 		})
 	}
@@ -146,6 +155,9 @@ func TestTaskSourceModelPreparationFallsBackBeforeSending(t *testing.T) {
 	if err != nil || got.SessionID == "" || got.SessionID == "main" || f.sent() != 1 {
 		t.Fatalf("model preparation fallback: %s %v sends=%d", got.SessionID, err, f.sent())
 	}
+	if runs := waitRuns(t, s, 1); runs[0].ConversationReason != "source_unavailable" {
+		t.Fatalf("source model preparation was not exercised: %+v", runs[0])
+	}
 }
 
 func TestTaskSourceRejectsExplicitExecutionBeforeSending(t *testing.T) {
@@ -154,5 +166,14 @@ func TestTaskSourceRejectsExplicitExecutionBeforeSending(t *testing.T) {
 	setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true, MachineID: "server", SessionID: "origin", ExecutionMachineID: "server"})
 	if _, err := runNow(t, s, "job"); err == nil || f.sent() != 0 {
 		t.Fatalf("explicit source context ignored: %v sent=%d", err, f.sent())
+	}
+}
+
+func TestTaskExecutionKnownMissingLauncherIsNotSubstituted(t *testing.T) {
+	s, f := pickFixture(t)
+	setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true})
+	setModel(t, s, "task.job", ModelBinding{Provider: "launcher.gone"})
+	if _, err := runNow(t, s, "job"); err == nil || f.sent() != 0 {
+		t.Fatalf("missing launcher was substituted: %v sent=%d", err, f.sent())
 	}
 }
