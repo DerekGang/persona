@@ -145,7 +145,7 @@ func (s *Service) workGuard(v *workView, e db.SessionWork, ownCard bool) (proto.
 	switch {
 	case !ok:
 		return c, "gone"
-	case c.HiddenByDirectory:
+	case c.HiddenByDirectory():
 		return c, "hidden by directory"
 	case c.ReadOnlyReason != "":
 		return c, "read-only"
@@ -500,7 +500,7 @@ func (s *Service) backfillWork(ctx context.Context, v *workView, now time.Time) 
 			if n >= 3 {
 				return
 			}
-			if c.HiddenByDirectory || c.Assistant || c.State != proto.StateUnread || c.Work != nil || now.Sub(c.UpdatedAt) > workBackfill ||
+			if c.HiddenByDirectory() || c.Assistant || c.State != proto.StateUnread || c.Work != nil || now.Sub(c.UpdatedAt) > workBackfill ||
 				now.Sub(c.UpdatedAt) < settle || !full && (c.TurnError == "" || !turnErrorTransient(c)) {
 				continue
 			}
@@ -522,7 +522,7 @@ func (s *Service) sampleWork(v *workView) {
 	counts := map[string]any{}
 	for _, d := range v.machines() {
 		for _, c := range v.listedSessions(d.ID) { // an archive row is offline: never counted
-			if c.HiddenByDirectory || c.Assistant || c.State == proto.StateOffline {
+			if c.HiddenByDirectory() || c.Assistant || c.State == proto.StateOffline {
 				continue
 			}
 			n, _ := counts[c.State].(int)

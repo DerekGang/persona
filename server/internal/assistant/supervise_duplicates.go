@@ -170,7 +170,7 @@ func (s *Service) planDuplicates(ctx context.Context, tasks []PlanTask) string {
 			continue
 		}
 		for _, c := range list {
-			if c.HiddenByDirectory {
+			if c.HiddenByDirectory() {
 				continue
 			}
 			if c.MachineID == "" {

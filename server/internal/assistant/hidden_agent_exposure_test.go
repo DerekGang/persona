@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func TestHiddenDirectoryAmbientExposure(t *testing.T) {
 			}
 			ft.d.setSessions("mac", rows)
 			inventory := ft.s.decorated("mac")
-			if len(inventory) != 3 || !inventory[0].HiddenByDirectory || !inventory[1].HiddenByDirectory || inventory[2].HiddenByDirectory {
+			if len(inventory) != 3 || !inventory[0].HiddenByDirectory() || !inventory[1].HiddenByDirectory() || inventory[2].HiddenByDirectory() {
 				t.Fatalf("inventory must remain recorded and marked: %+v", inventory)
 			}
 			for _, state := range []string{"all", "active", "needs_you", "unread", "done", "muted", "archived"} {
@@ -61,7 +62,7 @@ func TestHiddenDirectoryAmbientExposure(t *testing.T) {
 func TestHiddenDirectoryStopsAmbientTriageAndReminders(t *testing.T) {
 	s, f := workService(t)
 	c := stopped("hidden-session", "Please choose whether to continue")
-	c.HiddenByDirectory = true
+	c.SetHiddenByDirectory(true)
 	f.setSessions("box", c)
 	triage(t, s, c.SessionID)
 	if _, ok := s.workEntry([2]string{"box", c.SessionID}); ok {
@@ -83,7 +84,7 @@ func TestHiddenDirectoryStopsAmbientTriageAndReminders(t *testing.T) {
 func TestHiddenDirectoryFoldDoesNotCountChildren(t *testing.T) {
 	list := []proto.Session{
 		{SessionID: "parent", State: proto.StateIdle},
-		{SessionID: "hidden-child", ParentSessionID: "parent", IsSubagent: true, State: proto.StateNeedsYou, HiddenByDirectory: true},
+		{SessionID: "hidden-child", ParentSessionID: "parent", IsSubagent: true, State: proto.StateNeedsYou, Hierarchy: &proto.SessionHierarchy{HiddenByDirectory: true}},
 		{SessionID: "visible-child", ParentSessionID: "parent", IsSubagent: true, State: proto.StateWorking},
 	}
 	foldSessions(list, nil).apply(list)
@@ -113,10 +114,10 @@ func TestHiddenDirectoryArchiveRowsRemainHidden(t *testing.T) {
 		t.Fatalf("archive inventory lost: %+v", inventory)
 	}
 	for _, row := range inventory {
-		if !row.HiddenByDirectory {
+		if !row.HiddenByDirectory() {
 			t.Fatalf("remembered row exposed: %+v", row)
 		}
-		if one, ok := ft.s.decoratedSession("mac", row.SessionID); !ok || !one.HiddenByDirectory {
+		if one, ok := ft.s.decoratedSession("mac", row.SessionID); !ok || !one.HiddenByDirectory() {
 			t.Fatalf("single archived row exposed: %+v", one)
 		}
 	}
@@ -130,7 +131,7 @@ func TestHiddenDirectorySupervisedTaskStillObserved(t *testing.T) {
 	todo := e.task("conv1", "conv1")
 	hideExposureDirectory(e.s, "mac", "/code/app")
 	c, ok := e.s.decoratedSession("mac", supAgent)
-	if !ok || c.HiddenByDirectory {
+	if !ok || c.HiddenByDirectory() {
 		t.Fatalf("supervised task hidden: %+v", c)
 	}
 	if got := e.s.describeAgents(context.Background(), "all", "", ""); !strings.Contains(got, supAgent) {
@@ -140,7 +141,7 @@ func TestHiddenDirectorySupervisedTaskStillObserved(t *testing.T) {
 		t.Fatalf("close: %v %v", ok, err)
 	}
 	c, ok = e.s.decoratedSession("mac", supAgent)
-	if !ok || !c.HiddenByDirectory {
+	if !ok || !c.HiddenByDirectory() {
 		t.Fatalf("closed supervised task bypasses directory rule: %+v", c)
 	}
 }
@@ -166,5 +167,54 @@ func TestHiddenDirectorySupervisionNoticeDelivered(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("task supervision missing from delivered notices: %v", e.f.notices())
+	}
+}
+
+func TestHiddenDirectoryColdSupervision(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.Open(ctx, newDatabase(t), db.ManagerSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(database.Close)
+	seedTodos(t, database, db.TodoRow{ID: "visibility-task", Title: "Check change"})
+	if err := database.PutTodoSupervision(ctx, db.TodoSupervisionRow{TodoID: "visibility-task", Supervisor: "main", UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.LinkTodoAgentWithSource(ctx, "visibility-task", "mac", "cold-agent", "Worker", "/code/hidden", "codex", "", "manual", "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ft := newFleetTest(t)
+	ft.s.store = func() Store { return database }
+	hideExposureDirectory(ft.s, "mac", "/code/hidden")
+	ft.d.setSessions("mac", []proto.Session{{SessionID: "cold-agent", Cwd: "/code/hidden", Agent: "codex", Status: proto.StatusWorking}})
+	if ft.s.todosLoaded() {
+		t.Fatal("test must begin before task inventory loads")
+	}
+	c, ok := ft.s.decoratedSession("mac", "cold-agent")
+	if !ok || c.HiddenByDirectory() {
+		t.Fatalf("persisted active supervision hidden on first read: %+v", c)
+	}
+	// Finish first-load publication before the synthetic database closes.
+	published := make(chan struct{})
+	ft.s.inOrder(func() { close(published) })
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first-load publication did not finish")
+	}
+}
+
+type visibilityTodoReadFailure struct{ *db.DB }
+
+func (*visibilityTodoReadFailure) ListTodos(context.Context) ([]db.TodoRow, error) {
+	return nil, errors.New("task inventory unavailable")
+}
+
+func TestHiddenDirectoryKeepsUnknownSupervisionVisible(t *testing.T) {
+	ft := newFleetTest(t)
+	ft.s.store = func() Store { return &visibilityTodoReadFailure{} }
+	if !ft.s.directorySessionSupervised("mac", "agent") {
+		t.Fatal("unreadable inventory must not hide potentially supervised work")
 	}
 }

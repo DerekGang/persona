@@ -3,8 +3,6 @@ package assistant
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"path"
 	"slices"
@@ -40,9 +38,11 @@ func (s *Service) readHiddenDirs(ctx context.Context) (hiddenAgentDirs, error) {
 	defer b.mu.Unlock()
 	if !b.loaded || time.Since(b.at) > 5*time.Second {
 		v := hiddenAgentDirs{Rules: []hiddenAgentDir{}}
-		if st := s.store(); st != nil {
-			if _, err := st.Setting(ctx, hiddenAgentDirsKey, &v); err != nil {
-				return v, err
+		if s.store != nil {
+			if st := s.store(); st != nil {
+				if _, err := st.Setting(ctx, hiddenAgentDirsKey, &v); err != nil {
+					return v, err
+				}
 			}
 		}
 		b.value, b.loaded, b.at = v, true, time.Now()
@@ -113,7 +113,7 @@ func directoryMatches(cwd, home, pattern string) bool {
 
 func validateHiddenDirs(v *hiddenAgentDirs) error {
 	if len(v.Rules) > 100 {
-		return errors.New("at most 100 directory rules")
+		return i18n.Err("assistant-hidden_dirs.too_many")
 	}
 	seen := map[[2]string]bool{}
 	for i := range v.Rules {
@@ -123,11 +123,11 @@ func validateHiddenDirs(v *hiddenAgentDirs) error {
 		absolute := strings.HasPrefix(p, "/") || p == "~" || strings.HasPrefix(p, "~/") || len(p) > 2 && p[1:3] == ":/"
 		_, err := path.Match(p, "")
 		if r.MachineID == "" || !absolute || err != nil || len(p) > 2048 || strings.ContainsAny(p, "\x00\r\n") {
-			return fmt.Errorf("invalid directory rule: provide a machine_id and an absolute path or ~/ glob")
+			return i18n.Err("assistant-hidden_dirs.invalid")
 		}
 		k := [2]string{r.MachineID, r.Pattern}
 		if seen[k] {
-			return errors.New("duplicate directory rule")
+			return i18n.Err("assistant-hidden_dirs.duplicate")
 		}
 		seen[k] = true
 	}
@@ -153,7 +153,7 @@ func (s *Service) saveHiddenDirs(ctx context.Context, v hiddenAgentDirs, expecte
 		}
 		if !slices.Equal(current.Rules, expected.Rules) {
 			b.mu.Unlock()
-			return errors.New("directory rules changed while awaiting confirmation; read them and try again")
+			return i18n.Err("assistant-hidden_dirs.changed")
 		}
 	}
 	if err := s.putSetting(ctx, hiddenAgentDirsKey, v); err != nil {
@@ -190,7 +190,7 @@ func (s *Service) hiddenByDirectory(machine string, sess proto.Session) bool {
 			break
 		}
 	}
-	return matched && !s.supervisedTurn(machine, sess.SessionID, time.Time{})
+	return matched && !s.directorySessionSupervised(machine, sess.SessionID)
 }
 
 func (s *Service) directoryHiddenSession(machine, sid string) bool {
@@ -248,7 +248,7 @@ func (s *Service) hiddenDirRoutes() {
 	})
 	s.handle("PUT /api/v1/assistant/hidden-agent-dirs", func(w http.ResponseWriter, r *http.Request) {
 		if !fullRole(r) {
-			apierr.Write(w, http.StatusForbidden, errors.New("read-only role cannot change directory rules"))
+			apierr.Write(w, http.StatusForbidden, i18n.Err("assistant-hidden_dirs.forbidden"))
 			return
 		}
 		var v hiddenAgentDirs
@@ -266,4 +266,26 @@ func (s *Service) hiddenDirRoutes() {
 		}
 		apierr.WriteJSON(w, v)
 	})
+}
+
+func visibleDirectorySessions(list []proto.Session) []proto.Session {
+	return slices.DeleteFunc(slices.Clone(list), func(c proto.Session) bool { return c.HiddenByDirectory() })
+}
+
+// Read persisted supervision before deciding visibility; publishing its links is
+// queued outside decoration to avoid reentering the session-list pipeline.
+func (s *Service) directorySessionSupervised(machine, sid string) bool {
+	loaded, err := s.loadTodoInventory(context.Background())
+	if err != nil {
+		s.logf("directory visibility: supervision unavailable: %v", err)
+		return true
+	}
+	if loaded {
+		s.inOrder(func() { s.syncLinkedTodoTokens(); s.sweepSourceReports() })
+	}
+	key := [2]string{s.canonical(machine), sid}
+	s.todos.mu.RLock()
+	defer s.todos.mu.RUnlock()
+	t := s.todos.todos[s.todos.activeBySession[key]]
+	return t != nil && t.DoneAt == nil && t.Supervision != nil && t.Supervision.Supervisor != ""
 }

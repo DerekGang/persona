@@ -111,9 +111,7 @@ type ToolLoop struct {
 // so the size matters: its bools sit next to other bools, several to an 8-byte word, which keeps a row inside Go's
 // 1,536-byte size class (TestSessionFitsItsSizeClass). A bool between two wider fields takes a word to itself.
 type Session struct {
-	// HiddenByDirectory is manager-owned visibility, not collection or archive state.
-	HiddenByDirectory bool      `json:"hidden_by_directory,omitempty"`
-	ToolLoop          *ToolLoop `json:"tool_loop,omitempty"`
+	ToolLoop *ToolLoop `json:"tool_loop,omitempty"`
 	// Manager is the manager it belongs to (docs/assistant/managers.md, "Ownership"); the hub stamps it on what it sends the apps.
 	Manager          string               `json:"manager,omitempty"`
 	MachineID        string               `json:"machine_id"`

@@ -101,10 +101,10 @@ func (v *workView) session(machine, sid string) (proto.Session, bool) {
 func (v *workView) isMuted(machine, sid string) bool {
 	if m, ok := v.one(machine); ok { // as mutedSessions says of the row
 		c, found := v.session(machine, sid)
-		return found && (c.HiddenByDirectory || v.s.mutedAs(m.ID, sid, c.SpaceName))
+		return found && (c.HiddenByDirectory() || v.s.mutedAs(m.ID, sid, c.SpaceName))
 	}
 	for _, c := range v.sessions(machine) {
-		if c.SessionID == sid && c.HiddenByDirectory {
+		if c.SessionID == sid && c.HiddenByDirectory() {
 			return true
 		}
 	}

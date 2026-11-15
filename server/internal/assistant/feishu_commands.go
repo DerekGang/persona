@@ -446,7 +446,7 @@ func (s *Service) agentsCard(ctx context.Context, query string) (*feishubot.Card
 	for _, d := range s.devices(ctx) {
 		list, _ := s.sessions(ctx, d.ID)
 		for _, sess := range list {
-			if sess.Assistant || sess.HiddenByDirectory || sess.State == proto.StateOffline || sess.State == proto.StateUnknown {
+			if sess.Assistant || sess.HiddenByDirectory() || sess.State == proto.StateOffline || sess.State == proto.StateUnknown {
 				continue
 			}
 			if sess.State == proto.StateIdle && time.Since(sess.UpdatedAt) > 48*time.Hour {

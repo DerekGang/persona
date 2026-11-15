@@ -207,7 +207,7 @@ func indexedRow(mid, id string, row *proto.Session, stamp bool, manager, root st
 		todo = row.Todo.ID
 	}
 	item := sessionlist.Item{
-		ID: id, Machine: mid, Project: project, Group: group, PaneSource: pane, HiddenByDirectory: row.HiddenByDirectory,
+		ID: id, Machine: mid, Project: project, Group: group, PaneSource: pane, HiddenByDirectory: row.HiddenByDirectory(),
 		State: row.State, BackgroundWaiting: row.BackgroundWaiting, Source: row.SourceKind, Provider: row.Agent, UpdatedAt: row.UpdatedAt,
 		Fold: indexedFold(mid, row, root, todo, indexed.Fold), Private: healthSession(row), Assistant: row.Assistant,
 	}
@@ -377,7 +377,7 @@ func (s *runtimeRowSummary) MarshalJSONTo(enc *jsontext.Encoder) error {
 
 func runtimeSummary(s proto.Session) runtimeRowSummary {
 	out := proto.Session{
-		Manager: s.Manager, MachineID: s.MachineID, SessionID: s.SessionID, HiddenByDirectory: s.HiddenByDirectory,
+		Manager: s.Manager, MachineID: s.MachineID, SessionID: s.SessionID,
 		Title: rowText(s.Title, 256), Cwd: s.Cwd, WorkspaceCwd: s.WorkspaceCwd, RepoRoot: s.RepoRoot, Worktree: s.Worktree, Branch: s.Branch,
 		Status: s.Status, State: s.State, UpdatedAt: s.UpdatedAt, StateSince: s.StateSince, SeenAt: s.SeenAt,
 		LastText: rowText(s.LastText, 180), Activity: rowText(s.Activity, 120), ActivityAt: s.ActivityAt,

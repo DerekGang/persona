@@ -2422,3 +2422,13 @@ nothing ran the old build after the new one.
   has another Claude launcher (#5908), so a node check that asks "is it in my list?" refuses what the picker offers
   and what an Agent start runs. A check of what can run asks whether it runs (the login shell's `command -v`), as
   `knownLauncher` does.
+
+
+## Sparse visibility metadata and single-session allocation budgets
+
+Directory visibility (#8578) needs a wire flag without making every `Session` larger. Keep optional flags in
+existing sparse metadata and update the handwritten encoder and its layout hash together. Check both the
+row size and single-session allocation guards: invoking visibility callbacks from a lower-level list decorator
+made its one-row slice escape even after the row size was restored. Apply the annotation at the final list or
+single-row boundary, before folding/counting, and test archive-only rows too. Read persisted supervision before
+hiding; an unavailable task inventory must preserve possible supervision notifications.

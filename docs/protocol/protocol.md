@@ -4991,6 +4991,8 @@ its directory matches. Its supervision and existing notification policy (includi
 continue. This covers `task_plan`, supervised `agent_start` and adopted supervised agents; having once been
 started by Persona is not enough. Once the task closes or the session is released, the ordinary directory
 rule applies again. Assistant conversations themselves are exempt so their approval cards remain usable.
+The first visibility check loads persisted task ownership before classifying a session. If supervision state
+cannot be read, matching sessions remain visible until it can be read again.
 
 Web: Settings' Agent section contains the shared directory rules; Agents offers temporary inspection.
 Apple: Settings › Agent › Hidden Agent Folders and the Agents menu's temporary reveal use the same contract.

@@ -179,12 +179,7 @@ func archiveSnapshot(s proto.Session) proto.Session {
 // mark is archiveMark taken before list was read: a record changed after it is not
 // weighed against the list (agentArchive.active).
 func (svc *Service) archivedSessions(ctx context.Context, machine string, list []proto.Session, mark uint64) ([]proto.Session, bool, error) {
-	n := len(list)
-	out, changed, err := svc.applyArchives(ctx, machine, list, mark, true)
-	for i := n; i < len(out); i++ {
-		out[i].HiddenByDirectory = svc.hiddenByDirectory(machine, out[i])
-	}
-	return out, changed, err
+	return svc.applyArchives(ctx, machine, list, mark, true)
 }
 
 // archivedListed is archivedSessions without the rows only the archive keeps: list's own rows with the archive's
@@ -402,7 +397,7 @@ func (svc *Service) listArchivedSessions(w http.ResponseWriter, r *http.Request)
 			svc.publishList(m.ID)
 		}
 		for _, row := range list {
-			if row.Archived && !row.Assistant && (!row.HiddenByDirectory || r.URL.Query().Get("include_hidden") == "1") && !(ext && (row.Space == SpaceHealth || identity.InHealthSpace(row.Cwd))) {
+			if row.Archived && !row.Assistant && (!row.HiddenByDirectory() || r.URL.Query().Get("include_hidden") == "1") && !(ext && (row.Space == SpaceHealth || identity.InHealthSpace(row.Cwd))) {
 				row.Manager = svc.id
 				row.NativeArchive = svc.nativeArchiveView(m.ID, row.SessionID)
 				out = append(out, row)
