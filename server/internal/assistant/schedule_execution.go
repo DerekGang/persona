@@ -221,6 +221,7 @@ func (s *Service) saveTaskConfiguredLocked(ctx context.Context, sc *schedule, ta
 	if !ok {
 		return errors.New("atomic task configuration storage is unavailable")
 	}
+	dropStaleGrants(tasks) // the atomic path has the same grant boundary as saveLocked
 	if err := batch.PutSettings(ctx, map[string]any{tasksKey: tasks, modelRecordKey("task." + id): *record}); err != nil {
 		return err
 	}

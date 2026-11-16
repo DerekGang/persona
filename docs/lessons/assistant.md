@@ -574,6 +574,12 @@ test must advance past the retry delay; checking only the immediate send count m
 
 ## A pre-run check must use the task's selected computer (#6800)
 
+An explicit execution computer or directory is also part of the schedule's start-grant basis. An edit must revoke
+the old grant and keep a pending plan from granting the changed schedule. Preserve the old basis when both fields
+are empty, so an upgrade alone does not revoke legacy grants. The atomic task-and-model save must run the same
+stale-grant cleanup as the ordinary schedule save; otherwise a prompt edit together with a model edit retains a
+grant that can revive when the old prompt returns.
+
 A task's last run and the assistant default can point to different computers from its explicit execution target.
 Run the pre-run command on the explicit target first, falling back to the historical run and assistant only when no
 target was chosen. Cover both a first run and a task reconfigured after an earlier run; a skip result must still

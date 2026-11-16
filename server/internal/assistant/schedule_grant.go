@@ -52,8 +52,13 @@ type StartGrant struct {
 // grantBasis names what a grant is given under: t's prompt, where its runs go, its space and what the hub adds to its
 // prompt. A plan keeps its round's (PlanTask.ScheduleBasis), so a Start after the schedule changed grants nothing.
 func (t Task) grantBasis() string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{strings.TrimSpace(t.Prompt), t.MachineID, t.SessionID, t.Space,
-		strconv.FormatBool(t.Facts), strconv.FormatBool(t.Report)}, "\x00")))
+	parts := []string{strings.TrimSpace(t.Prompt), t.MachineID, t.SessionID, t.Space,
+		strconv.FormatBool(t.Facts), strconv.FormatBool(t.Report)}
+	// Keep existing grants valid when there are no execution overrides, but bind a grant to an explicit target.
+	if t.ExecutionMachineID != "" || t.Cwd != "" {
+		parts = append(parts, t.ExecutionMachineID, t.Cwd)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
