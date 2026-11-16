@@ -49,7 +49,11 @@ try {
   await context.routeWebSocket("**/api/v1/ws**",ws=>{ws.send(JSON.stringify({type:"hello",server_version:"synthetic",features:["task_execution","task_cron"]}));ws.onMessage(raw=>{if(JSON.parse(String(raw)).type==="app_ping")ws.send(JSON.stringify({type:"pong"}));});});
   const page=await context.newPage();const errors=[];page.on("pageerror",e=>errors.push(String(e)));page.setDefaultTimeout(10_000);
   await page.goto(`${base}/routines`);
-  await page.getByRole("button",{name:/Review project files/}).first().getByText("Assistant · claude · main-model · high",{exact:true}).waitFor();
+  await page.getByRole("button",{name:/Review project files/}).first().getByText("Assistant · claude · main-model · high",{exact:true}).waitFor().catch(async(error)=>{
+   await page.screenshot({path:join(shots,`task-load-failed-${width}-${theme}.png`)});
+   console.error(JSON.stringify({errors,reads,text:await page.locator("body").innerText()}));
+   throw error;
+  });
   await page.getByRole("button",{name:/Review project files/}).first().click();
   const disclosure=page.locator("summary").filter({hasText:"Execution options"});
   await page.getByRole("radio",{name:"Cron",exact:true}).waitFor();

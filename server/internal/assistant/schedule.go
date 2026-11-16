@@ -45,6 +45,12 @@ import (
 // on an approval. loadSchedule moves the old lists over once, ids and times kept.
 
 type Task struct {
+	// FreshEachRun starts a separate conversation for each recurring run. The last
+	// conversation is retained for run history and the existing busy check.
+	FreshEachRun bool           `json:"fresh_each_run,omitempty"`
+	StateNote    *TaskStateNote `json:"state_note,omitempty"`
+	stateRunKey  string
+
 	WorkoutID string `json:"workout_id,omitempty"`
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -76,7 +82,8 @@ type Task struct {
 	// Report: a daily report (a dot's, docs/assistant/north-star.md "Daily briefing"): its runs open with the north
 	// star's lines. Set with schedule_routine's report or in the body of PUT /api/v1/assistant/tasks/{id}; a change
 	// that leaves it out keeps it.
-	Report bool `json:"report,omitempty"`
+	Report bool          `json:"report,omitempty"`
+	RunIf  *routineCheck `json:"run_if,omitempty"`
 	// factsText is the run's facts as the model is given them (briefing.go); set on the copy a run is made from, never stored.
 	factsText string
 	// kbDir is the knowledge directory the run's hint names (a daily run with the knowledge base on); set on the copy, never stored.
@@ -236,6 +243,8 @@ type ScheduleRun struct {
 	At                 time.Time      `json:"at"`  // when it ran
 	Status             string         `json:"status"`
 	Error              string         `json:"error,omitempty"`
+	RunIfError         string         `json:"run_if_error,omitempty"`
+	ConditionSkipped   bool           `json:"condition_skipped,omitempty"`
 	Manual             bool           `json:"manual,omitempty"` // "Run now"
 	MachineID          string         `json:"machine_id,omitempty"`
 	SessionID          string         `json:"session_id,omitempty"`
@@ -278,7 +287,8 @@ type schedule struct {
 	runs   []ScheduleRun // newest last
 	wake   chan struct{} // the list changed: scheduleLoop recomputes when to wake up
 	// sending: tasks whose run is being sent right now (runTask), so two can't go into one conversation at once.
-	sending map[string]bool
+	sending     map[string]bool
+	stateDrafts map[string]taskStateDraft
 	// held: by task, until when its due run waits for the owner (runDue, relay_presence.go runHold); in memory only.
 	held map[string]time.Time
 	// inflight: runs runDue started and that have not recorded their result yet.
@@ -298,7 +308,7 @@ type schedule struct {
 func (sc *schedule) missedRuns(since time.Time) []ScheduleRun {
 	var missed []ScheduleRun
 	for i, r := range sc.runs {
-		if r.At.Before(since) || (r.Status != runFailed && r.Status != runSkipped) || r.Manual {
+		if r.At.Before(since) || (r.Status != runFailed && r.Status != runSkipped) || r.Manual || r.ConditionSkipped {
 			continue
 		}
 		recovered := false
@@ -593,7 +603,7 @@ func stopsAt(t Task, loc *time.Location) string {
 
 // scheduleHeader is the first line of a run's message (taskPrompt, prompts/assistant/task_run.md) and the notes under it. A patrol told to
 // "schedule the next one with the same prompt" copies them along; they are dropped so they don't pile up.
-var scheduleHeader = lazyre.New(`^(?:⏰[^\n]*（[^\n]*(?:跟进|定时任务)[^\n]*）|（本该[^\n]*）|（(?:Persona|Persona) 会[^\n]*）|（又到时间了[^\n]*）|（这个任务只在你用 notify_user[^\n]*）|（没有变化就立即结束，不做长汇报。）)\s*`)
+var scheduleHeader = lazyre.New(`^(?:⏰[^\n]*（[^\n]*(?:跟进|定时任务)[^\n]*）|（本该[^\n]*）|（(?:Persona|Persona) 会[^\n]*）|（又到时间了[^\n]*）|（这个任务只在你用 notify_user[^\n]*）|（没有变化就立即结束，不做长汇报。）|（Saved state from this scheduled task[^\n]*）|（At the end of this run, if the task state changed,[^\n]*）)\s*`)
 
 func stripScheduleHeader(p string) string {
 	p = strings.TrimSpace(p)
@@ -636,6 +646,7 @@ func sameText(a, b string) bool {
 
 func (s *Service) toolScheduleFollowup(ctx context.Context, machine, sessionID string, args json.RawMessage) (string, error) {
 	var a struct {
+		FreshEachRun    *bool           `json:"fresh_each_run"`
 		At              string          `json:"at"`
 		Every           string          `json:"every"`
 		Cron            string          `json:"cron"`
@@ -713,7 +724,7 @@ func (s *Service) toolScheduleFollowup(ctx context.Context, machine, sessionID s
 	needsOwn := hasTaskModel(a.Launcher, a.Model, a.Effort)
 	// A one-off ignores until, even a bad one. An interval task takes it; scheduleOwn applies it when this run is
 	// rescheduling its own task (including a one-off this call turns into an interval).
-	if out, id, ok, err := s.scheduleOwn(ctx, sessionID, a.Title, a.Prompt, prompt, a.At, at, every, rule, push, inbox, a.Until, a.Launcher, a.Model, a.Effort); ok || err != nil {
+	if out, id, ok, err := s.scheduleOwn(ctx, sessionID, a.Title, a.Prompt, prompt, a.At, at, every, rule, push, inbox, a.FreshEachRun, a.Until, a.Launcher, a.Model, a.Effort); ok || err != nil {
 		if err == nil && id != "" {
 			err = s.setTaskModel(ctx, id, a.Launcher, a.Model, a.Effort)
 		}
@@ -739,7 +750,10 @@ func (s *Service) toolScheduleFollowup(ctx context.Context, machine, sessionID s
 			return "", err
 		}
 	}
-	if !a.NewConversation {
+	if a.FreshEachRun != nil && t.Repeat != repeatOnce {
+		t.FreshEachRun = *a.FreshEachRun
+	}
+	if !a.NewConversation && !t.FreshEachRun {
 		t.SessionID = sessionID
 	}
 	if push != nil {
@@ -748,7 +762,7 @@ func (s *Service) toolScheduleFollowup(ctx context.Context, machine, sessionID s
 	if inbox != nil {
 		t.Inbox = *inbox
 	}
-	ownConversationIfQuiet(&t, s.mayBeMainNow(ctx))
+	isolateScheduledConversation(&t, s.mayBeMainNow(ctx))
 	if t.SessionID != "" && s.quietConversation(ctx, t.SessionID) {
 		t.SessionID = "" // asked from a quiet task's conversation: it runs in its own, where its runs are pushed (#2396)
 	}
@@ -787,7 +801,7 @@ func (s *Service) toolScheduleFollowup(ctx context.Context, machine, sessionID s
 // repeats stays as it is (a changed prompt is taken). A task deleted while its run was going stays deleted: the run is
 // told so, nothing is scheduled (#4792). A one-off given a cron rule (`cron`, zero spec for none) runs on it from now on. ok is false when this conversation's latest run isn't one of the task's
 // (rawPrompt is what was asked, before stripScheduleHeader), or the title and prompt are another task's.
-func (s *Service) scheduleOwn(ctx context.Context, sessionID, title, rawPrompt, prompt, atArg string, at time.Time, every int, cron cronRule, push, inbox *string, untilRaw json.RawMessage, launcher, model, effort *string) (string, string, bool, error) {
+func (s *Service) scheduleOwn(ctx context.Context, sessionID, title, rawPrompt, prompt, atArg string, at time.Time, every int, cron cronRule, push, inbox *string, freshEachRun *bool, untilRaw json.RawMessage, launcher, model, effort *string) (string, string, bool, error) {
 	if sessionID == "" {
 		return "", "", false, nil
 	}
@@ -850,7 +864,6 @@ func (s *Service) scheduleOwn(ctx context.Context, sessionID, title, rawPrompt, 
 	if inbox != nil { // left out: it keeps its setting
 		t.Inbox = *inbox
 	}
-	ownConversationIfQuiet(t, mayBeMain)
 	var out string
 	switch {
 	case t.Repeat != repeatOnce && !t.Enabled:
@@ -880,6 +893,10 @@ func (s *Service) scheduleOwn(ctx context.Context, sessionID, title, rawPrompt, 
 			out = fmt.Sprintf("Rescheduled %s「%s」 for %s (%s).", t.ID, t.label(), at.In(loc).Format("01-02 15:04 Mon"), until(at))
 		}
 	}
+	if freshEachRun != nil && t.Repeat != repeatOnce {
+		t.FreshEachRun = *freshEachRun
+	}
+	isolateScheduledConversation(t, mayBeMain)
 	// until applies only once the task is repeating. A one-off ignores it, including a bad value; checkUntil
 	// clears it. Absent keeps the stored end time; null clears it. A past end time on an enabled task fails
 	// before anything is saved.
@@ -1028,25 +1045,31 @@ func (s *Service) describeSchedule(ctx context.Context, space string) string {
 }
 
 // toolScheduleRoutine adds a daily task from a conversation ("give me a morning briefing at 9 every day"), or changes one by id.
-func (s *Service) toolScheduleRoutine(ctx context.Context, self string, args json.RawMessage) (string, error) {
+func (s *Service) toolScheduleRoutine(ctx context.Context, machine, self string, args json.RawMessage) (string, error) {
 	var a struct {
-		ID       string          `json:"id"`
-		Title    string          `json:"title"`
-		Prompt   string          `json:"prompt"`
-		Time     string          `json:"time"`
-		Weekdays []int           `json:"weekdays"`
-		Cron     string          `json:"cron"`
-		Enabled  *bool           `json:"enabled"`
-		Report   *bool           `json:"report"` // left out: kept
-		Push     *string         `json:"push"`   // left out: a new routine pushes every run, an existing one keeps its push
-		Inbox    *string         `json:"inbox"`  // left out: a new routine puts nothing in the Inbox, an existing one keeps its setting
-		Until    json.RawMessage `json:"until"`
+		FreshEachRun *bool           `json:"fresh_each_run"`
+		ID           string          `json:"id"`
+		Title        string          `json:"title"`
+		Prompt       string          `json:"prompt"`
+		Time         string          `json:"time"`
+		Weekdays     []int           `json:"weekdays"`
+		Cron         string          `json:"cron"`
+		Enabled      *bool           `json:"enabled"`
+		Report       *bool           `json:"report"` // left out: kept
+		Push         *string         `json:"push"`   // left out: a new routine pushes every run, an existing one keeps its push
+		Inbox        *string         `json:"inbox"`  // left out: a new routine puts nothing in the Inbox, an existing one keeps its setting
+		Until        json.RawMessage `json:"until"`
+		RunIf        json.RawMessage `json:"run_if"`
 		// The task's own model configuration (schedule_model.go): nil leaves it as it is, "" clears that part.
 		Launcher *string `json:"launcher"`
 		Model    *string `json:"model"`
 		Effort   *string `json:"effort"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
+		return "", err
+	}
+	runIf, err := parseRoutineCheck(a.RunIf)
+	if err != nil {
 		return "", err
 	}
 	a.Cron = strings.TrimSpace(a.Cron)
@@ -1086,6 +1109,15 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, self string, args jso
 			if err := s.validateTaskModel(ctx, a.ID, a.Launcher, a.Model, a.Effort); err != nil {
 				return "", err
 			}
+		}
+	}
+	if runIf != nil {
+		approved, err := s.approveRoutineCheck(ctx, machine, self, runIf)
+		if err != nil {
+			return "", err
+		}
+		if !approved {
+			return "The owner did not approve the pre-run command. The routine was not changed.", nil
 		}
 	}
 	mayBeMain := s.mayBeMainNow(ctx)
@@ -1135,9 +1167,15 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, self string, args jso
 	if inbox != nil {
 		t.Inbox = *inbox
 	}
+	if len(a.RunIf) != 0 {
+		t.RunIf = runIf
+	}
+	if a.FreshEachRun != nil {
+		t.FreshEachRun = *a.FreshEachRun
+	}
 	applyUntil(&t, end, hasUntil, clearUntil)
 	dropStaleUntil(&t, hasUntil, now)
-	ownConversationIfQuiet(&t, mayBeMain)
+	isolateScheduledConversation(&t, mayBeMain)
 	if err := checkTask(&t, now); err != nil {
 		sc.mu.Unlock()
 		return "", err
@@ -1313,6 +1351,7 @@ func (s *Service) Run(ctx context.Context) {
 	if err := s.recoverTaskStarts(recoverCtx, s.tasks.recoverBefore); err != nil {
 		s.logf("recover interrupted task starts: %v", err)
 	}
+	s.recoverSendsOut(recoverCtx) // sends of more for accepted tasks the manager before this one left out (tasks_sends_out.go)
 	cancel()
 	go s.taskCloseLoop(ctx)      // the agents of finished tasks (tasks_close.go)
 	go s.superviseLoop(ctx)      // the tasks the main conversation follows up (supervise_signals.go)
@@ -1674,11 +1713,26 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		s.recordRun(run)
 		return proto.Session{}, err
 	}
-	if t.SessionID != "" && !t.pushesOnlyAsked() && s.quietConversation(ctx, t.SessionID) {
+	fresh := t.FreshEachRun && t.Repeat != repeatOnce
+	if fresh {
+		// Override the destination only for this dispatch. Keeping the origin on the saved task
+		// lets the user restore same-chat runs without losing where the follow-up came from.
+		t.SessionID = ""
+	} else if t.SessionID != "" && !t.pushesOnlyAsked() && s.quietConversation(ctx, t.SessionID) {
 		// Another task's quiet conversation (its finished turns go unpushed): this one wants its runs pushed, so it
 		// runs in its own instead (#2396).
 		s.logf("task %s: %s is a quiet task's conversation; running in its own", t.ID, short(t.SessionID))
 		t.SessionID = ""
+	}
+	// A retry continues a run that was already admitted. A one-off follow-up must never be condition-skipped.
+	if !manual && !retried && t.Repeat != repeatOnce && t.RunIf != nil {
+		message, skip := s.checkRoutine(ctx, t)
+		if skip {
+			run.Status, run.Error, run.ConditionSkipped = runSkipped, message, true
+			s.recordRun(run)
+			return proto.Session{}, nil
+		}
+		run.RunIfError = message
 	}
 	if !manual && t.Repeat != repeatOnce { // a one-off is never held back: skipped it would be lost (schedule_ready.go)
 		if err := s.gateRun(ctx, t); err != nil { // not set up yet: skipped, nothing pushed (schedule_ready.go)
@@ -1686,15 +1740,31 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			return proto.Session{}, s.skipRun(run, err)
 		}
 	}
+	draftHandedOff := false
+	startRun := func(m *Device) {
+		draftHandedOff = true
+		s.startScheduledRun(run, t, m)
+	}
+	if t.Repeat != repeatOnce {
+		// Refresh the note under the schedule lock after acquiring the send slot.
+		if sc, err := s.lockedSchedule(ctx); err == nil {
+			if i := sc.indexLocked(t.ID); i >= 0 {
+				t.StateNote = sc.tasks[i].StateNote
+			}
+			sc.mu.Unlock()
+		}
+		t.stateRunKey = s.openTaskStateDraft()
+		defer func() {
+			if !draftHandedOff {
+				s.takeTaskStateDraft(t.stateRunKey)
+			}
+		}()
+	}
 	if kb {
 		t.kbDir = s.kb.dir // the hint names where the knowledge base is, not the default
 	}
 	t.factsText = s.runFacts(ctx, t, time.Now()) // the run's facts, worked out once (north_star.go)
-	if t.SessionID != "" && t.pushesOnlyAsked() && s.mayBeMain(ctx, t.SessionID) {
-		// The conversation it came from became (or may be) the main one, which is never quiet.
-		s.logf("task %s: %s is (or may be) the main conversation, which is never quiet; running in its own", t.ID, short(t.SessionID))
-		t.SessionID = ""
-	}
+	isolateScheduledConversation(&t, s.mayBeMainNow(ctx))
 	if t.SessionID != "" {
 		if m, ok := s.device(ctx, t.MachineID); ok && m.Online {
 			// A follow-up the assistant scheduled for itself is a turn of that conversation: it keeps the
@@ -1718,7 +1788,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 				effort, _ := params["effort"].(string)
 				run.Execution = &TaskExecution{MachineID: t.MachineID, Launcher: used, Model: model, Effort: effort, Agent: c.Agent, Cwd: c.Cwd, PermissionMode: cmp.Or(t.PermissionMode, c.PermissionMode)}
 				s.logf("task %s ran %s after its time", t.ID, lateness(due, time.Now()))
-				s.startScheduledRun(run, t, &m)
+				startRun(&m)
 				return proto.Session{MachineID: t.MachineID, SessionID: t.SessionID}, nil
 			}
 			if !unsent {
@@ -1764,7 +1834,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		case t.RunLauncher != launcher:
 			run.ConversationReason = "execution_changed"
 			s.logf("task %s: launcher %s → %s, its conversation %s can't go on; starting a new one", t.ID, t.RunLauncher, launcher, short(t.RunSessionID))
-		case t.pushesOnlyAsked() && s.mayBeMain(ctx, t.RunSessionID):
+		case (t.pushesOnlyAsked() || t.Repeat != repeatOnce) && s.mayBeMain(ctx, t.RunSessionID):
 			s.logf("task %s: its conversation %s is (or may be) the main one, which is never quiet; starting a new one", t.ID, short(t.RunSessionID))
 		case t.RunMachineID != here || !ok:
 			run.ConversationReason = "execution_changed"
@@ -1777,6 +1847,8 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 				s.tellWaitingSkip(ctx, t, m)
 			}
 			return proto.Session{}, err
+		case fresh:
+			// Keep the prior session for busy detection, then start a new one below.
 		default:
 			params := map[string]any{"session_id": t.RunSessionID, "text": taskPrompt(t, due, now, loc, manual, kb, true), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true, "cwd": ex.Cwd, "task_execution": true}
 			err := s.finishModel(ctx, "task."+t.ID, params, ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort, Runtime: ex.Runtime})
@@ -1787,7 +1859,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 				run.MachineID, run.SessionID = t.RunMachineID, t.RunSessionID
 				run.Conversation = "resumed"
 				s.logf("task %s ran %s after its time (its conversation %s)", t.ID, lateness(due, time.Now()), short(t.RunSessionID))
-				s.startScheduledRun(run, t, &m)
+				startRun(&m)
 				return proto.Session{MachineID: t.RunMachineID, SessionID: t.RunSessionID}, nil
 			}
 			if !taskConversationUnavailable(err, t.RunSessionID) {
@@ -1816,7 +1888,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	if d, ok := s.device(ctx, sess.MachineID); ok {
 		m = &d
 	}
-	s.startScheduledRun(run, t, m)
+	startRun(m)
 	return sess, nil
 }
 
@@ -1977,12 +2049,15 @@ func (s *Service) startScheduledRun(run ScheduleRun, t Task, m *Device) {
 	}
 	run.ID = s.recordRun(run)
 	if m == nil || run.ID == "" {
+		// There's no watcher to confirm success. Discard the draft so the next run reads only the last saved note.
+		s.takeTaskStateDraft(t.stateRunKey)
 		return
 	}
 	go s.watchScheduledRun(run, t, *m)
 }
 
 func (s *Service) watchScheduledRun(run ScheduleRun, t Task, m Device) {
+	defer s.takeTaskStateDraft(t.stateRunKey)
 	ctx, cancel := context.WithTimeout(context.Background(), runWatchTimeout)
 	defer cancel()
 	ended, ran := s.waitTurnEnd(ctx, m.ID, run.SessionID)
@@ -2005,6 +2080,13 @@ func (s *Service) watchScheduledRun(run ScheduleRun, t Task, m Device) {
 		}
 	}
 	if text == "" {
+		if t.stateRunKey != "" && hasSession && failedSession.State != proto.StateNeedsYou && !failedSession.Starting {
+			if items, ok := s.lastTurnItems(ctx, m.ID, run.SessionID); ok && s.stillEnded(ctx, m.ID, run.SessionID, items) {
+				if currentTurnHasTaskStateRun(items, t.stateRunKey) {
+					s.finishTaskState(ctx, t, run)
+				}
+			}
+		}
 		if t.Facts {
 			s.briefReached(run.SessionID) // the briefing is in its conversation, whether or not a push follows
 		}
@@ -2403,7 +2485,7 @@ func (s *Service) forgetConversation(ctx context.Context, id string) (Task, bool
 // runs are above instead. The task's prompt is always there: it may have been edited, or compacted away.
 func taskPrompt(t Task, due, now time.Time, loc *time.Location, manual, kb, continued bool) string {
 	r := prompts.TaskRun{Label: t.label(), Once: t.Repeat == repeatOnce, Interval: t.Repeat == repeatInterval, Due: due.In(loc),
-		Prompt: t.Prompt, KBHint: kb && t.calendar(), KnowledgeDir: t.kbDir, Continued: continued, PushAsked: t.pushesOnlyAsked(), InboxWorthy: t.inboxWorthy(), InboxEvery: t.inboxEvery(), Facts: t.factsText}
+		Prompt: t.Prompt, KBHint: kb && t.calendar(), KnowledgeDir: t.kbDir, Continued: continued, PushAsked: t.pushesOnlyAsked(), InboxWorthy: t.inboxWorthy(), InboxEvery: t.inboxEvery(), Facts: t.factsText, State: taskStatePrompt(t)}
 	if r.Interval {
 		r.Every = everyText(t.EveryMinutes)
 	}
@@ -2585,7 +2667,14 @@ func (s *Service) scheduleRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		runIf, err := parseRoutineCheck(raw["run_if"])
+		if err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
+		delete(raw, "run_if")
 		delete(raw, "until") // not a time.Time: "30m" and a local clock time would not unmarshal
+		ignoreTaskStateNote(raw)
 		var in Task
 		encoded, _ := json.Marshal(raw)
 		if err := json.Unmarshal(encoded, &in); err != nil {
@@ -2593,7 +2682,11 @@ func (s *Service) scheduleRoutes() {
 			return
 		}
 		t := editTask(Task{ID: "task_" + randomHex(4), CreatedAt: now.UTC()}, in, now)
-		t.SessionID, t.Push, t.Inbox = "", push, inbox
+		t.SessionID, t.Push, t.Inbox, t.RunIf = "", push, inbox, runIf
+		if err := editTaskState(&t, in, raw, now); err != nil {
+			writeTaskStateError(w, err)
+			return
+		}
 		applyUntil(&t, end, hasUntil, clearUntil)
 		dropStaleUntil(&t, hasUntil, now)
 		if err := checkTask(&t, now); err != nil {
@@ -2642,7 +2735,15 @@ func (s *Service) scheduleRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		runIf, err := parseRoutineCheck(raw["run_if"])
+		if err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
+		_, hasRunIf := raw["run_if"]
+		delete(raw, "run_if")
 		delete(raw, "until") // not a time.Time: "30m" and a local clock time would not unmarshal
+		ignoreTaskStateNote(raw)
 		mayBeMain := s.mayBeMainNow(r.Context())
 		s.models.mu.Lock()
 		defer s.models.mu.Unlock()
@@ -2671,6 +2772,14 @@ func (s *Service) scheduleRoutes() {
 			in.Repeat, in.Cron, in.At, in.Time, in.Weekdays, in.EveryMinutes = old.Repeat, old.Cron, old.At, "", nil, 0
 		}
 		t := editTask(sc.tasks[i], in, now)
+		if hasRunIf {
+			t.RunIf = runIf
+		}
+		if err := editTaskState(&t, in, raw, now); err != nil {
+			sc.mu.Unlock()
+			writeTaskStateError(w, err)
+			return
+		}
 		push, has, err := pushIn(raw)
 		if err != nil {
 			sc.mu.Unlock()
@@ -2703,7 +2812,7 @@ func (s *Service) scheduleRoutes() {
 		}
 		applyUntil(&t, end, hasUntil, clearUntil)
 		dropStaleUntil(&t, hasUntil, now)
-		ownConversationIfQuiet(&t, mayBeMain)
+		isolateScheduledConversation(&t, mayBeMain)
 		if err := checkTask(&t, now); err != nil {
 			sc.mu.Unlock()
 			apierr.Write(w, http.StatusBadRequest, err)

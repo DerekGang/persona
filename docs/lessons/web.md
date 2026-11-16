@@ -540,6 +540,8 @@ Retiring a generation must also wake mounted consumers to read the next generati
 
 A fresh task object can be an unchanged list read or an unrelated status update. Keep title and notes drafts with separate local and saved revisions: clean fields follow authoritative changes, while dirty fields survive reads and the other field's save. A successful PATCH acknowledges only its submitted revision, including edits away and back during that request; a failure leaves the draft available for another blur. Admit saves synchronously, and retire callbacks when the task or credential generation changes before starting a follow-up read or reporting an error. Regress the mounted detail through the real store and REST client with deferred synthetic responses, rather than asserting helper state alone.
 
+The scheduled-task editor can stay open after Save then Run fails. Its save response must accept canonical execution metadata and the state note without replacing ordinary edits typed while the request was pending. Regress that sequence with a deferred save, a later title edit and a failed run, then save again and check that the new title survives without resubmitting an unchanged note.
+
 ## Mail send admission must precede React updates (#1251)
 
 A busy button protects only its click path after rerender. Mail shortcuts and form submission need the same synchronous ref guard inside the send function, acquired after validation and released on failure. Keep it held after success until the composer closes. Regress mixed events in one React batch with a deferred transport, then check failure/retry, successful close, recipient validation and IME controls.

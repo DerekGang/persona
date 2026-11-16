@@ -193,7 +193,8 @@ func TestTaskSourceGoneOnAnExistingMachine(t *testing.T) {
 
 func TestTaskSourceModelPreparationFallsBackBeforeSending(t *testing.T) {
 	s, f := pickFixture(t)
-	setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true, MachineID: "server", SessionID: "main"})
+	// Recurring runs are isolated from the main chat; a one-off can still continue it with its model pick.
+	setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatOnce, Enabled: true, MachineID: "server", SessionID: "main"})
 	// This fixture supplies an authoritative launcher list: "gone" is refused before assistant.send.
 	if err := s.setModelPick(context.Background(), "main", &modelPick{MachineID: "server", Launcher: "gone", Model: "m"}); err != nil {
 		t.Fatal(err)
