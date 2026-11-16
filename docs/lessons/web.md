@@ -226,6 +226,10 @@ size. Every build prints each language's count (#7418; before, a build under its
 see them was a scratch build with the constant at 1 B). While the PR waits, `main` may raise the budget for its own
 changes: merge it, keep its note, and append yours with a new pair.
 
+A component shared by two lazy screens can add a chunk and preload entries to the startup bundle even when none of
+its component code loads at startup. Sharing the scheduled-task model picker with Settings added 95 B against a
+main with no room. Load Settings' picker when its editor opens so the first screen need not carry that dependency.
+
 ## A startup namespace ships every one of its strings in every first screen (#7418)
 
 The first-screen budget had 0 B of room after weeks of raises of 11 B, 25 B and 187 B, while the startup catalog sent
