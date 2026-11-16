@@ -5,6 +5,7 @@ import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { TaskEditor } from "./TaskEditor";
 import { blankTask, type Task } from "../../lib/routines";
 import { getState } from "../../lib/store";
+import { chooseManager, MANAGER_HEADER, resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 import { loadPages } from "../../lib/lazy-page";
 import { t } from "../../i18n";
 
@@ -28,6 +29,7 @@ const click=async(label:string)=>{
  expect(button).toBeTruthy();await act(async()=>button.click());await flush();
 };
 beforeEach(()=>{
+ resetManagerChoice();setRosterDefault('assistant');
  writes=[];reject=false;catalog='available';onSaved.mockClear();onClose.mockClear();
  saved={...blankTask(),id:'job',title:'Check files',prompt:'Summarize files',model_revision:0};
  Object.assign(getState(),{features:['task_execution'],machines:[{id:'box',name:'Computer',online:true}]});
@@ -52,9 +54,30 @@ beforeEach(()=>{
  }));
  host=document.createElement('div');document.body.append(host);root=createRoot(host);
 });
-afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals();});
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();resetManagerChoice();vi.unstubAllGlobals();});
 const expand=async(open=true)=>{await act(async()=>{document.querySelector<HTMLDetailsElement>('details')!.open=open;document.querySelector('details')!.dispatchEvent(new Event('toggle'));});await flush();};
 const render=async(task=saved,key='initial',expanded=true)=>{await act(async()=>root.render(<TaskEditor key={key} task={task} onSaved={onSaved} onClose={onClose} onDeleted={()=>{}}/>));await flush();if(expanded)await expand();};
+
+it('reads execution defaults and catalogs through the same chosen assistant as the task PUT',async()=>{
+ chooseManager('other');
+ const fetcher=globalThis.fetch;
+ const requests:{path:string;manager:string|null;method:string}[]=[];
+ vi.stubGlobal('fetch',vi.fn((input:RequestInfo|URL,init?:RequestInit)=>{
+  requests.push({path:String(input),manager:new Headers(init?.headers).get(MANAGER_HEADER),method:init?.method??'GET'});
+  return fetcher(input,init);
+ }));
+ await render();
+ await change(field(t('assistant-taskeditor.title_label')),'Other assistant task');
+ await click(t('common.save'));
+ for(const fragment of ['/purposes/assistant','/launchers?purpose=task','/models?','/assistant/tasks/job']){
+  const request=requests.find(r=>r.path.includes(fragment));
+  expect(request,fragment).toBeTruthy();
+  expect(request?.manager).toBe('other');
+ }
+ expect(requests.find(r=>r.method==='PUT')?.manager).toBe('other');
+ expect(writes).toHaveLength(1);
+ for(const field of ['launcher','model','effort','execution_machine_id'])expect(writes[0]).not.toHaveProperty(field);
+});
 
 it('previews inherited execution above the prompt while collapsed and keeps defaults inherited on save',async()=>{
  await render(saved,'defaults',false);

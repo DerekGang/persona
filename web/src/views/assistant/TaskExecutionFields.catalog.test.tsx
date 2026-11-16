@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TaskExecutionFields } from "./TaskExecutionFields";
 import { blankTask, type Task } from "../../lib/routines";
 import { getState } from "../../lib/store";
+import { resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 import { t } from "../../i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,6 +14,7 @@ const pending: { path: string; resolve: (response: Response) => void }[] = [];
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const flush = async () => { for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); }); };
 beforeEach(() => {
+  resetManagerChoice(); setRosterDefault("assistant");
   pending.length = 0;
   Object.assign(getState(), { machines: [{ id: "first", name: "First", online: true }, { id: "second", name: "Second", online: true }] });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -24,7 +26,7 @@ beforeEach(() => {
   }));
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); resetManagerChoice(); vi.unstubAllGlobals(); });
 
 it.each(["computer", "launcher"])("does not expose another %s's catalog during loading, failure, or a late response", async (kind) => {
   let draft: Task = { ...blankTask(), id: "job", execution_machine_id: "first", launcher: "first" };

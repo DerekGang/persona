@@ -912,7 +912,11 @@ agent backend, model and thinking effort. Every untouched control explicitly fol
 values shown; its title and summary share one line. Task rows use the same summary from their effective `execution`,
 while older responses without it keep their legacy display. The saved fields stay unset so future Assistant changes
 still apply. It reuses the chat's
-launcher list (`purpose=assistant`), model picker and capability-derived thinking choices; it never changes Main chat.
+assistant-compatible launcher list (`purpose=task`), model picker and capability-derived thinking choices; it never changes Main chat.
+Only the explicit task purpose computes computer-scoped task inheritance; `purpose=assistant` keeps the ordinary
+Assistant picker default. Every editor discovery request names the same chosen manager as the task save. Defaults,
+launcher lists and model catalogs are scoped to that manager as well as the computer and launcher, including while
+requests are loading or fail; a former manager's late answer cannot replace them.
 Plain-text prompts work independently of rich input and content references.
 
 `POST /assistant/tasks` and `PUT /assistant/tasks/{id}` accept sparse `launcher`, `model`, `effort`,
@@ -967,7 +971,9 @@ keeps the one-off failure notice but does not arm its automatic retry. The run's
 an older retry still pending when a later manual run loses its receipt. A request confirmed never sent still retries once;
 model snapshot and default-directory preparation failures retain that notification and retry behavior.
 A temporarily unreadable launcher list does not prove a saved launcher is gone: the run still uses that exact binding;
-an authoritative missing or incompatible launcher remains a failure. Unknown backend metadata stays unset.
+an authoritative missing or incompatible launcher remains a failure, including a successful empty node list. A missing
+or null node catalog and an unreadable managed-provider catalog remain unknown, rather than evidence of deletion.
+Configured wrappers and managed providers participate in the merged list. Unknown backend metadata stays unset.
 An unconfigured source-chat follow-up can use its own conversation when the source computer is missing/offline,
 model preparation fails before sending, or the node confirms the source is gone. Source sends use `resume_only`;
 the fallback records `source_unavailable`. A timeout, closed link or other unclassified send failure records failure

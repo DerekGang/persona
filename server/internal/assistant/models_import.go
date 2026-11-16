@@ -740,14 +740,14 @@ func nonNil(s []string) []string {
 	return s
 }
 
-// pickerDefault is GET /api/v1/machines/{mid}/launchers's default: ?purpose= (assistant, or "New Agent"'s agent.new
-// when absent).
+// pickerDefault is GET /api/v1/machines/{mid}/launchers's default: ?purpose=assistant for ordinary chats,
+// task for computer-scoped scheduled-task inheritance, or "New Agent"'s agent.new when absent.
 func (s *Service) pickerDefault(ctx context.Context, r *http.Request) map[string]any {
 	purpose := r.URL.Query().Get("purpose")
 	if purpose == "" {
 		purpose = "agent.new"
 	}
-	if purpose == "assistant" && r.PathValue("mid") != "" {
+	if purpose == "task" && r.PathValue("mid") != "" {
 		if b, err := s.taskModelBaseline(ctx, r.PathValue("mid")); err == nil {
 			runtime := b.Runtime
 			if runtime == "" {

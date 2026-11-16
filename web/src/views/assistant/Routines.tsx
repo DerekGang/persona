@@ -66,7 +66,7 @@ export function Routines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     const machines = [...new Set((tasks ?? []).map((task) => task.execution?.machine_id).filter((id): id is string => !!id))];
     setLauncherNames({});
     // One metadata read per execution computer, never one per task or a model discovery call.
-    void Promise.allSettled(machines.map(async (id) => [id, (await machineLaunchers(id, { purpose: "assistant", signal: controller.signal })).launchers] as const))
+    void Promise.allSettled(machines.map(async (id) => [id, (await machineLaunchers(id, { purpose: "task", manager: manager ?? undefined, signal: controller.signal })).launchers] as const))
       .then((results) => { if (!controller.signal.aborted) setLauncherNames(Object.fromEntries(results.flatMap((r) => r.status === "fulfilled" ? [r.value] : []))); });
     return () => controller.abort();
   }, [tasks, manager]);

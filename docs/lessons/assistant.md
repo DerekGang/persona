@@ -590,6 +590,14 @@ merging sparse overrides; a local alias there takes its own model defaults, whil
 its configured binding. Include target identity metadata in the execution fingerprint. Explicit overrides still fail
 when unavailable, and changing only the computer must not pin a copied default.
 
+Do not infer catalog uncertainty from the number of entries. An explicit successful empty task catalog confirms
+absence; a failed read or omitted/null catalog does not. Carry that distinction through the node-list merge and check
+the task's exact launcher before sending, including configured wrappers and managed providers. An unreadable managed
+catalog is also unknown. Test zero sends for authoritative deletion and incompatibility, alongside preserved exact
+bindings for older or unreadable discovery. Keep task-only inheritance behind an explicit picker purpose so ordinary
+Assistant defaults do not change. In the editor, scope every default and catalog read to the same chosen manager as
+the task write, and include that manager in response keys as well as effect dependencies.
+
 A runtime's session inventory is authoritative even without a local Claude/Codex state record. Strict task resumes
 validate the owning assistant-capable runtime, launcher and physical directory before sending; local id shape and state
 cannot classify a runtime-owned session as gone. Missing metadata for a known owner is uncertain, so it must fail without

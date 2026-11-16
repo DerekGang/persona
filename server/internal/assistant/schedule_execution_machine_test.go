@@ -40,7 +40,7 @@ func TestTaskExecutionInheritsOnItsComputer(t *testing.T) {
 			f.zshrc["remote"][0].BaseURL = "https://replacement.example"
 			f.mu.Unlock()
 			// Refresh the advertised node list through the same API used by the editor.
-			if r := request(s, "GET", "/api/v1/machines/remote/launchers?purpose=assistant", ""); r.Code != 200 {
+			if r := request(s, "GET", "/api/v1/machines/remote/launchers?purpose=task", ""); r.Code != 200 {
 				t.Fatalf("refresh catalog: %d %s", r.Code, r.Body.String())
 			} else {
 				var catalog struct {

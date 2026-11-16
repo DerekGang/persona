@@ -4,7 +4,7 @@ import { errorText } from "../../lib/api";
 import { modelPurpose, type ModelPurpose } from "../../lib/model-config";
 import { defaultModel, effortChoices, machineLaunchers, providerModels, takesEffort, type MachineLaunchers } from "../../lib/launcher-models";
 import { launcherTitle } from "../../lib/provider-names";
-import { shownManager } from "../../lib/manager-choice";
+import { useChosenManager, useKnownDefault } from "../../lib/manager-choice";
 import { taskExecutionNeedsOwnChat, taskExecutionSummary, type Task } from "../../lib/routines";
 import { useStore } from "../../lib/store";
 import { ModelPicker, type ModelList } from "../../ui/ModelPicker";
@@ -15,23 +15,32 @@ import { t } from "../../i18n";
 
 export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task; disabled: boolean; onChange: (patch: Partial<Task>) => void }) {
   const machines = useStore((s) => s.machines);
+  const picked = useChosenManager();
+  const knownDefault = useKnownDefault();
+  const manager = picked ?? knownDefault;
+  const availableMachines = machines.filter((m) => !m.manager || m.manager === manager);
   const [expanded, setExpanded] = useState(false);
-  const [main, setMain] = useState<ModelPurpose>();
-  const [launcherCatalog, setLauncherCatalog] = useState<{ key: string; list: MachineLaunchers }>();
+  const [mainCatalog, setMainCatalog] = useState<{ key: string; purpose?: ModelPurpose; error?: string }>();
+  const [launcherCatalog, setLauncherCatalog] = useState<{ key: string; list?: MachineLaunchers; error?: string }>();
   const [modelCatalog, setModelCatalog] = useState<{ key: string; models: ModelList }>();
-  const [problem, setProblem] = useState("");
   const [reload, setReload] = useState(0);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
+  const mainKey = JSON.stringify([manager, reload]);
+  const main = mainCatalog?.key === mainKey ? mainCatalog.purpose : undefined;
   useEffect(() => {
+    if (!manager) return;
     let live = true;
-    modelPurpose("assistant").then((r) => { if (live) { setMain(r.purpose); setProblem(""); } }, (e) => { if (live) setProblem(errorText(e)); });
+    modelPurpose("assistant", manager).then((r) => {
+      if (live) setMainCatalog({ key: mainKey, purpose: r.purpose });
+    }, (e) => { if (live) setMainCatalog({ key: mainKey, error: errorText(e) }); });
     return () => { live = false; };
-  }, [reload]);
+  }, [manager, reload, mainKey]);
   const machine = draft.execution_machine_id || main?.machine_id || draft.execution?.machine_id || "";
-  const launcherKey = JSON.stringify([machine, reload]);
+  const launcherKey = JSON.stringify([manager, machine, reload]);
   const launchers = launcherCatalog?.key === launcherKey ? launcherCatalog.list : undefined;
+  const problem = (mainCatalog?.key === mainKey && mainCatalog.error) || (launcherCatalog?.key === launcherKey && launcherCatalog.error) || "";
   const base = launchers?.default
     ? { ...launchers.default, provider: launchers.default.provider ? `launcher.${launchers.default.provider}` : "" }
     : machine === main?.machine_id ? main?.effective ?? {} : {};
@@ -39,28 +48,28 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
   const launcher = draft.launcher || inheritedLauncher;
   const inheritsAssistant = !draft.launcher || draft.launcher === inheritedLauncher;
   const inherited = inheritsAssistant ? base : {};
-  const modelKey = JSON.stringify([machine, launcher, reload]);
+  const modelKey = JSON.stringify([manager, machine, launcher, reload]);
   const models: ModelList = modelCatalog?.key === modelKey ? modelCatalog.models : { status: expanded ? "loading" : "idle" };
   const modelsPending = models.status === "idle" || models.status === "loading";
   useEffect(() => {
-    if (!machine) return;
+    if (!manager || !machine) return;
     const controller = new AbortController();
-    machineLaunchers(machine, { purpose: "assistant", signal: controller.signal }).then((r) => {
-      if (!controller.signal.aborted) { setLauncherCatalog({ key: launcherKey, list: r }); setProblem(""); }
-    }, (e) => { if (!controller.signal.aborted) setProblem(errorText(e)); });
+    machineLaunchers(machine, { purpose: "task", manager, signal: controller.signal }).then((r) => {
+      if (!controller.signal.aborted) setLauncherCatalog({ key: launcherKey, list: r });
+    }, (e) => { if (!controller.signal.aborted) setLauncherCatalog({ key: launcherKey, error: errorText(e) }); });
     return () => controller.abort();
-  }, [machine, reload, launcherKey]);
+  }, [manager, machine, reload, launcherKey]);
   useEffect(() => {
     setOpen(false); setQuery("");
     if (!expanded) return;
-    if (!machine || !launcher) return;
+    if (!manager || !machine || !launcher) return;
     const controller = new AbortController();
     setModelCatalog({ key: modelKey, models: { status: "loading" } });
-    providerModels(`launcher.${launcher}`, { machine, signal: controller.signal, refresh: reload > 0 })
+    providerModels(`launcher.${launcher}`, { manager, machine, signal: controller.signal, refresh: reload > 0 })
       .then((list) => { if (!controller.signal.aborted) setModelCatalog({ key: modelKey, models: { status: "ready", list } }); })
       .catch((e) => { if (!controller.signal.aborted) setModelCatalog({ key: modelKey, models: { status: "error", error: errorText(e) } }); });
     return () => controller.abort();
-  }, [expanded, machine, launcher, reload, modelKey]);
+  }, [expanded, manager, machine, launcher, reload, modelKey]);
   const list = models.list;
   const model = draft.model || inherited.model;
   const selectedModel = list?.models.find((m) => m.id === model) ?? (!model ? defaultModel(list?.models ?? []) : undefined);
@@ -83,9 +92,9 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
       <p className="text-submeta leading-relaxed text-ink-3">{t("assistant-taskeditor.execution_inheritance")}</p>
       <Field label={t("assistant-taskeditor.execution_computer")}>
         <select className={inputClass} value={draft.execution_machine_id ?? ""} disabled={disabled} onChange={(e) => onChange({ execution_machine_id: e.target.value })}>
-          <option value="">{t("assistant-taskeditor.computer_default", { name: machines.find((m) => m.id === main?.machine_id)?.name || main?.machine_id || "…" })}</option>
-          {draft.execution_machine_id && !machines.some((m) => m.id === draft.execution_machine_id) && <option value={draft.execution_machine_id}>{draft.execution_machine_id}</option>}
-          {machines.filter((m) => !m.manager || m.manager === shownManager()).map((m) => <option key={m.id} value={m.id}>{m.name}{m.online ? "" : ` · ${t("assistant-taskeditor.computer_offline")}`}</option>)}
+          <option value="">{t("assistant-taskeditor.computer_default", { name: availableMachines.find((m) => m.id === main?.machine_id)?.name || main?.machine_id || "…" })}</option>
+          {draft.execution_machine_id && !availableMachines.some((m) => m.id === draft.execution_machine_id) && <option value={draft.execution_machine_id}>{draft.execution_machine_id}</option>}
+          {availableMachines.map((m) => <option key={m.id} value={m.id}>{m.name}{m.online ? "" : ` · ${t("assistant-taskeditor.computer_offline")}`}</option>)}
         </select>
       </Field>
       <Field label={t("assistant-taskeditor.execution_agent")}>

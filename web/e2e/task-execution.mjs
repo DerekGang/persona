@@ -13,10 +13,12 @@ const watchdog=setTimeout(()=>{console.error("TIMEOUT task execution verificatio
 const browser=await chromium.launch({executablePath:flag("--chromium"),headless:true,args:["--no-sandbox"]});
 try {
  for(const width of [1280,390]) for(const theme of ["light","dark"]) {
+  const manager=theme==="dark"?"other":"assistant";
   const context=await browser.newContext({viewport:{width,height:900},colorScheme:theme,reducedMotion:"reduce"});
-  await context.addInitScript(({theme})=>{
+  await context.addInitScript(({theme,manager})=>{
    localStorage.setItem("persona.token","synthetic-task-token");localStorage.setItem("persona.language","en");localStorage.setItem("persona.theme",theme);
-  },{theme});
+   if(manager!=="assistant")localStorage.setItem("persona.currentManager",manager);
+  },{theme,manager});
   let task={id:"job",title:"Review project files",prompt:"Summarize the project files.",repeat:"interval",every_minutes:30,enabled:true,model_revision:0};
   const viewTask=()=>({...task,execution:{machine_id:"box",launcher:task.launcher||"assistant",agent:task.launcher==="codex"?"codex":"claude",model:task.model||"main-model",effort:task.effort||"high"}});
   const writes=[], reads=[];
@@ -26,6 +28,10 @@ try {
   await context.route("**/api/v1/**",async(route)=>{
    const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api\/v1/,"");
    reads.push(`${req.method()} ${path}`);
+   if(path==="/model-config/purposes/assistant"||/^\/machines\/[^/]+\/launchers$/.test(path)||path.startsWith("/model-config/providers/")||path.startsWith("/assistant/tasks")) {
+    assert.equal(req.headers()["x-persona-manager"]||"assistant",manager,`wrong assistant for ${req.method()} ${path}`);
+   }
+   if(/^\/machines\/[^/]+\/launchers$/.test(path))assert.equal(url.searchParams.get("purpose"),"task");
    let body={};
    if(path==="/machines")body={machines:[{id:"box",name:"Example computer",online:true},{id:"remote",name:"Other computer",online:true}]};
    else if(path==="/sessions")body={sessions:[]};
@@ -53,7 +59,7 @@ try {
    else if(path==="/assistant/tasks/job"&&req.method()==="PUT") {const patch=req.postDataJSON();writes.push({path,patch});task={...task,...patch,model_revision:1};body={task:viewTask()};}
    else if(path==="/extensions/ui")body={slots:[]};
    else if(path==="/extensions")body={extensions:[]};
-   else if(path==="/managers")body={managers:[]};
+   else if(path==="/managers")body={default:"assistant",managers:[{id:"assistant",name:"Default assistant",default:true,builtin:true,online:true},{id:"other",name:"Other assistant",online:true}]};
    if(!["GET","HEAD"].includes(req.method())&&!path.startsWith("/assistant/tasks/job"))throw new Error(`unexpected write ${req.method()} ${path}`);
    await route.fulfill({contentType:"application/json",body:JSON.stringify(body)});
   });
@@ -213,7 +219,7 @@ try {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
   await page.screenshot({path:join(shots,`task-model-failed-${width}-${theme}.png`)});
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme}: select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure and no invalid save`);
+  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure and no invalid save`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}

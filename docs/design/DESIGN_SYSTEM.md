@@ -2978,7 +2978,9 @@ requiring that computer to be online. Toggling the original chat back on revalid
 Launcher discovery failure or a missing saved launcher keeps the saved choice visible as unavailable, while the
 Assistant inheritance option remains selectable. Selecting it explicitly clears launcher, model and effort together;
 discovery alone never changes saved choices. Computer-scoped defaults come from that computer's launcher response.
-Model and launcher catalogs are keyed to their exact context; stale responses cannot replace the current catalog.
+Defaults, model and launcher catalogs are keyed to the current assistant and their exact execution context; stale
+responses cannot replace the current catalog. Discovery reads and the task save target the same assistant. Task
+inheritance is requested explicitly, leaving ordinary Assistant picker defaults unchanged.
 While model discovery is pending, the picker is disabled. A failed read leaves the saved selection visible and the
 launcher inheritance recovery control usable, with no rows from the previous context.
 Run history has a separate disclosure for its execution configuration, outside the button opening the conversation.

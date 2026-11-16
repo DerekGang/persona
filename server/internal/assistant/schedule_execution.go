@@ -7,6 +7,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
@@ -74,10 +75,13 @@ func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, bind
 	if err := checkModelID(b.Model); err != nil {
 		return ex, err
 	}
+	known, err := s.checkTaskLauncher(ctx, machine, ex.Launcher)
+	if err != nil {
+		return ex, err
+	}
 	providers := s.modelProviders(ctx)
-	if strings.HasPrefix(b.Provider, "launcher.") && launcherName.MatchString(ex.Launcher) && !slices.ContainsFunc(providers, func(v ModelProvider) bool { return v.ID == b.Provider }) {
-		// A saved launcher can be absent from discovery while its node's list is unavailable. mainChatFit still
-		// refuses a confirmed missing/incompatible launcher; an unknown one runs the exact saved binding (#6884).
+	if !known && strings.HasPrefix(b.Provider, "launcher.") && launcherName.MatchString(ex.Launcher) && !slices.ContainsFunc(providers, func(v ModelProvider) bool { return v.ID == b.Provider }) {
+		// Only an unreadable catalog permits an undiscovered saved binding. A successful empty list is authoritative.
 		providers = append(providers, ModelProvider{ID: b.Provider, Kind: "launcher"})
 	}
 	if err := s.validateModel(ctx, p, b, providers); err != nil {
@@ -187,6 +191,9 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 	if s.isWorkMachine(p.MachineID) {
 		return nil, errWorkAssistant
 	}
+	if _, err := s.checkTaskLauncher(ctx, p.MachineID, strings.TrimPrefix(effective.Provider, "launcher.")); err != nil {
+		return nil, err
+	}
 	if err := s.validateModel(ctx, p, effective, s.modelProviders(ctx)); err != nil {
 		return nil, err
 	}
@@ -209,6 +216,34 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 		return nil, nil
 	}
 	return &modelRecord{Revision: old.Revision + 1, Binding: b}, nil
+}
+
+// A successful task catalog is authoritative, including an empty list. The ordinary assistant's legacy fallback
+// treats an empty list as unknown; tasks must not silently retain a removed choice or substitute another launcher.
+// Configured wrappers and managed providers are merged before checking. Failed discovery remains unknown.
+func (s *Service) checkTaskLauncher(ctx context.Context, machine, name string) (known bool, err error) {
+	stored, known := s.storedLaunchersKnown(ctx)
+	if !known {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(withUnhidden(withManagedSnapshot(ctx, stored), name), 10*time.Second)
+	defer cancel()
+	picker, known, err := s.pickerLaunchersKnown(ctx, machine, "")
+	if err != nil || !known {
+		return false, nil
+	}
+	fits, err := s.assistantLaunchersOf(ctx, machine, picker)
+	if err != nil {
+		return false, nil
+	}
+	named := func(l ConfiguredLauncher) bool { return l.Name == name }
+	if slices.ContainsFunc(fits, named) {
+		return true, nil
+	}
+	if slices.ContainsFunc(picker, named) {
+		return true, s.mainChatRefusal(ctx, machine, name)
+	}
+	return true, i18n.Err("assistant-models.err_provider_missing")
 }
 
 func (s *Service) saveTaskConfiguredLocked(ctx context.Context, sc *schedule, tasks []Task, id string, record *modelRecord) error {

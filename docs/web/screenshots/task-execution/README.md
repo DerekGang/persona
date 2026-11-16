@@ -15,6 +15,10 @@ source-chat validation/toggle/clear and unavailable-launcher recovery. It checks
 dark themes, doubles text size, verifies controls remain within the dialog and records page errors. The largest-text
 form scrolls with its footer available. Model discovery loading/failure is checked after changing computers; an older
 context's model must not remain selectable. Deferred-response component tests also cover late responses after failure.
+The roster has two assistants: light-theme runs follow the default and dark-theme runs select the other assistant.
+Every task/default/launcher/model read and task save asserts the matching manager; task launcher reads explicitly
+request task inheritance. Component regressions cover assistant switches during each discovery stage, null defaults,
+loading and failures, including a transport that delivers an old response after cancellation.
 
 The form reuses the existing dialog, fields, native selects, model picker and semantic tokens. Advanced options stay
 collapsed by default. Follow the repository's screenshot-in-PR workflow when publishing captures.
