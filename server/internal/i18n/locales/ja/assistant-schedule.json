@@ -1,4 +1,5 @@
 {
+  "execution_context_unavailable": "タスクの会話の実行環境を確認できません。Agent を再接続して再試行してください。",
   "followup": "フォローアップ",
   "morning": "朝のまとめ",
   "evening": "夜の振り返り",

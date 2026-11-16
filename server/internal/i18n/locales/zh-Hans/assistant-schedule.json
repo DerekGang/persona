@@ -1,4 +1,5 @@
 {
+  "execution_context_unavailable": "暂时无法核对任务对话的执行环境。请重新连接其 Agent 后重试。",
   "followup": "定时跟进",
   "morning": "早报",
   "evening": "晚间回顾",

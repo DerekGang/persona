@@ -1,4 +1,5 @@
 {
+  "execution_context_unavailable": "Cannot verify the task conversation’s execution context. Reconnect its agent and try again.",
   "followup": "Follow-up",
   "morning": "Morning brief",
   "evening": "Evening review",

@@ -21,11 +21,13 @@ try {
   const viewTask=()=>({...task,execution:{machine_id:"box",launcher:task.launcher||"assistant",agent:task.launcher==="codex"?"codex":"claude",model:task.model||"main-model",effort:task.effort||"high"}});
   const writes=[], reads=[];
   let launcherCatalog="available";
+  let holdRemoteModels=false, releaseModels, sawHeldModels;
+  const heldModelRead=new Promise(resolve=>{sawHeldModels=resolve;});
   await context.route("**/api/v1/**",async(route)=>{
    const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api\/v1/,"");
    reads.push(`${req.method()} ${path}`);
    let body={};
-   if(path==="/machines")body={machines:[{id:"box",name:"Example computer",online:true}]};
+   if(path==="/machines")body={machines:[{id:"box",name:"Example computer",online:true},{id:"remote",name:"Other computer",online:true}]};
    else if(path==="/sessions")body={sessions:[]};
    else if(path==="/assistant")body={machine_id:"box",main:"",conversations:[],tasks:[],memory:[]};
    else if(path==="/assistant/tasks")body={tasks:[viewTask()]};
@@ -36,9 +38,18 @@ try {
     if(launcherCatalog==="failed") {
      await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Launcher discovery unavailable"})});return;
     }
-    body={launchers:launcherCatalog==="missing"?[]:[{name:"assistant",display_name:"Assistant",agent:"claude"},{name:"codex",display_name:"agents",agent:"codex"}]};
+    body={launchers:launcherCatalog==="missing"?[]:[{name:"assistant",display_name:"Assistant",agent:"claude"},{name:"codex",display_name:"agents",agent:"codex"}],default:{provider:"assistant",model:"main-model",effort:"high"}};
    }
-   else if(path.startsWith("/model-config/providers/"))body={agent:path.includes("codex")?"codex":"claude",models:[{id:"test-model",name:"Example model",efforts:["low","high"],default_effort:"high"}]};
+   else if(path==="/machines/remote/launchers")body={launchers:[{name:"codex",display_name:"Remote agent",agent:"codex"}],default:{provider:"codex"}};
+   else if(path.startsWith("/model-config/providers/")) {
+    if(holdRemoteModels&&url.searchParams.get("machine")==="remote"&&path.includes("launcher.codex/")) {
+     await new Promise(resolve=>{
+      releaseModels=async()=>{await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({code:"internal",retryable:false,error:"Current catalog unavailable"})});resolve();};
+      sawHeldModels();
+     });return;
+    }
+    body={agent:path.includes("codex")?"codex":"claude",models:[{id:"test-model",name:"Example model",efforts:["low","high"],default_effort:"high"}]};
+   }
    else if(path==="/assistant/tasks/job"&&req.method()==="PUT") {const patch=req.postDataJSON();writes.push({path,patch});task={...task,...patch,model_revision:1};body={task:viewTask()};}
    else if(path==="/extensions/ui")body={slots:[]};
    else if(path==="/extensions")body={extensions:[]};
@@ -168,8 +179,41 @@ try {
    await page.getByRole("dialog").getByRole("button",{name:"Cancel",exact:true}).click();
    await closed();
   }
+  launcherCatalog="available";
+  task={...task,session_id:""};
+  await page.goto(`${base}/routines`);
+  await page.getByRole("button",{name:/Updated source task/}).first().click();
+  await page.getByText("Execution options",{exact:true}).click();
+  const modelField=page.getByRole("dialog").locator("fieldset").filter({has:page.locator("button[aria-expanded]")});
+  await modelField.locator("button[aria-expanded]:enabled").waitFor();
+  holdRemoteModels=true;
+  const beforeSwitch=writes.length;
+  await page.getByRole("combobox",{name:"Computer",exact:true}).selectOption("remote");
+  await heldModelRead;
+  assert(await modelField.locator("button[aria-expanded]").isDisabled(),"model picking waits for the current computer's catalog");
+  assert.equal(await modelField.getByRole("option",{name:/Example model/}).count(),0);
+  assert.equal(await page.locator("summary").filter({hasText:"Execution options"}).getByText(/main-model/).count(),0,"another computer's inherited model is not previewed");
+  await modelField.scrollIntoViewIfNeeded();
+  await page.screenshot({path:join(shots,`task-model-loading-${width}-${theme}.png`)});
+  await page.evaluate(()=>document.documentElement.style.setProperty("--text-scale","2"));
+  await modelField.scrollIntoViewIfNeeded();
+  await page.screenshot({path:join(shots,`task-model-loading-${width}-${theme}-large.png`)});
+  await releaseModels();
+  await page.getByRole("alert").filter({hasText:"HTTP 503"}).first().waitFor().catch(async(error)=>{
+   await page.screenshot({path:join(shots,`task-model-unsettled-${width}-${theme}.png`)});
+   console.error(JSON.stringify({reads:reads.slice(-12),text:await page.locator("body").innerText()}));throw error;
+  });
+  assert(await page.getByRole("combobox",{name:"Agent",exact:true}).isEnabled(),"catalog failure retains the inheritance recovery control");
+  assert.equal(await modelField.getByRole("option",{name:/Example model/}).count(),0);
+  assert.equal(writes.length,beforeSwitch,"a discovery failure does not save another context's choice");
+  await modelField.scrollIntoViewIfNeeded();
+  await page.screenshot({path:join(shots,`task-model-failed-${width}-${theme}-large.png`)});
+  await page.evaluate(()=>document.documentElement.style.setProperty("--text-scale","1"));
+  await modelField.scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
+  await page.screenshot({path:join(shots,`task-model-failed-${width}-${theme}.png`)});
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme}: select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear and no invalid save`);
+  console.log(`PASS ${width} ${theme}: select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure and no invalid save`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}

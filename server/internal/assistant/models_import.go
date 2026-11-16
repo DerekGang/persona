@@ -747,6 +747,15 @@ func (s *Service) pickerDefault(ctx context.Context, r *http.Request) map[string
 	if purpose == "" {
 		purpose = "agent.new"
 	}
+	if purpose == "assistant" && r.PathValue("mid") != "" {
+		if b, err := s.taskModelBaseline(ctx, r.PathValue("mid")); err == nil {
+			runtime := b.Runtime
+			if runtime == "" {
+				runtime = proto.AssistantRuntimeCLI
+			}
+			return map[string]any{"provider": strings.TrimPrefix(b.Provider, "launcher."), "model": b.Model, "effort": b.Effort, "runtime": runtime}
+		}
+	}
 	return s.launcherDefault(ctx, purpose)
 }
 

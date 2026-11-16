@@ -17,8 +17,8 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
   const machines = useStore((s) => s.machines);
   const [expanded, setExpanded] = useState(false);
   const [main, setMain] = useState<ModelPurpose>();
-  const [launchers, setLaunchers] = useState<MachineLaunchers>();
-  const [models, setModels] = useState<ModelList>({ status: "idle" });
+  const [launcherCatalog, setLauncherCatalog] = useState<{ key: string; list: MachineLaunchers }>();
+  const [modelCatalog, setModelCatalog] = useState<{ key: string; models: ModelList }>();
   const [problem, setProblem] = useState("");
   const [reload, setReload] = useState(0);
   const [open, setOpen] = useState(false);
@@ -30,28 +30,37 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
     return () => { live = false; };
   }, [reload]);
   const machine = draft.execution_machine_id || main?.machine_id || draft.execution?.machine_id || "";
-  const inheritedLauncher = main?.effective?.provider?.replace(/^launcher\./, "") || draft.execution?.launcher || "";
+  const launcherKey = JSON.stringify([machine, reload]);
+  const launchers = launcherCatalog?.key === launcherKey ? launcherCatalog.list : undefined;
+  const base = launchers?.default
+    ? { ...launchers.default, provider: launchers.default.provider ? `launcher.${launchers.default.provider}` : "" }
+    : machine === main?.machine_id ? main?.effective ?? {} : {};
+  const inheritedLauncher = base.provider?.replace(/^launcher\./, "") || (draft.execution?.machine_id === machine ? draft.execution.launcher : "") || "";
   const launcher = draft.launcher || inheritedLauncher;
   const inheritsAssistant = !draft.launcher || draft.launcher === inheritedLauncher;
-  const inherited = inheritsAssistant ? main?.effective ?? {} : {};
+  const inherited = inheritsAssistant ? base : {};
+  const modelKey = JSON.stringify([machine, launcher, reload]);
+  const models: ModelList = modelCatalog?.key === modelKey ? modelCatalog.models : { status: expanded ? "loading" : "idle" };
+  const modelsPending = models.status === "idle" || models.status === "loading";
   useEffect(() => {
-    setLaunchers(undefined);
     if (!machine) return;
     const controller = new AbortController();
-    machineLaunchers(machine, { purpose: "assistant", signal: controller.signal }).then((r) => { setLaunchers(r); setProblem(""); }, (e) => { if (!controller.signal.aborted) setProblem(errorText(e)); });
+    machineLaunchers(machine, { purpose: "assistant", signal: controller.signal }).then((r) => {
+      if (!controller.signal.aborted) { setLauncherCatalog({ key: launcherKey, list: r }); setProblem(""); }
+    }, (e) => { if (!controller.signal.aborted) setProblem(errorText(e)); });
     return () => controller.abort();
-  }, [machine, reload]);
+  }, [machine, reload, launcherKey]);
   useEffect(() => {
     setOpen(false); setQuery("");
     if (!expanded) return;
-    if (!machine || !launcher) { setModels({ status: "idle" }); return; }
+    if (!machine || !launcher) return;
     const controller = new AbortController();
-    setModels({ status: "loading" });
+    setModelCatalog({ key: modelKey, models: { status: "loading" } });
     providerModels(`launcher.${launcher}`, { machine, signal: controller.signal, refresh: reload > 0 })
-      .then((list) => setModels({ status: "ready", list }))
-      .catch((e) => { if (!controller.signal.aborted) setModels({ status: "error", error: errorText(e) }); });
+      .then((list) => { if (!controller.signal.aborted) setModelCatalog({ key: modelKey, models: { status: "ready", list } }); })
+      .catch((e) => { if (!controller.signal.aborted) setModelCatalog({ key: modelKey, models: { status: "error", error: errorText(e) } }); });
     return () => controller.abort();
-  }, [expanded, machine, launcher, reload]);
+  }, [expanded, machine, launcher, reload, modelKey]);
   const list = models.list;
   const model = draft.model || inherited.model;
   const selectedModel = list?.models.find((m) => m.id === model) ?? (!model ? defaultModel(list?.models ?? []) : undefined);
@@ -88,8 +97,8 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
       </Field>
       <div>
         <span className="mb-1 block text-label font-medium text-ink-2">{t("settings-modelconfiguration.specific_model")}</span>
-        <fieldset className="min-w-0" disabled={disabled}><ModelPicker models={models} model={draft.model || ""} followed={inherited} defaultLabel={defaultLabel} open={open} onToggle={() => setOpen((v) => !v)} query={query} onQuery={setQuery} search={search}
-          onPick={(model) => { if (!disabled) { onChange({ model }); setOpen(false); } }} onReload={() => setReload((v) => v + 1)} custom failedNote={t("settings-modelconfiguration.list_failed")} /></fieldset>
+        <fieldset className="min-w-0" disabled={disabled || modelsPending}><ModelPicker models={models} model={draft.model || ""} followed={inherited} defaultLabel={defaultLabel} open={open} onToggle={() => setOpen((v) => !v)} query={query} onQuery={setQuery} search={search}
+          onPick={(model) => { if (!disabled && !modelsPending) { onChange({ model }); setOpen(false); } }} onReload={() => setReload((v) => v + 1)} custom failedNote={t("settings-modelconfiguration.list_failed")} /></fieldset>
         {models.status === "error" && <p role="alert" className="mt-1 break-words text-label text-red">{models.error}</p>}
       </div>
       <Field label={t("settings-modelconfiguration.effort")}>

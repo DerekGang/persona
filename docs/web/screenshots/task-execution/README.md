@@ -1,28 +1,20 @@
 # Scheduled task execution form
 
-Synthetic browser evidence for the task editor's optional execution configuration.
-The browser uses intercepted HTTP and WebSocket fixtures exclusively; no hub, real task or model is contacted.
+The synthetic browser fixture uses intercepted HTTP and WebSocket responses exclusively; it contacts no real hub,
+task or model. Review images belong to [PR #6806](https://github.com/nwverse/persona/pull/6806), not the source tree.
 
-Run against an owned loopback Vite server:
+Run against an owned loopback Vite server, writing captures outside the checkout:
 
 ```sh
 node web/e2e/task-execution.mjs http://127.0.0.1:5173 \
-  --shots docs/web/screenshots/task-execution --chromium <chromium-executable>
+  --shots <capture-directory> --chromium <chromium-executable>
 ```
 
-The fixture checks Cron visibility, the inherited configuration summary before the prompt, and the explicit agent,
-model and thinking effort. It saves a working directory, reopens the task, and checks the saved values and model
-discovery. Task-list screenshots show the complete effective execution line; standard editor screenshots show its
-single-line disclosure. It captures light/dark at 1280 and 390
-pixels, then opens the group, doubles text size and checks
-that form controls stay inside the dialog. Screenshots have been visually inspected. The largest-text form scrolls;
-its footer remains available. Native selects and the shared model picker keep full values available even when their
-collapsed text is truncated at the largest size.
+The fixture covers Cron, inherited and explicit execution summaries before the prompt, save/reopen, directory choices,
+source-chat validation/toggle/clear and unavailable-launcher recovery. It checks desktop and phone widths in light and
+dark themes, doubles text size, verifies controls remain within the dialog and records page errors. The largest-text
+form scrolls with its footer available. Model discovery loading/failure is checked after changing computers; an older
+context's model must not remain selectable. Deferred-response component tests also cover late responses after failure.
 
-The source-conversation regression also opens a historical task with a saved computer pin, changes its title,
-toggles **Continue the original chat** off and back on, and checks the warning and disabled Save without a request.
-Clearing the pin restores inheritance and permits a save. `task-origin-*.png` captures the validation at both widths,
-themes and text sizes.
-
-The form reuses the existing dialog, fields, native selects, model picker and semantic tokens. Advanced options are
-collapsed by default. This extends a secondary form and leaves primary screens and themes unchanged.
+The form reuses the existing dialog, fields, native selects, model picker and semantic tokens. Advanced options stay
+collapsed by default. Follow the repository's screenshot-in-PR workflow when publishing captures.

@@ -41,7 +41,22 @@ func (n *Node) checkTaskDirectory(id, cwd, launcher string) error {
 		return nil
 	}
 	st, ok := n.state.get(id)
+	if row, owner, listed := n.runtimes.rowOf(id); listed {
+		previous := row.Launcher
+		if previous == "" {
+			owner.mu.Lock()
+			previous = owner.hello.Launcher
+			owner.mu.Unlock()
+		}
+		if !owner.assistant() || n.assistantRuntime(launcher) != owner || previous != launcher {
+			return errors.New("task execution context differs from this conversation; start a new conversation")
+		}
+		st.Cwd, st.Launcher, ok = row.Cwd, previous, true
+	}
 	if !ok {
+		if _, _, known := n.runtimes.belongs(id); known {
+			return i18n.Err("assistant-schedule.execution_context_unavailable") // known ownership is not proof of a gone conversation
+		}
 		return fmt.Errorf("conversation %s is gone", id)
 	}
 	previous, err := n.taskDirectory(st.Cwd)

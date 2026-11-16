@@ -48,7 +48,7 @@ func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, bind
 		}
 	}
 	ex.Launcher, ex.Model, ex.Effort, ex.Runtime = strings.TrimPrefix(b.Provider, "launcher."), b.Model, b.Effort, b.Runtime
-	ex.Fingerprint = s.modelBindingFingerprint(ctx, b)
+	ex.Fingerprint = s.taskBindingFingerprint(ctx, machine, b)
 	if !validate {
 		if ex.Cwd == "" {
 			if d, ok := s.device(ctx, machine); ok {

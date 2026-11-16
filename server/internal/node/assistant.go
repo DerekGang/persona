@@ -204,9 +204,8 @@ func (n *Node) isAssistantSessionIn(id string, pass *codexListPass) bool {
 // never written) starts a new conversation at the hub instead of a blank one under the old id (docs/assistant/assistant.md
 // "Scheduled tasks").
 func (n *Node) assistantResumable(id string) bool {
-	if n.runtimeAssistant(id) { // a runtime keeps it: still its while the runtime knows it
-		_, _, known := n.runtimes.belongs(id)
-		return known
+	if _, _, known := n.runtimes.belongs(id); known { // runtime ownership is independent of local state or id shape
+		return true
 	}
 	if id == "" || !validID(id) {
 		return false
@@ -242,7 +241,9 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if launcher != "" && !shellcmd.NameRe.MatchString(launcher) {
 		return "", fmt.Errorf("invalid launcher %q", launcher)
 	}
-	if id != "" && !validID(id) && !n.runtimeAssistant(id) {
+	_, _, runtimeKnown := n.runtimes.belongs(id)
+	strictRuntime := executionOption(options).Strict && runtimeKnown
+	if id != "" && !validID(id) && !n.runtimeAssistant(id) && !strictRuntime {
 		return "", fmt.Errorf("invalid session id %q", id)
 	}
 	if id != "" {
@@ -286,6 +287,7 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 		if err := n.checkTaskDirectory(id, cwd, launcher); err != nil {
 			return "", err
 		}
+		_, _, strictRuntime = n.runtimes.belongs(id)
 	}
 	// Read and consume the one-shot choice before guest or launcher normalization can replace options. A resumed send
 	// must never lose an explicit tier and quietly continue on the thread's current speed.
@@ -299,7 +301,7 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 			return "", serviceTierRefusal(ctx, "assistant_service_tier_start_only")
 		}
 	}
-	if err := validModesFor(launcherOr(launcher, st.Launcher), mode, effort); err != nil {
+	if err := n.validAssistantModes(ctx, launcherOr(launcher, st.Launcher), mode, effort); err != nil {
 		return "", err
 	}
 	isMain := executionOption(options).IsMain
@@ -349,7 +351,7 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 			}
 		}
 	}
-	if own, switched := n.assistantResumeLauncher(ctx, id, launcher, st); switched {
+	if own, switched := n.assistantResumeLauncher(ctx, id, launcher, st); switched && !strictRuntime {
 		if executionOption(options).Strict {
 			return "", errors.New("task execution context differs from this conversation; start a new conversation")
 		}
@@ -360,7 +362,7 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	// An agent runtime's launcher, or a conversation one runs (assistant_runtime.go): it keeps its model; the node
 	// keeps the conversation's state, snapshot, mode and memory.
 	rl := launcherOr(launcher, st.Launcher)
-	if onRuntime, runs := n.assistantRuntime(rl), n.runtimeAssistant(id); guest != nil && (onRuntime != nil || runs) {
+	if onRuntime, runs := n.assistantRuntime(rl), n.runtimeAssistant(id) || strictRuntime; guest != nil && (onRuntime != nil || runs) {
 		return "", errGuestAgent
 	} else if onRuntime != nil || runs {
 		if policy != "" {
@@ -396,7 +398,10 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if effort != "" {
 		execution.Effort = effort
 	}
-	if err := execution.check(rl); err != nil {
+	if err := execution.checkModel(); err != nil {
+		return "", err
+	}
+	if err := n.validAssistantModes(ctx, rl, "", execution.Effort); err != nil {
 		return "", err
 	}
 	if launcher == "" && id != "" {

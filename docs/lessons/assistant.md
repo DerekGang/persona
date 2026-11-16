@@ -560,6 +560,16 @@ Run the pre-run command on the explicit target first, falling back to the histor
 target was chosen. Cover both a first run and a task reconfigured after an earlier run; a skip result must still
 prevent the model send.
 
+A local launcher name is not a portable provider identity. Resolve task inheritance on its execution computer before
+merging sparse overrides; a local alias there takes its own model defaults, while a shared managed provider can retain
+its configured binding. Include target identity metadata in the execution fingerprint. Explicit overrides still fail
+when unavailable, and changing only the computer must not pin a copied default.
+
+A runtime's session inventory is authoritative even without a local Claude/Codex state record. Strict task resumes
+validate the owning assistant-capable runtime, launcher and physical directory before sending; local id shape and state
+cannot classify a runtime-owned session as gone. Missing metadata for a known owner is uncertain, so it must fail without
+triggering a replacement send. Regress both runtime-shaped and UUID sessions, mismatches, missing sessions and lost replies.
+
 ## A send whose answer came too late may have gone in (2026-11-12)
 
 The manager waits 90 s for a relayed message (`drainRelays`) and kept it queued when no answer came. The node had

@@ -326,6 +326,7 @@ The current mechanisms are generic; specific commands, routes, and variables are
   - With only gated commands (and output-only commands such as jq / head / grep / echo / cd / `timeout N`), check each: reads allowed directly; self-only actions (mark read, complete own to-dos) allowed;
     other writes (send / reply / recall / forward, reactions, docs, schedules, approvals, mail, group settings…) show a phone "Lark" approval card with action, chat name (extension `assistant.summary`),
     method, path, and body to send (reads `@file`). Denial returns user feedback as the reason; "Always allow in this session" remembers this route type with ids stripped.
+    On Claude Code alone, one static authenticated send/reply with a top-level text body declares `editable_text`: the web may replace that text on a plain Allow or attach a denial note. The node retires the original card's grant, applies the same classifier and rules to the rebuilt command, and grants only the edited call once with all other tool input and call identity unchanged. Codex, runtimes, lark-cli, dynamic/file bodies and other routes keep ordinary Allow/Deny.
   - A write that went out through the proxy (the API answered 2xx) is kept in the sent-as-user ledger (`docs/extensions/connectors.md` "Sent as the user"): the node tells the manager (`lark.sent`) how the gate let it through. Not in it: lark-cli writes and gates without `auth`.
   - A health conversation's writes are confirmed each time, rules' allow included (`docs/assistant/health.md` "Outbound"), at both entrances: `larkCheck` turns an allow into a card, and the proxy address opened for a process started in the health space
     lets a write through only by taking the grant that card left (a conversation's own: a new Codex conversation's addresses are given its id once its thread starts, and take nothing before). Both decide the space from a record made when
@@ -906,8 +907,11 @@ change both records use the existing settings transaction and publish neither on
 model record's optimistic revision; a stale supplied revision returns 409. Old clients that omit these fields keep
 them. Old dormant `model_config.task.<id>` records remain inert.
 
-Inheritance uses the existing `mergeModel` contract: the same provider inherits unset model/effort from Main chat;
-a different provider starts from its own defaults. A model or effort override pins the effective provider so a later
+Inheritance is resolved on the execution computer, then uses the existing `mergeModel` contract. A shared managed
+provider retains its binding across computers in scope; a local launcher on another computer takes that computer's
+compatible launcher defaults, even when its alias matches Main chat's. Its model, effort, runtime and profile are not
+copied from another local provider. The picker reports the same computer-scoped defaults. A different explicit provider
+starts from its own defaults. A model or effort override pins the effective provider so a later
 Main chat switch cannot pair it with another agent. Task-specific choices require the task's own conversation;
 turn off **Continue the original chat** first. Agent means a real headless-capable launcher, including compatible
 runtime launchers, rather than an orchestration role. Work-only computers remain excluded.
@@ -933,7 +937,11 @@ space as before. The task records the physical directory used, so a changed syml
 A node must announce `task_execution`; unsupported nodes refuse the new execution request with `node_outdated`.
 
 The scheduler and **Run now** share `runTask` and the frozen resolved binding. A reusable conversation must match its
-computer, launcher/agent, model/effort/runtime fingerprint and physical directory. Permission changes are applied
+computer, launcher/agent, model/effort/runtime fingerprint and physical directory. The fingerprint includes the execution
+computer's advertised launcher identity; a changed local gateway starts a new chat. A runtime-owned conversation can
+resume without a local Claude/Codex state record: the node validates the owning assistant-capable runtime, its launcher
+and physical directory from runtime metadata. Missing metadata for a known owner is uncertain and cannot trigger a
+replacement send. Permission changes are applied
 on the next send. An unknown legacy context with explicit choices starts fresh. Replacements preserve previous
 conversations and run history; each run records `conversation` (`source`, `resumed`, `new`) and, when replaced,
 `conversation_reason`. For task-owned execution, offline computers, unavailable models and missing directories fail with their reason, with
@@ -1036,7 +1044,7 @@ Tasks continuing original chats (`session_id`) also switch those chats to these 
 
 In the Web Scheduled tasks editor, expand **Run continuity** to edit a recurring task's state note or select **Start a new chat for each run**.
 The hub includes the last saved note in each run. Keep cursors and a short record of what has already been reported, up to 4,096 UTF-8 bytes.
-A run can stage a replacement with `schedule_state_set`, passing the run key from its own turn's prompt; the hub checks it against the prompt of the conversation's latest turn, so a run in a reused chat cannot use an earlier run's key. Staging is temporary. The hub saves the replacement only if it can track the run through a successful turn and write the note.
+A run can stage a replacement with `schedule_state_set`, passing the run key from its own prompt; the hub checks it against the conversation's latest scheduled-task prompt, so a run in a reused chat cannot use an earlier run's key, while a background task's notice, a supervision message or another conversation's message that comes in during the run does not end it. Staging is temporary. The hub saves the replacement only if it can track the run through a successful turn and write the note. When the run's turn ends with nothing staged yet while work it sent to the background (a subagent launched async, a background command, a workflow) has not reported back, the run stays open until each has and the conversation is idle, within the run's 30-minute watch (#8913). A run that staged before its turn ended, or sent nothing to the background, is saved when its turn ends.
 If the hub cannot register the dispatched run or monitor its conversation, it discards the draft and the next run reads the last saved note.
 A user edit takes precedence over updates from a run that started before that edit. The editor sends the note's
 revision when changing its text. If a run already saved a newer note, the hub rejects the stale edit so the user can
