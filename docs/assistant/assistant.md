@@ -950,6 +950,10 @@ on the next send. An unknown legacy context with explicit choices starts fresh. 
 conversations and run history; each run records `conversation` (`source`, `resumed`, `new`) and, when replaced,
 `conversation_reason`. For task-owned execution, offline computers, unavailable models and missing directories fail with their reason, with
 no substitute computer, model or directory. A failed send with uncertain delivery is not sent again as a new chat.
+This also covers a new conversation's first send: a lost reply or a node reporting delivery as unknown/already accepted
+keeps the one-off failure notice but does not arm its automatic retry. The run's `delivery_unknown` flag also cancels
+an older retry still pending when a later manual run loses its receipt. A request confirmed never sent still retries once;
+model snapshot and default-directory preparation failures retain that notification and retry behavior.
 A temporarily unreadable launcher list does not prove a saved launcher is gone: the run still uses that exact binding;
 an authoritative missing or incompatible launcher remains a failure. Unknown backend metadata stays unset.
 An unconfigured source-chat follow-up can use its own conversation when the source computer is missing/offline,

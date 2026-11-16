@@ -563,6 +563,15 @@ The device layer returns `node_outdated` before dispatching unsupported requests
 back to its own conversation on that typed refusal. Keep it distinct from timeouts, closed links and unclassified
 errors, which cannot prove that a turn never started and must not cause replacement sends.
 
+## A new conversation's lost reply is not an unstarted task (#6800)
+
+`startConversation` can fail after `assistant.send` reached the node. Treating every error as a one-off that never
+started arms a delayed duplicate, even when source and resumed sends already refuse replacement. Use the existing
+`sendUnknown` delivery classification for the new-chat path too: retain the failure notice without retrying a possibly
+accepted turn. Persist `delivery_unknown` so a later manual send with a lost receipt cancels older pending retries too.
+Keep `rpc.ErrNotSent` and preparation failures retryable, and notify on a failed task-owned resume as well. A virtual-clock
+test must advance past the retry delay; checking only the immediate send count misses this failure.
+
 ## A pre-run check must use the task's selected computer (#6800)
 
 A task's last run and the assistant default can point to different computers from its explicit execution target.

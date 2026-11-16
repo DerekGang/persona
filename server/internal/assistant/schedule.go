@@ -254,6 +254,8 @@ type ScheduleRun struct {
 	SessionID          string         `json:"session_id,omitempty"`
 	// Retried: this run is the automatic retry after a failure (so a retry that fails again does not retry forever).
 	Retried bool `json:"retried,omitempty"`
+	// DeliveryUnknown: the send may have reached the agent without a conversation receipt; it also cancels older retries.
+	DeliveryUnknown bool `json:"delivery_unknown,omitempty"`
 	// NotReady: skipped because a required computer or model was not ready, including temporary offline states.
 	// It stays in the history but neither counts toward nor ends a failure streak (schedule_streak.go).
 	NotReady bool `json:"not_ready,omitempty"`
@@ -1721,6 +1723,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	if err != nil {
 		run.Status, run.Error = runFailed, err.Error()
 		s.recordRun(run)
+		s.oneOffNotStarted(ctx, t, run)
 		return proto.Session{}, err
 	}
 	fresh := t.FreshEachRun && t.Repeat != repeatOnce
@@ -1810,6 +1813,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			}
 			if !unsent {
 				run.Status, run.Error = runFailed, err.Error()
+				run.DeliveryUnknown = true
 				s.recordRun(run)
 				s.oneOffFailed(ctx, t, run)
 				return proto.Session{}, err // uncertain delivery cannot be retried in another turn or conversation
@@ -1835,6 +1839,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		if err != nil {
 			run.Status, run.Error = runFailed, err.Error()
 			s.recordRun(run)
+			s.oneOffNotStarted(ctx, t, run)
 			return proto.Session{}, err
 		}
 	}
@@ -1887,7 +1892,9 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			}
 			if !taskConversationUnavailable(err, t.RunSessionID) {
 				run.Status, run.Error = runFailed, err.Error()
+				run.DeliveryUnknown = sendUnknown(err)
 				s.recordRun(run)
+				s.oneOffFailed(ctx, t, run)
 				return proto.Session{}, err
 			}
 			run.ConversationReason = "conversation_gone"
@@ -1909,8 +1916,13 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	if err != nil {
 		s.logf("task %s: %v", t.ID, err)
 		run.Status, run.Error = runFailed, err.Error()
+		run.DeliveryUnknown = sendUnknown(err)
 		s.recordRun(run)
-		s.oneOffNotStarted(ctx, t, run)
+		if run.DeliveryUnknown {
+			s.oneOffFailed(ctx, t, run) // the first turn may already be running; never send it a second time
+		} else {
+			s.oneOffNotStarted(ctx, t, run)
+		}
 		return proto.Session{}, err
 	}
 	run.MachineID, run.SessionID = sess.MachineID, sess.SessionID
@@ -2257,7 +2269,7 @@ func (s *Service) retryStillDue(ctx context.Context, id string, failed ScheduleR
 // retryCancelled is why the retry of failed, due at now, does not go ("" when it does). cur is the task now (found:
 // false when it was deleted); runs is the history, newest last.
 //   - Another run of the task went out after the failed one (a Run now, or its next time): it already ran again. A
-//     run that could not start (no conversation) or was skipped did nothing, so the retry still goes.
+//     run confirmed not started or skipped did nothing, so the retry still goes. A lost receipt is not that proof.
 //   - A one-off is switched on again with its time after now (moved later, or earlier but still ahead): the
 //     scheduler runs it then. A one-off that is due is off (runDue), so being on again means the owner set it.
 //   - A repeating task switched off. (A repeating task's next time is always ahead, so its time says nothing.)
@@ -2266,7 +2278,7 @@ func retryCancelled(cur Task, found bool, failed ScheduleRun, runs []ScheduleRun
 		return "deleted"
 	}
 	for _, r := range slices.Backward(runs) {
-		if r.RefID == cur.ID && r.At.After(failed.At) && r.Status != runSkipped && r.SessionID != "" {
+		if r.RefID == cur.ID && r.At.After(failed.At) && r.Status != runSkipped && (r.SessionID != "" || r.DeliveryUnknown) {
 			return "run again"
 		}
 	}
