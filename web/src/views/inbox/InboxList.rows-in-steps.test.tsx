@@ -42,13 +42,27 @@ let root: Root;
 const flush = async () => {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 };
-// the idle steps: each one mounts the next rows
+// Hold idle work until the test releases a batch. Wall time between act turns must not mount the next rows.
+const idleCallbacks = new Map<number, () => void>();
+let idleID = 0;
 const idle = async (steps: number) => {
-  for (let i = 0; i < steps; i++) await act(async () => { await new Promise((done) => setTimeout(done, 60)); });
+  for (let i = 0; i < steps; i++) {
+    const pending = [...idleCallbacks.values()];
+    idleCallbacks.clear();
+    await act(async () => pending.forEach((run) => run()));
+  }
 };
 const rows = () => host.querySelectorAll("[data-item]").length;
 
 beforeEach(() => {
+  idleCallbacks.clear();
+  idleID = 0;
+  vi.stubGlobal("requestIdleCallback", (run: () => void) => {
+    const id = ++idleID;
+    idleCallbacks.set(id, run);
+    return id;
+  });
+  vi.stubGlobal("cancelIdleCallback", (id: number) => idleCallbacks.delete(id));
   hub.items = Array.from({ length: 120 }, (_, i) => mail(i));
   localStorage.clear();
   resetInboxForTests();
@@ -64,6 +78,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  expect(idleCallbacks.size).toBe(0);
 });
 
 describe("a long list mounts in steps (audit item 34)", () => {
@@ -96,6 +111,9 @@ describe("a long list mounts in steps (audit item 34)", () => {
     await flush();
     expect(host.querySelector('[data-item="m090"]')).not.toBeNull();
     expect(rows()).toBe(91);
+    await idle(1);
+    expect(rows()).toBe(111);
+    expect(host.querySelector('[data-item="m090"]')).not.toBeNull();
   });
 
   it("draws every row at once for a returned view, which puts its scroll position back", async () => {

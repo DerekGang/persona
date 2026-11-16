@@ -4,7 +4,7 @@
 // render inline.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "./Markdown";
 import { forgetMarkdown } from "./markdown-cache";
 
@@ -50,11 +50,9 @@ afterEach(() => {
 });
 
 const draw = async (text: string) => {
-  await act(async () => {
-    root.render(<Markdown text={text} />);
-    if (text.includes("tracker.example")) await import("./ExternalImageGate");
-  });
-  await flush();
+  await act(async () => root.render(<Markdown text={text} />));
+  // The render starts React.lazy's import. A separate direct import can finish before that request settles.
+  await act(async () => { await vi.dynamicImportSettled(); });
 };
 const gate = () => host.querySelector<HTMLButtonElement>("[data-external-image=gate]");
 const retry = () => host.querySelector<HTMLButtonElement>("[data-external-image=retry]");
