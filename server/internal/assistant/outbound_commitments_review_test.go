@@ -33,8 +33,10 @@ func TestOutboundPromiseInboxLocalRepeatIsNotAnotherDelivery(t *testing.T) {
 			h, it, c := outwardReviewInbox(t)
 			if source == "mail" {
 				h.in.mail = &fakeMail{}
+				h.inbox.mu.Lock()
 				it.Connector = nil
 				it.Mail = &InboxMail{AccountID: "example", Mailbox: "INBOX", UIDs: []uint32{1}}
+				h.inbox.mu.Unlock()
 			}
 			text := "I'll share the results later."
 			if _, err := h.replyInboxDo(ctx, it.ID, text, "11111111-1111-4111-8111-111111111111", false, false); err != nil {
@@ -75,8 +77,10 @@ func TestOutboundPromiseInboxFreshDeliveryUsesActualSendTime(t *testing.T) {
 			topicURL := it.Connector.URL
 			if source == "mail" {
 				h.in.mail = &fakeMail{}
+				h.inbox.mu.Lock()
 				it.Connector = nil
 				it.Mail = &InboxMail{AccountID: "example", Mailbox: "INBOX", UIDs: []uint32{1}}
+				h.inbox.mu.Unlock()
 				topic = it.Source + "/" + it.Account + "/" + it.ID
 				topicURL = "/inbox/" + it.ID
 			}
@@ -108,6 +112,7 @@ func TestOutboundPromiseUnsupportedInboxReplyLeavesNoIntent(t *testing.T) {
 			ctx := context.Background()
 			h, it, c := outwardReviewInbox(t)
 			var changes []DocChange
+			h.inbox.mu.Lock()
 			switch source {
 			case "read-only connector":
 				it.Connector.CanReply = false
@@ -127,6 +132,7 @@ func TestOutboundPromiseUnsupportedInboxReplyLeavesNoIntent(t *testing.T) {
 			case "unsupported":
 				it.Connector = nil
 			}
+			h.inbox.mu.Unlock()
 			const clientID = "33333333-3333-4333-8333-333333333333"
 			if _, err := h.replyInboxDo(ctx, it.ID, "I'll share the results later.", clientID, false, false, changes...); err == nil {
 				t.Fatal("fixture unexpectedly supported this reply")
@@ -138,7 +144,9 @@ func TestOutboundPromiseUnsupportedInboxReplyLeavesNoIntent(t *testing.T) {
 				t.Fatal("unsupported reply reached the provider")
 			}
 			if it.Connector != nil {
+				h.inbox.mu.Lock()
 				it.Connector.CanReply = true
+				h.inbox.mu.Unlock()
 				// Reusing the request ID after correcting the unsupported
 				// action must not confirm the text that was never sent.
 				if _, err := h.replyInboxDo(ctx, it.ID, "Here are the results.", clientID, false, false); err != nil {

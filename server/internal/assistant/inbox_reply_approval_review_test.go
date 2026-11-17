@@ -37,6 +37,7 @@ func approvalBlockedFixture(t *testing.T, blockAt int32) (*Service, *fakeHub, *I
 	if err := s.inboxReady(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitNeedsYouIdle(t, s)
 	now := time.Now().UTC()
 	it := &InboxItem{ID: "approval-concurrent", Source: "example", Tier: TierAction, Last: "a",
 		Reason: "Original reason", UpdatedAt: now.Add(-20 * time.Hour),
