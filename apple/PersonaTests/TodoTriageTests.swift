@@ -155,7 +155,7 @@ struct TodoTriageTests {
         #expect(delivered.shownState(.notStarted) == .unread)
 
         let waiting = todo("waiting") { $0.supervision = .init(supervisor: "main", state: "needs_user") }
-        #expect(waiting.statusLabel(.followup) == "等你处理")
+        #expect(waiting.statusLabel(.followup) == StateName.needsYou.text)
         #expect(waiting.shownState(.followup) == .needsYou)
 
         let done = todo("done", done: 1) { $0.supervision = .init(supervisor: "main", state: "needs_user") }
@@ -731,7 +731,7 @@ extension TodoTriageTests {
         #expect(td.waitsForOwner)
         #expect(!td.acceptedAtRest(status))
         #expect(td.shownState(status) == .needsYou)
-        #expect(td.statusLabel(status) == String(localized: "Waiting for You [To-do Sections]"))
+        #expect(td.statusLabel(status) == StateName.needsYou.text)
     }
 
     @Test(arguments: ["decide", "cannot"])
@@ -748,11 +748,61 @@ extension TodoTriageTests {
         let t = try sharedAt(json)
         let status: TaskState = .followup
         #expect(t.section == .done && t.rule == .accepted)
-        #expect(td.decisionReview?.dismissed == true)
+        #expect(td.decisionDismissed)
         #expect(td.waitsForOwner)
         #expect(td.acceptedAtRest(status))
         #expect(td.shownState(status) == .done)
         #expect(td.statusLabel(status) == String(localized: "Accepted"))
+    }
+
+    @Test func oldDismissalDoesNotHideANewerNeedsUserRound() throws {
+        let json = """
+        {"id":"newer-needs-user","title":"Choose the rollout again","created_at":"2026-11-09T00:00:00.000Z",
+         "updated_at":"2026-11-10T10:00:00.000Z","done_at":null,"agents":[],"origin":"main",
+         "supervision":{"supervisor":"main","done_when":[],"state":"needs_user",
+           "reviews":[{"at":"2026-11-10T10:00:00.000Z","verdict":"needs_user","checks":[]}]},
+         "decision_review":{"review_at":"2026-11-10T09:00:00.000Z","dismissal_id":"dismiss-old-round"}}
+        """
+        let td = try sharedTodo(json)
+        let t = try sharedAt(json)
+        #expect(t.section == .waiting && t.rule == .ownerDecides)
+        #expect(td.waitsForOwner)
+        #expect(td.shownState(.followup) == .needsYou)
+    }
+
+    @Test(arguments: ["decide", "cannot"])
+    func oldDismissalDoesNotHideANewerAcceptedDecision(outcome: String) throws {
+        let json = """
+        {"id":"newer-accepted-decision","title":"Choose the rollout again","created_at":"2026-11-09T00:00:00.000Z",
+         "updated_at":"2026-11-10T10:00:00.000Z","done_at":null,"agents":[],"origin":"main",
+         "supervision":{"supervisor":"main","done_when":[],"state":"accepted",
+           "reviews":[{"at":"2026-11-10T09:00:00.000Z","verdict":"accepted","checks":[]}]},
+         "decision_review":{"review_at":"2026-11-10T08:00:00.000Z","dismissal_id":"dismiss-old-round"},
+         "ask":{"outcome":"\(outcome)","verdict":"Choose the rollout again","asked_at":"2026-11-10T10:00:00.000Z"}}
+        """
+        let td = try sharedTodo(json)
+        let t = try sharedAt(json)
+        let status: TaskState = .followup
+        #expect(t.section == .waiting && t.rule == .ownerDecides)
+        #expect(!td.acceptedAtRest(status))
+        #expect(td.shownState(status) == .needsYou)
+        #expect(td.statusLabel(status) == StateName.needsYou.text)
+    }
+
+    /// Shared case `owner_decides_dismissed_with_open_pr`: a same-round dismissal still yields to the open-PR rule.
+    @Test func dismissedOwnerDecisionYieldsToOpenPR() throws {
+        let json = """
+        {"id":"t","title":"t","created_at":"2026-10-29T00:00:00.000Z",
+         "updated_at":"2026-11-10T11:00:00.000Z","done_at":null,
+         "agents":[{"machine_id":"m","session_id":"idle","linked_at":"2026-11-02T04:00:00.000Z"}],"origin":"conv",
+         "supervision":{"supervisor":"c","state":"needs_user",
+           "reviews":[{"at":"2026-11-10T09:00:00.000Z","verdict":"needs_user"}]},
+         "decision_review":{"review_at":"2026-11-10T09:00:00.000Z","dismissal_id":"dismiss_example"},
+         "pr_url":"https://github.com/example/project/pull/42",
+         "pr_status":{"url":"https://github.com/example/project/pull/42","state":"open","draft":false,"checked_at":"2026-11-10T11:59:00Z"}}
+        """
+        let t = try sharedAt(json)
+        #expect(t.section == .pr && t.rule == .prOpen)
     }
 
     /// Shared case `concern_deployed`: Other open / rest.

@@ -424,9 +424,6 @@ nonisolated struct DecisionReview: Codable, Hashable, Sendable {
     var dismissalID: String?
 
     enum CodingKeys: String, CodingKey { case reviewAt = "review_at", dismissalID = "dismissal_id" }
-
-    /// Don't handle was pressed for this very round and not undone.
-    var dismissed: Bool { !(dismissalID ?? "").isEmpty }
 }
 
 /// What the hub last read of one pull request (`pr_status` / `other_prs`, docs/protocol/protocol.md "Tasks and the chat feed").
@@ -453,6 +450,18 @@ nonisolated struct TodoPRStatus: Codable, Hashable, Sendable {
         self.checks = checks
         self.conflicts = conflicts
         self.checkedAt = checkedAt
+    }
+
+    /// Older or reduced fixtures may omit the optional review/check fields; use the same defaults as the memberwise init.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(String.self, forKey: .url)
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? "open"
+        draft = try c.decodeIfPresent(Bool.self, forKey: .draft) ?? false
+        review = try c.decodeIfPresent(String.self, forKey: .review) ?? "pending"
+        checks = try c.decodeIfPresent(String.self, forKey: .checks) ?? "none"
+        conflicts = try c.decodeIfPresent(Bool.self, forKey: .conflicts) ?? false
+        checkedAt = try c.decodeIfPresent(String.self, forKey: .checkedAt)
     }
 }
 

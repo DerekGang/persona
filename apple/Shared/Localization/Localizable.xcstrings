@@ -85,14 +85,6 @@
         "ja": {"stringUnit": {"state": "translated", "value": "交付済み・レビュー待ち"}}
       }
     },
-    "Waiting for You [To-do Sections]": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {"stringUnit": {"state": "translated", "value": "Waiting for you"}},
-        "zh-Hans": {"stringUnit": {"state": "translated", "value": "等你处理"}},
-        "ja": {"stringUnit": {"state": "translated", "value": "あなたの対応待ち"}}
-      }
-    },
     "Who Worked on It [Todo Detail]": {
       "extractionState": "manual",
       "localizations": {

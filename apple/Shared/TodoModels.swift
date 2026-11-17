@@ -61,7 +61,7 @@ nonisolated extension TodoItem {
             if reviewDone { return supervision?.state == "cancelled" ? String(localized: "Canceled") : String(localized: "Accepted") }
             return autoDone ? String(localized: "Auto-completed") : state.todoLabel
         }
-        if waitsForOwner { return String(localized: "Waiting for You [To-do Sections]") }
+        if waitsForOwner { return StateName.needsYou.text }
         if deliveredAwaitingReview(state) { return String(localized: "Delivered · Awaiting Review [To-do Sections]") }
         return state.todoLabel
     }
@@ -79,11 +79,26 @@ nonisolated extension TodoItem {
         return atRest && reviewRequired
     }
 
+    /// The review this decision belongs to: the latest review's time, else the hub's, else the ask's (web / Android).
+    private var decisionRound: Date? {
+        if let at = supervision?.latestReview?.at { return at }
+        if let at = decisionReview?.reviewAt, !at.isEmpty { return JSON.parseDate(at) }
+        return openAsk.flatMap { JSON.parseDate($0.askedAt) }
+    }
+
+    /// Don't handle was pressed for this very round and not undone; a newer review is a new decision round (#4874).
+    /// An unparseable legacy round keeps the previous hub-receipt behavior only when no newer review supersedes it.
+    var decisionDismissed: Bool {
+        guard let review = decisionReview, !(review.dismissalID ?? "").isEmpty, !review.reviewAt.isEmpty else { return false }
+        if let at = JSON.parseDate(review.reviewAt), let round = decisionRound { return at == round }
+        return supervision?.latestReview?.at == nil && JSON.parseDate(review.reviewAt) == nil
+    }
+
     /// An open task its supervisor accepted, reopened by the hub when its agent got more work, with nothing of it
     /// running or asking now: it reads Accepted, not Follow Up (#3156, docs/assistant/todo-status-sop.md "Accepted tasks").
     /// An open concern still waits for its report, so acceptance gives it neither that word nor Done styling (#3582).
     func acceptedAtRest(_ state: TaskState) -> Bool {
-        !isConcern && doneAt == nil && (!waitsForOwner || decisionReview?.dismissed == true) && acceptanceStands && (state == .followup || state == .unread || state == .notStarted)
+        !isConcern && doneAt == nil && (!waitsForOwner || decisionDismissed) && acceptanceStands && (state == .followup || state == .unread || state == .notStarted)
     }
 
     /// The state a row draws its tone and mark from: accepted, owner wait and delivered work match their labels (#5732).
