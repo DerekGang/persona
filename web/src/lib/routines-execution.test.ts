@@ -1,5 +1,16 @@
 import { expect, it } from "vitest";
-import { blankTask, runsWith, sameTask, taskBody } from "./routines";
+import { blankTask, runsWith, sameTask, taskBody, validateTask } from "./routines";
+
+it("keeps legacy title edits sparse after canonical empty fields enter the draft", () => {
+  for (const binding of [{ launcher: "claude" }, { effort: "high" }, { launcher: "claude", effort: "high" }]) {
+    const saved = { ...blankTask(), id: "job", title: "Before", prompt: "Check files", repeat: "interval" as const, every_minutes: 30, session_id: "origin", ...binding };
+    const draft = { ...saved, title: "After", launcher: saved.launcher ?? "", effort: saved.effort ?? "" };
+    expect(validateTask(draft, new Date(), saved)).toBeNull();
+    const body = taskBody(draft, saved);
+    for (const key of ["launcher", "model", "effort", "cwd", "execution_machine_id", "model_revision"]) expect(body).not.toHaveProperty(key);
+    expect(validateTask({ ...draft, effort: "low" }, new Date(), saved)).not.toBeNull();
+  }
+});
 
 it("saves task execution edits and clears overrides explicitly", () => {
   const saved = { ...blankTask(), id: "task", launcher: "codex", model: "test-model", cwd: "/work/project", execution_machine_id: "remote", model_revision: 3 };

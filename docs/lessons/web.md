@@ -8,6 +8,10 @@ Compare each execution field with the submitted snapshot: accept the canonical v
 edited in the meantime. Test save, a pending title edit, run failure, changed defaults and another save in the same
 form; reopening first masks the bug.
 
+A source task's old launcher/effort-only metadata is not a new execution choice. Pass the saved task to both the form
+validator and the execution-options notice, preserve sparse title saves, and still block changed choices. Otherwise
+the server can accept the compatibility case while the editor's Save button or duplicate notice still refuses it.
+
 ## A lazy waiting row needs a lazy ordering boundary (#9390)
 
 Ordering an unopened tray from its shared classifier imports the age computation on the first screen even when the

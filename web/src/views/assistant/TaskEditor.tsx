@@ -75,7 +75,7 @@ export function TaskEditor({
 
   /** What the hub said is wrong with the cron expression being typed ("" while it is fine or not checked yet). */
   const [cronProblem, setCronProblem] = useState("");
-  const problem = validateTask(draft, now) || (draft.repeat === "cron" && cronProblem ? cronProblem : null);
+  const problem = validateTask(draft, now, saved) || (draft.repeat === "cron" && cronProblem ? cronProblem : null);
   const changed = !saved || !sameTask(saved, draft);
   /** The user changed a field since it opened: a new task says what is missing only from then on; until then a grey
    *  Add is enough (a blank one opened in red before anything was typed). */
@@ -289,7 +289,7 @@ export function TaskEditor({
             )}
           </section>
 
-          {hasExecution && <Suspense fallback={<Spinner />}><TaskExecutionFields draft={draft} disabled={working} onChange={set} /></Suspense>}
+          {hasExecution && <Suspense fallback={<Spinner />}><TaskExecutionFields draft={draft} saved={saved} disabled={working} onChange={set} /></Suspense>}
 
           <section>
             <SectionTitle>{t("assistant-taskeditor.section_prompt")}</SectionTitle>

@@ -285,8 +285,32 @@ try {
   assert.equal(writes.length,count+2);
   for(const key of ["launcher","model","effort","cwd","execution_machine_id","model_revision"])assert.equal(key in writes[count+1].patch,false,`unrelated save must retain ${key}`);
   assert.equal(task.execution_machine_id,"box");assert.equal(task.launcher,"assistant");assert.equal(runRequests,1);
+  // A legacy source task's inert launcher/effort metadata must not block an unrelated title save.
+  task={id:"job",title:"Legacy source task",prompt:"Check the files.",repeat:"interval",every_minutes:30,enabled:true,model_revision:1,session_id:"origin",machine_id:"box",launcher:"assistant",effort:"high"};
+  await page.goto(`${base}/routines`);
+  await page.getByRole("button",{name:/Legacy source task/}).first().click();
+  await page.getByText("Execution options",{exact:true}).click();
+  await title.fill("Updated legacy source task");
+  const legacyCount=writes.length;
+  assert(await saveSource.isEnabled(),"unchanged legacy fields permit a title edit");
+  assert.equal(await page.getByRole("alert").filter({hasText:"Turn off “Continue the original chat”"}).count(),0);
+  for(const scale of [1,2]){
+   await page.evaluate(scale=>document.documentElement.style.setProperty("--text-scale",String(scale)),scale);
+   await page.getByRole("combobox",{name:"Agent",exact:true}).scrollIntoViewIfNeeded();
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
+   await page.screenshot({path:join(shots,`task-legacy-source-${width}-${theme}${scale===2?"-large":""}.png`)});
+  }
+  const legacyEffort=page.getByRole("combobox",{name:"Reasoning effort",exact:true});
+  await legacyEffort.selectOption("low");
+  assert(await saveSource.isDisabled(),"a new source effort choice is still refused");
+  await legacyEffort.selectOption("high");
+  assert(await saveSource.isEnabled());
+  await saveSource.click();await closed();
+  assert.equal(writes.length,legacyCount+1);assert.equal(writes[legacyCount].patch.session_id,"origin");
+  for(const key of ["launcher","model","effort","cwd","execution_machine_id","model_revision"])assert.equal(key in writes[legacyCount].patch,false,`legacy title save must preserve ${key}`);
+  assert.equal(task.launcher,"assistant");assert.equal(task.effort,"high");assert.equal(runRequests,1);
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure, real 404 manual model save, failed Run now canonical pins with pending title edit and sparse resave without reopening`);
+  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure, real 404 manual model save, failed Run now canonical pins with pending title edit and sparse resave without reopening, legacy source title save and changed-effort refusal`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}

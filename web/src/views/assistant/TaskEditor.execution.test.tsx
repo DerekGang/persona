@@ -215,6 +215,23 @@ it.each(['model','effort'] as const)('retains canonical pins after a failed Run 
  expect(onClose).toHaveBeenCalledOnce();
 });
 
+it.each([{launcher:'claude'},{effort:'high'},{launcher:'claude',effort:'high'}])('edits a legacy source task without turning its saved choices into new overrides: %j',async(binding)=>{
+ saved={...saved,...binding,session_id:'origin',machine_id:'box'};
+ await render();
+ await change(field(t('assistant-taskeditor.title_label')),'Updated legacy task');
+ const save=()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===t('common.save'))!;
+ expect(save().disabled).toBe(false);
+ expect(document.body.textContent).not.toContain(t('assistant-taskeditor.execution_own_chat'));
+ await click(t('common.save'));
+ expect(writes).toHaveLength(1);
+ expect(writes[0]).toMatchObject({title:'Updated legacy task',session_id:'origin'});
+ for(const key of ['launcher','model','effort','cwd','execution_machine_id','model_revision'])expect(writes[0]).not.toHaveProperty(key);
+ await change(field(t('settings-modelconfiguration.effort')),'low');
+ expect(save().disabled).toBe(true);
+ expect(document.body.textContent).toContain(t('assistant-taskeditor.execution_own_chat'));
+ expect(writes).toHaveLength(1);
+});
+
 it('blocks a pinned inherited computer with a source chat and validates toggling the source back on',async()=>{
  saved={...saved,session_id:'origin',machine_id:'box'};
  await render();

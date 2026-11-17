@@ -657,9 +657,12 @@ merging sparse overrides; a local alias there takes its own model defaults, whil
 its configured binding. Include target identity metadata in the execution fingerprint. Explicit overrides still fail
 when unavailable, and changing only the computer must not pin a copied default.
 
-Saving a model or effort override must retain both the provider and the computer on which it was validated, even
-when the choice equals today's default. Normalize before comparing the model record; persist the computer even when
-the model record itself is unchanged. Preserve explicit clears and untouched inheritance. Test after changing the
+Saving an explicit model or effort override must retain both the provider and the computer on which it was validated,
+even when the choice equals today's default. The execution editor supplies `model_revision` for that intent; an old
+unversioned launcher/effort-only echo with the same effective binding must preserve inheritance instead. Compare the
+effective patched and stored bindings before normalizing, and keep explicit empty values as clears. Normalize before
+comparing the model record; persist the computer even when the model record itself is unchanged. Preserve untouched
+inheritance. Test after changing the
 Assistant defaults and reconstructing the service, asserting the actual send target as well as storage. A fake's
 allowed-computer list must include the replacement, or its settings fallback silently undoes the test's default change.
 
@@ -670,6 +673,12 @@ catalog is also unknown. Test zero sends for authoritative deletion and incompat
 bindings for older or unreadable discovery. Keep task-only inheritance behind an explicit picker purpose so ordinary
 Assistant defaults do not change. In the editor, scope every default and catalog read to the same chosen manager as
 the task write, and include that manager in response keys as well as effect dependencies.
+
+Exercise an undiscovered launcher's first save as well as a seeded run. A placeholder only in the run path can hide
+the generic validator's global-provider rejection in the save path. Share that task-specific validation between both
+paths, and retain negative checks for model validation, advertised effort and managed-provider computer scope.
+Legacy source-chat launcher/effort metadata was inert: permit unchanged saves and source resumes, while refusing
+new overrides and any stored explicit model, directory or computer. Do not let raw request-key presence decide intent.
 
 A runtime's session inventory is authoritative even without a local Claude/Codex state record. Strict task resumes
 validate the owning assistant-capable runtime, launcher and physical directory before sending; local id shape and state

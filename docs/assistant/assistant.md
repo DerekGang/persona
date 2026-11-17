@@ -926,8 +926,10 @@ Plain-text prompts work independently of rich input and content references.
 `execution_machine_id` is the execution computer, distinct from `machine_id`, the source conversation's computer.
 Model overrides retain the existing `model_config.overrides.v1.task.<id>` record and `task.<id>` purpose. Saves that
 change both records use the existing settings transaction and publish neither on failure. `model_revision` is the
-model record's optimistic revision; a stale supplied revision returns 409. Old clients that omit these fields keep
-them. Old dormant `model_config.task.<id>` records remain inert.
+model record's optimistic revision; a stale supplied revision returns 409. Execution-aware clients include it for
+deliberate changes, including a choice equal to today's default. Old clients that omit these fields keep them.
+An unversioned launcher/effort-only echo whose effective binding is unchanged preserves the saved record and creates
+no provider or computer pin. Explicit clears remain clears. Old dormant `model_config.task.<id>` records remain inert.
 
 Inheritance is resolved on the execution computer, then uses the existing `mergeModel` contract. A shared managed
 provider retains its binding across computers in scope; a local launcher on another computer takes that computer's
@@ -942,6 +944,9 @@ An explicit empty computer restores computer inheritance; clearing the launcher/
 full inheritance. An untouched task stays sparse. The editor shows a validation error and
 disables Save and Run now while source-chat continuation and explicit execution choices coexist. Empty patches
 can clear historical choices without requiring a live computer; toggling continuation back on revalidates them.
+Existing source tasks may retain their unchanged legacy launcher/effort-only metadata, which did not affect the source
+chat's execution. Both title edits and runs keep that source's actual context; new execution choices still require
+the task's own conversation. A saved model, directory or execution computer does not qualify for this compatibility.
 
 The shared `TaskExecution` contract (`assistant/schedule_execution.go`, web `lib/routines.ts`) is returned as task
 `execution` and stored on each dispatched run as `execution`. It contains `machine_id`, `launcher`, `agent`, `model`,
@@ -977,7 +982,8 @@ This also covers a new conversation's first send: a lost reply or a node reporti
 keeps the one-off failure notice but does not arm its automatic retry. The run's `delivery_unknown` flag also cancels
 an older retry still pending when a later manual run loses its receipt. A request confirmed never sent still retries once;
 model snapshot and default-directory preparation failures retain that notification and retry behavior.
-A temporarily unreadable launcher list does not prove a saved launcher is gone: the run still uses that exact binding;
+A temporarily unreadable launcher list does not prove a launcher is gone: saving and running an undiscovered custom
+launcher preserve its exact binding while retaining model, effort, capability and computer-scope validation;
 an authoritative missing or incompatible launcher remains a failure, including a successful empty node list. A missing
 or null node catalog and an unreadable managed-provider catalog remain unknown, rather than evidence of deletion.
 Configured wrappers and managed providers participate in the merged list. Unknown backend metadata stays unset.

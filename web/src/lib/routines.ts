@@ -357,16 +357,19 @@ function pastUntil(d: Task, now: Date): string | null {
   return t("lib-routines.error_until");
 }
 
-/** A source chat keeps its execution context; only empty task choices can follow it. */
-export function taskExecutionNeedsOwnChat(d: Task): boolean {
-  return !!d.session_id && [d.launcher?.trim(), d.model?.trim(), d.effort?.trim(), d.execution_machine_id?.trim(), d.cwd].some(Boolean);
+/** Source chats retain their context, including legacy tasks whose launcher/effort fields were inert. */
+export function taskExecutionNeedsOwnChat(d: Task, saved?: Task | null): boolean {
+  const legacy = saved?.session_id === d.session_id && !saved?.model && !saved?.cwd && !saved?.execution_machine_id &&
+    (["launcher", "effort"] as const).every((key) => (d[key] ?? "").trim() === (saved?.[key] ?? "").trim());
+  return !!d.session_id && (!!d.model?.trim() || !!d.execution_machine_id?.trim() || !!d.cwd ||
+    (!legacy && !!(d.launcher?.trim() || d.effort?.trim())));
 }
 
 /** What the editor checks before saving (the hub checks the same and says why in Chinese): null = fine. */
-export function validateTask(d: Task, now: Date): string | null {
+export function validateTask(d: Task, now: Date, saved?: Task | null): string | null {
   if (d.repeat !== "once" && !d.title.trim()) return t("lib-routines.error_title");
   if (!d.prompt.trim()) return t("lib-routines.error_prompt");
-  if (taskExecutionNeedsOwnChat(d)) return t("assistant-taskeditor.execution_own_chat");
+  if (taskExecutionNeedsOwnChat(d, saved)) return t("assistant-taskeditor.execution_own_chat");
   switch (d.repeat) {
     case "daily":
       if (!HHMM.test(d.time ?? "")) return t("lib-routines.error_time");

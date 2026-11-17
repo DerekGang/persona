@@ -42,6 +42,10 @@ func TestTaskExecutionOverridePinsAcrossRestart(t *testing.T) {
 					s := newServiceOn(t, f, st)
 					setModel(t, s, "assistant", ModelBinding{Provider: "launcher.claude", Model: "main-model", Effort: "high"})
 					body := map[string]any{"title": "Check", "prompt": "Check files", "repeat": "interval", "every_minutes": 30, "enabled": true, tc.field: tc.value}
+					if tc.name == "equal_effort" {
+						// The execution editor distinguishes a deliberate equal-default choice from a legacy echo.
+						body["model_revision"] = 0
+					}
 					method, path := "POST", "/api/v1/assistant/tasks"
 					if tc.old != (ModelBinding{}) {
 						setTasks(s, granted(Task{ID: "job", Title: "Check", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true}))

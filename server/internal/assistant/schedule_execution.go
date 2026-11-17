@@ -32,7 +32,9 @@ func (s *Service) taskMachine(ctx context.Context, t Task) string {
 }
 
 func taskExecutionNeedsOwnChat(t Task, override ModelBinding) bool {
-	return t.SessionID != "" && (t.ExecutionMachineID != "" || t.Cwd != "" || override != (ModelBinding{}))
+	// Legacy launcher/effort fields were inert when continuing a source conversation.
+	// New changes to those fields are refused at save time; unchanged old records may still continue it.
+	return t.SessionID != "" && (t.ExecutionMachineID != "" || t.Cwd != "" || override.Model != "" || override.ConfigDir != "")
 }
 
 // A health task may choose its computer and model, but its directory and instructions belong to the space.
@@ -105,12 +107,7 @@ func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, bind
 	if err != nil {
 		return ex, err
 	}
-	providers := s.modelProviders(ctx)
-	if !known && strings.HasPrefix(b.Provider, "launcher.") && launcherName.MatchString(ex.Launcher) && !slices.ContainsFunc(providers, func(v ModelProvider) bool { return v.ID == b.Provider }) {
-		// Only an unreadable catalog permits an undiscovered saved binding. A successful empty list is authoritative.
-		providers = append(providers, ModelProvider{ID: b.Provider, Kind: "launcher"})
-	}
-	if err := s.validateModel(ctx, p, b, providers); err != nil {
+	if err := s.validateTaskExecutionModel(ctx, p, b, known); err != nil {
 		return ex, err
 	}
 	if err := s.checkTaskModelCapabilities(ctx, machine, b); err != nil {
@@ -188,7 +185,22 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 	if err != nil {
 		return nil, err
 	}
-	if taskExecutionNeedsOwnChat(*t, b) {
+	// Old clients echo launcher/effort during unrelated saves, without the revision used by
+	// execution-aware clients. Preserve an equal effective binding rather than creating new pins.
+	if changed && raw["model_revision"] == nil && raw["model"] == nil && raw["cwd"] == nil && raw["execution_machine_id"] == nil && string(patch.Provider) != "null" && string(patch.Effort) != "null" {
+		if b != old.Binding {
+			p := ModelPurpose{ID: "task." + t.ID, Kind: "launcher", CategoryID: "assistant", Parent: "assistant", MachineID: s.taskMachine(ctx, *t)}
+			base, _, err := s.modelBaseline(ctx, p)
+			if err != nil {
+				return nil, err
+			}
+			if mergeModel(base, b) == mergeModel(base, old.Binding) {
+				b = old.Binding
+			}
+		}
+		changed = b != old.Binding
+	}
+	if taskExecutionNeedsOwnChat(*t, b) || t.SessionID != "" && b != old.Binding && b != (ModelBinding{}) {
 		return nil, i18n.Err("assistant-schedule.execution_own_chat")
 	}
 	if !changed {
@@ -220,10 +232,11 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 	if s.isWorkMachine(p.MachineID) {
 		return nil, errWorkAssistant
 	}
-	if _, err := s.checkTaskLauncher(ctx, p.MachineID, strings.TrimPrefix(effective.Provider, "launcher.")); err != nil {
+	known, err := s.checkTaskLauncher(ctx, p.MachineID, strings.TrimPrefix(effective.Provider, "launcher."))
+	if err != nil {
 		return nil, err
 	}
-	if err := s.validateModel(ctx, p, effective, s.modelProviders(ctx)); err != nil {
+	if err := s.validateTaskExecutionModel(ctx, p, effective, known); err != nil {
 		return nil, err
 	}
 	if err := s.checkTaskModelCapabilities(ctx, p.MachineID, effective); err != nil {
@@ -250,6 +263,16 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 		return nil, nil
 	}
 	return &modelRecord{Revision: old.Revision + 1, Binding: b}, nil
+}
+
+func (s *Service) validateTaskExecutionModel(ctx context.Context, p ModelPurpose, b ModelBinding, catalogKnown bool) error {
+	providers := s.modelProviders(ctx)
+	name := strings.TrimPrefix(b.Provider, "launcher.")
+	if !catalogKnown && strings.HasPrefix(b.Provider, "launcher.") && launcherName.MatchString(name) && !slices.ContainsFunc(providers, func(v ModelProvider) bool { return v.ID == b.Provider }) {
+		// Unknown discovery cannot prove absence. Keep model, effort, capability and machine-scope checks.
+		providers = append(providers, ModelProvider{ID: b.Provider, Kind: "launcher"})
+	}
+	return s.validateModel(ctx, p, b, providers)
 }
 
 // A successful task catalog is authoritative, including an empty list. The ordinary assistant's legacy fallback

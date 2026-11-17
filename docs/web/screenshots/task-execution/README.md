@@ -28,5 +28,9 @@ The same open form must display the canonical provider/computer pins, retain the
 edit after defaults change without clearing those pins or sending another run. It captures the retained form in
 both themes and text sizes; service regressions separately assert persisted bindings and actual dispatch after restart.
 
+A legacy source task with unchanged launcher/effort metadata permits a sparse title save without an execution warning.
+Changing its effort still disables Save; restoring the saved value permits it again. Captures cover both text sizes,
+themes and widths, and the intercepted write must omit every execution field and retain the source conversation.
+
 The form reuses the existing dialog, fields, native selects, model picker and semantic tokens. Advanced options stay
 collapsed by default. Follow the repository's screenshot-in-PR workflow when publishing captures.

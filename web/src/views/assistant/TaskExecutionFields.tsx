@@ -13,7 +13,7 @@ import { Icon } from "../../ui/icons";
 import { Field, inputClass } from "./parts";
 import { t } from "../../i18n";
 
-export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task; disabled: boolean; onChange: (patch: Partial<Task>) => void }) {
+export function TaskExecutionFields({ draft, saved, disabled, onChange }: { draft: Task; saved?: Task | null; disabled: boolean; onChange: (patch: Partial<Task>) => void }) {
   const machines = useStore((s) => s.machines);
   const picked = useChosenManager();
   const knownDefault = useKnownDefault();
@@ -81,7 +81,7 @@ export function TaskExecutionFields({ draft, disabled, onChange }: { draft: Task
   const defaultEffort = inherited.effort || selectedModel?.default_effort;
   const defaultModelID = selectedModel?.resolved || (selectedModel?.id !== "default" ? selectedModel?.id : "");
   const summary = taskExecutionSummary({ launcher, agent, model: model || defaultModelID, effort: draft.effort || defaultEffort }, known, defaultLabel);
-  const incompatibleOrigin = taskExecutionNeedsOwnChat(draft);
+  const incompatibleOrigin = taskExecutionNeedsOwnChat(draft, saved);
   return <details onToggle={(e) => setExpanded(e.currentTarget.open)} className="rounded-card bg-inset p-3 shadow-hairline">
     <summary className="flex cursor-pointer list-none items-center gap-2 text-meta font-medium text-ink [&::-webkit-details-marker]:hidden">
       <Icon name="chevron" size={13} className={expanded ? "shrink-0" : "shrink-0 -rotate-90"} />
