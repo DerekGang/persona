@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/assistant/repository"
 	"github.com/nwverse/persona/server/internal/db"
@@ -210,6 +212,140 @@ func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
 	return urls
 }
 
+// A report or a model-produced artifact is only a candidate. A native successful
+// PR-create outcome, or the node's independently read author and pushed checkout,
+// establishes ownership. Missing evidence leaves automatic linking closed.
+func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo, machine, session string, urls []string) ([]string, error) {
+	var linked time.Time
+	for _, a := range todo.Agents {
+		if a.MachineID == machine && a.SessionID == session && a.ReleasedAt == nil && a.DismissedAt == nil {
+			linked = a.LinkedAt
+			break
+		}
+	}
+	if linked.IsZero() || todo.DoneAt != nil || todo.Cancelled() || len(urls) == 0 {
+		return nil, nil
+	}
+	proven := map[string]bool{}
+	pushed := map[string]string{}
+	pushCwd := ""
+	if items, ok := s.lastTurnItems(ctx, machine, session); ok {
+		calls := map[string]proto.Item{}
+		for _, it := range items {
+			if it.Kind == proto.KindToolUse && it.ToolUseID != "" {
+				calls[it.ToolUseID] = it
+				continue
+			}
+			if it.Kind != proto.KindToolResult || it.IsError || it.TS.IsZero() || it.TS.Before(linked) ||
+				it.Outcome == nil || it.Outcome.Status != proto.OutcomeOK ||
+				it.Outcome.ExitCode != nil && *it.Outcome.ExitCode != 0 {
+				continue
+			}
+			if git := it.Outcome.Git; git != nil {
+				if push := git.Push; push != nil && push.Branch != "" {
+					pushed[push.Branch] = ""
+				}
+				if pr := git.PR; pr != nil && pr.Action == "created" {
+					for _, url := range taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: pr.URL}}) {
+						proven[url] = true
+					}
+				}
+			}
+			call, found := calls[it.ToolUseID]
+			if !found || call.TS.IsZero() || call.TS.Before(linked) {
+				continue
+			}
+			op, cwd := taskRepositoryNativeCommand(call)
+			switch output := it.Text + "\n" + it.Outcome.Tail; op {
+			case "create":
+				urls := taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: output}})
+				slices.Sort(urls)
+				urls = slices.Compact(urls)
+				if len(urls) == 1 {
+					proven[urls[0]] = true
+				}
+			case "push":
+				for _, match := range repositoryPushResult.FindAllStringSubmatch(output, -1) {
+					pushed[strings.TrimPrefix(match[2], "refs/heads/")] = cwd
+					if cwd != "" {
+						pushCwd = cwd
+					}
+				}
+			}
+		}
+	}
+	if slices.ContainsFunc(urls, func(url string) bool { return !proven[url] }) {
+		if sess, ok := s.session(ctx, machine, session); ok && sess.Cwd != "" {
+			cwd := sess.Cwd
+			if pushCwd != "" {
+				cwd = pushCwd // a successful native push may run in another worktree
+			}
+			var result struct {
+				Branch  string `json:"branch"`
+				HeadOID string `json:"head_oid"`
+				Viewer  string `json:"viewer"`
+				PR      *struct {
+					URL     string `json:"url"`
+					Author  string `json:"author"`
+					Head    string `json:"head"`
+					HeadOID string `json:"head_oid"`
+				} `json:"pr"`
+			}
+			err := s.call(ctx, machine, "git.pr", map[string]any{"cwd": cwd, "ownership": true}, &result)
+			if err != nil && len(proven) == 0 {
+				return nil, err
+			} else if pr := result.PR; err == nil && pr != nil {
+				pushPath, pushSeen := pushed[pr.Head]
+				ownPush := pushSeen && (pushPath == cwd || pushPath == "" && cwd == sess.Cwd)
+				if result.Viewer != "" && (strings.EqualFold(pr.Author, result.Viewer) || ownPush) &&
+					result.Branch != "" && pr.Head == result.Branch && result.HeadOID != "" && pr.HeadOID == result.HeadOID {
+					for _, url := range taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: pr.URL}}) {
+						proven[url] = true
+					}
+				}
+			}
+		}
+	}
+	var owned []string
+	for _, url := range urls {
+		if proven[url] {
+			owned = append(owned, url)
+		}
+	}
+	if len(owned) == 0 {
+		return nil, nil
+	}
+	current, active := s.openTodoOfAgent(machine, session)
+	if !active || current.ID != todo.ID || !slices.ContainsFunc(current.Agents, func(a TodoAgent) bool {
+		return a.MachineID == machine && a.SessionID == session && a.LinkedAt.Equal(linked) &&
+			a.ReleasedAt == nil && a.DismissedAt == nil
+	}) {
+		return nil, nil
+	}
+	st, ok := s.store().(todoRepositoryImportStore)
+	if !ok {
+		return nil, repository.Problem("store_unavailable")
+	}
+	set, changed, err := st.ImportTodoRepositoryLinks(ctx, todo.ID, owned, "report")
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		s.todosChanged(ctx)
+	}
+	// The transaction may exclude a PR already assigned to another open to-do.
+	// Do not let the legacy stage/PR fields bypass that exclusion.
+	var accepted []string
+	for _, row := range set.Repositories {
+		for _, link := range row.Links {
+			if slices.Contains(owned, link.CanonicalURL) {
+				accepted = append(accepted, link.CanonicalURL)
+			}
+		}
+	}
+	return accepted, nil
+}
+
 // Artifacts also arrive through stopped-turn triage, without a full transcript
 // subscription. Only the session's current task may inherit that turn's PRs.
 func (s *Service) importTaskRepositoryArtifacts(ctx context.Context, e db.SessionWork) error {
@@ -227,7 +363,8 @@ func (s *Service) importTaskRepositoryArtifacts(ctx context.Context, e db.Sessio
 	for _, agent := range todo.Agents {
 		if agent.MachineID == e.MachineID && agent.SessionID == e.SessionID &&
 			agent.ReleasedAt == nil && agent.DismissedAt == nil && !e.TurnAt.Before(agent.LinkedAt) {
-			return s.importTodoRepositoryLinks(ctx, todo.ID, urls, "report")
+			_, err := s.importOwnedTaskRepositoryLinks(ctx, todo, e.MachineID, e.SessionID, urls)
+			return err
 		}
 	}
 	return nil

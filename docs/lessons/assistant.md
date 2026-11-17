@@ -721,3 +721,14 @@ as delivered instead of moving to the replacement. A check that a resource is fr
 mark the conversation as being replaced under that same lock (`relayBook.replacing`), have every drain and every direct
 delivery respect the mark (the direct ones queue), and clear it only where what waited has moved or the replacement
 failed, draining it again then (`TestNothingGoesIntoABackgroundSupervisorBeingReplaced`).
+
+An Agent's PR artifact is a claim, not proof of ownership. Deployment reports and
+evidence often name other Agents' PRs, sometimes under the same GitHub account.
+Automatic repository links need a native successful creation record or an
+independent node read matching author, head branch and published commit (a native
+push can establish the actor for a shared PR). Exclude another open to-do's PR in
+the same transaction, including concurrent reports, and apply the result to legacy
+stage PRs too; otherwise feedback routing and deterministic duplicate admission
+inherit the false association (`todo_repository_ownership_test.go`).
+Native CLI evidence must exclude help, web and dry-run modes, including Boolean
+`=true` flags, bundled short options and arguments whose shell expansion is unknown.

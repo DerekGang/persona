@@ -18,6 +18,26 @@ import (
 
 const artifactPR = "https://github.com/example/project/pull/7"
 
+func artifactCreationProof(f *fakeHub, todo Todo, urls ...string) {
+	f.setItems(artifactCreationItems(todo, urls...)...)
+}
+
+func artifactCreationItems(todo Todo, urls ...string) []proto.Item {
+	items := []proto.Item{}
+	at := todo.Agents[0].LinkedAt
+	for _, agent := range todo.Agents {
+		if agent.LinkedAt.After(at) {
+			at = agent.LinkedAt
+		}
+	}
+	for i, url := range urls {
+		items = append(items, proto.Item{ID: fmt.Sprint("created-", i), Role: "user", Kind: proto.KindToolResult,
+			TS: at.Add(time.Millisecond), Outcome: &proto.ToolOutcome{
+				Status: proto.OutcomeOK, Git: &proto.OutcomeGit{PR: &proto.OutcomePR{URL: url, Action: "created"}}}})
+	}
+	return items
+}
+
 func artifactWork(todo Todo) db.SessionWork {
 	a := todo.Agents[0]
 	return db.SessionWork{MachineID: a.MachineID, SessionID: a.SessionID, TurnAt: a.LinkedAt.Add(time.Second),
@@ -66,6 +86,7 @@ func TestTaskRepositoryArtifactsRouteFeedbackToExistingAgent(t *testing.T) {
 				t.Fatal(err)
 			}
 			todo := agentTask(t, s, f)
+			artifactCreationProof(f, todo, artifactPR, "https://github.com/example/project/pull/8")
 			before := len(sentToAgent(f))
 			work := artifactWork(todo)
 			switch entry {
@@ -179,13 +200,15 @@ func TestTaskRepositoryArtifactsRetryAfterReloadWithoutResurrectingRemovedLinks(
 	st := &artifactImportStore{Store: repositorystore.New(todoTestDB(t))}
 	s, f := newQuietServiceOn(t, st)
 	todo := agentTask(t, s, f)
+	artifactCreationProof(f, todo, artifactPR, "https://github.com/example/project/pull/8")
 	st.fail.Store(true)
 	s.putWork(t.Context(), artifactWork(todo))
 	if _, urls := savedArtifactURLs(t, st, todo.ID); len(urls) != 0 {
 		t.Fatal("failed import changed associations", urls)
 	}
 	st.fail.Store(false)
-	next, _ := newQuietServiceOn(t, st)
+	next, nextHub := newQuietServiceOn(t, st)
+	artifactCreationProof(nextHub, todo, artifactPR, "https://github.com/example/project/pull/8")
 	if err := next.ensureTodosLoaded(t.Context()); err != nil || !next.loadWork(t.Context()) {
 		t.Fatal("reload failed", err)
 	}

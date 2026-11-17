@@ -1038,12 +1038,21 @@ Existing `pr_url` / `prs` references are imported once before the first interact
 association read or edit. During a meeting turn, `todo_get` and
 `todo_repositories_get` read only saved associations: they never import links or
 write association data, revisions or receipts. An ordinary user turn retains the
-historical import behavior. New Agent progress reports append supported PR URLs to this same store,
-including self-hosted instances. An Agent's own final closeout contributes only its
-explicit `artifact: pr` links, not background references elsewhere in the reply.
-Persisted structured work artifacts also append PRs to the session's actively linked
-open to-do, without requiring a transcript subscription. Turns predating that Agent's
-task link, retired turns and released or dismissed Agents contribute nothing.
+historical import behavior. PR URLs in progress reports, closeouts and structured
+work artifacts are candidates, not ownership evidence. Automatic imports require
+a successful native PR-create tool outcome after the Agent's task link, or a node
+read of its actual checkout: the published PR head branch and commit must match,
+and its author must be the node's signed-in account (or a successful native push
+must name that branch). A deployment or review report mentioning another task's
+PRs does not claim them, even when every Agent uses the same account.
+Missing node identity, an older node or an unpublished head leaves the link unclaimed.
+An automatic import also skips any PR already associated with another open to-do;
+that exclusion is transactional across concurrent reports. Explicit user/Agent
+association tools remain the deliberate way to share a reference. Rejected PRs
+cannot enter legacy `pr_url` / PR history through stage updates.
+Persisted work artifacts retry the same ownership check without requiring a live
+transcript subscription. Turns predating that Agent's task link, retired turns and
+released or dismissed Agents contribute nothing.
 An association-store failure leaves the saved artifacts retryable on the next Inbox
 linking pass, including after a manager restart. The deterministic Inbox linker
 reads these saved links as well as legacy task references, so a comment or review

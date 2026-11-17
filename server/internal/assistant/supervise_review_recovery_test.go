@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistant/repositorystore"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -102,13 +103,14 @@ func TestAcceptedRecoversActualPRFromCloseout(t *testing.T) {
 		{"full PR URL cannot be confirmed", "https://github.com/o/r/pull/5", true, 403, 403, "4", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, todo := deliveryReviewService(t, &fakeForge{}, &runningHub{commit: oldHub}, false)
+			s, todo := deliveryReviewServiceOn(t, &fakeForge{}, &runningHub{commit: oldHub}, false, repositorystore.New(todoTestDB(t)))
 			ctx := context.Background()
 			s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/4")
 			f := s.hub.(*fakeHub)
 			reply := "The issue was recorded as PR #4; the actual delivery is in the closeout.\n" +
 				"<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\nartifact: pr " + tc.ref + "\n</closeout>"
-			f.setItems(proto.Item{Role: "assistant", Kind: proto.KindText, Text: reply})
+			f.setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/5"),
+				proto.Item{Role: "assistant", Kind: proto.KindText, Text: reply})...)
 			// The list preview does not carry the delivery artifact, and normal polling must not fetch it.
 			s.taskStageSessions(ctx, DeviceSessions{MachineID: "box", Sessions: []proto.Session{
 				{SessionID: "s1", Status: proto.StatusDone, LastText: "The actual delivery is in the closeout…"},

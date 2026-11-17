@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistant/repositorystore"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -80,7 +81,8 @@ const (
 // merged as mergeSHA, in newHub and not in oldHub.
 func deployService(t *testing.T) (*Service, *fakeHub, func() []string, *runningHub, *fakeForge) {
 	t.Helper()
-	s, f, posts := acceptService(t)
+	s, f, posts := acceptService(t, repositorystore.New(todoTestDB(t)))
+	artifactNodeProof(f, "https://github.com/o/r/pull/9", "contributor", "contributor", "fix/work", "fix/work", "abc", "abc")
 	s.ownerVerifiesAll = false
 	hub := &runningHub{commit: oldHub}
 	forge := &fakeForge{merged: true, sha: mergeSHA, contains: map[string]bool{oldHub: false, newHub: true}}

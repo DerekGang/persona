@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -314,6 +315,15 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 			}
 		}
 		if pr != "" {
+			if pr != current {
+				owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr})
+				if err != nil {
+					return "", false, fmt.Errorf("task %s: delivery PR ownership could not be verified: %w", t.ID, err)
+				}
+				if !slices.Contains(owned, pr) {
+					return "", false, fmt.Errorf("task %s: the reported PR has no verified ownership or belongs to another open to-do", t.ID)
+				}
+			}
 			if recovered != "" && recovered != pr {
 				return "", false, fmt.Errorf("task %s: its active agents report different delivery PR artifacts; clarify before accepting", t.ID)
 			}

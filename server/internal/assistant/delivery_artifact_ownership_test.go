@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistant/repositorystore"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -189,15 +190,19 @@ func TestReportedPRFromActiveAgentsRequiresUnambiguousOwnership(t *testing.T) {
 		{"all agents have no PR", []string{researchNoPRCloseout, researchNoPRCloseout}, "", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, f, todo := newSupervisedService(t)
+			s, f, todo := newSupervisedServiceOn(t, repositorystore.New(todoTestDB(t)))
 			s.deploy.forge = &fakeForge{}
 			other := todo.Agents[0]
 			other.SessionID = "s2"
-			todo.Agents = append(todo.Agents, other)
+			if err := s.linkTodoAgent(t.Context(), todo.ID, other.MachineID, other.SessionID, other.Title, other.Cwd, other.Agent); err != nil {
+				t.Fatal(err)
+			}
+			todo = todoNow(s, todo.ID)
 			f.mu.Lock()
 			f.itemReads = 0
 			f.readHooks.before = func(read int) {
-				f.setItems(proto.Item{Role: "assistant", Kind: proto.KindText, Text: tc.replies[min(read-1, 1)]})
+				f.setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/5", "https://github.com/o/r/pull/6"),
+					proto.Item{Role: "assistant", Kind: proto.KindText, Text: tc.replies[min(read-1, 1)]})...)
 			}
 			f.mu.Unlock()
 			defer func() {
@@ -290,9 +295,9 @@ func TestReportedPRRequiresTaskOwnedCloseout(t *testing.T) {
 			strings.ReplaceAll(explicit, "/pull/5", "/pull/9") + "\n````\nOur result:\n" + explicit}}, pr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, f, todo := newSupervisedService(t)
+			s, f, todo := newSupervisedServiceOn(t, repositorystore.New(todoTestDB(t)))
 			s.deploy.forge = &fakeForge{}
-			f.setItems(tc.items...)
+			f.setItems(append(artifactCreationItems(todo, pr), tc.items...)...)
 			got, noPR, err := s.reportedTaskPR(context.Background(), todo, "https://github.com/o/r/pull/4")
 			if got != tc.want || noPR || tc.want != "" && err != nil {
 				t.Fatalf("delivery recovery = %q, %v; want %q", got, err, tc.want)
@@ -304,15 +309,16 @@ func TestReportedPRRequiresTaskOwnedCloseout(t *testing.T) {
 func TestExplicitUnmergedDeliveryStillBlocksWithRelatedReferences(t *testing.T) {
 	for _, recorded := range []string{"", "4", "9"} {
 		t.Run("recorded_"+recorded, func(t *testing.T) {
-			s, f, todo := newSupervisedService(t)
+			s, f, todo := newSupervisedServiceOn(t, repositorystore.New(todoTestDB(t)))
 			ctx := context.Background()
 			deliveryOn(t, s)
 			if recorded != "" {
 				s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/"+recorded)
 			}
-			f.setItems(proto.Item{Role: "assistant", Kind: proto.KindText, Text: "Related merged PR: https://github.com/o/r/pull/9\n" +
-				"<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\n" +
-				"artifact: pr https://github.com/o/r/pull/5\n</closeout>"})
+			f.setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/5"),
+				proto.Item{Role: "assistant", Kind: proto.KindText, Text: "Related merged PR: https://github.com/o/r/pull/9\n" +
+					"<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\n" +
+					"artifact: pr https://github.com/o/r/pull/5\n</closeout>"})...)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/repos/o/r/issues/4":

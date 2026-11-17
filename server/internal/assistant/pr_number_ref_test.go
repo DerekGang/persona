@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/assistant/repositorystore"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -117,9 +118,10 @@ func TestPRFromNumber(t *testing.T) {
 // The incident: a supervised task's agent reports the PR by number alone; the task now carries it (pr_url and the
 // review stage), so its PR status is read and it can wait for merge.
 func TestTaskRecordsAPRNamedByNumber(t *testing.T) {
-	s, f := newTaskService(t)
+	s, f := newTaskServiceOn(t, repositorystore.New(todoTestDB(t)))
 	s.deploy.forge = &fakeForge{}
 	todo := startedTask(t, s, f)
+	artifactCreationProof(f, todo, "https://github.com/o/app/pull/7350")
 	ctx := context.Background()
 	s.setTaskStage(ctx, todo.ID, "develop", "")
 	cur := todoNow(s, todo.ID)
@@ -142,9 +144,10 @@ func TestTaskCloseoutArtifactReplacesEarlierPR(t *testing.T) {
 		{"later wrong URL artifact", "<closeout status=\"done\">\nartifact: pr #5\nartifact: url https://github.com/o/r/pull/4\n</closeout>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, f := newTaskService(t)
+			s, f := newTaskServiceOn(t, repositorystore.New(todoTestDB(t)))
 			s.deploy.forge = &fakeForge{}
 			todo := startedTask(t, s, f)
+			artifactCreationProof(f, todo, "https://github.com/o/r/pull/5")
 			ctx := context.Background()
 			s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/4")
 			if got := todoNow(s, todo.ID).PRURL; got != "https://github.com/o/r/pull/4" {

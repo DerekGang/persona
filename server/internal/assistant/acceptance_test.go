@@ -17,9 +17,9 @@ import (
 const deployedReply = "已合入 https://github.com/o/r/pull/9 并已部署到 n37。打开 https://hub.example.com/settings?tab=feishu 能看到新开关"
 
 // acceptService is reportService with the small model answering the "Please verify" lines, the cards' updates and notes kept.
-func acceptService(t *testing.T) (*Service, *fakeHub, func() []string) {
+func acceptService(t *testing.T, stores ...Store) (*Service, *fakeHub, func() []string) {
 	t.Helper()
-	s, f, posts := reportService(t, true)
+	s, f, posts := reportService(t, true, stores...)
 	s.ownerVerifiesAll = true // these tests cover the owner's "Please verify" (a big feature's; ownerVerifies)
 	f.judge = `{"changed":"飞书机器人多了任务进展开关","link":"https://hub.example.com/settings?tab=feishu","how":"打开设置 › 飞书机器人，应看到「任务进展发到飞书」"}`
 	f.answerApp(AppFeishu, FeishuUpdateCard, func(json.RawMessage) (any, error) { return map[string]any{}, nil })

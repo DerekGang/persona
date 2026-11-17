@@ -178,16 +178,28 @@ var generalTaskWords = lazyre.New(`(?i)\b(research|investigate|report|plan|triag
 // advanceTaskReply handles progress and final answers identically, including the running-hub deploy check.
 func (s *Service) advanceTaskReply(ctx context.Context, t Todo, machine, session, text string) bool {
 	urls := taskRepositoryReportLinks(text)
-	if len(urls) > 0 {
-		if err := s.importTodoRepositoryLinks(ctx, t.ID, urls, "report"); err != nil {
-			s.logf("task %s: repository links not saved: %v", t.ID, err)
-		}
-	}
 	stage, pr := stageOf(text)
 	d, marked := deliveryMark(text)
+	if pr == "" {
+		pr = s.prFromNumber(ctx, t, machine, session, text)
+	}
+	if pr != "" && !slices.Contains(urls, pr) {
+		urls = append(urls, pr)
+	}
+	accepted, err := s.importOwnedTaskRepositoryLinks(ctx, t, machine, session, urls)
+	if err != nil {
+		s.logf("task %s: owned repository links not saved: %v", t.ID, err)
+	}
+	if !slices.Contains(accepted, pr) {
+		pr = ""
+		if stage == "review" || stage == "merge" {
+			stage = "develop"
+		}
+	}
 	if pr != "" {
 		s.learnRepoRoot(ctx, machine, session, pr)
-	} else if pr = s.prFromNumber(ctx, t, machine, session, text); pr != "" && stage == "develop" && !marked {
+	}
+	if pr != "" && stage == "develop" && !marked {
 		stage = "review" // as stageOf has it for a linked PR (#7921)
 		if said(mergedWords, text) {
 			stage = "merge"
