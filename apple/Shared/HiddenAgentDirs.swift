@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// One computer's hidden Agent folders (docs/protocol/protocol.md "Agent directory visibility"): the parallel list to its
 /// Blocked Config Folders (ClaudeDirsSection), with the same pattern syntax. The manager matches them against each

@@ -272,9 +272,9 @@ final class DemoHub {
             #endif
             default: throw notFound()
             }
-        #if os(macOS)
         case ("machines", 4) where p[2] == "agent-dirs" && p[3] == "hidden":
             return ["rules": .array(hiddenAgentDirs[p[1]] ?? [])]
+        #if os(macOS)
         case ("machines", 4) where p[2] == "fs" && p[3] == "find": // ⌘K's Files: a made-up checkout
             return ["cwd": .string(q["cwd"] ?? ""), "truncated": false, "source": "git",
                     "files": .array(Self.demoFiles.map { .string($0) })]

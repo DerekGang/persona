@@ -59,7 +59,8 @@ struct HiddenAgentDirsView: View {
             } header: {
                 Text("Hidden Agent Folders")
             } footer: {
-                Text("Sessions working in these folders, with any Agent, stay recorded but leave Agents and the assistant's view. A path covers that folder and everything in it; ~ is this computer's home; *name* matches a folder name anywhere. Active supervised tasks stay visible. Turn a rule off to show its sessions again, or show them for a moment from the Agents menu. To stop collecting a Claude Code config folder altogether, use Blocked Config Folders in Claude Code Settings.")
+                // A String, not a key: Text would read *name* as Markdown italics and drop the asterisks the rule needs.
+                Text(String(localized: "Sessions working in these folders, with any Agent, stay recorded but leave Agents and the assistant's view. A path covers that folder and everything in it; ~ is this computer's home; *name* matches a folder name anywhere. Active supervised tasks stay visible. Turn a rule off to show its sessions again, or show them for a moment from the Agents menu. To stop collecting a Claude Code config folder altogether, use Blocked Config Folders in Claude Code Settings."))
             }
             .disabled(busy)
         }
