@@ -180,6 +180,33 @@ func TestTaskRepositoryOwnershipAlreadyLinkedElsewhereDoesNotPolluteLegacyPR(t *
 	}
 }
 
+func TestTaskRepositoryOwnershipConflictingSavedLinkIsNotAnAcceptedClaim(t *testing.T) {
+	st := repositorystore.New(todoTestDB(t))
+	s, f := newQuietServiceOn(t, st)
+	todo := agentTask(t, s, f)
+	owner, err := s.createPlainTodo(t.Context(), "Existing owner", "", db.TodoEdit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Preserve existing associations, including historical duplicates. Their
+	// presence in the returned set must not make a rejected claim successful.
+	for _, id := range []string{todo.ID, owner.ID} {
+		if err := s.importTodoRepositoryLinks(t.Context(), id, []string{artifactPR}, "explicit"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, _ := savedArtifactURLs(t, st, todo.ID)
+	artifactCreationProof(f, todo, artifactPR)
+	s.advanceTaskReply(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID, "PR: "+artifactPR)
+	if got := todoNow(s, todo.ID); got.PRURL != "" || len(got.PRs) != 0 {
+		t.Fatal("a conflicting saved association was mistaken for an accepted claim", got)
+	}
+	if after, urls := savedArtifactURLs(t, st, todo.ID); after.Revision != before.Revision ||
+		!slices.Equal(urls, []string{artifactPR}) {
+		t.Fatal("automatic claim changed existing explicit associations", after, urls)
+	}
+}
+
 func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testing.T) {
 	for _, name := range []string{"created", "pushed", "viewed", "echoed", "conditional", "dry run", "push dry run value",
 		"push dry run bundle", "create dry run", "create dry run value", "help", "help value", "web", "dynamic flags", "failed",

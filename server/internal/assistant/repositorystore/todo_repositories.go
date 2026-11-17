@@ -274,6 +274,15 @@ func (d *Store) ImportTodoRepositoryLinkDetails(ctx context.Context, id string, 
 					return err
 				}
 				if claimed {
+					// A historical duplicate in cur is not an accepted claim.
+					// Fail closed without deleting deliberate associations.
+					for _, row := range cur.Repositories {
+						for _, existing := range row.Links {
+							if existing.CanonicalURL == link.CanonicalURL {
+								return errors.New("reported PR is already linked to multiple open to-dos")
+							}
+						}
+					}
 					continue
 				}
 			}

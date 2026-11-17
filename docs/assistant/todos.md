@@ -1050,6 +1050,8 @@ An automatic import also skips any PR already associated with another open to-do
 that exclusion is transactional across concurrent reports. Explicit user/Agent
 association tools remain the deliberate way to share a reference. Rejected PRs
 cannot enter legacy `pr_url` / PR history through stage updates.
+If a conflicting link is already saved on both open to-dos, the automatic claim
+fails without deleting either association or treating the old duplicate as accepted.
 Persisted work artifacts retry the same ownership check without requiring a live
 transcript subscription. Turns predating that Agent's task link, retired turns and
 released or dismissed Agents contribute nothing.
@@ -1063,10 +1065,11 @@ judgment semantics. A stored receipt prevents historical imports and repeated re
 from restoring links removed by the user. An explicit additive call can restore them.
 Imports and interactive edits lock the same Todo and commit atomically; changes
 broadcast the existing `todos` event even when stage and legacy PR stay unchanged.
-Metadata import errors are logged without blocking the legacy progress path; explicit
-tool and HTTP failures remain errors. Link-derived repositories absent from the
-catalog have `catalog_state: "unlisted"`; recording a URL performs no repository
-verification, remote lookup or catalog mutation.
+Metadata import errors are logged and leave non-PR progress intact, but cannot
+admit an unverified PR into legacy progress. Explicit tool and HTTP failures remain
+errors. Link-derived repositories absent from the catalog have
+`catalog_state: "unlisted"`; the association-store write itself performs no remote
+lookup or catalog mutation.
 
 Shared Go types and validators: `server/internal/assistant/repository/task.go`.
 Web types/helpers: `web/src/lib/task-repositories.ts`. Fixed consumer fixture:
