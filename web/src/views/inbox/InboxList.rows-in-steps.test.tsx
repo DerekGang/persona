@@ -53,6 +53,8 @@ const idle = async (steps: number) => {
   }
 };
 const rows = () => host.querySelectorAll("[data-item]").length;
+// the section bar opens on Needs you (#9053); these mails are FYI
+const showFyi = () => act(() => host.querySelector<HTMLButtonElement>('[data-bar-choice="fyi"]')!.click());
 
 beforeEach(() => {
   idleCallbacks.clear();
@@ -85,6 +87,7 @@ describe("a long list mounts in steps (audit item 34)", () => {
   it("shows the first rows at once and the rest while the page is idle, in the list's order", async () => {
     act(() => root.render(<InboxList />));
     await flush();
+    showFyi();
     expect(rows()).toBe(20);
     expect(host.querySelector("[data-item]")?.getAttribute("data-item")).toBe("m000");
     await idle(1);
@@ -94,8 +97,9 @@ describe("a long list mounts in steps (audit item 34)", () => {
     expect([...host.querySelectorAll("[data-item]")].map((r) => r.getAttribute("data-item"))).toEqual(hub.items.map((it) => (it as InboxItem).id));
   });
 
+  // opened from outside the Inbox, it lands the list on its choice (FYI here) and is there from the start
   it("has the opened item from the start, so the list can show it", async () => {
-    act(() => root.render(<InboxList selected={{ id: "m090" }} />));
+    act(() => root.render(<InboxList selected={{ id: "m090" }} routed={hub.items[90] as InboxItem} />));
     await flush();
     expect(host.querySelector('[data-item="m090"]')).not.toBeNull();
     expect(rows()).toBe(91);
@@ -105,7 +109,11 @@ describe("a long list mounts in steps (audit item 34)", () => {
   // the keyboard comes back to the opened item's row when it closes (audit item 74): closed before the next step, the
   // row is still there to take it
   it("keeps the opened item's row once it is there, when the item closes before the next step", async () => {
-    act(() => root.render(<InboxList selected={{ id: "m090" }} />));
+    // opened from the list on FYI
+    act(() => root.render(<InboxList />));
+    await flush();
+    showFyi();
+    act(() => root.render(<InboxList selected={{ id: "m090" }} routed={hub.items[90] as InboxItem} />));
     await flush();
     act(() => root.render(<InboxList />));
     await flush();
@@ -117,7 +125,7 @@ describe("a long list mounts in steps (audit item 34)", () => {
   });
 
   it("draws every row at once for a returned view, which puts its scroll position back", async () => {
-    const view = { restored: true, revision: 0, entryId: null, listQuery: () => "", setListQuery() {}, listToggled: () => new Set<string>(), setListToggled() {}, listScroll: () => 0, setListScroll() {}, chainOpen: () => false, setChainOpen() {}, originalOpen: () => false, setOriginalOpen() {}, attach() {}, detach() {} } satisfies InboxViewMemory;
+    const view = { restored: true, revision: 0, entryId: null, listQuery: () => "", setListQuery() {}, listBar: () => ({ chosen: "fyi" as const, saved: null, landedFrom: null }), setListBar() {}, listToggled: () => new Set<string>(), setListToggled() {}, listScroll: () => 0, setListScroll() {}, chainOpen: () => false, setChainOpen() {}, originalOpen: () => false, setOriginalOpen() {}, attach() {}, detach() {} } satisfies InboxViewMemory;
     act(() => root.render(<InboxViewMemoryContext.Provider value={view}><InboxList /></InboxViewMemoryContext.Provider>));
     await flush();
     expect(rows()).toBe(120);
