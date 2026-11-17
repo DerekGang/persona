@@ -290,8 +290,9 @@ export function awaitsReview(todo: Todo, status: TodoStatus): boolean {
   return !todo.done_at && !acceptanceStands(todo) && !waitsForOwner(todo) && reviewRequired && (status === "follow_up" || status === "unread" || status === "not_started");
 }
 
-/** A task's place in the order: its status's rank, Awaiting review right after Needs you. */
+/** A task's place in the order: its status's rank, Awaiting review right after Needs you, Cancelled after Done. */
 export function todoRank(todo: Todo, status: TodoStatus): number {
+  if (isCancelled(todo)) return 9;
   return awaitsReview(todo, status) ? 2 : TODO_STATUS_RANK[shownStatus(todo, status)];
 }
 
@@ -332,10 +333,10 @@ export function acceptedAtRest(todo: Todo, status: TodoStatus): boolean {
   return todo.kind !== "concern" && !todo.done_at && (!waitsForOwner(todo) || decisionDismissed(todo)) && acceptanceStands(todo) && (status === "follow_up" || status === "unread" || status === "not_started" || status === "usage_limit");
 }
 
-/** A decision only the owner can move reads Waiting for you, consistently with triage and the snapshot (#5732). */
+/** An undismissed decision only the owner can move reads Waiting for you, consistently with triage and the snapshot (#5732). */
 export function waitsForOwner(todo: Todo): boolean {
   const outcome = openAsk(todo)?.outcome;
-  return !todo.done_at && (reviewState(todo) === "needs_user" || outcome === "decide" || outcome === "cannot");
+  return !todo.done_at && !decisionDismissed(todo) && (reviewState(todo) === "needs_user" || outcome === "decide" || outcome === "cannot");
 }
 
 /** The status a row draws its tone and mark from: Done for an accepted task at rest, else its own. */
@@ -461,7 +462,7 @@ export function interruption(s?: Session): { reason: string; canContinue: boolea
 /**
  * The todo list's order, the task board's (#4896): what needs the user (Needs you, Interrupted, Awaiting review) first;
  * then the open ones by due date, earliest (an overdue one) first, those without one after (#1683); then by todoRank —
- * Failed to start, Working, Not started, Finished, Stopped, Done — then newest first. A task that did not start has
+ * Failed to start, Working, Not started, Finished, Stopped, Done, Cancelled — then newest first. A task that did not start has
  * done_at too, but it is the user's to retry or remove, so it does not sink with the done ones.
  */
 export function sortTodos(todos: Todo[], lookup?: SessionLookup): Todo[] {

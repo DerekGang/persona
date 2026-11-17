@@ -456,7 +456,7 @@ nonisolated struct TodoPRStatus: Codable, Hashable, Sendable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         url = try c.decode(String.self, forKey: .url)
-        state = try c.decodeIfPresent(String.self, forKey: .state) ?? "open"
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? ""
         draft = try c.decodeIfPresent(Bool.self, forKey: .draft) ?? false
         review = try c.decodeIfPresent(String.self, forKey: .review) ?? "pending"
         checks = try c.decodeIfPresent(String.self, forKey: .checks) ?? "none"

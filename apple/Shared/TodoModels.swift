@@ -68,7 +68,7 @@ nonisolated extension TodoItem {
 
     /// An open task whose next move belongs to the owner, with the same wording on the row and detail as in triage (#5732).
     var waitsForOwner: Bool {
-        doneAt == nil && (reviewState == .needsUser || openAsk?.outcome == "decide" || openAsk?.outcome == "cannot")
+        doneAt == nil && !decisionDismissed && (reviewState == .needsUser || openAsk?.outcome == "decide" || openAsk?.outcome == "cannot")
     }
 
     /// Delivered work at rest still awaits acceptance; `live` alone never means done (#5732).

@@ -9,7 +9,10 @@ import {
   isAutoDone,
   isRemovable,
   TODO_STATUS_INFO,
+  TODO_STATUS_RANK,
+  todoRank,
   todoStatusLabel,
+  waitsForOwner,
   buildTodoAgentGroups,
   dockAgents,
   findTodoForSpace,
@@ -160,6 +163,48 @@ describe("待办状态计算 (todoStatus)", () => {
   });
 });
 
+describe("当前轮决定已不再处理 (#8262)", () => {
+  const round = "2026-11-10T10:00:00Z";
+  const waiting: Todo = {
+    id: "dismissed",
+    title: "选择发布路径",
+    created_at: "2026-11-10T09:00:00Z",
+    updated_at: round,
+    agents: [],
+    supervision: {
+      supervisor: "main",
+      state: "needs_user",
+      reviews: [{ at: round, verdict: "needs_user" }],
+    },
+    pr_url: "https://example.com/pull/42",
+    pr_status: { url: "https://example.com/pull/42", state: "open", draft: false, review: "pending", checks: "none", conflicts: false, checked_at: round },
+  };
+  const dismissed: Todo = {
+    ...waiting,
+    decision_review: { review_at: round, dismissal_id: "dismiss-current-round" },
+  };
+
+  it("同一轮 dismissal 不再显示或排名为等你，开放 PR 和工作状态仍按自身投影", () => {
+    for (const status of ["follow_up", "working"] as const) {
+      expect(waitsForOwner(dismissed)).toBe(false);
+      expect(shownStatus(dismissed, status)).toBe(status);
+      expect(todoStatusLabel(dismissed, status)).toBe(TODO_STATUS_INFO[status].label);
+      expect(todoRank(dismissed, status)).toBe(TODO_STATUS_RANK[status]);
+    }
+  });
+
+  it("未 dismiss 或新一轮 review 仍然等你", () => {
+    for (const current of [
+      waiting,
+      { ...dismissed, supervision: { ...waiting.supervision!, reviews: [{ at: "2026-11-10T11:00:00Z", verdict: "needs_user" as const }] } },
+    ]) {
+      expect(waitsForOwner(current)).toBe(true);
+      expect(shownStatus(current, "follow_up")).toBe("needs_you");
+      expect(todoRank(current, "follow_up")).toBe(0);
+    }
+  });
+});
+
 describe("Agent 没开起来的任务 (#1077 / #1142)", () => {
   const failed: Todo = {
     id: "t9",
@@ -238,6 +283,7 @@ describe("待办列表排序 (sortTodos)", () => {
     const review = { supervisor: "main", state: "pending_review" as const };
     const todos: Todo[] = [
       { id: "done", title: "", created_at: at, updated_at: "", done_at: at },
+      { id: "cancelled", title: "", created_at: "2026-11-07T10:00:00Z", updated_at: "", done_at: at, done_by: "cancelled", cancelled_at: at },
       { id: "stopped", title: "", created_at: at, updated_at: "", agents: on("s-idle") },
       { id: "unread", title: "", created_at: at, updated_at: "", agents: on("s-unread") },
       { id: "not-started", title: "", created_at: at, updated_at: "", agents: [] },
@@ -249,7 +295,7 @@ describe("待办列表排序 (sortTodos)", () => {
       { id: "needs", title: "", created_at: at, updated_at: "", agents: on("s-needs") },
     ];
     const sorted = sortTodos(todos, lookup);
-    expect(sorted.map((t) => t.id)).toEqual(["needs", "interrupted", "review-stopped", "review-unread", "failed", "working", "not-started", "unread", "stopped", "done"]);
+    expect(sorted.map((t) => t.id)).toEqual(["needs", "interrupted", "review-stopped", "review-unread", "failed", "working", "not-started", "unread", "stopped", "done", "cancelled"]);
     // the same order as the board's sections
     const sections = sorted.map((t) => BOARD_ORDER.indexOf(boardSectionOf({ todo: t, status: todoStatus(t, lookup) })));
     expect(sections).toEqual([...sections].sort((a, b) => a - b));

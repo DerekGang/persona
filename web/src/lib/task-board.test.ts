@@ -45,6 +45,26 @@ describe("the task board (iOS TaskBoardSheet)", () => {
     expect(boardSectionOf({ todo: td, status })).toBe(key);
   });
 
+  it("keeps cancelled tasks out of Done for both API representations", () => {
+    const doneAt = "2026-11-06T01:00:00Z";
+    const additive = { ...todo("additive-cancelled", "2026-11-06T00:00:00Z"), done_at: doneAt, done_by: "cancelled", cancelled_at: doneAt };
+    const legacy = supervised("legacy-cancelled", "cancelled", { done_at: doneAt, done_by: "review" });
+    const ordinaryDone = { ...todo("ordinary-done", "2026-11-06T00:00:00Z"), done_at: doneAt };
+    for (const td of [additive, legacy]) {
+      expect(boardSectionOf({ todo: td, status: "done" })).toBe("cancelled");
+      expect(todoRank(td, "done")).toBeGreaterThan(todoRank(ordinaryDone, "done"));
+    }
+    expect(boardSectionOf({ todo: ordinaryDone, status: "done" })).toBe("done");
+    expect(boardSections([
+      { todo: ordinaryDone, status: "done" },
+      { todo: additive, status: "done" },
+      { todo: legacy, status: "done" },
+    ], []).map((section) => [section.key, section.rows.map((row) => row.todo.id)])).toEqual([
+      ["done", ["ordinary-done"]],
+      ["cancelled", ["additive-cancelled", "legacy-cancelled"]],
+    ]);
+  });
+
   it("keeps an unaccepted live delivery awaiting review", () => {
     const td = { ...todo("live", "2026-11-06T00:00:00Z"), delivery: { state: "live" as const, at: "2026-11-06T01:00:00Z" } };
     expect(boardSectionOf({ todo: td, status: "unread" })).toBe("review");
@@ -65,7 +85,7 @@ describe("the task board (iOS TaskBoardSheet)", () => {
   });
 
   it("puts what the user must act on first: 等你, 待验收, 没开起来, then 在做, 做完了, 停着, 已完成 (#4896)", () => {
-    expect(BOARD_ORDER).toEqual(["waiting", "review", "failed", "working", "parked", "unread", "stopped", "done"]);
+    expect(BOARD_ORDER).toEqual(["waiting", "review", "failed", "working", "parked", "unread", "stopped", "done", "cancelled"]);
     const rows = [
       { todo: todo("done", "2026-11-06T07:00:00Z"), status: "done" as const },
       { todo: todo("stopped", "2026-11-06T06:00:00Z"), status: "follow_up" as const },

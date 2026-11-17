@@ -212,7 +212,7 @@ struct AssistantActionBarTests {
         accepted.supervision?.reviews = [.init(verdict: "accepted")]
         accepted.decisionReview = DecisionReview(reviewAt: iso(2), dismissalID: "dismiss-current-round")
         #expect(accepted.decisionDismissed)
-        #expect(accepted.waitsForOwner)
+        #expect(!accepted.waitsForOwner)
         #expect(AssistantEntries.rank(accepted, .followUp) == 8)
     }
 

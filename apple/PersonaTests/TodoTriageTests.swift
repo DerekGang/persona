@@ -749,7 +749,7 @@ extension TodoTriageTests {
         let status: TaskState = .followup
         #expect(t.section == .done && t.rule == .accepted)
         #expect(td.decisionDismissed)
-        #expect(td.waitsForOwner)
+        #expect(!td.waitsForOwner)
         #expect(td.acceptedAtRest(status))
         #expect(td.shownState(status) == .done)
         #expect(td.statusLabel(status) == String(localized: "Accepted"))
@@ -802,7 +802,35 @@ extension TodoTriageTests {
          "pr_status":{"url":"https://github.com/example/project/pull/42","state":"open","draft":false,"checked_at":"2026-11-10T11:59:00Z"}}
         """
         let t = try sharedAt(json)
+        let td = try sharedTodo(json)
         #expect(t.section == .pr && t.rule == .prOpen)
+        #expect(td.decisionDismissed)
+        #expect(!td.waitsForOwner)
+        #expect(td.shownState(.followup) == .followup)
+        #expect(td.shownState(.working) == .working)
+        #expect(td.statusLabel(.followup) == TaskState.followup.todoLabel)
+        #expect(AssistantEntries.rank(td, .followUp) == AssistantEntries.Status.followUp.rank)
+        var undismissed = td
+        undismissed.decisionReview = nil
+        #expect(undismissed.waitsForOwner)
+        #expect(undismissed.shownState(.followup) == .needsYou)
+    }
+
+    @Test func missingPRStateDoesNotWaitForMerge() throws {
+        let url = "https://example.com/pull/9"
+        for payload in [
+            #"{"url":"https://example.com/pull/9","checked_at":"2026-11-10T12:00:00Z"}"#,
+            #"{"url":"https://example.com/pull/9","state":null,"checked_at":"2026-11-10T12:00:00Z"}"#,
+        ] {
+            let facts = try JSON.decoder.decode(TodoPRStatus.self, from: Data(payload.utf8))
+            #expect(facts.state.isEmpty)
+            let t = todo("missing-state", agents: ["idle"]) { $0.prURL = url; $0.prStatus = facts }
+            #expect(at(t).section != .pr)
+        }
+        let open = try JSON.decoder.decode(TodoPRStatus.self, from: Data(#"{"url":"https://example.com/pull/9","state":"open","checked_at":"2026-11-10T12:00:00Z"}"#.utf8))
+        #expect(open.state == "open")
+        let t = todo("open-state", agents: ["idle"]) { $0.prURL = url; $0.prStatus = open }
+        #expect(at(t).section == .pr)
     }
 
     /// Shared case `concern_deployed`: Other open / rest.

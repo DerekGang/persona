@@ -493,6 +493,29 @@ class TodoTriageTest {
     }
 
     @Test
+    fun aDismissedOwnerDecisionDoesNotProjectNeedsYou() {
+        val reviewed = Supervision(supervisor = "c", state = "needs_user",
+            reviews = listOf(TaskReview(at = hoursAgo(1), verdict = "needs_user")))
+        val waiting = todo("t", agents = listOf(agent("idle")), supervision = reviewed,
+            prUrl = "https://example.com/pull/1", prStatus = openPr("https://example.com/pull/1"))
+        val dismissed = waiting.copy(decisionReview = DecisionReview(reviewAt = hoursAgo(1), dismissalId = "dismiss-current"))
+        assertTrue(dismissed.decisionDismissed())
+        assertFalse(dismissed.waitsForOwner())
+        assertEquals(TriageRule.PrOpen, at(dismissed).rule)
+        assertEquals(TodoState.FollowUp, dismissed.shownState(lookup, now))
+        val working = dismissed.copy(agents = listOf(agent("run")))
+        assertFalse(working.waitsForOwner())
+        assertEquals(TodoState.Working, working.shownState(lookup, now))
+
+        assertTrue(waiting.waitsForOwner())
+        assertEquals(TodoState.NeedsYou, waiting.shownState(lookup, now))
+        val newer = dismissed.copy(supervision = reviewed.copy(reviews = listOf(TaskReview(at = hoursAgo(0), verdict = "needs_user"))))
+        assertFalse(newer.decisionDismissed())
+        assertTrue(newer.waitsForOwner())
+        assertEquals(TodoState.NeedsYou, newer.shownState(lookup, now))
+    }
+
+    @Test
     fun aDismissedOwnerDecisionRestoresAcceptedAtRest() {
         val accepted = todo("t", agents = listOf(agent("idle")), reopenedAt = hoursAgo(4), supervision = acceptedReopened())
         val waiting = listOf("decide", "cannot").map { outcome ->
@@ -503,7 +526,7 @@ class TodoTriageTest {
                 reviewAt = accepted.supervision!!.latestReview!!.at, dismissalId = "dismiss-current-round",
             ))
         }
-        assertEquals(listOf(true, true), dismissed.map { it.waitsForOwner() })
+        assertEquals(listOf(false, false), dismissed.map { it.waitsForOwner() })
         assertEquals(listOf(true, true), dismissed.map { it.decisionDismissed() })
         assertEquals(listOf(TriageRule.Accepted, TriageRule.Accepted), dismissed.map { at(it).rule })
         assertEquals("dismissed decide/cannot restore accepted at rest", listOf(true, true),
