@@ -383,7 +383,13 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // layouts tried (mounting it under every exchange, or riding the reply bar's chunk, cost more). 85 B in ja, measured in
 // one environment against main 21cd52cc2 (ja 482,104 B to 482,189 B; en 478,990 B to 479,075 B, zh-Hans 479,859 B to
 // 479,944 B). Main had 422 B of room; the budget stays.
-export const FIRST_SCREEN_BUDGET = 482_526;
+// #9745: Overview's extension cards drawn as the user arranged them add 507 B in ja, measured in one environment against
+// main 546b976e7 (ja 482,373 B to 482,880 B; en 479,275 B to 479,786 B, zh-Hans 480,079 B to 480,603 B): the
+// arrangement's store and the order, hidden cards and widths it draws (lib/overview-cards.ts), Arrange cards in
+// Overview's top bar, and the arrangement to and from the hub with the start page (lib/start-page.ts). The editor (its
+// heading, each card's controls, the drag and the edits) is a chunk of its own (views/extensions/OverviewArrange.tsx,
+// lib/overview-edit.ts). Main's 153 B of room is kept on top.
+export const FIRST_SCREEN_BUDGET = 483_033;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
