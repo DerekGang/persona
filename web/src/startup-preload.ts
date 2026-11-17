@@ -634,7 +634,11 @@ export function firstScreenOverBudget(bytes: [string, number][], budget = FIRST_
 // sections' provider, ExtensionView.tsx's chunk; measured 46,190 B in one environment).
 // 3 B more of #9727's fix round 3 (the canvas's fold control moved fully beside the node, and its chunk's renamed
 // hash the idle tier embeds as a fixed string; measured 46,193 B in one environment).
-export const IDLE_TIER_BUDGET = 46_143 + 42 + 5 + 3;
+// 9 B more of #9727's fix round 4 (the drag's leftover click-swallow taken off at its gesture's end, the busy cue on
+// a node whose action runs, the fade memory committed by an effect instead of written in render, the stale-pointer
+// map dropped at each bind, the store's cap never evicting a mounted canvas's entry, and the canvas chunk's renamed
+// hash the idle tier embeds; measured 46,202 B in one environment).
+export const IDLE_TIER_BUDGET = 46_143 + 42 + 5 + 3 + 9;
 
 const gzip = promisify(gzipCompress);
 

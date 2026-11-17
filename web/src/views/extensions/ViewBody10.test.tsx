@@ -698,6 +698,216 @@ describe("UI 10: the graph canvas", () => {
     const html = renderToStaticMarkup(<GraphCanvas item={draw(WORK)} busy="" onPress={() => {}} />);
     expect(html).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
+
+  it("the first tap after a pan that began on a node still presses (the drag's click-swallow is gone)", async () => {
+    // the reviewer's finding: a drag that began on a control attaches a one-shot capture click listener to swallow
+    // its own click, but the stage's pointer capture retargets that click to the stage — the listener never fires,
+    // stays attached, and eats the NEXT real tap on the same node in the capture phase.
+    const held = capturePolyfill();
+    const spy = sizeStage(300, 200); // the drawing overflows: the pan moves and clamps nothing back
+    const pressed: UIAction[] = [];
+    await mountView(WORK, { onPress: (a) => pressed.push(a) });
+    const stage = host.querySelector("[data-graph-stage]")!;
+    const node = host.querySelector<HTMLButtonElement>('[data-graph-node="root"]')!;
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const before = transformOf(layer);
+    // the gesture: down on the node, moves still targeting the node (the browser keeps the target until the drag
+    // takes the capture), a move past 4 px makes the drag take over, up, and the stage's own click
+    act(() => node.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, button: 0, clientX: 500, clientY: 300, bubbles: true, cancelable: true })));
+    const move = (target: Element, x: number, y: number) => act(() => target.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: x, clientY: y, bubbles: true, cancelable: true })));
+    move(node, 494, 300); // under 4 px from the down: still the node's own press
+    move(node, 470, 280); // past it: the drag takes over, captures, and pans
+    expect(transformOf(layer)).not.toEqual(before);
+    move(stage, 470, 280); // the captured pointer now reports to the stage
+    act(() => stage.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: 470, clientY: 280, bubbles: true, cancelable: true })));
+    act(() => stage.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))); // the gesture's own click, retargeted
+    expect(pressed).toEqual([]); // the pan never pressed the node
+    // the gesture's click swallowed (or timed out), the next real tap on the SAME node presses — the leftover
+    // listener used to stop it in the capture phase
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    act(() => node.click());
+    expect(pressed).toEqual([{ id: "open", values: { id: "root" } }]);
+    spy.mockRestore();
+    void held;
+  });
+
+  it("the first tap after a pan that began on a fold control still folds", async () => {
+    // the same leftover, on the fold control: a pan begun on it must not leave the next fold tap dead
+    const held = capturePolyfill();
+    const spy = sizeStage(300, 200);
+    await mountView(WORK);
+    const stage = host.querySelector("[data-graph-stage]")!;
+    const fold = host.querySelector<HTMLButtonElement>('[data-graph-fold="b"]')!;
+    act(() => fold.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, button: 0, clientX: 500, clientY: 300, bubbles: true, cancelable: true })));
+    // the moves target the fold until the drag takes the capture
+    act(() => fold.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 470, clientY: 280, bubbles: true, cancelable: true })));
+    act(() => stage.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 470, clientY: 280, bubbles: true, cancelable: true })));
+    act(() => stage.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: 470, clientY: 280, bubbles: true, cancelable: true })));
+    act(() => stage.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const before = host.querySelectorAll("[data-graph-node]").length;
+    act(() => fold.click());
+    await act(async () => {});
+    expect(host.querySelectorAll("[data-graph-node]")).not.toBe(before); // b unfolds: the tap folded it
+    spy.mockRestore();
+    void held;
+  });
+
+  it("a node whose action is busy shows the busy cue and stays focusable, as the row's button does", () => {
+    // a slow action on a node must not look idle: the row's own Button gets a spinner and aria-busy
+    const view = structuredClone(WORK);
+    const nodes = (view.sections[0].items[0] as { nodes: { id: string; action?: { id: string } }[] }).nodes;
+    nodes.find((n) => n.id === "a")!.action = { id: "open-a", values: {} } as never; // a distinct action, so `open` is root's alone
+    const d = doc(renderToStaticMarkup(<GraphCanvas item={draw(view)} busy="open" onPress={() => {}} />));
+    const root = d.querySelector('[data-graph-node="root"]')!;
+    expect(root.getAttribute("aria-busy")).toBe("true"); // a screen reader hears the work
+    expect(root.querySelector(".busy-motion")).not.toBeNull(); // a spinner shows it
+    // a press on a node whose action is NOT the busy one is disabled (the row's own rule), but never loses focus
+    const a = d.querySelector('[data-graph-node="a"]')!;
+    expect(a.getAttribute("aria-busy")).toBe(null);
+    expect((a as unknown as HTMLButtonElement).disabled).toBe(true);
+    const plain = d.querySelector('[data-graph-node="b"]')!;
+    expect(plain.tagName).not.toBe("BUTTON"); // a node without an action is never disabled
+  });
+
+  it("a node fades in under StrictMode: the fade memory is written by the commit, not the render", async () => {
+    // the render-side memory write meant every committed node under the app's StrictMode (main.tsx) drew with no
+    // fade at all: the double-invoked render read the signatures it had just written. The fade must come from the
+    // previous committed map.
+    const { StrictMode } = await import("react");
+    const strictHost = document.createElement("div");
+    document.body.append(strictHost);
+    const strictRoot = createRoot(strictHost);
+    try {
+      await act(async () => strictRoot.render(
+        <StrictMode>
+          <GraphCanvas item={draw(WORK)} busy="" onPress={() => {}} />
+        </StrictMode>,
+      ));
+      const first = strictHost.querySelector('[data-graph-node="root"]')!;
+      expect(first.getAttribute("style")).toContain("fade-in"); // the first commit fades in
+      // a states-only redraw does not replay it; a changed field does
+      const redraw = structuredClone(WORK);
+      const nodes = (redraw.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
+      nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
+      await act(async () => strictRoot.render(
+        <StrictMode>
+          <GraphCanvas item={draw(redraw)} busy="" onPress={() => {}} />
+        </StrictMode>,
+      ));
+      expect(strictHost.querySelector('[data-graph-node="root"]')!.getAttribute("style")).not.toContain("fade-in"); // only states changed
+      expect(strictHost.querySelector('[data-graph-node="c"]')!.getAttribute("style")).toContain("fade-in"); // c's fields changed
+    } finally {
+      act(() => strictRoot.unmount());
+      strictHost.remove();
+    }
+  });
+
+  it("a pointer held over the Full screen switch does not pinch the next drag", async () => {
+    // the reviewer's stale-map finding: one finger on the canvas, another taps Full screen (the stage element is
+    // replaced); the second pointer's entry stays in the map, so the next single-finger drag pairs with it and
+    // becomes a phantom pinch. The rebind must drop what it did not see go down.
+    const held = capturePolyfill();
+    const spy = sizeStage(300, 200);
+    await mountView(WORK);
+    const stage = host.querySelector("[data-graph-stage]")!;
+    // finger one goes down on the canvas and stays down
+    act(() => stage.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, button: 0, clientX: 100, clientY: 100, bubbles: true, cancelable: true })));
+    act(() => stage.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 100, clientY: 100, bubbles: true, cancelable: true })));
+    // finger two taps the Full screen button: the overlay replaces the stage, finger one never sees its pointerup
+    act(() => host.querySelector<HTMLButtonElement>(`[aria-label="${t("extensions-viewbody.graph_full_screen")}"]`)!.click());
+    await act(async () => {});
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await act(async () => {});
+    // a fresh single-finger drag: 10 px, straight down. A stale second point would pinch (zoom 0.5 -> ~0.44); a
+    // clean map pans at the same zoom.
+    const stage2 = host.querySelector("[data-graph-stage]")!;
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const before = transformOf(layer);
+    act(() => stage2.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9, button: 0, clientX: 200, clientY: 100, bubbles: true, cancelable: true })));
+    act(() => stage2.dispatchEvent(new PointerEvent("pointermove", { pointerId: 9, clientX: 200, clientY: 110, bubbles: true, cancelable: true })));
+    const after = transformOf(layer);
+    expect(after[2]).toBeCloseTo(before[2], 9); // no phantom pinch: the zoom never moved
+    spy.mockRestore();
+    void held;
+  });
+
+  it("a canvas whose owner changes without a remount takes the new owner's folds and writes to its store", async () => {
+    // the reviewer's finding: personFolds was read once at mount, so the same instance under a new owner kept the
+    // old owner's folds and wrote its toggles into the old owner's store.
+    const swapHost = document.createElement("div");
+    document.body.append(swapHost);
+    let swapRoot = createRoot(swapHost);
+    try {
+      const Graph = ({ owner }: { owner: string }) => (
+        <ExtensionOwnerScope owner={owner}>
+          <GraphCanvas item={draw(structuredClone(WORK))} busy="" onPress={() => {}} />
+        </ExtensionOwnerScope>
+      );
+      // owner one unfolds b (their store keeps it); owner two has never touched it (the view's fold stands)
+      await act(async () => swapRoot.render(<Graph owner="one" />));
+      act(() => swapHost.querySelector<HTMLButtonElement>('[data-graph-fold="b"]')!.click());
+      await act(async () => {});
+      expect(swapHost.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length + 2); // b open under one
+      // the same instance, a new owner (the context value changes; no keyed remount)
+      await act(async () => swapRoot.render(<Graph owner="two" />));
+      expect(swapHost.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length); // two's store: b folded by the view
+      // and a toggle under two writes to TWO's store, not one's: a remount under one still keeps the unfold
+      act(() => swapHost.querySelector<HTMLButtonElement>('[data-graph-fold="root"]')!.click());
+      await act(async () => {});
+      await act(async () => swapRoot.unmount());
+      swapHost.remove();
+      swapRoot = createRoot(swapHost);
+      document.body.append(swapHost);
+      await act(async () => swapRoot.render(<Graph owner="one" />));
+      expect(swapHost.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length + 2); // one's unfold kept
+      await act(async () => swapRoot.render(<Graph owner="two" />));
+      const twoNodes = swapHost.querySelectorAll("[data-graph-node]").length;
+      expect(twoNodes).not.toBe(VISIBLE.length + 2); // two's own store, not one's
+    } finally {
+      act(() => swapRoot.unmount());
+      swapHost.remove();
+    }
+  });
+
+  it("the store's cap never evicts the entry of a canvas that is still mounted", async () => {
+    // the reviewer's finding: with the cap reached, the on-screen key's entry was rebuilt fresh on its next
+    // states-only redraw, which reads moved: false and takes the opening view — throwing the person's pan away.
+    const spy = sizeStage(900, 500);
+    // the holder host keeps the canvas mounted the whole time; the fillers mount and unmount on their own hosts
+    const holderHost = document.createElement("div");
+    document.body.append(holderHost);
+    const holderRoot = createRoot(holderHost);
+    const held = { root, host };
+    await act(async () => holderRoot.render(<GraphCanvas item={draw(WORK)} busy="" onPress={() => {}} />));
+    const stage = holderHost.querySelector("[data-graph-stage]")!;
+    act(() => stage.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })));
+    const kept = transformOf(holderHost.querySelector("[data-graph-layer]"));
+    expect(kept[2]).not.toBeCloseTo(0.5, 9); // the person zoomed: the store keeps it as moved
+    // mount 140 other keys (over the cap of 128) — each on its own host, unmounted at once: never this one
+    const fillerHost = document.createElement("div");
+    document.body.append(fillerHost);
+    for (let i = 0; i < 140; i++) {
+      const other = structuredClone(WORK);
+      (other.sections[0].items[0] as { key: string }).key = `filler-${i}`;
+      const fillerRoot = createRoot(fillerHost);
+      await act(async () => fillerRoot.render(<GraphCanvas item={draw(other)} busy="" onPress={() => {}} />));
+      act(() => fillerRoot.unmount());
+    }
+    fillerHost.remove();
+    // the filler keys evicted each other, never this one: a states-only redraw keeps the person's zoom
+    const again = structuredClone(WORK);
+    const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
+    nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
+    await act(async () => holderRoot.render(<GraphCanvas item={draw(again)} busy="" onPress={() => {}} />));
+    const now = transformOf(holderHost.querySelector("[data-graph-layer]"));
+    expect(now[2]).toBeCloseTo(kept[2], 9); // not the opening 0.5: the pan was never thrown away
+    act(() => holderRoot.unmount());
+    holderHost.remove();
+    root = held.root;
+    host = held.host;
+    spy.mockRestore();
+  });
 });
 
 describe("UI 10: a graph in a view", () => {
