@@ -10,7 +10,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readView, type UIAction } from "../../lib/extension-ui";
+import { readView, type UIAction, type UIItem } from "../../lib/extension-ui";
+import { ExtensionOwnerScope } from "../../lib/extension-owner";
 import { t } from "../../i18n";
 import { INERT, ViewSections } from "./ViewBody";
 import { forgetGraphStores, GraphCanvas } from "./ViewBody10";
@@ -52,9 +53,17 @@ const draw = (view: unknown) => readView(view as object).sections[0].items[0];
 let host: HTMLDivElement;
 let root: Root;
 // the item's key remounts the canvas (a different key is a different graph, as the page's redraws keep it); the owner
-// scopes with it, so two owners' graphs never share one instance either
-const mount = async (item: Parameters<typeof GraphCanvas>[0]) => {
-  await act(async () => root.render(<GraphCanvas key={`${item.scope ?? ""}/${item.item.key ?? ""}`} {...item} />));
+// scopes with it, so two owners' graphs never share one instance either — the owner travels as a context
+// (lib/extension-owner.tsx), as the surfaces that draw an extension's view provide it
+type MountOpts = { compact?: boolean; onPress?: (a: UIAction) => void; owner?: string };
+const mount = async (item: UIItem, opts?: MountOpts) => {
+  const key = `${opts?.owner ?? ""}/${item.key ?? ""}`;
+  const canvas = <GraphCanvas item={item} compact={opts?.compact} busy="" onPress={opts?.onPress ?? (() => {})} />;
+  await act(async () =>
+    root.render(opts?.owner === undefined ? <GraphCanvas key={key} item={item} compact={opts?.compact} busy="" onPress={opts?.onPress ?? (() => {})} /> : (
+      <ExtensionOwnerScope key={key} owner={opts.owner}>{canvas}</ExtensionOwnerScope>
+    )),
+  );
 };
 
 const sizeStage = (w: number, h: number) => {
@@ -62,6 +71,32 @@ const sizeStage = (w: number, h: number) => {
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(h);
   return spy;
 };
+
+// jsdom has PointerEvent but not the capture API the canvas's drag path reads; a polyfill stands in for the
+// browser's (a captured pointer stays the canvas's drag — true once a drag began, exactly what the code asks next).
+const capturePolyfill = () => {
+  const held = new Set<number>();
+  const proto = HTMLElement.prototype as HTMLElement & {
+    setPointerCapture: (id: number) => void;
+    hasPointerCapture: (id: number) => boolean;
+    releasePointerCapture: (id: number) => void;
+  };
+  proto.setPointerCapture ??= (id: number) => void held.add(id);
+  proto.hasPointerCapture ??= (id: number) => held.has(id);
+  proto.releasePointerCapture ??= (id: number) => void held.delete(id);
+  return held;
+};
+
+/** A pointer drag over the stage: down at (x, y), then moves, without a control under it. */
+const drag = (stage: Element, moves: [number, number][], pointerId = 1) => {
+  const [x0, y0] = moves[0];
+  const at = (x: number, y: number) => ({ pointerId, button: 0, clientX: x, clientY: y, bubbles: true, cancelable: true });
+  act(() => stage.dispatchEvent(new PointerEvent("pointerdown", at(x0, y0))));
+  for (let i = 1; i < moves.length; i++) act(() => stage.dispatchEvent(new PointerEvent("pointermove", at(moves[i][0], moves[i][1]))));
+};
+/** The layer's transform as numbers: [x, y, zoom]. */
+const transformOf = (el: Element | null) =>
+  (el as HTMLElement).style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!.slice(1).map(Number);
 
 describe("UI 10: the graph canvas", () => {
   beforeEach(() => {
@@ -76,9 +111,9 @@ describe("UI 10: the graph canvas", () => {
     document.querySelectorAll("[role=dialog]").forEach((d) => d.remove());
   });
 
-  const mountView = async (view: unknown, opts?: { compact?: boolean; onPress?: (a: UIAction) => void; scope?: string }) => {
+  const mountView = async (view: unknown, opts?: { compact?: boolean; onPress?: (a: UIAction) => void; owner?: string }) => {
     const pressed: UIAction[] = [];
-    await mount({ item: draw(view), compact: opts?.compact, busy: "", onPress: opts?.onPress ?? ((a) => pressed.push(a)), scope: opts?.scope });
+    await mount(draw(view), { compact: opts?.compact, onPress: opts?.onPress ?? ((a) => pressed.push(a)), owner: opts?.owner });
     return { pressed };
   };
 
@@ -117,12 +152,18 @@ describe("UI 10: the graph canvas", () => {
     expect(rootFold.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("puts each fold control inside its node's own listitem, so Tab walks node, its fold, the next node", () => {
+  it("puts each fold control inside its node's own listitem, so Tab walks node, its fold, the next node", async () => {
     const d = doc(renderToStaticMarkup(<GraphCanvas item={draw(WORK)} busy="" onPress={() => {}} />));
     const item = d.querySelector('[data-graph-at="root"]')!;
     expect(item.getAttribute("role")).toBe("listitem");
     expect(item.contains(d.querySelector('[data-graph-fold="root"]')!)).toBe(true);
     expect([...d.querySelectorAll("[data-graph-fold]")].every((f) => f.closest('[role="listitem"]') !== null)).toBe(true);
+    // and the DOM gives Tab exactly that order: a node, then its own fold, then the next node — jsdom moves no
+    // focus itself, but the focusables in document order are what the browser's Tab walks
+    await mountView(WORK);
+    const list = [...host.querySelectorAll<HTMLElement>("button, [tabindex='0']")];
+    const labels = list.map((el) => el.getAttribute("data-graph-node") ?? el.getAttribute("data-graph-fold"));
+    expect(labels.filter(Boolean).slice(0, 5)).toEqual(["root", "root", "a", "a", "way1"]); // root's button, root's fold, a's button, a's fold, then way1
   });
 
   it("presses a node's action and not the fold control beside it", async () => {
@@ -149,7 +190,7 @@ describe("UI 10: the graph canvas", () => {
     const again = structuredClone(WORK);
     const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
     nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
-    await mount({ item: draw(again), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(again), { compact: false });
     expect((host.querySelector('[data-graph-node="root"]') as HTMLElement).isSameNode(rootEl)).toBe(true);
     expect(rootEl.isConnected).toBe(true);
   });
@@ -163,12 +204,12 @@ describe("UI 10: the graph canvas", () => {
     // a redraw of the same key with the view's own folded list: the person's choice wins
     const again = structuredClone(WORK);
     (again.sections[0].items[0] as { folded: string[] }).folded = ["b"];
-    await mount({ item: draw(again), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(again), { compact: false });
     expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length + 2); // still the person's: b open
     // a different key takes the view's folds again
     const otherKey = structuredClone(WORK);
     (otherKey.sections[0].items[0] as { key: string }).key = "other";
-    await mount({ item: draw(otherKey), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(otherKey), { compact: false });
     expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length);
   });
 
@@ -180,14 +221,43 @@ describe("UI 10: the graph canvas", () => {
     expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length);
     const open = structuredClone(noKey);
     (open.sections[0].items[0] as { folded?: string[] }).folded = [];
-    await mount({ item: draw(open), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(open), { compact: false });
     expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length + 2); // not the first one's folds
     // the same key under two owners: their folds never leak between them
-    await mountView(WORK, { scope: "one" });
+    await mountView(WORK, { owner: "one" });
     act(() => host.querySelector<HTMLButtonElement>('[data-graph-fold="b"]')!.click());
     await act(async () => {});
-    await mount({ item: draw(WORK), compact: false, busy: "", onPress: () => {}, scope: "two" });
+    await mount(draw(WORK), { owner: "two" });
     expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length); // b still folded there
+  });
+
+  it("keeps two owners' keyed graphs apart when a lone re-render happens under one of them", async () => {
+    // the stale-global shape the reviewer found: two cards on one page, the second card's graph re-renders alone (its
+    // own state), and a module global set by the last render would have the first card's scope read the second's
+    // owner. A context is right on every re-render, so each owner's entry keeps its own folds.
+    const twoHost = document.createElement("div");
+    document.body.append(twoHost);
+    const twoRoot = createRoot(twoHost);
+    try {
+      const Card = ({ owner }: { owner: string }) => (
+        <ExtensionOwnerScope owner={owner}>
+          <GraphCanvas item={draw(structuredClone(WORK))} busy="" onPress={() => {}} />
+        </ExtensionOwnerScope>
+      );
+      await act(async () => twoRoot.render(<><Card key="a" owner="one" /><Card key="b" owner="two" /></>));
+      // the person unfolds b under the first owner alone
+      const first = twoHost.querySelectorAll("[data-graph-stage]")[0]!;
+      act(() => first.querySelector<HTMLButtonElement>('[data-graph-fold="b"]')!.click());
+      await act(async () => {});
+      expect(twoHost.querySelectorAll("[data-graph-node]")).toHaveLength(2 * VISIBLE.length + 2); // one unfolded, one still folded
+      // a re-render of the whole page with the same owners: the first keeps its unfold, the second keeps its fold
+      await act(async () => twoRoot.render(<><Card key="a" owner="one" /><Card key="b" owner="two" /></>));
+      const per = [...twoHost.querySelectorAll("[data-graph-stage]")].map((s) => s.querySelectorAll("[data-graph-node]").length);
+      expect(per).toEqual([VISIBLE.length + 2, VISIBLE.length]);
+    } finally {
+      act(() => twoRoot.unmount());
+      twoHost.remove();
+    }
   });
 
   it("keeps the pan and zoom across a redraw that changes only states, and re-fits while untouched", async () => {
@@ -205,13 +275,59 @@ describe("UI 10: the graph canvas", () => {
     const again = structuredClone(WORK);
     const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
     nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
-    await mount({ item: draw(again), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(again), { compact: false });
     expect((host.querySelector("[data-graph-layer]") as HTMLElement).style.transform).toBe(moved);
     // while the person never moves it, a redraw takes the opening view again
     const otherKey = structuredClone(WORK);
     (otherKey.sections[0].items[0] as { key: string }).key = "fresh";
-    await mount({ item: draw(otherKey), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(otherKey), { compact: false });
     expect((host.querySelector("[data-graph-layer]") as HTMLElement).style.transform).toBe(before);
+    spy.mockRestore();
+  });
+
+  it("keeps Fit's view across a redraw of the same key: Fit counts as the person moving the canvas", async () => {
+    const spy = sizeStage(900, 500);
+    await mountView(WORK);
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const lw = Number.parseFloat(layer.style.width);
+    const lh = Number.parseFloat(layer.style.height);
+    // Fit: everything centred at the fitted scale (the opening view would not be centred, with `selected` there)
+    act(() => host.querySelector<HTMLButtonElement>(`[aria-label="${t("extensions-viewbody.graph_fit")}"]`)!.click());
+    const fitted = transformOf(layer);
+    const wantZ = Math.max(0.25, Math.min(1, Math.min((900 - 80) / lw, (500 - 80) / lh)));
+    expect(fitted[2]).toBeCloseTo(wantZ, 9);
+    expect(fitted[0]).toBeCloseTo((900 - lw * wantZ) / 2, 9);
+    // a redraw that changes only states keeps the person's Fit — without marking Fit as a move, the redraw would
+    // take the opening view again and throw it away
+    const again = structuredClone(WORK);
+    const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
+    nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
+    await mount(draw(again), { compact: false });
+    expect(transformOf(host.querySelector("[data-graph-layer]"))).toEqual(fitted);
+    spy.mockRestore();
+  });
+
+  it("a drag keeps panning across a redraw mid-gesture (a live graph's states change while it runs)", async () => {
+    capturePolyfill();
+    const spy = sizeStage(300, 200); // small enough that the drawing overflows: a pan is not clamped back to centre
+    await mountView(WORK);
+    const stage = host.querySelector("[data-graph-stage]")!;
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const at = () => transformOf(layer);
+    const start = at();
+    drag(stage, [[500, 300], [470, 280]]); // a 30 px pan
+    const pan1 = at();
+    expect(pan1).not.toEqual(start);
+    // a redraw of the same key (states changed) must not lose the pointer: the drag goes on panning
+    const again = structuredClone(WORK);
+    const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
+    nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
+    await mount(draw(again), { compact: false });
+    const stage2 = host.querySelector("[data-graph-stage]")!;
+    const layer2 = host.querySelector("[data-graph-layer]") as HTMLElement;
+    expect(layer2).toBe(layer); // the redraw re-renders in place, not a remount
+    drag(stage2, [[470, 280], [440, 260]], 1); // the same pointer keeps moving
+    expect(transformOf(layer2)).not.toEqual(pan1);
     spy.mockRestore();
   });
 
@@ -260,6 +376,35 @@ describe("UI 10: the graph canvas", () => {
     await act(async () => {});
     expect(document.querySelector("[role=dialog]")).toBeNull();
     expect(pressed).toEqual([]); // nothing was pressed on the way
+    // the focus comes back to the card's preview button, the control that reopens Full screen — not lost to the body
+    expect(document.activeElement?.classList.contains("graph-preview")).toBe(true);
+  });
+
+  it("gives the focus back to the Full screen button after Esc, on the page and from a card", async () => {
+    // the page: the Full screen button is replaced by the portal while the overlay is over it, so the focus used to
+    // fall to the body; it comes back to the button that reopens the overlay
+    await mountView(WORK);
+    const full = host.querySelector<HTMLButtonElement>(`[aria-label="${t("extensions-viewbody.graph_full_screen")}"]`)!;
+    full.focus();
+    expect(document.activeElement).toBe(full);
+    act(() => full.click());
+    await act(async () => {});
+    expect(document.querySelector("[role=dialog]")).not.toBeNull();
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await act(async () => {});
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    const back = host.querySelector<HTMLButtonElement>(`[aria-label="${t("extensions-viewbody.graph_full_screen")}"]`)!;
+    expect(document.activeElement).toBe(back); // a keyboard user presses Enter to reopen, not Tab from the top
+    // a card: the preview button is the opener, and it is back too
+    await mountView(WORK, { compact: true });
+    const preview = host.querySelector<HTMLButtonElement>(".graph-preview")!;
+    preview.focus();
+    act(() => preview.click());
+    await act(async () => {});
+    expect(document.querySelector("[role=dialog]")).not.toBeNull();
+    act(() => void window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await act(async () => {});
+    expect(document.activeElement).toBe(host.querySelector<HTMLButtonElement>(".graph-preview"));
   });
 
   it("a compact preview fits the whole layer into the stage, with no 25% floor", async () => {
@@ -277,7 +422,7 @@ describe("UI 10: the graph canvas", () => {
     expect(x).toBeCloseTo((600 - lw * zoom) / 2, 9);
     expect(y).toBeCloseTo((200 - lh * zoom) / 2, 9);
     // a re-run of the layout (a redraw of the same item) fits again, not the opening view
-    await mount({ item: draw(WORK), compact: true, busy: "", onPress: () => {} });
+    await mount(draw(WORK), { compact: true });
     const again = (host.querySelector("[data-graph-layer]") as HTMLElement).style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!;
     expect(Number(again[3])).toBeCloseTo(Math.max(0.01, Math.min(1, want)), 9);
     spy.mockRestore();
@@ -293,7 +438,7 @@ describe("UI 10: the graph canvas", () => {
     const kept = (host.querySelector("[data-graph-layer]") as HTMLElement).style.transform;
     expect(kept).not.toBe("");
     // a compact card of the same key fits itself and never touches the kept view; opening it fits again
-    await mount({ item: draw(WORK), compact: true, busy: "", onPress: (a) => pressed.push(a) });
+    await mount(draw(WORK), { compact: true, onPress: (a) => pressed.push(a) });
     const preview = host.querySelector<HTMLButtonElement>(".graph-preview")!;
     expect(preview).not.toBeNull();
     // Full screen from the card: the same interactive canvas — node buttons, fold controls, a drag and a wheel
@@ -315,7 +460,7 @@ describe("UI 10: the graph canvas", () => {
     await act(async () => {});
     expect(document.querySelector("[role=dialog]")).toBeNull();
     // the page's own kept view is what it was: the card's fits and the overlay's zoom never reached it
-    await mount({ item: draw(WORK), compact: false, busy: "", onPress: () => {} });
+    await mount(draw(WORK), { compact: false });
     const again = (host.querySelector("[data-graph-layer]") as HTMLElement).style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!;
     const keptM = kept.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/)!;
     expect(Number(again[3])).toBeCloseTo(Number(keptM[3]), 9); // the zoom the person left it at
@@ -324,7 +469,7 @@ describe("UI 10: the graph canvas", () => {
 
   it("walks the nodes with Tab in reading order and presses with Enter", async () => {
     const pressed: UIAction[] = [];
-    await mount({ item: draw(WORK), compact: false, busy: "", onPress: (a) => pressed.push(a) });
+    await mount(draw(WORK), { compact: false, onPress: (a) => pressed.push(a) });
     // every visible node is focusable in the DOM's reading order: a button when it acts, a group when it does not.
     // A button without its own tabindex is focusable by its own nature; a group carries tabindex="0".
     for (const id of VISIBLE) {
