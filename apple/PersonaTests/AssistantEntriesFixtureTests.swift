@@ -36,8 +36,9 @@ final class AssistantEntriesFixtureTests: XCTestCase {
         var running: [String]
         var shelved: [String]
         var activity: [String: Activity?]?
-        /// The In Progress rows that say their supervisor is reviewing them; nil in a case with none.
-        var supervisor_review: [String]?
+        var review: [String]?
+        var stopped: [String]?
+        var parked: [String]?
     }
 
     private struct Activity: Decodable {
@@ -61,19 +62,20 @@ final class AssistantEntriesFixtureTests: XCTestCase {
             XCTAssertEqual(got.needsYou.map(\.id), c.expected.needs_you, "\(c.name): needs you")
             XCTAssertEqual(got.running.map(\.id), c.expected.running, "\(c.name): running")
             XCTAssertEqual(got.shelved.map(\.id), c.expected.shelved, "\(c.name): shelved")
+            XCTAssertEqual(got.review.map(\.id), c.expected.review ?? [], "\(c.name): awaiting acceptance")
+            XCTAssertEqual(got.stopped.map(\.id), c.expected.stopped ?? [], "\(c.name): stopped")
+            XCTAssertEqual(got.parked.map(\.id), c.expected.parked ?? [], "\(c.name): parked")
             // each thing once, and each count is its rows
-            let all = (got.needsYou + got.running + got.shelved).map(\.id)
+            let all = (got.needsYou + got.running + got.shelved + got.review + got.stopped + got.parked).map(\.id)
             XCTAssertEqual(Set(all).count, all.count, "\(c.name): a thing in two places: \(all)")
             let content = ActionTrayContent(got)
             XCTAssertEqual(content.count(.needsYou), c.expected.needs_you.count, c.name)
             XCTAssertEqual(content.count(.running), c.expected.running.count, c.name)
-            let reviewing = got.running.filter { row in
-                guard case .task(let id, let status, _) = row, let todo = i.todos.first(where: { $0.id == id }) else { return false }
-                return AssistantEntries.saysSupervisorReview(todo, status: status, now: now)
-            }
-            XCTAssertEqual(reviewing.map(\.id), c.expected.supervisor_review ?? [], "\(c.name): rows saying Supervisor reviewing")
+            XCTAssertEqual(content.count(.review), c.expected.review?.count ?? 0, c.name)
+            XCTAssertEqual(content.count(.stopped), c.expected.stopped?.count ?? 0, c.name)
+            XCTAssertEqual(content.count(.parked), c.expected.parked?.count ?? 0, c.name)
             if let expected = c.expected.activity {
-                for row in got.running where expected.keys.contains(row.id) {
+                for row in got.running + got.stopped + got.parked where expected.keys.contains(row.id) {
                     let sessions: [Session]
                     switch row {
                     case .task(let id, _, _):

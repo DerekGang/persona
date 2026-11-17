@@ -124,75 +124,55 @@ After acceptance, workspaces are **silently retained**: no cleanup, recycling, o
 
 ### Needs you and In progress: each thing once (#3387)
 
-Above the Assistant's composer, **Needs you** lists the user's turn and **In progress** the work that does not need
-them. On the web, **Parked** is their peer for external waits, including ready review/merge waits (#9325), not a fold
-inside active work. Each thing is one row in exactly one entry, Needs you first; task badges use the shared open-count
-rule below. Native clients keep their existing two-entry presentation until they adopt this grouping:
+The Web, iOS / iPad / Mac, and Android composer has five peer entries, in this order. They reuse the existing tray,
+row, status-mark and horizontal-scroller patterns; empty entries remain visible in secondary ink. There is no parent
+"In progress" group containing the other task states. Each task has one home and one count.
 
-- **Needs you**: a task whose current agent asks something (one row, its cards under the task's name), a task waiting
-  for a decision that is the owner's (an open `ask`; `needs_user` on an open task; on Android and Apple also a
-  `pending_review` that is overdue, next bullet), one whose turn broke off on a model error (`interrupted`) or whose start failed while it is
-  still the user's to retry; in the main chat, an Agent opened by hand (no task) that asks something; a plan waiting
-  for Start (one row per plan); a message card waiting for Send; the conversation's own cards.
-- **A supervisor's review is not the owner's.** A supervised task judged finished waits in `pending_review` for its
-  supervisor (the background supervisor, a leader, or the conversation that handed it out; "Supervision" and
-  "Background supervisor" below), who closes it with `task_review`. That review is Persona's to do, so the Needs you
-  badge does not count it. It comes to the owner only when something of it is theirs: its agent asks, it has an open
-  `ask` (please verify), or the review ends in `needs_user`. Unchanged by this: the To-dos page's sections, the
-  direction tree's `review` state, the Today card's "Waiting for your review" and pushes. Before 2026-11-15 every
-  `pending_review` task was listed under Needs you, a rule older than the background supervisor (#4927): most of what
-  the owner was shown there was a review Persona finished on its own minutes later.
-  - **Web: Persona reviewing** (#8678, zh 等 Persona 验收, ja Persona の確認待ち): every such task with nothing of it
-    running (its status a finished turn, `awaitsReview`) is a row in an entry of its own, after In progress, however
-    long the review has waited and whether or not the hub sends `pending_since`. The entry is there only while one
-    waits (or its tray is open), is drawn neutral (a grey `ink-3` dot and `ink-2` label, never the attention or
-    working colour) since nothing in it is the user's, and counts its rows like the others. Its rows say "Supervisor
-    reviewing" (zh 督办验收中, ja 監督の確認待ち) and open the task. A task under
-    review whose PR is open and waits for a maintainer is here, not in Parked (`supervisor_review_with_open_pr`). A
-    review whose agent is at work again is In progress with it. Until #8678 the web put a review overdue by an hour
-    (or with no `pending_since`) in Needs you, as Android and Apple still do: users opened such a row, found only the
-    Agent's finished conversation and nothing to answer, and could not tell what was wanted of them. The entry keeps a
-    stalled or missing supervisor's review in sight without making it the owner's.
-  - **Android and Apple** (until they adopt the entry): the task is **In progress**, its row saying "Supervisor
-    reviewing", for the first hour of the review, and in Needs you after that (`supervision.pending_since`; the
-    threshold is `REVIEW_OVERDUE_MS` on Android, `AssistantEntries.reviewOverdueAfter` on Apple), or at once from a hub
-    that does not send `pending_since`. The row stays in In progress whatever the To-dos page files the task under,
-    each client re-reads the clock once a minute, and a task under review with an open PR is In progress, not Waiting
-    for merge, until the review is overdue. `spec/fixtures/entries` pins this split and, in `web_review`, the rows the
-    web lists under Persona reviewing instead.
-- **Parked** (web only, #9325): explicit supervisor holds and ready review/merge waits share one peer group. A fresh,
-  matching open non-draft PR with nothing active or awaiting the owner keeps the existing `pr_open` rule, now displayed
-  inside Parked. Generic person-reply holds do not become merge waits. The To-dos status list and All board use the
-  same classification. Multiple PRs keep their own links/blockers but the task has one row and count. Overdue holds stay
-  here until the hub actually wakes/reviews them, never auto-shelved or silently filed as finished. The entry appears
-  while it has rows or its tray is open; a hold's neutral clock replaces the Agent's finished-turn check. This slice
-  keeps the existing until/reason line; contact evidence, waiting age/order and reminders are separate work in #9289.
-  Android and iOS still use their earlier presentation and do not adopt this web group in this PR.
-- **In progress**: every other task the To-dos page counts open (#3331), and in the main chat each working Agent opened
-  by hand. A task's agents are never rows of their own. Shelved tasks fold under one uncounted line. A row may remain
-  visible without being counted open (a seen supervisor review); its `data-counts-open` flag keeps counted task rows
-  across Needs you, In progress, Parked and Persona reviewing equal to the To-dos header's "Not done", for the same
-  scope. Live questions, owner decisions and active work outrank both types of wait; the supervisor's review keeps its
-  own entry. Existing acceptance/deployed precedence and PR freshness are unchanged.
-- Finished tasks (done, cancelled, accepted) are in neither; the board (**All**) has them. An answered card moves its task
-  back to In progress. An entry with nothing counted (no number on it), Needs you or In progress, is grey and still opens:
-  to the rows it lists uncounted, or to its line ("All caught up", "Nothing in progress"); the web drew such an In
-  progress in its working blue and ink until 2026-11-14.
-- **One home for an Agent several tasks list** (every client, 2026-11-14: web #7490, Android #7531, iOS / Mac #7532): an
-  Agent that more than one of the conversation's tasks lists asks under one of them, the task the hub ties its session
-  to (`Session.todo`), else the first that lists it (oldest card first; one plan's tasks in the plan's order, the web's
-  slot id `plan:<plan>:<index>`). Its cards are that task's row alone and are
-  counted once; the other tasks do not wait on the user for them and are In progress, unless a decision of their own
-  keeps them in Needs you (without the Agent's cards). Before, each task listing the Agent showed and counted the same
-  approval. The shared cases (`spec/fixtures/entries`) pin it; the whole-client Needs you rule is #5974's.
+| Entry | Admission | Row meaning |
+| --- | --- | --- |
+| Needs you | An Agent's unanswered question, an open owner ask, `needs_user`, an interrupted turn or retryable failed start; also stopped unfinished work unattended for **more than** one hour | What the owner can answer or the supervisor has failed to follow up |
+| In progress | A current Agent actually working or starting, including background commands, workflows and subagents | Actual execution, not an unread reply or a generic external wait |
+| Awaiting acceptance | Nothing running, Agent closeout `status=done`, not accepted/closed and not intentionally parked | Reported done, not supervisor-verified completion |
+| Stopped, unfinished | Nothing running, closeout `not_done` / `blocked` or missing, and no intentional park | Stopped unfinished, or stopped waiting for the named party |
+| Parked | An explicit supervisor hold or the existing fresh, matching open non-draft PR wait | Intentional external wait; preserve evidence, target, contact, wake and age |
 
-The split is one pure function per client: web `assistantEntries` (`web/src/lib/assistant-entries.ts`), Android
-`assistantEntries` (`persona.core.domain.tasks`), iOS / iPad / Mac `AssistantEntries.split`
-(`apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift`, #3393). All three replay `spec/fixtures/entries`, which pins
-which entry every case goes to, and which In progress rows say their supervisor is reviewing them (Apple:
-`AssistantEntriesFixtureTests`); the web reads those rows, and the overdue reviews, from `web_review` as its Persona
-reviewing entry (#8678). The older Pending / Progress / Agents / To start entries
-below are the earlier presentation (#2878, #3162).
+Live questions and owner decisions take precedence. Actual foreground or background work outranks a hold. A generic
+`blocked/external` / `waiting` status with **no execution** must not hide an explicit park. Without a supervisor park,
+such a wait belongs to Stopped, unfinished: show the Agent's waiting line and ask the supervisor to confirm the wait
+and park it. An Agent's claim does not create evidence of a sent request or a reviewer acknowledgement. Ready PR
+facts alone do not override a pending internal acceptance review or an unseen, unreviewed Agent turn.
+
+The hour is measured from the stopped turn (`work.turn_at`, falling back on older hubs to `state_since`, session
+`updated_at` or the Agent link) or the last real supervisor follow-up, whichever is later, never before task creation.
+A successful `task_review` or a **confirmed successful** `agent_send` by the task's current supervisor updates
+`supervision.followed_up_at`. Failed/unknown sends, another conversation's messages, automatic ledger writes and
+reviewer-only records do not. Existing supervisor review history is a fallback for older hubs. Reading a reply or a hub
+restart must not restart this clock. A send does not change `supervision.updated_at` or `pending_since`: those identify
+the review/decision round. An explicit park never ages into Needs you. A `done` closeout remains Awaiting acceptance,
+however old; its age alone is not a user decision.
+
+Agent row text and the to-do's actual state are separate. Agent closeouts read **Reported done · awaiting acceptance**,
+**Stopped · unfinished**, or **Stopped · waiting for <party>**. The existing to-do chip / native secondary label names
+its own state (review, rework, parked, accepted). An unread turn is **New reply**, not completion. Only supervisor
+acceptance closes supervised work; this presentation does not send an acceptance or close a to-do. Existing
+Just finished / shelved history remains available under In progress and does not count; unaccepted stopped tasks
+stay visible in the five groups even if the board has filed their reply as seen or stale. Board filing and acceptance
+are deliberately not interchangeable counts.
+
+The main conversation watches every task; another conversation only the tasks it dispatched (`origin`). A task's
+current Agents are not independent rows. An Agent several tasks list asks under one task: the task `Session.todo`
+ties it to, else the first current lister (oldest card first, one plan's tasks in plan order). The other tasks do not
+repeat that request: their own execution / closeout decides their group. Plans waiting for Start and message cards
+waiting for Send are Needs you rows, one per plan or card. A hand-opened Agent with no current task appears in the
+main conversation only: Needs you while asking, In progress while actually working. Finished or released task links
+do not hide such an Agent. Each capsule opens one tray, not an inline wall of cards; pending choices remain in their
+existing answerable pending area.
+
+The pure split functions are Web `assistantEntries` (`web/src/lib/assistant-entries.ts`), Android `assistantEntries`
+(`persona.core.domain.tasks`), and Apple `AssistantEntries.split`
+(`apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift`). All replay `spec/fixtures/entries`, including exact
+hour boundaries, real follow-up, missing closeouts, resumed work, explicit external parks, and background activity.
+The older Pending / Progress / Agents / To start entries below describe the earlier presentation (#2878, #3162).
 
 ### Background activity in In progress (#3588)
 

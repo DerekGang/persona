@@ -71,4 +71,14 @@
     <string name="chat_tray_held_reason_dedup">同一件事在过去 12 小时内已经推过</string>
     <string name="chat_tray_held_load_failed">没能读到被拦推送。检查连接后重试。</string>
     <string name="chat_tray_held_p2_toggle">展开或收起静默推送</string>
+    <string name="chat_tray_entry_acceptance">待验收</string>
+    <string name="chat_tray_entry_stopped">停下没做完</string>
+    <string name="chat_tray_entry_parked">搁置</string>
+    <string name="chat_tray_agent_reported_done">做完了·待验收</string>
+    <string name="chat_tray_agent_waiting">停下·在等</string>
+    <string name="chat_tray_agent_waiting_on">停下·在等%1$s</string>
+    <string name="chat_tray_todo_state">待办：%1$s</string>
+    <string name="chat_tray_unattended">督办超过1小时没有跟进</string>
+    <string name="chat_tray_park_hint">请督办确认等待并挂搁置</string>
+    <string name="chat_tray_agent_unfinished">停下·没做完</string>
 </resources>

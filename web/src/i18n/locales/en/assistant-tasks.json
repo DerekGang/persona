@@ -13,8 +13,7 @@
   "tray_needs_you": "Needs you",
   "tray_running": "In progress",
   "tray_empty_parked": "No tasks parked",
-  "tray_review": "Persona reviewing",
-  "tray_empty_review": "Nothing waiting for Persona to review",
+  "tray_empty_review": "Nothing awaiting acceptance",
   "pr_blocker_review_required": "Review required",
   "pr_blocker_changes_requested": "Changes requested",
   "pr_blocker_checks_failed": "Checks failed",
@@ -132,7 +131,6 @@
   "plan_edit_prompt": "First message to the agent",
   "plan_edit_discard": "Discard these changes?",
   "review_pending": "Awaiting review",
-  "review_supervisor": "Supervisor reviewing",
   "review_rework": "Rework round {round}",
   "review_needs_user": "Needs your call",
   "review_dismissed": "Not handling",
@@ -192,5 +190,14 @@
   "start_cause_timed_out": "It took too long to start",
   "start_cause_not_allowed": "This computer didn't allow it",
   "start_cause_needs_update": "Persona on this computer needs an update",
-  "start_failed_details": "Didn't start. Open it for details."
+  "start_failed_details": "Didn't start. Open it for details.",
+  "tray_acceptance": "Awaiting acceptance",
+  "tray_stopped": "Stopped, unfinished",
+  "tray_empty_stopped": "No stopped, unfinished tasks",
+  "agent_reported_done": "Reported done · awaiting acceptance",
+  "agent_unfinished": "Stopped · unfinished",
+  "agent_waiting": "Stopped · waiting",
+  "agent_waiting_on": "Stopped · waiting for {waiting}",
+  "tray_unattended": "Persona has not followed up for over an hour",
+  "tray_park_hint": "Supervisor: confirm the wait and park this task"
 }

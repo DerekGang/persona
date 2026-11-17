@@ -1639,6 +1639,15 @@ control when it sits lower in the row.
 
 ### 4.8 Pending requests
 
+**Task entry states (#5669).** Web, Apple and Android show five peer capsules above the composer: Needs you,
+In progress (actual execution), Awaiting acceptance (Agent reports done), Stopped unfinished, and Parked. Use the
+existing capsule / horizontally scrolling row; all five remain available, including empty entries in secondary ink.
+Only Needs you uses attention styling; execution uses the existing working mark, acceptance and stopped states are
+neutral, and Parked retains its clock / wait evidence. An Agent's closeout label and the to-do state are separate,
+never a completed check for an unfinished unread turn. A stopped unparked external wait shows its target and a
+supervisor-parking hint. The full admission and one-hour follow-up rule is in
+`docs/assistant/unified-entry.md` "Needs you and In progress: each thing once". No new token or component family.
+
 Task decisions on the web reuse the task-routing chip for **Answer in chat** (#5929). It identifies the task and
 states visibly that the next message is saved as the answer; its existing cancel action switches back to ordinary
 discussion. The original decision round travels with the answer. Only a delivered and recorded answer removes the

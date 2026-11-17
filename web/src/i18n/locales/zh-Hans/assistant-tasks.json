@@ -13,8 +13,7 @@
   "tray_needs_you": "要你处理",
   "tray_running": "进行中",
   "tray_empty_parked": "没有搁置中的事",
-  "tray_review": "等 Persona 验收",
-  "tray_empty_review": "没有等 Persona 验收的任务",
+  "tray_empty_review": "没有待验收的任务",
   "pr_blocker_review_required": "需要审查",
   "pr_blocker_changes_requested": "需要修改",
   "pr_blocker_checks_failed": "检查未通过",
@@ -119,7 +118,6 @@
   "plan_edit_prompt": "交给 Agent 的第一条消息",
   "plan_edit_discard": "放弃这些修改？",
   "review_pending": "待验收",
-  "review_supervisor": "督办验收中",
   "review_rework": "返工第 {round} 轮",
   "review_needs_user": "等你决定",
   "review_dismissed": "不处理",
@@ -178,5 +176,14 @@
   "start_cause_timed_out": "启动太久，超时了",
   "start_cause_not_allowed": "这台电脑没有允许",
   "start_cause_needs_update": "这台电脑上的 Persona 需要更新",
-  "start_failed_details": "没开起来，点开看详情"
+  "start_failed_details": "没开起来，点开看详情",
+  "tray_acceptance": "待验收",
+  "tray_stopped": "停下没做完",
+  "tray_empty_stopped": "没有停下没做完的任务",
+  "agent_reported_done": "做完了·待验收",
+  "agent_unfinished": "停下·没做完",
+  "agent_waiting": "停下·在等",
+  "agent_waiting_on": "停下·在等{waiting}",
+  "tray_unattended": "督办超过1小时没有跟进",
+  "tray_park_hint": "请督办确认等待并挂搁置"
 }

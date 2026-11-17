@@ -69,7 +69,7 @@ class QuietTasksUiTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     @After fun close() = scope.cancel()
 
-    private val at = Instant.now().minusSeconds(3600).toString()
+    private val at = Instant.now().minusSeconds(1800).toString()
     private val cut = Session("desk", "cut", title = "Rewrite the intro", state = "idle",
         turnError = "The model service stopped responding.")
     private val resetAt = Instant.now().plusSeconds(3 * 3600).toString()
@@ -153,14 +153,15 @@ class QuietTasksUiTest {
         Snapshot.sendApplyNotifications()
         rule.waitForIdle()
         rule.onNodeWithText("Just finished").assertIsDisplayed()
+        rule.onNodeWithText("Renamed the button").assertIsDisplayed()
+        rule.onNodeWithText("Done").assertIsDisplayed()
+        rule.onNodeWithTag("assistant-entry-stopped").performScrollTo().performClick()
         rule.onNodeWithText("Usage Limit", substring = true).assertIsDisplayed()
         rule.onNodeWithText("Weekly limit reached", substring = true).assertIsDisplayed()
         rule.onNodeWithText("Resets", substring = true).assertIsDisplayed()
-        rule.onNodeWithText("Renamed the button").assertIsDisplayed()
-        rule.onNodeWithText("Done").assertIsDisplayed()
-        rule.onNodeWithTag("assistant-entry-running").assertIsDisplayed()
         rule.onNodeWithText("Continue").performClick()
         rule.runOnIdle { assertEquals(listOf("failed", "cut", "limit"), api.retried) }
+        rule.onNodeWithTag("assistant-entry-running").performClick()
         rule.onNodeWithTag("assistant-just-finished-row").performClick()
         rule.runOnIdle {
             assertEquals(TaskSheet.Task("done"), host.sheet.value)
@@ -184,6 +185,9 @@ class QuietTasksUiTest {
                         AssistantTrays(host, needs, emptyList(), emptyList(), emptyList(), { 700.dp }, busy = false, enabled = true,
                             onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
                         AssistantTrays(host, running, emptyList(), emptyList(), emptyList(), { 700.dp }, busy = false, enabled = true,
+                            onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
+                        AssistantTrays(host, AssistantTrayState().also { it.expanded = AssistantTray.Stopped },
+                            emptyList(), emptyList(), emptyList(), { 700.dp }, busy = false, enabled = true,
                             onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
                     }
                 }

@@ -6,7 +6,7 @@ import { todoBucket, triageTodos } from "./todo-triage";
 import type { Todo } from "./todos";
 import { assistantEntries } from "./assistant-entries";
 
-// #3331: the conversation's In progress entry and the To-dos page's "Not done" read one rule (todoBucket).
+// Board filing is not acceptance: the five task groups keep every unaccepted task visible.
 const NOW = Date.parse("2026-11-10T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 const at = hoursAgo(1);
@@ -48,17 +48,16 @@ describe("cardBucket", () => {
   });
 });
 
-// In progress (#3387) is the open tasks that do not wait on the user; none of these do, so it is the page's open number.
 const entryRows = (conversation: string, todos: Todo[], plans: Record<string, TaskPlan>, main?: string) => {
   const got = assistantEntries({ conversation, main, todos, sessions: [], interactions: [], plans, feed: [], lookup: noSessions, now: NOW });
   const ids = (items: typeof got.running) => items.map((item) => (item.kind === "task" ? item.todo.id : item.key));
-  return { open: ids(got.running), shelved: ids(got.shelved), needsYou: got.needsYou.map((item) => item.key) };
+  return { running: ids(got.running), stopped: ids(got.stopped), shelved: ids(got.shelved), needsYou: got.needsYou.map((item) => item.key) };
 };
 
-describe("In progress counts what the To-dos page counts", () => {
+describe("five groups count unfinished work, not whether its reply was read", () => {
   const todos: Todo[] = [
     todo({ id: "open" }),
-    todo({ id: "shelved", created_at: hoursAgo(80), updated_at: hoursAgo(60) }),
+    todo({ id: "stale", created_at: hoursAgo(80), updated_at: hoursAgo(60) }),
     todo({ id: "accepted", supervision: accepted() }),
     todo({ id: "done", done_at: hoursAgo(3) }),
     todo({ id: "manual", origin: undefined }),
@@ -66,21 +65,21 @@ describe("In progress counts what the To-dos page counts", () => {
   ];
   const plans = { p: plan("p", "open", "main", 2) };
 
-  it("the main conversation: every to-do, the same open number, shelved folded, plans not counted", () => {
+  it("keeps a stale unaccepted task in Needs you rather than hiding it among shelved or completed tasks", () => {
     const main = todos.map((td) => (td.origin === "c" ? { ...td, origin: "main" } : td));
     const rows = entryRows("main", main, plans, "main");
-    const page = triageTodos(main, noSessions, NOW);
-    expect(rows.open.length).toBe(page.open);
-    expect([...rows.open].sort()).toEqual(["elsewhere", "manual", "open"]);
-    expect(rows.shelved).toEqual(["shelved"]);
-    expect(rows.shelved.length).toBe(page.shelved);
-    // the finished ones are in neither entry; the plan waiting for Start is one Needs you row, not its two tasks
-    expect(rows.needsYou).toEqual(["plan:p"]);
+    expect(rows.running).toEqual([]);
+    expect([...rows.stopped].sort()).toEqual(["elsewhere", "manual", "open"]);
+    expect(rows.shelved).toEqual([]);
+    expect(rows.needsYou).toEqual(["plan:p", "task:stale"]);
+    expect(triageTodos(main, noSessions, NOW).shelved).toBe(1); // The board's archival filing is unchanged.
   });
 
-  it("another conversation counts only the tasks it handed out, by the same rule", () => {
+  it("another conversation lists only the tasks it handed out, across the five groups", () => {
     const rows = entryRows("c", todos, {});
-    expect(rows.open).toEqual(["open"]);
-    expect(rows.shelved).toEqual(["shelved"]);
+    expect(rows.running).toEqual([]);
+    expect(rows.stopped).toEqual(["open"]);
+    expect(rows.needsYou).toEqual(["task:stale"]);
+    expect(rows.shelved).toEqual([]);
   });
 });

@@ -120,7 +120,7 @@ class AssistantChatDetailsShotsTest {
         File(output, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    @Test fun shelvedNextAndGettingReadyAsOnIos() {
+    @Test fun unattendedTasksStayVisibleAndNextAndGettingReadyAsOnIos() {
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
         var round by mutableIntStateOf(0)
@@ -152,10 +152,10 @@ class AssistantChatDetailsShotsTest {
             rule.waitUntil(10_000) { rule.onAllNodesWithTag("assistant-tray-bar").fetchSemanticsNodes().isNotEmpty() }
             rule.onNodeWithText("Ask Persona…").assertExists()
 
-            // In progress: the running task, and on Glass the two shelved ones as one quiet line.
+            // Stale unaccepted tasks escalate; they are not silently hidden in shelved.
             rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
             shot("$name-1-in-progress")
-            rule.onAllNodesWithTag("assistant-tray-shelved").assertCountEquals(if (s == AppStyle.Glass) 1 else 0)
+            rule.onAllNodesWithTag("assistant-tray-shelved").assertCountEquals(0)
             rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
 
             // Needs you: approving the last card here offers the next one waiting elsewhere, as an Agent's chat does.

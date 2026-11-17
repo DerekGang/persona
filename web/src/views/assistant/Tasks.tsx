@@ -6,7 +6,8 @@
 import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { taskMeter, type TaskCardMetadata } from "../../lib/task-cards";
 import { agentRowKey, agentRowLabel, agentRowMark, agentRowTone, todoChipLabel, todoChipState } from "../../lib/task-row-status";
-import { assistantEntries, needsYouBySupervisor, type NeedsYouItem } from "../../lib/assistant-entries";
+import { shownCloseout } from "../../lib/closeout";
+import { assistantEntries, needsYouBySupervisor, taskAwaitsDecision, type NeedsYouItem } from "../../lib/assistant-entries";
 import { useRestoredTodos } from "../../lib/todo-restore";
 import {
   answeredItems,
@@ -748,10 +749,10 @@ function dockTasksIn(s: State, conversation: string, plans: Record<string, TaskP
     });
 }
 
-type AssistantTray = "needs" | "running" | "parked" | "review";
+type AssistantTray = "needs" | "running" | "parked" | "review" | "stopped";
 /** Each entry's mark: Needs you waits on the user, In progress is work under way; Persona reviewing is neutral, since
  *  nothing in it is the user's (#8678). */
-const TRAY_DOT: Record<AssistantTray, string> = { needs: "bg-attention", running: "bg-accent", parked: "bg-ink-3", review: "bg-ink-3" };
+const TRAY_DOT: Record<AssistantTray, string> = { needs: "bg-attention", running: "bg-accent", parked: "bg-ink-3", review: "bg-ink-3", stopped: "bg-ink-3" };
 const EMPTY_FEED: FeedItem[] = [];
 const EMPTY_CARDS: TaskCardMetadata[] = [];
 
@@ -819,32 +820,36 @@ function ProgressTaskRow({ card, conversation, activity, countsOpen, supervisorR
   const nobody = orphan && (orphan.reason ? `${orphan.lead} · ${orphan.reason}` : orphan.lead);
   // a usage limit says what stopped it and when it goes on (the status word on the right says only that it did)
   const limit = state === "usage_limit" ? usageLimitLabel(task?.lead, clock) : undefined;
+  const closeout = shownCloseout(task?.lead);
+  const unparkedWait = todo?.supervision?.state !== "parked" && !liveWork && agentKey !== "working"
+    && (closeout?.status === "blocked" || task?.lead?.work?.phase === "blocked" && task.lead.work.on === "external");
   const detail = finished || state === "cancelled"
     ? latestReview(todo?.supervision)?.note ?? todo?.done_reason ?? (receipt && field(receipt, "summary"))
-    : limit ?? liveLine ?? parked ?? waits ?? nobody ?? stopped ?? progressLine(todo?.supervision) ?? ask ?? task?.lead?.plan?.current ?? progressOf(task?.lead)?.text ?? (report && field(report, "text"));
+    : limit ?? liveLine ?? parked ?? (closeout?.status === "blocked" ? closeout.waiting : undefined) ?? waits ?? nobody ?? stopped ?? progressLine(todo?.supervision) ?? ask ?? task?.lead?.plan?.current ?? progressOf(task?.lead)?.text ?? (report && field(report, "text"));
   return (
     <button type="button" data-task-slot={card.id} data-counts-open={countsOpen ? "true" : "false"} disabled={!todo && !card.plan_id} onClick={() => {
       onOpen?.();
       if (card.todo_id) openTask(card.todo_id);
       else window.dispatchEvent(new CustomEvent("persona:task-start", { detail: conversation }));
-    }} className="flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-left hover:bg-hover disabled:cursor-default">
-      <span data-task-mark={rowIsFinished ? "done" : reviewing ? "follow_up" : agentKey} className="flex w-4 shrink-0 justify-center">
+    }} className="grid w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_1rem] items-center gap-x-3 gap-y-0.5 px-3 py-2.5 text-left hover:bg-hover disabled:cursor-default sm:flex sm:gap-3">
+      <span data-task-mark={rowIsFinished ? "done" : reviewing ? "follow_up" : agentKey} className="col-start-1 row-start-1 flex w-4 shrink-0 justify-center">
         {rowIsFinished ? <TaskMark status="done" size={8} /> : reviewing ? <TaskMark status="follow_up" size={8} /> : <StatusMark state={agentRowMark(agentKey)} size="sm" />}
       </span>
-      <div className="min-w-0 flex-1">
+      <div data-task-content className="col-start-2 row-start-1 min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate text-sm font-semibold" title={title}>{title}</span>
           {chip && <span data-task-todo-state className="max-w-1/2 shrink-0 truncate rounded-full bg-field px-1.5 text-xs text-ink-2">{todoChipLabel(chip)}</span>}
         </div>
         <BackgroundWorkDetail activity={liveWork} detail={detail} pr={prNumber ? t("assistant-tasks.progress_pr", { number: prNumber }) : undefined} />
+        {unparkedWait && <div data-task-park-hint className="text-xs text-ink-2">{t("assistant-tasks.tray_park_hint")}</div>}
         {!finished && state !== "cancelled" && meter && <TaskProgressMeter value={meter.value} total={meter.total} blocked={blocked} title={title} />}
       </div>
       {/* the status in its own right-aligned column (the rows' states scan down it), then the row's end: › where it opens
           something, ✓ once finished, ⓘ for a usage limit (#5569) */}
-      <span data-task-status={rowIsFinished ? "done" : reviewing ? "review" : agentKey} className={cx("max-w-[40%] shrink-0 truncate text-right text-xs", rowIsFinished || reviewing ? "text-ink-2" : agentRowTone(agentKey))}>
-        {rowIsFinished ? (accepted ? t("assistant-tasks.review_accepted") : TODO_STATUS_INFO.done.label) : reviewing ? t("assistant-tasks.review_supervisor") : agentRowLabel(agentKey)}
+      <span data-task-status={rowIsFinished ? "done" : reviewing ? "review" : agentKey} title={agentRowLabel(agentKey, task?.lead)} className={cx("col-start-2 row-start-2 min-w-0 text-xs sm:max-w-[40%] sm:shrink-0 sm:truncate sm:text-right", rowIsFinished || reviewing ? "text-ink-2" : agentRowTone(agentKey))}>
+        {rowIsFinished ? (accepted ? t("assistant-tasks.review_accepted") : TODO_STATUS_INFO.done.label) : agentRowLabel(agentKey, task?.lead)}
       </span>
-      <span className="flex w-4 shrink-0 justify-center">
+      <span className="col-start-3 row-start-1 flex w-4 shrink-0 justify-center">
         {finished ? <Icon name="check" className="text-green" /> : state === "usage_limit" ? <Icon name="info" className="text-orange" /> : <Icon name="chevronRight" className="text-ink-3" />}
       </span>
     </button>
@@ -1027,15 +1032,16 @@ function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr }: { rowKey?: str
     return done ? field(done, "summary") : undefined;
   });
   const cutOff = status === "interrupted";
+  const unattended = status !== "needs_you" && !cutOff && !taskAwaitsDecision(todo);
   const cut = cutOff ? interruption(task?.lead) : undefined;
   const canContinue = cutOff && (cut ? cut.canContinue : true);
-  const line = cut ? cut.reason : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || progressOf(task?.lead)?.text : undefined;
+  const line = unattended ? t("assistant-tasks.tray_unattended") : cut ? cut.reason : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || progressOf(task?.lead)?.text : undefined;
   return (
     <div data-needs-row={rowKey} {...countsOpenAttr} data-waiting-task={todo.id} className={cx("flex flex-col gap-1.5 rounded-control px-3 py-2 text-sm", cutOff ? "bg-danger-wash" : "bg-field")}>
       <div className="flex min-w-0 items-center gap-2">
         <Icon name={cutOff ? "info" : "hand"} className={cx("shrink-0", cutOff ? "text-red" : "text-attention")} />
         <button type="button" onClick={() => openTask(todo.id)} className="min-w-0 flex-1 truncate text-left hover:underline">{todo.title}</button>
-        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{waitsLabel(todo, status)}</span>
+        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{unattended ? t("assistant-tasks.agent_unfinished") : waitsLabel(todo, status)}</span>
       </div>
       {line && <div className={cx("truncate pl-6 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{line}</div>}
       {canContinue && (
@@ -1178,7 +1184,7 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   // no to-do — hand-opened Agents, plans waiting for Start, draft cards, the chat's own ask cards — still add one.
   const badgeOf = (items: { kind: string; countsOpen?: boolean }[]) =>
     items.reduce((n, item) => n + (item.kind === "task" ? (item.countsOpen ? 1 : 0) : 1), 0);
-  const counts: Record<AssistantTray, number> = { needs: ownAsks.length + badgeOf(entries.needsYou), running: badgeOf(entries.running), parked: badgeOf(entries.parked), review: badgeOf(entries.review) };
+  const counts: Record<AssistantTray, number> = { needs: ownAsks.length + badgeOf(entries.needsYou), running: badgeOf(entries.running), parked: badgeOf(entries.parked), review: badgeOf(entries.review), stopped: badgeOf(entries.stopped) };
   // the card is in the chat already: close the tray onto it and bring it into view
   const openOwn = (id: string) => {
     setTray(null);
@@ -1193,9 +1199,9 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
       window.removeEventListener("persona:task-start", needs);
     };
   }, [conversation]);
-  const labels: Record<AssistantTray, string> = { needs: t("assistant-tasks.tray_needs_you"), running: t("assistant-tasks.tray_running"), parked: t("todos.section_parked"), review: t("assistant-tasks.tray_review") };
+  const labels: Record<AssistantTray, string> = { needs: t("assistant-tasks.tray_needs_you"), running: t("assistant-tasks.tray_running"), parked: t("todos.section_parked"), review: t("assistant-tasks.tray_acceptance"), stopped: t("assistant-tasks.tray_stopped") };
   // Parked is a peer, not folded inside In progress; keep an emptied tray reachable until it closes.
-  const entryKeys: AssistantTray[] = ["needs", "running", ...(entries.parked.length > 0 || tray === "parked" ? ["parked" as const] : []), ...(entries.review.length > 0 || tray === "review" ? ["review" as const] : [])];
+  const entryKeys: AssistantTray[] = ["needs", "running", "review", "stopped", "parked"];
   const entryButtons = useRef<Partial<Record<AssistantTray, HTMLButtonElement | null>>>({});
   // Esc closes the open tray from its entry, its header and its rows, and hands the focus back to the entry; it stops
   // there, never on to the window, where the chat's Esc would stop a working turn. Not while a menu or dialog is open
@@ -1244,6 +1250,10 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
           {tray === "review" && <div className="divide-y divide-line">
             {entries.review.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} supervisorReview />)}
             {!entries.review.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_review")}</p>}
+          </div>}
+          {tray === "stopped" && <div className="divide-y divide-line">
+            {entries.stopped.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} />)}
+            {!entries.stopped.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_stopped")}</p>}
           </div>}
           {tray === "parked" && <div className="divide-y divide-line">
             <Suspense fallback={<Loading />}><ParkedTasks items={entries.parked} /></Suspense>
