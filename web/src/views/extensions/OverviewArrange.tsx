@@ -27,8 +27,8 @@ export function OverviewEditHead({ onDone }: { onDone: () => void }) {
   return (
     <div data-overview-arrange className="col-span-full flex flex-wrap items-start gap-x-3 gap-y-2">
       <div className="min-w-48 flex-1">
-        <h2 className="text-[13px] font-medium text-ink">{t("extensions-overviewarrange.title")}</h2>
-        <p className="mt-0.5 text-[12.5px] leading-[1.5] text-ink-2">
+        <h2 className="text-meta font-medium text-ink">{t("extensions-overviewarrange.title")}</h2>
+        <p className="mt-0.5 text-label leading-[1.5] text-ink-2">
           {t("extensions-overviewarrange.line", { hint: t("extensions-overviewarrange.hint"), where: synced ? t("settings.start_page_footer_synced") : t("settings.start_page_footer_local") })}
         </p>
       </div>
@@ -58,8 +58,8 @@ export function OverviewEditBar({ place, span, hidden, edit }: { place: UIPlace;
         <Icon name="grip" size={14} />
       </span>
       <div className="min-w-24 flex-1">
-        <div className={cx("truncate text-[13px] font-medium", hidden ? "text-ink-3" : "text-ink")}>{name}</div>
-        {(hidden || place.extension_name) && <div className="truncate text-[11px] text-ink-3">{hidden ? t("extensions-overviewarrange.hidden") : place.extension_name}</div>}
+        <div className={cx("truncate text-meta font-medium", hidden ? "text-ink-3" : "text-ink")}>{name}</div>
+        {(hidden || place.extension_name) && <div className="truncate text-submeta text-ink-3">{hidden ? t("extensions-overviewarrange.hidden") : place.extension_name}</div>}
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         <select value={span} onChange={(e) => edit.set({ span: e.target.value === "full" ? "full" : "half" })} aria-label={t("extensions-overviewarrange.width", { name })} className={cx(FIELD, "max-w-32")}>
