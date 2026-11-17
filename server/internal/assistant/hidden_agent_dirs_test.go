@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -216,5 +217,42 @@ func TestHiddenDirectoryApprovalDoesNotOverwriteNewerRules(t *testing.T) {
 	rules, _, _ := f.HiddenAgentDirs(context.Background(), "mac")
 	if want := []proto.HiddenAgentDir{{Pattern: "/other", Enabled: true}, {Pattern: "/work", Enabled: true}}; !slices.Equal(rules, want) {
 		t.Fatalf("got %+v", rules)
+	}
+}
+
+// A home reached through a link (/home/u -> /data/home/u): Codex records the working folder with the link
+// followed, and a rule written with ~ still hides it — in the rules, agents_list and the count get shows (#8578).
+func TestHiddenDirectoryHomeThroughLink(t *testing.T) {
+	ft := newFleetTest(t)
+	ft.f.mu.Lock()
+	ft.f.sessions["mac"] = nil // the fake hub reaches mac's node, so agents_list lists it
+	ft.f.mu.Unlock()
+	ft.d.mu.Lock()
+	ft.d.machines["mac"].homeReal = "/data/home/u"
+	ft.d.mu.Unlock()
+	f := useAgentDirs(ft.s)
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "~/.remi/multiremi/*", Enabled: true}, proto.HiddenAgentDir{Pattern: "~/.remi/multiremi", Enabled: true})
+	ft.d.setSessions("mac", []proto.Session{
+		{SessionID: "remi-real", Agent: "codex", Cwd: "/data/home/u/.remi/multiremi/workspaces/w1", Title: "Remi resolved", Status: proto.StatusWorking, UpdatedAt: time.Now()},
+		{SessionID: "remi-link", Agent: "claude", Cwd: "/home/u/.remi/multiremi/workspaces/w2", Title: "Remi linked", Status: proto.StatusWorking, UpdatedAt: time.Now()},
+		{SessionID: "mine", Agent: "codex", Cwd: "/data/home/u/code/app", Title: "Visible work", Status: proto.StatusWorking, UpdatedAt: time.Now()},
+	})
+	for sid, want := range map[string]bool{"remi-real": true, "remi-link": true, "mine": false} {
+		if got := ft.s.directoryHiddenSession("mac", sid); got != want {
+			t.Errorf("%s hidden=%v", sid, got)
+		}
+	}
+	if got := ft.s.describeAgents(context.Background(), "all", "", ""); strings.Contains(got, "Remi") || !strings.Contains(got, "Visible work") {
+		t.Fatalf("agents_list: %s", got)
+	}
+	got := settingsTool(ft.s, `{"action":"get","key":"agents.hidden_dirs"}`)
+	if got.IsError || !strings.Contains(got.Content[0].Text, "~/.remi/multiremi/* (on; matches 2 sessions)") ||
+		!strings.Contains(got.Content[0].Text, "~/.remi/multiremi (on; matches 2 sessions)") {
+		t.Fatalf("get: %+v", got)
+	}
+	// A rule written with the followed path hides the folder named through the link too.
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/data/home/u/.remi", Enabled: true})
+	if !ft.s.directoryHiddenSession("mac", "remi-link") || ft.s.directoryHiddenSession("mac", "mine") {
+		t.Fatal("a rule on the followed path")
 	}
 }

@@ -56,7 +56,7 @@ func (s *Service) hiddenByDirectory(machine string, sess proto.Session) bool {
 		home = m.Home
 	}
 	// Do not expose ambient context after a failed rules read.
-	matched := err != nil || proto.DirPatternMatchedBy(sess.Cwd, home, patterns) != ""
+	matched := err != nil || proto.DirPatternMatchedOn(sess.Cwd, home, m.HomeReal, patterns) != ""
 	return matched && !s.directorySessionSupervised(machine, sess.SessionID)
 }
 
@@ -129,7 +129,7 @@ func (s *Service) getHiddenAgentDirs(ctx context.Context) (string, error) {
 			}
 			n := 0
 			for _, sess := range sessions {
-				if proto.DirPatternMatchedBy(sess.Cwd, home, []string{r.Pattern}) != "" {
+				if proto.DirPatternMatchedOn(sess.Cwd, home, m.HomeReal, []string{r.Pattern}) != "" {
 					n++
 				}
 			}

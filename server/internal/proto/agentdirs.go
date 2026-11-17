@@ -58,6 +58,19 @@ func DirPatternMatchedBy(dir, home string, patterns []string) string {
 	return ""
 }
 
+// DirPatternMatchedOn is DirPatternMatchedBy on a machine whose home may be reached through a link (real, the home
+// with its links followed; "" when it is none): a dir or pattern written under either name of the home is the same
+// folder. Runtimes record a session's working folder either way (Codex resolves links, a shell's $PWD keeps them).
+func DirPatternMatchedOn(dir, home, real string, patterns []string) string {
+	d := HomeNamed(dir, home, real)
+	for _, p := range patterns {
+		if DirPatternMatchedBy(d, home, []string{HomeNamed(p, home, real)}) != "" {
+			return p
+		}
+	}
+	return ""
+}
+
 // HiddenAgentDir is one hidden Agent folder rule of a computer. A rule switched off stays listed and hides nothing.
 type HiddenAgentDir struct {
 	Pattern string `json:"pattern"`
