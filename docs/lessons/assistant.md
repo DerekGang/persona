@@ -590,6 +590,12 @@ merging sparse overrides; a local alias there takes its own model defaults, whil
 its configured binding. Include target identity metadata in the execution fingerprint. Explicit overrides still fail
 when unavailable, and changing only the computer must not pin a copied default.
 
+Saving a model or effort override must retain both the provider and the computer on which it was validated, even
+when the choice equals today's default. Normalize before comparing the model record; persist the computer even when
+the model record itself is unchanged. Preserve explicit clears and untouched inheritance. Test after changing the
+Assistant defaults and reconstructing the service, asserting the actual send target as well as storage. A fake's
+allowed-computer list must include the replacement, or its settings fallback silently undoes the test's default change.
+
 Do not infer catalog uncertainty from the number of entries. An explicit successful empty task catalog confirms
 absence; a failed read or omitted/null catalog does not. Carry that distinction through the node-list merge and check
 the task's exact launcher before sending, including configured wrappers and managed providers. An unreadable managed

@@ -132,7 +132,7 @@ func TestTaskExecutionSaveIsAtomicAndRevisionChecked(t *testing.T) {
 	}
 	task, _ := taskByID(s, "job")
 	record, err := s.modelRecord(context.Background(), "task.job")
-	if err != nil || task.Title != "Before" || task.Cwd != "" || record.Revision != 0 {
+	if err != nil || task.Title != "Before" || task.Cwd != "" || task.ExecutionMachineID != "" || record.Revision != 0 {
 		t.Fatalf("partial save: %+v %+v %v", task, record, err)
 	}
 	st.failBatch = ""
@@ -145,7 +145,7 @@ func TestTaskExecutionSaveIsAtomicAndRevisionChecked(t *testing.T) {
 	// Reconstruct the service to prove both settings survive a restart.
 	restarted := newServiceOn(t, f, st)
 	view, ok := restarted.taskView(context.Background(), "job")
-	if !ok || view.Model != "test-model" || view.Launcher != "claude" || view.Cwd != "/work/project" || view.ModelRevision != 1 {
+	if !ok || view.Model != "test-model" || view.Launcher != "claude" || view.Cwd != "/work/project" || view.ExecutionMachineID != "server" || view.ModelRevision != 1 {
 		t.Fatalf("restart: %+v", view)
 	}
 }

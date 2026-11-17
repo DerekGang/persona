@@ -935,7 +935,9 @@ starts from its own defaults. A model or effort override pins the effective prov
 Main chat switch cannot pair it with another agent. Task-specific choices require the task's own conversation;
 turn off **Continue the original chat** first. Agent means a real headless-capable launcher, including compatible
 runtime launchers, rather than an orchestration role. Work-only computers remain excluded.
-This includes pinning the computer already inherited from Assistant. The editor shows a validation error and
+This includes pinning the computer already inherited from Assistant when the save omits `execution_machine_id`.
+An explicit empty computer restores computer inheritance; clearing the launcher/model/effort and computer restores
+full inheritance. An untouched task stays sparse. The editor shows a validation error and
 disables Save and Run now while source-chat continuation and explicit execution choices coexist. Empty patches
 can clear historical choices without requiring a live computer; toggling continuation back on revalidates them.
 

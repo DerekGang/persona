@@ -125,6 +125,42 @@ it('keeps a directory draft after a refused save',async()=>{
  expect(field(t('assistant-taskeditor.execution_directory')).value).toBe('/work/missing');
 });
 
+it.each(['model','effort'] as const)('submits only the %s edit and accepts the server-pinned provider and computer',async(kind)=>{
+ const fetcher=globalThis.fetch;
+ vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const path=String(input);
+  if(path.endsWith('/assistant/tasks/job/run'))return new Response(JSON.stringify({error:'Run unavailable'}),{status:503});
+  const response=await fetcher(input,init);
+  if(path.endsWith('/assistant/tasks/job')&&init?.method==='PUT'&&writes.length===1){
+   saved={...saved,launcher:'claude',execution_machine_id:'box',model_revision:1};
+   return new Response(JSON.stringify({task:saved}));
+  }
+  return response;
+ }));
+ await render();
+ if(kind==='model'){
+  const picker=[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-expanded')==='false'&&b.querySelector('span'))!;
+  await act(async()=>picker.click());await flush();
+  const choice=[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('Test model'))!;
+  await act(async()=>choice.click());await flush();
+ }else await change(field(t('settings-modelconfiguration.effort')),'low');
+ await click(t('assistant-taskeditor.run_now'));
+ expect(writes).toHaveLength(1);
+ expect(writes[0]).toMatchObject({[kind]:kind==='model'?'test-model':'low',model_revision:0});
+ for(const key of ['launcher','execution_machine_id',kind==='model'?'effort':'model'])expect(writes[0]).not.toHaveProperty(key);
+ expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({launcher:'claude',execution_machine_id:'box',model_revision:1}));
+ expect(onClose).not.toHaveBeenCalled();
+ expect(field(t('assistant-taskeditor.execution_agent')).value).toBe('claude');
+ expect(field(t('assistant-taskeditor.execution_computer')).value).toBe('box');
+ await render(saved,'reopen-pinned');
+ expect(field(t('assistant-taskeditor.execution_computer')).value).toBe('box');
+ await change(field(t('assistant-taskeditor.execution_computer')),'');
+ await click(t('common.save'));
+ expect(writes[1]).toMatchObject({execution_machine_id:'',model_revision:1});
+ for(const key of ['launcher','model','effort'])expect(writes[1]).not.toHaveProperty(key);
+ expect(saved.execution_machine_id).toBe('');
+});
+
 it('blocks a pinned inherited computer with a source chat and validates toggling the source back on',async()=>{
  saved={...saved,session_id:'origin',machine_id:'box'};
  await render();

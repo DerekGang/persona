@@ -212,6 +212,11 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 		}
 		// Keep the path the user chose. Each run resolves symlinks again on that computer.
 	}
+	if _, specified := raw["execution_machine_id"]; !specified && (b.Model != "" || b.Effort != "") {
+		// Keep the computer on which this override was validated, just as we keep its provider.
+		// An explicit empty computer still restores inheritance.
+		t.ExecutionMachineID = p.MachineID
+	}
 	if b == old.Binding {
 		return nil, nil
 	}
