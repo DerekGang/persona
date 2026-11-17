@@ -4894,10 +4894,11 @@ every device of theirs follows it.
   change of another field keeps it. It requires `full` (an `answer` credential gets 403; extension tokens never reach it,
   `extwire.RouteScopes` does not list it); and broadcasts `{"type":"navigation","start"?:"<page>","pages"?:{…},"overview"?:[…]}`.
 - A hub or default manager from before answers 404: the web then keeps the choice in the browser only and says so in the
-  setting (`docs/web/web.md` "Start page"). A default manager from before `overview` answers a PUT of only it 400 (it needs
-  `start` or `pages`) and leaves it out of the record it answers; the web sends the arrangement on its own and, on either, keeps
-  it in the browser only and says so where the cards are arranged (`docs/web/web.md` "Overview's extension cards"). iOS and
-  Android do not read the record yet.
+  setting (`docs/web/web.md` "Start page"). A default manager from before `overview` answers a PUT of only it 400 with its own
+  words (`start is required`, #9328; `start or pages is required`, #9351) and leaves it out of the record it answers; the web
+  sends the arrangement on its own and, on either, keeps it in the browser, says so where the cards are arranged
+  (`docs/web/web.md` "Overview's extension cards") and asks again at the next hello. Any other failure is not taken for that.
+  iOS and Android do not read the record yet.
 
 ## Tags in messages (parsed by clients)
 
