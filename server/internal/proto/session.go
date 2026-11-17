@@ -95,6 +95,9 @@ func ProjectEfforts(levels, vocab []string) []string {
 // ModeBypass skips every permission prompt; a headless claude only takes it at start (--permission-mode).
 const ModeBypass = "bypassPermissions"
 
+// ModePlan permits investigation while requiring approval for changes and other non-read-only tools.
+const ModePlan = "plan"
+
 // ClaudeDefaultModeSetting is Claude Code's permissions.defaultMode, a key of Settings › Claude Code (node
 // claudeconfig.go): the mode a session started without --permission-mode runs in. The hub reads it for a planned
 // task with no mode of its own (assistant/tasks_permission.go).
@@ -450,11 +453,6 @@ type Session struct {
 	FailureReason string `json:"failure_reason,omitempty"`
 	// ExternalURL opens the session where it lives outside Persona (a botmux session's Feishu topic).
 	ExternalURL string `json:"external_url,omitempty"`
-	// Runtime: an assistant conversation's runtime as it actually runs ("agentsdk"; "" is the CLI, #2455).
-	Runtime string `json:"runtime,omitempty"`
-	// RuntimeFallback: why an assistant conversation asked to run on the Agent SDK runs on the CLI instead (no
-	// Node.js 22+, no bridge package, no claude); "" when it runs as asked.
-	RuntimeFallback string `json:"runtime_fallback,omitempty"`
 	// Chat, Topic, Dispatched: a botmux session's Feishu chat, its topic's root message and the topics it dispatched
 	// (`botmux dispatch`), for the todos to follow (docs/assistant/todos.md "botmux following"); stripped by hub like SpawnFrom.
 	Chat       string   `json:"chat,omitempty"`

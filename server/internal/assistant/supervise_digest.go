@@ -113,14 +113,21 @@ func (s *Service) sendDigest(ctx context.Context) {
 	gone := map[string]bool{}      // leaders whose conversation is not there: their signals go to the main one
 	s.rehomeLeaderlessWorkers(ctx) // a worker whose leader's task closed gets a supervisor that can act, before routing
 	if s.backgroundNeeded(ctx, here, list) {
-		// The background supervisor is made the first time a signal is for it, and again when it is gone. One that
-		// cannot start leaves here as it was: the gone check below sends its signals to the main conversation.
+		// Only an explicitly addressed legacy notice selects the existing background conversation. One that is gone or
+		// cannot start another clean round leaves here as it was: the gone check below moves its unread work to main.
 		id, was := s.ensureBackground(ctx)
 		if id != "" {
 			here = s.settings(ctx)
 		}
 		if lost := s.backgroundLost(ctx, was, cmp.Or(id, here.Main), web); len(lost) > 0 { // what waited for the one that is gone goes out with these
 			list = mergeSignals(lost, list)
+		}
+		if was != "" && id == "" {
+			for i := range list {
+				if list[i].To == was {
+					list[i].To = "" // this digest's explicit legacy target is gone too: regather it for main
+				}
+			}
 		}
 	}
 	var retry []superviseSignal
@@ -252,8 +259,9 @@ func (s *Service) deliverDigest(ctx context.Context, here Settings, to string, l
 		s.turnsTold(ctx, holds) // and how a turn ended: kept went, the rest of them was said the same within the window
 	}()
 	leader := background || to != here.Main && s.isLeader(ctx, to)
+	fresh := background && !backgroundKeepsContext(here) // a round that starts from the first turn (supervise_round.go)
 	render := func(list []prompts.SuperviseEntry) string {
-		return prompts.RenderSupervise(prompts.Supervise{Entries: sortEntries(list), Leader: leader, Background: background, Side: to != here.Main && !leader, Escalated: escalatedIn(list),
+		return prompts.RenderSupervise(prompts.Supervise{Entries: sortEntries(list), Leader: leader, Background: background, Fresh: fresh, Side: to != here.Main && !leader, Escalated: escalatedIn(list),
 			BackgroundEscalated: slices.ContainsFunc(list, func(e prompts.SuperviseEntry) bool { return e.Kind == sigEscalated && e.Background }),
 			LeaderStuck:         slices.ContainsFunc(list, func(e prompts.SuperviseEntry) bool { return e.Kind == sigLeaderStuck }),
 			Overdue:             slices.ContainsFunc(list, func(e prompts.SuperviseEntry) bool { return e.Kind == sigOverdue }),
@@ -303,7 +311,7 @@ func (s *Service) deliverDigest(ctx context.Context, here Settings, to string, l
 		s.logf("supervise: %d signal(s) to the main conversation", len(entries))
 	}
 	c, ok := s.session(ctx, here.MachineID, to)
-	if !ok || c.Starting || !msg.Interject && (c.Status == proto.StatusWorking || s.relayWaits(to, msg)) {
+	if !ok || c.Starting || s.relayReplacing(to) || !msg.Interject && (c.Status == proto.StatusWorking || s.relayWaits(to, msg)) {
 		if !s.queueDigest(to, msg, kept, now, prev) {
 			return false
 		}
@@ -553,6 +561,9 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 		e.Detail = prompts.RenderDraftPR(prompts.DraftPR{Language: answerLanguage(string(s.botLang(ctx))),
 			URL: draft.URL, Head: draft.HeadOID})
 	}
+	// The last review, shown only in a Fresh message (supervise_round.go): a decision reply's round confirms the decision
+	// that review put to the owner.
+	e.LastReview = s.lastReviewEntry(ctx, v)
 	if g.Kind == sigDecisionReply {
 		e.AgentReply = &prompts.DecisionAgentReply{Language: answerLanguage(string(s.botLang(ctx))),
 			Machine: replyAsk.AgentReply.MachineID, Session: replyAsk.AgentReply.SessionID}
