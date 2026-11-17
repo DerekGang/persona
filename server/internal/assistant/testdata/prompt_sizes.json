@@ -25,7 +25,7 @@
   "mcp_tools.assistant#agent_autoname_receipt": 1724,
   "mcp_tools.assistant#agent_interrupt": 1295,
   "mcp_tools.assistant#agent_read": 724,
-  "mcp_tools.assistant#agent_send": 3577,
+  "mcp_tools.assistant#agent_send": 3574,
   "mcp_tools.assistant#agent_start": 5443,
   "mcp_tools.assistant#agent_supervise": 1763,
   "mcp_tools.assistant#agent_switch": 2235,
