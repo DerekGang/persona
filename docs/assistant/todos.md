@@ -597,7 +597,10 @@ update is work to follow up, not an external dependency to park (#9754).
   exact text, and provider send time. Optional `promise` handles other wording;
   `due_at` states an exact deadline. This records an already-sent message and never
   sends one. An explicit receipt is the sender's attestation, not independent
-  verification by the provider. An uncertain send is not such a receipt.
+  verification by the provider. Its sent-message permalink must resolve to the
+  same topic: a GitHub issue/PR, a Feishu/Lark thread, or a generic HTTPS URL
+  differing only in its fragment. Unrecognized permalink relationships are
+  rejected rather than guessed. An uncertain send is not such a receipt.
 - The default deadline is 24 hours after successful sending. Recognized message
   times are RFC3339 timestamps, numeric English/Chinese minute/hour/day durations,
   and today/tomorrow with `HH:MM` in the owner's time zone. An explicit receipt's
@@ -621,9 +624,14 @@ update is work to follow up, not an external dependency to park (#9754).
   sent promise. Explicit owner completion/cancellation remains authoritative;
   fulfillment never means that all the original task's work is accepted.
 
-Delivery and recording are separate. An intent is persisted before a relevant
-send; a failed intent write prevents the send. Confirmed-delivery bookkeeping is
-retried without sending again. After a restart, an intent with no saved receipt
+Delivery and recording are separate. Source validation and local duplicate checks
+precede a relevant send's intent; a failed intent write prevents the provider
+attempt. A locally repeated reply neither prepares nor confirms another receipt.
+Only provider readback of that exact send is an older delivery; a fresh provider
+delivery keeps its actual send time. Confirmed-delivery bookkeeping is retried
+without sending again, retaining its original timestamp and deadline until the
+receipt, task notes, supervision, and task association are durable. After a
+restart, an intent with no saved receipt
 is **not** promoted to delivery or fulfillment: after 24 hours it becomes a
 source-readback task and supervisor signal. This is not another outbox and never
 blindly retries a potentially delivered message.

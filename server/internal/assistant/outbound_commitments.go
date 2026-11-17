@@ -214,7 +214,11 @@ func (s *Service) finishOutbound(ctx context.Context, r outboundReply, now time.
 		b.confirmed = map[string]outboundConfirmation{}
 	}
 	receiptID := outboundID(r.Topic, r.ID)
-	b.confirmed[receiptID] = outboundConfirmation{r, now}
+	if receipt, ok := b.confirmed[receiptID]; ok {
+		r, now = receipt.reply, receipt.at
+	} else {
+		b.confirmed[receiptID] = outboundConfirmation{r, now}
+	}
 	if err := s.loadOutboundLocked(ctx); err != nil {
 		return err
 	}
@@ -222,44 +226,50 @@ func (s *Service) finishOutbound(ctx context.Context, r outboundReply, now time.
 	index := slices.IndexFunc(entries, func(e outboundCommitment) bool {
 		return e.Reply.ID == r.ID && e.Reply.Topic == r.Topic
 	})
-	if index < 0 || !entries[index].SentAt.IsZero() {
+	if index < 0 {
 		delete(b.confirmed, receiptID)
 		return nil
 	}
 	e := &entries[index]
-	if r.replayed != nil && *r.replayed {
-		// A once-only source readback proves an older send, not a new update.
-		// Its intent is the conservative ordering bound when provider time is absent.
-		now = e.PreparedAt
+	if e.SentAt.IsZero() {
+		if r.replayed != nil && *r.replayed {
+			// A once-only source readback proves an older send, not a new update.
+			// Its intent is the conservative ordering bound when provider time is absent.
+			now = e.PreparedAt
+		}
+		e.SentAt = now.UTC()
+		if e.Promise {
+			e.DueAt = outboundDeadline(e.Reply.Text, now, s.location(ctx))
+			if e.Reply.DueAt != nil {
+				e.DueAt = e.Reply.DueAt.UTC()
+			}
+		}
+		for i := range entries {
+			previous := &entries[i]
+			if r.replayed != nil && *r.replayed || i == index || !previous.Promise || previous.Reply.Topic != r.Topic || previous.SentAt.IsZero() ||
+				!previous.SentAt.Before(now) || !previous.FulfilledAt.IsZero() {
+				continue
+			}
+			previous.FulfilledAt, previous.FulfilledBy = now.UTC(), r.ID
+		}
+		if err := s.putOutboundLocked(ctx, entries); err != nil {
+			return err
+		}
 	}
-	e.SentAt = now.UTC()
 	if e.Promise {
-		e.DueAt = outboundDeadline(e.Reply.Text, now, s.location(ctx))
-		if e.Reply.DueAt != nil {
-			e.DueAt = e.Reply.DueAt.UTC()
+		entries = slices.Clone(entries)
+		e = &entries[index]
+		if err := s.attachOutboundTodo(ctx, e); err != nil {
+			return err
+		}
+		if err := s.putOutboundLocked(ctx, entries); err != nil {
+			return err
 		}
 	}
-	for i := range entries {
-		previous := &entries[i]
-		if r.replayed != nil && *r.replayed || i == index || !previous.Promise || previous.Reply.Topic != r.Topic || previous.SentAt.IsZero() ||
-			!previous.SentAt.Before(now) || !previous.FulfilledAt.IsZero() {
-			continue
-		}
-		previous.FulfilledAt, previous.FulfilledBy = now.UTC(), r.ID
-	}
-	if err := s.putOutboundLocked(ctx, entries); err != nil {
-		return err
-	}
+	// Keep the original confirmation until both its receipt and task attachment
+	// are durable. A retry repairs bookkeeping, never re-dates a known send.
 	delete(b.confirmed, receiptID)
-	if !e.Promise {
-		return nil
-	}
-	entries = slices.Clone(entries)
-	e = &entries[index]
-	if err := s.attachOutboundTodo(ctx, e); err != nil {
-		return err // the sent receipt is durable; the watch retries task attachment
-	}
-	return s.putOutboundLocked(ctx, entries)
+	return nil
 }
 
 func (s *Service) outboundTracksTopic(r outboundReply) bool {
@@ -294,7 +304,14 @@ func (s *Service) attachOutboundTodo(ctx context.Context, e *outboundCommitment)
 		return err
 	}
 	r := &e.Reply
+	marker := "<!-- outward-promise:" + r.ID + " -->"
+	if e.SentAt.IsZero() {
+		marker = "<!-- outward-attempt:" + r.ID + " -->"
+	}
 	t, ok := s.todoNow(r.TodoID)
+	if ok && t.DoneAt != nil && strings.Contains(t.Notes, marker) {
+		return nil // recording the same receipt cannot reopen its completed task
+	}
 	if !ok || t.DoneAt != nil {
 		id := "todo_" + outboundID(r.Topic, r.ID)
 		if existing, found := s.todoNow(id); found {
@@ -315,10 +332,6 @@ func (s *Service) attachOutboundTodo(ctx context.Context, e *outboundCommitment)
 			}
 		}
 		r.TodoID = t.ID
-	}
-	marker := "<!-- outward-promise:" + r.ID + " -->"
-	if e.SentAt.IsZero() {
-		marker = "<!-- outward-attempt:" + r.ID + " -->"
 	}
 	if !strings.Contains(t.Notes, marker) {
 		key := "record"
@@ -372,6 +385,16 @@ func (s *Service) outboundInboxReply(it InboxItem, text, delivery string) outbou
 	return r
 }
 
+// Call only after source validation and local duplicate checks, immediately
+// before a provider attempt. Only that provider's readback can mark a replay.
+func (s *Service) deliverInboxReply(ctx context.Context, r inboxReplyReq, send func(context.Context) error) error {
+	replayed := false
+	ctx = context.WithValue(ctx, outboundReadbackKey{}, &replayed)
+	outward := s.outboundInboxReply(r.item, r.text, r.sendID)
+	outward.replayed = &replayed
+	return s.deliverOutbound(ctx, outward, func() error { return send(ctx) })
+}
+
 // An explicit sender receipt covers other send tools without guessing their
 // schemas or intercepting terminal commands. It records; it never performs a send.
 type outwardAnnotation struct {
@@ -416,8 +439,8 @@ func (a *outwardAnnotation) reply(t Todo, now time.Time) (outboundReply, error) 
 		a.SentAt.IsZero() || a.SentAt.After(now.Add(time.Minute)) {
 		return outboundReply{}, errors.New("outward_reply requires HTTPS topic_url and sent_url, exact text and a non-future RFC3339 sent_at")
 	}
-	if strings.HasPrefix(topic, "github/") && topic != receiptTopic {
-		return outboundReply{}, errors.New("outward_reply sent_url must belong to the original GitHub topic")
+	if topic != receiptTopic {
+		return outboundReply{}, errors.New("outward_reply sent_url must belong to the original topic")
 	}
 	if a.DueAt != nil && a.DueAt.IsZero() {
 		return outboundReply{}, errors.New("outward_reply due_at must be an RFC3339 deadline")
