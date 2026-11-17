@@ -1925,7 +1925,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			// Keep the prior session for busy detection, then start a new one below.
 		default:
 			params := map[string]any{"session_id": t.RunSessionID, "text": taskPrompt(t, due, now, loc, manual, kb, true), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true, "cwd": ex.Cwd, "task_execution": true}
-			err := s.finishModel(ctx, "task."+t.ID, params, ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort, Runtime: ex.Runtime})
+			err := s.finishModel(ctx, "task."+t.ID, params, ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort})
 			if err == nil {
 				s.noteRound(m.ID, t.RunSessionID, t.ID, t.runGrantBasis, time.Now())
 				if err = s.resumeOwn(ctx, m.ID, t.RunSessionID, params); err != nil {
@@ -1951,7 +1951,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		}
 	}
 	sp := startParams{Text: taskPrompt(t, due, now, loc, manual, kb, false), Source: taskMessageSource(t), PermissionMode: t.PermissionMode,
-		Purpose: "task." + t.ID, Space: t.Space, Origin: OriginTask, OriginRef: t.ID, MachineID: here, Cwd: ex.Cwd, TaskExecution: true, TaskModel: &ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort, Runtime: ex.Runtime}}
+		Purpose: "task." + t.ID, Space: t.Space, Origin: OriginTask, OriginRef: t.ID, MachineID: here, Cwd: ex.Cwd, TaskExecution: true, TaskModel: &ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort}}
 	if clean {
 		sp.NewSessionID = newGuestSessionID()
 		// Before it starts: its first message's context asks, and its turn may plan at once.

@@ -188,6 +188,50 @@ func TestTaskExecutionChecksAdvertisedModelEffort(t *testing.T) {
 	}
 }
 
+func TestTaskExecutionLegacySDKContextStartsFreshCLI(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeHub().withMachine()
+	f.launcherList = []proto.Launcher{{Name: "claude", Agent: "claude"}}
+	st := newSettingsFaultStore()
+	s := newServiceOn(t, f, st)
+	setTasks(s, Task{ID: "job", Title: "Check", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true})
+	first, err := runNow(t, s, "job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRuns(t, s, 1)
+	stored, _ := taskByID(s, "job")
+	if stored.RunExecution == nil {
+		t.Fatal("missing execution snapshot")
+	}
+	stored.RunExecution.Runtime = "agentsdk" // an older task's saved execution context
+	if err := st.PutSetting(ctx, tasksKey, []Task{stored}); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newServiceOn(t, f, st)
+	second, err := runNow(t, restarted, "job")
+	if err != nil || second.SessionID == first.SessionID {
+		t.Fatalf("legacy SDK task context resumed: %+v %v", second, err)
+	}
+	runs := waitRuns(t, restarted, 2)
+	if runs[1].ConversationReason != "execution_changed" || runs[1].Execution == nil || runs[1].Execution.Runtime != "" {
+		t.Fatalf("runtime transition missing from history: %+v", runs)
+	}
+	if _, sent := f.lastSend(t)["runtime"]; sent {
+		t.Fatal("new task sent a removed Claude runtime choice")
+	}
+	r := request(restarted, "GET", "/api/v1/machines/server/launchers?purpose=task", "")
+	var catalog struct {
+		Default map[string]any `json:"default"`
+	}
+	if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &catalog) != nil || catalog.Default == nil {
+		t.Fatalf("task defaults: %d %s", r.Code, r.Body)
+	}
+	if _, offered := catalog.Default["runtime"]; offered {
+		t.Fatal("task defaults still offer a removed Claude runtime choice")
+	}
+}
+
 func TestTaskExecutionLegacyDefaultsRemainInherited(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeHub().withMachine()

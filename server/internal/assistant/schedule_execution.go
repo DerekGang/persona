@@ -21,7 +21,7 @@ type TaskExecution struct {
 	Agent          string `json:"agent,omitempty"`
 	Model          string `json:"model,omitempty"`
 	Effort         string `json:"effort,omitempty"`
-	Runtime        string `json:"runtime,omitempty"`
+	Runtime        string `json:"runtime,omitempty"` // legacy Claude execution evidence; new Claude runs use the CLI
 	Cwd            string `json:"cwd,omitempty"`
 	PermissionMode string `json:"permission_mode,omitempty"`
 	Fingerprint    string `json:"fingerprint,omitempty"`
@@ -74,7 +74,7 @@ func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, bind
 			return ex, err
 		}
 	}
-	ex.Launcher, ex.Model, ex.Effort, ex.Runtime = strings.TrimPrefix(b.Provider, "launcher."), b.Model, b.Effort, b.Runtime
+	ex.Launcher, ex.Model, ex.Effort = strings.TrimPrefix(b.Provider, "launcher."), b.Model, b.Effort
 	ex.Fingerprint = s.taskBindingFingerprint(ctx, machine, b)
 	if !validate {
 		if ex.Cwd == "" {
