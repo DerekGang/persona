@@ -572,6 +572,15 @@ accepted turn. Persist `delivery_unknown` so a later manual send with a lost rec
 Keep `rpc.ErrNotSent` and preparation failures retryable, and notify on a failed task-owned resume as well. A virtual-clock
 test must advance past the retry delay; checking only the immediate send count misses this failure.
 
+## A schedule grant must bind to the model record its round consumed (#6800)
+
+Task model overrides live in their own settings record. Hashing only the task row misses model-only and effort-only
+edits when the execution computer is already pinned. Compute configured grants from the effective provider, model,
+effort and runtime configuration, checking the candidate record in atomic saves and the authoritative record at use.
+Keep the legacy hash for untouched inheritance. Freeze that same basis with the run's actual model snapshot and its
+pending plans: an old conversation cannot adopt a new model's grant. Test real sends, owner authorization, edits,
+clears, service reconstruction and automatic dispatch, rather than copied model fields or hash equality alone.
+
 ## A pre-run check must use the task's selected computer (#6800)
 
 An explicit execution computer or directory is also part of the schedule's start-grant basis. An edit must revoke

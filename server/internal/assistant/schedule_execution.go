@@ -261,7 +261,9 @@ func (s *Service) saveTaskConfiguredLocked(ctx context.Context, sc *schedule, ta
 	if !ok {
 		return errors.New("atomic task configuration storage is unavailable")
 	}
-	dropStaleGrants(tasks) // the atomic path has the same grant boundary as saveLocked
+	if err := s.dropStaleGrants(ctx, tasks, id, record); err != nil {
+		return err
+	}
 	if err := batch.PutSettings(ctx, map[string]any{tasksKey: tasks, modelRecordKey("task." + id): *record}); err != nil {
 		return err
 	}
@@ -287,16 +289,18 @@ func (s *Service) taskRunSnapshot(ctx context.Context, t Task) (Task, ModelBindi
 		t = sc.tasks[i]
 	}
 	sc.mu.Unlock()
-	if t.SessionID != "" {
-		r, err := s.modelRecord(ctx, "task."+t.ID)
-		if err != nil {
-			return t, ModelBinding{}, err
-		}
-		if taskExecutionNeedsOwnChat(t, r.Binding) {
-			return t, ModelBinding{}, i18n.Err("assistant-schedule.execution_own_chat")
-		}
+	r, err := s.modelRecord(ctx, "task."+t.ID)
+	if err != nil {
+		return t, ModelBinding{}, err
 	}
-	b, err := s.resolveModel(ctx, "task."+t.ID)
+	if taskExecutionNeedsOwnChat(t, r.Binding) {
+		return t, ModelBinding{}, i18n.Err("assistant-schedule.execution_own_chat")
+	}
+	b, err := s.resolveModelRecord(ctx, "task."+t.ID, &r)
+	t.runGrantBasis = t.grantBasis()
+	if r.Binding != (ModelBinding{}) {
+		t.runGrantBasis = t.grantBasis(b)
+	}
 	return t, b, err
 }
 

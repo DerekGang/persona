@@ -50,6 +50,8 @@ type Task struct {
 	FreshEachRun bool           `json:"fresh_each_run,omitempty"`
 	StateNote    *TaskStateNote `json:"state_note,omitempty"`
 	stateRunKey  string
+	// runGrantBasis belongs only to the model/task snapshot consumed by this run, never the stored task.
+	runGrantBasis string
 
 	WorkoutID string `json:"workout_id,omitempty"`
 	ID        string `json:"id"`
@@ -499,10 +501,12 @@ func (s *Service) saveLocked(sc *schedule, tasks []Task) error {
 	if tasks == nil {
 		tasks = []Task{} // null would read as "never moved over"
 	}
-	dropStaleGrants(tasks) // a prompt or target changed since the owner's grant: it no longer applies (schedule_grant.go)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.dropStaleGrants(ctx, tasks, "", nil); err != nil {
+		return err
+	}
 	if st := s.store(); st != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if err := st.PutSetting(ctx, tasksKey, tasks); err != nil {
 			s.logf("save tasks: %v", err)
 			return errScheduleSave
@@ -1822,7 +1826,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	// A schedule the owner let start some kinds by itself runs each round in a new conversation of its own whose
 	// context leaves out the live snapshot (schedule_grant.go cleanRound): only such a round may use the grant. Not a
 	// retry: it goes on in the round's conversation, which has its earlier work, and its plans ask.
-	clean := t.SessionID == "" && !retried && t.grantEligible() && t.liveGrant() != nil
+	clean := t.SessionID == "" && !retried && t.grantEligible() && t.liveGrant(t.runGrantBasis) != nil
 	if t.SessionID != "" {
 		if m, ok := s.device(ctx, t.MachineID); ok && m.Online {
 			// A follow-up the assistant scheduled for itself is a turn of that conversation: it keeps the
@@ -1832,7 +1836,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
 			unsent := err != nil // model preparation has not sent the task's message
 			if err == nil {
-				s.noteRound(m.ID, t.SessionID, t.ID, time.Now()) // before it is sent: its turn may plan at once (schedule_grant.go)
+				s.noteRound(m.ID, t.SessionID, t.ID, t.runGrantBasis, time.Now()) // before it is sent: its turn may plan at once (schedule_grant.go)
 				if err = s.call(ctx, m.ID, DeviceAssistantSend, params, nil); err != nil {
 					s.endRound(m.ID, t.SessionID, t.ID)
 				}
@@ -1919,7 +1923,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			params := map[string]any{"session_id": t.RunSessionID, "text": taskPrompt(t, due, now, loc, manual, kb, true), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true, "cwd": ex.Cwd, "task_execution": true}
 			err := s.finishModel(ctx, "task."+t.ID, params, ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort, Runtime: ex.Runtime})
 			if err == nil {
-				s.noteRound(m.ID, t.RunSessionID, t.ID, time.Now())
+				s.noteRound(m.ID, t.RunSessionID, t.ID, t.runGrantBasis, time.Now())
 				if err = s.resumeOwn(ctx, m.ID, t.RunSessionID, params); err != nil {
 					s.endRound(m.ID, t.RunSessionID, t.ID)
 				}
@@ -1948,7 +1952,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		sp.NewSessionID = newGuestSessionID()
 		// Before it starts: its first message's context asks, and its turn may plan at once.
 		s.noteCleanRound(sp.NewSessionID, t.ID)
-		s.noteRound(here, sp.NewSessionID, t.ID, time.Now().Add(-roundEarly))
+		s.noteRound(here, sp.NewSessionID, t.ID, t.runGrantBasis, time.Now().Add(-roundEarly))
 	}
 	sess, err := s.startConversation(ctx, sp)
 	if clean && (err != nil || sess.SessionID != sp.NewSessionID || sess.MachineID != here) {
@@ -1967,7 +1971,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		return proto.Session{}, err
 	}
 	run.MachineID, run.SessionID = sess.MachineID, sess.SessionID
-	s.noteRound(sess.MachineID, sess.SessionID, t.ID, time.Now().Add(-roundEarly)) // sent already: its prompt is older
+	s.noteRound(sess.MachineID, sess.SessionID, t.ID, t.runGrantBasis, time.Now().Add(-roundEarly)) // sent already: its prompt is older
 	s.logf("task %s ran %s after its time (new conversation %s, kept for the next runs)", t.ID, lateness(due, time.Now()), short(sess.SessionID))
 	s.adoptConversation(t.ID, sess.MachineID, sess.SessionID, sess.Launcher, ex)
 	s.titleFixed(sess.MachineID, sess.SessionID, time.Now(), titleTask, t.label()) // "MMDD | scheduled | task name", the same for every run in it

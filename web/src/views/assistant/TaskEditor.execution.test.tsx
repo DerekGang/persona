@@ -283,3 +283,34 @@ it('preserves saved launcher, model and effort after discovery fails until the u
  for(const key of ['launcher','model','effort'])expect(writes[0]).not.toHaveProperty(key);
  expect(saved).toMatchObject({launcher:'codex',model:'saved-model',effort:'high'});
 });
+
+it.each([[404,false],[200,false],[503,false],[404,true]] as const)('edits and saves an unknown model with catalog status %s (delayed: %s)',async(status,delayed)=>{
+ const fetcher=globalThis.fetch;
+ let releaseCatalog:(response:Response)=>void=()=>{};
+ const response=()=>new Response(JSON.stringify(status===200?{agent:'claude',models:[]}:{error:'No model catalog'}),{status});
+ const catalogResponse=delayed?new Promise<Response>(resolve=>{releaseCatalog=resolve;}):Promise.resolve(response());
+ vi.stubGlobal('fetch',vi.fn((input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/models')
+  ? catalogResponse
+  : fetcher(input,init)));
+ saved={...saved,launcher:'claude',model:'saved-unknown',effort:'low',execution_machine_id:'box',model_revision:4};
+ await render();
+ if(delayed){
+  expect(document.querySelector<HTMLFieldSetElement>('fieldset')!.disabled).toBe(true);
+  await change(field(t('assistant-taskeditor.title_label')),'Edited while catalog loads');
+  await act(async()=>releaseCatalog(response()));await flush();
+ }
+ expect(document.body.textContent).toContain('saved-unknown');
+ expect(field(t('settings-modelconfiguration.effort')).value).toBe('low');
+ const picker=document.querySelector<HTMLButtonElement>('fieldset button[aria-expanded]')!;
+ expect(picker.closest('fieldset')!.disabled).toBe(false);
+ await act(async()=>picker.click());await flush();
+ const search=document.querySelector<HTMLInputElement>(`input[aria-label="${t('ui-modelpicker.search_label')}"]`)!;
+ await change(search,'manual-model');
+ const choice=[...document.querySelectorAll('button[role="option"]')].find(b=>b.textContent?.includes('manual-model'))!;
+ expect(choice).toBeTruthy();await act(async()=>choice.click());await flush();
+ await click(t('common.save'));
+ expect(writes).toEqual([expect.objectContaining({model:'manual-model',model_revision:4})]);
+ for(const key of ['launcher','effort','execution_machine_id'])expect(writes[0]).not.toHaveProperty(key);
+ expect(saved).toMatchObject({model:'manual-model',launcher:'claude',effort:'low',execution_machine_id:'box'});
+ expect(onClose).toHaveBeenCalledOnce();
+});
