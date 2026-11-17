@@ -423,11 +423,14 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			if source.InboxItem == "" {
 				return result, nil
 			}
+			// Delivery succeeded; ending the send's wait must not discard its durable Inbox link.
+			sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
 			id := own.ID
 			if task != nil {
 				id = task.todo.ID
 			}
-			if err := s.linkExistingTaskInbox(ctx, self, source, id, []SessionRef{{MachineID: am.ID, SessionID: c.SessionID}}); err != nil {
+			if err := s.linkExistingTaskInbox(sctx, self, source, id, []SessionRef{{MachineID: am.ID, SessionID: c.SessionID}}); err != nil {
 				return "", fmt.Errorf("message delivered to the Agent, but its Inbox link was not saved: %w; do not resend the message", err)
 			}
 			return result + fmt.Sprintf(" Inbox item %s now links to task %s and this Agent.", source.InboxItem, id), nil

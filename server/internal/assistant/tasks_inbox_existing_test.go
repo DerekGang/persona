@@ -284,3 +284,90 @@ func TestExistingTaskInboxHandoffSaveFailureReportsPartialSuccessAndRollsBack(t 
 		})
 	}
 }
+
+type postSendInboxStore struct {
+	*db.DB
+	beforeLink func(context.Context)
+}
+
+func (s *postSendInboxStore) PutInboxItem(ctx context.Context, id string, data []byte, at time.Time, done *time.Time) error {
+	var item InboxItem
+	if err := json.Unmarshal(data, &item); err != nil {
+		return err
+	}
+	if item.Agent != nil && item.Agent.TodoID != "" {
+		s.beforeLink(ctx)
+	}
+	return s.DB.PutInboxItem(ctx, id, data, at, done)
+}
+
+func TestExistingTaskInboxHandoffPersistsAfterSendCallerEnds(t *testing.T) {
+	for _, delivery := range []string{"sent", "queued"} {
+		for _, ending := range []string{"canceled", "deadline"} {
+			t.Run(delivery+"/"+ending, func(t *testing.T) {
+				var caller context.Context
+				var cancel context.CancelFunc
+				type contextKey struct{}
+				writes := 0
+				st := &postSendInboxStore{DB: todoTestDB(t), beforeLink: func(ctx context.Context) {
+					writes++
+					if ending == "canceled" {
+						cancel()
+					}
+					<-caller.Done() // the send succeeded; its caller stops waiting during the association write
+					if err := ctx.Err(); err != nil {
+						t.Errorf("the delivered handoff still uses the finished send context: %v", err)
+					}
+					if deadline, ok := ctx.Deadline(); !ok || !deadline.After(time.Now()) || time.Until(deadline) > time.Minute {
+						t.Error("the association write needs its own bounded deadline", deadline, ok)
+					}
+					if ctx.Value(contextKey{}) != "kept" {
+						t.Error("the association write lost the caller's context values")
+					}
+				}}
+				s, f := newQuietServiceOn(t, st)
+				todo := agentTask(t, s, f)
+				it := taskInboxItem(t, s, "example:post-send", "server", "conv1")
+				before := len(sentToAgent(f))
+				f.answerNode(DeviceSessionSend, func(_ string, raw json.RawMessage) (any, error) {
+					var args map[string]any
+					if err := json.Unmarshal(raw, &args); err != nil {
+						return nil, err
+					}
+					f.agentSent = append(f.agentSent, args)
+					return map[string]bool{"queued": delivery == "queued"}, nil
+				})
+				ctx := context.WithValue(t.Context(), contextKey{}, "kept")
+				if ending == "canceled" {
+					caller, cancel = context.WithCancel(ctx)
+				} else {
+					caller, cancel = context.WithTimeout(ctx, 2*time.Second)
+				}
+				defer cancel()
+				raw, err := json.Marshal(existingInboxArgs("agent_send", todo, ""))
+				if err != nil {
+					t.Fatal(err)
+				}
+				result := s.Tool(caller, ToolCall{MachineID: "server", SessionID: "conv1", Name: "agent_send", Arguments: raw})
+				if result.IsError || len(result.Content) == 0 {
+					t.Fatalf("delivered message lost its persisted Inbox handoff: %+v", result)
+				}
+				if !strings.Contains(result.Content[0].Text, "Inbox item "+it.ID+" now links to task "+todo.ID) {
+					t.Fatal("successful send did not report its saved association", result.Content)
+				}
+				if (delivery == "queued") != strings.HasPrefix(result.Content[0].Text, "Queued for ") {
+					t.Fatal("the test did not exercise the expected send receipt", result.Content)
+				}
+				if writes != 1 || len(sentToAgent(f)) != before+1 || len(f.started()) != 0 {
+					t.Fatal("saving the association retried delivery or started another Agent", writes, sentToAgent(f), f.started())
+				}
+				assertExistingInboxLink(t, s, it.ID, todo)
+				next, _ := newQuietServiceOn(t, st.DB)
+				if err := next.inboxReady(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				assertExistingInboxLink(t, next, it.ID, todo)
+			})
+		}
+	}
+}
