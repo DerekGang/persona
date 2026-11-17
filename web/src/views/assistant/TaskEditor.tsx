@@ -102,10 +102,17 @@ export function TaskEditor({
       ? await api<{ task: Task }>(`/assistant/tasks/${enc(saved.id)}`, { method: "PUT", json: body })
       : await api<{ task: Task }>("/assistant/tasks", { method: "POST", json: body });
     setSaved(r.task);
-    // A failed Run now leaves the editor open. Keep edits made during the save while accepting server metadata.
-    setDraft((current) => current === draft ? r.task : {
-      ...current, id: r.task.id, state_note: r.task.state_note, model_revision: r.task.model_revision,
-      execution: r.task.execution, execution_error: r.task.execution_error,
+    // A failed Run now keeps this draft. Reconcile canonical pins without replacing edits made during the save.
+    setDraft((current) => {
+      if (current === draft) return r.task;
+      const next = {
+        ...current, id: r.task.id, state_note: r.task.state_note, model_revision: r.task.model_revision,
+        execution: r.task.execution, execution_error: r.task.execution_error,
+      };
+      for (const key of ["launcher", "model", "effort", "cwd", "execution_machine_id"] as const) {
+        if (current[key] === draft[key]) next[key] = r.task[key];
+      }
+      return next;
     });
     onSaved(r.task);
     return r.task;

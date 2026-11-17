@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -64,10 +65,26 @@ func TestTaskExecutionOverridePinsAcrossRestart(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					// Run now saves first. Refuse its separate admission, leaving the same editor open.
+					st.memStore.mu.Lock()
+					st.failPut = errors.New("synthetic admission unavailable")
+					st.memStore.mu.Unlock()
+					failed := request(s, "POST", "/api/v1/assistant/tasks/"+id+"/run", `{}`)
+					st.memStore.mu.Lock()
+					st.failPut = nil
+					st.memStore.mu.Unlock()
+					if failed.Code != 503 || scheduleSendCount(f) != 0 {
+						t.Fatalf("failed admission dispatched work: %d %s", failed.Code, failed.Body.String())
+					}
 					// Change both sources of inheritance only after saving, then read from the same store in a new service.
 					setModel(t, s, "assistant", ModelBinding{Provider: "launcher.codex", Model: "other-model", Effort: "medium"})
 					if moveComputer {
 						setSettings(t, s, func(v *Settings) { v.MachineID = "remote" })
+					}
+					// The reconciled web form's unrelated edit is sparse: no clears or stale model revision.
+					edit := `{"title":"Edited after failure","prompt":"Check files","repeat":"interval","every_minutes":30,"enabled":true}`
+					if r := request(s, "PUT", "/api/v1/assistant/tasks/"+id, edit); r.Code != 200 {
+						t.Fatalf("second save: %d %s", r.Code, r.Body.String())
 					}
 					restarted := newServiceOn(t, f, st)
 					main, err := restarted.resolveModel(ctx, "assistant")
@@ -92,7 +109,7 @@ func TestTaskExecutionOverridePinsAcrossRestart(t *testing.T) {
 						}
 					}
 					stored, _ := taskByID(restarted, id)
-					if stored.ExecutionMachineID != "server" {
+					if stored.ExecutionMachineID != "server" || stored.Title != "Edited after failure" {
 						t.Errorf("computer pin missing after restart: %+v", stored)
 					}
 					if stored.StartGrant != nil {

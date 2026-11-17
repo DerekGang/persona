@@ -8,6 +8,7 @@ import { getState } from "../../lib/store";
 import { chooseManager, MANAGER_HEADER, resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 import { loadPages } from "../../lib/lazy-page";
 import { t } from "../../i18n";
+import { Toasts } from "../../ui/atoms";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 beforeAll(() => loadPages(),60_000);
@@ -56,7 +57,7 @@ beforeEach(()=>{
 });
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();resetManagerChoice();vi.unstubAllGlobals();});
 const expand=async(open=true)=>{await act(async()=>{document.querySelector<HTMLDetailsElement>('details')!.open=open;document.querySelector('details')!.dispatchEvent(new Event('toggle'));});await flush();};
-const render=async(task=saved,key='initial',expanded=true)=>{await act(async()=>root.render(<TaskEditor key={key} task={task} onSaved={onSaved} onClose={onClose} onDeleted={()=>{}}/>));await flush();if(expanded)await expand();};
+const render=async(task=saved,key='initial',expanded=true)=>{await act(async()=>root.render(<><TaskEditor key={key} task={task} onSaved={onSaved} onClose={onClose} onDeleted={()=>{}}/><Toasts/></>));await flush();if(expanded)await expand();};
 
 it('reads execution defaults and catalogs through the same chosen assistant as the task PUT',async()=>{
  chooseManager('other');
@@ -152,13 +153,66 @@ it.each(['model','effort'] as const)('submits only the %s edit and accepts the s
  expect(onClose).not.toHaveBeenCalled();
  expect(field(t('assistant-taskeditor.execution_agent')).value).toBe('claude');
  expect(field(t('assistant-taskeditor.execution_computer')).value).toBe('box');
- await render(saved,'reopen-pinned');
- expect(field(t('assistant-taskeditor.execution_computer')).value).toBe('box');
+ // Clear from the retained form, without reopening it to refresh the draft.
  await change(field(t('assistant-taskeditor.execution_computer')),'');
  await click(t('common.save'));
  expect(writes[1]).toMatchObject({execution_machine_id:'',model_revision:1});
  for(const key of ['launcher','model','effort'])expect(writes[1]).not.toHaveProperty(key);
  expect(saved.execution_machine_id).toBe('');
+});
+
+it.each(['model','effort'] as const)('retains canonical pins after a failed Run now and an unrelated pending %s save edit',async(kind)=>{
+ const fetcher=globalThis.fetch;
+ let answer!:(response:Response)=>void;
+ let moveDefaults=false,runRequests=0;
+ vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const path=String(input);
+  if(path.endsWith('/assistant/tasks/job/run')){
+   runRequests++;
+   return new Response(JSON.stringify({error:'Run unavailable'}),{status:503});
+  }
+  if(path.includes('/model-config/purposes/assistant')&&moveDefaults)return new Response(JSON.stringify({purpose:{id:'assistant',machine_id:'remote',effective:{provider:'launcher.codex',model:'other-model'},override:{}},providers:[]}));
+  const response=await fetcher(input,init);
+  if(path.endsWith('/assistant/tasks/job')&&init?.method==='PUT'&&writes.length===1){
+   saved={...saved,launcher:'claude',execution_machine_id:'box',model_revision:1,execution:{machine_id:'box',launcher:'claude',model:kind==='model'?'test-model':undefined,effort:kind==='effort'?'low':undefined,cwd:'/work/project'}};
+   return new Promise<Response>(resolve=>{answer=resolve;});
+  }
+  if(path.endsWith('/assistant/tasks/job')&&init?.method==='PUT'&&moveDefaults){
+   saved={...saved,execution:{machine_id:saved.execution_machine_id||'remote',launcher:saved.launcher||'codex',model:saved.model,effort:saved.effort,cwd:saved.cwd}};
+   return new Response(JSON.stringify({task:saved}));
+  }
+  return response;
+ }));
+ await render();
+ await change(field(t('assistant-taskeditor.execution_directory')),'/work/project');
+ if(kind==='model'){
+  const picker=[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-expanded')==='false'&&b.querySelector('span'))!;
+  await act(async()=>picker.click());await flush();
+  const choice=[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('Test model'))!;
+  await act(async()=>choice.click());await flush();
+ }else await change(field(t('settings-modelconfiguration.effort')),'low');
+ await click(t('assistant-taskeditor.run_now'));
+ expect(writes).toHaveLength(1);
+ await change(field(t('assistant-taskeditor.title_label')),'Edited while saving');
+ await act(async()=>answer(new Response(JSON.stringify({task:saved}))));await flush();
+ expect(onClose).not.toHaveBeenCalled();
+ expect(runRequests).toBe(1);
+ expect(document.body.textContent).toContain('Run unavailable');
+ expect(document.body.textContent).not.toContain(t('assistant-taskeditor.run_started',{title:saved.title}));
+ expect(field(t('assistant-taskeditor.title_label')).value).toBe('Edited while saving');
+ expect.soft(field(t('assistant-taskeditor.execution_agent')).value).toBe('claude');
+ expect.soft(field(t('assistant-taskeditor.execution_computer')).value).toBe('box');
+ expect(field(t('assistant-taskeditor.execution_directory')).value).toBe('/work/project');
+ // Stay in the same form after defaults move; reopening would hide the stale-draft bug.
+ moveDefaults=true;
+ await change(field(t('assistant-taskeditor.title_label')),'Edited after failure');
+ await click(t('common.save'));
+ expect(writes[1]).toMatchObject({title:'Edited after failure'});
+ for(const key of ['launcher','model','effort','cwd','execution_machine_id','model_revision'])expect(writes[1]).not.toHaveProperty(key);
+ expect(saved).toMatchObject({launcher:'claude',execution_machine_id:'box',model_revision:1,[kind]:kind==='model'?'test-model':'low',cwd:'/work/project'});
+ expect(saved.execution).toMatchObject({machine_id:'box',launcher:'claude'});
+ expect(runRequests).toBe(1);
+ expect(onClose).toHaveBeenCalledOnce();
 });
 
 it('blocks a pinned inherited computer with a source chat and validates toggling the source back on',async()=>{

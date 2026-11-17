@@ -1,5 +1,13 @@
 # Lessons: web UI and interactions
 
+## A retained task draft must accept canonical pins field by field (#6800)
+
+Run now saves before sending. A title edit during that save makes the draft a new object; accepting only server
+metadata then leaves canonical provider/computer pins out of the open form. A later unrelated save can clear them.
+Compare each execution field with the submitted snapshot: accept the canonical value only if that field was not
+edited in the meantime. Test save, a pending title edit, run failure, changed defaults and another save in the same
+form; reopening first masks the bug.
+
 ## Transcript cut sizes are bytes, not characters (#9442)
 
 A page's `full_size` signals a truncated item and measures the original UTF-8 bytes; the displayed text may also

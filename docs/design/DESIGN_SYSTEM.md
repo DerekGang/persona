@@ -2972,6 +2972,9 @@ inside the group. Launcher and model discovery use that computer's chat-compatib
 is only requested when the group opens. A working directory
 is an existing path on that computer, explained under the field. Switching execution context may start a new chat;
 the hint says earlier chats are retained. Failed saves retain the draft, and saving/running disables the controls.
+If Run now saves successfully but running fails, the open form accepts the saved execution pins and revision.
+Fields edited while saving keep their newer input; untouched execution fields take the canonical saved values.
+A later unrelated save stays sparse, and explicitly clearing a choice still restores inheritance.
 Continuing the original chat requires empty task execution choices, including the computer and directory. The shared
 form validation explains this and disables Save and Run now; clearing saved choices restores inheritance without
 requiring that computer to be online. Toggling the original chat back on revalidates the current choices.

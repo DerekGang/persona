@@ -20,7 +20,8 @@ try {
    if(manager!=="assistant")localStorage.setItem("persona.currentManager",manager);
   },{theme,manager});
   let task={id:"job",title:"Review project files",prompt:"Summarize the project files.",repeat:"interval",every_minutes:30,enabled:true,model_revision:0};
-  const viewTask=()=>({...task,execution:{machine_id:"box",launcher:task.launcher||"assistant",agent:task.launcher==="codex"?"codex":"claude",model:task.model||"main-model",effort:task.effort||"high"}});
+  let defaultsMoved=false,holdSave=false,releaseSave,sawSave,failRun=false,runRequests=0;
+  const viewTask=()=>({...task,execution:{machine_id:task.execution_machine_id||(defaultsMoved?"remote":"box"),launcher:task.launcher||(defaultsMoved?"codex":"assistant"),agent:task.launcher==="codex"?"codex":"claude",model:task.model||"main-model",effort:task.effort||"high"}});
   const writes=[], reads=[];
   let launcherCatalog="available";
   let holdRemoteModels=false, releaseModels, sawHeldModels;
@@ -39,7 +40,7 @@ try {
    else if(path==="/assistant/tasks")body={tasks:[viewTask()]};
    else if(path==="/assistant/runs")body={runs:[]};
    else if(path==="/model-config")body={providers:[{id:"launcher.assistant",name:"Assistant",agent:"claude"},{id:"launcher.codex",name:"agents",agent:"codex"}]};
-   else if(path==="/model-config/purposes/assistant")body={purpose:{id:"assistant",machine_id:"box",effective:{provider:"launcher.assistant",model:"main-model",effort:"high"},override:{}},providers:[]};
+   else if(path==="/model-config/purposes/assistant")body={purpose:{id:"assistant",machine_id:defaultsMoved?"remote":"box",effective:{provider:defaultsMoved?"launcher.codex":"launcher.assistant",model:"main-model",effort:"high"},override:{}},providers:[]};
    else if(path==="/machines/box/launchers") {
     if(launcherCatalog==="failed") {
      await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Launcher discovery unavailable"})});return;
@@ -56,7 +57,18 @@ try {
     }
     body={agent:path.includes("codex")?"codex":"claude",models:[{id:"test-model",name:"Example model",efforts:["low","high"],default_effort:"high"}]};
    }
-   else if(path==="/assistant/tasks/job"&&req.method()==="PUT") {const patch=req.postDataJSON();writes.push({path,patch});task={...task,...patch,model_revision:1};body={task:viewTask()};}
+   else if(path==="/assistant/tasks/job"&&req.method()==="PUT") {
+    const patch=req.postDataJSON();writes.push({path,patch});task={...task,...patch,model_revision:1};
+    if(holdSave){
+     holdSave=false;task={...task,launcher:"assistant",execution_machine_id:"box"};
+     await new Promise(resolve=>{releaseSave=resolve;sawSave();});
+    }
+    body={task:viewTask()};
+   }
+   else if(path==="/assistant/tasks/job/run"&&failRun){
+    runRequests++;
+    await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Run unavailable"})});return;
+   }
    else if(path==="/extensions/ui")body={slots:[]};
    else if(path==="/extensions")body={extensions:[]};
    else if(path==="/managers")body={default:"assistant",managers:[{id:"assistant",name:"Default assistant",default:true,builtin:true,online:true},{id:"other",name:"Other assistant",online:true}]};
@@ -218,8 +230,43 @@ try {
   await modelField.scrollIntoViewIfNeeded();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
   await page.screenshot({path:join(shots,`task-model-failed-${width}-${theme}.png`)});
+  await dialog.getByRole("button",{name:"Cancel",exact:true}).click();await closed();
+  holdRemoteModels=false;
+  task={id:"job",title:"Failed run draft",prompt:"Check the files.",repeat:"interval",every_minutes:30,enabled:true,model_revision:0};
+  await page.goto(`${base}/routines`);
+  await page.getByRole("button",{name:/Failed run draft/}).first().click();
+  await page.getByText("Execution options",{exact:true}).click();
+  await page.getByRole("combobox",{name:"Reasoning effort",exact:true}).selectOption("low");
+  const title=page.getByRole("textbox",{name:"Title",exact:true});
+  const count=writes.length;
+  const pendingSave=new Promise(resolve=>{sawSave=resolve;});holdSave=true;failRun=true;
+  await dialog.getByRole("button",{name:"Run now",exact:true}).click();await pendingSave;
+  assert(await page.getByRole("combobox",{name:"Computer",exact:true}).isDisabled());
+  await title.fill("Edited while saving");releaseSave();
+  await page.getByText(/Run unavailable|HTTP 503/).first().waitFor();
+  assert.equal(await title.inputValue(),"Edited while saving");
+  assert.equal(await page.getByRole("combobox",{name:"Computer",exact:true}).inputValue(),"box");
+  assert.equal(await page.getByRole("combobox",{name:"Agent",exact:true}).inputValue(),"assistant");
+  assert.equal(runRequests,1);assert.equal(writes[count].patch.effort,"low");
+  for(const key of ["launcher","execution_machine_id"])assert.equal(key in writes[count].patch,false);
+  for(const scale of [1,2]){
+   await page.evaluate(scale=>document.documentElement.style.setProperty("--text-scale",String(scale)),scale);
+   await page.getByRole("combobox",{name:"Computer",exact:true}).scrollIntoViewIfNeeded();
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth),false);
+   await page.screenshot({path:join(shots,`task-failed-run-pins-${width}-${theme}${scale===2?"-large":""}.png`)});
+  }
+  defaultsMoved=true;
+  await title.fill("Edited after failed run");
+  // On the phone, the recoverable error toast can cover Save; dismiss it through its visible control.
+  const failureToast=page.locator('[aria-live="polite"] > div').filter({hasText:/Run unavailable|HTTP 503/});
+  await failureToast.getByRole("button",{name:"Close",exact:true}).click();
+  await failureToast.waitFor({state:"hidden"});
+  await dialog.getByRole("button",{name:"Save",exact:true}).click();await closed();
+  assert.equal(writes.length,count+2);
+  for(const key of ["launcher","model","effort","cwd","execution_machine_id","model_revision"])assert.equal(key in writes[count+1].patch,false,`unrelated save must retain ${key}`);
+  assert.equal(task.execution_machine_id,"box");assert.equal(task.launcher,"assistant");assert.equal(runRequests,1);
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure and no invalid save`);
+  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure, failed Run now canonical pins with pending title edit and sparse resave without reopening`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}
