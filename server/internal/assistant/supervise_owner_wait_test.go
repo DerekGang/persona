@@ -59,7 +59,7 @@ func TestNeedsUserJudgmentWaitsAndPushesOnce(t *testing.T) {
 	waitFor(t, "the needs-user push", func() bool { return len(f.pushed()) == 1 })
 	pushes := f.pushed()
 	if len(pushes) != 1 || pushes[0].Kind != NotifyPush || pushes[0].SessionID != "conv1" ||
-		!strings.Contains(pushes[0].Body, "需要你本人操作") || !strings.Contains(pushes[0].Body, testWeb+"/todos?id="+todo.ID) {
+		!strings.Contains(pushes[0].Body, "需要你本人操作") || !strings.Contains(pushes[0].Body, testWeb+"/todos/"+todo.ID) {
 		t.Fatalf("needs-user pushes = %+v", pushes)
 	}
 	wantRelated := "todo:" + todo.ID + "@" + cur.Supervision.Waits.Work.UTC().Format(time.RFC3339Nano)

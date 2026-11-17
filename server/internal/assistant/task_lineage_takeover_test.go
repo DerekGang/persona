@@ -73,11 +73,11 @@ func TestAgentSuperviseAfterCloseLinksTheTakeoverLineage(t *testing.T) {
 		shots[task.ID] = true
 		switch task.ID {
 		case old.ID:
-			if task.SupersededBy != current.ID || task.SupersededByLink != "https://hub.example.com/todos?id="+current.ID {
+			if task.SupersededBy != current.ID || task.SupersededByLink != "https://hub.example.com/todos/"+current.ID {
 				t.Fatalf("old snapshot = %+v", task)
 			}
 		case current.ID:
-			if task.Continues != old.ID || task.ContinuesLink != "https://hub.example.com/todos?id="+old.ID {
+			if task.Continues != old.ID || task.ContinuesLink != "https://hub.example.com/todos/"+old.ID {
 				t.Fatalf("new snapshot = %+v", task)
 			}
 		}

@@ -403,6 +403,12 @@ func TestBackgroundWithoutAnchorMovesLegacyWorkToMain(t *testing.T) {
 	// Idle again: both the known signals and the message with no in-memory signals move to main.
 	listRound(f, old, proto.StatusIdle, false)
 	wakeRound(s, superviseSignal{Todo: todo.ID, Kind: sigInterrupted, Key: "k2"})
+	// The moved conversation message may go in first, leaving this digest queued behind its turn. Let that turn finish,
+	// as the node's next idle session list does on a hub, before requiring both parts of the moved work.
+	waitFor(t, "the moved conversation message in main", func() bool {
+		return strings.Contains(strings.Join(f.noticesTo("conv1"), "\n"), "顺便看看")
+	})
+	s.drainRelays("server", listRound(f, old, proto.StatusIdle, false))
 	waitFor(t, "the moved legacy work in main", func() bool {
 		got := strings.Join(f.noticesTo("conv1"), "\n")
 		return strings.Contains(got, "50 分钟没有进展") && strings.Contains(got, "被模型服务出错打断了") && strings.Contains(got, "顺便看看")
