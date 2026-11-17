@@ -117,7 +117,7 @@ What an extension contributes where is written in the manifest's `contributes`: 
 | `api` (version 1) | `api.` | `id`, `prefix` (one path segment), `features?`, `events?`, `receipts?` (`[{method, path, kind}]`: writes that need send receipts) | `runtime.http`, `on_startup`; with `events`, the process must speak the protocol | A block of App-facing API `/api/v1/<prefix>/…`, see "App API" below |
 | `assistant` (version 1) | `assistant.` | `id`, `skills?` (directories in the package, each with `SKILL.md`), `instructions?` (an `.md` in the package), `gate?` (a `.json` in the package: the gate for one command in a skill) | These files exist in the package; `gate` requires `skills`, and when credentials are needed the process speaks the protocol | The assistant's skills, instructions and command gates, see "Assistant" below |
 | `mcp_servers` (version 1) | `mcp.` | `id` (`a-z0-9_-`, cannot be `persona` or the legacy server name), `command`, `env?`, `args?`, `requires?`, `allow?`, `deny?` | Declarative is enough; the command is installed on the computer that runs the assistant | One more MCP server for the Claude assistant (tool names `mcp__<id>__*`), see "MCP servers" below |
-| `ui` (version 9) | `ui.` | `id`, `title`, `placement` (slot, see "UI slots": `extension_page` (old name `plugin_page`) / `launcher_section` / `nav_page` / `overview_card` / `capsule_card` / `machine_section` / `inbox_item` / `widget`), `hosts?` (only for `launcher_section`: gateway host names, may start with `*.`; omitted means any launcher, the extension decides), `icon?` (only `nav_page`), `opens?` (only `overview_card`, `capsule_card` and `widget`), `connector?` (only `inbox_item`, and required: the id of a connector contributed by the same extension), `group?` (only `nav_page`: `{"id", "title"}`, the sidebar group the page goes in, see "UI slots"), `families` / `refresh_minutes?` (only `widget`; `families` is required, see "System-level placements") | Process speaks the protocol; `launcher_section` needs permission `launcher_keys` | A page in the extension's details, a section on the launcher page, main navigation, overview, machine details, the details of an Inbox item, widgets and watch faces outside the App; see "Declarative UI", "UI slots", "System-level placements" below |
+| `ui` (version 10) | `ui.` | `id`, `title`, `placement` (slot, see "UI slots": `extension_page` (old name `plugin_page`) / `launcher_section` / `nav_page` / `overview_card` / `capsule_card` / `machine_section` / `inbox_item` / `widget`), `hosts?` (only for `launcher_section`: gateway host names, may start with `*.`; omitted means any launcher, the extension decides), `icon?` (only `nav_page`), `opens?` (only `overview_card`, `capsule_card` and `widget`), `connector?` (only `inbox_item`, and required: the id of a connector contributed by the same extension), `group?` (only `nav_page`: `{"id", "title"}`, the sidebar group the page goes in, see "UI slots"), `families` / `refresh_minutes?` (only `widget`; `families` is required, see "System-level placements") | Process speaks the protocol; `launcher_section` needs permission `launcher_keys` | A page in the extension's details, a section on the launcher page, main navigation, overview, machine details, the details of an Inbox item, widgets and watch faces outside the App; see "Declarative UI", "UI slots", "System-level placements" below |
 | `agent_sources` (version 1) | `agentsrc.` | `id` (`a-z0-9_-`, also the source segment of session ids `<id>:<sessionKey>`), `name`, `providers?` (`a-z0-9_`, e.g. `grok_bot`) | Process speaks the protocol, `on_startup` | Personal Agents on the Agents page (the hub has no sources of its own; all come from extensions), see "Personal Agent sources" below |
 | `channel` (version 1) | `channel.` | `id` (`^[a-z][a-z0-9_]{0,31}$`, cannot be 8 hex digits), `name`, `kind` (`im`), `connector?` (binding and status come from this connector of the same extension), `bind?` (`qr` / `code` / `fields`), `description?`, `capabilities` (receive images / files / voice, `format`, `max_text`, `asks`, `push`, `typing`, `progress`, `threads`) | Process speaks the protocol; `on_startup` when there is no `connector` | A channel for talking to Persona: the hub runs the shared pipeline (into the chat, tracking the turn, sending the answer back, questions), and the extension only talks to the IM; see [channels.md](channels.md) |
 | `events` (version 1) | `event.` | `id`, `subscribe` (a list of event names, see "Events") | Process speaks the protocol, `on_startup` | Only tells the extension what happened on the hub, see "Events" below |
@@ -2078,7 +2078,7 @@ When the app draws a slot, it states in `context` whom it is drawing for and whe
 | --- | --- | --- |
 | `placement` | — | This contribution's slot |
 | `size` | Optional: `compact` / `full` | If not sent, the size from the slot table; `compact` is a card and must be compact (see the limits under "New items") |
-| `ui_version` | The UI version the app can draw: the hub knows `9`; the web sends `9` (its native stream `7`), Android and iOS send `8` (their native streams too) until they draw all of UI version 9; **older apps do not send it, which counts as 1** | `min(app's, hub's)`; the extension can draw a version an older app can handle (e.g. `progress` instead of `chart`) |
+| `ui_version` | The UI version the app can draw: the hub knows `10`; the web sends `10` (its native stream `7`), Android and iOS send `10`; **older apps do not send it, which counts as 1** | `min(app's, hub's)`; the extension can draw a version an older app can handle (e.g. `progress` instead of `chart`) |
 | `tz` | The user's time zone (IANA name, `Asia/Shanghai`) | Passed on only if it loads; if not sent or invalid, the user time zone the hub knows (reported by the app, or from assistant settings), empty if neither. "Today" is computed in it |
 | `locale` | The app's language (`zh-Hans-CN`) | Passed on only if it looks like a language tag, otherwise empty |
 | `platform` | `ios` / `mac` / `android` / `web` | Other values are dropped |
@@ -2221,7 +2221,7 @@ If you do not want to see an extension's entries and cards: disable the extensio
 
 ### Compatibility
 
-**UI versions**: 1 is the original eight item types and two slots; 2 adds three slots, `chart` / `stat_grid` / `segmented`, `refresh_after` and context; for 3 see "UI version 3" above; for 4 see "UI version 4: code hosting"; for 5 see "UI version 5: code review"; for 6 see "UI version 6"; 7 is a section's `key` for the native stream (see `schema/extension/README.md`), which needs no downgrade; for 8 see "UI version 8"; for 9 see "UI version 9". The version of the `ui` extension point changes with it (`hub.extension_points.ui` in `initialize`, currently 9).
+**UI versions**: 1 is the original eight item types and two slots; 2 adds three slots, `chart` / `stat_grid` / `segmented`, `refresh_after` and context; for 3 see "UI version 3" above; for 4 see "UI version 4: code hosting"; for 5 see "UI version 5: code review"; for 6 see "UI version 6"; 7 is a section's `key` for the native stream (see `schema/extension/README.md`), which needs no downgrade; for 8 see "UI version 8"; for 9 see "UI version 9"; for 10 see "UI version 10". The version of the `ui` extension point changes with it (`hub.extension_points.ui` in `initialize`, currently 10).
 
 `progress.style` is an unversioned drawing hint: an app that does not recognize it keeps drawing a bar, so it needs no UI version bump or downgrade. Native stream does not accept this field.
 
@@ -2710,8 +2710,10 @@ color's tint, its arc with round ends; the value is in `text-xl` (`text-lg` in a
 tiles keep the grid's columns (`max_columns`, at least 150 px each), so a phone has two a line. The web's native stream still sends 7.
 `web/e2e/extension-gauge.mjs` checks it in a browser against the mock (`MOCK_EXTENSIONS=1 MOCK_EXTENSION_GAUGE=1`).
 
-**iOS and Android** have the field in their generated types and still send 8: the hub draws them the tile without its ring until
-they draw version 9 (their own changes, after #9337).
+**iOS and Android** both draw the ring natively, with the named colour's tint for its track, the value and unit (or percentage)
+in its centre, and the exact meter readout; Reduce Motion snaps ratio changes. Android's `ExtensionGaugeRing` is shared by grid
+and carousel tiles at 96 dp on a page and 80 dp in a compact card. `JTile` keeps the existing surface, badge, switch, action and
+extra-action menu, and adds meter semantics without removing the button behaviour of an actionable tile.
 
 ## UI version 10 (#9727)
 
@@ -2765,7 +2767,8 @@ assistant-only action is taken out of an extension's view.
   close button, Esc or Back.
 - **On a page** the canvas is 70% of the page's visible height, at least 320 and at most 900 pt / dp / px, and the page scrolls
   around it. **In a card** (`compact`, an overview card, a launcher or computer section, an assistant card) it is a still preview
-  fitted into 200 tall: no buttons, no gestures, no node presses; pressing it opens Full screen.
+  fitted into 200 tall: no buttons, no gestures, no node presses; pressing it opens Full screen. The graph is one of the
+  card's 12 items, however many nodes it has (its nodes still count toward the page's 300).
 - **Redraws:** the layout follows from the nodes, edges and folds alone, so a redraw that changes only states keeps every node in
   place; the app keeps the position and zoom for the `key`, unless the person has not moved the canvas since it opened, when it
   takes the opening view again. New and changed nodes fade their state in; with Reduce Motion nothing moves.
@@ -2782,14 +2785,15 @@ the same titles, states and actions are there, as a list:
 
 | Version 10 | Version 1–9 |
 | --- | --- |
-| `graph` | one `row` per visible node (the view's `folded` applied) in reading order, indented by its depth: `│ ` for each level above its parent's and `└ ` before its title, as extensions drew trees by hand |
+| `graph` | one `row` per visible node (the view's `folded` applied) in reading order, indented by its depth: `│ ` for each level above its parent's and `└ ` before its title, as extensions drew trees by hand; in a card, only the rows that fit its 12 items, in reading order |
 | a node's `subtitle`, `badge`, `icon`, `color`, `action` | the row's `subtitle`, `badge`, `icon`, `icon_color`, `action` |
 | a node's `progress` | the row's `value`, the percentage (`40%`) |
 | a folded node | its row's `value` gains `+12` (the nodes it hides), after the percentage with ` · ` when it has one; what it hides has no row |
-| `tone`, `group`, `selected`, `layout`, `direction`, `key` | left out (a row's key is `key/id` when the graph has a key and that is free on the page) |
+| `tone`, `group`, `selected`, `layout`, `direction`, `key` | left out (a row's key is `key/id` when the graph has a key and that is free on the page; a native stream's row always has a key, so a taken or overlong one becomes a free digest of the node id) |
 
 Below versions 6 and 3 the rows then lose what those versions did not have (`icon_color`, `icon`), as any row. A native stream's
 client (whose components never include `graph`) gets the same rows. Extensions may still draw an older app differently (`ui_version`).
+An action's `items` holding a graph are left out for an app below 10, which then draws the whole page again.
 
 **The web** (#9727) draws all of it and sends `10` (`web/src/views/extensions/ViewBody10.tsx`, a chunk loaded with the first view that has
 a graph; the page keeps the canvas's height meanwhile, and the card's fallback keeps the card's height too). The nodes are cards of the node token's size — growing with the
@@ -2806,7 +2810,16 @@ presses; pressing it opens Full screen, the same interactive canvas as the page'
 
 **iOS** (#9727): see `apple/Persona/Views/Settings/ExtensionGraph.swift`.
 
-**Android** (#9727): see `ExtensionGraph.kt` in `android/feature/settings`.
+**Android** (#9727) draws the canvas in `android/feature/settings/src/main/kotlin/persona/feature/settings/ExtensionGraph.kt` and
+sends `10` (`HttpExtensionManagement.UI_VERSION`). The pure-Kotlin `ExtensionGraphLayout` reproduces the shared slot layout and
+reading order; the Compose canvas draws its curves, group frames, node cards, selected ring and separate 48 dp fold targets with
+the design system's tokens in every style and theme. Transformable gestures and the floating controls zoom from 25% to 200%, Fit
+includes the whole graph, and `JFullScreen` shares the originating canvas's transform and folds. `rememberSaveable`, keyed by the
+graph key, keeps both across recreation; an untouched canvas takes its opening view again after a redraw. A compact card is a
+200 dp still preview whose only action opens Full screen. Nodes use the existing row-action path and read aloud in shared order,
+including badge, subtitle, progress and parent; the graph never enters the native stream's component set, whose clients still
+receive the hub's rows. `ExtensionGraphLayoutTest` replays every shared case, while the Compose tests cover actions, folding,
+restoration, full-screen continuity and compact-preview boundaries.
 
 ## System-level placements (#1858)
 

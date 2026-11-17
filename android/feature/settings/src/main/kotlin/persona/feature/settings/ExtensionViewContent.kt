@@ -441,6 +441,8 @@ internal fun StandaloneItem(item: ExtensionViewItem, state: ExtensionViewState, 
         "image" -> ExtensionImage(item, handle, top)
         "grid" -> ExtensionGrid(item, state, handle, top)
         "carousel" -> ExtensionCarousel(item, state, handle, top)
+        // UI version 10
+        "graph" -> ExtensionGraph(item, state, handle, top)
     }
 }
 
@@ -575,8 +577,10 @@ private fun CardItem(item: ExtensionViewItem, state: ExtensionViewState, handle:
         }
         // UI version 6: a card's grid has at most four tiles, its carousel six (the hub holds them to it)
         "image" -> ExtensionImage(item, handle, compact = true)
-        "grid" -> ExtensionGrid(item, state, handle, limit = 4)
-        "carousel" -> ExtensionCarousel(item, state, handle, limit = 6)
+        "grid" -> ExtensionGrid(item, state, handle, limit = 4, compact = true)
+        "carousel" -> ExtensionCarousel(item, state, handle, limit = 6, compact = true)
+        // UI version 10: a still preview; only its whole surface opens the full-screen canvas.
+        "graph" -> ExtensionGraph(item, state, handle, compact = true)
     }
 }
 

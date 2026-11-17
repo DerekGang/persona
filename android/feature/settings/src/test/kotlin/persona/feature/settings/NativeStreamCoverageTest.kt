@@ -406,7 +406,9 @@ class NativeStreamCoverageTest {
             assertTrue(name, gaps.all { it.startsWith("view.") && !it.contains("https://") })
             if (name.startsWith("View.v6-") && name != "View.v6-media.json") assertTrue("$name must disclose its missing optional fields", gaps.isNotEmpty())
         }
-        assertEquals(NativeExtensionStreamAdapter.Components, ExtensionComponent.TYPES.filter { it != "html" }.toSet())
+        // Graph stays on the legacy renderer so native streams receive the hub's downgraded rows (#9727).
+        assertEquals(NativeExtensionStreamAdapter.Components, ExtensionComponent.TYPES.filter { it != "html" && it != "graph" }.toSet())
+        assertFalse("graph" in NativeExtensionStreamAdapter.Components)
         val raw = Json.parseToJsonElement("""{"sections":[{"items":[{"type":"row","title":"Zero","control":{"kind":"stepper","name":"zero","value":0,"min":0,"max":10,"action":{"id":"step"}}},{"type":"image","key":"image","src":{"url":"https://example.com/a.png","width":1,"height":1},"alt":"Empty caption","caption":"","no_zoom":false}]}]}""").jsonObject
         assertTrue(NativeExtensionProfile.gaps(raw).isEmpty())
         assertEquals(JsonPrimitive(0), raw.getValue("sections").jsonArray[0].jsonObject.getValue("items").jsonArray[0].jsonObject.getValue("control").jsonObject["value"])
