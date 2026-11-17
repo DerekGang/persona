@@ -306,7 +306,7 @@ it.each([[404,false],[200,false],[503,false],[404,true]] as const)('edits and sa
  await act(async()=>picker.click());await flush();
  const search=document.querySelector<HTMLInputElement>(`input[aria-label="${t('ui-modelpicker.search_label')}"]`)!;
  await change(search,'manual-model');
- const choice=[...document.querySelectorAll('button[role="option"]')].find(b=>b.textContent?.includes('manual-model'))!;
+ const choice=[...document.querySelectorAll<HTMLButtonElement>('button[role="option"]')].find(b=>b.textContent?.includes('manual-model'))!;
  expect(choice).toBeTruthy();await act(async()=>choice.click());await flush();
  await click(t('common.save'));
  expect(writes).toEqual([expect.objectContaining({model:'manual-model',model_revision:4})]);
