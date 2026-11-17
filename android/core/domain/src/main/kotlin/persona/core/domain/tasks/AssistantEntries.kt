@@ -209,7 +209,7 @@ fun assistantEntries(
             else !todo.isDone && (status == TriageStatus.NeedsYou || status == TriageStatus.Interrupted)
         val decision = todo.awaitsDecision(now)
         val execution = todo.execution(lookup)
-        val settled = todo.isDone || (todo.supervision?.state == "accepted" && todo.supervision?.reviews?.lastOrNull()?.verdict == "accepted")
+        val settled = todo.isDone || todo.acceptanceStands
         val external = todo.externallyWaiting(now, status, todo.triage(lookup, now, restored[todo.id] ?: 0L, superseded = todo.id in superseded).last, lookup)
         val unfinished = !settled && !execution.running && !external && execution.closeout?.status != "done"
         val unattended = unfinished && execution.unattendedSince > 0 && now - execution.unattendedSince > STOP_FOLLOWUP_MS

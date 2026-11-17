@@ -129,6 +129,8 @@ async function run(browser, size, theme, language, textSize = "standard") {
     assert.equal(await page.locator("[data-task-park-hint]").textContent(), words[language].hint);
     assert.equal(await page.locator('[data-task-mark="done"], [data-task-mark="unread"], [data-task-mark="working"]').count(), 0);
     assert.equal(await page.locator("[data-task-todo-state]").count(), 3, "every Agent row names its to-do state separately");
+    if (size === "narrow") assert(await page.locator("[data-task-content]").first().evaluate((el) => el.getBoundingClientRect().width > 230),
+      "long waiting labels leave the title a readable width on phones");
     assert(!(await page.locator(".assistant-action-tray").innerText()).includes("完成未看"));
     await page.screenshot({ path: name("stopped") });
     await open("parked");

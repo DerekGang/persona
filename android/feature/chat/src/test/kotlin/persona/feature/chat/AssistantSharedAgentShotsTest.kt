@@ -64,7 +64,12 @@ class AssistantSharedAgentShotsTest {
     }
 
     private fun badge(entry: String, count: Int) {
-        rule.onNodeWithTag("assistant-entry-$entry").assertTextContains(count.toString())
+        val node = rule.onNodeWithTag("assistant-entry-$entry")
+        if (count > 0) node.assertTextContains(count.toString())
+        else {
+            val words = node.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString { it.text }
+            assertFalse("An empty capsule has no numeric badge: $words", Regex("[0-9]").containsMatchIn(words))
+        }
     }
 
     private fun shot(name: String) {

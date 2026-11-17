@@ -3,7 +3,7 @@ import PersonaWire
 import SwiftUI
 
 // The row above the assistant's composer on iPhone, iPad and Mac (#3393, docs/assistant/unified-entry.md "Needs you and In
-// progress: each thing once"): two entries, Needs You and In Progress, each thing in exactly one of them. The split is
+// progress: each thing once"): five peer entries, each thing in exactly one of them. The split is
 // `AssistantEntries`, a port of the web's `assistantEntries` (web/src/lib/assistant-entries.ts, Android's
 // AssistantEntries.kt, #3387) replaying the shared fixture spec/fixtures/entries/cases.json. Each entry opens a tray above
 // the bar, one at a time; the entries are drawn as the old dock's capsules (`DockCapsule`), so the bar is as low. In the
@@ -502,20 +502,25 @@ struct AssistantActionBar: View {
                 PushInterceptsTray(model: held) { withAnimation(Theme.Motion.state) { heldOpen = false } }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            ScrollView(.horizontal, showsIndicators: false) { row {
-                ForEach(ActionTray.allCases) { entry($0, count: content.count($0)) }
-                if inMain, let held {
-                    PushInterceptsEntry(model: held, open: heldOpen) {
-                        withAnimation(Theme.Motion.state) {
-                            open = nil
-                            heldOpen.toggle()
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) { row {
+                    ForEach(ActionTray.allCases) { entry($0, count: content.count($0)).id($0) }
+                    if inMain, let held {
+                        PushInterceptsEntry(model: held, open: heldOpen) {
+                            withAnimation(Theme.Motion.state) {
+                                open = nil
+                                heldOpen.toggle()
+                            }
                         }
                     }
+                    if ComputerActivityPill.shows(computer) {
+                        ComputerActivityPill(activity: computer).background(Theme.pageBackground, in: .capsule) // as the entries
+                    }
+                } }
+                .onChange(of: open) { _, tray in
+                    if let tray { withAnimation(Theme.Motion.state) { proxy.scrollTo(tray, anchor: .trailing) } }
                 }
-                if ComputerActivityPill.shows(computer) {
-                    ComputerActivityPill(activity: computer).background(Theme.pageBackground, in: .capsule) // as the entries
-                }
-            } }
+            }
             .padding(.horizontal, Theme.Space.xs)
             #if !os(macOS)
             .padding(.top, Theme.Space.s)
@@ -816,7 +821,7 @@ struct AssistantActionBar: View {
                                  detail: activity.isActive && status == .waiting ? StateName.working.text : detail(todo, status: status, agents: agents),
                                  tint: tint(status), subtitle: subtitle(todo, status: status, lead: lead, activity: activity),
                                  subtitleTint: status == .failed || status == .interrupted ? Theme.danger : nil,
-                                 trail: .open, activity: activity) {
+                                 trail: .open, activity: activity, stackDetail: true) {
                                 if open != .needsYou && (activity.isActive || status == .working) {
                                     WorkingIndicator().accessibilityIdentifier("action-tray.working-mark")
                                 } else if status == .waiting {
@@ -1075,7 +1080,7 @@ struct AssistantActionBar: View {
     private enum Trail { case none, open, folded, expanded }
 
     private func line<Mark: View>(title: String, detail: String, tint: Color? = nil, subtitle: String? = nil, subtitleTint: Color? = nil,
-                                  trail: Trail = .open, activity: AssistantTrayActivity = .init(),
+                                  trail: Trail = .open, activity: AssistantTrayActivity = .init(), stackDetail: Bool = false,
                                   @ViewBuilder mark: () -> Mark) -> some View {
         HStack(spacing: Theme.Space.s) {
             mark().scaledFrame(width: Theme.Size.markM)
@@ -1083,7 +1088,13 @@ struct AssistantActionBar: View {
                 HStack(spacing: Theme.Space.s) {
                     Text(title).font(Theme.Font.body).lineLimit(1)
                     Spacer(minLength: Theme.Space.s)
-                    Text(detail).font(Theme.Font.caption).lineLimit(1).fixedSize()
+                    if !stackDetail {
+                        Text(detail).font(Theme.Font.caption).lineLimit(1).fixedSize()
+                            .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
+                    }
+                }
+                if stackDetail {
+                    Text(detail).font(Theme.Font.caption).lineLimit(4)
                         .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                 }
                 if let subtitle {

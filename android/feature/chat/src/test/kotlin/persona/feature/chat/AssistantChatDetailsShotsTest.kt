@@ -172,11 +172,11 @@ class AssistantChatDetailsShotsTest {
             rule.onNodeWithText("Persona is getting ready…").assertExists()
             shot("$name-4-getting-ready")
 
-            // The shelved line opens the board, which lists them.
+            // The existing All action still opens the board; unattended work is no longer a shelved line.
             if (s != AppStyle.Glass) continue
             rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
-            rule.onNodeWithText("Shelved").assertExists()
-            rule.onNodeWithTag("assistant-tray-shelved").performClick(); settle()
+            rule.onNodeWithText("Shelved").assertDoesNotExist()
+            rule.onNodeWithTag("assistant-task-board").performClick(); settle()
             rule.mainClock.advanceTimeBy(1_000); rule.waitForIdle() // the sheet slides up
             rule.onNodeWithText("Tidy the release notes").assertExists()
             // iOS's board has no Shelved section either (`TaskBoardSheet`): a shelved task sits under its own state, with the

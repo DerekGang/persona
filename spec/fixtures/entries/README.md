@@ -36,3 +36,9 @@ subtask folding. All data is made up.
 Run `cd web && npx vitest run src/lib/assistant-entries.test.ts`,
 `cd android && ./gradlew :core:domain:test --tests '*AssistantEntriesFixtureTest*'`, and
 `AssistantEntriesFixtureTests` in Apple's `PersonaTests`.
+
+Native UI replay: start `scripts/mock/mock_hub.py` on an owned loopback port with `MOCK_TASKS=1`,
+`MOCK_TASKS_NO_ASKS=1`, and `MOCK_TASK_CLOSEOUT_GROUPS=1`. Apple `TaskCloseoutGroupsUITests` uses
+`PERSONA_MOCK_HUB` and `PERSONA_CLOSEOUT_GROUPS=1`; it checks separate groups and that long waiting targets do not
+push task rows outside the phone. Android `AssistantTraysShotsTest.fivePeerGroupsUseCloseoutsAndPreserveExplicitExternalParks`
+checks the real composable, counts, closeout wording, explicit parks, and no accidental acceptance writes.

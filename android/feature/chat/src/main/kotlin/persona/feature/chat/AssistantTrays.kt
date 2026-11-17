@@ -676,18 +676,20 @@ private fun TrayProgressRow(row: TrayProgress, activity: BackgroundWork? = null,
     val work = activity.takeIf { live }
     val detail = trayBackgroundLine(work) ?: row.text
     val palette = PersonaTheme.palette
+    val reported = live && work == null && !working &&
+        (row.closeoutStatus in setOf("done", "not_done", "blocked") || row.externalWait || row.stopped && !row.blocked)
+    val agentLabel = if (reported && row.closeoutStatus == "done") stringResource(R.string.chat_tray_agent_reported_done)
+        else if (reported && (row.closeoutStatus == "blocked" || row.externalWait)) {
+            row.waitingFor?.takeIf(String::isNotBlank)?.let { stringResource(R.string.chat_tray_agent_waiting_on, it) }
+                ?: stringResource(R.string.chat_tray_agent_waiting)
+        } else if (reported) stringResource(R.string.chat_tray_agent_unfinished)
+        else stringResource(if (live && waiting) R.string.chat_tray_waiting else if (work != null || working) R.string.chat_tray_working
+            else if (row.cancelled) R.string.chat_tray_cancelled else if (row.blocked) R.string.chat_tray_blocked else if (row.plan != null) R.string.chat_tray_planned
+            else if (row.stopped) R.string.chat_tray_stopped_state else R.string.chat_tray_in_progress)
     JRow(onClick = onClick, modifier = Modifier.testTag("assistant-progress-${row.id}"), chevron = false, trailing = {
         if (row.done) JIcon(PersonaIcons.done, stringResource(if (row.todo?.supervision?.state == "accepted")
             R.string.chat_tray_accepted else R.string.chat_tray_done), tint = palette.positive)
-        // A closeout is the Agent's report, not the supervisor's acceptance.
-        else Text(if (live && work == null && !working && row.closeoutStatus == "done") stringResource(R.string.chat_tray_agent_reported_done)
-            else if (live && work == null && !working && (row.closeoutStatus == "blocked" || row.externalWait)) {
-                row.waitingFor?.takeIf(String::isNotBlank)?.let { stringResource(R.string.chat_tray_agent_waiting_on, it) }
-                    ?: stringResource(R.string.chat_tray_agent_waiting)
-            } else if (live && work == null && !working && row.stopped && !row.blocked) stringResource(R.string.chat_tray_agent_unfinished)
-            else stringResource(if (live && waiting) R.string.chat_tray_waiting else if (work != null || working) R.string.chat_tray_working
-            else if (row.cancelled) R.string.chat_tray_cancelled else if (row.blocked) R.string.chat_tray_blocked else if (row.plan != null) R.string.chat_tray_planned
-            else if (row.stopped) R.string.chat_tray_stopped_state else R.string.chat_tray_in_progress),
+        else if (!reported) Text(agentLabel,
             style = PersonaTheme.type.micro, color = if (row.blocked || row.orphaned != null) palette.cautionText else palette.ink3, maxLines = 1)
     }) {
         if (live && (work != null || (working && !waiting))) {
@@ -699,6 +701,9 @@ private fun TrayProgressRow(row: TrayProgress, activity: BackgroundWork? = null,
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
             Text(row.title, style = PersonaTheme.type.bodyStrong, color = palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Long waiting targets get their own line instead of consuming the title's width.
+            if (reported) Text(agentLabel, style = PersonaTheme.type.micro, color = palette.ink3,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
             row.todo?.let { todo ->
                 val state = stringResource(when (todo.supervision?.state) {
                     "accepted" -> R.string.chat_tray_accepted
