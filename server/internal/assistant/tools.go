@@ -34,13 +34,18 @@ var toolNames = []string{"ask_user", "notify_user", "supervision_finish", "sched
 	"model_profiles_list", "model_profile_get", "model_profile_switch", "model_profile_rollback",
 	"repositories_list", "repository_get", "repository_add", "view_show", "view_update", "view_get",
 	"conversations_list", "conversation_read", "conversation_rename", "conversation_archive", "conversation_unarchive",
+	"conversation_tags_set",
 	"conversation_new", "conversation_send", "task_plan", "task_plan_withdraw", "task_review", "task_scope", "task_decided", "task_start_screen", "task_start_keys", "task_retry",
 	"todo_repositories_get", "todo_repositories_set", "todo_repository_links_set", "todo_repository_links_add", "todo_list", "todo_get", "todo_create", "todo_update", "todo_complete", "todo_reopen", "todo_delete", "concern_report",
 	"direction_name", "leader_progress"}
 
 // Tools are the assistant's tools (assistant.tools).
 func (s *Service) Tools(ctx context.Context) []proto.Tool {
-	return toolsNamed(toolNames)
+	tools := toolsNamed(toolNames)
+	if s.urgentOn(ctx) {
+		tools = append(tools, toolsNamed([]string{"urgent_call"})...)
+	}
+	return append(tools, s.knowledgeFolderTools(ctx)...)
 }
 
 // toolsNamed are the MCP tools of these names, as prompts/mcp has them.
@@ -55,6 +60,9 @@ func toolsNamed(names []string) []proto.Tool {
 
 // Tool runs one of the assistant's MCP tools for the conversation call.SessionID on machine call.MachineID.
 func (s *Service) Tool(ctx context.Context, call ToolCall) proto.ToolResult {
+	if err := s.conversationAvailable(ctx, call.MachineID, call.SessionID); err != nil {
+		return proto.TextResult(err.Error(), true)
+	}
 	call.Name = compat.Tool(call.Name)
 	args := call.Arguments
 	if len(args) == 0 {
@@ -167,6 +175,12 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		return s.toolLeaderProgress(ctx, self, args)
 	case "concern_report":
 		return s.toolConcernReport(ctx, machine, self, args) // concerns.go
+	case knowledgeSearchTool, knowledgeReadTool:
+		_, guest, err := s.guestOf(ctx, machine, self)
+		if err != nil || guest || s.isWorkMachine(machine) || isOutwardReader(ctx) {
+			return "", errors.New("remote knowledge folders are only available in private sessions")
+		}
+		return s.toolKnowledgeFolder(ctx, name, args)
 	case "kb_search", "kb_list", "kb_get", "kb_update":
 		return s.toolKB(ctx, name, args)
 	case "kb_history_plan", "kb_history_status", "kb_history_stop", "kb_history_resume":
@@ -238,6 +252,8 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		s.recordNotify(ctx, machine, self, notifyMissed(res)) // an interruption when a device took it (north_star.go)
 		s.promoteSupervision(self)
 		return notifyAnswerText(s.lang(ctx), res, copies.wait(notifyCopyWait)), nil
+	case "urgent_call":
+		return s.toolUrgentCall(ctx, machine, self, args) // urgent_call_tool.go
 	case "conversations_list":
 		return s.toolConversationsList(ctx, self, args)
 	case "conversation_read":
@@ -246,6 +262,8 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		return s.toolConversationRename(ctx, self, args)
 	case "conversation_archive", "conversation_unarchive":
 		return s.toolConversationArchive(ctx, self, args, name == "conversation_archive")
+	case "conversation_tags_set":
+		return s.toolConversationTagsSet(ctx, self, args)
 	case "conversation_new":
 		return s.toolConversationNew(ctx, self, args)
 	case "conversation_send":
@@ -276,7 +294,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if !s.taskInSpace(ctx, a.ID, space) { // another space's task is as good as none (health.go)
 			return "", fmt.Errorf("no task %q", a.ID)
 		}
-		ok, err := s.deleteTask(ctx, a.ID)
+		ok, err := s.deleteTaskFrom(ctx, a.ID, self) // this conversation may ask for it again (scheduleOwn)
 		if err != nil {
 			return "", err
 		}
@@ -404,18 +422,34 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			handed = s.handAttachments(ctx, machine, am.ID, atts, mentioned)
 			params["text"] = withAttachments(text, handed)
 		}
-		unsent := s.noteAgentSend(self, am.ID, c.SessionID) // more from its task's conversation reopens an accepted task (#6726)
+		sending, _ := params["text"].(string)
 		// A resume goes through the user's Resume's node call, the text as its first message (agent_resume.go).
 		if resume != "" {
-			return s.resumeAndSend(ctx, self, am, c, params, resume, a.Text, handed.said(), task, unsent)
+			return s.resumeAndSend(ctx, self, am, c, params, resume, a.Text, handed.said(), task)
 		}
 		if c.Status != proto.StatusOffline {
+			// A running agent takes it at once. A send of more for an accepted task holds a turn of the agent that
+			// starts meanwhile for its answer, so it is bounded however long the caller waits (a runtime's tool call
+			// has no deadline) and the turn is not held for good; any other send waits as long as its caller (#7539).
+			lctx, cancel := context.WithTimeout(ctx, liveSendWait)
+			defer cancel()
+			note, err := s.noteAgentSend(lctx, self, am.ID, c.SessionID, "", sending) // more from its task's conversation reopens an accepted task (#6726, #7539)
+			if err != nil {
+				return "", task.sendFailed(ctx, s, err)
+			}
+			if !note.reopens() {
+				lctx = ctx
+			}
 			var sent struct {
 				Queued bool `json:"queued"` // the runtime holds it behind the turn under way (#8097)
 			}
-			if err := s.call(ctx, am.ID, DeviceSessionSend, params, &sent); err != nil {
-				if !startResultUnknown(err) { // it may still arrive and start the turn
-					unsent()
+			err = s.call(lctx, am.ID, DeviceSessionSend, params, &sent)
+			note.sent(lctx, err) // an unknown answer counts for the agent's next turn: it may still arrive
+			if err != nil {
+				if note.reopens() && sendUnknown(err) {
+					// Its own wait ran out, or the link dropped, while the node may still type it in: the model reads
+					// the agent before it sends the text twice.
+					err = fmt.Errorf("%w (it may still arrive; check with agent_read before sending again)", err)
 				}
 				return "", task.sendFailed(ctx, s, err)
 			}
@@ -430,10 +464,13 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		// stops waiting.
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 		defer cancel()
-		if err := s.call(sctx, am.ID, DeviceSessionSend, params, nil); err != nil {
-			if !startResultUnknown(err) { // it may still arrive and start the turn
-				unsent()
-			}
+		note, err := s.noteAgentSend(sctx, self, am.ID, c.SessionID, "", sending)
+		if err != nil {
+			return "", task.sendFailed(sctx, s, err)
+		}
+		err = s.call(sctx, am.ID, DeviceSessionSend, params, nil)
+		note.sent(sctx, err)
+		if err != nil {
 			return "", task.sendFailed(sctx, s, err)
 		}
 		return fmt.Sprintf("Resumed %s on %s (same session, directory and launcher) and sent.", agentLabel(c), am.Name) + handed.said() + task.sent(sctx, s, a.Text), nil
@@ -537,7 +574,8 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			a.Effort = ""
 		}
 		// The admission gate refuses a too-busy computer before the user is asked to approve anything.
-		if err := s.checkAgentStart(ctx, am.ID); err != nil {
+		gated, _ := run["launcher"].(string)
+		if err := s.checkAgentStart(ctx, am.ID, s.startLauncher(ctx, gated)); err != nil {
 			return "", fmt.Errorf("%w; no agent was started", err)
 		}
 		branch := strings.TrimSpace(a.Worktree.Branch)
@@ -574,9 +612,6 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		// The tab is named from the prompt as written; the agent gets its project's background before it (#2820).
 		params := map[string]any{"cwd": a.Cwd, "launcher": a.Launcher, "model": a.Model, "effort": a.Effort, "tab_name": s.tabName(sctx, a.Prompt)}
 		prompt := s.withCloseoutBrief(sctx, a.Prompt, false)
-		if !s.isWorkMachine(am.ID) {
-			prompt += "\n\n" + prompts.RenderTaskHandoff()
-		}
 		params["prompt"] = s.withProjectContext(sctx, am.ID, a.Cwd, prompt)
 		if a.Ultracode {
 			params["ultracode"] = true
@@ -605,6 +640,9 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 				return "", fmt.Errorf("%w; no agent was started", err)
 			}
 			delete(params, "effort") // Model configuration's, not this call's
+		}
+		if !s.isWorkMachine(am.ID) {
+			params["prompt"] = params["prompt"].(string) + "\n\n" + s.taskHandoff(sctx, am.ID, fit)
 		}
 		if note != "" {
 			note = " Note: " + note + "."
@@ -667,7 +705,8 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		}
 		// Last look on the machine it will really start on (a health detour may have changed am): re-check and hold
 		// its admission slot across the session.start call.
-		release, err := s.admitAgentStart(sctx, am.ID)
+		final, _ := params["launcher"].(string)
+		release, err := s.admitAgentStart(sctx, am.ID, s.startLauncher(ctx, final))
 		if err != nil {
 			return "", fmt.Errorf("%w; no agent was started", err)
 		}
@@ -751,6 +790,33 @@ func startResultUnknown(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
 		errors.Is(err, rpc.ErrClosed) || errors.As(err, &re) && re.Message == rpc.ErrClosed.Error()
 }
+
+// sendUnknown: a session.send or session.start that failed though its text may have reached the agent: its answer
+// never came back (startResultUnknown), or the node's error says the text may have arrived or did (nodeMayHaveTaken).
+// Not when the manager's own connection says it never went out (rpc.ErrNotSent: the caller's wait ran out, or the
+// connection closed, before it was written, or the node's not-started refusals outlasted the retries).
+func sendUnknown(err error) bool {
+	return (startResultUnknown(err) || nodeMayHaveTaken(err)) && !errors.Is(err, rpc.ErrNotSent)
+}
+
+// nodeMayHaveTaken: err is the node's, and its delivered says the text may have arrived ("unknown": typing failed part
+// way, or a Claude's inbox read it but the session has not confirmed it yet, peer_unconfirmed) or did ("yes"). A refusal
+// says "none" (nothing was typed); an error that says neither is read by its kind alone (startResultUnknown).
+func nodeMayHaveTaken(err error) bool {
+	var re *rpc.Error
+	if !errors.As(err, &re) || len(re.Data) == 0 {
+		return false
+	}
+	var d struct {
+		Delivered string `json:"delivered"`
+	}
+	_ = json.Unmarshal(re.Data, &d)
+	return d.Delivered == "unknown" || d.Delivered == "yes"
+}
+
+// liveSendWait bounds a send to an agent that runs when the send may reopen its accepted task (agent_send), and the
+// owner's message on a task's card: its node types it in at once. A var so tests shorten it.
+var liveSendWait = 90 * time.Second
 
 // startedWithoutAnswer answers an agent_start whose result is unknown. A list showing the new session the node
 // built (not present before the start) adopts and links it like an answered start; otherwise the model gets neutral
@@ -1147,7 +1213,11 @@ func (s *Service) describeAgents(ctx context.Context, state, machine, query stri
 		} else if ix.Kind == proto.IxScreen {
 			what = "终端对话框等你处理"
 		}
-		k := [2]string{ix.MachineID, ix.SessionID}
+		session := ix.SessionID
+		if ix.FoldedUnder != "" {
+			session = ix.FoldedUnder
+		}
+		k := [2]string{ix.MachineID, session}
 		what += " (interaction_id=" + ix.ID + ")"
 		pending[k] = append(pending[k], clip(what, 400))
 	}
@@ -1170,9 +1240,10 @@ func (s *Service) describeAgents(ctx context.Context, state, machine, query stri
 		}
 		list, muted, _ := s.sessionsMuted(ctx, m.ID)
 		for _, c := range list {
-			if c.Assistant || c.HiddenByDirectory() {
+			if c.Assistant || c.HiddenByDirectory() || c.FoldedUnder() != "" {
 				continue
 			}
+			c.State = c.FoldedState()
 			// Archived ones are out of the apps' lists: only "archived" lists them, and "all" with them marked.
 			switch state {
 			case "all":

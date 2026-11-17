@@ -167,7 +167,7 @@ final class AssistantModelPanelModel {
         static var live: Deps {
             Deps(
                 launchers: { try await AppModel.shared.assistantLaunchers($0, refresh: $1) },
-                models: { try await AppModel.shared.api($0.group)?.launcherModels(machine: $0.id, launcher: $1, refresh: $2)
+                models: { try await AppModel.shared.api($0.group)?.launcherModels(machine: $0.id, launcher: $1, refresh: $2, purpose: "assistant")
                     ?? LauncherModels(agent: "", models: [], locked: nil, machine: nil) },
                 keep: { await AppModel.shared.keepConversationModel($0, pick: $1) },
                 drop: { await AppModel.shared.dropConversationModel($0) })
@@ -350,14 +350,12 @@ struct AssistantModelSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "Close")) { dismiss() }.lineLimit(1)
-                }
+                SheetClose { dismiss() }
             }
             .refreshable { await panel.load(refresh: true) }
             .task { await panel.load() }
             .sheet(item: Binding(get: { typingFor.map { TypingTarget(launcher: $0) } }, set: { typingFor = $0?.launcher })) { target in
-                TypedModelSheet(machine: panel.machine, launcher: target.launcher,
+                TypedModelSheet(machine: panel.machine, launcher: target.launcher, purpose: "assistant",
                                 note: String(localized: "Used for this conversation's next messages, on every device.")) { id in
                     Task {
                         if await panel.choose(launcher: target.launcher, model: id, session: session) { dismiss() }

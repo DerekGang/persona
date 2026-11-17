@@ -3,6 +3,7 @@ package proto
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"time"
 )
 
@@ -62,6 +63,34 @@ func (s *PermissionModeSet) UnmarshalJSON(b []byte) error {
 // CodexEffortLevels are Codex's reasoning efforts, weakest first: a codex launcher's model catalog advertises ultra,
 // so a start on one takes it too (node/codex_effort.go). Claude Code's list stops at max.
 var CodexEffortLevels = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+// EffortWords are the thinking levels gateways and APIs name, weakest first: Claude Code's (EffortLevels), the APIs'
+// none and minimal below them and Codex's ultra above. Every other list of levels is a part of it in this order.
+var EffortWords = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+// ProjectEfforts is levels (EffortWords) in the words vocab takes, weakest first and each once: a level vocab names
+// stays as it is, minimal becomes low and ultra max where vocab lacks them (cindy's clampEffortForClaude), and
+// anything else vocab lacks (none, a word outside EffortWords) is left out.
+func ProjectEfforts(levels, vocab []string) []string {
+	var out []string
+	for _, w := range EffortWords {
+		for _, e := range levels {
+			p := e
+			if !slices.Contains(vocab, p) {
+				switch p {
+				case "minimal":
+					p = "low"
+				case "ultra":
+					p = "max"
+				}
+			}
+			if p == w && slices.Contains(vocab, p) && !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
 
 // ModeBypass skips every permission prompt; a headless claude only takes it at start (--permission-mode).
 const ModeBypass = "bypassPermissions"
@@ -142,9 +171,13 @@ type Session struct {
 	// started with --dangerously-skip-permissions, --allow-dangerously-skip-permissions or --permission-mode
 	// bypassPermissions, which put that mode in its shift+tab cycle (#1379). The node reads it off the claude process its
 	// hooks run under; false while unknown (no hook yet, a node too old to say).
-	BypassAvailable bool   `json:"bypass_available,omitempty"`
-	Title           string `json:"title"`
-	Cwd             string `json:"cwd"`
+	BypassAvailable bool `json:"bypass_available,omitempty"`
+	// Tags are the user-defined labels of an assistant conversation (assistant/conversation_tags.go), set by the user
+	// or the assistant. A pointer so a row without tags adds no size to Session's size class (session_size_test.go);
+	// nil and an empty slice both mean "no tags" and are omitted on the wire.
+	Tags  *[]string `json:"tags,omitempty"`
+	Title string    `json:"title"`
+	Cwd   string    `json:"cwd"`
 	// WorkspaceCwd is the node-verified physical directory for Cwd. Consumers
 	// matching workspace bindings prefer it and fall back to Cwd on older nodes.
 	WorkspaceCwd string `json:"workspace_cwd,omitempty"`
@@ -251,16 +284,18 @@ type Session struct {
 	Channels []string `json:"channels,omitempty"`
 	// Space / slot generalize where an agent lives in its host tool: for herdr a workspace and a tab
 	// (docs/protocol/agent-states.md). Agents sharing a space are shown together as one collaborating group.
-	SpaceKind  string `json:"space_kind,omitempty"` // herdr
-	SpaceID    string `json:"space_id,omitempty"`
-	SpaceName  string `json:"space_name,omitempty"`
-	SpaceIndex int    `json:"space_index,omitempty"`
+	SpaceKind string `json:"space_kind,omitempty"` // herdr
+	SpaceID   string `json:"space_id,omitempty"`
+	SpaceName string `json:"space_name,omitempty"`
+	// SpaceIndex and SlotIndex are small host-side ordinal numbers (a workspace's and a tab's place), so int32 is wide
+	// enough; keeping the two four-byte fields in one word leaves room in Session's size class (session_size_test.go).
+	SpaceIndex int32 `json:"space_index,omitempty"`
+	SlotIndex  int32 `json:"slot_index,omitempty"`
 	// ParentSpaceID is the space this one is nested under in its host, same kind and machine (Orca: a child
 	// worktree's parent, #2073); empty for a top-level space. Clients that know it fold the child under its parent.
 	ParentSpaceID string `json:"parent_space_id,omitempty"`
 	SlotID        string `json:"slot_id,omitempty"`
 	SlotName      string `json:"slot_name,omitempty"`
-	SlotIndex     int    `json:"slot_index,omitempty"`
 	// PaneIndex is the pane's 0-based place in its slot by layout, top left first: 0 is the pane the others were split
 	// from (the group's "Initiator" when an agent runs there). Absent (nil) when the host does not say where its panes sit
 	// (older nodes, hosts without layouts, a pane missing from the layout). A pointer so that 0 is sent.
@@ -415,11 +450,6 @@ type Session struct {
 	FailureReason string `json:"failure_reason,omitempty"`
 	// ExternalURL opens the session where it lives outside Persona (a botmux session's Feishu topic).
 	ExternalURL string `json:"external_url,omitempty"`
-	// Runtime: an assistant conversation's runtime as it actually runs ("agentsdk"; "" is the CLI, #2455).
-	Runtime string `json:"runtime,omitempty"`
-	// RuntimeFallback: why an assistant conversation asked to run on the Agent SDK runs on the CLI instead (no
-	// Node.js 22+, no bridge package, no claude); "" when it runs as asked.
-	RuntimeFallback string `json:"runtime_fallback,omitempty"`
 	// Chat, Topic, Dispatched: a botmux session's Feishu chat, its topic's root message and the topics it dispatched
 	// (`botmux dispatch`), for the todos to follow (docs/assistant/todos.md "botmux following"); stripped by hub like SpawnFrom.
 	Chat       string   `json:"chat,omitempty"`
@@ -434,10 +464,10 @@ type Session struct {
 	Host string `json:"host,omitempty"`
 	// Hierarchy is where the session stands among the sessions that started one another, and when it began
 	// (docs/protocol/protocol.md "Session hierarchy"); nil for most rows. Its members are written on the row itself
-	// (parent_agent_id, folded_under, folded_as, children, started_at, asking_parent_session_id: sessionWire), so it has
+	// (parent_agent_id, folded_under, folded_as, children, started_at, asking_parent_session_id, deleted: sessionWire), so it has
 	// no key of its own. Read it with ParentAgentID, FoldedUnder, FoldedAs, Children, StartedAt and
-	// AskingParentSessionID; it is shared by every copy of the row, so it is never written in place: SetParentAgentID,
-	// SetFold, SetStartedAt and SetAskingParentSessionID put a new one.
+	// AskingParentSessionID and IsDeleted; it is shared by every copy of the row, so it is never written in place:
+	// SetParentAgentID, SetFold, SetStartedAt, SetAskingParentSessionID and SetDeleted put a new one.
 	Hierarchy *SessionHierarchy `json:"-"`
 }
 

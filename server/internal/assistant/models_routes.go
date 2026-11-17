@@ -63,16 +63,13 @@ func (s *Service) modelPurpose(ctx context.Context, id string, providers []Model
 			if p.Effective.Model == "" {
 				p.Effective.Model = v.Model
 			}
-			if p.Kind == "api" && (v.API == "responses" || v.API == "messages" || v.API == "") {
+			if p.Kind == "api" && (v.API == "responses" || v.API == "messages" || v.API == "chat" || v.API == "") {
 				p.Fields = append(p.Fields, "effort")
 			}
 		}
 	}
 	if p.Kind == "launcher" {
 		p.Fields = append(p.Fields, "effort")
-	}
-	if len(p.Runtimes) > 0 {
-		p.Fields = append(p.Fields, "runtime")
 	}
 	if len(p.ConfigDirs) > 0 {
 		p.Fields = append(p.Fields, "config_dir")
@@ -212,10 +209,6 @@ func (s *Service) modelConfigRoutes() {
 			apierr.Write(w, 409, errModelConflict)
 			return
 		}
-		if in.Runtime != nil && string(in.Runtime) != "null" && len(p.Runtimes) == 0 {
-			apierr.Write(w, 400, i18n.Err("assistant-models.err_runtime_assistant_only"))
-			return
-		}
 		if in.ConfigDir != nil && string(in.ConfigDir) != "null" && len(p.ConfigDirs) == 0 {
 			apierr.Write(w, 400, i18n.Err("assistant-models.err_config_dir_assistant_only"))
 			return
@@ -250,7 +243,7 @@ func (s *Service) modelConfigRoutes() {
 				apierr.Write(w, 400, e)
 				return
 			}
-			if !messagesAPI(config.API) && config.API != "responses" {
+			if !messagesAPI(config.API) && config.API != "responses" && config.API != "chat" {
 				apierr.Write(w, 400, i18n.Err("assistant-models.err_api_effort"))
 				return
 			}

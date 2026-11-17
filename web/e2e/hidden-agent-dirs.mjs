@@ -1,4 +1,6 @@
 // Isolated synthetic browser evidence: no live hub, credentials or Agent actions.
+// Usage: node web/e2e/hidden-agent-dirs.mjs <loopback-web-origin> <artifact-directory> <chromium-executable>
+// Captures go in the PR, not the repository (CLAUDE.md, "Workflow").
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { chromium } from "playwright-core";

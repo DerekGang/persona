@@ -166,7 +166,7 @@ not looked up on every redraw.
 every push and every frame of a scroll.
 
 **Counter-examples.**
-- `apple/Persona/Views/Inbox/Lark/LarkInline.swift:303`: compiles a regular expression on every call, from every Lark card node's `body`.
+- Fixed before: `apple/Persona/Views/Inbox/Lark/LarkInline.swift` compiled a regular expression on every call, and another per attribute, from every Lark card node's `body`; the three fixed expressions are now `static let`.
 - `apple/Persona/Views/Knowledge/KnowledgeView.swift:1092`: a new `DateFormatter` per call from `body` (`apple/Persona/Views/Knowledge/KnowledgeView.swift:826`).
 - Fixed before, `apple/Shared/StateNames.swift`: `StateName.text` called `interfaceText(_:)` each time it was read. With an explicit locale,
   `String(localized:)` reads the string tables on every call (1–2 ms each on the simulator, against the cached lookup of
@@ -578,9 +578,9 @@ is off the main actor and nothing can call it unseen.
 | A closure literal that only its destination's type makes `@Sendable` | `main` when written in main-actor code (a false positive: write `{ @Sendable in` to say so) |
 | A closure kept in a local variable, or read out of a property and handed on | `unknown` outside main-actor code |
 | `map`, `filter` and the like on a lazy sequence, in a file that imports Combine, or in the sequence of a `for await` | `unknown` outside main-actor code |
-| A call on a value whose type no declaration states (`$0.load()`, a value out of an untyped closure) | may make the callee `unknown`, never `main` or `off` |
+| A call on a value whose type no declaration states (`$0.load()`, a value out of an untyped closure), or whose type has the name of a generic parameter or associated type anywhere in the sources | may make the callee `unknown`, never `main` or `off` |
 | `@objc` members, `#selector`, overrides of SDK classes, callbacks of SDK delegate protocols | `unknown`: the caller is outside the sources |
-| A function handed on as a value, or a property named in a key path | `unknown` |
+| A function handed on as a value, or a property named in a key path (a name only compared, used in arithmetic or interpolated into a string is read, not handed on, unless an `appendInterpolation` of the sources takes, unlabeled, a value that may be a function: anything but a concrete type such as `Int`, `String` or a struct of the sources) | `unknown` |
 | `nonisolated` code with no call in the sources | `unknown` |
 | A conformance other than `Error`, `LocalizedError` or `CodingKey` that makes the compiler infer `nonisolated` | read as MainActor |
 | `SWIFT_DEFAULT_ACTOR_ISOLATION` set per build configuration | the run stops with an error |
@@ -639,7 +639,6 @@ Grep counts are across `apple/` without tests; they are leads to read, not each 
 
 **P4: work in `body`**
 
-- `apple/Persona/Views/Inbox/Lark/LarkInline.swift:303`: `cardMarkdown` compiles an `NSRegularExpression` on every call, and another per attribute (`apple/Persona/Views/Inbox/Lark/LarkInline.swift:310`), for every card node's `body` (`apple/Persona/Views/Inbox/Lark/LarkCard.swift:327`). 45 uncached `NSRegularExpression(` sites in all.
 - `apple/Persona/Views/Knowledge/KnowledgeView.swift:1092`: a new `DateFormatter` per call, from `body` (`apple/Persona/Views/Knowledge/KnowledgeView.swift:826`); same in `apple/Persona/Views/Settings/ExtensionCodeViews.swift:382-389` (`ISO8601DateFormatter`, `RelativeDateTimeFormatter`).
 - `apple/Shared/Models.swift:2505`: `storageText` creates a `ByteCountFormatter` on each read; 35 callers, many in rows and in a progress label (`apple/Persona/Views/Chat/VideoFileView.swift:145`).
 - `apple/Persona/Views/Session/ReviewPage.swift:267-283`: rebuilds a file's diff rows, scans them for the widest line number and filters the drafts once per line, on every `body`.

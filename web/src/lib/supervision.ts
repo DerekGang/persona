@@ -13,6 +13,28 @@ export interface Parked {
   until: string;
   waiting_on: "owner_priority" | "someone_else" | "external_event" | "date";
   count: number;
+  /** Source-backed account recorded by task_review, not a provider receipt fetched by the hub. */
+  evidence?: ParkEvidence;
+}
+
+export interface ParkContact {
+  channel: string;
+  url: string;
+  sender: string;
+  sent_at: string;
+  request: string;
+  status: string;
+}
+
+export interface ParkEvidence {
+  kind: "person_reply" | "merge_review" | "external_event" | "date";
+  target: string;
+  url?: string;
+  wake: string;
+  contact?: ParkContact;
+  ready?: boolean;
+  /** Recording conversation, not the person who sent the request. */
+  recorded_by?: string;
 }
 
 export interface ReviewCheck {
@@ -32,6 +54,10 @@ export interface TaskReview {
   reason?: string;
   recommend?: string;
   options?: { label: string; leads_to?: string }[];
+  until?: string;
+  waiting_on?: Parked["waiting_on"];
+  parks?: number;
+  evidence?: ParkEvidence;
 }
 
 export interface Supervision {
@@ -46,7 +72,8 @@ export interface Supervision {
   round?: number;
   reviews?: TaskReview[];
   updated_at?: string;
-  /** When the task entered `pending_review`; absent in every other state, and from an older hub. */
+  /** When the task entered `pending_review`; absent in every other state, and from an older hub. The web lists every
+   *  review alike (Persona reviewing, #8678); Android and Apple read it to tell an overdue one. */
   pending_since?: string;
   /** What its agent last reported to Persona (report_to_supervisor); kept by the hub while it runs. */
   progress?: TaskProgress;
@@ -129,19 +156,6 @@ export function reviewState(todo: Pick<Todo, "done_at"> & { supervision?: Superv
   return st;
 }
 
-/** How long a task's review is its supervisor's alone (docs/assistant/unified-entry.md "Needs you and In progress"):
- *  past it the review is overdue and the task is the owner's, under Needs you. */
-export const REVIEW_OVERDUE_MS = 60 * 60 * 1000;
-
-/** The task waits for its supervisor's review, which is not the owner's to do yet: open, in `pending_review` for less
- *  than `REVIEW_OVERDUE_MS`. False past that, and when the hub does not say since when (an older hub): the review is
- *  then the owner's, as it was. An open ask or an asking Agent is the owner's whatever this says (assistantEntries). */
-export function supervisorReviewing(todo: Pick<Todo, "done_at"> & { supervision?: Supervision }, now: number): boolean {
-  if (todo.done_at || reviewState(todo) !== "pending_review") return false;
-  const since = Date.parse(todo.supervision?.pending_since ?? "");
-  return Number.isFinite(since) && now - since < REVIEW_OVERDUE_MS;
-}
-
 /** "Parked until Nov 14, 9:00 AM · The design team has to pick the icon set first": a parked task in a line, for its
  *  row among the tasks in progress and for its page; undefined for a task that is not parked. */
 export function parkedLine(todo: (Pick<Todo, "done_at"> & { supervision?: Supervision }) | undefined): string | undefined {
@@ -153,10 +167,18 @@ export function parkedLine(todo: (Pick<Todo, "done_at"> & { supervision?: Superv
 
 export type ReviewTone = "accent" | "red" | "orange" | "green" | "muted";
 
+/** The owner chose Don't handle on the decision round waiting now (the hub's task_review_dismissals): it no longer waits
+ *  on them, in the main conversation, on the To-dos page and in the badge alike. An answer later undoes it on the hub. */
+export function decisionDismissed(todo: Pick<Todo, "decision_review"> & { supervision?: Supervision }): boolean {
+  const r = todo.decision_review;
+  return !!r?.dismissal_id && r.review_at === (todo.supervision?.reviews?.at(-1)?.at || r.review_at);
+}
+
 /** What the state is called and how it is coloured; undefined for a task that is not supervised. */
-export function reviewBadge(todo: Pick<Todo, "done_at"> & { supervision?: Supervision }): { label: string; tone: ReviewTone } | undefined {
+export function reviewBadge(todo: Pick<Todo, "done_at" | "decision_review"> & { supervision?: Supervision }): { label: string; tone: ReviewTone } | undefined {
   const sup = todo.supervision;
   if (!sup) return undefined;
+  if (reviewState(todo) === "needs_user" && decisionDismissed(todo)) return { label: t("assistant-tasks.review_dismissed"), tone: "muted" };
   switch (reviewState(todo)) {
     case "pending_review":
       return { label: t("assistant-tasks.review_pending"), tone: "accent" };

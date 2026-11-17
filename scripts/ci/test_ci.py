@@ -109,6 +109,11 @@ class PathTests(unittest.TestCase):
         self.assertTrue(paths.select(["scripts/ci/server-shards.py"])["server"])
         self.assertTrue(paths.select(["scripts/ci/android-shards.py"])["android"])
 
+    def test_the_callkit_guards_select_the_apple_lane(self):
+        # The Apple lane runs both against real builds (#9290).
+        for filename in ("scripts/release/check_no_callkit.py", "scripts/test/test_apple_no_callkit.py"):
+            self.assertTrue(paths.select([filename])["apple"], filename)
+
     def test_deleted_and_renamed_old_paths_are_relevant(self):
         self.assertTrue(paths.select(["apple/Old.swift", "docs/archive/new.md"])["apple"])
         self.assertTrue(paths.select([".github/workflows/release.yml"])["image"])
@@ -365,6 +370,47 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS HTML card tests (separate batch)',
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
+
+
+class PostgresCleanupTests(unittest.TestCase):
+    def test_server_fixture_removes_its_volume_on_success_and_failure(self):
+        for run_status, ready_status in ((0, 0), (23, 0), (0, 19)):
+            with self.subTest(run_status=run_status, ready_status=ready_status), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                fixtures = root / "fixtures"
+                fixtures.mkdir()
+                shutil.copyfile(Path(__file__).with_name("server.sh"), root / "server.sh")
+                # Run the real entrypoint and EXIT trap without starting Docker or Go tests.
+                (root / "common.sh").write_text("""ci_run() {
+  local label="$1"
+  shift 2
+  case "$label" in
+    'Postgres 18 fixture') "$@" ;;
+    'Postgres readiness') return "$FIXTURE_READY_STATUS" ;;
+    *) return 0 ;;
+  esac
+}
+""")
+                docker = root / "docker"
+                docker.write_text("""#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_DOCKER_CALLS"
+if [ "$1" = run ]; then exit "$FIXTURE_RUN_STATUS"; fi
+""")
+                docker.chmod(0o755)
+                log = root / "docker-calls"
+                environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                                   TMPDIR=str(fixtures), FIXTURE_DOCKER_CALLS=str(log),
+                                   FIXTURE_RUN_STATUS=str(run_status), FIXTURE_READY_STATUS=str(ready_status))
+                result = subprocess.run(["bash", str(root / "server.sh"), "managers"],
+                                        env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, run_status or ready_status, result.stderr)
+                calls = [line.split() for line in log.read_text().splitlines()]
+                self.assertEqual(len(calls), 2, calls)
+                self.assertEqual(calls[0][:2], ["run", "--detach"])
+                container = calls[0][calls[0].index("--name") + 1]
+                self.assertEqual(calls[1], ["rm", "-fv", container])
+                self.assertEqual(list(fixtures.iterdir()), [])
 
 
 class RunnerTests(unittest.TestCase):
