@@ -29,7 +29,19 @@ func existingInboxCall(t *testing.T, s *Service, name string, args map[string]an
 	if name == "agent_send(task)" {
 		name = "agent_send"
 	}
-	return runJSON(t, s, "conv1", name, args)
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := s.Tool(t.Context(), ToolCall{MachineID: "server", SessionID: "conv1", Name: name, Arguments: raw})
+	if len(result.Content) == 0 {
+		t.Fatal("empty MCP response")
+	}
+	text := result.Content[0].Text
+	if result.IsError {
+		return text, errors.New(text)
+	}
+	return text, nil
 }
 
 func assertExistingInboxLink(t *testing.T, s *Service, id string, todo Todo) {
