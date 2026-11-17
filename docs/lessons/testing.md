@@ -147,6 +147,9 @@ Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUD
   for the gate's privacy/retry assertions; otherwise an idle import makes the same fixture change components.
   Freeze the Date clock at local noon when a formatting case assumes a recent message is from today. One minute
   before 00:00 belongs to yesterday and correctly carries a date; do not loosen the same-day/date assertions.
+  A runtime gate fixture must prepare the assistant directory through `assistant.prepare` before sending, as the
+  hub does. Merely writing a user skill does not authorize copying it into an unprepared task directory; keep that
+  boundary and the gate's read, refused-write and conversation-ownership assertions intact.
 
 - A concurrency test that passes with `-race` can still fail without it (2026-11-06, #5908). `-race` slows the instrumented code, so the goroutines meet in a different order. `TestInstallClaimsOperation` passed 20 of 20 runs with `-race` and failed 13 to 29 of 40 without it. Without `-race` its second install usually ran only after the first had committed and used up the preview, and got a 403 from the market check that the PR's own `-race` runs never reached. Run a new concurrency test with `-count`, both with and without `-race`. For the interleaving that matters, set up the state directly instead of hoping two goroutines meet there (here: claim the operation, drop the preview, then install again).
 
