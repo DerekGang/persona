@@ -116,16 +116,17 @@ type briefRecord struct {
 	// Request: the owner's message, nil when the work was not started on one (StartedBy says by whom) or it could not
 	// be read. Trigger is what the turn that handed the work out followed instead (supervision, followup, routine,
 	// conversation, notice, meeting, wake), TriggerTitle its one line; Reason is why, as whoever started it said.
-	Request       *BriefRequest `json:"request,omitempty"`
-	StartedBy     string        `json:"started_by"`
-	Trigger       string        `json:"trigger,omitempty"`
-	TriggerTitle  string        `json:"trigger_title,omitempty"`
-	Reason        string        `json:"reason,omitempty"`
-	Conversation  string        `json:"conversation,omitempty"` // where it was handed out
-	Goal          string        `json:"goal"`
-	DoneWhen      []string      `json:"done_when"`
-	ExpectMinutes int           `json:"expect_minutes,omitempty"`
-	OutOfBounds   []string      `json:"out_of_bounds,omitempty"`
+	Request       *BriefRequest      `json:"request,omitempty"`
+	StartedBy     string             `json:"started_by"`
+	Trigger       string             `json:"trigger,omitempty"`
+	TriggerTitle  string             `json:"trigger_title,omitempty"`
+	Reason        string             `json:"reason,omitempty"`
+	Conversation  string             `json:"conversation,omitempty"` // where it was handed out
+	Goal          string             `json:"goal"`
+	DoneWhen      []string           `json:"done_when"`
+	ExpectMinutes int                `json:"expect_minutes,omitempty"`
+	OutOfBounds   []string           `json:"out_of_bounds,omitempty"`
+	DistinctFrom  []TaskDistinctFrom `json:"distinct_from,omitempty"`
 	// Reconstructed: made later from what the to-do still had (a task from before briefs): Handover is the prompt its
 	// agent was handed, which is not the owner's words, and nothing else was invented.
 	Reconstructed bool   `json:"reconstructed,omitempty"`
@@ -327,6 +328,7 @@ func (tb *taskBrief) view() TaskBrief {
 	v := TaskBrief{briefRecord: tb.rec, Log: slices.Clone(tb.st.Log), Criteria: tb.criteria(), ExpectNow: tb.expect(),
 		ClockAt: tb.clockAt(), DueAt: tb.dueAt(), Overdue: tb.overdueAt()}
 	v.DoneWhen = slices.Clone(tb.rec.DoneWhen)
+	v.DistinctFrom = slices.Clone(tb.rec.DistinctFrom)
 	if v.DoneWhen == nil {
 		v.DoneWhen = []string{}
 	}

@@ -132,6 +132,7 @@ func (s *Service) planBriefs(ctx context.Context, machine, conversation string, 
 		rec := *origin
 		rec.ID, rec.CreatedAt = "brief_"+randomHex(8), time.Now().UTC()
 		rec.Goal, rec.DoneWhen, rec.ExpectMinutes, rec.OutOfBounds = firstNonEmpty(t.Goal, t.Title), t.DoneWhen, t.ExpectMinutes, t.OutOfBounds
+		rec.DistinctFrom = slices.Clone(t.DistinctFrom)
 		if rec.StartedBy != briefByOwner {
 			rec.Reason = t.StartedWhy
 		}
@@ -175,7 +176,7 @@ func (s *Service) briefStarted(ctx context.Context, p *TaskPlan, t *PlanTask, to
 		s.logf("task %s: the task it continues (%s) is gone: it gets a brief of its own", todo.ID, t.Continues)
 	}
 	rec := briefRecord{StartedBy: briefByUnknown, Conversation: p.Conversation, Goal: firstNonEmpty(t.Goal, t.Title),
-		DoneWhen: t.DoneWhen, ExpectMinutes: t.ExpectMinutes, OutOfBounds: t.OutOfBounds}
+		DoneWhen: t.DoneWhen, ExpectMinutes: t.ExpectMinutes, OutOfBounds: t.OutOfBounds, DistinctFrom: slices.Clone(t.DistinctFrom)}
 	if t.Brief != nil && !t.Brief.Reconstructed && t.Continues == "" {
 		rec = t.Brief.briefRecord
 	}

@@ -164,9 +164,18 @@ func TestTaskLeaderGetsRestrictedTaskPlanAndWorkersDoNot(t *testing.T) {
 			restricted = append(restricted, tl)
 		}
 	}
-	if len(restricted) != 1 || !strings.Contains(restricted[0].Description, "Hand part of your own task to workers") ||
-		strings.Contains(string(restricted[0].InputSchema), "todo_id") || strings.Contains(string(restricted[0].InputSchema), `"role"`) {
+	if len(restricted) != 1 || !strings.Contains(restricted[0].Description, "Hand part of your own task to workers") {
 		t.Fatalf("the leader's tools: %+v", restricted)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(restricted[0].InputSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	taskSchema := schema["properties"].(map[string]any)["tasks"].(map[string]any)
+	fields := taskSchema["items"].(map[string]any)["properties"].(map[string]any)
+	// A nested distinct_from.todo_id explains separation; it cannot select a worker's to-do.
+	if fields["todo_id"] != nil || fields["role"] != nil || fields["distinct_from"] == nil {
+		t.Fatalf("the leader's task fields: %+v", fields)
 	}
 	if got := leaderToolNames(s.sessionMCPTools(ctx, "box", "someone-else", false, false)); slices.Contains(got, "task_plan") {
 		t.Fatalf("an agent of no task got task_plan: %v", got)

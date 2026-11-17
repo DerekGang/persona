@@ -616,8 +616,23 @@ runs on the original to-do and keeps its brief (`brief.id`). The replacement pro
 boundaries, and new information. The manager adds the effective criteria once. For an owner-authorized change, call
 `task_scope` first and pass its `scope_revision` with `continues`. A stale revision is refused at planning, and the
 manager rechecks the planned revision at Start and before dispatch. Replan a refused continuation from the current
-brief. The original request, scope log, and to-do survive a failed start. Without `continues`, when `task_plan`'s "Possible duplicates"
-fires, the answer tells the assistant to plan again with `continues` or say why the work is different. A to-do's
+brief. The original request, scope log, and to-do survive a failed start.
+
+**Repository-linked duplicates.** A new task with neither `continues` nor `todo_id` is refused when a GitHub issue/PR
+or GitLab issue/MR URL in its `title`, `goal` or `prompt` matches an explicit repository link of an open to-do.
+The comparison uses canonical URLs, including provider, host, repository, link kind and number; comment anchors and
+tracking queries do not change that identity. Closed to-dos do not block planning. Notes, legacy PR metadata, bare
+numbers, similar titles and Agent activity are not evidence for this refusal, and admission reads do not import links.
+The refusal names the existing to-do and link: use `continues` with `continues_why`, or `todo_id`, for the same work.
+For separate work, supply `distinct_from: [{"todo_id": "<existing to-do>", "reason": "<why this is different work>"}]`
+for every conflicting to-do. Each entry needs a unique to-do ID and a nonempty reason; declarations do not replace
+continuation/reuse authorization. The reasons are kept in the new task's brief, including after restart.
+Task leaders use the same check and may explain separate worker scopes with `distinct_from`.
+The manager checks before saving a plan and again at Start, before creating any to-do or dispatching any Agent, so a
+waiting card cannot bypass newly added associations or a conflicting prompt edit. An unavailable association store
+refuses admission rather than assuming no match. Other "Possible duplicates" hints remain advisory.
+
+A to-do's
 `lineage` is the chain, oldest first: to-do id, title, Agent, machine, session, `started`, `ended`, `why` it stopped,
 `continues`, `superseded_by`. The to-do that joined the brief last carries the work: the clock, the result and the briefing go by
 it, so closing a superseded to-do ends nothing.

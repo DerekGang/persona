@@ -270,21 +270,22 @@ type leaderScope struct {
 // leaderTaskIn is a worker task as a task leader may plan it: nothing else (no todo_id, role, attachments, project,
 // user_requested…) is read, an unknown field is refused.
 type leaderTaskIn struct {
-	Title         string   `json:"title"`
-	Prompt        string   `json:"prompt"`
-	Machine       string   `json:"machine"`
-	MachinePolicy string   `json:"machine_policy"`
-	Cwd           string   `json:"cwd"`
-	Launcher      string   `json:"launcher"`
-	Model         string   `json:"model"`
-	Tier          string   `json:"tier"`
-	Effort        string   `json:"effort"`
-	Permission    string   `json:"permission"`
-	Readonly      bool     `json:"readonly"`
-	DoneWhen      []string `json:"done_when"`
-	Goal          string   `json:"goal"`
-	ExpectMinutes int      `json:"expect_minutes"`
-	Why           string   `json:"why"`
+	Title         string             `json:"title"`
+	Prompt        string             `json:"prompt"`
+	Machine       string             `json:"machine"`
+	MachinePolicy string             `json:"machine_policy"`
+	Cwd           string             `json:"cwd"`
+	Launcher      string             `json:"launcher"`
+	Model         string             `json:"model"`
+	Tier          string             `json:"tier"`
+	Effort        string             `json:"effort"`
+	Permission    string             `json:"permission"`
+	Readonly      bool               `json:"readonly"`
+	DoneWhen      []string           `json:"done_when"`
+	Goal          string             `json:"goal"`
+	ExpectMinutes int                `json:"expect_minutes"`
+	Why           string             `json:"why"`
+	DistinctFrom  []TaskDistinctFrom `json:"distinct_from"`
 }
 
 // workerTasks reads a leader's task_plan arguments as worker tasks beneath its task.
@@ -302,7 +303,8 @@ func (l *leaderScope) workerTasks(args json.RawMessage) ([]PlanTask, error) {
 	for _, t := range in.Tasks {
 		pt := PlanTask{Title: t.Title, Prompt: t.Prompt, Machine: t.Machine, MachinePolicy: t.MachinePolicy, Cwd: t.Cwd,
 			Launcher: t.Launcher, Model: t.Model, Tier: t.Tier, Effort: t.Effort, Permission: t.Permission, Readonly: t.Readonly,
-			DoneWhen: t.DoneWhen, Goal: t.Goal, ExpectMinutes: t.ExpectMinutes, Why: t.Why, Parent: l.task.ID, Project: l.task.Project}
+			DoneWhen: t.DoneWhen, Goal: t.Goal, ExpectMinutes: t.ExpectMinutes, Why: t.Why, Parent: l.task.ID, Project: l.task.Project,
+			DistinctFrom: t.DistinctFrom}
 		if strings.TrimSpace(pt.Machine) == "" {
 			pt.Machine = l.agent.MachineID
 			if strings.TrimSpace(pt.Cwd) == "" {
