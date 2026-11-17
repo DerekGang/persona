@@ -147,6 +147,16 @@ try {
     const fitted = transform(fittedM);
     const wantZ = Math.max(0.25, Math.min(1, Math.min((fittedM.stage.w - 80) / fittedM.lw, (fittedM.stage.h - 80) / fittedM.lh)));
     check(`1440 ${theme}: Fit fits everything, centred`, fitted && Math.abs(fitted[2] - wantZ) < 0.01 && Math.abs(fitted[0] - (fittedM.stage.w - fittedM.lw * wantZ) / 2) < 2 && Math.abs(fitted[1] - (fittedM.stage.h - fittedM.lh * wantZ) / 2) < 2, { fitted, wantZ, stage: fittedM.stage, lw: fittedM.lw, lh: fittedM.lh });
+    // Fit counts as the person's move: a redraw of the same key (a pushed page and back) keeps it, where it used to
+    // survive only one poll of a live graph before the opening view took over again
+    await p.locator('[data-graph-node="root"]').click();
+    const pushedFit = await p.waitForFunction(() => document.body.textContent.includes("A made-up step"), null, { timeout: 15_000 }).then(() => true, () => false);
+    check(`1440 ${theme}: the step page shows after Fit`, pushedFit);
+    await p.goBack();
+    await p.locator("[data-graph-stage]").waitFor({ timeout: 15_000 });
+    await p.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity));
+    const keptFit = transform(await measure(p));
+    check(`1440 ${theme}: the fitted view kept across a redraw`, keptFit && fitted && Math.abs(keptFit[2] - fitted[2]) < 0.01 && Math.abs(keptFit[0] - fitted[0]) < 2, { fitted, keptFit });
     // Full screen
     await p.getByRole("button", { name: "Full screen" }).click();
     const overlay = await p.waitForSelector('[role="dialog"]', { timeout: 10_000 });
@@ -154,6 +164,10 @@ try {
     await p.screenshot({ path: join(shots, `work-1440-${theme}-full.png`) });
     await p.keyboard.press("Escape");
     check(`1440 ${theme}: Esc closes Full screen`, !(await p.$('[role="dialog"]')));
+    // the focus comes back to the Full screen button (the overlay replaces it while open, so the focus used to fall
+    // to the body and a keyboard user had to Tab from the top of the document)
+    const active = await p.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? "");
+    check(`1440 ${theme}: the focus returns to the Full screen button`, active === "Full screen", active);
     await p.context().close();
   }
   // a phone width: the canvas is 70% of the visible height, clamped to 320-900
@@ -230,6 +244,9 @@ try {
         check("compact: a drag pans Full screen", afterDrag && beforeDrag && (afterDrag[0] !== beforeDrag[0] || afterDrag[1] !== beforeDrag[1]), { beforeDrag, afterDrag });
         await p.screenshot({ path: join(shots, "card-1440-light-full.png") });
         await p.keyboard.press("Escape");
+        // from a card too: the focus returns to the preview button, the control that reopens Full screen
+        const fromCard = await p.evaluate(() => document.activeElement?.classList.contains("graph-preview") ?? false);
+        check("compact: the focus returns to the preview button", fromCard);
       }
     }
     await p.screenshot({ path: join(shots, "card-1440-light.png") });
