@@ -89,11 +89,11 @@ func TestInboxReplyApprovalRetriesNotificationWithoutDuplicatingRequest(t *testi
 	it.Suggestion = &InboxSuggestion{Version: 2, Kind: SuggestReply, Text: "Revised draft", At: now}
 	h.inbox.mu.Unlock()
 	h.superviseWatch(ctx, now.Add(4*time.Hour-time.Nanosecond))
-	if len(it.Chain) != chain || it.Urgent {
+	if len(it.Chain) != chain-1 || it.Urgent {
 		t.Fatal("replacement inherited the old suggestion's deadline")
 	}
 	h.superviseWatch(ctx, now.Add(4*time.Hour))
-	if len(it.Chain) != chain+1 {
+	if len(it.Chain) != chain {
 		t.Fatal("old reminder receipt suppressed the replacement's reminder")
 	}
 }

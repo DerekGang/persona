@@ -567,6 +567,10 @@ and handling chain staged by that reminder. Version and timestamp equality alone
 are not ownership: a replacement arriving during the write must keep its own
 note, urgency, chain and notification receipt. The same guard applies to failed
 notification-receipt writes and stale-reminder cleanup.
+Each new reminder records its exact appended note suffix and check-entry ID.
+Stale cleanup removes that suffix once and only that check, including from a
+rejected legacy draft's stored note. Preexisting text and checks remain; old
+receipts without those ownership markers are not used to guess what to remove.
 
 Old reply drafts that still live in `InboxAgent` keep the waiting-time warning
 in that draft's stored note, not only in the handling chain or a temporary

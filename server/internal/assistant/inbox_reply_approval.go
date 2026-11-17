@@ -19,6 +19,9 @@ type inboxReplyApproval struct {
 	PreviousUrgent bool   `json:"previous_urgent,omitempty"`
 	PreviousReason string `json:"previous_reason,omitempty"`
 	Explanation    string `json:"explanation"`
+	NoteSuffix     string `json:"note_suffix,omitempty"`
+	LegacyNote     bool   `json:"legacy_note,omitempty"`
+	ChainID        string `json:"chain_id,omitempty"`
 }
 
 // A row save releases inbox.mu while storage is in flight. Undo and notification
@@ -32,6 +35,10 @@ type inboxApprovalState struct {
 }
 
 func approvalState(it *InboxItem) inboxApprovalState {
+	agentNote := ""
+	if it.Agent != nil {
+		agentNote = it.Agent.Note
+	}
 	raw, _ := json.Marshal(struct {
 		Suggestion                     *InboxSuggestion
 		Receipt                        *inboxReplyApproval
@@ -39,7 +46,8 @@ func approvalState(it *InboxItem) inboxApprovalState {
 		Reason, Last, Tier, MergedInto string
 		DoneAt                         *time.Time
 		Chain                          []InboxChainEntry
-	}{currentSuggestion(it), it.ReplyApproval, it.Urgent, it.Reason, it.Last, it.Tier, it.MergedInto, it.DoneAt, it.Chain})
+		AgentNote                      string
+	}{currentSuggestion(it), it.ReplyApproval, it.Urgent, it.Reason, it.Last, it.Tier, it.MergedInto, it.DoneAt, it.Chain, agentNote})
 	return inboxApprovalState{it.Suggestion, it.Agent, it.ReplyApproval, string(raw)}
 }
 
@@ -105,19 +113,24 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 		}
 		if receipt == nil || receipt.Version != g.Version {
 			it.ReplyApproval = &inboxReplyApproval{Version: g.Version, PreviousUrgent: it.Urgent,
-				PreviousReason: it.Reason, Explanation: text}
+				PreviousReason: it.Reason, Explanation: text, NoteSuffix: "\n" + text, LegacyNote: it.Suggestion == nil}
 			it.Urgent, it.Reason = true, text
-			g.Note = g.Note + "\n" + text
+			g.Note += it.ReplyApproval.NoteSuffix
 			if it.Suggestion == nil {
 				it.Agent.Note = g.Note // legacySuggestion is a projection, not the stored draft
 			}
 			b.chainAdd(it, InboxChainEntry{Kind: ChainCheck, At: now.UTC(), Text: text, Detail: link,
 				Link: firstLink(it), Via: ViaAssistant})
 			r.chainID = it.Chain[len(it.Chain)-1].ID
+			it.ReplyApproval.ChainID = r.chainID
 			r.displayed = true
 		} else if repairLegacy {
 			// Older receipts may be durable even though only a temporary note was edited.
-			it.Agent.Note = g.Note + "\n" + receipt.Explanation
+			repaired := *receipt
+			repaired.NoteSuffix = "\n" + receipt.Explanation
+			repaired.LegacyNote = true
+			it.ReplyApproval = &repaired
+			it.Agent.Note = g.Note + repaired.NoteSuffix
 			r.displayed = true
 		}
 		r.state = approvalState(it)
@@ -190,11 +203,12 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 func (s *Service) clearStaleReplyApprovals(ctx context.Context) {
 	b := &s.inbox
 	type cleared struct {
-		it      *InboxItem
-		receipt *inboxReplyApproval
-		urgent  bool
-		reason  string
-		state   inboxApprovalState
+		it                      *InboxItem
+		receipt                 *inboxReplyApproval
+		urgent                  bool
+		reason, note, agentNote string
+		chain                   []InboxChainEntry
+		state                   inboxApprovalState
 	}
 	var clearedRows []cleared
 	var items []*InboxItem
@@ -205,12 +219,30 @@ func (s *Service) clearStaleReplyApprovals(ctx context.Context) {
 		if r == nil || it.open() && it.Tier != TierNoise && g != nil && g.Kind == SuggestReply && g.Version == r.Version {
 			continue
 		}
-		oldUrgent, oldReason := it.Urgent, it.Reason
+		old := cleared{it: it, receipt: r, urgent: it.Urgent, reason: it.Reason, chain: slices.Clone(it.Chain)}
+		if it.Suggestion != nil {
+			old.note = it.Suggestion.Note
+			if r.NoteSuffix != "" {
+				it.Suggestion.Note = strings.TrimSuffix(it.Suggestion.Note, r.NoteSuffix)
+			}
+		}
+		if it.Agent != nil {
+			old.agentNote = it.Agent.Note
+			if r.LegacyNote && r.NoteSuffix != "" {
+				it.Agent.Note = strings.TrimSuffix(it.Agent.Note, r.NoteSuffix)
+			}
+		}
+		if r.ChainID != "" {
+			it.Chain = slices.DeleteFunc(it.Chain, func(e InboxChainEntry) bool {
+				return e.ID == r.ChainID && e.Kind == ChainCheck && e.Text == r.Explanation
+			})
+		}
 		if it.Reason == r.Explanation {
 			it.Urgent, it.Reason = r.PreviousUrgent, r.PreviousReason
 		}
 		it.ReplyApproval = nil
-		clearedRows = append(clearedRows, cleared{it, r, oldUrgent, oldReason, approvalState(it)})
+		old.state = approvalState(it)
+		clearedRows = append(clearedRows, old)
 		items = append(items, it)
 	}
 	b.mu.Unlock()
@@ -218,6 +250,13 @@ func (s *Service) clearStaleReplyApprovals(ctx context.Context) {
 		for _, r := range clearedRows {
 			if failed[r.it.ID] && r.state.current(b, r.it) {
 				r.it.ReplyApproval, r.it.Urgent, r.it.Reason = r.receipt, r.urgent, r.reason
+				r.it.Chain = r.chain
+				if r.it.Suggestion != nil {
+					r.it.Suggestion.Note = r.note
+				}
+				if r.it.Agent != nil {
+					r.it.Agent.Note = r.agentNote
+				}
 			}
 		}
 	})

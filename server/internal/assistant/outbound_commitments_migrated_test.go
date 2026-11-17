@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,48 @@ func TestOutboundPromiseMigratedFeishuIdentitySurvivesRestart(t *testing.T) {
 	if len(got) != 2 || got[0].FulfilledAt.IsZero() || posts.Load() != 1 ||
 		got[0].Reply.TodoID != before[0].Reply.TodoID || got[0].Reply.URL != "/inbox/"+it.ID {
 		t.Fatalf("restart lost the migrated promise identity or original source: %+v", got)
+	}
+}
+
+func TestOutboundPromiseUnreadableMigratedDistinctAnchors(t *testing.T) {
+	for _, account := range []int{0, 1, 2} {
+		for _, kind := range []string{"", LarkThreadTopic, LarkThreadThread} {
+			t.Run(fmt.Sprintf("account-%d/%s", account, kind), func(t *testing.T) {
+				h, it := outwardMigratedInbox(t)
+				h.f.answerApp(AppFeishu, FeishuMessages, func(json.RawMessage) (any, error) {
+					return nil, errors.New("synthetic unreadable source")
+				})
+				h.inbox.mu.Lock()
+				it.Lark.AccountID, it.Lark.ThreadKind = account, kind
+				h.inbox.mu.Unlock()
+				ctx := context.Background()
+				if _, err := h.replyInboxDo(ctx, it.ID, "I'll share the results later.", "promise", false, false); err != nil {
+					t.Fatal(err)
+				}
+				next, lark := *it, *it.Lark
+				next.ID, next.DoneAt, next.DoneBy, next.Lark = "other-anchor", nil, "", &lark
+				lark.ReplyTo = "om_other"
+				h.inbox.mu.Lock()
+				h.inbox.items[next.ID] = &next
+				h.inbox.mu.Unlock()
+				if _, err := h.replyInboxDo(ctx, next.ID, "Here are the other results.", "other-update", false, false); err != nil {
+					t.Fatal(err)
+				}
+				if got := outwardReceipts(t, h.store()); !got[0].FulfilledAt.IsZero() {
+					t.Fatal("an unreadable different anchor in the same chat fulfilled the promise")
+				}
+				same, anchor := next, *it.Lark
+				same.ID, same.DoneAt, same.DoneBy, same.Lark = "original-anchor", nil, "", &anchor
+				h.inbox.mu.Lock()
+				h.inbox.items[same.ID] = &same
+				h.inbox.mu.Unlock()
+				if _, err := h.replyInboxDo(ctx, same.ID, "Here are the original results.", "same-update", false, false); err != nil {
+					t.Fatal(err)
+				}
+				if got := outwardReceipts(t, h.store()); got[0].FulfilledAt.IsZero() {
+					t.Fatal("a confirmed update under the exact original anchor did not fulfill the promise")
+				}
+			})
+		}
 	}
 }
