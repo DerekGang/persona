@@ -326,8 +326,7 @@ func TestLegacyBackgroundQueuedNoticeSurvivesRestart(t *testing.T) {
 	setSettings(t, s, func(v *Settings) { v.BackgroundSupervisor, v.BackgroundSupervisorMachineID = "bg1", "server" })
 	// A pre-upgrade queue entry has no structured signals and no separately persisted grant. Only its entry subject is
 	// an assignment; an unrelated task linked from the evidence must not acquire closeout permission after a restart.
-	legacyText := "1. 任务「整理材料」（" + todo.ID + "，signal=needs_you）：请验收。\n" +
-		"证据：另一个任务 todo_unrelated 的链接和完成说明。"
+	legacyText := "1. 任务「整理材料」（" + todo.ID + "）：hub 判断做完了，等你验收；证据」（todo_unrelated）：说明"
 	if n := s.queueRelay("bg1", relayMsg{Tool: superviseTool, Text: legacyText, At: time.Now()}); n != 1 {
 		t.Fatalf("queue the legacy notice: %d", n)
 	}

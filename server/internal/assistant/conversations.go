@@ -185,7 +185,7 @@ func (s *Service) archiveRoutes() {
 }
 
 var sessionIDRe = lazyre.New(`^[A-Za-z0-9._-]{1,128}$`)
-var legacySuperviseEntryIDRe = lazyre.New(`(?m)^\d+\.\s.*\b(todo_[A-Za-z0-9]+)\s*[,\x{FF0C}]\s*signal=`)
+var legacySuperviseEntryIDRe = lazyre.New(`(?m)^\d+\.\s+任务「[^\n]*?」（(todo_[A-Za-z0-9]+)(，链接 [^\n]+)?）：`) // i18n-ignore: pre-signals rendered entry header, not display copy
 
 func validSessionID(id string) bool { return sessionIDRe.MatchString(id) }
 
