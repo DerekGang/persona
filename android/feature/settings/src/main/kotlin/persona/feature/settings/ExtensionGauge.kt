@@ -1,7 +1,6 @@
 package persona.feature.settings
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +47,9 @@ internal fun gaugeReadout(tile: ExtensionTile): String {
 internal fun ExtensionGaugeRing(tile: ExtensionTile, compact: Boolean, modifier: Modifier = Modifier) {
     val gauge = tile.gauge ?: return
     val target = (if (gauge.ratio.isFinite()) gauge.ratio else 0.0).toFloat().coerceIn(0f, 1f)
-    val ratio by animateFloatAsState(target, animationSpec = if (PersonaTheme.reduceMotion) snap() else PersonaTheme.motion.enter(), label = "Gauge ratio")
+    // Reduce Motion: the ring jumps to its ratio; the eased value is then never read.
+    val reduceMotion = PersonaTheme.reduceMotion
+    val eased = animateFloatAsState(target, animationSpec = PersonaTheme.motion.enter(), label = "Gauge ratio")
     val palette = PersonaTheme.palette
     val hue = ExtensionViewText.hue(gauge.color) ?: ExtensionViewText.hue(tile.color)
     val colours = hue?.let(palette::hue)
@@ -62,6 +63,7 @@ internal fun ExtensionGaugeRing(tile: ExtensionTile, compact: Boolean, modifier:
             val inset = stroke / 2
             val arcSize = Size(size.width - stroke, size.height - stroke)
             val topLeft = Offset(inset, inset)
+            val ratio = if (reduceMotion) target else eased.value
             drawArc(track, -90f, 360f, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
             if (ratio > 0f) drawArc(arc, -90f, ratio * 360f, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
         }
