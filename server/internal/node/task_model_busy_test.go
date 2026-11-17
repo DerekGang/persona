@@ -10,7 +10,10 @@ import (
 func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 	for _, background := range []bool{false, true} {
 		for _, strict := range []bool{false, true} {
-			for _, change := range []string{"model", "effort", "fingerprint", "launcher", "matching"} {
+			for _, change := range []string{"model", "effort", "fingerprint", "launcher", "matching", "round model"} {
+				if change == "round model" && !background {
+					continue // background-only work reaches the new round-tool fallback without a foreground wait
+				}
 				name := change + "/busy"
 				if background {
 					name = change + "/background"
@@ -25,7 +28,7 @@ func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 					asked := old
 					launcher := "claude"
 					switch change {
-					case "model":
+					case "model", "round model":
 						asked.Model = "new"
 					case "effort":
 						asked.Effort = "high"
@@ -40,6 +43,9 @@ func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 					in := &stdinBuf{}
 					p := &assistantProc{id: testThread, agent: "claude", launcher: "claude", cwd: t.TempDir(), stdin: in, exited: make(chan struct{}), born: time.Now(),
 						mode: "default", effort: old.Effort, model: old, fingerprint: n.executionFingerprint("claude", old), busy: !background}
+					if change == "round model" {
+						p.round, p.toolSet = true, roundToolSet
+					}
 					if background {
 						p.tasks = []string{"background work"}
 					}
@@ -56,6 +62,12 @@ func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 					}
 					if !p.alive() || n.procs[testThread] != p || p.model != old || (len(p.tasks) != 0) != background {
 						t.Fatal("active process or its background work changed")
+					}
+					p.mu.Lock()
+					retire := p.retire
+					p.mu.Unlock()
+					if retire != (change == "round model" && !strict) {
+						t.Fatalf("round process retirement changed: %v", retire)
 					}
 					state, _ := n.state.get(testThread)
 					if state.Model != old.Model || state.ModelEffort != old.Effort || state.ModelFingerprint != old.Fingerprint || state.Origin != "task" {
