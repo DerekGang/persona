@@ -77,13 +77,14 @@ const navigation = (p, method, body) =>
     return r.status === 200 ? r.json() : { status: r.status };
   }, [method, body]);
 
-/** The cards as drawn, once their own entrance is over: key, box, and whether it is hidden (drawn only while arranging). */
+/** The cards as drawn, once their own entrance is over: key, box, and whether it is hidden (drawn only while arranging,
+ *  without its content). */
 const cards = async (p) => {
   await p.waitForFunction(() => [...document.querySelectorAll("[data-extension-card]")].every((c) => c.getAnimations().every((a) => a.playState !== "running")));
   return p.evaluate(() =>
     [...document.querySelectorAll("[data-extension-card]")].map((c) => {
       const b = c.getBoundingClientRect();
-      return { key: c.getAttribute("data-extension-card"), x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), hidden: c.hasAttribute("data-hidden") };
+      return { key: c.getAttribute("data-extension-card"), x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), hidden: !c.classList.contains("bg-surface") };
     }),
   );
 };
@@ -109,7 +110,7 @@ async function arrangeByHand(p) {
   await p.getByRole("button", { name: "把「Needs me」往前移" }).focus();
   await p.keyboard.press("Enter");
   await p.getByRole("switch", { name: "在总览上显示「Quota left」" }).click();
-  await p.waitForFunction(() => document.querySelector('[data-extension-card="example-quota/left"]')?.hasAttribute("data-hidden"));
+  await p.waitForFunction(() => !document.querySelector('[data-extension-card="example-quota/left"]')?.classList.contains("bg-surface"));
 }
 
 let failed = false;
@@ -171,7 +172,7 @@ try {
     // Reset puts the cards back, with Undo
     await startArranging(p);
     await head(p).getByRole("button", { name: "恢复默认" }).click();
-    await p.waitForFunction(() => !document.querySelector('[data-extension-card="example-quota/left"]')?.hasAttribute("data-hidden"));
+    await p.waitForFunction(() => document.querySelector('[data-extension-card="example-quota/left"]')?.classList.contains("bg-surface"));
     check("Reset: the hub's order again", JSON.stringify((await cards(p)).map((c) => c.key)) === JSON.stringify(HUB_ORDER));
     await p.getByRole("button", { name: "撤销" }).click();
     await p.waitForFunction(() => document.querySelector("[data-extension-card]")?.getAttribute("data-extension-card") === "example-today/agenda");

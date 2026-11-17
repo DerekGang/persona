@@ -1,8 +1,9 @@
 // Overview's extension cards as the user arranged them (#9745, lib/overview-cards.ts): the hub's cards in the user's
 // order, the ones the arrangement does not name after it, entries for cards that are not there passed over; the edits
-// (move, drop, hide, widen) and what an arrangement writes.
+// (move, drop, hide, widen) and what an arrangement writes (lib/overview-edit.ts).
 import { describe, expect, it } from "vitest";
-import { arrangeCards, changeEntry, dropEntry, entriesOf, halvesPaired, moveEntry, OVERVIEW_MOST, readOverview } from "./overview-cards";
+import { arrangeCards, halvesPaired, readOverview } from "./overview-cards";
+import { changeEntry, dropEntry, entriesOf, moveEntry, OVERVIEW_MOST } from "./overview-edit";
 
 const card = (extension: string, id: string) => ({ extension, id, title: id });
 // the hub's order: by extension, then the manifest's
@@ -38,32 +39,26 @@ describe("arrangeCards", () => {
 });
 
 describe("readOverview", () => {
-  it("keeps the entries of the shape the hub takes, once each, at most OVERVIEW_MOST", () => {
+  it("keeps the entries that name a card; anything else is none", () => {
     expect(readOverview(null)).toEqual([]);
     expect(readOverview({ extension: "a", id: "b" })).toEqual([]);
-    expect(
-      readOverview([
-        { extension: "example-quota", id: "left", hidden: true, span: "full", extra: 1 },
-        { extension: "example-quota", id: "left" },
-        { extension: "Example", id: "x" },
-        { extension: "a/b", id: "x" },
-        { extension: "example-gateway", id: "today", hidden: "yes", span: "wide" },
-        "example-today/needs",
-        null,
-      ]),
-    ).toEqual([
+    expect(readOverview([{ extension: "example-quota", id: "left", hidden: true, span: "full" }, { extension: "example-gateway" }, "example-today/needs", null, 1])).toEqual([
       { extension: "example-quota", id: "left", hidden: true, span: "full" },
-      { extension: "example-gateway", id: "today" },
     ]);
-    const many = Array.from({ length: OVERVIEW_MOST + 5 }, (_, i) => ({ extension: `example-${i}`, id: "card" }));
-    expect(readOverview(many)).toHaveLength(OVERVIEW_MOST);
+  });
+
+  it("an entry of another shape draws as the default", () => {
+    const out = arrangeCards(HUB, readOverview([{ extension: "example-gateway", id: "today", hidden: "yes", span: "wide" }]));
+    expect(out[0]).toMatchObject({ key: "example-gateway/today", hidden: false, span: "half" });
   });
 });
 
 describe("the edits", () => {
   const list = entriesOf(arrangeCards(HUB, [{ extension: "example-quota", id: "left", hidden: true }, { extension: "example-removed", id: "card" }]));
 
-  it("an arrangement writes every card there is now, in its place, and only what differs from the default", () => {
+  it("an arrangement writes every card there is now, in its place, and only what differs from the default, at most OVERVIEW_MOST", () => {
+    const many = Array.from({ length: OVERVIEW_MOST + 5 }, (_, i) => card(`example-${i}`, "card"));
+    expect(entriesOf(arrangeCards(many, []))).toHaveLength(OVERVIEW_MOST);
     expect(list).toEqual([
       { extension: "example-quota", id: "left", hidden: true },
       { extension: "example-gateway", id: "today" },
@@ -99,6 +94,7 @@ describe("halvesPaired", () => {
     const half = { hidden: false, span: "half" as const };
     expect(halvesPaired([half, half])).toBe(true);
     expect(halvesPaired([half, { hidden: true, span: "half" }])).toBe(false);
+    expect(halvesPaired([half, { hidden: true, span: "half" }], true)).toBe(true); // arranging: the hidden one is drawn
     expect(halvesPaired([{ hidden: false, span: "full" }, half])).toBe(false);
     expect(halvesPaired([{ hidden: false, span: "full" }, half, half])).toBe(true);
   });

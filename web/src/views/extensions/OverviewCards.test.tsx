@@ -42,6 +42,7 @@ beforeAll(() => loadPages());
 
 beforeEach(() => {
   localStorage.clear();
+  window.dispatchEvent(new StorageEvent("storage", { key: null }));
   hub.cards = CARDS;
   hub.synced = true;
   hub.mounts = [];
@@ -59,7 +60,11 @@ afterEach(() => {
 });
 
 const draw = (editing = false) => act(() => root.render(<><OverviewCards editing={editing} onDone={() => draw(false)} /><Toasts /></>));
-const arrange = (list: OverviewEntry[]) => localStorage.setItem("overview.cards", JSON.stringify(list));
+// this browser's copy, as another tab would leave it (the store reads it again)
+const arrange = (list: OverviewEntry[]) => {
+  localStorage.setItem("overview.cards", JSON.stringify(list));
+  window.dispatchEvent(new StorageEvent("storage", { key: "overview.cards" }));
+};
 const cards = () => [...host.querySelectorAll<HTMLElement>("[data-extension-card]")];
 const order = () => cards().map((c) => c.dataset.extensionCard);
 const grid = () => host.querySelector("section")!;
@@ -140,10 +145,13 @@ describe("arranging them", () => {
     const onto = card("example-gateway/today");
     expect(from.draggable).toBe(true);
     drag("dragstart", from);
+    expect(from.dataset.drag).toBe("from");
     drag("dragover", onto);
-    expect(onto.className).toContain("var(--accent)");
+    expect(onto.dataset.drag).toBe("over");
+    expect(onto.className).toContain("data-[drag=over]:shadow-[inset_0_0_0_2px_var(--accent)]");
     drag("drop", onto);
     drag("dragend", from);
+    expect(host.querySelector("[data-drag]")).toBeNull();
     expect(order()).toEqual(["example-today/needs", "example-gateway/today", "example-quota/left"]);
     expect(saved).toHaveLength(1);
   });
@@ -192,6 +200,7 @@ describe("arranging them", () => {
     draw(false);
     expect(hub.mounts).toHaveLength(3);
     expect(card("example-gateway/today").querySelector("[inert]")).toBeNull();
+    expect(card("example-gateway/today").draggable).toBe(false);
   });
 
   it("a card's entrance plays once: moved after it, the card does not play it again", () => {
