@@ -17,7 +17,7 @@ type TaskDistinctFrom struct {
 	Reason string `json:"reason"`
 }
 
-func planRepositoryReferences(t PlanTask) map[string]bool {
+func planRepositoryReferences(t PlanTask) (map[string]bool, error) {
 	refs := map[string]bool{}
 	for _, raw := range inboxTaskURL.FindAllString(t.Title+"\n"+t.Goal+"\n"+t.Prompt, -1) {
 		raw = strings.TrimRight(raw, ".,;:!?)]}，。；：！）》」』") // i18n-ignore: URL punctuation, not displayed text
@@ -25,14 +25,20 @@ func planRepositoryReferences(t PlanTask) map[string]bool {
 		if err != nil {
 			continue
 		}
-		// A comment anchor or tracking query still names the same issue or PR.
+		// Identify the link without credentials, then validate the original before admitting it.
+		u.User = nil
 		u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = "", "", "", false
 		u.Path = strings.TrimRight(u.Path, "/")
-		if _, link, err := repository.ParseTaskLink(u.String()); err == nil {
-			refs[link.CanonicalURL] = true
+		identity, link, err := repository.ParseTaskLink(u.String())
+		if err != nil {
+			continue
 		}
+		if _, err := repository.Parse(raw, identity.Provider); err != nil {
+			return nil, fmt.Errorf("unsafe repository issue/PR URL: remove credentials or invalid query parameters; nothing was dispatched")
+		}
+		refs[link.CanonicalURL] = true
 	}
-	return refs
+	return refs, nil
 }
 
 // checkPlanRepositoryDuplicates uses saved associations only, never the legacy
@@ -46,6 +52,10 @@ func (s *Service) checkPlanRepositoryDuplicates(ctx context.Context, tasks []Pla
 	loaded := false
 	for i := range tasks {
 		t := &tasks[i]
+		refs, err := planRepositoryReferences(*t)
+		if err != nil {
+			return fmt.Errorf("task %d: %w", i+1, err)
+		}
 		if strings.TrimSpace(t.Continues) != "" || t.ReuseTodo != "" {
 			if len(t.DistinctFrom) != 0 {
 				return fmt.Errorf("task %d: distinct_from is only for new tasks without continues or todo_id", i+1)
@@ -61,7 +71,6 @@ func (s *Service) checkPlanRepositoryDuplicates(ctx context.Context, tasks []Pla
 			}
 			distinct[d.TodoID] = true
 		}
-		refs := planRepositoryReferences(*t)
 		if len(refs) == 0 {
 			continue
 		}

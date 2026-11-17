@@ -105,19 +105,101 @@ func TestTaskPlanRepositoryReferencesNormalizeIdentity(t *testing.T) {
 		"https://GITHUB.COM/Example/Project/issues/17#issuecomment-9",
 		"http://github.com/example/project/issues/17/?utm_source=task",
 	} {
-		if got := planRepositoryReferences(PlanTask{Prompt: raw}); len(got) != 1 || !got[canonical] {
-			t.Errorf("reference %q: %v", raw, got)
+		if got, err := planRepositoryReferences(PlanTask{Prompt: raw}); err != nil || len(got) != 1 || !got[canonical] {
+			t.Errorf("reference %q: %v, %v", raw, got, err)
 		}
 	}
 	for _, raw := range []string{
 		"#17", "example/project#17", "https://github.com/example/project",
-		"https://me@example.com/example/project/issues/17",
 		"https://github.com/example/project/issues/017",
 		"https://github.com/example/project/issues/17extra",
 	} {
-		if got := planRepositoryReferences(PlanTask{Prompt: raw}); len(got) != 0 {
-			t.Errorf("not an exact credential-free issue/PR reference %q: %v", raw, got)
+		if got, err := planRepositoryReferences(PlanTask{Prompt: raw}); err != nil || len(got) != 0 {
+			t.Errorf("not an exact issue/PR reference %q: %v, %v", raw, got, err)
 		}
+	}
+}
+
+func TestTaskPlanRepositoryReferencesRejectUnsafeURLs(t *testing.T) {
+	links := []string{
+		"https://github.com/example/project/issues/17",
+		"https://github.com/example/project/pull/17",
+		"https://gitlab.com/group/project/-/issues/17",
+		"https://gitlab.example.com/group/project/-/merge_requests/17",
+	}
+	for _, link := range links {
+		for _, key := range []string{"token", "access_token", "private_token", "auth", "authorization", "password", "api_key", "apikey", "signature", "PRIVATE_TOKEN", "private%5Ftoken"} {
+			raw := link + "?utm_source=task&" + key + "=test-only"
+			refs, err := planRepositoryReferences(PlanTask{Prompt: raw})
+			if err == nil || !strings.Contains(err.Error(), "unsafe repository") || len(refs) != 0 ||
+				strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "test-only") {
+				t.Fatalf("credential-bearing %s reference was accepted or echoed: refs=%v, error=%v", key, refs, err)
+			}
+		}
+	}
+	for _, raw := range []string{
+		"https://me@example.com/example/project/issues/17",
+		links[0] + "?private_token=%zz",
+		links[0] + "?tracking=one;private_token=test-only",
+	} {
+		if refs, err := planRepositoryReferences(PlanTask{Prompt: raw}); err == nil || len(refs) != 0 {
+			t.Fatalf("unsafe reference was accepted: refs=%v, error=%v", refs, err)
+		}
+	}
+}
+
+func TestTaskPlanRepositoryRejectsUnsafeURLsBeforePlanning(t *testing.T) {
+	const link = "https://github.com/example/project/issues/17"
+	s, f, database, todo := repositoryDuplicateService(t, link)
+	for _, field := range []string{"title", "goal", "prompt"} {
+		for _, mode := range []string{"new", "distinct", "continues", "todo_id"} {
+			t.Run(field+"/"+mode, func(t *testing.T) {
+				unsafe := link + "?private_token=test-only"
+				over := map[string]any{field: unsafe, "user_requested": true}
+				switch mode {
+				case "distinct":
+					over["distinct_from"] = []TaskDistinctFrom{{TodoID: todo.ID, Reason: "Separate investigation"}}
+				case "continues", "todo_id":
+					over[mode], over["continues_why"] = todo.ID, "Follow-up requested by the owner"
+				}
+				got, isErr := tool(t, s, "task_plan", briefTask(over))
+				if !isErr || !strings.Contains(got, "unsafe repository issue/PR URL") ||
+					strings.Contains(got, unsafe) || strings.Contains(got, "test-only") {
+					t.Fatalf("unsafe URL was admitted or echoed: %s", got)
+				}
+				assertRepositoryDuplicateNoDispatch(t, s, f, database, 0, 1)
+			})
+		}
+	}
+	t.Run("whole plan without a saved match", func(t *testing.T) {
+		first := briefTask(nil)["tasks"].([]map[string]any)[0]
+		second := briefTask(map[string]any{"prompt": "https://github.com/example/other/pull/19?signature=test-only"})["tasks"].([]map[string]any)[0]
+		got, isErr := tool(t, s, "task_plan", map[string]any{"tasks": []map[string]any{first, second}})
+		if !isErr || !strings.Contains(got, "task 2: unsafe repository") || strings.Contains(got, "test-only") {
+			t.Fatalf("unsafe second task was admitted or echoed: %s", got)
+		}
+		assertRepositoryDuplicateNoDispatch(t, s, f, database, 0, 1)
+	})
+}
+
+func TestTaskPlanRepositoryRechecksUnsafeURLAtStart(t *testing.T) {
+	s, f, database, _ := repositoryDuplicateService(t)
+	if got, isErr := tool(t, s, "task_plan", briefTask(map[string]any{"readonly": false})); isErr {
+		t.Fatal(got)
+	}
+	rows, err := database.TaskPlans(t.Context(), "conv1")
+	if err != nil || len(rows) != 1 {
+		t.Fatal(rows, err)
+	}
+	edits := []PlanTask{{Prompt: "https://github.com/example/project/issues/17?private_token=test-only"}}
+	if _, err := s.startPlan(t.Context(), rows[0].ID, edits, false); err == nil ||
+		!strings.Contains(err.Error(), "unsafe repository") || strings.Contains(err.Error(), "test-only") {
+		t.Fatalf("waiting card dispatched or echoed an unsafe URL: %v", err)
+	}
+	assertRepositoryDuplicateNoDispatch(t, s, f, database, 1, 1)
+	plan, err := s.loadPlan(t.Context(), rows[0].ID)
+	if err != nil || plan.State != planOpen {
+		t.Fatal("refused card no longer waits", plan, err)
 	}
 }
 

@@ -20,7 +20,7 @@ func (s *Service) planInboxSource(ctx context.Context, machine, conversation str
 		s.inbox.mu.Lock()
 		for _, it := range s.inbox.items {
 			h := handoffTo(it, conversation)
-			if it.open() && h != nil && h.MachineID == machine && h.Op != "" {
+			if it.open() && inboxTaskLinkEligible(it) && h != nil && h.MachineID == machine && h.Op != "" {
 				candidates = append(candidates, it.ID)
 			}
 		}

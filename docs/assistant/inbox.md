@@ -1056,8 +1056,9 @@ The same rules on the web (`web/src/lib/inbox-groups.ts`) and iOS / iPad (`Perso
   request again sends nothing more), or starts the main conversation with it, and answers `{item, session}`; a work machine is refused, and a failed send records nothing (`apierr.Call`'s status, as for a new conversation).
   The item keeps the hand-off (`handoffs`: `machine_id`, `session_id`, `at`, the latest 5) and its chain gets one `handling` entry per conversation ("Handed to Persona's main chat",
   linked to it). Its processing conversation (`agent`, `handling`) is not touched, so the AI twin's sweep and timeouts never take the main conversation for one of its own.
-  When that conversation dispatches work with `task_plan`, an omitted `inbox_item` uses its sole unarchived handed item
-  on the calling computer. No such item leaves the task unlinked; several refuse planning and require an explicit
+  When that conversation dispatches work with `task_plan`, an omitted `inbox_item` uses its sole eligible unarchived handed item
+  on the calling computer. Bot notifications and owner-bot handoffs are excluded before counting candidates; explicitly
+  naming them still fails the link policy. No eligible item leaves the task unlinked; several refuse planning and require an explicit
   `inbox_item` on each task. Selection uses the manager's persisted handoff ledger, not an ID parsed from a message
   or the latest item in a shared conversation.
   The manager validates the conversation, machine, open item and link policy, records the handoff operation on the plan, and rechecks it at Start.

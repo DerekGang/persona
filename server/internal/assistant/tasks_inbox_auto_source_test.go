@@ -138,30 +138,76 @@ func TestTaskPlanInboxAutoSourceIgnoresOtherContexts(t *testing.T) {
 	}
 }
 
-func TestTaskPlanInboxAutoSourceRetainsExclusionAndStartChecks(t *testing.T) {
-	for _, when := range []string{"planning", "start"} {
-		t.Run(when, func(t *testing.T) {
+func TestTaskPlanInboxAutoSourceIgnoresIneligibleHandoffs(t *testing.T) {
+	for _, kinds := range [][]string{{KindBot}, {"bot_handoff"}, {KindBot, "bot_handoff"}} {
+		for _, eligible := range []string{"none", "human", "legacy human"} {
+			t.Run(strings.Join(kinds, "+")+"/"+eligible, func(t *testing.T) {
+				const conversation = "inbox-auto-policy"
+				s, f := newTaskService(t)
+				var excluded []*InboxItem
+				for _, kind := range kinds {
+					it := taskInboxItem(t, s, "example:"+kind, "box", conversation)
+					s.inbox.mu.Lock()
+					it.Source, it.Kind = "larkcli", kind
+					it.Connector = taskNotification("cli_example")
+					s.inbox.mu.Unlock()
+					excluded = append(excluded, it)
+				}
+				var want string
+				if eligible != "none" {
+					it := taskInboxItem(t, s, "example:human", "box", conversation)
+					want = it.ID
+					if eligible == "legacy human" {
+						s.inbox.mu.Lock()
+						it.Source, it.Kind, it.Connector = "larkcli", KindBot, taskNotification("ou_example")
+						s.inbox.mu.Unlock()
+					}
+				}
+				if _, err := s.toolTaskPlanFrom(t.Context(), "box", conversation, taskInboxArgs("")); err != nil {
+					t.Fatal("ineligible handoff blocked ordinary work or made the eligible source ambiguous:", err)
+				}
+				plan := planOf(t, s, conversation)
+				if task := plan.Tasks[0]; task.InboxItem != want || (want == "" && task.InboxHandoff != "") {
+					t.Fatalf("inference chose the wrong source: %+v, want %q", task, want)
+				}
+				for _, it := range excluded {
+					if _, err := s.toolTaskPlanFrom(t.Context(), "box", conversation, taskInboxArgs(it.ID)); err == nil {
+						t.Fatal("explicit ineligible source bypassed link policy")
+					}
+				}
+				started, err := s.startPlan(t.Context(), plan.ID, nil, false)
+				if err != nil || started.Tasks[0].Error != "" || started.Tasks[0].TodoID == "" {
+					t.Fatalf("eligible or unlinked work could not start: %+v, %v", started, err)
+				}
+				waitFor(t, "work after filtering ineligible handoffs", func() bool { return len(f.started()) == 1 })
+				todo, _ := s.todoNow(started.Tasks[0].TodoID)
+				if todo.InboxItem != want {
+					t.Fatalf("admission changed the chosen source: %+v", todo)
+				}
+			})
+		}
+	}
+}
+
+func TestTaskPlanInboxAutoSourceRetainsStartChecks(t *testing.T) {
+	for _, why := range []string{"filed", "excluded"} {
+		t.Run(why, func(t *testing.T) {
 			const conversation = "inbox-auto-recheck"
 			s, f := newTaskService(t)
 			it := taskInboxItem(t, s, "example:source", "box", conversation)
-			if when == "planning" {
-				s.inbox.mu.Lock()
-				it.Source, it.Kind = "larkcli", "bot_handoff"
-				s.inbox.mu.Unlock()
-				if _, err := s.toolTaskPlanFrom(t.Context(), "box", conversation, taskInboxArgs("")); err == nil {
-					t.Fatal("automatic inference bypassed the existing source policy")
-				}
-			} else {
-				if _, err := s.toolTaskPlanFrom(t.Context(), "box", conversation, taskInboxArgs("")); err != nil {
-					t.Fatal(err)
-				}
-				s.inbox.mu.Lock()
+			if _, err := s.toolTaskPlanFrom(t.Context(), "box", conversation, taskInboxArgs("")); err != nil {
+				t.Fatal(err)
+			}
+			s.inbox.mu.Lock()
+			if why == "filed" {
 				it.DoneAt = new(time.Now())
-				s.inbox.mu.Unlock()
-				started, err := s.startPlan(t.Context(), planOf(t, s, conversation).ID, nil, false)
-				if err != nil || started.Tasks[0].Error == "" || started.Tasks[0].TodoID != "" {
-					t.Fatalf("an inferred source bypassed the archived-item recheck: %+v, %v", started, err)
-				}
+			} else {
+				it.Source, it.Kind = "larkcli", "bot_handoff"
+			}
+			s.inbox.mu.Unlock()
+			started, err := s.startPlan(t.Context(), planOf(t, s, conversation).ID, nil, false)
+			if err != nil || started.Tasks[0].Error == "" || started.Tasks[0].TodoID != "" {
+				t.Fatalf("an inferred source bypassed the Start recheck: %+v, %v", started, err)
 			}
 			if todoCount(s) != 0 || len(f.started()) != 0 {
 				t.Fatal("source rejection created work")

@@ -231,7 +231,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
           },
           "inbox_item": {
             "type": "string",
-            "description": "Inbox item id; omit for this conversation's sole unarchived handed item. Multiple items require an id; none leaves work unlinked. Never files or replies."
+            "description": "Inbox item id; defaults to this conversation's sole eligible open handoff. Several require an id; none leaves work unlinked. Never files or replies."
           },
           "tier": {
             "type": "string",

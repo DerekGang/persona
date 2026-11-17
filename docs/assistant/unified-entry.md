@@ -621,7 +621,9 @@ brief. The original request, scope log, and to-do survive a failed start.
 **Repository-linked duplicates.** A new task with neither `continues` nor `todo_id` is refused when a GitHub issue/PR
 or GitLab issue/MR URL in its `title`, `goal` or `prompt` matches an explicit repository link of an open to-do.
 The comparison uses canonical URLs, including provider, host, repository, link kind and number; comment anchors and
-tracking queries do not change that identity. Closed to-dos do not block planning. Notes, legacy PR metadata, bare
+tracking queries do not change that identity. Issue/PR URLs with credentials or invalid query parameters are refused
+before canonicalization, including for continuations and reused to-dos; errors never repeat the unsafe URL.
+Closed to-dos do not block planning. Notes, legacy PR metadata, bare
 numbers, similar titles and Agent activity are not evidence for this refusal, and admission reads do not import links.
 The refusal names the existing to-do and link: use `continues` with `continues_why`, or `todo_id`, for the same work.
 For separate work, supply `distinct_from: [{"todo_id": "<existing to-do>", "reason": "<why this is different work>"}]`
