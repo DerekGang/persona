@@ -1,4 +1,4 @@
-Replace all links for repo_id at the revision from todo_repositories_get; URLs must match its saved identity. Use {url} or {kind,number}. [] clears; omitted/empty titles preserve retained titles. On conflict reread and reconcile. No files, task progress or completion changes.
+Replace all links for repo_id at the revision from todo_repositories_get; URLs must match its saved identity. Use {url} or {kind,number}. [] clears; omitted/empty titles preserve retained titles. On conflict reread and reconcile. No files, task progress or completion changes.{{template "shared/mcp_language" .}}
 
 ```json
 {

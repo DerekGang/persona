@@ -2,7 +2,7 @@ Plan Agent work (code, repo research, or more than a few tool calls) instead of 
 
 When repository identity needs resolving, consult repositories_list, and repository_get only when useful. The user's explicit repository URL or path takes precedence. A saved binding is a reference, not authorization or an allowlist; never infer a machine or checkout path from it. Non-repository tasks need no lookup; retrieval is not a mandatory dispatch preflight.
 
-Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-change"}} names its branch; {"existing":"<cwd or workspace_id>"} selects one; "none" creates nothing. Omitted: readonly uses none; writable Git follows assistant.task_workspace_preference (prefer-existing by default, prefer-new for isolation), and an occupied cwd uses new. Explicit existing never switches silently; refusal names its task owner. For an explicit new branch already checked out, reuse requires a clean checkout, no live Agent and no unfinished-task owner; otherwise refuse with its path and known owner. The machine's engine owns creation, location and registration; never run git worktree add. The card previews the path and is editable before Start. Default branch: task/<todo id>. Creation failure starts no Agent. Workspaces remain after acceptance. Organization read-only policy refusals include their reason: follow it, never retry unchanged.
+Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-change"}} names its branch; {"existing":"<cwd or workspace_id>"} selects one; "none" creates nothing. Omitted: readonly uses none; writable Git follows assistant.task_workspace_preference (prefer-existing by default, prefer-new for isolation), and an occupied cwd uses new. Explicit existing never switches silently; refusal names its task owner. For an explicit new branch already checked out, reuse requires a clean checkout, no live Agent and no unfinished-task owner; otherwise refuse with its path and known owner. The machine's engine owns creation, location and registration; never run git worktree add. The card previews the path and is editable before Start. Default branch: task/<todo id>. Creation failure starts no Agent. Workspaces remain after acceptance. Organization read-only policy refusals include their reason: follow it, never retry unchanged.{{template "shared/mcp_language" .}}
 
 ```json
 {
@@ -33,7 +33,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
         "properties": {
           "title": {
             "type": "string",
-            "description": "the task in a short line the user reads on the card (Chinese, under 20 characters)"
+            "description": "{{if eq .Lang "en"}}the task in a short line the user reads on the card (English, under 20 characters){{else if eq .Lang "ja"}}カードに表示する短いタスク名（日本語、20文字未満）{{else}}the task in a short line the user reads on the card (Chinese, under 20 characters){{end}}"
           },
           "prompt": {
             "type": "string",
@@ -98,7 +98,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
           },
           "why": {
             "type": "string",
-            "description": "one line (Chinese) on why this machine, directory and model"
+            "description": "{{if eq .Lang "en"}}one line (English) on why this machine, directory and model{{else if eq .Lang "ja"}}このコンピュータ、ディレクトリ、モデルを選ぶ理由を日本語で一行に記述します{{else}}one line (Chinese) on why this machine, directory and model{{end}}"
           },
           "done_when": {
             "type": "array",
@@ -106,11 +106,11 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
             "items": {
               "type": "string"
             },
-            "description": "what done means: results you will check before you accept it (Chinese, one each), e.g. 「PR 合并到 master」「浅色 / 深色截图贴进 PR」「线上 hub 已部署并验证」; the agent is told them. Required for a writable task (at least one); with continues the effective criteria from the original to-do apply and this is ignored"
+            "description": "{{if eq .Lang "en"}}what done means: results you will check before you accept it (English, one each), e.g. PR merged to master; light/dark screenshots attached to the PR; production hub deployed and verified; the agent is told them. Required for a writable task (at least one); with continues the effective criteria from the original to-do apply and this is ignored{{else if eq .Lang "ja"}}完了として受け入れる前に確認する結果を、日本語で一項目ずつ記述します。例：PR のマージ、PR への浅色・深色スクリーンショットの添付、本番 hub のデプロイと検証。Agent に伝えられます。書き込み可能なタスクは一つ以上必須です。continues 指定時は元のタスクの有効な完了条件が適用され、この値は無視されます{{else}}what done means: results you will check before you accept it (Chinese, one each), e.g. 「PR 合并到 master」「浅色 / 深色截图贴进 PR」「线上 hub 已部署并验证」; the agent is told them. Required for a writable task (at least one); with continues the effective criteria from the original to-do apply and this is ignored{{end}}"
           },
           "goal": {
             "type": "string",
-            "description": "the work in one sentence, as the owner would say what they get from it (Chinese); required for a read-only task, the title when left out of a writable one"
+            "description": "{{if eq .Lang "en"}}the work in one sentence, as the owner would say what they get from it (English); required for a read-only task, the title when left out of a writable one{{else if eq .Lang "ja"}}ユーザーが得る結果として作業の目標を日本語の一文で記述します。読み取り専用タスクでは必須です。書き込み可能なタスクで省略した場合はタイトルを使います{{else}}the work in one sentence, as the owner would say what they get from it (Chinese); required for a read-only task, the title when left out of a writable one{{end}}"
           },
           "out_of_bounds": {
             "type": "array",
@@ -118,7 +118,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
             "items": {
               "type": "string"
             },
-            "description": "optional: what the agent must not do or touch (Chinese, one each), e.g. 「不合并」「不动线上」"
+            "description": "{{if eq .Lang "en"}}optional: what the agent must not do or touch (English, one each), e.g. do not merge; do not change production{{else if eq .Lang "ja"}}任意：Agent が行ってはいけない操作や触れてはいけない対象を日本語で一項目ずつ記述します。例：マージしない、本番環境を変更しない{{else}}optional: what the agent must not do or touch (Chinese, one each), e.g. 「不合并」「不动线上」{{end}}"
           },
           "continues": {
             "type": "string",

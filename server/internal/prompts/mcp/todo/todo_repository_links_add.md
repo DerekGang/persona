@@ -1,4 +1,4 @@
-Record discovered/opened issue/PR links without manual user entry. Accept 1–50 exact URLs across links:[{url,title}] and legacy urls; group repositories automatically, including unlisted ones. Use actual source titles, never guesses; nonempty titles refresh, omitted/empty preserve. Deduplicate links; this explicit call can restore removed links. Atomic; preserves aliases, refs and source snapshots. Use todo_repositories_get and revision-checked set tools to replace/remove. Associations do not prove completion.
+Record discovered/opened issue/PR links without manual user entry. Accept 1–50 exact URLs across links:[{url,title}] and legacy urls; group repositories automatically, including unlisted ones. Use actual source titles, never guesses; nonempty titles refresh, omitted/empty preserve. Deduplicate links; this explicit call can restore removed links. Atomic; preserves aliases, refs and source snapshots. Use todo_repositories_get and revision-checked set tools to replace/remove. Associations do not prove completion.{{template "shared/mcp_language" .}}
 
 ```json
 {

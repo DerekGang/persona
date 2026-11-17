@@ -1,4 +1,4 @@
-Replace associations atomically using revisions from todo_repositories_get and repositories_list. [] removes metadata only. Retained source snapshots stay fixed; remove and reselect to adopt a changed catalog identity. Editable after execution. Omitted links preserve; [] clears. Use {url} or {kind,number}; omitted/empty titles preserve retained titles. On conflict reread and reconcile. No files, task progress or completion changes.
+Replace associations atomically using revisions from todo_repositories_get and repositories_list. [] removes metadata only. Retained source snapshots stay fixed; remove and reselect to adopt a changed catalog identity. Editable after execution. Omitted links preserve; [] clears. Use {url} or {kind,number}; omitted/empty titles preserve retained titles. On conflict reread and reconcile. No files, task progress or completion changes.{{template "shared/mcp_language" .}}
 
 ```json
 {
