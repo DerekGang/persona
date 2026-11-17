@@ -383,6 +383,10 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // layouts tried (mounting it under every exchange, or riding the reply bar's chunk, cost more). 85 B in ja, measured in
 // one environment against main 21cd52cc2 (ja 482,104 B to 482,189 B; en 478,990 B to 479,075 B, zh-Hans 479,859 B to
 // 479,944 B). Main had 422 B of room; the budget stays.
+// #9751: Just finished (lib/agent-groups.ts justFinished, the paged list's section in lib/session-groups.ts, the seen
+// outbox's unseen rows in lib/seen-outbox.ts) adds 112 B in ja, measured in one environment against main 7f756aa00a (ja
+// 482,373 B to 482,485 B; en 479,275 B to 479,391 B, zh-Hans 480,079 B to 480,221 B). Main had 153 B of room; the
+// budget stays.
 // #5669: five peer task entries and closeout-based execution add 735 B to the fullest language, measured against
 // main 5fe749b57b in one environment (ja 482,373 -> 483,108 B; en 479,275 -> 480,004 B; zh-Hans 480,079 -> 480,809 B).
 // Keep main's 153 B of room and its low-room warning; this buys only the measured feature delta.
