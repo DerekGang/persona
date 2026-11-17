@@ -373,6 +373,7 @@ func triageExecuting(t Todo, look triageLookup) bool {
 		}
 		if s, ok := look(a.MachineID, a.SessionID); ok &&
 			(triageStateOf(s) == proto.StateWorking || s.Starting || s.BackgroundWorking || backgroundRunning(s) ||
+				s.Children().Working > 0 ||
 				s.Work != nil && s.Work.Phase == proto.WorkWorking) {
 			return true
 		}

@@ -121,14 +121,14 @@ class AssistantSharedAgentShotsTest {
         for (s in AppStyle.entries) for (d in listOf(false, true)) {
             style = s; dark = d; tray.expanded = null; settle()
             badge("needs", 1); badge("running", 0); badge("stopped", 2)
-            rule.onNodeWithTag("assistant-entry-needs").performClick(); settle()
+            rule.tapTray("needs"); settle()
             rule.onNodeWithTag("assistant-needs-task-release").assertIsDisplayed()
             rule.onNodeWithTag("assistant-needs-task-cache").assertDoesNotExist()
             rule.onNodeWithTag("assistant-needs-task-tests").assertDoesNotExist()
             rule.onAllNodesWithTag("assistant-decision-permission").assertCountEquals(1)
             val suffix = "${s.name.lowercase()}-${if (d) "dark" else "light"}"
             shot("needs-$suffix")
-            rule.onNodeWithTag("assistant-entry-stopped").performScrollTo().performClick(); settle()
+            rule.tapTray("stopped"); settle()
             for (id in listOf("cache", "tests")) {
                 val row = hasAnyAncestor(hasTestTag("assistant-progress-todo:$id"))
                 rule.onNodeWithTag("assistant-progress-todo:$id").assertIsDisplayed()

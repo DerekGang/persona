@@ -168,6 +168,9 @@ func TestExplicitParkOutranksStoppedExternalWait(t *testing.T) {
 	session.Background = []proto.BackgroundTask{{Kind: "command"}}
 	check(triageWorking, ruleAgentRunning)
 	session.Background = nil
+	session.Hierarchy = &proto.SessionHierarchy{Children: &proto.SessionChildren{Total: 1, Working: 1}}
+	check(triageWorking, ruleAgentRunning)
+	session.Hierarchy = nil
 	session.Work.Phase = proto.WorkWorking
 	check(triageWorking, ruleAgentRunning)
 	session.Work.Phase = proto.WorkBlocked

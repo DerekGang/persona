@@ -265,7 +265,7 @@ class CloseoutShotsTest {
         settle()
         for (s in AppStyle.entries) for (d in listOf(false, true)) {
             style = s; dark = d; settle()
-            rule.onNodeWithTag("assistant-entry-needs").performClick(); settle()
+            rule.tapTray("needs"); settle()
             rule.onNodeWithTag("assistant-task-decision-${decision.id}").assertIsDisplayed()
             rule.onNodeWithTag("decision-question", useUnmergedTree = true).assertTextEquals("Release 2.4 to everyone now, or wait for the crash fix?")
             rule.onNodeWithTag("decision-background", useUnmergedTree = true).assertIsDisplayed()
@@ -294,15 +294,15 @@ class CloseoutShotsTest {
             rule.onNodeWithTag("decision-done", useUnmergedTree = true).assertTextEquals("Sent back to Persona")
             // the next variant starts from the unanswered round again
             tasks.reloadTodos(); settle()
-            rule.onNodeWithTag("assistant-entry-stopped").performScrollTo().performClick(); settle()
+            rule.tapTray("stopped"); settle()
             rule.onNodeWithTag("assistant-orphaned-todo:${orphan.id}", useUnmergedTree = true)
                 .assertTextEquals("Nobody is working on this · closed after an error")
             shot("orphaned-${variant(s, d)}")
-            rule.onNodeWithTag("assistant-entry-stopped").performScrollTo().performClick(); settle()
+            rule.tapTray("stopped"); settle()
         }
         // the largest text: the buttons keep one line each; what no longer fits is in the menu
         style = AppStyle.Glass; dark = false; large = true; settle()
-        rule.onNodeWithTag("assistant-entry-needs").performClick(); settle()
+        rule.tapTray("needs"); settle()
         rule.onNodeWithTag("assistant-task-decision-${decision.id}").performTouchInput { swipeUp() }; settle()
         rule.onNodeWithText("Other…", useUnmergedTree = true).assertExists()
         shot("decision-answers-glass-light-large")

@@ -425,10 +425,10 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                                         } else {
                                             val projected = progressByTodo[entry.todo.id] ?: TrayProgress("todo:${entry.todo.id}", entry.todo.title, todo = entry.todo)
                                             // Only replace the projection's state when a shared Agent's requests belong elsewhere (#7531).
-                                            val row = if (tray != AssistantTray.Running) projected.copy(stopped = true)
-                                            else if (entry.hasAgentsElsewhere) projected.copy(blocked = false,
+                                            val own = if (entry.hasAgentsElsewhere) projected.copy(blocked = false,
                                                 stopped = entry.status == TriageStatus.Unread || entry.status == TriageStatus.FollowUp)
                                             else projected
+                                            val row = if (tray != AssistantTray.Running) own.copy(stopped = true) else own
                                             TrayProgressRow(row, activity = entry.activity, waiting = entry.waiting,
                                                 working = entry.status == TriageStatus.Working,
                                                 onClick = { openTask(host, entry.todo) })
@@ -697,7 +697,7 @@ private fun TrayProgressRow(row: TrayProgress, activity: BackgroundWork? = null,
         if (live && (work != null || (working && !waiting))) {
             JSpinner(Modifier.testTag("assistant-work-spinner"))
             Spacer(Modifier.width(Tokens.Space.s))
-        } else if (live && waiting) {
+        } else if (live && (waiting || reported && (row.externalWait || row.closeoutStatus == "blocked"))) {
             TrayWaitClock()
             Spacer(Modifier.width(Tokens.Space.s))
         }

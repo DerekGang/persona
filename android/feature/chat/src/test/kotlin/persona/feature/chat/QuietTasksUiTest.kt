@@ -155,13 +155,13 @@ class QuietTasksUiTest {
         rule.onNodeWithText("Just finished").assertIsDisplayed()
         rule.onNodeWithText("Renamed the button").assertIsDisplayed()
         rule.onNodeWithText("Done").assertIsDisplayed()
-        rule.onNodeWithTag("assistant-entry-stopped").performScrollTo().performClick()
+        rule.tapTray("stopped")
         rule.onNodeWithText("Usage Limit", substring = true).assertIsDisplayed()
         rule.onNodeWithText("Weekly limit reached", substring = true).assertIsDisplayed()
         rule.onNodeWithText("Resets", substring = true).assertIsDisplayed()
         rule.onNodeWithText("Continue").performClick()
         rule.runOnIdle { assertEquals(listOf("failed", "cut", "limit"), api.retried) }
-        rule.onNodeWithTag("assistant-entry-running").performClick()
+        rule.tapTray("running")
         rule.onNodeWithTag("assistant-just-finished-row").performClick()
         rule.runOnIdle {
             assertEquals(TaskSheet.Task("done"), host.sheet.value)

@@ -1,6 +1,5 @@
-// A task its supervisor parked (#3804): the real web app with synthetic HTTP/WS only; it never connects to a user's hub
-// or conversation. Parked and ready multi-PR waits share one peer group; active work and owner decisions keep theirs.
-// Also checks the To-dos list and All board, all three languages, both themes and the largest app text size.
+// Five peer task groups in the real web app, with synthetic HTTP/WS only and no connection to a user's hub.
+// Checks closeout versus acceptance, external waits, phone bounds, both themes and large translated text.
 // node web/e2e/task-closeout-groups.mjs <web URL> --shots <directory> [--chromium <executable>]
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -134,6 +133,7 @@ async function run(browser, size, theme, language, textSize = "standard") {
     assert(!(await page.locator(".assistant-action-tray").innerText()).includes("完成未看"));
     await page.screenshot({ path: name("stopped") });
     await open("parked");
+    await page.locator('[data-parked-task-row="parked"]').waitFor();
     assert.equal(await page.locator("[data-parked-task-row]").count(), 1, "explicit park wins over blocked/external");
     assert.equal(await page.locator('[data-needs-row="task:parked"]').count(), 0);
     await page.screenshot({ path: name("parked") });
