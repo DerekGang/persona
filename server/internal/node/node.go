@@ -672,6 +672,9 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		method = "codex.answer"
 		ctx, _ = withOwnerDelivery(ctx)
 	}
+	if method == "session.send" || method == "codex.answer" {
+		ctx = promptLanguageContext(ctx, params)
+	}
 	switch method {
 	case "session.share_projection":
 		return n.shareProjection(ctx, params)
