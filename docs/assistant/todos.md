@@ -1038,8 +1038,18 @@ Existing `pr_url` / `prs` references are imported once before the first interact
 association read or edit. During a meeting turn, `todo_get` and
 `todo_repositories_get` read only saved associations: they never import links or
 write association data, revisions or receipts. An ordinary user turn retains the
-historical import behavior. New Agent reports append every supported PR URL to this same store,
-including self-hosted instances; old stage and delivery fields retain their existing
+historical import behavior. New Agent progress reports append supported PR URLs to this same store,
+including self-hosted instances. An Agent's own final closeout contributes only its
+explicit `artifact: pr` links, not background references elsewhere in the reply.
+Persisted structured work artifacts also append PRs to the session's actively linked
+open to-do, without requiring a transcript subscription. Turns predating that Agent's
+task link, retired turns and released or dismissed Agents contribute nothing.
+An association-store failure leaves the saved artifacts retryable on the next Inbox
+linking pass, including after a manager restart. The deterministic Inbox linker
+reads these saved links as well as legacy task references, so a comment or review
+on any linked PR can return to the existing task Agent even when `pr_url` names
+another PR. Ambiguous or closed tasks are not selected.
+Old stage and delivery fields retain their existing
 judgment semantics. A stored receipt prevents historical imports and repeated reports
 from restoring links removed by the user. An explicit additive call can restore them.
 Imports and interactive edits lock the same Todo and commit atomically; changes

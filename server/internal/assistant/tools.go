@@ -149,7 +149,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 	case "task_retry":
 		return s.toolTaskRetry(ctx, self, args)
 	case "task_scope":
-		return s.toolTaskScope(ctx, self, args) // task_brief_scope.go
+		return s.toolTaskScope(ctx, machine, self, args) // task_brief_scope.go
 	case "task_decided":
 		return s.toolTaskDecided(ctx, machine, self, args) // task_decided.go
 	case "task_review":
@@ -324,6 +324,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			Machine   string `json:"machine"`
 			SessionID string `json:"session_id"`
 			Text      string `json:"text"`
+			InboxItem string `json:"inbox_item"`
 			// DismissNotice: close a notice that Enter only closes (no options) before sending; any other dialog
 			// still refuses the send.
 			DismissNotice bool `json:"dismiss_notice"`
@@ -381,6 +382,22 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		} else if err := s.exitAllowed(ctx, self, am, c, a.Text, len(atts)); err != nil {
 			return "", err
 		}
+		source := PlanTask{InboxItem: strings.TrimSpace(a.InboxItem)}
+		if err := s.ensureTodosLoaded(ctx); err != nil {
+			return "", err
+		}
+		own, onTask := s.openTodoOfAgent(am.ID, c.SessionID)
+		mayLink := a.Task != nil || onTask && othersTask(c, own, self) == nil
+		if !exitText(a.Text) && mayLink {
+			if err := s.planInboxSource(ctx, machine, self, &source); err != nil {
+				return "", err
+			}
+			if err := s.checkExistingTaskInbox(self, source, own); err != nil {
+				return "", err
+			}
+		} else if source.InboxItem != "" {
+			return "", fmt.Errorf("inbox_item requires work on your own open task; nothing was sent")
+		}
 		summary := agentLabel(c) + " · " + am.Name + "\n\n" + a.Text
 		if resume != "" { // the phone says it resumes the agent, and why
 			summary = s.resumeNote(ctx, c, am, resume) + "\n\n" + a.Text
@@ -390,11 +407,27 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		} else if !ok {
 			return "The user declined on the phone: nothing was sent to that agent.", nil
 		}
+		if err := s.checkExistingTaskInbox(self, source, own); err != nil {
+			return "", fmt.Errorf("%w; nothing was sent", err)
+		}
 		var task *handedTask
 		if a.Task != nil {
 			if task, err = s.handTask(ctx, self, am, c, *a.Task, a.Text); err != nil {
 				return "", err
 			}
+		}
+		finish := func(ctx context.Context, result string) (string, error) {
+			if source.InboxItem == "" {
+				return result, nil
+			}
+			id := own.ID
+			if task != nil {
+				id = task.todo.ID
+			}
+			if err := s.linkExistingTaskInbox(ctx, self, source, id, []SessionRef{{MachineID: am.ID, SessionID: c.SessionID}}); err != nil {
+				return "", fmt.Errorf("message delivered to the Agent, but its Inbox link was not saved: %w; do not resend the message", err)
+			}
+			return result + fmt.Sprintf(" Inbox item %s now links to task %s and this Agent.", source.InboxItem, id), nil
 		}
 		text := a.Text
 		if a.Task == nil {
@@ -425,7 +458,11 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		sending, _ := params["text"].(string)
 		// A resume goes through the user's Resume's node call, the text as its first message (agent_resume.go).
 		if resume != "" {
-			return s.resumeAndSend(ctx, self, am, c, params, resume, a.Text, handed.said(), task)
+			result, err := s.resumeAndSend(ctx, self, am, c, params, resume, a.Text, handed.said(), task)
+			if err != nil {
+				return result, err
+			}
+			return finish(ctx, result)
 		}
 		if c.Status != proto.StatusOffline {
 			// A running agent takes it at once. A send of more for an accepted task holds a turn of the agent that
@@ -454,10 +491,10 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 				return "", task.sendFailed(ctx, s, err)
 			}
 			if sent.Queued {
-				return fmt.Sprintf("Queued for %s on %s: it is in the middle of a turn and reads the message once what it is doing now ends.",
-					agentLabel(c), am.Name) + handed.said() + task.sent(ctx, s, a.Text), nil
+				return finish(lctx, fmt.Sprintf("Queued for %s on %s: it is in the middle of a turn and reads the message once what it is doing now ends.",
+					agentLabel(c), am.Name)+handed.said()+task.sent(ctx, s, a.Text))
 			}
-			return fmt.Sprintf("Sent to %s on %s.", agentLabel(c), am.Name) + handed.said() + task.sent(ctx, s, a.Text), nil
+			return finish(lctx, fmt.Sprintf("Sent to %s on %s.", agentLabel(c), am.Name)+handed.said()+task.sent(ctx, s, a.Text))
 		}
 		// Not running and not read-only: a branch nothing has started yet (node fork.go), or a node from before #4754
 		// that still resumes a stopped agent. Its node starts it first, which can take minutes and goes on if this call
@@ -473,7 +510,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if err != nil {
 			return "", task.sendFailed(sctx, s, err)
 		}
-		return fmt.Sprintf("Resumed %s on %s (same session, directory and launcher) and sent.", agentLabel(c), am.Name) + handed.said() + task.sent(sctx, s, a.Text), nil
+		return finish(sctx, fmt.Sprintf("Resumed %s on %s (same session, directory and launcher) and sent.", agentLabel(c), am.Name)+handed.said()+task.sent(sctx, s, a.Text))
 	case "agent_switch": // moves a running agent to another launcher and goes on with it (agent_switch.go, #5973)
 		return s.toolAgentSwitch(ctx, machine, self, args)
 	case "agents_switch": // moves many running agents to another launcher at once (agents_switch.go, #6008)

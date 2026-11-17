@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/assistant/repository"
+	"github.com/nwverse/persona/server/internal/closeout"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 type todoRepositoryImportStore interface {
@@ -161,6 +164,10 @@ func (s *Service) agentRepositoryTool(ctx context.Context, machine, session, nam
 }
 
 func taskRepositoryReportLinks(text string) []string {
+	if block := deliveryCloseout(text); block != "" {
+		_, artifacts, _ := closeout.Parse(block)
+		return taskRepositoryArtifactLinks(artifacts)
+	}
 	urls := []string{}
 	for _, raw := range inboxTaskURL.FindAllString(text, -1) {
 		raw = strings.TrimRight(raw, ".,;:!?)]}，。；：！）》」』") // i18n-ignore: report punctuation, not displayed text
@@ -169,4 +176,52 @@ func taskRepositoryReportLinks(text string) []string {
 		}
 	}
 	return urls
+}
+
+func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
+	urls := []string{}
+	for _, artifact := range artifacts {
+		if artifact.Kind != "pr" {
+			continue
+		}
+		u, err := url.Parse(artifact.Ref)
+		if err != nil {
+			continue
+		}
+		u.User = nil
+		u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = "", "", "", false
+		u.Path = strings.TrimRight(u.Path, "/")
+		identity, link, err := repository.ParseTaskLink(u.String())
+		if err != nil || link.Kind != "pull_request" {
+			continue
+		}
+		// Validate before discarding a query or fragment, including credentials.
+		if _, err := repository.Parse(artifact.Ref, identity.Provider); err == nil {
+			urls = append(urls, link.CanonicalURL)
+		}
+	}
+	return urls
+}
+
+// Artifacts also arrive through stopped-turn triage, without a full transcript
+// subscription. Only the session's current task may inherit that turn's PRs.
+func (s *Service) importTaskRepositoryArtifacts(ctx context.Context, e db.SessionWork) error {
+	urls := taskRepositoryArtifactLinks(e.Work.Artifacts)
+	if len(urls) == 0 || e.TurnAt.IsZero() || e.Work.RetiredAt != nil {
+		return nil
+	}
+	if err := s.ensureTodosLoaded(ctx); err != nil {
+		return err
+	}
+	todo, ok := s.openTodoOfAgent(e.MachineID, e.SessionID)
+	if !ok {
+		return nil
+	}
+	for _, agent := range todo.Agents {
+		if agent.MachineID == e.MachineID && agent.SessionID == e.SessionID &&
+			agent.ReleasedAt == nil && agent.DismissedAt == nil && !e.TurnAt.Before(agent.LinkedAt) {
+			return s.importTodoRepositoryLinks(ctx, todo.ID, urls, "report")
+		}
+	}
+	return nil
 }

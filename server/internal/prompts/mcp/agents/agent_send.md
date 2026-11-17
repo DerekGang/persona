@@ -18,6 +18,10 @@ To hand new work to a running agent (one the user opened, a long-lived one that 
     "text": {
       "type": "string"
     },
+    "inbox_item": {
+      "type": "string",
+      "description": "Inbox source for your task; omit for the conversation's sole eligible open handoff. Several require an id."
+    },
     "resume": {
       "type": "boolean",
       "description": "resume this stopped agent with its context, text as its first message"
@@ -34,7 +38,7 @@ To hand new work to a running agent (one the user opened, a long-lived one that 
       "type": "array",
       "maxItems": 8,
       "items": { "type": "string" },
-      "description": "pictures and files the user gave you for it, by their absolute paths on your computer: a picture they sent (the path Claude Code gives it), a file the app put in their message. They are copied to the agent's computer and listed at the end of its message, and the text's mentions of them name the copies. Only those the user gave you in this conversation are accepted"
+      "description": "absolute paths of pictures/files the user gave this conversation (including attachment paths); copied to the agent's computer and appended to its message, with mentions pointing to those copies. Others refused"
     },
     "task": {
       "type": ["object", "null"],

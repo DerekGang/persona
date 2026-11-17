@@ -1,4 +1,4 @@
-Change what a task you supervise is to do, or what done means for it, after it started (its todo id). The task's brief (the owner's request and the criteria it started with) is never rewritten: this adds an entry to the brief's log with what changed and why, applies the new done_when and expect_minutes, restarts the task's clock, and the owner reads the change in their next digest. It is the only way done_when changes after a task started (agent_supervise and agent_send with a task on your own task go through the same log). Give done_when as the whole list after the change: a criterion you leave out is recorded as dropped by this change, and the completion report says so. A change that adds a step only the owner may allow (deploying, merging, releasing, sending or commenting where other people see it, deleting, spending, changing production) and was not part of the task is refused unless the owner's own message started this turn: ask them first (ask_user, or task_review needs_user), then call it again when they answered. Only the task's supervisor may call it. The agent is not told: send it what changed with agent_send. Use it also to answer an overdue task that is still right: say why and give the new expect_minutes.
+Change what a task you supervise does or what done means (its todo id). The original brief stays intact: log what changed and why, apply done_when and expect_minutes, restart the clock, and show the owner the change in their next digest. Only this log changes done_when after dispatch; agent_supervise and agent_send(task) on your task use it too. Give the whole new done_when list: omitted criteria are recorded as dropped and named in the completion report. Adding an owner-only step not already in scope (deploy, merge, release, external send/comment, delete, spend, production change) requires the owner's message to have started this turn; otherwise ask_user or task_review needs_user, then retry after their answer. Only the supervisor may call it. It does not notify the Agent: use agent_send. For an overdue but still valid task, explain why and give new expect_minutes.
 
 ```json
 {
@@ -8,6 +8,10 @@ Change what a task you supervise is to do, or what done means for it, after it s
     "todo_id": {
       "type": "string",
       "description": "the task's todo id (todo_…)"
+    },
+    "inbox_item": {
+      "type": "string",
+      "description": "Inbox source; omit for the conversation's sole eligible open handoff. Several require an id. Links the existing task and its Agents."
     },
     "change": {
       "type": "string",
