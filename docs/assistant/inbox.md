@@ -538,6 +538,30 @@ A `received` entry's `via` is the item's `source`; a `triaged` entry's is `assis
 - **Cross-atomic related items**: phase 1 does not merge them, only records `related` on both sides, at most 10, excluding same-atomic-thread items. Currently populated when a connector says an item grew from another (`InboxThing.parent` points to an item in another source / chat),
   and from `related` submitted by a handling chat with its suggestion (only existing Inbox items are accepted).
 
+## Reply approvals that have waited too long
+
+For a person reviewing prepared replies, an unanswered draft is not background
+work that may disappear silently (#9754). A current reply suggestion already has
+one home in Inbox **Needs you**. After four hours from that suggestion's creation,
+the supervisor watch makes that same row urgent and sends the owner a notification.
+It does not create a second to-do or request, approve the draft, start an Agent,
+or send anything to the other person.
+
+The explanation next to the unchanged draft and on its source-linked handling
+chain says how long the other person has waited. That duration starts at the
+item's latest incoming-message time, or at draft creation if no earlier source
+time is known, and is displayed in whole elapsed hours rounded down. The chain
+opens the original source; the notification includes its HTTPS URL where supplied,
+otherwise the existing Inbox original-message view.
+
+The four-hour threshold is deterministic, independent of the AI twin, model,
+pushes to external channels, or any user-created recurring task. A failed owner
+notification can be retried with its stable id without adding another request.
+The reminder and notification receipts are persisted per suggestion version.
+Sent, dismissed, merged, folded and replaced suggestions cannot keep the old
+reminder active; a replacement starts its own four-hour window. Normal
+notification policy still applies.
+
 ## Following up (2026-11-13, #6611)
 
 An item stays one matter for as long as it goes on: a handled event takes the messages that continue it and reopens, the processing conversation names it, and the Inbox knows what it waits on and when to look at it again. Nothing here is a new table, section, handling state or endpoint; the fields are optional on the item's JSON (`inbox_follow.go`), so old apps ignore them and new apps keep today's drawing when a hub sends none. This section is the contract the lanes of #6611 build on; each behavior lands in its own PR.
