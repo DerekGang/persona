@@ -313,11 +313,21 @@ func (s *Service) backgroundFresh(cfg Settings, id string) bool {
 	return id != "" && id == cfg.BackgroundSupervisor && at != nil && time.Since(*at) < backgroundGrace
 }
 
-// backgroundNeeded: one of the signals list explicitly targets the configured legacy background, or would have used
-// the pre-#5732 automatic background route (the probe). Only the former is possible for new work under #5732.
+// backgroundNeeded: one of the signals list explicitly targets the configured legacy background, unread legacy work
+// needs its outgrown state reconciled even when this digest is main-only, or a signal would have used the pre-#5732
+// automatic background route (the probe). Only the first is possible for new work under #5732.
 func (s *Service) backgroundNeeded(ctx context.Context, cfg Settings, list []superviseSignal) bool {
 	const probe = "\x00background"
 	legacy := cfg.BackgroundSupervisor
+	if legacy != "" && legacy != cfg.Main {
+		b := &s.supervise
+		b.mu.Lock()
+		waiting := len(b.queued[legacy]) > 0
+		b.mu.Unlock()
+		if waiting || s.queuedFor(legacy) > 0 {
+			return true
+		}
+	}
 	cfg.BackgroundSupervisor, cfg.BackgroundSupervisorMachineID = probe, cfg.MachineID
 	for _, g := range list {
 		if legacy != "" && legacy != cfg.Main && g.To == legacy {

@@ -391,6 +391,24 @@ func ownerWithoutQuotes(text string) string {
 	}, text)
 }
 
+// ownerDecimalPoint reports a full stop between two ASCII digits, as in a version or decimal number.
+func ownerDecimalPoint(text string, at int) bool {
+	return at > 0 && at+1 < len(text) && text[at] == '.' &&
+		text[at-1] >= '0' && text[at-1] <= '9' && text[at+1] >= '0' && text[at+1] <= '9'
+}
+
+// ownerPreviousSentenceEnd returns the last sentence terminator before the clause, ignoring decimal points.
+func ownerPreviousSentenceEnd(text string) int {
+	for i := len(text); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(text[:i])
+		i -= size
+		if strings.ContainsRune(ownerSentenceEnds, r) && !ownerDecimalPoint(text, i) {
+			return i
+		}
+	}
+	return -1
+}
+
 // ownerSentenceEnd returns the first unquoted sentence terminator at or after at, preserving original byte offsets.
 func ownerSentenceEnd(lower string, at int) int {
 	straight, curly := false, 0
@@ -406,7 +424,7 @@ func ownerSentenceEnd(lower string, at int) int {
 				curly--
 			}
 		default:
-			if !straight && curly == 0 && strings.ContainsRune(ownerSentenceEnds, r) {
+			if !straight && curly == 0 && strings.ContainsRune(ownerSentenceEnds, r) && !ownerDecimalPoint(lower, i) {
 				return i
 			}
 		}
@@ -435,13 +453,13 @@ func directOwnerMarker(text, marker string) bool {
 		direct = direct || strings.ContainsRune(ownerSentenceEnds, terminator)
 		if afterContrast {
 			clause := ownerWithoutQuotes(before)
-			end := strings.LastIndexAny(clause, ownerSentenceEnds)
+			end := ownerPreviousSentenceEnd(clause)
 			// A contrast does not close a leading if-sentence. A trailing condition, by contrast, owns only its own
 			// clause, so the marker after its `but` remains an independent requirement.
 			direct = !ownerConditionalOpen(strings.TrimSpace(clause[end+1:]))
 		} else if strings.HasSuffix(before, ",") || strings.HasSuffix(before, ":") {
 			clause := ownerWithoutQuotes(before)
-			end := strings.LastIndexAny(clause, ownerSentenceEnds)
+			end := ownerPreviousSentenceEnd(clause)
 			conditional := strings.TrimSpace(clause[end+1:])
 			// Commas and colons introduce guidance without closing an "if" elsewhere in this sentence. Only a
 			// sentence boundary or an explicit "otherwise" clause makes the next requirement independent.
@@ -1249,40 +1267,31 @@ func (s *Service) applyTaskDone(ctx context.Context, t Todo, work time.Time, wor
 	}
 	if t.Supervision == nil {
 		// Tasks created before universal supervision still join the main conversation instead of being closed (#5732).
-		if main := s.settings(ctx).Main; main != "" {
-			if err := s.superviseTodo(ctx, t.ID, main, nil, 0); err != nil {
-				// Leave the turn unjudged so the next sweep can attach this legacy delivery and tell main after the
-				// store recovers. Marking it now would strand an open task without anybody allowed to review it (#5732).
-				return
-			}
-			if current, ok := s.todoNow(t.ID); ok {
-				t = current
-			}
-		}
-	}
-	if t.Supervision != nil {
-		s.tasks.completionMu.Lock()
-		defer s.tasks.completionMu.Unlock()
-		if !s.taskWorkCurrent(t.ID, work) {
+		main := s.settings(ctx).Main
+		if main == "" {
+			// Without a reviewer, leave the turn unjudged so the same completed work reaches main after settings recover.
+			s.logf("task %s: no main conversation to review delivery; left unjudged", t.ID)
 			return
 		}
-		if !worked {
-			work = t.CreatedAt
+		if err := s.superviseTodo(ctx, t.ID, main, nil, 0); err != nil {
+			// Leave the turn unjudged so the next sweep can attach this legacy delivery and tell main after the
+			// store recovers. Marking it now would strand an open task without anybody allowed to review it (#5732).
+			return
 		}
-		s.turnJudged(ctx, t.ID, c, err, "")     // on the turn's ledger before its signal: judged once, told once (task_turns.go)
-		s.superviseJudged(ctx, t, work, c, err) // never closed here: its supervisor reviews it (supervise.go)
+		if current, ok := s.todoNow(t.ID); ok {
+			t = current
+		}
+	}
+	s.tasks.completionMu.Lock()
+	defer s.tasks.completionMu.Unlock()
+	if !s.taskWorkCurrent(t.ID, work) {
 		return
 	}
-	s.turnJudged(ctx, t.ID, c, err, "")
-	if err != nil {
-		if !ai.IsPaused(err) {
-			s.logf("task %s: done judge: %v (left open)", t.ID, err)
-		}
-		return
+	if !worked {
+		work = t.CreatedAt
 	}
-	// Without a main conversation there is nobody to review delivery either. Keep the task open with its check; never
-	// fall back to the old automatic close (#5732).
-	s.logf("task %s: judge %s: left open for delivery review (%s)", t.ID, c.Verdict, c.Reason)
+	s.turnJudged(ctx, t.ID, c, err, "")     // on the turn's ledger before its signal: judged once, told once (task_turns.go)
+	s.superviseJudged(ctx, t, work, c, err) // never closed here: its supervisor reviews it (supervise.go)
 }
 
 // doneCheckRoute: POST /api/v1/todos/{id}/done-check runs the judgment on a todo as it is and answers it. Without

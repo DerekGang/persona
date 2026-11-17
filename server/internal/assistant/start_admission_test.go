@@ -47,6 +47,31 @@ func TestPlanSupervisionFailureDoesNotStart(t *testing.T) {
 	}
 }
 
+// A failed supervision write has no async dispatcher left to release an Inbox task's reserved todo ID.
+func TestPlanSupervisionFailureReleasesInboxReservation(t *testing.T) {
+	ctx := context.Background()
+	st := failingSupervisionStore{DB: todoTestDB(t)}
+	s, _ := newQuietServiceOn(t, st)
+	const conversation = "inbox-supervision-failure"
+	it := taskInboxItem(t, s, "example:supervision-failure", "server", conversation)
+	if _, err := s.toolTaskPlanFrom(ctx, "server", conversation, taskInboxArgs(it.ID)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.startPlan(ctx, planOf(t, s, conversation).ID, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Tasks[0].Error == "" || p.Tasks[0].TodoID == "" {
+		t.Fatalf("the prepared Inbox task did not fail visibly: %+v", p.Tasks[0])
+	}
+	s.tasks.mu.Lock()
+	held := s.tasks.reusing[p.Tasks[0].TodoID]
+	s.tasks.mu.Unlock()
+	if held {
+		t.Fatalf("the failed task still holds todo %s", p.Tasks[0].TodoID)
+	}
+}
+
 // The start itself deliberately outlives the caller, so a definite refusal's bookkeeping must too. Unknown outcomes keep
 // their separate neutral/adoption path; this is the definite coded-refusal path only (#5732).
 func TestAgentStartDefiniteFailureSurvivesCallerCancellation(t *testing.T) {

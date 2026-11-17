@@ -185,7 +185,7 @@ func (s *Service) archiveRoutes() {
 }
 
 var sessionIDRe = lazyre.New(`^[A-Za-z0-9._-]{1,128}$`)
-var legacyTodoIDRe = lazyre.New(`todo_[A-Za-z0-9]+`)
+var legacySuperviseEntryIDRe = lazyre.New(`(?m)^\d+\.\s.*\b(todo_[A-Za-z0-9]+)\s*[,\x{FF0C}]\s*signal=`)
 
 func validSessionID(id string) bool { return sessionIDRe.MatchString(id) }
 
@@ -322,8 +322,10 @@ func (s *Service) relayLocked(ctx context.Context) bool {
 					}
 				}
 			} else {
-				for _, id := range legacyTodoIDRe.FindAllString(msg.Text, -1) {
-					rs.LegacyBackground[conversation+"\x00"+id] = true
+				// A pre-signals digest names each assignment in its numbered entry header. IDs in evidence or links
+				// are not notices for those tasks and must not become closeout permission after a restart.
+				for _, match := range legacySuperviseEntryIDRe.FindAllStringSubmatch(msg.Text, -1) {
+					rs.LegacyBackground[conversation+"\x00"+match[1]] = true
 				}
 			}
 		}

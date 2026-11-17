@@ -324,9 +324,16 @@ func TestLegacyBackgroundQueuedNoticeSurvivesRestart(t *testing.T) {
 		proto.Session{SessionID: "conv1", MachineID: "server", Assistant: true, Status: proto.StatusIdle},
 		proto.Session{SessionID: "bg1", MachineID: "server", Assistant: true, Status: proto.StatusIdle})
 	setSettings(t, s, func(v *Settings) { v.BackgroundSupervisor, v.BackgroundSupervisorMachineID = "bg1", "server" })
-	// A pre-upgrade queue entry has no structured signals and no separately persisted grant.
-	if n := s.queueRelay("bg1", relayMsg{Tool: superviseTool, Text: "旧督办：" + todo.ID, At: time.Now()}); n != 1 {
+	// A pre-upgrade queue entry has no structured signals and no separately persisted grant. Only its entry subject is
+	// an assignment; an unrelated task linked from the evidence must not acquire closeout permission after a restart.
+	legacyText := "1. 任务「整理材料」（" + todo.ID + "，signal=needs_you）：请验收。\n" +
+		"证据：另一个任务 todo_unrelated 的链接和完成说明。"
+	if n := s.queueRelay("bg1", relayMsg{Tool: superviseTool, Text: legacyText, At: time.Now()}); n != 1 {
 		t.Fatalf("queue the legacy notice: %d", n)
+	}
+	structured := []superviseSignal{{Todo: "todo_structured"}}
+	if n := s.queueRelay("bg1", relayMsg{Tool: superviseTool, Text: "structured notice", Signals: &structured, At: time.Now()}); n != 2 {
+		t.Fatalf("queue the structured notice: %d", n)
 	}
 
 	s.supervise.mu.Lock()
@@ -338,6 +345,14 @@ func TestLegacyBackgroundQueuedNoticeSurvivesRestart(t *testing.T) {
 	res, err := runJSON(t, s, "bg1", "task_review", map[string]any{"todo_id": todo.ID, "verdict": "accepted", "note": "queued before upgrade", "checks": completeReviewChecks(todoNow(s, todo.ID))})
 	if err != nil || !strings.Contains(res, "accepted and closed") {
 		t.Fatalf("a queued pre-upgrade notice did not authorize closeout: %s %v", res, err)
+	}
+	for _, id := range []string{todo.ID, "todo_structured"} {
+		if !s.legacyBackgroundNotice(context.Background(), "bg1", id) {
+			t.Errorf("the actual notice subject %s lost its grant after restart", id)
+		}
+	}
+	if s.legacyBackgroundNotice(context.Background(), "bg1", "todo_unrelated") {
+		t.Fatal("an unrelated todo ID in the evidence became a closeout grant")
 	}
 }
 

@@ -184,6 +184,39 @@ func TestLegacyDoneRetriesSupervisionAttachAfterStoreRecovery(t *testing.T) {
 	}
 }
 
+func TestLegacyDoneWaitsForMainBeforeJudgment(t *testing.T) {
+	s, _ := newQuietService(t)
+	ctx := context.Background()
+	todo, err := s.createTodo(ctx, "Legacy delivery before main", "", "conv1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := time.Now().UTC()
+	if _, again := s.takeTurn(ctx, todo, turnRow(proto.StatusDone, 1, "delivered"), nil,
+		turnClose{Key: "legacy-turn-before-main"}, true, work, turnDone); again {
+		t.Fatal("the terminated test turn was already taken")
+	}
+	setSettings(t, s, func(v *Settings) { v.Main = "" })
+	check := taskDoneCheck{Verdict: verdictDone, Reason: "delivered"}
+	s.applyTaskDone(ctx, todo, work, true, check, nil)
+	if e, ok := s.turnOf(ctx, todo.ID); !ok || e.Judged != nil {
+		t.Fatalf("the turn was marked judged without a main reviewer: %+v, %v", e, ok)
+	}
+	if cur := todoNow(s, todo.ID); cur.DoneAt != nil || cur.Supervision != nil {
+		t.Fatalf("the missing main changed the legacy task: %+v", cur)
+	}
+
+	setSettings(t, s, func(v *Settings) { v.Main = "conv1" })
+	s.applyTaskDone(ctx, todo, work, true, check, nil)
+	cur := todoNow(s, todo.ID)
+	if cur.DoneAt != nil || cur.Supervision == nil || cur.Supervision.Supervisor != "conv1" || cur.Supervision.State != reviewPending {
+		t.Fatalf("the configured main did not receive the legacy review: %+v", cur)
+	}
+	if e, ok := s.turnOf(ctx, todo.ID); !ok || e.Judged == nil {
+		t.Fatalf("the main-supervised retry did not record its judgment: %+v, %v", e, ok)
+	}
+}
+
 func TestSameRequest(t *testing.T) {
 	if !sameRequest("<persona-context kind=\"context\">x</persona-context>\niPad 横屏时登录页崩溃，修好并补测试", "iPad 横屏时登录页崩溃，修好并补测试") ||
 		sameRequest("再把「全部 N」挪到最左边", "iPad 横屏时登录页崩溃，修好并补测试") {

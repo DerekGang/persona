@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // A legacy background conversation whose rounds can no longer start clean moves its unread work to main (#5732, #7315).
@@ -89,6 +91,61 @@ func TestNothingGoesIntoALegacyBackgroundBeingRetired(t *testing.T) {
 	}
 	if s.queuedFor(bg) != 0 || s.isArchived(bg) || len(conversationStarts(f)) != 0 {
 		t.Fatalf("after the move: old queue %d, archived %v, starts %d", s.queuedFor(bg), s.isArchived(bg), len(conversationStarts(f)))
+	}
+}
+
+// A digest containing only new main-supervised work still reconciles an outgrown legacy queue. A healthy legacy
+// conversation keeps the same queue: the reconciliation must not reroute work merely because a background exists.
+func TestMainOnlyDigestReconcilesLegacyQueue(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		outgrown bool
+	}{
+		{"outgrown moves to main", true},
+		{"healthy stays queued", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, todo, _ := newRoundService(t)
+			ctx := context.Background()
+			bg := withBackgroundBG1(t, s, f)
+			if tc.outgrown {
+				s.superviseRoundAnswered(bg, superviseRoundReply{Context: "kept", Why: "no_anchor"})
+			}
+			listRound(f, bg, proto.StatusWorking, false)
+			wakeRound(s, superviseSignal{Todo: todo.ID, Kind: sigStalled, Key: "legacy-waiting", Minutes: 50})
+			if got := s.queuedFor(bg); got != 1 {
+				t.Fatalf("the legacy notice did not queue: %d", got)
+			}
+
+			listRound(f, bg, proto.StatusIdle, false)
+			g := superviseSignal{Todo: todo.ID, Kind: sigInterrupted, Key: "main-only", At: time.Now().Add(-time.Minute)}
+			b := &s.supervise
+			b.mu.Lock()
+			b.init()
+			b.pending[g.id()] = g // no explicit legacy target: this is new work routed to main
+			b.last = time.Time{}
+			b.mu.Unlock()
+			s.sendDigest(ctx)
+
+			waitFor(t, "the main-only signal", func() bool {
+				return strings.Contains(strings.Join(f.noticesTo("conv1"), "\n"), "被模型服务出错打断了")
+			})
+			got := strings.Join(f.noticesTo("conv1"), "\n")
+			moved := strings.Contains(got, "50 分钟没有进展")
+			if moved != tc.outgrown {
+				t.Fatalf("legacy work moved = %v, want %v; main notices:\n%s", moved, tc.outgrown, got)
+			}
+			wantQueued := 1
+			if tc.outgrown {
+				wantQueued = 0
+			}
+			if queued := s.queuedFor(bg); queued != wantQueued {
+				t.Fatalf("legacy queue = %d, want %d", queued, wantQueued)
+			}
+			if len(conversationStarts(f)) != 0 || s.isArchived(bg) {
+				t.Fatalf("reconciliation archived or replaced the old conversation: %d starts, archived %v", len(conversationStarts(f)), s.isArchived(bg))
+			}
+		})
 	}
 }
 

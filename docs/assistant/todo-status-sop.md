@@ -32,9 +32,9 @@ then the folded ones, Done and Cancelled last. The same order decides which memb
 | Waiting for merge | open | Fresh facts match its PR URL; the PR is open and non-draft, no agent is active and no owner decision is pending. Show the PR link and review/check/conflict blockers, or that it awaits a maintainer |
 | Parked (web) | open | An explicitly parked task whose wait has not expired; it is unfinished, even if its last agent turn was seen |
 | Other open | open | Open, recently active, none of the above (an agent stopped and seen, a reminder of the user's own) |
-| Delivered · awaiting review | open | Worth a look: an unaccepted delivery, unseen turn, pending review or done / please-verify ask. An unaccepted `live` delivery stays here and open indefinitely, even after being seen; it never ages into Done or Shelved |
+| Delivered · awaiting review | open | Worth a look: an unaccepted delivery, unseen turn, pending review or done / please-verify ask, or a closed concern whose completion is less than 24 hours old and unseen. An unaccepted `live` delivery stays here and open indefinitely, even after being seen; it never ages into Done or Shelved |
 | Inactive (web; Shelved on native clients) | folded | No activity for 48 hours and nothing running (see "Shelving"); not an explicit parked verdict |
-| Done | folded | Non-cancelled closed, accepted or superseded work immediately; an ordinary unsupervised finished turn seen since it last moved. Unaccepted `live` work never enters this section merely through age or Seen |
+| Done | folded | Non-cancelled closed (apart from that fresh unseen closed concern), accepted or superseded work immediately; an ordinary unsupervised finished turn seen since it last moved. Unaccepted `live` work never enters this section merely through age or Seen |
 | Cancelled | folded | Cancelled work, with its cancellation reason; never counted as Done |
 
 ## Decision table
@@ -49,7 +49,7 @@ The first rule that holds wins.
 | 2 | `agent_asks` | An agent waits on the owner (question, approval, plan) or was cut off by a model error | Waiting for you |
 | 3 | `owner_decides` | Open, and the review says `needs_user`, or its ask is a decision or "cannot be done" | Waiting for you |
 | 4 | `agent_running` | An agent is working or starting | Working |
-| 5 | `closed` | `done_at` is set | Done immediately, regardless of age or Seen; explicit completion is never left open |
+| 5 | `closed` | `done_at` is set | Done immediately, regardless of age or Seen; explicit completion is never left open. A closed concern is the sole exception: it stays in Delivered · awaiting review while its completion is less than 24 hours old and unseen, then enters Done |
 | 5a | `parked` (web) | Open and the current review is parked | Parked until the hub changes its state, including past its fallback `until`; never Done just because its agent stopped |
 | 6 | `accepted` | The latest review accepted it and no review came since, even when the hub reopened it (see "Accepted tasks") | Done immediately, regardless of review age or Seen; acceptance is never left open |
 | 7 | `finished_unseen` | `delivery.state` is `live`, but the task has not been accepted | Delivered · awaiting review, open until main-chat acceptance or explicit user completion; no 24-hour or 48-hour timeout, including after Seen |
@@ -70,9 +70,11 @@ The first rule that holds wins.
 - Rule 10 (`stale`) never applies: an open concern is never Shelved, however long nothing happens.
 - Otherwise it is Other open by rule `rest`.
 
-A closed concern (`done_at` set by its report) follows rule 5 like any closed to-do. Every concern row, open or closed,
-carries one neutral **Concern** tag next to its title, using the client's existing tag component; other rows do not change.
-A client whose older hub does not send `kind` keeps its previous behavior.
+A closed concern (`done_at` set) follows rule 5 with its one visibility exception: while the completion is less than 24
+hours old and the owner has not seen it since, it stays in Delivered · awaiting review under rule `closed`. Seen or older
+closed concerns enter Done immediately like any other closed to-do. Every concern row, open or closed, carries one neutral
+**Concern** tag next to its title, using the client's existing tag component; other rows do not change. A client whose
+older hub does not send `kind` keeps its previous behavior.
 
 On the web, the header's Parked count is the number of to-dos in the Parked section (included in open). It contains both explicit holds and ready merge waits (#9325). The `pr_open` rule and PR freshness/precedence are unchanged; only its web display section changes from `pr` to `parked`. Shared fixture expectations retain the legacy `pr` name for the hub and native clients; the web fixture reader maps that label explicitly, preserving the same rules and open total. The conversation tray and All board use this same web classification. A fallback date alone does not move a hold to Other open; an actual wake/review does.
 Inactive counts only automatic 48-hour shelving. Cancelled has its own count and is never included in Done / completed.

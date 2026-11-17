@@ -214,7 +214,11 @@ func (s *Service) failPlanSupervision(ctx context.Context, todo Todo, t *PlanTas
 	}
 	t.Error = reason
 	// No async start body will run, so release every claim that body would have released.
-	s.releaseTakenTodo(t.ReuseTodo)
+	held := t.ReuseTodo
+	if held == "" && t.InboxItem != "" {
+		held = todo.ID
+	}
+	s.releaseTakenTodo(held)
 	s.releaseTaskWorkspace(todo.ID)
 	if t.admissionRelease != nil {
 		t.admissionRelease()
