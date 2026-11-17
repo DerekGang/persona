@@ -1235,7 +1235,9 @@ final class AppModel {
     func refreshAssistant() async {
         guard let api else { return }
         do {
-            let st = try await api.assistant()
+            // Archived ones too: on a paged hub this read is how Persona's chats reach the sidebar, Archived and All
+            // Chats, and a chat archived elsewhere only moves out of the open lists when its row says so.
+            let st = try await api.assistant(archived: true)
             guard showsPage(of: api) else { return } // another group or manager was picked meanwhile
             let previousMain = assistantMain
             assistantConfig = st
@@ -1261,7 +1263,7 @@ final class AppModel {
             if assistantCurrent == nil, neverChosen {
                 if let main = assistantMain {
                     assistantCurrent = main
-                } else if let newest = st.conversations.max(by: { ($0.updatedAt ?? .distantPast) < ($1.updatedAt ?? .distantPast) }) {
+                } else if let newest = st.conversations.filter({ $0.archived != true }).max(by: { ($0.updatedAt ?? .distantPast) < ($1.updatedAt ?? .distantPast) }) {
                     assistantCurrent = SessionKey(group: api.group, machineID: st.machineID, sessionID: newest.sessionID)
                 }
             }

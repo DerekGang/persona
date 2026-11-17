@@ -1358,7 +1358,9 @@ nonisolated struct APIClient: Sendable {
         var machineID: String
         var launcher: String
         var cwd: String
-        var conversations: [Session]
+        /// Read row by row: one conversation that does not decode is left out instead of failing the whole settings
+        /// read, which would empty every list of Persona's chats. A missing or non-list `conversations` still fails.
+        @LossyRows var conversations: [Session]
         /// What the assistant is told about the user (Settings › Assistant › About Me).
         var notes: String?
         var timezone: String?
@@ -1465,8 +1467,11 @@ nonisolated struct APIClient: Sendable {
         }
     }
     /// Decoded off the main actor: it holds every conversation, and the app reads it again each time it comes back to
-    /// the front (#8324).
-    func assistant() async throws -> AssistantState { owned(try await getDecodedOffMain("/api/v1/assistant")) }
+    /// the front (#8324). `archived`: the archived conversations too (`?archived=1`, marked `archived`), which the hub
+    /// leaves out otherwise; only the sidebar's read asks for them (Archived, and the flags of chats archived elsewhere).
+    func assistant(archived: Bool = false) async throws -> AssistantState {
+        owned(try await getDecodedOffMain("/api/v1/assistant", query: archived ? ["archived": "1"] : [:]))
+    }
     /// A direction as `GET /api/v1/assistant/leaders` lists it (#3519, #3695): its leader conversation's id and the name
     /// the hub gives the direction (the name set, else its project's, else the title without its "MMDD | kind | " prefix).
     struct LeaderInfo: Codable, Sendable, Equatable {
@@ -2212,6 +2217,17 @@ nonisolated struct AnyEncodable: Encodable {
     let value: any Encodable
     init(_ value: any Encodable) { self.value = value }
     func encode(to encoder: Encoder) throws { try value.encode(to: encoder) }
+}
+
+/// A list read row by row (`Lossy`): a row that does not decode is left out, the list around it is not. The list itself
+/// must still be there and be a list.
+@propertyWrapper nonisolated struct LossyRows<T: Codable & Sendable>: Codable, Sendable {
+    var wrappedValue: [T]
+    init(wrappedValue: [T]) { self.wrappedValue = wrappedValue }
+    init(from decoder: Decoder) throws {
+        wrappedValue = try decoder.singleValueContainer().decode([Lossy<T>].self).compactMap(\.value)
+    }
+    func encode(to encoder: Encoder) throws { try wrappedValue.encode(to: encoder) }
 }
 
 extension Error {

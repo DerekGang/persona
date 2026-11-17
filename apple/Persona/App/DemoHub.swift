@@ -211,7 +211,10 @@ final class DemoHub {
             var a = data["assistant"]?.object ?? [:]
             // ?space=health lists the health space's own (docs/assistant/health.md); the plain list never holds them.
             let space = q["space"] ?? ""
-            a["conversations"] = .array(sessions.filter { $0["assistant"]?.bool == true && ($0["space"]?.string ?? "") == space })
+            // Archived ones only with ?archived=1, as the hub (docs/assistant/assistant.md "Archive only hides").
+            let archived = ["1", "true"].contains(q["archived"] ?? "")
+            a["conversations"] = .array(sessions.filter { $0["assistant"]?.bool == true && ($0["space"]?.string ?? "") == space
+                && (archived || $0["archived"]?.bool != true) })
             return .object(a)
         case ["model-config"]: return DemoModelCatalog.configuration(tasks: tasks, overrides: modelBindings)
         case ["assistant", "tasks"]: return ["tasks": .array(tasks)]
