@@ -246,7 +246,7 @@ func (s *Service) checkTaskLauncher(ctx context.Context, machine, name string) (
 		return true, nil
 	}
 	if slices.ContainsFunc(picker, named) {
-		return true, s.mainChatRefusal(ctx, machine, name)
+		return true, s.mainChatRefusal(ctx, machine, name, "")
 	}
 	return true, i18n.Err("assistant-models.err_provider_missing")
 }
