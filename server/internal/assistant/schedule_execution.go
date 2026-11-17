@@ -35,9 +35,35 @@ func taskExecutionNeedsOwnChat(t Task, override ModelBinding) bool {
 	return t.SessionID != "" && (t.ExecutionMachineID != "" || t.Cwd != "" || override != (ModelBinding{}))
 }
 
+// A health task may choose its computer and model, but its directory and instructions belong to the space.
+// Check both edited candidates and stored tasks; validation in the editor alone cannot protect old records.
+func checkTaskExecutionSpace(t Task) error {
+	if t.Space == SpaceHealth && t.Cwd != "" {
+		return i18n.Err("assistant-schedule.execution_health_directory")
+	}
+	return nil
+}
+
+// A stored source conversation can predate the health directory boundary. Prepare the node's canonical
+// directory and verify its actual cwd before continuing it; its space label alone is not proof of isolation.
+func (s *Service) taskSourceCwd(ctx context.Context, t Task) (string, bool) {
+	if t.Space != SpaceHealth {
+		return "", true
+	}
+	c, known := s.session(ctx, t.MachineID, t.SessionID)
+	if !known {
+		return "", false
+	}
+	cwd, err := s.prepareSpace(ctx, t.MachineID, SpaceHealth)
+	return cwd, err == nil && c.Cwd == cwd
+}
+
 func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, binding ...ModelBinding) (TaskExecution, error) {
 	machine := s.taskMachine(ctx, t)
 	ex := TaskExecution{MachineID: machine, Cwd: t.Cwd, PermissionMode: cmp.Or(t.PermissionMode, s.settings(ctx).DefaultPermissionMode, "bypassPermissions")}
+	if err := checkTaskExecutionSpace(t); err != nil {
+		return ex, err
+	}
 	var b ModelBinding
 	if len(binding) > 0 {
 		b = binding[0]
@@ -123,6 +149,9 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 			}
 			changed = true
 		}
+	}
+	if err := checkTaskExecutionSpace(*t); err != nil {
+		return nil, err
 	}
 	old, err := s.modelRecord(ctx, "task."+t.ID)
 	if err != nil {
@@ -289,6 +318,9 @@ func (s *Service) taskRunSnapshot(ctx context.Context, t Task) (Task, ModelBindi
 		t = sc.tasks[i]
 	}
 	sc.mu.Unlock()
+	if err := checkTaskExecutionSpace(t); err != nil {
+		return t, ModelBinding{}, err
+	}
 	r, err := s.modelRecord(ctx, "task."+t.ID)
 	if err != nil {
 		return t, ModelBinding{}, err

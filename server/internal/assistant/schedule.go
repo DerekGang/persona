@@ -1828,11 +1828,15 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	// retry: it goes on in the round's conversation, which has its earlier work, and its plans ask.
 	clean := t.SessionID == "" && !retried && t.grantEligible() && t.liveGrant(t.runGrantBasis) != nil
 	if t.SessionID != "" {
-		if m, ok := s.device(ctx, t.MachineID); ok && m.Online {
+		sourceCwd, sourceOK := s.taskSourceCwd(ctx, t)
+		if m, ok := s.device(ctx, t.MachineID); ok && m.Online && sourceOK {
 			// A follow-up the assistant scheduled for itself is a turn of that conversation: it keeps the
 			// conversation's launcher like a message from the phone does. On the task's category launcher (Agents
 			// then) it moved the main conversation onto another one (plain claude, not logged in there) for good (#1518).
 			params := map[string]any{"session_id": t.SessionID, "text": taskPrompt(t, due, now, loc, manual, kb, false), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true}
+			if sourceCwd != "" {
+				params["cwd"], params["task_execution"] = sourceCwd, true
+			}
 			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
 			unsent := err != nil // model preparation has not sent the task's message
 			if err == nil {

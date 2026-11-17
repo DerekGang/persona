@@ -256,7 +256,11 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 	}
 	var cwd string
 	var err error
-	if p.Cwd != "" {
+	if p.Space == SpaceHealth {
+		// The space owns its directory, instructions and the node's outbound gate classification.
+		// Even a task's already-resolved cwd cannot replace health preparation.
+		cwd, err = s.prepareSpace(ctx, machine, p.Space)
+	} else if p.Cwd != "" {
 		cwd = p.Cwd
 	} else if p.GuestTools != nil {
 		cwd, err = s.guestPrepare(ctx, machine) // its own directory: none of the assistant's instructions, memory or skills
