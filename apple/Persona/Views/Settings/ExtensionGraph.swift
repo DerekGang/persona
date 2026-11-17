@@ -42,15 +42,7 @@ struct ExtensionGraph: View {
                             .background(Theme.pageBackground)
                             .navigationTitle(coverTitle(model))
                             .navigationBarTitleDisplayMode(.inline)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarLeading) {
-                                    Button { fullScreen = false } label: {
-                                        ThemedIcon(Theme.Icon.close).font(Theme.Font.heading)
-                                    }
-                                    .accessibilityLabel(String(localized: "Close"))
-                                    .accessibilityIdentifier("extension-graph-close")
-                                }
-                            }
+                            .toolbar { SheetClose(id: "extension-graph-close") { fullScreen = false } }
                             .focusable()
                             .focused($coverFocused)
                             .onKeyPress(.escape) {
