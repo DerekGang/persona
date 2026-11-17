@@ -101,6 +101,9 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 				PreviousReason: it.Reason, Explanation: text}
 			it.Urgent, it.Reason = true, text
 			g.Note = g.Note + "\n" + text
+			if it.Suggestion == nil {
+				it.Agent.Note = g.Note // legacySuggestion is a projection, not the stored draft
+			}
 			b.chainAdd(it, InboxChainEntry{Kind: ChainCheck, At: now.UTC(), Text: text, Detail: link,
 				Link: firstLink(it), Via: ViaAssistant})
 			r.chainID = it.Chain[len(it.Chain)-1].ID
@@ -123,7 +126,11 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 				continue
 			}
 			it.Urgent, it.Reason, it.ReplyApproval = r.oldUrgent, r.oldReason, r.oldReceipt
-			currentSuggestion(it).Note = r.oldNote
+			if it.Suggestion != nil {
+				it.Suggestion.Note = r.oldNote
+			} else {
+				it.Agent.Note = r.oldNote
+			}
 			it.Chain = slices.DeleteFunc(it.Chain, func(e InboxChainEntry) bool { return e.ID == r.chainID })
 		}
 	})

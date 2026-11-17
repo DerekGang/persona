@@ -640,7 +640,10 @@ Only provider readback of that exact send is an older delivery; a fresh provider
 delivery keeps its actual send time. Confirmed-delivery bookkeeping is retried
 without sending again, retaining its original timestamp and deadline until the
 receipt, task notes, supervision, and task association are durable. After a
-restart, an intent with no saved receipt
+restart, a provider's `Already` readback never fulfills another promise, whether
+its intent was saved earlier or first created by that call. Without a known
+delivery timestamp, intent time is only a conservative recording bound, not
+evidence that a fresh update was sent. An intent with no saved receipt
 is **not** promoted to delivery or fulfillment: after 24 hours it becomes a
 source-readback task and supervisor signal. This is not another outbox and never
 blindly retries a potentially delivered message.

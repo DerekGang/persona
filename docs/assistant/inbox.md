@@ -568,6 +568,11 @@ are not ownership: a replacement arriving during the write must keep its own
 note, urgency, chain and notification receipt. The same guard applies to failed
 notification-receipt writes and stale-reminder cleanup.
 
+Old reply drafts that still live in `InboxAgent` keep the waiting-time warning
+in that draft's stored note, not only in the handling chain or a temporary
+suggestion view. Reload and failed-save rollback preserve the same behavior
+without changing the draft text, creation time, or legacy shape.
+
 ## Following up (2026-11-13, #6611)
 
 An item stays one matter for as long as it goes on: a handled event takes the messages that continue it and reopens, the processing conversation names it, and the Inbox knows what it waits on and when to look at it again. Nothing here is a new table, section, handling state or endpoint; the fields are optional on the item's JSON (`inbox_follow.go`), so old apps ignore them and new apps keep today's drawing when a hub sends none. This section is the contract the lanes of #6611 build on; each behavior lands in its own PR.
