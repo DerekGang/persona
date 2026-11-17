@@ -20,6 +20,9 @@ Every task/default/launcher/model read and task save asserts the matching manage
 request task inheritance. Component regressions cover assistant switches during each discovery stage, null defaults,
 loading and failures, including a transport that delivers an old response after cancellation.
 
+A real model-catalog 404 exercises the nullable older-hub contract: expanding the editor keeps the saved unknown model
+and effort, and selecting a manually entered model ID saves only that model change.
+
 The failed Run now flow holds a successful save response while the title is edited, then refuses the separate run.
 The same open form must display the canonical provider/computer pins, retain the newer title, and save an unrelated
 edit after defaults change without clearing those pins or sending another run. It captures the retained form in

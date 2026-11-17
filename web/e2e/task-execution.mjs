@@ -23,7 +23,7 @@ try {
   let defaultsMoved=false,holdSave=false,releaseSave,sawSave,failRun=false,runRequests=0;
   const viewTask=()=>({...task,execution:{machine_id:task.execution_machine_id||(defaultsMoved?"remote":"box"),launcher:task.launcher||(defaultsMoved?"codex":"assistant"),agent:task.launcher==="codex"?"codex":"claude",model:task.model||"main-model",effort:task.effort||"high"}});
   const writes=[], reads=[];
-  let launcherCatalog="available";
+  let launcherCatalog="available", modelCatalogStatus=200;
   let holdRemoteModels=false, releaseModels, sawHeldModels;
   const heldModelRead=new Promise(resolve=>{sawHeldModels=resolve;});
   await context.route("**/api/v1/**",async(route)=>{
@@ -49,6 +49,9 @@ try {
    }
    else if(path==="/machines/remote/launchers")body={launchers:[{name:"codex",display_name:"Remote agent",agent:"codex"}],default:{provider:"codex"}};
    else if(path.startsWith("/model-config/providers/")) {
+    if(modelCatalogStatus===404){
+     await route.fulfill({status:404,contentType:"application/json",body:JSON.stringify({error:"No model catalog"})});return;
+    }
     if(holdRemoteModels&&url.searchParams.get("machine")==="remote"&&path.includes("launcher.codex/")) {
      await new Promise(resolve=>{
       releaseModels=async()=>{await route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({code:"internal",retryable:false,error:"Current catalog unavailable"})});resolve();};
@@ -232,6 +235,23 @@ try {
   await page.screenshot({path:join(shots,`task-model-failed-${width}-${theme}.png`)});
   await dialog.getByRole("button",{name:"Cancel",exact:true}).click();await closed();
   holdRemoteModels=false;
+  modelCatalogStatus=404;
+  task={...task,title:"Manual model task",session_id:"",launcher:"codex",model:"saved-unknown",effort:"low",execution_machine_id:"box"};
+  await page.goto(`${base}/routines`);
+  await page.getByRole("button",{name:/Manual model task/}).first().click();
+  await page.getByText("Execution options",{exact:true}).click();
+  const manualPicker=modelField.locator("button[aria-expanded]:enabled");
+  await manualPicker.waitFor();
+  assert((await manualPicker.innerText()).includes("saved-unknown"),"404 preserves the saved unknown model");
+  assert.equal(await page.getByRole("combobox",{name:"Reasoning effort",exact:true}).inputValue(),"low");
+  await manualPicker.click();
+  await page.getByRole("textbox",{name:"Search models",exact:true}).fill("manual-model");
+  await dialog.getByRole("option",{name:/manual-model/}).click();
+  const manualCount=writes.length;
+  await dialog.getByRole("button",{name:"Save",exact:true}).click();await closed();
+  assert.equal(writes.length,manualCount+1);assert.equal(writes[manualCount].patch.model,"manual-model");
+  for(const key of ["launcher","effort","execution_machine_id"])assert.equal(key in writes[manualCount].patch,false);
+  modelCatalogStatus=200;
   task={id:"job",title:"Failed run draft",prompt:"Check the files.",repeat:"interval",every_minutes:30,enabled:true,model_revision:0};
   await page.goto(`${base}/routines`);
   await page.getByRole("button",{name:/Failed run draft/}).first().click();
@@ -266,7 +286,7 @@ try {
   for(const key of ["launcher","model","effort","cwd","execution_machine_id","model_revision"])assert.equal(key in writes[count+1].patch,false,`unrelated save must retain ${key}`);
   assert.equal(task.execution_machine_id,"box");assert.equal(task.launcher,"assistant");assert.equal(runRequests,1);
   assert.deepEqual(errors,[]);
-  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure, failed Run now canonical pins with pending title edit and sparse resave without reopening`);
+  console.log(`PASS ${width} ${theme} ${manager}: matching discovery/save scope, select/save/reopen, text scaling, source validation/toggle/clear, missing/failed launcher clear, computer catalog loading/failure, real 404 manual model save, failed Run now canonical pins with pending title edit and sparse resave without reopening`);
   await context.close();
  }
 } finally {await browser.close();clearTimeout(watchdog);}
