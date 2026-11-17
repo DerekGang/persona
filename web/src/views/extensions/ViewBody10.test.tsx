@@ -152,6 +152,18 @@ describe("UI 10: the graph canvas", () => {
     expect(rootFold.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("reads the label in the doc's order — title, badge, subtitle, progress, then the parent — with all of them on one node", () => {
+    // a node with a badge and a subtitle at once: their order in the label is the doc's, not whatever order the
+    // fields happen to be read in (a swapped badge and subtitle must change the string)
+    const both = structuredClone(WORK);
+    const nodes = (both.sections[0].items[0] as { nodes: { id: string; subtitle?: string }[] }).nodes;
+    nodes.find((n) => n.id === "c")!.subtitle = "3 checks";
+    const d = doc(renderToStaticMarkup(<GraphCanvas item={draw(both)} busy="" onPress={() => {}} />));
+    expect(d.querySelector('[data-graph-node="c"]')!.getAttribute("aria-label")).toBe(
+      `Check，Done，3 checks，40%，${t("extensions-viewbody.graph_under", { title: "Smallest" })}`,
+    );
+  });
+
   it("puts each fold control inside its node's own listitem, so Tab walks node, its fold, the next node", async () => {
     const d = doc(renderToStaticMarkup(<GraphCanvas item={draw(WORK)} busy="" onPress={() => {}} />));
     const item = d.querySelector('[data-graph-at="root"]')!;
@@ -164,6 +176,40 @@ describe("UI 10: the graph canvas", () => {
     const list = [...host.querySelectorAll<HTMLElement>("button, [tabindex='0']")];
     const labels = list.map((el) => el.getAttribute("data-graph-node") ?? el.getAttribute("data-graph-fold"));
     expect(labels.filter(Boolean).slice(0, 5)).toEqual(["root", "root", "a", "a", "way1"]); // root's button, root's fold, a's button, a's fold, then way1
+  });
+
+  it("puts the fold control fully outside the node's box, beside it on the side its children leave it", () => {
+    // the contract (docs/extensions/extensions.md "Drawing, on every app"): the fold control sits beside the node,
+    // outside the box — never over the node's own end, where it would cover its badge. A right tree puts it in the
+    // gap to its children on the right; a down tree below it. The control is placed inside the node's own wrapper
+    // (so Tab walks the node then its fold), so its offsets are the wrapper's own frame: beside the box means past
+    // its width (right) or its height (down), inside the pitch's gap, centred on the crossed axis.
+    const d = doc(renderToStaticMarkup(<GraphCanvas item={draw(WORK)} busy="" onPress={() => {}} />));
+    const node = d.querySelector('[data-graph-at="root"]')! as unknown as HTMLElement;
+    const fold = d.querySelector('[data-graph-fold="root"]')! as unknown as HTMLElement;
+    const px = (v: string): number => Number.parseFloat(v); // jsdom gives "224px"; the number is before the unit
+    const w = px(node.style.width); // the wrapper is the node's own box: left, top, width, height
+    const h = px(node.style.height);
+    const fl = px(fold.style.left);
+    const ft = px(fold.style.top);
+    const S = 24; // the control's own size (size-6), scaled only on screen
+    expect(w).toBeGreaterThan(0);
+    expect(fl).toBeGreaterThanOrEqual(w); // fully past the node's right edge: nothing over the node's badge
+    expect(fl).toBeLessThan(w + 48); // inside the gap to its children (pitch − node = 48)
+    expect(ft + S / 2).toBeCloseTo(h / 2, 6); // centred on the node's own middle, beside it
+    // the same downwards: the control sits below the node, centred in the gap below it
+    const down = structuredClone(WORK);
+    (down.sections[0].items[0] as { direction?: string }).direction = "down";
+    const dd = doc(renderToStaticMarkup(<GraphCanvas item={draw(down)} busy="" onPress={() => {}} />));
+    const dnode = dd.querySelector('[data-graph-at="root"]')! as unknown as HTMLElement;
+    const dfold = dd.querySelector('[data-graph-fold="root"]')! as unknown as HTMLElement;
+    const dw = px(dnode.style.width);
+    const dh = px(dnode.style.height);
+    const dfl = px(dfold.style.left);
+    const dft = px(dfold.style.top);
+    expect(dft).toBeGreaterThanOrEqual(dh); // fully below the node: never over its subtitle or progress
+    expect(dft).toBeLessThan(dh + 28); // inside the gap (pitch − node = 28)
+    expect(dfl + S / 2).toBeCloseTo(dw / 2, 6); // centred on the node's own middle, below it
   });
 
   it("presses a node's action and not the fold control beside it", async () => {
@@ -307,6 +353,28 @@ describe("UI 10: the graph canvas", () => {
     spy.mockRestore();
   });
 
+  it("keeps Fit's zoom across a redraw at a stage where Fit and the opening view differ", async () => {
+    // 600 x 400: the fitted scale is 0.471 but the opening view holds it to 50%, so the two differ. A Fit that did
+    // not count as the person's move survives one redraw only while it coincides with the opening view — at this
+    // stage the redraw's re-open would change the zoom, and the assertion sees it.
+    const spy = sizeStage(600, 400);
+    await mountView(WORK);
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const lw = Number.parseFloat(layer.style.width);
+    const lh = Number.parseFloat(layer.style.height);
+    const wantZ = Math.max(0.25, Math.min(1, Math.min((600 - 80) / lw, (400 - 80) / lh)));
+    expect(transformOf(layer)[2]).toBeCloseTo(0.5, 9); // the opening view, held to 50%-100%
+    expect(wantZ).toBeLessThan(0.5); // the stage makes the two differ: the check below can see a lost Fit
+    act(() => host.querySelector<HTMLButtonElement>(`[aria-label="${t("extensions-viewbody.graph_fit")}"]`)!.click());
+    expect(transformOf(layer)[2]).toBeCloseTo(wantZ, 9); // Fit went below the opening view's 50% floor
+    const again = structuredClone(WORK);
+    const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
+    nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
+    await mount(draw(again), { compact: false });
+    expect(transformOf(host.querySelector("[data-graph-layer]"))[2]).toBeCloseTo(wantZ, 9); // the fit is kept
+    spy.mockRestore();
+  });
+
   it("a drag keeps panning across a redraw mid-gesture (a live graph's states change while it runs)", async () => {
     capturePolyfill();
     const spy = sizeStage(300, 200); // small enough that the drawing overflows: a pan is not clamped back to centre
@@ -353,6 +421,34 @@ describe("UI 10: the graph canvas", () => {
     } else {
       expect([rootX, rootY]).toEqual([40, 40]);
     }
+    spy.mockRestore();
+  });
+
+  it("opens centred on the selected node, wherever it is — not on the first root or the drawing's centre", async () => {
+    // a stage the drawing overflows on both axes at the opening scale (300 x 150 at zoom 0.5: 552 x 167.5), so
+    // neither axis is centred by clamping and each candidate centre (selected, first root, drawing) gives a
+    // different transform. The selected node c sits at slots [3, 0]: its own centre must be the stage's centre.
+    const spy = sizeStage(300, 150);
+    await mountView(WORK);
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const lw = Number.parseFloat(layer.style.width);
+    const lh = Number.parseFloat(layer.style.height);
+    const [x, y, zoom] = transformOf(layer);
+    expect(zoom).toBeCloseTo(0.5, 9); // the fitted scale held to 50%-100%
+    expect(lw * zoom).toBeGreaterThan(300); // the drawing overflows both axes: clamping centres neither
+    expect(lh * zoom).toBeGreaterThan(150);
+    const centreOf = (id: string): [number, number] => {
+      const el = host.querySelector(`[data-graph-at="${id}"]`) as HTMLElement;
+      const sx = Number.parseFloat(el.style.left);
+      const sy = Number.parseFloat(el.style.top);
+      return [x + (sx + Number.parseFloat(el.style.width) / 2) * zoom, y + (sy + Number.parseFloat(el.style.height) / 2) * zoom];
+    };
+    const [cx, cy] = centreOf("c");
+    expect(cx).toBeCloseTo(150, 6); // the selected node's centre is the stage's centre…
+    expect(cy).toBeCloseTo(75, 6);
+    const [rootCx] = centreOf("root"); // …not the first root's (half a drawing away) nor the layer's
+    expect(Math.abs(cx - rootCx)).toBeGreaterThan(50);
+    expect(Math.abs(cx - (x + lw * zoom / 2))).toBeGreaterThan(50); // the drawing's own centre
     spy.mockRestore();
   });
 
@@ -483,6 +579,117 @@ describe("UI 10: the graph canvas", () => {
     a.focus(); // Tab reaches it in the reading order above
     act(() => a.click()); // Enter or Space presses a focused button (the browser's own button behavior)
     expect(pressed).toEqual([{ id: "open", values: { id: "a" } }]);
+  });
+
+  it("pans by the arrow keys with the canvas focused, each arrow its own way", async () => {
+    // a stage the drawing overflows (300 x 150 at the opening scale), so a pan is not clamped back and each arrow
+    // leaves a visible, different delta. ArrowRight moves the drawing left (the view travels right): the deltas
+    // carry the directions, so a swapped pair cannot pass.
+    const spy = sizeStage(300, 150);
+    await mountView(WORK);
+    const stage = host.querySelector("[data-graph-stage]")!;
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const before = transformOf(layer);
+    const key = (k: string) => act(() => stage.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
+    key("ArrowRight");
+    const right = transformOf(layer);
+    expect(right[0]).toBeCloseTo(before[0] - 48, 6); // the drawing moves left: the view travels right
+    expect(right[1]).toBeCloseTo(before[1], 6);
+    key("ArrowLeft");
+    expect(transformOf(layer)[0]).toBeCloseTo(before[0], 6); // and back where it was
+    key("ArrowDown");
+    const downv = transformOf(layer);
+    expect(downv[1]).toBeCloseTo(before[1] - 48, 6); // the drawing moves up: the view travels down
+    expect(downv[0]).toBeCloseTo(before[0], 6);
+    key("ArrowUp");
+    expect(transformOf(layer)[1]).toBeCloseTo(before[1], 6);
+    spy.mockRestore();
+  });
+
+  it("zooms with + and fits with 0 while the canvas is focused", async () => {
+    // 600 x 400: the fitted scale (0.471) differs from both the opening view (0.5) and the floor (0.25), so `0`
+    // fitting can be told apart from a zoom-out and from a no-op.
+    const spy = sizeStage(600, 400);
+    await mountView(WORK);
+    const stage = host.querySelector("[data-graph-stage]")!;
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const lw = Number.parseFloat(layer.style.width);
+    const lh = Number.parseFloat(layer.style.height);
+    const wantZ = Math.max(0.25, Math.min(1, Math.min((600 - 80) / lw, (400 - 80) / lh)));
+    const key = (k: string) => act(() => stage.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
+    key("+");
+    const plus = transformOf(layer);
+    expect(plus[2]).toBeCloseTo(0.5 * 1.25, 6); // + zooms in from the opening view
+    key("0");
+    const zero = transformOf(layer);
+    expect(zero[2]).toBeCloseTo(wantZ, 6); // 0 fits: the fitted scale, centred — not the floor, not the opening view
+    expect(zero[0]).toBeCloseTo((600 - lw * wantZ) / 2, 6);
+    key("-");
+    expect(transformOf(layer)[2]).toBeCloseTo(wantZ / 1.25, 6); // - zooms back out from the fit
+    spy.mockRestore();
+  });
+
+  it("pans a focused node into view, without counting as the person's move", async () => {
+    // a wide stage (900 x 500) where the whole drawing fits inside the inset after the opening view: a far node
+    // (b's hidden steps aside, take s2 at the bottom) still sits outside the stage after the opening view centres
+    // on the selected node, and focusing it must pan it into view.
+    const spy = sizeStage(300, 150);
+    await mountView(WORK);
+    const stage = host.querySelector("[data-graph-stage]")!;
+    const layer = host.querySelector("[data-graph-layer]") as HTMLElement;
+    const before = transformOf(layer);
+    // b is folded, so its steps are not there: unfold it first — the person's fold, then the nodes exist again
+    act(() => host.querySelector<HTMLButtonElement>('[data-graph-fold="b"]')!.click());
+    await act(async () => {});
+    // the opening view re-ran on the redraw (the fold changed the layout): read where it is now
+    const folded = transformOf(layer);
+    // s2 sits at slots [2, 3.25] — the deepest column, far off the 300 x 150 stage; focus it
+    const s2 = host.querySelector<HTMLElement>('[data-graph-node="s2"]')!;
+    act(() => s2.focus());
+    const after = transformOf(layer);
+    expect(after).not.toEqual(folded); // focusing a far node pans
+    // the node's box is inside the stage now: its place × zoom plus the translate, with its whole size
+    const el = host.querySelector('[data-graph-at="s2"]') as HTMLElement;
+    const nx = Number.parseFloat(el.style.left);
+    const ny = Number.parseFloat(el.style.top);
+    const nw = Number.parseFloat(el.style.width);
+    const nh = Number.parseFloat(el.style.height);
+    const sx = after[0] + nx * after[2];
+    const sy = after[1] + ny * after[2];
+    expect(sx).toBeGreaterThanOrEqual(12);
+    expect(sy).toBeGreaterThanOrEqual(12);
+    expect(sx + nw * after[2]).toBeLessThanOrEqual(300 - 12);
+    expect(sy + nh * after[2]).toBeLessThanOrEqual(150 - 12);
+    // and the pan is kept for the key but does not mark the person's move: a redraw keeps it (an untouched key
+    // would take the opening view again and drop the focused node out of view)
+    const again = structuredClone(WORK);
+    const nodes = (again.sections[0].items[0] as { nodes: { id: string; badge?: { text: string } }[] }).nodes;
+    nodes.find((n) => n.id === "c")!.badge = { text: "Running" };
+    // the person's unfold (kept in the store) survives too: s2 is still there after the redraw
+    await mount(draw(again), { compact: false });
+    expect(host.querySelector('[data-graph-node="s2"]')).not.toBeNull();
+    const kept = transformOf(host.querySelector("[data-graph-layer]"));
+    expect(kept[2]).toBeCloseTo(after[2], 6); // the zoom the reveal left it at
+    void before;
+    void stage;
+    spy.mockRestore();
+  });
+
+  it("keeps the person's folds in the store across an unmount and remount of the same key", async () => {
+    // the fold set is written to the store on the toggle and read from it at the mount: a remount of the same key
+    // (the person leaves the page and comes back) keeps their choice, where the view's own `folded` alone would
+    // fold b again
+    await mountView(WORK);
+    act(() => host.querySelector<HTMLButtonElement>('[data-graph-fold="b"]')!.click());
+    await act(async () => {});
+    expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length + 2); // b's steps are back
+    act(() => root.unmount());
+    host.remove();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await mount(draw(WORK), { compact: false }); // the same key, a fresh instance: the store's folds, not the view's
+    expect(host.querySelectorAll("[data-graph-node]")).toHaveLength(VISIBLE.length + 2); // still the person's: b open
   });
 
   it("grows only through design tokens: no new pixel font sizes or hex colors in what it draws", () => {

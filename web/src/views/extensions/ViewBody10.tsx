@@ -193,16 +193,19 @@ interface FoldProps {
   id: string;
   w: number;
   h: number;
+  /** The gap between the node and its children on the side they leave it (pitch − node): the control centres in it. */
+  gap: number;
   down: boolean;
   folded: boolean;
   hidden: number;
   onToggle: (id: string) => void;
 }
 
-/** The fold control: its own control inside the node's own wrapper, on the side where the node's children leave it
- *  (right for a right tree, below for a down one), never a press of the node. It counters the layer's zoom, so it
- *  stays 24 px on screen with a 44 px hit at any zoom. */
-const FoldControl = memo(function FoldControl({ id, w, h, down, folded, hidden, onToggle }: FoldProps) {
+/** The fold control: its own control inside the node's own wrapper, fully beside the node on the side where its
+ *  children leave it (right for a right tree, below for a down one) — never over the node, whose badge stays whole —
+ *  and never a press of the node. It counters the layer's zoom, so it stays 24 px on screen with a 44 px hit at any
+ *  zoom. */
+const FoldControl = memo(function FoldControl({ id, w, h, gap, down, folded, hidden, onToggle }: FoldProps) {
   const label = folded ? t("extensions-viewbody.graph_show_hidden", { count: hidden }) : t("extensions-viewbody.graph_fold");
   return (
     <button
@@ -219,7 +222,7 @@ const FoldControl = memo(function FoldControl({ id, w, h, down, folded, hidden, 
       style={{
         transform: "scale(var(--graph-fold-scale, 1))",
         transformOrigin: "center",
-        ...(down ? { left: w / 2 - 12, top: h - 13 } : { left: w - 13, top: h / 2 - 12 }),
+        ...(down ? { left: w / 2 - 12, top: h + gap / 2 - 12 } : { left: w + gap / 2 - 12, top: h / 2 - 12 }),
       }}
     >
       {folded ? (
@@ -584,7 +587,7 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress }: {
             onPress={onPress}
             onReveal={reveal}
             fade={fadesIn(memRef.current, id, drawSig(n, parentTitle[id]))}
-            fold={needsFold ? <FoldControl id={id} w={nodeW} h={nodeH} down={down} folded={folded} hidden={hidden} onToggle={toggle} /> : undefined}
+            fold={needsFold ? <FoldControl id={id} w={nodeW} h={nodeH} gap={down ? pitchY - nodeH : pitchX - nodeW} down={down} folded={folded} hidden={hidden} onToggle={toggle} /> : undefined}
           />
         );
       })}
