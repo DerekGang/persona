@@ -248,7 +248,10 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 	if p.Space != "" && p.Space != SpaceHealth {
 		return proto.Session{}, badRequest(fmt.Errorf("space %q: health or none", p.Space))
 	}
-	if p.PermissionMode == "" && p.GuestTools == nil {
+	if p.Origin == OriginInbox {
+		// The handling chat investigates and suggests; it never needs the assistant's bypass mode.
+		p.PermissionMode = proto.ModePlan
+	} else if p.PermissionMode == "" && p.GuestTools == nil {
 		p.PermissionMode = s.settings(ctx).DefaultPermissionMode
 		if p.PermissionMode == "" {
 			p.PermissionMode = proto.ModeBypass
@@ -274,6 +277,9 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 		"effort": p.Effort, "is_main": main}
 	if p.TaskExecution {
 		params["task_execution"] = true
+	}
+	if p.Origin != "" {
+		params["origin"] = p.Origin // the node enforces the origin from the process's first tool call, before start answers
 	}
 	if p.Model != "" {
 		params["model"] = p.Model // picked with the first message, as with a message (sendModel): a typed id too
@@ -1083,6 +1089,12 @@ func (s *Service) sendParamsOwn(ctx context.Context, p SendParams) (map[string]a
 		params = map[string]any{}
 	}
 	delete(params, "runtime") // every assistant conversation runs on Claude Code's CLI (finishModel)
+	delete(params, "origin")  // only the manager's origin book may attest an Inbox conversation
+	if s.isInboxModelCall(ctx, p.MachineID, p.SessionID, "") {
+		// A node reload does not restore the node's in-memory origin field. Re-attest it on every later send so the
+		// first resumed process is clamped to Plan and its Lark gate cannot fall back to an ordinary conversation.
+		params["origin"] = OriginInbox
+	}
 	text, _ := params["text"].(string)
 	own := !contextTagRe.MatchString(text)
 	params["is_main"] = false

@@ -137,6 +137,9 @@ Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUD
   `vi.resetModules()` changes the registry. For a paged conversation, wait for its observed message request, not a fixed
   number of microtasks. Preserve the assertions and deadlines; compare the same fixed main and candidate under the
   same ordering, and distinguish naturally reproduced failures from deliberately delayed imports or responses.
+  After merging a newer main, rerun the normal production build under the branch's committed byte limit.
+  An upstream budget increase does not prove that stricter limit. Keep a deferred confirmation and its failure
+  rendering in the same existing chunk; regress cancellation, retry and failed chunk loading before measuring again.
 
 - A concurrency test that passes with `-race` can still fail without it (2026-11-06, #5908). `-race` slows the instrumented code, so the goroutines meet in a different order. `TestInstallClaimsOperation` passed 20 of 20 runs with `-race` and failed 13 to 29 of 40 without it. Without `-race` its second install usually ran only after the first had committed and used up the preview, and got a 403 from the market check that the PR's own `-race` runs never reached. Run a new concurrency test with `-count`, both with and without `-race`. For the interleaving that matters, set up the state directly instead of hoping two goroutines meet there (here: claim the operation, drop the preview, then install again).
 

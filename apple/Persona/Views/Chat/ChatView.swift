@@ -189,6 +189,8 @@ struct ChatView: View {
     @Environment(\.shell) private var shell
     /// iPhone Duo's bars down the side: the shell's bar over the Persona conversation is the side rail (`ShellSideRail`).
     @Environment(\.shellRailEdge) private var railEdge
+    /// iPhone Duo's side column under the tab bar: how much of it this chat's buttons have (`sideButtons`, #9837).
+    @Environment(\.sideColumn) private var sideColumn
     /// The page draws this chat's lifted message (`MessageLiftHost`).
     @Environment(\.messageLiftHost) private var liftHost
     /// The shell's composer (`ShellComposerBar`): the assistant's conversation and, in the shell, an agent's too, in every
@@ -207,6 +209,8 @@ struct ChatView: View {
     @State private var chrome = ChatChrome()
     /// The page's height, read by the pending cards only (#926).
     @State private var footerRoom = FooterRoom()
+    /// Where each pending card's message is in the chat, for its View in Chat (#9392).
+    @State private var cardSources = CardSources()
     @Environment(\.openSpace) private var openSpace
     @State private var link: LinkTarget?
     /// ⋯ › Preview's list of the session's dev servers, and the one picked there, opened once the list is gone (#150).
@@ -2520,14 +2524,36 @@ struct ChatView: View {
         if ref.isForward { return openForwarded(ref) }
         if openContextLink(ref) { return true }
         guard ref.kind == "quote", !ref.msg.isEmpty else { return false }
+        return jumpToMessage(ref.msg, hold: hold)
+    }
+
+    /// Finds the pending cards' messages in the loaded chat (`CardSource`) and how View in Chat goes to one (#9392).
+    private func findCardSources() {
+        let items = store.items
+        var found: [String: String] = [:]
+        for card in pendingCards { found[card.id] = CardSource.item(for: card.interaction, in: items) }
+        if cardSources.items != found { cardSources.items = found }
+        // After the card has folded (`InteractionPanel`): the list's new height first, then the jump, which lands where
+        // the list measured it.
+        cardSources.open = { id in
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                _ = jumpToMessage(id)
+            }
+        }
+    }
+
+    /// Brings message `msg` (an item's id) of the loaded chat to the middle of the list and lights it up for `hold`, opening
+    /// the work line it is folded in; the list stops following the newest. False when it is not in the loaded chat.
+    private func jumpToMessage(_ msg: String, hold: Duration = Theme.Quote.flashHold) -> Bool {
         var target: String?
         for line in currentLines() {
             switch line.content {
             case .row, .recaps, .answerPart:
-                if line.holds(ref.msg) { target = line.id }
+                if line.holds(msg) { target = line.id }
             case .work(let wid, let items, let live, _, _):
                 // The agent's words before its last ones are in the work line: open it, go to that step.
-                if let item = items.first(where: { if case .text(let i) = $0 { i.id == ref.msg } else { false } }) {
+                if let item = items.first(where: { if case .text(let i) = $0 { i.id == msg } else { false } }) {
                     if !isOpen(wid, live: live) {
                         var t = Transaction()
                         t.disablesAnimations = true
@@ -2536,7 +2562,7 @@ struct ChatView: View {
                     target = wid + "/" + item.id
                 }
             case .workStep(let group, let item, _):
-                if case .text(let i) = item, i.id == ref.msg { target = group + "/" + item.id }
+                if case .text(let i) = item, i.id == msg { target = group + "/" + item.id }
             default: break
             }
             if target != nil { break }
@@ -2741,7 +2767,7 @@ struct ChatView: View {
     @ViewBuilder private var taskFooter: some View {
         let conversation = key.sessionID
         let tasks = TasksStore.shared
-        TaskQuestions(conversation: conversation)
+        TaskQuestions(conversation: conversation, room: footerRoom)
         DraftReader(key: key) { typed in
             if let range = TaskMentionList.mention(in: typed) {
                 TaskMentionList(conversation: conversation) { todo in
@@ -2838,6 +2864,10 @@ struct ChatView: View {
                 }
                 if !pendingCards.isEmpty {
                     PendingCards(cards: pendingCards, room: footerRoom)
+                        .environment(\.cardSources, cardSources)
+                        .task(id: CardSourceInputs(cards: pendingCards.map(\.id), count: store.items.count, last: store.items.last?.id)) {
+                            findCardSources()
+                        }
                 }
                 // The latest question the assistant answered here (#544), until put away; Session Info lists them all.
                 if let answered = model.delegated(for: key).last {
@@ -4148,19 +4178,31 @@ struct ChatView: View {
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            if pane != .chat {
-                Button { withAnimation(Theme.Motion.standard) { pane = .chat } } label: { Label("Chat", systemImage: SessionPane.chat.symbol) }
-            }
-            if session?.canTerminal == true {
-                Button { Haptics.tap(); openTerminal() } label: { Label("Terminal", systemImage: SessionPane.terminal.symbol).lineLimit(1) }
-            }
-            ForEach(panes.filter { ($0 == .git || $0 == .files) && $0 != pane }) { p in
-                Button { Haptics.tap(); withAnimation(Theme.Motion.standard) { pane = p } } label: {
-                    Label(paneBadges[p].map { String(localized: "\(p.title) (\($0))") } ?? p.title, systemImage: p.symbol)
+            ForEach(sideButtons) { p in
+                switch p {
+                case .chat:
+                    Button { withAnimation(Theme.Motion.standard) { pane = .chat } } label: { Label("Chat", systemImage: SessionPane.chat.symbol) }
+                case .terminal:
+                    Button { Haptics.tap(); openTerminal() } label: { Label("Terminal", systemImage: SessionPane.terminal.symbol).lineLimit(1) }
+                default:
+                    Button { Haptics.tap(); withAnimation(Theme.Motion.standard) { pane = p } } label: {
+                        Label(paneBadges[p].map { String(localized: "\(p.title) (\($0))") } ?? p.title, systemImage: p.symbol)
+                    }
                 }
             }
             Menu { moreMenuItems } label: { Label("More", systemImage: Theme.Icon.more) }
         }
+    }
+
+    /// The side column's buttons between Back and ⋯, in order (back to the chat from a pane, the terminal, Git, Files),
+    /// as many of them as stand clear of the Duo's tab bar under them (#9837, `TabSwitchLayout.pageButtons`): the leading
+    /// ones; ⋯ has every one of them (`moreMenuItems`), so what has no room is still a tap away there.
+    private var sideButtons: [SessionPane] {
+        var all: [SessionPane] = pane != .chat ? [.chat] : []
+        if session?.canTerminal == true { all.append(.terminal) }
+        all += panes.filter { ($0 == .git || $0 == .files) && $0 != pane }
+        let back = !hidesBack && !systemShowsList
+        return Array(all.prefix(TabSwitchLayout.pageButtons(all.count, back: back, room: sideColumn?.room)))
     }
 
     /// The header's other half while its buttons are in the side column: the title (a tap shows the session's info),
@@ -5588,6 +5630,21 @@ struct Composer: View, Equatable {
         voiceNote = VoiceEntry.start(key, model: model)
     }
 
+    /// Call Persona in the 「+」 panel (#9290): Persona's main conversation only, on the iPhone and iPad (the system's calls);
+    /// Voice Chat beside it stays the chat's own voice. Why a call could not be placed shows over the app
+    /// (`PersonaCalls.refusal`, `personaCallCover`).
+    private var callPersonaEntry: (() -> Void)? {
+        #if os(iOS)
+        guard isMainAssistantChat, VoicePlatform.current == .phone else { return nil }
+        return {
+            focused = false
+            Task { [group = key.group] in await PersonaCalls.shared.callPersona(group: group, origin: .app) }
+        }
+        #else
+        return nil
+        #endif
+    }
+
     /// Voice Chat in the 「+」 menu (iOS and visionOS: the Mac has no call audio yet, docs/assistant/voice.md 6.9).
     @ViewBuilder private var voiceMenuItem: some View {
         if VoicePlatform.current == .phone {
@@ -6319,6 +6376,7 @@ struct Composer: View, Equatable {
     /// then extension prompts. Rows a chat or device can never use are left out; /clear while the Agent works is dimmed.
     private var attachMoreSections: [AttachMoreSection] {
         var sections = AttachMoreSection.common(voice: VoicePlatform.current == .phone ? { startVoice() } : nil,
+                                                call: callPersonaEntry,
                                                 camera: CameraPicker.isAvailable ? { showCamera = true } : nil,
                                                 scan: DocumentScanner.isAvailable ? { showScan = true } : nil,
                                                 glasses: MetaGlasses.isBuiltIn ? { showGlasses = true } : nil,
