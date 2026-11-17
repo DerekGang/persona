@@ -71,9 +71,10 @@ type superviseSignal struct {
 	Detail, Ask      string
 	Minutes          int
 	// A report's (sigReport): its kind (progress, question, blocked, done), evidence and the step it is on.
-	Report      string
-	Evidence    []string
-	Step, Steps int
+	SourcePermission proto.SourcePermission
+	Report           string
+	Evidence         []string
+	Step, Steps      int
 	// Orphan: why nobody works on it (sigOrphaned): orphanError, orphanClosed or orphanOffline.
 	Orphan string
 	// To is the conversation it goes to when that is not digestTo's to say: a card's rung (sigAsk), the main
