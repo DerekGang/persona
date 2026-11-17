@@ -37,7 +37,7 @@ export function DisconnectConfirm({ open, busy, onCancel, onConfirm, problem, on
         onClose={onProblemClose}
         title={nothing ? t("disconnect.nothing_title") : t("disconnect.failed_title")}
         footer={
-          <>
+          <div className="flex flex-wrap justify-end gap-2">
             <Button tone="quiet" onClick={onProblemClose} disabled={busy}>
               {t("common.cancel")}
             </Button>
@@ -47,7 +47,7 @@ export function DisconnectConfirm({ open, busy, onCancel, onConfirm, problem, on
             {!nothing && <Button tone="primary" onClick={onConfirm} busy={busy}>
               {t("disconnect.retry")}
             </Button>}
-          </>
+          </div>
         }
       >
         <p className="text-[13px] leading-relaxed text-ink-2">{nothing ? t("disconnect.nothing_body") : t("disconnect.failed_body")}</p>
