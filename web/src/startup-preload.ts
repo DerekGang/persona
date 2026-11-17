@@ -391,14 +391,14 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // (main 6fc9e85a00~1: ja 482,373 B; 6fc9e85a00: ja 482,643 B, en 479,549 B, zh-Hans 480,379 B), 117 B over the budget,
 // so main stopped building. The budget is main's ja size plus 40 B; taking those bytes back off the first screen is
 // separate work.
-// #9745: Overview's extension cards drawn as the user arranged them add 567 B in ja, measured in one environment
-// against main e4ea9d95f (ja 482,643 B to 483,210 B; en 479,549 B to 480,095 B, zh-Hans 480,379 B to 480,913 B): the
+// #9745: Overview's extension cards drawn as the user arranged them add 583 B in ja, measured in one environment
+// against main e4ea9d95f (ja 482,643 B to 483,226 B; en 479,549 B to 480,111 B, zh-Hans 480,379 B to 480,929 B): the
 // arrangement's store, kept per hub and sign-in, and the order, hidden cards and widths it draws
 // (lib/overview-cards.ts), Arrange cards in Overview's top bar, and the arrangement to and from the hub with the start
 // page, pushes heard during a change settled after it (lib/start-page.ts). The editor (its heading, each card's
 // controls, the drag and the edits) is a chunk of its own (views/extensions/OverviewArrange.tsx, lib/overview-edit.ts).
 // Main's 40 B of room is kept.
-export const FIRST_SCREEN_BUDGET = 483_250;
+export const FIRST_SCREEN_BUDGET = 483_266;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;

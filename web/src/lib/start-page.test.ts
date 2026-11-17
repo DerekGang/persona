@@ -535,6 +535,33 @@ describe("Overview's cards (#9745)", () => {
       expect(cards.getOverviewPrefs()).toEqual(arrangement);
     });
 
+    it("one pushed after our last with the value of an earlier change of ours is taken (review of #9778, P2)", async () => {
+      const { hello } = await load();
+      hub = { overview: [] };
+      await hello();
+      const cards = await import("./overview-cards");
+      const releases: (() => void)[] = [];
+      const hold = () =>
+        vi.mocked(fetch).mockImplementationOnce(async (_input, init) => {
+          hub = { overview: JSON.parse(String((init as RequestInit).body)).overview };
+          const answerNow = { ...(hub as object) };
+          await new Promise<void>((r) => releases.push(r));
+          return Response.json(answerNow);
+        });
+      hold();
+      hold();
+      cards.saveOverview(arrangement);
+      await flush();
+      cards.saveOverview(newer);
+      await flush();
+      Socket.last.push({ type: "navigation", overview: arrangement }); // our first change, as the hub pushes it
+      Socket.last.push({ type: "navigation", overview: newer }); // our second
+      Socket.last.push({ type: "navigation", overview: arrangement }); // the phone puts the first back, after ours
+      releases.forEach((r) => r());
+      await flush();
+      expect(cards.getOverviewPrefs()).toEqual(arrangement);
+    });
+
     it("a push of other fields meanwhile is taken field by field", async () => {
       const { cards, release } = await inFlight();
       Socket.last.push({ type: "navigation", start: "inbox", pages: { order: ["kb"], shown: [], hidden: [] } });

@@ -178,15 +178,21 @@ onOverviewSaved((p) => sendOverview(p));
 
 /** Once the last change on its way is answered: the hub pushes every change, these too, in its order, so an arrangement
  *  pushed after the last of ours is newer than ours and is taken; with none, this browser's copy (the newest change)
- *  stays, as does a change the hub did not take, which goes again at the next hello. */
+ *  stays, as does a change the hub did not take, which goes again at the next hello. Our answers are found among the
+ *  pushes in the order they were made, each after the one before, so a later push with the value of an earlier change
+ *  of ours (another device putting the cards back as they were) is not taken for ours. */
 function settleOverview() {
   const heard = heardOverview;
   const ours = answeredOverview;
   heardOverview = [];
   answeredOverview = [];
   let last = -1;
+  let next = 0;
   heard.forEach((p, i) => {
-    if (ours.includes(JSON.stringify(p))) last = i;
+    if (next < ours.length && JSON.stringify(p) === ours[next]) {
+      next++;
+      last = i;
+    }
   });
   if (!unsentOverview && last >= 0 && last < heard.length - 1) adoptOverview(heard[heard.length - 1]);
 }
