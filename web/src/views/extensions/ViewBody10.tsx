@@ -10,6 +10,7 @@ import { t } from "../../i18n";
 import { layOutGraph } from "../../lib/graph-layout";
 import { toneOf, type UIAction, type UIItem, type UIGraphNode } from "../../lib/extension-ui";
 import { hue } from "../../lib/extension-ui-v6";
+import { useExtensionOwner } from "../../lib/extension-owner";
 import { useCloseOnBack } from "../../lib/back-close";
 import { cx, EASE, IconButton } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
@@ -50,12 +51,20 @@ interface CanvasView { x: number; y: number; zoom: number }
 interface GraphStore { view: CanvasView; moved: boolean; folds: Set<string> | null }
 
 /** Every canvas's persistence, by its owner and its `key`: one entry per owner, so two extensions using the same key
- *  never share what it keeps. */
+ *  never share what it keeps. Capped (an entry a canvas still reads is touched back to the end, so a long session
+ *  evicts the keys nobody has drawn for a long time, not the one on screen). */
 const STORES = new Map<string, GraphStore>();
+const STORE_CAP = 128;
 const storeFor = (scope: string, key: string): GraphStore => {
   const id = `${scope}\u0000${key}`;
   let s = STORES.get(id);
-  if (!s) STORES.set(id, (s = { view: { x: 0, y: 0, zoom: 1 }, moved: false, folds: null }));
+  if (s) {
+    STORES.delete(id); // touched: the oldest entries evict first
+    STORES.set(id, s);
+    return s;
+  }
+  if (STORES.size >= STORE_CAP) STORES.delete(STORES.keys().next().value!);
+  STORES.set(id, (s = { view: { x: 0, y: 0, zoom: 1 }, moved: false, folds: null }));
   return s;
 };
 /** Forgets what every key kept (a test's clean slate; the page never calls it). */
@@ -79,15 +88,12 @@ function textScaleNow(): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-// What one node drew the last time this layer drew it (its fields as they read): a node that is new, or whose fields
-// changed since, fades in; one that only moved place does not. The memory lives on the layer element itself, so a
-// canvas keeps its own and unmounting takes it with it.
-const drawMemory = new WeakMap<HTMLDivElement, Map<string, string>>();
+// What one node drew the last time this canvas drew it (its fields as they read): a node that is new, or whose fields
+// changed since, fades in; one that only moved place does not. The memory is one map per canvas instance, so it
+// survives the layer being swapped (opening Full screen replaces the layer element) and dies with the canvas itself.
 const drawSig = (n: UIGraphNode, parentTitle: string | undefined): string =>
   JSON.stringify([n.title, n.badge?.text ?? "", n.subtitle ?? "", n.progress ?? null, n.tone ?? "", n.color ?? "", n.icon ?? "", n.group ?? "", n.action?.id ?? "", parentTitle ?? ""]);
-const fadesIn = (pane: HTMLDivElement, id: string, sig: string): boolean => {
-  let mem = drawMemory.get(pane);
-  if (!mem) drawMemory.set(pane, (mem = new Map()));
+const fadesIn = (mem: Map<string, string>, id: string, sig: string): boolean => {
   const was = mem.get(id);
   mem.set(id, sig);
   return was === undefined || was !== sig;
@@ -114,7 +120,8 @@ interface NodeProps {
  *  the icon at the start, the title one line with the badge at its end, the subtitle under, progress along the foot.
  *  Module-level and memoized, so a redraw re-renders a node in place instead of remounting all of them (keyboard
  *  focus included). A node without an action is a focusable group, so Tab reaches it too and a screen reader reads
- *  its whole label. */
+ *  its whole label. The node being pressed stays enabled (as the row's own button, ViewBody's ItemButton): disabling
+ *  it would blur it mid-action and the browser would drop the keyboard focus to the page. */
 const GraphNode = memo(function GraphNode({ node: n, parentTitle, id, x, y, w, h, still, busy, pressable, onPress, onReveal, fade, fold }: NodeProps) {
   const color = nodeColor(n);
   const glyph = glyphOf(n.icon, ROW_ICON);
@@ -154,7 +161,7 @@ const GraphNode = memo(function GraphNode({ node: n, parentTitle, id, x, y, w, h
         <button
           type="button"
           {...common}
-          disabled={!!busy || !pressable}
+          disabled={(!!busy && busy !== act.id) || !pressable}
           onFocus={() => onReveal(id)}
           onClick={() => onPress(act)}
           className={cx(
@@ -229,18 +236,18 @@ const FoldControl = memo(function FoldControl({ id, w, h, down, folded, hidden, 
  * `graph-canvas`) and the page scrolls around it; `compact` (a card, an overview or an assistant view) draws the
  * still fitted preview (`graph-preview`, 200 px) — a preview is not interactive: pressing it opens the Full screen
  * overlay, which draws the same canvas over the window with its position, zoom and folds, buttons, gestures and node
- * presses. `scope` says whose view it is; without it the page's own path is the owner, so two extensions' graphs
- * never share what a key keeps.
+ * presses. Whose view it is comes from lib/extension-owner.tsx's context (the extension, else the page's own path), so
+ * two owners' graphs never share what a key keeps — a context value stays right on a lone re-render, where a module
+ * global set by the last render went stale.
  */
-export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
+export function GraphCanvas({ item, compact, busy, onPress, canPress }: {
   item: UIItem;
   compact?: boolean;
   busy: string;
   onPress: (a: UIAction, destructive?: boolean) => void;
   canPress?: (a: UIAction) => boolean;
-  scope?: string;
 }) {
-  const scoped = scope ?? (typeof location !== "undefined" ? location.pathname : "");
+  const scoped = useExtensionOwner();
   const keyed = typeof item.key === "string" ? item.key : null;
   // A keyless graph keeps its state in this instance alone; a keyed one shares it per owner and key. A still
   // (compact) canvas never reads or writes the shared entry: whatever the person does to a card, the page's own
@@ -258,9 +265,30 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
   const stage = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
+  // The control that opened Full screen: the page's Full screen button, or the compact preview button. Both are
+  // replaced while the overlay is over them (the page's canvas is unmounted inside the portal, the preview button
+  // becomes a placeholder), so useModalFocus's own returnFocus finds the opener gone and leaves the focus on body; a
+  // layout effect after the close gives it back to the control that reopens the overlay.
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const wasFull = useRef(false);
+  if (full) wasFull.current = true;
+  useLayoutEffect(() => {
+    if (full) return;
+    if (!wasFull.current) return;
+    wasFull.current = false;
+    // a close that moved the focus on purpose keeps it (returnFocus's rule): only a lost focus comes back
+    if ((!document.activeElement || document.activeElement === document.body) && opener.current?.isConnected) opener.current.focus({ preventScroll: true });
+  }, [full]);
   const view = useRef<CanvasView>({ x: 0, y: 0, zoom: 1 });
   // The person has moved this key's canvas (kept in the store, so a redraw does not mistake it for untouched).
   const moved = useRef(false);
+  // The pointers of a drag or pinch in flight: outside the layout effect, which tears down and re-runs on every
+  // redraw, so a gesture survives a redraw (states changing while the work runs) instead of losing its points.
+  const pointsRef = useRef(new Map<number, { x: number; y: number }>());
+  // What each node drew on the last committed render: a layer swap (opening Full screen) used to restart it from
+  // empty, so every node faded again on the first redraw inside Full screen; a per-instance map keeps the canvas's
+  // own memory across the swap.
+  const memRef = useRef(new Map<string, string>());
   const controls = useRef<{ zoom: (factor: number) => void; fit: () => void } | null>(null);
   useModalFocus(dialog, full);
   useEscapeClose(full, () => setFull(false));
@@ -373,10 +401,13 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
     };
 
     // Fit shows everything: the page and Full screen down to 25%, a still preview with no floor above 1%, centred.
+    // It counts as the person moving the canvas: without it, the next redraw's settled() would see the key untouched
+    // and take the opening view again, throwing the person's fit away — on a live graph, one poll later.
     const fit = (floor = MIN_ZOOM) => {
       const { w, h } = size();
       if (!w || !h) return;
       const zoom = clamp(Math.min((w - 2 * INSET) / lw, (h - 2 * INSET) / lh), floor, 1);
+      if (!still) moved.current = true;
       apply({ x: (w - lw * zoom) / 2, y: (h - lh * zoom) / 2, zoom });
     };
 
@@ -405,8 +436,10 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
 
     // Drag pans; two pointers pinch around their centre (the point between them stays put). A press that starts on a
     // node (or any control) stays that control's press — the drag takes over only once the pointer moves 4 px, and
-    // dragging never presses the node under it.
-    const points = new Map<number, { x: number; y: number }>();
+    // dragging never presses the node under it. The pointers live in a ref, not the effect: the effect re-runs on every
+    // redraw (a new `laid`), and a map reborn empty would silently kill a drag or pinch that a live graph's state
+    // change interrupted mid-gesture — exactly the case this canvas exists for.
+    const points = pointsRef.current;
     const gesture = (ps: Map<number, { x: number; y: number }>) => {
       const [a, b] = ps.values();
       if (!a) return undefined;
@@ -485,7 +518,9 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- readStore closes over keyed/scoped only through the store's own id
   }, [laid, still, full, storeKey, keyed, at, sel, nodeW, nodeH, lw, lh]);
 
-  // A node the keyboard focuses is panned into view (it does not count as the person moving the canvas).
+  // A node the keyboard focuses is panned into view. It does not count as the person moving the canvas (an untouched
+  // key still re-fits), but the shift itself is kept: without it, the next redraw of an untouched key would take the
+  // opening view again and undo the scroll-into-view, dropping the focused node out of the visible area.
   const reveal = useCallback((id: string) => {
     const area = stage.current;
     const pane = layer.current;
@@ -506,8 +541,13 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
       view.current = next;
       pane.style.transform = `translate(${next.x}px, ${next.y}px) scale(${next.zoom})`;
       pane.style.setProperty("--graph-fold-scale", String(Math.max(1, 1 / next.zoom)));
+      if (!still) {
+        const s = readStore();
+        s.view = next; // kept without marking the person's move: an untouched key still re-fits on a resize
+      }
     }
-  }, [at, nodeW, nodeH]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- readStore closes over keyed/scoped only through the store's own id
+  }, [at, nodeW, nodeH, still, keyed, scoped]);
 
   const toggle = useCallback((id: string) => {
     const next = new Set(folds);
@@ -543,7 +583,7 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
             pressable={pressable}
             onPress={onPress}
             onReveal={reveal}
-            fade={layer.current ? fadesIn(layer.current, id, drawSig(n, parentTitle[id])) : true}
+            fade={fadesIn(memRef.current, id, drawSig(n, parentTitle[id]))}
             fold={needsFold ? <FoldControl id={id} w={nodeW} h={nodeH} down={down} folded={folded} hidden={hidden} onToggle={toggle} /> : undefined}
           />
         );
@@ -613,7 +653,7 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
       <IconButton icon="minus" label={t("extensions-viewbody.graph_zoom_out")} size={32} onClick={() => controls.current?.zoom(1 / STEP)} />
       <IconButton icon="plus" label={t("extensions-viewbody.graph_zoom_in")} size={32} onClick={() => controls.current?.zoom(STEP)} />
       <IconButton icon="fit" label={t("extensions-viewbody.graph_fit")} size={32} onClick={() => controls.current?.fit()} />
-      {!full && <IconButton icon="expand" label={t("extensions-viewbody.graph_full_screen")} size={32} onClick={() => setFull(true)} />}
+      {!full && <IconButton icon="expand" label={t("extensions-viewbody.graph_full_screen")} size={32} buttonRef={opener} onClick={() => setFull(true)} />}
     </div>
   );
 
@@ -652,6 +692,7 @@ export function GraphCanvas({ item, compact, busy, onPress, canPress, scope }: {
       <div className="px-4 py-3">
         <button
           type="button"
+          ref={opener}
           aria-label={t("extensions-viewbody.graph_full_screen")}
           title={t("extensions-viewbody.graph_full_screen")}
           onClick={() => setFull(true)}

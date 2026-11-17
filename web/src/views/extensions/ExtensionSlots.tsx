@@ -12,7 +12,7 @@ import { cx, EASE, IconButton, Loading } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { lazyPage } from "../../lib/lazy-page";
 import { NEW_ICON_GLYPH } from "./icon-map";
-import { setExtensionOwner } from "../../lib/extension-owner";
+import { ExtensionOwnerScope } from "../../lib/extension-owner";
 
 // The extension page is its own chunk (#1794): App.tsx reaches this file for the sidebar's and the nav page's icons and
 // titles, and the first screen draws no extension UI. A page, a card and a section each wait under their own Suspense
@@ -20,11 +20,11 @@ import { setExtensionOwner } from "../../lib/extension-owner";
 const ExtensionUI = lazyPage(() => import("../settings/ExtensionView").then((m) => m.ExtensionUI));
 
 // Whose extension is being drawn (ExtensionView knows it, the items it draws do not): the graph's per-key store is
-// scoped by it (views/extensions/ViewBody.tsx), so two extensions using the same key never share what it keeps.
-const OwnerScope = ({ extension, children }: { extension: string; children: React.ReactNode }) => {
-  useMemo(() => setExtensionOwner(() => extension), [extension]);
-  return <>{children}</>;
-};
+// scoped by it through a context (lib/extension-owner.tsx), so two extensions using the same key never share what it
+// keeps — a context, not a module global set in a render, stays right on a lone re-render of the graph under it.
+const OwnerScope = ({ extension, children }: { extension: string; children: React.ReactNode }) => (
+  <ExtensionOwnerScope owner={extension}>{children}</ExtensionOwnerScope>
+);
 
 /** A nav_page's icon from the fixed vocabulary, as one of the web's icons (unknown: the extension's). */
 const NAV_ICON: Record<UIIcon, IconName> = { extension: "extension", plugin: "extension", chart: "chart", gauge: "gauge", list: "list", bell: "bell", doc: "read", calendar: "calendar", money: "money",
