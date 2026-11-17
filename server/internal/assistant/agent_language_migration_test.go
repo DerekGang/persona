@@ -278,7 +278,8 @@ func TestGoldenAgentLanguageLegacyAll(t *testing.T) {
 			"closeout_ask": renderCloseoutAsk(""), "closeout_required": renderCloseoutRequired(""),
 		}
 		for name, text := range values {
-			golden(t, "agent_language.legacy."+name+"."+suffix, text)
+			// Framing preserves exact final newlines without trailing blank lines in fixture files.
+			golden(t, "agent_language.legacy."+name+"."+suffix, "<rendered-prompt>\n"+text+"\n</rendered-prompt>")
 		}
 	}
 }

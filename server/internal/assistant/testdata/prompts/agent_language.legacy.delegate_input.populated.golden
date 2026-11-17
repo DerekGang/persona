@@ -1,3 +1,4 @@
+<rendered-prompt>
 现在：TIME
 Agent：Agent 原文（box，目录 /code/example）
 项目：Project 原文
@@ -15,3 +16,5 @@ Reply 原文
 它在问：
 - Question 原文（可多选）
   - Label 原文：Description 原文
+
+</rendered-prompt>
