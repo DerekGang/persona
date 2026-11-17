@@ -11,7 +11,7 @@ import { api, ApiError } from "./api";
 import { stripBase } from "./base";
 import { hasSlots } from "./extension-slots";
 import { NAV_PAGES } from "./persona-nav";
-import { adoptOverview, getOverviewPrefs, noteOverviewKept, onOverviewSaved, overviewChosen, overviewKept, type OverviewEntry } from "./overview-cards";
+import { adoptOverview, getOverviewPrefs, noteOverviewKept, onOverviewSaved, overviewChosen, overviewKept } from "./overview-cards";
 import { adoptSidebarPrefs, chosen, getSidebarPrefs, onSidebarPrefsSaved } from "./sidebar-pages";
 import { isResumed } from "./reconnect";
 import { navigate, type Route } from "./router";
@@ -145,17 +145,23 @@ onSidebarPrefsSaved((pages) => {
 // Overview's cards (lib/overview-cards.ts) go the same way, sent on their own. A default manager from before the field
 // answers a change of only them with its own 400 (OLD_MANAGER), or takes the PUT and leaves them out of its answer: the
 // arrangement then stays in this browser (Overview's editor says so) until the next hello asks again. Any other failure
-// (403, 5xx, the network, another 400) keeps the change and sends it again at the next hello. Pushes heard while a change
-// is on its way are settled once the last one is answered (settleOverview), not dropped.
+// (403, 5xx, the network, another 400) keeps the change and sends it again at the next hello. One change is on its way at a
+// time: one made meanwhile goes once that one is answered, the newest as this browser has it then, so the hub takes them in
+// the order they were made and the last answer says whether the newest reached it. Pushes heard meanwhile are settled once
+// the last one is answered (settleOverview), not dropped.
 const OLD_MANAGER = ["start is required", "start or pages is required"]; // #9328, #9351
-let sendingOverview = 0;
+let sendingOverview = false;
+let againOverview = false; // a change made while one was on its way
 let unsentOverview = false;
+let editsOverview = 0; // bumped by each change made here and each one sent: a hello's read that one overtook is not taken
 let heardOverview: unknown[] = []; // the arrangements the hub pushed meanwhile, in its order
-let answeredOverview: string[] = []; // its answers to the changes on their way
-function sendOverview(overview: OverviewEntry[], probe = false) {
+let answeredOverview: string[] = []; // its answers to our changes, in the same order
+function sendOverview(probe = false) {
   if (synced === false || (overviewKept() === false && !probe)) return; // this browser only
-  sendingOverview++;
-  api<{ overview?: unknown }>("/navigation", { method: "PUT", json: { overview } })
+  if (sendingOverview) return void (againOverview = true);
+  sendingOverview = true;
+  editsOverview++;
+  api<{ overview?: unknown }>("/navigation", { method: "PUT", json: { overview: getOverviewPrefs() } })
     .then(
       (r) => {
         noteStartPageSynced();
@@ -171,10 +177,18 @@ function sendOverview(overview: OverviewEntry[], probe = false) {
       },
     )
     .finally(() => {
-      if (--sendingOverview === 0) settleOverview();
+      sendingOverview = false;
+      if (againOverview) {
+        againOverview = false;
+        sendOverview();
+      }
+      if (!sendingOverview) settleOverview();
     });
 }
-onOverviewSaved((p) => sendOverview(p));
+onOverviewSaved(() => {
+  editsOverview++;
+  sendOverview();
+});
 
 /** Once the last change on its way is answered: the hub pushes every change, these too, in its order, so an arrangement
  *  pushed after the last of ours is newer than ours and is taken; with none, this browser's copy (the newest change)
@@ -208,6 +222,7 @@ function hubOverview(v: unknown[]) {
 // each change. A hub that never stored one is handed the one this browser kept while there was no record.
 onHubEvent("hello", (msg) => {
   if (isResumed(msg)) return;
+  const edits = sendingOverview ? -1 : editsOverview;
   api<{ start?: string; pages?: unknown; overview?: unknown }>("/navigation").then(
     (r) => {
       noteStartPageSynced();
@@ -217,9 +232,10 @@ onHubEvent("hello", (msg) => {
       if (r.pages && !unsent) adoptSidebarPrefs(r.pages);
       else if (chosen(getSidebarPrefs())) handover.pages = getSidebarPrefs();
       if (Object.keys(handover).length) void api("/navigation", { method: "PUT", json: handover }).then(() => (unsent = false), () => {});
-      // ours, unless a change of it did not reach the hub; else handed over, or asked again where it was refused
-      if (Array.isArray(r.overview) && !unsentOverview) hubOverview(r.overview);
-      else if (overviewChosen() || unsentOverview || overviewKept() === false) sendOverview(getOverviewPrefs(), true);
+      // ours, unless a change of it did not reach the hub or one was on its way or made since this read began (newer than
+      // its answer); else handed over, or asked again where it was refused
+      if (Array.isArray(r.overview) && !unsentOverview && edits === editsOverview) hubOverview(r.overview);
+      else if (overviewChosen() || unsentOverview || overviewKept() === false) sendOverview(true);
     },
     noteStartPageSynced, // the copies here stay
   );
