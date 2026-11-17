@@ -1056,12 +1056,15 @@ The same rules on the web (`web/src/lib/inbox-groups.ts`) and iOS / iPad (`Perso
   request again sends nothing more), or starts the main conversation with it, and answers `{item, session}`; a work machine is refused, and a failed send records nothing (`apierr.Call`'s status, as for a new conversation).
   The item keeps the hand-off (`handoffs`: `machine_id`, `session_id`, `at`, the latest 5) and its chain gets one `handling` entry per conversation ("Handed to Persona's main chat",
   linked to it). Its processing conversation (`agent`, `handling`) is not touched, so the AI twin's sweep and timeouts never take the main conversation for one of its own.
-  When that conversation dispatches work with `task_plan`, each related task supplies `inbox_item` with the handoff's exact item id.
+  When that conversation dispatches work with `task_plan`, an omitted `inbox_item` uses its sole unarchived handed item
+  on the calling computer. No such item leaves the task unlinked; several refuse planning and require an explicit
+  `inbox_item` on each task. Selection uses the manager's persisted handoff ledger, not an ID parsed from a message
+  or the latest item in a shared conversation.
   The manager validates the conversation, machine, open item and link policy, records the handoff operation on the plan, and rechecks it at Start.
   Admission persists the to-do's existing `inbox_item` back-reference and the item's `agent.todo_id`; an explicit handoff replaces an earlier inferred link
   without filing the item, changing its draft or sending a reply. New task rows include their source in the initial insert and stay reserved
   through binding and first start, so another plan cannot adopt a half-admitted task.
-  Unrelated tasks omit the field. Multiple tasks retain their own back-references:
+  Explicit item choices resolve multiple-item ambiguity. Multiple tasks retain their own back-references:
   the web detail lists each task and its current workers, scoped to the item's manager, and one completed task cannot file an item with other unfinished tasks.
   Reusing a to-do preserves its source; assigning it to a different item is refused. A failed item write rolls back the binding before any Agent starts.
   If a newer item write retains that target, admission instead keeps the to-do and its source, reports the failure without starting an Agent,
