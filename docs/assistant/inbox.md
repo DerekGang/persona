@@ -571,7 +571,10 @@ notification-receipt writes and stale-reminder cleanup.
 Old reply drafts that still live in `InboxAgent` keep the waiting-time warning
 in that draft's stored note, not only in the handling chain or a temporary
 suggestion view. Reload and failed-save rollback preserve the same behavior
-without changing the draft text, creation time, or legacy shape.
+without changing the draft text, creation time, or legacy shape. If an older
+version already stored a reminder receipt without its note, the watch repairs
+the note from that receipt without adding another history entry or repeating
+an already-delivered notification.
 
 ## Following up (2026-11-13, #6611)
 

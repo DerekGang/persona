@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
@@ -66,6 +67,7 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 		chainID      string
 		conversation string
 		displayed    bool
+		notify       bool
 		state        inboxApprovalState
 	}
 	var reminders []reminder
@@ -74,8 +76,13 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 		g := currentSuggestion(it)
 		receipt := it.ReplyApproval
 		if !it.open() || it.Tier == TierNoise || g == nil || g.Kind != SuggestReply ||
-			g.At.IsZero() || now.Before(g.At.Add(inboxReplyApprovalAfter)) ||
-			receipt != nil && receipt.Version == g.Version && receipt.Notified {
+			g.At.IsZero() || now.Before(g.At.Add(inboxReplyApprovalAfter)) {
+			continue
+		}
+		notified := receipt != nil && receipt.Version == g.Version && receipt.Notified
+		repairLegacy := it.Suggestion == nil && receipt != nil && receipt.Version == g.Version &&
+			!strings.Contains(g.Note, receipt.Explanation)
+		if notified && !repairLegacy {
 			continue
 		}
 		since := g.At
@@ -90,7 +97,7 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 			link = "/inbox/" + it.ID
 		}
 		r := reminder{item: it, version: g.Version, text: text, url: link,
-			oldUrgent: it.Urgent, oldReason: it.Reason, oldReceipt: receipt, oldNote: g.Note}
+			oldUrgent: it.Urgent, oldReason: it.Reason, oldReceipt: receipt, oldNote: g.Note, notify: !notified}
 		if g.Conversation != nil {
 			r.conversation = g.Conversation.SessionID
 		} else if it.Agent != nil {
@@ -107,6 +114,10 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 			b.chainAdd(it, InboxChainEntry{Kind: ChainCheck, At: now.UTC(), Text: text, Detail: link,
 				Link: firstLink(it), Via: ViaAssistant})
 			r.chainID = it.Chain[len(it.Chain)-1].ID
+			r.displayed = true
+		} else if repairLegacy {
+			// Older receipts may be durable even though only a temporary note was edited.
+			it.Agent.Note = g.Note + "\n" + receipt.Explanation
 			r.displayed = true
 		}
 		r.state = approvalState(it)
@@ -131,11 +142,13 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 			} else {
 				it.Agent.Note = r.oldNote
 			}
-			it.Chain = slices.DeleteFunc(it.Chain, func(e InboxChainEntry) bool { return e.ID == r.chainID })
+			if r.chainID != "" {
+				it.Chain = slices.DeleteFunc(it.Chain, func(e InboxChainEntry) bool { return e.ID == r.chainID })
+			}
 		}
 	})
 	for _, r := range reminders {
-		if failed[r.item.ID] {
+		if !r.notify || failed[r.item.ID] {
 			continue
 		}
 		b.mu.Lock()

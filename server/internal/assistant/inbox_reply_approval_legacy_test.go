@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +126,172 @@ func TestInboxReplyApprovalLegacyFailedSaveProtectsNote(t *testing.T) {
 				if string(got) != string(want) {
 					t.Errorf("failed legacy reminder overwrote a replacement:\nwant %s\n got %s", want, got)
 				}
+			}
+		})
+	}
+}
+
+func TestInboxReplyApprovalLegacyRepairsExistingReceipt(t *testing.T) {
+	for _, notified := range []bool{false, true} {
+		name := "notification pending"
+		if notified {
+			name = "already notified"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			database := taskRecoveryDatabase(t)
+			s, f := newQuietServiceOn(t, database)
+			holdDigest(s)
+			if err := s.inboxReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			const explanation = "The other person has waited 20 hours."
+			it := &InboxItem{ID: "legacy-reminded", Source: "example", Tier: TierAction, Last: "a",
+				Urgent: true, Reason: explanation, UpdatedAt: now.Add(-20 * time.Hour),
+				Suggestion: &InboxSuggestion{Version: 1, Kind: SuggestReply, Text: "Original draft",
+					Note: "Original note", At: now.Add(-5 * time.Hour)},
+				ReplyApproval: &inboxReplyApproval{Version: 1, Notified: notified, Explanation: explanation},
+				Chain:         []InboxChainEntry{{ID: "original-check", Kind: ChainCheck, Text: explanation}},
+				Connector:     &InboxConnector{Thread: "legacy-thread", URL: "https://example.com/messages/legacy"}}
+			legacyApprovalDraft(it)
+			s.inbox.mu.Lock()
+			s.inbox.items[it.ID] = it
+			s.inbox.mu.Unlock()
+			if failed := s.saveInbox(ctx, []*InboxItem{it}); failed[it.ID] {
+				t.Fatal("could not store the already-reminded legacy draft")
+			}
+			s.checkInboxReplyApprovals(ctx, now)
+			if it.Suggestion != nil || it.Agent.Draft != "Original draft" ||
+				it.Agent.Note != "Original note\n"+explanation || len(it.Chain) != 1 ||
+				it.Chain[0].ID != "original-check" || !it.ReplyApproval.Notified {
+				t.Errorf("existing reminder was not repaired without changing its draft or history: %+v", it)
+			}
+			f.mu.Lock()
+			pushes := len(f.pushes)
+			f.mu.Unlock()
+			wantPushes := 1
+			if notified {
+				wantPushes = 0
+			}
+			if pushes != wantPushes {
+				t.Errorf("repair sent %d notifications, want %d", pushes, wantPushes)
+			}
+			restarted, nextHub := newQuietServiceOn(t, database)
+			holdDigest(restarted)
+			if err := restarted.inboxReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			recovered := restarted.inbox.items[it.ID]
+			if recovered == nil || recovered.Suggestion != nil || recovered.Agent == nil ||
+				recovered.Agent.Note != "Original note\n"+explanation || !recovered.Urgent ||
+				recovered.Reason != explanation {
+				t.Fatalf("Postgres reload lost the repaired legacy warning: %+v", recovered)
+			}
+			restarted.checkInboxReplyApprovals(ctx, now.Add(time.Minute))
+			nextHub.mu.Lock()
+			pushes = len(nextHub.pushes)
+			nextHub.mu.Unlock()
+			if pushes != 0 || strings.Count(recovered.Agent.Note, explanation) != 1 || len(recovered.Chain) != 1 {
+				t.Error("reloaded legacy repair duplicated its notification, explanation or history")
+			}
+		})
+	}
+}
+
+func TestInboxReplyApprovalLegacyRepairFailureRetriesWithoutChainLoss(t *testing.T) {
+	for _, notified := range []bool{false, true} {
+		name := "notification pending"
+		if notified {
+			name = "already notified"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, f, it, st, now := approvalBlockedFixture(t, 0)
+			legacyApprovalDraft(it)
+			const explanation = "The other person has waited 20 hours."
+			it.ReplyApproval = &inboxReplyApproval{Version: 1, Notified: notified, Explanation: explanation}
+			it.Urgent, it.Reason = true, explanation
+			it.Chain = []InboxChainEntry{{Kind: ChainCheck, Text: "A preexisting legacy check"}}
+			it.arrived(now)
+			before, _ := json.Marshal(it)
+			st.imu.Lock()
+			st.down = errors.New("synthetic legacy repair failure")
+			st.imu.Unlock()
+			s.checkInboxReplyApprovals(context.Background(), now)
+			after, _ := json.Marshal(it)
+			if string(after) != string(before) {
+				t.Errorf("failed note-only repair changed the draft or removed history:\nwant %s\n got %s", before, after)
+			}
+			f.mu.Lock()
+			pushes := len(f.pushes)
+			f.mu.Unlock()
+			if pushes != 0 {
+				t.Fatal("failed repair sent a notification before its note was saved")
+			}
+			st.imu.Lock()
+			st.down = nil
+			st.imu.Unlock()
+			s.checkInboxReplyApprovals(context.Background(), now)
+			if it.Agent.Note != "Original note\n"+explanation || len(it.Chain) != 1 || !it.ReplyApproval.Notified {
+				t.Fatal("retry did not repair the stored note while preserving its receipt and history")
+			}
+			before, _ = json.Marshal(it)
+			s.checkInboxReplyApprovals(context.Background(), now.Add(time.Minute))
+			after, _ = json.Marshal(it)
+			if string(after) != string(before) {
+				t.Error("repeated repair changed the already-repaired draft")
+			}
+			wantPushes := 1
+			if notified {
+				wantPushes = 0
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.pushes) != wantPushes {
+				t.Errorf("repair retry sent %d notifications, want %d", len(f.pushes), wantPushes)
+			}
+		})
+	}
+}
+
+func TestInboxReplyApprovalLegacyRepairFailedSavePreservesReplacement(t *testing.T) {
+	for _, replacement := range []string{"new note", "new agent", "new suggestion"} {
+		t.Run(replacement, func(t *testing.T) {
+			s, f, it, st, now := approvalBlockedFixture(t, 1)
+			legacyApprovalDraft(it)
+			const explanation = "The other person has waited 20 hours."
+			it.ReplyApproval = &inboxReplyApproval{Version: 1, Notified: true, Explanation: explanation}
+			it.Urgent, it.Reason = true, explanation
+			it.Chain = []InboxChainEntry{{Kind: ChainCheck, Text: "A preexisting legacy check"}}
+			done := make(chan struct{})
+			go func() {
+				s.checkInboxReplyApprovals(context.Background(), now)
+				close(done)
+			}()
+			approvalAwaitWrite(t, st)
+			s.inbox.mu.Lock()
+			staged := it.Agent.Note == "Original note\n"+explanation
+			switch replacement {
+			case "new note":
+				it.Agent.Note = "New explanation"
+			case "new agent":
+				a := *it.Agent
+				it.Agent = &a
+			case "new suggestion":
+				it.Suggestion = currentSuggestion(it)
+			}
+			want, _ := json.Marshal(it)
+			s.inbox.mu.Unlock()
+			close(st.release)
+			<-done
+			got, _ := json.Marshal(it)
+			if !staged || string(got) != string(want) {
+				t.Errorf("failed legacy repair overwrote a replacement:\nwant %s\n got %s", want, got)
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.pushes) != 0 {
+				t.Error("failed repair repeated an already-delivered notification")
 			}
 		})
 	}
