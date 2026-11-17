@@ -100,7 +100,8 @@ class MockNavigationTests(unittest.TestCase):
     def test_a_manager_from_before_the_field(self):
         hub = Mock(MOCK_NAVIGATION="no-overview")
         self.addCleanup(hub.close)
-        self.assertEqual(hub.call("PUT", "/api/v1/navigation", {"overview": ARRANGEMENT}), (400, {"error": "start or pages is required"}))
+        code, got = hub.call("PUT", "/api/v1/navigation", {"overview": ARRANGEMENT})
+        self.assertEqual((code, got.get("error")), (400, "start or pages is required"))  # #9351's own words
         code, got = hub.call("PUT", "/api/v1/navigation", {"start": "kb", "overview": ARRANGEMENT})
         self.assertEqual(code, 200)
         self.assertNotIn("overview", got)
