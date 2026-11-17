@@ -197,7 +197,7 @@ nonisolated enum AssistantEntries {
         item.kind == .message && item.ref != nil && item.sentAt == nil && item.filedAt == nil
     }
 
-    /// Splits a conversation's things into the two entries (the web's `assistantEntries`). `main`: the main
+    /// Splits a conversation's things into the five peer entries (the web's `assistantEntries`). `main`: the main
     /// conversation's id (it watches every task and the Agents opened by hand); `messageWaits`: whether a message card
     /// still waits for Send (the app adds the inbox's word and Later); `decisionHidden`: a decision put off with Later or
     /// taken out with Don't handle (the web's `deferred` and `dismissal_id`); `restored`: tasks brought back from shelved;

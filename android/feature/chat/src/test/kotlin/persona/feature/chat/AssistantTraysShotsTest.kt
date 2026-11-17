@@ -191,14 +191,22 @@ class AssistantTraysShotsTest {
         fixture.tasks.reloadTodos()
         val host = AssistantTaskHost(fixture.tasks, "main", agents, { it }, {}, { throw it }, {})
         val tray = AssistantTrayState()
+        var dark by mutableStateOf(false)
+        var large by mutableStateOf(false)
         rule.setContent {
-            PersonaTheme(reduceMotion = true) {
+            val density = androidx.compose.ui.unit.Density(androidx.compose.ui.platform.LocalDensity.current.density, if (large) 2f else 1f)
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides density) {
+            PersonaTheme(darkTheme = dark, reduceMotion = true) {
                 Column(Modifier.width(400.dp).background(PersonaTheme.palette.background).testTag("assistant-page-shot")) {
                     AssistantTrays(host, tray, emptyList(), emptyList(), emptyList(), { 700.dp }, busy = false, enabled = true,
                         onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
                 }
             }
+            }
         }
+        for (big in listOf(false, true)) for (night in listOf(false, true)) {
+        large = big; dark = night; tray.expanded = null; settle()
+        val variant = "${if (night) "dark" else "light"}-${if (big) "large" else "standard"}"
         for ((tag, count) in listOf("needs" to 1, "running" to 1, "review" to 1, "stopped" to 2, "parked" to 1)) {
             rule.onNodeWithTag("assistant-entry-$tag").assertExists().assert(hasText(count.toString()))
         }
@@ -207,21 +215,22 @@ class AssistantTraysShotsTest {
         rule.onNodeWithTag("assistant-progress-todo:reported").assertIsDisplayed()
         rule.onNodeWithText("Reported done · awaiting acceptance").assertIsDisplayed()
         rule.onNodeWithText("Done").assertDoesNotExist()
-        shot("five-groups-awaiting-acceptance")
+        shot("five-groups-$variant-awaiting-acceptance")
         open("stopped")
-        rule.onNodeWithTag("assistant-progress-todo:unfinished").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithTag("assistant-progress-todo:unfinished").performScrollTo().assertIsDisplayed().assert(hasText("To-do: Rework round 1"))
         rule.onNodeWithText("Stopped · unfinished").assertIsDisplayed()
         rule.onNodeWithTag("assistant-progress-todo:external").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("Stopped · waiting for the maintainer to re-review the release").assertIsDisplayed()
         rule.onNodeWithText("Supervisor: confirm the wait and park this task").assertIsDisplayed()
         rule.onAllNodesWithTag("assistant-work-spinner", useUnmergedTree = true).assertCountEquals(0)
         rule.onNodeWithText("Done").assertDoesNotExist()
-        shot("five-groups-stopped-external")
+        shot("five-groups-$variant-stopped-external")
         open("parked")
         rule.onNodeWithTag("assistant-progress-todo:parked").assertIsDisplayed()
         rule.onNodeWithText("Supervisor: confirm the wait and park this task").assertDoesNotExist()
         assertTrue(fixture.accepted.isEmpty()); assertTrue(fixture.patches.isEmpty())
-        shot("five-groups-explicit-park")
+        shot("five-groups-$variant-explicit-park")
+        }
     }
 
     @Test

@@ -14,8 +14,8 @@ import type { Interaction, Session } from "./types";
  * per task; reading a reply does not accept it. */
 export type NeedsYouItem =
   /** A task whose agent asks something (`asks`, oldest first), or that waits for the user's decision.
-   *  `countsOpen` says whether the To-dos page's "Not done" counts the to-do (#3331): the row stays visible whatever
-   *  it says, the chip badge counts it only when it does. */
+   *  `countsOpen` keeps unaccepted work counted even when the board filed its reply as seen or stale;
+   *  retryable failed starts keep their existing open-count exception. */
   | { kind: "task"; key: string; todo: Todo; status: TodoStatus; asks: Interaction[]; countsOpen: boolean }
   /** An Agent that belongs to no task, asking something. */
   | { kind: "agent"; key: string; session: Session; asks: Interaction[] }
@@ -25,7 +25,7 @@ export type NeedsYouItem =
   | { kind: "message"; key: string; item: FeedItem };
 
 export type RunningItem =
-  /** A dispatched task not finished and not waiting on the user. `countsOpen`: see NeedsYouItem. */
+  /** A task row; its owning array identifies execution, acceptance, stopped work or an intentional wait. */
   | { kind: "task"; key: string; card: TaskCardMetadata; todo: Todo; status: TodoStatus; activity?: BackgroundWork; countsOpen: boolean }
   /** A working Agent that belongs to no task. */
   | { kind: "agent"; key: string; session: Session; activity?: BackgroundWork };

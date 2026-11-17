@@ -48,6 +48,8 @@ import persona.core.domain.tasks.NeedsYouGroup
 import persona.core.domain.tasks.needsYouGroups
 import persona.core.domain.tasks.RunningEntry
 import persona.core.domain.tasks.TaskState
+import persona.core.domain.tasks.reviewStage
+import persona.core.domain.tasks.reviewState
 import persona.core.domain.tasks.notDoneReason
 import persona.core.domain.tasks.orphanedLine
 import persona.core.domain.tasks.TasksStore
@@ -705,13 +707,8 @@ private fun TrayProgressRow(row: TrayProgress, activity: BackgroundWork? = null,
             if (reported) Text(agentLabel, style = PersonaTheme.type.micro, color = palette.ink3,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             row.todo?.let { todo ->
-                val state = stringResource(when (todo.supervision?.state) {
-                    "accepted" -> R.string.chat_tray_accepted
-                    "cancelled" -> R.string.chat_tray_cancelled
-                    "parked" -> R.string.chat_tray_entry_parked
-                    "pending_review" -> R.string.chat_tray_entry_acceptance
-                    else -> R.string.chat_tray_entry_running
-                })
+                val state = if (todo.reviewState == "parked") stringResource(R.string.chat_tray_entry_parked)
+                    else todo.reviewStage?.label(todo.supervision?.round ?: 1) ?: stringResource(R.string.chat_tray_entry_running)
                 Text(stringResource(R.string.chat_tray_todo_state, state), style = PersonaTheme.type.micro,
                     color = palette.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!working && work == null && todo.supervision?.state != "parked" &&

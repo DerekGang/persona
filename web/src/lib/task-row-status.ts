@@ -90,8 +90,7 @@ export function todoChipState(o: { toStart: boolean; status: string; done: boole
   if (o.done || o.status === "done") return stateName("done");
   if (review === "parked") return t("assistant-tasks.review_parked");
   if (review === "needs_user") return t("assistant-tasks.review_needs_user");
-  // Awaiting review and rework are the to-do's state only while its Agent is not at work or asking: otherwise the row is
-  // that Agent's (its status column says so) and a review chip beside it would contradict it.
+  // Execution and the supervisor ledger are independent: resuming an Agent does not erase the to-do's review state.
   if (review === "pending_review") return t("assistant-tasks.review_pending");
   if (review === "rework") return t("assistant-tasks.review_rework", { round: o.todo?.supervision?.round ?? 1 });
   if (o.stage === "merge" && o.pr) return t("assistant-tasks.todo_waiting_merge");
