@@ -4,6 +4,11 @@
 // to a hub that has none; a hub without the route leaving the choice in this browser.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OverviewEntry } from "./overview-cards";
+// The modules each test loads afresh (load(), the Settings row's), transformed while the file is collected, outside the
+// test timeout (as highlight-lazy.test.tsx, #4955): a test's first load then only runs them. Transforming them inside
+// the first tests took those past 5 s on a loaded CI runner.
+import "./start-page";
+import "../views/settings/StartPage";
 vi.hoisted(() => {
   // the Settings row's module draws with the sidebar's pages, which read these
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
