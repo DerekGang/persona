@@ -1,5 +1,5 @@
 // Where the app opens (#9071, docs/web/web.md "Start page"): Persona's main chat, unless the user chose another page in
-// Settings › General › Start page. It also carries the sidebar's arrangement to and from the hub (below). The hub keeps the choice (GET / PUT /api/v1/navigation, its default manager's): a
+// Settings › General › Start page. It also carries the sidebar's arrangement and Overview's cards (#9745) to and from the hub (below). The hub keeps the choice (GET / PUT /api/v1/navigation, its default manager's): a
 // hub has one owner, so every device of theirs follows. This browser keeps a copy, so an opening decides before the
 // first paint without waiting for the hub, and keeps the choice itself where the hub has no such route (404). Only an
 // opening at the root address goes there (a new tab, the installed app, the hub's address typed): a reload, Back /
@@ -11,6 +11,7 @@ import { api, ApiError } from "./api";
 import { stripBase } from "./base";
 import { hasSlots } from "./extension-slots";
 import { NAV_PAGES } from "./persona-nav";
+import { adoptOverview, getOverviewPrefs, noteOverviewKept, onOverviewSaved, overviewChosen, overviewKept, type OverviewEntry } from "./overview-cards";
 import { adoptSidebarPrefs, chosen, getSidebarPrefs, onSidebarPrefsSaved } from "./sidebar-pages";
 import { isResumed } from "./reconnect";
 import { navigate, type Route } from "./router";
@@ -141,11 +142,40 @@ onSidebarPrefsSaved((pages) => {
     .finally(() => sending--);
 });
 
+// Overview's cards (lib/overview-cards.ts) go the same way, sent on their own: a default manager from before the field
+// (#9745) answers a change of only them 400, or leaves them out of the record it answers, and the arrangement then
+// stays in this browser, as on a hub without the route (Overview's editor says so).
+let sendingOverview = 0;
+let unsentOverview = false;
+function sendOverview(overview: OverviewEntry[]) {
+  if (synced === false || overviewKept() === false) return; // this browser only
+  sendingOverview++;
+  api<{ overview?: unknown }>("/navigation", { method: "PUT", json: { overview } })
+    .then(
+      (r) => {
+        noteStartPageSynced();
+        unsentOverview = false;
+        if (!Array.isArray(r.overview)) return noteOverviewKept(false);
+        noteOverviewKept(true);
+        if (sendingOverview === 1) adoptOverview(r.overview);
+      },
+      (e) => {
+        noteStartPageSynced(e);
+        if (e instanceof ApiError && e.status === 400) {
+          unsentOverview = false;
+          noteOverviewKept(false);
+        } else unsentOverview = synced !== false;
+      },
+    )
+    .finally(() => sendingOverview--);
+}
+onOverviewSaved(sendOverview);
+
 // The hub's choices, read at every hello that did not resume (a resumed one gets the pushes it missed) and pushed on
 // each change. A hub that never stored one is handed the one this browser kept while there was no record.
 onHubEvent("hello", (msg) => {
   if (isResumed(msg)) return;
-  api<{ start?: string; pages?: unknown }>("/navigation").then(
+  api<{ start?: string; pages?: unknown; overview?: unknown }>("/navigation").then(
     (r) => {
       noteStartPageSynced();
       const handover: Record<string, unknown> = {};
@@ -154,6 +184,9 @@ onHubEvent("hello", (msg) => {
       if (r.pages && !unsent) adoptSidebarPrefs(r.pages);
       else if (chosen(getSidebarPrefs())) handover.pages = getSidebarPrefs();
       if (Object.keys(handover).length) void api("/navigation", { method: "PUT", json: handover }).then(() => (unsent = false), () => {});
+      if (Array.isArray(r.overview)) noteOverviewKept(true);
+      if (Array.isArray(r.overview) && !unsentOverview) adoptOverview(r.overview);
+      else if (overviewChosen() || unsentOverview) sendOverview(getOverviewPrefs());
     },
     noteStartPageSynced, // the copies here stay
   );
@@ -161,4 +194,6 @@ onHubEvent("hello", (msg) => {
 onHubEvent("navigation", (msg) => {
   if (typeof msg.start === "string") keepStartPage(msg.start);
   if (msg.pages && !sending) adoptSidebarPrefs(msg.pages);
+  if (Array.isArray(msg.overview)) noteOverviewKept(true);
+  if (Array.isArray(msg.overview) && !sendingOverview) adoptOverview(msg.overview);
 });

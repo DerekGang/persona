@@ -3,6 +3,7 @@
 // of the root address only; the hub's choice read at the hello and followed on its pushes; a choice kept here handed
 // to a hub that has none; a hub without the route leaving the choice in this browser.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OverviewEntry } from "./overview-cards";
 vi.hoisted(() => {
   // the Settings row's module draws with the sidebar's pages, which read these
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -29,7 +30,7 @@ class Socket {
 
 const TODAY = "p:example-today/today";
 // what the made-up hub keeps: undefined until something is stored; "missing" for a hub without the route
-let hub: { start?: string; pages?: unknown } | "missing";
+let hub: { start?: string; pages?: unknown; overview?: unknown } | "missing";
 let puts: unknown[];
 
 beforeEach(() => {
@@ -297,5 +298,123 @@ describe("a hub without the route", () => {
     const { chooseStartPage } = await import("../views/settings/StartPage");
     await chooseStartPage("kb");
     expect(startPage()).toBe("inbox");
+  });
+});
+
+describe("Overview's cards (#9745)", () => {
+  const arrangement: OverviewEntry[] = [{ extension: "example-quota", id: "left", span: "full" }, { extension: "example-gateway", id: "today", hidden: true }];
+  const puts$ = () => vi.mocked(fetch).mock.calls.filter(([, i]) => (i as RequestInit | undefined)?.method === "PUT");
+
+  it("two devices: what one arranges, the other draws from its hello and on the push", async () => {
+    const laptop = await load();
+    await laptop.hello();
+    const cards = await import("./overview-cards");
+    cards.saveOverview(arrangement);
+    await flush();
+    expect(puts).toEqual([{ overview: arrangement }]);
+    expect(hub).toMatchObject({ overview: arrangement });
+    expect(cards.overviewKept()).toBe(true);
+    laptop.store.disconnect();
+    vi.resetModules();
+    localStorage.clear();
+    localStorage.setItem("persona.token", "test-token");
+    const phone = await load();
+    await phone.hello();
+    const phoneCards = await import("./overview-cards");
+    expect(phoneCards.getOverviewPrefs()).toEqual(arrangement);
+    expect(JSON.parse(localStorage.getItem("overview.cards")!)).toEqual(arrangement);
+    // another device puts the cards back as they were: the push brings it here
+    Socket.last.push({ type: "navigation", overview: [] });
+    expect(phoneCards.getOverviewPrefs()).toEqual([]);
+    expect(localStorage.getItem("overview.cards")).toBeNull();
+  });
+
+  it("a push of another field leaves the cards alone", async () => {
+    hub = { overview: arrangement };
+    const { hello } = await load();
+    await hello();
+    const cards = await import("./overview-cards");
+    Socket.last.push({ type: "navigation", start: "inbox" });
+    expect(cards.getOverviewPrefs()).toEqual(arrangement);
+  });
+
+  it("is handed this browser's arrangement when the hub has none, on its own", async () => {
+    hub = { start: "" };
+    localStorage.setItem("overview.cards", JSON.stringify(arrangement));
+    const { hello } = await load();
+    await hello();
+    expect(puts).toEqual([{ overview: arrangement }]);
+  });
+
+  it("the hub's arrangement wins over this browser's older copy, an empty one too", async () => {
+    hub = { overview: [] };
+    localStorage.setItem("overview.cards", JSON.stringify(arrangement));
+    const { hello } = await load();
+    await hello();
+    const cards = await import("./overview-cards");
+    expect(cards.getOverviewPrefs()).toEqual([]);
+    expect(puts).toEqual([]);
+  });
+
+  it("keeps a change the hub did not take and sends it again at the next hello", async () => {
+    hub = { overview: [] };
+    const { hello } = await load();
+    await hello();
+    const cards = await import("./overview-cards");
+    vi.mocked(fetch).mockImplementationOnce(async () => Response.json({ error: "database down" }, { status: 503 }));
+    cards.saveOverview(arrangement);
+    await flush();
+    expect(cards.getOverviewPrefs()).toEqual(arrangement);
+    expect(cards.overviewKept()).toBe(true);
+    await hello();
+    expect(cards.getOverviewPrefs()).toEqual(arrangement);
+    expect(hub).toMatchObject({ overview: arrangement });
+  });
+
+  it("stays in this browser on a hub without the route", async () => {
+    hub = "missing";
+    const { hello, startPageSynced } = await load();
+    await hello();
+    const cards = await import("./overview-cards");
+    cards.saveOverview(arrangement);
+    await flush();
+    expect(startPageSynced()).toBe(false);
+    expect(JSON.parse(localStorage.getItem("overview.cards")!)).toEqual(arrangement);
+    expect(puts$()).toEqual([]);
+  });
+
+  it("stays in this browser with a default manager from before the field: a change of only it refused", async () => {
+    // the manager of #9351: start and pages, no overview; a PUT of neither is 400
+    hub = { start: "inbox" };
+    vi.mocked(fetch).mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      const body = init?.method === "PUT" ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      if (body && body.start === undefined && body.pages === undefined) return Response.json({ error: "start or pages is required" }, { status: 400 });
+      return Response.json(new URL(String(input), location.href).pathname === "/api/v1/navigation" ? hub : {});
+    });
+    const { hello, startPageSynced } = await load();
+    await hello();
+    const cards = await import("./overview-cards");
+    cards.saveOverview(arrangement);
+    await flush();
+    expect(cards.overviewKept()).toBe(false);
+    expect(startPageSynced()).toBe(true); // the start page and the sidebar are still kept there
+    expect(cards.getOverviewPrefs()).toEqual(arrangement);
+    // no more tries in this load: no hand-over at the next hello, nor another change
+    await hello();
+    cards.saveOverview([...arrangement].reverse());
+    await flush();
+    expect(puts$()).toHaveLength(1);
+  });
+
+  it("stays in this browser when the manager answers a change without the field", async () => {
+    hub = { start: "inbox" };
+    vi.mocked(fetch).mockImplementation(async () => Response.json(hub)); // takes the PUT, never says overview
+    localStorage.setItem("overview.cards", JSON.stringify(arrangement));
+    const { hello } = await load();
+    await hello();
+    const cards = await import("./overview-cards");
+    expect(puts$()).toHaveLength(1); // the hand-over
+    expect(cards.overviewKept()).toBe(false);
+    expect(cards.getOverviewPrefs()).toEqual(arrangement);
   });
 });
