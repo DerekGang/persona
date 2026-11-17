@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -221,6 +222,19 @@ func TestTaskRepositoryArtifactsValidateExactPRURLs(t *testing.T) {
 	text := "Related change: " + artifactPR + "\n" + researchNoPRCloseout + relatedMemoryFooter
 	if got := taskRepositoryReportLinks(text); len(got) != 0 {
 		t.Fatal("a non-PR closeout imported incidental PRs", got)
+	}
+	titled := []proto.WorkArtifact{{Kind: "pr", Ref: "Prepared [Keep task context](" + artifactPR + ") for review."}}
+	if got := taskRepositoryArtifactLinks(titled); !slices.Equal(got, []string{artifactPR}) {
+		t.Fatal("a PR artifact's label hid its URL", got)
+	}
+	// Display clipping in closeout.Parse must not drop associations from the original record.
+	text = "<closeout status=\"blocked\" merged=\"no\" deployed=\"no\">\n"
+	for n := 1; n <= 7; n++ {
+		text += fmt.Sprintf("artifact: pr https://github.com/example/project/pull/%d Change %d\n", n, n)
+	}
+	text += "waiting: Review\n</closeout>"
+	if got := taskRepositoryReportLinks(text); len(got) != 7 {
+		t.Fatal("closeout display limits clipped task PR associations", got)
 	}
 }
 

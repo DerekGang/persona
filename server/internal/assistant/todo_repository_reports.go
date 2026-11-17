@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/assistant/repository"
-	"github.com/nwverse/persona/server/internal/closeout"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -165,7 +164,12 @@ func (s *Service) agentRepositoryTool(ctx context.Context, machine, session, nam
 
 func taskRepositoryReportLinks(text string) []string {
 	if block := deliveryCloseout(text); block != "" {
-		_, artifacts, _ := closeout.Parse(block)
+		var artifacts []proto.WorkArtifact
+		for _, line := range strings.Split(block, "\n") {
+			if prefix := closeoutPRLine.FindString(line); prefix != "" {
+				artifacts = append(artifacts, proto.WorkArtifact{Kind: "pr", Ref: strings.TrimPrefix(line, prefix)})
+			}
+		}
 		return taskRepositoryArtifactLinks(artifacts)
 	}
 	urls := []string{}
@@ -184,20 +188,23 @@ func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
 		if artifact.Kind != "pr" {
 			continue
 		}
-		u, err := url.Parse(artifact.Ref)
-		if err != nil {
-			continue
-		}
-		u.User = nil
-		u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = "", "", "", false
-		u.Path = strings.TrimRight(u.Path, "/")
-		identity, link, err := repository.ParseTaskLink(u.String())
-		if err != nil || link.Kind != "pull_request" {
-			continue
-		}
-		// Validate before discarding a query or fragment, including credentials.
-		if _, err := repository.Parse(artifact.Ref, identity.Provider); err == nil {
-			urls = append(urls, link.CanonicalURL)
+		for _, raw := range inboxTaskURL.FindAllString(artifact.Ref, -1) {
+			raw = strings.TrimRight(raw, ".,;:!?)]}，。；：！）》」』") // i18n-ignore: artifact punctuation, not displayed text
+			u, err := url.Parse(raw)
+			if err != nil {
+				continue
+			}
+			u.User = nil
+			u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = "", "", "", false
+			u.Path = strings.TrimRight(u.Path, "/")
+			identity, link, err := repository.ParseTaskLink(u.String())
+			if err != nil || link.Kind != "pull_request" {
+				continue
+			}
+			// Validate before discarding a query or fragment, including credentials.
+			if _, err := repository.Parse(raw, identity.Provider); err == nil {
+				urls = append(urls, link.CanonicalURL)
+			}
 		}
 	}
 	return urls
