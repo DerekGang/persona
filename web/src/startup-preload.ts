@@ -391,7 +391,12 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // And 235 B of #9727's fix round: the graph's owner scoping (lib/extension-owner.ts, set by ExtensionSlots.tsx — both
 // in the first screen's static closure) and the Suspense fallback that keeps a card's height while its chunk loads
 // (en 479,763 to 479,998 B; ja 482,861 to 483,096 B; zh-Hans 480,567 to 480,802 B, measured in one environment).
-export const FIRST_SCREEN_BUDGET = 483_014 + 235;
+// And 186 B of #9727's fix round 2: the owner travels as a React context instead of that module global
+// (lib/extension-owner.tsx, its provider at every surface that draws an extension's view — ExtensionSlots, the
+// assistant's cards, an inbox item's body, the subscription pages, the launcher sections — so a lone re-render reads
+// the right owner); the global's own bytes left with it (en 479,998 to 480,184 B; ja 483,096 to 483,282 B; zh-Hans
+// 480,802 to 480,988 B, measured in one environment).
+export const FIRST_SCREEN_BUDGET = 483_014 + 235 + 186;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
@@ -624,7 +629,10 @@ export function firstScreenOverBudget(bytes: [string, number][], budget = FIRST_
 // gesture fix), so the budget covers what the branch sends.
 // 28 B more of #9727's fix round (the graph's Suspense fallback keeps a card's own height — the wrapper — while the
 // canvas's chunk loads, and the scope prop in its lazy registration; measured 46,143 B in one environment).
-export const IDLE_TIER_BUDGET = 46_143;
+// 42 B more of #9727's fix round 2 (the scope prop left the lazy registration with the owner moving to a context,
+// lib/extension-owner.tsx; measured 46,185 B in one environment), and 5 B more of the same round (the launcher
+// sections' provider, ExtensionView.tsx's chunk; measured 46,190 B in one environment).
+export const IDLE_TIER_BUDGET = 46_143 + 42 + 5;
 
 const gzip = promisify(gzipCompress);
 

@@ -165,9 +165,11 @@ Against an exclusively owned mock-backed web server (Vite or `vite preview`), in
 "Work" page (a 200-node tree, one part folded by the view, a step selected) and checks what jsdom cannot lay out: the canvas
 holds to 50%–100% on opening, centred on the selected node; the visible nodes in reading order with the group frames, edges
 in one SVG and the selected node's ring; the fold beside a node both folds (hiding its subtree behind a +N) and presses a
-node through to its own page and back; a drag pans and the zoom buttons zoom, with Fit centring everything (down to 25%);
-the person's fold, pan and zoom survive the page's own redraw with the same key; Full screen covers the window and Esc
-closes it; at 390 × 844 the canvas is 70% of the visible height clamped to 320–900; and the Overview card draws the same
+node through to its own page and back; a drag pans and the zoom buttons zoom, with Fit centring everything (down to 25%,
+and kept as the person's view across a redraw — Fit survives a live graph's polls); the person's fold, pan and zoom survive
+the page's own redraw with the same key; Full screen covers the window and Esc closes it, the focus returning to the button
+that opened it (the page's Full screen button, a card's preview button); at 390 × 844 the canvas is 70% of the visible height
+clamped to 320–900; and the Overview card draws the same
 graph as a 200-px still preview whose only press is opening Full screen. It waits for the page's finite animations to end,
 never for a fixed time. Only the mock's own requests leave the browser. Screenshots and `results.json` go to the artifact
 directory; a 180-second watchdog ends the run, and the last line is the verdict.
