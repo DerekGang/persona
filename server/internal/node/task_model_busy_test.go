@@ -1,0 +1,68 @@
+package node
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
+	for _, background := range []bool{false, true} {
+		for _, strict := range []bool{false, true} {
+			for _, change := range []string{"model", "effort", "fingerprint", "launcher", "matching"} {
+				name := change + "/busy"
+				if background {
+					name = change + "/background"
+				}
+				if strict {
+					name += "/strict"
+				}
+				t.Run(name, func(t *testing.T) {
+					n := codexTestNode(t)
+					withFakeHub(t, n)
+					old := modelExecution{Strict: strict, Model: "old", Effort: "low", UseEffort: true, Fingerprint: "before", Origin: "task"}
+					asked := old
+					launcher := "claude"
+					switch change {
+					case "model":
+						asked.Model = "new"
+					case "effort":
+						asked.Effort = "high"
+					case "fingerprint":
+						asked.Fingerprint = "after"
+					case "launcher":
+						launcher = "other"
+					}
+					modelProbeCache.Lock()
+					modelProbeCache.results[n.home+"\x00claude\x00"+asked.Model] = modelProbeResult{at: time.Now(), agent: "claude"}
+					modelProbeCache.Unlock()
+					in := &stdinBuf{}
+					p := &assistantProc{id: testThread, agent: "claude", launcher: "claude", cwd: t.TempDir(), stdin: in, exited: make(chan struct{}), born: time.Now(),
+						mode: "default", effort: old.Effort, model: old, fingerprint: n.executionFingerprint("claude", old), busy: !background}
+					if background {
+						p.tasks = []string{"background work"}
+					}
+					n.procs[testThread] = p
+					n.state.put(testThread, sessionState{Launcher: "claude", Cwd: p.cwd, StartedAt: time.Now().UTC(), Model: old.Model, ModelEffort: old.Effort, ModelFingerprint: old.Fingerprint, Tasks: p.tasks, Origin: "task"})
+					_, err := n.assistantSend(context.Background(), testThread, p.cwd, launcher, "scheduled request", nil, "default", "", asked)
+					refused := strict && change != "matching"
+					if refused {
+						if err == nil || err.Error() != "task execution context differs from this conversation; start a new conversation" || in.String() != "" {
+							t.Fatalf("strict mismatch delivered or wrong refusal: error=%v stdin=%q", err, in.String())
+						}
+					} else if err != nil || !strings.Contains(in.String(), "scheduled request") {
+						t.Fatalf("matching/legacy send refused: error=%v stdin=%q", err, in.String())
+					}
+					if !p.alive() || n.procs[testThread] != p || p.model != old || (len(p.tasks) != 0) != background {
+						t.Fatal("active process or its background work changed")
+					}
+					state, _ := n.state.get(testThread)
+					if state.Model != old.Model || state.ModelEffort != old.Effort || state.ModelFingerprint != old.Fingerprint || state.Origin != "task" {
+						t.Fatalf("running execution was misreported: %+v", state)
+					}
+				})
+			}
+		}
+	}
+}

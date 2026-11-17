@@ -531,7 +531,8 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if want == "" && p != nil {
 		want, _ = n.modesOf(id)
 	}
-	if p != nil && (!p.alive() || p.launcher != launcher || p.fingerprint != n.executionFingerprint(launcher, execution) || p.needsRestartFor(want) || p.instructionsStale()) {
+	executionChanged := p != nil && (p.launcher != launcher || p.fingerprint != n.executionFingerprint(launcher, execution))
+	if p != nil && (!p.alive() || executionChanged || p.needsRestartFor(want) || p.instructionsStale()) {
 		p.mu.Lock()
 		active := p.busy || len(p.tasks) > 0
 		roleChanged := p.model.SupervisionInstructions != execution.SupervisionInstructions
@@ -541,6 +542,9 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 				// Do not kill active work, or deliver a new role's message on the old system
 				// policy. Manager-generated messages remain queued for an idle retry.
 				return "", refusal("busy", i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+			}
+			if execution.Strict && executionChanged {
+				return "", errors.New("task execution context differs from this conversation; start a new conversation")
 			}
 			// Answering, or running background tasks a new process would kill: the message goes to this process on
 			// what it runs, and the switch waits for the first message after it is idle. Refusing it left the user

@@ -22,6 +22,7 @@ import (
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // What the assistant does on its own (docs/assistant/assistant.md "Scheduled tasks") is one list of tasks, each with a schedule:
@@ -1862,10 +1863,14 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			}
 			if !unsent {
 				run.Status, run.Error = runFailed, err.Error()
-				run.DeliveryUnknown = true
+				run.DeliveryUnknown = !errors.Is(err, rpc.ErrNotSent)
 				s.recordRun(run)
-				s.oneOffFailed(ctx, t, run)
-				return proto.Session{}, err // uncertain delivery cannot be retried in another turn or conversation
+				if run.DeliveryUnknown {
+					s.oneOffFailed(ctx, t, run)
+				} else {
+					s.oneOffNotStarted(ctx, t, run) // retry the same source after the existing delay, without replacing it
+				}
+				return proto.Session{}, err // only transport proof of no write permits another attempt
 			}
 			s.logf("task %s into %s refused before delivery: %v; using its own conversation", t.ID, t.SessionID, err)
 		}
@@ -1926,6 +1931,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		default:
 			params := map[string]any{"session_id": t.RunSessionID, "text": taskPrompt(t, due, now, loc, manual, kb, true), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true, "cwd": ex.Cwd, "task_execution": true}
 			err := s.finishModel(ctx, "task."+t.ID, params, ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort})
+			preparationFailed := err != nil // no task text has been sent while building the model parameters
 			if err == nil {
 				s.noteRound(m.ID, t.RunSessionID, t.ID, t.runGrantBasis, time.Now())
 				if err = s.resumeOwn(ctx, m.ID, t.RunSessionID, params); err != nil {
@@ -1941,9 +1947,13 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			}
 			if !taskConversationUnavailable(err, t.RunSessionID) {
 				run.Status, run.Error = runFailed, err.Error()
-				run.DeliveryUnknown = sendUnknown(err)
+				run.DeliveryUnknown = !preparationFailed && sendUnknown(err)
 				s.recordRun(run)
-				s.oneOffFailed(ctx, t, run)
+				if run.DeliveryUnknown {
+					s.oneOffFailed(ctx, t, run)
+				} else {
+					s.oneOffNotStarted(ctx, t, run)
+				}
 				return proto.Session{}, err
 			}
 			run.ConversationReason = "conversation_gone"

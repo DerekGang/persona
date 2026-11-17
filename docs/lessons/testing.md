@@ -150,6 +150,11 @@ Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUD
   A runtime gate fixture must prepare the assistant directory through `assistant.prepare` before sending, as the
   hub does. Merely writing a user skill does not authorize copying it into an unprepared task directory; keep that
   boundary and the gate's read, refused-write and conversation-ownership assertions intact.
+  For scheduled delivery, distinguish a real RPC peer closed before its write (`rpc.ErrNotSent`) from one closed
+  after accepting the request. Wrap the actual errors and advance a `synctest` clock past the production retry delay;
+  count attempts and effects separately, including persistent failure and uncertain delivery. Keep scheduled turns
+  and their completion watchers in the same clock bubble. A busy-process fixture must acknowledge its current mode
+  and effort, or an unrelated control request can obscure the model-compatibility boundary being tested.
 
 - A concurrency test that passes with `-race` can still fail without it (2026-11-06, #5908). `-race` slows the instrumented code, so the goroutines meet in a different order. `TestInstallClaimsOperation` passed 20 of 20 runs with `-race` and failed 13 to 29 of 40 without it. Without `-race` its second install usually ran only after the first had committed and used up the preview, and got a 403 from the market check that the PR's own `-race` runs never reached. Run a new concurrency test with `-count`, both with and without `-race`. For the interleaving that matters, set up the state directly instead of hoping two goroutines meet there (here: claim the operation, drop the preview, then install again).
 
