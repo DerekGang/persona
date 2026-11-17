@@ -1872,7 +1872,7 @@
   },
   {
     "name": "model_profile_rollback",
-    "description": "Undo the last model-profile switch using its saved before-image. Restores only touched model settings, not launcher credentials or chat runtime. Inspect the rollback preview with model_profiles_list first; a second rollback redoes the switch.",
+    "description": "Undo the last model-profile switch using its saved before-image. Restores only touched model settings, not launcher credentials. Inspect the rollback preview with model_profiles_list first; a second rollback redoes the switch.",
     "input_schema": {
       "type": "object",
       "properties": {},
@@ -2405,7 +2405,7 @@
               },
               "inbox_item": {
                 "type": "string",
-                "description": "Inbox item id; defaults to this conversation's sole eligible open handoff. Several require an id; none leaves work unlinked. Never files or replies."
+                "description": "Inbox item id; omit for the conversation's sole eligible open handoff. Several require an id; none leaves work unlinked. Never files or replies."
               },
               "tier": {
                 "type": "string",
