@@ -562,6 +562,12 @@ Sent, dismissed, merged, folded and replaced suggestions cannot keep the old
 reminder active; a replacement starts its own four-hour window. Normal
 notification policy still applies.
 
+A failed row write rolls back only the exact suggestion, receipt, explanation
+and handling chain staged by that reminder. Version and timestamp equality alone
+are not ownership: a replacement arriving during the write must keep its own
+note, urgency, chain and notification receipt. The same guard applies to failed
+notification-receipt writes and stale-reminder cleanup.
+
 ## Following up (2026-11-13, #6611)
 
 An item stays one matter for as long as it goes on: a handled event takes the messages that continue it and reopens, the processing conversation names it, and the Inbox knows what it waits on and when to look at it again. Nothing here is a new table, section, handling state or endpoint; the fields are optional on the item's JSON (`inbox_follow.go`), so old apps ignore them and new apps keep today's drawing when a hub sends none. This section is the contract the lanes of #6611 build on; each behavior lands in its own PR.

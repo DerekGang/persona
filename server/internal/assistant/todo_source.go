@@ -502,6 +502,8 @@ func (s *Service) sendSourceReport(ctx context.Context, src TodoSource, todoID s
 		if src.ThreadID != "" {
 			r.Topic = "lark-bot/" + src.ChatID + "/" + src.ThreadID
 			r.URL = outboundTopicURL(src.ChatID, src.ThreadID, src.MessageID)
+		} else {
+			r.Topic = s.outboundFeishuSourceTopic(ctx, src.ChatID, src.MessageID)
 		}
 		return s.deliverOutbound(ctx, r, func() error {
 			return s.appCall(ctx, AppFeishu, FeishuText, map[string]any{

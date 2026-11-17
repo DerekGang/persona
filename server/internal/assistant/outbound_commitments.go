@@ -366,7 +366,28 @@ func outboundTopicURL(chat, thread, message string) string {
 	return "https://applink.feishu.cn/client/thread/open?" + q.Encode()
 }
 
-func (s *Service) outboundInboxReply(it InboxItem, text, delivery string) outboundReply {
+// Resolve only the actual source message, never the task's separate work topic.
+// A single bounded readback bridges migrated Inbox and old source reports to
+// native bot topics. Opaque/unreadable sources retain their exact message key.
+func (s *Service) outboundFeishuSourceTopic(ctx context.Context, chat, message string) string {
+	fallback := "lark-message/" + chat + "/" + message
+	if !strings.HasPrefix(chat, "oc_") || !strings.HasPrefix(message, "om_") {
+		return fallback
+	}
+	lookup, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	items, err := s.botMessages(lookup, message)
+	if err == nil {
+		for _, m := range items {
+			if m.MessageID == message && m.ChatID == chat && m.ThreadID != "" && !m.Deleted && m.UpperMessageID == "" {
+				return "lark-bot/" + chat + "/" + m.ThreadID
+			}
+		}
+	}
+	return fallback
+}
+
+func (s *Service) outboundInboxReply(ctx context.Context, it InboxItem, text, delivery string) outboundReply {
 	r := outboundReply{ID: delivery, Text: text, Topic: it.Source + "/" + it.Account + "/" + it.ID}
 	if it.Agent != nil {
 		r.TodoID, r.Origin = it.Agent.TodoID, it.Agent.SessionID
@@ -376,6 +397,22 @@ func (s *Service) outboundInboxReply(it InboxItem, text, delivery string) outbou
 		r.URL = it.Connector.URL
 		if topic := outwardURLTopic(r.URL); topic != "" {
 			r.Topic = topic
+		}
+	} else if it.Source == "lark" && it.Lark != nil && it.Doc == nil && it.Moment == nil && it.Lark.FeedID != "" {
+		// migratedThread includes the legacy account; item IDs change after each
+		// filed event and cannot identify a conversation. A topic anchor narrows
+		// that identity when the connector has not supplied a native thread.
+		r.Topic = it.Source + "/" + it.Account + "/" + migratedThread(&it)
+		if message := it.Lark.ReplyTo; message != "" {
+			topic := s.outboundFeishuSourceTopic(ctx, it.Lark.FeedID, message)
+			if it.Lark.AccountID <= 1 || strings.HasPrefix(topic, "lark-bot/") {
+				r.Topic = topic
+			} else {
+				r.Topic += "/" + url.PathEscape(message)
+			}
+		} else if it.Lark.IsTopic || it.Lark.ThreadKind != "" {
+			// A topic-group feed alone does not prove which topic was answered.
+			r.Topic += "/item/" + url.PathEscape(it.ID)
 		}
 	}
 	// Legacy sources have a Persona original-message view rather than a provider URL.
@@ -390,7 +427,7 @@ func (s *Service) outboundInboxReply(it InboxItem, text, delivery string) outbou
 func (s *Service) deliverInboxReply(ctx context.Context, r inboxReplyReq, send func(context.Context) error) error {
 	replayed := false
 	ctx = context.WithValue(ctx, outboundReadbackKey{}, &replayed)
-	outward := s.outboundInboxReply(r.item, r.text, r.sendID)
+	outward := s.outboundInboxReply(ctx, r.item, r.text, r.sendID)
 	outward.replayed = &replayed
 	return s.deliverOutbound(ctx, outward, func() error { return send(ctx) })
 }

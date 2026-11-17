@@ -611,9 +611,18 @@ update is work to follow up, not an external dependency to park (#9754).
   an incoming reply, another topic, or a failed/unconfirmed send does not.
   GitHub comment fragments do not change the topic. A task's separate Lark work
   topic is never substituted for its actual outward source. Newly captured
-  Feishu source requests retain their original thread id; legacy records without
-  that identity keep an internal source view rather than inventing a provider
-  topic link. A sender can record the verified topic through an explicit receipt.
+  Feishu source requests retain their original thread id. Migrated Inbox chat
+  replies and old source reports resolve a native source chat/message with one
+  readback, bounded to two seconds. Only that exact, non-deleted source message
+  in that chat can supply the shared bot thread identity; a forwarded inner
+  message cannot. Their internal item/task URL remains the display link.
+  Unreadable or opaque sources keep an exact source-message identity (shared
+  with a report to that message), with secondary legacy accounts isolated.
+  Unthreaded legacy chats without a message anchor use their account-scoped
+  `migratedThread`, not the transient Inbox item ID. A topic without an anchor
+  stays item-scoped rather than conflating all topics in a group. No name-based
+  mapping or extra retry is attempted; unavailable source identity cannot prove
+  cross-topic fulfillment. A sender can record a verified topic explicitly.
 - At expiry the task's existing supervisor gets a source-linked blocked-work
   signal. After another 24 hours, the task enters the existing Needs you decision
   flow, with options to prepare an update for approval or keep waiting. Nothing is

@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
@@ -19,6 +20,32 @@ type inboxReplyApproval struct {
 	Explanation    string `json:"explanation"`
 }
 
+// A row save releases inbox.mu while storage is in flight. Undo and notification
+// receipts may touch only the exact suggestion, receipt and explanation staged
+// by that save, not a replacement that happens to reuse its version and time.
+type inboxApprovalState struct {
+	suggestion *InboxSuggestion
+	agent      *InboxAgent
+	receipt    *inboxReplyApproval
+	value      string
+}
+
+func approvalState(it *InboxItem) inboxApprovalState {
+	raw, _ := json.Marshal(struct {
+		Suggestion                     *InboxSuggestion
+		Receipt                        *inboxReplyApproval
+		Urgent                         bool
+		Reason, Last, Tier, MergedInto string
+		DoneAt                         *time.Time
+		Chain                          []InboxChainEntry
+	}{currentSuggestion(it), it.ReplyApproval, it.Urgent, it.Reason, it.Last, it.Tier, it.MergedInto, it.DoneAt, it.Chain})
+	return inboxApprovalState{it.Suggestion, it.Agent, it.ReplyApproval, string(raw)}
+}
+
+func (state inboxApprovalState) current(b *inboxBook, it *InboxItem) bool {
+	return b.items[it.ID] == it && state == approvalState(it)
+}
+
 // Drafts already have one home in Inbox Needs you. Make an old one urgent there,
 // with a source-linked explanation, and notify the owner; never create a second
 // decision, change the draft text, or send it to the other person.
@@ -31,7 +58,6 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 	type reminder struct {
 		item         *InboxItem
 		version      int
-		at           time.Time
 		text, url    string
 		oldUrgent    bool
 		oldReason    string
@@ -40,6 +66,7 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 		chainID      string
 		conversation string
 		displayed    bool
+		state        inboxApprovalState
 	}
 	var reminders []reminder
 	b.mu.Lock()
@@ -62,7 +89,7 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 		if link == "" {
 			link = "/inbox/" + it.ID
 		}
-		r := reminder{item: it, version: g.Version, at: g.At, text: text, url: link,
+		r := reminder{item: it, version: g.Version, text: text, url: link,
 			oldUrgent: it.Urgent, oldReason: it.Reason, oldReceipt: receipt, oldNote: g.Note}
 		if g.Conversation != nil {
 			r.conversation = g.Conversation.SessionID
@@ -79,6 +106,7 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 			r.chainID = it.Chain[len(it.Chain)-1].ID
 			r.displayed = true
 		}
+		r.state = approvalState(it)
 		reminders = append(reminders, r)
 	}
 	b.mu.Unlock()
@@ -91,13 +119,11 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 	failed := s.saveInboxUndo(ctx, items, func(failed map[string]bool) {
 		for _, r := range reminders {
 			it := r.item
-			g := currentSuggestion(it)
-			if !failed[it.ID] || g == nil || g.Version != r.version || !g.At.Equal(r.at) ||
-				it.ReplyApproval == nil || it.ReplyApproval.Version != r.version {
+			if !r.displayed || !failed[it.ID] || !r.state.current(b, it) {
 				continue
 			}
 			it.Urgent, it.Reason, it.ReplyApproval = r.oldUrgent, r.oldReason, r.oldReceipt
-			g.Note = r.oldNote
+			currentSuggestion(it).Note = r.oldNote
 			it.Chain = slices.DeleteFunc(it.Chain, func(e InboxChainEntry) bool { return e.ID == r.chainID })
 		}
 	})
@@ -106,9 +132,7 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 			continue
 		}
 		b.mu.Lock()
-		g := currentSuggestion(r.item)
-		current := r.item.open() && r.item.Tier != TierNoise && g != nil && g.Kind == SuggestReply &&
-			g.Version == r.version && g.At.Equal(r.at) && r.item.ReplyApproval != nil && r.item.ReplyApproval.Version == r.version
+		current := r.state.current(b, r.item)
 		b.mu.Unlock()
 		if !current {
 			continue
@@ -123,21 +147,20 @@ func (s *Service) checkInboxReplyApprovals(ctx context.Context, now time.Time) {
 			continue
 		}
 		b.mu.Lock()
-		g = currentSuggestion(r.item)
-		current = r.item.open() && r.item.Tier != TierNoise && g != nil && g.Kind == SuggestReply &&
-			g.Version == r.version && g.At.Equal(r.at) && r.item.ReplyApproval != nil && r.item.ReplyApproval.Version == r.version
+		current = r.state.current(b, r.item)
+		previous := r.item.ReplyApproval
+		var notified inboxApprovalState
 		if current {
 			receipt := *r.item.ReplyApproval
 			receipt.Notified = true
 			r.item.ReplyApproval = &receipt
+			notified = approvalState(r.item)
 		}
 		b.mu.Unlock()
 		if current {
 			s.saveInboxUndo(ctx, []*InboxItem{r.item}, func(failed map[string]bool) {
-				if failed[r.item.ID] && r.item.ReplyApproval != nil && r.item.ReplyApproval.Version == r.version {
-					receipt := *r.item.ReplyApproval
-					receipt.Notified = false
-					r.item.ReplyApproval = &receipt
+				if failed[r.item.ID] && notified.current(b, r.item) {
+					r.item.ReplyApproval = previous
 				}
 			})
 		}
@@ -151,6 +174,7 @@ func (s *Service) clearStaleReplyApprovals(ctx context.Context) {
 		receipt *inboxReplyApproval
 		urgent  bool
 		reason  string
+		state   inboxApprovalState
 	}
 	var clearedRows []cleared
 	var items []*InboxItem
@@ -161,18 +185,18 @@ func (s *Service) clearStaleReplyApprovals(ctx context.Context) {
 		if r == nil || it.open() && it.Tier != TierNoise && g != nil && g.Kind == SuggestReply && g.Version == r.Version {
 			continue
 		}
-		clearedRows = append(clearedRows, cleared{it, r, it.Urgent, it.Reason})
+		oldUrgent, oldReason := it.Urgent, it.Reason
 		if it.Reason == r.Explanation {
 			it.Urgent, it.Reason = r.PreviousUrgent, r.PreviousReason
 		}
 		it.ReplyApproval = nil
+		clearedRows = append(clearedRows, cleared{it, r, oldUrgent, oldReason, approvalState(it)})
 		items = append(items, it)
 	}
 	b.mu.Unlock()
 	s.saveInboxUndo(ctx, items, func(failed map[string]bool) {
 		for _, r := range clearedRows {
-			if failed[r.it.ID] && r.it.ReplyApproval == nil &&
-				(r.it.Reason == r.receipt.PreviousReason || r.it.Reason == r.reason) {
+			if failed[r.it.ID] && r.state.current(b, r.it) {
 				r.it.ReplyApproval, r.it.Urgent, r.it.Reason = r.receipt, r.urgent, r.reason
 			}
 		}
