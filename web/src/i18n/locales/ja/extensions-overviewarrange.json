@@ -13,5 +13,6 @@
   "later": "「{name}」を後ろへ",
   "show": "「{name}」を概要に表示",
   "hidden": "非表示：読み込みません",
-  "line": "{hint}{where}"
+  "line": "{hint}{where}",
+  "undo_stale": "元に戻しませんでした。その後カードが変更されています。"
 }

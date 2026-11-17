@@ -13,5 +13,6 @@
   "later": "把「{name}」往后移",
   "show": "在总览上显示「{name}」",
   "hidden": "已隐藏：不加载",
-  "line": "{hint}{where}"
+  "line": "{hint}{where}",
+  "undo_stale": "没有撤销：卡片在这之后又改过了。"
 }

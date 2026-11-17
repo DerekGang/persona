@@ -142,34 +142,61 @@ onSidebarPrefsSaved((pages) => {
     .finally(() => sending--);
 });
 
-// Overview's cards (lib/overview-cards.ts) go the same way, sent on their own: a default manager from before the field
-// (#9745) answers a change of only them 400, or leaves them out of the record it answers, and the arrangement then
-// stays in this browser, as on a hub without the route (Overview's editor says so).
+// Overview's cards (lib/overview-cards.ts) go the same way, sent on their own. A default manager from before the field
+// answers a change of only them with its own 400 (OLD_MANAGER), or takes the PUT and leaves them out of its answer: the
+// arrangement then stays in this browser (Overview's editor says so) until the next hello asks again. Any other failure
+// (403, 5xx, the network, another 400) keeps the change and sends it again at the next hello. Pushes heard while a change
+// is on its way are settled once the last one is answered (settleOverview), not dropped.
+const OLD_MANAGER = ["start is required", "start or pages is required"]; // #9328, #9351
 let sendingOverview = 0;
 let unsentOverview = false;
-function sendOverview(overview: OverviewEntry[]) {
-  if (synced === false || overviewKept() === false) return; // this browser only
+let heardOverview: unknown[] = []; // the arrangements the hub pushed meanwhile, in its order
+let answeredOverview: string[] = []; // its answers to the changes on their way
+function sendOverview(overview: OverviewEntry[], probe = false) {
+  if (synced === false || (overviewKept() === false && !probe)) return; // this browser only
   sendingOverview++;
   api<{ overview?: unknown }>("/navigation", { method: "PUT", json: { overview } })
     .then(
       (r) => {
         noteStartPageSynced();
         unsentOverview = false;
-        if (!Array.isArray(r.overview)) return noteOverviewKept(false);
-        noteOverviewKept(true);
-        if (sendingOverview === 1) adoptOverview(r.overview);
+        noteOverviewKept(Array.isArray(r.overview));
+        if (Array.isArray(r.overview)) answeredOverview.push(JSON.stringify(r.overview));
       },
       (e) => {
         noteStartPageSynced(e);
-        if (e instanceof ApiError && e.status === 400) {
-          unsentOverview = false;
-          noteOverviewKept(false);
-        } else unsentOverview = synced !== false;
+        const old = e instanceof ApiError && e.status === 400 && OLD_MANAGER.includes(String(e.body?.error));
+        if (old) noteOverviewKept(false);
+        unsentOverview = !old && synced !== false;
       },
     )
-    .finally(() => sendingOverview--);
+    .finally(() => {
+      if (--sendingOverview === 0) settleOverview();
+    });
 }
-onOverviewSaved(sendOverview);
+onOverviewSaved((p) => sendOverview(p));
+
+/** Once the last change on its way is answered: the hub pushes every change, these too, in its order, so an arrangement
+ *  pushed after the last of ours is newer than ours and is taken; with none, this browser's copy (the newest change)
+ *  stays, as does a change the hub did not take, which goes again at the next hello. */
+function settleOverview() {
+  const heard = heardOverview;
+  const ours = answeredOverview;
+  heardOverview = [];
+  answeredOverview = [];
+  let last = -1;
+  heard.forEach((p, i) => {
+    if (ours.includes(JSON.stringify(p))) last = i;
+  });
+  if (!unsentOverview && last >= 0 && last < heard.length - 1) adoptOverview(heard[heard.length - 1]);
+}
+
+/** The hub's arrangement, read or pushed: taken at once, or settled with the change on its way. */
+function hubOverview(v: unknown[]) {
+  noteOverviewKept(true);
+  if (sendingOverview) heardOverview.push(v);
+  else adoptOverview(v);
+}
 
 // The hub's choices, read at every hello that did not resume (a resumed one gets the pushes it missed) and pushed on
 // each change. A hub that never stored one is handed the one this browser kept while there was no record.
@@ -184,9 +211,9 @@ onHubEvent("hello", (msg) => {
       if (r.pages && !unsent) adoptSidebarPrefs(r.pages);
       else if (chosen(getSidebarPrefs())) handover.pages = getSidebarPrefs();
       if (Object.keys(handover).length) void api("/navigation", { method: "PUT", json: handover }).then(() => (unsent = false), () => {});
-      if (Array.isArray(r.overview)) noteOverviewKept(true);
-      if (Array.isArray(r.overview) && !unsentOverview) adoptOverview(r.overview);
-      else if (overviewChosen() || unsentOverview) sendOverview(getOverviewPrefs());
+      // ours, unless a change of it did not reach the hub; else handed over, or asked again where it was refused
+      if (Array.isArray(r.overview) && !unsentOverview) hubOverview(r.overview);
+      else if (overviewChosen() || unsentOverview || overviewKept() === false) sendOverview(getOverviewPrefs(), true);
     },
     noteStartPageSynced, // the copies here stay
   );
@@ -194,6 +221,5 @@ onHubEvent("hello", (msg) => {
 onHubEvent("navigation", (msg) => {
   if (typeof msg.start === "string") keepStartPage(msg.start);
   if (msg.pages && !sending) adoptSidebarPrefs(msg.pages);
-  if (Array.isArray(msg.overview)) noteOverviewKept(true);
-  if (Array.isArray(msg.overview) && !sendingOverview) adoptOverview(msg.overview);
+  if (Array.isArray(msg.overview)) hubOverview(msg.overview);
 });

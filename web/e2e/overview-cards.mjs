@@ -71,6 +71,12 @@ async function overview(p) {
   await p.locator("[data-extension-card]").first().waitFor({ timeout: 20_000 });
 }
 
+/** This browser's copy of the arrangement, kept per hub and sign-in (`<scope>:overview.cards`, lib/overview-cards.ts). */
+const COPY = () => {
+  const key = Object.keys(localStorage).find((k) => k.endsWith(":overview.cards"));
+  return key ? JSON.parse(localStorage.getItem(key)) : [];
+};
+
 const navigation = (p, method, body) =>
   p.evaluate(async ([method, body]) => {
     const r = await fetch("/api/v1/navigation", { method, headers: { Authorization: `Bearer ${localStorage.getItem("persona.token")}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -120,8 +126,8 @@ try {
     if (mode === "old-hub") check("the hub has no navigation route", (await navigation(p, "GET")).status === 404);
     else check("the manager answers a change of only the cards 400", (await navigation(p, "PUT", { overview: [] })).status === 400);
     await arrangeByHand(p);
-    await p.waitForFunction(() => JSON.parse(localStorage.getItem("overview.cards") ?? "[]").some((e) => e.hidden));
-    check("the arrangement stays in this browser", JSON.parse(await p.evaluate(() => localStorage.getItem("overview.cards")))[0]?.id === "agenda");
+    await p.waitForFunction(`(${COPY})().some((e) => e.hidden)`);
+    check("the arrangement stays in this browser", (await p.evaluate(COPY))[0]?.id === "agenda");
     await p.waitForFunction((local) => document.querySelector("[data-overview-arrange]")?.textContent.includes(local), LOCAL, { timeout: 10_000 });
     check("the edit state says so", true);
     check("the hub keeps none", !("overview" in (await navigation(p, "GET"))));
@@ -153,6 +159,7 @@ try {
     check("done: Agenda spans the row, the two under it side by side", drawn[0].w >= width - 2 && drawn[1].y === drawn[2].y && drawn[1].y > drawn[0].y && drawn[1].w < width * 0.55, { drawn, width });
     const hub = await navigation(p, "GET");
     check("the hub keeps the arrangement", JSON.stringify(hub.overview) === JSON.stringify(ARRANGED), hub.overview);
+    check("this browser's copy is kept per hub and sign-in", (await p.evaluate(COPY)).length === 4 && (await p.evaluate(() => localStorage.getItem("overview.cards"))) === null);
 
     // the hidden card's render is never asked for
     laptop.renders.length = 0;
@@ -162,7 +169,7 @@ try {
 
     // another device draws it from its hello
     const other = await device({ width: 1440, height: 900 });
-    await other.p.waitForFunction(() => JSON.parse(localStorage.getItem("overview.cards") ?? "[]").length === 4, null, { timeout: 20_000 });
+    await other.p.waitForFunction(`(${COPY})().length === 4`, null, { timeout: 20_000 });
     await other.p.waitForFunction(() => document.querySelectorAll("[data-extension-card]").length === 3);
     const there = await cards(other.p);
     check("another device draws the same", JSON.stringify(there.map((c) => [c.key, c.w >= width - 2])) === JSON.stringify(drawn.map((c) => [c.key, c.w >= width - 2])), there);

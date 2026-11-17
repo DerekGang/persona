@@ -7,7 +7,7 @@
 import { useEffect, useRef } from "react";
 import { t } from "../../i18n";
 import type { UIPlace } from "../../lib/extension-ui";
-import { cardKey, saveOverview, useOverviewKept, useOverviewPrefs, type ArrangedCard, type CardSpan, type OverviewEntry } from "../../lib/overview-cards";
+import { cardKey, getOverviewPrefs, saveOverview, useOverviewKept, useOverviewPrefs, type ArrangedCard, type CardSpan, type OverviewEntry } from "../../lib/overview-cards";
 import { changeEntry, dropEntry, entriesOf, moveEntry } from "../../lib/overview-edit";
 import { useStartPageSynced } from "../../lib/start-page";
 import { Button, cx, IconButton, Switch, toast } from "../../ui/atoms";
@@ -28,9 +28,12 @@ function EditHead({ onDone }: { onDone: () => void }) {
   const route = useStartPageSynced();
   const field = useOverviewKept();
   const synced = route !== false && field !== false;
+  // Undo puts back the arrangement from before only while the cards are still as Reset left them: one changed since
+  // (here, in another tab, or on another device) is newer and stays
   const reset = () => {
     saveOverview([]);
-    toast(t("extensions-overviewarrange.reset_done"), "info", { label: t("extensions-overviewarrange.undo"), run: () => saveOverview(prefs) });
+    const undo = () => (getOverviewPrefs().length ? toast(t("extensions-overviewarrange.undo_stale"), "info") : saveOverview(prefs));
+    toast(t("extensions-overviewarrange.reset_done"), "info", { label: t("extensions-overviewarrange.undo"), run: undo });
   };
   return (
     <div data-overview-arrange className="col-span-full flex flex-wrap items-start gap-x-3 gap-y-2">

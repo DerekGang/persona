@@ -10,6 +10,7 @@
 // until the user saves another arrangement (it holds only the cards there are then). Changing it is
 // lib/overview-edit.ts's, loaded with Overview's card editor: the first screen only draws the cards.
 import { useSyncExternalStore } from "react";
+import { feedCacheScope, scopedKey } from "./feed-cache";
 
 const KEY = "overview.cards";
 
@@ -55,17 +56,27 @@ export const halvesPaired = (cards: readonly { hidden: boolean; span: CardSpan }
 
 const listeners = new Set<() => void>();
 const changed = () => listeners.forEach((l) => l());
-// this browser's copy as read from storage (null: not read yet), the one shown until it changes
+// This browser's copy, kept per hub and sign-in (lib/feed-cache.ts scopedKey, as the extensions' places list is; signing
+// out removes it): another hub or account in this browser neither draws it nor hands it to its hub. `prefs` is the copy
+// as read under `scope`, read again when the scope changes (null: not read yet).
 let prefs: OverviewEntry[] | null = null;
-function read() {
+let scope: string | null = null;
+function read(key: string | null) {
   try {
-    return readOverview(JSON.parse(localStorage.getItem(KEY) ?? "[]"));
+    return key ? readOverview(JSON.parse(localStorage.getItem(key) ?? "[]")) : [];
   } catch {
     return []; // none, broken, or storage blocked: as they always were
   }
 }
 
-export const getOverviewPrefs = (): OverviewEntry[] => (prefs ??= read());
+export function getOverviewPrefs(): OverviewEntry[] {
+  const now = feedCacheScope();
+  if (prefs === null || now !== scope) {
+    scope = now;
+    prefs = read(scopedKey(now, KEY));
+  }
+  return prefs;
+}
 
 /** Whether this browser holds an arrangement at all (none: the cards as they always were). */
 export const overviewChosen = () => getOverviewPrefs().length > 0;
@@ -86,10 +97,12 @@ export function saveOverview(list: OverviewEntry[]) {
 }
 
 function keep(p: OverviewEntry[]) {
+  scope = feedCacheScope();
   prefs = p;
+  const key = scopedKey(scope, KEY);
   try {
-    if (p.length) localStorage.setItem(KEY, JSON.stringify(p));
-    else localStorage.removeItem(KEY);
+    if (key && p.length) localStorage.setItem(key, JSON.stringify(p));
+    else if (key) localStorage.removeItem(key);
   } catch {
     // storage blocked: the change lasts until the page reloads
   }
@@ -110,8 +123,8 @@ export function noteOverviewKept(on: boolean) {
 if (typeof window !== "undefined") {
   // another tab changed it
   window.addEventListener("storage", (e) => {
-    if (e.key === KEY || e.key === null) {
-      prefs = read();
+    if (e.key === null || e.key.endsWith(`:${KEY}`)) {
+      prefs = null;
       changed();
     }
   });

@@ -27053,6 +27053,8 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(self.last_body or b"{}")
             start, pages = body.get("start"), body.get("pages")
             overview = None if os.environ.get("MOCK_NAVIGATION") == "no-overview" else body.get("overview")
+            if os.environ.get("MOCK_NAVIGATION") == "no-overview" and start is None and pages is None:
+                return self.send_json({"error": "start or pages is required"}, 400)  # #9351's own words
             if (start is None and pages is None and overview is None) or (start is not None and (not isinstance(start, str) or (start and not NAVIGATION_START.fullmatch(start)))) \
                     or (pages is not None and not isinstance(pages, dict)) or (overview is not None and not navigation_overview_ok(overview)):
                 return self.send_json({"error": "start, pages or overview, of their shapes"}, 400)

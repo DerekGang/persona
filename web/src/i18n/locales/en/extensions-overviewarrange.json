@@ -13,5 +13,6 @@
   "later": "Move {name} later",
   "show": "Show {name} on Overview",
   "hidden": "Hidden: not loaded",
-  "line": "{hint} {where}"
+  "line": "{hint} {where}",
+  "undo_stale": "Not undone: the cards were changed since."
 }

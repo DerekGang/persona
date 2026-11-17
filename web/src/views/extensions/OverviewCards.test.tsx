@@ -23,8 +23,9 @@ vi.mock("../settings/ExtensionView", async () => {
 });
 
 import { t } from "../../i18n";
+import { feedCacheScope, scopedKey } from "../../lib/feed-cache";
 import { loadPages } from "../../lib/lazy-page";
-import { getOverviewPrefs, noteOverviewKept, onOverviewSaved, type OverviewEntry } from "../../lib/overview-cards";
+import { adoptOverview, getOverviewPrefs, noteOverviewKept, onOverviewSaved, type OverviewEntry } from "../../lib/overview-cards";
 import { Toasts } from "../../ui/atoms";
 import { OverviewArrangeButton, OverviewCards } from "./ExtensionSlots";
 
@@ -42,6 +43,7 @@ beforeAll(() => loadPages());
 
 beforeEach(() => {
   localStorage.clear();
+  localStorage.setItem("persona.token", "test-token"); // the copy is kept per hub and sign-in
   window.dispatchEvent(new StorageEvent("storage", { key: null }));
   hub.cards = CARDS;
   hub.synced = true;
@@ -62,8 +64,9 @@ afterEach(() => {
 const draw = (editing = false) => act(() => root.render(<><OverviewCards editing={editing} onDone={() => draw(false)} /><Toasts /></>));
 // this browser's copy, as another tab would leave it (the store reads it again)
 const arrange = (list: OverviewEntry[]) => {
-  localStorage.setItem("overview.cards", JSON.stringify(list));
-  window.dispatchEvent(new StorageEvent("storage", { key: "overview.cards" }));
+  const key = scopedKey(feedCacheScope(), "overview.cards")!;
+  localStorage.setItem(key, JSON.stringify(list));
+  window.dispatchEvent(new StorageEvent("storage", { key }));
 };
 const cards = () => [...host.querySelectorAll<HTMLElement>("[data-extension-card]")];
 const order = () => cards().map((c) => c.dataset.extensionCard);
@@ -229,6 +232,24 @@ describe("arranging them", () => {
     press(byText(t("extensions-overviewarrange.undo")));
     expect(saved.at(-1)).toEqual(list);
     expect(order()).toEqual(["example-today/needs", "example-gateway/today", "example-quota/left"]);
+  });
+
+  // review of #9778, P1: Undo put the old arrangement back over a newer one
+  it("Undo leaves a newer arrangement alone and says so: one from another device, or another tab", () => {
+    const list = [{ extension: "example-today", id: "needs", span: "full" as const }];
+    const phone = [{ extension: "example-quota", id: "left", hidden: true }];
+    for (const elsewhere of [() => adoptOverview(phone), () => arrange(phone)]) {
+      arrange(list);
+      draw(true);
+      saved = [];
+      press(byText(t("extensions-overviewarrange.reset")));
+      act(elsewhere);
+      press(byText(t("extensions-overviewarrange.undo")));
+      expect(getOverviewPrefs()).toEqual(phone);
+      expect(saved).toEqual([[]]); // nothing written over it
+      expect(document.body.textContent).toContain(t("extensions-overviewarrange.undo_stale"));
+      expect(order()[0]).toBe("example-quota/left");
+    }
   });
 
   it("says where the arrangement is kept: every device, or this browser only", () => {
