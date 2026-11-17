@@ -291,6 +291,7 @@ struct InboxExtensionItemPage: View {
         SettingsForm {
             if let v = page.view {
                 ExtensionViewRenderer(view: v, model: page, link: links)
+                    .environment(\.pluginUICompact, true)
             }
         }
         .themedPage()

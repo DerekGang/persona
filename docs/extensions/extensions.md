@@ -2710,10 +2710,12 @@ color's tint, its arc with round ends; the value is in `text-xl` (`text-lg` in a
 tiles keep the grid's columns (`max_columns`, at least 150 px each), so a phone has two a line. The web's native stream still sends 7.
 `web/e2e/extension-gauge.mjs` checks it in a browser against the mock (`MOCK_EXTENSIONS=1 MOCK_EXTENSION_GAUGE=1`).
 
-**iOS and Android** both draw the ring natively, with the named colour's tint for its track, the value and unit (or percentage)
-in its centre, and the exact meter readout; Reduce Motion snaps ratio changes. Android's `ExtensionGaugeRing` is shared by grid
-and carousel tiles at 96 dp on a page and 80 dp in a compact card. `JTile` keeps the existing surface, badge, switch, action and
-extra-action menu, and adds meter semantics without removing the button behaviour of an actionable tile.
+**iOS and Android** both draw the ring natively on grid and carousel tiles, with the named palette colour's tint for its track,
+the value and unit (or the percentage) in its centre, the same accessibility reading (the exact meter readout) and an eased ratio
+change which snaps with Reduce Motion. Android's `ExtensionGaugeRing` is shared by grid and carousel tiles at 96 dp on a page and
+80 dp in a compact card. `JTile` keeps the existing surface, badge, switch, action and extra-action menu, and adds meter semantics
+without removing the button behaviour of an actionable tile. Their native streams stay at their earlier versions, so the hub still
+gives a stream the downgraded tile.
 
 ## UI version 10 (#9727)
 
@@ -2808,7 +2810,19 @@ are new or their fields changed. A card draws the same graph as a still fitted p
 presses; pressing it opens Full screen, the same interactive canvas as the page's. The web's native stream still sends 7.
 `web/e2e/extension-graph.mjs` checks it in a browser against the mock (`MOCK_EXTENSIONS=1 MOCK_EXTENSION_GRAPH=1`), keyboard included.
 
-**iOS** (#9727): see `apple/Persona/Views/Settings/ExtensionGraph.swift`.
+**iOS** (#9727) draws all of it and sends `10` for whole pages and the app's cards and sections
+(`ExtensionUIContext.pageVersion` and `cardVersion`); the native stream stays at `8` and receives rows, and the frozen
+Mac app keeps its earlier version. `apple/Persona/Views/Settings/ExtensionGraphLayout.swift` is a pure, nonisolated
+copy of the shared layout, checked against every field of every shared case by `ExtensionGraphLayoutTests`.
+`apple/Persona/Views/Settings/ExtensionGraph.swift` draws one edge `Canvas`, the group frames and native node cards,
+with 44 pt fold targets, reading-order VoiceOver elements and a fold custom action. Drag, pinch and iPad pointer
+scrolling move the canvas; the floating Zoom out, Zoom in, Fit and Full screen controls use the design system, and the
+cover keeps the same model, transform and folds. A page gives it 70% of the visible height, clamped to 320–900 pt; a
+compact card has a still 200 pt preview which opens the cover. `ExtensionGraphModel` lays out and restores off the
+main actor, persists the transform and explicit fold choices per component key, scoped to the hub, page and placement,
+in a bounded `StateCache` document, and refits only while the canvas is untouched. `ExtensionGraphModelTests` covers restoration, folding and fitting;
+`ExtensionGraphUITests` checks zoom, fold, node push, full screen and the compact preview against the mock
+(`MOCK_EXTENSIONS=1 MOCK_EXTENSION_GRAPH=1`).
 
 **Android** (#9727) draws the canvas in `android/feature/settings/src/main/kotlin/persona/feature/settings/ExtensionGraph.kt` and
 sends `10` (`HttpExtensionManagement.UI_VERSION`). The pure-Kotlin `ExtensionGraphLayout` reproduces the shared slot layout and
