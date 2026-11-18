@@ -144,6 +144,41 @@ struct CallFollowUpTests {
         capture.error = nil
     }
 
+    /// A replay is refused while a call is on, before its tape, recording state or audio opens. Without a call the same
+    /// tape really plays its fixture audio and End lets the session and the replayed recording go (#10693).
+    @Test func aMeetingReplayRefusesOnACallAndPlaysWithoutOne() async throws {
+        let capture = RecordingCapture.shared
+        let replay = MeetingReplay.shared
+        try #require(capture.state == .idle && !replay.running)
+        let gate = capture.callGate
+        defer { capture.callGate = gate; capture.error = nil }
+        var tape = MeetingTape(title: "Replay call gate", startedAt: .now)
+        tape.endedAfter = 30
+        let audio = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/meeting-tape/audio.m4a")
+
+        capture.callGate = { "End the call first" }
+        let refused = replay.play(tape, audioFile: audio)
+        #expect(!refused, "a live call did not refuse the replay")
+        #expect(replay.audio == nil && capture.state == .idle && capture.recordingID == nil)
+        if refused {
+            _ = capture.stop()
+            await Self.waitUntil { !replay.running }
+            replay.clearEnded()
+        }
+
+        capture.callGate = { nil }
+        let started = replay.play(tape, audioFile: audio)
+        #expect(started, "ordinary replay did not start")
+        if started {
+            await Self.waitUntil { replay.audio?.isPlaying == true }
+            #expect(replay.audio?.isPlaying == true, "ordinary replay audio did not play")
+            _ = capture.stop()
+            await Self.waitUntil { !replay.running }
+        }
+        #expect(!replay.running && replay.audio == nil && capture.state == .idle && capture.recordingID == nil)
+        replay.clearEnded()
+    }
+
     /// The gate's words, while the call manager says a call is on.
     @Test func theGateSaysWhyWhileACallIsOn() {
         let live = LiveCallGate.isLive

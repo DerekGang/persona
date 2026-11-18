@@ -47,7 +47,7 @@ import OSLog
     @ObservationIgnored private var task: Task<Void, Never>?
     /// The run playing now: a run that ended late (its last tick after the next began) touches nothing of the next.
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private var audio: AVAudioPlayer?
+    @ObservationIgnored private(set) var audio: AVAudioPlayer?
     @ObservationIgnored private var sessionActive = false
     nonisolated private static let log = Logger(subsystem: "persona", category: "recording")
 
