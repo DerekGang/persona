@@ -179,6 +179,5 @@
   "agent_unfinished": "停下·没做完",
   "agent_waiting": "停下·在等",
   "agent_waiting_on": "停下·在等{waiting}",
-  "tray_unattended": "督办超过1小时没有跟进",
-  "tray_park_hint": "请督办确认等待并挂搁置"
+  "tray_unattended": "督办超过1小时没有跟进"
 }

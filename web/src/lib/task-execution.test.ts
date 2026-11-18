@@ -30,7 +30,7 @@ describe("closeout-based entries aligned with #10174", () => {
       const got = entries({ ...agent, state, work: status ? { phase: "", closeout: { status, waiting: "the design team" } } : undefined });
       expect(got.justFinished).toEqual([]);
       expect(got.running).toEqual([]);
-      expect(got.review).toEqual([]);
+      expect(got).not.toHaveProperty("review");
       expect(got.needsYou).toEqual([]);
     }
   });
@@ -39,7 +39,7 @@ describe("closeout-based entries aligned with #10174", () => {
     for (const state of ["", "pending_review"] as const) {
       const got = entries(s, { ...todo, supervision: { ...todo.supervision!, state } }, now + 24 * STOP_FOLLOWUP_MS);
       expect(keys(got.justFinished)).toEqual(["task:task"]);
-      expect(got.review).toEqual([]);
+      expect(got).not.toHaveProperty("review");
       expect([...got.running, ...got.needsYou]).toEqual([]);
     }
   });
@@ -48,7 +48,7 @@ describe("closeout-based entries aligned with #10174", () => {
     const awaiting: Todo = { ...todo, seen_at: new Date(now).toISOString(), supervision: { supervisor: "main", state: "" } };
     const got = entries(stopped, awaiting, now + 1);
     expect(keys(got.justFinished)).toEqual(["task:task"]);
-    expect([...got.running, ...got.needsYou, ...got.review]).toEqual([]);
+    expect([...got.running, ...got.needsYou]).toEqual([]);
     expect(got.justFinished[0]).toMatchObject({ countsOpen: false });
   });
   it("does not call an unread stopped Agent running when another Agent really runs", () => {
@@ -56,12 +56,12 @@ describe("closeout-based entries aligned with #10174", () => {
     const got = assistantEntries({ conversation: "main", main: "main", todos: [{ ...todo, agents: [...todo.agents!,
       { machine_id: "box", session_id: "second", linked_at: at }] }], sessions: [agent, second], interactions: [], plans: {}, feed: [], now });
     expect(keys(got.running)).toEqual(["task:task"]);
-    expect([...got.review]).toEqual([]);
+    expect(got).not.toHaveProperty("review");
   });
   it("ignores an old done closeout on a resumed Agent", () => {
     const got = entries({ ...agent, state: "working", work: { phase: "working", closeout: { status: "done" } } });
     expect(keys(got.running)).toEqual(["task:task"]);
-    expect(got.review).toEqual([]);
+    expect(got).not.toHaveProperty("review");
   });
   it("escalates only after the full hour and honors real follow-up, not automatic ledger writes", () => {
     expect(entries(agent, todo, now).needsYou).toEqual([]);
@@ -82,7 +82,7 @@ describe("closeout-based entries aligned with #10174", () => {
       parked: { reason: "Waiting for the maintainer", until: "2026-12-01T00:00:00Z", waiting_on: "someone_else" as const, count: 1 } } };
     const got = entries(agent, parked, now + 48 * STOP_FOLLOWUP_MS);
     expect(keys(got.parked)).toEqual(["task:task"]);
-    expect([...got.running, ...got.review, ...got.needsYou]).toEqual([]);
+    expect([...got.running, ...got.needsYou]).toEqual([]);
   });
   it("does not let blocked/external waiting override an explicit park", () => {
     const s: Session = { ...agent, state: "idle", work: { phase: "blocked", on: "external", turn_at: at,
@@ -110,7 +110,7 @@ describe("closeout-based entries aligned with #10174", () => {
     const accepted = { ...todo, supervision: { ...todo.supervision!, state: "accepted" as const,
       reviews: [{ at, verdict: "accepted" as const }] } };
     const got = entries(agent, accepted, now + 24 * STOP_FOLLOWUP_MS);
-    expect([...got.running, ...got.review, ...got.needsYou]).toEqual([]);
+    expect([...got.running, ...got.needsYou]).toEqual([]);
   });
 });
 

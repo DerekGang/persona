@@ -223,6 +223,8 @@ describe("Assistant Needs you / In progress trays", () => {
     const row = () => host.querySelector("[data-task-slot]")!;
     const status = () => row().querySelector<HTMLElement>("[data-task-status]")!;
     expect(status().textContent).toBe(t("lib-state-labels.working"));
+    expect(status().className).toContain("break-words");
+    expect(status().className).not.toContain("truncate");
     expect(row().querySelector(".font-semibold")!.textContent).toBe("Demo task"); // the title no longer carries the word
     const limited: Session = { machine_id: "demo", session_id: "worker", title: "Demo agent", cwd: "/demo", status: "idle", state: "idle", updated_at: at,
       turn_error: "You've hit your usage limit.", turn_error_kind: "usage_limit", turn_error_resets_at: new Date(now.getTime() + 3 * 3_600_000).toISOString() };

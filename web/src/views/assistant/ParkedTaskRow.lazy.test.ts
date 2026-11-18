@@ -5,6 +5,15 @@ import startup from "../../i18n/startup-namespaces.json";
 import { startupMatcher } from "../../i18n/startup-keys";
 
 describe("wait information stays off the first screen", () => {
+  it("loads an unfinished stop's expanded body with the existing Needs you details", () => {
+    const entry = readFileSync(new URL("./Tasks.tsx", import.meta.url), "utf8");
+    const details = readFileSync(new URL("./TaskDecision.tsx", import.meta.url), "utf8");
+    expect(entry).toContain('lazyPage(() => import("./TaskDecision").then((m) => m.WaitingTaskRow))');
+    expect(entry).not.toContain("function WaitingTaskRow(");
+    expect(details).toContain("export function WaitingTaskRow(");
+    expect(details).toContain('data-needs-reason={unattended ? "stopped_unfinished"');
+  });
+
   it("loads wait ordering and new detail copy only with the waiting list", () => {
     const source = readFileSync(new URL("./Tasks.tsx", import.meta.url), "utf8");
     expect(source).not.toMatch(/^import[^;]*from\s+["']\.\/ParkedTaskRow["']/m);

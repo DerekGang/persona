@@ -115,6 +115,7 @@ async function run(browser, size, theme, language, textSize = "standard") {
       await noOverflow();
     };
     await open("needs");
+    await page.locator('[data-needs-reason="stopped_unfinished"]').waitFor();
     assert.equal(await page.locator("[data-needs-row]").count(), 2, "owner decision and an unattended stopped task only");
     assert.equal(await page.locator('[data-needs-reason="stopped_unfinished"]').count(), 1);
     assert.equal(await page.locator('[data-needs-row="task:unattended"] [data-task-status="unfinished"]').count(), 1);

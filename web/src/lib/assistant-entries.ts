@@ -43,8 +43,6 @@ export interface AssistantEntries {
   shelved: RunningItem[];
   /** Explicit holds and fresh ready PR waits: the Waiting subsection of In progress. */
   parked: RunningItem[];
-  /** Legacy field kept for callers during the hub-view rollout; always empty, not a separate tray. */
-  review: RunningItem[];
   /** Handed-out tasks that finished in the last 24 hours and that the owner has not opened since (the To-dos page's Just
    *  finished, todo-triage), newest first: a group under In progress, not counted (#8237). How a task ended is told
    *  here, not by a card in the chat. */
@@ -98,12 +96,6 @@ export function taskAwaitsDecision(todo: Todo): boolean {
   if (ask) return !(todo.done_at && ask.outcome === "decide");
   if (todo.done_at) return false;
   return todo.supervision?.state === "needs_user";
-}
-
-/** The task waits for its supervisor's review and nothing of it runs: an open `pending_review` whose status is a
- *  finished turn (`awaitsReview`). An agent at work again keeps it In progress. */
-function underReview(todo: Todo, status: TodoStatus): boolean {
-  return !todo.done_at && reviewState(todo) === "pending_review" && awaitsReview(todo, status);
 }
 
 /** The message card still waits for Send: not sent, filed, dismissed, or put off. */
@@ -198,7 +190,7 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
       for (const agent of active) folded.add(sessionKey(agent.machine_id, agent.session_id));
       continue;
     }
-    else if (!external && underReview(todo, status) && !execution.running) finished.push({ item: { kind: "task", key, card, todo, status, countsOpen: false }, at: execution.unattendedSince });
+    else if (!external && !todo.done_at && reviewState(todo) === "pending_review" && awaitsReview(todo, status) && !execution.running) finished.push({ item: { kind: "task", key, card, todo, status, countsOpen: false }, at: execution.unattendedSince });
     else if (!settled && execution.running) open.push({ item: { kind: "task", key, card, todo, status: "working", activity: taskBackgroundWork(todo, lookup), countsOpen: true }, rank: todoRank(todo, status), at: card.at });
     // Use the To-dos page's wait classification. Live work and owner decisions outrank a hold or an open PR.
     else if (external) parked.push({ item: { kind: "task", key, card, todo, status, countsOpen: countsOpen || execution.waiting }, at: card.at });
@@ -241,7 +233,6 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     running: [...open.sort(newest).map((row) => row.item), ...agentsRunning],
     shelved: shelved.sort(newest).map((row) => row.item),
     parked: parked.sort(newest).map((row) => row.item),
-    review: [],
     justFinished: finished.sort((a, b) => b.at - a.at || a.item.key.localeCompare(b.item.key)).map((row) => row.item),
   };
 }

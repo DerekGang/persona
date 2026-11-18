@@ -179,6 +179,5 @@
   "agent_unfinished": "停止・未完了",
   "agent_waiting": "停止・待機中",
   "agent_waiting_on": "停止・{waiting}待ち",
-  "tray_unattended": "1時間以上フォローアップがありません",
-  "tray_park_hint": "監督役：待機を確認して保留してください"
+  "tray_unattended": "1時間以上フォローアップがありません"
 }

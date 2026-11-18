@@ -193,6 +193,5 @@
   "agent_unfinished": "Stopped · unfinished",
   "agent_waiting": "Stopped · waiting",
   "agent_waiting_on": "Stopped · waiting for {waiting}",
-  "tray_unattended": "Persona has not followed up for over an hour",
-  "tray_park_hint": "Supervisor: confirm the wait and park this task"
+  "tray_unattended": "Persona has not followed up for over an hour"
 }

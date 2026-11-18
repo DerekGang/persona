@@ -63,7 +63,7 @@ func (r run) title() string {
 // since is when the run got where it is: its session's state_since, else its updated_at.
 func (r run) since() time.Time {
 	if r.s.Work != nil && r.s.Work.Phase != proto.WorkWorking && !r.s.Starting &&
-		stateOf(r.s) != proto.StateWorking && stateOf(r.s) != proto.StateNeedsYou && !r.s.Work.TurnAt.IsZero() {
+		stateOf(*r.s) != proto.StateWorking && stateOf(*r.s) != proto.StateNeedsYou && !r.s.Work.TurnAt.IsZero() {
 		return r.s.Work.TurnAt
 	}
 	if !r.s.StateSince.IsZero() {

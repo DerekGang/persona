@@ -17,7 +17,7 @@ describe("the Assistant's Needs you and In progress entries (spec/fixtures/entri
       expect([...got.running, ...got.parked].map((item) => item.key)).toEqual(c.expected.running);
       expect(got.shelved.map((item) => item.key)).toEqual(c.expected.shelved);
       expect(got.justFinished.map((item) => item.key)).toEqual(c.expected.just_finished);
-      expect(got.review).toEqual([]);
+      expect(got).not.toHaveProperty("review");
       const activity = (c.expected as { activity?: Record<string, unknown> }).activity;
       for (const [key, expected] of Object.entries(activity ?? {})) {
         const work = got.running.find((row) => row.key === key)?.activity;
@@ -122,7 +122,7 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
   const run = (todos: Todo[], sessions: Session[] = [], plans: Record<string, TaskPlan> = {}) =>
     assistantEntries({ conversation: "main", main: "main", todos, sessions, interactions: [], plans, feed: [], now });
   const openTaskItems = (got: ReturnType<typeof assistantEntries>) =>
-    [...got.needsYou, ...got.running, ...got.review, ...got.parked].filter((item) => item.kind === "task") as { key: string; countsOpen: boolean }[];
+    [...got.needsYou, ...got.running, ...got.parked].filter((item) => item.kind === "task") as { key: string; countsOpen: boolean }[];
 
   it("keeps an unexpired parked task open even after days without activity, as the page does", () => {
     const t = base("parked-stale", stale, { supervision: { supervisor: "main", state: "parked", parked, reviews: [], updated_at: stale } });
@@ -167,7 +167,7 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
     expect(pageOpen).toBe(3); // The legacy page header still uses its inactivity rule during the view rollout.
     expect(chipOpen).toBe(4); // Working, Waiting, and two stopped tasks needing follow-up.
     expect(got.needsYou.filter((i) => i.kind === "task").map((i) => i.key).sort()).toEqual(["task:review-seen", "task:stale"]);
-    expect(got.review).toEqual([]);
+    expect(got).not.toHaveProperty("review");
     expect(got.justFinished.map((i) => i.key)).toContain("task:review-unseen");
     expect(got.needsYou.some((i) => i.kind === "plan")).toBe(true);
     expect(got.running.some((i) => i.kind === "agent")).toBe(true);

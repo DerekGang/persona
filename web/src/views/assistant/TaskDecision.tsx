@@ -1,16 +1,21 @@
+import { shownCloseout } from "../../lib/closeout";
+import { agentRowKey, agentRowLabel, todoChipState, todoChipLabel } from "../../lib/task-row-status";
+import { plainMarkdown } from "../../lib/plain-markdown";
+import { Icon } from "../../ui/icons";
+import type { draftTasks } from "./Tasks";
 // Task-review decisions use the existing row and draft actions, including legacy reviews without an acceptance ask.
 // Dismissal is round-bound and persisted by the manager; Later only defers this browser session, as on reply drafts.
 import { openTask } from "../../lib/handoff";
 import { useRef, useState } from "react";
 import { t } from "../../i18n";
 import { api, credentialOwner, enc, errorText } from "../../lib/api";
-import { decisionLaterKey, decisionRound } from "../../lib/assistant-entries";
-import { askRow, later } from "../../lib/feed";
+import { decisionLaterKey, decisionRound, taskAwaitsDecision } from "../../lib/assistant-entries";
+import { askRow, later, field, useFeed, type FeedItem } from "../../lib/feed";
 import { defaultManager, MANAGER_HEADER, shownManager } from "../../lib/manager-choice";
 import { getState, putTodo, refreshTodos } from "../../lib/store";
 import { latestReview } from "../../lib/supervision";
-import { askOptions, openAsk, type Todo } from "../../lib/todos";
-import { Button, toast } from "../../ui/atoms";
+import { askOptions, openAsk, interruption, stoppedReason, type Todo, type TodoStatus } from "../../lib/todos";
+import { Button, toast, cx } from "../../ui/atoms";
 import { AcceptRow } from "./Brief";
 import { BriefingMark } from "./BriefingMark";
 import { DecisionRow } from "./DecisionRow";
@@ -116,4 +121,52 @@ export type NeedsYouPartProps =
 export default function NeedsYouParts(props: NeedsYouPartProps) {
   if ("decision" in props) return <TaskDecision todo={props.decision} rowKey={props.rowKey} hideTitle={props.hideTitle} />;
   return <RuleSuggestionLine of={props.rule} />;
+}
+
+const EMPTY_FEED: FeedItem[] = [];
+
+/** A task in Needs you that only waits (#8237): cut off by the model service, with why and Continue (its receipt card's
+ *  until then); waiting for review, with what it handed in; else what it waits for. The title opens the task. */
+export function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr, label, tasks }: { rowKey?: string; todo: Todo; status: TodoStatus; countsOpenAttr: { "data-counts-open"?: string }; label: string; tasks: typeof draftTasks }) {
+  const task = tasks.useTaskNow(todo);
+  const retrying = tasks.useRetrying(todo.id);
+  const summary = useFeed((s) => {
+    const done = (todo.origin ? s.feeds[todo.origin] ?? EMPTY_FEED : EMPTY_FEED).filter((it) => it.kind === "receipt" && it.ref === todo.id && field(it, "state") !== "failed").at(-1);
+    return done ? field(done, "summary") : undefined;
+  });
+  const cutOff = status === "interrupted";
+  const cut = cutOff ? interruption(task?.lead) : undefined;
+  const canContinue = cutOff && (cut ? cut.canContinue : true);
+  const unattended = !cutOff && !taskAwaitsDecision(todo);
+  const stopped = unattended ? stoppedReason(todo, status) : undefined;
+  const closeout = shownCloseout(task?.lead);
+  const agentKey = task?.lead ? agentRowKey({ live: false, status, lead: task.lead, todo: true, starting: false }) : "unfinished";
+  const chip = todoChipState({ toStart: false, status, done: !!todo.done_at, stage: todo.stage, pr: todo.pr_url, todo });
+  const line = cut ? cut.reason : unattended
+    ? (stopped !== undefined ? stopped ? t("assistant-tasks.progress_stopped_reason", { reason: stopped }) : t("assistant-tasks.progress_stopped")
+      : closeout?.waiting || closeout?.missing || tasks.progressOf(task?.lead)?.text || task?.lead?.last_text || t("assistant-tasks.tray_unattended"))
+    : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || tasks.progressOf(task?.lead)?.text : undefined;
+  return (
+    <div data-needs-row={rowKey} {...countsOpenAttr} data-waiting-task={todo.id} data-needs-reason={unattended ? "stopped_unfinished" : undefined} className={cx("flex flex-col gap-1.5 rounded-control px-3 py-2 text-sm", cutOff ? "bg-danger-wash" : "bg-field")}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon name={cutOff ? "info" : "hand"} className={cx("shrink-0", cutOff ? "text-red" : "text-attention")} />
+        <button type="button" onClick={() => openTask(todo.id)} className="min-w-0 flex-1 truncate text-left hover:underline">{todo.title}</button>
+        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{label}</span>
+      </div>
+      {unattended && <div className="pl-6 text-xs text-ink-2">{t("assistant-tasks.tray_unattended")}</div>}
+      {unattended && <div className="flex min-w-0 flex-col gap-1 break-words pl-6 text-xs text-ink-2">
+        <span data-task-status={agentKey}>{agentRowLabel(agentKey, task?.lead)}</span>
+        {chip && <span data-task-todo-state>{todoChipLabel(chip)}</span>}
+      </div>}
+      {line && <div className={cx("truncate pl-6 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{line}</div>}
+      {canContinue && (
+        <div className="flex items-center gap-4 pl-6 text-[12.5px]">
+          <button type="button" data-continue-task={todo.id} disabled={retrying} onClick={() => tasks.retryTaskNow(todo, "continue")} className="touch-hit inline-flex items-center gap-1 whitespace-nowrap font-semibold text-ink hover:underline disabled:opacity-50 disabled:hover:no-underline">
+            <Icon name="retry" size={12} />
+            {retrying ? t("assistant-tasks.retrying") : t("assistant-tasks.continue")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
