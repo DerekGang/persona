@@ -18,9 +18,6 @@ object AssistantTrayTokens {
     val maximumHeight = 330.dp
     const val maximumHeightFraction = 0.45f
     val markSize = JChipTokens.dotSize
-    /** An entry is a tappable filter chip, so it is exactly as tall as one. */
-    val entryMinimumHeight = JChipTokens.height
-    const val expandedRotation = 180f
 }
 
 enum class AssistantTrayTone { Pending, Progress, Agents }

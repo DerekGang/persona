@@ -436,16 +436,6 @@ func LinkKey(identity Identity, link TaskLink) string {
 	return identity.Provider + "|" + identity.InstanceURL + "|" + identity.Path + "|" + link.Kind + "|" + link.Number
 }
 
-// DefaultAlias is a suggestion only; callers must report collisions rather than silently rename.
-func DefaultAlias(identity Identity) string {
-	parts := strings.Split(identity.Path, "/")
-	alias := parts[len(parts)-1]
-	if ValidateAlias(alias) != nil {
-		return "repo"
-	}
-	return alias
-}
-
 // ParseTaskLink derives a credential-free source from an exact issue/PR URL, offline.
 func ParseTaskLink(raw string) (Identity, TaskLink, error) {
 	provider := "github"
