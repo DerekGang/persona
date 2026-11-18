@@ -3,7 +3,7 @@
   "cases": [
     {
       "name": "task_waiting_for_review_only_in_needs_you",
-      "description": "An Agent reporting done waits in Awaiting acceptance until its supervisor accepts it; unread/seen and the age of pending_review do not transfer that review to the owner. Owner questions still have one home.",
+      "description": "An Agent reporting done waits in Just finished, awaiting acceptance until its supervisor accepts it; unread/seen and the age of pending_review do not transfer that review to the owner. Owner questions still have one home.",
       "source": [
         "web/src/lib/assistant-entries.ts assistantEntries",
         "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
@@ -2308,7 +2308,7 @@
     },
     {
       "name": "external_wait_without_background_keeps_clock",
-      "description": "external wait without background keeps clock Non-running work is Stopped, unfinished, not In progress; a shared question still belongs to exactly one task.",
+      "description": "A named external wait without running background work is Waiting, not a spinner or unattended stop (#10411).",
       "source": [
         "web/src/lib/assistant-entries.ts assistantEntries",
         "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
@@ -2359,7 +2359,9 @@
       },
       "expected": {
         "needs_you": [],
-        "running": [],
+        "running": [
+          "task:activity-task"
+        ],
         "shelved": [],
         "supervisor_review": [],
         "just_finished": []
@@ -4200,6 +4202,146 @@
         "supervisor_review": [],
         "just_finished": []
       }
+    },
+    {
+      "name": "known_closeout_keeps_named_agent_wait_in_waiting",
+      "input": {
+        "conversation": "main",
+        "main": "main",
+        "now": "2026-11-17T10:00:00Z",
+        "todos": [
+          {
+            "id": "re-review",
+            "title": "Release re-review",
+            "stage": "review",
+            "origin": "main",
+            "created_at": "2026-11-17T08:00:00Z",
+            "updated_at": "2026-11-17T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "box",
+                "session_id": "worker",
+                "linked_at": "2026-11-17T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main",
+              "state": "pending_review"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "box",
+            "session_id": "worker",
+            "title": "Release checks",
+            "cwd": "/example",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-17T09:00:00Z",
+            "state_since": "2026-11-17T09:00:00Z",
+            "work": {
+              "phase": "blocked",
+              "on": "agent",
+              "turn_at": "2026-11-17T08:00:00Z",
+              "closeout": {
+                "status": "blocked",
+                "merged": "no",
+                "deployed": "no",
+                "waiting": "the maintainer to re-review the release"
+              },
+              "wait": "the release checks finish"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:re-review"
+        ],
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
+      },
+      "description": "A named wait stays in Waiting after an hour, including a stale pending-review ledger; it is neither unattended nor Just finished (#10411).",
+      "source": [
+        "#10411",
+        "#9823"
+      ]
+    },
+    {
+      "name": "known_closeout_keeps_named_external_wait_in_waiting",
+      "input": {
+        "conversation": "main",
+        "main": "main",
+        "now": "2026-11-17T10:00:00Z",
+        "todos": [
+          {
+            "id": "re-review",
+            "title": "Release re-review",
+            "stage": "review",
+            "origin": "main",
+            "created_at": "2026-11-17T08:00:00Z",
+            "updated_at": "2026-11-17T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "box",
+                "session_id": "worker",
+                "linked_at": "2026-11-17T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main",
+              "state": "pending_review"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "box",
+            "session_id": "worker",
+            "title": "Release checks",
+            "cwd": "/example",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-17T09:00:00Z",
+            "state_since": "2026-11-17T09:00:00Z",
+            "work": {
+              "phase": "blocked",
+              "on": "external",
+              "turn_at": "2026-11-17T08:00:00Z",
+              "closeout": {
+                "status": "blocked",
+                "merged": "no",
+                "deployed": "no",
+                "waiting": "the maintainer to re-review the release"
+              },
+              "wait": "the release checks finish"
+            }
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:re-review"
+        ],
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
+      },
+      "description": "A named wait stays in Waiting after an hour, including a stale pending-review ledger; it is neither unattended nor Just finished (#10411).",
+      "source": [
+        "#10411",
+        "#9823"
+      ]
     }
   ]
 }

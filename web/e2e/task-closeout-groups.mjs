@@ -44,19 +44,22 @@ async function run(browser, size, theme, language, textSize = "standard") {
   const task = (id, state = "") => ({ id, title: `Example ${id}`, origin: sid, stage: "review", created_at: at, updated_at: at,
     agents: [{ machine_id: "demo", session_id: id, linked_at: at }], supervision: { supervisor: sid, state } });
   const list = [task("owner", "needs_user"), task("running"), task("reported", "pending_review"), task("unfinished", "rework"),
-    task("external"), task("missing"), task("parked", "parked"), task("unattended")];
+    task("external"), task("missing"), task("parked", "parked"), task("unattended"), task("named-wait", "pending_review")];
   list[6].supervision.parked = { reason: "Waiting for the maintainer re-review", waiting_on: "someone_else", count: 1,
     until: new Date(Date.now() + 24 * 3600_000).toISOString() };
   list[7].created_at = old;
   list[7].agents[0].linked_at = old;
+  list[8].created_at = old;
+  list[8].agents[0].linked_at = old;
   const session = { machine_id: "demo", session_id: sid, title: "Example task review", assistant: true, state: "idle", status: "idle", updated_at: at };
   const agents = list.map((t) => ({ machine_id: "demo", session_id: t.id, title: `${t.title} Agent`, cwd: "/example",
     state: t.id === "running" ? "working" : t.id === "reported" || t.id === "unfinished" ? "unread" : "idle",
     status: t.id === "running" ? "working" : "idle", updated_at: at, state_since: at,
-    work: t.id === "missing" ? undefined : { phase: t.id === "running" ? "working" : ["external", "parked"].includes(t.id) ? "blocked" : "",
-      on: ["external", "parked"].includes(t.id) ? "external" : undefined,
-      turn_at: t.id === "unattended" ? old : at,
-      closeout: { status: t.id === "reported" ? "done" : ["external", "parked"].includes(t.id) ? "blocked" : "not_done",
+    work: t.id === "missing" ? undefined : { phase: t.id === "running" ? "working" : ["external", "parked", "named-wait"].includes(t.id) ? "blocked" : "",
+      on: ["external", "parked", "named-wait"].includes(t.id) ? "external" : undefined,
+      wait: t.id === "named-wait" ? "the release checks finish" : undefined,
+      turn_at: ["unattended", "named-wait"].includes(t.id) ? old : at,
+      closeout: { status: t.id === "reported" ? "done" : ["external", "parked", "named-wait"].includes(t.id) ? "blocked" : "not_done",
         waiting: "the maintainer to re-review the release" } } }));
   const apiReads = [];
   await context.route("**/api/v1/**", async (route) => {
@@ -126,7 +129,9 @@ async function run(browser, size, theme, language, textSize = "standard") {
     assert.equal(await page.locator('[data-task-status="reported_done"]').locator('xpath=ancestor::*[@data-task-slot]').getAttribute("data-counts-open"), "false");
     await page.screenshot({ path: name("acceptance") });
     await page.locator('[data-parked-task-row="parked"]').waitFor();
-    assert.equal(await page.locator("[data-parked-task-row]").count(), 1, "explicit park wins over blocked/external");
+    assert.equal(await page.locator("[data-parked-task-row]").count(), 2, "explicit park and an aged named wait stay Waiting");
+    assert.equal(await page.locator('[data-parked-task-row="named-wait"] [data-task-run-wait]').textContent(), "the release checks finish");
+    assert.equal(await page.locator('[data-parked-task-row="named-wait"] [data-task-todo-state]').count(), 1);
     assert.equal(await page.locator('[data-needs-row="task:parked"]').count(), 0);
     assert.equal(await page.locator('[data-task-status="unread"]').count(), 0, "an unread reply never claims completion");
     assert(!(await page.locator(".assistant-action-tray").innerText()).includes("完成未看"));
@@ -134,8 +139,8 @@ async function run(browser, size, theme, language, textSize = "standard") {
     await page.screenshot({ path: name("waiting") });
     assert.equal(apiReads.length, reads, "switching groups does not fetch or mutate a to-do");
     assert.deepEqual(errors, []);
-    readings.push({ size, theme, language, textSize, entries: 2, needsYou: 2, working: 1, waiting: 1, justFinishedUncounted: 1, recentStoppedOnTodos: 3, groupApiReads: 0 });
-    console.log(`PASS ${size} ${theme} ${language} ${textSize}: entries=2, needs_you=2, working=1, waiting=1, just_finished_uncounted=1, group_api_reads=0`);
+    readings.push({ size, theme, language, textSize, entries: 2, needsYou: 2, working: 1, waiting: 2, justFinishedUncounted: 1, recentStoppedOnTodos: 3, groupApiReads: 0 });
+    console.log(`PASS ${size} ${theme} ${language} ${textSize}: entries=2, needs_you=2, working=1, waiting=2, just_finished_uncounted=1, group_api_reads=0`);
   } catch (error) {
     await page.screenshot({ path: name("failed") }).catch(() => {});
     throw error;

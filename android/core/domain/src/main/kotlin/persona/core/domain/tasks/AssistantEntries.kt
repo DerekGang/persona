@@ -107,7 +107,7 @@ private val RESTING = setOf(TriageStatus.FollowUp, TriageStatus.Unread, TriageSt
 /** Stopped unfinished work becomes the owner's attention after an hour without supervisor follow-up. */
 const val STOP_FOLLOWUP_MS = 60 * 60 * 1000L
 
-data class TaskExecution(val running: Boolean, val closeout: persona.core.contracts.Closeout?, val unattendedSince: Long)
+data class TaskExecution(val running: Boolean, val waiting: Boolean, val closeout: persona.core.contracts.Closeout?, val unattendedSince: Long)
 
 fun Todo.execution(lookup: (SessionKey) -> Session?): TaskExecution {
     val active = activeAgents.filter { it.startError.isNullOrBlank() }
@@ -121,6 +121,10 @@ fun Todo.execution(lookup: (SessionKey) -> Session?): TaskExecution {
         AgentState.Idle -> 3
         else -> 4
     } }
+    val waiting = !running && lead?.shownCloseout?.status != "done" && sessions.any {
+        val work = it.work
+        work?.phase == "blocked" && (work.on == "agent" || work.on == "external" && !work.wait.isNullOrBlank())
+    }
     fun time(at: String?) = parseTime(at)?.toEpochMilli() ?: 0L
     val stopped = active.maxOfOrNull { a ->
         val session = lookup(a.key)
@@ -129,7 +133,7 @@ fun Todo.execution(lookup: (SessionKey) -> Session?): TaskExecution {
     } ?: 0L
     val followed = maxOf(time(supervision?.followedUpAt),
         supervision?.reviews?.filter { it.by.isNullOrBlank() }?.maxOfOrNull { time(it.at) } ?: 0L)
-    return TaskExecution(running, if (running) null else lead?.shownCloseout, maxOf(time(createdAt), stopped, followed))
+    return TaskExecution(running, waiting, if (running) null else lead?.shownCloseout, maxOf(time(createdAt), stopped, followed))
 }
 
 fun Todo.externallyWaiting(now: Long, status: TriageStatus, last: Long, lookup: (SessionKey) -> Session?): Boolean {
@@ -228,7 +232,7 @@ fun assistantEntries(
         val reviewing = !decision && todo.supervisorReviewing(now)
         val execution = todo.execution(lookup)
         val settled = todo.isDone || todo.acceptanceStands
-        val external = todo.externallyWaiting(now, status, todo.triage(lookup, now, restored[todo.id] ?: 0L).last, lookup)
+        val external = execution.waiting || todo.externallyWaiting(now, status, todo.triage(lookup, now, restored[todo.id] ?: 0L).last, lookup)
         val unfinished = !hasAgentsElsewhere && !settled && todo.activeAgents.isNotEmpty() && !execution.running && !external &&
             status != TriageStatus.UsageLimit && execution.closeout?.status != "done"
         val unattended = unfinished && execution.unattendedSince > 0 && now - execution.unattendedSince > STOP_FOLLOWUP_MS
@@ -242,7 +246,7 @@ fun assistantEntries(
             !settled && !execution.running && !external && execution.closeout?.status == "done" ->
                 finished += RunningEntry.Task(todo, status) to execution.unattendedSince
             unfinished -> Unit
-            !settled && !execution.running && reviewing -> finished += RunningEntry.Task(todo, status) to
+            !settled && !execution.running && !external && reviewing -> finished += RunningEntry.Task(todo, status) to
                 todo.triage(lookup, now, restored[todo.id] ?: 0L).last
             bucket == TodoBucket.Open || reviewing || !settled && (external || execution.running) -> {
                 val activity = todo.backgroundWork(lookup)

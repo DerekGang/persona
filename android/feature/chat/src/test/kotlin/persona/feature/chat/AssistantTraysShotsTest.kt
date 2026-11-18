@@ -218,14 +218,20 @@ class AssistantTraysShotsTest {
             for (tag in listOf("review", "stopped", "parked")) rule.onNodeWithTag("assistant-entry-$tag").assertDoesNotExist()
             val variant = "${if (night) "dark" else "light"}-${if (big) "large" else "standard"}"
             rule.tapTray("running"); settle()
-            rule.onNodeWithTag("assistant-progress-todo:reported").performScrollTo().assertIsDisplayed()
+            rule.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-tray-running")))
+                .performScrollToNode(hasTestTag("assistant-progress-todo:reported"))
+            rule.onNodeWithTag("assistant-progress-todo:reported").assertIsDisplayed()
             rule.onNodeWithText("Reported done · awaiting acceptance").assertIsDisplayed()
             rule.onNodeWithText("Done").assertDoesNotExist()
             rule.onNodeWithTag("assistant-progress-todo:external").assertDoesNotExist()
             shot("aligned-closeouts-$variant-acceptance")
-            rule.onNodeWithTag("assistant-progress-todo:parked").performScrollTo().assertIsDisplayed()
+            rule.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-tray-running")))
+                .performScrollToNode(hasTestTag("assistant-progress-todo:parked"))
+            rule.onNodeWithTag("assistant-progress-todo:parked").assertIsDisplayed()
             rule.tapTray("needs"); settle()
-            rule.onNodeWithTag("assistant-progress-todo:unfinished").performScrollTo().assertIsDisplayed()
+            rule.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-tray-needs")))
+                .performScrollToNode(hasTestTag("assistant-progress-todo:unfinished"))
+            rule.onNodeWithTag("assistant-progress-todo:unfinished").assertIsDisplayed()
                 .assert(hasText("To-do: Rework round 1"))
             rule.onNodeWithText("Stopped · unfinished").assertIsDisplayed()
             rule.onAllNodesWithTag("assistant-work-spinner", useUnmergedTree = true).assertCountEquals(0)
@@ -526,9 +532,12 @@ class AssistantTraysShotsTest {
         settle()
         rule.waitUntil(10_000) { rule.onAllNodesWithTag("assistant-tray-bar").fetchSemanticsNodes().isNotEmpty() }
         rule.tapTray("needs"); settle()
-        rule.onNodeWithText("Ship the settings page").performScrollTo()
         for (s in styles) for (d in listOf(false, true)) {
             style = s; dark = d; settle()
+            val advancing = rule.mainClock.autoAdvance
+            rule.mainClock.autoAdvance = true
+            try { rule.onNodeWithText("Ship the settings page").performScrollTo() }
+            finally { rule.mainClock.autoAdvance = advancing }
             rule.onNodeWithTag("assistant-tray-needs").assertIsDisplayed()
             rule.onNodeWithText(line).assertIsDisplayed()
             rule.onNodeWithText("Pushed the branch and opened the PR").assertDoesNotExist()

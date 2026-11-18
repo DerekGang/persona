@@ -143,21 +143,21 @@ class AssistantSharedAgentShotsTest {
         rule.onNodeWithTag("assistant-needs-task-release").assertDoesNotExist()
         // Its own review still needs the owner, with no duplicate Agent approval.
         sessions = listOf(shared)
-        api.rows = todos.map { if (it.id == "tests") it.copy(supervision = Supervision(state = "pending_review")) else it }
+        api.rows = todos.map { if (it.id == "tests") it.copy(supervision = Supervision(state = "needs_user")) else it }
         tasks.reloadTodos(); settle()
         badge("needs", 2); badge("running", 1)
         rule.onNodeWithTag("assistant-review-todo:tests").assertIsDisplayed()
         rule.onAllNodesWithTag("assistant-decision-permission").assertCountEquals(1)
         rule.onNodeWithTag("assistant-approve-all").performClick(); settle()
         assertEquals(listOf(request.id), approved)
-        // An idle Agent of its own makes the other task Stopped, rather than blocked by the shared request.
+        // An idle Agent of its own does not duplicate the shared request: the task still waits on that request's home.
         val idle = Session("box", "idle", state = "idle", status = "idle")
         sessions = listOf(shared, idle)
         api.rows = todos.map { if (it.id == "tests") it.copy(agents = it.agents + TodoAgent("box", "idle")) else it }
         tasks.reloadTodos(); tray.expanded = AssistantTray.Running; settle()
         badge("needs", 1); badge("running", 2)
         val stopped = hasAnyAncestor(hasTestTag("assistant-progress-todo:tests"))
-        rule.onNode(hasText("Stopped") and stopped, useUnmergedTree = true).assertIsDisplayed()
+        rule.onNode(hasText("Waiting") and stopped, useUnmergedTree = true).assertIsDisplayed()
         rule.onNode(hasTestTag("assistant-work-spinner") and stopped, useUnmergedTree = true).assertDoesNotExist()
     }
 

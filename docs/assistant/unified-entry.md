@@ -147,7 +147,8 @@ Needs you, Working, Waiting, To do, Just finished, then folded Someday and Done
 - **In progress** counts Working plus Waiting. Foreground, child and real background execution outrank a prior
   closeout; a resumed Agent is Working, never a finished turn. Explicit parks remain Waiting until the hub changes
   them, including an elapsed fallback, and cannot be hidden by an Agent's generic `blocked/external` state. PR waits
-  keep each PR's own link and blockers, while the task counts once. A supervisor's pending acceptance is not active
+  keep each PR's own link and blockers, while the task counts once. A named Agent/external wait also stays Waiting
+  (#10411), rather than becoming unattended work merely because an hour passed. A supervisor's pending acceptance is not active
   work and does not become an owner decision merely because `pending_since` aged.
 - **Just finished** includes an Agent's `done` closeout awaiting supervisor acceptance, even when its reply was
   already read. It is displayed beneath Working and Waiting but never counted in In progress. Its Agent says

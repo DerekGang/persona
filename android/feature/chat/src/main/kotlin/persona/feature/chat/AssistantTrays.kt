@@ -53,6 +53,7 @@ import persona.core.domain.tasks.orphanedLine
 import persona.core.domain.tasks.TasksStore
 import persona.core.domain.tasks.assistantEntries
 import persona.core.domain.tasks.awaitsDecision
+import persona.core.domain.tasks.acceptanceStands
 import persona.core.domain.tasks.finishedSummary
 import persona.core.domain.tasks.triage
 import persona.core.domain.tasks.reviewState
@@ -791,7 +792,7 @@ private fun JustFinishedRow(todo: Todo, host: AssistantTaskHost, feed: List<Feed
     val palette = PersonaTheme.palette
     val lead = host.tasks.lead(todo, sessions.values.toList())
     val summary = finishedSummary(todo, feed, lead)
-    JRow(todo.title, subtitle = summary, subtitleLines = 2, onClick = {
+    val open: () -> Unit = {
         openTask(host, todo)
         if (host.tasks.features?.value?.contains("todo_seen") == true) scope.launch {
             try {
@@ -802,7 +803,13 @@ private fun JustFinishedRow(todo: Todo, host: AssistantTaskHost, feed: List<Feed
             } catch (_: Throwable) {
             }
         }
-    }, modifier = Modifier.testTag("assistant-just-finished-row"), leading = {
+    }
+    if (!todo.isDone && !todo.acceptanceStands) {
+        val row = trayProgress(listOf(todo), emptyList(), host, feed, everyTodo = true).first()
+        TrayProgressRow(row, onClick = open)
+        return
+    }
+    JRow(todo.title, subtitle = summary, subtitleLines = 2, onClick = open, modifier = Modifier.testTag("assistant-just-finished-row"), leading = {
         JIcon(PersonaIcons.done, decorative = true, size = Tokens.Size.iconXS, tint = palette.positive)
     }, trailing = {
         Text(stringResource(R.string.chat_tray_finished_done), style = PersonaTheme.type.micro, color = palette.ink3, maxLines = 1)

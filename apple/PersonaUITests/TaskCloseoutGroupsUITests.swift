@@ -9,7 +9,7 @@ final class TaskCloseoutGroupsUITests: XCTestCase {
         }
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        for (tray, count) in [("needsYou", 2), ("running", 3)] {
+        for (tray, count) in [("needsYou", 2), ("running", 2)] {
             app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-dev.openChat", "",
                                    "-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001",
                                    "-showActionTray", tray, "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
@@ -28,6 +28,10 @@ final class TaskCloseoutGroupsUITests: XCTestCase {
             }
             if tray == "running" {
                 XCTAssertTrue(rows.allElementsBoundByIndex.contains { $0.label.contains("the maintainer") })
+                let reported = app.buttons.matching(identifier: "action-tray.finished")
+                XCTAssertEqual(reported.count, 1, app.debugDescription)
+                XCTAssertTrue(reported.firstMatch.label.contains("待验收"), reported.firstMatch.label)
+                XCTAssertTrue(reported.firstMatch.label.contains("待办"), reported.firstMatch.label)
             }
             XCTAssertTrue(app.buttons["action-bar.\(tray)"].isHittable, app.debugDescription)
             if let directory = env["PERSONA_SHOTS"] {

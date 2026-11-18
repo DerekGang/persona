@@ -17,6 +17,14 @@ const entries = (s = agent, t = todo, clock = now) => assistantEntries({ convers
 const keys = (rows: { key: string }[]) => rows.map((r) => r.key);
 
 describe("closeout-based entries aligned with #10174", () => {
+  it.each(["agent", "external"] as const)("keeps a named %s wait in Waiting rather than escalating its blocked closeout", (on) => {
+    const s: Session = { ...agent, state: "idle", work: { phase: "blocked", on, wait: "the release checks finish",
+      turn_at: at, closeout: { status: "blocked" } } };
+    const got = entries(s, todo, now + STOP_FOLLOWUP_MS);
+    expect(keys(got.parked)).toEqual(["task:task"]);
+    expect([...got.needsYou, ...got.justFinished, ...got.running]).toEqual([]);
+    expect(taskExecution(todo, makeSessionLookup([s])).waiting).toBe(true);
+  });
   it.each(["not_done", "blocked", undefined])("keeps a stopped %s turn unfinished, unread or seen", (status) => {
     for (const state of ["unread", "idle"] as const) {
       const got = entries({ ...agent, state, work: status ? { phase: "", closeout: { status, waiting: "the design team" } } : undefined });

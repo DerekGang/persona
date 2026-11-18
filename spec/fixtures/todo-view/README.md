@@ -313,9 +313,10 @@ python3 scripts/test/test_wire_schema.py                                      # 
 ### Closeout follow-up (#9823, aligned with #10174)
 
 The projection reads the session's structured closeout and `work.turn_at`; an older snapshot without either keeps its
-compatibility reading. A known unfinished or missing-closeout stop with a recorded turn time is To do during its
+compatibility reading, including the upstream unread/wait judgement call below. A known unfinished stop, or a seen
+missing-closeout stop with a recorded turn time, is To do during its
 follow-up window, then Needs you (`stopped_unfinished`) only after a full hour. Explicit owner asks, actual foreground,
-child/background work, an intentional park and settled work keep their own homes. The latest evidenced stopped run
+child/background work, a named Agent/external wait (#10411), an intentional park and settled work keep their own homes. The latest evidenced stopped run
 wins over an older closeout. The clock uses the turn and `supervision.followed_up_at` or an explicit review (empty
 `by`), never a read receipt, an automatic review or the ledger's `updated_at`. `next_change_at` names the strict
 one-hour boundary plus one nanosecond.

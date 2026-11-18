@@ -176,19 +176,23 @@ nonisolated enum AssistantEntries {
     /// Stopped unfinished work becomes the owner's attention after an hour without supervisor follow-up.
     static let stoppedFollowupAfter: TimeInterval = 60 * 60
 
-    @MainActor static func execution(_ todo: TodoItem, lookup: TodosLogic.SessionLookup?) -> (running: Bool, closeout: Closeout?, unattendedSince: Date) {
+    @MainActor static func execution(_ todo: TodoItem, lookup: TodosLogic.SessionLookup?) -> (running: Bool, waiting: Bool, closeout: Closeout?, unattendedSince: Date) {
         let active = todo.activeAgents.filter { ($0.startError ?? "").isEmpty }
         let sessions = active.compactMap { lookup?($0.machineID, $0.sessionID) }
         let running = sessions.contains { $0.state == .working || $0.starting == true || $0.work?.phase == "working" }
             || AssistantTrayActivity(sessions: sessions).isActive
         let lead = sessions.min { $0.state.priority < $1.state.priority }
+        let waiting = !running && lead?.shownCloseout?.status != "done" && sessions.contains {
+            $0.work?.phase == "blocked" && ($0.work?.on == "agent"
+                || $0.work?.on == "external" && !($0.work?.wait ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
         let stopped = active.map { a in
             lookup?(a.machineID, a.sessionID)?.work?.turnAt ?? lookup?(a.machineID, a.sessionID)?.stateSince
                 ?? lookup?(a.machineID, a.sessionID)?.updatedAt ?? a.linkedAt ?? .distantPast
         }.max() ?? .distantPast
         let followed = max(todo.supervision?.followedUpAt ?? .distantPast,
                            todo.supervision?.reviews.filter { ($0.by ?? "").isEmpty }.compactMap(\.at).max() ?? .distantPast)
-        return (running, running ? nil : lead?.shownCloseout, max(todo.createdAt ?? .distantPast, stopped, followed))
+        return (running, waiting, running ? nil : lead?.shownCloseout, max(todo.createdAt ?? .distantPast, stopped, followed))
     }
 
     static func externallyWaiting(_ todo: TodoItem, status: Status, last: Date, now: Date) -> Bool {
@@ -294,7 +298,7 @@ nonisolated enum AssistantEntries {
             let decision = awaitsDecision(todo, now: now)
             let work = execution(todo, lookup: lookup)
             let settled = todo.doneAt != nil || todo.acceptanceStands
-            let external = externallyWaiting(todo, status: status, last: triage.last, now: now)
+            let external = work.waiting || externallyWaiting(todo, status: status, last: triage.last, now: now)
             let unfinished = own.count == active.count && !settled && !todo.activeAgents.isEmpty && !work.running && !external
                 && status != .usageLimit && work.closeout?.status != "done"
             let unattended = unfinished && work.unattendedSince > .distantPast
@@ -310,7 +314,7 @@ nonisolated enum AssistantEntries {
                 finished.append((row, work.unattendedSince)); listed()
             }
             else if unfinished { listed() }
-            else if !settled && !work.running && supervisorReviewing(todo, now: now) {
+            else if !settled && !work.running && !external && supervisorReviewing(todo, now: now) {
                 finished.append((row, triage.last)); listed()
             }
             else if !settled && work.running {
@@ -1043,18 +1047,21 @@ struct AssistantActionBar: View {
         .accessibilityIdentifier("action-tray.just-finished")
         ForEach(rows) { row in
             if case .task(let id, _, _) = row, let todo = store.todos[id] {
+                let awaiting = todo.doneAt == nil && !todo.acceptanceStands
                 Button {
                     open = nil
                     store.detailTask = id
                     see(todo)
                 } label: {
-                    line(title: todo.title, detail: TaskState.done.label, subtitle: finishedLine(todo), trail: .open) {
-                        TaskMark(state: .done)
+                    line(title: todo.title,
+                         detail: awaiting ? detail(todo, status: .followUp, agents: todo.activeAgents.count) : TaskState.done.label,
+                         subtitle: finishedLine(todo), trail: .open, stackDetail: awaiting) {
+                        TaskMark(state: awaiting ? .followup : .done)
                     }
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("action-tray.finished")
-                .contextMenu { TaskRemoveMenuItem(todo: todo, state: .done, pending: $removing) }
+                .contextMenu { TaskRemoveMenuItem(todo: todo, state: awaiting ? .followup : .done, pending: $removing) }
             }
         }
     }

@@ -179,8 +179,8 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     const decision = taskAwaitsDecision(todo);
     const execution = taskExecution(todo, lookup);
     const settled = !!todo.done_at || acceptanceStands(todo);
-    const external = !settled && reviewState(todo) !== "pending_review"
-      && triage(todo, lookup, now, input.restored?.get(todo.id) ?? 0, superseded.has(todo.id)).section === "parked";
+    const external = !settled && (execution.waiting || reviewState(todo) !== "pending_review"
+      && triage(todo, lookup, now, input.restored?.get(todo.id) ?? 0, superseded.has(todo.id)).section === "parked");
     const unfinished = own.length === active.length && !settled && !!todo.agents?.some((a) => !a.released_at && !a.start_error)
       && !execution.running && !external && status !== "usage_limit" && execution.closeout?.status !== "done";
     const unattended = unfinished && execution.unattendedSince > 0 && now - execution.unattendedSince > STOP_FOLLOWUP_MS;
@@ -198,10 +198,10 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
       for (const agent of active) folded.add(sessionKey(agent.machine_id, agent.session_id));
       continue;
     }
-    else if (underReview(todo, status) && !execution.running) finished.push({ item: { kind: "task", key, card, todo, status, countsOpen: false }, at: execution.unattendedSince });
+    else if (!external && underReview(todo, status) && !execution.running) finished.push({ item: { kind: "task", key, card, todo, status, countsOpen: false }, at: execution.unattendedSince });
     else if (!settled && execution.running) open.push({ item: { kind: "task", key, card, todo, status: "working", activity: taskBackgroundWork(todo, lookup), countsOpen: true }, rank: todoRank(todo, status), at: card.at });
     // Use the To-dos page's wait classification. Live work and owner decisions outrank a hold or an open PR.
-    else if (reviewState(todo) !== "pending_review" && triage(todo, lookup, now, input.restored?.get(todo.id) ?? 0, superseded.has(todo.id)).section === "parked") parked.push({ item: { kind: "task", key, card, todo, status, countsOpen }, at: card.at });
+    else if (external) parked.push({ item: { kind: "task", key, card, todo, status, countsOpen: countsOpen || execution.waiting }, at: card.at });
     else if (bucket === "open" || reviewState(todo) === "pending_review") open.push({ item: { kind: "task", key, card, todo, status, activity: taskBackgroundWork(todo, lookup), countsOpen }, rank: todoRank(todo, status), at: card.at });
     else if (bucket === "shelved") shelved.push({ item: { kind: "task", key, card, todo, status, countsOpen: false }, at: card.at });
     else {

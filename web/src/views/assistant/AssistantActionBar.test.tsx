@@ -190,7 +190,7 @@ describe("Assistant Needs you / In progress trays", () => {
     expect(row.textContent).toContain(t("assistant-tasks.pr_blocker_review_required"));
   });
 
-  it("uses the Working mark and live subtitle for background work, with a clock only after all work ends", () => {
+  it("uses the Working mark for real background work and Waiting for a named external wait", async () => {
     act(() => entry("running").click());
     const row = host.querySelector("[data-task-slot]")!;
     const session: Session = { machine_id: "demo", session_id: "worker", title: "Demo agent", cwd: "/demo", status: "working", state: "working", updated_at: at,
@@ -211,7 +211,10 @@ describe("Assistant Needs you / In progress trays", () => {
       background_tasks_count: 0, work: { phase: "blocked", on: "external", wait: "Wait for deployment", line: "Wait for deployment" } }));
     expect(host.querySelector("[data-task-slot]")).toBeNull();
     expect(host.querySelector("[data-progress-just-finished]")).toBeNull();
-    expect(entry("running").textContent).toBe(label.running);
+    expect(entry("running").textContent).toBe(label.running + "1");
+    await act(async () => {});
+    expect(host.querySelector("[data-task-run-wait]")?.textContent).toBe("Wait for deployment");
+    expect(host.querySelector('[data-task-mark="waiting"]')).not.toBeNull();
     expect(writes).toEqual([]);
   });
 

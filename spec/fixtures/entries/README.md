@@ -14,7 +14,8 @@ The closeout cases cover reported done versus actual acceptance, unfinished and 
 boundary, successful supervisor follow-up versus automatic writes, read receipts and restarts, resumed execution,
 shared-Agent request ownership, usage limits and explicit parks. An unfinished stop within its follow-up window
 remains on To-dos, not a finished tray row. A hold wins over an Agent's generic blocked/external snapshot unless
-actual execution resumes.
+actual execution resumes. A named Agent or external wait stays Waiting under #10411, even after an hour and with
+a pending-review ledger; a generic blocked/external hint without a named wait is not that arrangement.
 
 Runners: `web/src/lib/assistant-entries.test.ts`, `apple/PersonaTests/AssistantEntriesFixtureTests.swift`, and Android's
 `AssistantEntriesFixtureTest`. The new `spec/fixtures/todo-view` and `spec/fixtures/todo-counts` belong to #10226;
