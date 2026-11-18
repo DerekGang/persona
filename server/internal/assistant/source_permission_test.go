@@ -103,6 +103,25 @@ func TestSourcePermissionReportReachesLeaderAndRetryKeepsOriginalClass(t *testin
 	}
 }
 
+func TestSourcePermissionJoinedReportsFailClosed(t *testing.T) {
+	for _, classes := range [][2]string{{"bypass", ""}, {"", "bypass"}, {"bypass", "prompting"}, {"prompting", "bypass"}, {"bypass", "bypass"}} {
+		t.Run(classes[0]+"-"+classes[1], func(t *testing.T) {
+			a := superviseSignal{Session: "s1", Detail: "First report"}
+			b := superviseSignal{Session: "s1", Detail: "Second report"}
+			if classes[0] != "" {
+				a.SourcePermission = testSourcePermission("s1", "report_to_supervisor", json.RawMessage(`{"detail":"first"}`), classes[0])
+			}
+			if classes[1] != "" {
+				b.SourcePermission = testSourcePermission("s1", "report_to_supervisor", json.RawMessage(`{"detail":"second"}`), classes[1])
+			}
+			joined := joinReports(a, b)
+			if joined.Detail != "First report\n—\nSecond report" || joined.SourcePermission != (proto.SourcePermission{}) {
+				t.Fatalf("joined report keeps a single call's permission or lost its content: %+v", joined)
+			}
+		})
+	}
+}
+
 func TestSourcePermissionMixedDigestFailsClosed(t *testing.T) {
 	proof := testSourcePermission("s1", "report_to_supervisor", json.RawMessage(`{}`), "bypass")
 	other := proof
