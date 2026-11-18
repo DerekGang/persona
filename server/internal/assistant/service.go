@@ -325,6 +325,7 @@ func New(o Options) *Service {
 	s.routeRoutes()
 	s.agentRouteRoutes()
 	s.directionNameRoutes()
+	s.directionNotesRoutes()
 	s.originRoutes()
 	s.profileRoutes()
 	s.skillImportRoutes()
@@ -901,7 +902,7 @@ func (s *Service) SessionsChanged(ctx context.Context, d DeviceSessions) {
 	if s.retractConfirmedStartUnknowns(ctx, d.Sessions) {
 		s.drainRelays(d.MachineID, d.Sessions)
 	}
-	s.undeliveredSeen(d) // kept owner messages go once their conversation runs again (undelivered.go)
+	s.undeliveredSeen(d)                      // kept owner messages go once their conversation runs again (undelivered.go)
 	s.originsChanged(d.MachineID, d.Sessions) // conversations from before origins were noted (origins.go)
 	s.todosSessionsChanged(ctx, d)
 	s.taskStageSessions(ctx, d)

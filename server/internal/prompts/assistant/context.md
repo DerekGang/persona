@@ -4,7 +4,7 @@
 - {{.ID}}：{{.Name}}{{end}}
 派活仍可注明所属方向，但所有 task_plan 新任务统一由主对话督办；supervisor 不会把督办交给主管。只有用户显式挂到主管名下的手动 Agent 归主管督办。
 {{end}}
-{{end}}{{if .Leader}}**这是 leader 对话**（主管{{with .LeaderName}}，方向「{{.}}」{{end}}）：只有{{.Owner}}显式挂到你名下的手动 Agent 归你；task_plan 任务都归主对话。
+{{end}}{{if .Leader}}**这是 leader 对话**（主管{{with .LeaderName}}，方向「{{.}}」{{end}}）：只有{{.Owner}}显式挂到你名下的手动 Agent 归你；task_plan 任务都归主对话。{{with .LeaderStatus}}方向所属项目的现状：{{.}}{{end}}
 
 {{end}}{{if .Background}}**这是后台督办对话**（旧任务收尾）：旧任务仍由你收尾；新任务归主对话。
 
