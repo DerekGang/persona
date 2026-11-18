@@ -223,6 +223,8 @@ func validSessionID(id string) bool { return sessionIDRe.MatchString(id) }
 // --- messages between conversations ---
 
 type relayMsg struct {
+	// Signals is the JSON supervision payload, kept comparable with the relay and rechecked after restart.
+	Signals   string    `json:"signals,omitempty"`
 	From      string    `json:"from"`
 	FromTitle string    `json:"from_title"`
 	Tool      string    `json:"tool"`
@@ -714,6 +716,7 @@ func (s *Service) drainRelays(machine string, list []proto.Session) {
 				return
 			}
 			msg := q[0]
+			original := msg
 			b.mu.Unlock()
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			// A needs notice may have been answered on the phone after it queued while the agent's node still
@@ -731,10 +734,17 @@ func (s *Service) drainRelays(machine string, list []proto.Session) {
 					}
 				}
 			}
+			landed := msg.Tool == superviseTool && s.relayLanded(machine, id, msg)
+			if msg.Tool == superviseTool && !landed {
+				msg, stale, keep = s.recheckQueuedDigest(ctx, id, msg)
+				if !stale && !keep {
+					original = msg
+				}
+			}
 			var err error
 			tried := time.Now()
 			if !stale && !keep {
-				if s.relayLanded(machine, id, msg) {
+				if landed || s.relayLanded(machine, id, msg) {
 					err = nil // an earlier try in doubt went in after all: nothing is sent again
 				} else {
 					err = s.deliverRelay(ctx, machine, id, msg)
@@ -757,7 +767,7 @@ func (s *Service) drainRelays(machine string, list []proto.Session) {
 			// node or another delivery failure keeps it.
 			taken := false
 			if stale || !keep && (err == nil || strings.Contains(err.Error(), "is gone")) {
-				if q := b.st.Queue[id]; len(q) > 0 && (!stale || q[0] == msg) {
+				if q := b.st.Queue[id]; len(q) > 0 && q[0] == original {
 					b.st.Queue[id] = q[1:]
 				}
 				if len(b.st.Queue[id]) == 0 {
