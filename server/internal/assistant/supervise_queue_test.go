@@ -257,3 +257,32 @@ func TestQueuedDigestDoesNotRememberDrainedSignals(t *testing.T) {
 		t.Fatal("already delivered signals could be merged into a later digest")
 	}
 }
+
+func TestQueuedDigestRefreshKeepsPersistedDeliveryID(t *testing.T) {
+	s, f, tasks := queuedDigestFixture(t, "Accepted example", "Actionable example")
+	s.relays.mu.Lock()
+	original := s.relays.st.Queue["conv1"][0]
+	s.relays.mu.Unlock()
+	closeTodo(t, s, tasks[0].ID)
+	tries := relayTries(f, "conv1")
+	f.mu.Lock()
+	f.failAssistant = errors.New("synthetic definite refusal")
+	f.mu.Unlock()
+	drainQueuedDigest(t, s, f)
+	s.relays.mu.Lock()
+	raw, err := json.Marshal(s.relays.st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &s.relays.st); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := s.relays.st.Queue["conv1"][0]
+	s.relays.mu.Unlock()
+	if refreshed.Text == original.Text || relayMsgID("conv1", refreshed) != relayMsgID("conv1", original) {
+		t.Fatal("refresh changed the persisted once-only delivery identity")
+	}
+	if ids := triesOf(f, tries); len(ids) != 1 || ids[0] != relayMsgID("conv1", original) {
+		t.Fatalf("delivery ids: %q", ids)
+	}
+}

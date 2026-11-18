@@ -229,6 +229,8 @@ func validSessionID(id string) bool { return sessionIDRe.MatchString(id) }
 // --- messages between conversations ---
 
 type relayMsg struct {
+	// OnceID preserves a supervision relay's delivery identity when its queued text is refreshed.
+	OnceID string `json:"once_id,omitempty"`
 	// Signals is the JSON supervision payload, kept comparable with the relay and rechecked after restart.
 	Signals   string    `json:"signals,omitempty"`
 	From      string    `json:"from"`
