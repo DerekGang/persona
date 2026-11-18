@@ -22,7 +22,7 @@ import { Rolling } from "../ui/Rolling";
 import { PersonaAvatar, usePersona } from "./assistant/Persona";
 import { managerOf, useRoster } from "../lib/managers";
 import { OriginMark } from "../ui/ChannelMark";
-import { autoOrigin, originMarkLabel } from "../lib/conversation-origins";
+import { autoOrigin, openerFrom } from "../lib/conversation-origins";
 import { InfoTip } from "../ui/InfoTip";
 import { Icon, type IconName } from "../ui/icons";
 import { UltraMark } from "./chat/Ultracode";
@@ -257,6 +257,8 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
   const source = agentRow && !endRoom ? sessionSource(s) : undefined;
   // a Persona conversation the hub opened by itself (#3758, #5195): what opened it, in the source mark's place
   const origin = source ? undefined : autoOrigin(s);
+  // the extension whose own icon that mark draws, which the row's tooltip names too (#10358)
+  const [openerName, setOpenerName] = useState<string>();
   const associatedTab = s.slot_id?.trim() || s.tab_id?.trim() ? tabLabel(s) : "";
   const tabIdentity = associatedTab ? t("sidebar.tab_named", { label: associatedTab }) : "";
   // A structural tab row keeps its old plain-text fallback, but only a real association earns the localized identity.
@@ -373,7 +375,8 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
       onBlur={() => { hover(null); setDetailsAt(null); }}
       aria-current={active ? "page" : undefined}
       aria-describedby={detailsAt ? detailId : undefined}
-      title={agentRow ? undefined : `${sessionTitle(s)}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${originMarkLabel(origin)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
+      // an Agent row's details use the structured card; the others' mark's name is in their native tooltip
+      title={agentRow ? undefined : `${sessionTitle(s)}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${openerFrom(origin, openerName)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
       // a touch screen: rows a finger can hit (44), and room at the end for the ⋯ that is always there; the open row
       // keeps its ⋯ too, so it has room for it
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-transform duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active && CURRENT_ROW, // room for "N agents" and the ⋯ beside it (instead of the ⋯'s own)
@@ -433,7 +436,7 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
           <Icon name="todo" size={10} stroke={2} />
         </span>
       )}
-      {origin && <OriginMark origin={origin} size={16} />}
+      {origin && <OriginMark origin={origin} size={16} session={s} onName={setOpenerName} />}
       {tailShown && <span data-row-context className={cx(hintFull ? "shrink-0 whitespace-nowrap tabular-nums" : "max-w-[72px] min-w-6 shrink-[20] truncate", "text-[11px] text-ink-3")}>{tail}</span>}
       {ageAtEnd && <span data-row-age className={cx("shrink-0 text-[11px] text-ink-3", aside)}>{ago(s.updated_at, Date.now(), "narrow")}</span>}
       {pendingCount > 0 && <span data-pending-count className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-attention tabular-nums">{pendingCount}</span>}

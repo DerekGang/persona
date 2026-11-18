@@ -244,7 +244,7 @@ func (rh *RuntimeHost) request(ctx context.Context, h *runtimeConn, method strin
 		// sessions over (runtimecontrol.go). workspaces: runtime.workspaces is kept and, for a runtime with
 		// caps.workspaces that is the machine's engine, listed as its catalog and asked to make worktrees
 		// (runtimeworkspaces.go).
-		features := []string{"prefer_running", "resume_argv", "handover", "transcript", "launchers", "start_params", "modes", "resume", "codex_thread", "unlisted_transcripts", "workspaces"}
+		features := []string{"prefer_running", "resume_argv", "handover", "transcript", "launchers", "start_params", "modes", "resume", "codex_thread", "unlisted_transcripts", "workspaces", "usage"}
 		if !h.isDaemon() {
 			features = append(features, "leader_tools")
 		}
@@ -332,7 +332,11 @@ func (rh *RuntimeHost) request(ctx context.Context, h *runtimeConn, method strin
 			return n.assistantGateTool(ctx, g, p.SessionID, p.Args), nil
 		}
 		var res json.RawMessage
-		err := n.peer.Call(ctx, "mcp.call", map[string]any{"name": p.Name, "args": p.Args, "session_id": p.SessionID, "assistant": assistant, "guest": n.guestOf(p.SessionID) != nil}, &res)
+		params := map[string]any{"name": p.Name, "args": p.Args, "session_id": p.SessionID, "assistant": assistant, "guest": n.guestOf(p.SessionID) != nil}
+		if origin := n.assistantOrigin(p.SessionID); origin != "" {
+			params["origin"] = origin
+		}
+		err := n.peer.Call(ctx, "mcp.call", params, &res)
 		return res, err
 	}
 	return nil, fmt.Errorf("unknown method %s", method)
