@@ -2106,6 +2106,17 @@ if os.environ.get("MOCK_PERSONA_QUEUE") == "1":
     ASSISTANT[0].update({"state": "working", "status": "working", "queued_relayed": 1,
                          "queued": list(PERSONA_QUEUE_MESSAGES)})
 
+# MOCK_UNDELIVERED=1 (#10194, docs/assistant/assistant.md "Messages that could not go in"): the first Persona chat could
+# not start, and its manager keeps two of the owner's messages: one it sends again by itself, one that gave up (Retry /
+# Delete).
+if os.environ.get("MOCK_UNDELIVERED") == "1":
+    ASSISTANT[0].update({"status": "offline", "state": "offline", "undelivered": [
+        {"id": "a0d1e2f3-0000-4000-8000-00000000f001", "text": "帮我看一下备份任务昨晚有没有跑完", "at": ago(minutes=50),
+         "state": "failed", "attempts": 40, "error": "助手没能启动"},
+        {"id": "a0d1e2f3-0000-4000-8000-00000000f002", "text": "顺便把结果发到今天的待办里", "at": ago(minutes=2),
+         "state": "waiting", "attempts": 2, "next_at": ago(minutes=-1), "error": "助手没能启动"},
+    ]})
+
 # MOCK_NEXT_SUGGESTIONS=1 (#4644, docs/assistant/assistant.md "Next-message suggestions"): the switch is on and sessions carry
 # the suggestion as the manager lists them: the main Persona chat and the Codex session (stopped) the suggest.next model's,
 # the PR review agent (Claude Code in a terminal) Claude Code's own, and the morning briefing chat a risky one
@@ -10589,6 +10600,7 @@ def mock_interactions():
 #   done        only finished-unseen agents
 #   one         exactly one working agent (a tap opens it)
 #   empty       nothing (the connection line)
+#   off         the default: GET serves an empty Fleet, with no fleet events
 # A working agent whose turn is over while its background work runs (MOCK_WORKFLOW=1, MOCK_WORKFLOW_CARDS=1) is a
 # background item, as the hub sends it (#3437): background, its workflow's line and bar, the workflow's start as since.
 MOCK_FLEET = os.environ.get("MOCK_FLEET", "")
@@ -10711,18 +10723,19 @@ def push_fleet():
         except Exception: pass
 
 
-FLEET_MODES = ("1", "all", "permission", "working", "done", "one", "empty")
+FLEET_MODES = ("1", "all", "permission", "working", "done", "one", "empty", "off")
 
 
 def set_fleet_mode(mode):
     """GET /mock/fleet?mode=…: switch MOCK_FLEET while running and push the new fleet. Restarting the mock instead
-    changes HUB_ID, and the app's pairing no longer matches (docs/lessons/android.md)."""
+    changes HUB_ID, and the app's pairing no longer matches (docs/lessons/android.md). `off` restores the default."""
     global MOCK_FLEET
     if mode not in FLEET_MODES:
         return {"error": "mode is one of " + ", ".join(FLEET_MODES)}, 400
-    MOCK_FLEET = mode
+    MOCK_FLEET = "" if mode == "off" else mode
     push_fleet()
-    return {"mode": MOCK_FLEET, "fleet": mock_fleet()}, 200
+    fleet = mock_fleet() if MOCK_FLEET else {"phase": "", "needsYou": 0, "working": 0, "unread": 0, "items": []}
+    return {"mode": MOCK_FLEET, "fleet": fleet}, 200
 
 
 def mock_notify(interaction_id):
