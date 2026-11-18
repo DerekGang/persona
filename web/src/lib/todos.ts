@@ -3,6 +3,7 @@ import { currentHeaders, noteItemManager } from "./manager-choice";
 import { acceptanceStands, decisionDismissed, reviewState, type Supervision } from "./supervision";
 import type { LineageStep, TaskBrief } from "./brief";
 import type { RuleSuggestion } from "./rule-suggestion";
+import type { TodoSummary } from "./todo-view-wire";
 import { api, ApiError, enc } from "./api";
 import { parseAPIError, retryable } from "./api-errors";
 import { stateOf } from "./format";
@@ -120,6 +121,13 @@ export interface Todo {
    *  docs/assistant/unified-entry.md "Briefs"); unset for a to-do that is no task, and from hubs before briefs. */
   brief?: TaskBrief;
   lineage?: LineageStep[];
+  /** The owner's latest restore of it, and until when they put it off (Someday; a far date means no date), as the hub
+   *  keeps them (docs/assistant/todos.md "Restores and Someday"); unset when never, and from hubs before them. */
+  restored_at?: string | null;
+  someday_until?: string | null;
+  /** The hub's view of the row (#10226, docs/assistant/todo-status-sop.md "The hub's view"): read only behind
+   *  Developing Persona's switches for now (features/todos/model). Unset from managers without `todo_view`. */
+  view?: TodoSummary;
 }
 
 /** Whether this closed to-do was cancelled, including the legacy supervision-only representation. */

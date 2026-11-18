@@ -47,6 +47,8 @@ func drainFleetBackground(t *testing.T, s *Service, cancel context.CancelFunc) {
 	}
 	tree.mu.Unlock()
 
+	s.todoViewsStop()
+
 	// A screen-upgrade start checks runCtx under fleet.mu; taking it here closes the Add/Wait teardown window.
 	// Delayed turn completions use the same gate: stop pending timers and let an already running callback finish.
 	s.fleet.mu.Lock()
@@ -71,6 +73,7 @@ func drainFleetBackground(t *testing.T, s *Service, cancel context.CancelFunc) {
 	waitFleetBackground(t, "turn completions", &s.fleet.completionRuns)
 	waitFleetBackground(t, "agent naming", &names.runs)
 	waitFleetBackground(t, "direction tree", &tree.runs)
+	waitFleetBackground(t, "to-do views", &s.tview.runs)
 	waitFleetBackground(t, "screen upgrades", &s.fleet.upgrades)
 	waitFleetBackground(t, "hub transcription", &s.hubTr.wg)
 	waitFleetBackground(t, "work events", &s.work.eventWrites)

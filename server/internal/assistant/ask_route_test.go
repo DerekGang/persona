@@ -24,6 +24,8 @@ type routeEnv struct {
 
 func newRouteEnv(t *testing.T, st Store, leaders bool) *routeEnv {
 	t.Helper()
+	old := askHoldFor
+	t.Cleanup(func() { askHoldFor = old }) // after the fleet drains below (Cleanup is LIFO), never beside a late digest
 	var ft *fleetTest
 	if st == nil {
 		ft = newFleetTest(t)
@@ -33,9 +35,7 @@ func newRouteEnv(t *testing.T, st Store, leaders bool) *routeEnv {
 	s, f := ft.s, ft.f
 	shortSupervise(t, s)
 	noDirectionsTimers(s)
-	old := askHoldFor
 	askHoldFor = time.Hour // tests move cards up by hand (askTick)
-	t.Cleanup(func() { askHoldFor = old })
 	ctx := context.Background()
 	f.hello.Assistant.MachineID = "server"
 	f.known["conv1"], f.known["lead1"] = true, true
