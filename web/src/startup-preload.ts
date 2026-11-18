@@ -403,14 +403,19 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // lib/todo-triage.ts's functions; a direct import from the recorder's chunk split lib/todo-triage.ts into a chunk of its
 // own, about 700 B). 49 B in each language, measured in one environment against main d5050affc5 (ja 482,098 B to
 // 482,147 B; en 478,979 B to 479,028 B, zh-Hans 479,841 B to 479,890 B). The budget stays.
-// #9745: Overview's extension cards drawn as the user arranged them add 735 B in ja, measured in one environment
-// against main affb08b4d (ja 482,147 B to 482,882 B; en 479,028 B to 479,789 B, zh-Hans 479,890 B to 480,641 B): the
+// 2026-11-18 (#10538): #10524 (ja 482,147 B to 482,619 B) and #10504 (to 482,722 B) left main's ja first screen 39 B over
+// the budget, so main stopped building. The main conversation's readiness help (views/assistant/ReadinessHelp.tsx, a
+// lazyOverlay started once something that opens it is on screen) and its assistant-readiness words left the first screen:
+// ja 482,722 B to 481,367 B, en 479,634 B to 478,331 B, zh-Hans 480,477 B to 479,146 B, measured in one environment
+// against main 51eb4b6a47. The budget stays.
+// #9745: Overview's extension cards drawn as the user arranged them add 771 B in ja, measured in one environment
+// against main 6c7be9c4b (ja 481,367 B to 482,138 B; en 478,331 B to 479,079 B, zh-Hans 479,146 B to 479,901 B): the
 // arrangement's store, kept per hub and sign-in, and the order, hidden cards and widths it draws
 // (lib/overview-cards.ts), Arrange cards in Overview's top bar, and the arrangement to and from the hub with the start
 // page, one change on its way at a time and pushes heard during it settled once the hub pushed it (lib/start-page.ts).
 // The editor (its heading, each card's controls, the drag and the edits) is a chunk of its own
-// (views/extensions/OverviewArrange.tsx, lib/overview-edit.ts). Main's 536 B of room is kept.
-export const FIRST_SCREEN_BUDGET = 483_418;
+// (views/extensions/OverviewArrange.tsx, lib/overview-edit.ts). Main had 1,316 B of room; the budget stays.
+export const FIRST_SCREEN_BUDGET = 482_683;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
