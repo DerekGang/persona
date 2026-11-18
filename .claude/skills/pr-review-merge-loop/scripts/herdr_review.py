@@ -37,7 +37,7 @@ def command(*args, timeout=90):
     try:
         value = json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        if result.returncode == 0 and not result.stdout.strip() and args[:2] == ("pane", "run"):
+        if result.returncode == 0 and not result.stdout.strip() and args[:2] in (("pane", "run"), ("pane", "send-keys")):
             return {}
         raise RuntimeError("Herdr did not return JSON (%s %s): %s"
                            % (args[:2], result.returncode, (result.stderr or result.stdout)[-500:])) from error
@@ -200,6 +200,11 @@ def wait_agent(pane, unit, timeout=180):
         if agent is not None:
             if agent.get("agent") != "claude":
                 raise RuntimeError("unexpected reviewer executable")
+            screen = terminal_text(pane, "visible", 45)
+            if "Yes, I trust this folder" in screen and "Quick safety check" in screen:
+                command("pane", "send-keys", pane, "down", "enter", timeout=20)
+                time.sleep(2)
+                continue
             if agent.get("agent_status") == "blocked":
                 screen = terminal_text(pane, "visible", 45)
                 warning = _config.get("startup_warning", "")
