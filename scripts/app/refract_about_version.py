@@ -47,7 +47,7 @@ SCHEMA_ONLY_HARMONY = PILOT / "harmony-resource-validation-only"
 EXPECTED = {
     "source": "https://github.com/nwverse/refract",
     "commit": "e32413fba1f13ff0652dedea5f96fc49ec4a8c96",
-    "archiveSha256": "522ec930a5b5de652acc090f1734e7d3440b18ad404a437927f713b2c3ad23fa",
+    "archiveSha256": "9b1e28debe23c36590d897082064f52509d552e2e412966a3b7354d33b5844d9",
     "sourceTreeSha256": "bb1e9d8fbe772541bd619a825cdb673c10d09542395aace51b1fbcfe280b5c30",
     "archiveTreeSha256": "cfaeafa9cee642c7f8e8832440977ec099851f834ffa31e87de281d5334a43be",
     "mappingSchemaVersion": 1,
