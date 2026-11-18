@@ -181,7 +181,7 @@ func codexExecutionArgs(argv []string, e modelExecution) []string {
 // known. With no message it returns the waiting row once Codex's input box is up (codex_waiting.go). In a pane it was
 // given (adoptedPane: a switch from Claude Code, engine_switch.go) it starts there, and a start that fails leaves that
 // pane open: what it left in front is for the caller to clear.
-func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launcher string, argv []string, prompt, ws, tabName, mode string) (*proto.Session, error) {
+func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launcher string, argv []string, prompt, ws, tabName, mode string, options ...modelExecution) (*proto.Session, error) {
 	waiting := strings.TrimSpace(prompt) == ""
 	if waiting {
 		prompt = ""
@@ -296,7 +296,10 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 	defer n.unclaimCodexThread(id)
 	n.bindPane(pane, id)
 	n.namePersonaTab(ctx, pane, id) // the tab was marked before the thread was known (personatab.go)
-	st := sessionState{Pane: pane, Launcher: launcher, Cwd: cwd, StartedAt: began.UTC()}
+	st := sessionState{Pane: pane, Launcher: launcher, Cwd: cwd, StartedAt: began.UTC(), TaskInstructions: executionOption(options).TaskInstructions}
+	if st.TaskInstructions != "" && slices.Contains(argv, codexTaskConfig(st.TaskInstructions)) {
+		st.TaskInstructionChannel = "codex"
+	}
 	if mode == "plan" {
 		st.AppMode = mode
 	}

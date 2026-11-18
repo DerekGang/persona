@@ -40,6 +40,11 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 		return nil, externalRefusal(ctx, "adapter_purpose_unsupported")
 	}
 	execution := executionOption(options)
+	if resume != "" {
+		if st, ok := n.state.get(resume); ok {
+			execution.TaskInstructions = st.TaskInstructions
+		}
+	}
 	// A start named to a failed start's kept tab holds it from here, sync and async alike: newTab uses it, else it is
 	// kept again when the start returns (startremedy.go).
 	claim, claimErr := n.claimKeptTab(execution.InPane)
@@ -175,6 +180,25 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 		// is reported as before.
 		_ = n.ensureHerdr(ctx, "start a session in a workspace")
 	}
+	var instructionFile, instructionChannel string
+	if execution.TaskInstructions != "" {
+		switch {
+		case codex && kind != traexAgent && n.taskCodexChannel(ctx, launcher, cwd, argv) && len(codexTaskConfig(execution.TaskInstructions)) < maxResumeArgv-2048:
+			instructionChannel = "codex"
+			argv = codexTaskArgs(argv, execution.TaskInstructions)
+		case !codex && kind == "claude" && n.taskClaudeChannel(ctx, launcher):
+			instructionFile, err = n.taskInstructionFile(execution.TaskInstructions)
+			if err != nil {
+				return nil, err
+			}
+			instructionChannel = "claude"
+		default:
+			if resume == "" {
+				prompt = taskFallback(prompt, execution.TaskInstructions)
+			}
+		}
+	}
+	prompt = taskFallback(prompt, execution.TaskAttachments)
 	if codex && kind != traexAgent { // codex_start.go
 		if resume != "" { // a Codex thread is resumed above: this id is not one
 			return nil, refusal(codexResumeRefused, "找不到这个 Codex 会话的记录，没法接着它：请在电脑上恢复（codex resume）。", nil)
@@ -183,7 +207,7 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 			// An inherited effort needs no override, which would leave the shared app-server.
 			execution.Effort = ""
 		}
-		return n.startCodex(ctx, launch, cwd, launcher, codexExecutionArgs(argv, execution), prompt, ws, tabName, mode)
+		return n.startCodex(ctx, launch, cwd, launcher, codexExecutionArgs(argv, execution), prompt, ws, tabName, mode, execution)
 	}
 	if work := workAgentKind(launcher, kind); work != "" { // workagent.go
 		if resume != "" {
@@ -227,7 +251,7 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 	// Persona's hooks: a plugin, or in --settings for a claude that loads none (hooksplugin.go).
 	settings, hooks := n.claudeStartSettings(ctx, launcher, "claude", cwd)
 	spec := claudeLaunch{Launcher: launcher, Settings: settings, Hooks: hooks, Display: n.liveRepliesPlugin(hooks), Model: execution.Model,
-		Plugins: n.claudeLoadsPlugins(ctx)}
+		Plugins: n.claudeLoadsPlugins(ctx), TaskInstructionFile: instructionFile}
 	// herdr told it is Claude (hostherdr.go): a launcher that wraps another binary is otherwise not seen as one. The
 	// node's directory in front, the assistant's environment left out (agentenv.go).
 	shells := n.startPaneShells(ctx, launch, created)
@@ -242,7 +266,7 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 	}
 	n.notePaneStart(launcher) // not in the agent sandbox unless a managed launcher (agentsandbox.go)
 	st := sessionState{Pane: pane, Launcher: launcher, Cwd: cwd, StartedAt: time.Now().UTC(), Model: execution.Model, ModelFingerprint: execution.Fingerprint,
-		PlanThen: planThen}
+		PlanThen: planThen, TaskInstructions: execution.TaskInstructions, TaskInstructionFile: instructionFile, TaskInstructionChannel: instructionChannel}
 	if prev, ok := n.state.get(id); ok && resume != "" {
 		if !prev.StartedAt.IsZero() { // a branch (fork.go) has none: it starts now
 			st.StartedAt = prev.StartedAt

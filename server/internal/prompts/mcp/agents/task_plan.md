@@ -35,9 +35,10 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
             "type": "string",
             "description": "the task in a short line the user reads on the card (Chinese, under 20 characters)"
           },
+          "context": {"type": "string", "description": "optional: pertinent facts the manager cannot resolve; do not copy the project background, which the manager supplies once"},
           "prompt": {
             "type": "string",
-            "description": "the agent's first message: everything it needs to do the task without asking you"
+            "description": "assignment goal, boundaries and new facts; the manager adds effective criteria, project background and framework instructions once. Put other pertinent facts in context"
           },
           "machine": {
             "type": "string",
