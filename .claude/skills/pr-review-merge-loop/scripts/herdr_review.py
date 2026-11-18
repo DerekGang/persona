@@ -4,8 +4,8 @@
 Usage: herdr_review.py CONFIG -- [CLI_ARG ...]
 
 The watcher owns semantic validation. This helper only transports the fixed
-prompt and CLI JSON result, allocates bounded slots, and reclaims its own tab.
-It does not start, stop or supervise Herdr itself.
+prompt and interactive terminal result, allocates bounded slots, and reclaims
+its own tab and scope. It does not start, stop or supervise Herdr itself.
 """
 import atexit
 import fcntl
@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 _cleanup_tab = None
 _cleanup_scope = None
@@ -38,11 +39,64 @@ def command(*args, timeout=90):
     except json.JSONDecodeError as error:
         if result.returncode == 0 and not result.stdout.strip() and args[:2] == ("pane", "run"):
             return {}
-        raise RuntimeError("Herdr did not return JSON: " + (result.stderr or result.stdout)[-500:]) from error
+        raise RuntimeError("Herdr did not return JSON (%s %s): %s"
+                           % (args[:2], result.returncode, (result.stderr or result.stdout)[-500:])) from error
+    if not isinstance(value, dict):
+        raise RuntimeError("Herdr returned an unexpected response")
     if result.returncode or "error" in value:
         detail = value.get("error", {})
         raise RuntimeError(str(detail.get("message") or detail.get("code") or result.stderr[-500:]))
     return value.get("result", value)
+
+
+def interactive_command(launcher, flags):
+    """Translate the watcher's validated print-only request to a visible agent.
+
+    Interactive mode cannot use --json-schema; the watcher still validates the
+    returned object and every changed-line finding. Read/plan/safe mode keep the
+    terminal reviewer within the same tool boundary as the one-shot transport.
+    """
+    options_with_values = {"--json-schema", "--tools", "--setting-sources", "--permission-mode"}
+    launch_flags = []
+    schema = None
+    index = 0
+    while index < len(flags):
+        flag = flags[index]
+        if flag in {"-p", "--output-format"}:
+            if flag == "--output-format":
+                if index + 1 >= len(flags) or flags[index + 1] != "json":
+                    raise RuntimeError("interactive reviewer requires JSON output")
+                index += 1
+            index += 1
+            continue
+        if flag in options_with_values:
+            if index + 1 >= len(flags):
+                raise RuntimeError("missing reviewer option argument")
+            if flag == "--json-schema":
+                schema = flags[index + 1]
+            else:
+                launch_flags.extend(flags[index:index + 2])
+            index += 2
+            continue
+        if flag == "--add-dir":
+            if index + 1 >= len(flags):
+                raise RuntimeError("missing reviewer add-dir argument")
+            launch_flags.extend(flags[index:index + 2])
+            index += 2
+            continue
+        if flag == "--no-session-persistence":
+            # Print-only persistence is replaced by a unique interactive session
+            # ID; it is never used to resume another PR's review.
+            index += 1
+            continue
+        if flag in {"--safe-mode", "--strict-mcp-config", "--disable-slash-commands"}:
+            launch_flags.append(flag)
+            index += 1
+            continue
+        raise RuntimeError("unsupported interactive reviewer flag: " + flag)
+    if schema is None:
+        raise RuntimeError("interactive reviewer requires the watcher JSON schema")
+    return launcher + " " + shlex.join(launch_flags), schema
 
 
 def scoped_reviewer(wrapper, slot, unit, properties):
@@ -110,56 +164,59 @@ def terminate_signal(signum, frame):
     raise SystemExit(128 + signum)
 
 
-def wait_agent(pane, timeout=180):
+def scope_state(unit):
+    result = subprocess.run(
+        ["/usr/bin/systemctl", "--user", "show", unit, "--property=LoadState,ActiveState"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, timeout=10, check=False)
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    return values.get("LoadState"), values.get("ActiveState")
+
+
+def wait_scope_start(unit, deadline):
+    """Scope registration races pane.run; absence is not yet a process exit."""
+    while time.monotonic() < deadline:
+        load, active = scope_state(unit)
+        if active == "active":
+            return True
+        time.sleep(.2)
+    raise TimeoutError("interactive reviewer scope did not start")
+
+
+def scope_running(unit):
+    load, active = scope_state(unit)
+    return load != "not-found" and active not in ("inactive", "failed")
+
+
+def wait_agent(pane, unit, timeout=180):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        result = command("agent", "list", timeout=20)
-        found = False
-        for agent in result.get("agents", []):
-            if agent.get("pane_id") != pane:
-                continue
-            found = True
+        if not scope_running(unit):
+            screen = terminal_text(pane, "visible", 45)
+            raise RuntimeError("interactive reviewer exited before becoming ready: "
+                               + json.dumps(screen, ensure_ascii=False)[-1200:])
+        agents = command("agent", "list", timeout=20).get("agents", [])
+        agent = next((item for item in agents if item.get("pane_id") == pane), None)
+        if agent is not None:
             if agent.get("agent") != "claude":
                 raise RuntimeError("unexpected reviewer executable")
             if agent.get("agent_status") == "blocked":
-                screen = command("pane", "read", pane, "--source", "visible", "--lines", "45", timeout=20)
-                text = json.dumps(screen, ensure_ascii=False)
+                screen = terminal_text(pane, "visible", 45)
                 warning = _config.get("startup_warning", "")
                 acceptance = _config.get("startup_acceptance", "")
-                if not warning or not acceptance or warning not in text or acceptance not in text:
+                if not warning or not acceptance or warning not in screen or acceptance not in screen:
                     raise RuntimeError("reviewer requested an unexpected interaction")
                 command("pane", "send-keys", pane, "right", "enter", timeout=20)
+                time.sleep(2)
+                continue
+            if agent.get("agent_status") in ("idle", "working"):
+                return
+            if agent.get("agent_status") == "done":
                 time.sleep(1)
                 continue
-            if agent.get("agent_status") in ("idle", "done", "working"):
-                return
             raise RuntimeError("reviewer startup state is not usable")
-        if not found:
-            try:
-                screen = command("pane", "read", pane, "--source", "visible", "--lines", "45", timeout=20)
-                if screen:
-                    raise RuntimeError("reviewer exited before agent detection: " + json.dumps(screen, ensure_ascii=False)[-1200:])
-            except RuntimeError as error:
-                if "exited before agent detection" in str(error):
-                    raise
         time.sleep(1)
     raise RuntimeError("reviewer did not become ready")
-
-
-def wait_scope(unit, deadline):
-    """An inactive scope is terminal even if Herdr retains an idle agent row."""
-    while time.monotonic() < deadline and not _terminated:
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "--user", "show", unit,
-             "--property=LoadState,ActiveState"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, timeout=20, check=False)
-        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        if result.returncode == 0 and (values.get("LoadState") == "not-found"
-                                       or values.get("ActiveState") in ("inactive", "failed")):
-            return
-        time.sleep(min(1, max(0.1, deadline - time.monotonic())))
-    raise TimeoutError("Herdr reviewer scope exceeded its lifetime")
 
 
 def forwarded_flags(arguments, forbidden):
@@ -188,6 +245,69 @@ def forwarded_flags(arguments, forbidden):
     return output
 
 
+def interactive_prompt(prompt, schema, marker):
+    return (prompt + "\n\nComplete this review now. Your final response must contain no prose, "
+            "markdown, tool calls or further turns. Return exactly one JSON object matching this "
+            "schema, with a unique transport marker on the line before and after it:\n"
+            + marker + "\n<JSON object matching the schema below>\n" + marker
+            + "\nSchema:\n" + schema)
+
+
+def terminal_text(pane, source="recent-unwrapped", lines=None):
+    result = subprocess.run(
+        [_config["herdr_command"], "--session", _config["session"], "pane", "read", pane,
+         "--source", source, "--lines", str(lines or int(_config.get("result_lines", 20000))),
+         "--format", "text"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, timeout=60, check=False)
+    if result.returncode:
+        raise RuntimeError("cannot read interactive reviewer terminal: " + result.stderr[-500:])
+    return result.stdout
+
+
+def wait_result(pane, unit, marker, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = terminal_text(pane)
+        if screen.rsplit("●", 1)[-1].count(marker) >= 2:
+            agents = command("agent", "list", timeout=20).get("agents", [])
+            agent = next((item for item in agents if item.get("pane_id") == pane), None)
+            if agent and agent.get("agent_status") in ("idle", "done"):
+                return screen
+            if agent and agent.get("agent_status") == "blocked":
+                raise RuntimeError("interactive reviewer requested an unexpected interaction")
+        if not scope_running(unit):
+            raise RuntimeError("interactive reviewer exited before returning its result")
+        time.sleep(1)
+    raise TimeoutError("interactive reviewer did not return a complete marked result")
+
+
+def terminal_result(screen, marker, schema):
+    """Accept only a marked assistant response, not the prompt or a diff's JSON."""
+    if marker not in screen:
+        raise RuntimeError("interactive reviewer returned no marked result")
+    tail = screen.rsplit("●", 1)[-1]
+    matches = list(re.finditer(re.escape(marker), tail))
+    if len(matches) != 2:
+        raise RuntimeError("interactive reviewer result markers are not unique: "
+                           + screen[-1500:])
+    text = tail[matches[0].end():matches[1].start()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = "\n".join(lines)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("interactive reviewer returned invalid marked JSON") from error
+    try:
+        import jsonschema
+        jsonschema.validate(value, json.loads(schema))
+    except ImportError as error:
+        raise RuntimeError("interactive reviewer requires the jsonschema validator") from error
+    except (ValueError, jsonschema.ValidationError) as error:
+        raise RuntimeError("interactive reviewer result does not match the watcher schema") from error
+    return value
+
+
 def run(slot, flags):
     global _cleanup_tab, _cleanup_scope
     root = Path(_config["runtime_directory"]).expanduser()
@@ -207,14 +327,12 @@ def run(slot, flags):
             pass
     name = "pr-r%02d-%d" % (slot, os.getpid())
     unit = "pr-review-r%02d-%d-%s.scope" % (slot, os.getpid(), secrets.token_hex(4))
-    with tempfile.TemporaryDirectory(prefix="slot-%02d-" % slot, dir=root) as temporary:
-        work = Path(temporary)
-        prompt_path = work / "prompt.txt"
-        result_path = work / "result.json"
-        prompt_path.write_text(sys.stdin.read(), encoding="utf-8")
-        os.chmod(prompt_path, 0o600)
-        tab = None
-        pane = None
+    marker = "PR_REVIEW_RESULT_" + secrets.token_hex(12)
+    session_id = str(uuid.uuid4())
+    launch, schema = interactive_command(_config["reviewer_launcher"], flags)
+    launch += " --session-id " + session_id
+    prompt = interactive_prompt(sys.stdin.read(), schema, marker)
+    with tempfile.TemporaryDirectory(prefix="slot-%02d-" % slot, dir=root):
         with lease_path.open("w", encoding="utf-8") as lease:
             json.dump({"pid": os.getpid(), "slot": slot}, lease)
             lease.flush()
@@ -227,40 +345,32 @@ def run(slot, flags):
                 _cleanup_tab = tab
                 lease.seek(0)
                 lease.truncate()
-                json.dump({"pid": os.getpid(), "slot": slot, "tab": tab, "pane": pane}, lease)
+                json.dump({"pid": os.getpid(), "slot": slot, "tab": tab, "pane": pane,
+                           "scope": unit}, lease)
                 lease.flush()
                 os.fsync(lease.fileno())
-                launch = (_config["reviewer_launcher"] + " " + " ".join(shlex.quote(flag) for flag in flags)
-                          + " < " + shlex.quote(str(prompt_path)) + " > " + shlex.quote(str(result_path))
-                          + " 2> " + shlex.quote(str(work / "stderr.txt")))
                 bounded = reviewer_command(_config.get("process_wrapper", ""), slot, unit,
                                            _config.get("scope_properties", {}))
                 bounded.append(launch)
                 _cleanup_scope = unit
                 command("pane", "run", pane, " ".join(shlex.quote(arg) for arg in bounded), timeout=30)
-                wait_agent(pane)
-                wait_scope(unit, time.monotonic() + int(_config.get("lifetime_seconds", 7200)))
-                if not result_path.is_file():
-                    detail = (work / "stderr.txt").read_text(errors="replace")[-1000:]
-                    raise RuntimeError("reviewer produced no structured result: " + detail)
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-                if not isinstance(result, dict) or result.get("is_error"):
-                    raise RuntimeError("reviewer failed")
-                if set(result) == {"findings"}:
-                    # Add only the transport envelope; the watcher still fully
-                    # validates every model-provided finding and changed line.
-                    result = {"is_error": False, "subtype": "success", "result": "",
-                              "structured_output": result, "permission_denials": []}
+                if not wait_scope_start(unit, time.monotonic() + 180):
+                    screen = terminal_text(pane, "visible", 45)
+                    raise RuntimeError("interactive reviewer exited before becoming ready: "
+                                       + json.dumps(screen, ensure_ascii=False)[-1200:])
+                wait_agent(pane, unit)
+                command("agent", "prompt", pane, prompt, "--wait", "--until", "working",
+                        "--until", "blocked",
+                        "--timeout", str(int(_config.get("lifetime_seconds", 7200)) * 1000),
+                        timeout=int(_config.get("prompt_timeout_seconds", 120)))
+                screen = wait_result(pane, unit, marker, int(_config.get("lifetime_seconds", 7200)))
+                value = terminal_result(screen, marker, schema)
+                result = {"is_error": False, "subtype": "success", "result": "",
+                          "structured_output": value, "permission_denials": []}
                 sys.stdout.write(json.dumps(result, separators=(",", ":")))
-            except BaseException:
-                cleanup_tab()
-                cleanup_scope()
-                raise
             finally:
                 cleanup_tab()
                 cleanup_scope()
-                for path in (prompt_path, result_path):
-                    path.unlink(missing_ok=True)
 
 
 def main():

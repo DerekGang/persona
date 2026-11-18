@@ -27,7 +27,39 @@ class HelperTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module["forwarded_flags"](["--model", "other"], {"--model"})
 
-    def test_reviewer_scope_wraps_visible_shell_without_moving_redirections(self):
+    def test_interactive_reviewer_keeps_visible_cli_and_validates_result(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        launch, schema = module["interactive_command"]("cc_k3", [
+            "-p", "--output-format", "json", "--json-schema",
+            '{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"]}',
+            "--no-session-persistence", "--tools", "Read", "--safe-mode", "--setting-sources", "",
+            "--strict-mcp-config", "--permission-mode", "plan", "--disable-slash-commands"])
+        self.assertNotIn(" -p ", " " + launch + " ")
+        self.assertNotIn("--output-format", launch)
+        self.assertNotIn("--json-schema", launch)
+        self.assertNotIn("--no-session-persistence", launch)
+        self.assertIn("--safe-mode", launch)
+        self.assertIn("--tools Read", launch)
+        self.assertIn("--permission-mode plan", launch)
+        marker = "PR_REVIEW_RESULT_0123456789abcdef01234567"
+        screen = ("❯ Review prompt\n  " + marker + "\n  old prompt marker\n"
+                  "● " + marker + '\n  {"findings":[]}\n  ' + marker + "\n✻ done")
+        self.assertEqual(module["terminal_result"](screen, marker, schema), {"findings": []})
+        with self.assertRaises(RuntimeError):
+            module["terminal_result"]("❯ " + marker + "\n" + marker, marker, schema)
+        with self.assertRaises(RuntimeError):
+            module["terminal_result"](screen.replace('"findings"', '"other"'), marker, schema)
+
+    def test_interactive_scope_waits_for_registration_before_exit(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        with patch.dict(module["wait_scope_start"].__globals__, {
+                "scope_state": unittest.mock.Mock(
+                    side_effect=[("not-found", "inactive"), ("loaded", "active")])}), \
+                patch.object(module["time"], "sleep", return_value=None):
+            self.assertTrue(module["wait_scope_start"]("pr-review-r00-123-01234567.scope",
+                                                      module["time"].monotonic() + 5))
+
+    def test_reviewer_scope_wraps_visible_shell(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
         argv = module["reviewer_command"](
             "python3 -I wrapper.py resources.json --slot", 7,
@@ -51,11 +83,23 @@ class HelperTests(unittest.TestCase):
             module["scoped_reviewer"]("", 7, "pr-review-r07-123-01234567.scope",
                                        {"ExecStartPost": "true"})
 
-    def test_reviewer_scope_lifetime_does_not_wait_for_stale_agent_rows(self):
+    def test_interactive_scope_waits_for_agent_completion_after_markers(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        marker = "PR_REVIEW_RESULT_0123456789abcdef01234567"
+        screen = "● " + marker + '\n  {"findings":[]}\n  ' + marker
+        with patch.dict(module["wait_result"].__globals__, {
+                "terminal_text": unittest.mock.Mock(return_value=screen),
+                "command": unittest.mock.Mock(return_value={
+                    "agents": [{"pane_id": "w3:p1", "agent_status": "done"}]}),
+                "scope_running": unittest.mock.Mock(return_value=True)}):
+            self.assertEqual(module["wait_result"]("w3:p1", "pr-review-r00-123-01234567.scope", marker, 5), screen)
+
+    def test_scope_state_handles_collected_units(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
         result = subprocess.CompletedProcess(["systemctl"], 0, "LoadState=not-found\nActiveState=inactive\n", "")
         with patch.object(module["subprocess"], "run", return_value=result) as run:
-            module["wait_scope"]("pr-review-r00-123-01234567.scope", module["time"].monotonic() + 10)
+            self.assertEqual(module["scope_state"]("pr-review-r00-123-01234567.scope"),
+                             ("not-found", "inactive"))
         self.assertIn("pr-review-r00-123-01234567.scope", run.call_args.args[0])
 
     def test_reviewer_closes_its_tab_once(self):

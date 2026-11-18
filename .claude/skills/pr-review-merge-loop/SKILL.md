@@ -71,13 +71,17 @@ The `scripts/` directory contains portable helpers for maintainers who want visi
 They never contain a real username, host, token, proxy, repository checkout or runtime path. Copy the `*.example.json`
 files into a private runtime directory and replace every placeholder; restrict those copies with `chmod 600`.
 
-- `herdr_review.py CONFIG -- <watcher CLI args>` creates one isolated tab in the configured existing Herdr session,
-  launches the configured reviewer there through `systemd-run --user --scope --collect`, forwards
-  `-p --output-format json`, and returns its structured result. Each unique `pr-review-rNN-....scope` uses the explicit
-  `scope_properties`; memory and task values are integer byte/task counts and `CPUQuota` is a percentage string. Keep
-  `process_wrapper` for CPU affinity and rlimits: a scope property shown by `systemctl` is not proof that a cgroup v1
-  memory or CPU controller enforces it. The helper never starts or stops Herdr and closes only its own tab and scope.
-  Reviewer tool boundaries and model overrides remain enforced.
+- `herdr_review.py CONFIG -- <watcher CLI args>` creates one isolated tab in the configured existing Herdr session
+  and launches an interactive reviewer through `systemd-run --user --scope --collect`. The watcher's print-only
+  request is validated then translated to a visible `cc_k3` session: no `-p`, shell prompt redirection, or JSON output
+  file appears in the tab. Herdr submits the multiline review prompt and the helper reads the final marked assistant
+  response from the terminal. The response must still match the watcher's JSON schema and changed-line validation;
+  terminal text is transport, never approval by itself. Each review gets a fresh session ID and is never resumed into
+  another PR. Each unique `pr-review-rNN-....scope` uses the explicit `scope_properties`; memory and task values are
+  integer byte/task counts and `CPUQuota` is a percentage string. Keep `process_wrapper` for CPU affinity and rlimits:
+  a scope property shown by `systemctl` is not proof that a cgroup v1 memory or CPU controller enforces it. The helper
+  never starts or stops Herdr and closes only its own tab and scope. Reviewer tool boundaries and model overrides
+  remain enforced.
 - `pr_watch_resources.py CONFIG COMMAND ...` allocates locked CPU groups, preserves the lock across `exec`, and applies
   optional address-space and CPU-time limits. `RLIMIT_AS` is not a cgroup RSS limit. The watcher uses it only when the
   trusted `PR_WATCH_PROCESS_WRAPPER` environment is explicitly configured.
