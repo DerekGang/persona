@@ -21,6 +21,7 @@ import { ultracodeMarkShown } from "../lib/ultracode";
 import { Rolling } from "../ui/Rolling";
 import { PersonaAvatar, usePersona } from "./assistant/Persona";
 import { managerOf, useRoster } from "../lib/managers";
+import { BrandMark } from "../ui/BrandMark";
 import { OriginMark } from "../ui/ChannelMark";
 import { autoOrigin, openerFrom } from "../lib/conversation-origins";
 import { InfoTip } from "../ui/InfoTip";
@@ -47,10 +48,8 @@ import { BADGE_CLASS, CURRENT_ROW, type GoFn, GroupCount, MachineChip, type RegF
 import { machineWithHub } from "../lib/mesh";
 import { stateName } from "../lib/state-labels";
 
-// Persona's main conversation: the column's first and strongest entry (the app's mark, always in ink, #2004), with the
-// conversation's state when it is working or wants you. A line under it parts it from the pages.
-// The small "Main chat" under the name keeps the brand row readable as a conversation, not a heading (#6293); a draft
-// waiting in the box takes that line (#5568).
+// The main conversation uses the home symbol (Back to main chat's) and one Main conversation line.
+// The assistant's identity belongs to the sidebar head; a left draft keeps its existing second line.
 // Its menu (Copy session ID, End…: iOS's long press on the main row) opens on a right click, the menu key or its ⋯.
 // Memoized like SessionRow: a push that leaves the main conversation as it was does not render it again.
 export const PersonaRow = memo(function PersonaRow({ reg, hover, active, go, main, chord, onMenu: menuOf }: { reg: RegFn; hover: (k: string | null) => void; active: boolean; go: GoFn; main?: Session; /** The "Open Persona" shortcut as bound now ("": none). */ chord?: string; /** The conversation rows' menu, opened on `main`: none without it. */ onMenu?: RowMenuFn }) {
@@ -63,11 +62,6 @@ export const PersonaRow = memo(function PersonaRow({ reg, hover, active, go, mai
   const aside = onMenu && !active ? "group-hover/row:invisible" : undefined;
   // words left unsent in the main conversation's box, once you are not in it (#5568)
   const draft = draftLine(useLeftDraft(main ? `${main.machine_id}/${main.session_id}` : null));
-  // The main conversation is the default assistant itself: the look's face and the assistant's name, one source with
-  // the sidebar's head (#6401).
-  const persona = usePersona();
-  const roster = useRoster();
-  const mainName = (roster ? managerOf(roster, roster.default)?.name : "") || persona.name;
   const link = (
     <a
       ref={ref}
@@ -83,10 +77,10 @@ export const PersonaRow = memo(function PersonaRow({ reg, hover, active, go, mai
       // pinned over the list (#5581), its own hover fill: the gliding highlight passes under the pinned box
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-[background-color,transform] duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active ? CURRENT_ROW : "hover:bg-hover focus-visible:bg-hover", onMenu && active && "pr-8", onMenu && "[@media(hover:none)]:pr-11")}
     >
-      <PersonaAvatar size={18} className="shadow-hairline" />
+      <Icon name="home" size={14} stroke={1.8} className="shrink-0 text-ink" />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13.5px] font-semibold text-ink">{mainName}</span>
-        {draft ? <SecondLine line={draft} draft /> : <SecondLine line={{ text: t("sidebar.main_chat") }} draft={false} />}
+        <span className="truncate text-[13.5px] font-semibold text-ink">{t("sidebar.main_chat")}</span>
+        {draft && <SecondLine line={draft} draft />}
       </span>
       {chord && <span aria-hidden data-persona-chord className={cx("hidden sm:inline-flex [@media(hover:none)]:hidden", aside)}><Kbd>{formatChord(chord)}</Kbd></span>}
       {pending > 0 ? (
