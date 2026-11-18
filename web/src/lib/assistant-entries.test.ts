@@ -145,7 +145,7 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
     expect(got.needsYou).toEqual([]);
   });
 
-  it("counts across the entries exactly the to-dos the To-dos page header calls open, and never plans or hand-opened Agents", () => {
+  it("counts unattended work but not Just finished, plans or hand-opened Agents in the task badges", () => {
     const workingSession: Session = { machine_id: "box", session_id: "working", title: "Worker", cwd: "/w", state: "working", status: "working", updated_at: fresh } as Session;
     const todos: Todo[] = [
       base("working", fresh, { agents: [{ machine_id: "box", session_id: "working", linked_at: fresh }] }),
@@ -153,7 +153,7 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
       base("done", fresh, { done_at: fresh }),
       base("parked-stale", stale, { supervision: { supervisor: "main", state: "parked", parked, reviews: [], updated_at: stale } }),
       base("review-seen", stale, { seen_at: stale, supervision: { supervisor: "main", state: "pending_review", reviews: [{ at: stale, verdict: "needs_user" as const }], updated_at: stale } }),
-      // a review nobody has looked at: under Persona reviewing (#8678), and still open on the page
+      // A reported finish is visible in Just finished, not counted as active work.
       base("review-unseen", fresh, { supervision: { supervisor: "main", state: "pending_review", reviews: [], updated_at: fresh, pending_since: fresh } }),
     ];
     // a plan waiting for Start has no to-do yet: a Needs you row that is not a to-do
@@ -164,8 +164,9 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
     const got = run(todos, [workingSession, loneAgent, ready], plans);
     const pageOpen = triageTodos(todos, makeSessionLookup([workingSession, loneAgent, ready]), now).open;
     const chipOpen = openTaskItems(got).filter((i) => i.countsOpen).length;
-    expect(chipOpen).toBe(pageOpen - 1);
-    expect(chipOpen).toBe(2); // Working and Waiting; Just finished is deliberately not part of In progress.
+    expect(pageOpen).toBe(3); // The legacy page header still uses its inactivity rule during the view rollout.
+    expect(chipOpen).toBe(4); // Working, Waiting, and two stopped tasks needing follow-up.
+    expect(got.needsYou.filter((i) => i.kind === "task").map((i) => i.key).sort()).toEqual(["task:review-seen", "task:stale"]);
     expect(got.review).toEqual([]);
     expect(got.justFinished.map((i) => i.key)).toContain("task:review-unseen");
     expect(got.needsYou.some((i) => i.kind === "plan")).toBe(true);

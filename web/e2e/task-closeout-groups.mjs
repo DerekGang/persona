@@ -104,6 +104,7 @@ async function run(browser, size, theme, language, textSize = "standard") {
     assert.deepEqual(await entries.evaluateAll((els) => els.map((el) => el.dataset.trayEntry)), ["needs", "running"]);
     const labels = await entries.allTextContents();
     words[language].groups.forEach((label, i) => assert(labels[i].startsWith(label), `group ${i}: ${labels[i]} starts with ${label}`));
+    await page.waitForLoadState("networkidle");
     const reads = apiReads.length;
     const open = async (group) => {
       await page.locator(`[data-tray-entry="${group}"]`).click();
@@ -112,8 +113,9 @@ async function run(browser, size, theme, language, textSize = "standard") {
     };
     await open("needs");
     assert.equal(await page.locator("[data-needs-row]").count(), 2, "owner decision and an unattended stopped task only");
-    await page.locator('button[data-needs-row="task:unattended"]').click();
     assert.equal(await page.locator('[data-needs-reason="stopped_unfinished"]').count(), 1);
+    assert.equal(await page.locator('[data-needs-row="task:unattended"] [data-task-status="unfinished"]').count(), 1);
+    assert.equal(await page.locator('[data-needs-row="task:unattended"] [data-task-todo-state]').count(), 1);
     await page.screenshot({ path: name("needs-you") });
     await open("running");
     assert.equal(await page.locator("[data-task-slot]").count(), 2, "working plus an uncounted reported finish");

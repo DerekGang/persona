@@ -184,16 +184,16 @@ class AssistantTraysShotsTest {
             val stoppedAt = if (id == "unfinished") old else at
             Todo(id, "Example $id", origin = "main", createdAt = stoppedAt, updatedAt = stoppedAt,
                 agents = listOf(TodoAgent("box", id, linkedAt = stoppedAt)),
-                supervision = Supervision(supervisor = "main", state = state))
+                supervision = Supervision(supervisor = "main", state = state, round = 1))
         }
         val agents = states.map { (id, _) ->
             val stoppedAt = if (id == "unfinished") old else at
             Session("box", id, title = "Example $id Agent",
                 state = if (id == "executing") "working" else "idle", status = if (id == "executing") "working" else "idle",
                 updatedAt = stoppedAt, stateSince = stoppedAt,
-                work = WorkState(if (id == "executing") "working" else if (id in listOf("external", "parked")) "blocked" else "",
+                work = persona.core.contracts.WorkState(if (id == "executing") "working" else if (id in listOf("external", "parked")) "blocked" else "",
                     on = "external", turnAt = stoppedAt,
-                    closeout = Closeout(if (id == "reported") "done" else if (id in listOf("external", "parked")) "blocked" else "not_done",
+                    closeout = persona.core.contracts.Closeout(if (id == "reported") "done" else if (id in listOf("external", "parked")) "blocked" else "not_done",
                         waiting = "the maintainer to re-review the release")))
         }
         fixture.tasks.reloadTodos()

@@ -12,15 +12,15 @@ import type { Interaction, Session } from "./types";
 /**
  * The Assistant's entries above the composer (docs/assistant/unified-entry.md "Needs you and In progress"):
  * Needs you lists the user's turn, In progress active work and external waits, including ready PRs.
- * Each thing has one home and one count; finished things are on the board, not counted in these entries. A
- * task waiting for its supervisor's review is in neither: the web lists it under Persona reviewing (`review`, #8678),
- * however long it has waited. A task is one row whatever its agents: they are not listed on their own. In the main
+ * Each thing has one home and one count; a reported finish goes in uncounted Just finished, not a peer review tray.
+ * An unfinished stop needs follow-up after a full hour, even if the old page's inactivity rule would shelve it.
+ * A task is one row whatever its agents: they are not listed on their own. In the main
  * conversation an Agent that belongs to no task (opened by hand) is a row of its own.
  */
 export type NeedsYouItem =
   /** A task whose agent asks something (`asks`, oldest first), or that waits for the user's decision.
-   *  `countsOpen` says whether the To-dos page's "Not done" counts the to-do (#3331): the row stays visible whatever
-   *  it says, the chip badge counts it only when it does. */
+   *  `countsOpen` says whether the task contributes to the badge; an unattended stopped task counts even after
+   *  the legacy page's inactivity window. */
   | { kind: "task"; key: string; todo: Todo; status: TodoStatus; asks: Interaction[]; countsOpen: boolean }
   /** An Agent that belongs to no task, asking something. */
   | { kind: "agent"; key: string; session: Session; asks: Interaction[] }
@@ -41,11 +41,9 @@ export interface AssistantEntries {
   /** Open tasks with no progress for 48 hours and nothing running (the To-dos page's shelved, #3331): folded under
    *  In progress, not counted. */
   shelved: RunningItem[];
-  /** Explicit holds and fresh ready PR waits, outside In progress; still open tasks. */
+  /** Explicit holds and fresh ready PR waits: the Waiting subsection of In progress. */
   parked: RunningItem[];
-  /** Tasks waiting for their supervisor's review (`pending_review`) with nothing of them running or asking, however long
-   *  the review has waited (web only, #8678): Persona's to do, not the owner's, so outside Needs you; still open tasks,
-   *  counted like the other entries. An asking agent, an open `ask` or `needs_user` makes such a task Needs you instead. */
+  /** Legacy field kept for callers during the hub-view rollout; always empty, not a separate tray. */
   review: RunningItem[];
   /** Handed-out tasks that finished in the last 24 hours and that the owner has not opened since (the To-dos page's Just
    *  finished, todo-triage), newest first: a group under In progress, not counted (#8237). How a task ended is told
@@ -142,7 +140,6 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
   const open: { item: RunningItem; rank: number; at: string }[] = [];
   const shelved: { item: RunningItem; at: string }[] = [];
   const parked: { item: RunningItem; at: string }[] = [];
-  const review: { item: RunningItem; rank: number; at: string }[] = [];
   const finished: { item: RunningItem; at: number }[] = [];
   const folded = new Set<string>();
   const slots = taskCardSlots(conversation, input.cards ?? [], feed, plans, todos, isMain);
@@ -191,7 +188,7 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     else if (waits || decision || unattended) {
       // Only the review decision is hidden; a live Agent question above still has its home.
       if (!(status !== "needs_you" && decision && (decisionDismissed(todo) || input.deferred?.[decisionLaterKey(todo)]))) {
-        deciding.push({ item: { kind: "task", key, todo, status, asks, countsOpen }, rank: todoRank(todo, status), at: card.at });
+        deciding.push({ item: { kind: "task", key, todo, status, asks, countsOpen: countsOpen || unattended }, rank: todoRank(todo, status), at: card.at });
       }
     }
     // #10174: a reported finish awaits acceptance in Just finished, never in a peer acceptance group.
@@ -244,7 +241,7 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     running: [...open.sort(newest).map((row) => row.item), ...agentsRunning],
     shelved: shelved.sort(newest).map((row) => row.item),
     parked: parked.sort(newest).map((row) => row.item),
-    review: review.sort(newest).map((row) => row.item),
+    review: [],
     justFinished: finished.sort((a, b) => b.at - a.at || a.item.key.localeCompare(b.item.key)).map((row) => row.item),
   };
 }

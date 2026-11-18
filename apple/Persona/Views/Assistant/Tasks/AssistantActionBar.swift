@@ -297,7 +297,8 @@ nonisolated enum AssistantEntries {
             let external = externallyWaiting(todo, status: status, last: triage.last, now: now)
             let unfinished = own.count == active.count && !settled && !todo.activeAgents.isEmpty && !work.running && !external
                 && status != .usageLimit && work.closeout?.status != "done"
-            let unattended = unfinished && now.timeIntervalSince(work.unattendedSince) > stoppedFollowupAfter
+            let unattended = unfinished && work.unattendedSince > .distantPast
+                && now.timeIntervalSince(work.unattendedSince) > stoppedFollowupAfter
             if !asks.isEmpty { asking.append((row, asks.map { $0.createdAt ?? .distantPast }.min())); listed() }
             else if waits || decision || unattended {
                 // Only the review decision is put off or dismissed (Later / Don't handle); a live Agent question keeps its home.

@@ -93,6 +93,11 @@ describe("closeout-based entries aligned with #10174", () => {
     expect(taskExecution(todo, makeSessionLookup([s])).unattendedSince).toBe(Date.parse(at));
     expect(keys(entries(s, todo, now + 1).needsYou)).toEqual(["task:task"]);
   });
+  it("counts an unattended task in Needs you even when legacy triage would have shelved it", () => {
+    const s: Session = { ...agent, state: "idle", work: { phase: "", turn_at: at, closeout: { status: "not_done" } } };
+    const t: Todo = { ...todo, supervision: { supervisor: "main", state: "" } };
+    expect(entries(s, t, Date.parse(at) + 72 * STOP_FOLLOWUP_MS).needsYou).toMatchObject([{ key: "task:task", countsOpen: true }]);
+  });
   it("never brings an accepted task back as stopped or awaiting acceptance", () => {
     const accepted = { ...todo, supervision: { ...todo.supervision!, state: "accepted" as const,
       reviews: [{ at, verdict: "accepted" as const }] } };

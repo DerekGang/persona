@@ -751,8 +751,7 @@ function dockTasksIn(s: State, conversation: string, plans: Record<string, TaskP
 }
 
 type AssistantTray = "needs" | "running";
-/** Each entry's mark: Needs you waits on the user, In progress is work under way; Persona reviewing is neutral, since
- *  nothing in it is the user's (#8678). */
+/** Needs you waits on the user; In progress contains Working and Waiting, with Just finished uncounted. */
 const TRAY_DOT: Record<AssistantTray, string> = { needs: "bg-attention", running: "bg-accent" };
 const EMPTY_FEED: FeedItem[] = [];
 const EMPTY_CARDS: TaskCardMetadata[] = [];
@@ -777,7 +776,7 @@ function TaskHandoffs({ item }: { item: FeedItem }) {
 }
 
 /** One slot, one row: live task/session state wins over historical feed metadata. */
-function ProgressTaskRow({ card, conversation, activity, countsOpen, supervisorReview, onOpen }: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; supervisorReview?: boolean; onOpen?: () => void }) {
+function ProgressTaskRow({ card, conversation, activity, countsOpen, onOpen }: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; onOpen?: () => void }) {
   const todo = useTodo(card.todo_id);
   const task = useTaskNow(todo);
   const plans = useFeed((s) => s.plans);
@@ -808,8 +807,6 @@ function ProgressTaskRow({ card, conversation, activity, countsOpen, supervisorR
   const agentKey = agentRowKey({ live: !!liveWork, status: state, lead: task?.lead, todo: !!todo, starting });
   const rowIsFinished = !countsOpen && finished;
   const chip = todoChipState({ toStart, status: state, done: finished, stage: todo?.stage, pr, todo });
-  // judged finished and with its supervisor for review (the Persona reviewing tray, lib/assistant-entries `review`): the row says whose turn it is
-  const reviewing = !!supervisorReview && !liveWork && !finished && state !== "cancelled";
   const ask = useStore((s) => taskAsk(todo ? taskInteraction(todo, s.interactions, task?.lead) : undefined));
   // what a waiting task waits for (#3274): its agent's own line for it
   const waits = useStore((s) => (todo && state === "waiting" ? waitingLine(todo, taskSessionLookup(s)) : undefined));
@@ -833,8 +830,8 @@ function ProgressTaskRow({ card, conversation, activity, countsOpen, supervisorR
       if (card.todo_id) openTask(card.todo_id);
       else window.dispatchEvent(new CustomEvent("persona:task-start", { detail: conversation }));
     }} className="grid w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_1rem] items-center gap-x-3 gap-y-0.5 px-3 py-2.5 text-left hover:bg-hover disabled:cursor-default sm:flex sm:gap-3">
-      <span data-task-mark={rowIsFinished ? "done" : reviewing ? "follow_up" : agentKey} className="col-start-1 row-start-1 flex w-4 shrink-0 justify-center">
-        {rowIsFinished ? <TaskMark status="done" size={8} /> : reviewing ? <TaskMark status="follow_up" size={8} /> : <StatusMark state={agentRowMark(agentKey)} size="sm" />}
+      <span data-task-mark={rowIsFinished ? "done" : agentKey} className="col-start-1 row-start-1 flex w-4 shrink-0 justify-center">
+        {rowIsFinished ? <TaskMark status="done" size={8} /> : <StatusMark state={agentRowMark(agentKey)} size="sm" />}
       </span>
       <div data-task-content className="col-start-2 row-start-1 min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -847,7 +844,7 @@ function ProgressTaskRow({ card, conversation, activity, countsOpen, supervisorR
       </div>
       {/* the status in its own right-aligned column (the rows' states scan down it), then the row's end: › where it opens
           something, ✓ once finished, ⓘ for a usage limit (#5569) */}
-      <span data-task-status={rowIsFinished ? "done" : reviewing ? "review" : agentKey} title={agentRowLabel(agentKey, task?.lead)} className={cx("col-start-2 row-start-2 min-w-0 text-xs sm:max-w-[40%] sm:shrink-0 sm:truncate sm:text-right", rowIsFinished || reviewing ? "text-ink-2" : agentRowTone(agentKey))}>
+      <span data-task-status={rowIsFinished ? "done" : agentKey} title={agentRowLabel(agentKey, task?.lead)} className={cx("col-start-2 row-start-2 min-w-0 text-xs sm:max-w-[40%] sm:shrink-0 sm:truncate sm:text-right", rowIsFinished ? "text-ink-2" : agentRowTone(agentKey))}>
         {rowIsFinished ? (accepted ? t("assistant-tasks.review_accepted") : TODO_STATUS_INFO.done.label) : agentRowLabel(agentKey, task?.lead)}
       </span>
       <span className="col-start-3 row-start-1 flex w-4 shrink-0 justify-center">
@@ -1052,9 +1049,12 @@ function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr }: { rowKey?: str
   const canContinue = cutOff && (cut ? cut.canContinue : true);
   const unattended = !cutOff && !taskAwaitsDecision(todo);
   const stopped = unattended ? stoppedReason(todo, status) : undefined;
+  const closeout = shownCloseout(task?.lead);
+  const agentKey = task?.lead ? agentRowKey({ live: false, status, lead: task.lead, todo: true, starting: false }) : "unfinished";
+  const chip = todoChipState({ toStart: false, status, done: !!todo.done_at, stage: todo.stage, pr: todo.pr_url, todo });
   const line = cut ? cut.reason : unattended
     ? (stopped !== undefined ? stopped ? t("assistant-tasks.progress_stopped_reason", { reason: stopped }) : t("assistant-tasks.progress_stopped")
-      : shownCloseout(task?.lead)?.waiting || progressOf(task?.lead)?.text || task?.lead?.last_text || t("assistant-tasks.tray_unattended"))
+      : closeout?.waiting || closeout?.missing || progressOf(task?.lead)?.text || task?.lead?.last_text || t("assistant-tasks.tray_unattended"))
     : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || progressOf(task?.lead)?.text : undefined;
   return (
     <div data-needs-row={rowKey} {...countsOpenAttr} data-waiting-task={todo.id} data-needs-reason={unattended ? "stopped_unfinished" : undefined} className={cx("flex flex-col gap-1.5 rounded-control px-3 py-2 text-sm", cutOff ? "bg-danger-wash" : "bg-field")}>
@@ -1064,6 +1064,10 @@ function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr }: { rowKey?: str
         <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{waitsLabel(todo, status)}</span>
       </div>
       {unattended && <div className="pl-6 text-xs text-ink-2">{t("assistant-tasks.tray_unattended")}</div>}
+      {unattended && <div className="flex min-w-0 flex-col gap-1 break-words pl-6 text-xs text-ink-2">
+        <span data-task-status={agentKey}>{agentRowLabel(agentKey, task?.lead)}</span>
+        {chip && <span data-task-todo-state>{todoChipLabel(chip)}</span>}
+      </div>}
       {line && <div className={cx("truncate pl-6 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{line}</div>}
       {canContinue && (
         <div className={ROW_ACTIONS}>
