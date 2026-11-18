@@ -166,6 +166,11 @@ Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUD
   omitted launcher through both the actual send and a runtime peer, including a session row without a launcher.
   Keep stored-launcher precedence and reject a stale stored launcher belonging to another connected runtime;
   accepting the listed owner alone can validate one runtime while the sender routes to another.
+  A transport fixture for scheduled execution must mark its computer online, answer the exact synthetic model
+  probe, and recognize a listed source session when `resume_only` is sent. Otherwise setup failures hide the
+  category/inheritance behavior it asserts. Keep the original send-parameter and refusal assertions.
+  Trusted-adapter fixtures also validate their test executable's ancestors: use private temporary directories
+  and an owner-only process umask, since a group-writable Go build directory or test binary is correctly refused.
 
 - A concurrency test that passes with `-race` can still fail without it (2026-11-06, #5908). `-race` slows the instrumented code, so the goroutines meet in a different order. `TestInstallClaimsOperation` passed 20 of 20 runs with `-race` and failed 13 to 29 of 40 without it. Without `-race` its second install usually ran only after the first had committed and used up the preview, and got a 403 from the market check that the PR's own `-race` runs never reached. Run a new concurrency test with `-count`, both with and without `-race`. For the interleaving that matters, set up the state directly instead of hoping two goroutines meet there (here: claim the operation, drop the preview, then install again).
 
@@ -484,6 +489,15 @@ no longer running passes with such a transcript whatever the code does: the engi
 listed" did, and its title check (the row takes the old session's title, read off that session's row) failed until the
 transcript was long enough to be listed (`longTurn`). Before asserting a row is absent, assert it is there in the same
 setup.
+
+## A throwaway hub started from an Agent's terminal uses the real state directory (2026-11-17, #10096)
+
+An Agent that Persona started inherits `PERSONA_HOME`, and `identity.DataDir` takes it before `HOME`: a throwaway
+`personad hub run` with only `HOME=<tmp>` reads and writes the machine's real `~/.persona/hub.json` (a first run writes a
+default one), and `personad hub setup` then creates the shared `persona-postgres` container and writes its address into
+that file. Set `PERSONA_HOME=<tmp>/.persona` (and `HOME`), give the throwaway `hub.json` its own `database_url` and
+`listen` instead of running `hub setup`, and list the real state directory and `docker ps -a` afterwards. If it happened,
+remove only what the run created (check creation times first), never a file that was there before.
 
 ## A simulator that ran against the mock hub uploads its recordings to the next hub it pairs with (2026-11-17, #9417)
 

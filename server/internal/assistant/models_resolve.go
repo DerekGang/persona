@@ -142,7 +142,7 @@ func (s *Service) fallbackAPIProvider(ctx context.Context) string {
 	stored := s.storedLaunchers(ctx)
 	hidden := s.hiddenLaunchers(ctx)
 	usable := func(l storedLauncher) bool {
-		return !slices.Contains(hidden, l.Name) && l.BaseURL != "" && l.Model != "" && l.KeySealed != ""
+		return !proto.IsExternalLauncher(l.Name) && !slices.Contains(hidden, l.Name) && l.BaseURL != "" && l.Model != "" && l.KeySealed != ""
 	}
 	for _, l := range stored {
 		if l.Kind == "api" && usable(l) {
@@ -209,7 +209,11 @@ func (s *Service) resolveModelRecord(ctx context.Context, id string, r *modelRec
 		}
 		r = &read
 	}
-	return effectiveModel(p, base, r.Binding), nil
+	b := effectiveModel(p, base, r.Binding)
+	if err := checkExternalPurpose(b); err != nil {
+		return b, err
+	}
+	return b, nil
 }
 
 func launcherProvider(name string) string {
@@ -259,6 +263,9 @@ func chatEffortForModel(models []proto.ProviderModel, model, effort string) stri
 // apiConfig is the connection an API binding calls, with its key opened.
 func (s *Service) apiConfig(ctx context.Context, b ModelBinding) (ai.Config, error) {
 	var c ai.Config
+	if err := checkExternalPurpose(b); err != nil {
+		return c, err
+	}
 	var providerModels []proto.ProviderModel
 	if strings.HasPrefix(b.Provider, "legacy.") {
 		c = s.legacyModelConfig(ctx, b.Provider)
@@ -311,6 +318,9 @@ func (s *Service) apiConfig(ctx context.Context, b ModelBinding) (ai.Config, err
 		}
 	} else {
 		return c, i18n.Err("assistant-models.err_not_api")
+	}
+	if proto.IsExternalLauncher(c.RunLauncher) {
+		return c, i18n.Err("external-adapter.purpose_unsupported")
 	}
 	if b.Model != "" {
 		c.Model = b.Model
