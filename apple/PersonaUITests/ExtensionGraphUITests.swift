@@ -86,19 +86,25 @@ final class ExtensionGraphUITests: XCTestCase {
         zoomOut.tap()
         app.buttons["extension-graph-zoom-in"].tap()
 
-        // Fold a visible parent, then restore it. The control is independent of its node.
-        let folds = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "extension-graph-fold-")).allElementsBoundByIndex
-        guard let fold = visible(folds, in: app) else {
-            XCTFail("no visible fold control:\n\(app.debugDescription)")
-            return
+        // Fold a visible parent through its chip, then restore it. The chip is hidden from VoiceOver because the node
+        // carries the same custom action, so drive its actual children-edge coordinate rather than an AX duplicate.
+        var foldPair: (parent: XCUIElement, child: XCUIElement)?
+        for part in 0..<8 {
+            for step in [3, 4, 1, 2, 0, 5] {
+                let parent = app.buttons["extension-graph-node-p\(part).s\(step)"]
+                let child = app.buttons["extension-graph-node-p\(part).s\(step).c0"]
+                if visible([parent], in: app) != nil && child.exists {
+                    foldPair = (parent, child)
+                    break
+                }
+            }
+            if foldPair != nil { break }
         }
-        let openLabel = fold.label
-        XCTAssertFalse(openLabel.isEmpty)
-        fold.tap()
-        XCTAssertNotEqual(fold.label, openLabel, "folding changes the control to its show-hidden label")
-        fold.tap()
-        XCTAssertEqual(fold.label, openLabel)
+        let (parent, child) = try XCTUnwrap(foldPair, "no visible parent with children:\n\(app.debugDescription)")
+        parent.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).tap()
+        XCTAssertTrue(child.waitForNonExistence(timeout: 5), app.debugDescription)
+        parent.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).tap()
+        XCTAssertTrue(child.waitForExistence(timeout: 5), app.debugDescription)
 
         app.buttons["extension-graph-full-screen"].tap()
         XCTAssertTrue(app.buttons["extension-graph-close"].waitForExistence(timeout: 10), app.debugDescription)
