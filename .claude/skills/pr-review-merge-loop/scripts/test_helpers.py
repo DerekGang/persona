@@ -59,6 +59,27 @@ class HelperTests(unittest.TestCase):
             self.assertTrue(module["wait_scope_start"]("pr-review-r00-123-01234567.scope",
                                                       module["time"].monotonic() + 5))
 
+    def test_interactive_workspace_trust_uses_down_before_prompt(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        responses = iter([
+            {"agents": [{"pane_id": "w3:p1", "agent": "claude", "agent_status": "idle"}]},
+            {"agents": [{"pane_id": "w3:p1", "agent": "claude", "agent_status": "idle"}]},
+        ])
+        calls = []
+        def fake_command(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("agent", "list"):
+                return next(responses)
+            return {}
+        globals_ = module["wait_agent"].__globals__
+        screens = ["Quick safety check\n❯ No, exit\n  Yes, I trust this folder", ""]
+        with patch.dict(globals_, {
+                "scope_running": unittest.mock.Mock(return_value=True),
+                "terminal_text": unittest.mock.Mock(side_effect=screens),
+                "command": fake_command}):
+            module["wait_agent"]("w3:p1", "pr-review-r00-123-01234567.scope", timeout=5)
+        self.assertIn(("pane", "send-keys", "w3:p1", "down", "enter"), calls)
+
     def test_reviewer_scope_wraps_visible_shell(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
         argv = module["reviewer_command"](
