@@ -514,8 +514,10 @@ describe("Overview's cards (#9745)", () => {
       });
       cards.saveOverview(arrangement);
       await flush();
-      return { cards, release: async () => (release(), await flush()) };
+      return { cards, hello, release: async () => (release(), await flush()) };
     }
+    // a list as the hub passes a push on: read into a map and written again, each card's keys in sorted order
+    const asPassedOn = (list: OverviewEntry[]) => list.map((c) => Object.fromEntries(Object.entries(c).sort(([a], [b]) => (a < b ? -1 : 1))));
 
     it("a change from another device that lands after ours is taken, not replaced by our answer", async () => {
       const { cards, release } = await inFlight();
@@ -564,6 +566,54 @@ describe("Overview's cards (#9745)", () => {
       expect(pages.getSidebarPrefs().order).toEqual(["kb"]);
       await release();
       expect(cards.getOverviewPrefs()).toEqual(arrangement);
+    });
+
+    // review of #9778, P1: the hub's answer can come before its push of the same change
+    it("one that landed before ours, heard after our answer, does not undo ours", async () => {
+      const { cards, release } = await inFlight();
+      await release(); // answered; the push of ours is still to come
+      Socket.last.push({ type: "navigation", overview: newer }); // the phone's, before ours
+      expect(cards.getOverviewPrefs()).toEqual(arrangement);
+      Socket.last.push({ type: "navigation", overview: asPassedOn(arrangement) }); // ours
+      expect(cards.getOverviewPrefs()).toEqual(arrangement);
+      Socket.last.push({ type: "navigation", overview: newer }); // the phone's again, after ours
+      expect(cards.getOverviewPrefs()).toEqual(newer);
+    });
+
+    it("one that lands after ours is taken once ours is heard, after our answer", async () => {
+      const { cards, release } = await inFlight();
+      Socket.last.push({ type: "navigation", overview: newer }); // the phone's, before ours
+      await release();
+      Socket.last.push({ type: "navigation", overview: asPassedOn(arrangement) }); // ours
+      Socket.last.push({ type: "navigation", overview: [] }); // the phone's, after ours
+      expect(cards.getOverviewPrefs()).toEqual([]);
+    });
+
+    it("ours is known by its cards, whatever order the hub writes their keys in", async () => {
+      const { cards, release } = await inFlight();
+      Socket.last.push({ type: "navigation", overview: asPassedOn(arrangement) }); // ours
+      Socket.last.push({ type: "navigation", overview: newer }); // the phone's, after ours
+      await release();
+      expect(cards.getOverviewPrefs()).toEqual(newer);
+    });
+
+    it("a hello that did not resume ends the wait: the pushes of ours and the phone's went with the socket", async () => {
+      const { cards, release, hello } = await inFlight();
+      await release();
+      hub = { overview: newer }; // the phone's, after ours, while the socket was down
+      await hello();
+      expect(cards.getOverviewPrefs()).toEqual(newer);
+      Socket.last.push({ type: "navigation", overview: [] }); // the phone's again
+      expect(cards.getOverviewPrefs()).toEqual([]);
+    });
+
+    it("nor does a change on its way at such a hello wait for its push", async () => {
+      const { cards, release, hello } = await inFlight();
+      await hello(); // the socket came back while ours was on its way: its push may have gone with the old one
+      await release(); // answered, and sent again (it was on its way when the hub was read)
+      Socket.last.push({ type: "navigation", overview: asPassedOn(arrangement) }); // the push of the one sent again
+      Socket.last.push({ type: "navigation", overview: newer }); // the phone's
+      expect(cards.getOverviewPrefs()).toEqual(newer);
     });
   });
 

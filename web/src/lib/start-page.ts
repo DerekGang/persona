@@ -11,7 +11,7 @@ import { api, ApiError } from "./api";
 import { stripBase } from "./base";
 import { hasSlots } from "./extension-slots";
 import { NAV_PAGES } from "./persona-nav";
-import { adoptOverview, getOverviewPrefs, noteOverviewKept, onOverviewSaved, overviewChosen, overviewKept } from "./overview-cards";
+import { adoptOverview, getOverviewPrefs, noteOverviewKept, onOverviewSaved, overviewChosen, overviewKept, type OverviewEntry } from "./overview-cards";
 import { adoptSidebarPrefs, chosen, getSidebarPrefs, onSidebarPrefsSaved } from "./sidebar-pages";
 import { isResumed } from "./reconnect";
 import { navigate, type Route } from "./router";
@@ -147,27 +147,34 @@ onSidebarPrefsSaved((pages) => {
 // arrangement then stays in this browser (Overview's editor says so) until the next hello asks again. Any other failure
 // (403, 5xx, the network, another 400) keeps the change and sends it again at the next hello. One change is on its way at a
 // time: one made meanwhile goes once that one is answered, the newest as this browser has it then, so the hub takes them in
-// the order they were made and the last answer says whether the newest reached it. Pushes heard meanwhile are settled once
-// the last one is answered (settleOverview), not dropped.
+// the order they were made and the last answer says whether the newest reached it. Pushes heard meanwhile, and until the
+// hub's push of the last one taken comes (its answer can come first), are settled then (settleOverview), not dropped.
 const OLD_MANAGER = ["start is required", "start or pages is required"]; // #9328, #9351
 let sendingOverview = false;
 let againOverview = false; // a change made while one was on its way
 let unsentOverview = false;
 let editsOverview = 0; // bumped by each change made here and each one sent: a hello's read that one overtook is not taken
 let heardOverview: unknown[] = []; // the arrangements the hub pushed meanwhile, in its order
-let answeredOverview: string[] = []; // its answers to our changes, in the same order
+let answeredOverview: string[] = []; // its answers to our changes, in the same order, until it pushed the last of them
+let helloOverview = 0; // bumped by each hello that did not resume: the hub's pushes from before it do not come again
+// The hub passes a push on as it read it (internal/hub bus_broadcast.go), a card's keys in another order than its answer's:
+// an arrangement is compared card by card.
+const overviewKey = (v: unknown) =>
+  JSON.stringify((Array.isArray(v) ? (v as Partial<OverviewEntry>[]) : []).map((c) => [c?.extension, c?.id, c?.hidden ?? false, c?.span ?? ""]));
 function sendOverview(probe = false) {
   if (synced === false || (overviewKept() === false && !probe)) return; // this browser only
   if (sendingOverview) return void (againOverview = true);
   sendingOverview = true;
   editsOverview++;
+  const hello = helloOverview;
   api<{ overview?: unknown }>("/navigation", { method: "PUT", json: { overview: getOverviewPrefs() } })
     .then(
       (r) => {
         noteStartPageSynced();
         unsentOverview = false;
         noteOverviewKept(Array.isArray(r.overview));
-        if (Array.isArray(r.overview)) answeredOverview.push(JSON.stringify(r.overview));
+        // its push is still to come, unless it went out before a hello that did not resume
+        if (Array.isArray(r.overview) && hello === helloOverview) answeredOverview.push(overviewKey(r.overview));
       },
       (e) => {
         noteStartPageSynced(e);
@@ -190,38 +197,44 @@ onOverviewSaved(() => {
   sendOverview();
 });
 
-/** Once the last change on its way is answered: the hub pushes every change, these too, in its order, so an arrangement
- *  pushed after the last of ours is newer than ours and is taken; with none, this browser's copy (the newest change)
- *  stays, as does a change the hub did not take, which goes again at the next hello. Our answers are found among the
- *  pushes in the order they were made, each after the one before, so a later push with the value of an earlier change
- *  of ours (another device putting the cards back as they were) is not taken for ours. */
+/** Once the last change on its way is answered and the hub pushed it: the hub pushes every change, these too, in its
+ *  order, to every app, so an arrangement pushed before the last of ours is older than ours and one pushed after it is
+ *  newer and is taken; with none, this browser's copy (the newest change) stays, as does a change the hub did not take,
+ *  which goes again at the next hello. Our answers are found among the pushes in the order they were made, each after the
+ *  one before, so a later push with the value of an earlier change of ours (another device putting the cards back as they
+ *  were) is not taken for ours. Until the last is found (its answer can come before its push), pushes wait with it. */
 function settleOverview() {
-  const heard = heardOverview;
-  const ours = answeredOverview;
-  heardOverview = [];
-  answeredOverview = [];
   let last = -1;
   let next = 0;
-  heard.forEach((p, i) => {
-    if (next < ours.length && JSON.stringify(p) === ours[next]) {
+  heardOverview.forEach((p, i) => {
+    if (next < answeredOverview.length && overviewKey(p) === answeredOverview[next]) {
       next++;
       last = i;
     }
   });
+  if (!unsentOverview && next < answeredOverview.length) return;
+  const heard = heardOverview;
+  heardOverview = [];
+  answeredOverview = [];
   if (!unsentOverview && last >= 0 && last < heard.length - 1) adoptOverview(heard[heard.length - 1]);
 }
 
-/** The hub's arrangement, read or pushed: taken at once, or settled with the change on its way. */
+/** The hub's arrangement, read or pushed: taken at once, or settled with the change on its way or its push to come. */
 function hubOverview(v: unknown[]) {
   noteOverviewKept(true);
-  if (sendingOverview) heardOverview.push(v);
-  else adoptOverview(v);
+  if (!sendingOverview && !answeredOverview.length) return adoptOverview(v);
+  heardOverview.push(v);
+  if (!sendingOverview) settleOverview();
 }
 
 // The hub's choices, read at every hello that did not resume (a resumed one gets the pushes it missed) and pushed on
 // each change. A hub that never stored one is handed the one this browser kept while there was no record.
 onHubEvent("hello", (msg) => {
   if (isResumed(msg)) return;
+  // what the hub pushed before it does not come again: its read stands for it
+  helloOverview++;
+  heardOverview = [];
+  answeredOverview = [];
   const edits = sendingOverview ? -1 : editsOverview;
   api<{ start?: string; pages?: unknown; overview?: unknown }>("/navigation").then(
     (r) => {
