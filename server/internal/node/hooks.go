@@ -529,6 +529,9 @@ func (n *Node) handleHook(ctx context.Context, req sockRequest) (any, error) {
 		if mode == "" {
 			mode = cmp.Or(n.planThen(in.SessionID), "bypassPermissions")
 		}
+		if n.peer != nil && res.ModeActor != nil {
+			_ = n.peer.Notify(proto.EventModeSet, proto.ModeSetEvent{SessionID: in.SessionID, From: in.PermissionMode, To: mode, Actor: res.ModeActor})
+		}
 		var input map[string]any
 		_ = json.Unmarshal(in.ToolInput, &input)
 		// A bare allow does not close the plan dialog; it needs updatedInput plus a setMode update (2.1.310).
