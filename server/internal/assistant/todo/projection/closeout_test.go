@@ -64,6 +64,35 @@ func TestOnlyRealSupervisorFollowupResetsProjectionClock(t *testing.T) {
 	}
 }
 
+func TestCloseoutFollowupKeepsRunAskRisk(t *testing.T) {
+	f := closeoutFacts(proto.CloseoutNotDone)
+	now := f.CreatedAt.Add(2 * time.Hour)
+	f.Agents = append(f.Agents, Agent{MachineID: "box", SessionID: "choice", Title: "Release choice"})
+	f.Sessions = append(f.Sessions, proto.Session{
+		MachineID: "box", SessionID: "choice", State: proto.StateNeedsYou, StateSince: now,
+	})
+	f.Interactions = []proto.Interaction{{
+		ID: "release-choice", MachineID: "box", SessionID: "choice", Kind: proto.IxQuestion, CreatedAt: now,
+		Questions: []proto.Question{{Question: "Which target?",
+			Options: []proto.QuestionOption{{Label: "Preview"}, {Label: "Stable"}}}},
+	}}
+	v := View(f, now)
+	if v.Reason != assistantwire.TodoReasonAgentAsks || len(v.Asks) != 1 {
+		t.Fatalf("a real run question takes precedence over an unfinished stop: %+v", v)
+	}
+	if ask := v.Asks[0]; ask.Interaction != "release-choice" || ask.Risk != assistantwire.OwnerAskRiskSafe ||
+		ask.Lockscreen != assistantwire.OwnerAskLockscreenAnswer {
+		t.Fatalf("the run question keeps the upstream card and risk: %+v", ask)
+	}
+
+	f.Agents, f.Sessions, f.Interactions = f.Agents[:1], f.Sessions[:1], nil
+	v = View(f, now)
+	if v.Reason != assistantwire.TodoReasonStoppedUnfinished || v.Section != assistantwire.TodoListSectionNeedsYou ||
+		len(v.Asks) != 0 {
+		t.Fatalf("without the question, the unfinished stop still needs follow-up: %+v", v)
+	}
+}
+
 func TestStoppedProjectionDoesNotOverrideExecutionParkOrAcceptance(t *testing.T) {
 	for _, kind := range []string{"running", "starting", "background", "another run", "parked", "accepted", "closed"} {
 		t.Run(kind, func(t *testing.T) {
