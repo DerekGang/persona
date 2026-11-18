@@ -408,13 +408,22 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // lazyOverlay started once something that opens it is on screen) and its assistant-readiness words left the first screen:
 // ja 482,722 B to 481,367 B, en 479,634 B to 478,331 B, zh-Hans 480,477 B to 479,146 B, measured in one environment
 // against main 51eb4b6a47. The budget stays.
-// #9745: Overview's extension cards drawn as the user arranged them add 771 B in ja, measured in one environment
-// against main 6c7be9c4b (ja 481,367 B to 482,138 B; en 478,331 B to 479,079 B, zh-Hans 479,146 B to 479,901 B): the
+// #10358: a conversation an extension opened is marked with that extension's own icon and, while the icon is drawn,
+// named after it. The icon and the installed extensions it is picked from are a lazy chunk (ui/OpenerTile.tsx,
+// lib/opener-icons.ts); the first screen keeps OriginMark's check for an opener, the lazy entry, the opener handed to
+// the first message's line and the name the mark tells its row and that line. 251 B in each language, measured in one
+// environment against main 4732e71a5 (ja 481,367 B to 481,618 B; en 478,331 B to 478,582 B, zh-Hans 479,146 B to
+// 479,397 B), much of it the lazy entry's preload list: its chunks' names in the App chunk's dependency table, which
+// renumbers the entries of every lazy import after it, so the count moves with main (117 B against affb08b4d, 258 B
+// against c53addf40; before the names: 45 B against 04cffd3d4, 198 B against c2fec3548, 155 B against bda346e8c). Main
+// had 1,316 B of room; the budget stays.
+// #9745: Overview's extension cards drawn as the user arranged them add 857 B in ja, measured in one environment
+// against main ad6ca8162 (ja 481,443 B to 482,300 B; en 478,411 B to 479,242 B, zh-Hans 479,252 B to 480,068 B): the
 // arrangement's store, kept per hub and sign-in, and the order, hidden cards and widths it draws
 // (lib/overview-cards.ts), Arrange cards in Overview's top bar, and the arrangement to and from the hub with the start
 // page, one change on its way at a time and pushes heard during it settled once the hub pushed it (lib/start-page.ts).
 // The editor (its heading, each card's controls, the drag and the edits) is a chunk of its own
-// (views/extensions/OverviewArrange.tsx, lib/overview-edit.ts). Main had 1,316 B of room; the budget stays.
+// (views/extensions/OverviewArrange.tsx, lib/overview-edit.ts). Main had 1,240 B of room; the budget stays.
 export const FIRST_SCREEN_BUDGET = 482_683;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
