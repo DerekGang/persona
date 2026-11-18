@@ -152,6 +152,7 @@ type superviseBook struct {
 	writeMu       sync.Mutex          // one ledger write at a time (updateSupervision)
 	ownerPushMu   sync.Mutex          // ownerPushes only; never held across RPC, todo or database calls
 	ownerPushes   map[string]struct{} // todo + work currently being pushed and receipted
+	digestMu      sync.Mutex          // one whole digest, including todo and durable-pending restoration; teardown drains it
 	dedupMu       sync.Mutex          // serializes digest reservations and delivery
 	dedup         map[string]superviseFingerprint
 	pending       map[string]superviseSignal   // by todo|kind
@@ -741,6 +742,9 @@ func (s *Service) signalReplacing(old *superviseSignal, g superviseSignal) {
 
 // scheduleDigestLocked sets the timer for when the pending signals are due; s.supervise.mu is held.
 func (s *Service) scheduleDigestLocked(now time.Time) {
+	if s.runCtx().Err() != nil {
+		return
+	}
 	b := &s.supervise
 	list := make([]superviseSignal, 0, len(b.pending))
 	for _, g := range b.pending {
@@ -758,11 +762,14 @@ func (s *Service) scheduleDigestLocked(now time.Time) {
 		b.timer.Stop()
 	}
 	b.timerAt = at
-	b.timer = time.AfterFunc(wait, func() { s.sendDigest(context.Background()) })
+	b.timer = time.AfterFunc(wait, func() { s.sendDigest(s.runCtx()) })
 }
 
 // retryDigestLocked tries the digest again in d, unless one is due sooner (b.mu held).
 func (s *Service) retryDigestLocked(d time.Duration) {
+	if s.runCtx().Err() != nil {
+		return
+	}
 	b := &s.supervise
 	at := time.Now().Add(d)
 	if b.timer != nil && !b.timerAt.After(at) {
@@ -772,7 +779,7 @@ func (s *Service) retryDigestLocked(d time.Duration) {
 		b.timer.Stop()
 	}
 	b.timerAt = at
-	b.timer = time.AfterFunc(d, func() { s.sendDigest(context.Background()) })
+	b.timer = time.AfterFunc(d, func() { s.sendDigest(s.runCtx()) })
 }
 
 // watchSignals are what t and its agents show now that the supervisor should hear of, by their state alone: a task

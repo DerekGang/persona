@@ -26,6 +26,11 @@ const superviseTool = "supervise"
 // dropped.
 func (s *Service) sendDigest(ctx context.Context) {
 	b := &s.supervise
+	b.digestMu.Lock()
+	defer b.digestMu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	if err := s.ensureTodosLoaded(ctx); err != nil {
 		b.mu.Lock()
 		b.init()

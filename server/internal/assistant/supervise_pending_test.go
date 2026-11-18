@@ -30,6 +30,7 @@ func storedSupervisePending(t *testing.T, s *Service) map[string]superviseSignal
 func simulateSupervisionRestart(t *testing.T, s *Service) {
 	t.Helper()
 	b := &s.supervise
+	b.digestMu.Lock()
 	b.pendingLoadMu.Lock()
 	b.dedupMu.Lock()
 	b.mu.Lock()
@@ -43,6 +44,7 @@ func simulateSupervisionRestart(t *testing.T, s *Service) {
 	b.mu.Unlock()
 	b.dedupMu.Unlock()
 	b.pendingLoadMu.Unlock()
+	b.digestMu.Unlock()
 	s.relays.mu.Lock()
 	s.relays.loaded = false
 	s.relays.mu.Unlock()
