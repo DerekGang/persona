@@ -45,10 +45,12 @@ func TestTaskResumeDoesNotChangeDirectoryOrLauncher(t *testing.T) {
 	first, second := t.TempDir(), t.TempDir()
 	id := newUUID()
 	n.state.put(id, sessionState{Cwd: first, Launcher: "claude"})
-	if err := n.checkTaskDirectory(id, first, "claude"); err != nil {
-		t.Fatal(err)
+	for _, launcher := range []string{"", "claude"} {
+		if err := n.checkTaskDirectory(id, first, launcher); err != nil {
+			t.Fatalf("valid resume with launcher %q refused: %v", launcher, err)
+		}
 	}
-	for _, tc := range []struct{ dir, launcher string }{{second, "claude"}, {first, "codex"}} {
+	for _, tc := range []struct{ dir, launcher string }{{second, ""}, {second, "claude"}, {first, "codex"}} {
 		if err := n.checkTaskDirectory(id, tc.dir, tc.launcher); err == nil {
 			t.Fatalf("incompatible context accepted: %+v", tc)
 		}

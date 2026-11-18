@@ -23,7 +23,7 @@ func TestTaskExecutionResumesRuntimeOwnedConversation(t *testing.T) {
 	uuid := newUUID()
 	_ = host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{
 		{"session_id": id, "cwd": dir, "launcher": "dsh", "started_by_persona": true, "status": "idle"},
-		{"session_id": uuid, "cwd": dir, "launcher": "dsh", "started_by_persona": true, "status": "idle"},
+		{"session_id": uuid, "cwd": dir, "started_by_persona": true, "status": "idle"},
 	}})
 	waitFor(t, "runtime task listed", func() bool { _, _, ok := n.runtimes.rowOf(id); return ok })
 	if _, ok := n.state.get(id); ok {
@@ -41,20 +41,38 @@ func TestTaskExecutionResumesRuntimeOwnedConversation(t *testing.T) {
 		return err
 	}
 	for _, sid := range []string{id, uuid} {
-		for range 2 {
-			if err := send(sid, dir, "dsh"); err != nil {
-				t.Fatalf("valid strict runtime resume refused: %v", err)
+		for _, launcher := range []string{"", "dsh"} {
+			for range 2 {
+				if err := send(sid, dir, launcher); err != nil {
+					t.Fatalf("valid strict runtime resume with launcher %q refused: %v", launcher, err)
+				}
 			}
 		}
 	}
-	if got := len(host.got("session.send")); got != 4 || len(host.got("session.start")) != 0 {
+	if got := len(host.got("session.send")); got != 8 || len(host.got("session.start")) != 0 {
 		t.Fatalf("runtime was restarted: sends=%d starts=%d", got, len(host.got("session.start")))
 	}
-	for _, args := range [][2]string{{t.TempDir(), "dsh"}, {dir, "other-agent"}} {
+	for _, args := range [][2]string{{t.TempDir(), ""}, {t.TempDir(), "dsh"}, {dir, "other-agent"}} {
 		if err := send(id, args[0], args[1]); err == nil || !strings.Contains(err.Error(), "context differs") {
 			t.Fatalf("incompatible runtime context accepted or classified as gone: %v", err)
 		}
 	}
+	// The sender resolves a stored launcher before falling back to the session's runtime owner.
+	// A stale stored launcher must not route an inherited send to a different connected runtime.
+	hello := assistantRuntimeHello()
+	hello["runtime"], hello["name"], hello["launcher"] = "other-runtime", "Other", "other-agent"
+	other := dialRuntime(t, n, hello)
+	stored, _ := n.state.get(id)
+	stale := stored
+	stale.Launcher = "other-agent"
+	n.state.put(id, stale)
+	if err := send(id, dir, ""); err == nil || !strings.Contains(err.Error(), "context differs") {
+		t.Fatalf("inherited stale runtime owner accepted: %v", err)
+	}
+	if len(host.got("session.send")) != 8 || len(other.got("session.send")) != 0 || len(other.got("session.start")) != 0 {
+		t.Fatal("owner mismatch delivered or replaced the conversation")
+	}
+	n.state.put(id, stored)
 	if err := send("session-gone", dir, "dsh"); err == nil || !strings.Contains(err.Error(), "is gone") {
 		t.Fatalf("missing runtime conversation was not refused before delivery: %v", err)
 	}
@@ -62,7 +80,7 @@ func TestTaskExecutionResumesRuntimeOwnedConversation(t *testing.T) {
 	if err := send(id, dir, "dsh"); err == nil || !strings.Contains(err.Error(), "runtime reply lost") || errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("runtime delivery error was replaced: %v", err)
 	}
-	if len(host.got("session.send")) != 5 || len(host.got("session.start")) != 0 {
+	if len(host.got("session.send")) != 9 || len(host.got("session.start")) != 0 {
 		t.Fatal("refused/unknown runtime sends caused a replacement or retry")
 	}
 	// A known runtime without authoritative execution metadata is uncertain, not a confirmed missing session.
@@ -73,7 +91,7 @@ func TestTaskExecutionResumesRuntimeOwnedConversation(t *testing.T) {
 	delete(n.state.Sessions, id)
 	n.state.mu.Unlock()
 	n.state.persistMu.Unlock()
-	if err := send(id, dir, "dsh"); err == nil || strings.Contains(err.Error(), "is gone") || len(host.got("session.send")) != 5 {
+	if err := send(id, dir, "dsh"); err == nil || strings.Contains(err.Error(), "is gone") || len(host.got("session.send")) != 9 {
 		t.Fatalf("uncertain runtime ownership was treated as gone or sent without validation: %v", err)
 	}
 }

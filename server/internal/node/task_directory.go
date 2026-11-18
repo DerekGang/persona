@@ -41,6 +41,7 @@ func (n *Node) checkTaskDirectory(id, cwd, launcher string) error {
 		return nil
 	}
 	st, ok := n.state.get(id)
+	launcher = launcherOr(launcher, st.Launcher)
 	if row, owner, listed := n.runtimes.rowOf(id); listed {
 		previous := row.Launcher
 		if previous == "" {
@@ -48,6 +49,8 @@ func (n *Node) checkTaskDirectory(id, cwd, launcher string) error {
 			previous = owner.hello.Launcher
 			owner.mu.Unlock()
 		}
+		// Match the sender's stored-launcher precedence before falling back to the runtime owner.
+		launcher = launcherOr(launcher, previous)
 		if !owner.assistant() || n.assistantRuntime(launcher) != owner || previous != launcher {
 			return errors.New("task execution context differs from this conversation; start a new conversation")
 		}

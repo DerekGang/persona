@@ -155,6 +155,10 @@ Pitfalls, odd behavior, and the tradeoffs made at the time (originally in `CLAUD
   count attempts and effects separately, including persistent failure and uncertain delivery. Keep scheduled turns
   and their completion watchers in the same clock bubble. A busy-process fixture must acknowledge its current mode
   and effort, or an unrelated control request can obscure the model-compatibility boundary being tested.
+  Resume guards must apply the sender's launcher inheritance before comparing execution contexts. Exercise an
+  omitted launcher through both the actual send and a runtime peer, including a session row without a launcher.
+  Keep stored-launcher precedence and reject a stale stored launcher belonging to another connected runtime;
+  accepting the listed owner alone can validate one runtime while the sender routes to another.
 
 - A concurrency test that passes with `-race` can still fail without it (2026-11-06, #5908). `-race` slows the instrumented code, so the goroutines meet in a different order. `TestInstallClaimsOperation` passed 20 of 20 runs with `-race` and failed 13 to 29 of 40 without it. Without `-race` its second install usually ran only after the first had committed and used up the preview, and got a 403 from the market check that the PR's own `-race` runs never reached. Run a new concurrency test with `-count`, both with and without `-race`. For the interleaving that matters, set up the state directly instead of hoping two goroutines meet there (here: claim the operation, drop the preview, then install again).
 
