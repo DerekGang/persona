@@ -138,12 +138,12 @@ private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, col
     val type = PersonaTheme.type
     val outer = LocalUriHandler.current
     val uriHandler = remember(outer, open) { if (open == null) outer else PathLinks.handler(outer, open) }
-    // Inline code a tap copies, in the body's color on its well; inside a path's link it stays the link's (#2984).
+    // Linked code opens its target; elsewhere a tap copies the code.
     val copy = rememberCopy()
-    val codeSpan = inlineCodeStyle(color)
+    val codeInk = if (color == palette.ink) palette.replyCodeInk else Color.Unspecified
     // …except in a message whose words "Select" has selected in place: a tap there is the selection's (#4210).
     val selecting = LocalSelectionAbove.current
-    val annotator = remember(codeSpan, copy, selecting) { copyingCode(codeSpan, if (selecting) null else { words: String -> copy(words, null) }) }
+    val annotator = remember(codeInk, copy, selecting) { copyingCode(codeInk, if (selecting) null else { words: String -> copy(words, null) }) }
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
         if (parsed == null) ChatLinkText(text, Modifier.fillMaxWidth(), bodyStyle.copy(color = color))
         else Markdown(parsed!!, modifier = Modifier.fillMaxWidth(), imageTransformer = rememberMathImages(color, bodyStyle),
@@ -154,7 +154,7 @@ private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, col
             dimens = markdownDimens(blockQuoteThickness = Dp(0f)), // none (a hairline still draws a pixel)
             padding = markdownPadding(blockQuote = PaddingValues(start = Tokens.Space.m), blockQuoteBar = PaddingValues.Absolute()),
             colors = markdownColor(text = color, codeBackground = palette.sunken,
-                inlineCodeBackground = palette.sunken, dividerColor = palette.line,
+                inlineCodeBackground = Color.Transparent, dividerColor = palette.line,
                 tableBackground = palette.surface, darkTheme = palette.dark,
                 highlightText = palette.ink, highlightBackground = palette.marker),
             typography = markdownTypography(h1 = type.largeTitle, h2 = type.title, h3 = type.headline,

@@ -35,15 +35,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import com.mikepenz.markdown.model.MarkdownAnnotator
 import com.mikepenz.markdown.model.markdownAnnotator
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.ast.getTextInNode
 import persona.core.designsystem.JIcon
 import persona.core.designsystem.JIconButton
@@ -77,27 +79,39 @@ internal fun codeSpanWords(span: String): String {
 private val LINKS = setOf(MarkdownElementTypes.INLINE_LINK, MarkdownElementTypes.FULL_REFERENCE_LINK,
     MarkdownElementTypes.SHORT_REFERENCE_LINK, MarkdownElementTypes.AUTOLINK)
 
-private fun ASTNode.inLink(): Boolean {
-    var p = parent
-    while (p != null) {
-        if (p.type in LINKS) return true
-        p = p.parent
-    }
-    return false
-}
+private val CJK_SCRIPTS = setOf(Character.UnicodeScript.HAN, Character.UnicodeScript.HIRAGANA,
+    Character.UnicodeScript.KATAKANA, Character.UnicodeScript.HANGUL, Character.UnicodeScript.BOPOMOFO)
 
-/** Inline code a tap copies (#2984), drawn as code (the body's color on its well), not as a link; inside a link (a path
- *  that opens) it stays the link's. With no [copy] it is only drawn, the same: the words of a message selected in place
- *  take the tap (#4210). */
-internal fun copyingCode(style: SpanStyle, copy: ((String) -> Unit)?): MarkdownAnnotator = markdownAnnotator { content, child ->
-    if (child.type != MarkdownElementTypes.CODE_SPAN || child.inLink()) return@markdownAnnotator false
+private fun isCjkLetter(point: Int): Boolean =
+    Character.isLetter(point) && Character.UnicodeScript.of(point) in CJK_SCRIPTS
+
+/** The Markdown renderer still owns the enclosing link. Only unlinked code gets a Copy action. */
+internal fun copyingCode(ink: Color, copy: ((String) -> Unit)?): MarkdownAnnotator = markdownAnnotator { content, child ->
+    if (child.type != MarkdownElementTypes.CODE_SPAN) return@markdownAnnotator false
+    val ancestors = generateSequence(child.parent) { it.parent }
+    val link = ancestors.firstOrNull { it.type in LINKS }
+    val quote = ancestors.any { it.type == MarkdownElementTypes.BLOCK_QUOTE }
+    val style = SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 0.94.em,
+        color = if (link != null || quote) Color.Unspecified else ink)
     val words = codeSpanWords(child.getTextInNode(content).toString())
-    // the style on the words themselves too: a link's styles draw no background. A thin space each side, as the
-    // library pads its own inline code.
-    if (copy == null) withStyle(style) { append("\u2009$words\u2009") }
-    else withLink(LinkAnnotation.Clickable("copy-code", TextLinkStyles(style)) { copy(words) }) {
-        withStyle(style) { append("\u2009$words\u2009") }
+
+    // PathLinks wraps a bare path span in a synthetic link. Use the original span's neighbors outside that wrapper.
+    val pathLink = link?.takeIf {
+        it.type == MarkdownElementTypes.INLINE_LINK && child.startOffset == it.startOffset + 1 &&
+            content.getOrNull(child.endOffset) == ']' &&
+            it.findChildOfType(MarkdownElementTypes.LINK_DESTINATION)?.let { dest ->
+                content.startsWith(PathLinks.SCHEME, dest.startOffset)
+            } == true
     }
+    val start = pathLink?.startOffset ?: child.startOffset
+    val end = pathLink?.endOffset ?: child.endOffset
+    if (start > 0 && isCjkLetter(content.codePointBefore(start))) append('\u2009')
+    if (copy != null && link == null) {
+        withLink(LinkAnnotation.Clickable("copy-code") { copy(words) }) { withStyle(style) { append(words) } }
+    } else {
+        withStyle(style) { append(words) }
+    }
+    if (end < content.length && isCjkLetter(content.codePointAt(end))) append('\u2009')
     true
 }
 
@@ -145,8 +159,3 @@ private fun Modifier.fade(solid: Color): Modifier = graphicsLayer(compositingStr
     drawContent()
     drawRect(Brush.verticalGradient(0.6f to solid, 1f to solid.copy(alpha = 0f)), blendMode = BlendMode.DstIn)
 }
-
-/** Inline code in a reply: the code face in [color] on the well. */
-@Composable
-internal fun inlineCodeStyle(color: Color): SpanStyle =
-    PersonaTheme.type.code.toSpanStyle().copy(color = color, background = PersonaTheme.palette.sunken)
