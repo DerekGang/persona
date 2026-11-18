@@ -607,8 +607,13 @@ update is work to follow up, not an external dependency to park (#9754).
   `due_at` wins. Unsupported natural-language dates use the default; the sender
   can supply their resolved deadline explicitly.
 - A later **successfully sent** update in the same topic fulfills earlier
-  promises there, including after a manager restart. A retry of the same delivery,
-  an incoming reply, another topic, or a failed/unconfirmed send does not.
+  promises there only when its preparation time is strictly after the promise's
+  successful send, including after a manager restart. An update prepared at or
+  before that send cannot fulfill the promise just because delivery finishes
+  later. An unknown preparation time cannot prove eligibility. Explicit provider
+  receipts retain their provided send time for this ordering.
+  A retry of the same delivery, an incoming reply, another topic, or a
+  failed/unconfirmed send does not.
   GitHub comment fragments do not change the topic. A task's separate Lark work
   topic is never substituted for its actual outward source. Newly captured
   Feishu source requests retain their original thread id. Migrated Inbox chat

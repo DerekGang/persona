@@ -246,8 +246,9 @@ func (s *Service) finishOutbound(ctx context.Context, r outboundReply, now time.
 		}
 		for i := range entries {
 			previous := &entries[i]
+			// Late delivery cannot make an earlier intent answer a newer promise.
 			if r.replayed != nil && *r.replayed || i == index || !previous.Promise || previous.Reply.Topic != r.Topic || previous.SentAt.IsZero() ||
-				!previous.SentAt.Before(now) || !previous.FulfilledAt.IsZero() {
+				!previous.SentAt.Before(now) || !e.PreparedAt.After(previous.SentAt) || !previous.FulfilledAt.IsZero() {
 				continue
 			}
 			previous.FulfilledAt, previous.FulfilledBy = now.UTC(), r.ID

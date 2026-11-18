@@ -24,6 +24,7 @@ type outwardReceipt struct {
 		TodoID string `json:"todo_id"`
 	}
 	Promise     bool
+	PreparedAt  time.Time `json:"prepared_at"`
 	SentAt      time.Time `json:"sent_at"`
 	DueAt       time.Time `json:"due_at"`
 	FulfilledAt time.Time `json:"fulfilled_at"`
