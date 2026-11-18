@@ -236,6 +236,11 @@ PY
   ' -- "$SOURCE/scripts/app/sim-boot.sh" "$SIM" "$CI_BUNDLE_ID"
   export TEST_RUNNER_PERSONA_EVENTKIT_ROUNDTRIP=1
 
+  ci_run 'Diagnostic focused profile and late-response tests' 300 "${IOS_TESTS[@]}" \
+    -only-testing:PersonaTests/MainPagesStackTests -only-testing:PersonaTests/PushInterceptsTests \
+    -resultBundlePath "$OUTPUT/ios-focused.xcresult" test-without-building
+  result ios-focused MainPagesStackTests PushInterceptsTests
+
   ci_run 'iOS offline unit and design/token tests' 1800 "${IOS_TESTS[@]}" "${IOS_UNIT_SELECTION[@]}" \
     -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building
   result ios-unit TypeScaleTests IconVocabularyTests TokenRatchetTests StyleSpecTests
