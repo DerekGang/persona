@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// Recorded from upstream 05567dc82 before adding template rendering. This covers
-// every original description and schema, not only a representative golden.
+// Recorded from the unlocalized upstream tool inventory. This covers the
+// description and schema of every tool, not only a representative golden.
 func TestMCPLegacyBytes(t *testing.T) {
 	raw, err := os.ReadFile("testdata/mcp_legacy.json")
 	if err != nil {
