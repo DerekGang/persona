@@ -28,7 +28,7 @@ on=agent/externalの場合：
 line：一覧の一行、日本語で30文字以内。doneは結論（「PR #123マージ済み、テスト成功」）、blockedは待っていること（「D2・D4・D10の選択待ち」「デプロイ後の確認待ち」）を書きます。「Agent」「それ」のような主語や、pane・session・バッチ・todo_などの内部IDは使いません（PR・issue番号は可）。
 artifacts：返答にある成果物を最大5件。kindはpr、commit、doc（文書パス・リンク）、build（番号）、urlで、refは原文どおりです。
 
-doneか不確かならunsureにし、誤って完了と判断するのを避けるために質問を捏造しないでください。
+完了と判断できるかどうかが不確かな場合だけ、phase を unsure にしてください。誤って完了と判断するのを避けるために質問を捏造しないでください。
 
 JSONで回答：{"phase":"…","on":"…","line":"…","questions":[{"question":"…","header":"…","options":[{"label":"…","description":"…"}],"multi_select":false}],"link":{"url":"…","minutes":10},"wait":{"what":"…","then":"…","check_minutes":10,"agent":"…","risky":false},"artifacts":[{"kind":"pr","ref":"…"}]}。
 不要なフィールドは省略し、指定された原文の依頼・URL・label・識別子を保ったまま、生成する文章は日本語にしてください。
