@@ -3,14 +3,13 @@ package assistant
 import (
 	"strings"
 	"testing"
-
-	"github.com/nwverse/persona/server/internal/proto"
 )
 
 func TestTaskAssignmentAndFrameworkInstructions(t *testing.T) {
-	s, f, h := taskHandoffTestFixture(t, "claude")
-	h.info["box"] = proto.NodeInfo{Capabilities: []string{"task_instructions_v1"}}
+	s, f, _ := taskHandoffTestFixture(t, "claude")
+	f.mu.Lock()
 	f.devices = []Device{{ID: "server", Online: true, Reachable: true}, {ID: "box", Online: true, Reachable: true, TaskInstructions: true}}
+	f.mu.Unlock()
 	closeoutOn(t, s)
 	prompt := taskHandoffTestStart(t, s, f, "task_plan")
 	instructions, _ := startsOf(f)[0]["task_instructions"].(string)
@@ -34,12 +33,9 @@ func TestTaskAssignmentHasProjectOnceAndKeepsCriteria(t *testing.T) {
 	for _, modern := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "separate"}[modern], func(t *testing.T) {
 			s, f, _ := outcomeEnv(t, nil, outcomeReply)
-			caps := []string(nil)
-			if modern {
-				caps = []string{"task_instructions_v1"}
-			}
-			s.hub = &taskHandoffTestHub{fakeHub: f, info: map[string]proto.NodeInfo{"box": {Capabilities: caps}}}
+			f.mu.Lock()
 			f.devices = []Device{{ID: "server", Online: true, Reachable: true}, {ID: "box", Online: true, Reachable: true, TaskInstructions: modern}}
+			f.mu.Unlock()
 			closeoutOn(t, s)
 			task := PlanTask{Title: "Summarize checks", Prompt: "Summarize the failed checks in the sample repository.", Context: "New fact: the check failed after the last update.", Machine: "box", Cwd: "/code/weather", Readonly: true, DoneWhen: []string{"Name each failed check and its cause."}, Attachments: []string{"/x/conv1/images/1.png"}, AttachFrom: "box"}
 			if _, _, err := s.startTaskAgent(t.Context(), &task, false); err != nil {
