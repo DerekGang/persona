@@ -275,7 +275,7 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 		t.Effort = ""
 	}
 	if withDefaults { // only what the task left open, after the fit, which may itself have filled some in
-		s.applyStartExtras(ctx, t, caller, defaults, fit.agent == "claude", params, presetNote)
+		s.applyStartExtras(ctx, t, caller, defaults, fit.agent, params, presetNote)
 	}
 	if t.MachinePolicy == machineFixed {
 		// Only an actual terminal start can recheck a repaired terminal shell.
@@ -334,7 +334,7 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	}
 	// The project background, and the decisions of the todo and its continuation ancestors (a task started again may
 	// have some), go before the prompt (#2820, #1618); the tab is named from the title.
-	prompt = s.withProjectContext(ctx, m.ID, t.Cwd, s.withTodoDecisions(ctx, t.TodoID, prompt))
+	prompt = s.withProjectContext(ctx, m.ID, t.Cwd, t.Supervisor, s.withTodoDecisions(ctx, t.TodoID, prompt))
 	prompt, err = s.withStandingAuthorizations(ctx, m.ID, t.Cwd, prompt)
 	if err != nil {
 		return "", "", err
