@@ -383,7 +383,33 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // layouts tried (mounting it under every exchange, or riding the reply bar's chunk, cost more). 85 B in ja, measured in
 // one environment against main 21cd52cc2 (ja 482,104 B to 482,189 B; en 478,990 B to 479,075 B, zh-Hans 479,859 B to
 // 479,944 B). Main had 422 B of room; the budget stays.
-export const FIRST_SCREEN_BUDGET = 482_526;
+// #9751: Just finished (lib/agent-groups.ts justFinished, the paged list's section in lib/session-groups.ts, the seen
+// outbox's unseen rows in lib/seen-outbox.ts) adds 112 B in ja, measured in one environment against main 7f756aa00a (ja
+// 482,373 B to 482,485 B; en 479,275 B to 479,391 B, zh-Hans 480,079 B to 480,221 B). Main had 153 B of room; the
+// budget stays.
+// #9053: the Inbox section bar adds 9 B in each language, measured in one environment against main a2531b0b62 (ja
+// 482,485 B to 482,494 B; en 479,391 B to 479,400 B, zh-Hans 480,221 B to 480,230 B): two of atoms' hard-coded sizes
+// become the named one they equal, which pays the font ratchet for CountBadge's. Everything else is in the Inbox page's
+// chunk: CountBadge (ui/CountBadge.tsx; 131 B in atoms against main 094253763d), its Needs-you tone in the existing
+// --attention utility the sidebar's counts use until #4653 brings the blue (its text token was 29 B in the token table
+// alone, more in the CSS), the grouping button with its mark (IconButton's menu attributes and the icon set's mark took
+// 43 B), the bar's own copies of the edge fade's widths and the arrow keys' step (up to 131 B in the App chunk), and
+// spacing classes the CSS already has (a new one took 44 B). The budget stays.
+// 2026-11-17 (#9847): #9784 landed on a main that had moved since its measurement and added 270 B in ja, not 112 B
+// (main 6fc9e85a00~1: ja 482,373 B; 6fc9e85a00: ja 482,643 B, en 479,549 B, zh-Hans 480,379 B), 117 B over the budget,
+// so main stopped building. The budget is main's ja size plus 40 B; taking those bytes back off the first screen is
+// separate work.
+// #9727: UI version 10's graph adds 1,020 B in every language, measured in one environment against main e6a2faac1 (ja
+// 482,752 B to 483,772 B; en 479,646 B to 480,666 B, zh-Hans 480,469 B to 481,489 B): the reading of a view's graph
+// (lib/extension-ui.ts readGraph and the UIGraph fields), its one-line lazy entry and Suspense case in
+// views/extensions/ViewBody.tsx with the fallback that keeps a card's height while the canvas's chunk loads, and the
+// graph's owner as a React context (lib/extension-owner.tsx) with its provider at every surface that draws an
+// extension's view (ExtensionSlots, the assistant's cards, an inbox item's body, the subscription pages, the launcher
+// sections), all in the first screen's static closure; the canvas itself is a chunk of its own (ViewBody10.tsx).
+// The same environment measures main e4ea9d95f at #9847's ja 482,643 B and main e6a2faac1 at ja 482,752 B, 69 B over
+// main's own budget before this change. The budget is main's, plus that 69 B so the build passes (taking them back off
+// the first screen is main's separate work), plus this change's 1,020 B: 0 B of room.
+export const FIRST_SCREEN_BUDGET = 482_683 + 69 + 1_020;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
@@ -608,7 +634,12 @@ export function firstScreenOverBudget(bytes: [string, number][], budget = FIRST_
 // environment. The idle renderer (ViewBody6.tsx's TileView) gains a gauge tile's label and meter role, the ring's
 // space while it loads and the lazy registration of ViewBody9.tsx; the ring itself (about 1 KB) loads on intent with
 // the first tile that has a gauge. Main's 60 B of room is kept on top.
-export const IDLE_TIER_BUDGET = 46_063;
+// And 189 B for UI version 10 (#9727): main e6a2faac1 sends 45,998 B at idle, the same tree with #9727 46,187 B, in one
+// environment. The idle renderer (ViewBody.tsx) gains the graph's case with its Suspense fallback of the kept height and
+// the lazy registration of ViewBody10.tsx (whose chunk name it embeds), and the launcher sections (ExtensionView.tsx's
+// chunk) gain the owner's context provider; the canvas itself (about 8 KB) loads on intent with the first view that has
+// a graph. Main's 65 B of room is kept on top.
+export const IDLE_TIER_BUDGET = 46_063 + 189;
 
 const gzip = promisify(gzipCompress);
 
