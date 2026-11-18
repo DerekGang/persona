@@ -410,8 +410,8 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // against main 51eb4b6a47. The budget stays.
 // #8578: directory-hidden Agents and their pending cards leave the lists, counts and attention events (lib/sessions.ts
 // directoryVisible / directoryVisibleCards, lib/attention.ts) and the Agents page gets its Hidden sessions button; the
-// inspection dialog is a chunk of its own (views/HiddenAgentSessionsDialog.tsx). Merged with main MAINSHA and measured
-// in one environment: ja JA B, en EN B, zh-Hans ZH B (ROOM B of room). The budget stays.
+// inspection dialog is a chunk of its own (views/HiddenAgentSessionsDialog.tsx). Merged with main f7c715f076 and measured
+// in one environment: ja 481,528 B, en 478,433 B, zh-Hans 479,282 B (1,155 B of room). The budget stays.
 export const FIRST_SCREEN_BUDGET = 482_683;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
