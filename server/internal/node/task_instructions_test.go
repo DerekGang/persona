@@ -172,3 +172,36 @@ func TestTaskInstructionsFollowAnEngineSwitch(t *testing.T) {
 		t.Fatalf("switched state=%+v", st)
 	}
 }
+
+func TestTaskInstructionsResumeFallbackDoesNotDropPolicy(t *testing.T) {
+	const rules = "Keep the task's rules."
+	got, err := taskResumeFallback(t.Context(), "Continue the assignment", rules, true, "claude")
+	if err != nil || got != "Continue the assignment\n\n"+rules {
+		t.Fatalf("continuation=%q %v", got, err)
+	}
+	if _, err = taskResumeFallback(t.Context(), "", rules, true, "claude"); rpcCode(err) != "task_instructions_resume" {
+		t.Fatalf("bare Resume=%v", err)
+	}
+	got, err = taskResumeFallback(t.Context(), "Continue", rules, true, "")
+	if err != nil || got != "Continue" {
+		t.Fatalf("history policy repeated: %q %v", got, err)
+	}
+}
+
+func TestTaskInstructionsBareResumeRefusesBeforeCreatingATerminal(t *testing.T) {
+	shellHome := fakeCLIHome(t)
+	if err := os.WriteFile(filepath.Join(shellHome, ".zshrc"), []byte("fallback() { claude; }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	n, f, home := herdrNode(t)
+	cwd := mkdir(t, filepath.Join(home, "proj"))
+	writeUserLine(t, home, cwd, startID, "Original assignment")
+	n.state.put(startID, sessionState{Launcher: "fallback", Cwd: cwd, TaskInstructions: "Keep the scope", TaskInstructionChannel: "claude"})
+	_, err := request(t, n, "session.start", map[string]any{"resume_session_id": startID, "launcher": "fallback"})
+	if rpcCode(err) != "task_instructions_resume" {
+		t.Fatalf("resume=%v", err)
+	}
+	if calls := f.trace("tab.create", "workspace.create", "pane.send_input"); len(calls) != 0 {
+		t.Fatalf("resume created a terminal: %q", calls)
+	}
+}

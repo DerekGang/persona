@@ -164,6 +164,28 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 		}
 	}
 
+	var instructionFile, instructionChannel string
+	if execution.TaskInstructions != "" {
+		switch {
+		case codex && kind != traexAgent && n.taskCodexChannel(ctx, launcher, cwd, argv) && len(codexTaskConfig(execution.TaskInstructions)) < maxResumeArgv-2048:
+			instructionChannel = "codex"
+			argv = codexTaskArgs(argv, execution.TaskInstructions)
+		case !codex && kind == "claude" && n.taskClaudeChannel(ctx, launcher):
+			instructionFile, err = n.taskInstructionFile(execution.TaskInstructions)
+			if err != nil {
+				return nil, err
+			}
+			instructionChannel = "claude"
+		default:
+			previous, _ := n.state.get(resume)
+			prompt, err = taskResumeFallback(ctx, prompt, execution.TaskInstructions, resume != "", previous.TaskInstructionChannel)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	prompt = taskFallback(prompt, execution.TaskAttachments)
+
 	// New sessions start in the host the start named, else the default host.
 	launch, err := n.launcherFor(n.startKind(ctx))
 	if err != nil {
@@ -180,25 +202,6 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 		// is reported as before.
 		_ = n.ensureHerdr(ctx, "start a session in a workspace")
 	}
-	var instructionFile, instructionChannel string
-	if execution.TaskInstructions != "" {
-		switch {
-		case codex && kind != traexAgent && n.taskCodexChannel(ctx, launcher, cwd, argv) && len(codexTaskConfig(execution.TaskInstructions)) < maxResumeArgv-2048:
-			instructionChannel = "codex"
-			argv = codexTaskArgs(argv, execution.TaskInstructions)
-		case !codex && kind == "claude" && n.taskClaudeChannel(ctx, launcher):
-			instructionFile, err = n.taskInstructionFile(execution.TaskInstructions)
-			if err != nil {
-				return nil, err
-			}
-			instructionChannel = "claude"
-		default:
-			if resume == "" {
-				prompt = taskFallback(prompt, execution.TaskInstructions)
-			}
-		}
-	}
-	prompt = taskFallback(prompt, execution.TaskAttachments)
 	if codex && kind != traexAgent { // codex_start.go
 		if resume != "" { // a Codex thread is resumed above: this id is not one
 			return nil, refusal(codexResumeRefused, "找不到这个 Codex 会话的记录，没法接着它：请在电脑上恢复（codex resume）。", nil)

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // taskInstructionFile keeps stable framework rules outside shell command lines and user messages.
@@ -137,4 +139,19 @@ func codexTaskFlags(text string) string {
 func codexTaskConfig(text string) string {
 	value, _ := json.Marshal(text)
 	return "developer_instructions=" + strings.ReplaceAll(string(value), "'", `\u0027`)
+}
+
+// A resumed fallback already has its rules in history. A formerly dedicated policy
+// must enter the explicit continuation once; a bare Resume cannot start a policy-only turn.
+func taskResumeFallback(ctx context.Context, prompt, rules string, resume bool, previousChannel string) (string, error) {
+	if !resume {
+		return taskFallback(prompt, rules), nil
+	}
+	if previousChannel == "" {
+		return prompt, nil
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return "", refusal("task_instructions_resume", i18n.T(i18n.From(ctx), "rpc-errors.task_instructions_resume"), nil)
+	}
+	return taskFallback(prompt, rules), nil
 }
