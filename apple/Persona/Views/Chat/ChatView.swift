@@ -81,6 +81,8 @@ struct ChatView: View {
     @State private var showTodoDetail = false
     /// A task a hub link in this chat opened (`/todos?id=…`, #2696): its detail rises like a link.
     @State private var linkedTodo: TodoDetailRoute?
+    /// A knowledge entry or computer a link in this chat opened (#9926); a to-do keeps `linkedTodo`.
+    @State private var hubSheet: HubLinkSheet?
     @State private var showLink = false
     /// The Mac's chat column has room for its title in the title bar's row (`macTitleRow`).
     @State private var macWide = true
@@ -209,6 +211,8 @@ struct ChatView: View {
     @State private var chrome = ChatChrome()
     /// The page's height, read by the pending cards only (#926).
     @State private var footerRoom = FooterRoom()
+    /// Where each pending card's message is in the chat, for its View in Chat (#9392).
+    @State private var cardSources = CardSources()
     @Environment(\.openSpace) private var openSpace
     @State private var link: LinkTarget?
     /// ⋯ › Preview's list of the session's dev servers, and the one picked there, opened once the list is gone (#150).
@@ -822,10 +826,17 @@ struct ChatView: View {
         #endif
         // A different chat shown in place: its own cards decide whether another conversation needs you (#4348).
         .onChange(of: key) { _, _ in offeredNext = nil }
-        // Leaving the conversation ends the phone's voice call bound to it (docs/assistant/voice.md 6.5): another agent shown in
-        // place, the page gone, or hidden in the shell (`onTabVisibility`).
-        .onChange(of: key) { old, _ in VoiceCalls.shared.leave(old) }
-        .onTabVisibility(appear: {}, disappear: { [key] in VoiceCalls.shared.leave(key) })
+        // Leaving the conversation (another agent shown in place, the page gone, or hidden in the shell: `onTabVisibility`)
+        // leaves the phone's voice chat bound to it with the bar back to it at the top, and coming back takes the bar away
+        // (docs/assistant/voice.md 6.5; #9887 one button: it no longer ends there).
+        .onChange(of: key) { old, new in
+            VoiceCalls.shared.leave(old)
+            VoiceCalls.shared.returned(new)
+        }
+        .onTabVisibility(appear: { [key] in VoiceCalls.shared.returned(key) }, disappear: { [key] in VoiceCalls.shared.leave(key) })
+        // The bar back to this conversation's voice chat tapped over a cover of this page (#9887: a full-screen picture,
+        // the terminal): the cover goes, and the page showing again takes the bar away (`VoiceCalls.returnTo`).
+        .onChange(of: VoiceCalls.shared.returning == key) { _, back in if back { closeCovers() } }
         .onChange(of: status) { _, st in if !st.isActive { Task { await loadGit() } } }
         // One stack: the chat takes the whole screen. Beside the list (split) the tab bar stays, or there is no way out.
         let activityMiddle = AnyView(activityTop)
@@ -887,6 +898,7 @@ struct ChatView: View {
         #endif
         // Pushed into the detail column in regular width (iPad, #2816), a sheet otherwise.
         .stackSegment()
+        .hubLinkSheet($hubSheet)
         .detailPresentation(item: $linkedTodo) { r in
             DetailStack {
                 TodoDetailView(todoID: r.id).sheetDone { linkedTodo = nil }
@@ -1286,6 +1298,12 @@ struct ChatView: View {
             guard let k = model.linkedConversation(group, id: id) else { return false }
             target = k
             item = at
+        default:
+            // Any other page of the route table (#9926): where the app has it, a detail over this chat.
+            guard let opened = model.openHubPage(page, group: group) else { return false }
+            Haptics.tap()
+            if case .sheet(let s) = opened { hubSheet = s }
+            return true
         }
         Haptics.tap()
         if target == key || target == shownKey { // this chat: only to the message
@@ -1359,7 +1377,8 @@ struct ChatView: View {
             openPlan: { planOpen = true },
             openFold: openFold,
             jumpToCall: { jumpToCall($0) },
-            openQuote: { jumpToQuoted($0) })
+            openQuote: { jumpToQuoted($0) },
+            openAppLink: { openHubPage($0) })
     }
 
     /// Folds or opens a work line without moving what you were reading. In the upside-down list the newest end holds
@@ -2143,6 +2162,13 @@ struct ChatView: View {
     /// strip shows them).
     private var shownPending: [PendingMessage] { pendingPlacement.chat }
 
+    /// The row's kept messages (#10194) the transcript does not have yet (the row may lag behind the line).
+    private var keptUndelivered: [UndeliveredMessage] {
+        guard let list = session?.undelivered, !list.isEmpty else { return [] }
+        return UndeliveredMessage.shown(list, landed: store.items.compactMap(\.clientMsgID),
+                                        drawn: (store.pending + store.arriving).map(\.id.uuidString))
+    }
+
     /// What was sent from here and is not in the transcript yet, split between the chat and the queue strip (#1461).
     private var pendingPlacement: (strip: [PendingMessage], chat: [PendingMessage]) {
         QueuePlacement.split(store.arriving + store.pending, working: session?.status.isActive == true, queued: session?.queued ?? [],
@@ -2522,14 +2548,36 @@ struct ChatView: View {
         if ref.isForward { return openForwarded(ref) }
         if openContextLink(ref) { return true }
         guard ref.kind == "quote", !ref.msg.isEmpty else { return false }
+        return jumpToMessage(ref.msg, hold: hold)
+    }
+
+    /// Finds the pending cards' messages in the loaded chat (`CardSource`) and how View in Chat goes to one (#9392).
+    private func findCardSources() {
+        let items = store.items
+        var found: [String: String] = [:]
+        for card in pendingCards { found[card.id] = CardSource.item(for: card.interaction, in: items) }
+        if cardSources.items != found { cardSources.items = found }
+        // After the card has folded (`InteractionPanel`): the list's new height first, then the jump, which lands where
+        // the list measured it.
+        cardSources.open = { id in
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                _ = jumpToMessage(id)
+            }
+        }
+    }
+
+    /// Brings message `msg` (an item's id) of the loaded chat to the middle of the list and lights it up for `hold`, opening
+    /// the work line it is folded in; the list stops following the newest. False when it is not in the loaded chat.
+    private func jumpToMessage(_ msg: String, hold: Duration = Theme.Quote.flashHold) -> Bool {
         var target: String?
         for line in currentLines() {
             switch line.content {
             case .row, .recaps, .answerPart:
-                if line.holds(ref.msg) { target = line.id }
+                if line.holds(msg) { target = line.id }
             case .work(let wid, let items, let live, _, _):
                 // The agent's words before its last ones are in the work line: open it, go to that step.
-                if let item = items.first(where: { if case .text(let i) = $0 { i.id == ref.msg } else { false } }) {
+                if let item = items.first(where: { if case .text(let i) = $0 { i.id == msg } else { false } }) {
                     if !isOpen(wid, live: live) {
                         var t = Transaction()
                         t.disablesAnimations = true
@@ -2538,7 +2586,7 @@ struct ChatView: View {
                     target = wid + "/" + item.id
                 }
             case .workStep(let group, let item, _):
-                if case .text(let i) = item, i.id == ref.msg { target = group + "/" + item.id }
+                if case .text(let i) = item, i.id == msg { target = group + "/" + item.id }
             default: break
             }
             if target != nil { break }
@@ -2743,7 +2791,7 @@ struct ChatView: View {
     @ViewBuilder private var taskFooter: some View {
         let conversation = key.sessionID
         let tasks = TasksStore.shared
-        TaskQuestions(conversation: conversation)
+        TaskQuestions(conversation: conversation, room: footerRoom)
         DraftReader(key: key) { typed in
             if let range = TaskMentionList.mention(in: typed) {
                 TaskMentionList(conversation: conversation) { todo in
@@ -2840,6 +2888,10 @@ struct ChatView: View {
                 }
                 if !pendingCards.isEmpty {
                     PendingCards(cards: pendingCards, room: footerRoom)
+                        .environment(\.cardSources, cardSources)
+                        .task(id: CardSourceInputs(cards: pendingCards.map(\.id), count: store.items.count, last: store.items.last?.id)) {
+                            findCardSources()
+                        }
                 }
                 // The latest question the assistant answered here (#544), until put away; Session Info lists them all.
                 if let answered = model.delegated(for: key).last {
@@ -3052,6 +3104,17 @@ struct ChatView: View {
                     .allowsHitTesting(!pick.on)
                     #endif
             }
+            // Your messages the assistant keeps after they could not go in, from the row: on every device (#10194).
+            ForEach(keptUndelivered.reversed()) { m in
+                UndeliveredBubble(message: m, retry: { Task { await model.retryUndelivered(key, m.id) } },
+                                  discard: { Task { await model.deleteUndelivered(key, m.id) } })
+                    .chatMark("chat.undelivered.\(m.state).\(m.id)")
+                    #if os(iOS)
+                    .allowsHitTesting(!pick.on) // not sent yet: never picked, and quiet while selecting
+                    #endif
+                    .flippedBack()
+                    .id("undelivered-" + m.id)
+            }
             // The first message of a conversation, not in the transcript yet: its day over it, as the new-conversation
             // page drew it (`FirstMessagePending`) and the transcript's lines will (#1911).
             if style == .assistant, lines.isEmpty, !pending.isEmpty { DayLine(date: .now).flippedBack() }
@@ -3169,7 +3232,7 @@ struct ChatView: View {
         .contentMargins(.bottom, headerRoom + 10, for: .scrollContent)
         .scrollIndicators(.hidden)
         // iOS 26's soft edge blur works out its region on the unflipped view and fogged the whole list.
-        .scrollEdgeEffectHidden(true, for: .all)
+        .scrollEdgeEffectHiddenWhenSupported(true, for: .all)
         .scrollPosition($position)
         // The part over the footer: what the page shows of the list, as the follow, the landings and the navigator take it.
         .onGeometryChange(for: CGRect.self, of: { g in
@@ -3992,7 +4055,7 @@ struct ChatView: View {
         let header = ChromeHeader(chrome: chrome, touched: { scratch.lastActivity = .now }) {
             VStack(spacing: 0) {
                 // One container for the row's glass (back, the terminal, ⋯): drawn together instead of as separate glasses.
-                GlassEffectContainer(spacing: 8) {
+                GlassGroup(spacing: 8) {
                     HStack(spacing: Theme.Space.s) {
                         headerBack
                         if pane == .chat, let expand = host?.expand { hostedExpandButton(expand) }
@@ -4502,6 +4565,16 @@ struct ChatView: View {
         guard model.latestAnswerFor == key else { return false }
         model.latestAnswerFor = nil
         return true
+    }
+
+    /// What covers this page full screen goes (the bar back to its voice chat was tapped, #9887): the picture viewer and
+    /// the terminal. Their dismissal shows the page again, which takes the bar away (`VoiceCalls.returned`).
+    private func closeCovers() {
+        if viewingImages != nil { viewingImages = nil }
+        if showTerminal {
+            showTerminal = false
+            resumeOnOpen = false // as its own dismissal does
+        }
     }
 
     private func appeared() {
@@ -5590,34 +5663,22 @@ struct Composer: View, Equatable {
     /// it is on, and 「语音已结束 · 继续」 sits over the box after it ended by itself.
     private var voiceCall: VoiceConversation? { VoiceCalls.shared.call(on: key) }
 
-    /// The composer's voice button (docs/assistant/voice.md 6.1): only where a call can start; the 「+」 menu's item stays and says why
-    /// not.
+    /// The composer's phone icon (docs/assistant/voice.md 6.1; #9887 one button: the one voice entry): only where a call
+    /// can start. On the iPhone it calls this conversation through the system; elsewhere it is the voice chat in the app
+    /// (`VoiceEntry.start`). Why a call could not be placed shows over the app (`PersonaCalls.refusal`).
     private var voiceEntry: (() -> Void)? {
         guard VoiceSupport.shared.availability(for: model.session(key), group: key.group).isAvailable else { return nil }
         return { startVoice() }
     }
 
-    private func startVoice() {
+    /// `inApp`: the voice chat in the app whatever the device (DEBUG `-openVoice`).
+    private func startVoice(inApp: Bool = false) {
         focused = false
-        voiceNote = VoiceEntry.start(key, model: model)
+        voiceNote = VoiceEntry.start(key, model: model, inApp: inApp) { voiceNote = $0 }
     }
 
-    /// Call Persona in the 「+」 panel (#9290): Persona's main conversation only, on the iPhone and iPad (the system's calls);
-    /// Voice Chat beside it stays the chat's own voice. Why a call could not be placed shows over the app
-    /// (`PersonaCalls.refusal`, `personaCallCover`).
-    private var callPersonaEntry: (() -> Void)? {
-        #if os(iOS)
-        guard isMainAssistantChat, VoicePlatform.current == .phone else { return nil }
-        return {
-            focused = false
-            Task { [group = key.group] in await PersonaCalls.shared.callPersona(group: group, origin: .app) }
-        }
-        #else
-        return nil
-        #endif
-    }
-
-    /// Voice Chat in the 「+」 menu (iOS and visionOS: the Mac has no call audio yet, docs/assistant/voice.md 6.9).
+    /// Voice Chat in the 「+」 menu of the composers with no phone icon (Apple Vision Pro's: the Mac has no call audio yet,
+    /// docs/assistant/voice.md 6.9). The iPhone's and the iPad's + have none: the phone icon is their one voice entry.
     @ViewBuilder private var voiceMenuItem: some View {
         if VoicePlatform.current == .phone {
             Button { startVoice() } label: { Label("Voice Chat", systemImage: Theme.Icon.voiceChannel) }
@@ -5989,7 +6050,7 @@ struct Composer: View, Equatable {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             if let call, inCall {
-                VoiceBar(call: call, key: key, label: VoiceEntry.label(model.session(key), model: model))
+                VoiceBar(call: call, key: key, label: VoiceEntry.label(key, model: model))
                     .transition(.opacity)
             } else if usesShellComposer {
                 // The shell's composer (docs/apple/ios.md「New shell」), whatever the style: the assistant's and an agent's (#1091).
@@ -5999,6 +6060,7 @@ struct Composer: View, Equatable {
                                  hasAttachments: hasAttachments,
                                  stop: status.isActive && model.session(key)?.canInterrupt == true ? { Task { await model.interrupt(key) } } : nil,
                                  voice: voiceEntry,
+                                 voiceLabel: VoiceEntry.iconLabel(key),
                                  modesTitle: modesTitle,
                                  modesDisclosure: assistantModelPickAvailable,
                                  quotes: contexts,
@@ -6143,7 +6205,7 @@ struct Composer: View, Equatable {
             await declarations.refreshWhileActive(api: model.api(key.group))
         }
         // Voice (docs/assistant/voice.md 6.1): asks the hub about it, says why there is none, and the DEBUG switches (6.8).
-        .modifier(ComposerVoice(key: key, note: $voiceNote, active: phase == .active, offered: { voiceEntry != nil }, start: { startVoice() }))
+        .modifier(ComposerVoice(key: key, note: $voiceNote, active: phase == .active, offered: { voiceEntry != nil }, start: { startVoice(inApp: true) }))
         #if DEBUG
         .task { // `-showSampleQuotes YES`: a page's text and another session quoted over the box (#986, screenshots)
             guard UserDefaults.standard.bool(forKey: "showSampleQuotes") else { return }
@@ -6344,12 +6406,10 @@ struct Composer: View, Equatable {
 
     /// What + offers besides photos and files (#3225), one list for three places: the panel's More tab, the iPhone's touch
     /// and hold on +, and the iPad's + menu under Photos and Files. The most used first (the menu puts it nearest the
-    /// finger): calls, the camera and (Persona's main conversation) Meeting Recording, Mention, an Agent's Quick Commands,
-    /// then extension prompts. Rows a chat or device can never use are left out; /clear while the Agent works is dimmed.
+    /// finger): the camera and (Persona's main conversation) Meeting Recording, Mention, an Agent's Quick Commands, then
+    /// extension prompts. No voice or call rows (#9887 one button): the composer's phone icon is the one voice entry. Rows a chat or device can never use are left out; /clear while the Agent works is dimmed.
     private var attachMoreSections: [AttachMoreSection] {
-        var sections = AttachMoreSection.common(voice: VoicePlatform.current == .phone ? { startVoice() } : nil,
-                                                call: callPersonaEntry,
-                                                camera: CameraPicker.isAvailable ? { showCamera = true } : nil,
+        var sections = AttachMoreSection.common(camera: CameraPicker.isAvailable ? { showCamera = true } : nil,
                                                 scan: DocumentScanner.isAvailable ? { showScan = true } : nil,
                                                 glasses: MetaGlasses.isBuiltIn ? { showGlasses = true } : nil,
                                                 // As the sidebar's (#3723): records the meeting with Recordings open, or opens the one running.
@@ -7672,6 +7732,9 @@ struct WorkStepView: View, Equatable {
         var openFold: (Item) async throws -> Void = { _ in }
         var jumpToCall: (String) -> Void = { _ in }
         var openQuote: (ContextRef) -> Bool = { _ in false }
+        /// An app link to one of Persona's pages (`persona://open<path>`, an older `persona://` form, #9926): true when it
+        /// opened.
+        var openAppLink: (URL) -> Bool = { _ in false }
     }
 
     private var handlers = Handlers()
@@ -7715,6 +7778,9 @@ struct WorkStepView: View, Equatable {
             return .handled
         }
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let self else {
+            // A link to one of Persona's pages written into a message (#9926): handed to the system it came back to
+            // `onOpenURL` and went nowhere.
+            if self?.handlers.openAppLink(url) == true { return .handled }
             // Mac: NSWorkspace would run any scheme it names (LinkPolicy).
             #if os(macOS)
             return LinkPolicy.system(url)
