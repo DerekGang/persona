@@ -86,6 +86,18 @@ strips exact English/Japanese peer heads as well as the current and historical C
 from Persona. Stop recognition remains unchanged. A display-language upgrade never reclassifies another peer's
 message as the owner's input.
 
+### Tool guidance (#6274)
+
+1. The translation JSON routes and the background mail pass reach `translateTexts` or `translateMailFresh`.
+   Localize their model instructions with the owner's language while preserving the explicit translation target.
+   The shared system template, batch and mail wrappers, and mail input are one unit. The batch parser checks
+   `texts` cardinality and order, and the mail parser reads `subject` and `text`. Keep those keys and localize
+   the subject label together in the system and user messages.
+2. Manual and automatic naming reach `makeTitle`. Its system prompt already carries the topic language.
+   Give its first exchange and failed-answer retry the same language and character limit. The parser continues
+   to require one of the existing Chinese kind identifiers and the same pipe delimiter. The first exchange,
+   extension hint and rejected answer are quoted as data. These calls are private model requests.
+
 ### Ratchet and acceptance
 
 `scripts/ci/prompt_language_ratchet.py` runs in the repository CI guards. It counts CJK-bearing `.md` templates
