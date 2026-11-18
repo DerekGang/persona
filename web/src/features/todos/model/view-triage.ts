@@ -61,8 +61,9 @@ export function drawnFromView(local: TriageResult, now: number): TriageResult {
       const rest = g.members.filter((m) => !viewed(m));
       for (const m of g.members) {
         if (!knownView(m.view)) continue;
-        const section = legacyOf(m.view, m.kind === "concern")!;
-        const t: Triage = { section, rule: ruleOf(m.view, section), last: g.triage.get(m.id)!.last };
+        const before = g.triage.get(m.id)!;
+        const section = legacyOf(m.view, before.rule === "closed" && before.section === "just_done")!;
+        const t: Triage = { section, rule: ruleOf(m.view, section), last: before.last };
         fromView.push({ view: m.view, group: { key: m.id, section, lead: m, members: [m], triage: new Map([[m.id, t]]), last: t.last } });
       }
       if (rest.length === g.members.length) kept[s].push(g);

@@ -101,4 +101,15 @@ describe("drawnFromView", () => {
     expect(r.sections.cancelled[0].triage.get("todo_x")?.rule).toBe("cancelled");
     expect([r.open, r.finished, r.cancelled]).toEqual([1, 0, 1]);
   });
+
+  it("uses local freshness for a closed concern, not its kind alone", () => {
+    const list = [
+      todo("todo_fresh_concern", { kind: "concern", done_at: ago(1), done_by: "reported", view: view("just_finished", "closed_unseen", { phase: "done" }) }),
+      todo("todo_stale_concern", { kind: "concern", done_at: ago(30), done_by: "reported", view: view("just_finished", "closed_unseen", { phase: "done" }) }),
+    ];
+    const local = triageTodos(list, undefined, NOW);
+    const r = drawnFromView(local, NOW);
+    expect(r.sections.just_done.flatMap((g) => g.members.map((m) => m.id))).toEqual(["todo_fresh_concern"]);
+    expect(r.sections.done.flatMap((g) => g.members.map((m) => m.id))).toEqual(["todo_stale_concern"]);
+  });
 });
