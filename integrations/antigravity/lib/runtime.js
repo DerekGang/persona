@@ -39,6 +39,9 @@ export function createAgyRuntime(options = {}) {
 
   const activeTurns = new Map() // personaId -> { streamingText, startedAt }
   const promptTurns = new Map() // the prompt executing, before any queued successor
+  const unexportedTurns = new Map() // agyId -> { baseMaxIndex, seq, steps } settled turns awaiting native transcript export
+  const sentMsgIds = new Map() // `${agyId}:${stepIndex}` -> { text, clientMsgId }
+  let nextTurnSeq = 1
   const createdAt = new Map() // owned sessions remain discoverable before their first transcript export
   const completedTurns = new Set() // owned ACP turns that ended before a native transcript was available
   const sessionTitles = new Map() // agyId -> title
@@ -189,6 +192,22 @@ export function createAgyRuntime(options = {}) {
           rt.sessionsChanged()
         }
         break
+      case 'agent_thought_chunk': {
+        const chunk = upd.content?.text
+        const turn = promptTurns.get(pid)
+        if (typeof chunk === 'string' && chunk && turn) {
+          turn.liveThinking += chunk
+          turn.liveRev++
+          if (!turn.thoughtTimer) {
+            turn.thoughtTimer = setTimeout(() => {
+              turn.thoughtTimer = undefined
+              if (promptTurns.get(pid) === turn) syncTranscriptAppend(rawId)
+            }, 150)
+            turn.thoughtTimer.unref?.()
+          }
+        }
+        break
+      }
       case 'agent_message_chunk': {
         const chunk = upd.content?.text
         if (typeof chunk === 'string' && chunk) {
@@ -204,11 +223,41 @@ export function createAgyRuntime(options = {}) {
         }
         break
       }
-      case 'tool_call':
-      case 'tool_call_update':
-        if (upd.sessionUpdate === 'tool_call' && promptTurns.has(pid)) promptTurns.get(pid).newMessage = true
+      case 'tool_call': {
+        const turn = promptTurns.get(pid)
+        if (turn) {
+          turn.newMessage = true
+          const id = upd.toolCallId || `live-${turn.liveTools.length}`
+          const rawName = upd._meta?.toolName || upd.name || upd.title || 'tool'
+          const args = upd.rawInput || upd.input || {}
+          const existing = turn.liveTools.find((t) => t.id === id)
+          if (existing) {
+            existing.name = rawName
+            existing.args = args
+          } else {
+            turn.liveTools.push({ id, name: rawName, args, done: false, output: '', isError: false })
+          }
+          turn.liveRev++
+        }
         syncTranscriptAppend(rawId)
         break
+      }
+      case 'tool_call_update': {
+        const turn = promptTurns.get(pid)
+        if (turn && upd.toolCallId) {
+          const existing = turn.liveTools.find((t) => t.id === upd.toolCallId)
+          if (existing && ['completed', 'failed'].includes(upd.status)) {
+            existing.done = true
+            existing.isError = upd.status === 'failed'
+            existing.output = Array.isArray(upd.content)
+              ? upd.content.map((b) => (b?.type === 'content' ? b.content?.text || '' : b?.text || '')).filter(Boolean).join('\n')
+              : typeof upd.rawOutput === 'string' ? upd.rawOutput : ''
+            turn.liveRev++
+          }
+        }
+        syncTranscriptAppend(rawId)
+        break
+      }
       default:
         break
     }
@@ -371,8 +420,92 @@ export function createAgyRuntime(options = {}) {
     return [transcript.history, last?.step_index, last?.created_at, native?.step_count, native?.last_modified_time].join('|')
   }
 
+  function maxStepIndex(steps) {
+    return steps.reduce((max, step, index) => Math.max(max, typeof step?.step_index === 'number' ? step.step_index : index), -1)
+  }
+
+  function clientMsgIdFor(rawId) {
+    return (idx, text) => {
+      const sent = sentMsgIds.get(`${rawId}:${idx}`)
+      return sent && sent.text === text ? sent.clientMsgId : undefined
+    }
+  }
+
+  function liveTurnSteps(turn) {
+    const out = []
+    let idx = turn.baseMaxIndex + 1
+    if (turn.userText) {
+      out.push({
+        step_index: idx++,
+        type: 'USER_INPUT',
+        source: 'USER_EXPLICIT',
+        status: 'DONE',
+        created_at: turn.startedIso,
+        content: turn.userText,
+        client_msg_id: turn.clientMsgId,
+      })
+    }
+    if (turn.liveThinking.trim()) {
+      out.push({
+        step_index: idx++,
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'RUNNING',
+        created_at: turn.startedIso,
+        thinking: turn.liveThinking,
+      })
+    }
+    for (const tc of turn.liveTools) {
+      out.push({
+        step_index: idx++,
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: tc.done ? 'DONE' : 'RUNNING',
+        created_at: turn.startedIso,
+        tool_calls: [{ name: tc.name, args: tc.args }],
+      })
+      if (tc.done) {
+        out.push({
+          step_index: idx++,
+          type: 'GENERIC',
+          source: 'MODEL',
+          status: tc.isError ? 'ERROR' : 'DONE',
+          created_at: turn.startedIso,
+          content: tc.output,
+          ...(tc.isError ? { error: tc.output || 'Tool failed' } : {}),
+        })
+      }
+    }
+    return out
+  }
+
   function transcriptOf(rawId, native = readConversationStates().get(rawId)) {
     const transcript = exportedTranscriptOf(rawId, native)
+    const curMax = maxStepIndex(transcript.steps)
+    const pid = toPersonaId(rawId)
+    const turn = promptTurns.get(pid)
+    if (turn && turn.exportedBaseMax !== undefined && curMax <= turn.exportedBaseMax) {
+      const extra = [...turn.priorPending, ...liveTurnSteps(turn)]
+      if (extra.length > 0) {
+        return {
+          ...transcript,
+          steps: [...transcript.steps, ...extra],
+          history: `${transcript.history}:live:${turn.seq}:${turn.liveRev}`,
+        }
+      }
+    }
+    const pending = unexportedTurns.get(rawId)
+    if (pending) {
+      if (curMax > pending.baseMaxIndex) {
+        unexportedTurns.delete(rawId)
+      } else {
+        return {
+          ...transcript,
+          steps: [...transcript.steps, ...pending.steps],
+          history: `${transcript.history}:settled:${pending.seq}`,
+        }
+      }
+    }
     const tail = nativeTails.get(rawId)
     if (tail?.key === tailKey(transcript, native) && tail.error) {
       return { ...transcript, steps: [...transcript.steps, tail.error] }
@@ -484,7 +617,7 @@ export function createAgyRuntime(options = {}) {
     const prevSeq = lastPushedSeq.get(pid) ?? 0
     const rewritten = lastPushedHistory.has(pid) && lastPushedHistory.get(pid) !== history
     if (rewritten || toSeq > prevSeq) {
-      const { items: allItems } = stepsToItems(steps, { brainDir: bDir, full: false })
+      const { items: allItems } = stepsToItems(steps, { brainDir: bDir, full: false, clientMsgIdFor: clientMsgIdFor(rawId) })
       const deltaItems = rewritten ? allItems : allItems.filter((it) => it.seq > prevSeq)
       lastPushedSeq.set(pid, toSeq)
       lastPushedHistory.set(pid, history)
@@ -571,7 +704,7 @@ export function createAgyRuntime(options = {}) {
       const transcript = transcriptOf(rawId, native || null)
       if (!running) void readNativeError(rawId, native, transcript)
       const { steps, history } = transcript
-      const parsed = stepsToItems(steps, { brainDir: brainDirOf(rawId), full: false })
+      const parsed = stepsToItems(steps, { brainDir: brainDirOf(rawId), full: false, clientMsgIdFor: clientMsgIdFor(rawId) })
       if (!lastPushedSeq.has(pid)) lastPushedSeq.set(pid, parsed.toSeq)
       if (!lastPushedHistory.has(pid)) lastPushedHistory.set(pid, history)
       let status = running ? 'working' : transcriptStatus(steps, native)
@@ -594,7 +727,7 @@ export function createAgyRuntime(options = {}) {
         status,
         updated_at: new Date(mtimeMs).toISOString(),
         rev: Math.max(1, parsed.toSeq),
-        last_text: hasTranscript ? parsed.lastText : snippet(summary?.Preview || ''),
+        last_text: (hasTranscript || steps.length > 0) ? parsed.lastText : snippet(summary?.Preview || ''),
         model: sessionModels.get(rawId),
         launcher: 'agy',
         agent_label: LABEL,
@@ -626,7 +759,7 @@ export function createAgyRuntime(options = {}) {
     await readNativeError(rawId)
     const bDir = brainDirOf(rawId)
     const { steps, history } = transcriptOf(rawId)
-    const { items: allItems, toSeq } = stepsToItems(steps, { brainDir: bDir, full: false })
+    const { items: allItems, toSeq } = stepsToItems(steps, { brainDir: bDir, full: false, clientMsgIdFor: clientMsgIdFor(rawId) })
     return page(allItems, params, { history, toSeq })
   }
 
@@ -635,7 +768,7 @@ export function createAgyRuntime(options = {}) {
     await reconcileNativeCut(rawId)
     await readNativeError(rawId)
     const { steps, history } = transcriptOf(rawId)
-    const { toSeq } = stepsToItems(steps, { brainDir: brainDirOf(rawId), full: false })
+    const { toSeq } = stepsToItems(steps, { brainDir: brainDirOf(rawId), full: false, clientMsgIdFor: clientMsgIdFor(rawId) })
     return { to_seq: toSeq, history }
   }
 
@@ -645,7 +778,7 @@ export function createAgyRuntime(options = {}) {
     await readNativeError(rawId)
     const bDir = brainDirOf(rawId)
     const { steps } = transcriptOf(rawId)
-    const { items: fullItems } = stepsToItems(steps, { brainDir: bDir, full: true })
+    const { items: fullItems } = stepsToItems(steps, { brainDir: bDir, full: true, clientMsgIdFor: clientMsgIdFor(rawId) })
     const found = fullItems.find((it) => it.id === params.item_id)
     if (!found) throw new Error(`item ${params.item_id} not found`)
     return found
@@ -764,7 +897,7 @@ export function createAgyRuntime(options = {}) {
         session_id: pid,
         title: basename(cwd) || LABEL,
         cwd,
-        status: params.prompt ? 'working' : 'done',
+        status: params.prompt ? 'working' : 'idle',
         updated_at: new Date().toISOString(),
         rev: 1,
         model: sessionModels.get(rawId),
@@ -791,6 +924,26 @@ export function createAgyRuntime(options = {}) {
       rt.sessionsChanged()
       return { session }
     })
+  }
+
+  function beginLiveTurn(rawId, pid, turn) {
+    const base = exportedTranscriptOf(rawId)
+    const curMax = maxStepIndex(base.steps)
+    const pending = unexportedTurns.get(rawId)
+    const priorPending = pending && curMax <= pending.baseMaxIndex ? pending.steps : []
+    const baseMax = maxStepIndex([...base.steps, ...priorPending])
+    turn.priorPending = priorPending
+    turn.exportedBaseMax = curMax
+    turn.baseMaxIndex = baseMax
+    turn.startedIso = new Date().toISOString()
+    if (turn.clientMsgId && turn.userText) {
+      sentMsgIds.set(`${rawId}:${baseMax + 1}`, { text: turn.userText, clientMsgId: turn.clientMsgId })
+      while (sentMsgIds.size > 512) sentMsgIds.delete(sentMsgIds.keys().next().value)
+    }
+    promptFailures.delete(rawId)
+    promptTurns.set(pid, turn)
+    rt.streamEnd(pid)
+    syncTranscriptAppend(rawId)
   }
 
   async function send(params) {
@@ -842,18 +995,38 @@ export function createAgyRuntime(options = {}) {
       if (prevTurn?.pollTimer) clearInterval(prevTurn.pollTimer)
       const pollTimer = setInterval(() => syncTranscriptAppend(rawId), 400)
       const turnToken = Symbol('turn')
-      const turn = { streamingText: '', newMessage: false, startedAt: Date.now(), pollTimer, token: turnToken }
+      const turn = {
+        seq: nextTurnSeq++,
+        userText: cleanUserText(params.text || ''),
+        clientMsgId: typeof params.client_msg_id === 'string' && params.client_msg_id ? params.client_msg_id : undefined,
+        streamingText: '',
+        liveThinking: '',
+        liveTools: [],
+        liveRev: 0,
+        thoughtTimer: undefined,
+        priorPending: [],
+        exportedBaseMax: undefined,
+        baseMaxIndex: undefined,
+        startedIso: '',
+        failed: false,
+        newMessage: false,
+        startedAt: Date.now(),
+        pollTimer,
+        token: turnToken,
+      }
+      if (!prevTurn && !archived.has(rawId)) {
+        beginLiveTurn(rawId, pid, turn)
+      }
       const prevPromise = prevTurn?.promise || Promise.resolve()
       const promise = prevPromise
         .catch(() => {})
         .then(() => {
           if (archived.has(rawId)) return
-          promptFailures.delete(rawId)
-          promptTurns.set(pid, turn)
-          rt.streamEnd(pid)
+          if (promptTurns.get(pid) !== turn) beginLiveTurn(rawId, pid, turn)
           return acp.prompt(rawId, blocks)
         })
         .catch((err) => {
+          turn.failed = true
           if (!stopped && !cancelling.has(rawId)) {
             promptFailures.set(rawId, { input: inputKey(rawId), fields: {
               turn_error: err.message, turn_error_after_work: Boolean(turn.streamingText || turn.newMessage),
@@ -862,10 +1035,34 @@ export function createAgyRuntime(options = {}) {
           log(`agy prompt error (${pid}): ${err.message}`)
         })
         .finally(async () => {
+          clearTimeout(turn.thoughtTimer)
+          turn.thoughtTimer = undefined
           if (!stopped) await readNativeError(rawId)
           // The turn is over: a card still waiting has nothing to answer for any more.
+          const wasCancelled = cancelling.has(rawId)
           cancelling.delete(rawId)
           withdrawPermissionAsks(rawId, 'the turn ended')
+          if (!stopped && !turn.failed && !wasCancelled && !archived.has(rawId) && turn.exportedBaseMax !== undefined) {
+            const curMax = maxStepIndex(exportedTranscriptOf(rawId).steps)
+            if (curMax <= turn.exportedBaseMax) {
+              const settled = [...turn.priorPending, ...liveTurnSteps(turn)]
+              if (turn.streamingText.trim()) {
+                settled.push({
+                  step_index: (settled.length ? maxStepIndex(settled) : turn.baseMaxIndex) + 1,
+                  type: 'PLANNER_RESPONSE',
+                  source: 'MODEL',
+                  status: 'DONE',
+                  created_at: new Date().toISOString(),
+                  content: turn.streamingText.trim(),
+                })
+              }
+              if (settled.length > 0) {
+                unexportedTurns.set(rawId, { baseMaxIndex: turn.exportedBaseMax, seq: turn.seq, steps: settled })
+              }
+            } else {
+              unexportedTurns.delete(rawId)
+            }
+          }
           if (promptTurns.get(pid) === turn) {
             promptTurns.delete(pid)
             rt.streamEnd(pid)
@@ -875,13 +1072,13 @@ export function createAgyRuntime(options = {}) {
             activeTurns.delete(pid)
             completedTurns.add(pid)
             syncTranscriptAppend(rawId)
-            rt.sessionsChanged()
+            rt.sessionsChanged(0)
           }
           if (want) void maybeExit()
         })
       turn.promise = promise
       activeTurns.set(pid, turn)
-      rt.sessionsChanged()
+      rt.sessionsChanged(0)
     })
   }
 
@@ -903,6 +1100,7 @@ export function createAgyRuntime(options = {}) {
   async function close(params) {
     const rawId = ownedId(params.session_id)
     archived.add(rawId)
+    unexportedTurns.delete(rawId)
     await interrupt(params)
     await acp.closeSession(rawId)
     rt.sessionsChanged()
@@ -946,6 +1144,8 @@ export function createAgyRuntime(options = {}) {
         throw new RpcError('The selected message moved. Reload the conversation before rewinding', 'rewind_mismatch')
       }
       const before = transcriptOf(rawId)
+      unexportedTurns.delete(rawId)
+      for (const k of sentMsgIds.keys()) if (k.startsWith(`${rawId}:`)) sentMsgIds.delete(k)
       lastPushedHistory.set(pid, before.history)
       lastPushedSeq.set(pid, stepsToItems(before.steps).toSeq)
       await acp.nativeRequest('RevertToCascadeStep', { cascadeId: rawId, stepIndex: target.index - 1,
@@ -1034,9 +1234,13 @@ export function createAgyRuntime(options = {}) {
     catalogAbort.abort()
     rt.stop()
     // A turn's transcript poll would otherwise keep running; acp.stop() fails the prompts themselves.
-    for (const turn of activeTurns.values()) clearInterval(turn.pollTimer)
+    for (const turn of activeTurns.values()) {
+      clearInterval(turn.pollTimer)
+      clearTimeout(turn.thoughtTimer)
+    }
     activeTurns.clear()
     promptTurns.clear()
+    unexportedTurns.clear()
     return acp.stop()
   }
 
