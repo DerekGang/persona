@@ -91,3 +91,25 @@ it("previews the selected computer's inherited provider and its own model defaul
   await flush();
   expect(details.querySelector("summary")!.textContent).toContain("remote-agent · codex · remote-default · low");
 });
+
+it("uses a folded saved alias's advertised default effort without changing the choice", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.includes("/purposes/assistant")) return json({ purpose: { machine_id: "first", effective: { provider: "launcher.first" } } });
+    if (path.includes("/launchers")) return json({ launchers: [{ name: "second", agent: "codex" }] });
+    if (path.includes("/models")) return json({ agent: "codex", models: [{ id: "test-model", aliases: ["test-alias"], efforts: ["low"], default_effort: "low" }] });
+    throw new Error(`unexpected request ${path}`);
+  }));
+  const changed = vi.fn();
+  const draft = { ...blankTask(), execution_machine_id: "first", launcher: "second", model: "test-alias" };
+  await act(async () => root.render(<TaskExecutionFields draft={draft} disabled={false} onChange={changed} />));
+  await flush();
+  const details = host.querySelector("details")!;
+  await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle")); });
+  await flush();
+  expect(details.querySelector("summary")!.textContent).toContain("second · codex · test-alias · low");
+  const effort = [...host.querySelectorAll("label")].find((el) => el.textContent?.startsWith(t("settings-modelconfiguration.effort")))!.querySelector("select")!;
+  expect([...effort.options].map((option) => option.value)).toEqual(["", "low"]);
+  expect(effort.options[0].textContent).toContain("low");
+  expect(changed).not.toHaveBeenCalled();
+});

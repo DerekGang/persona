@@ -16,7 +16,7 @@ func (n *Node) taskDirectory(path string) (proto.Workspace, error) {
 	if path != strings.TrimSpace(path) {
 		return proto.Workspace{}, i18n.Err("assistant-schedule.execution_directory_whitespace")
 	}
-	w, err := n.resolveWorkspace(path)
+	w, err := n.resolveWorkspace(path, false)
 	if err != nil {
 		return w, err
 	}

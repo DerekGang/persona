@@ -383,7 +383,7 @@ func (s *Service) checkTaskModelCapabilities(ctx context.Context, machine string
 		return nil
 	} // older catalogs do not advertise these levels; the node still validates its input
 	for _, m := range list.Models {
-		if b.Model == m.ID || b.Model != "" && b.Model == m.Resolved || b.Model == "" && m.Default {
+		if b.Model == m.ID || b.Model != "" && (b.Model == m.Resolved || slices.Contains(m.Aliases, b.Model)) || b.Model == "" && m.Default {
 			if len(m.Efforts) > 0 && !slices.Contains(m.Efforts, b.Effort) {
 				return i18n.Err("assistant-models.err_effort_unsupported")
 			}

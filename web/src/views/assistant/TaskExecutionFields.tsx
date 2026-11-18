@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { errorText } from "../../lib/api";
 import { modelPurpose, type ModelPurpose } from "../../lib/model-config";
-import { defaultModel, effortChoices, machineLaunchers, providerModels, takesEffort, type MachineLaunchers } from "../../lib/launcher-models";
+import { defaultModel, effortChoices, listedModel, machineLaunchers, providerModels, takesEffort, type MachineLaunchers } from "../../lib/launcher-models";
 import { launcherTitle } from "../../lib/provider-names";
 import { useChosenManager, useKnownDefault } from "../../lib/manager-choice";
 import { taskExecutionNeedsOwnChat, taskExecutionSummary, type Task } from "../../lib/routines";
@@ -72,7 +72,7 @@ export function TaskExecutionFields({ draft, saved, disabled, onChange }: { draf
   }, [expanded, manager, machine, launcher, reload, modelKey]);
   const list = models.list;
   const model = draft.model || inherited.model;
-  const selectedModel = list?.models.find((m) => m.id === model) ?? (!model ? defaultModel(list?.models ?? []) : undefined);
+  const selectedModel = model ? listedModel(list?.models ?? [], model) : defaultModel(list?.models ?? []);
   const efforts = list && (takesEffort(list.agent) || selectedModel?.efforts?.length) ? effortChoices(list, draft.model || "", inherited) : [];
   const known = launchers?.launchers ?? [];
   const knownLauncher = known.find((l) => l.name === launcher);
