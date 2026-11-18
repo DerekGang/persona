@@ -19,6 +19,7 @@ import { Button, toast, cx } from "../../ui/atoms";
 import { AcceptRow } from "./Brief";
 import { BriefingMark } from "./BriefingMark";
 import { DecisionRow } from "./DecisionRow";
+import { FailedTaskRow, waitsLabel } from "./FailedTaskRow";
 import RuleSuggestionLine from "./RuleSuggestionLine";
 import type { RuleCard } from "../../lib/rule-suggestion";
 
@@ -112,14 +113,17 @@ export function TaskDecision({ todo, rowKey, hideTitle = false }: { todo: Todo; 
 export type NeedsYouPartProps =
   /** A task's decision in the tray. */
   | { decision: Todo; rowKey?: string; hideTitle?: boolean }
+  /** A task whose Agent did not start, in the tray (#10365). */
+  | { failed: Todo; rowKey: string; countsOpenAttr: { "data-counts-open"?: string } }
   /** The suggested rule of a plan card or a passed-up question, under it. */
   | { rule: RuleCard };
 
 /** What views/assistant/Tasks loads, with the first card that draws one and not with the first screen
- *  (startup-preload's budget): a decision's row, or a suggested rule's line (#5802). One chunk behind one component,
- *  so the first screen names one file for both. */
+ *  (startup-preload's budget): a decision's row, a failed start's row (#10365), or a suggested rule's line (#5802). One
+ *  chunk behind one component, so the first screen names one file for all. */
 export default function NeedsYouParts(props: NeedsYouPartProps) {
   if ("decision" in props) return <TaskDecision todo={props.decision} rowKey={props.rowKey} hideTitle={props.hideTitle} />;
+  if ("failed" in props) return <FailedTaskRow todo={props.failed} rowKey={props.rowKey} countsOpenAttr={props.countsOpenAttr} />;
   return <RuleSuggestionLine of={props.rule} />;
 }
 
@@ -127,7 +131,7 @@ const EMPTY_FEED: FeedItem[] = [];
 
 /** A task in Needs you that only waits (#8237): cut off by the model service, with why and Continue (its receipt card's
  *  until then); waiting for review, with what it handed in; else what it waits for. The title opens the task. */
-export function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr, label, tasks }: { rowKey?: string; todo: Todo; status: TodoStatus; countsOpenAttr: { "data-counts-open"?: string }; label: string; tasks: typeof draftTasks }) {
+export function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr, tasks }: { rowKey?: string; todo: Todo; status: TodoStatus; countsOpenAttr: { "data-counts-open"?: string }; tasks: typeof draftTasks }) {
   const task = tasks.useTaskNow(todo);
   const retrying = tasks.useRetrying(todo.id);
   const summary = useFeed((s) => {
@@ -144,16 +148,16 @@ export function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr, label, ta
   const chip = todoChipState({ toStart: false, status, done: !!todo.done_at, stage: todo.stage, pr: todo.pr_url, todo });
   const line = cut ? cut.reason : unattended
     ? (stopped !== undefined ? stopped ? t("assistant-tasks.progress_stopped_reason", { reason: stopped }) : t("assistant-tasks.progress_stopped")
-      : closeout?.waiting || closeout?.missing || tasks.progressOf(task?.lead)?.text || task?.lead?.last_text || t("assistant-tasks.tray_unattended"))
+      : closeout?.waiting || closeout?.missing || tasks.progressOf(task?.lead)?.text || task?.lead?.last_text || t("assistant-task-details.tray_unattended"))
     : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || tasks.progressOf(task?.lead)?.text : undefined;
   return (
     <div data-needs-row={rowKey} {...countsOpenAttr} data-waiting-task={todo.id} data-needs-reason={unattended ? "stopped_unfinished" : undefined} className={cx("flex flex-col gap-1.5 rounded-control px-3 py-2 text-sm", cutOff ? "bg-danger-wash" : "bg-field")}>
       <div className="flex min-w-0 items-center gap-2">
         <Icon name={cutOff ? "info" : "hand"} className={cx("shrink-0", cutOff ? "text-red" : "text-attention")} />
         <button type="button" onClick={() => openTask(todo.id)} className="min-w-0 flex-1 truncate text-left hover:underline">{todo.title}</button>
-        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{label}</span>
+        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{waitsLabel(todo, status)}</span>
       </div>
-      {unattended && <div className="pl-6 text-xs text-ink-2">{t("assistant-tasks.tray_unattended")}</div>}
+      {unattended && <div className="pl-6 text-xs text-ink-2">{t("assistant-task-details.tray_unattended")}</div>}
       {unattended && <div className="flex min-w-0 flex-col gap-1 break-words pl-6 text-xs text-ink-2">
         <span data-task-status={agentKey}>{agentRowLabel(agentKey, task?.lead)}</span>
         {chip && <span data-task-todo-state>{todoChipLabel(chip)}</span>}

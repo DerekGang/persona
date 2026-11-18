@@ -53,7 +53,6 @@ import { Button, Collapse, cx, IconButton, Loading, Menu, toast, useNow } from "
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon, type IconName } from "../../ui/icons";
 import { AcceptRow, BriefCard } from "./Brief";
-import { startFailureRowLine } from "../../lib/start-failure";
 import { setTodoSeen, todoSeenOn } from "../../lib/todo-seen";
 import { triage } from "../../lib/todo-triage";
 
@@ -62,7 +61,8 @@ const PlanBrief = lazy(() => import("./TaskBrief").then((m) => ({ default: m.Pla
 const HeldPushesEntry = lazyPage(() => import("./HeldPushes").then((m) => m.HeldPushesEntry));
 
 // A decision's row comes with the tray's first decision, not with the first screen (startup-preload's budget); the
-// same chunk has a suggested rule's line (#5802), which comes with the first card that carries one.
+// same chunk has a suggested rule's line (#5802), which comes with the first card that carries one, and a task whose
+// Agent did not start (#10365), which comes with the first such row.
 const NeedsYouPart = lazy(() => import("./TaskDecision"));
 const WaitingTaskPart = lazyPage(() => import("./TaskDecision").then((m) => m.WaitingTaskRow));
 /** The suggested rule's line of a card, drawn right after it; nothing for a card without the field, unless Always
@@ -70,7 +70,7 @@ const WaitingTaskPart = lazyPage(() => import("./TaskDecision").then((m) => m.Wa
 const ruleLine = (of: RuleCard) => (of.suggestion || underCard.made?.has(of.id!)) && <Suspense fallback={null}><NeedsYouPart rule={of} /></Suspense>;
 underCard.line = ruleLine;
 import { SentLine } from "./Sent";
-import { feedWake, HandoffCard, HandoffCards, taskHandoffs, whyNotStarted } from "./Handoff";
+import { feedWake, HandoffCard, HandoffCards, taskHandoffs } from "./Handoff";
 import { latestReview, parkedLine, progressLine } from "../../lib/supervision";
 import { namedLauncher, providerIdNote, providerTitle, useProviderNames } from "../../lib/provider-names";
 import { useChosenManager, useLinkManager } from "../../lib/manager-choice";
@@ -876,13 +876,6 @@ function TaskProgressMeter({ value, total, blocked, title }: { value: number; to
   );
 }
 
-/** The task's line in Needs you when no card of its agent stands for it: what it waits for. */
-function waitsLabel(todo: Todo, status: TodoStatus): string {
-  if (todo.supervision?.state === "pending_review") return t("assistant-tasks.review_pending");
-  if (todo.supervision?.state === "needs_user") return t("assistant-tasks.review_needs_user");
-  return TODO_STATUS_INFO[status]?.label ?? t("assistant-tasks.review_needs_user");
-}
-
 /** One row of Needs you (lib/assistant-entries): a task or an Agent with the cards it asks, a plan to start, a task to
  *  decide on or review, a message to send. */
 /** A decision or review the task waits on, as the row has it (a decision with options, or a review only the user can settle). */
@@ -1024,41 +1017,15 @@ export function NeedsYouBody({ item, nested = false }: { item: NeedsYouItem; nes
       </Suspense>
     );
   if (ask) return <div data-needs-row={rowKey} {...taskOpenAttr} className="min-w-0 rounded-control bg-field px-3 py-2.5"><AcceptRow stacked hideTitle={nested} key={todo.id + ask.asked_at} row={askRow(todo, ask)} /></div>;
-  if (status === "failed") return <FailedTaskRow rowKey={item.key} todo={todo} countsOpenAttr={taskOpenAttr} />;
+  if (status === "failed")
+    return (
+      <Suspense fallback={<div data-needs-row={item.key} {...taskOpenAttr} className="truncate rounded-control bg-danger-wash px-3 py-2 text-sm">{todo.title}</div>}>
+        <NeedsYouPart rowKey={item.key} failed={todo} countsOpenAttr={taskOpenAttr} />
+      </Suspense>
+    );
   return <Suspense fallback={<div data-needs-row={rowKey} {...taskOpenAttr} className="px-3 py-2 text-sm text-ink-2">{todo.title}</div>}>
-    <WaitingTaskPart rowKey={rowKey} todo={todo} status={status} countsOpenAttr={taskOpenAttr} label={waitsLabel(todo, status)} tasks={draftTasks} />
+    <WaitingTaskPart rowKey={rowKey} todo={todo} status={status} countsOpenAttr={taskOpenAttr} tasks={draftTasks} />
   </Suspense>;
-}
-
-/** The buttons under a Needs you task row's words (Continue; Retry and Remove), lined up with them. */
-const ROW_ACTIONS = "flex items-center gap-4 pl-6 text-[12.5px]";
-
-/** A task whose Agent did not start, in Needs you: why, and Retry / Remove where it is (#5096: no panel to open for them;
- *  the title opens the to-do's page). */
-function FailedTaskRow({ rowKey, todo, countsOpenAttr }: { rowKey: string; todo: Todo; countsOpenAttr: { "data-counts-open"?: string } }) {
-  const retrying = useRetrying(todo.id);
-  const why = useFeed((s) => whyNotStarted(todo, s.plans));
-  return (
-    <div data-needs-row={rowKey} {...countsOpenAttr} data-failed-task={todo.id} className="flex flex-col gap-1.5 rounded-control bg-danger-wash px-3 py-2 text-sm">
-      <div className="flex min-w-0 items-center gap-2">
-        <Icon name="info" className="shrink-0 text-red" />
-        <button type="button" onClick={() => openTask(todo.id)} className="min-w-0 flex-1 truncate text-left hover:underline">{todo.title}</button>
-        <span className="shrink-0 text-xs text-ink">{waitsLabel(todo, "failed")}</span>
-      </div>
-      {/* in plain words; the hub's raw error is the task's details' (#8237) */}
-      {why && <div className="truncate pl-6 text-xs text-ink">{startFailureRowLine(why)}</div>}
-      <div className={ROW_ACTIONS}>
-        <button type="button" disabled={retrying} onClick={() => retryTaskNow(todo)} className="touch-hit inline-flex items-center gap-1 whitespace-nowrap font-semibold text-ink hover:underline disabled:opacity-50 disabled:hover:no-underline">
-          <Icon name="retry" size={12} />
-          {retrying ? t("assistant-tasks.retrying") : t("assistant-tasks.retry")}
-        </button>
-        <button type="button" onClick={() => removeTaskNow(todo)} className="touch-hit inline-flex items-center gap-1 whitespace-nowrap font-semibold text-ink hover:underline">
-          <Icon name="trash" size={12} />
-          {t("assistant-tasks.remove")}
-        </button>
-      </div>
-    </div>
-  );
 }
 
 /** Opening a Just finished row counts as seeing it (#5707), where the hub keeps seen marks; a failure leaves it there. */
