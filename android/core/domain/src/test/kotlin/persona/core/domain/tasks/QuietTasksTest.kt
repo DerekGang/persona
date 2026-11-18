@@ -67,7 +67,7 @@ class QuietTasksTest {
         assertEquals(StartFailurePlain.Details, startFailurePlain("  "))
     }
 
-    @Test fun aUsageLimitStaysStoppedThenNeedsTheOwnerWhenItsGraceEnds() {
+    @Test fun aUsageLimitStaysInterruptedAndLeavesInProgressWhenItsGraceEnds() {
         val soon = Instant.ofEpochMilli(nowMs + 5 * 60_000)
         val limited = Session("desk", "s", state = "unread", turnError = "Weekly limit reached", turnErrorKind = "usage_limit",
             turnErrorResetsAt = soon.toString())
@@ -97,8 +97,8 @@ class QuietTasksTest {
         assertEquals(TaskState.Interrupted, TaskState.of(todo, listOf(AgentState.Unread), limited.interrupted))
         fun placed(at: Long) = assistantEntries("main", "main", listOf(todo), listOf(limited), emptyList(), emptyList(), emptyList(), at)
         val during = placed(resets + grace)
-        assertEquals(listOf("task:t"), during.stopped.map { it.key })
-        assertEquals(TriageStatus.UsageLimit, (during.stopped.single() as RunningEntry.Task).status)
+        assertEquals(listOf("task:t"), during.running.map { it.key })
+        assertEquals(TriageStatus.UsageLimit, (during.running.single() as RunningEntry.Task).status)
         assertTrue(during.needsYou.isEmpty())
         val after = placed(resets + grace + 1)
         assertTrue(after.running.isEmpty())
@@ -129,16 +129,17 @@ class QuietTasksTest {
         assertTrue(side.justFinished.isEmpty())
     }
 
-    @Test fun anUnseenTurnWithoutCloseoutStaysStoppedAndAFailedStartIsNotNews() {
+    @Test fun aReportedFinishWaitsUncountedInJustFinishedAndAFailedStartIsNotNews() {
         val agent = TodoAgent("desk", "cut", linkedAt = "2026-11-10T08:00:00Z")
-        val session = Session("desk", "cut", state = "unread", updatedAt = "2026-11-10T08:40:00Z")
+        val session = Session("desk", "cut", state = "unread", updatedAt = "2026-11-10T08:40:00Z",
+            work = persona.core.contracts.WorkState("done", closeout = persona.core.contracts.Closeout("done")))
         val open = Todo("open", "Still open", origin = "main", createdAt = "2026-11-10T08:00:00Z",
             updatedAt = "2026-11-10T08:40:00Z", agents = listOf(agent))
         val failed = Todo("failed", "Did not start", origin = "main", startError = "rpc: connection closed",
             doneAt = "2026-11-10T08:50:00Z", createdAt = "2026-11-10T08:50:00Z")
         val got = assistantEntries("main", "main", listOf(open, failed), listOf(session), emptyList(), emptyList(), emptyList(), nowMs)
-        assertTrue(got.justFinished.isEmpty())
-        assertEquals(listOf("task:open"), got.stopped.map { it.key })
+        assertEquals(listOf("task:open"), got.justFinished.map { it.key })
+        assertTrue(got.running.isEmpty())
         assertEquals(listOf("task:failed"), got.needsYou.map { it.key })
     }
 }

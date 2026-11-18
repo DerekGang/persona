@@ -13,16 +13,11 @@ describe("the Assistant's Needs you and In progress entries (spec/fixtures/entri
     it(c.name, () => {
       const input = c.input as unknown as { conversation: string; main: string; now: string; todos: Todo[]; sessions: Session[]; interactions: Interaction[]; plans: Record<string, TaskPlan>; feed: FeedItem[] };
       const got = assistantEntries({ ...input, now: Date.parse(input.now) });
-      // the web lists every task waiting for its supervisor's review under Persona reviewing (#8678), out of the two
-      // entries the other clients put it in: the rest of the split is theirs
-      const expected = c.expected as typeof c.expected & { review?: string[]; stopped?: string[]; parked?: string[] };
       expect(got.needsYou.map((item) => item.key)).toEqual(c.expected.needs_you);
-      expect(got.running.map((item) => item.key)).toEqual(c.expected.running);
+      expect([...got.running, ...got.parked].map((item) => item.key)).toEqual(c.expected.running);
       expect(got.shelved.map((item) => item.key)).toEqual(c.expected.shelved);
-      expect(got.review.map((item) => item.key)).toEqual(expected.review ?? []);
-      expect(got.stopped.map((item) => item.key)).toEqual(expected.stopped ?? []);
-      expect(got.parked.map((item) => item.key)).toEqual(expected.parked ?? []);
-      // what the other clients' In progress says its supervisor is reviewing is under Persona reviewing here
+      expect(got.justFinished.map((item) => item.key)).toEqual(c.expected.just_finished);
+      expect(got.review).toEqual([]);
       const activity = (c.expected as { activity?: Record<string, unknown> }).activity;
       for (const [key, expected] of Object.entries(activity ?? {})) {
         const work = got.running.find((row) => row.key === key)?.activity;
@@ -30,7 +25,7 @@ describe("the Assistant's Needs you and In progress entries (spec/fixtures/entri
           ...(work.workflow?.phase ? { phase: work.workflow.phase, progress: `${work.workflow.agents_done}/${work.workflow.agents_started}+` } : {}) } : null).toEqual(expected);
       }
       // one entry each: nothing is in both, and no agent of a listed task shows on its own
-      const keys = [...got.needsYou, ...got.running, ...got.shelved, ...got.review, ...got.stopped, ...got.parked].map((item) => item.key);
+      const keys = [...got.needsYou, ...got.running, ...got.shelved, ...got.justFinished, ...got.parked].map((item) => item.key);
       expect(new Set(keys).size).toBe(keys.length);
       const taskAgents = new Set(input.todos.filter((todo) => !todo.done_at && keys.includes(`task:${todo.id}`))
         .flatMap((todo) => (todo.agents ?? []).filter((a) => !a.released_at).map((a) => `agent:${a.machine_id}/${a.session_id}`)));
@@ -127,7 +122,7 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
   const run = (todos: Todo[], sessions: Session[] = [], plans: Record<string, TaskPlan> = {}) =>
     assistantEntries({ conversation: "main", main: "main", todos, sessions, interactions: [], plans, feed: [], now });
   const openTaskItems = (got: ReturnType<typeof assistantEntries>) =>
-    [...got.needsYou, ...got.running, ...got.review, ...got.stopped, ...got.parked].filter((item) => item.kind === "task") as { key: string; countsOpen: boolean }[];
+    [...got.needsYou, ...got.running, ...got.review, ...got.parked].filter((item) => item.kind === "task") as { key: string; countsOpen: boolean }[];
 
   it("keeps an unexpired parked task open even after days without activity, as the page does", () => {
     const t = base("parked-stale", stale, { supervision: { supervisor: "main", state: "parked", parked, reviews: [], updated_at: stale } });
@@ -139,20 +134,18 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
     expect(openTaskItems(run([freshTodo]))[0]!.countsOpen).toBe(true);
   });
 
-  it("keeps reported-done work awaiting acceptance and counted, whether its reply was seen or not", () => {
-    const review = { at: stale, verdict: "needs_user" as const, note: "Choose the route." };
-    const seen = base("review-seen", stale, { seen_at: stale, supervision: { supervisor: "main", state: "pending_review", reviews: [review], updated_at: stale } });
-    const session = (id: string): Session => ({ machine_id: "box", session_id: id, title: id, cwd: "/", state: "idle", status: "idle", updated_at: stale, work: { phase: "done", closeout: { status: "done" } } });
-    const got = run([seen], [session(seen.id)]);
+  it("does not treat a pending ledger as a completed turn or count Just finished as active work", () => {
+    const pending = base("review", fresh, { supervision: { supervisor: "main", state: "pending_review" } });
+    const stopped: Session = { machine_id: "box", session_id: "review", title: "Review", cwd: "/w", state: "idle", status: "idle", updated_at: fresh };
+    expect(run([pending], [stopped]).justFinished).toEqual([]);
+    const reported: Session = { ...stopped, work: { phase: "done", closeout: { status: "done" } } };
+    const got = run([pending], [reported]);
+    expect(got.justFinished.map((row) => row.key)).toEqual(["task:review"]);
+    expect(openTaskItems(got)).toEqual([]);
     expect(got.needsYou).toEqual([]);
-    expect(got.review.map((i) => i.key)).toEqual(["task:review-seen"]);
-    expect(openTaskItems(got)[0]!.countsOpen).toBe(true);
-    // nobody looked at the finished turn yet: the page keeps it in Just finished, so it still counts
-    const unseen = base("review-unseen", stale, { supervision: { supervisor: "main", state: "pending_review", reviews: [review], updated_at: stale } });
-    expect(openTaskItems(run([unseen], [session(unseen.id)]))[0]!.countsOpen).toBe(true);
   });
 
-  it("counts actual unfinished tasks, not the board's seen-reply filing, and never counts plans as tasks", () => {
+  it("counts across the entries exactly the to-dos the To-dos page header calls open, and never plans or hand-opened Agents", () => {
     const workingSession: Session = { machine_id: "box", session_id: "working", title: "Worker", cwd: "/w", state: "working", status: "working", updated_at: fresh } as Session;
     const todos: Todo[] = [
       base("working", fresh, { agents: [{ machine_id: "box", session_id: "working", linked_at: fresh }] }),
@@ -167,15 +160,14 @@ describe("the entries' open-to-do count follows the To-dos page's rule", () => {
     const plans: Record<string, TaskPlan> = { plan: { id: "plan", conversation: "main", state: "open", created_at: fresh, tasks: [{ title: "Future work", prompt: "p", cwd: "/w", machine: "box" }] } };
     // a hand-opened Agent that belongs to no to-do: a running row that is not a to-do
     const loneAgent: Session = { machine_id: "box", session_id: "lone", title: "Lone", cwd: "/w", state: "working", status: "working", updated_at: fresh } as Session;
-    const reviewSessions: Session[] = ["review-seen", "review-unseen"].map((id) => ({ machine_id: "box", session_id: id, title: id, cwd: "/", state: "idle", status: "idle", updated_at: fresh, work: { phase: "done", closeout: { status: "done" } } }));
-    const got = run(todos, [workingSession, loneAgent, ...reviewSessions], plans);
-    const pageOpen = triageTodos(todos, makeSessionLookup([workingSession, loneAgent]), now).open;
+    const ready: Session = { machine_id: "box", session_id: "review-unseen", title: "Review", cwd: "/w", state: "unread", status: "idle", updated_at: fresh, work: { phase: "done", closeout: { status: "done" } } };
+    const got = run(todos, [workingSession, loneAgent, ready], plans);
+    const pageOpen = triageTodos(todos, makeSessionLookup([workingSession, loneAgent, ready]), now).open;
     const chipOpen = openTaskItems(got).filter((i) => i.countsOpen).length;
-    expect(pageOpen).toBe(3); // The board still files the seen reply separately; seeing it is not supervisor acceptance.
-    expect(openTaskItems(got).filter((i) => i.countsOpen).map((i) => i.key).sort())
-      .toEqual(["task:parked-stale", "task:review-seen", "task:review-unseen", "task:stale", "task:working"]);
-    expect(chipOpen).toBe(5); // An unattended old stop is visible in Needs you, not silently shelved.
-    expect(got.review.map((i) => i.key)).toEqual(["task:review-unseen", "task:review-seen"]);
+    expect(chipOpen).toBe(pageOpen - 1);
+    expect(chipOpen).toBe(2); // Working and Waiting; Just finished is deliberately not part of In progress.
+    expect(got.review).toEqual([]);
+    expect(got.justFinished.map((i) => i.key)).toContain("task:review-unseen");
     expect(got.needsYou.some((i) => i.kind === "plan")).toBe(true);
     expect(got.running.some((i) => i.kind === "agent")).toBe(true);
   });
@@ -192,18 +184,17 @@ describe("an Agent several to-dos list", () => {
   const run = (todos: Todo[], session = asking) => assistantEntries({ conversation: "main", main: "main", todos, sessions: [session], interactions: [approval], plans: {}, feed: [], now: Date.parse(at) });
   const withAsks = (got: ReturnType<typeof assistantEntries>) => got.needsYou.filter((i) => (i.kind === "task" || i.kind === "agent") && i.asks.length).map((i) => i.key);
 
-  it("asks under the to-do the hub ties its session to; non-running shared tasks are stopped", () => {
+  it("asks under the to-do the hub ties its session to; the others are in progress", () => {
     const got = run([todo("cache"), todo("release"), todo("tests")], { ...asking, todo: { id: "release", title: "release" } });
     expect(withAsks(got)).toEqual(["task:release"]);
     expect(got.needsYou.map((i) => i.key)).toEqual(["task:release"]);
-    expect(got.stopped.map((i) => i.key).sort()).toEqual(["task:cache", "task:tests"]);
-    expect(got.running).toEqual([]);
+    expect(got.running.map((i) => i.key).sort()).toEqual(["task:cache", "task:tests"]);
   });
 
   it("asks under the first to-do that lists it when the hub ties it to none of them", () => {
     const got = run([todo("cache"), todo("tests")]);
     expect(withAsks(got)).toEqual(["task:cache"]);
-    expect(got.stopped.map((i) => i.key)).toEqual(["task:tests"]);
+    expect(got.running.map((i) => i.key)).toEqual(["task:tests"]);
   });
 
   it("keeps another to-do's own decision in Needs you, without the Agent's card", () => {
@@ -246,7 +237,7 @@ describe("Just finished in the Assistant's entries", () => {
 describe("Persona reviewing in the Assistant's entries", () => {
   const now = Date.parse("2026-11-10T09:00:00Z");
   const at = "2026-11-10T06:00:00Z";
-  const idle = (id: string): Session => ({ machine_id: "box", session_id: id, title: id, cwd: "/w", state: "idle", status: "idle", updated_at: at, work: { phase: "done", closeout: { status: "done" } } } as Session);
+  const idle = (id: string): Session => ({ machine_id: "box", session_id: id, title: id, cwd: "/w", state: "idle", status: "idle", updated_at: at, work: { phase: "done", turn_at: at, closeout: { status: "done" } } } as Session);
   const task = (id: string, supervision: Todo["supervision"], patch: Partial<Todo> = {}): Todo => ({
     id, title: id, origin: "main", created_at: at, updated_at: at, agents: [{ machine_id: "box", session_id: id, linked_at: at }], supervision, ...patch,
   }) as Todo;
@@ -261,9 +252,9 @@ describe("Persona reviewing in the Assistant's entries", () => {
       task("needs-user", { supervisor: "main", state: "needs_user" }),
     ], ["fresh", "overdue", "old-hub", "needs-user"].map(idle));
     expect(keys(got.needsYou)).toEqual(["task:needs-user"]);
-    expect(keys(got.review).sort()).toEqual(["task:fresh", "task:old-hub", "task:overdue"]);
+    expect(keys(got.justFinished).sort()).toEqual(["task:fresh", "task:old-hub", "task:overdue"]);
     expect(got.running).toEqual([]);
-    expect(got.review.every((item) => item.kind === "task" && item.countsOpen)).toBe(true);
+    expect(got.justFinished.every((item) => item.kind === "task" && !item.countsOpen)).toBe(true);
   });
 
   it("leaves a review whose Agent works again in progress, and a review is never Waiting for merge", () => {
@@ -274,7 +265,7 @@ describe("Persona reviewing in the Assistant's entries", () => {
       task("with-pr", { supervisor: "main", state: "pending_review" }, { seen_at: "2026-11-10T08:40:00Z", pr_url: pr, pr_status: { url: pr, state: "open", draft: false, review: "required", checks: "success", conflicts: false, checked_at: "2026-11-10T08:55:00Z" } }),
     ], [working, idle("with-pr")]);
     expect(keys(got.running)).toEqual(["task:working"]);
-    expect(keys(got.review)).toEqual(["task:with-pr"]);
+    expect(keys(got.justFinished)).toEqual(["task:with-pr"]);
     expect(got.parked).toEqual([]);
     expect(got.needsYou).toEqual([]);
   });

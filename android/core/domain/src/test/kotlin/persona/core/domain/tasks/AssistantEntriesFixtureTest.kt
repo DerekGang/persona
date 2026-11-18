@@ -38,12 +38,13 @@ class AssistantEntriesFixtureTest(private val name: String, private val fixture:
         )
         assertEquals(name, expected.keys("needs_you"), got.needsYou.map { it.key })
         assertEquals(name, expected.keys("running"), got.running.map { it.key })
-        assertEquals(name, expected["review"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(), got.review.map { it.key })
-        assertEquals(name, expected["stopped"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(), got.stopped.map { it.key })
-        assertEquals(name, expected["parked"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(), got.parked.map { it.key })
         assertEquals(name, expected.keys("shelved"), got.shelved.map { it.key })
+        assertEquals(name, expected.keys("just_finished"), got.justFinished.map { it.key })
+        // the In progress rows that say their supervisor is reviewing them
+        assertEquals(name, expected["supervisor_review"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
+            got.running.filter { it is RunningEntry.Task && it.supervisorReview }.map { it.key })
         for ((key, value) in (expected["activity"] as? JsonObject).orEmpty()) {
-            val row = (got.running + got.stopped + got.parked).first { it.key == key }
+            val row = got.running.first { it.key == key }
             val work = when (row) { is RunningEntry.Task -> row.activity; is RunningEntry.Agent -> row.activity }
             if (value == kotlinx.serialization.json.JsonNull) assertEquals(name, null, work)
             else {
@@ -54,11 +55,10 @@ class AssistantEntriesFixtureTest(private val name: String, private val fixture:
                 wanted["phase"]?.let { assertEquals(name, it.jsonPrimitive.content, work?.workflow?.phase) }
                 wanted["progress"]?.let { assertEquals(name, it.jsonPrimitive.content, work?.workflow?.let(persona.core.domain.sort.WorkflowTimeline::counts)) }
             }
-            if (name == "external_wait_without_background_keeps_clock") assertTrue(name, row in got.stopped)
+            if (name == "external_wait_without_background_keeps_clock") assertTrue(name, (row as RunningEntry.Task).waiting)
         }
         // one entry each, and no agent of a listed task on its own
-        val keys = (got.needsYou.map { it.key } + got.running.map { it.key } + got.shelved.map { it.key }
-            + got.review.map { it.key } + got.stopped.map { it.key } + got.parked.map { it.key })
+        val keys = got.needsYou.map { it.key } + got.running.map { it.key } + got.shelved.map { it.key } + got.justFinished.map { it.key }
         assertEquals(name, keys.size, keys.toSet().size)
         val taskAgents = todos.filter { !it.isDone && "task:${it.id}" in keys }
             .flatMap { t -> t.activeAgents.map { "agent:${it.machineId}/${it.sessionId}" } }.toSet()

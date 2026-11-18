@@ -1,4 +1,4 @@
-// Five peer task groups in the real web app, with synthetic HTTP/WS only and no connection to a user's hub.
+// The decided Needs you / In progress entries in the real web app, with synthetic HTTP/WS only and no connection to a user's hub.
 // Checks closeout versus acceptance, external waits, phone bounds, both themes and large translated text.
 // node web/e2e/task-closeout-groups.mjs <web URL> --shots <directory> [--chromium <executable>]
 import assert from "node:assert/strict";
@@ -22,11 +22,11 @@ const watchdog = setTimeout(() => { console.error("TIMEOUT task-closeout-groups 
 const sid = "task-closeout-demo";
 const readings = [];
 const words = {
-  en: { groups: ["Needs you", "In progress", "Awaiting acceptance", "Stopped, unfinished", "Parked"],
+  en: { groups: ["Needs you", "In progress"],
     done: "Reported done · awaiting acceptance", unfinished: "Stopped · unfinished", hint: "Supervisor: confirm the wait and park this task" },
-  "zh-Hans": { groups: ["要你处理", "进行中", "待验收", "停下没做完", "搁置"],
+  "zh-Hans": { groups: ["要你处理", "进行中"],
     done: "做完了·待验收", unfinished: "停下·没做完", hint: "请督办确认等待并挂搁置" },
-  ja: { groups: ["要対応", "進行中", "確認待ち", "停止・未完了", "保留中"],
+  ja: { groups: ["要対応", "進行中"],
     done: "完了報告・確認待ち", unfinished: "停止・未完了", hint: "監督役：待機を確認して保留してください" },
 };
 
@@ -101,7 +101,7 @@ async function run(browser, size, theme, language, textSize = "standard") {
     await page.goto(`${base}/`);
     const entries = page.locator("[data-tray-entry]");
     await entries.last().waitFor();
-    assert.deepEqual(await entries.evaluateAll((els) => els.map((el) => el.dataset.trayEntry)), ["needs", "running", "review", "stopped", "parked"]);
+    assert.deepEqual(await entries.evaluateAll((els) => els.map((el) => el.dataset.trayEntry)), ["needs", "running"]);
     const labels = await entries.allTextContents();
     words[language].groups.forEach((label, i) => assert(labels[i].startsWith(label), `group ${i}: ${labels[i]} starts with ${label}`));
     const reads = apiReads.length;
@@ -112,35 +112,28 @@ async function run(browser, size, theme, language, textSize = "standard") {
     };
     await open("needs");
     assert.equal(await page.locator("[data-needs-row]").count(), 2, "owner decision and an unattended stopped task only");
+    await page.locator('button[data-needs-row="task:unattended"]').click();
+    assert.equal(await page.locator('[data-needs-reason="stopped_unfinished"]').count(), 1);
+    await page.screenshot({ path: name("needs-you") });
     await open("running");
-    assert.equal(await page.locator("[data-task-slot]").count(), 1);
+    assert.equal(await page.locator("[data-task-slot]").count(), 2, "working plus an uncounted reported finish");
     assert.equal(await page.locator('[data-task-status="working"]').count(), 1);
-    await open("review");
-    assert.equal(await page.locator("[data-task-slot]").count(), 1);
-    assert.equal(await page.locator('[data-task-status="review"]').textContent(), words[language].done);
+    assert.equal(await page.locator('[data-task-status="reported_done"]').textContent(), words[language].done);
     assert.equal(await page.locator('[data-task-mark="done"]').count(), 0, "reported done is not accepted");
+    assert.equal(await page.locator("[data-progress-just-finished]").count(), 1);
+    assert.equal(await page.locator('[data-task-status="reported_done"]').locator('xpath=ancestor::*[@data-task-slot]').getAttribute("data-counts-open"), "false");
     await page.screenshot({ path: name("acceptance") });
-    await open("stopped");
-    assert.equal(await page.locator("[data-task-slot]").count(), 3, "not_done, blocked/external and missing closeouts");
-    assert.equal(await page.locator('[data-task-status="unfinished"]').count(), 2);
-    assert.equal(await page.locator('[data-task-status="blocked"]').count(), 1);
-    assert((await page.locator('[data-task-status="blocked"]').textContent()).includes("the maintainer"));
-    assert.equal(await page.locator("[data-task-park-hint]").textContent(), words[language].hint);
-    assert.equal(await page.locator('[data-task-mark="done"], [data-task-mark="unread"], [data-task-mark="working"]').count(), 0);
-    assert.equal(await page.locator("[data-task-todo-state]").count(), 3, "every Agent row names its to-do state separately");
-    if (size === "narrow") assert(await page.locator("[data-task-content]").first().evaluate((el) => el.getBoundingClientRect().width > 230),
-      "long waiting labels leave the title a readable width on phones");
-    assert(!(await page.locator(".assistant-action-tray").innerText()).includes("完成未看"));
-    await page.screenshot({ path: name("stopped") });
-    await open("parked");
     await page.locator('[data-parked-task-row="parked"]').waitFor();
     assert.equal(await page.locator("[data-parked-task-row]").count(), 1, "explicit park wins over blocked/external");
     assert.equal(await page.locator('[data-needs-row="task:parked"]').count(), 0);
-    await page.screenshot({ path: name("parked") });
+    assert.equal(await page.locator('[data-task-status="unread"]').count(), 0, "an unread reply never claims completion");
+    assert(!(await page.locator(".assistant-action-tray").innerText()).includes("完成未看"));
+    await noOverflow();
+    await page.screenshot({ path: name("waiting") });
     assert.equal(apiReads.length, reads, "switching groups does not fetch or mutate a to-do");
     assert.deepEqual(errors, []);
-    readings.push({ size, theme, language, textSize, needsYou: 2, running: 1, acceptance: 1, stopped: 3, parked: 1, groupApiReads: 0 });
-    console.log(`PASS ${size} ${theme} ${language} ${textSize}: groups=5, needs_you=2, running=1, acceptance=1, stopped=3, parked=1, group_api_reads=0`);
+    readings.push({ size, theme, language, textSize, entries: 2, needsYou: 2, working: 1, waiting: 1, justFinishedUncounted: 1, recentStoppedOnTodos: 3, groupApiReads: 0 });
+    console.log(`PASS ${size} ${theme} ${language} ${textSize}: entries=2, needs_you=2, working=1, waiting=1, just_finished_uncounted=1, group_api_reads=0`);
   } catch (error) {
     await page.screenshot({ path: name("failed") }).catch(() => {});
     throw error;

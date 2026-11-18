@@ -70,17 +70,18 @@ class AssistantEntriesDecisionDismissalTest {
         assertEquals(listOf("task:task"), got.needsYou.map { it.key })
     }
 
-    @Test fun acceptanceReviewDoesNotBecomeAnOwnerDecisionByAge() {
-        fun pending(age: Long) = dismissed.copy(supervision = dismissed.supervision!!.copy(state = "pending_review",
-            pendingSince = Instant.parse(at).minusMillis(age).toString()))
-        val reportedDone = idle.copy(work = persona.core.contracts.WorkState(phase = "done",
-            closeout = persona.core.contracts.Closeout(status = "done")))
-        for (age in listOf(STOP_FOLLOWUP_MS - 1, STOP_FOLLOWUP_MS, 24 * STOP_FOLLOWUP_MS)) {
-            for (todo in listOf(pending(age), pending(age).copy(decisionReview = null))) {
-                val got = run(todo, reportedDone)
+    /** A reported finish is the supervisor's acceptance work, not an owner decision that ages into Needs you. */
+    @Test fun dismissalDoesNotHideAnAcceptanceOrTurnItIntoAnOwnerDecision() {
+        val reported = idle.copy(work = persona.core.contracts.WorkState("done",
+            closeout = persona.core.contracts.Closeout("done")))
+        for (age in listOf(REVIEW_OVERDUE_MS - 1, REVIEW_OVERDUE_MS, REVIEW_OVERDUE_MS + 1)) {
+            val pending = dismissed.copy(supervision = dismissed.supervision!!.copy(state = "pending_review",
+                pendingSince = Instant.parse(at).minusMillis(age).toString()))
+            for (todo in listOf(pending, pending.copy(decisionReview = null))) {
+                val got = run(todo, reported)
                 assertTrue(got.needsYou.isEmpty())
                 assertTrue(got.running.isEmpty())
-                assertEquals(listOf("task:task"), got.review.map { it.key })
+                assertEquals(listOf("task:task"), got.justFinished.map { it.key })
             }
         }
     }

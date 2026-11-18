@@ -14,7 +14,7 @@ class TaskCloseoutGroupsMockTests(unittest.TestCase):
         cls.hub = Mock(port, MOCK_TASKS="1", MOCK_TASKS_NO_ASKS="1", MOCK_TASK_CLOSEOUT_GROUPS="1")
         cls.addClassCleanup(cls.hub.stop)
 
-    def test_five_groups_have_six_unaccepted_tasks(self):
+    def test_closeouts_have_six_unaccepted_tasks(self):
         todos = self.hub.get("/api/v1/todos")["todos"]
         self.assertEqual(len(todos), 6)
         self.assertTrue(all(not t.get("done_at") for t in todos))

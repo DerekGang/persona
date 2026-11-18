@@ -35,14 +35,14 @@ class AssistantEntriesSharedAgentTest {
         }
     }.map { it.key }
 
-    @Test fun asksUnderTheTodoTheHubTiesItsSessionToAndTheOthersAreStopped() {
+    @Test fun asksUnderTheTodoTheHubTiesItsSessionToAndTheOthersAreInProgress() {
         val got = run(listOf(todo("cache"), todo("release"), todo("tests")),
             asking.copy(todo = SessionTodo("release", "release")))
         assertEquals(listOf("task:release"), withAsks(got))
         assertEquals(listOf("task:release"), got.needsYou.map { it.key })
-        assertEquals(listOf("task:cache", "task:tests"), got.stopped.map { it.key }.sorted())
-        assertTrue(got.stopped.all { (it as RunningEntry.Task).status == TriageStatus.FollowUp })
-        assertTrue(got.stopped.all { (it as RunningEntry.Task).hasAgentsElsewhere })
+        assertEquals(listOf("task:cache", "task:tests"), got.running.map { it.key }.sorted())
+        assertTrue(got.running.all { (it as RunningEntry.Task).status == TriageStatus.Working })
+        assertTrue(got.running.all { (it as RunningEntry.Task).hasAgentsElsewhere })
         assertTrue(got.shelved.isEmpty())
     }
 
@@ -51,7 +51,7 @@ class AssistantEntriesSharedAgentTest {
             val got = run(listOf(todo("cache"), todo("tests")), asking.copy(todo = tied))
             assertEquals(listOf("task:cache"), withAsks(got))
             assertEquals(listOf("task:cache"), got.needsYou.map { it.key })
-            assertEquals(listOf("task:tests"), got.stopped.map { it.key })
+            assertEquals(listOf("task:tests"), got.running.map { it.key })
         }
     }
 
@@ -102,13 +102,13 @@ class AssistantEntriesSharedAgentTest {
         val got = run(listOf(todo("cache"), todo("tests")), asking.copy(todo = SessionTodo("tests", "tests")),
             interactions = emptyList())
         assertEquals(listOf("task:tests"), got.needsYou.map { it.key })
-        assertEquals(listOf("task:cache"), got.stopped.map { it.key })
-        assertTrue((got.stopped.single() as RunningEntry.Task).hasAgentsElsewhere)
+        assertEquals(listOf("task:cache"), got.running.map { it.key })
+        assertTrue((got.running.single() as RunningEntry.Task).hasAgentsElsewhere)
     }
 
     @Test fun anUnsharedAgentsTaskDoesNotHaveAgentsElsewhere() {
-        val got = run(listOf(todo("only")), asking.copy(state = "idle", status = "idle"), interactions = emptyList())
-        assertEquals(listOf("task:only"), got.stopped.map { it.key })
-        assertFalse((got.stopped.single() as RunningEntry.Task).hasAgentsElsewhere)
+        val got = run(listOf(todo("only")), asking.copy(state = "working", status = "working"), interactions = emptyList())
+        assertEquals(listOf("task:only"), got.running.map { it.key })
+        assertFalse((got.running.single() as RunningEntry.Task).hasAgentsElsewhere)
     }
 }

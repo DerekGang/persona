@@ -16,11 +16,11 @@ const entries = (s = agent, t = todo, clock = now) => assistantEntries({ convers
   todos: [t], sessions: [s], interactions: [], plans: {}, feed: [], now: clock });
 const keys = (rows: { key: string }[]) => rows.map((r) => r.key);
 
-describe("closeout-based task groups", () => {
+describe("closeout-based entries aligned with #10174", () => {
   it.each(["not_done", "blocked", undefined])("keeps a stopped %s turn unfinished, unread or seen", (status) => {
     for (const state of ["unread", "idle"] as const) {
       const got = entries({ ...agent, state, work: status ? { phase: "", closeout: { status, waiting: "the design team" } } : undefined });
-      expect(keys(got.stopped)).toEqual(["task:task"]);
+      expect(got.justFinished).toEqual([]);
       expect(got.running).toEqual([]);
       expect(got.review).toEqual([]);
       expect(got.needsYou).toEqual([]);
@@ -30,16 +30,25 @@ describe("closeout-based task groups", () => {
     const s: Session = { ...agent, work: { phase: "done", closeout: { status: "done" } } };
     for (const state of ["", "pending_review"] as const) {
       const got = entries(s, { ...todo, supervision: { ...todo.supervision!, state } }, now + 24 * STOP_FOLLOWUP_MS);
-      expect(keys(got.review)).toEqual(["task:task"]);
-      expect([...got.running, ...got.stopped, ...got.needsYou]).toEqual([]);
+      expect(keys(got.justFinished)).toEqual(["task:task"]);
+      expect(got.review).toEqual([]);
+      expect([...got.running, ...got.needsYou]).toEqual([]);
     }
+  });
+  it("keeps a seen reported finish in Just finished before its acceptance ledger arrives", () => {
+    const stopped: Session = { ...agent, state: "idle", work: { phase: "done", closeout: { status: "done" } } };
+    const awaiting: Todo = { ...todo, seen_at: new Date(now).toISOString(), supervision: { supervisor: "main", state: "" } };
+    const got = entries(stopped, awaiting, now + 1);
+    expect(keys(got.justFinished)).toEqual(["task:task"]);
+    expect([...got.running, ...got.needsYou, ...got.review]).toEqual([]);
+    expect(got.justFinished[0]).toMatchObject({ countsOpen: false });
   });
   it("does not call an unread stopped Agent running when another Agent really runs", () => {
     const second: Session = { ...agent, session_id: "second", state: "working", status: "running" };
     const got = assistantEntries({ conversation: "main", main: "main", todos: [{ ...todo, agents: [...todo.agents!,
       { machine_id: "box", session_id: "second", linked_at: at }] }], sessions: [agent, second], interactions: [], plans: {}, feed: [], now });
     expect(keys(got.running)).toEqual(["task:task"]);
-    expect([...got.stopped, ...got.review]).toEqual([]);
+    expect([...got.review]).toEqual([]);
   });
   it("ignores an old done closeout on a resumed Agent", () => {
     const got = entries({ ...agent, state: "working", work: { phase: "working", closeout: { status: "done" } } });
@@ -50,10 +59,11 @@ describe("closeout-based task groups", () => {
     expect(entries(agent, todo, now).needsYou).toEqual([]);
     expect(keys(entries(agent, todo, now + 1).needsYou)).toEqual(["task:task"]);
     const followed = { ...todo, supervision: { ...todo.supervision!, followed_up_at: new Date(now).toISOString() } };
-    expect(keys(entries(agent, followed, now + 1).stopped)).toEqual(["task:task"]);
+    expect(entries(agent, followed, now + 1).needsYou).toEqual([]);
+    expect(entries(agent, followed, now + 1).justFinished).toEqual([]);
     expect(keys(entries(agent, { ...todo, supervision: { ...todo.supervision!, reviews: [
       { at: new Date(now).toISOString(), verdict: "rework" },
-    ] } }, now + 1).stopped)).toEqual(["task:task"]);
+    ] } }, now + 1).needsYou)).toEqual([]);
     const automatic = { ...todo, supervision: { ...todo.supervision!, updated_at: new Date(now).toISOString(), reviews: [
       { at: new Date(now).toISOString(), verdict: "rework" as const, by: "reviewer" as const },
     ] } };
@@ -64,7 +74,7 @@ describe("closeout-based task groups", () => {
       parked: { reason: "Waiting for the maintainer", until: "2026-12-01T00:00:00Z", waiting_on: "someone_else" as const, count: 1 } } };
     const got = entries(agent, parked, now + 48 * STOP_FOLLOWUP_MS);
     expect(keys(got.parked)).toEqual(["task:task"]);
-    expect([...got.running, ...got.review, ...got.stopped, ...got.needsYou]).toEqual([]);
+    expect([...got.running, ...got.review, ...got.needsYou]).toEqual([]);
   });
   it("does not let blocked/external waiting override an explicit park", () => {
     const s: Session = { ...agent, state: "idle", work: { phase: "blocked", on: "external", turn_at: at,
@@ -72,7 +82,7 @@ describe("closeout-based task groups", () => {
     const t: Todo = { ...todo, stage: "review", supervision: { ...todo.supervision!, state: "parked",
       parked: { reason: "Waiting for re-review", waiting_on: "someone_else", until: "2026-12-01T00:00:00Z", count: 1 } } };
     expect(keys(entries(s, t, now + 24 * STOP_FOLLOWUP_MS).parked)).toEqual(["task:task"]);
-    expect(keys(entries(s, { ...t, supervision: undefined }).stopped)).toEqual(["task:task"]);
+    expect(keys(entries(s, { ...t, supervision: undefined }, now + 1).needsYou)).toEqual(["task:task"]);
     expect(entries(s, { ...t, supervision: undefined }).running).toEqual([]);
     expect(keys(entries({ ...s, background_tasks_count: 1 }, t).running)).toEqual(["task:task"]);
     expect(keys(entries(s, { ...t, ask: { outcome: "decide", asked_at: at, verdict: "Choose a release track" } }).needsYou)).toEqual(["task:task"]);
@@ -87,7 +97,7 @@ describe("closeout-based task groups", () => {
     const accepted = { ...todo, supervision: { ...todo.supervision!, state: "accepted" as const,
       reviews: [{ at, verdict: "accepted" as const }] } };
     const got = entries(agent, accepted, now + 24 * STOP_FOLLOWUP_MS);
-    expect([...got.running, ...got.stopped, ...got.review, ...got.needsYou]).toEqual([]);
+    expect([...got.running, ...got.review, ...got.needsYou]).toEqual([]);
   });
 });
 

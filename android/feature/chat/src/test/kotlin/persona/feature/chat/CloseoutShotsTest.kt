@@ -229,8 +229,8 @@ class CloseoutShotsTest {
                 AskOption("Release to 10% first", "A staged rollout; widen it once the crash rate is known")),
             costOfWaiting = "The importer fix in 2.4 stays unreleased", default = "never",
             responses = listOf("decide_yourself", "not_what_i_asked", "explain_first")))
-    private val orphan = Todo("task-billing", stopped.title, origin = "main", createdAt = Instant.now().toString(), updatedAt = askedAt,
-        agents = listOf(TodoAgent(stopped.machineId, stopped.sessionId)), orphaned = TodoOrphaned("error", askedAt))
+    private val orphan = Todo("task-billing", stopped.title, origin = "main", createdAt = Instant.now().minusSeconds(3700).toString(), updatedAt = askedAt,
+        agents = listOf(TodoAgent(stopped.machineId, stopped.sessionId, linkedAt = Instant.now().minusSeconds(3700).toString())), orphaned = TodoOrphaned("error", askedAt))
 
     @Test
     @Config(sdk = [35], qualifiers = "en-w400dp-h1000dp-xhdpi")
@@ -294,11 +294,12 @@ class CloseoutShotsTest {
             rule.onNodeWithTag("decision-done", useUnmergedTree = true).assertTextEquals("Sent back to Persona")
             // the next variant starts from the unanswered round again
             tasks.reloadTodos(); settle()
-            rule.tapTray("stopped"); settle()
+            if (rule.onAllNodesWithTag("assistant-tray-needs").fetchSemanticsNodes().isEmpty()) rule.tapTray("needs")
+            settle()
             rule.onNodeWithTag("assistant-orphaned-todo:${orphan.id}", useUnmergedTree = true)
                 .assertTextEquals("Nobody is working on this · closed after an error")
             shot("orphaned-${variant(s, d)}")
-            rule.tapTray("stopped"); settle()
+            rule.tapTray("needs"); settle()
         }
         // the largest text: the buttons keep one line each; what no longer fits is in the menu
         style = AppStyle.Glass; dark = false; large = true; settle()

@@ -120,7 +120,7 @@ class AssistantChatDetailsShotsTest {
         File(output, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    @Test fun unattendedTasksStayVisibleAndNextAndGettingReadyAsOnIos() {
+    @Test fun shelvedNextAndGettingReadyAsOnIos() {
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
         var round by mutableIntStateOf(0)
@@ -152,10 +152,10 @@ class AssistantChatDetailsShotsTest {
             rule.waitUntil(10_000) { rule.onAllNodesWithTag("assistant-tray-bar").fetchSemanticsNodes().isNotEmpty() }
             rule.onNodeWithText("Ask Persona…").assertExists()
 
-            // Stale unaccepted tasks escalate; they are not silently hidden in shelved.
+            // In progress: the running task, and on Glass the two shelved ones as one quiet line.
             rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
             shot("$name-1-in-progress")
-            rule.onAllNodesWithTag("assistant-tray-shelved").assertCountEquals(0)
+            rule.onAllNodesWithTag("assistant-tray-shelved").assertCountEquals(if (s == AppStyle.Glass) 1 else 0)
             rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
 
             // Needs you: approving the last card here offers the next one waiting elsewhere, as an Agent's chat does.
@@ -172,11 +172,11 @@ class AssistantChatDetailsShotsTest {
             rule.onNodeWithText("Persona is getting ready…").assertExists()
             shot("$name-4-getting-ready")
 
-            // The existing All action still opens the board; unattended work is no longer a shelved line.
+            // The shelved line opens the board, which lists them.
             if (s != AppStyle.Glass) continue
             rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
-            rule.onNodeWithText("Shelved").assertDoesNotExist()
-            rule.onNodeWithTag("assistant-task-board").performClick(); settle()
+            rule.onNodeWithText("Shelved").assertExists()
+            rule.onNodeWithTag("assistant-tray-shelved").performClick(); settle()
             rule.mainClock.advanceTimeBy(1_000); rule.waitForIdle() // the sheet slides up
             rule.onNodeWithText("Tidy the release notes").assertExists()
             // iOS's board has no Shelved section either (`TaskBoardSheet`): a shelved task sits under its own state, with the

@@ -5,8 +5,8 @@
 // side panel.
 import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { taskMeter, type TaskCardMetadata } from "../../lib/task-cards";
-import { agentRowKey, agentRowLabel, agentRowMark, agentRowTone, todoChipLabel, todoChipState } from "../../lib/task-row-status";
 import { shownCloseout } from "../../lib/closeout";
+import { agentRowKey, agentRowLabel, agentRowMark, agentRowTone, todoChipLabel, todoChipState } from "../../lib/task-row-status";
 import { assistantEntries, needsYouBySupervisor, taskAwaitsDecision, type NeedsYouItem } from "../../lib/assistant-entries";
 import { useRestoredTodos } from "../../lib/todo-restore";
 import {
@@ -750,10 +750,10 @@ function dockTasksIn(s: State, conversation: string, plans: Record<string, TaskP
     });
 }
 
-type AssistantTray = "needs" | "running" | "parked" | "review" | "stopped";
+type AssistantTray = "needs" | "running";
 /** Each entry's mark: Needs you waits on the user, In progress is work under way; Persona reviewing is neutral, since
  *  nothing in it is the user's (#8678). */
-const TRAY_DOT: Record<AssistantTray, string> = { needs: "bg-attention", running: "bg-accent", parked: "bg-ink-3", review: "bg-ink-3", stopped: "bg-ink-3" };
+const TRAY_DOT: Record<AssistantTray, string> = { needs: "bg-attention", running: "bg-accent" };
 const EMPTY_FEED: FeedItem[] = [];
 const EMPTY_CARDS: TaskCardMetadata[] = [];
 
@@ -1048,17 +1048,22 @@ function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr }: { rowKey?: str
     return done ? field(done, "summary") : undefined;
   });
   const cutOff = status === "interrupted";
-  const unattended = status !== "needs_you" && !cutOff && !taskAwaitsDecision(todo);
   const cut = cutOff ? interruption(task?.lead) : undefined;
   const canContinue = cutOff && (cut ? cut.canContinue : true);
-  const line = unattended ? t("assistant-tasks.tray_unattended") : cut ? cut.reason : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || progressOf(task?.lead)?.text : undefined;
+  const unattended = !cutOff && !taskAwaitsDecision(todo);
+  const stopped = unattended ? stoppedReason(todo, status) : undefined;
+  const line = cut ? cut.reason : unattended
+    ? (stopped !== undefined ? stopped ? t("assistant-tasks.progress_stopped_reason", { reason: stopped }) : t("assistant-tasks.progress_stopped")
+      : shownCloseout(task?.lead)?.waiting || progressOf(task?.lead)?.text || task?.lead?.last_text || t("assistant-tasks.tray_unattended"))
+    : todo.supervision?.state === "pending_review" ? (summary && plainMarkdown(summary)) || progressOf(task?.lead)?.text : undefined;
   return (
-    <div data-needs-row={rowKey} {...countsOpenAttr} data-waiting-task={todo.id} className={cx("flex flex-col gap-1.5 rounded-control px-3 py-2 text-sm", cutOff ? "bg-danger-wash" : "bg-field")}>
+    <div data-needs-row={rowKey} {...countsOpenAttr} data-waiting-task={todo.id} data-needs-reason={unattended ? "stopped_unfinished" : undefined} className={cx("flex flex-col gap-1.5 rounded-control px-3 py-2 text-sm", cutOff ? "bg-danger-wash" : "bg-field")}>
       <div className="flex min-w-0 items-center gap-2">
         <Icon name={cutOff ? "info" : "hand"} className={cx("shrink-0", cutOff ? "text-red" : "text-attention")} />
         <button type="button" onClick={() => openTask(todo.id)} className="min-w-0 flex-1 truncate text-left hover:underline">{todo.title}</button>
-        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{unattended ? t("assistant-tasks.agent_unfinished") : waitsLabel(todo, status)}</span>
+        <span className={cx("shrink-0 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{waitsLabel(todo, status)}</span>
       </div>
+      {unattended && <div className="pl-6 text-xs text-ink-2">{t("assistant-tasks.tray_unattended")}</div>}
       {line && <div className={cx("truncate pl-6 text-xs", cutOff ? "text-ink" : "text-ink-2")}>{line}</div>}
       {canContinue && (
         <div className={ROW_ACTIONS}>
@@ -1200,7 +1205,7 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   // no to-do — hand-opened Agents, plans waiting for Start, draft cards, the chat's own ask cards — still add one.
   const badgeOf = (items: { kind: string; countsOpen?: boolean }[]) =>
     items.reduce((n, item) => n + (item.kind === "task" ? (item.countsOpen ? 1 : 0) : 1), 0);
-  const counts: Record<AssistantTray, number> = { needs: ownAsks.length + badgeOf(entries.needsYou), running: badgeOf(entries.running), parked: badgeOf(entries.parked), review: badgeOf(entries.review), stopped: badgeOf(entries.stopped) };
+  const counts: Record<AssistantTray, number> = { needs: ownAsks.length + badgeOf(entries.needsYou), running: badgeOf(entries.running) + badgeOf(entries.parked) };
   // the card is in the chat already: close the tray onto it and bring it into view
   const openOwn = (id: string) => {
     setTray(null);
@@ -1215,9 +1220,8 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
       window.removeEventListener("persona:task-start", needs);
     };
   }, [conversation]);
-  const labels: Record<AssistantTray, string> = { needs: t("assistant-tasks.tray_needs_you"), running: t("assistant-tasks.tray_running"), parked: t("todos.section_parked"), review: t("assistant-tasks.tray_acceptance"), stopped: t("assistant-tasks.tray_stopped") };
-  // Parked is a peer, not folded inside In progress; keep an emptied tray reachable until it closes.
-  const entryKeys: AssistantTray[] = ["needs", "running", "review", "stopped", "parked"];
+  const labels: Record<AssistantTray, string> = { needs: t("assistant-tasks.tray_needs_you"), running: t("assistant-tasks.tray_running") };
+  const entryKeys: AssistantTray[] = ["needs", "running"];
   const entryButtons = useRef<Partial<Record<AssistantTray, HTMLButtonElement | null>>>({});
   // Esc closes the open tray from its entry, its header and its rows, and hands the focus back to the entry; it stops
   // there, never on to the window, where the chat's Esc would stop a working turn. Not while a menu or dialog is open
@@ -1246,7 +1250,11 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
           <div data-tray-list className="min-h-0 grow overflow-y-auto overscroll-contain">
           {tray === "running" && <div className="divide-y divide-line">
             {entries.running.map((item) => item.kind === "task" ? <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} activity={item.activity} countsOpen={item.countsOpen} /> : <RunningAgentRow key={item.key} session={item.session} activity={item.activity} />)}
-            {!entries.running.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_progress")}</p>}
+            {!entries.running.length && !entries.parked.length && !entries.justFinished.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_progress")}</p>}
+            {entries.parked.length > 0 && <>
+              <h3 className="px-3 py-2 text-xs text-ink-2">{stateName("task_waiting")}</h3>
+              <Suspense fallback={<Loading />}><ParkedTasks items={entries.parked} /></Suspense>
+            </>}
             {entries.shelved.length > 0 && (
               <button type="button" data-progress-shelved aria-expanded={showShelved} onClick={() => setShowShelved((v) => !v)} title={t("assistant-tasks.tray_shelved_hint")} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink-2 hover:bg-hover">
                 <Icon name={showShelved ? "chevron" : "chevronRight"} size={12} className="shrink-0" />
@@ -1262,18 +1270,6 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
               </div>
             )}
             {entries.justFinished.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={false} onOpen={() => seeJustFinished(item.todo)} />)}
-          </div>}
-          {tray === "review" && <div className="divide-y divide-line">
-            {entries.review.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} supervisorReview />)}
-            {!entries.review.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_review")}</p>}
-          </div>}
-          {tray === "stopped" && <div className="divide-y divide-line">
-            {entries.stopped.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={item.countsOpen} />)}
-            {!entries.stopped.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_stopped")}</p>}
-          </div>}
-          {tray === "parked" && <div className="divide-y divide-line">
-            <Suspense fallback={<Loading />}><ParkedTasks items={entries.parked} /></Suspense>
-            {!entries.parked.length && <p className="px-3 py-3 text-sm text-ink-2">{t("assistant-tasks.tray_empty_parked")}</p>}
           </div>}
           {tray === "needs" && <div className="flex flex-col gap-2 p-2">
             {asking.map((item) => <NeedsYouRow key={item.key} item={item} open={openRows.has(openKey(item))} onToggle={() => toggleRow(openKey(item))} />)}
@@ -1307,7 +1303,7 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
               aria-expanded={open}
               aria-controls={open ? trayId : undefined}
               onClick={() => setTray(open ? null : key)}
-              className={cx(DOCK_CAPSULE, "gap-2 font-medium", open ? "bg-ink text-surface" : quiet ? "bg-field text-ink-3 hover:bg-hover" : key === "review" || key === "parked" ? "bg-field text-ink-2 hover:bg-hover" : "bg-field text-ink hover:bg-hover")}
+              className={cx(DOCK_CAPSULE, "gap-2 font-medium", open ? "bg-ink text-surface" : quiet ? "bg-field text-ink-3 hover:bg-hover" : "bg-field text-ink hover:bg-hover")}
             >
               <span aria-hidden className={cx("size-2 shrink-0 rounded-full", quiet ? "bg-ink-3" : TRAY_DOT[key])} />
               <span>{labels[key]}</span>

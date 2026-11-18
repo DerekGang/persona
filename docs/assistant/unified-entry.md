@@ -124,55 +124,49 @@ After acceptance, workspaces are **silently retained**: no cleanup, recycling, o
 
 ### Needs you and In progress: each thing once (#3387)
 
-The Web, iOS / iPad / Mac, and Android composer has five peer entries, in this order. They reuse the existing tray,
-row, status-mark and horizontal-scroller patterns; empty entries remain visible in secondary ink. There is no parent
-"In progress" group containing the other task states. Each task has one home and one count.
+The 2026-11-18 decision in #10051, implemented in stages by #10174, replaces the five-peer-group proposal in #9823.
+The composer keeps **Needs you** and **In progress**. Awaiting acceptance is an uncounted **Just finished** group
+inside In progress; explicit parks and ready review/merge waits are **Waiting** inside it, not a Parked peer.
+Stopped unfinished work is a Needs you reason, not an entry of its own. The to-do list's decided section order is
+Needs you, Working, Waiting, To do, Just finished, then folded Someday and Done
+(`docs/design/proposals/todos-redesign.md`, "Owner decisions"). This slice does not build that new list or its bar.
 
-| Entry | Admission | Row meaning |
-| --- | --- | --- |
-| Needs you | An Agent's unanswered question, an open owner ask, `needs_user`, an interrupted turn or retryable failed start; also stopped unfinished work unattended for **more than** one hour | What the owner can answer or the supervisor has failed to follow up |
-| In progress | A current Agent actually working or starting, including background commands, workflows and subagents | Actual execution, not an unread reply or a generic external wait |
-| Awaiting acceptance | Nothing running, Agent closeout `status=done`, not accepted/closed and not intentionally parked | Reported done, not supervisor-verified completion |
-| Stopped, unfinished | Nothing running, closeout `not_done` / `blocked` or missing, and no intentional park | Stopped unfinished, or stopped waiting for the named party |
-| Parked | An explicit supervisor hold or the existing fresh, matching open non-draft PR wait | Intentional external wait; preserve evidence, target, contact, wake and age |
+- **Needs you**: a current Agent question, an open task ask or explicit `needs_user`, an interrupted turn, a failed
+  start the owner can retry, and stopped unfinished work unattended for **more than one hour**. A plan waiting for
+  Start, a draft waiting for Send, the conversation's own pending cards, and (in the main chat) an unbound Agent's
+  question keep their existing homes. A task linked to several Agents is one row; a shared Agent's requests have one
+  home, never one copy per linked task. Dismissing a decision round does not dismiss a live Agent question.
+- **Stopped unfinished**: an open, unaccepted dispatched task with no actual execution, no explicit external hold,
+  no active usage-limit wait and no `done` closeout. `not_done`, `blocked` and an absent closeout do not complete it.
+  During the follow-up window it remains on To-dos, not among finished work. After the window it is Needs you with
+  the reason `stopped_unfinished`; it does not acquire a second, peer entry.
+- **The one-hour clock** starts at the stopped turn (`work.turn_at`, then the older-hub state/link timestamps).
+  Confirmed successful `agent_send` from this task's supervisor and an explicit supervisor `task_review` reset it.
+  `supervision.followed_up_at` persists that evidence. Read receipts, automatic ledger writes or judgments, failed or
+  unknown sends and another conversation's send do not reset it. A send does not create a new review round.
+- **In progress** counts Working plus Waiting. Foreground, child and real background execution outrank a prior
+  closeout; a resumed Agent is Working, never a finished turn. Explicit parks remain Waiting until the hub changes
+  them, including an elapsed fallback, and cannot be hidden by an Agent's generic `blocked/external` state. PR waits
+  keep each PR's own link and blockers, while the task counts once. A supervisor's pending acceptance is not active
+  work and does not become an owner decision merely because `pending_since` aged.
+- **Just finished** includes an Agent's `done` closeout awaiting supervisor acceptance, even when its reply was
+  already read. It is displayed beneath Working and Waiting but never counted in In progress. Its Agent says
+  **Reported done, awaiting acceptance**, not Accepted or Done. Only the existing owner/supervisor lifecycle can
+  accept or close the to-do. Closed and accepted news keep their existing Just finished rendering. The redesign's
+  hub projection owns the new seen/24-hour filing rules; this compatibility slice does not introduce another copy.
+- **Agent and to-do state are separate**: the Agent's row names its closeout (reported done, unfinished, blocked and
+  whom it waits for), while a separate to-do chip names pending review, rework, an explicit hold, acceptance or closure.
+  A working Agent can have a pending review or rework chip: restarting execution does not erase the ledger. Unread
+  means **New reply**, never proof that the task or turn finished. Narrow rows wrap their explanatory line without
+  hiding the title. Existing tokens, status marks and manual expansion remain unchanged.
+- **Counts have different units**: Needs you counts actionable rows; In progress counts Working plus Waiting;
+  Just finished is listed but uncounted. The To-dos header's broader Not done count also contains work not listed in
+  those two entries, so summing the badges is not its definition. No group switch accepts a task or dispatches work.
 
-Live questions and owner decisions take precedence. Actual foreground or background work outranks a hold. A generic
-`blocked/external` / `waiting` status with **no execution** must not hide an explicit park. Without a supervisor park,
-such a wait belongs to Stopped, unfinished: show the Agent's waiting line and ask the supervisor to confirm the wait
-and park it. An Agent's claim does not create evidence of a sent request or a reviewer acknowledgement. Ready PR
-facts alone do not override a pending internal acceptance review or an unseen, unreviewed Agent turn.
-
-The hour is measured from the stopped turn (`work.turn_at`, falling back on older hubs to `state_since`, session
-`updated_at` or the Agent link) or the last real supervisor follow-up, whichever is later, never before task creation.
-A successful `task_review` or a **confirmed successful** `agent_send` by the task's current supervisor updates
-`supervision.followed_up_at`. Failed/unknown sends, another conversation's messages, automatic ledger writes and
-reviewer-only records do not. Existing supervisor review history is a fallback for older hubs. Reading a reply or a hub
-restart must not restart this clock. A send does not change `supervision.updated_at` or `pending_since`: those identify
-the review/decision round. An explicit park never ages into Needs you. A `done` closeout remains Awaiting acceptance,
-however old; its age alone is not a user decision.
-
-Agent row text and the to-do's actual state are separate. Agent closeouts read **Reported done · awaiting acceptance**,
-**Stopped · unfinished**, or **Stopped · waiting for <party>**. The existing to-do chip / native secondary label names
-its own state (review, rework, parked, accepted). An unread turn is **New reply**, not completion. Only supervisor
-acceptance closes supervised work; this presentation does not send an acceptance or close a to-do. Existing
-Just finished / shelved history remains available under In progress and does not count; unaccepted stopped tasks
-stay visible in the five groups even if the board has filed their reply as seen or stale. Board filing and acceptance
-are deliberately not interchangeable counts.
-
-The main conversation watches every task; another conversation only the tasks it dispatched (`origin`). A task's
-current Agents are not independent rows. An Agent several tasks list asks under one task: the task `Session.todo`
-ties it to, else the first current lister (oldest card first, one plan's tasks in plan order). The other tasks do not
-repeat that request: their own execution / closeout decides their group. Plans waiting for Start and message cards
-waiting for Send are Needs you rows, one per plan or card. A hand-opened Agent with no current task appears in the
-main conversation only: Needs you while asking, In progress while actually working. Finished or released task links
-do not hide such an Agent. Each capsule opens one tray, not an inline wall of cards; pending choices remain in their
-existing answerable pending area.
-
-The pure split functions are Web `assistantEntries` (`web/src/lib/assistant-entries.ts`), Android `assistantEntries`
-(`persona.core.domain.tasks`), and Apple `AssistantEntries.split`
-(`apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift`). All replay `spec/fixtures/entries`, including exact
-hour boundaries, real follow-up, missing closeouts, resumed work, explicit external parks, and background activity.
-The older Pending / Progress / Agents / To start entries below describe the earlier presentation (#2878, #3162).
+`spec/fixtures/entries` is replayed on Web, Apple and Android, including the exact hour, confirmed follow-up,
+read/restart, explicit-park precedence and accepted-task cases. The existing entry helpers remain a compatibility
+path while #10226 adds the hub's `view`; #10174 owns the single projection, new wire routes, list and later removal of
+client triage copies. This change adds no competing projection package or new phase/section values.
 
 ### Background activity in In progress (#3588)
 

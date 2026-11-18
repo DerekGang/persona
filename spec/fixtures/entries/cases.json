@@ -60,7 +60,8 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "review": [
+        "supervisor_review": [],
+        "just_finished": [
           "task:t-review"
         ]
       }
@@ -150,7 +151,9 @@
           "task:t-user"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -285,9 +288,10 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "review": [
-          "task:t-fresh",
+        "supervisor_review": [],
+        "just_finished": [
           "task:t-almost",
+          "task:t-fresh",
           "task:t-seen"
         ]
       }
@@ -409,7 +413,8 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "review": [
+        "supervisor_review": [],
+        "just_finished": [
           "task:t-overdue-pr",
           "task:t-review-pr"
         ]
@@ -511,7 +516,8 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "review": [
+        "supervisor_review": [],
+        "just_finished": [
           "task:t-hour",
           "task:t-late"
         ]
@@ -614,9 +620,10 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "review": [
-          "task:t-old-hub",
-          "task:t-no-time"
+        "supervisor_review": [],
+        "just_finished": [
+          "task:t-no-time",
+          "task:t-old-hub"
         ]
       }
     },
@@ -797,7 +804,8 @@
         ],
         "running": [],
         "shelved": [],
-        "review": [
+        "supervisor_review": [],
+        "just_finished": [
           "task:t-fresh"
         ]
       }
@@ -852,7 +860,9 @@
         "running": [
           "task:t-run"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -927,7 +937,9 @@
           "task:t-ask"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -980,7 +992,9 @@
         "running": [
           "task:t-ask"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1031,7 +1045,9 @@
           "agent:mac/m-ask"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1100,7 +1116,9 @@
         "running": [
           "agent:mac/m-work"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1219,7 +1237,9 @@
         "running": [
           "task:t-side"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1272,7 +1292,9 @@
         "running": [
           "task:t-side"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1388,7 +1410,13 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [
+          "task:t-accepted",
+          "task:t-cancel",
+          "task:t-done"
+        ]
       }
     },
     {
@@ -1475,7 +1503,9 @@
           "message:msg-1"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1540,7 +1570,9 @@
           "task:t-fail"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1600,7 +1632,11 @@
           "task:t-retry"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [
+          "task:t-done"
+        ]
       }
     },
     {
@@ -1678,9 +1714,8 @@
         ],
         "running": [],
         "shelved": [],
-        "stopped": [
-          "task:t-stopped"
-        ]
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1758,7 +1793,9 @@
           "task:t-ask"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1814,7 +1851,9 @@
         "running": [
           "task:t-run"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1871,7 +1910,9 @@
         "running": [
           "agent:mac/w-done"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -1949,11 +1990,12 @@
         "needs_you": [
           "agent:mac/w-ask"
         ],
-        "running": [],
-        "shelved": [],
-        "stopped": [
+        "running": [
           "task:t-ask"
-        ]
+        ],
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2016,7 +2058,9 @@
             "subagents": 0,
             "workflows": 0
           }
-        }
+        },
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2095,7 +2139,9 @@
             "phase": "Adversarial review",
             "progress": "5/6+"
           }
-        }
+        },
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2173,7 +2219,9 @@
             "subagents": 2,
             "workflows": 0
           }
-        }
+        },
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2253,7 +2301,9 @@
             "phase": "Adversarial review",
             "progress": "5/6+"
           }
-        }
+        },
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2311,12 +2361,8 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "activity": {
-          "task:activity-task": null
-        },
-        "stopped": [
-          "task:activity-task"
-        ]
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2399,7 +2445,9 @@
           "task:activity-task"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2462,7 +2510,9 @@
             "phase": "Adversarial review",
             "progress": "5/6+"
           }
-        }
+        },
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2543,7 +2593,9 @@
             "subagents": 0,
             "workflows": 0
           }
-        }
+        },
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2638,12 +2690,13 @@
         "needs_you": [
           "task:t-release"
         ],
-        "running": [],
-        "shelved": [],
-        "stopped": [
+        "running": [
           "task:t-tests",
           "task:t-cache"
-        ]
+        ],
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2720,11 +2773,12 @@
         "needs_you": [
           "task:t-cache"
         ],
-        "running": [],
-        "shelved": [],
-        "stopped": [
+        "running": [
           "task:t-tests"
-        ]
+        ],
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2826,11 +2880,12 @@
         "needs_you": [
           "task:t-zeta"
         ],
-        "running": [],
-        "shelved": [],
-        "stopped": [
+        "running": [
           "task:t-alpha"
-        ]
+        ],
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -2891,12 +2946,11 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [
           "task:work"
-        ],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        ]
       }
     },
     {
@@ -2957,12 +3011,9 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [
-          "task:work"
-        ],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3023,12 +3074,9 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [
-          "task:work"
-        ],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3082,12 +3130,9 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [
-          "task:work"
-        ],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3143,10 +3188,9 @@
           "task:work"
         ],
         "running": [],
-        "review": [],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3201,12 +3245,9 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [
-          "task:work"
-        ],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3266,12 +3307,9 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [
-          "task:work"
-        ],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3335,10 +3373,9 @@
           "task:work"
         ],
         "running": [],
-        "review": [],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3401,10 +3438,9 @@
         "running": [
           "task:work"
         ],
-        "review": [],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3466,10 +3502,9 @@
         "running": [
           "task:work"
         ],
-        "review": [],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3531,12 +3566,11 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [
           "task:work"
-        ],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        ]
       }
     },
     {
@@ -3595,13 +3629,15 @@
       },
       "expected": {
         "needs_you": [],
-        "running": [],
-        "review": [],
-        "stopped": [],
-        "parked": [
+        "running": [
           "task:work"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [],
+        "waiting": [
+          "task:work"
+        ]
       }
     },
     {
@@ -3671,13 +3707,15 @@
       },
       "expected": {
         "needs_you": [],
-        "running": [],
-        "review": [],
-        "stopped": [],
-        "parked": [
+        "running": [
           "task:work"
         ],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [],
+        "waiting": [
+          "task:work"
+        ]
       }
     },
     {
@@ -3745,10 +3783,11 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": [
+          "task:work"
+        ]
       }
     },
     {
@@ -3819,12 +3858,9 @@
       "expected": {
         "needs_you": [],
         "running": [],
-        "review": [],
-        "stopped": [
-          "task:work"
-        ],
-        "parked": [],
-        "shelved": []
+        "shelved": [],
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3881,11 +3917,8 @@
         "needs_you": [],
         "running": [],
         "shelved": [],
-        "review": [],
-        "stopped": [
-          "task:re-review"
-        ],
-        "parked": []
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -3950,11 +3983,13 @@
       },
       "expected": {
         "needs_you": [],
-        "running": [],
+        "running": [
+          "task:re-review"
+        ],
         "shelved": [],
-        "review": [],
-        "stopped": [],
-        "parked": [
+        "supervisor_review": [],
+        "just_finished": [],
+        "waiting": [
           "task:re-review"
         ]
       }
@@ -4026,9 +4061,8 @@
           "task:re-review"
         ],
         "shelved": [],
-        "review": [],
-        "stopped": [],
-        "parked": []
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -4103,9 +4137,8 @@
         ],
         "running": [],
         "shelved": [],
-        "review": [],
-        "stopped": [],
-        "parked": []
+        "supervisor_review": [],
+        "just_finished": []
       }
     },
     {
@@ -4164,9 +4197,8 @@
         ],
         "running": [],
         "shelved": [],
-        "review": [],
-        "stopped": [],
-        "parked": []
+        "supervisor_review": [],
+        "just_finished": []
       }
     }
   ]

@@ -64,12 +64,8 @@ class AssistantSharedAgentShotsTest {
     }
 
     private fun badge(entry: String, count: Int) {
-        val node = rule.onNodeWithTag("assistant-entry-$entry")
-        if (count > 0) node.assertTextContains(count.toString())
-        else {
-            val words = node.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString { it.text }
-            assertFalse("An empty capsule has no numeric badge: $words", Regex("[0-9]").containsMatchIn(words))
-        }
+        if (count == 0) rule.onNodeWithTag("assistant-entry-$entry").assertTextEquals(if (entry == "needs") "Needs you" else "In progress")
+        else rule.onNodeWithTag("assistant-entry-$entry").assertTextContains(count.toString())
     }
 
     private fun shot(name: String) {
@@ -120,20 +116,20 @@ class AssistantSharedAgentShotsTest {
         settle()
         for (s in AppStyle.entries) for (d in listOf(false, true)) {
             style = s; dark = d; tray.expanded = null; settle()
-            badge("needs", 1); badge("running", 0); badge("stopped", 2)
-            rule.tapTray("needs"); settle()
+            badge("needs", 1); badge("running", 2)
+            rule.onNodeWithTag("assistant-entry-needs").performClick(); settle()
             rule.onNodeWithTag("assistant-needs-task-release").assertIsDisplayed()
             rule.onNodeWithTag("assistant-needs-task-cache").assertDoesNotExist()
             rule.onNodeWithTag("assistant-needs-task-tests").assertDoesNotExist()
             rule.onAllNodesWithTag("assistant-decision-permission").assertCountEquals(1)
             val suffix = "${s.name.lowercase()}-${if (d) "dark" else "light"}"
             shot("needs-$suffix")
-            rule.tapTray("stopped"); settle()
+            rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
             for (id in listOf("cache", "tests")) {
                 val row = hasAnyAncestor(hasTestTag("assistant-progress-todo:$id"))
                 rule.onNodeWithTag("assistant-progress-todo:$id").assertIsDisplayed()
-                rule.onNode(hasText("Stopped · unfinished") and row, useUnmergedTree = true).assertIsDisplayed()
-                rule.onNode(hasTestTag("assistant-work-spinner") and row, useUnmergedTree = true).assertDoesNotExist()
+                rule.onNode(hasText("Waiting") and row, useUnmergedTree = true).assertIsDisplayed()
+                rule.onAllNodes(hasTestTag("assistant-work-spinner") and row, useUnmergedTree = true).assertCountEquals(0)
             }
             rule.onNodeWithTag("assistant-progress-todo:release").assertDoesNotExist()
             rule.onNodeWithText("Blocked").assertDoesNotExist()
@@ -142,14 +138,14 @@ class AssistantSharedAgentShotsTest {
         }
         // No hub tie: the first current lister holds the same single request and count.
         sessions = listOf(shared.copy(todo = null)); tray.expanded = AssistantTray.NeedsYou; settle()
-        badge("needs", 1); badge("running", 0); badge("stopped", 2)
+        badge("needs", 1); badge("running", 2)
         rule.onNodeWithTag("assistant-needs-task-cache").assertIsDisplayed()
         rule.onNodeWithTag("assistant-needs-task-release").assertDoesNotExist()
         // Its own review still needs the owner, with no duplicate Agent approval.
         sessions = listOf(shared)
-        api.rows = todos.map { if (it.id == "tests") it.copy(supervision = Supervision(state = "needs_user")) else it }
+        api.rows = todos.map { if (it.id == "tests") it.copy(supervision = Supervision(state = "pending_review")) else it }
         tasks.reloadTodos(); settle()
-        badge("needs", 2); badge("running", 0); badge("stopped", 1)
+        badge("needs", 2); badge("running", 1)
         rule.onNodeWithTag("assistant-review-todo:tests").assertIsDisplayed()
         rule.onAllNodesWithTag("assistant-decision-permission").assertCountEquals(1)
         rule.onNodeWithTag("assistant-approve-all").performClick(); settle()
@@ -158,14 +154,14 @@ class AssistantSharedAgentShotsTest {
         val idle = Session("box", "idle", state = "idle", status = "idle")
         sessions = listOf(shared, idle)
         api.rows = todos.map { if (it.id == "tests") it.copy(agents = it.agents + TodoAgent("box", "idle")) else it }
-        tasks.reloadTodos(); tray.expanded = AssistantTray.Stopped; settle()
-        badge("needs", 1); badge("running", 0); badge("stopped", 2)
+        tasks.reloadTodos(); tray.expanded = AssistantTray.Running; settle()
+        badge("needs", 1); badge("running", 2)
         val stopped = hasAnyAncestor(hasTestTag("assistant-progress-todo:tests"))
-        rule.onNode(hasText("Stopped · unfinished") and stopped, useUnmergedTree = true).assertIsDisplayed()
+        rule.onNode(hasText("Stopped") and stopped, useUnmergedTree = true).assertIsDisplayed()
         rule.onNode(hasTestTag("assistant-work-spinner") and stopped, useUnmergedTree = true).assertDoesNotExist()
     }
 
-    @Test fun anUnsharedRunningTaskKeepsItsProjectedBlockedAndStoppedAppearance() {
+    @Test fun anUnsharedStoppedTaskIsNotCountedAsActiveDuringItsFollowupWindow() {
         val at = Instant.now().toString()
         val idle = Session("box", "solo", title = "Independent task", state = "idle", status = "idle")
         val todo = Todo("solo", idle.title, origin = "main", agents = listOf(TodoAgent("box", "solo")), createdAt = at, updatedAt = at)
@@ -180,7 +176,7 @@ class AssistantSharedAgentShotsTest {
         }
         val tasks = TasksStore(api, connection, scope).also { it.reloadTodos(); it.loadTodayIfMain("main") }
         val host = AssistantTaskHost(tasks, "main", listOf(idle), { it }, {}, { throw it }, {})
-        val tray = AssistantTrayState().also { it.expanded = AssistantTray.Stopped }
+        val tray = AssistantTrayState().also { it.expanded = AssistantTray.Running }
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
         rule.mainClock.autoAdvance = false
@@ -202,16 +198,16 @@ class AssistantSharedAgentShotsTest {
             style = s; dark = d; api.rows = listOf(blocked); tasks.reloadTodos(); settle()
             val projection = trayProgress(api.rows, emptyList(), host).single()
             assertTrue(projection.blocked); assertFalse(projection.stopped)
-            badge("running", 0); badge("stopped", 1)
+            badge("running", 0)
             val row = hasAnyAncestor(hasTestTag("assistant-progress-todo:solo"))
-            rule.onNode(hasText("Blocked") and row, useUnmergedTree = true).assertIsDisplayed()
-            rule.onNode(hasText("Stopped · unfinished") and row, useUnmergedTree = true).assertDoesNotExist()
+            rule.onNodeWithTag("assistant-progress-todo:solo").assertDoesNotExist()
+            rule.onNode(hasText("Stopped") and row, useUnmergedTree = true).assertDoesNotExist()
             val suffix = "${s.name.lowercase()}-${if (d) "dark" else "light"}"
             shot("unshared-blocked-$suffix")
             api.rows = listOf(todo); tasks.reloadTodos(); settle()
             val stopped = trayProgress(api.rows, emptyList(), host).single()
             assertFalse(stopped.blocked); assertTrue(stopped.stopped)
-            rule.onNode(hasText("Stopped · unfinished") and row, useUnmergedTree = true).assertIsDisplayed()
+            rule.onNodeWithTag("assistant-progress-todo:solo").assertDoesNotExist()
             rule.onNode(hasText("Blocked") and row, useUnmergedTree = true).assertDoesNotExist()
             shot("unshared-stopped-$suffix")
         }

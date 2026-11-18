@@ -2,14 +2,14 @@ import XCTest
 
 /// Run with MOCK_TASKS=1 MOCK_TASKS_NO_ASKS=1 MOCK_TASK_CLOSEOUT_GROUPS=1.
 final class TaskCloseoutGroupsUITests: XCTestCase {
-    @MainActor func testCloseoutsHaveSeparateGroupsAndLongWaitsStayInsideThePhone() throws {
+    @MainActor func testCloseoutsUseTheDecidedGroupsAndLongWaitsStayInsideThePhone() throws {
         let env = ProcessInfo.processInfo.environment
         guard let hub = env["PERSONA_MOCK_HUB"], env["PERSONA_CLOSEOUT_GROUPS"] == "1" else {
-            throw XCTSkip("Needs the deterministic five-group task mock")
+            throw XCTSkip("Needs the deterministic closeout task mock")
         }
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        for (tray, count) in [("review", 1), ("stopped", 2), ("parked", 1)] {
+        for (tray, count) in [("needsYou", 2), ("running", 3)] {
             app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-dev.openChat", "",
                                    "-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001",
                                    "-showActionTray", tray, "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
@@ -23,7 +23,10 @@ final class TaskCloseoutGroupsUITests: XCTestCase {
                 XCTAssertFalse(row.label.contains("完成未看"), row.label)
                 XCTAssertTrue(row.label.contains("待办"), row.label)
             }
-            if tray == "stopped" {
+            for removed in ["review", "stopped", "parked"] {
+                XCTAssertFalse(app.buttons["action-bar.\(removed)"].exists)
+            }
+            if tray == "running" {
                 XCTAssertTrue(rows.allElementsBoundByIndex.contains { $0.label.contains("the maintainer") })
             }
             XCTAssertTrue(app.buttons["action-bar.\(tray)"].isHittable, app.debugDescription)

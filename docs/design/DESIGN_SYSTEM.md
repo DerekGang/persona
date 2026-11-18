@@ -1690,15 +1690,6 @@ control when it sits lower in the row.
 
 ### 4.8 Pending requests
 
-**Task entry states (#5669).** Web, Apple and Android show five peer capsules above the composer: Needs you,
-In progress (actual execution), Awaiting acceptance (Agent reports done), Stopped unfinished, and Parked. Use the
-existing capsule / horizontally scrolling row; all five remain available, including empty entries in secondary ink.
-Only Needs you uses attention styling; execution uses the existing working mark, acceptance and stopped states are
-neutral, and Parked retains its clock / wait evidence. An Agent's closeout label and the to-do state are separate,
-never a completed check for an unfinished unread turn. A stopped unparked external wait shows its target and a
-supervisor-parking hint. The full admission and one-hour follow-up rule is in
-`docs/assistant/unified-entry.md` "Needs you and In progress: each thing once". No new token or component family.
-
 Task decisions on the web reuse the task-routing chip for **Answer in chat** (#5929). It identifies the task and
 states visibly that the next message is saved as the answer; its existing cancel action switches back to ordinary
 discussion. The original decision round travels with the answer. Only a delivered and recorded answer removes the
@@ -1843,7 +1834,7 @@ The task cards follow `docs/design/task-cards.md`, which holds the state tables 
 - **Accept and decision rows** stack when their container is narrow (a container query, not the viewport): the words take the whole width, the secondary buttons one row, the primary its own full-width line. Never a menu.
 - **Progress rows.** The status word is its own right-aligned column, then a fixed end slot: `›` where the row opens something, a check once finished, an info mark for a usage limit. A task whose Agent is not up says Starting. A usage limit's second line says when it resets. A stopped task that is not done says "Stopped, not done yet · <why>" from its completion check (#3180; iOS too since #8237), else its Agent's last words. The column and the row's leading mark say only what the task's Agent itself is doing (#6492, `web/src/lib/task-row-status.ts`): Working, Needs you, Done not seen, Idle, Stopped (its lead session is gone), Interrupted, Usage limit, Couldn't start, Starting (only while a start is in flight, #7594; a to-do nobody dispatched says Not started); the mark is that Agent's `StatusMark`, the one mark set for Agent states. What the to-do itself is at (parked, waiting to merge, awaiting review, rework, the owner's call, accepted, cancelled, waiting for Start) is a chip after the title, "To-do: Parked"; a to-do with nothing to add has none. Before, one column mixed both, so a parked to-do whose Agent had stopped read Parked.
 - **Needs you rows with something to answer are folded to one line** (mark, title, what it waits for, the kind) and open in place on a click of the line or its chevron (`aria-expanded`); the card leaves with the answer, and every row is folded again when the tray changes. The conversation's own cards stay in the chat, and their rows close the tray onto them.
-- **Persona reviewing rows.** The supervisor-review tray names whose turn it is: its status stays "Supervisor reviewing", even after the task's Agent stops. Its neutral follow-up mark is not an Agent-stopped mark. Finished rows keep their completion mark and label; open rows in In progress use the Agent-only column described above. The separate Waiting for merge group keeps its PR blockers.
+- **Closeout and acceptance rows** (#9823, aligned with #10174): no peer acceptance or stopped-work entry. Needs you carries an unattended stopped turn as a reason; Working and Waiting share In progress, with Just finished uncounted below them. A reported `done` is awaiting acceptance, never an accepted to-do. The Agent closeout and the to-do ledger each keep their own words, even when the Agent resumes. An unread reply says New reply, not completion. A blocked row names its waiting party; long state words wrap below the title on narrow screens. Existing PR wait evidence, tokens and manual expansion are reused. The broader Not done header is not a sum of the two entry badges (`docs/assistant/unified-entry.md`, "Needs you and In progress: each thing once (#3387)").
 - **To-do state chips** use at most half the title area and truncate, so their text cannot hide the task's title on a narrow screen.
 - **Hard-coded font sizes.** `text-[13px]` and its kin may only fall: `scripts/ci/web_font_ratchet.py` (`docs/operations/testing.md`).
 
