@@ -558,7 +558,7 @@
     },
     "TileWidth": {"description": "A carousel's tiles: narrow about 140pt (scenes), regular about 200pt (the default; rooms), wide about 80% of the screen (camera pictures).", "type": "string", "enum": ["narrow", "regular", "wide"]},
     "Tile": {
-      "description": "A tile of a grid or a carousel (UI version 6): an icon or a picture, a title, a state line, a value; tapping does its action. active marks a tile that is on (a scene running, a light on) in its color.",
+      "description": "A tile of a grid or a carousel (UI version 6): an icon, an emoji (UI version 10) or a picture, a title, a state line, a value; tapping does its action. active marks a tile that is on (a scene running, a light on) in its color.",
       "type": "object",
       "properties": {
         "key": {"type": "string", "maxLength": 128},
@@ -574,7 +574,8 @@
         "control": {"$ref": "#/$defs/RowControl", "description": "A switch only; the tile then has a key."},
         "actions": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/RowAction"}},
         "action": {"$ref": "#/$defs/Action"},
-        "gauge": {"$ref": "#/$defs/Gauge", "x-since": 9, "description": "Draws the tile as a ring (UI version 9): never with an image or a spark."}
+        "gauge": {"$ref": "#/$defs/Gauge", "x-since": 9, "description": "Draws the tile as a ring (UI version 9): never with an image or a spark."},
+        "emoji": {"type": "string", "minLength": 1, "maxLength": 16, "x-since": 10, "description": "One emoji drawn large in the icon's place (UI version 10), as a home app pictures a device: a single pictograph with its variation selector, skin tone or ZWJ sequence, a flag or a keycap; never with an image or a gauge. An older app draws the tile's icon instead, so give one too."}
       },
       "required": ["title"]
     },

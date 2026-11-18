@@ -1,0 +1,21 @@
+{
+  "title": "家",
+  "sections": [
+    {"title": "客厅 · 2 开着", "items": [{"type": "grid", "key": "room:living", "tiles": [
+      {"key": "t:switch.living_1", "title": "灯光1", "emoji": "💡", "icon": "light", "color": "amber", "active": true,
+        "control": {"kind": "switch", "name": "power:switch.living_1", "on": true, "action": {"id": "ctl:power", "values": {"entity": "switch.living_1"}}},
+        "action": {"id": "open:switch.living_1"}},
+      {"key": "t:media_player.speaker", "title": "音箱", "subtitle": "开", "emoji": "🔊", "icon": "speaker", "color": "purple", "active": true,
+        "action": {"id": "open:media_player.speaker"}},
+      {"key": "r:button.ac_on", "title": "空调", "subtitle": "遥控 · 21:05 关机", "emoji": "❄️", "icon": "snow", "color": "blue",
+        "actions": [{"title": "开机", "action": {"id": "do:button.ac_on|press"}}, {"title": "关机", "action": {"id": "do:button.ac_off|press"}}],
+        "action": {"id": "open:button.ac_on"}},
+      {"key": "r:button.tv_on", "title": "电视", "subtitle": "遥控", "emoji": "📺", "icon": "tv", "color": "purple", "action": {"id": "open:button.tv_on"}}
+    ]}]},
+    {"title": "厕所", "items": [{"type": "grid", "key": "room:bath", "tiles": [
+      {"key": "t:switch.bath_fan", "title": "排气扇", "emoji": "🌀", "icon": "fan", "color": "teal",
+        "control": {"kind": "switch", "name": "power:switch.bath_fan", "action": {"id": "ctl:power", "values": {"entity": "switch.bath_fan"}}}},
+      {"key": "t:switch.bath_light", "title": "灯光", "emoji": "💡", "icon": "light", "color": "amber"}
+    ]}]}
+  ]
+}

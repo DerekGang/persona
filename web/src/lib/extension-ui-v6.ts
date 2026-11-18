@@ -123,6 +123,8 @@ export interface UITile {
   action?: UIAction;
   /** UI version 9 (#9337): the tile is a ring filled to ratio, its value (and unit) in the centre. */
   gauge?: UIGauge;
+  /** One emoji drawn large in the icon's place (UI version 10, #10060); the icon is what an older app draws. */
+  emoji?: string;
 }
 
 /** A tile's ring (UI version 9): ratio 0 to 1 (held to it where drawn), a short unit under the value, a named color. */

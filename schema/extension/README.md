@@ -385,6 +385,10 @@ stream's source may draw them. Its examples are `examples/View.v8-*.json`.
 UI version 9 (#9337) adds one field: a tile's `gauge` (`Gauge`: `ratio`, `unit`, `color`), `x-since: 9`, a ring with the tile's
 value in its centre. The hub's `downgrade9` (`server/internal/extension/ui_v9.go`) leaves it out for an older app and puts the unit,
 the percentage and the color on the tile instead. Its examples are `examples/View.v9-*.json`.
+UI version 10 (#10060) adds one field: a tile's `emoji`, `x-since: 10`, one emoji drawn large in the icon's place (`wire.IsEmoji`
+says what one emoji is; the hub's check refuses anything else and an emoji beside an image or a gauge). The hub's `downgrade10`
+(`server/internal/extension/ui_v10.go`) leaves it out for an older app, which draws the tile's icon. Its example is
+`examples/View.v10-home.json`.
 
 ## Adding a call
 

@@ -117,7 +117,7 @@ What an extension contributes where is written in the manifest's `contributes`: 
 | `api` (version 1) | `api.` | `id`, `prefix` (one path segment), `features?`, `events?`, `receipts?` (`[{method, path, kind}]`: writes that need send receipts) | `runtime.http`, `on_startup`; with `events`, the process must speak the protocol | A block of App-facing API `/api/v1/<prefix>/…`, see "App API" below |
 | `assistant` (version 1) | `assistant.` | `id`, `skills?` (directories in the package, each with `SKILL.md`), `instructions?` (an `.md` in the package), `gate?` (a `.json` in the package: the gate for one command in a skill) | These files exist in the package; `gate` requires `skills`, and when credentials are needed the process speaks the protocol | The assistant's skills, instructions and command gates, see "Assistant" below |
 | `mcp_servers` (version 1) | `mcp.` | `id` (`a-z0-9_-`, cannot be `persona` or the legacy server name), `command`, `env?`, `args?`, `requires?`, `allow?`, `deny?` | Declarative is enough; the command is installed on the computer that runs the assistant | One more MCP server for the Claude assistant (tool names `mcp__<id>__*`), see "MCP servers" below |
-| `ui` (version 9) | `ui.` | `id`, `title`, `placement` (slot, see "UI slots": `extension_page` (old name `plugin_page`) / `launcher_section` / `nav_page` / `overview_card` / `capsule_card` / `machine_section` / `inbox_item` / `widget`), `hosts?` (only for `launcher_section`: gateway host names, may start with `*.`; omitted means any launcher, the extension decides), `icon?` (only `nav_page`), `opens?` (only `overview_card`, `capsule_card` and `widget`), `connector?` (only `inbox_item`, and required: the id of a connector contributed by the same extension), `group?` (only `nav_page`: `{"id", "title"}`, the sidebar group the page goes in, see "UI slots"), `families` / `refresh_minutes?` (only `widget`; `families` is required, see "System-level placements") | Process speaks the protocol; `launcher_section` needs permission `launcher_keys` | A page in the extension's details, a section on the launcher page, main navigation, overview, machine details, the details of an Inbox item, widgets and watch faces outside the App; see "Declarative UI", "UI slots", "System-level placements" below |
+| `ui` (version 10) | `ui.` | `id`, `title`, `placement` (slot, see "UI slots": `extension_page` (old name `plugin_page`) / `launcher_section` / `nav_page` / `overview_card` / `capsule_card` / `machine_section` / `inbox_item` / `widget`), `hosts?` (only for `launcher_section`: gateway host names, may start with `*.`; omitted means any launcher, the extension decides), `icon?` (only `nav_page`), `opens?` (only `overview_card`, `capsule_card` and `widget`), `connector?` (only `inbox_item`, and required: the id of a connector contributed by the same extension), `group?` (only `nav_page`: `{"id", "title"}`, the sidebar group the page goes in, see "UI slots"), `families` / `refresh_minutes?` (only `widget`; `families` is required, see "System-level placements") | Process speaks the protocol; `launcher_section` needs permission `launcher_keys` | A page in the extension's details, a section on the launcher page, main navigation, overview, machine details, the details of an Inbox item, widgets and watch faces outside the App; see "Declarative UI", "UI slots", "System-level placements" below |
 | `agent_sources` (version 1) | `agentsrc.` | `id` (`a-z0-9_-`, also the source segment of session ids `<id>:<sessionKey>`), `name`, `providers?` (`a-z0-9_`, e.g. `grok_bot`) | Process speaks the protocol, `on_startup` | Personal Agents on the Agents page (the hub has no sources of its own; all come from extensions), see "Personal Agent sources" below |
 | `channel` (version 1) | `channel.` | `id` (`^[a-z][a-z0-9_]{0,31}$`, cannot be 8 hex digits), `name`, `kind` (`im`), `connector?` (binding and status come from this connector of the same extension), `bind?` (`qr` / `code` / `fields`), `description?`, `capabilities` (receive images / files / voice, `format`, `max_text`, `asks`, `push`, `typing`, `progress`, `threads`) | Process speaks the protocol; `on_startup` when there is no `connector` | A channel for talking to Persona: the hub runs the shared pipeline (into the chat, tracking the turn, sending the answer back, questions), and the extension only talks to the IM; see [channels.md](channels.md) |
 | `events` (version 1) | `event.` | `id`, `subscribe` (a list of event names, see "Events") | Process speaks the protocol, `on_startup` | Only tells the extension what happened on the hub, see "Events" below |
@@ -2081,7 +2081,7 @@ When the app draws a slot, it states in `context` whom it is drawing for and whe
 | --- | --- | --- |
 | `placement` | — | This contribution's slot |
 | `size` | Optional: `compact` / `full` | If not sent, the size from the slot table; `compact` is a card and must be compact (see the limits under "New items") |
-| `ui_version` | The UI version the app can draw: the hub knows `9`; the web sends `9` (its native stream `7`), Android and iOS send `8` (their native streams too) until they draw all of UI version 9; **older apps do not send it, which counts as 1** | `min(app's, hub's)`; the extension can draw a version an older app can handle (e.g. `progress` instead of `chart`) |
+| `ui_version` | The UI version the app can draw: the hub knows `10`; the web sends `10` (its native stream `7`), Android and iOS send `8` (their native streams too) until they draw all of UI versions 9 and 10; **older apps do not send it, which counts as 1** | `min(app's, hub's)`; the extension can draw a version an older app can handle (e.g. `progress` instead of `chart`) |
 | `tz` | The user's time zone (IANA name, `Asia/Shanghai`) | Passed on only if it loads; if not sent or invalid, the user time zone the hub knows (reported by the app, or from assistant settings), empty if neither. "Today" is computed in it |
 | `locale` | The app's language (`zh-Hans-CN`) | Passed on only if it looks like a language tag, otherwise empty |
 | `platform` | `ios` / `mac` / `android` / `web` | Other values are dropped |
@@ -2224,7 +2224,7 @@ If you do not want to see an extension's entries and cards: disable the extensio
 
 ### Compatibility
 
-**UI versions**: 1 is the original eight item types and two slots; 2 adds three slots, `chart` / `stat_grid` / `segmented`, `refresh_after` and context; for 3 see "UI version 3" above; for 4 see "UI version 4: code hosting"; for 5 see "UI version 5: code review"; for 6 see "UI version 6"; 7 is a section's `key` for the native stream (see `schema/extension/README.md`), which needs no downgrade; for 8 see "UI version 8"; for 9 see "UI version 9". The version of the `ui` extension point changes with it (`hub.extension_points.ui` in `initialize`, currently 9).
+**UI versions**: 1 is the original eight item types and two slots; 2 adds three slots, `chart` / `stat_grid` / `segmented`, `refresh_after` and context; for 3 see "UI version 3" above; for 4 see "UI version 4: code hosting"; for 5 see "UI version 5: code review"; for 6 see "UI version 6"; 7 is a section's `key` for the native stream (see `schema/extension/README.md`), which needs no downgrade; for 8 see "UI version 8"; for 9 see "UI version 9"; for 10 see "UI version 10". The version of the `ui` extension point changes with it (`hub.extension_points.ui` in `initialize`, currently 10).
 
 `progress.style` is an unversioned drawing hint: an app that does not recognize it keeps drawing a bar, so it needs no UI version bump or downgrade. Native stream does not accept this field.
 
@@ -2715,6 +2715,42 @@ tiles keep the grid's columns (`max_columns`, at least 150 px each), so a phone 
 
 **iOS and Android** have the field in their generated types and still send 8: the hub draws them the tile without its ring until
 they draw version 9 (their own changes, after #9337).
+
+## UI version 10 (#10060)
+
+A home page drawn as a home app draws it: each device a card with a picture of what it is at its corner (a bulb, a fan, an air
+conditioner, a TV) rather than a small line icon. The app sends `10` in `context.ui_version`; `hub.extension_points.ui` is `10`; there
+is no new `features` entry. One field on a tile, authoritative in `schema/extension/view.schema.json` (`Tile.emoji`, `x-since: 10`);
+the example is `schema/extension/examples/View.v10-home.json`. **An app sends 10 only when it draws all of the below** (and all of 9).
+
+| Where | Field | What it does |
+| --- | --- | --- |
+| `Tile.emoji` (a `grid`'s or a `carousel`'s tile) | one emoji (at most 16 characters) | Drawn large in the icon's place at the tile's corner, in its own colors with no tinted square around it; `active` still lays the tile's color under it and around it, and the badge, switch and menu stay in the corner. A screen reader hears the title, not the emoji |
+
+The emoji is one emoji and nothing else (`wire.IsEmoji`): a pictograph with its skin tone and variation selector, several joined by
+zero-width joiners, a flag (two regional indicators, or a black flag's tags) or a keycap. The hub's check refuses text, two emoji, a
+lone joiner or modifier, and a tile with an emoji and an `image` or a `gauge` (each is the tile's picture). An `icon` beside it is
+allowed and expected: it is what an older app draws.
+
+```json
+{"type": "grid", "tiles": [
+  {"key": "t:switch.living_1", "title": "灯光1", "emoji": "💡", "icon": "light", "color": "amber", "active": true},
+  {"key": "r:button.ac_on", "title": "空调", "subtitle": "遥控 · 21:05 关机", "emoji": "❄️", "icon": "snow"}
+]}
+```
+
+### Compatibility
+
+| Version 10 | Version 6–9 |
+| --- | --- |
+| `Tile.emoji` | left out (`downgrade10`, `server/internal/extension/ui_v10.go`); the tile is drawn with its `icon` |
+
+Below version 6 the tile becomes a row as any other, which never carried a picture of this kind.
+
+**The web** (#10060) draws it and sends `10` (`TileView` in `web/src/views/extensions/ViewBody6.tsx`): the emoji at 28 px where the 32 px
+icon square was, `aria-hidden`. The tile renderer is first-screen code, so the reader keeps the emoji as sent, as it keeps the
+title and subtitle: the hub's check is what makes it one emoji. **iOS and Android** have the field in their generated types and still
+send 8: they draw the tile's icon until they draw versions 9 and 10.
 
 ## System-level placements (#1858)
 

@@ -2057,8 +2057,8 @@ export type TileWidth = "narrow" | "regular" | "wide" | (string & {});
 export const TILE_WIDTHS = ["narrow", "regular", "wide"] as const;
 
 /**
- * A tile of a grid or a carousel (UI version 6): an icon or a picture, a title, a state line, a value; tapping does
- * its action. active marks a tile that is on (a scene running, a light on) in its color.
+ * A tile of a grid or a carousel (UI version 6): an icon, an emoji (UI version 10) or a picture, a title, a state
+ * line, a value; tapping does its action. active marks a tile that is on (a scene running, a light on) in its color.
  */
 export interface Tile {
   key?: string;
@@ -2078,6 +2078,12 @@ export interface Tile {
   action?: Action;
   /** Draws the tile as a ring (UI version 9): never with an image or a spark. */
   gauge?: Gauge;
+  /**
+   * One emoji drawn large in the icon's place (UI version 10), as a home app pictures a device: a single pictograph
+   * with its variation selector, skin tone or ZWJ sequence, a flag or a keycap; never with an image or a gauge. An
+   * older app draws the tile's icon instead, so give one too.
+   */
+  emoji?: string;
 }
 
 /**

@@ -19,10 +19,10 @@ import { SUBSCRIPTIONS_UI } from "./subscriptions-ui";
 export { isHttps };
 
 /**
- * The UI version the web draws (context.ui_version): all of 9, the columns layout's (views/extensions/ViewBody8.tsx) and a
- * tile's gauge (views/extensions/ViewBody9.tsx) too.
+ * The UI version the web draws (context.ui_version): all of 10, the columns layout's (views/extensions/ViewBody8.tsx), a
+ * tile's gauge (views/extensions/ViewBody9.tsx) and a tile's emoji (views/extensions/ViewBody6.tsx) too.
  */
-export const UI_VERSION = 9;
+export const UI_VERSION = 10;
 
 export type UITone = "neutral" | "positive" | "caution" | "danger";
 

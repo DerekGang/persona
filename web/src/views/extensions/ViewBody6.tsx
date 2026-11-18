@@ -455,14 +455,20 @@ function TileView({ tile, compact, glyphs, busy, onPress, canPress, ...h }: Tile
         </span>
       )}
       <span className="flex min-w-0 flex-col gap-0.5 p-3">
-        {!tile.image && (
+        {!tile.image && (tile.emoji ? (
+          // an emoji (UI version 10, one emoji as the hub checked it, like the title and subtitle beside it) is the
+          // tile's picture: large at the corner, in its own colors, no square; first-screen code, so kept this small
+          <span aria-hidden="true" className="mb-1.5 text-[28px] leading-none">
+            {tile.emoji}
+          </span>
+        ) : (
           <span
             className="mb-1.5 flex size-8 items-center justify-center rounded-[9px]"
             style={on ? { background: color ? hue(color) : "var(--accent)", color: "var(--surface)" } : { background: color ? hueTint(color) : "var(--inset)", color: color ? hue(color) : "var(--ink-2)" }}
           >
             <Icon name={glyph ?? "extension"} size={16} stroke={on ? 2.2 : 1.9} />
           </span>
-        )}
+        ))}
         <span className="truncate text-[13px] font-medium text-ink">{tile.title}</span>
         {tile.subtitle && <span className="truncate text-[11.5px] text-ink-3">{tile.subtitle}</span>}
         {(tile.value || tile.spark) && (

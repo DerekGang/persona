@@ -66,6 +66,9 @@ func fit(v *View, slot UISlot, uiVersion int, native bool, languages ...i18n.Lan
 			return dropped, err
 		}
 	}
+	if uiVersion < 10 {
+		downgrade10(v)
+	}
 	if uiVersion < 9 {
 		downgrade9(v)
 	}

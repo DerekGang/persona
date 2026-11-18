@@ -1944,8 +1944,9 @@ const (
 // TileWidths are the values of TileWidth, in order.
 var TileWidths = []string{"narrow", "regular", "wide"}
 
-// Tile: A tile of a grid or a carousel (UI version 6): an icon or a picture, a title, a state line, a value; tapping
-// does its action. active marks a tile that is on (a scene running, a light on) in its color.
+// Tile: A tile of a grid or a carousel (UI version 6): an icon, an emoji (UI version 10) or a picture, a title, a
+// state line, a value; tapping does its action. active marks a tile that is on (a scene running, a light on) in its
+// color.
 type Tile struct {
 	Key      string `json:"key,omitempty"`
 	Title    string `json:"title"`
@@ -1964,6 +1965,10 @@ type Tile struct {
 	Action  *Action     `json:"action,omitempty"`
 	// Draws the tile as a ring (UI version 9): never with an image or a spark.
 	Gauge *Gauge `json:"gauge,omitempty"`
+	// One emoji drawn large in the icon's place (UI version 10), as a home app pictures a device: a single pictograph
+	// with its variation selector, skin tone or ZWJ sequence, a flag or a keycap; never with an image or a gauge. An
+	// older app draws the tile's icon instead, so give one too.
+	Emoji string `json:"emoji,omitempty"`
 }
 
 // Gauge: A tile's ring (UI version 9), for a quota or a usage: filled to ratio, with the tile's value and the unit in

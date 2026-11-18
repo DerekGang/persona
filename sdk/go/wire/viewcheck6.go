@@ -360,6 +360,14 @@ func (p *pageCheck) checkTile(t *Tile) error {
 	if t.Gauge != nil && (t.Image != nil || t.Spark != nil) {
 		return errors.New("a tile with a gauge has no image or spark: the ring takes their place")
 	}
+	if t.Emoji != "" {
+		switch {
+		case !IsEmoji(t.Emoji):
+			return fmt.Errorf("emoji %q is not one emoji", t.Emoji)
+		case t.Image != nil || t.Gauge != nil:
+			return errors.New("a tile with an emoji has no image or gauge: it is the tile's picture")
+		}
+	}
 	if t.Image != nil {
 		if err := checkSource(t.Image); err != nil {
 			return err
