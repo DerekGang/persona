@@ -1130,7 +1130,7 @@ so the extension learns the addresses you and your Agents mention in a to-do's w
 as its install permission says. Reports skip such addresses while the extension is
 unavailable, and the one-time import of older `pr_url` / `prs` references never
 asks an extension. A provider's resolved URL, kind and title are not ownership
-evidence: its background result passes the same report-turn and active Agent
+evidence: its background result passes the same requested-kind, report-turn and active Agent
 checks before the transaction can record it. A successful resolution may be reused
 during the cooldown, but each new report checks ownership again; an earlier report
 without proof cannot suppress a later report's valid creation evidence.

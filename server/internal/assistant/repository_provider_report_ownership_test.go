@@ -1,13 +1,74 @@
 package assistant
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistant/repository"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
+
+func TestReportedProviderResolutionKeepsEachCallersKind(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cached", true: "in flight"}[pending], func(t *testing.T) {
+			database, err := db.Open(t.Context(), newDatabase(t), db.ManagerSet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			s, provider, _ := acmeService(t, database)
+			release := make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			if pending {
+				s.repoExt = slowAcme{provider, release}
+			}
+			todo, err := s.createPlainTodo(t.Context(), "Repository work", "", db.TodoEdit{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := func(counts chan int) reportedLinkSave {
+				return func(_ context.Context, links []repository.LinkInput) ([]string, error) {
+					counts <- len(links)
+					return nil, nil
+				}
+			}
+			first, second := make(chan int, 4), make(chan int, 4)
+			const issue = "https://code.acme.test/team/app/issues/17"
+			if _, err := s.importReportedLinks(t.Context(), todo.ID, []string{issue}, "", record(first)); err != nil {
+				t.Fatal(err)
+			}
+			if !pending {
+				s.reportedLinks.runs.Wait()
+			}
+			if _, err := s.importReportedLinks(t.Context(), todo.ID, []string{issue}, "pull_request", record(second)); err != nil {
+				t.Fatal(err)
+			}
+			close(release)
+			s.reportedLinks.runs.Wait()
+			total := func(counts chan int) (n int) {
+				for len(counts) > 0 {
+					n += <-counts
+				}
+				return n
+			}
+			if a, b := total(first), total(second); a != 1 || b != 0 {
+				t.Fatalf("shared resolution lost the caller's kind filter: any=%d PR-only=%d want=1,0", a, b)
+			}
+			if got := provider.asked(); !slices.Equal(got, []string{"parse", "link", "describe"}) {
+				t.Fatal("resolution was not shared", got)
+			}
+		})
+	}
+}
 
 func repositoryReportTask(t *testing.T, s *Service, id string) Todo {
 	t.Helper()

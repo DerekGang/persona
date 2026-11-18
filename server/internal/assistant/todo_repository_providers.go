@@ -478,6 +478,22 @@ func (s *Service) importReportedLinks(ctx context.Context, id string, raws []str
 			return nil, s.importReported(ctx, id, links)
 		}
 	}
+	if only != "" {
+		write := save
+		save = func(ctx context.Context, links []repository.LinkInput) ([]string, error) {
+			kept := make([]repository.LinkInput, 0, len(links))
+			for _, in := range links {
+				_, link, err := repository.ParseTaskLinkInput(in)
+				if err != nil {
+					return nil, err
+				}
+				if link.Kind == only {
+					kept = append(kept, in)
+				}
+			}
+			return write(ctx, kept)
+		}
+	}
 	src := s.linkSources(ctx, id)
 	var links []repository.LinkInput
 	var later []string
