@@ -1,0 +1,145 @@
+package assistant
+
+import (
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/proto"
+)
+
+func repositoryReportTask(t *testing.T, s *Service, id string) Todo {
+	t.Helper()
+	todo := todoNow(s, id)
+	if len(todo.Agents) == 0 {
+		s.hub.(*fakeHub).setSessions("box", proto.Session{MachineID: "box", SessionID: "report-" + id,
+			Agent: "claude", Status: proto.StatusIdle})
+		if err := s.ensureTodosLoaded(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		s.todos.writing.Lock()
+		err := s.writeTodoAgentLink(t.Context(), id, "box", "report-"+id, "Repository work", "/code/app", "claude", "", "manual", "", false)
+		s.todos.writing.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		todo = todoNow(s, id)
+	}
+	return todo
+}
+
+func TestRepositoryProviderOwnershipIsRecheckedAfterResolution(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cached", true: "in flight"}[pending], func(t *testing.T) {
+			database, err := db.Open(t.Context(), newDatabase(t), db.ManagerSet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			s, provider, _ := acmeService(t, database)
+			release := make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			if pending {
+				s.repoExt = slowAcme{provider, release}
+			}
+			todo, err := s.createPlainTodo(t.Context(), "Repository work", "", db.TodoEdit{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			const review = "https://code.acme.test/team/app/reviews/17"
+			ownedRepositoryReport(t, s, todo.ID, "Deployment only mentions "+review)
+			if !pending {
+				s.reportedLinks.runs.Wait()
+			}
+			if _, links := savedArtifactURLs(t, s.store().(todoRepositoryStore), todo.ID); len(links) != 0 {
+				t.Fatal("provider resolution claimed the reference-only PR", links)
+			}
+			ownedRepositoryReport(t, s, todo.ID, "Created "+review, review)
+			close(release)
+			s.reportedLinks.runs.Wait()
+			if _, links := savedArtifactURLs(t, s.store().(todoRepositoryStore), todo.ID); !slices.Equal(links, []string{review}) {
+				t.Fatal("resolution retry cache hid fresh ownership evidence", links)
+			}
+			if got := provider.asked(); !slices.Equal(got, []string{"parse", "link", "describe"}) {
+				t.Fatal("resolution was not shared between the two reports", got)
+			}
+		})
+	}
+}
+
+// Provider routing fixtures still need a real task link and matching native creation evidence.
+func ownedRepositoryReport(t *testing.T, s *Service, id, text string, created ...string) bool {
+	t.Helper()
+	todo := repositoryReportTask(t, s, id)
+	reply := artifactReportProof(s.hub.(*fakeHub), todo, text, created...)
+	a := todo.Agents[0]
+	return s.advanceTaskReplyAt(t.Context(), todo, a.MachineID, a.SessionID, text, reply.TS)
+}
+
+func TestRepositoryProviderReportsRequireTurnOwnership(t *testing.T) {
+	for _, entry := range []string{"report", "artifacts"} {
+		for _, evidence := range []string{"created in turn", "reference only", "earlier turn", "another open task"} {
+			t.Run(entry+"/"+evidence, func(t *testing.T) {
+				database, err := db.Open(t.Context(), newDatabase(t), db.ManagerSet)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer database.Close()
+				s, _, _ := acmeService(t, database)
+				todo, err := s.createPlainTodo(t.Context(), "Deployment evidence", "", db.TodoEdit{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				todo = repositoryReportTask(t, s, todo.ID)
+				f := s.hub.(*fakeHub)
+				const review = "https://code.acme.test/team/app/reviews/17"
+				text := "Deployment report mentions " + review
+				reply := artifactReportProof(f, todo, text, review)
+				switch evidence {
+				case "reference only":
+					f.setItems(reply)
+				case "earlier turn":
+					old := artifactCreationItems(todo, review)
+					reply.TS = reply.TS.Add(2 * time.Second)
+					old = append(old, proto.Item{Role: "user", Kind: proto.KindText, Text: "Only check deployment", TS: reply.TS.Add(-time.Second)}, reply)
+					f.setItems(old...)
+				case "another open task":
+					other, err := s.createPlainTodo(t.Context(), "Original implementation", "", db.TodoEdit{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := s.toolTodoRepositoryLinksAdd(t.Context(), "", "", "todo_repository_links_add",
+						[]byte(`{"id":"`+other.ID+`","urls":["`+review+`"]}`)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				a := todo.Agents[0]
+				if entry == "report" {
+					s.advanceTaskReplyAt(t.Context(), todo, a.MachineID, a.SessionID, text, reply.TS)
+				} else {
+					work := artifactWork(todo)
+					work.TurnAt = reply.TS
+					work.Work.Artifacts = []proto.WorkArtifact{{Kind: "pr", Ref: review}}
+					if err := s.importTaskRepositoryArtifacts(t.Context(), work); err != nil {
+						t.Fatal(err)
+					}
+				}
+				s.reportedLinks.runs.Wait()
+				_, urls := savedArtifactURLs(t, s.store().(todoRepositoryStore), todo.ID)
+				if want := evidence == "created in turn"; slices.Contains(urls, review) != want {
+					t.Fatalf("provider resolution replaced ownership proof: links=%v wantLinked=%v", urls, want)
+				}
+				if evidence != "created in turn" && todoNow(s, todo.ID).PRURL != "" {
+					t.Fatal("rejected provider PR entered the legacy route")
+				}
+			})
+		}
+	}
+}

@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/nwverse/persona/server/internal/assistant/repository"
 	"github.com/nwverse/persona/server/internal/feishubot"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lazyre"
@@ -411,8 +410,8 @@ func (s *Service) setTaskStage(ctx context.Context, id, stage, pr string) {
 }
 
 func (s *Service) setTaskStageKind(ctx context.Context, id, stage, pr, kind string, verified bool) {
-	if _, link, err := repository.ParseTaskLink(pr); err == nil {
-		if err = s.importTodoRepositoryLinks(ctx, id, []string{link.CanonicalURL}, "report"); err != nil {
+	if pr != "" {
+		if _, err := s.importReportedLinks(ctx, id, []string{pr}, "", nil); err != nil {
 			s.logf("task %s: repository link not saved: %v", id, err)
 		}
 	}
