@@ -939,15 +939,22 @@ func (s *Service) visiblePendingInteractions() []proto.Interaction {
 }
 
 // refreshPendingCards replays actionable state after session visibility changes.
-// It neither marks a card as told nor sends pushes or delegates it again. Holding
-// the queue lock across the enqueue prevents a resolved card from being resurrected.
+// It neither marks a card as told nor sends pushes or delegates it again. The cards
+// are read under fleet.mu and told through tellCard after it is released: a write
+// that stalls on the hub's connection must not hold up pendingIx or resolve, and
+// tellCard tells a card that ended meanwhile ended again, so none is resurrected.
 func (s *Service) refreshPendingCards() {
-	for _, ix := range s.pendingInteractions() {
-		s.fleet.mu.Lock()
-		if p := s.fleet.interactions[ix.ID]; p != nil && !p.claimed {
-			s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: ix})
+	s.fleet.mu.Lock()
+	replay := make([]proto.Interaction, 0, len(s.fleet.interactions))
+	for _, p := range s.fleet.interactions {
+		if !p.claimed {
+			replay = append(replay, p.ix)
 		}
-		s.fleet.mu.Unlock()
+	}
+	s.fleet.mu.Unlock()
+	sort.Slice(replay, func(i, j int) bool { return replay[i].CreatedAt.Before(replay[j].CreatedAt) })
+	for _, ix := range replay {
+		s.tellCard(s.withTask(ix))
 	}
 }
 
