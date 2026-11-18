@@ -20,7 +20,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 
 _cleanup_tab = None
 _cleanup_scope = None
@@ -50,62 +49,55 @@ def command(*args, timeout=90):
 
 
 def interactive_command(launcher, flags):
-    """Translate the watcher's validated print-only request to a visible agent.
+    """Validate the watcher request; the private launcher owns CLI policy.
 
-    Interactive mode cannot use --json-schema; the watcher still validates the
-    returned object and every changed-line finding. Read/plan/safe mode keep the
-    terminal reviewer within the same tool boundary as the one-shot transport.
+    Herdr should show the same simple interactive command as other scoped
+    agents. The configured launcher is trusted maintainer configuration and
+    applies the maintainer's interactive permission policy, Read-only tools and
+    resource fallback. A new session is created per invocation.
     """
     options_with_values = {"--json-schema", "--tools", "--setting-sources", "--permission-mode"}
-    launch_flags = []
     schema = None
     index = 0
     while index < len(flags):
         flag = flags[index]
-        if flag in {"-p", "--output-format"}:
-            if flag == "--output-format":
-                if index + 1 >= len(flags) or flags[index + 1] != "json":
-                    raise RuntimeError("interactive reviewer requires JSON output")
-                index += 1
+        if flag == "-p":
             index += 1
+            continue
+        if flag == "--output-format":
+            if index + 1 >= len(flags) or flags[index + 1] != "json":
+                raise RuntimeError("interactive reviewer requires JSON output")
+            index += 2
             continue
         if flag in options_with_values:
             if index + 1 >= len(flags):
                 raise RuntimeError("missing reviewer option argument")
             if flag == "--json-schema":
                 schema = flags[index + 1]
-            else:
-                launch_flags.extend(flags[index:index + 2])
             index += 2
             continue
         if flag == "--add-dir":
             if index + 1 >= len(flags):
                 raise RuntimeError("missing reviewer add-dir argument")
-            launch_flags.extend(flags[index:index + 2])
             index += 2
             continue
-        if flag == "--no-session-persistence":
-            # Print-only persistence is replaced by a unique interactive session
-            # ID; it is never used to resume another PR's review.
-            index += 1
-            continue
-        if flag in {"--safe-mode", "--strict-mcp-config", "--disable-slash-commands"}:
-            launch_flags.append(flag)
+        if flag in {"--no-session-persistence", "--safe-mode", "--strict-mcp-config",
+                    "--disable-slash-commands"}:
             index += 1
             continue
         raise RuntimeError("unsupported interactive reviewer flag: " + flag)
     if schema is None:
         raise RuntimeError("interactive reviewer requires the watcher JSON schema")
-    return launcher + " " + shlex.join(launch_flags), schema
+    return launcher, schema
 
 
-def scoped_reviewer(wrapper, slot, unit, properties):
-    """Run the visible shell in an owned, uniquely named user scope.
+def scoped_reviewer(slot, unit, properties):
+    """Show only systemd's resource options and the interactive launcher.
 
-    The resource wrapper retains affinity and rlimits for cgroup v1 hosts.
-    Redirections remain in the shell, never in systemd-run's option parser.
+    On cgroup v1 the configured launcher must retain affinity and rlimits;
+    scope properties alone do not bound the memory and CPU controllers.
     """
-    if not re.fullmatch(r"pr-review-r[0-9]{2}-[0-9]+-[a-f0-9]{8}\.scope", unit):
+    if not re.fullmatch(r"pr-review-r[0-9]{2}\.scope", unit):
         raise RuntimeError("reviewer scope name is not owned by this helper")
     command = ["/usr/bin/systemd-run", "--user", "--scope", "--unit=" + unit[:-6], "--collect"]
     for key, value in sorted(properties.items()):
@@ -114,21 +106,18 @@ def scoped_reviewer(wrapper, slot, unit, properties):
         if key == "CPUQuota":
             if not isinstance(value, str) or not re.fullmatch(r"[0-9]+%", value) or int(value[:-1]) <= 0:
                 raise RuntimeError("CPUQuota must be a positive percentage")
-        elif not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            raise RuntimeError("reviewer scope properties must be positive integers")
-        command.extend(["-p", key + "=" + str(value)])
-    return [*command, *shlex.split(wrapper), "zsh", "-lic"]
+        elif key in {"CPUWeight", "TasksMax"}:
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise RuntimeError("reviewer CPU weight/task count must be positive integers")
+            value = str(value)
+        elif not isinstance(value, str) or not re.fullmatch(r"[0-9]+[KMG]", value) or int(value[:-1]) <= 0:
+            raise RuntimeError("reviewer scope memory values must use K, M or G units")
+        command.extend(["-p", key + "=" + value])
+    return [*command, "zsh", "-lic"]
 
 
-def reviewer_command(wrapper, slot, unit, properties):
-    parts = shlex.split(wrapper)
-    if "--slot" in parts:
-        parts = [str(slot) if argument == "--slot" else argument for argument in parts]
-    elif parts:
-        parts.append(str(slot))
-    if parts:
-        parts.append("--")
-    return scoped_reviewer(shlex.join(parts), slot, unit, properties)
+def reviewer_command(slot, unit, properties, launcher):
+    return scoped_reviewer(slot, unit, properties) + [launcher]
 
 
 def scope_command(action, unit, timeout=20):
@@ -201,17 +190,21 @@ def wait_agent(pane, unit, timeout=180):
             if agent.get("agent") != "claude":
                 raise RuntimeError("unexpected reviewer executable")
             screen = terminal_text(pane, "visible", 45)
+            warning = _config.get("startup_warning", "")
+            acceptance = _config.get("startup_acceptance", "")
+            if warning and acceptance and warning in screen and acceptance in screen:
+                command("pane", "send-keys", pane, "down", "enter", timeout=20)
+                time.sleep(2)
+                continue
             if "Yes, I trust this folder" in screen and "Quick safety check" in screen:
                 command("pane", "send-keys", pane, "down", "enter", timeout=20)
                 time.sleep(2)
                 continue
             if agent.get("agent_status") == "blocked":
                 screen = terminal_text(pane, "visible", 45)
-                warning = _config.get("startup_warning", "")
-                acceptance = _config.get("startup_acceptance", "")
                 if not warning or not acceptance or warning not in screen or acceptance not in screen:
                     raise RuntimeError("reviewer requested an unexpected interaction")
-                command("pane", "send-keys", pane, "right", "enter", timeout=20)
+                command("pane", "send-keys", pane, "down", "enter", timeout=20)
                 time.sleep(2)
                 continue
             if agent.get("agent_status") in ("idle", "working"):
@@ -330,12 +323,10 @@ def run(slot, flags):
                         command("tab", "close", tab, timeout=20)
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
             pass
-    name = "pr-r%02d-%d" % (slot, os.getpid())
-    unit = "pr-review-r%02d-%d-%s.scope" % (slot, os.getpid(), secrets.token_hex(4))
+    name = "pr-r%02d" % slot
+    unit = "pr-review-r%02d.scope" % slot
     marker = "PR_REVIEW_RESULT_" + secrets.token_hex(12)
-    session_id = str(uuid.uuid4())
     launch, schema = interactive_command(_config["reviewer_launcher"], flags)
-    launch += " --session-id " + session_id
     prompt = interactive_prompt(sys.stdin.read(), schema, marker)
     with tempfile.TemporaryDirectory(prefix="slot-%02d-" % slot, dir=root):
         with lease_path.open("w", encoding="utf-8") as lease:
@@ -354,9 +345,15 @@ def run(slot, flags):
                            "scope": unit}, lease)
                 lease.flush()
                 os.fsync(lease.fileno())
-                bounded = reviewer_command(_config.get("process_wrapper", ""), slot, unit,
-                                           _config.get("scope_properties", {}))
-                bounded.append(launch)
+                bounded = reviewer_command(slot, unit, _config.get("scope_properties", {}), launch)
+                environment = _config.get("launcher_environment", {})
+                if not isinstance(environment, dict) or any(
+                        not isinstance(key, str) or not isinstance(value, str)
+                        for key, value in environment.items()):
+                    raise RuntimeError("launcher_environment must contain string values")
+                environment["PR_REVIEW_SLOT"] = str(slot)
+                for key, value in environment.items():
+                    bounded[2:2] = ["--setenv=" + key + "=" + value]
                 _cleanup_scope = unit
                 command("pane", "run", pane, " ".join(shlex.quote(arg) for arg in bounded), timeout=30)
                 if not wait_scope_start(unit, time.monotonic() + 180):

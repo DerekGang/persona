@@ -77,9 +77,11 @@ files into a private runtime directory and replace every placeholder; restrict t
   file appears in the tab. Herdr submits the multiline review prompt and the helper reads the final marked assistant
   response from the terminal. The response must still match the watcher's JSON schema and changed-line validation;
   terminal text is transport, never approval by itself. Each review gets a fresh session ID and is never resumed into
-  another PR. Each unique `pr-review-rNN-....scope` uses the explicit `scope_properties`; memory and task values are
-  integer byte/task counts and `CPUQuota` is a percentage string. Keep `process_wrapper` for CPU affinity and rlimits:
-  a scope property shown by `systemctl` is not proof that a cgroup v1 memory or CPU controller enforces it. The helper
+  another PR. The visible launch ends in `zsh -lic cc_k3`; the trusted launcher and `launcher_environment` keep
+  safe-mode, Read-only tools, the maintainer's interactive permission policy, per-session identity and any
+  cgroup-v1 affinity/rlimit fallback out of the displayed command. Each `pr-review-rNN.scope` uses the explicit
+  `scope_properties`: memory values use `5G`/`6G`-style units, CPU weight and task count are integers, and `CPUQuota`
+  is a percentage string. A scope property shown by `systemctl` is not proof that a cgroup v1 controller enforces it.
   never starts or stops Herdr and closes only its own tab and scope. Reviewer tool boundaries and model overrides
   remain enforced.
 - `pr_watch_resources.py CONFIG COMMAND ...` allocates locked CPU groups, preserves the lock across `exec`, and applies

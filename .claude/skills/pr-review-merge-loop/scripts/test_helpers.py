@@ -34,13 +34,8 @@ class HelperTests(unittest.TestCase):
             '{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"]}',
             "--no-session-persistence", "--tools", "Read", "--safe-mode", "--setting-sources", "",
             "--strict-mcp-config", "--permission-mode", "plan", "--disable-slash-commands"])
-        self.assertNotIn(" -p ", " " + launch + " ")
-        self.assertNotIn("--output-format", launch)
-        self.assertNotIn("--json-schema", launch)
-        self.assertNotIn("--no-session-persistence", launch)
-        self.assertIn("--safe-mode", launch)
-        self.assertIn("--tools Read", launch)
-        self.assertIn("--permission-mode plan", launch)
+        self.assertEqual(launch, "cc_k3")
+        self.assertIn('"findings"', schema)
         marker = "PR_REVIEW_RESULT_0123456789abcdef01234567"
         screen = ("❯ Review prompt\n  " + marker + "\n  old prompt marker\n"
                   "● " + marker + '\n  {"findings":[]}\n  ' + marker + "\n✻ done")
@@ -56,8 +51,7 @@ class HelperTests(unittest.TestCase):
                 "scope_state": unittest.mock.Mock(
                     side_effect=[("not-found", "inactive"), ("loaded", "active")])}), \
                 patch.object(module["time"], "sleep", return_value=None):
-            self.assertTrue(module["wait_scope_start"]("pr-review-r00-123-01234567.scope",
-                                                      module["time"].monotonic() + 5))
+            module["wait_scope_start"]("pr-review-r00.scope", module["time"].monotonic() + 5)
 
     def test_interactive_workspace_trust_uses_down_before_prompt(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
@@ -74,35 +68,50 @@ class HelperTests(unittest.TestCase):
         globals_ = module["wait_agent"].__globals__
         screens = ["Quick safety check\n❯ No, exit\n  Yes, I trust this folder", ""]
         with patch.dict(globals_, {
+                "_config": {},
                 "scope_running": unittest.mock.Mock(return_value=True),
                 "terminal_text": unittest.mock.Mock(side_effect=screens),
                 "command": fake_command}):
             module["wait_agent"]("w3:p1", "pr-review-r00-123-01234567.scope", timeout=5)
         self.assertIn(("pane", "send-keys", "w3:p1", "down", "enter"), calls)
 
+    def test_interactive_danger_confirmation_uses_down(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        responses = iter([
+            {"agents": [{"pane_id": "w3:p1", "agent": "claude", "agent_status": "blocked"}]},
+            {"agents": [{"pane_id": "w3:p1", "agent": "claude", "agent_status": "idle"}]},
+        ])
+        calls = []
+        def fake_command(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("agent", "list"):
+                return next(responses)
+            return {}
+        with patch.dict(module["wait_agent"].__globals__, {
+                "_config": {"startup_warning": "WARNING: Claude Code running in Bypass Permissions",
+                            "startup_acceptance": "Yes, I accept"},
+                "scope_running": unittest.mock.Mock(return_value=True),
+                "terminal_text": unittest.mock.Mock(side_effect=[
+                    "WARNING: Claude Code running in Bypass Permissions\n❯ No, exit\n  Yes, I accept", ""]),
+                "command": fake_command}):
+            module["wait_agent"]("w3:p1", "pr-review-r00.scope", timeout=5)
+        self.assertIn(("pane", "send-keys", "w3:p1", "down", "enter"), calls)
+
     def test_reviewer_scope_wraps_visible_shell(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
-        argv = module["reviewer_command"](
-            "python3 -I wrapper.py resources.json --slot", 7,
-            "pr-review-r07-123-01234567.scope",
-            {"CPUQuota": "400%", "CPUWeight": 20, "MemoryHigh": 5 * 1024**3,
-             "MemoryMax": 6 * 1024**3, "TasksMax": 512})
-        self.assertEqual(argv[:5], ["/usr/bin/systemd-run", "--user", "--scope",
-                                   "--unit=pr-review-r07-123-01234567", "--collect"])
-        self.assertIn("MemoryMax=6442450944", argv)
-        self.assertEqual(argv[-8:], ["python3", "-I", "wrapper.py", "resources.json", "7", "--",
-                                    "zsh", "-lic"])
-        launch = "cc_k3 -p < /private/prompt.txt > /private/result.json"
-        self.assertEqual(argv + [launch], [*argv, launch])
-        explicit = module["reviewer_command"]("python3 -I wrapper.py resources.json", 2,
-                                              "pr-review-r02-123-01234567.scope", {})
-        self.assertEqual(explicit[-8:], ["python3", "-I", "wrapper.py", "resources.json", "2", "--",
-                                        "zsh", "-lic"])
+        argv = module["reviewer_command"](7, "pr-review-r07.scope", {
+            "CPUQuota": "400%", "CPUWeight": 20, "MemoryHigh": "5G",
+            "MemoryMax": "6G", "TasksMax": 512}, "cc_k3")
+        self.assertEqual(argv, [
+            "/usr/bin/systemd-run", "--user", "--scope", "--unit=pr-review-r07", "--collect",
+            "-p", "CPUQuota=400%", "-p", "CPUWeight=20", "-p", "MemoryHigh=5G",
+            "-p", "MemoryMax=6G", "-p", "TasksMax=512", "zsh", "-lic", "cc_k3"])
         with self.assertRaises(RuntimeError):
-            module["scoped_reviewer"]("", 7, "refract-worker-222.scope", {})
+            module["scoped_reviewer"](7, "refract-worker-222.scope", {})
         with self.assertRaises(RuntimeError):
-            module["scoped_reviewer"]("", 7, "pr-review-r07-123-01234567.scope",
-                                       {"ExecStartPost": "true"})
+            module["scoped_reviewer"](7, "pr-review-r07.scope", {"ExecStartPost": "true"})
+        with self.assertRaises(RuntimeError):
+            module["scoped_reviewer"](7, "pr-review-r07.scope", {"MemoryMax": 6442450944})
 
     def test_interactive_scope_waits_for_agent_completion_after_markers(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
