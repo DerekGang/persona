@@ -2,11 +2,14 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
 )
+
+var errInboxTaskClaimed = errors.New("Inbox item belongs to another task")
 
 // A follow-up may belong to an existing task with a different original Inbox
 // source. Keep that source and append this item's backlink and Agent chain.
@@ -25,7 +28,7 @@ func (s *Service) checkExistingTaskInbox(conversation string, source PlanTask, t
 	}
 	it := b.items[source.InboxItem]
 	if it.Agent != nil && it.Agent.TodoID != "" && it.Agent.TodoID != todo.ID {
-		return fmt.Errorf("inbox_item %q already links to task %s; continue that task instead", it.ID, it.Agent.TodoID)
+		return fmt.Errorf("%w: inbox_item %q already links to task %s; continue that task instead", errInboxTaskClaimed, it.ID, it.Agent.TodoID)
 	}
 	return nil
 }
@@ -62,7 +65,7 @@ func (s *Service) linkExistingTaskInbox(ctx context.Context, conversation string
 	it := b.items[source.InboxItem]
 	if it.Agent != nil && it.Agent.TodoID != "" && it.Agent.TodoID != todo.ID {
 		b.mu.Unlock()
-		return fmt.Errorf("inbox_item %q was linked to another task meanwhile", it.ID)
+		return fmt.Errorf("%w: inbox_item %q was linked to another task meanwhile", errInboxTaskClaimed, it.ID)
 	}
 	w := beginWrite(it)
 	changed := it.Agent == nil || it.Agent.TodoID != todo.ID

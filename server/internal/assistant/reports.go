@@ -176,7 +176,12 @@ var codeTaskWords = lazyre.New(`(?i)\b(PR|MR|merge[ds]?|deploy(?:ed|ment)?|relea
 var generalTaskWords = lazyre.New(`(?i)\b(research|investigate|report|plan|triage|cleanup|summary|analysis|doc review)\b|调研|报告|方案|分诊|清理|总结|分析`)                                                                                                   // i18n-ignore: match what the agent or user wrote, not text shown
 
 // advanceTaskReply handles progress and final answers identically, including the running-hub deploy check.
+// Without a recorded turn, ownership must come from the independent checkout read.
 func (s *Service) advanceTaskReply(ctx context.Context, t Todo, machine, session, text string) bool {
+	return s.advanceTaskReplyAt(ctx, t, machine, session, text, time.Time{})
+}
+
+func (s *Service) advanceTaskReplyAt(ctx context.Context, t Todo, machine, session, text string, at time.Time) bool {
 	urls := taskRepositoryReportLinks(text)
 	stage, pr := stageOf(text)
 	d, marked := deliveryMark(text)
@@ -186,7 +191,7 @@ func (s *Service) advanceTaskReply(ctx context.Context, t Todo, machine, session
 	if pr != "" && !slices.Contains(urls, pr) {
 		urls = append(urls, pr)
 	}
-	accepted, err := s.importOwnedTaskRepositoryLinks(ctx, t, machine, session, urls)
+	accepted, err := s.importOwnedTaskRepositoryLinks(ctx, t, machine, session, urls, text, at)
 	if err != nil {
 		s.logf("task %s: owned repository links not saved: %v", t.ID, err)
 	}

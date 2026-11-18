@@ -260,7 +260,7 @@ type tasksState struct {
 	// receipt is due when the task settles after working since the last one.
 	working      map[string]time.Time
 	receipted    map[string]time.Time
-	stageReplies map[SessionRef][2]string // task id and last snippet; unchanged list rows do not repeat stage work
+	stageReplies map[SessionRef][3]string // task id, last snippet and turn time; a new turn must recheck its evidence
 	// awaitingAnswer remembers a stopped status whose transcript still ends in a tool.
 	awaitingAnswer map[SessionRef]bool
 	// limitLooks: when a task agent's usage-limit wait is looked at again (taskTurnEndedAfter), one look per agent

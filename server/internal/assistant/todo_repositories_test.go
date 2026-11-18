@@ -160,10 +160,10 @@ func TestTodoRepositoryAgentReportsUseUnifiedStore(t *testing.T) {
 	defer database.Close()
 	s, f := newQuietServiceOn(t, repositorystore.New(database))
 	todo := agentTask(t, s, f)
-	artifactCreationProof(f, todo, "https://github.com/example/web/pull/7", "https://github.com/example/web/pull/8",
-		"https://gitlab.example.com/team/api/-/merge_requests/7")
 	text := "Opened https://github.com/example/web/pull/7 and https://github.com/example/web/pull/8; https://gitlab.example.com/team/api/-/merge_requests/7"
-	s.advanceTaskReply(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID, text)
+	reply := artifactReportProof(f, todo, text, "https://github.com/example/web/pull/7", "https://github.com/example/web/pull/8",
+		"https://gitlab.example.com/team/api/-/merge_requests/7")
+	s.advanceTaskReplyAt(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID, text, reply.TS)
 	set, err := s.readTodoRepositories(t.Context(), todo.ID)
 	if err != nil || len(set.Repositories) != 2 || len(set.Repositories[0].Links) != 2 {
 		t.Fatal(set, err)
@@ -240,19 +240,20 @@ func TestTodoRepositoryReportsNotifyWithoutChangingLegacyProgress(t *testing.T) 
 	s, f := newQuietServiceOn(t, repositorystore.New(database))
 	todo := agentTask(t, s, f)
 	first := "https://github.com/example/web/pull/7"
-	artifactCreationProof(f, todo, first, "https://github.com/example/web/pull/8")
 	machine, session := todo.Agents[0].MachineID, todo.Agents[0].SessionID
-	s.advanceTaskReply(t.Context(), todo, machine, session, first)
+	reply := artifactReportProof(f, todo, first, first)
+	s.advanceTaskReplyAt(t.Context(), todo, machine, session, first, reply.TS)
 	todo = todoNow(s, todo.ID)
 	todosTold(t, s)
 	before := strings.Count(f.eventTypes(), "todos")
-	s.advanceTaskReply(t.Context(), todo, machine, session, "https://github.com/example/web/pull/8 "+first)
+	reply = artifactReportProof(f, todo, "https://github.com/example/web/pull/8 "+first, first, "https://github.com/example/web/pull/8")
+	s.advanceTaskReplyAt(t.Context(), todo, machine, session, reply.Text, reply.TS)
 	todosTold(t, s)
 	after := strings.Count(f.eventTypes(), "todos")
 	if after <= before {
 		t.Fatal("new association with unchanged legacy stage/PR sent no update")
 	}
-	s.advanceTaskReply(t.Context(), todo, machine, session, "https://github.com/example/web/pull/8 "+first)
+	s.advanceTaskReplyAt(t.Context(), todo, machine, session, reply.Text, reply.TS)
 	todosTold(t, s)
 	if got := strings.Count(f.eventTypes(), "todos"); got != after {
 		t.Fatal("replayed links emitted another update", after, got)

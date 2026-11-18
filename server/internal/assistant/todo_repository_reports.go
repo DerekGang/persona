@@ -215,7 +215,7 @@ func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
 // A report or a model-produced artifact is only a candidate. A native successful
 // PR-create outcome, or the node's independently read author and pushed checkout,
 // establishes ownership. Missing evidence leaves automatic linking closed.
-func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo, machine, session string, urls []string) ([]string, error) {
+func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo, machine, session string, urls []string, reportText string, reportAt time.Time) ([]string, error) {
 	var linked time.Time
 	for _, a := range todo.Agents {
 		if a.MachineID == machine && a.SessionID == session && a.ReleasedAt == nil && a.DismissedAt == nil {
@@ -230,13 +230,37 @@ func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo,
 	pushed := map[string]string{}
 	pushCwd := ""
 	if items, ok := s.lastTurnItems(ctx, machine, session); ok {
+		// A separate transcript read must match this report, not merely this Agent's lifetime.
+		_, items = splitLastTurn(items)
+		// Stored turn timestamps have Postgres microsecond precision.
+		reportAt = reportAt.Truncate(time.Microsecond)
+		linkedAt := linked.Truncate(time.Microsecond)
+		var endedAt time.Time
+		for i := range items {
+			items[i].TS = items[i].TS.Truncate(time.Microsecond)
+			it := items[i]
+			if it.TS.After(endedAt) {
+				endedAt = it.TS
+			}
+		}
+		matched := endedAt.Equal(reportAt)
+		if reportText != "" {
+			matched = slices.ContainsFunc(items, func(it proto.Item) bool {
+				return it.Role == "assistant" && it.Kind == proto.KindText && it.FullSize == 0 &&
+					strings.TrimSpace(it.Text) == strings.TrimSpace(reportText) &&
+					(it.TS.Equal(reportAt) || endedAt.Equal(reportAt))
+			})
+		}
+		if _, source := taskTurnSource(todo, items); source != "" || reportAt.IsZero() || reportAt.Before(linkedAt) || !matched {
+			items = nil // Only a fresh independent checkout read may authorize this candidate.
+		}
 		calls := map[string]proto.Item{}
 		for _, it := range items {
 			if it.Kind == proto.KindToolUse && it.ToolUseID != "" {
 				calls[it.ToolUseID] = it
 				continue
 			}
-			if it.Kind != proto.KindToolResult || it.IsError || it.TS.IsZero() || it.TS.Before(linked) ||
+			if it.Kind != proto.KindToolResult || it.IsError || it.TS.IsZero() || it.TS.Before(linkedAt) || it.TS.After(reportAt) ||
 				it.Outcome == nil || it.Outcome.Status != proto.OutcomeOK ||
 				it.Outcome.ExitCode != nil && *it.Outcome.ExitCode != 0 {
 				continue
@@ -252,7 +276,7 @@ func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo,
 				}
 			}
 			call, found := calls[it.ToolUseID]
-			if !found || call.TS.IsZero() || call.TS.Before(linked) {
+			if !found || call.TS.IsZero() || call.TS.Before(linkedAt) || call.TS.After(reportAt) {
 				continue
 			}
 			op, cwd := taskRepositoryNativeCommand(call)
@@ -363,7 +387,7 @@ func (s *Service) importTaskRepositoryArtifacts(ctx context.Context, e db.Sessio
 	for _, agent := range todo.Agents {
 		if agent.MachineID == e.MachineID && agent.SessionID == e.SessionID &&
 			agent.ReleasedAt == nil && agent.DismissedAt == nil && !e.TurnAt.Before(agent.LinkedAt) {
-			_, err := s.importOwnedTaskRepositoryLinks(ctx, todo, e.MachineID, e.SessionID, urls)
+			_, err := s.importOwnedTaskRepositoryLinks(ctx, todo, e.MachineID, e.SessionID, urls, "", e.TurnAt)
 			return err
 		}
 	}

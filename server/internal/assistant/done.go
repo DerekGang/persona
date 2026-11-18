@@ -621,12 +621,20 @@ func (s *Service) advanceFromLastReplies(ctx context.Context, t Todo) {
 			continue
 		}
 		text := ""
+		var replyAt time.Time
 		if items, read := s.lastTurnItems(ctx, m.ID, a.SessionID); read {
 			_, text = turnExchange(items)
+			for i := len(items) - 1; i >= 0; i-- {
+				if it := items[i]; it.Role == "assistant" && it.Kind == proto.KindText && strings.TrimSpace(it.Text) == text {
+					replyAt = it.TS
+					break
+				}
+			}
 		}
 		if text == "" {
 			if c, ok := s.session(ctx, m.ID, a.SessionID); ok && !strings.HasSuffix(c.LastText, "…") {
 				text = strings.TrimSpace(c.LastText)
+				replyAt = c.UpdatedAt
 			}
 		}
 		if text == "" {
@@ -635,7 +643,7 @@ func (s *Service) advanceFromLastReplies(ctx context.Context, t Todo) {
 		if cur, ok := s.todoNow(t.ID); ok {
 			t = cur
 		}
-		if s.advanceTaskReply(ctx, t, m.ID, a.SessionID, text) {
+		if s.advanceTaskReplyAt(ctx, t, m.ID, a.SessionID, text, replyAt) {
 			go s.askAcceptance(t, m.ID, a.SessionID, text) // deployed: verified, by the supervising assistant or the owner
 		}
 	}

@@ -608,7 +608,7 @@ func (s *Service) settleTurn(ctx context.Context, machine, sid, unheard string) 
 		return settleTaken
 	}
 	s.taskNotice(cctx, t, name, "done", "", clipMarkdown(text, 1500))
-	if s.advanceTaskReply(cctx, t, last.MachineID, last.SessionID, text) {
+	if s.advanceTaskReplyAt(cctx, t, last.MachineID, last.SessionID, text, last.UpdatedAt) {
 		go s.askAcceptance(t, last.MachineID, last.SessionID, text) // verified, by the supervising assistant or the user (acceptance.go)
 	}
 	s.taskReport(t, reportDone, name, [2]string{last.MachineID, last.SessionID}, text, nil)

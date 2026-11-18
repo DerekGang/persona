@@ -232,8 +232,10 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 			continue
 		}
 		_, items = splitLastTurn(items)
+		var replyAt time.Time
 		for j := len(items) - 1; j >= 0; j-- {
 			if it := items[j]; it.Role == "assistant" && it.Kind == proto.KindText && strings.TrimSpace(it.Text) != "" {
+				replyAt = it.TS
 				if it.FullSize > 0 || !it.TS.IsZero() && it.TS.Before(a.LinkedAt) {
 					ok = false
 				}
@@ -316,7 +318,7 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 		}
 		if pr != "" {
 			if pr != current {
-				owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr})
+				owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr}, text, replyAt)
 				if err != nil {
 					return "", false, fmt.Errorf("task %s: delivery PR ownership could not be verified: %w", t.ID, err)
 				}

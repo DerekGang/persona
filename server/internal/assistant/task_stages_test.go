@@ -74,9 +74,9 @@ func TestTaskStageMidTaskReply(t *testing.T) {
 	}
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	url := "https://gitlab.example.com/group/repo/-/merge_requests/42"
-	artifactCreationProof(f, todo, url)
+	reply := artifactReportProof(f, todo, "Opened "+url, url)
 	// No TurnEnded: a progress reply from the list must update a running task.
-	s.SessionsChanged(ctx, DeviceSessions{MachineID: "box", Sessions: []proto.Session{{SessionID: "s1", Status: proto.StatusWorking, LastText: "Opened " + url}}})
+	s.SessionsChanged(ctx, DeviceSessions{MachineID: "box", Sessions: []proto.Session{{SessionID: "s1", Status: proto.StatusWorking, LastText: reply.Text, UpdatedAt: reply.TS}}})
 	if got := todoNow(s, todo.ID); got.Stage != "review" || got.PRURL != url || got.StageKind != "code" || got.DoneAt != nil {
 		t.Fatalf("mid-task review = %+v", got)
 	}
@@ -120,8 +120,8 @@ func TestTaskStageClippedProgressReply(t *testing.T) {
 	if got := todoNow(s, todo.ID); stageIndex(got.Stage) > stageIndex("develop") || got.PRURL != "" {
 		t.Fatalf("clipped item advanced progress: %+v", got)
 	}
-	artifactCreationProof(f, todo, url)
-	s.taskStageItems(ctx, SessionItems{MachineID: "box", SessionID: "s1", Items: []proto.Item{{Role: "assistant", Kind: proto.KindText, Text: text}}})
+	reply := artifactReportProof(f, todo, text, url)
+	s.taskStageItems(ctx, SessionItems{MachineID: "box", SessionID: "s1", Items: []proto.Item{reply}})
 	if got := todoNow(s, todo.ID); got.Stage != "merge" || got.PRURL != url {
 		t.Fatalf("complete item missed its MR: %+v", got)
 	}

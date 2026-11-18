@@ -108,13 +108,18 @@ func TestTaskRepositoryOwnershipRequiresIndependentPublishedHead(t *testing.T) {
 			}
 			work := artifactWork(todo)
 			work.Work.Artifacts = work.Work.Artifacts[:1]
+			if name == "own push" {
+				f.mu.Lock()
+				f.items = append(f.items, proto.Item{Role: "assistant", Kind: proto.KindText, Text: "PR: " + artifactPR, TS: work.TurnAt})
+				f.mu.Unlock()
+			}
 			s.putWork(t.Context(), work)
 			_, saved := savedArtifactURLs(t, st, todo.ID)
 			want := name == "owned" || name == "own push"
 			if slices.Contains(saved, artifactPR) != want {
 				t.Fatalf("ownership=%s: saved=%v", name, saved)
 			}
-			s.advanceTaskReply(t.Context(), todo, work.MachineID, work.SessionID, "PR: "+artifactPR)
+			s.advanceTaskReplyAt(t.Context(), todo, work.MachineID, work.SessionID, "PR: "+artifactPR, work.TurnAt)
 			if got := todoNow(s, todo.ID).PRURL; (got == artifactPR) != want {
 				t.Fatalf("legacy PR field bypassed ownership: %q", got)
 			}
@@ -166,9 +171,8 @@ func TestTaskRepositoryOwnershipAlreadyLinkedElsewhereDoesNotPolluteLegacyPR(t *
 	if err := s.importTodoRepositoryLinks(t.Context(), owner.ID, []string{artifactPR}, "explicit"); err != nil {
 		t.Fatal(err)
 	}
-	artifactCreationProof(f, todo, artifactPR)
-	s.advanceTaskReply(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID,
-		"<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\nartifact: pr "+artifactPR+"\n</closeout>")
+	reply := artifactReportProof(f, todo, "<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\nartifact: pr "+artifactPR+"\n</closeout>", artifactPR)
+	s.advanceTaskReplyAt(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID, reply.Text, reply.TS)
 	if _, links := savedArtifactURLs(t, st, todo.ID); len(links) != 0 {
 		t.Fatal("automatic import duplicated another open task", links)
 	}
@@ -196,8 +200,8 @@ func TestTaskRepositoryOwnershipConflictingSavedLinkIsNotAnAcceptedClaim(t *test
 		}
 	}
 	before, _ := savedArtifactURLs(t, st, todo.ID)
-	artifactCreationProof(f, todo, artifactPR)
-	s.advanceTaskReply(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID, "PR: "+artifactPR)
+	reply := artifactReportProof(f, todo, "PR: "+artifactPR, artifactPR)
+	s.advanceTaskReplyAt(t.Context(), todo, todo.Agents[0].MachineID, todo.Agents[0].SessionID, reply.Text, reply.TS)
 	if got := todoNow(s, todo.ID); got.PRURL != "" || len(got.PRs) != 0 {
 		t.Fatal("a conflicting saved association was mistaken for an accepted claim", got)
 	}
@@ -265,8 +269,8 @@ func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testi
 			case "older call":
 				call.TS = at.Add(-time.Hour)
 			}
-			f.setItems(call, result)
 			work := artifactWork(todo)
+			f.setItems(call, result, proto.Item{Kind: proto.KindNotice, TS: work.TurnAt})
 			work.Work.Artifacts = work.Work.Artifacts[:1]
 			s.putWork(t.Context(), work)
 			_, saved := savedArtifactURLs(t, st, todo.ID)

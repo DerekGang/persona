@@ -198,18 +198,21 @@ func TestReportedPRFromActiveAgentsRequiresUnambiguousOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			todo = todoNow(s, todo.ID)
-			f.mu.Lock()
-			f.itemReads = 0
-			f.readHooks.before = func(read int) {
-				f.setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/5", "https://github.com/o/r/pull/6"),
-					proto.Item{Role: "assistant", Kind: proto.KindText, Text: tc.replies[min(read-1, 1)]})...)
-			}
-			f.mu.Unlock()
-			defer func() {
-				f.mu.Lock()
-				f.readHooks = receiptHooks{}
-				f.mu.Unlock()
-			}()
+			f.answerNode(DeviceSessionItems, func(_ string, raw json.RawMessage) (any, error) {
+				var args struct {
+					SessionID string `json:"session_id"`
+				}
+				if err := json.Unmarshal(raw, &args); err != nil {
+					return nil, err
+				}
+				index := 1
+				if args.SessionID == other.SessionID {
+					index = 0
+				}
+				items := append(artifactCreationItems(todo, "https://github.com/o/r/pull/5", "https://github.com/o/r/pull/6"),
+					proto.Item{Role: "assistant", Kind: proto.KindText, Text: tc.replies[index], TS: artifactTurnAt(todo)})
+				return map[string]any{"items": items}, nil
+			})
 			got, noPR, err := s.reportedTaskPR(context.Background(), todo, "")
 			if got != tc.want || noPR != tc.noPR || (err != nil) != tc.err {
 				t.Fatalf("multi-agent delivery = %q, noPR=%v, %v; want %q, noPR=%v, error=%v",
@@ -297,6 +300,11 @@ func TestReportedPRRequiresTaskOwnedCloseout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f, todo := newSupervisedServiceOn(t, repositorystore.New(todoTestDB(t)))
 			s.deploy.forge = &fakeForge{}
+			for i := range tc.items {
+				if tc.items[i].TS.IsZero() {
+					tc.items[i].TS = artifactTurnAt(todo)
+				}
+			}
 			f.setItems(append(artifactCreationItems(todo, pr), tc.items...)...)
 			got, noPR, err := s.reportedTaskPR(context.Background(), todo, "https://github.com/o/r/pull/4")
 			if got != tc.want || noPR || tc.want != "" && err != nil {
@@ -316,7 +324,7 @@ func TestExplicitUnmergedDeliveryStillBlocksWithRelatedReferences(t *testing.T) 
 				s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/"+recorded)
 			}
 			f.setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/5"),
-				proto.Item{Role: "assistant", Kind: proto.KindText, Text: "Related merged PR: https://github.com/o/r/pull/9\n" +
+				proto.Item{Role: "assistant", Kind: proto.KindText, TS: artifactTurnAt(todo), Text: "Related merged PR: https://github.com/o/r/pull/9\n" +
 					"<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\n" +
 					"artifact: pr https://github.com/o/r/pull/5\n</closeout>"})...)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

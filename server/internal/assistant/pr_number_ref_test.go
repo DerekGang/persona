@@ -121,12 +121,12 @@ func TestTaskRecordsAPRNamedByNumber(t *testing.T) {
 	s, f := newTaskServiceOn(t, repositorystore.New(todoTestDB(t)))
 	s.deploy.forge = &fakeForge{}
 	todo := startedTask(t, s, f)
-	artifactCreationProof(f, todo, "https://github.com/o/app/pull/7350")
+	reply := artifactReportProof(f, todo, "The 423 fix is pushed to #7350 and deployed; the PR waits for review", "https://github.com/o/app/pull/7350")
 	ctx := context.Background()
 	s.setTaskStage(ctx, todo.ID, "develop", "")
 	cur := todoNow(s, todo.ID)
 	cur.Notes = "Upstream: https://github.com/o/app/issues/7343"
-	s.advanceTaskReply(ctx, cur, "box", "s1", "The 423 fix is pushed to #7350 and deployed; the PR waits for review")
+	s.advanceTaskReplyAt(ctx, cur, "box", "s1", reply.Text, reply.TS)
 	if got := todoNow(s, todo.ID); got.PRURL != "https://github.com/o/app/pull/7350" {
 		t.Fatalf("pr_url = %q (stage %s)", got.PRURL, got.Stage)
 	}
@@ -147,16 +147,14 @@ func TestTaskCloseoutArtifactReplacesEarlierPR(t *testing.T) {
 			s, f := newTaskServiceOn(t, repositorystore.New(todoTestDB(t)))
 			s.deploy.forge = &fakeForge{}
 			todo := startedTask(t, s, f)
-			artifactCreationProof(f, todo, "https://github.com/o/r/pull/5")
+			reply := artifactReportProof(f, todo, tc.close, "https://github.com/o/r/pull/5")
 			ctx := context.Background()
 			s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/4")
 			if got := todoNow(s, todo.ID).PRURL; got != "https://github.com/o/r/pull/4" {
 				t.Fatalf("initial PR = %q, want /pull/4", got)
 			}
 
-			s.taskStageItems(ctx, SessionItems{MachineID: "box", SessionID: "s1", Items: []proto.Item{{
-				Role: "assistant", Kind: proto.KindText, Text: tc.close,
-			}}})
+			s.taskStageItems(ctx, SessionItems{MachineID: "box", SessionID: "s1", Items: []proto.Item{reply}})
 			if got := todoNow(s, todo.ID).PRURL; got != "https://github.com/o/r/pull/5" {
 				t.Fatalf("current PR = %q, want /pull/5 (stage %s)", got, todoNow(s, todo.ID).Stage)
 			}

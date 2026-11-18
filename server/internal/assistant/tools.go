@@ -418,6 +418,9 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			if task, err = s.handTask(ctx, self, am, c, *a.Task, a.Text); err != nil {
 				return "", err
 			}
+			if err := s.checkExistingTaskInbox(self, source, task.todo); err != nil {
+				return "", task.sendFailed(ctx, s, fmt.Errorf("%w; nothing was sent", err))
+			}
 		}
 		finish := func(ctx context.Context, result string) (string, error) {
 			if source.InboxItem == "" {
@@ -431,6 +434,13 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 				id = task.todo.ID
 			}
 			if err := s.linkExistingTaskInbox(sctx, self, source, id, []SessionRef{{MachineID: am.ID, SessionID: c.SessionID}}); err != nil {
+				if task != nil && task.made && errors.Is(err, errInboxTaskClaimed) {
+					// Delivery cannot be undone, but a refused claim must not leave a duplicate task.
+					if undoErr := s.removeTodo(sctx, task.todo.ID); undoErr != nil {
+						return "", fmt.Errorf("message delivered to the Agent, but its Inbox link was not saved: %w; newly created task %s remains because rollback failed: %v; do not resend the message", err, task.todo.ID, undoErr)
+					}
+					return "", fmt.Errorf("message delivered to the Agent, but its Inbox link was not saved: %w; newly created task %s was removed without stopping the Agent; do not resend the message", err, task.todo.ID)
+				}
 				return "", fmt.Errorf("message delivered to the Agent, but its Inbox link was not saved: %w; do not resend the message", err)
 			}
 			return result + fmt.Sprintf(" Inbox item %s now links to task %s and this Agent.", source.InboxItem, id), nil

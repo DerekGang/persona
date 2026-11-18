@@ -30,7 +30,7 @@ func TestRecoveredNumberedPRUsesReplyRepository(t *testing.T) {
 			ctx := context.Background()
 			s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/"+tc.saved)
 			f.setItems(append(artifactCreationItems(todo, "https://github.com/o/actual/pull/5"),
-				proto.Item{Role: "assistant", Kind: proto.KindText, Text: "Delivery repository: https://github.com/" + tc.replyRepo + "/issues/5\n" +
+				proto.Item{Role: "assistant", Kind: proto.KindText, TS: artifactTurnAt(todo), Text: "Delivery repository: https://github.com/" + tc.replyRepo + "/issues/5\n" +
 					"<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\nartifact: pr " + tc.ref + "\n</closeout>"})...)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

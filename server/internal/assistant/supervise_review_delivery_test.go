@@ -218,7 +218,7 @@ func TestAcceptedNonPRCannotHideEarlierRealPR(t *testing.T) {
 	s, todo := deliveryReviewServiceOn(t, &fakeForge{}, &runningHub{commit: oldHub}, false, repositorystore.New(todoTestDB(t)))
 	ctx := context.Background()
 	s.setTaskStage(ctx, todo.ID, "review", "https://github.com/o/r/pull/10")
-	s.hub.(*fakeHub).setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/9"), proto.Item{Role: "assistant", Kind: proto.KindText,
+	s.hub.(*fakeHub).setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/9"), proto.Item{Role: "assistant", Kind: proto.KindText, TS: artifactTurnAt(todo),
 		Text: "<closeout status=\"not_done\" merged=\"no\" deployed=\"no\">\n" +
 			"artifact: pr https://github.com/o/r/pull/9\n</closeout>"})...)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

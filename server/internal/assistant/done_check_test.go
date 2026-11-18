@@ -45,8 +45,7 @@ func TestDoneCheckApplyClosesAFinishedTask(t *testing.T) {
 		t.Fatalf("supervised: %+v", todo.Supervision)
 	}
 	reply := "修好了，PR https://github.com/o/r/pull/9 已合并"
-	f.setItems(append(artifactCreationItems(todo, "https://github.com/o/r/pull/9"),
-		proto.Item{Role: "assistant", Kind: proto.KindText, Text: reply})...)
+	artifactReportProof(f, todo, reply, "https://github.com/o/r/pull/9")
 	agentStopped(f, reply)
 
 	got := doneCheck(t, s, todo.ID, "")

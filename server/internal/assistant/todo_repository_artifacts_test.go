@@ -22,25 +22,37 @@ func artifactCreationProof(f *fakeHub, todo Todo, urls ...string) {
 	f.setItems(artifactCreationItems(todo, urls...)...)
 }
 
-func artifactCreationItems(todo Todo, urls ...string) []proto.Item {
-	items := []proto.Item{}
+func artifactTurnAt(todo Todo) time.Time {
 	at := todo.Agents[0].LinkedAt
 	for _, agent := range todo.Agents {
 		if agent.LinkedAt.After(at) {
 			at = agent.LinkedAt
 		}
 	}
+	return at.Add(time.Second)
+}
+
+func artifactReportProof(f *fakeHub, todo Todo, text string, urls ...string) proto.Item {
+	reply := proto.Item{Role: "assistant", Kind: proto.KindText, Text: text, TS: artifactTurnAt(todo)}
+	f.setItems(append(artifactCreationItems(todo, urls...), reply)...)
+	return reply
+}
+
+func artifactCreationItems(todo Todo, urls ...string) []proto.Item {
+	items := []proto.Item{}
+	at := artifactTurnAt(todo).Add(-time.Second)
 	for i, url := range urls {
 		items = append(items, proto.Item{ID: fmt.Sprint("created-", i), Role: "user", Kind: proto.KindToolResult,
 			TS: at.Add(time.Millisecond), Outcome: &proto.ToolOutcome{
 				Status: proto.OutcomeOK, Git: &proto.OutcomeGit{PR: &proto.OutcomePR{URL: url, Action: "created"}}}})
 	}
+	items = append(items, proto.Item{Kind: proto.KindNotice, TS: artifactTurnAt(todo)})
 	return items
 }
 
 func artifactWork(todo Todo) db.SessionWork {
 	a := todo.Agents[0]
-	return db.SessionWork{MachineID: a.MachineID, SessionID: a.SessionID, TurnAt: a.LinkedAt.Add(time.Second),
+	return db.SessionWork{MachineID: a.MachineID, SessionID: a.SessionID, TurnAt: artifactTurnAt(todo),
 		Work: proto.WorkState{Phase: proto.WorkBlocked, On: proto.WaitExternal, By: "rule",
 			Artifacts: []proto.WorkArtifact{{Kind: "pr", Ref: artifactPR + "#issuecomment-1"},
 				{Kind: "pr", Ref: "https://github.com/example/project/pull/8"}}}}
@@ -95,8 +107,9 @@ func TestTaskRepositoryArtifactsRouteFeedbackToExistingAgent(t *testing.T) {
 					"<closeout status=\"blocked\" merged=\"no\" deployed=\"no\">\n" +
 					"artifact: pr " + artifactPR + "\nartifact: pr https://github.com/example/project/pull/8\n" +
 					"waiting: Review\n</closeout>"
+				reply := artifactReportProof(f, todo, text, artifactPR, "https://github.com/example/project/pull/8")
 				s.taskStageItems(t.Context(), SessionItems{MachineID: work.MachineID, SessionID: work.SessionID,
-					Items: []proto.Item{{Role: "assistant", Kind: proto.KindText, Text: text}}})
+					Items: []proto.Item{reply}})
 			case "work artifacts":
 				s.putWork(t.Context(), work)
 			case "scheduled triage artifacts":
