@@ -25,6 +25,9 @@ func TestCloseoutPartitionAndExactFollowupWindow(t *testing.T) {
 	for _, status := range []string{proto.CloseoutNotDone, proto.CloseoutBlocked, ""} {
 		t.Run(status, func(t *testing.T) {
 			f := closeoutFacts(status)
+			if status == "" {
+				f.Sessions[0].State = proto.StateIdle
+			}
 			cutoff := f.CreatedAt.Add(time.Hour)
 			v := View(f, cutoff)
 			if v.Phase != assistantwire.TodoPhaseTodo || !v.NextChangeAt.Equal(cutoff.Add(time.Nanosecond)) {
@@ -131,5 +134,21 @@ func TestCloseoutCountsUseTheDecidedPartition(t *testing.T) {
 	if c.NeedsYou != 1 || c.InProgress != 1 || c.Open != 3 ||
 		c.Sections[assistantwire.TodoListSectionJustFinished] != 1 {
 		t.Fatalf("Needs you=1, Waiting=1, uncounted Just finished=1, open=3: %+v", c)
+	}
+}
+
+func TestCloseoutDoesNotOverrideTheDecidedRunWaits(t *testing.T) {
+	for _, on := range []string{proto.WaitAgent, proto.WaitExternal} {
+		t.Run(on, func(t *testing.T) {
+			f := closeoutFacts(proto.CloseoutBlocked)
+			f.Sessions[0].State = proto.StateIdle
+			f.Sessions[0].Work.Phase = proto.WorkBlocked
+			f.Sessions[0].Work.On = on
+			f.Sessions[0].Work.Wait = "the release finishes"
+			v := View(f, f.CreatedAt.Add(2*time.Hour))
+			if v.Phase != assistantwire.TodoPhaseWaiting || v.Reason != assistantwire.TodoReasonSomeoneElse {
+				t.Fatalf("a named wait is Waiting even with a pending ledger and an old closeout: %+v", v)
+			}
+		})
 	}
 }
