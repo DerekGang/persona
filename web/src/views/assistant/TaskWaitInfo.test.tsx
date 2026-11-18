@@ -84,9 +84,10 @@ describe("task wait information", () => {
     expect(text("[data-wait-wake]")).toContain("Review is approved");
     await render(makeTodo({ kind: "date", target: "Release window", wake: "The date arrives", until: "2026-11-18T00:00:00Z", url: "https://example.test/calendar/3", recorded_by: "Supervisor" }));
     expect(host.querySelector('[data-wait-kind="date"]')).not.toBeNull();
-    expect(host.querySelector('[data-wait-contact-missing]')).not.toBeNull();
+    expect(host.querySelector('[data-wait-contact-missing]')).toBeNull();
     expect([...host.querySelectorAll<HTMLAnchorElement>("[data-wait-source]")].map(a => a.href)).toEqual(["https://example.test/calendar/3"]);
     await render(makeTodo({ kind: "external_event", target: "Deployment", wake: "Health check passes", url: "javascript:alert(1)" }));
+    expect(host.querySelector('[data-wait-contact-missing]')).not.toBeNull();
     expect(host.querySelectorAll("[data-wait-source]")).toHaveLength(0);
   });
 
