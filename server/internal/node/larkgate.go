@@ -85,6 +85,10 @@ func (n *Node) larkGate(ctx context.Context, in hookInput, ix proto.Interaction)
 // "deny" may carry the user's own words. Claude reaches it through the Bash PreToolUse hook (larkGate), Codex through
 // the app-server's command approvals (assistant_codex_approve.go).
 func (n *Node) larkCheck(ctx context.Context, session, cwd, command string, ix proto.Interaction) (string, string, error) {
+	// Cwd on the eventual card may be normalized to the conversation's display
+	// directory. Keep the actual execution directory separately for the
+	// manager's exact-call continuation fingerprint.
+	ix.ExecutionCwd = cwd
 	cfg := n.assistantLark(ctx)
 	if slices.ContainsFunc(cfg.Gates, func(g proto.CommandGate) bool { return g.Auth != nil }) {
 		n.gates() // the proxy goes by this Node's config from now on (a resident node's next connection)

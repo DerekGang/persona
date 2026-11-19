@@ -49,7 +49,7 @@ func detachedFingerprint(ix proto.Interaction) (string, error) {
 		Kind    string          `json:"kind"`
 		Tool    string          `json:"tool"`
 		Input   json.RawMessage `json:"input"`
-	}{ix.MachineID, ix.SessionID, ix.Cwd, ix.Kind, ix.ToolName, ix.ToolInput})
+	}{ix.MachineID, ix.SessionID, ix.ExecutionCwd, ix.Kind, ix.ToolName, ix.ToolInput})
 	return string(b), err
 }
 
@@ -176,6 +176,73 @@ func (s *Service) consumeDetachedGrant(ctx context.Context, ix proto.Interaction
 	return proto.Resolution{}, false, nil
 }
 
+// detachedOriginalReplay identifies the original resumable request whose card has
+// a late grant or any recorded terminal outcome. The unused grant is enough
+// while the outcome write is still in flight; history then prevents an Always
+// rule from replacing the original Allow, Deny, expiry or failed outcome.
+func (s *Service) detachedOriginalReplay(ctx context.Context, ix proto.Interaction) (bool, error) {
+	if !ix.Resumable {
+		return false, nil
+	}
+	b := &s.detached
+	b.mu.Lock()
+	if err := s.loadDetachedGrantsLocked(ctx); err != nil {
+		b.mu.Unlock()
+		return false, err
+	}
+	_, unused := b.grants[ix.ID]
+	b.mu.Unlock()
+	if unused {
+		return true, nil
+	}
+	st := s.fleetStore()
+	if st == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, historyTimeout)
+	defer cancel()
+	status, _, err := st.InteractionOutcome(ctx, ix.ID)
+	if err != nil {
+		return false, fmt.Errorf("read the original detached approval outcome: %w", err)
+	}
+	return status != "" && status != "pending", nil
+}
+
+// revokeDetachedGrant makes an interrupted or otherwise unsuccessful approval
+// unusable. A failed persistent delete still removes the in-memory grant, so
+// this process fails closed and the next recovery retries the durable delete.
+func (s *Service) revokeDetachedGrant(ctx context.Context, id string) error {
+	b := &s.detached
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := s.loadDetachedGrantsLocked(ctx); err != nil {
+		return err
+	}
+	if _, ok := b.grants[id]; !ok {
+		return nil
+	}
+	grants := cloneDetachedGrants(b.grants)
+	delete(grants, id)
+	if err := s.saveDetachedGrantsLocked(ctx, grants); err != nil {
+		delete(b.grants, id)
+		return fmt.Errorf("revoke detached approval grant: %w", err)
+	}
+	b.grants = grants
+	return nil
+}
+
+// detachedContinuationPendingLocked reports whether the exact retry is still
+// available. s.detached.mu is held across the result handoff too, so a matching
+// call either consumes first (and the message becomes a no-retry notice) or the
+// continuation reaches the conversation first.
+func (s *Service) detachedContinuationPendingLocked(ctx context.Context, id string) (bool, error) {
+	if err := s.loadDetachedGrantsLocked(ctx); err != nil {
+		return false, err
+	}
+	grant, ok := s.detached.grants[id]
+	return ok && grant.ExpiresAt.After(time.Now()), nil
+}
+
 // waitDetachedCard uses the prepared-approval coordinator for its first-answer-
 // wins claim, clarification, durable result delivery and short initial wait.
 // Apply creates a continuation grant only after the original caller was
@@ -191,7 +258,17 @@ func (s *Service) waitDetachedCard(ctx context.Context, ix proto.Interaction) (p
 			continued := state.clarified
 			s.fleet.mu.Unlock()
 			if !continued {
+				if r.Remembered {
+					return "A newer Always allow covers this exact command through the original hook.", nil
+				}
 				return "The owner allowed this exact command through the original hook.", nil
+			}
+			if r.Remembered {
+				// A newer explicit Always decision covers this sibling card. Its
+				// late card must not mint another one-time grant or ask the model to
+				// repeat a call that a later owner turn may already have run.
+				state.reportStatus = "covered"
+				return "A newer Always allow covers this exact call. This older card executed nothing and requests no automatic retry; check whether the call already ran before making a later explicit call.", nil
 			}
 			if err := s.putDetachedGrant(applyCtx, ix, r); err != nil {
 				return "", fmt.Errorf("%w: %v", approvalops.ErrNotApplied, err)

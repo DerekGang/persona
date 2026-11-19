@@ -1269,6 +1269,7 @@ Provider responses carry only the description and `has_key`, never secrets. Defa
  "always_honored":false,       // manager → clients: whether answering Always is kept; see "Always allow" below
  "can_clarify":true,           // manager → clients: this prepared assistant approval accepts owner questions; additive, absent on older managers
  "detachable":true,            // node → manager, assistant command gates only: release the initial hook after 75s and continue with a one-time exact-call grant; ignored elsewhere
+ "execution_cwd":"/absolute/work/dir", // node → manager, required beside detachable: where this command actually runs; included in the exact-call grant, unlike display-only cwd
  "tool_title":"iPhone control", // manager → clients: its own tool's name for people, in the user's language; see "Always allow" below
  "tool_name_title":"Report to supervisor", // manager → clients: the tool alone, beside a tool_title that also says what the call does; see "Always allow" below
  "agent":"codex", "reason":"…", "always_label":"本会话不再问这个命令"} // a card the node read from the Codex / compatible forks TUI ("Codex questions and approvals"); always_label is emitted in Chinese: "don't ask about this command again this session"

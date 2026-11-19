@@ -120,9 +120,12 @@ type Interaction struct {
 	// Only the authoritative creation path sets it; older clients ignore it and keep their existing Allow/Deny behavior.
 	CanClarify bool `json:"can_clarify,omitempty"`
 	// Detachable is a node command gate's request to release its initial hook while the owner decides. The manager
-	// honors it only for a permission in one of its assistant conversations; a later Allow creates a one-time grant
-	// for the exact original call rather than executing it in another process.
+	// honors it only for a permission in one of its assistant conversations with complete input and ExecutionCwd;
+	// a later Allow creates a one-time grant for the exact original call rather than executing it in another process.
 	Detachable bool `json:"detachable,omitempty"`
+	// ExecutionCwd is where this command actually runs, which can differ from the conversation's display directory
+	// (Cwd). The node sets it for a detachable command; the manager requires it and includes it in the exact-call grant.
+	ExecutionCwd string `json:"execution_cwd,omitempty"`
 	// Dialog is the screen's dialog read on the hub (screen interactions); answers name an option and are checked
 	// against Dialog.Rev before any key is pressed. Absent when the screen shows no dialog it could read.
 	Dialog *dialogwire.Dialog `json:"dialog,omitempty"`
