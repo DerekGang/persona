@@ -132,6 +132,7 @@ func scanLaunchers(ctx context.Context) ([]byte, error) {
 
 func launcherShellOutput(ctx context.Context, script string) ([]byte, error) {
 	cmd := loginShell(ctx, script)
+	// A shell's children can hold stdout open after it dies. Bound the group and the pipe wait (#10952).
 	killGroupOnCancel(cmd)
 	return cmd.Output()
 }
