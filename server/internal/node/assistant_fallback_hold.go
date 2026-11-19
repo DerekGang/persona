@@ -56,36 +56,76 @@ func (n *Node) heldFallback(id, launcher string, asked modelExecution) modelExec
 	return execution
 }
 
+// fallbackPrevious is the session's execution identity and launcher before the current request. It is optional in
+// tests of in-memory holds; cold and stale markers need it to distinguish a same-model edit from continuing the old chain.
+type fallbackPrevious struct {
+	launcher  string
+	execution modelExecution
+}
+
 // heldFallbackWithExpiry also reports whether an existing hold for this exact request expired naturally. A missing
 // hold after a restart is not expiry, and another model choice is not expiry either.
-func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution) (modelExecution, bool) {
+func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution, previous ...fallbackPrevious) (modelExecution, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	asked.NewModelChoice = false
 	f := n.fallbacks[id]
+	now := time.Now()
+	if f != nil && now.Sub(f.at) >= assistantRefusalSticky {
+		if f.launcher == launcher && !now.Before(f.until) && sameModelChoice(asked, f.from) {
+			delete(n.fallbacks, id)
+			return asked, true // this exact old request still expires naturally; its age does not make it a cold restart
+		}
+		delete(n.fallbacks, id)
+		f = nil
+	}
 	if f == nil {
-		// A cold restart can have a persisted marker without an in-memory hold. The requested model itself is the
-		// provenance in that case: anything other than the old configured model is a new explicit choice.
+		// A cold restart or an expired in-memory record can leave only the persisted marker. Compare the complete
+		// execution identity and launcher so a same-model edit is not mistaken for continuing the old chain.
 		r := n.recoveryMarks[id]
 		if r == nil {
 			if st, ok := n.state.get(id); ok {
 				r = st.ModelRecovery
 			}
 		}
-		asked.NewModelChoice = modelRecoverySwitched(r) && asked.Model != r.From
-		return asked, false
-	}
-	now := time.Now()
-	if now.Sub(f.at) >= assistantRefusalSticky {
-		delete(n.fallbacks, id)
+		if modelRecoverySwitched(r) {
+			choice := modelExecution{Model: r.From, Effort: asked.Effort, UseEffort: asked.UseEffort, Fingerprint: asked.Fingerprint}
+			oldLauncher := ""
+			if r.Choice != nil {
+				// The chain's own record is authoritative: recovery sends may have overwritten session model/effort.
+				choice = modelExecution{Model: r.From, Effort: r.Choice.Effort, UseEffort: r.Choice.UseEffort, Fingerprint: r.Choice.Fingerprint}
+				oldLauncher = r.Choice.Launcher
+			} else if len(previous) > 0 {
+				// Records from older nodes have no choice snapshot; use the pre-request session as the compatibility path.
+				choice = previous[0].execution
+				choice.Model = r.From
+				oldLauncher = previous[0].launcher
+			}
+			asked.NewModelChoice = !sameModelChoice(asked, choice) || oldLauncher != "" && oldLauncher != launcher
+			if asked.NewModelChoice {
+				// Keep the old chain as a superseded record. It supplies no budget to this new pick, but a rejected pick
+				// must not erase the old sticky behavior, and a cold marker otherwise has no record to restore.
+				if oldLauncher == "" {
+					oldLauncher = launcher
+				}
+				to := choice
+				to.Model = r.To
+				at := r.At
+				if at.IsZero() {
+					at = now
+				}
+				if n.fallbacks == nil {
+					n.fallbacks = map[string]*assistantFallback{}
+				}
+				n.fallbacks[id] = &assistantFallback{launcher: oldLauncher, from: choice, to: to, at: at, newChoice: true}
+			}
+		}
 		return asked, false
 	}
 	if !now.Before(f.until) || f.launcher != launcher || !sameModelChoice(asked, f.from) {
 		expired := !now.Before(f.until) && f.launcher == launcher && sameModelChoice(asked, f.from)
-		if f.launcher == launcher && !sameModelChoice(asked, f.from) {
-			f.newChoice = true
-			asked.NewModelChoice = true
-		}
+		f.newChoice = f.launcher != launcher || !sameModelChoice(asked, f.from)
+		asked.NewModelChoice = f.newChoice
 		f.until = time.Time{} // over; a refusal soon after still skips the same-model retry
 		return asked, expired
 	}
@@ -93,15 +133,16 @@ func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution)
 	out.IsMain, out.Interject, out.Ultracode = asked.IsMain, asked.Interject, asked.Ultracode // the message's own
 	out.SupervisionInstructions = asked.SupervisionInstructions
 	out.NewModelChoice = false // the old hold selected this execution, not a new pick
+	f.newChoice = false
 	return out, false
 }
 
 // recentFallback: conversation id's last fallback answered within assistantRefusalSticky, and what the conversation
-// was asked to run before it (the model a hold keeps it away from). A superseded record is not a recovery budget to
-// inherit. n.mu is held.
+// was asked to run before it (the model a hold keeps it away from). newChoice says whether a later request superseded
+// the record; newAssistantRecovery decides whether this execution belongs to the old chain. n.mu is held.
 func (n *Node) recentFallback(id string) (from modelExecution, launcher string, ok bool) {
 	f := n.fallbacks[id]
-	if f == nil || f.newChoice || time.Since(f.at) >= assistantRefusalSticky {
+	if f == nil || time.Since(f.at) >= assistantRefusalSticky {
 		return modelExecution{}, "", false
 	}
 	return f.from, f.launcher, true

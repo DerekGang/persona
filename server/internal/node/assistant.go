@@ -504,7 +504,9 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 		askedModel := execution.Model
 		// The fallback that answered (#3788). holdExpired is declared apart: ":=" would shadow execution in this block.
 		var holdExpired bool
-		execution, holdExpired = n.heldFallbackWithExpiry(id, launcher, execution)
+		previous := fallbackPrevious{launcher: st.Launcher, execution: modelExecution{Model: st.Model, Effort: st.ModelEffort,
+			UseEffort: st.ModelFingerprint != "", Fingerprint: st.ModelFingerprint}}
+		execution, holdExpired = n.heldFallbackWithExpiry(id, launcher, execution, previous)
 		execution = n.applyModelRecoveryReturn(ctx, id, askedModel, execution, holdExpired)
 	}
 	execution.IsMain = isMain && guest == nil

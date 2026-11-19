@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -48,6 +49,24 @@ func TestGatewayAvailableAgain(t *testing.T) {
 		if ok != c.ok || !got.Equal(c.want) {
 			t.Errorf("%q: %v %v, want %v %v", c.text, got, ok, c.want, c.ok)
 		}
+	}
+}
+
+// Releasing one launcher's recovery never erases another launcher's availability evidence for the same model ID.
+func TestReleaseModelRecoveryKeepsOtherLaunchersUnavailable(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	n, _ := recoveryTestNode(t, id, true, false)
+	n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model", Returning: true})
+	n.unavailable = map[string]time.Time{
+		unavailableKey("claude", "primary-model"): time.Now().Add(time.Hour),
+		unavailableKey("codex", "primary-model"):  time.Now().Add(time.Hour),
+	}
+	n.releaseModelRecovery(id, "primary-model")
+	if _, ok := n.unavailable[unavailableKey("claude", "primary-model")]; ok {
+		t.Fatal("the recovered Claude model is still marked unavailable")
+	}
+	if _, ok := n.unavailable[unavailableKey("codex", "primary-model")]; !ok {
+		t.Fatal("Claude's recovery erased Codex's unavailable record")
 	}
 }
 
@@ -100,6 +119,9 @@ func TestRecoverySwitchIsVisibleOnTheMainConversation(t *testing.T) {
 	r := n.modelRecovery(id)
 	if r.From != "primary-model" || r.To != "fallback-model" || r.Reason != proto.ModelRecoveryReasonSafeguards || r.ChainExhausted {
 		t.Fatalf("marker %+v", r)
+	}
+	if r.Choice == nil || r.Choice.Launcher != "claude" {
+		t.Fatalf("the original execution choice was not recorded: %+v", r.Choice)
 	}
 	if len(r.Tried) < 2 || r.Tried[0] != "primary-model" || r.Tried[len(r.Tried)-1] != "fallback-model" {
 		t.Fatalf("tried %v", r.Tried)
@@ -799,19 +821,35 @@ func TestRecoveryAutomaticReturnHonorsExplicitFallbackPick(t *testing.T) {
 		resetsAt  *time.Time
 		probe     bool
 		cold      bool
+		stale     bool
+		launcher  string
 	}{
 		{name: "returning", returning: true},
 		{name: "reset time", resetsAt: &past},
 		{name: "successful probe", probe: true},
 		{name: "cold returning", returning: true, cold: true},
+		{name: "stale returning", returning: true, stale: true},
+		{name: "stale reset time", resetsAt: &past, stale: true},
+		{name: "stale successful probe", probe: true, stale: true},
+		{name: "launcher switch returning", returning: true, launcher: "codex"},
+		{name: "launcher switch reset time", resetsAt: &past, launcher: "codex"},
+		{name: "launcher switch successful probe", probe: true, launcher: "codex"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n, _ := recoveryTestNode(t, id, false, true)
 			n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model", Returning: tc.returning, ResetsAt: tc.resetsAt})
+			launcher := tc.launcher
+			if launcher == "" {
+				launcher = "claude"
+			}
 			if !tc.cold {
+				at := time.Now()
+				if tc.stale {
+					at = at.Add(-assistantRefusalSticky - time.Minute)
+				}
 				n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude",
 					from: modelExecution{Model: "primary-model"}, to: modelExecution{Model: "fallback-model"},
-					at: time.Now(), until: time.Now().Add(assistantFallbackHold)}}
+					at: at, until: at.Add(assistantFallbackHold)}}
 			}
 			n.unavailable = map[string]time.Time{
 				unavailableKey("claude", "primary-model"): time.Now().Add(time.Hour),
@@ -823,7 +861,7 @@ func TestRecoveryAutomaticReturnHonorsExplicitFallbackPick(t *testing.T) {
 				return tc.probe
 			}
 			picked := modelExecution{Model: "fallback-model"}
-			execution, expired := n.heldFallbackWithExpiry(id, "claude", picked)
+			execution, expired := n.heldFallbackWithExpiry(id, launcher, picked)
 			execution = n.applyModelRecoveryReturn(context.Background(), id, picked.Model, execution, expired)
 			if execution.Model != picked.Model {
 				t.Fatalf("automatic return overrode the explicit fallback pick with %q", execution.Model)
@@ -831,8 +869,8 @@ func TestRecoveryAutomaticReturnHonorsExplicitFallbackPick(t *testing.T) {
 			if n.modelRecovery(id) != nil {
 				t.Fatal("the old recovery marker outlived the explicit fallback pick")
 			}
-			if _, _, ok := n.recentFallback(id); ok {
-				t.Fatal("the old fallback hold outlived the explicit fallback pick")
+			if got := n.fallbacks[id]; got == nil || !got.newChoice {
+				t.Fatal("the old fallback was not retained as a superseded record")
 			}
 			if probes.Load() != 0 {
 				t.Fatalf("the explicit pick triggered %d automatic-return probes", probes.Load())
@@ -843,6 +881,144 @@ func TestRecoveryAutomaticReturnHonorsExplicitFallbackPick(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The recorded original choice, not the fallback-mutated session state, decides whether a cold request is unchanged.
+func TestColdRecoveryUsesRecordedOriginalChoice(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	for _, tc := range []struct {
+		name, effort, want string
+		unchanged          bool
+	}{
+		{name: "unchanged primary high", effort: "high", want: "fallback-model", unchanged: true},
+		{name: "new primary low", effort: "low", want: "primary-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, _ := recoveryTestNode(t, id, false, true)
+			n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model",
+				Choice: &proto.ModelRecoveryChoice{Effort: "high", UseEffort: true, Fingerprint: "fp-old", Launcher: "claude"}})
+			// The recovery's own fallback normalized effort to auto and overwrote the session's current model.
+			previous := fallbackPrevious{launcher: "claude", execution: modelExecution{Model: "fallback-model", Effort: "auto", UseEffort: true, Fingerprint: "fp-old"}}
+			asked := modelExecution{Model: "primary-model", Effort: tc.effort, UseEffort: true, Fingerprint: "fp-old"}
+			execution, expired := n.heldFallbackWithExpiry(id, "claude", asked, previous)
+			execution = n.applyModelRecoveryReturn(context.Background(), id, asked.Model, execution, expired)
+			if execution.Model != tc.want {
+				t.Fatalf("cold recovery selected %q, want %q", execution.Model, tc.want)
+			}
+			if tc.unchanged && n.modelRecovery(id) == nil {
+				t.Fatal("the unchanged request cleared the marker before a probe authorized return")
+			}
+			if !tc.unchanged && n.modelRecovery(id) != nil {
+				t.Fatal("the changed execution did not clear the old marker")
+			}
+		})
+	}
+}
+
+// A new pick can be rejected after applyModelRecoveryReturn but before delivery. The old sticky record must still be
+// there for the old chain, including an older busy turn that finishes while the new pick is waiting.
+func TestRejectedNewPickKeepsOldStickyRetry(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	for _, state := range []string{"fresh", "stale", "cold"} {
+		t.Run(state, func(t *testing.T) {
+			n, _ := recoveryTestNode(t, id, false, true)
+			previous := fallbackPrevious{launcher: "claude", execution: modelExecution{Model: "primary-model", Effort: "high", UseEffort: true, Fingerprint: "fp-old"}}
+			n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model", Returning: true})
+			if state != "cold" {
+				at := time.Now()
+				if state == "stale" {
+					at = at.Add(-assistantRefusalSticky - time.Minute)
+				}
+				n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude", from: previous.execution,
+					to: modelExecution{Model: "fallback-model", Effort: "high", UseEffort: true, Fingerprint: "fp-old"},
+					at: at, until: at.Add(assistantFallbackHold)}}
+			}
+			picked := previous.execution
+			picked.Model = "fallback-model"
+			execution, expired := n.heldFallbackWithExpiry(id, "claude", picked, previous)
+			execution = n.applyModelRecoveryReturn(context.Background(), id, picked.Model, execution, expired)
+			if execution.Model != picked.Model {
+				t.Fatalf("the new pick was not honored: %+v", execution)
+			}
+			// An older busy turn still belongs to the old chain even though the new pick is already waiting.
+			n.mu.Lock()
+			oldTurn := n.newAssistantRecovery(id, "claude", previous.execution, previous.execution.Model, previous.execution.Model, "")
+			n.mu.Unlock()
+			if !oldTurn.retried[previous.execution.Model] {
+				t.Fatal("the older busy turn lost its sticky retry budget")
+			}
+			// The new pick is rejected before it answers. Asking for the old configured model again restores its old chain.
+			execution, expired = n.heldFallbackWithExpiry(id, "claude", previous.execution, previous)
+			n.mu.Lock()
+			next := n.newAssistantRecovery(id, "claude", execution, execution.Model, execution.Model, "")
+			n.mu.Unlock()
+			if !next.retried[previous.execution.Model] || next.from.Model != previous.execution.Model {
+				t.Fatalf("the rejected pick erased the old sticky retry: %+v", next)
+			}
+		})
+	}
+}
+
+// Natural expiry is a property of the exact old request, even after the sticky record itself is too old to inherit.
+// It must not turn into a cold restart that sends the conversation back to the fallback.
+func TestRecoveryNaturalExpirySurvivesStaleRecord(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	n, _ := recoveryTestNode(t, id, false, true)
+	previous := fallbackPrevious{launcher: "claude", execution: modelExecution{Model: "primary-model", Effort: "high", UseEffort: true, Fingerprint: "fp-old"}}
+	n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model"})
+	at := time.Now().Add(-assistantRefusalSticky - time.Minute)
+	n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude", from: previous.execution,
+		to: modelExecution{Model: "fallback-model", Effort: "high", UseEffort: true, Fingerprint: "fp-old"},
+		at: at, until: at.Add(assistantFallbackHold)}}
+	execution, expired := n.heldFallbackWithExpiry(id, "claude", previous.execution, previous)
+	if !expired {
+		t.Fatal("the stale record's exact-request natural expiry was lost")
+	}
+	execution = n.applyModelRecoveryReturn(context.Background(), id, previous.execution.Model, execution, expired)
+	if execution.Model != previous.execution.Model {
+		t.Fatalf("natural expiry selected %q instead of the old configured model", execution.Model)
+	}
+	if n.modelRecovery(id) != nil {
+		t.Fatal("natural expiry did not clear the old marker")
+	}
+}
+
+// Cold and stale markers need the previous execution's full identity, not just its model name. A changed fingerprint,
+// effort, or launcher is a new explicit choice and must not be forced back to the old fallback.
+func TestRecoveryReturnHonorsExecutionAndLauncherChanges(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	for _, stale := range []bool{false, true} {
+		for _, change := range []string{"fingerprint", "effort", "launcher"} {
+			t.Run(fmt.Sprintf("stale=%v/%s", stale, change), func(t *testing.T) {
+				n, _ := recoveryTestNode(t, id, false, true)
+				previous := fallbackPrevious{launcher: "claude", execution: modelExecution{Model: "primary-model", Effort: "high", UseEffort: true, Fingerprint: "fp-old"}}
+				n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model"})
+				if stale {
+					at := time.Now().Add(-assistantRefusalSticky - time.Minute)
+					n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude", from: previous.execution,
+						to: modelExecution{Model: "fallback-model", Effort: "high", UseEffort: true, Fingerprint: "fp-old"},
+						at: at, until: at.Add(assistantFallbackHold)}}
+				}
+				asked, launcher := previous.execution, "claude"
+				switch change {
+				case "fingerprint":
+					asked.Fingerprint = "fp-new"
+				case "effort":
+					asked.Effort = "low"
+				case "launcher":
+					launcher = "codex"
+				}
+				execution, expired := n.heldFallbackWithExpiry(id, launcher, asked, previous)
+				execution = n.applyModelRecoveryReturn(context.Background(), id, asked.Model, execution, expired)
+				if execution.Model != asked.Model {
+					t.Fatalf("the explicit %s change was overridden with %q", change, execution.Model)
+				}
+				if n.modelRecovery(id) != nil {
+					t.Fatal("the explicit execution change left the old marker")
+				}
+			})
+		}
 	}
 }
 
@@ -942,8 +1118,8 @@ func TestExplicitPickOfHeldFallbackKeepsItsFirstRetry(t *testing.T) {
 		t.Fatalf("the recovery chain belongs to %q, want the explicit pick %q", from, picked.Model)
 	}
 	n.clearAssistantRecovery(p, true)
-	if _, _, ok := n.recentFallback(id); ok {
-		t.Fatal("the old fallback outlived the explicit pick's successful answer")
+	if got := n.fallbacks[id]; got == nil || !got.newChoice {
+		t.Fatal("the successful explicit pick did not leave the old record superseded")
 	}
 }
 

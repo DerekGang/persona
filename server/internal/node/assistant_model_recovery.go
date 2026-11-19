@@ -172,9 +172,19 @@ func (n *Node) recordRecoverySwitch(id, launcher, from, probeFrom, to, reason st
 	if !n.recoveryProtected(id) {
 		return
 	}
+	var choice *proto.ModelRecoveryChoice
+	n.mu.Lock()
+	if current := n.recoveries[id]; current != nil {
+		e := current.from
+		choice = &proto.ModelRecoveryChoice{Effort: e.Effort, UseEffort: e.UseEffort, Fingerprint: e.Fingerprint, Launcher: launcher}
+	}
+	n.mu.Unlock()
 	prev := n.modelRecovery(id)
-	r := &proto.ModelRecovery{From: from, ProbeFrom: probeFrom, To: to, Reason: reason, At: time.Now().UTC(), Tried: append([]string{}, tried...)}
+	r := &proto.ModelRecovery{From: from, ProbeFrom: probeFrom, To: to, Reason: reason, At: time.Now().UTC(), Tried: append([]string{}, tried...), Choice: choice}
 	if prev != nil && prev.From == from {
+		if prev.Choice != nil {
+			r.Choice = prev.Choice // the first configured execution identity wins throughout one recovery chain
+		}
 		if prev.ProbeFrom != "" {
 			r.ProbeFrom = prev.ProbeFrom // the first configured identity wins throughout one recovery chain
 		}
@@ -199,6 +209,7 @@ func (n *Node) recordRecoveryExhausted(id, reason string, resets *time.Time, tri
 	r := &proto.ModelRecovery{Reason: reason, At: time.Now().UTC(), Tried: append([]string{}, tried...), ChainExhausted: true}
 	if prev != nil {
 		r.From, r.ProbeFrom, r.To = prev.From, prev.ProbeFrom, prev.To
+		r.Choice = prev.Choice
 	}
 	if resets != nil {
 		r.ResetsAt = resets
@@ -297,8 +308,8 @@ func (n *Node) returnToConfiguredAt(ctx context.Context, id string, at time.Time
 func (n *Node) applyModelRecoveryReturn(ctx context.Context, id, askedModel string, execution modelExecution, holdExpired bool) modelExecution {
 	if execution.NewModelChoice {
 		// The explicit choice wins even when it names marker.To: that is a new pick, not the old hold asking to return.
-		// Retire only the old marker and hold; availability evidence for other models and launchers was not proved here.
-		n.forgetFallback(id)
+		// Clear the old marker without deleting the superseded sticky record: a pick rejected before delivery must not
+		// erase the old chain, and availability evidence for other models and launchers was not proved here.
 		n.clearModelRecovery(id)
 		return execution
 	}
@@ -360,10 +371,19 @@ func (n *Node) releaseModelRecoveryLocked(id, configured string) (dropped bool) 
 		}
 	}
 	delete(n.fallbacks, id)
+	launcher := ""
+	if st, ok := n.state.get(id); ok {
+		launcher = st.Launcher
+	}
 	probeFrom := modelRecoveryProbeFrom(marker)
 	for k := range n.unavailable {
-		if _, model, ok := strings.Cut(k, "\x00"); ok &&
-			(model == configured || marker != nil && (model == marker.From || model == probeFrom)) {
+		l, model, ok := strings.Cut(k, "\x00")
+		// Only this conversation's launcher supplied the availability evidence. A same-named model on another
+		// launcher, or on an unidentified one, keeps its own unavailable record.
+		if !ok || l != launcher {
+			continue
+		}
+		if model == configured || marker != nil && (model == marker.From || model == probeFrom) {
 			delete(n.unavailable, k)
 		}
 	}
