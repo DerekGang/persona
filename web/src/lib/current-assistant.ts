@@ -5,7 +5,7 @@
 import { useMemo } from "react";
 import { useChosenManager, useShownManager } from "./manager-choice";
 import { installedManagers, managerOf, multiManager, ownerIn, useRoster, type Manager, type ManagerList } from "./managers";
-import { stateCounts, useAgentListStatus, useAgentSessions, useCounts, useFullAgentSessions, type AgentList } from "./sessions";
+import { directoryVisibleCards, stateCounts, useAgentListStatus, useAgentSessions, useCounts, useFullAgentSessions, type AgentList } from "./sessions";
 import { useStore } from "./store";
 import type { Session } from "./types";
 
@@ -71,7 +71,7 @@ export function useScopedTodos() {
 
 /** The current assistant's authoritative pending cards. Conversation views read the store directly so they can show copies. */
 export function useScopedInteractions() {
-  const cards = useScoped(useStore((s) => s.interactions));
+  const cards = useScoped(useStore((s) => directoryVisibleCards(s.interactions)));
   return useMemo(() => cards.filter((ix) => !ix.mirror_of), [cards]);
 }
 

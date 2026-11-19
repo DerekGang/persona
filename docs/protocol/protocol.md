@@ -2079,7 +2079,7 @@ Clients report their errors and crashes only while `features` has `error_reports
 | POST | `/api/v1/assistant/directions/{id}/make` | Make it a direction: the same without an offer. The clients' **设为常驻** (en **Pin**, #4331) |
 | POST | `/api/v1/assistant/directions/{id}/end` | End direction → `{"ended"}` (false: it was no direction); the tasks it supervised keep their `supervisor`. The clients' **取消常驻** (en **Unpin**) |
 | PUT | `/api/v1/assistant/directions/{id}/name` | The owner names a direction: `{"name"}` (at most 40 characters; `""` clears it, the project's name or the title without its date and kind shows again) → `{"name"}`; told as `leader.changed` `name`; unknown direction 404, read-only devices 403 (`docs/assistant/unified-entry.md` "Names and progress") |
-| PUT | `/api/v1/assistant/directions/{id}/notes` | The owner writes a direction's notes: `{"notes"}` (trimmed, at most 4,000 characters, a closing `</direction-notes>` dropped; `""` clears them) → `{"notes"}` as kept; the leader gets them in its system prompt (restarted on its next message) and the direction's new Agents before their first prompt; `GET /api/v1/assistant/leaders` lists `notes` and `notes_at`; unknown direction 404, read-only devices 403 (`docs/assistant/unified-entry.md` "Direction notes") |
+| PUT | `/api/v1/assistant/directions/{id}/notes` | The owner writes a direction's notes: `{"notes", "notes_at"?}` (trimmed, at most 4,000 characters, a closing `</direction-notes>` dropped; `""` clears them) → `{"notes", "notes_at"}` as kept (`notes_at` at millisecond precision, `null` with no notes); the leader gets them in its system prompt (restarted on the first message that finds it idle; until then it keeps the notes it has) and the direction's new Agents before their first prompt; `GET /api/v1/assistant/leaders` lists `notes` and `notes_at`. `notes_at` (#11392) is the value the editor started from, as `GET /api/v1/assistant/leaders` gave it (`null`: there were no notes), compared as an instant to the millisecond: when it is no longer the stored one, 409 `notes_changed` `{"error", "code", "notes", "notes_at"}` with what is stored, and nothing changes; left out, the save is not checked. A `notes_at` that is not a time 400; unknown direction 404, read-only devices 403 (`docs/assistant/unified-entry.md` "Direction notes") |
 | POST | `/api/v1/assistant/route/agent` | The New agent sheet's **Under** field: `{"machine_id","cwd","prompt"}` → `{"supervisor","main"?,"title"?,"by"}`, the conversation a new agent goes under: the leader filed under the kb project that owns `cwd` (`by: "project"`), else the leader `assistant.route` matches the prompt to (`"model"`, 2 s), else the main conversation (`main: true`, `"default"`); read-only devices 403 (`docs/assistant/unified-entry.md` "New agent goes under a leader") |
 | POST | `/api/v1/assistant/agents/{mid}/{sid}/supervisor` | Puts an agent the owner started under a leader: `{"supervisor"?, "title"?}` (`""` the main conversation) → `{"todo","made"}`: an agent of no task becomes a supervised task of that conversation, its card in that conversation; one on a task moves to it with its card (its signals follow from the next one); no such machine or session 404; not a leader, an assistant conversation or the owner's own to-do 409; read-only devices 403 |
 | GET | `/api/v1/assistant/capabilities` | What the assistant supports, for extensions to ask before relying on it: `{"guest_conversations": true}` (404 on an older hub) |
@@ -2098,7 +2098,7 @@ Clients report their errors and crashes only while `features` has `error_reports
 | DELETE | `/api/v1/assistant/conversations/{id}/always/{hash}` | Full-access clients only: remove one grant, then reset the running assistant's permissions (stops its current response). Idempotent, including retrying the reset. `{"ok":true,"restart_required":false}`; `restart_required: true` means storage was revoked but the conversation must restart before cached rules are gone (old/offline node or unsupported runtime). Other conversations and grants remain unchanged |
 | POST | `/api/v1/assistant/conversations/{id}/stop` | Stop a chat opened with `report_tasks` (Lark /agent's `/stop`, #3308) → `{"conversation","tasks":[{"id","title","agents"}],"already"}`: interrupts its running turn (`conversation`) and the running Agents of the unfinished tasks it dispatched (`tasks`, `agents` is how many were interrupted), and drops queued task notifications; after that its task notifications are discarded until the user messages it again. If nothing was running, `already: true`. Not such a chat 404 |
 | GET | `/api/v1/assistant/reporters` | Chats opened with `report_tasks` (within 14 days) → `{"reporters":[{"session_id","machine_id","at","stopped_at"?,"stopped_by"?}]}`; `stopped_by` is `lark` (`…/stop`) or `app` (the App's stop button: an assistant chat stopped with `POST /api/v1/sessions/{mid}/{sid}/interrupt`, for which the hub sends `session.user_stopped` to the assistant); the plugin uses it to know a request was stopped in the App |
-| DELETE | `/api/v1/assistant/conversations/{id}` | Feature `assistant_conversation_delete`; full credentials only. `{machine_id}` → `{ok:true,deleted:true}`. Permanently hide an ordinary or archived former main chat; keep a manager-owned identity tombstone and all task/origin/derived records and Agent sessions. Computer transcript files remain. Repeating is idempotent. Main/background supervisor: 400 `conversation_protected`; working/starting/compacting, queued messages, pending requests or unfinished tasks still owned/supervised by this chat: 409 `conversation_busy`; unknown/non-assistant: 404. Deleted chat reads, feeds, sends, resume, restore and subscriptions return 410 `conversation_deleted` or the WebSocket deletion marker. The hub applies the owning manager's successful reply before returning 200; later response header commits are fenced against deletion, while bytes of a response already committed before the acknowledgement may still be in flight. Delayed assistant content broadcasts are suppressed and retained event-log content is replaced by same-sequence deletion markers. |
+| DELETE | `/api/v1/assistant/conversations/{id}` | Feature `assistant_conversation_delete`; full credentials only. `{machine_id}` → `{ok:true,deleted:true}`. Permanently hide an ordinary or archived former main chat; keep a manager-owned identity tombstone and all task/origin/derived records and Agent sessions. Computer transcript files remain. Repeating is idempotent. Main/background supervisor, and a current direction's lead conversation (one in `assistant.leaders`; its message says to unpin it first, after which it deletes as any other, #11392): 400 `conversation_protected`; working/starting/compacting, queued messages, pending requests or unfinished tasks still owned/supervised by this chat: 409 `conversation_busy`; unknown/non-assistant: 404. Deleted chat reads, feeds, sends, resume, restore and subscriptions return 410 `conversation_deleted` or the WebSocket deletion marker. The hub applies the owning manager's successful reply before returning 200; later response header commits are fenced against deletion, while bytes of a response already committed before the acknowledgement may still be in flight. Delayed assistant content broadcasts are suppressed and retained event-log content is replaced by same-sequence deletion markers. |
 | POST | `/api/v1/assistant/conversations/{id}/archive` | Archive one of the assistant's chats (just hidden from the list, data kept) → `{"ok","archived":true}`; the main chat 400. In the session list (`sessions` push) it carries `archived: true` and the App files it under **Archived**; when the user messages it again (`POST …/messages`) it's unarchived automatically (`docs/assistant/assistant.md` ("Managing its own conversations")) |
 | POST | `/api/v1/assistant/conversations/{id}/unarchive` | Unarchive → `{"ok","archived":false}` |
 | PUT | `/api/v1/assistant/conversations/{id}/tags` | Full-access clients only: replace one of the assistant's chats' whole user tag set, body `{"tags":[…]}` → `{"ok","changed":bool}`. Entries are trimmed, empties dropped and duplicates collapsed; each tag is at most 32 runes and at most 10 tags are kept, an over-limit body returning 400 before anything changes; `{"tags":[]}` clears them. The main chat is taggable; an unknown / deleted chat or a chat in another space returns an error. Tags ride the normal session snapshot / push, so list rows update live (`docs/assistant/assistant.md` "Conversation tags") |
@@ -2634,12 +2634,13 @@ A machine's session list has hundreds of sessions at about 1 KB each, and a push
 
 #### Opt-in parameters (both session collections)
 
-Any of `limit`, `cursor`, `since`, `summary`, `state`, `project`, `group`, or `counts` opts into the bounded API. `pane_source`, `roots`, `parent_session_id`, `place`, `space`, `catalog`, `todo`, `waiting` and `exclude_pane_source` also opt in, but are supported only by the runtime collection (see below). Without them the legacy request shape remains unchanged: runtime `machine_id` filtering still returns the complete list; personal-agent `source`/`provider` filtering still returns the complete list; personal-agent `q` alone still searches messages and returns `items`. The runtime collection's legacy answer now carries the same bounded rows a `summary` page does (cut text, task arrays only as counts): a whole fleet's list answer was hundreds of KB a pull while every hint reread it, and a row's whole chat detail stays in `GET /api/v1/sessions/{mid}/{sid}/info`.
+Any of `limit`, `cursor`, `since`, `summary`, `state`, `project`, `group`, or `counts` opts into the bounded API. `pane_source`, `roots`, `parent_session_id`, `place`, `space`, `catalog`, `todo`, `waiting`, `exclude_pane_source` and `include_hidden` also opt in, but are supported only by the runtime collection (see below). Without them the legacy request shape remains unchanged: runtime `machine_id` filtering still returns the complete list; personal-agent `source`/`provider` filtering still returns the complete list; personal-agent `q` alone still searches messages and returns `items`. The runtime collection's legacy answer now carries the same bounded rows a `summary` page does (cut text, task arrays only as counts): a whole fleet's list answer was hundreds of KB a pull while every hint reread it, and a row's whole chat detail stays in `GET /api/v1/sessions/{mid}/{sid}/info`.
 
 | Parameter | Contract |
 | --- | --- |
 | `limit` | Integer 1–200, default **50**. Full and delta pages both use it. A delta removal consumes one slot, just like an upsert. |
 | `cursor` | Opaque `next_cursor` from a preceding page. URL-encode it and repeat all original filters, `summary` and `since`; `limit` may change. Empty/invalid cursor is rejected, not treated as a first page. |
+| `include_hidden` | `1`/`true` includes directory-hidden runtime rows for temporary user inspection; default false. Applies before rows, totals, counts, catalog and search, binds cursors and deltas, and never changes saved rules or Assistant observations. |
 | `summary` | `1`/`true` for list-row summaries, `0`/`false` for complete rows; default false. Does not change row identity or filter membership. |
 | `state` | Exact unified state: `needs_you`, `working`, `unread`, `idle`, `offline`, or `unknown`. Omit for all states. No user-specific mute/pin ordering is implied. |
 | `machine_id` | Exact runtime machine id. Personal-agent sources do not expose a machine, so this filter matches no personal-agent rows. |
@@ -5607,6 +5608,67 @@ Resumed sends and non-Codex starts return coded 409 refusals; a native refusal r
 `assistant_service_tier_refused`, stops the unused new process and persists no conversation before the first turn.
 New Agent starts do not take a speed setting.
 
+
+## Agent directory visibility
+
+Hidden Agent folders are the parallel list to blocked Claude config directories
+(`docs/integrations/claude-integration.md`, "Blocking configuration directories"): both are per computer, kept in
+the devices layer's settings beside each other (`claude_dirs_blocked/<machine id>`, `agent_dirs_hidden/<machine id>`),
+and use one pattern syntax and matcher (`proto.DirPatternMatchedBy`). They differ in what they do:
+
+| | Blocked Claude config directories | Hidden Agent folders |
+| --- | --- | --- |
+| Matches | a Claude Code `CLAUDE_CONFIG_DIR` | a session's working directory (`cwd`), any runtime |
+| Effect | the node does not scan it; its sessions are never collected | sessions stay collected and recorded; the manager leaves them out of Agents and the assistant's view |
+| Switch | delete the rule | each rule has `enabled`; off keeps the rule and hides nothing |
+| HTTP | `GET /api/v1/machines/{mid}/claude-dirs`, `PUT …/claude-dirs/blocked {"blocked": [...]}` | `GET /api/v1/machines/{mid}/agent-dirs/hidden`, `PUT …/agent-dirs/hidden {"rules": [...]}` |
+| `persona_settings` | `agents.blocked_claude_dirs` get / add / remove | `agents.hidden_dirs` get / add / remove |
+
+`GET /api/v1/machines/{mid}/agent-dirs/hidden` returns `{rules: [{pattern, enabled}], home?}` (`home` is the
+computer's home for showing `~`, absent before its node first said). `PUT` replaces the computer's whole list and
+returns the new state; an answer-only device cannot call it. Offline computers can be set up. A rule is a path or
+`filepath.Match` glob starting with `/` or `~/` (`~` is that computer's home, never the manager's; until it is
+known a `~/` rule does not match), or a folder name glob starting with `*` (`*botfarm*`) that matches a folder of
+that name anywhere in the path. A rule matches the folder and everything under it. Trailing slashes are dropped;
+patterns that would cover home or the root, or that every folder matches (`*`, `/*`), invalid globs, duplicates and
+more than 100 rules are refused (400).
+Matching is lexical and case-sensitive; symlinks on the remote computer are not resolved. Empty is the default.
+
+`persona_settings` `agents.hidden_dirs` takes the same values as `agents.blocked_claude_dirs`: `add`
+`{"machine", "pattern", "enabled"?}` (default on; on an existing rule it switches it), `remove`
+`"<machine id>:<pattern>"`, and `get` lists each computer's rules with how many sessions each hides now. Every
+change waits for the user's approval on the phone and is applied to the rules as they are then, so a change made
+meanwhile is kept; the opposite switch or `remove` undoes it.
+
+The Assistant manager annotates session rows with `hidden_by_directory: true` (otherwise omitted).
+Bounded lists, counts, catalog and ranked search exclude those rows by default. Legacy app inventories
+retain annotated rows so clients can inspect them; updated clients filter before their grouping and attention
+counts. Exact user session access remains available. Temporary inspection uses `include_hidden=1` and does
+not expose the rows to Assistant: `agents_list`, live snapshots, ambient triage, completion notifications,
+needs-you cards and reminders exclude them. Hidden children do not affect visible parents' folded counts.
+This is a visibility preference, not access control or transcript deletion.
+
+Pending interactions have a separate authoritative inventory. `fleet.interactions` on reconnect always carries
+all pending cards, including directory-hidden sessions: an omitted card means resolved to the hub. Assistant,
+Feishu and attention summaries use a visibility projection instead. Saving any hidden-folder change (the devices
+tell the assistant, `devices.Options.HiddenAgentDirsChanged`) publishes the computer's updated session rows, then
+replays pending `fleet.interaction` cards to connected clients. Replays preserve
+delegation state and do not send notifications; a pending card stays actionable after revealing its session.
+
+
+**Supervision boundary:** a session attached to an open task with an active supervisor stays visible even if
+its directory matches. Its supervision and existing notification policy (including main-task quiet mode)
+continue. This covers `task_plan`, supervised `agent_start` and adopted supervised agents; having once been
+started by Persona is not enough. Once the task closes or the session is released, the ordinary directory
+rule applies again. Assistant conversations themselves are exempt so their approval cards remain usable.
+The first visibility check loads persisted task ownership before classifying a session. If supervision state
+cannot be read, matching sessions remain visible until it can be read again.
+
+Web: Settings › Agents starts with Hidden Agent folders (a computer picker, then that computer's rules), above the
+per-runtime sections where Claude Code's blocked config directories are; Agents offers temporary inspection.
+Apple: Settings › Agent › Hidden Agent Folders and the Agents menu's temporary reveal use the same contract.
+Android has the blocked list only for now.
+New labels and confirmation text ship in English, Simplified Chinese and Japanese.
 ### Optional Todo repository metadata
 
 The manager relays `GET /api/v1/todos/{id}/repositories` with `todos.read`, and
