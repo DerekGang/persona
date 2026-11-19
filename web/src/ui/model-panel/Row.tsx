@@ -97,7 +97,7 @@ export function Row({ row, second, describes, keepSecond, asButton, blocked, cus
   // a typed ID's row is its ID already; a preset's second line describes it
   const hasId = row.kind !== "typed" && row.kind !== "preset";
   const idLine = hasId && cut ? "always" : hasId && !describes && model.id !== name ? "touch" : null;
-  const fullId = `${second || provider.name} · ${model.id}`;
+  const fullId = `${describes || !second ? provider.name : second} · ${model.id}`;
   const key = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || e.nativeEvent.isComposing) return;
     if (e.key === "ArrowLeft") {

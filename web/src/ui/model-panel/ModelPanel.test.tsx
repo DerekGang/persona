@@ -722,7 +722,7 @@ describe("a long list", () => {
     expect(document.body.querySelector("[data-panel-more]")).toBeNull();
   });
 
-  it("a name cut short shows the launcher and whole model ID; others add them only on a touch screen", async () => {
+  it.each(["", "A detailed model"])("a name cut short shows the launcher and whole model ID; others add them only on a touch screen (description: %s)", async (description) => {
     const sw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
     const cw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
     // a name longer than 20 characters does not fit
@@ -744,7 +744,7 @@ describe("a long list", () => {
         providers: [
           claude({
             models: [
-              { id: long, name: long, efforts: [] },
+              { id: long, name: long, description, efforts: [] },
               { id: "sonnet", name: "Sonnet 5", efforts: [] },
             ],
           }),
