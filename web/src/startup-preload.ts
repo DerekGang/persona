@@ -428,7 +428,7 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // Keep the stricter existing limit while combining these changes.
 // #10822: Colored sidebar icons, an Appearance choice off by default: the choice's store and the built-in pages' colors
 // (lib/sidebar-icons.ts), read where the sidebar draws its pages, and the style a colored icon takes. 304 B in each
-// language, measured in one environment against main 7ea68311d5 (ja 482,497 B to 482,801 B; en 479,378 B to 479,682 B,
+// language, measured in one environment against main 708f4326b9 (ja 482,497 B to 482,801 B; en 479,378 B to 479,682 B,
 // zh-Hans 480,224 B to 480,528 B); the setting's row and words load with Settings. Main had 29 B of room, so the budget
 // is this ja size plus those 29 B.
 export const FIRST_SCREEN_BUDGET = 482_830;
