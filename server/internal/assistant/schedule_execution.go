@@ -56,18 +56,17 @@ func checkTaskExecutionSpace(t Task) error {
 	return nil
 }
 
-// A stored source conversation can predate the health directory boundary. Prepare the node's canonical
-// directory and verify its actual cwd before continuing it; its space label alone is not proof of isolation.
+// Before continuing a Health assistant, verify its actual cwd against the node's canonical Health directory.
 func (s *Service) taskSourceCwd(ctx context.Context, t Task) (string, bool) {
 	if t.Space != SpaceHealth {
 		return "", true
 	}
 	c, known := s.session(ctx, t.MachineID, t.SessionID)
-	if !known {
+	if !known || !c.Assistant || c.Space != SpaceHealth {
 		return "", false
 	}
 	cwd, err := s.prepareSpace(ctx, t.MachineID, SpaceHealth)
-	return cwd, err == nil && c.Cwd == cwd
+	return cwd, err == nil && cwd != "" && c.Cwd == cwd
 }
 
 func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, binding ...ModelBinding) (TaskExecution, error) {
@@ -183,7 +182,7 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 			changed = true
 		}
 	}
-	if v, ok := raw["model_revision"]; changed && ok {
+	if v, ok := raw["model_revision"]; ok {
 		var rev int64
 		if err := json.Unmarshal(v, &rev); err != nil {
 			return nil, err
@@ -222,6 +221,7 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 		if b == old.Binding {
 			return nil, nil
 		}
+		t.StartGrant = nil // a conversation-backed task cannot use a schedule start grant
 		return &modelRecord{Revision: old.Revision + 1, Binding: b}, nil
 	}
 	p := ModelPurpose{ID: "task." + t.ID, Kind: "launcher", CategoryID: "assistant", Parent: "assistant", MachineID: s.taskMachine(ctx, *t)}
@@ -272,6 +272,15 @@ func (s *Service) patchTaskExecution(ctx context.Context, t *Task, raw map[strin
 	}
 	if b == old.Binding {
 		return nil, nil
+	}
+	if t.StartGrant != nil {
+		basis := t.grantBasis()
+		if b != (ModelBinding{}) {
+			basis = t.grantBasis(effective)
+		}
+		if t.liveGrant(basis) == nil {
+			t.StartGrant = nil
+		}
 	}
 	return &modelRecord{Revision: old.Revision + 1, Binding: b}, nil
 }
@@ -324,9 +333,7 @@ func (s *Service) saveTaskConfiguredLocked(ctx context.Context, sc *schedule, ta
 	if !ok {
 		return errors.New("atomic task configuration storage is unavailable")
 	}
-	if err := s.dropStaleGrants(ctx, tasks, id, record); err != nil {
-		return err
-	}
+	dropEditedTaskGrants(sc.tasks, tasks)
 	if err := batch.PutSettings(ctx, map[string]any{tasksKey: tasks, modelRecordKey("task." + id): *record}); err != nil {
 		return err
 	}

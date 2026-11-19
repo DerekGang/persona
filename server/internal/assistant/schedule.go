@@ -571,9 +571,7 @@ func (s *Service) saveLocked(sc *schedule, tasks []Task) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.dropStaleGrants(ctx, tasks, "", nil); err != nil {
-		return err
-	}
+	dropEditedTaskGrants(sc.tasks, tasks)
 	if st := s.store(); st != nil {
 		if err := st.PutSetting(ctx, tasksKey, tasks); err != nil {
 			s.logf("save tasks: %v", err)

@@ -86,38 +86,29 @@ func (t Task) liveGrant(basis ...string) *StartGrant {
 	return g
 }
 
-// dropStaleGrants clears every grant that no longer applies before a list is saved: the owner gave it to a schedule
-// that has since changed its prompt or where it runs. liveGrant checks again at use, for what changes in memory only.
-func (s *Service) dropStaleGrants(ctx context.Context, tasks []Task, id string, record *modelRecord) error {
+// Revoke grants on persisted task edits using only the task rows. The task editor checks model changes before
+// its atomic save. Authorization still checks the authoritative model and round at use.
+func dropEditedTaskGrants(previous, tasks []Task) {
+	bases := make(map[string]string)
+	for _, task := range previous {
+		if task.StartGrant != nil {
+			bases[task.ID] = task.grantBasis()
+		}
+	}
 	for i := range tasks {
-		if tasks[i].StartGrant == nil {
-			continue
-		}
-		var next *modelRecord
-		if tasks[i].ID == id {
-			next = record
-		}
-		basis, err := s.taskGrantBasis(ctx, tasks[i], next)
-		if err != nil {
-			return err
-		}
-		if tasks[i].liveGrant(basis) == nil {
+		if old, ok := bases[tasks[i].ID]; ok && tasks[i].StartGrant != nil && old != tasks[i].grantBasis() {
 			tasks[i].StartGrant = nil
 		}
 	}
-	return nil
 }
 
-// Read the authoritative model record, including a candidate in an atomic task/model save. Untouched tasks
-// retain their legacy hash and inheritance; configured tasks bind to the effective execution configuration.
+// Read the authoritative model record for granting or consuming authorization. Untouched tasks retain their
+// legacy hash and inheritance; configured tasks bind to the effective execution configuration.
 // Unlike resolveModel(task.ID), this accepts the already-locked task without reacquiring the schedule lock.
-func (s *Service) taskGrantBasis(ctx context.Context, t Task, record *modelRecord) (string, error) {
-	if record == nil {
-		r, err := s.modelRecord(ctx, "task."+t.ID)
-		if err != nil {
-			return "", err
-		}
-		record = &r
+func (s *Service) taskGrantBasis(ctx context.Context, t Task) (string, error) {
+	record, err := s.modelRecord(ctx, "task."+t.ID)
+	if err != nil {
+		return "", err
 	}
 	if record.Binding == (ModelBinding{}) {
 		return t.grantBasis(), nil
@@ -160,7 +151,7 @@ func (s *Service) grantScheduleKind(ctx context.Context, id string, t PlanTask) 
 		sc.mu.Unlock() // gone, or no longer the schedule whose round the owner saw: nothing granted
 		return
 	}
-	basis, err := s.taskGrantBasis(ctx, sc.tasks[i], nil)
+	basis, err := s.taskGrantBasis(ctx, sc.tasks[i])
 	if err != nil || basis != t.ScheduleBasis {
 		sc.mu.Unlock()
 		return
@@ -357,7 +348,7 @@ func (s *Service) scheduledRoundOf(ctx context.Context, machine, session string)
 	if !ok {
 		return Task{}, false
 	}
-	basis, err := s.taskGrantBasis(ctx, t, nil)
+	basis, err := s.taskGrantBasis(ctx, t)
 	if err != nil || basis != r.basis {
 		return Task{}, false
 	}
@@ -521,7 +512,7 @@ func (s *Service) scheduleGrantCover(ctx context.Context, t Task, machine, sessi
 	if !ok {
 		return nil
 	}
-	basis, err := s.taskGrantBasis(ctx, current, nil)
+	basis, err := s.taskGrantBasis(ctx, current)
 	if err != nil || basis != t.runGrantBasis {
 		return nil
 	}

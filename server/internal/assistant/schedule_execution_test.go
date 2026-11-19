@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/nwverse/persona/server/internal/proto"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 func TestTaskExecutionSaveAndRun(t *testing.T) {
@@ -147,6 +150,32 @@ func TestTaskExecutionSaveIsAtomicAndRevisionChecked(t *testing.T) {
 	view, ok := restarted.taskView(context.Background(), "job")
 	if !ok || view.Model != "test-model" || view.Launcher != "claude" || view.Cwd != "/work/project" || view.ExecutionMachineID != "server" || view.ModelRevision != 1 {
 		t.Fatalf("restart: %+v", view)
+	}
+}
+
+func TestTaskExecutionRevisionOnlyEditRejectsStaleSave(t *testing.T) {
+	s := newTestService(t, newFakeHub().withMachine())
+	setTasks(s, Task{ID: "job", Title: "Before", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true})
+	setModel(t, s, "task.job", ModelBinding{Provider: "launcher.claude", Model: "test-model"})
+	before := modelRecordOf(t, s, "task.job")
+	edit := func(revision int64) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"title":"After","prompt":"Check files","repeat":"interval","every_minutes":30,"enabled":true,"model_revision":%d}`, revision)
+		return request(s, "PUT", "/api/v1/assistant/tasks/job", body)
+	}
+	if r := edit(before.Revision - 1); r.Code != http.StatusConflict {
+		t.Fatalf("stale revision-only edit: %d %s", r.Code, r.Body)
+	}
+	if task, _ := taskByID(s, "job"); task.Title != "Before" {
+		t.Fatalf("stale edit saved the title: %+v", task)
+	}
+	if r := edit(before.Revision); r.Code != http.StatusOK {
+		t.Fatalf("current revision-only edit: %d %s", r.Code, r.Body)
+	}
+	if task, _ := taskByID(s, "job"); task.Title != "After" {
+		t.Fatalf("current edit did not save the title: %+v", task)
+	}
+	if after := modelRecordOf(t, s, "task.job"); after != before {
+		t.Fatalf("title edit changed the model record: before=%+v after=%+v", before, after)
 	}
 }
 

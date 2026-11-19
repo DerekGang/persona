@@ -10,6 +10,34 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+func TestScheduleRunPersistenceDoesNotReadAnotherTasksGrantModel(t *testing.T) {
+	st := newSettingsFaultStore()
+	s := newServiceOn(t, newFakeHub().withMachine(), st)
+	guarded := granted(depsTask())
+	setTasks(s, guarded, Task{ID: "other", Title: "Other", Prompt: "Check progress", Repeat: repeatDaily, Time: "09:00"})
+	run := ScheduleRun{RefID: "other", Status: runFailed}
+	run.ID = s.recordRun(run)
+	if run.ID == "" {
+		t.Fatal("run was not recorded")
+	}
+	key := modelRecordKey("task." + guarded.ID)
+	reads := st.readCount(key)
+	st.failRead = key
+	if _, err := s.updateRunResult(run, runOK, "", true); err != nil {
+		t.Fatalf("an unrelated grant model prevented saving the run result: %v", err)
+	}
+	if got := st.readCount(key); got != reads {
+		t.Fatalf("runtime save read another task's model %d more times", got-reads)
+	}
+	var stored []Task
+	if found, err := st.Setting(t.Context(), tasksKey, &stored); err != nil || !found {
+		t.Fatalf("read saved tasks: found=%t error=%v", found, err)
+	}
+	if len(stored) != 2 || stored[0].liveGrant() == nil || stored[1].LastStatus != runOK {
+		t.Fatalf("runtime persistence lost the unrelated grant or run outcome: %+v", stored)
+	}
+}
+
 func TestScheduleGrantModelEditsRevokeAuthorization(t *testing.T) {
 	for _, field := range []string{"model", "effort", "launcher"} {
 		t.Run(field, func(t *testing.T) {

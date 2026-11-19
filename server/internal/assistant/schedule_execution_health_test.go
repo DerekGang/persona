@@ -189,21 +189,24 @@ func TestTaskExecutionLegacyHealthPreparesBeforeResume(t *testing.T) {
 	}
 }
 
-// An earlier bad health start can leave a conversation labelled health while its actual directory is ordinary.
-// A follow-up created from it has no task cwd override; the source conversation must still not bypass isolation.
+// A health follow-up may resume only a Health assistant with the canonical physical directory.
 func TestTaskExecutionHealthChecksSourceDirectory(t *testing.T) {
-	for _, sameDirectory := range []bool{false, true} {
-		name := "mislabeled source"
-		if sameDirectory {
-			name = "canonical source"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, space                          string
+		assistant, sameDirectory, wantResume bool
+	}{
+		{name: "wrong directory", space: SpaceHealth, assistant: true},
+		{name: "ordinary assistant in health directory", assistant: true, sameDirectory: true},
+		{name: "non-assistant Health session", space: SpaceHealth, sameDirectory: true},
+		{name: "canonical Health assistant", space: SpaceHealth, assistant: true, sameDirectory: true, wantResume: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			s, f, prepared := healthExecutionService(t)
 			cwd := "/work/project"
-			if sameDirectory {
+			if tc.sameDirectory {
 				cwd = path.Join("/home/me", s.healthRel())
 			}
-			f.sessions["server"] = append(f.sessions["server"], proto.Session{SessionID: "legacy-source", Cwd: cwd, Space: SpaceHealth, Assistant: true, Agent: "claude"})
+			f.sessions["server"] = append(f.sessions["server"], proto.Session{SessionID: "legacy-source", Cwd: cwd, Space: tc.space, Assistant: tc.assistant, Agent: "claude"})
 			f.known["legacy-source"] = true
 			task := Task{ID: "health", Title: "Health check", Prompt: "Check the summary", Space: SpaceHealth, MachineID: "server", SessionID: "legacy-source", Repeat: repeatOnce, At: time.Now(), Enabled: true}
 			setTasks(s, task)
@@ -212,13 +215,13 @@ func TestTaskExecutionHealthChecksSourceDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := f.lastSend(t)
-			if sameDirectory {
+			if tc.wantResume {
 				if p["session_id"] != "legacy-source" || len(*prepared) == 0 || p["cwd"] != cwd || p["task_execution"] != true {
 					t.Fatalf("safe source was not prepared and continued: session=%v preparations=%d", p["session_id"], len(*prepared))
 				}
 			} else {
 				if p["session_id"] == "legacy-source" || p["cwd"] != path.Join("/home/me", s.healthRel()) || p["task_execution"] != true {
-					t.Fatalf("health continued an ordinary-directory source: session=%v cwd=%v strict=%v", p["session_id"], p["cwd"], p["task_execution"])
+					t.Fatalf("health continued an incompatible source: session=%v cwd=%v strict=%v", p["session_id"], p["cwd"], p["task_execution"])
 				}
 				runs := waitRuns(t, s, 1)
 				if runs[0].ConversationReason != "source_unavailable" {
