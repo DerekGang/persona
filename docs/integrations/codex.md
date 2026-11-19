@@ -73,6 +73,28 @@ The Persona assistant ("Persona" tab) can also use Codex launchers through `code
 
 Multiple existing app-server instances on one computer (desktop App, separate `CODEX_HOME`s, multiple clients reading / writing / approving) are integrated into the existing Agents list. See [`codex-app-server.md`](codex-app-server.md) for how that works and its limits; the source research behind it is in [the archive](../archive/integrations/codex-app-server-research.md). Discovering history requires no herdr; only instances exposing a protected Unix / loopback WebSocket endpoint support live connection and control. External stdio is explicitly read-only.
 
+## Visualize
+
+Codex's visualize plugin asks the model to write a self-contained HTML fragment (no network access of its own: no `fetch` / XHR, everything inlined, under 1 MB) and marks it inside an AgentMessage's text with private-use runes:
+
+`<U+E200>visualize<U+E202>{"path":"<abs>.html","mode":"wide"?,"title"?}<U+E201>`
+
+(`U+E200` opens, `U+E202` separates the tag from the JSON payload, `U+E201` closes.) The files live under `$CODEX_HOME/visualizations/YYYY/MM/DD/<codex session id>/`; `mode` is absent (the Codex client's 736 px frame) or `"wide"` (1024 px), and `title` is optional. The Codex client renders the fragment inline where the marker stood; without handling it, a reader sees only the file path as text.
+
+Persona's transcript parser (`server/internal/transcript/codex_visualize.go`) splits each marker out of the AgentMessage text: the words before, between and after the markers stay one or more ordinary `text` items, and each well-formed marker becomes its own `visualization` item (`proto.Visualization{path, mode, title}`), in order. A marker is kept verbatim as text when its JSON is invalid, its path is relative, its mode is unknown, its title is overlong, or it is not closed; blank lines around a marker are collapsed. The item never carries the fragment's bytes, only the file reference.
+
+Only the session's own completed AgentMessages are scanned. Markers also appear verbatim where one thread reads another's history — inside `codex_app` `read_thread` DynamicToolCall output, `custom_tool_call_output` snapshots and a compacted rollout's `guardian_history` — but those stay part of the tool result: they reference another session's files and repeat on every read, so re-emitting them would duplicate items the owning thread already produced.
+
+The node serves the bytes through `session.visualization`, and the hub through `GET /api/v1/sessions/{mid}/{sid}/items/{iid}/visualization` (`docs/protocol/protocol.md`, "Sessions"). The node resolves symlinks and only returns a file that:
+
+- is inside `$CODEX_HOME/visualizations`, with the fixed `YYYY/MM/DD/<session id>/<file>` shape;
+- belongs to the requested session: the directory's id is the session id or its main thread's;
+- is a regular file of at most 1 MiB (`visualizationMaxBytes`).
+
+Anything else answers `not_found`, so a marker cannot name an arbitrary file on the computer. The hub marks the response `text/html; charset=utf-8` and privately cacheable.
+
+The web client renders the item with `views/chat/VisualizationCard.tsx`: it fetches the fragment once when scrolled on screen and runs it in the same offline QuickJS sandbox as assistant HTML cards (`web/src/lib/html-runtime`, an `allow-scripts`-only iframe, no same-origin access), with every `persona.*` bridge call refused. The frame follows the fragment's height up to 640 px and is torn down off screen; a wide card may take 1024 px, another 736 px. Fetch and runtime failures show the file name and Retry. A Markdown export writes a `_[Visualization: <title or file name>]_` placeholder because the interactive frame has no Markdown form.
+
 ## Sessions on the daemon (app-server route)
 
 Rewind metadata preserves native terminal sessions' read, send, interrupt, approval and terminal capabilities.
@@ -99,6 +121,12 @@ not screen reading or typing into the terminal. Panes it cannot join retain the 
   - Async questions (`request_user_input_async`) are messages, not requests. Recognize them from rollout as before ("Questions and approvals"); send the answer envelope as an app-server message (`turn/start` / `turn/steer`).
   - Phone messages use `turn/start` when idle or `turn/steer` with the current turn while working (for a turn already running before connection, read it once with `thread/read`).
     No terminal typing: computer input drafts stay untouched, neither swallowed nor mixed into the message.
+  - `/compact` alone (spaces around it allowed, no photos) compacts the thread with `thread/compact/start`, the call the TUI's own `/compact` makes (#10188, `node/codex_remote_compact.go`).
+    The app-server runs no slash commands: sent as a turn, `/compact` reached the model as words. Codex writes the rollout's `compacted` line and its `ContextCompaction` item, so the session shows
+    the same "Context compacted" notice as a terminal compaction and no user message. While a turn runs it is refused with `codex_compact_busy`, nothing sent and nothing steered: Codex's compaction
+    replaces a running turn instead of waiting for it, and the TUI refuses `/compact` mid-turn too. A thread the node last saw resting is read again (`thread/read`) just before, so a turn
+    begun at the computer since is not cut short; an app-server without the method refuses it (`codex_refused`). Anything more (`/compact now`, a photo) is a message as before. Other slash
+    commands still go to the model as text; panes on the terminal route type `/compact` into the TUI as before.
   - The thread's turn on the app-server counts over herdr's state: a pane herdr calls done / idle / unknown is listed Working while the app-server runs a turn in it,
     from the reply to `turn/start` on (#4865, `docs/protocol/agent-states.md`, "Codex").
   - Thinking effort can be changed on the phone (permission mode cannot); see "Thinking effort" below.
@@ -112,7 +140,7 @@ not screen reading or typing into the terminal. Panes it cannot join retain the 
   Persona does not block the TUI: requests also go to it, so users can answer on the computer at any time.
 - **Visible routing**: sessions carry `codex_route` (`app_server` / `terminal`) and `codex_route_note` (why terminal). The App's "Session Info" shows "Connection: app-server (structured)"
   or "Terminal (screen reading)" plus the reason. Node logs record every successful / failed join.
-- **Tests**: `node/codex_daemon_test.go` (auto-join on a synthetic app-server, messages, async answers, approval cards, denial reasons, join retry, socket alias);
+- **Tests**: `node/codex_daemon_test.go` (auto-join on a synthetic app-server, messages, async answers, approval cards, denial reasons, join retry, socket alias), `node/codex_remote_compact_test.go` (`/compact`);
   real Codex: `scripts/test/test-codex.sh` with `PERSONA_CODEX_DAEMON_BINS` (`docs/operations/testing.md`, "Codex integration"), starts a test-only `codex app-server --listen unix://…` in isolated herdr
   (does not touch the active daemon; node discovery is disabled and recognizes only this one), with the TUI connected using `--remote`.
 
@@ -459,7 +487,7 @@ A Codex thread nothing runs comes back in a new tab of the engine with `codex re
 on a message to it (the message goes in as the resume's prompt, nothing typed) or on `session.start` with `resume_session_id` (no message unless the start brings one).
 Code: `node/codex_resume.go`, `node/retire.go` (`resumeOther`, `resumeCodex`); #1700, #5220.
 
-- **Started by Persona**: the launcher, directory and model it ran with (node state). A terminal read-only start also retains `app_mode: plan`, so a later resume or message uses the same read-only CLI flags. A fresh `plan` resume applies and saves that constraint too; conflicting launcher flags are refused before opening a tab.
+- **Started by Persona**: the launcher, directory, model and effort it ran with (node state; #10434). The effort recorded is the one the start asked for, even when the start left out `-c model_reasoning_effort` because Codex's config already runs that effort; the resume leaves it out again in that case, so it stays on the shared app-server. A terminal read-only start also retains `app_mode: plan`, so a later resume or message uses the same read-only CLI flags. A fresh `plan` resume applies and saves that constraint too; conflicting launcher flags are refused before opening a tab.
 - **Natively archived threads**: after the resume's stop-cause, writer and permission checks pass, restore through the existing native archive route (`thread/unarchive` or `codex unarchive`) before opening the terminal. Otherwise Codex's archive confirmation can block the first prompt. A failed, unsupported or unconfirmed restore refuses the start without opening a tab; Persona never moves the rollout or edits Codex's database itself. Supervisor resumes still refuse user, unknown and missing stop causes.
 - **Started elsewhere** (`codex` in a terminal, since closed; listed as a "Codex history" row): the directory from its rollout's `session_meta`,
   the launcher the start gave (or the hub's "New Agent" one for a message) when it runs Codex, otherwise plain `codex`. From then on it is Persona's:
@@ -471,8 +499,8 @@ Code: `node/codex_resume.go`, `node/retire.go` (`resumeOther`, `resumeCodex`); #
 - **Switching an Agent between the engines** (#5054, [claude-integration.md](claude-integration.md) "Switching a running Agent to another engine"): a Codex Agent Persona started (or resumed) in a terminal can move to Claude Code like a Claude Code Agent moves to Codex.
   It is quit with Ctrl+C in its pane; once only a shell is in front and no Codex CLI holds its rollout (an app-server that keeps the thread loaded does not count: nothing of the other engine writes it), Claude Code starts in that shell.
   When the conversation comes back to Codex, the thread it ran in is resumed in the same pane with `codex resume <id> -- <handoff and message>` through the launcher picked, when that launcher runs Codex in the thread's home and nothing has the thread open (the rules above: an app-server that still has it loaded keeps it from being resumed); otherwise a fresh thread takes the conversation with the whole handoff.
-  The resume runs in the thread's directory with the switch's mode (plan as read-only flags, bypassPermissions as the bypass flags), the model picked (`--model`) and the effort picked (`-c model_reasoning_effort`); the record then names that launcher. A switch that fails brings the Codex back on its own launcher with `codex resume <id>` in the same pane, its record's model and mode kept.
-- **Tests**: `node/codex_resume_test.go` (history row sendable / view only while held, resume on a message and on a start, Codex App thread refused), `node/retire_test.go`.
+  The resume runs in the thread's directory with the switch's mode (plan as read-only flags, bypassPermissions as the bypass flags), the model picked (`--model`) and the effort picked (`-c model_reasoning_effort`, left out when Codex's config already runs it); the record then names that launcher, model and effort. A switch that fails brings the Codex back on its own launcher with `codex resume <id>` in the same pane, its record's model, effort and mode kept.
+- **Tests**: `node/codex_resume_test.go` (history row sendable / view only while held, resume on a message and on a start, Codex App thread refused), `node/codex_resume_model_test.go` (model and effort recorded at the start and run again on a resume), `node/retire_test.go`.
 
 ## Archive
 
@@ -606,6 +634,17 @@ with its own tag and "Message the Agent" input label. Code: `server/internal/nod
 - **Infer state independently**: a braille spinner before the terminal title (`terminal_title`, not the stripped version) or "esc to interrupt" on screen = Working;
   numbered choices such as "› 1." = Needs you (a "Terminal is asking you" card). Otherwise report `done`, and the hub determines Unread / Seen from whether it has been read. Read the screen at most every 2 seconds.
 - **Same file layout as Codex**, rooted at `~/.trae/cli`: `sessions/YYYY/MM/DD/rollout-*.jsonl` and `session_index.jsonl` (thread names for titles).
+- **Paginated history (TRAE CLI 0.215)**: `state_<n>.sqlite` and `thread_history_<n>.sqlite` can be authoritative even when a rollout remains.
+  The node uses the existing paginated reader, with the system `sqlite3` 3.33 or newer, to list and read these conversations, including stored items
+  of a running turn and stopped conversations. Databases are opened read-only; generated transcripts stay in the node's private state directory.
+  Per-thread projection revisions keep unrelated database writes from rebuilding every transcript. Older schemas retain the database-stamp fallback.
+  Full history is projected only when its conversation is read or watched; listing sessions uses cached summaries and does not convert cold histories.
+  Live writer locks and process ancestry select one main conversation per pane; nested exec and guardian threads cannot replace it.
+  A fresh start excludes all historical IDs, and an asynchronous request waits for the CLI's actual thread instead of preallocating a Claude ID.
+- **Conversation directory and terminal container**: the session's cwd comes from its TRAE metadata, not the host workspace.
+  Orca may put a terminal for an unregistered directory in its active workspace and then change into the requested directory. Its workspace ID
+  still describes that physical container; it does not change where the CLI reads or writes. Register the project in Orca when its terminal
+  should belong to that project. Task permission handling remains as documented in [Read-only planned tasks](../assistant/todos.md#read-only-planned-tasks).
 - **Newer rollout format**: user messages and replies are in `history_mutation.display_completions[].item` (same item structure as `item_completed`),
   while tool calls remain in `event_msg/item_completed`. The same item may appear in both places within a turn (deduplicate by id within the turn). A `history_mutation` line may span hundreds of KB to 1 MB
   (full context after compaction); decode only `display_completions`. `task_started` / `task_complete` are recorded in `Meta.TurnOpen`.
