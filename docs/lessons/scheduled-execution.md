@@ -121,6 +121,9 @@ either side alone misses a merge regression.
 
 ## Integration verification
 
+- A source-based desktop fixture must delimit the setup code at its current loader. After the packaged setup page
+  moves from `loadFile` to its registered URL scheme, update that boundary while retaining every recovery assertion.
+
 - A mocked hook's mutable object does not notify React. Render again after changing its loading or streaming state,
   so an unrelated pending import or timer cannot decide whether the test exercises that state. Keep the original
   foreground/background assertions; a deterministic render can expose a real missing Processing fallback. When the
