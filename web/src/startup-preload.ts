@@ -455,6 +455,11 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // Main had 4,560 B of room, so its budget became this ja size plus those 4,560 B. This branch keeps its stricter
 // existing 482,526 B limit; the merged overview and extension cards must fit within that existing room, with the same
 // measurement and enforcement.
+// #11090: a waiting to-do's label says what it waits on (lib/todo-wait-reason.ts waitReason and todoLook, read on the
+// first screen by Overview's task cards, the main chat's trays and the sidebar's By to-do rows; the seven
+// lib-state-labels waits_* words in place of task_waiting). 505 B in ja, measured in one environment against main
+// c4fc3ef324 (ja 479,301 B to 479,806 B; en 476,414 B to 476,898 B, zh-Hans 477,154 B to 477,624 B). Main had 3,430 B
+// of room; the budget stays (merged with #9745 above, it takes those 505 B of #9745's room).
 export const FIRST_SCREEN_BUDGET = 482_526;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
