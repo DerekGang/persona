@@ -404,11 +404,16 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
 
-    def test_explicit_resolution_keeps_the_committed_resolved_superset(self):
+    def test_hosted_resolution_uses_the_fixed_ide_without_changing_the_build_compiler(self):
         root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/apple-test.yml').read_text()
+        self.assertIn('PERSONA_RESOLVER_DEVELOPER_DIR: /Applications/Xcode_26.1.1.app/Contents/Developer', workflow)
+        self.assertIn("ci_run 'Verify supported package resolver IDE' 60 env DEVELOPER_DIR=\"$PERSONA_RESOLVER_DEVELOPER_DIR\" xcodebuild -version", workflow)
         script = (root / 'scripts/ci/apple.sh').read_text()
+        self.assertIn('RESOLVER_DEVELOPER_DIR="${PERSONA_RESOLVER_DEVELOPER_DIR:-$DEVELOPER_DIR}"', script)
         resolve = script.split('resolve() {', 1)[1].split('\n}', 1)[0]
-        self.assertIn('-resolvePackageDependencies -disableAutomaticPackageResolution', resolve)
+        self.assertIn('env DEVELOPER_DIR="$RESOLVER_DEVELOPER_DIR"', resolve)
+        self.assertIn('export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode_26.0.1.app/Contents/Developer}"', script)
 
 
 class PostgresCleanupTests(unittest.TestCase):

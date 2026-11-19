@@ -101,9 +101,11 @@ UNSIGNED=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= D
 # (docs/lessons/testing.md #6192). No certificate/profile or secret is required.
 TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=)
 XCODE=(xcodebuild -project "$PROJECT" -configuration Debug -clonedSourcePackagesDirPath "$SPM/SourcePackages")
+RESOLVER_DEVELOPER_DIR="${PERSONA_RESOLVER_DEVELOPER_DIR:-$DEVELOPER_DIR}"
 resolve() {
-  # Use the committed resolved superset for both optional-Meta configurations, matching release (#11063).
-  ci_run "Resolve Swift packages ($1)" 900 "${XCODE[@]}" -scheme "$1" -resolvePackageDependencies -disableAutomaticPackageResolution
+  # Hosted CI selects the supported 26.1.1 resolver IDE; compilation stays on DEVELOPER_DIR, pinned to 26.0.1 (#11063).
+  ci_run "Resolve Swift packages ($1)" 900 env DEVELOPER_DIR="$RESOLVER_DEVELOPER_DIR" \
+    "${XCODE[@]}" -scheme "$1" -resolvePackageDependencies
 }
 result() {
   local name="$1"; shift

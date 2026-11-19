@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 120
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+      PERSONA_RESOLVER_DEVELOPER_DIR: /Applications/Xcode_26.1.1.app/Contents/Developer
       CI_SPM_CACHE: ${{ github.workspace }}/.ci-cache/spm
       APPLE_CI_LANE: ${{ inputs.lane }}
     steps:
@@ -44,6 +45,8 @@ jobs:
           ci_run 'Select system Xcode 26.0' 60 sudo xcode-select --switch "$DEVELOPER_DIR"
           ci_run 'Initialize Xcode 26.0 platform services' 900 sudo env DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -runFirstLaunch
           ci_run 'Verify system Xcode selection' 60 xcode-select --print-path
+          # Only package resolution uses the newer IDE; compilation and tests remain on pinned Xcode 26.0.1 (#11063).
+          ci_run 'Verify supported package resolver IDE' 60 env DEVELOPER_DIR="$PERSONA_RESOLVER_DEVELOPER_DIR" xcodebuild -version
       - name: Install project generation tools
         run: brew install xcodegen
       - uses: actions/cache@v4
