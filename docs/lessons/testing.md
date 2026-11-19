@@ -1,5 +1,17 @@
 # Lessons: testing and validation
 
+- A mocked hook's mutable object does not notify React. Render again after changing its loading or streaming state,
+  so an unrelated pending import or timer cannot decide whether the test exercises that state. Keep the original
+  foreground/background assertions; a deterministic render can expose a real missing Processing fallback. When the
+  answer itself streams, include that existing feedback in the activity assertion rather than requiring a second spinner.
+- A fixture's CLI result file can precede its caller's recovery bookkeeping. Await the observable lost-task record
+  clearing with the existing bounded helper, while retaining the origin, permission, tool and no-stall assertions.
+- Executable trust includes every path ancestor. Use a protected, user-owned executable directory and a short compiler
+  path; do not relax ownership checks or change shared directory owners.
+  A child mount namespace can change the UID seen for system ancestors: inspect that mapping before running executable
+  trust tests there. For tests that require a short `/tmp`, an isolated child mount can supply fixture capacity without
+  changing the host's temporary files. Record denied native syscalls and nested-namespace skips as coverage gaps.
+
 - Cache-age fixtures must settle every startup file the probe watches. Settling only `.zshrc` while the same fake
   home just created `.bashrc` legitimately bypasses the cache; a fast temporary filesystem exposes that timing
   assumption. Date only the fixture's files with the existing helper, keeping retry/freshness limits and assertions.
@@ -1281,6 +1293,18 @@ To check that a failure is this, move `dev.json` aside in the app's data contain
 
 - `-showFleetSample needsYou` is only an initial DEBUG sample. A paired hub's next Fleet event or foreground fetch replaces it; the default mock's empty Fleet turns it into All Caught Up before the Lock Screen appears. For an action test, enable the mock's permission Fleet and take the interaction id from that response, so the resolve assertion names the request whose Deny is visible.
 - The first Live Activities authorization prompt can appear after the Lock Screen wake, not before a single immediate `exists` check. Wait for either the activity's Deny or the system's Allow, answer the system prompt, and then wait for Deny. Clear any launch alert before Home, and keep the unlock teardown registered immediately after locking.
+
+## Workspace naming review reproductions (#7100)
+
+- Exercise a task save with Assistant defaults changed by another editor. Check the placeholder against the actual preview after the save, and keep the explicit draft separate from the refreshed saved baseline/revision. A failed follow-up read must not replay an acknowledged write or reset the preview computer/layout; include an empty computer choice as well as a different valid one.
+- A lazily imported editor can still add first-screen bytes through shared modules and preload metadata. Keep the general repository API free of React and reuse the existing editor-owned request-context guard when that avoids an extra shared chunk. Compare a normal build with one fixed clean main; retain the startup budget and the guard's credential/manager lifetime checks.
+- Tailwind's global stylesheet can also include utilities used only by a lazy editor. Keep that editor's unique rules in its own imported stylesheet, applying the existing utilities through a reference to the shared design tokens. This preserves its exact layout without charging those rules to every first screen.
+- Seed legacy PRs in persisted task progress without first reading the repository API: that read imports them. Pause the synthetic Node after source capture and inspect the real PostgreSQL association set and import receipt. Naming already imports before capture; a link-only edit changes the association revision but not the selected preparation digest. Changing a selected ref must still conflict, and a saved operation must survive restart without resolving again.
+- A Windows-looking `NodeContext` does not make a Linux process use Windows `filepath` semantics. Run the Windows-specific naming tests on Windows, or explicitly label any extracted lexical-path fixture and its substitutions. Cross-compilation checks compilation only. Keep settings syntax, target-native resolution, Node authorization and actual filesystem behavior as separate claims; never widen path permissions to make a host-mismatched reproduction pass.
+- Windows namespace prefixes can make `filepath.Rel` reject an equivalent ordinary path as a different volume. Test both workspace and private-state spellings, including drive and UNC forms; a failed containment comparison is not proof that a path is outside private state. Naming rejects these namespaces rather than stripping their special semantics.
+- A lazy settings subtree needs its own `PageBoundary` inside the surrounding settings page. Reproduce a chunk failure by blocking the browser's actual module request, then verify that sibling settings remain editable and their drafts can still save. Restore the resource and use the existing Reload action to verify recovery of the module and persisted rules; a mocked component or a JSX-shape assertion cannot establish that behavior.
+
+- An export-only change in a deferred editor need not reduce the first screen. Measure it, revert an ineffective trial, and inspect the shared code that startup actually ships. Remove duplicated work there while retaining validation and request-lifetime guards; keep the original budget and verify the normal app/public build.
 
 ## Raw TCP test listeners get the port probe too (2026-11-19, #10659)
 
