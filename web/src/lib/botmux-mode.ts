@@ -25,6 +25,9 @@ export function readBotmuxMode(store: Storage | undefined = globalThis.localStor
 /** The chip's next mode: decode → all → hide → decode. */
 export const nextBotmuxMode = (m: BotmuxMode): BotmuxMode => MODES[(MODES.indexOf(m) + 1) % MODES.length];
 
+/** Fired on window when the mode changes, for views outside React's store (HistoryBrowser). */
+export const BOTMUX_VISIBILITY_EVENT = "persona-botmux-visibility";
+
 const subscribers = new Set<() => void>();
 
 const subscribe = (f: () => void) => {
@@ -39,6 +42,7 @@ export function setBotmuxMode(next: BotmuxMode) {
   localStorage.setItem(BOTMUX_MODE_KEY, next);
   localStorage.removeItem(LEGACY_HIDDEN_KEY);
   subscribers.forEach((f) => f());
+  window.dispatchEvent(new Event(BOTMUX_VISIBILITY_EVENT));
 }
 
 export function useBotmuxMode(): BotmuxMode {

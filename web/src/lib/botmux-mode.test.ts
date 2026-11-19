@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { BOTMUX_MODE_KEY, getBotmuxMode, nextBotmuxMode, readBotmuxMode, setBotmuxMode } from "./botmux-mode";
+import { BOTMUX_MODE_KEY, BOTMUX_VISIBILITY_EVENT, getBotmuxMode, nextBotmuxMode, readBotmuxMode, setBotmuxMode } from "./botmux-mode";
 
 afterEach(() => localStorage.clear());
 
@@ -21,5 +21,14 @@ describe("botmux mode", () => {
     expect(getBotmuxMode()).toBe("all");
     expect(localStorage.getItem(BOTMUX_MODE_KEY)).toBe("all");
     expect(localStorage.getItem("persona.agentHideBotmux")).toBeNull();
+  });
+  it("tells views outside the store (session history) when the mode changes", () => {
+    let fired = 0;
+    const count = () => void fired++;
+    window.addEventListener(BOTMUX_VISIBILITY_EVENT, count);
+    setBotmuxMode("hide");
+    setBotmuxMode("hide");
+    window.removeEventListener(BOTMUX_VISIBILITY_EVENT, count);
+    expect(fired).toBe(1);
   });
 });
