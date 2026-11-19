@@ -818,6 +818,20 @@ func TestNewModelPickKeepsItsFirstSameModelRetry(t *testing.T) {
 	}
 	if second := waitRecoverySend(t, sent); second.Model != "primary-model" {
 		t.Fatalf("after the same-model retry, recovery used %q instead of the next model", second.Model)
+	} else if second.NewModelChoice {
+		t.Fatal("the recovery's own model inherited the user's new-choice marker")
+	}
+	waitRecovery(t, "the next-model recovery to finish", func() bool {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		r := n.recoveries[id]
+		return r != nil && !r.running
+	})
+	recovered := &assistantProc{id: id, agent: "claude", launcher: "claude", model: modelExecution{Model: "primary-model"}}
+	n.procs[id] = recovered
+	n.clearAssistantRecovery(recovered, true)
+	if from, _, ok := n.recentFallback(id); !ok || from.Model != picked.Model {
+		t.Fatalf("the recovery's own hold was not retained: %+v %v", from, ok)
 	}
 }
 
@@ -840,6 +854,39 @@ func TestActiveHoldFallbackFailureKeepsStickyNextModelBehavior(t *testing.T) {
 	}
 	if first := waitRecoverySend(t, sent); first.Model != "last-model" {
 		t.Fatalf("the first recovery send used %q, want the next model without another same-model retry", first.Model)
+	}
+}
+
+// Explicitly choosing the old fallback itself is still a new choice, including for a legacy send with no execution
+// fingerprint. It gets its own first retry instead of inheriting the old chain's original model and spent budget.
+func TestExplicitPickOfHeldFallbackKeepsItsFirstRetry(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	n, sent := recoveryTestNode(t, id, false, true)
+	n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude",
+		from: modelExecution{Model: "primary-model"}, to: modelExecution{Model: "fallback-model"},
+		at: time.Now(), until: time.Now().Add(assistantFallbackHold)}}
+	picked := modelExecution{Model: "fallback-model"}
+	execution := n.heldFallback(id, "claude", picked)
+	if execution.Model != picked.Model {
+		t.Fatalf("the old hold overrode the explicit pick: %+v", execution)
+	}
+	p := &assistantProc{id: id, agent: "claude", launcher: "claude", model: execution}
+	n.procs[id] = p
+	if !n.recoverAssistantResult(p, true, "API Error: 503 no eligible upstream account is currently available") {
+		t.Fatal("the explicit fallback pick's transient failure was not recovered")
+	}
+	if first := waitRecoverySend(t, sent); first.Model != picked.Model {
+		t.Fatalf("the first retry used %q, want the explicit pick %q", first.Model, picked.Model)
+	}
+	n.mu.Lock()
+	from := n.recoveries[id].from.Model
+	n.mu.Unlock()
+	if from != picked.Model {
+		t.Fatalf("the recovery chain belongs to %q, want the explicit pick %q", from, picked.Model)
+	}
+	n.clearAssistantRecovery(p, true)
+	if _, _, ok := n.recentFallback(id); ok {
+		t.Fatal("the old fallback outlived the explicit pick's successful answer")
 	}
 }
 

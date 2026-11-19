@@ -59,6 +59,7 @@ func (n *Node) heldFallback(id, launcher string, asked modelExecution) modelExec
 func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution) (modelExecution, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	asked.NewModelChoice = false
 	f := n.fallbacks[id]
 	if f == nil {
 		return asked, false
@@ -70,12 +71,14 @@ func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution)
 	}
 	if !now.Before(f.until) || f.launcher != launcher || !sameModelChoice(asked, f.from) {
 		expired := !now.Before(f.until) && f.launcher == launcher && sameModelChoice(asked, f.from)
+		asked.NewModelChoice = f.launcher == launcher && !sameModelChoice(asked, f.from)
 		f.until = time.Time{} // over; a refusal soon after still skips the same-model retry
 		return asked, expired
 	}
 	out := f.to
 	out.IsMain, out.Interject, out.Ultracode = asked.IsMain, asked.Interject, asked.Ultracode // the message's own
 	out.SupervisionInstructions = asked.SupervisionInstructions
+	out.NewModelChoice = false // the old hold selected this execution, not a new pick
 	return out, false
 }
 

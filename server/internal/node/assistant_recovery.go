@@ -43,9 +43,9 @@ type assistantTurnRecovery struct {
 }
 
 // newAssistantRecovery is a conversation's chain begun by a failure of launcher running execution (key and current as
-// recoverAssistantResultFor has them), stored on n. When the same model choice, or the fallback already held for it,
+// recoverAssistantResultFor has them), stored on n. When the same model choice, or the fallback selected by its hold,
 // is refused again soon, the same-model retry is spent already: a resend carries the refused turns again (#3788).
-// A genuinely newer explicit pick gets its own first retry instead of inheriting the old model's sticky record. n.mu is held.
+// A new explicit choice gets its own first retry, even when it names the old fallback. n.mu is held.
 func (n *Node) newAssistantRecovery(id, launcher string, execution modelExecution, key, current, replyModel string) *assistantTurnRecovery {
 	r := &assistantTurnRecovery{retried: map[string]bool{}, used: map[string]bool{}, launcher: launcher, from: execution}
 	if execution.Model == "" || execution.Model == "default" {
@@ -57,7 +57,7 @@ func (n *Node) newAssistantRecovery(id, launcher string, execution modelExecutio
 	}
 	if from, l, ok := n.recentFallback(id); ok && l == launcher {
 		held := n.fallbacks[id]
-		if sameModelChoice(execution, from) || held != nil && sameModelChoice(execution, held.to) {
+		if sameModelChoice(execution, from) || held != nil && !execution.NewModelChoice && sameModelChoice(execution, held.to) {
 			r.from = from // what the user's setting asks for, not the fallback a failure there came from
 			r.retried[key] = true
 		}
@@ -239,6 +239,11 @@ func (n *Node) clearAssistantRecovery(p *assistantProc, answered bool) {
 	needPersist := false
 	if n.procs[p.id] == p { // a replaced process's late result cannot clear its replacement's recovery
 		r := n.recoveries[p.id]
+		if answered && model.NewModelChoice {
+			// A successful explicit choice retires the old chain, including its sticky fallback. Otherwise a later turn
+			// would inherit the old model's spent retry even after the new choice has proved itself.
+			needPersist = n.releaseModelRecoveryLocked(p.id, model.Model) || needPersist
+		}
 		if answered && r != nil && r.switched && r.launcher == launcher {
 			// Answering on the configured model again ends the recovery marker; answering on the fallback keeps it so
 			// the apps keep naming the model that actually answers and why it switched (#7824). n.mu is already held,
@@ -545,6 +550,7 @@ func resolvedAssistantDefault(list proto.LauncherModels, current string) string 
 // launcher's default, matching the model picker instead of making the new model refuse an unsupported level.
 func assistantExecutionForModel(execution modelExecution, list proto.LauncherModels, id string) modelExecution {
 	execution.Model = id
+	execution.NewModelChoice = false // the recovery chain, not a new user pick, selected this model
 	if execution.Effort == "" || execution.Effort == effortAuto {
 		return execution
 	}
