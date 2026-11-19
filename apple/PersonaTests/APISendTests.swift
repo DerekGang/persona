@@ -103,7 +103,7 @@ struct APISendTests {
         NonMatchingRefusal(path: "/api/v1/devices/d/prefs", status: 500, code: APIClient.pushRegistrationRequired),
         NonMatchingRefusal(path: "/api/v1/sessions/test/codex/messages", status: 409, code: APIClient.pushRegistrationRequired),
     ])
-    func nonMatchingRefusalsDoNotRegisterOrRetry(_ refusal: NonMatchingRefusal) async throws {
+    fileprivate func nonMatchingRefusalsDoNotRegisterOrRetry(_ refusal: NonMatchingRefusal) async throws {
         let hub = FakeHub(), registrations = PushRegistrations()
         hub.on("PUT", refusal.path) { _ in
             throw APIError(status: refusal.status, message: "refused", fields: ["code": refusal.code])
