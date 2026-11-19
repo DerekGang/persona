@@ -4,11 +4,17 @@
   home just created `.bashrc` legitimately bypasses the cache; a fast temporary filesystem exposes that timing
   assumption. Date only the fixture's files with the existing helper, keeping retry/freshness limits and assertions.
 
+- New relayed routes need both extension-scope inventories checked (#7100): `TestRouteScopes` records the exact
+  scope, and `TestEveryExtensionRouteIsBounded` records how ownership is enforced. Updating `extwire.RouteScopes`
+  alone leaves those checks failing. Exercise allowed and refused tokens, another manager's Todo and explicit manager
+  selectors, and body-named machines before recording the classification; keep every existing scope unchanged.
+  Regenerate the route inventory after merging additions so shared-prefix routes remain sorted.
+
+- A viewer's Close button existing, or being non-hittable, does not prove that its picture and tap recognizers are ready, or that a tap hid the chrome (#8562). The full-screen presentation may still be settling, the decoded page may still be a spinner, or a SpringBoard alert may cover the app. Dismiss the known icon-change alert, wait for the decoded `viewer-page-N` and a hittable Close before the first tap, and only then assert the hide/show sequence. A delayed-decode launch turns the old race into a deterministic failure; a longer poll after a mistimed tap only hides the synchronization gap.
+
 - A fixture exercising a new read must answer with the real contract: register the same synthetic computer in the
   fleet and transcript provider, and return a complete Assistant snapshot when an unlisted chat triggers a refresh.
   An empty operation receipt is not a snapshot; do not weaken the registration or model-selection assertions.
-
-- A viewer's Close button existing, or being non-hittable, does not prove that its picture and tap recognizers are ready, or that a tap hid the chrome (#8562). The full-screen presentation may still be settling, the decoded page may still be a spinner, or a SpringBoard alert may cover the app. Dismiss the known icon-change alert, wait for the decoded `viewer-page-N` and a hittable Close before the first tap, and only then assert the hide/show sequence. A delayed-decode launch turns the old race into a deterministic failure; a longer poll after a mistimed tap only hides the synchronization gap.
 
 - Fixture teardown is part of a test's elapsed time (#5730). A scripted terminal whose shell is ready immediately
   does not need a fixed startup pause. When a test has finished its assertions, cancel background prompt checks
