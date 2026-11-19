@@ -392,6 +392,7 @@ describe("a message that did not go, in an agent's chat (#1122)", () => {
     await flush();
     const words = [...host.querySelectorAll<HTMLElement>("[data-outbox] [data-user-bubble] *")].filter((el) => el.textContent === "你好").at(-1)!;
     act(() => void words.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })));
+    await act(async () => { await import("./ReplyBar"); });
     const last = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].at(-1)!;
     expect(last.textContent?.trim()).toBe("删除");
     act(() => last.click());

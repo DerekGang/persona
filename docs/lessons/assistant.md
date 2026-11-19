@@ -1,8 +1,15 @@
 # Lessons: assistant (headless Claude / Codex)
 
+- Context API changes must cover the empty branch and real prompt callers. A project context paired with project
+  slugs returns both empty values when no project matches; a new supervising-conversation argument is also passed by
+  language golden tests (empty when there is no supervisor). Keep the prompt and golden assertions unchanged, then
+  compile and run the caller checks together.
+
 - A selected schedule copy is not its admitted execution snapshot (#6800). Initialize to-do progress history after
   reading the task and model together, including failed admission. A new or cleared association, or a change to a
   one-off, must describe that admitted task rather than the scheduler's older copy. Test those edits before any send.
+
+- A review wake is not a completion verdict (#8373). PR events and judged-done candidates share the same signal. Keep its wording neutral, preserve the actual reason and criterion evidence, and leave acceptance gates and display grouping unchanged.
 
 - Snapshot display projections must not initialize the knowledge base (#10108). Publication already holds
   `pubMu`; read an already-open engine and retain the canonical cached project-name fallback rather than calling
