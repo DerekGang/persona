@@ -113,7 +113,8 @@ result() {
   ci_run "Inspect test results ($name)" 120 python3 "$CI_ROOT/scripts/ci/apple_result.py" "$OUTPUT/$name.xcresult" "$@"
 }
 
-if [ "$LANE" = all ] || [ "$LANE" = ios ] || [ "$LANE" = packages ]; then
+# This diagnostic branch runs the issue's five simulator suites in the dispatched iOS lane.
+if [ "$LANE" = all ] || [ "$LANE" = packages ]; then
   ci_run 'PersonaCore strict-concurrency tests and C-binding fixture replay' 900 xcrun swift test --package-path "$SOURCE/apple/Packages/PersonaCore" --scratch-path "$SPM/PersonaCore" -Xswiftc -warnings-as-errors
   ci_run 'PersonaKit unit tests' 900 xcrun swift test --package-path "$SOURCE/apple/Packages/PersonaKit" --scratch-path "$SPM/PersonaKit"
   # The live screen's video wire and capture decisions (#3954): PersonaScreenCore, all Persona Link's helper is built from
@@ -158,19 +159,21 @@ if [ "$LANE" = all ] || [ "$LANE" = ios ]; then
     if [ "$platform" = iOS ]; then IOS_RUNTIME="$runtime"; fi
   done
   resolve Persona
-  # Generic device builds compile the actual watch/widget/notification/share
-  # dependency graph; do not delete the watch target to accommodate the runner.
-  ci_run 'Unsigned iOS and embedded watch/extensions build' 1800 "${XCODE[@]}" -scheme Persona \
-    -destination 'generic/platform=iOS' -derivedDataPath "$OUTPUT/ios-device" \
-    -disableAutomaticPackageResolution "${UNSIGNED[@]}" build
-  # Every Mach-O in the device app (extensions, frameworks, the Watch app) and every architecture: none links CallKit,
-  # weakly or through a package (#9290). Device-only linker flags exist, so the simulator build cannot stand in for it.
-  ci_run 'No CallKit in the device build' 300 python3 "$CI_ROOT/scripts/release/check_no_callkit.py" \
-    "$OUTPUT/ios-device/Build/Products/Debug-iphoneos/Persona.app"
-  # A phone's main thread has a 1 MB stack, the simulator's 8 MB: view functions with big fixed frames in this Debug
-  # device build fail here (#6735; MainPagesStackTests measures the run-time part in the simulator).
-  ci_run 'Debug view stack frames (device build)' 300 python3 "$CI_ROOT/scripts/ci/apple_stack_frames.py" \
-    "$OUTPUT/ios-device/Build/Products/Debug-iphoneos/Persona.app"
+  if [ "$LANE" = all ]; then
+    # Generic device builds compile the actual watch/widget/notification/share
+    # dependency graph; do not delete the watch target to accommodate the runner.
+    ci_run 'Unsigned iOS and embedded watch/extensions build' 1800 "${XCODE[@]}" -scheme Persona \
+      -destination 'generic/platform=iOS' -derivedDataPath "$OUTPUT/ios-device" \
+      -disableAutomaticPackageResolution "${UNSIGNED[@]}" build
+    # Every Mach-O in the device app (extensions, frameworks, the Watch app) and every architecture: none links CallKit,
+    # weakly or through a package (#9290). Device-only linker flags exist, so the simulator build cannot stand in for it.
+    ci_run 'No CallKit in the device build' 300 python3 "$CI_ROOT/scripts/release/check_no_callkit.py" \
+      "$OUTPUT/ios-device/Build/Products/Debug-iphoneos/Persona.app"
+    # A phone's main thread has a 1 MB stack, the simulator's 8 MB: view functions with big fixed frames in this Debug
+    # device build fail here (#6735; MainPagesStackTests measures the run-time part in the simulator).
+    ci_run 'Debug view stack frames (device build)' 300 python3 "$CI_ROOT/scripts/ci/apple_stack_frames.py" \
+      "$OUTPUT/ios-device/Build/Products/Debug-iphoneos/Persona.app"
+  fi
 
   IOS_COMMON=("${XCODE[@]}" -scheme Persona -derivedDataPath "$OUTPUT/ios-tests" \
     -parallel-testing-enabled NO -disableAutomaticPackageResolution "${TEST_SIGNING[@]}")
@@ -190,6 +193,11 @@ if [ "$LANE" = all ] || [ "$LANE" = ios ]; then
   # The full execution retains exactly the same suite selection.
   IOS_UNIT_SELECTION=("${IOS_EXCLUSIONS[@]}" -only-testing:PersonaTests
     -skip-testing:PersonaTests/AssistantHTMLCardTests -skip-testing:PersonaTests/AssistantHTMLSecurityTests)
+  if [ "$LANE" = ios ]; then
+    ISSUE_SUITES=(AgentListOrderTests StateNamesTests SeenOutboxTests SessionWorkTests TokenRatchetTests)
+    IOS_UNIT_SELECTION=()
+    for suite in "${ISSUE_SUITES[@]}"; do IOS_UNIT_SELECTION+=("-only-testing:PersonaTests/$suite"); done
+  fi
   # A generic destination must retain the host's single runnable architecture.
   ci_run 'Build iOS offline unit tests' 1800 "${IOS_COMMON[@]}" \
     -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES \
@@ -215,6 +223,30 @@ print(matches[0])
 PY
   )
   IOS_TESTS=("${IOS_COMMON[@]}" -destination "platform=iOS Simulator,id=$SIM" -destination-timeout 120)
+  if [ "$LANE" = ios ]; then
+    test_status=0
+    ci_run 'Run the five #9787 acceptance suites' 1200 "${IOS_TESTS[@]}" "${IOS_UNIT_SELECTION[@]}" \
+      -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building || test_status=$?
+    if [ -d "$OUTPUT/ios-unit.xcresult" ]; then
+      python3 -I - "$CI_ROOT/scripts/app" "$OUTPUT/ios-unit.xcresult" "${ISSUE_SUITES[@]}" <<'CASES'
+from collections import Counter
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from perf_report import statuses
+cases, state = statuses(Path(sys.argv[2]))
+if state["status"] != "ok":
+    sys.exit(state.get("error", "could not read the Xcode test tree"))
+for suite in sys.argv[3:]:
+    outcomes = Counter(status for name, status in cases.items() if suite in name.split("/"))
+    print(f"apple-ci: #9787 {suite} executed={sum(outcomes.values())} outcomes={dict(outcomes)}")
+CASES
+    fi
+    [ "$test_status" -eq 0 ] || exit "$test_status"
+    result ios-unit "${ISSUE_SUITES[@]}"
+    ci_run 'Verify token baseline was not rewritten' 60 cmp "$CI_ROOT/apple/PersonaTests/TokenBaseline.json" "$SOURCE/apple/PersonaTests/TokenBaseline.json"
+    exit 0
+  fi
   # Xcode owns boot, installation and test-host launch. The existing hosted suite
   # and its strict result check must both finish inside the readiness deadline.
   CI_BUNDLE_ID=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["app"]["bundle_id"])' "$PERSONA_CONFIG")
