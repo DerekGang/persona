@@ -117,7 +117,7 @@ func (s *Service) approvalJournalAborted(ctx context.Context, id string) {
 // original card is no longer waiting, including when execution is uncertain.
 func approvalResultText(id, status, text string) string {
 	word := map[string]string{
-		"resolved": "applied", "denied": "denied", "expired": "expired",
+		"resolved": "applied", "approved": "approved", "denied": "denied", "expired": "expired",
 		"replaced": "replaced", "stale": "stale and cancelled", "cancelled": "cancelled", "dismissed": "dismissed",
 		"failed": "left with an uncertain execution outcome",
 	}[status]

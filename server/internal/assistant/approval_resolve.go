@@ -19,7 +19,7 @@ func (s *Service) resolvePreparedAnswer(ctx context.Context, p *pending, r proto
 	if authorization != nil || r.Remembered {
 		return errors.New("a standing or remembered authorization cannot approve a prepared card")
 	}
-	if r.EditedText != "" {
+	if !editedAnswerAllowed(p.ix, r) {
 		return errInvalidEditedAnswer
 	}
 	for _, f := range p.ix.Fields {
@@ -123,6 +123,12 @@ func (s *Service) resolvePreparedAnswer(ctx context.Context, p *pending, r proto
 	}
 
 	s.fleet.mu.Lock()
+	if p.ix.Detachable && clarified && r.UserAllowed() && applyErr == nil {
+		// A late detached Allow records a continuation grant, not permission to
+		// replay the original hook. Only grant consumption may return this call's
+		// execution Allow (approval_detached.go enforces that distinction).
+		r.ApprovalID = p.ix.ID
+	}
 	a.outcome = approvalops.Outcome{Text: text}
 	a.err = applyErr
 	a.result = r

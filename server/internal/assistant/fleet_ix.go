@@ -242,7 +242,8 @@ func (s *Service) nodeInteraction(ctx context.Context, ix proto.Interaction) (pr
 			}
 		}
 	}
-	ix = nodeCard(ix, s.fleetStore() != nil, s.ixInHealth(ctx, ix), s.ixInAssistant(ctx, ix))
+	inAssistant := s.ixInAssistant(ctx, ix)
+	ix = nodeCard(ix, s.fleetStore() != nil, s.ixInHealth(ctx, ix), inAssistant)
 	if ix.Kind == proto.IxPermission {
 		l := s.lang(ctx)
 		ix.ToolTitle = personaToolTitle(l, ix.ToolName, ix.ToolInput)
@@ -250,11 +251,22 @@ func (s *Service) nodeInteraction(ctx context.Context, ix proto.Interaction) (pr
 			ix.ToolNameTitle = name // the tool alone, for what Always covers: no report's kind
 		}
 	}
+	ix.Detachable = ix.Detachable && ix.Kind == proto.IxPermission && ix.SessionID != "" && inAssistant
+	if ix.Detachable {
+		if r, ok, err := s.consumeDetachedGrant(ctx, ix); err != nil {
+			return proto.Resolution{}, err
+		} else if ok {
+			return r, nil
+		}
+	}
 	if r, ok := s.alwaysAllowed(ctx, ix); ok {
 		if ix.Resumable { // its hook's earlier attempt left the card pending: it is answered too
 			_ = s.resolveRemembered(ix.ID, r, false)
 		}
 		return r, nil
+	}
+	if ix.Detachable {
+		return s.waitDetachedCard(ctx, ix)
 	}
 	return s.waitInteraction(ctx, ix)
 }

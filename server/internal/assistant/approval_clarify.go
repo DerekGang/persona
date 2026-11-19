@@ -79,7 +79,10 @@ var (
 	// clarificationPauseBudget is cumulative per card, not per question.
 	clarificationPauseBudget = 24 * time.Hour
 	clarifyQuestionRunes     = 1000
-	// approvalWaitingWindow is how long a prepared card stays pending after its decision window ended unanswered.
+	// approvalInitialWait bounds how long a prepared tool call holds its conversation's turn before returning the
+	// non-final waiting result. The owner still has the much longer waiting window to answer the retained card.
+	approvalInitialWait = 75 * time.Second
+	// approvalWaitingWindow is how long a prepared card stays pending after the original tool call returned unanswered.
 	approvalWaitingWindow = 24 * time.Hour
 )
 
@@ -159,7 +162,8 @@ func (s *Service) startPreparedTimer(p *pending) {
 	if p.prepared == nil || p.prepared.terminal {
 		return
 	}
-	p.prepared.decisionTimer = time.AfterFunc(max(0, time.Until(p.ix.ExpiresAt)), func() {
+	wait := min(max(0, time.Until(p.ix.ExpiresAt)), approvalInitialWait)
+	p.prepared.decisionTimer = time.AfterFunc(wait, func() {
 		s.expirePrepared(p)
 	})
 }
