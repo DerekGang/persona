@@ -16,7 +16,7 @@ private struct RequestBody: Codable, Equatable {
     var value: String
 }
 
-private struct NonMatchingRefusal: Sendable {
+fileprivate struct NonMatchingRefusal: Sendable {
     var path: String
     var status: Int
     var code: String
