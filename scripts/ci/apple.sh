@@ -93,6 +93,10 @@ unset PERSONA_LEAN_DEV_BUILD
 ci_run 'Build PersonaCore XCFramework before package resolution' 1200 "$SOURCE/native/app-core/scripts/build-apple.sh"
 ci_run 'Generate public unsigned Apple config' 60 python3 "$SOURCE/scripts/persona_config.py" xcconfig
 ci_run 'Generate Apple project' 120 xcodegen generate --spec "$SOURCE/apple/project.yml" --project "$SOURCE/apple"
+# Resolve against the standard generated-workspace file, not a local package's fallback copy (#11063).
+WORKSPACE_RESOLVED="$PROJECT/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+mkdir -p "$(dirname "$WORKSPACE_RESOLVED")"
+cp "$SOURCE/apple/Packages/PersonaSSH/Package.resolved" "$WORKSPACE_RESOLVED"
 [ -s "$SOURCE/apple/PersonaTests/TokenBaseline.json" ] || { printf 'apple-ci: FAIL committed token baseline missing\n' >&2; exit 1; }
 
 UNSIGNED=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=)
