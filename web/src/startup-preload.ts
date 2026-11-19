@@ -417,6 +417,11 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // renumbers the entries of every lazy import after it, so the count moves with main (117 B against affb08b4d, 258 B
 // against c53addf40; before the names: 45 B against 04cffd3d4, 198 B against c2fec3548, 155 B against bda346e8c). Main
 // had 1,316 B of room; the budget stays.
+// #10822: Colored sidebar icons, an Appearance choice off by default: the choice's store and the built-in pages' colors
+// (lib/sidebar-icons.ts), read where the sidebar draws its pages, and the style a colored icon takes. 236 B in each
+// language, measured in one environment against main 1aed2cfd30 (ja 482,030 B to 482,266 B; en 478,911 B to 479,147 B,
+// zh-Hans 479,772 B to 480,008 B); the setting's row and words load with Settings. Main had 653 B of room; the budget
+// stays.
 export const FIRST_SCREEN_BUDGET = 482_683;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").

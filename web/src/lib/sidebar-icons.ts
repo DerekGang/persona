@@ -62,4 +62,5 @@ if (typeof window !== "undefined")
     if (e.key === null || e.key === KEY) notify();
   });
 
-export const useSidebarIconMode = () => useSyncExternalStore(subscribe, sidebarIconMode);
+// the same on a server render (the palette's tests draw to a string): Monochrome without a browser's storage
+export const useSidebarIconMode = () => useSyncExternalStore(subscribe, sidebarIconMode, sidebarIconMode);
