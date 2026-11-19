@@ -34,9 +34,26 @@ SPM=$(cd "$SPM" && pwd)
 SIM=""
 SIM_STARTED=0
 SIM_NAME="Persona CI $(basename "$OUTPUT")"
+capture_project() {
+  mkdir -p "$DIAGNOSTICS"
+  [ ! -f "$PROJECT/project.pbxproj" ] || cp "$PROJECT/project.pbxproj" "$DIAGNOSTICS/Persona-project.pbxproj"
+  [ ! -f "$PROJECT/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ] || \
+    cp "$PROJECT/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" "$DIAGNOSTICS/generated-Package.resolved"
+  [ ! -f "$SOURCE/apple/Packages/PersonaSSH/Package.resolved" ] || \
+    cp "$SOURCE/apple/Packages/PersonaSSH/Package.resolved" "$DIAGNOSTICS/PersonaSSH-Package.resolved"
+  [ ! -f "$SPM/SourcePackages/workspace-state.json" ] || \
+    cp "$SPM/SourcePackages/workspace-state.json" "$DIAGNOSTICS/SourcePackages-workspace-state.json"
+  {
+    xcodegen --version
+    printf 'DEVELOPER_DIR=%s\n' "${DEVELOPER_DIR:-}"
+    printf 'PERSONA_META_WEARABLES=%s\n' "${PERSONA_META_WEARABLES:-}"
+    printf 'PERSONA_LEAN_DEV_BUILD=%s\n' "${PERSONA_LEAN_DEV_BUILD:-}"
+  } > "$DIAGNOSTICS/package-input-environment.txt" 2>&1
+}
 cleanup() {
   local code=$?
   trap - EXIT
+  capture_project || printf 'apple-ci: generated project diagnostics could not be collected\n' >&2
   # A failed boot may already have created the device without returning its ID.
   if [ -z "$SIM" ] && [ "$SIM_STARTED" = 1 ]; then
     SIM=$(python3 -I - "$SIM_NAME" <<'PY'
@@ -93,6 +110,7 @@ unset PERSONA_LEAN_DEV_BUILD
 ci_run 'Build PersonaCore XCFramework before package resolution' 1200 "$SOURCE/native/app-core/scripts/build-apple.sh"
 ci_run 'Generate public unsigned Apple config' 60 python3 "$SOURCE/scripts/persona_config.py" xcconfig
 ci_run 'Generate Apple project' 120 xcodegen generate --spec "$SOURCE/apple/project.yml" --project "$SOURCE/apple"
+capture_project
 [ -s "$SOURCE/apple/PersonaTests/TokenBaseline.json" ] || { printf 'apple-ci: FAIL committed token baseline missing\n' >&2; exit 1; }
 
 UNSIGNED=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=)
@@ -104,6 +122,9 @@ XCODE=(xcodebuild -project "$PROJECT" -configuration Debug -clonedSourcePackages
 resolve() {
   ci_run "Resolve Swift packages ($1)" 900 "${XCODE[@]}" -scheme "$1" -resolvePackageDependencies
 }
+# Diagnostic ref only: preserve the generated project and stop after the first real Resolve.
+resolve Persona
+exit 0
 result() {
   local name="$1"; shift
   ci_run "Inspect test results ($name)" 120 python3 "$CI_ROOT/scripts/ci/apple_result.py" "$OUTPUT/$name.xcresult" "$@"
