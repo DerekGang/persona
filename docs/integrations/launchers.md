@@ -248,9 +248,10 @@ The script frames what it prints with begin/end markers, and node reads only bet
   A function-based launcher's `--settings` is not visible and still gets overridden on these claude versions.
 - Model listing (`node/launcher_models.go`) passes `--settings '{"disableAllHooks":true}'` to avoid triggering hooks (alias and managed-launcher settings are still merged). A function's own
   `--settings` is still overridden here, so the listed models omit its effects: disabling hooks can only be specified in `--settings`, and merging requires first reading the settings supplied by the function (#1411).
-  For a Persona-managed Claude Code provider, model discovery invokes `personad launch` directly. When the CLI is an npm
-  script installed with Node Version Manager (NVM), Persona supplies its matching Node.js interpreter through the
-  child process's search path. The user's shell configuration needs no changes.
+  For a Persona-managed Claude Code provider, model discovery invokes `personad launch` directly when the CLI and its
+  interpreter can be located without shell startup. For npm installations, including Node Version Manager (NVM) and
+  Homebrew prefixes, Persona adds the matching Node.js directory to the child process's search path. When the user's
+  setup is needed to locate the CLI or Node.js, the probe runs through the user's interactive shell.
 
 ## How herdr recognizes Agents started by launchers (`HERDR_AGENT`, #3454)
 

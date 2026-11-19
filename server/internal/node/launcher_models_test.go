@@ -65,11 +65,12 @@ func TestClaudeModelListErrors(t *testing.T) {
 	}
 }
 
-func TestManagedClaudeModelListWithNVM(t *testing.T) {
+func TestManagedClaudeModelListWithNode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses Unix npm launchers and node sockets")
 	}
-	if _, err := exec.LookPath("zsh"); err != nil {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
 		t.Skip("no zsh")
 	}
 	node, err := exec.LookPath("node")
@@ -80,6 +81,16 @@ func TestManagedClaudeModelListWithNVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	for _, setup := range []string{"NVM", "Homebrew prefix", "Node on service PATH", "Node from shell startup"} {
+		t.Run(setup, func(t *testing.T) {
+			testManagedClaudeModelListWithNode(t, setup, node, zsh, self)
+		})
+	}
+}
+
+func testManagedClaudeModelListWithNode(t *testing.T, setup, node, zsh, self string) {
+	t.Helper()
 	home := launchKeyHome(t)
 	n, _ := testNode(t)
 	n.home, n.dir = home, filepath.Dir(nodeclient.SocketPath())
@@ -91,10 +102,58 @@ func TestManagedClaudeModelListWithNVM(t *testing.T) {
 	if err := os.Symlink(self, n.bin); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(home, "custom NVM")
-	prefix := filepath.Join(root, "versions", "node", "v22.1.0")
-	bin := filepath.Join(prefix, "bin")
-	cli := writeExecutable(t, filepath.Join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"), `#!/usr/bin/env node
+	serviceBin := filepath.Join(home, "service-bin")
+	link := func(target, path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link(zsh, filepath.Join(serviceBin, "zsh"))
+	t.Setenv("NVM_DIR", "")
+	t.Setenv("PERSONA_NODEJS", "")
+	t.Setenv("PATH", serviceBin)
+	localClaude := filepath.Join(home, ".local", "bin", "claude")
+	cli := localClaude
+	var prefix string
+	if setup == "NVM" {
+		root := filepath.Join(home, "custom NVM")
+		prefix = filepath.Join(root, "versions", "node", "v22.1.0")
+		t.Setenv("NVM_DIR", root)
+		// The service knows one Node installation; a different interpreter on PATH must not win.
+		t.Setenv("PERSONA_NODEJS", filepath.Join(prefix, "bin", "node"))
+		writeExecutable(t, filepath.Join(serviceBin, "node"), "#!/bin/sh\nexit 17\n")
+	} else if setup == "Homebrew prefix" {
+		prefix = filepath.Join(home, "opt", "homebrew")
+	}
+	if prefix != "" {
+		cli = filepath.Join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+		bin := filepath.Join(prefix, "bin")
+		rel, err := filepath.Rel(bin, cli)
+		if err != nil {
+			t.Fatal(err)
+		}
+		link(rel, filepath.Join(bin, "claude"))
+		link(node, filepath.Join(bin, "node"))
+		if setup == "Homebrew prefix" {
+			link(filepath.Join(bin, "claude"), localClaude)
+		}
+	} else if setup == "Node on service PATH" {
+		link(node, filepath.Join(serviceBin, "node"))
+	}
+
+	shellSetup := setup == "Node from shell startup"
+	rc := `: > "$HOME/rc-ran"` + "\n/bin/sleep 20\n"
+	if shellSetup {
+		shellBin := filepath.Join(home, "shell runtime", "bin")
+		link(node, filepath.Join(shellBin, "node"))
+		rc = `: > "$HOME/rc-ran"` + "\nexport PATH=" + shellQuote(shellBin) + `:"$PATH"` + "\n"
+	}
+	writeFile(t, filepath.Join(home, ".zshrc"), rc)
+	writeExecutable(t, cli, `#!/usr/bin/env node
 const fs = require('node:fs');
 const readline = require('node:readline');
 const args = process.argv.slice(2);
@@ -115,26 +174,8 @@ rl.on('line', (line) => {
   }}));
 });
 `)
-	if err := os.MkdirAll(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if rel, err := filepath.Rel(bin, cli); err != nil {
-		t.Fatal(err)
-	} else if err := os.Symlink(rel, filepath.Join(bin, "claude")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(node, filepath.Join(bin, "node")); err != nil {
-		t.Fatal(err)
-	}
-	wrong := writeExecutable(t, filepath.Join(home, "service-bin", "node"), "#!/bin/sh\nexit 17\n")
-	writeFile(t, filepath.Join(home, ".zshrc"), `: > "$HOME/rc-ran"
-/bin/sleep 20
-`)
 	t.Setenv("ZDOTDIR", home)
 	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("PATH", filepath.Dir(wrong)+":/usr/bin:/bin")
-	t.Setenv("NVM_DIR", root)
-	t.Setenv("PERSONA_NODEJS", filepath.Join(bin, "node")) // Like a service whose Node.js path is known.
 	t.Setenv("NODE_OPTIONS", "")
 	t.Setenv("NODE_TEST_LAUNCH", "1")
 	n.setManaged([]proto.ManagedLauncher{{Name: "store", APIKey: "probe-fixture", Auth: "bearer"}})
@@ -147,8 +188,8 @@ rl.on('line', (line) => {
 	if err != nil || len(models) != 1 || models[0].ID != "npm-model" {
 		t.Fatalf("managed models = %+v, %v", models, err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "rc-ran")); !os.IsNotExist(err) {
-		t.Fatalf("the model probe ran the shell rc: %v", err)
+	if _, err := os.Stat(filepath.Join(home, "rc-ran")); (shellSetup && err != nil) || (!shellSetup && !os.IsNotExist(err)) {
+		t.Fatalf("shell initialization: expected ran=%t, stat error=%v", shellSetup, err)
 	}
 }
 

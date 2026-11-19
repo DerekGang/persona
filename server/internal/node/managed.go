@@ -297,11 +297,10 @@ var agentSystemDirs = []string{"/opt/homebrew/bin", "/usr/local/bin"}
 // node puts claude. commonNodePaths looks there after agentSystemDirs; a test points it elsewhere with them (#6257).
 var distroNodeDir = "/usr/bin"
 
-// claudeExecutable finds claude: PATH first, then the usual install spots. A node started by launchd (macOS) has a
-// minimal PATH that misses /opt/homebrew/bin, and nothing in `personad launch`'s own path adds it.
-func agentExecutable(bin string) (string, error) {
+// agentExecutableOnDisk finds a CLI on PATH or in the usual install locations without running shell startup files.
+func agentExecutableOnDisk(bin string) string {
 	if p, err := exec.LookPath(bin); err == nil {
-		return p, nil
+		return p
 	}
 	home := userHome()
 	var candidates []string
@@ -331,10 +330,16 @@ func agentExecutable(bin string) (string, error) {
 		}
 		seen[p] = true
 		if st, err := os.Stat(p); err == nil && !st.IsDir() && (st.Mode().Perm()&0111 != 0 || runtime.GOOS == "windows") {
-			return p, nil
+			return p
 		}
 	}
+	return ""
+}
 
+func agentExecutable(bin string) (string, error) {
+	if p := agentExecutableOnDisk(bin); p != "" {
+		return p, nil
+	}
 	agentExecutableMu.Lock()
 	cached := agentExecutableCache[bin]
 	agentExecutableMu.Unlock()
@@ -375,6 +380,23 @@ func agentExecutable(bin string) (string, error) {
 }
 
 func claudeExecutable() (string, error) { return agentExecutable("claude") }
+
+// A managed model probe can skip the user's rc file when Claude and its interpreter are already available.
+// Otherwise run the original shell command so it gets the launcher and PATH established by the user's setup.
+func canProbeManagedClaudeDirectly() bool {
+	if runtime.GOOS == "windows" {
+		return true // keep the Windows executable and wrapper handling in Launch
+	}
+	claude := agentExecutableOnDisk("claude")
+	if claude == "" {
+		return false
+	}
+	if dir, needsNode := launcherNodeDir(claude); dir != "" || !needsNode {
+		return true
+	}
+	_, err := exec.LookPath("node")
+	return err == nil
+}
 
 // Launch is `personad launch [--ticket <ticket>] <name> [claude args…]`: the managed launcher's settings from the
 // local node, a hand-off's values with a ticket (secretenv.go), then claude.
@@ -468,7 +490,7 @@ func Launch(ctx context.Context, name string, args []string, ticket string) erro
 		argv = codexBypassArgs(argv)
 	}
 	env = withoutEnv(env, []string{codexBypassEnv})
-	env = nvmLauncherEnv(exe, env)
+	env = launcherNodeEnv(exe, env)
 	exe, argv, env, _ = launchExec(agent, exe, argv, env)
 	return osproc.Exec(exe, argv, env)
 }

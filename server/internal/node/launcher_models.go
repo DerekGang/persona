@@ -224,8 +224,8 @@ func (n *Node) launcherModelsAgent(ctx context.Context, name, agentType string) 
 	return "claude" // a probe that failed: as claude, like every other start
 }
 
-// agentModelsCommand asks the launcher for its agent's models in dir. Managed Claude launchers have a command and
-// settings of their own. Custom Claude launchers still use the shell for functions and aliases.
+// agentModelsCommand asks the launcher for its agent's models in dir. Managed Claude launchers skip the shell when
+// the executable and its interpreter are already available. Custom Claude launchers use the shell for aliases.
 func (n *Node) agentModelsCommand(ctx context.Context, name, agent, dir string) (*exec.Cmd, error) {
 	_, managed := n.managedLauncher(name)
 	var args []string
@@ -238,7 +238,7 @@ func (n *Node) agentModelsCommand(ctx context.Context, name, agent, dir string) 
 		args = []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
 			"--settings", n.claudeSettings(ctx, name, ours, dir)}
 	}
-	if managed && agent == "claude" {
+	if managed && agent == "claude" && canProbeManagedClaudeDirectly() {
 		cmd := exec.CommandContext(ctx, n.bin, append([]string{"launch", name}, args...)...)
 		cmd.Dir = dir
 		return cmd, nil
