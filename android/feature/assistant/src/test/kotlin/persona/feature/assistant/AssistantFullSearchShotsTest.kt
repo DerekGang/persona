@@ -100,6 +100,27 @@ class AssistantFullSearchShotsTest {
         assertEquals(chats.first().key, opened)
     }
 
+    @Test @Config(fontScale = 2f)
+    fun drawsTheMainResultAtLargestTextSize() {
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = AppStyle.Glass) {
+                Box(Modifier.fillMaxSize().background(PersonaTheme.palette.background).testTag("shot")) {
+                    AssistantFullSearch(
+                        chats = chats, known = chats, searchOn = false, management = null, hubKey = "test",
+                        words = words, mainKey = chats.first().key, initialQuery = "Main conversation",
+                        onOpen = {}, onDismiss = {}, overlay = false,
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("Main conversation", useUnmergedTree = true).assertIsDisplayed()
+        capture("full-search-main-glass-light-large-text")
+        dark = true
+        androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+        capture("full-search-main-glass-dark-large-text")
+    }
+
     @Test fun filledSearchInEveryStyle() {
         var style by mutableStateOf(AppStyle.Glass)
         var dark by mutableStateOf(false)
