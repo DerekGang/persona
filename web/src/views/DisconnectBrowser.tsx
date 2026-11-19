@@ -17,9 +17,14 @@ const DisconnectConfirm = lazyPage(() => import("./DisconnectConfirm").then((m) 
 export function useDisconnect(): { start: () => void; busy: boolean; dialog: React.ReactNode } {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<DisconnectProblem | null>(null);
-  // Undefined until first opened; false keeps the question mounted so it closes animated and can retry its chunk.
-  const [asking, setAsking] = useState<boolean>();
-  const ask = () => !busy && setAsking(true);
+  // Keep the dialogs mounted after the first opening so they can animate closed and retry their chunk.
+  const [asked, setAsked] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const ask = () => {
+    if (busy) return;
+    setAsked(true);
+    setAsking(true);
+  };
   const revoke = async () => {
     if (busy) return;
     setBusy(true);
@@ -38,8 +43,8 @@ export function useDisconnect(): { start: () => void; busy: boolean; dialog: Rea
     signOutHere(problem?.id ?? "");
   };
   // Keep both dialogs mounted after first opening so they can animate closed. They share the already-idle chunk.
-  const dialog = asking !== undefined && (
-    <OverlayBoundary open={!!asking || !!problem} onClose={() => { setAsking(false); setProblem(null); toast(t("pageboundary.chunk_body"), "error"); }}>
+  const dialog = asked && (
+    <OverlayBoundary open={asking || problem !== null} onClose={() => { setAsking(false); setProblem(null); toast(t("pageboundary.chunk_body"), "error"); }}>
       <Suspense fallback={null}>
         <DisconnectConfirm open={asking} busy={busy} onCancel={() => setAsking(false)} onConfirm={() => void revoke()}
           problem={problem} onProblemClose={close} onSignOut={signOut} />
