@@ -236,6 +236,12 @@ PY
   ' -- "$SOURCE/scripts/app/sim-boot.sh" "$SIM" "$CI_BUNDLE_ID"
   export TEST_RUNNER_PERSONA_EVENTKIT_ROUNDTRIP=1
 
+  # Diagnostic for #10729: bound the focused request/retry behavior check before the unchanged full selection.
+  ci_run 'Focused APIClient request and retry tests' 600 "${IOS_TESTS[@]}" \
+    -only-testing:PersonaTests/APISendTests \
+    -resultBundlePath "$OUTPUT/ios-api-send.xcresult" test-without-building
+  result ios-api-send APISendTests
+
   ci_run 'iOS offline unit and design/token tests' 1800 "${IOS_TESTS[@]}" "${IOS_UNIT_SELECTION[@]}" \
     -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building
   result ios-unit TypeScaleTests IconVocabularyTests TokenRatchetTests StyleSpecTests
