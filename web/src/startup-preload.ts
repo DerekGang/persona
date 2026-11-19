@@ -426,12 +426,12 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // sections), all in the first screen's static closure; the canvas itself is a chunk of its own (ViewBody10.tsx).
 // Main had 1,583 B of room; the budget stays.
 // #10822: Colored sidebar icons, an Appearance choice off by default: the choice's store and the built-in pages' colors
-// (lib/sidebar-icons.ts), read where the sidebar draws its pages, and the style a colored icon takes. 186 B in each
-// language, measured in one environment against main eb0894343a (ja 482,736 B to 482,922 B; en 479,653 B to 479,839 B,
-// zh-Hans 480,504 B to 480,690 B); the setting's row and words load with Settings. That main was already 53 B over the
-// budget (482,736 B against 482,683 B), so it had no room to keep: the budget is this ja size, 482,683 B to 482,922 B,
-// 53 B of it main's overage; taking those bytes back off the first screen is separate work.
-export const FIRST_SCREEN_BUDGET = 482_922;
+// (lib/sidebar-icons.ts), read where the sidebar draws its pages, and the style a colored icon takes. 176 B in each
+// language, measured in one environment against main 61a77a424d (ja 482,786 B to 482,962 B; en 479,703 B to 479,879 B,
+// zh-Hans 480,554 B to 480,730 B); the setting's row and words load with Settings. That main was already 103 B over the
+// budget (482,786 B against 482,683 B), so it had no room to keep: the budget is this ja size, 482,683 B to 482,962 B,
+// 103 B of it main's overage; taking those bytes back off the first screen is separate work.
+export const FIRST_SCREEN_BUDGET = 482_962;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
