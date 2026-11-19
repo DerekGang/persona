@@ -91,7 +91,10 @@ files into a private runtime directory and replace every placeholder; restrict t
   Each review gets a fresh session ID and is never resumed into another PR. The visible launch ends in
   `zsh -lic cc_k3`; the trusted launcher and `launcher_environment` keep
   safe-mode, Read-only tools, the maintainer's interactive permission policy, per-session identity and any
-  cgroup-v1 affinity/rlimit fallback out of the displayed command. Each `pr-review-rNN.scope` uses the explicit
+  cgroup-v1 affinity/rlimit fallback out of the displayed command. Each `pr-review-rNN-PID-TOKEN.scope` has a unique
+  per-invocation name, with its exact scope passed to the trusted launcher for ownership validation; cleanup cannot
+  stop an older scope from a killed helper. The helper clears the per-slot session file before launching and rejects
+  a loaded scope that has already exited, rather than waiting for another startup timeout. Each scope uses the explicit
   `scope_properties`: memory values use `5G`/`6G`-style units, CPU weight and task count are integers, and `CPUQuota`
   is a percentage string. A scope property shown by `systemctl` is not proof that a cgroup v1 controller enforces it.
   The helper never starts or stops Herdr and closes only its own tab and scope. Reviewer tool boundaries and model

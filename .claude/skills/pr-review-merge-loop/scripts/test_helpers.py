@@ -128,7 +128,7 @@ class HelperTests(unittest.TestCase):
             config.mkdir()
             path = module["transcript_path"](worktree, session_id, config)
             path.parent.mkdir(parents=True)
-            expected_project = "-" + str(worktree).lstrip("/").replace("/", "-").replace(".", "-")
+            expected_project = "-" + str(worktree).lstrip("/").replace("/", "-").replace(".", "-").replace("_", "-")
             self.assertEqual(path.parent.name, expected_project)
             records = [
                 {"type": "assistant", "sessionId": session_id,
@@ -175,6 +175,7 @@ class HelperTests(unittest.TestCase):
                 self.assertEqual(module["wait_session_id"](path, "w3:p1", "pr-review-r00.scope"), session_id)
             path.unlink()
             with patch.dict(module["wait_session_id"].__globals__, {
+                    "scope_running": unittest.mock.Mock(return_value=False),
                     "terminal_text": unittest.mock.Mock(return_value="cc_k3: invalid PR review session path")}):
                 with self.assertRaisesRegex(RuntimeError, "invalid PR review session path"):
                     module["wait_session_id"](path, "w3:p1", "pr-review-r00.scope", timeout=0.01)
@@ -186,6 +187,13 @@ class HelperTests(unittest.TestCase):
                     side_effect=[("not-found", "inactive"), ("loaded", "active")])}), \
                 patch.object(module["time"], "sleep", return_value=None):
             module["wait_scope_start"]("pr-review-r00.scope", module["time"].monotonic() + 5)
+
+    def test_interactive_scope_rejects_an_early_exit(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        with patch.dict(module["wait_scope_start"].__globals__, {
+                "scope_state": unittest.mock.Mock(return_value=("loaded", "inactive"))}):
+            with self.assertRaisesRegex(RuntimeError, "before startup"):
+                module["wait_scope_start"]("pr-review-r00-123-01234567.scope", module["time"].monotonic() + 5)
 
     def test_interactive_workspace_trust_uses_down_before_prompt(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
@@ -233,11 +241,11 @@ class HelperTests(unittest.TestCase):
 
     def test_reviewer_scope_wraps_visible_shell(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
-        argv = module["reviewer_command"](7, "pr-review-r07.scope", {
+        argv = module["reviewer_command"](7, "pr-review-r07-123-01234567.scope", {
             "CPUQuota": "400%", "CPUWeight": 20, "MemoryHigh": "5G",
             "MemoryMax": "6G", "TasksMax": 512}, "cc_k3")
         self.assertEqual(argv, [
-            "/usr/bin/systemd-run", "--user", "--scope", "--unit=pr-review-r07", "--collect",
+            "/usr/bin/systemd-run", "--user", "--scope", "--unit=pr-review-r07-123-01234567", "--collect",
             "-p", "CPUQuota=400%", "-p", "CPUWeight=20", "-p", "MemoryHigh=5G",
             "-p", "MemoryMax=6G", "-p", "TasksMax=512", "zsh", "-lic", "cc_k3"])
         with self.assertRaises(RuntimeError):

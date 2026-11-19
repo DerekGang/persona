@@ -148,7 +148,7 @@ def scoped_reviewer(slot, unit, properties):
     On cgroup v1 the configured launcher must retain affinity and rlimits;
     scope properties alone do not bound the memory and CPU controllers.
     """
-    if not re.fullmatch(r"pr-review-r[0-9]{2}\.scope", unit):
+    if not re.fullmatch(r"pr-review-r[0-9]{2}-[0-9]+-[a-f0-9]{8}\.scope", unit):
         raise RuntimeError("reviewer scope name is not owned by this helper")
     command = ["/usr/bin/systemd-run", "--user", "--scope", "--unit=" + unit[:-6], "--collect"]
     for key, value in sorted(properties.items()):
@@ -235,6 +235,8 @@ def wait_scope_start(unit, deadline):
         load, active = scope_state(unit)
         if active == "active":
             return True
+        if active == "failed" or load == "loaded" and active == "inactive":
+            raise RuntimeError("interactive reviewer scope exited before startup")
         time.sleep(.2)
     raise TimeoutError("interactive reviewer scope did not start")
 
@@ -477,7 +479,7 @@ def run(slot, flags):
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
             pass
     name = "pr-r%02d" % slot
-    unit = "pr-review-r%02d.scope" % slot
+    unit = "pr-review-r%02d-%d-%s.scope" % (slot, os.getpid(), secrets.token_hex(4))
     marker = "PR_REVIEW_RESULT_" + secrets.token_hex(12)
     launch, schema = interactive_command(_config["reviewer_launcher"], flags)
     prompt = interactive_prompt(sys.stdin.read(), schema, marker)
@@ -508,15 +510,16 @@ def run(slot, flags):
                     raise RuntimeError("launcher_environment must contain string values")
                 environment["PR_REVIEW_SLOT"] = str(slot)
                 environment["PR_REVIEW_SESSION_PATH"] = str(session_path)
+                environment["PR_REVIEW_SCOPE"] = unit
                 for key, value in environment.items():
                     bounded[2:2] = ["--setenv=" + key + "=" + value]
                 _cleanup_scope = unit
+                session_path.unlink(missing_ok=True)
                 command("pane", "run", pane, " ".join(shlex.quote(arg) for arg in bounded), timeout=30)
                 if not wait_scope_start(unit, time.monotonic() + 180):
                     screen = terminal_text(pane, "visible", 45)
                     raise RuntimeError("interactive reviewer exited before becoming ready: "
                                        + json.dumps(screen, ensure_ascii=False)[-1200:])
-                session_path.unlink(missing_ok=True)
                 session_id = wait_session_id(session_path, pane, unit)
                 transcript = transcript_path(os.getcwd(), session_id)
                 wait_agent(pane, unit)
