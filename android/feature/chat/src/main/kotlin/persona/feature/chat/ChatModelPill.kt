@@ -420,7 +420,7 @@ fun PersonaModelPill(
         readCatalog()
     }
     LaunchedEffect(management, machineId, open) {
-        if (open && lists.assistantCatalog(machineId) is JLoadable.Loaded) readCatalog()
+        if (open) readCatalog()
     }
     val kept = PersonaModelPanel.MODEL_PICK in features
     val shownSession = session?.let { s -> drawn?.takeIf { it.rev == s.rev }?.let { s.copy(modelPick = it.pick) } ?: s }

@@ -204,6 +204,31 @@ class ModelPillTest {
         assertEquals(2, hub.launcherListReads)
     }
 
+    @Test fun openingTheAssistantModelSheetRetriesAFailedPrefetch() {
+        val first = CompletableDeferred<Unit>()
+        val retry = CompletableDeferred<Unit>()
+        val hub = object : Hub() {
+            override suspend fun assistantLauncherList(machineId: String): AssistantLaunchers {
+                val result = super.assistantLauncherList(machineId)
+                (if (launcherListReads == 1) first else retry).await()
+                return result
+            }
+        }
+        showAssistantPill(hub)
+        rule.waitUntil(5_000) { hub.launcherListReads == 1 }
+        rule.runOnIdle { first.completeExceptionally(SocketTimeoutException()) }
+        rule.onNode(isDialog()).assertDoesNotExist()
+
+        rule.onNodeWithTag("model-pill").performClick()
+        waitForDialogText("Loading models…")
+        rule.runOnIdle {
+            assertEquals(2, hub.launcherListReads)
+            retry.complete(Unit)
+        }
+        waitForDialogText("Sonnet 4.5")
+        rule.onNode(hasDialogText("Retry"), useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test fun aFailedAssistantProviderRefreshKeepsTheModelsInTheOpenSheet() {
         val refresh = CompletableDeferred<Unit>()
         val hub = object : Hub() {
