@@ -1716,11 +1716,20 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		if n.isAssistantSession(p.SessionID) {
 			return ok(n.assistantInterrupt(p.SessionID))
 		}
-		if _, live := n.agent(p.SessionID); !live {
+		a, live := n.agent(p.SessionID)
+		if !live {
 			// A claude outside Persona's panes (the desktop app's, another terminal's): through its inbox (claudebg.go).
 			if handled, err := n.interruptOutside(ctx, p.SessionID); handled {
 				return ok(err)
 			}
+		}
+		if err := n.switchingRefusal(p.SessionID); err != nil { // as keys says it, before the turn's state
+			return nil, err
+		}
+		if live && !escStops(a) {
+			// Esc on an idle Claude box quits claude (docs/lessons/agents.md, #10827): a stop that arrives after the
+			// turn ended (a stale "working", a second tap, a stop confirmed on the phone minutes later) presses nothing.
+			return map[string]any{"ok": true, "settled": true, "not_running": true}, nil
 		}
 		return ok(n.keys(ctx, p.SessionID, []string{"esc"}, ""))
 	case "session.screen.before":
