@@ -492,7 +492,8 @@ func (s *Service) machineLauncherRoutes() {
 		var err error
 		var unavailable []unavailableLauncher
 		var all []ConfiguredLauncher
-		if purpose == "assistant" { // the main chat's menu, and the scheduled tasks' that follow it
+		// the main chat's menu, and the scheduled tasks' (task: computer-scoped scheduled-task inheritance)
+		if purpose == "assistant" || purpose == "task" {
 			if !d.ExternalInventory {
 				ctx = context.WithValue(ctx, pickerDiscoveryDeadline{}, time.Now().Add(launcherSyncTimeout))
 			}
