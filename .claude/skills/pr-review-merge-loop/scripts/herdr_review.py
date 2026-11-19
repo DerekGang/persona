@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 _cleanup_tab = None
 _cleanup_scope = None
@@ -85,7 +86,7 @@ def command(*args, timeout=90):
                     if arg == "--source":
                         value = value.replace("-", "_")
                     params[arg[2:].replace("-", "_").replace("workspace", "workspace_id")] = (
-                        int(value) if arg == "--lines" else value)
+                        True if arg == "--raw" else int(value) if arg == "--lines" else value)
                     index += 1
             elif not params:
                 params["workspace_id" if args[:2] == ("tab", "create") else
@@ -168,6 +169,20 @@ def scoped_reviewer(slot, unit, properties):
 
 def reviewer_command(slot, unit, properties, launcher):
     return scoped_reviewer(slot, unit, properties) + [launcher]
+
+
+def wait_session_id(path, pane, unit, timeout=180):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+            return str(uuid.UUID(value))
+        except (OSError, ValueError):
+            pass
+        if not scope_running(unit):
+            raise RuntimeError("interactive reviewer exited before creating its session")
+        time.sleep(.2)
+    raise RuntimeError("interactive reviewer did not publish its session ID")
 
 
 def scope_command(action, unit, timeout=20):
@@ -301,6 +316,94 @@ def interactive_prompt(prompt, schema, marker):
             + "\nSchema:\n" + schema)
 
 
+def transcript_path(worktree, session_id, home=None):
+    """Resolve one launcher's session, never another conversation's history."""
+    try:
+        session_id = str(uuid.UUID(session_id))
+    except (ValueError, TypeError, AttributeError) as error:
+        raise RuntimeError("reviewer session ID is invalid") from error
+    cwd = Path(worktree).resolve()
+    if not cwd.is_absolute() or not cwd.is_dir():
+        raise RuntimeError("reviewer worktree is not an absolute directory")
+    config = Path(home or os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")).expanduser()
+    if not config.is_absolute() or not config.is_dir():
+        raise RuntimeError("reviewer transcript configuration is unavailable")
+    project = re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
+    project = "-" + project.lstrip("-")
+    return config / "projects" / project / (session_id + ".jsonl")
+
+
+def transcript_result(path, marker, schema):
+    """Read the current session's exact final message, not terminal scrollback."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise RuntimeError("interactive reviewer transcript is unavailable") from error
+    marked = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("type") != "assistant" or record.get("sessionId") != path.stem:
+            continue
+        message = record.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        text = "".join(block.get("text", "") for block in content
+                       if isinstance(block, dict) and block.get("type") == "text")
+        if marker not in text:
+            continue
+        marked.append((text, message.get("stop_reason")))
+    if len(marked) != 1:
+        raise RuntimeError("interactive reviewer transcript result is not unique")
+    text, stop_reason = marked[0]
+    if stop_reason != "end_turn":
+        raise RuntimeError("interactive reviewer transcript result is not final")
+    matches = list(re.finditer(re.escape(marker), text))
+    if len(matches) != 2:
+        raise RuntimeError("interactive reviewer transcript markers are not unique")
+    body = text[matches[0].end():matches[1].start()].strip()
+    if not body or text[:matches[0].start()].strip() or text[matches[1].end():].strip():
+        raise RuntimeError("interactive reviewer result must contain only its marked JSON")
+    try:
+        value = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("interactive reviewer returned invalid marked JSON") from error
+    try:
+        import jsonschema
+        jsonschema.validate(value, json.loads(schema))
+    except ImportError as error:
+        raise RuntimeError("interactive reviewer requires the jsonschema validator") from error
+    except (ValueError, jsonschema.ValidationError) as error:
+        raise RuntimeError("interactive reviewer result does not match the watcher schema") from error
+    return value
+
+
+def wait_transcript(path, marker, schema, pane, unit, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.is_file():
+            try:
+                return transcript_result(path, marker, schema)
+            except RuntimeError as error:
+                if "invalid marked JSON" in str(error) or "does not match" in str(error):
+                    raise
+        agents = command("agent", "list", timeout=20).get("agents", [])
+        agent = next((item for item in agents if item.get("pane_id") == pane), None)
+        if agent and agent.get("agent_status") == "blocked":
+            raise RuntimeError("interactive reviewer requested an unexpected interaction")
+        if not scope_running(unit):
+            if path.is_file():
+                return transcript_result(path, marker, schema)
+            raise RuntimeError("interactive reviewer exited before returning its result")
+        time.sleep(1)
+    raise TimeoutError("interactive reviewer did not return a complete marked result")
+
+
 def terminal_text(pane, source="recent-unwrapped", lines=None):
     result = command("pane", "read", pane, "--source", source,
                      "--lines", str(lines or int(_config.get("result_lines", 20000))),
@@ -376,6 +479,8 @@ def run(slot, flags):
     marker = "PR_REVIEW_RESULT_" + secrets.token_hex(12)
     launch, schema = interactive_command(_config["reviewer_launcher"], flags)
     prompt = interactive_prompt(sys.stdin.read(), schema, marker)
+    session_path = root / ("slot-%02d-session" % slot)
+    transcript = None
     with tempfile.TemporaryDirectory(prefix="slot-%02d-" % slot, dir=root):
         with lease_path.open("w", encoding="utf-8") as lease:
             json.dump({"pid": os.getpid(), "slot": slot}, lease)
@@ -400,6 +505,7 @@ def run(slot, flags):
                         for key, value in environment.items()):
                     raise RuntimeError("launcher_environment must contain string values")
                 environment["PR_REVIEW_SLOT"] = str(slot)
+                environment["PR_REVIEW_SESSION_PATH"] = str(session_path)
                 for key, value in environment.items():
                     bounded[2:2] = ["--setenv=" + key + "=" + value]
                 _cleanup_scope = unit
@@ -408,13 +514,16 @@ def run(slot, flags):
                     screen = terminal_text(pane, "visible", 45)
                     raise RuntimeError("interactive reviewer exited before becoming ready: "
                                        + json.dumps(screen, ensure_ascii=False)[-1200:])
+                session_path.unlink(missing_ok=True)
+                session_id = wait_session_id(session_path, pane, unit)
+                transcript = transcript_path(os.getcwd(), session_id)
                 wait_agent(pane, unit)
                 command("agent", "prompt", pane, prompt, "--wait", "--until", "working",
                         "--until", "blocked",
                         "--timeout", str(int(_config.get("lifetime_seconds", 7200)) * 1000),
                         timeout=int(_config.get("prompt_timeout_seconds", 120)))
-                screen = wait_result(pane, unit, marker, int(_config.get("lifetime_seconds", 7200)))
-                value = terminal_result(screen, marker, schema)
+                value = wait_transcript(transcript, marker, schema, pane, unit,
+                                        int(_config.get("lifetime_seconds", 7200)))
                 result = {"is_error": False, "subtype": "success", "result": "",
                           "structured_output": value, "permission_denials": []}
                 sys.stdout.write(json.dumps(result, separators=(",", ":")))

@@ -113,7 +113,57 @@ class HelperTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module["terminal_result"](screen.replace('"findings"', '"other"'), marker, schema)
 
-    def test_interactive_scope_waits_for_registration_before_exit(self):
+    def test_interactive_transcript_reads_exact_final_marked_message(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        marker = "PR_REVIEW_RESULT_0123456789abcdef01234567"
+        session_id = "12345678-1234-1234-1234-123456789abc"
+        long_summary = "long punctuation: " + ("alpha beta gamma; " * 100)
+        finding = {"path": "probe.txt", "line": 1, "severity": "P2",
+                   "summary": long_summary, "suggestion": "Keep it intact."}
+        schema = json.dumps({"type": "object", "properties": {"findings": {"type": "array"}}, "required": ["findings"]})
+        with tempfile.TemporaryDirectory(prefix="review-transcript-test-") as root:
+            worktree = Path(root) / "worktree.with.dots"
+            worktree.mkdir()
+            config = Path(root) / "claude"
+            config.mkdir()
+            path = module["transcript_path"](worktree, session_id, config)
+            path.parent.mkdir(parents=True)
+            expected_project = "-" + str(worktree).lstrip("/").replace("/", "-").replace(".", "-")
+            self.assertEqual(path.parent.name, expected_project)
+            records = [
+                {"type": "assistant", "sessionId": session_id,
+                 "message": {"stop_reason": "tool_use", "content": [{"type": "text", "text": "Reading surrounding source"}]}},
+                {"type": "assistant", "sessionId": session_id,
+                 "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text":
+                     marker + "\n" + json.dumps({"findings": [finding]}) + "\n" + marker}]}},
+            ]
+            path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+            self.assertEqual(module["transcript_result"](path, marker, schema), {"findings": [finding]})
+            records[-1]["message"]["content"][0]["text"] = "Explanation before the marker\n" + records[-1]["message"]["content"][0]["text"]
+            path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+            with self.assertRaisesRegex(RuntimeError, "only its marked JSON"):
+                module["transcript_result"](path, marker, schema)
+            with self.assertRaisesRegex(RuntimeError, "invalid"):
+                module["transcript_path"](worktree, "../other-session", config)
+
+    def test_interactive_transcript_rejects_stale_or_unfinished_results(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        marker = "PR_REVIEW_RESULT_0123456789abcdef01234567"
+        session_id = "12345678-1234-1234-1234-123456789abc"
+        schema = '{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"]}'
+        with tempfile.TemporaryDirectory(prefix="review-transcript-test-") as root:
+            path = Path(root) / (session_id + ".jsonl")
+            record = {"type": "assistant", "sessionId": session_id,
+                      "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text":
+                          marker + '\n{"findings":[]}\n' + marker}]}}
+            path.write_text(json.dumps(record) + "\n" + json.dumps(record) + "\n")
+            with self.assertRaisesRegex(RuntimeError, "not unique"):
+                module["transcript_result"](path, marker, schema)
+            record["message"]["stop_reason"] = "tool_use"
+            path.write_text(json.dumps(record) + "\n")
+            with self.assertRaisesRegex(RuntimeError, "not final"):
+                module["transcript_result"](path, marker, schema)
+
         module = runpy.run_path(str(HERE / "herdr_review.py"))
         with patch.dict(module["wait_scope_start"].__globals__, {
                 "scope_state": unittest.mock.Mock(

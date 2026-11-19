@@ -82,10 +82,14 @@ files into a private runtime directory and replace every placeholder; restrict t
   request is validated then translated to a visible `cc_k3` session: no `-p`, shell prompt redirection, or JSON output
   file appears in the tab. The private `socket_path` names the existing session's Herdr socket. Herdr submits the
   multiline review prompt through its JSON-line socket API, keeping large prompts out of the operating-system argument
-  limit; requests are bounded at 2 MiB and responses at 4 MB. The helper reads the final marked assistant response from
-  the terminal. The response must still match the watcher's JSON schema and changed-line validation;
-  terminal text is transport, never approval by itself. Each review gets a fresh session ID and is never resumed into
-  another PR. The visible launch ends in `zsh -lic cc_k3`; the trusted launcher and `launcher_environment` keep
+  limit; requests are bounded at 2 MiB and responses at 4 MB. The launcher publishes its fresh session ID through the
+  private per-slot session file. The helper reads that session's final marked assistant message from its Claude Code
+  transcript, rather than relying on terminal soft wraps or alternate-screen scrollback. Only a complete `end_turn`
+  message containing exactly the two invocation markers and the JSON object is accepted; intermediate tool calls,
+  prompt echoes, other sessions, additional prose and duplicate marked results are rejected. The response must still
+  match the watcher's JSON schema and changed-line validation; transcript text is transport, never approval by itself.
+  Each review gets a fresh session ID and is never resumed into another PR. The visible launch ends in
+  `zsh -lic cc_k3`; the trusted launcher and `launcher_environment` keep
   safe-mode, Read-only tools, the maintainer's interactive permission policy, per-session identity and any
   cgroup-v1 affinity/rlimit fallback out of the displayed command. Each `pr-review-rNN.scope` uses the explicit
   `scope_properties`: memory values use `5G`/`6G`-style units, CPU weight and task count are integers, and `CPUQuota`
