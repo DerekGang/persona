@@ -1009,6 +1009,8 @@ func TestAssistantPendingFailureUsesTheReplacementProcess(t *testing.T) {
 // A task's explicit execution choice keeps the same-model retry, then surfaces the error without a model switch.
 func TestTaskExecutionEachTurnCanRetryWithoutModelFallback(t *testing.T) {
 	f := cliTest(t)
+	retryResult := filepath.Join(f.dir, "retry-result")
+	t.Setenv("CLI_FAKE_RETRY_RESULT_GATE", retryResult)
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "bin", "claude"), []byte("#!/bin/sh\n"+claudeLikeCLI), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -1029,7 +1031,20 @@ func TestTaskExecutionEachTurnCanRetryWithoutModelFallback(t *testing.T) {
 		cliWait(t, "the same-model retry", func() bool {
 			return strings.Count(f.file("user.jsonl"), `"type":"user"`) >= 2*turn
 		})
+		// Exercise result handling after the recovery send returns. Early results take the pending-failure path.
+		cliWait(t, "the recovery send to return", func() bool {
+			f.n.mu.Lock()
+			defer f.n.mu.Unlock()
+			recovery := f.n.recoveries[id]
+			return recovery != nil && !recovery.running
+		})
+		if err := os.WriteFile(retryResult, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
 		f.idle(t, id)
+		if err := os.Remove(retryResult); err != nil {
+			t.Fatal(err)
+		}
 		if count := strings.Count(f.file("user.jsonl"), `"type":"user"`); count != 2*turn {
 			t.Fatalf("turn %d ended after %d total attempts, want %d", turn, count, 2*turn)
 		}

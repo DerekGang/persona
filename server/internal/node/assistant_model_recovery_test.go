@@ -885,8 +885,10 @@ func TestTaskExecutionSkipsConversationRecoveryAtRPCBoundary(t *testing.T) {
 				modelProbeCache.Unlock()
 			})
 			st, _ := n.state.get(id)
-			raw, _ := json.Marshal(map[string]any{"session_id": id, "cwd": st.Cwd, "launcher": "claude", "model": "primary-model", "text": "next request", "task_execution": strict, "follows_setting": true})
-			_, err := n.handle(context.Background(), "assistant.send", raw)
+			_, err := nodeCall(t, n, "assistant.send", map[string]any{
+				"session_id": id, "cwd": st.Cwd, "launcher": "claude", "model": "primary-model",
+				"text": "next request", "task_execution": strict, "follows_setting": true,
+			})
 			want := fallback
 			if strict {
 				want = primary
