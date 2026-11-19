@@ -50,9 +50,9 @@ export function TaskWorkspaceControls({ plan, index, disabled, onChange, mode }:
     <div className="flex flex-wrap items-center gap-2">
       <label htmlFor={`${id}-policy`} className="text-[12px] text-ink-2">{t("assistant-tasks.workspace")}</label>
       <select id={`${id}-policy`} value={mode} className={field} onChange={(e) => onChange(e.target.value === "existing" ? { existing: task.cwd } : e.target.value as "new" | "none")}>
-        <option value="new">{t("assistant-task-details.workspace_new")}</option>
-        <option value="existing">{t("assistant-task-details.workspace_existing")}</option>
-        <option value="none">{t("assistant-task-details.workspace_none")}</option>
+        <option value="new">{t("assistant-tasks.workspace_new")}</option>
+        <option value="existing">{t("assistant-tasks.workspace_existing")}</option>
+        <option value="none">{t("assistant-tasks.workspace_none")}</option>
       </select>
       {mode === "existing" && <select aria-label={t("assistant-task-details.workspace_select")} value={list.workspaces.some((w) => w.id === existing) ? existing : ""} className={`${field} flex-1`}
         onChange={(e) => { if (e.target.value) onChange({ existing: e.target.value }); }}>

@@ -1,7 +1,4 @@
 {
-  "workspace_new": "新規作成",
-  "workspace_existing": "既存を使用",
-  "workspace_none": "不要",
   "workspace_select": "既存のワークスペースを選択",
   "workspace_manual": "パスまたはワークスペース ID を入力",
   "workspace_path": "既存ワークスペースのパスまたは ID",

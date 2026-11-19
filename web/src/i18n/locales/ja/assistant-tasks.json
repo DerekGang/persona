@@ -1,5 +1,8 @@
 {
   "workspace": "ワークスペース",
+  "workspace_new": "新規作成",
+  "workspace_existing": "既存を使用",
+  "workspace_none": "不要",
   "tray_needs_you": "要対応",
   "next_unanswered": "次の回答待ち",
   "tray_running": "進行中",

@@ -34,6 +34,32 @@ describe("wait information stays off the first screen", () => {
     }
   });
 
+  it("loads progress and acceptance rows only after opening In progress", () => {
+    const entry = readFileSync(new URL("./Tasks.tsx", import.meta.url), "utf8");
+    const details = readFileSync(new URL("./TaskDecision.tsx", import.meta.url), "utf8");
+    expect(entry).toContain('lazyPage(() => import("./TaskDecision").then((m) => m.ProgressTaskRow))');
+    expect(entry).not.toContain("function TaskProgressMeter(");
+    expect(details).toContain("export function ProgressTaskRow(");
+    expect(details).toContain("function TaskProgressMeter(");
+    expect(details).toContain("tasks.BackgroundWorkDetail");
+    expect(details).toContain('data-task-status={rowIsFinished ? "done" : agentKey}');
+  });
+
+  it("keeps all three workspace summary modes available before details load", () => {
+    const inStartup = startupMatcher(startup);
+    const controls = readFileSync(new URL("./TaskWorkspaceControls.tsx", import.meta.url), "utf8");
+    for (const language of ["en", "ja", "zh-Hans"]) {
+      const words = JSON.parse(readFileSync(
+        new URL(`../../i18n/locales/${language}/assistant-tasks.json`, import.meta.url), "utf8",
+      )) as Record<string, string>;
+      for (const mode of ["new", "existing", "none"]) {
+        expect(words[`workspace_${mode}`], `${language}.${mode}`).toBeTruthy();
+        expect(inStartup(`assistant-tasks.workspace_${mode}`)).toBe(true);
+        expect(controls).toContain(`t("assistant-tasks.workspace_${mode}")`);
+      }
+    }
+  });
+
   it("loads wait ordering and new detail copy only with the waiting list", () => {
     const source = readFileSync(new URL("./Tasks.tsx", import.meta.url), "utf8");
     expect(source).not.toMatch(/^import[^;]*from\s+["']\.\/ParkedTaskRow["']/m);

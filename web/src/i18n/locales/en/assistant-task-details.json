@@ -1,7 +1,4 @@
 {
-  "workspace_new": "New",
-  "workspace_existing": "Use existing",
-  "workspace_none": "Not needed",
   "workspace_select": "Choose an existing workspace",
   "workspace_manual": "Enter a path or workspace ID",
   "workspace_path": "Existing workspace path or ID",

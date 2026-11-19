@@ -1,7 +1,4 @@
 {
-  "workspace_new": "新建",
-  "workspace_existing": "使用已有",
-  "workspace_none": "不需要",
   "workspace_select": "选择已有工作区",
   "workspace_manual": "手动输入路径或工作区 ID",
   "workspace_path": "已有工作区路径或 ID",

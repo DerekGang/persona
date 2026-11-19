@@ -1,5 +1,8 @@
 {
   "workspace": "工作区",
+  "workspace_new": "新建",
+  "workspace_existing": "使用已有",
+  "workspace_none": "不需要",
   "tray_needs_you": "要你处理",
   "next_unanswered": "下一条等你回复",
   "tray_running": "进行中",

@@ -1,5 +1,8 @@
 {
   "workspace": "Workspace",
+  "workspace_new": "New",
+  "workspace_existing": "Use existing",
+  "workspace_none": "Not needed",
   "tray_needs_you": "Needs you",
   "next_unanswered": "Next waiting for your answer",
   "tray_running": "In progress",
