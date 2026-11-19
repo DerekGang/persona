@@ -18,6 +18,8 @@ describe("the Assistant's Needs you and In progress entries (spec/fixtures/entri
       expect(got.shelved.map((item) => item.key)).toEqual(c.expected.shelved);
       expect(got.justFinished.map((item) => item.key)).toEqual(c.expected.just_finished);
       expect(got).not.toHaveProperty("review");
+      // Finished (#10922): what the conversation handed out that finished in the last 24 hours, newest first, and which
+      // of them nobody has opened since (drawn as new)
       const finished = c.expected as { finished?: string[]; finished_new?: string[] };
       expect(got.finished.map((item) => item.key)).toEqual(finished.finished ?? []);
       expect(got.finished.filter((item) => item.fresh).map((item) => item.key)).toEqual(finished.finished_new ?? []);
