@@ -1731,7 +1731,13 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			// turn ended (a stale "working", a second tap, a stop confirmed on the phone minutes later) presses nothing.
 			return map[string]any{"ok": true, "settled": true, "not_running": true}, nil
 		}
-		return ok(n.keys(ctx, p.SessionID, []string{"esc"}, ""))
+		over := n.turnOver(p.SessionID) // before the key: the Escape itself may end a turn
+		err := n.keys(ctx, p.SessionID, []string{"esc"}, "")
+		if err == nil && over && n.backgroundRuns(p.SessionID) {
+			// The turn was over before Esc and its background work goes on: said, not claimed as an interruption (#10828).
+			err = refusal(proto.CodeTurnOverBackground, i18n.T(i18n.From(ctx), "rpc-errors."+proto.CodeTurnOverBackground), nil)
+		}
+		return ok(err)
 	case "session.screen.before":
 		var a struct {
 			SessionID string   `json:"session_id"`
