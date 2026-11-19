@@ -9,6 +9,8 @@
 
 - An omitted Inbox source is resolved from the persisted user handoff, not model text (#9725). Exactly one eligible unarchived item handed to the calling conversation and computer is a safe default; multiple eligible items require `inbox_item`. Filter the existing link policy before counting candidates, so excluded bot handoffs neither block unrelated work nor create false ambiguity. Persist that exact handoff on the plan and keep Start checks; a later handoff must not retarget a waiting card.
 
+- A review wake is not a completion verdict (#8373). PR events and judged-done candidates share the same signal. Keep its wording neutral, preserve the actual reason and criterion evidence, and leave acceptance gates and display grouping unchanged.
+
 - Snapshot display projections must not initialize the knowledge base (#10108). Publication already holds
   `pubMu`; read an already-open engine and retain the canonical cached project-name fallback rather than calling
   an accessor that may initialize storage. Let direction synchronization refresh project names asynchronously.
