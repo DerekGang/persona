@@ -2331,6 +2331,32 @@ This requested HarmonyOS presentation uses compact icon submissions while retain
 8. Make drift visible: extend the Android ratchet to the design system, add a web literal ratchet, and a test that compares the Swift scales with the shared JSON (DS-30, DS-35).
 9. Prune dead tokens and views, and replace the remaining `SecureField` uses (DS-31, DS-32).
 
+## Word lookup
+
+The `text_lookup` extension point on Apple (#10977; behavior per surface in `docs/apple/ios.md` "Word lookup (text_lookup)").
+Who it serves: everyday readers of English text; nothing changes for anyone without an enabled lookup extension
+(principle 1, defaults first; principle 3, turning the extension off removes the behavior at once).
+
+- **Gesture**: a quick tap on a word of reading text (`TextLookupViews.swift`, `LookupTap`) opens the card; it never takes a
+  touch from a link, a long press (lift, selection), a button or a scroll, and never fires in inputs, code blocks, tool
+  output or terminals. Rows and buttons are never lookup surfaces. The plain alternative (VoiceOver selects rather than
+  taps) is **Look Up in <provider>** in a selection's edit menu (`Theme.Icon.lookUpWord`, an alias of `glossary`).
+- **The card** (`TextLookupCard`): a popover on the iPhone too (as `InfoTip`; a UIKit popover hosting the card, which
+  grows with it as the lookup loads), `Theme.Size.box300` wide in all (scaled) with `Theme.Space.m` padding: one width,
+  so its height is measured at the width it is drawn. The word in `Theme.Font.title` on one line (shrinking to
+  `Theme.TextLookup.minimumScale`), the pronunciation in `Theme.Font.secondary` secondary ink, senses as a part-of-speech
+  label in `Theme.Font.captionStrong` secondary and the sense in `Theme.Font.secondary` (at most
+  `Theme.TextLookup.senseLimit`), then a footer: the extension's name in `Theme.Font.caption` secondary and **Save** /
+  **Saved** (`themedButton`, prominent while unsaved; `Theme.Icon.saveWord` / `Theme.Icon.savedWord`, one line). Loading
+  shows the word at once with a small spinner and "Looking up…"; a failure says why in secondary ink with **Retry**
+  (section 3.10); a failed save says why in `Theme.danger` caption and goes back. No entry: "No entry for this word.",
+  no Save.
+- **Underline of saved words** (only with the extension's `underline_saved`, off by default): a `Theme.TextLookup.underline`
+  hairline `Theme.TextLookup.underlineInset` above the line's bottom in `Theme.TextLookup.underlineInk` (the accent at
+  55%, quieter than a link), drawn by one Canvas per block, hidden from VoiceOver.
+- **Tokens** (`apple/Shared/Design/TextLookupTokens.swift`): `Theme.TextLookup.tapLimit`, `senseLimit`, `minimumScale`,
+  `underline`, `underlineInset`, `underlineInk`.
+
 ## UI change self-check
 
 Run this before opening a PR that adds or changes UI or an interaction, and paste the list into the PR with each item marked
