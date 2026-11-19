@@ -71,3 +71,21 @@ func (n *Node) checkTaskDirectory(id, cwd, launcher string) error {
 	}
 	return nil
 }
+
+// Ordinary assistant starts may create their managed directory. Task execution only validates the chosen directory.
+func (n *Node) prepareAssistantCwd(cwd string, strict bool) error {
+	if strict {
+		_, err := n.taskDirectory(cwd)
+		return err
+	}
+	return os.MkdirAll(cwd, 0o700)
+}
+
+// assistantDirectoryPrepared identifies directories whose generated assistant files the hub owns.
+// A user-selected task directory keeps its own instructions and skills.
+func (n *Node) assistantDirectoryPrepared(cwd string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	_, ok := n.assistantPrepared[assistantPrepareDir(cwd)]
+	return ok
+}

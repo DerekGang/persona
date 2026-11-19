@@ -5,13 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 )
+
+func writeTaskExecutionError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, errModelConflict) {
+		status = http.StatusConflict
+	}
+	apierr.Write(w, status, err)
+}
 
 // TaskExecution is the shared execution context for scheduled prompts and their content references.
 // An empty model or effort means the launcher's own default, not another provider's default.

@@ -2,7 +2,6 @@ package assistant
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,7 +21,6 @@ import (
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
-	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // What the assistant does on its own (docs/assistant/assistant.md "Scheduled tasks") is one list of tasks, each with a schedule:
@@ -101,9 +99,10 @@ type Task struct {
 	// nothing to compare with): the first run starts it on the assistant's machine with RunLauncher, later runs are
 	// sent into it. Empty = the next run starts one (the app's "New chat next time"); so does a conversation that is gone or
 	// can't be continued (another launcher or machine), and the new one is kept.
-	RunMachineID string         `json:"run_machine_id,omitempty"`
-	RunSessionID string         `json:"run_session_id,omitempty"`
-	RunLauncher  string         `json:"run_launcher,omitempty"`
+	RunMachineID string `json:"run_machine_id,omitempty"`
+	RunSessionID string `json:"run_session_id,omitempty"`
+	RunLauncher  string `json:"run_launcher,omitempty"`
+
 	RunExecution *TaskExecution `json:"run_execution,omitempty"`
 	// ExecutionMachineID is independent of MachineID, which belongs to the source conversation.
 	ExecutionMachineID string         `json:"execution_machine_id,omitempty"`
@@ -1903,10 +1902,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		if t.Facts || t.Report {
 			t.factsText = s.runFacts(ctx, t, time.Now())
 		}
-		run.Status, run.Error = runFailed, err.Error()
-		s.recordRun(run)
-		s.oneOffNotStarted(ctx, t, run)
-		return proto.Session{}, err
+		return s.failTaskRun(ctx, t, run, err, false)
 	}
 	fresh := t.FreshEachRun && t.Repeat != repeatOnce
 	if fresh {
@@ -1974,10 +1970,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			// A follow-up the assistant scheduled for itself is a turn of that conversation: it keeps the
 			// conversation's launcher like a message from the phone does. On the task's category launcher (Agents
 			// then) it moved the main conversation onto another one (plain claude, not logged in there) for good (#1518).
-			params := map[string]any{"session_id": t.SessionID, "text": taskPrompt(t, due, now, loc, manual, kb, false), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true}
-			if sourceCwd != "" {
-				params["cwd"], params["task_execution"] = sourceCwd, true
-			}
+			params := taskSourceParams(t, taskPrompt(t, due, now, loc, manual, kb, false), sourceCwd)
 			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
 			unsent := err != nil // model preparation has not sent the task's message
 			if err == nil {
@@ -1987,31 +1980,19 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 				}
 				// Offline/no-device and capability-gate errors are pre-dispatch; gone is a resume-only preflight refusal.
 				// A lost RPC answer or closed link says nothing about whether the turn already started.
-				unsent = errors.Is(err, apierr.ErrOffline) || errors.Is(err, ErrNoDevice) || nodeOutdated(err) || (err != nil && taskConversationUnavailable(err, t.SessionID))
+				unsent = taskSourceDefinitelyUnsent(err, t.SessionID)
 			}
 			if err == nil {
 				run.MachineID, run.SessionID = t.MachineID, t.SessionID
 				run.Conversation = "source"
-				c, _ := s.session(ctx, t.MachineID, t.SessionID)
-				used, _ := params["launcher"].(string)
-				model, _ := params["model"].(string)
-				effort, _ := params["effort"].(string)
-				run.Execution = &TaskExecution{MachineID: t.MachineID, Launcher: used, Model: model, Effort: effort, Agent: c.Agent, Cwd: c.Cwd, PermissionMode: cmp.Or(t.PermissionMode, c.PermissionMode)}
+				run.Execution = s.sourceTaskExecution(ctx, t, params)
 				s.scheduledWake(t.SessionID, time.Now()) // a new chain of messages between conversations (#10099)
 				s.logf("task %s ran %s after its time", t.ID, lateness(due, time.Now()))
 				startRun(&m)
 				return proto.Session{MachineID: t.MachineID, SessionID: t.SessionID}, nil
 			}
 			if !unsent {
-				run.Status, run.Error = runFailed, err.Error()
-				run.DeliveryUnknown = !errors.Is(err, rpc.ErrNotSent)
-				s.recordRun(run)
-				if run.DeliveryUnknown {
-					s.oneOffFailed(ctx, t, run)
-				} else {
-					s.oneOffNotStarted(ctx, t, run) // retry the same source after the existing delay, without replacing it
-				}
-				return proto.Session{}, err // only transport proof of no write permits another attempt
+				return s.failSourceTaskRun(ctx, t, run, err)
 			}
 			s.logf("task %s into %s refused before delivery: %v; using its own conversation", t.ID, t.SessionID, err)
 		}
@@ -2020,10 +2001,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	ex, err := s.taskExecution(ctx, t, true, binding)
 	run.Execution = &ex
 	if err != nil {
-		run.Status, run.Error = runFailed, err.Error()
-		s.recordRun(run)
-		s.oneOffNotStarted(ctx, t, run)
-		return proto.Session{}, err
+		return s.failTaskRun(ctx, t, run, err, false)
 	}
 	here, launcher := ex.MachineID, ex.Launcher
 	t.PermissionMode = ex.PermissionMode
@@ -2032,10 +2010,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	if t.Cwd == "" {
 		ex.Cwd, err = s.prepareSpace(ctx, here, t.Space)
 		if err != nil {
-			run.Status, run.Error = runFailed, err.Error()
-			s.recordRun(run)
-			s.oneOffNotStarted(ctx, t, run)
-			return proto.Session{}, err
+			return s.failTaskRun(ctx, t, run, err, false)
 		}
 	}
 	run.Execution = &ex
@@ -2045,12 +2020,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	if t.RunSessionID != "" {
 		m, ok := s.device(ctx, t.RunMachineID)
 		switch {
-		case t.RunExecution != nil && !compatibleTaskExecution(*t.RunExecution, ex):
-			run.ConversationReason = "execution_changed"
-			s.logf("task %s: execution context changed; starting a new conversation", t.ID)
-		case t.RunExecution == nil && (t.Cwd != "" || ex.Model != "" || ex.Effort != "" || ex.Runtime != ""):
-			run.ConversationReason = "legacy_context"
-			s.logf("task %s: previous execution context is unknown; starting a new conversation", t.ID)
+		case s.taskConversationChanged(t, ex, &run):
 		case t.RunLauncher != launcher:
 			run.ConversationReason = "execution_changed"
 			s.logf("task %s: launcher %s → %s, its conversation %s can't go on; starting a new one", t.ID, t.RunLauncher, launcher, short(t.RunSessionID))
@@ -2070,7 +2040,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		case fresh || clean:
 			// Keep the prior session for busy detection, then start a new one below.
 		default:
-			params := map[string]any{"session_id": t.RunSessionID, "text": taskPrompt(t, due, now, loc, manual, kb, true), "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true, "cwd": ex.Cwd, "task_execution": true}
+			params := taskResumeParams(t, taskPrompt(t, due, now, loc, manual, kb, true), ex)
 			err := s.finishModel(ctx, "task."+t.ID, params, ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort})
 			preparationFailed := err != nil // no task text has been sent while building the model parameters
 			if err == nil {
@@ -2088,22 +2058,13 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 				return proto.Session{MachineID: t.RunMachineID, SessionID: t.RunSessionID}, nil
 			}
 			if !taskConversationUnavailable(err, t.RunSessionID) {
-				run.Status, run.Error = runFailed, err.Error()
-				run.DeliveryUnknown = !preparationFailed && sendUnknown(err)
-				s.recordRun(run)
-				if run.DeliveryUnknown {
-					s.oneOffFailed(ctx, t, run)
-				} else {
-					s.oneOffNotStarted(ctx, t, run)
-				}
-				return proto.Session{}, err
+				return s.failTaskRun(ctx, t, run, err, !preparationFailed && sendUnknown(err))
 			}
 			run.ConversationReason = "conversation_gone"
 			s.logf("task %s into its conversation %s: %v; starting a new one", t.ID, short(t.RunSessionID), err)
 		}
 	}
-	sp := startParams{Text: taskPrompt(t, due, now, loc, manual, kb, false), Source: taskMessageSource(t), PermissionMode: t.PermissionMode,
-		Purpose: "task." + t.ID, Space: t.Space, Origin: OriginTask, OriginRef: t.ID, MachineID: here, Cwd: ex.Cwd, TaskExecution: true, TaskModel: &ModelBinding{Provider: launcherProvider(ex.Launcher), Model: ex.Model, Effort: ex.Effort}}
+	sp := taskStartParams(t, taskPrompt(t, due, now, loc, manual, kb, false), ex)
 	if clean {
 		sp.NewSessionID = newGuestSessionID()
 		// Before it starts: its first message's context asks, and its turn may plan at once.
@@ -2116,15 +2077,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 	}
 	if err != nil {
 		s.logf("task %s: %v", t.ID, err)
-		run.Status, run.Error = runFailed, err.Error()
-		run.DeliveryUnknown = sendUnknown(err)
-		s.recordRun(run)
-		if run.DeliveryUnknown {
-			s.oneOffFailed(ctx, t, run) // the first turn may already be running; never send it a second time
-		} else {
-			s.oneOffNotStarted(ctx, t, run)
-		}
-		return proto.Session{}, err
+		return s.failTaskRun(ctx, t, run, err, sendUnknown(err))
 	}
 	run.MachineID, run.SessionID = sess.MachineID, sess.SessionID
 	s.noteRound(sess.MachineID, sess.SessionID, t.ID, t.runGrantBasis, time.Now().Add(-roundEarly)) // sent already: its prompt is older
@@ -2983,11 +2936,7 @@ func (s *Service) scheduleRoutes() {
 		record, err := s.patchTaskExecution(r.Context(), &t, raw)
 		if err != nil {
 			sc.mu.Unlock()
-			status := http.StatusBadRequest
-			if errors.Is(err, errModelConflict) {
-				status = http.StatusConflict
-			}
-			apierr.Write(w, status, err)
+			writeTaskExecutionError(w, err)
 			return
 		}
 		err = s.saveTaskConfiguredLocked(r.Context(), sc, append(slices.Clone(sc.tasks), t), t.ID, record)
@@ -3101,11 +3050,7 @@ func (s *Service) scheduleRoutes() {
 		record, err := s.patchTaskExecution(r.Context(), &t, raw)
 		if err != nil {
 			sc.mu.Unlock()
-			status := http.StatusBadRequest
-			if errors.Is(err, errModelConflict) {
-				status = http.StatusConflict
-			}
-			apierr.Write(w, status, err)
+			writeTaskExecutionError(w, err)
 			return
 		}
 		tasks := slices.Clone(sc.tasks)

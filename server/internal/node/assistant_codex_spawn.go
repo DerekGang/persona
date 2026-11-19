@@ -100,11 +100,7 @@ func (n *Node) spawnCodexWithMode(id, cwd, launcher string, resume, spare bool, 
 	if err := execution.check("codex"); err != nil {
 		return nil, err
 	}
-	if execution.Strict {
-		if _, err := n.taskDirectory(cwd); err != nil {
-			return nil, err
-		}
-	} else if err := os.MkdirAll(cwd, 0o700); err != nil {
+	if err := n.prepareAssistantCwd(cwd, execution.Strict); err != nil {
 		return nil, err
 	}
 	root, memDir := n.codexDirs(cwd)
