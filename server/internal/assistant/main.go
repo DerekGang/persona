@@ -358,13 +358,16 @@ func run(ctx context.Context, build update.Build, o runOptions) error {
 			}
 			return svc.NodeRequest(ctx, machine, method, params) // the interactions, the MCP tools (fleet_events.go)
 		},
-		Event:    func(machine, event string, params json.RawMessage) bool { return svc.NodeEvent(machine, event, params) },
-		Detached: func(machine string) { svc.NodeDetached(machine) },
-		Location: func() *time.Location { return svc.location(context.Background()) },
+		Event:          func(machine, event string, params json.RawMessage) bool { return svc.NodeEvent(machine, event, params) },
+		Detached:       func(machine string) { svc.NodeDetached(machine) },
+		Location:       func() *time.Location { return svc.location(context.Background()) },
+		PromptLanguage: func() string { return answerLanguage(svc.hello(context.Background()).Locale) },
 		// The extensions' part of a node's connection and its events (internal/extmgr).
 		Own:         func(ctx context.Context, machine string) map[string]json.RawMessage { return ext.Own(ctx, machine) },
 		OnConnected: func(machine string) { ext.NodeConnected(machine) },
 		OnEvent:     func(machine, event string, params json.RawMessage) bool { return ext.NodeEvent(machine, event, params) },
+		// The messages held for a machine's Agents changed (devices held.go): its rows again, nothing else of a list.
+		HeldChanged: func(machine string) { svc.publishSessions(machine) },
 		// A node's new connection gets the launchers added in Persona, with their keys (models_launchers_push.go).
 		// Not one waiting to be confirmed: it gets them when it is (trustChanged, machine_trust.go).
 		NodeCalls: func(ctx context.Context, machine string) []devicewire.NodeCall {

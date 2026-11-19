@@ -396,7 +396,7 @@ func (s *Service) projectContextSlugs(ctx context.Context, machine, dir string) 
 	}
 	projects := e.ProjectsForWork(machine, dir)
 	if len(projects) == 0 {
-		return ""
+		return "", nil
 	}
 	// What extensions wrote for these projects (extension_context.go): asked once for all of them.
 	var slugs []string
@@ -428,6 +428,13 @@ func (s *Service) withProjectContext(ctx context.Context, machine, dir, lead, pr
 	if strings.TrimSpace(prompt) == "" {
 		return prompt
 	}
+	if background := s.projectHandoffContext(ctx, machine, dir, lead); background != "" {
+		return background + "\n\n" + prompt
+	}
+	return prompt
+}
+
+func (s *Service) projectHandoffContext(ctx context.Context, machine, dir, lead string) string {
 	var parts []string
 	c, slugs := s.projectContextSlugs(ctx, machine, dir)
 	if s.isWorkMachine(machine) {
@@ -438,5 +445,5 @@ func (s *Service) withProjectContext(ctx context.Context, machine, dir, lead, pr
 	if c != "" {
 		parts = append(parts, c)
 	}
-	return strings.Join(append(parts, prompt), "\n\n")
+	return strings.Join(parts, "\n\n")
 }

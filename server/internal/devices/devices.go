@@ -88,12 +88,18 @@ type Options struct {
 	Detached func(machine string)
 	// Location is the user's time zone ("today" of the token usage); nil: the machine's.
 	Location func() *time.Location
+	// PromptLanguage is the owner language for newly generated node-side prompt wrappers.
+	// Nil retains legacy Chinese; it is display policy, never an authority input.
+	PromptLanguage func() string
 	// ConfigFile is the manager's manager.json (internal/managerconf): its usage section (the account-pool gateways
 	// and their keys, usagegateways.go) is read and written there. "": none (tests).
 	ConfigFile string
 	// TailcatKey is the identity file the computers reached over tailcat trust (tunnel.LoadOrCreateHubKey); "": this
 	// machine's data directory's (tunnel.HubKeyPath).
 	TailcatKey string
+	// HeldChanged: what is held for a machine's Agents changed (held.go): its rows are published again, with
+	// HeldMessages' read anew (the assistant's publishSessions). nil: nobody draws them.
+	HeldChanged func(machine string)
 }
 
 // Devices is every computer the manager carries.
@@ -102,6 +108,7 @@ type Devices struct {
 	logf func(format string, args ...any)
 
 	transfers transfers // computer to computer file transfers running or just over (transfer.go)
+	held      heldBook  // the owner's messages held for Agents whose computer is away (held.go)
 
 	mu    sync.Mutex
 	cfg   devicewire.Config
@@ -231,6 +238,9 @@ func (d *Devices) Run(ctx context.Context) error {
 	go d.usageLoop(mctx)
 	d.workers.Add(1)
 	go func() { defer d.workers.Done(); d.runShareIngestion(mctx) }()
+	// The messages held while their computers were away (held.go).
+	d.workers.Add(1)
+	go func() { defer d.workers.Done(); d.heldLoop(mctx) }()
 	go d.usageGW.run(ctx) // the account-pool gateways (usagegateways.go)
 	// A switch to Persona Link a restart left (link_switch.go).
 	go d.resumeLinkSwitches(mctx)
@@ -611,8 +621,8 @@ func (d *Devices) BusUp() {
 // maxForward bounds one node message passed on to the hub: the bus takes 64 MiB a line, the wrapper included, and a
 // line it cannot take would drop the whole connection. The node's own lines have the same limit, so this only cuts
 // the last bytes; what is big on purpose (downloads, uploads, node updates, a port's bytes) comes in pieces of 1 MiB
-// at most.
-const maxForward = 60 << 20
+// at most. A var so tests change it.
+var maxForward = 60 << 20
 
 var errTooLarge = &rpc.Error{Code: "too_large", Message: "the node's answer is too large to pass on"}
 
@@ -636,10 +646,22 @@ func (d *Devices) forward(machine, event string, params any) {
 }
 
 // Call is devices.call: a call to a machine's node, coded for the hub (no_device, machine_offline, node_closed;
-// the node's own coded errors as they are).
+// the node's own coded errors as they are; held for a session.send that may be, held.go).
 func (d *Devices) Call(ctx context.Context, p devicewire.NodeCall) (json.RawMessage, error) {
+	out, err := d.callNode(ctx, p)
+	if err != nil {
+		return nil, wireError(err)
+	}
+	return out, nil
+}
+
+// callNode is Call with its errors as they are: a held message's delivery tells what wrote nothing apart (held.go).
+func (d *Devices) callNode(ctx context.Context, p devicewire.NodeCall) (json.RawMessage, error) {
 	if reservedOwnerControl(p.Method) {
 		return nil, errReservedOwnerControl
+	}
+	if p.Method == proto.MethodSessionSendUnseen {
+		return nil, &rpc.Error{Code: "forbidden", Message: "session.send_unseen is reserved for held-message delivery"}
 	}
 	if strings.HasPrefix(p.Method, "session.codex.takeover.") {
 		return nil, &rpc.Error{Code: "user_confirmation_required", Message: i18n.Err("codex-takeover.user_only").Error()}
@@ -647,6 +669,12 @@ func (d *Devices) Call(ctx context.Context, p devicewire.NodeCall) (json.RawMess
 	m := d.machineByID(p.MachineID)
 	if m == nil {
 		return nil, &rpc.Error{Code: devicewire.CodeNoDevice, Message: fmt.Sprintf("no machine %q", p.MachineID)}
+	}
+	held := d.heldCallOf(ctx, m, p) // the owner's message to an Agent, kept in order or held for its computer (held.go)
+	if held != nil {
+		if err := d.holdBehind(ctx, held); err != nil {
+			return nil, err
+		}
 	}
 	if p.TimeoutMS > 0 {
 		var cancel context.CancelFunc
@@ -657,11 +685,13 @@ func (d *Devices) Call(ctx context.Context, p devicewire.NodeCall) (json.RawMess
 	if len(params) == 0 {
 		params = json.RawMessage(`{}`)
 	}
-	if p.Method == "session.send" {
+	if p.Method == "session.send" || p.Method == "session.send_once" {
 		var err error
-		params, err = d.prepareSessionSkills(params)
-		if err != nil {
-			return nil, err
+		if p.Method == "session.send" {
+			params, err = d.prepareSessionSkills(params)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if params, err = ownerInputParams(p, params); err != nil {
 			return nil, err
@@ -679,6 +709,11 @@ func (d *Devices) Call(ctx context.Context, p devicewire.NodeCall) (json.RawMess
 	if refusesHandoff(p.Method, params) {
 		return nil, errHandoffRefused
 	}
+	var languageErr error
+	params, languageErr = d.promptLanguageParams(p.Method, params)
+	if languageErr != nil {
+		return nil, languageErr
+	}
 	m.noteWatch(p.Method, params)
 	if p.Method == "session.unwatch" && m.follows(params) {
 		return json.RawMessage(`{}`), nil // the manager still follows it: the node keeps sending its items
@@ -688,7 +723,7 @@ func (d *Devices) Call(ctx context.Context, p devicewire.NodeCall) (json.RawMess
 	params, receipt, preparation, prepareErr = d.prepareShareCall(ctx, p, params)
 	if prepareErr != nil {
 		d.observeCreationCall(p, nil, nil, preparation, prepareErr)
-		return nil, wireError(prepareErr)
+		return nil, prepareErr
 	}
 	if refusesHandoff(p.Method, params) { // and on what actually goes (prepareShareCall re-marshals it)
 		return nil, errHandoffRefused
@@ -698,16 +733,39 @@ func (d *Devices) Call(ctx context.Context, p devicewire.NodeCall) (json.RawMess
 		snapshot = new(sessionSnapshot)
 	}
 	modeSID, modeFrom, modeTo, recordMode := m.modeSetFrom(p, params) // the record of mode changes (mode_changes.go)
+	var nodeParams any = params
+	if p.Method == devicewire.MethodPortDial {
+		var dial devicewire.PortDial
+		if err := json.Unmarshal(params, &dial); err != nil {
+			return nil, &rpc.Error{Code: "invalid_params", Message: "port.dial: " + err.Error()}
+		}
+		dial.StreamVersion = 0
+		if p.StreamVersion == devicewire.PortStreamHalfCloseV1 {
+			dial.StreamVersion = p.StreamVersion
+		}
+		nodeParams = dial
+	}
 	var out json.RawMessage
-	err := m.callWithSnapshot(ctx, p.Method, params, &out, snapshot)
+	err := m.callWithSnapshot(ctx, p.Method, nodeParams, &out, snapshot)
+	if try, ok := ctx.Value(heldDeliveryKey{}).(*heldTry); ok {
+		try.called, try.err = true, err // a held delivery is judged on this call alone (held.go)
+	}
 	if recordMode && err == nil {
 		m.recordModeSet(p.Actor, modeSID, modeFrom, modeTo, out)
 	}
 	d.observeCreationCall(p, params, out, preparation, err)
-	d.finishShareCall(ctx, p, receipt, out, err)
+	if err != nil && held != nil && held.hold && heldMayHold(err) {
+		// Nothing was written: held until the node is back. Its share receipt waits for that delivery.
+		if herr := d.hold(ctx, held); herr != nil {
+			return nil, herr
+		}
+	}
+	if heldSettles(ctx, err) {
+		d.finishShareCall(ctx, p, receipt, out, err)
+	}
 	m.noteOpened(p.Method, params, err)
 	if err != nil {
-		return nil, wireError(err)
+		return nil, err
 	}
 	if p.Method == "sessions.list" { // the hub had the node list them again (its agent filters): the manager's list
 		var list struct {
@@ -934,9 +992,19 @@ func (d *Devices) CallNode(ctx context.Context, id, method string, params json.R
 			ctx = context.WithValue(ctx, ownerControlKey{}, method)
 		}
 	}
+	var languageErr error
+	params, languageErr = d.promptLanguageParams(method, params)
+	if languageErr != nil {
+		return nil, languageErr
+	}
+	actor := devicewire.ModeActorOf(ctx)
+	sid, from, to, record := m.modeSetFrom(devicewire.NodeCall{Method: method, Actor: actor}, params)
 	var out json.RawMessage
 	if err := m.call(ctx, method, params, &out); err != nil {
 		return nil, err
+	}
+	if record {
+		m.recordModeSet(actor, sid, from, to, out)
 	}
 	return out, nil
 }
