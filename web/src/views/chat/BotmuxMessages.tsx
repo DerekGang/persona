@@ -4,9 +4,14 @@
 import { memo, type ReactNode, useMemo, useState } from "react";
 import { t } from "../../i18n";
 import { botmuxReplies, botmuxTags, decodedUser, originalText } from "../../lib/botmux";
+import { alsoOpenText } from "../../lib/engines";
+import { attentionReason, externalLink } from "../../lib/format";
 import type { Step, UserMessage } from "../../lib/turns";
-import type { Botmux } from "../../lib/types";
+import type { Botmux, Session } from "../../lib/types";
+import { StatusMark } from "../../ui/StatusMark";
+import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
+import { FailureNote } from "./FailureNote";
 
 function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
   const tags = botmuxTags(b);
@@ -62,4 +67,52 @@ export function BotmuxUser({ msg, bubble }: { msg: UserMessage; bubble: (decoded
       <BotmuxOriginal text={originalText(msg)} end />
     </div>
   );
+}
+
+/** Above the composer while a session needs you and its host says why (a botmux attention, iOS AttentionNote):
+ *  the reason and "Open in Lark" its topic. */
+function AttentionNote({ session }: { session: Session }) {
+  const reason = attentionReason(session);
+  if (!reason) return null;
+  const link = externalLink(session);
+  return (
+    <div role="status" data-testid="chat-attention" className="flex items-start gap-2 rounded-[12px] border-l-2 border-attention bg-inset px-3 py-2 text-meta" style={{ animation: "fade-up 200ms ease-out both" }}>
+      <span className="flex h-[18px] shrink-0 items-center"><StatusMark state="needs_you" /></span>
+      <span className="line-clamp-3 min-w-0 flex-1 text-ink-2">{reason}</span>
+      {link && (
+        <a href={link} target="_blank" rel="noopener noreferrer" className="flex shrink-0 items-center gap-1 whitespace-nowrap font-medium text-accent hover:underline">
+          <Icon name="external" size={12} />
+          {t("chat-chatview.open_in_lark")}
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** The session is live in another engine host too (#2576): this one owns it, and messages go here only. */
+function ConflictNote({ session }: { session: Session }) {
+  const text = alsoOpenText(session);
+  if (!text) return null;
+  return (
+    <div role="status" data-testid="chat-also-open" className="flex items-start gap-2 rounded-[12px] bg-orange-tint px-3 py-2 text-meta" style={{ animation: "fade-up 200ms ease-out both" }}>
+      <span className="flex h-[18px] shrink-0 items-center text-orange"><Icon name="warning" size={13} /></span>
+      <span className="line-clamp-2 min-w-0 flex-1 text-ink-2">{text}</span>
+    </div>
+  );
+}
+
+/** Conditional host notices above the composer (attention, failure, multi-host conflict), loaded lazily. */
+export function BotmuxComposerNotes({ session, failureNote, onRetry }: { session: Session; failureNote: boolean; onRetry: () => void }) {
+  return (
+    <>
+      <AttentionNote session={session} />
+      <ConflictNote session={session} />
+      {failureNote && <FailureNote session={session} onRetry={onRetry} />}
+    </>
+  );
+}
+
+/** Default export for single-chunk lazy loading from SegmentView. */
+export default function BotmuxPart(props: { msg: UserMessage; bubble: (decoded: UserMessage) => ReactNode } | { steps: readonly Step[]; mid: string }) {
+  return "msg" in props ? <BotmuxUser msg={props.msg} bubble={props.bubble} /> : <BotmuxReplies steps={props.steps} mid={props.mid} />;
 }

@@ -28,11 +28,9 @@ export const nextBotmuxMode = (m: BotmuxMode): BotmuxMode => MODES[(MODES.indexO
 /** Fired on window when the mode changes, for views outside React's store (HistoryBrowser). */
 export const BOTMUX_VISIBILITY_EVENT = "persona-botmux-visibility";
 
-const subscribers = new Set<() => void>();
-
 const subscribe = (f: () => void) => {
-  subscribers.add(f);
-  return () => void subscribers.delete(f);
+  window.addEventListener(BOTMUX_VISIBILITY_EVENT, f);
+  return () => window.removeEventListener(BOTMUX_VISIBILITY_EVENT, f);
 };
 
 export const getBotmuxMode = (): BotmuxMode => readBotmuxMode();
@@ -41,7 +39,6 @@ export function setBotmuxMode(next: BotmuxMode) {
   if (next === getBotmuxMode()) return;
   localStorage.setItem(BOTMUX_MODE_KEY, next);
   localStorage.removeItem(LEGACY_HIDDEN_KEY);
-  subscribers.forEach((f) => f());
   window.dispatchEvent(new Event(BOTMUX_VISIBILITY_EVENT));
 }
 

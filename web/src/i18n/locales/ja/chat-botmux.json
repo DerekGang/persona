@@ -10,5 +10,6 @@
   "voice": "音声",
   "truncated": "途中まで",
   "original": "原文",
-  "hide_original": "原文を隠す"
+  "hide_original": "原文を隠す",
+  "external_trigger_notice": "旧版 botmux：Persona からの送信はオーナーではなく外部イベントとして届きます。"
 }

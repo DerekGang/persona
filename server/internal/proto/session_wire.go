@@ -21,7 +21,7 @@ import (
 // fields differ from them (a field added, renamed, retyped or retagged by a change that did not update this file),
 // appendSession leaves every session to the reflect encoder: the session is sent whole, only slower, until its line
 // here and this hash are brought up to date. TestSessionWireMatchesReflect fails meanwhile and prints the new hash.
-const sessionWireLayout = 0x3b11d3e1bfabc8cc
+const sessionWireLayout = 0xa851298b3056fd54
 
 var sessionWireCurrent = sessionLayout() == sessionWireLayout && hierarchyLayout() == hierarchyWireLayout
 
@@ -233,6 +233,7 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 	}
 	w.boolean(`"suggestion_risky":`, s.SuggestionRisky, true)
 	w.boolean(`"bypass_pending":`, s.BypassPending, true)
+	w.boolean(`"botmux_external_trigger":`, s.BotmuxExternalTrigger, true)
 	w.str(`"turn_error":`, s.TurnError, true)
 	w.str(`"turn_error_kind":`, s.TurnErrorKind, true)
 	if s.TurnErrorResetsAt != nil {

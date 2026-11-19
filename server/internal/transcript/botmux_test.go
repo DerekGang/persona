@@ -85,3 +85,74 @@ func TestBotmuxParseAndFold(t *testing.T) {
 		t.Fatalf("fold botmux = %+v", got)
 	}
 }
+
+func TestBotmuxTurnsFixtures(t *testing.T) {
+	raw, err := os.ReadFile(botmuxFixtures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx struct {
+		TurnsCases []struct {
+			Name           string               `json:"name"`
+			Status         int                  `json:"status"`
+			Response       *BotmuxTurnsResponse `json:"response"`
+			WantOwnerActor bool                 `json:"want_owner_actor"`
+			Items          []proto.Item         `json:"items"`
+			WantBotmux     []*proto.Botmux      `json:"want_botmux"`
+		} `json:"turns_cases"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatal(err)
+	}
+	if len(fx.TurnsCases) == 0 {
+		t.Fatal("no turns_cases")
+	}
+	for _, tc := range fx.TurnsCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			gotOwner := tc.Status == 200 && tc.Response != nil && tc.Response.HasCapability(BotmuxCapOwnerActor)
+			if gotOwner != tc.WantOwnerActor {
+				t.Fatalf("ownerActor = %v, want %v", gotOwner, tc.WantOwnerActor)
+			}
+			// Simulate ParseLine's wrapper fallback first, then overlay structured turns when available.
+			items := append([]proto.Item(nil), tc.Items...)
+			origTexts := make([]string, len(items))
+			for i := range items {
+				origTexts[i] = items[i].Text
+			}
+			markBotmux(items)
+			if tc.Status == 200 && tc.Response != nil && tc.Response.OK && tc.Response.Schema == BotmuxTurnsSchema {
+				items = ApplyBotmuxTurns(items, tc.Response.Turns)
+			}
+			if len(items) != len(tc.WantBotmux) {
+				t.Fatalf("items = %d, want %d", len(items), len(tc.WantBotmux))
+			}
+			for i, want := range tc.WantBotmux {
+				if items[i].Text != origTexts[i] {
+					t.Errorf("item[%d].Text mutated", i)
+				}
+				if !reflect.DeepEqual(items[i].Botmux, want) {
+					t.Errorf("item[%d].Botmux:\n got %+v\nwant %+v", i, items[i].Botmux, want)
+				}
+				if items[i].Botmux != nil {
+					b, _ := json.Marshal(items[i].Botmux)
+					if s := string(b); containsAny(s, "ou_example_", "om_example_") {
+						t.Errorf("item[%d].Botmux leaked Lark ID: %s", i, s)
+					}
+				}
+			}
+		})
+	}
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if len(sub) > 0 && len(s) >= len(sub) {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

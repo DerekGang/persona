@@ -739,19 +739,13 @@ function BoundedAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate,
     setFilter(f);
     hover(null);
   }, [botmuxHidden, hover]);
-  const toggleBotmux = useCallback(() => {
-    const mode = nextBotmuxMode(botmuxHidden ? "hide" : botmuxMode);
-    const next = botmuxAndFilter(filter, mode === "hide", "botmux");
-    setBotmuxMode(mode);
-    if (next.filter !== filter) chooseFilter(next.filter);
-    hover(null);
-  }, [filter, botmuxHidden, botmuxMode, chooseFilter, hover]);
+  const botmuxChip = useBotmuxToggle(filter, chooseFilter, hover);
   const quick = useMemo((): PagedQuickFilters | undefined => quickFilters ? {
     select: QUICK_SELECT[filter],
-    exclude: botmuxHidden ? HIDE_BOTMUX : SHOW_ALL,
+    exclude: botmuxChip.hidden ? HIDE_BOTMUX : SHOW_ALL,
     // the switch shows while there are Lark sessions to hide, or they are hidden
-    bar: (counts) => <FilterBar selection={filter} counts={counts ?? NO_COUNTS} onChoose={chooseFilter} botmux={(counts?.feishu ?? 0) > 0 || botmuxHidden ? { mode: botmuxHidden ? "hide" : botmuxMode, onToggle: toggleBotmux } : undefined} />,
-  } : undefined, [quickFilters, filter, botmuxHidden, botmuxMode, chooseFilter, toggleBotmux]);
+    bar: (counts) => <FilterBar selection={filter} counts={counts ?? NO_COUNTS} onChoose={chooseFilter} botmux={(counts?.feishu ?? 0) > 0 || botmuxChip.hidden ? botmuxChip : undefined} />,
+  } : undefined, [quickFilters, filter, botmuxChip, chooseFilter]);
   const groupsRef = useRef<HTMLDivElement>(null);
   // the words ⌘K's "Filter Agents list" put on the list, its search (#6589): only its words, which the hub matches as
   // text; the Filter menu's choices are the complete list's, so a chip shows here only what this list is narrowed by
@@ -954,14 +948,8 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
     setKept(matchingKeys(filterInputs.current.live, f, filterInputs.current.mutes));
     hover(null);
   }, [botmuxHidden, hover]);
-  const toggleBotmux = useCallback(() => {
-    const mode = nextBotmuxMode(botmuxHidden ? "hide" : botmuxMode);
-    const next = botmuxAndFilter(filter, mode === "hide", "botmux");
-    setBotmuxMode(mode);
-    if (next.filter !== filter) choose(next.filter);
-    hover(null);
-  }, [filter, botmuxHidden, botmuxMode, choose, hover]);
-  const botmux = useMemo(() => botmuxCount > 0 || botmuxHidden ? { mode: botmuxHidden ? "hide" as const : botmuxMode, onToggle: toggleBotmux } : undefined, [botmuxCount, botmuxHidden, botmuxMode, toggleBotmux]);
+  const botmuxChip = useBotmuxToggle(filter, choose, hover);
+  const botmux = useMemo(() => botmuxCount > 0 || botmuxChip.hidden ? botmuxChip : undefined, [botmuxCount, botmuxChip]);
   // Settings › Appearance › Show terminals in sidebar (off): the plain shells of each machine's terminal host, under its agents in "By machine"
   const showTerminals = useSidebarTerminals() && shownGrouping === "machine";
   const { listing: panes, refresh: refreshPanes } = usePanes(machines, showTerminals);
@@ -1201,6 +1189,20 @@ const GroupingBar = memo(function GroupingBar({ groupings, selection, onChoose }
     </div>
   );
 });
+
+function useBotmuxToggle(filter: AgentFilter, choose: (f: AgentFilter) => void, hover: (k: string | null) => void) {
+  const raw = useBotmuxMode();
+  const hidden = botmuxAndFilter(filter, raw === "hide", "filter").hidden;
+  const mode: BotmuxMode = hidden ? "hide" : raw;
+  const onToggle = useCallback(() => {
+    const nextMode = nextBotmuxMode(mode);
+    const next = botmuxAndFilter(filter, nextMode === "hide", "botmux");
+    setBotmuxMode(nextMode);
+    if (next.filter !== filter) choose(next.filter);
+    hover(null);
+  }, [filter, mode, choose, hover]);
+  return useMemo(() => ({ hidden, mode, onToggle }), [hidden, mode, onToggle]);
+}
 
 /** The botmux chip in each mode: what it shows, and what a click does next (decode → as it is → hidden → decode). */
 const BOTMUX_CHIP: Record<BotmuxMode, { icon: "check" | "code" | "x"; label: string; title: string }> = {

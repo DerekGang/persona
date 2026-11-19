@@ -180,6 +180,7 @@ func (n *Node) pushItems(id string, items []proto.Item, span transcript.Span) {
 	f := n.files[id]
 	n.mu.Unlock()
 	agentUsage(f, items) // finished subagents' results carry what they used (agent_usage.go)
+	items = n.applyBotmuxTurns(context.Background(), id, items)
 	items = n.echoed(id, f, items)
 	_ = n.peer.Notify("session.items", withSpan(map[string]any{"session_id": id, "items": nonNil(items)}, span, true))
 	n.liveRecheck(id) // the words these items brought replace their live copy, right after them (livereply.go)

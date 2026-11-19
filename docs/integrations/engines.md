@@ -258,18 +258,17 @@ Typical use: work Agents in botmux, personal Agents in herdr, viewed together.
   Without matching rollout, omit: newly opened sessions before initial prompt enters rollout (next refresh finds them), or custom bot-specific `CODEX_HOME` / `TRAE_HOME` directories unknown to node
   (Codex reads known homes, compatible fork only `~/.trae/cli`). `codex-app` (botmux drives Codex through app-server, without session-ID prompts) and other CLIs omitted.
   Space is cwd (like Herdr App terminals outside spaces; trim trailing `/` to avoid duplicates), named by final directory component. If it matches parent case-insensitively, include parent (`Botmux/botmux`, #1836). Derive only from its own path, not other listed sessions, so name-based pin / mute / group-to-do bindings stay stable.
-- **Sending**: same for all three, delivered through botmux dashboard `POST /api/trigger` targeting the session, not terminal input. Botmux queues while busy,
+- **Sending**: same for all three, delivered through botmux dashboard `POST /api/trigger` targeting the session (`target.kind: "turn"`, `botId`, `sessionId`), not terminal input. Botmux queues while busy,
   resumes suspended sessions itself (no separate herdr `claude --resume`, also for suspended beyond 7 days / unlisted), and sends replies back to Lark topics.
-  Node gets dashboard token through `botmux dashboard current`, memory-only, connecting only to local 127.0.0.1. Claude receives botmux task tags and an external-event explanation.
+  Node gets the dashboard token through `botmux dashboard current`, memory-only, connecting only to local 127.0.0.1.
+  Before sending, the node checks capabilities via the read-only `GET /api/sessions/:id/turns` probe (cached per botmux instance and re-probed after dashboard restart, token rotation, or CLI upgrade; never probed with a real message and never retried after delivery).
+  When `capabilities` includes `ownerActor`, `POST /api/trigger` sends top-level `actor: "owner"` (with no `envelope.payload` or `envelope.rawText`) and confirms the echoed `actor: "owner"` in the response, so botmux delivers the turn as the bot owner with `<sender>` and `<message_location>`.
+  On older botmux versions (`404` or `ownerActor` absent), the node sends the existing external-event trigger and sets `botmux_external_trigger: true` on the session so the composer shows a one-line notice.
 - **Unsupported**: screen reads, keys, dialogs (answer in Lark), close, rename, create, live terminal; app hides or explains by capabilities.
-- **Showing it as in Lark**: botmux wraps each Lark message in blocks for the model (`<user_message>`, `<sender />`, `<mentions>`, `<attachments>`,
-  `<message_location />`, `<botmux_reminder>`, `<botmux_formatting>`…) and the agent answers with `botmux send`. The node reads both back
-  (`server/internal/transcript/botmux.go`) into the item's `botmux` field: the words written in Lark, the sender's display name and a few facts for tags,
-  and the reply text of a `botmux send` call (also on a fold that hides the call). The transcript text is unchanged, so the original stays one tap away.
-  A message the apps sent arrives as a trigger turn (`<botmux_task>` plus the untrusted external event) and reads back as `kind: trigger`, the user's own
-  words. Apps do not write botmux's wrapper themselves: botmux resolves `<sender />` from Lark, has no field for a connector to claim one, and already
-  adds its reminder and formatting blocks to trigger turns. Reading the wrapper back is a compatibility fallback until botmux offers a structured,
-  versioned turn record; formats and fallbacks: `docs/protocol/protocol.md` ("BotMux messages").
+- **Showing it as in Lark**: **structured turns first, wrapper parsing as per-turn fallback.**
+  When the local botmux dashboard serves `GET /api/sessions/:id/turns` (`botmux.session-turns.v1`, `server/internal/node/hostbotmux_turns.go`, `server/internal/transcript/botmux_turns.go`), the node reads turns incrementally by `seq` cursor and matches each turn to its transcript entry by `anchor.cliEntryId` or `anchor.inputSha256`, filling `Item.botmux` with the inbound text, sender display name, attachment metadata, thread placement, mentions, and full reply text (including `--content-file` and `--card-file` replies).
+  When the endpoint returns `404` (older botmux) or a turn has no structured record (e.g., turns before a botmux upgrade), the node falls back per turn to wrapper and `botmux send` parsing (`server/internal/transcript/botmux.go`).
+  The transcript text is always unchanged so the original stays one tap away, and only display names leave the node (never `open_id` or `messageId`). Formats and fallbacks: `docs/protocol/protocol.md` ("BotMux messages").
 - **Why it needs you / open in Lark**: reason from `botmux send --attention` goes into `attention_reason` while Needs you;
   app shows it in list rows / chat top. Raw observe topic link (`feishuThreadLink`, HTTPS only) becomes `external_url` for "Open in Lark."
   Both are raw botmux fields, not stable APIs; omit if absent.

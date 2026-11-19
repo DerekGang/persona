@@ -317,6 +317,9 @@ export interface Session {
    *  once its turn is over, resuming the same conversation (#6476, node/mode_restart.go); `permission_mode` is the mode
    *  it still runs in until then. */
   bypass_pending?: boolean;
+  /** On a botmux session whose botmux instance does not advertise ownerActor, sends go through the untrusted
+   *  external-event trigger; the composer shows a one-line notice. */
+  botmux_external_trigger?: boolean;
   /** What the model saw in the latest reply and the model's window, in tokens (#2430); omitted while the node cannot tell. */
   context_tokens?: number;
   context_window?: number;
@@ -692,6 +695,7 @@ export interface Botmux {
   topic_context?: boolean;
   thread?: boolean;
   attachments?: number;
+  attachment_meta?: { kind: string; name?: string; mime_type?: string }[];
   mentions?: string[];
   source?: string;
   final?: boolean;

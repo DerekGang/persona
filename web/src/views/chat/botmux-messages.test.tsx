@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { setBotmuxMode } from "../../lib/botmux-mode";
 import { segments } from "../../lib/turns";
-import type { Item } from "../../lib/types";
+import type { Item, Session } from "../../lib/types";
+import { AgentStatusLine } from "./AgentStatusLine";
 import { SegmentView } from "./SegmentView";
 
 // A botmux session's exchange as the node sends it (docs/protocol/protocol.md "BotMux messages"): the message with
@@ -47,5 +48,15 @@ describe("botmux sessions in the chat", () => {
     expect(html).not.toContain("data-botmux-message");
     expect(html).not.toContain("data-botmux-reply");
     expect(html).toContain("user_message");
+  });
+
+  it("shows a one-line composer notice when botmux falls back to external-event trigger", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const session = { machine_id: "m", session_id: "s", title: "t", cwd: "/tmp", status: "idle", botmux_external_trigger: true } as Session;
+    await act(async () => root.render(<AgentStatusLine session={session} />));
+    expect(host.innerHTML).toContain('data-testid="botmux-external-trigger-note"');
+    expect(host.textContent?.trim().length).toBeGreaterThan(0);
+    act(() => root.unmount());
   });
 });

@@ -391,5 +391,354 @@
         "text": "-5 degrees outside"
       }
     }
+  ],
+  "turns_cases": [
+    {
+      "name": "structured_with_owner_actor_and_file_card_replies",
+      "status": 200,
+      "response": {
+        "ok": true,
+        "schema": "botmux.session-turns.v1",
+        "capabilities": [
+          "ownerActor"
+        ],
+        "next": "12",
+        "turns": [
+          {
+            "turnId": "t1",
+            "seq": 12,
+            "at": 1763520000000,
+            "inbound": [
+              {
+                "messageId": "om_example_1",
+                "text": "please ship v2",
+                "sender": {
+                  "type": "user",
+                  "openId": "ou_example_owner",
+                  "name": "Alex Chen"
+                },
+                "via": "lark",
+                "quotedMessageId": "om_example_prev",
+                "attachments": [
+                  {
+                    "kind": "image",
+                    "name": "shot.png",
+                    "mimeType": "image/png"
+                  },
+                  {
+                    "kind": "file",
+                    "name": "notes.pdf",
+                    "mimeType": "application/pdf"
+                  }
+                ],
+                "mentions": [
+                  {
+                    "openId": "ou_example_bot",
+                    "name": "Review Bot"
+                  },
+                  {
+                    "openId": "ou_example_unnamed"
+                  }
+                ],
+                "placement": {
+                  "kind": "thread",
+                  "rootMessageId": "om_example_root"
+                }
+              }
+            ],
+            "replies": [
+              {
+                "messageId": "om_example_r1",
+                "responseKind": "progress",
+                "at": 1763520010000,
+                "text": "Running tests from content file."
+              },
+              {
+                "messageId": "om_example_r2",
+                "responseKind": "final",
+                "at": 1763520060000,
+                "text": "Shipped v2 (card summary)."
+              }
+            ],
+            "anchor": {
+              "cliId": "claude-code",
+              "inputSha256": "ea10289baf1c524b0692df0b64dd860a26828b40f1a25536c8f6fdb58f3b1d97"
+            }
+          }
+        ]
+      },
+      "want_owner_actor": true,
+      "items": [
+        {
+          "id": "u1#0",
+          "seq": 1,
+          "role": "user",
+          "kind": "text",
+          "text": "<botmux_reminder>reply with botmux send</botmux_reminder>\n\n<user_message>\nplease ship v2\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_example_owner\" name=\"Alex Chen\" />"
+        },
+        {
+          "id": "a1#0",
+          "seq": 2,
+          "role": "assistant",
+          "kind": "tool_use",
+          "tool_name": "Bash",
+          "tool_use_id": "tu1",
+          "tool_input": {
+            "command": "botmux send --content-file /tmp/reply.md"
+          }
+        },
+        {
+          "id": "a2#0",
+          "seq": 3,
+          "role": "assistant",
+          "kind": "tool_use",
+          "tool_name": "Bash",
+          "tool_use_id": "tu2",
+          "tool_input": {
+            "command": "botmux send --response-kind final --card-file /tmp/card.json"
+          }
+        }
+      ],
+      "want_botmux": [
+        {
+          "kind": "message",
+          "text": "please ship v2",
+          "sender": "Alex Chen",
+          "sender_type": "user",
+          "quoted": true,
+          "thread": true,
+          "attachments": 2,
+          "attachment_meta": [
+            {
+              "kind": "image",
+              "name": "shot.png",
+              "mime_type": "image/png"
+            },
+            {
+              "kind": "file",
+              "name": "notes.pdf",
+              "mime_type": "application/pdf"
+            }
+          ],
+          "mentions": [
+            "Review Bot"
+          ]
+        },
+        {
+          "kind": "reply",
+          "text": "Running tests from content file."
+        },
+        {
+          "kind": "reply",
+          "text": "Shipped v2 (card summary).",
+          "final": true
+        }
+      ]
+    },
+    {
+      "name": "structured_without_owner_actor_cli_entry_id",
+      "status": 200,
+      "response": {
+        "ok": true,
+        "schema": "botmux.session-turns.v1",
+        "capabilities": [],
+        "next": "20",
+        "turns": [
+          {
+            "turnId": "t2",
+            "seq": 20,
+            "at": 1763520100000,
+            "inbound": [
+              {
+                "messageId": "om_example_2",
+                "text": "matched by cliEntryId",
+                "sender": {
+                  "type": "user",
+                  "openId": "ou_example_user",
+                  "name": "Jordan Lee"
+                },
+                "via": "lark",
+                "placement": {
+                  "kind": "chat"
+                }
+              }
+            ],
+            "replies": [],
+            "anchor": {
+              "cliId": "claude-code",
+              "inputSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "cliEntryId": "u2"
+            }
+          }
+        ]
+      },
+      "want_owner_actor": false,
+      "items": [
+        {
+          "id": "u2#0",
+          "seq": 1,
+          "role": "user",
+          "kind": "text",
+          "text": "opaque future wrapper text without known tags"
+        }
+      ],
+      "want_botmux": [
+        {
+          "kind": "message",
+          "text": "matched by cliEntryId",
+          "sender": "Jordan Lee",
+          "sender_type": "user"
+        }
+      ]
+    },
+    {
+      "name": "mixed_old_and_new_turns_per_turn_fallback",
+      "status": 200,
+      "response": {
+        "ok": true,
+        "schema": "botmux.session-turns.v1",
+        "capabilities": [
+          "ownerActor"
+        ],
+        "next": "35",
+        "turns": [
+          {
+            "turnId": "t_new",
+            "seq": 35,
+            "at": 1763520200000,
+            "inbound": [
+              {
+                "messageId": "om_example_new",
+                "text": "follow up as owner",
+                "sender": {
+                  "type": "user",
+                  "openId": "ou_example_owner",
+                  "name": "Alex Chen"
+                },
+                "via": "owner_actor",
+                "placement": {
+                  "kind": "thread",
+                  "rootMessageId": "om_example_root"
+                }
+              }
+            ],
+            "replies": [
+              {
+                "messageId": "om_example_r_new",
+                "responseKind": "final",
+                "at": 1763520210000,
+                "text": "Done via card."
+              }
+            ],
+            "anchor": {
+              "cliId": "claude-code",
+              "inputSha256": "74026594ac9333373d7171ee19589555663201940dcd29115016d3a1be106d45"
+            }
+          }
+        ]
+      },
+      "want_owner_actor": true,
+      "items": [
+        {
+          "id": "u_old#0",
+          "seq": 1,
+          "role": "user",
+          "kind": "text",
+          "text": "<botmux_reminder>reply with botmux send</botmux_reminder>\n\n<user_message>\nlegacy turn before upgrade\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_example_legacy\" name=\"Sam Lin\" />"
+        },
+        {
+          "id": "a_old#0",
+          "seq": 2,
+          "role": "assistant",
+          "kind": "tool_use",
+          "tool_name": "Bash",
+          "tool_use_id": "tu_old",
+          "tool_input": {
+            "command": "botmux send --response-kind final 'legacy reply'"
+          }
+        },
+        {
+          "id": "u_new#0",
+          "seq": 3,
+          "role": "user",
+          "kind": "text",
+          "text": "<botmux_reminder>reply with botmux send</botmux_reminder>\n\n<user_message>\nfollow up as owner\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_example_owner\" name=\"Alex Chen\" /><message_location placement=\"thread\" />"
+        },
+        {
+          "id": "a_new#0",
+          "seq": 4,
+          "role": "assistant",
+          "kind": "tool_use",
+          "tool_name": "Bash",
+          "tool_use_id": "tu_new",
+          "tool_input": {
+            "command": "botmux send --card-file /tmp/final-card.json"
+          }
+        }
+      ],
+      "want_botmux": [
+        {
+          "kind": "message",
+          "text": "legacy turn before upgrade",
+          "sender": "Sam Lin",
+          "sender_type": "user"
+        },
+        {
+          "kind": "reply",
+          "text": "legacy reply",
+          "final": true
+        },
+        {
+          "kind": "message",
+          "text": "follow up as owner",
+          "sender": "Alex Chen",
+          "sender_type": "user",
+          "thread": true
+        },
+        {
+          "kind": "reply",
+          "text": "Done via card.",
+          "final": true
+        }
+      ]
+    },
+    {
+      "name": "endpoint_404_full_wrapper_fallback",
+      "status": 404,
+      "response": null,
+      "want_owner_actor": false,
+      "items": [
+        {
+          "id": "u_404#0",
+          "seq": 1,
+          "role": "user",
+          "kind": "text",
+          "text": "<botmux_reminder>reply with botmux send</botmux_reminder>\n\n<user_message>\nlegacy turn before upgrade\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_example_legacy\" name=\"Sam Lin\" />"
+        },
+        {
+          "id": "a_404#0",
+          "seq": 2,
+          "role": "assistant",
+          "kind": "tool_use",
+          "tool_name": "Bash",
+          "tool_use_id": "tu_404",
+          "tool_input": {
+            "command": "botmux send 'still works on old botmux'"
+          }
+        }
+      ],
+      "want_botmux": [
+        {
+          "kind": "message",
+          "text": "legacy turn before upgrade",
+          "sender": "Sam Lin",
+          "sender_type": "user"
+        },
+        {
+          "kind": "reply",
+          "text": "still works on old botmux"
+        }
+      ]
+    }
   ]
 }

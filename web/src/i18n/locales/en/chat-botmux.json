@@ -10,5 +10,6 @@
   "voice": "Voice",
   "truncated": "Cut short",
   "original": "Original",
-  "hide_original": "Hide original"
+  "hide_original": "Hide original",
+  "external_trigger_notice": "Older botmux: replies from Persona arrive as external events rather than as the owner."
 }

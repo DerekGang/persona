@@ -265,9 +265,10 @@ type Botmux struct {
 	Quoted       bool `json:"quoted,omitempty"`
 	TopicContext bool `json:"topic_context,omitempty"`
 	// Thread: the message was posted in a topic (BotMux's placement "thread"), not to the chat itself.
-	Thread      bool     `json:"thread,omitempty"`
-	Attachments int      `json:"attachments,omitempty"`
-	Mentions    []string `json:"mentions,omitempty"`
+	Thread         bool               `json:"thread,omitempty"`
+	Attachments    int                `json:"attachments,omitempty"`
+	AttachmentMeta []BotmuxAttachment `json:"attachment_meta,omitempty"`
+	Mentions       []string           `json:"mentions,omitempty"`
 	// Source names who handed a trigger turn to BotMux (its sourceName, "Persona" for the apps' own sends).
 	Source string `json:"source,omitempty"`
 	// Final and Voice describe a reply: BotMux's --response-kind final, and a voice message.
@@ -275,6 +276,13 @@ type Botmux struct {
 	Voice bool `json:"voice,omitempty"`
 	// Truncated: the item's text was clipped inside the wrapper, so Text is only its start.
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+// BotmuxAttachment is safe attachment metadata from BotMux's structured turn record (never a local path or Lark id).
+type BotmuxAttachment struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
 }
 
 // Botmux kinds.
