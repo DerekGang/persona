@@ -264,18 +264,8 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 		}
 	} else {
 		if codexStartPaste {
-			err = n.waitCodexBox(ctx, pane)
-			if err == nil {
-				// Readiness alone does not establish an empty composer: never append
-				// the task to a draft typed by the user while this launch was waiting.
-				if err = n.codexReady(ctx, pane, true); err == nil {
-					err = n.codexType(ctx, pane, prompt, func(draft string) bool {
-						return stillPrompted(draft, prompt) || pastedRE.MatchString(draft)
-					})
-				}
-			}
-		}
-		if err == nil {
+			id, err = n.pasteCodexFirst(ctx, pane, cwd, prompt, began)
+		} else {
 			id, err = n.waitCodexThread(ctx, pane, cwd, prompt, began)
 		}
 	}
@@ -293,7 +283,9 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 		// A pane it did not open (a switch from Claude Code, engine_switch.go) is the user's terminal and is never
 		// closed: the switch quits what the start left in it (clearPane).
 		if adoptedPane(ctx) == nil {
-			start.session = n.failedCodexSession(ctx, pane, began)
+			identify, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			start.session = n.failedCodexSession(identify, pane, began)
+			cancel()
 			cleanupErr = n.closeFailedCodexStart(ctx, start)
 		}
 		if cleanupErr != nil {
@@ -336,6 +328,31 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 	s := n.sessionFor(id, a)
 	s.Agent = "codex"
 	return s, nil
+}
+
+// Readiness, paste, submit and transcript confirmation share the original startup
+// budget. Two separate 60-second waits would outlive the hub's start request.
+func (n *Node) pasteCodexFirst(ctx context.Context, pane, cwd, prompt string, began time.Time) (id string, err error) {
+	wait, cancel := context.WithTimeout(ctx, codexStartWait)
+	defer cancel()
+	defer func() {
+		if errors.Is(wait.Err(), context.DeadlineExceeded) && ctx.Err() == nil && err != nil {
+			err = &rpc.Error{Code: proto.CodeAgentStartStalled, Message: err.Error()}
+		}
+	}()
+	if err = n.waitCodexBox(wait, pane); err != nil {
+		return "", err
+	}
+	// A user may have typed into the new pane while startup was waiting.
+	if err = n.codexReady(wait, pane, true); err != nil {
+		return "", err
+	}
+	if err = n.codexType(wait, pane, prompt, func(draft string) bool {
+		return stillPrompted(draft, prompt) || pastedRE.MatchString(draft)
+	}); err != nil {
+		return "", err
+	}
+	return n.waitCodexThread(wait, pane, cwd, prompt, began)
 }
 
 // codexOnRemote: the launcher attaches to an app-server of its own (--remote).
