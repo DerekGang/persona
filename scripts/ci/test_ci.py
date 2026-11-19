@@ -404,16 +404,14 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
 
-    def test_hosted_resolution_uses_the_fixed_ide_without_changing_the_build_compiler(self):
+    def test_project_generation_uses_the_verified_xcodegen_release(self):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / '.github/workflows/apple-test.yml').read_text()
-        self.assertIn('PERSONA_RESOLVER_DEVELOPER_DIR: /Applications/Xcode_26.1.1.app/Contents/Developer', workflow)
-        self.assertIn("ci_run 'Verify supported package resolver IDE' 60 env DEVELOPER_DIR=\"$PERSONA_RESOLVER_DEVELOPER_DIR\" xcodebuild -version", workflow)
-        script = (root / 'scripts/ci/apple.sh').read_text()
-        self.assertIn('RESOLVER_DEVELOPER_DIR="${PERSONA_RESOLVER_DEVELOPER_DIR:-$DEVELOPER_DIR}"', script)
-        resolve = script.split('resolve() {', 1)[1].split('\n}', 1)[0]
-        self.assertIn('env DEVELOPER_DIR="$RESOLVER_DEVELOPER_DIR"', resolve)
-        self.assertIn('export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode_26.0.1.app/Contents/Developer}"', script)
+        self.assertIn('XCODEGEN_VERSION=2.47.0', workflow)
+        self.assertIn('XCODEGEN_SHA256=6ef12a3ef5327c2c713397f46d9160550f8b1cdc5c925cd884d65c77c9f696cd', workflow)
+        self.assertIn('shasum -a 256 -c -', workflow)
+        self.assertIn('"$tool_dir/xcodegen/bin" >> "$GITHUB_PATH"', workflow)
+        self.assertNotIn('brew install xcodegen', workflow)
 
 
 class PostgresCleanupTests(unittest.TestCase):
