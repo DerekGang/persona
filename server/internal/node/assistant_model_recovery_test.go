@@ -809,6 +809,28 @@ func TestNewModelPickKeepsItsFirstSameModelRetry(t *testing.T) {
 	}
 }
 
+// A failure on the fallback already held for the old model is not a new pick: its same-model retry stays spent, so the
+// bounded chain goes to the next model exactly as before.
+func TestActiveHoldFallbackFailureKeepsStickyNextModelBehavior(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	n, sent := recoveryTestNode(t, id, false, true)
+	n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude",
+		from: modelExecution{Model: "primary-model"}, to: modelExecution{Model: "fallback-model"},
+		at: time.Now(), until: time.Now().Add(assistantFallbackHold)}}
+	execution := n.heldFallback(id, "claude", modelExecution{Model: "primary-model"})
+	if execution.Model != "fallback-model" {
+		t.Fatalf("the active hold selected %q", execution.Model)
+	}
+	p := &assistantProc{id: id, agent: "claude", launcher: "claude", model: execution}
+	n.procs[id] = p
+	if !n.recoverAssistantResult(p, true, "API Error: 503 no eligible upstream account is currently available") {
+		t.Fatal("the fallback's transient failure was not recovered")
+	}
+	if first := waitRecoverySend(t, sent); first.Model != "last-model" {
+		t.Fatalf("the first recovery send used %q, want the next model without another same-model retry", first.Model)
+	}
+}
+
 // A probe/reset-confirmed return through the real assistantSend path releases the fallback hold, sticky record and
 // unavailable entry. Natural expiry above deliberately does less; confusing the two branches leaves either behavior broken.
 func TestRecoveryConfirmedReturnReleasesFallbackThroughAssistantSend(t *testing.T) {

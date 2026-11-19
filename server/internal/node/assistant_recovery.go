@@ -43,9 +43,9 @@ type assistantTurnRecovery struct {
 }
 
 // newAssistantRecovery is a conversation's chain begun by a failure of launcher running execution (key and current as
-// recoverAssistantResultFor has them), stored on n. When the same model choice is refused again soon after its fallback
-// answered, the same-model retry is spent already: a resend carries the refused turns again (#3788). A newer explicit
-// pick gets its own first retry instead of inheriting the old model's sticky record. n.mu is held.
+// recoverAssistantResultFor has them), stored on n. When the same model choice, or the fallback already held for it,
+// is refused again soon, the same-model retry is spent already: a resend carries the refused turns again (#3788).
+// A genuinely newer explicit pick gets its own first retry instead of inheriting the old model's sticky record. n.mu is held.
 func (n *Node) newAssistantRecovery(id, launcher string, execution modelExecution, key, current, replyModel string) *assistantTurnRecovery {
 	r := &assistantTurnRecovery{retried: map[string]bool{}, used: map[string]bool{}, launcher: launcher, from: execution}
 	if execution.Model == "" || execution.Model == "default" {
@@ -55,9 +55,12 @@ func (n *Node) newAssistantRecovery(id, launcher string, execution modelExecutio
 		r.used[current] = true
 		r.triedOrder = append(r.triedOrder, current)
 	}
-	if from, l, ok := n.recentFallback(id); ok && l == launcher && sameModelChoice(execution, from) {
-		r.from = from // what the user's setting asks for, not the fallback a failure there came from
-		r.retried[key] = true
+	if from, l, ok := n.recentFallback(id); ok && l == launcher {
+		held := n.fallbacks[id]
+		if sameModelChoice(execution, from) || held != nil && sameModelChoice(execution, held.to) {
+			r.from = from // what the user's setting asks for, not the fallback a failure there came from
+			r.retried[key] = true
+		}
 	}
 	if n.recoveries == nil {
 		n.recoveries = map[string]*assistantTurnRecovery{}
