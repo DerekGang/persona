@@ -6,6 +6,7 @@
   "tray_needs_you": "要対応",
   "next_unanswered": "次の回答待ち",
   "tray_running": "進行中",
+  "tray_finished": "完了",
   "pr_blocker_review_required": "レビューが必要",
   "pr_blocker_changes_requested": "変更が必要",
   "pr_blocker_checks_failed": "チェック失敗",

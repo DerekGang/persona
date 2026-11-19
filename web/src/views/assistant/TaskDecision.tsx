@@ -1,6 +1,7 @@
 import { taskMeter, type TaskCardMetadata } from "../../lib/task-cards";
 import { backgroundWorkLine, type BackgroundWork } from "../../lib/background-work";
 import { usageLimitLabel } from "../../lib/usage-limit";
+import { stateName } from "../../lib/state-labels";
 import { StatusMark } from "../../ui/StatusMark";
 import { shownCloseout } from "../../lib/closeout";
 import { agentRowKey, agentRowLabel, agentRowMark, agentRowTone, todoChipState, todoChipLabel } from "../../lib/task-row-status";
@@ -179,7 +180,7 @@ export function WaitingTaskRow({ rowKey, todo, status, countsOpenAttr, tasks }: 
   );
 }
 
-export function ProgressTaskRow({ card, conversation, activity, countsOpen, onOpen, tasks }: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; onOpen?: () => void; tasks: typeof draftTasks }) {
+export function ProgressTaskRow({ card, conversation, activity, countsOpen, fresh = false, onOpen, tasks }: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; fresh?: boolean; onOpen?: () => void; tasks: typeof draftTasks }) {
   const todo = tasks.useTodo(card.todo_id);
   const task = tasks.useTaskNow(todo);
   const plans = useFeed((s) => s.plans);
@@ -209,6 +210,7 @@ export function ProgressTaskRow({ card, conversation, activity, countsOpen, onOp
   // the status column is the Agent's own state, drawn with the Agents' marks; the to-do's own state is its chip (#6492)
   const agentKey = agentRowKey({ live: !!liveWork, status: state, lead: task?.lead, todo: !!todo, starting });
   const rowIsFinished = !countsOpen && finished;
+  const isNew = fresh && !countsOpen;
   const chip = todoChipState({ toStart, status: state, done: finished, stage: todo?.stage, pr, todo });
   const ask = useStore((s) => tasks.taskAsk(todo ? tasks.taskInteraction(todo, s.interactions, task?.lead) : undefined));
   // what a waiting task waits for (#3274): its agent's own line for it
@@ -231,8 +233,8 @@ export function ProgressTaskRow({ card, conversation, activity, countsOpen, onOp
       if (card.todo_id) openTask(card.todo_id);
       else window.dispatchEvent(new CustomEvent("persona:task-start", { detail: conversation }));
     }} className="grid w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)_1rem] items-center gap-x-3 gap-y-0.5 px-3 py-2.5 text-left hover:bg-hover disabled:cursor-default sm:flex sm:gap-3">
-      <span data-task-mark={rowIsFinished ? "done" : agentKey} className="col-start-1 row-start-1 flex w-4 shrink-0 justify-center">
-        {rowIsFinished ? <tasks.TaskMark status="done" size={8} /> : <StatusMark state={agentRowMark(agentKey)} size="sm" />}
+      <span data-task-mark={isNew ? "just_finished" : rowIsFinished ? "done" : agentKey} className="col-start-1 row-start-1 flex w-4 shrink-0 justify-center">
+        {isNew ? <StatusMark state="idle" finished size="sm" /> : rowIsFinished ? <tasks.TaskMark status="done" size={8} /> : <StatusMark state={agentRowMark(agentKey)} size="sm" />}
       </span>
       <div data-task-content className="col-start-2 row-start-1 min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -244,8 +246,8 @@ export function ProgressTaskRow({ card, conversation, activity, countsOpen, onOp
       </div>
       {/* the status in its own right-aligned column (the rows' states scan down it), then the row's end: › where it opens
           something, ✓ once finished, ⓘ for a usage limit (#5569) */}
-      <span data-task-status={rowIsFinished ? "done" : agentKey} className={cx("col-start-2 row-start-2 min-w-0 break-words text-xs sm:max-w-[40%] sm:shrink-0 sm:text-right", rowIsFinished ? "text-ink-2" : agentRowTone(agentKey))}>
-        {rowIsFinished ? (accepted ? t("assistant-tasks.review_accepted") : TODO_STATUS_INFO.done.label) : agentRowLabel(agentKey, task?.lead)}
+      <span data-task-status={isNew ? "just_finished" : rowIsFinished ? "done" : agentKey} className={cx("col-start-2 row-start-2 min-w-0 break-words text-xs sm:max-w-[40%] sm:shrink-0 sm:text-right", isNew ? "text-green" : rowIsFinished ? "text-ink-2" : agentRowTone(agentKey))}>
+        {isNew ? stateName("just_finished") : rowIsFinished ? (accepted ? t("assistant-tasks.review_accepted") : TODO_STATUS_INFO.done.label) : agentRowLabel(agentKey, task?.lead)}
       </span>
       <span className="col-start-3 row-start-1 flex w-4 shrink-0 justify-center">
         {finished ? <Icon name="check" className="text-green" /> : state === "usage_limit" ? <Icon name="info" className="text-orange" /> : <Icon name="chevronRight" className="text-ink-3" />}

@@ -51,8 +51,6 @@ import { Button, Collapse, cx, IconButton, Loading, Menu, toast } from "../../ui
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon, type IconName } from "../../ui/icons";
 import { AcceptRow, BriefCard } from "./Brief";
-import { setTodoSeen, todoSeenOn } from "../../lib/todo-seen";
-import { triage } from "../../lib/todo-triage";
 
 // A plan task's brief (#3822) comes with the first plan card that has one, as the decision row does.
 const PlanBrief = lazy(() => import("./TaskBrief").then((m) => ({ default: m.PlanBrief })));
@@ -86,6 +84,9 @@ const PlanEditDialog = lazyPage(() => import("./PlanEdit").then((m) => m.PlanEdi
 // "All" opens it: its code and its lib/task-board load then, not with the first screen (#4656)
 const TaskBoard = lazyPage(() => import("./TaskBoard").then((m) => m.TaskBoard));
 const ParkedTasks = lazyPage(() => import("./ParkedTaskRow").then((m) => m.ParkedTaskRows));
+// the Finished tray's rows, seeing one and its empty line come with its first opening, in the Parked rows' chunk (#10922)
+const FinishedTasks = lazyPage(() => import("./ParkedTaskRow").then((m) => m.FinishedTaskRows));
+const AcceptanceTasks = lazyPage(() => import("./ParkedTaskRow").then((m) => m.AcceptanceTaskRows));
 import { conversationTitle } from "./conversations";
 import { TaskWorkspaceEditor, TaskWorkspaceLine } from "./TaskWorkspace";
 import type { TaskWorkspace } from "../../lib/feed";
@@ -750,7 +751,8 @@ function dockTasksIn(s: State, conversation: string, plans: Record<string, TaskP
     });
 }
 
-type AssistantTray = "needs" | "running";
+type AssistantTray = "needs" | "running" | "finished";
+const TRAY_DOT: Record<AssistantTray, string> = { needs: "bg-attention", running: "bg-accent", finished: "bg-green" };
 const EMPTY_FEED: FeedItem[] = [];
 const EMPTY_CARDS: TaskCardMetadata[] = [];
 
@@ -774,7 +776,7 @@ function TaskHandoffs({ item }: { item: FeedItem }) {
 }
 
 /** One slot, one row: live task/session state wins over historical feed metadata. */
-function ProgressTaskRow(props: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; onOpen?: () => void }) {
+export function ProgressTaskRow(props: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; fresh?: boolean; onOpen?: () => void }) {
   return <Suspense fallback={<Loading />}><ProgressTaskPart {...props} tasks={draftTasks} /></Suspense>;
 }
 
@@ -943,14 +945,6 @@ export function NeedsYouBody({ item, nested = false }: { item: NeedsYouItem; nes
   </Suspense>;
 }
 
-/** Opening a Just finished row counts as seeing it (#5707), where the hub keeps seen marks; a failure leaves it there. */
-function seeJustFinished(todo: Todo) {
-  const s = getState();
-  if (!todoSeenOn(s.features)) return;
-  const tr = triage(todo, taskSessionLookup(s), Date.now());
-  if (tr.section === "just_done") void setTodoSeen(todo.id, true, tr.last).catch(() => undefined);
-}
-
 /** An Agent that belongs to no task, working: one row of In progress that opens its page. */
 function RunningAgentRow({ session, activity }: { session: Session; activity?: BackgroundWork }) {
   const detail = backgroundWorkLine(activity) ?? session.activity?.trim();
@@ -967,8 +961,9 @@ function RunningAgentRow({ session, activity }: { session: Session; activity?: B
   );
 }
 
-/** The conversation's two upward trays (#3387): Needs you, everything waiting on the user, and In progress, everything
- *  running that does not; each thing in one of them only (lib/assistant-entries). Finished things are on the board. */
+/** The conversation's upward trays (#3387): Needs you, everything waiting on the user, and In progress, everything
+ *  running that does not; each thing in one of them only (lib/assistant-entries). What finished in the last 24 hours is
+ *  under Finished (#10922), everything finished on the board (All). */
 const NO_ASKS: Interaction[] = [];
 
 /** One of the conversation's own cards in Needs you (#4883): the card itself is in the chat above the composer, as on
@@ -1045,7 +1040,7 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   // no to-do — hand-opened Agents, plans waiting for Start, draft cards, the chat's own ask cards — still add one.
   const badgeOf = (items: { kind: string; countsOpen?: boolean }[]) =>
     items.reduce((n, item) => n + (item.kind === "task" ? (item.countsOpen ? 1 : 0) : 1), 0);
-  const counts: Record<AssistantTray, number> = { needs: ownAsks.length + badgeOf(entries.needsYou), running: badgeOf(entries.running) + badgeOf(entries.parked) };
+  const counts: Record<AssistantTray, number> = { needs: ownAsks.length + badgeOf(entries.needsYou), running: badgeOf(entries.running) + badgeOf(entries.parked), finished: entries.finished.length };
   // the card is in the chat already: close the tray onto it and bring it into view. A folded stack shows only its first
   // card, so use its existing expander before looking for another one (#10347).
   const scrollOwn = (id: string, keepBar = false) => {
@@ -1091,8 +1086,8 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
       window.removeEventListener("persona:task-start", needs);
     };
   }, [conversation]);
-  const labels: Record<AssistantTray, string> = { needs: t("assistant-tasks.tray_needs_you"), running: t("assistant-tasks.tray_running") };
-  const entryKeys: AssistantTray[] = ["needs", "running"];
+  const labels: Record<AssistantTray, string> = { needs: t("assistant-tasks.tray_needs_you"), running: t("assistant-tasks.tray_running"), finished: t("assistant-tasks.tray_finished") };
+  const entryKeys: AssistantTray[] = ["needs", "running", ...(entries.finished.length > 0 || tray === "finished" ? ["finished" as const] : [])];
   const entryButtons = useRef<Partial<Record<AssistantTray, HTMLButtonElement | null>>>({});
   // Esc closes the open tray from its entry, its header and its rows, and hands the focus back to the entry; it stops
   // there, never on to the window, where the chat's Esc would stop a working turn. Not while a menu or dialog is open
@@ -1133,14 +1128,12 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
               </button>
             )}
             {showShelved && entries.shelved.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} activity={item.activity} countsOpen={item.countsOpen} />)}
-            {/* what just finished, under its own heading and not counted (#8237): how a task ended, instead of a card in the chat */}
-            {entries.justFinished.length > 0 && (
-              <div data-progress-just-finished className="flex w-full items-center gap-2 px-3 py-2 text-xs text-ink-2">
-                <span className="min-w-0 flex-1 truncate">{stateName("just_finished")}</span>
-                <span className="shrink-0 tabular-nums">{entries.justFinished.length}</span>
-              </div>
-            )}
-            {entries.justFinished.map((item) => item.kind === "task" && <ProgressTaskRow key={item.key} card={item.card} conversation={conversation} countsOpen={false} onOpen={() => seeJustFinished(item.todo)} />)}
+            {entries.justFinished.length > 0 && <Suspense fallback={<Loading />}><AcceptanceTasks items={entries.justFinished} conversation={conversation} /></Suspense>}
+          </div>}
+          {/* how a task ended, instead of a card in the chat (#8237): what finished in the last 24 hours, newest first, seen
+              or not; one nobody opened yet says Just finished (#10922) */}
+          {tray === "finished" && <div data-tray-finished className="divide-y divide-line">
+            <Suspense fallback={<Loading />}><FinishedTasks items={entries.finished} conversation={conversation} /></Suspense>
           </div>}
           {tray === "needs" && <div className="flex flex-col gap-2 p-2">
             {asking.map((item) => <NeedsYouRow key={item.key} item={item} open={openRows.has(openKey(item))} onToggle={() => toggleRow(openKey(item))} />)}
@@ -1180,9 +1173,9 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
               aria-expanded={open}
               aria-controls={open ? trayId : undefined}
               onClick={() => setTray(open ? null : key)}
-              className={cx(DOCK_CAPSULE, "gap-2 font-medium", open ? "bg-ink text-surface" : quiet ? "bg-field text-ink-3 hover:bg-hover" : "bg-field text-ink hover:bg-hover")}
+              className={cx(DOCK_CAPSULE, "gap-2 font-medium", open ? "bg-ink text-surface" : quiet ? "bg-field text-ink-3 hover:bg-hover" : key === "finished" ? "bg-field text-ink-2 hover:bg-hover" : "bg-field text-ink hover:bg-hover")}
             >
-              <span aria-hidden className={cx("size-2 shrink-0 rounded-full", quiet ? "bg-ink-3" : key === "needs" ? "bg-attention" : "bg-accent")} />
+              <span aria-hidden className={cx("size-2 shrink-0 rounded-full", quiet ? "bg-ink-3" : TRAY_DOT[key])} />
               <span>{labels[key]}</span>
               {counts[key] > 0 && <span className={cx("tabular-nums", !open && "text-ink-2")}>{counts[key]}</span>}
             </button>

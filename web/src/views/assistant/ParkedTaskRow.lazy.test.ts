@@ -42,7 +42,7 @@ describe("wait information stays off the first screen", () => {
     expect(details).toContain("export function ProgressTaskRow(");
     expect(details).toContain("function TaskProgressMeter(");
     expect(details).toContain("tasks.BackgroundWorkDetail");
-    expect(details).toContain('data-task-status={rowIsFinished ? "done" : agentKey}');
+    expect(details).toContain('data-task-status={isNew ? "just_finished" : rowIsFinished ? "done" : agentKey}');
   });
 
   it("keeps all three workspace summary modes available before details load", () => {

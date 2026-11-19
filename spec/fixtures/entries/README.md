@@ -6,7 +6,8 @@ acceptance is in `just_finished`, shown below In progress but uncounted. There a
 entries. The Web keeps its existing internal `parked` array, drawn inside Waiting; the shared expected `running`
 combines that array with real execution. This is a compatibility representation, not another section model.
 
-`needs_you`, `running`, `shelved` and `just_finished` contain stable row keys. The last group sorts newest first,
+`needs_you`, `running`, `shelved` and `just_finished` contain stable row keys. `finished` lists the last 24 hours of
+finished work (#10922), and `finished_new` identifies rows the owner has not opened since they finished. The last group sorts newest first,
 then by key on equal timestamps. `activity` and `waiting` describe real background activity and external holds.
 `supervisor_review` is empty: a pending acceptance is not counted active work or an owner decision because it aged.
 

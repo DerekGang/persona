@@ -250,6 +250,7 @@ var rpcFailureKeys = map[string]string{
 	"codex_first_unconfirmed":  "rpc-errors.codex_first_unconfirmed",
 	"codex_waiting":            "rpc-errors.codex_waiting",
 	"codex_compact_busy":       "rpc-errors.codex_compact_busy", // a /compact while its app-server runs a turn (node/codex_remote_compact.go, #10188)
+	"codex_writer_busy":        "rpc-errors.codex_writer_busy",
 	"codex_no_box":             "rpc-errors.codex_no_box",
 	"codex_no_box_here":        "rpc-errors.codex_no_box_here", // the same in a pane the user picked (#5504)
 	"prompt_changed":           "rpc-errors.prompt_changed",
@@ -407,10 +408,11 @@ func RPCText(l i18n.Lang, text string) string {
 // codeActions are the refusals whose words the hub writes itself, wherever they came from (the assistant, a node),
 // with what a client offers to fix each (docs/assistant/onboarding.md 4.6, 5.2).
 var codeActions = map[string]string{
-	proto.CodeNoMachine:       "add_computer",
-	proto.CodeMachinePending:  "confirm_computer",
-	proto.CodeClaudeMissing:   "install_claude",
-	proto.CodeLauncherMissing: "connect_model",
+	proto.CodeNoMachine:        "add_computer",
+	proto.CodeMachinePending:   "confirm_computer",
+	proto.CodeClaudeMissing:    "install_claude",
+	proto.CodeLauncherMissing:  "connect_model",
+	proto.TurnErrorNotLoggedIn: "connect_model",
 }
 
 // OnMachine is err naming the machine (its display name) it was refused on, when it is one of the refusals the hub

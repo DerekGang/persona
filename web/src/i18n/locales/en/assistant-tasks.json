@@ -6,6 +6,7 @@
   "tray_needs_you": "Needs you",
   "next_unanswered": "Next waiting for your answer",
   "tray_running": "In progress",
+  "tray_finished": "Finished",
   "pr_blocker_review_required": "Review required",
   "pr_blocker_changes_requested": "Changes requested",
   "pr_blocker_checks_failed": "Checks failed",

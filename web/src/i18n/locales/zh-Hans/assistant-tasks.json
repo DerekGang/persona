@@ -6,6 +6,7 @@
   "tray_needs_you": "要你处理",
   "next_unanswered": "下一条等你回复",
   "tray_running": "进行中",
+  "tray_finished": "已完成",
   "pr_blocker_review_required": "需要审查",
   "pr_blocker_changes_requested": "需要修改",
   "pr_blocker_checks_failed": "检查未通过",
