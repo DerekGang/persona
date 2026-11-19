@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -202,6 +203,12 @@ func (s *Service) advanceTaskReplyAt(ctx context.Context, t Todo, machine, sessi
 	}
 	if pr != "" {
 		s.learnRepoRoot(ctx, machine, session, pr)
+	}
+	if replyNamesOtherPR(text, cmp.Or(pr, t.PRURL)) && (!marked || d.State != deliveryNone) {
+		if pr != "" {
+			s.setTaskStage(ctx, t.ID, "review", pr)
+		}
+		return false // the reported merge or deploy is not attributable to this task
 	}
 	if pr != "" && stage == "develop" && !marked {
 		stage = "review" // as stageOf has it for a linked PR (#7921)

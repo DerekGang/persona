@@ -683,7 +683,7 @@ func (s *Service) settleTurnReporting(ctx context.Context, machine, sid, unheard
 		text = answer
 	}
 	// A paged reply may have lost its tail (the file lines and the closeout are there): read the whole item.
-	text = s.taskAnswer(cctx, machine, sid, items, text)
+	text = s.taskAnswer(cctx, last.MachineID, last.SessionID, items, text)
 	if current, ok := s.todoNow(t.ID); !ok || current.Cancelled() || current.AgentAborted(machine, sid) {
 		s.logf("task %s: cancelled or agent %s/%s aborted: not issuing done receipt", t.ID, machine, sid)
 		return settleRefused
@@ -710,12 +710,10 @@ func (s *Service) settleTurnReporting(ctx context.Context, machine, sid, unheard
 		} else {
 			body.Criteria = list
 		}
+		body.PR = s.ownedReplyPR(cctx, current, last.MachineID, last.SessionID, text, taskReplyItem(items).TS)
 	}
 	if body.Summary == "" {
 		body.Summary = i18n.T(s.lang(cctx), "assistant-tasks.done")
-	}
-	if pr := prLink.FindAllString(text, -1); len(pr) > 0 {
-		body.PR = pr[len(pr)-1]
 	}
 	// One receipt, one judgment and one supervision signal for each turn the runtime closed, whatever tells of its end
 	// and however often. The ledger says whether this turn was taken up before; its receipt has one id, so the feed

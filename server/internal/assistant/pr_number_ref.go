@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistant/repository"
 	"github.com/nwverse/persona/server/internal/closeout"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -26,6 +27,7 @@ var (
 	githubRepoLink        = lazyre.New(`https://github\.com/([\w.-]+/[\w.-]+)/(?:pull|issues)/\d+`)
 	closeoutApplicability = lazyre.New(`\b(merged|deployed)\s*=\s*"([^"]*)"`)
 	closeoutPRLine        = lazyre.New(`(?im)^[\t *-]*artifact\s*[:\x{ff1a}]\s*pr(?:\s|:|$)`)
+	replyPRNumber         = lazyre.New(`(?i)(?:^|[^\w/&#])(?:(build[ \t]*)|([\w.-]+/[\w.-]+))?#(\d+)\b`)
 )
 
 // repoRootsKey keeps, per computer and repository root, the GitHub repository its agents' PRs went to.
@@ -84,6 +86,73 @@ func closeoutPRRef(text string) string {
 		return ""
 	}
 	return ref
+}
+
+func sameReplyPR(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	_, left, leftErr := repository.ParseTaskLink(a)
+	_, right, rightErr := repository.ParseTaskLink(b)
+	return leftErr == nil && rightErr == nil && left.Kind == "pull_request" && left.CanonicalURL == right.CanonicalURL
+}
+
+// replyNamesOtherPR prevents an unqualified status word from being applied to the task's PR when the reply
+// also names a different change. A bare #number can refer to a dependency even without the word PR.
+func replyNamesOtherPR(text, pr string) bool {
+	links := prLink.FindAllString(text, -1)
+	if deliveryCloseout(text) != "" {
+		links = append(links, taskRepositoryReportLinks(text)...)
+	}
+	for _, link := range links {
+		if !sameReplyPR(link, pr) {
+			return true
+		}
+	}
+	known := ciPRURL.FindStringSubmatch(pr)
+	for _, ref := range replyPRNumber.FindAllStringSubmatch(text, -1) {
+		if ref[1] != "" { // build #1234
+			continue
+		}
+		if known == nil || ref[3] != known[2] || ref[2] != "" && !strings.EqualFold(ref[2], known[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownedReplyPR selects delivery evidence without changing the to-do or importing repository links.
+// Its saved PR is already eligible. Any new PR must pass the same ownership check as a report.
+func (s *Service) ownedReplyPR(ctx context.Context, t Todo, machine, session, text string, at time.Time) string {
+	urls := prLink.FindAllString(text, -1)
+	if deliveryCloseout(text) != "" {
+		urls = taskRepositoryReportLinks(text)
+	}
+	if len(urls) == 0 && prNumberIn(text) == "" {
+		return t.PRURL
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if len(urls) == 0 {
+		if pr := s.prFromNumber(ctx, t, machine, session, text); pr != "" {
+			urls = append(urls, pr)
+		}
+	}
+	var candidates []repository.LinkInput
+	for _, url := range urls {
+		if sameReplyPR(url, t.PRURL) {
+			return t.PRURL
+		}
+		candidates = append(candidates, repository.LinkInput{URL: url})
+	}
+	owned, err := s.ownedTaskRepositoryLinkInputs(ctx, t, machine, session, candidates, text, at)
+	if err == nil && len(owned) > 0 {
+		return owned[len(owned)-1].URL
+	}
+	return t.PRURL
 }
 
 // deliveryCloseout accepts the reply's own final record, not a quoted example or an earlier reference.
