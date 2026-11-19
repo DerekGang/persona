@@ -1007,21 +1007,52 @@ func TestAssistantPendingFailureUsesTheReplacementProcess(t *testing.T) {
 }
 
 // A task's explicit execution choice keeps the same-model retry, then surfaces the error without a model switch.
-func TestTaskExecutionNeverFallsBackToAnotherModel(t *testing.T) {
+func TestTaskExecutionEachTurnCanRetryWithoutModelFallback(t *testing.T) {
 	f := cliTest(t)
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "bin", "claude"), []byte("#!/bin/sh\n"+claudeLikeCLI), 0700); err != nil {
 		t.Fatal(err)
 	}
-	id, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "task request", nil, "", "", modelExecution{Strict: true})
-	if err != nil {
-		t.Fatal(err)
+	cwd := t.TempDir()
+	execution := modelExecution{Strict: true}
+	var id string
+	var process *assistantProc
+	for turn := 1; turn <= 3; turn++ {
+		// Every turn and its retry receive the same transient failure from the fake process.
+		if err := os.WriteFile(filepath.Join(f.dir, "attempts"), []byte("0\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		next, err := f.n.assistantSend(t.Context(), id, cwd, "claude", "task request", nil, "", "", execution)
+		if err != nil || (id != "" && next != id) {
+			t.Fatalf("send turn %d: previous=%q next=%q error=%v", turn, id, next, err)
+		}
+		id = next
+		cliWait(t, "the same-model retry", func() bool {
+			return strings.Count(f.file("user.jsonl"), `"type":"user"`) >= 2*turn
+		})
+		f.idle(t, id)
+		if count := strings.Count(f.file("user.jsonl"), `"type":"user"`); count != 2*turn {
+			t.Fatalf("turn %d ended after %d total attempts, want %d", turn, count, 2*turn)
+		}
+		p := f.proc(id)
+		if p == nil {
+			t.Fatalf("turn %d lost its process", turn)
+		}
+		if turn == 1 {
+			process = p
+		} else if p != process {
+			t.Fatalf("turn %d replaced the process", turn)
+		}
+		p.mu.Lock()
+		model, failure, recovery := p.model, p.turnError, p.turnRecovery
+		p.mu.Unlock()
+		if !model.Strict || model.Model == "fallback-model" || !strings.Contains(failure, "503") {
+			t.Errorf("turn %d ended with model %+v and error %q", turn, model, failure)
+		}
+		if recovery != nil {
+			t.Errorf("turn %d left its exhausted recovery on the idle process", turn)
+		}
 	}
-	cliWait(t, "the same-model retry", func() bool { return strings.Count(f.file("user.jsonl"), `"type":"user"`) == 2 })
-	f.idle(t, id)
 	if strings.Contains(f.file("cli-argv"), "--model fallback-model") {
 		t.Fatal("task silently changed models")
-	}
-	if p := f.proc(id); p == nil || !p.model.Strict || p.model.Model == "fallback-model" {
-		t.Fatalf("task execution choice was lost: %+v", p)
 	}
 }
