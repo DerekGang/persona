@@ -131,7 +131,7 @@ nonisolated enum AssistantEntries {
             else if s?.waitsToBeWoken == true { waiting = true }
             else if st == .working || s?.starting == true { working = true }
         }
-        if interrupted { return .interrupted }
+        if interrupted, !working, !waiting, todo.supervision?.state != "parked" { return .interrupted }
         if limit { return .usageLimit }
         if unread { return .unread }
         if working { return .working }
@@ -870,6 +870,7 @@ struct AssistantActionBar: View {
                                  detail: activity.isActive && status == .waiting ? StateName.working.text : detail(todo, status: status, agents: agents),
                                  tint: tint(status), subtitle: subtitle(todo, status: status, lead: lead, activity: activity),
                                  subtitleTint: status == .failed || status == .interrupted ? Theme.danger : nil,
+                                 subtitleLines: APIErrorInfo.unrecoverable(lead?.turnError) ? nil : 1,
                                  trail: .open, activity: activity, stackDetail: true) {
                                 if open != .needsYou && (activity.isActive || status == .working) {
                                     WorkingIndicator().accessibilityIdentifier("action-tray.working-mark")
@@ -962,7 +963,10 @@ struct AssistantActionBar: View {
     private func detail(_ todo: TodoItem, status: AssistantEntries.Status, agents: Int) -> String {
         let resting = status == .followUp || status == .unread || status == .notStarted
         var parts: [String]
-        if status == .interrupted { parts = [String(localized: "Interrupted [Chat Layout]")] }
+        if status == .interrupted, APIErrorInfo.unrecoverable(store.leadSession(todo)?.turnError) {
+            parts = [String(localized: "Invalid conversation")]
+        }
+        else if status == .interrupted { parts = [String(localized: "Interrupted [Chat Layout]")] }
         else if status == .usageLimit { parts = [String(localized: "Usage Limit")] }
         else if resting || status == .waiting, todo.doneAt == nil {
             let lead = store.leadSession(todo)
@@ -1044,7 +1048,9 @@ struct AssistantActionBar: View {
     /// that failed, Continue for a turn the model service cut off (or a usage limit nothing continues by itself).
     @ViewBuilder private func actions(_ todo: TodoItem, status: AssistantEntries.Status, lead: Session?) -> some View {
         let retry = status == .failed && store.state(todo) == .failed
-        let resume = status == .interrupted || status == .usageLimit && lead.map { !$0.usageLimitContinues } == true
+        let invalid = lead?.turnErrorKind == "unrecoverable" || lead?.turnErrorCode == "compaction_sealed" ||
+            APIErrorInfo.unrecoverable(lead?.turnError)
+        let resume = !invalid && (status == .interrupted || status == .usageLimit && lead.map { !$0.usageLimitContinues } == true)
         if retry || resume || status == .failed {
             let busy = store.busyRetries.contains(todo.id)
             HStack(spacing: Theme.Space.s) {
@@ -1156,7 +1162,7 @@ struct AssistantActionBar: View {
     /// What follows a row's words on the right.
     private enum Trail { case none, open, folded, expanded }
 
-    private func line<Mark: View>(title: String, detail: String, tint: Color? = nil, subtitle: String? = nil, subtitleTint: Color? = nil,
+    private func line<Mark: View>(title: String, detail: String, tint: Color? = nil, subtitle: String? = nil, subtitleTint: Color? = nil, subtitleLines: Int? = 1,
                                   trail: Trail = .open, activity: AssistantTrayActivity = .init(), stackDetail: Bool = false,
                                   @ViewBuilder mark: () -> Mark) -> some View {
         HStack(spacing: Theme.Space.s) {
@@ -1175,7 +1181,7 @@ struct AssistantActionBar: View {
                         .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                 }
                 if let subtitle {
-                    Text(subtitle).font(Theme.Font.caption).lineLimit(1)
+                    Text(subtitle).font(Theme.Font.caption).lineLimit(subtitleLines)
                         .foregroundStyle(subtitleTint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                         .accessibilityIdentifier("action-tray.subtitle")
                 }
