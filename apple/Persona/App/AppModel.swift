@@ -1030,6 +1030,7 @@ final class AppModel {
 
     /// Sign Out of everything: every group, every hub (Settings › Disconnect with one group, a revoked credential of this device).
     func unpair() {
+        forgetSeen()
         LarkChatOutbox.forget()
         // No hub left to answer: the open questions are denied, their results have nowhere to go.
         phoneConfirmations.denyAll()
@@ -3646,6 +3647,21 @@ final class AppModel {
             }
             list[i].markLocallySeen()
             sessionsByMachine[key.machineRef] = list
+            sessionLists.markSeen([key], model: self)
+        }
+    }
+
+    func keepSeen(in list: SessionListModel<Session>) {
+        guard !seenOutbox.marks.isEmpty else { return }
+        list.keepSeen { seenOutbox.marks[$0] != nil }
+    }
+
+    /// Retire marks and their held row when their pairing is forgotten. Reconnecting keeps both.
+    func forgetSeen(in groups: Set<String>? = nil) {
+        seenOutbox.forget(groups: groups)
+        if let heldInList, groups?.contains(heldInList.group) ?? true {
+            self.heldInList = nil
+            heldJustFinished = false
         }
     }
 
@@ -3662,10 +3678,14 @@ final class AppModel {
             socket.send(["type": "seen", "machine_id": key.machineID, "session_id": key.sessionID])
             scheduleSeenCheck()
         } else if let api = api(key.group) {
-            seenOutbox.sent(key, .http, at: Date())
+            let owner = link(key.group)
+            let markID = seenOutbox.sent(key, .http, at: Date())
             Task {
+                guard link(key.group) === owner else { return }
                 // A failed one waits for the socket to come back (`hello`).
-                if (try? await api.post("/api/v1/sessions/\(key.machineID)/\(key.sessionID)/seen")) != nil { seenOutbox.answered(key) }
+                if (try? await api.post("/api/v1/sessions/\(key.machineID)/\(key.sessionID)/seen")) != nil {
+                    seenOutbox.answered(key, markID: markID)
+                }
             }
         }
     }
@@ -3683,14 +3703,21 @@ final class AppModel {
 
     /// Mark All as Read: every finished-unread one of these, in one update of the list.
     func markSeen(_ keys: [SessionKey]) {
-        let unread = keys.filter { key in session(key).map { $0.needsSeen(muted: isMuted($0)) } == true }
+        let unread = keys.filter { key in sessionIndex[key].map { $0.needsSeen(muted: isMuted($0)) } == true }
         guard !unread.isEmpty else { return }
         for key in unread { sendSeen(key) }
         var lists = sessionsByMachine
-        for key in unread {
-            if let i = lists[key.machineRef]?.firstIndex(where: { $0.sessionID == key.sessionID }) { lists[key.machineRef]![i].markLocallySeen() }
+        for (machine, keys) in Dictionary(grouping: unread, by: \.machineRef) {
+            guard var list = lists[machine] else { continue }
+            var remaining = Set(keys.map(\.sessionID))
+            for i in list.indices {
+                if remaining.isEmpty { break }
+                if remaining.remove(list[i].sessionID) != nil { list[i].markLocallySeen() }
+            }
+            lists[machine] = list
         }
         sessionsByMachine = lists
+        sessionLists.markSeen(unread, model: self)
         Haptics.success()
     }
 
@@ -4381,6 +4408,7 @@ final class AppModel {
     /// What the app holds about groups that are no longer there.
     func forgetGroups(_ gone: Set<String>, keepingPushKeys: Bool = false) {
         guard !gone.isEmpty else { return }
+        forgetSeen(in: gone)
         if !keepingPushKeys { LarkChatOutbox.forget(groups: gone) }
         toolResults.forget(groups: gone)
         PortForwarder.shared.close(groups: gone)
