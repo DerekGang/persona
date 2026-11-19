@@ -445,12 +445,20 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // effortTitle, and home.task_agents_more). 205 B in ja, measured in one environment against main e7a12f7323 (ja
 // 482,497 B to 482,702 B; en 479,378 B to 479,585 B, zh-Hans 480,224 B to 480,422 B). Main had 29 B of room, so the
 // budget is this ja size plus those 29 B.
+// #9745: Overview's extension cards drawn as the user arranged them add 749 B in ja, measured in one environment
+// against main 54408eed1b (ja 478,171 B to 478,920 B; en 475,161 B to 475,957 B, zh-Hans 476,023 B to 476,809 B): the
+// arrangement's store, kept per hub and sign-in, with the revision Reset's Undo checks, and the order, hidden cards and
+// widths it draws (lib/overview-cards.ts), Arrange cards in Overview's top bar, and the arrangement to and from the hub
+// with the start page, one change on its way at a time and pushes heard during it settled once the hub pushed it, a
+// read a later hello or another sign-in overtook left alone (lib/start-page.ts). The editor (its heading, each card's
+// controls, the drag and the edits) is a chunk of its own (views/extensions/OverviewArrange.tsx, lib/overview-edit.ts).
+// Main had 4,560 B of room, so the budget is this ja size plus those 4,560 B.
 // #10822: Colored sidebar icons, an Appearance choice off by default: the choice's store and the built-in pages' colors
-// (lib/sidebar-icons.ts), read where the sidebar draws its pages, and the style a colored icon takes. 179 B in each
-// language, measured in one environment against main 4cb7450ec4 (ja 479,051 B to 479,230 B; en 476,160 B to 476,339 B,
-// zh-Hans 476,915 B to 477,094 B); the setting's row and words load with Settings. Main had 3,680 B of room, so the
-// budget is this ja size plus those 3,680 B.
-export const FIRST_SCREEN_BUDGET = 482_910;
+// (lib/sidebar-icons.ts), read where the sidebar draws its pages, and the style a colored icon takes. 356 B in each
+// language, measured in one environment against main baacfe89c6 (ja 480,552 B to 480,908 B; en 477,626 B to 477,982 B,
+// zh-Hans 478,364 B to 478,720 B); the setting's row and words load with Settings. Main had 2,928 B of room, so the
+// budget is this ja size plus those 2,928 B.
+export const FIRST_SCREEN_BUDGET = 483_836;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
