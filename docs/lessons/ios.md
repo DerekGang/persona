@@ -154,6 +154,16 @@ the fix and 448 KB after; the Assistant page went from 906 to 573 KB and a conve
 
 A SwiftUI container's `accessibilityIdentifier` can replace the identifiers on a nested `Menu` and `ScrollView`, while the buttons inside the scroll view keep theirs. The Agents capsule looked correct and its filters remained queryable, but its grouping icon was exposed under the capsule's identifier instead of `agents.grouping`. Put identifiers on the actionable controls, not on their surrounding capsule, and test both the menu's identity and its fixed frame after a horizontal drag.
 
+## Headings that must line up across a list's sections (2026-11-19, #10551)
+
+The Sidebar layout's Agents heading sat 12 pt further below Persona Chats than Persona Chats below Pages: the list's
+default section spacing came between the Persona rows' section and the Agents' one, and the Agents heading's own row was
+a 44 pt frame around its top padding with its words centred over its buttons. Hidden headers and separators do not remove
+that gap; `.listSectionSpacing(.custom(0))` on the section before it does. Give headings that should look alike one
+box (`SidebarHeadingBox`) and keep a heading's buttons out of its height, then measure the rows (`XCUIElement.cells`),
+not the headings' own elements: a SwiftUI button that is a row's only element reported the whole 52 pt cell, its
+neighbour with a tally its 44 pt label.
+
 ## A bar button's color goes on its label, not on the button (2026-11-17, #9653)
 
 In an iOS 26 toolbar, `.foregroundStyle(Color.primary)` on a `ToolbarItem`'s `Button` is ignored: the bar draws the button's label in the app's tint. Settings' ✕ carried that modifier from 11-01 and still showed in the orange accent. Style the label inside the button (`Text(…).sheetBarLabel()`, `ThemedIcon(…).sheetBarLabel()`, as `SheetClose` does). The system's own close button (`Button(role: .close)` with no label) is no way out of this: it draws its ✕ in the tint too (blue on the extension Update sheet, 11-17). Check a bar's colors in a screenshot, dark included, not in the code.
@@ -963,7 +973,10 @@ Use an invalidation revision as the task key and handle the flag after completio
 - The hub continuously pushes lists, machines and steps; every push reevaluates consumers. Do not attach active controls to them (`docs/archive/apple/live-updates.md`):
   toolbars in data-driven views are resubmitted to UIKit each push, resetting open overflow-menu scroll position even with unchanged content. `ChatsView` handles navigation / toolbar, `AgentsList` handles the list
   (after splitting, `ChatsView.body` must read `searching`, otherwise chats opened from search retain the system navigation bar, `SearchOpenTests`);
-  closure environment values in body (`.environment(\.openFile) { … }`) are new each time, reevaluating every reading row (all visible work steps per push); use once-created `ChatActions`;
+  closure environment values in body (`.environment(\.openFile) { … }`) are new each time, reevaluating every reading row (all visible work steps per push); use once-created `ChatActions`.
+  A closure read from the environment is reported changed each time SwiftUI looks, even the same one handed down once (`_printChanges`): a list moving windows, a tab switch or anything above
+  that makes SwiftUI look at a row's inputs again runs every row that reads one. Hand an object down instead, one for the life of the view that makes it (`FileOpener`, `SpaceOpener`,
+  `SplitShowList`, #10303); a `Binding(get:set:)` and a binding through `Bindable` are reported changed the same way, a `@State` binding is not;
   observe `model.session(key)` per session (`SessionCell`), not all-machine lists. Keep fullscreen viewers and row expansion state on the page, not lazy rows.
   Measure with `LiveUpdateTests` (`/mock/churn` continuous pushes, `-perfCounts YES` reporting body counts and main-thread time per round).
 - Badges (pending count, Inbox Needs you) change almost every push; their consumers must not contain pages or menus (2026-11-01, TestFlight 70 "it's back", `docs/archive/apple/live-updates.md`):
