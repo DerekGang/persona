@@ -303,7 +303,7 @@ func (s *postSendInboxStore) PutInboxItem(ctx context.Context, id string, data [
 
 func TestExistingTaskInboxHandoffPersistsAfterSendCallerEnds(t *testing.T) {
 	for _, delivery := range []string{"sent", "queued"} {
-		for _, ending := range []string{"canceled", "deadline"} {
+		for _, ending := range []string{"canceled", "deadline", "inline canceled"} {
 			t.Run(delivery+"/"+ending, func(t *testing.T) {
 				var caller context.Context
 				var cancel context.CancelFunc
@@ -311,7 +311,7 @@ func TestExistingTaskInboxHandoffPersistsAfterSendCallerEnds(t *testing.T) {
 				writes := 0
 				st := &postSendInboxStore{DB: todoTestDB(t), beforeLink: func(ctx context.Context) {
 					writes++
-					if ending == "canceled" {
+					if ending != "deadline" {
 						cancel()
 					}
 					<-caller.Done() // the send succeeded; its caller stops waiting during the association write
@@ -338,19 +338,26 @@ func TestExistingTaskInboxHandoffPersistsAfterSendCallerEnds(t *testing.T) {
 					return map[string]bool{"queued": delivery == "queued"}, nil
 				})
 				ctx := context.WithValue(t.Context(), contextKey{}, "kept")
-				if ending == "canceled" {
+				if ending != "deadline" {
 					caller, cancel = context.WithCancel(ctx)
 				} else {
 					caller, cancel = context.WithTimeout(ctx, 2*time.Second)
 				}
 				defer cancel()
-				raw, err := json.Marshal(existingInboxArgs("agent_send", todo, ""))
+				args := existingInboxArgs("agent_send", todo, "")
+				if ending == "inline canceled" {
+					args["wait_seconds"] = 1
+				}
+				raw, err := json.Marshal(args)
 				if err != nil {
 					t.Fatal(err)
 				}
 				result := s.Tool(caller, ToolCall{MachineID: "server", SessionID: "conv1", Name: "agent_send", Arguments: raw})
 				if result.IsError || len(result.Content) == 0 {
 					t.Fatalf("delivered message lost its persisted Inbox handoff: %+v", result)
+				}
+				if ending == "inline canceled" && !strings.Contains(result.Content[0].Text, `"state":"cancelled"`) {
+					t.Fatal("the inline wait must acknowledge cancellation after saving the Inbox link", result.Content)
 				}
 				if !strings.Contains(result.Content[0].Text, "Inbox item "+it.ID+" now links to task "+todo.ID) {
 					t.Fatal("successful send did not report its saved association", result.Content)

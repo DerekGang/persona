@@ -324,6 +324,10 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		_ = json.Unmarshal(args, &a)
 		return s.toolAgentRead(ctx, a.Machine, a.SessionID, a.Turns)
 	case "agent_send":
+		wait, waitErr := agentWaitDuration(args)
+		if waitErr != nil {
+			return "", waitErr
+		}
 		var a struct {
 			Machine   string `json:"machine"`
 			SessionID string `json:"session_id"`
@@ -423,7 +427,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 				return "", task.sendFailed(ctx, s, fmt.Errorf("%w; nothing was sent", err))
 			}
 		}
-		finish := func(ctx context.Context, result string) (string, error) {
+		persistInbox := func(ctx context.Context, result string) (string, error) {
 			if source.InboxItem == "" {
 				return result, nil
 			}
@@ -467,6 +471,18 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		// The user's attachments, copied to the agent's computer when it is another one: the text ends with them, the
 		// pictures in the <attached_images> block a picture sent straight to the agent ends with (#2437).
 		params := sendParams(c.SessionID, text, a.DismissNotice)
+		inputID := ""
+		if wait > 0 {
+			inputID = "wait_" + randomHex(16)
+			params["client_msg_id"] = inputID
+		}
+		finish := func(sendCtx context.Context, receipt string) (string, error) {
+			receipt, err := persistInbox(sendCtx, receipt)
+			if err != nil {
+				return receipt, err
+			}
+			return s.waitAgentReply(ctx, receipt, inputID, wait, fixedWaitTarget(am.ID, c.SessionID)), nil
+		}
 		var handed handedAttachments
 		if mentioned := s.mentionedAttachments(ctx, machine, self, a.Text, atts); len(atts)+len(mentioned) > 0 {
 			handed = s.handAttachments(ctx, machine, am.ID, atts, mentioned)
@@ -548,6 +564,10 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 	case "agent_autoname_receipt":
 		return s.toolAgentAutonameReceipt(ctx, machine, self, args) // agent_naming_receipt.go
 	case "agent_start":
+		wait, waitErr := agentWaitDuration(args)
+		if waitErr != nil {
+			return "", waitErr
+		}
 		var a struct {
 			Machine  string `json:"machine"`
 			Cwd      string `json:"cwd"`
@@ -786,6 +806,11 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			}
 			note += hand.granted(approvedBy)
 		}
+		inputID := ""
+		if wait > 0 {
+			inputID = "wait_" + randomHex(16)
+			params["client_msg_id"] = inputID
+		}
 		err = s.call(sctx, am.ID, DeviceSessionStart, params, &res)
 		if reason, refused := s.ultracodeRefusal(ctx, err, params); refused {
 			delete(params, "ultracode")                                  // an extra the agent it landed on cannot have: it starts without it (#3596)
@@ -814,12 +839,15 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if said := s.startInsteadNote(ctx, am, res.Instead, res.Session); said != "" {
 			note += " Note: " + said + "." // the engine ran another of the same kind, its default model, a lower effort (#8140)
 		}
+		finish := func(receipt string) string {
+			return s.waitAgentReply(ctx, receipt, inputID, wait, fixedWaitTarget(am.ID, res.Session.SessionID))
+		}
 		s.inboxAgentStarted(ctx, self, am.ID, res.Session.SessionID, a.Prompt) // an inbox event's conversation: its chain
 		if told, ok := s.quietAgentTask(ctx, self, am, a.Cwd, a.Prompt, params["tab_name"], res.Session.SessionID); ok {
-			return fmt.Sprintf("Started on %s in %s: session %s, a task of this conversation (its card is in the conversation; "+
-				"%s).%s", am.Name, a.Cwd, res.Session.SessionID, told, note), nil
+			return finish(fmt.Sprintf("Started on %s in %s: session %s, a task of this conversation (its card is in the conversation; "+
+				"%s).%s", am.Name, a.Cwd, res.Session.SessionID, told, note)), nil
 		}
-		return fmt.Sprintf("Started on %s in %s: session %s. It shows up in the app's Agents tab.%s", am.Name, a.Cwd, res.Session.SessionID, note), nil
+		return finish(fmt.Sprintf("Started on %s in %s: session %s. It shows up in the app's Agents tab.%s", am.Name, a.Cwd, res.Session.SessionID, note)), nil
 	}
 	return "", fmt.Errorf("unknown tool %s", name)
 }
