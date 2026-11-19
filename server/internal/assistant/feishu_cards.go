@@ -56,7 +56,7 @@ func (s *Service) feishuInteraction(ix proto.Interaction) {
 }
 
 // feishuCardWanted: the bot posts a card for ix (feishuInteraction): it is on with the cards switch, and the chat
-// drives the conversation or "all cards" is on (not for a health conversation's).
+// drives the conversation, it is an eligible non-main assistant permission, or "all cards" is on (not for health).
 func (s *Service) feishuCardWanted(ctx context.Context, ix proto.Interaction) bool {
 	f, ready := s.feishuFeatures(ctx)
 	if !ready || !f.Cards {
@@ -65,11 +65,14 @@ func (s *Service) feishuCardWanted(ctx context.Context, ix proto.Interaction) bo
 	if ix.Private {
 		return false // a Just me turn's card: never on Lark (meeting_justme.go)
 	}
-	// "All cards" does not take a health conversation's: only one the chat drives itself (health.go).
-	if drives := s.botDrives(ctx, ix.MachineID, ix.SessionID); !drives && (!f.AllCards || s.ixInHealth(ctx, ix)) {
-		return false
+	if s.botDrives(ctx, ix.MachineID, ix.SessionID) {
+		return true
 	}
-	return true
+	if s.nonMainAssistantPermission(ctx, ix) {
+		return true // the owner's direct chat, independently of all_cards
+	}
+	// "All cards" keeps its existing meaning and never takes a health conversation's card.
+	return f.AllCards && !s.ixInHealth(ctx, ix)
 }
 
 // feishuInteractionAlways posts ix's card whatever the cards switches say: a task's decision the report put on top

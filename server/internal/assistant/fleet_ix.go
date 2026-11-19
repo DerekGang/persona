@@ -183,11 +183,27 @@ func (s *Service) tellCard(ix proto.Interaction) {
 	if err := s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: ix}); err != nil {
 		return // the hub did not get it: nothing of it to take back (its handshake gets the pending cards again)
 	}
-	s.fleet.mu.Lock()
-	_, held := s.fleet.interactions[ix.ID]
-	s.fleet.mu.Unlock()
-	if !held {
+	held := func() bool {
+		s.fleet.mu.Lock()
+		defer s.fleet.mu.Unlock()
+		_, ok := s.fleet.interactions[ix.ID]
+		return ok
+	}
+	if !held() {
 		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: ix.ID})
+		return
+	}
+	mirror, ok := s.mainApprovalMirror(context.Background(), ix)
+	if !ok {
+		return
+	}
+	if err := s.hub.Tell(assistantwire.EventFleetInteraction, assistantwire.FleetInteraction{Interaction: mirror}); err != nil {
+		return
+	}
+	// A mirror is held only through its authoritative interaction. Recheck after
+	// publishing it so a concurrent resolution cannot leave an orphaned copy.
+	if !held() {
+		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: mirror.ID})
 	}
 }
 

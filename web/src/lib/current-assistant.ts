@@ -69,9 +69,10 @@ export function useScopedTodos() {
   return useScoped(useStore((s) => s.todos));
 }
 
-/** The current assistant's pending cards. */
+/** The current assistant's authoritative pending cards. Conversation views read the store directly so they can show copies. */
 export function useScopedInteractions() {
-  return useScoped(useStore((s) => s.interactions));
+  const cards = useScoped(useStore((s) => s.interactions));
+  return useMemo(() => cards.filter((ix) => !ix.mirror_of), [cards]);
 }
 
 /** The agents the pages list: the current assistant's with several (from the complete list: the hub's first page

@@ -69,9 +69,9 @@ func TestPutSettings(t *testing.T) {
 			t.Fatalf("%s: %d %v", bad, code, out)
 		}
 	}
-	code, out := put(`{"launcher":"codex-l","timezone":"Asia/Shanghai","main":"m1","main_tasks_quiet":false,"notes":"关于我"}`)
+	code, out := put(`{"launcher":"codex-l","timezone":"Asia/Shanghai","main":"m1","main_tasks_quiet":false,"approval_mirror_main":false,"notes":"关于我"}`)
 	if code != http.StatusOK || out["launcher"] != "codex-l" || out["timezone"] != "Asia/Shanghai" || out["main"] != "m1" ||
-		out["main_tasks_quiet"] != false || out["notes_effective"] != "关于我" || out["cwd"] != "/home/me/.persona/assistant" {
+		out["main_tasks_quiet"] != false || out["approval_mirror_main"] != false || out["notes_effective"] != "关于我" || out["cwd"] != "/home/me/.persona/assistant" {
 		t.Fatalf("PUT: %d %v", code, out)
 	}
 	if r := modelRecordOf(t, s, "assistant"); r.Binding.Provider != "launcher.codex-l" {
@@ -390,7 +390,7 @@ func TestSettingsTool(t *testing.T) {
 	}
 }
 
-// persona_settings' three on/off settings (setBoolSetting): the same value changes nothing and asks nothing; another
+// persona_settings' on/off settings (setBoolSetting): the same value changes nothing and asks nothing; another
 // asks on the phone with the setting's own card, and only an approval saves it; a value that is not a bool is refused.
 func TestBoolSettingsSet(t *testing.T) {
 	ctx := context.Background()
@@ -419,7 +419,7 @@ func TestBoolSettingsSet(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		def  bool
-	}{{"main_tasks_quiet", true}, {"start_requested_tasks", true}, {"done_needs_delivery", false}, {"interject_background", false}, {"agent_tasks", false}, {"close_ended_terminals", false}, {"main_background_folded", true}, {"recent_task_chats", false}, {"inbox_signals", false}, {"main_supervises_own_tasks", false}} {
+	}{{"main_tasks_quiet", true}, {"approval_mirror_main", true}, {"start_requested_tasks", true}, {"done_needs_delivery", false}, {"interject_background", false}, {"agent_tasks", false}, {"close_ended_terminals", false}, {"main_background_folded", true}, {"recent_task_chats", false}, {"inbox_signals", false}, {"main_supervises_own_tasks", false}} {
 		key := "assistant." + c.name
 		get := func() string { out, _ := tool(`{"action":"get","key":"` + key + `"}`); return out }
 		set := func(value string) (string, bool) {

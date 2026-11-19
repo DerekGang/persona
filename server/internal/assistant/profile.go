@@ -70,7 +70,10 @@ type Settings struct {
 	Former []FormerMain `json:"former_main,omitempty"`
 	// MainTasksQuiet: tasks the main conversation opens are told only there, not pushed, on the Live Activity or in
 	// task badges (#1731). nil is on (the default); the view always says what is in effect.
-	MainTasksQuiet         *bool `json:"main_tasks_quiet,omitempty"`
+	MainTasksQuiet *bool `json:"main_tasks_quiet,omitempty"`
+	// ApprovalMirrorMain shows eligible non-main assistant permission cards in Main too. Nil is on;
+	// changing it applies to new cards, and every existing copy still resolves with its authoritative card.
+	ApprovalMirrorMain     *bool `json:"approval_mirror_main,omitempty"`
 	IdleAutoCompact        *bool `json:"idle_auto_compact,omitempty"`
 	IdleAutoCompactMinutes *int  `json:"idle_auto_compact_minutes,omitempty"`
 	IdleAutoCompactTokens  *int  `json:"idle_auto_compact_tokens,omitempty"`
@@ -539,6 +542,7 @@ type assistantView struct {
 	Conversations          []proto.Session    `json:"conversations"`
 	NotesEffective         string             `json:"notes_effective"`  // what the assistant is told about the user
 	MainTasksQuiet         bool               `json:"main_tasks_quiet"` // in effect (the setting's own is left out while unset)
+	ApprovalMirrorMain     bool               `json:"approval_mirror_main"`
 	IdleAutoCompact        bool               `json:"idle_auto_compact"`
 	IdleAutoCompactMinutes int                `json:"idle_auto_compact_minutes"`
 	IdleAutoCompactTokens  int                `json:"idle_auto_compact_tokens"`
@@ -605,6 +609,7 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 	v.Launcher = s.launcherNow(ctx)
 	effectiveRules, _ := workspacenaming.Effective(v.WorkspaceRules, workspacenaming.Rules{})
 	out := assistantView{WorkspaceNamingVersion: workspacenaming.Version, EffectiveWorkspaceRules: effectiveRules, Settings: v, Manager: s.managerIdentity(), PermissionDefaults: s.permissionDefaults(), Conversations: []proto.Session{}, NotesEffective: s.notes(ctx), MainTasksQuiet: quietOn(v.MainTasksQuiet),
+		ApprovalMirrorMain:  quietOn(v.ApprovalMirrorMain),
 		StartRequestedTasks: quietOn(v.StartRequestedTasks), RecordingDays: recordingDaysOf(v), MinutesDays: kb.MinutesDaysFor(minutesDaysSetting(v), recordingDaysOf(v)),
 		IdleAutoCompact: s.idleAutoCompact(ctx), IdleAutoCompactMinutes: s.idleAutoCompactMinutes(ctx), IdleAutoCompactTokens: s.idleAutoCompactTokens(ctx),
 		MeetingAttendanceDefault: meetingAttendanceOf(v), KBTopics: quietOn(v.KBTopics),

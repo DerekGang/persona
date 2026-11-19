@@ -85,8 +85,11 @@ type Interaction struct {
 	Manager string `json:"manager,omitempty"`
 	// Private: a Just me turn raised it (docs/assistant/meeting-minutes.md "Just me"): its push and the Fleet Live
 	// Activity say nothing of what it asks, as a health conversation's card, and it never goes to Lark or a channel.
-	Private      bool       `json:"private,omitempty"`
-	ID           string     `json:"id"`
+	Private bool   `json:"private,omitempty"`
+	ID      string `json:"id"`
+	// MirrorOf identifies the authoritative interaction for a display-only copy in another assistant conversation.
+	// The hub normalizes its actions to that interaction; it is never a second pending operation or aggregate request.
+	MirrorOf     string     `json:"mirror_of,omitempty"`
 	MachineID    string     `json:"machine_id"`
 	SessionID    string     `json:"session_id"`
 	SessionTitle string     `json:"session_title,omitempty"`

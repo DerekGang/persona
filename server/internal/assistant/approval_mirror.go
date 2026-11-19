@@ -1,0 +1,74 @@
+package assistant
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+
+	"github.com/nwverse/persona/server/internal/proto"
+)
+
+// approvalMirrorMain controls display copies for new cards. Existing copies keep
+// following their authoritative card until that card resolves.
+func (s *Service) approvalMirrorMain(ctx context.Context) bool {
+	return quietOn(s.settings(ctx).ApprovalMirrorMain)
+}
+
+// approvalMirrorID is stable across updates and reconnects without accepting a
+// node-chosen display ID in the authoritative interaction's namespace.
+func approvalMirrorID(id string) string {
+	sum := sha256.Sum256([]byte("assistant-main-approval-mirror\x00" + id))
+	return "assistant-main-mirror-" + hex.EncodeToString(sum[:])
+}
+
+// nonMainAssistantPermission is the narrow routing boundary shared by the main
+// conversation copy and the bot's direct chat. Agent sessions, private cards,
+// health conversations, questions and display copies themselves never opt in.
+func (s *Service) nonMainAssistantPermission(ctx context.Context, ix proto.Interaction) bool {
+	if ix.Kind != proto.IxPermission || ix.Private || ix.SessionID == "" || ix.MirrorOf != "" ||
+		s.ixInHealth(ctx, ix) || !s.ixInAssistant(ctx, ix) {
+		return false
+	}
+	v := s.settings(ctx)
+	if v.Main == "" || ix.SessionID != v.Main {
+		return true
+	}
+	mainMachine := s.confirmedMainMachine(ctx, v)
+	return mainMachine != "" && ix.MachineID != mainMachine
+}
+
+// mainApprovalMirror returns the display-only copy for ix. Only the hub keeps
+// this copy; the manager's pending map, decision boundary and aggregate counts
+// continue to contain just the authoritative interaction.
+func (s *Service) mainApprovalMirror(ctx context.Context, ix proto.Interaction) (proto.Interaction, bool) {
+	if !s.approvalMirrorMain(ctx) || !s.nonMainAssistantPermission(ctx, ix) {
+		return proto.Interaction{}, false
+	}
+	v := s.settings(ctx)
+	mainMachine := s.confirmedMainMachine(ctx, v)
+	if v.Main == "" || mainMachine == "" {
+		return proto.Interaction{}, false
+	}
+	mirror := ix
+	mirror.ID = approvalMirrorID(ix.ID)
+	mirror.MirrorOf = ix.ID
+	mirror.MachineID = mainMachine
+	mirror.SessionID = v.Main
+	mirror.FoldedUnder, mirror.FoldedAs, mirror.FoldedSide = "", "", ""
+	mirror.Muted = false
+	return mirror, true
+}
+
+// pendingDisplayInteractions is the reconnect snapshot: authoritative pending
+// operations plus their display copies, adjacent and in the same order.
+func (s *Service) pendingDisplayInteractions(ctx context.Context) []proto.Interaction {
+	pending := s.pendingInteractions()
+	out := make([]proto.Interaction, 0, len(pending)*2)
+	for _, ix := range pending {
+		out = append(out, ix)
+		if mirror, ok := s.mainApprovalMirror(ctx, ix); ok {
+			out = append(out, mirror)
+		}
+	}
+	return out
+}

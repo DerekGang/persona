@@ -224,7 +224,7 @@ const scopedAgentCounts = () => runtimeAgents.getSnapshot().counts;
 
 export function useCounts() {
   const all = useAgentSessions();
-  const interactions = useStore((s) => s.interactions.length);
+  const interactions = useStore((s) => s.interactions.reduce((n, ix) => n + (ix.mirror_of ? 0 : 1), 0));
   const { bounded, pagedAgents, aggregate } = useStore((s) => ({
     bounded: s.features.includes(SESSIONS_LIST_FEATURE),
     pagedAgents: supportsPagedAgents(s.features),

@@ -110,12 +110,42 @@ func init() {
 			f.mu.Unlock()
 			return // another manager's card: not replaced
 		}
+		if p.Interaction.MirrorOf != "" {
+			origin, ok := f.interactions[p.Interaction.MirrorOf]
+			if !ok || !validDisplayMirror(origin, p.Interaction) {
+				f.mu.Unlock()
+				return // no display copy without its live authoritative permission
+			}
+		}
 		if f.interactions == nil {
 			f.interactions = map[string]proto.Interaction{}
 		}
 		f.interactions[p.Interaction.ID] = p.Interaction
+		updated := []proto.Interaction{p.Interaction}
+		var resolved []string
+		if p.Interaction.MirrorOf == "" {
+			for id, mirror := range f.interactions {
+				if mirror.MirrorOf != p.Interaction.ID || mirror.Manager != p.Interaction.Manager {
+					continue
+				}
+				if p.Interaction.Private {
+					delete(f.interactions, id)
+					resolved = append(resolved, id)
+					continue
+				}
+				mirror = refreshedDisplayMirror(p.Interaction, mirror)
+				f.interactions[id] = mirror
+				updated = append(updated, mirror)
+			}
+		}
 		f.mu.Unlock()
-		h.broadcast(map[string]any{"type": "interaction", "interaction": p.Interaction})
+		for _, ix := range updated {
+			h.broadcast(map[string]any{"type": "interaction", "interaction": ix})
+		}
+		for _, id := range resolved {
+			h.push.withdraw(id)
+			h.broadcast(map[string]any{"type": "interaction_resolved", "id": id})
+		}
 		if !h.cardAllowed(c.managerID(), p.Interaction) { // its machine moved meanwhile (dropCard)
 			h.dropCard(c.managerID(), p.Interaction.ID)
 		}
@@ -132,19 +162,28 @@ func init() {
 			return // another manager's
 		}
 		delete(f.interactions, p.ID)
-		f.mu.Unlock()
-		h.push.withdraw(p.ID) // a suspended app hears it by push (#4349)
-		event := map[string]any{"type": "interaction_resolved", "id": p.ID}
-		if p.AnsweredBy != "" {
-			event["answered_by"] = p.AnsweredBy // the app marks a question the assistant answered (docs/assistant/assistant.md)
-			if p.Reason != "" {
-				event["reason"] = p.Reason // "Assistant answered: X, because Y"
-			}
-			if len(p.Answers) > 0 {
-				event["answers"] = p.Answers // what "Change answer" (POST …/reanswer) starts from
+		ids := []string{p.ID}
+		for id, ix := range f.interactions {
+			if ix.MirrorOf == p.ID && ix.Manager == c.managerID() {
+				delete(f.interactions, id)
+				ids = append(ids, id)
 			}
 		}
-		h.broadcast(event)
+		f.mu.Unlock()
+		for _, id := range ids {
+			h.push.withdraw(id) // a suspended app hears it by push (#4349)
+			event := map[string]any{"type": "interaction_resolved", "id": id}
+			if p.AnsweredBy != "" {
+				event["answered_by"] = p.AnsweredBy // the app marks a question the assistant answered (docs/assistant/assistant.md)
+				if p.Reason != "" {
+					event["reason"] = p.Reason // "Assistant answered: X, because Y"
+				}
+				if len(p.Answers) > 0 {
+					event["answers"] = p.Answers // what "Change answer" (POST …/reanswer) starts from
+				}
+			}
+			h.broadcast(event)
+		}
 	})
 	handleBusEvent(assistantwire.EventFleetInteractions, func(h *Hub, c *busConn, params json.RawMessage) {
 		var p assistantwire.FleetInteractions
@@ -240,6 +279,36 @@ func (h *Hub) takeFleetInteractionsFrom(owner string, list []proto.Interaction) 
 		list[i].Manager = owner
 		now[list[i].ID] = list[i]
 	}
+	// A display copy belongs to the hub's display state, not to the manager's
+	// pending-operation list. Keep an already-published copy when a reconnect
+	// snapshot contains its still-live original but omits the copy (for example
+	// after approval_mirror_main was turned off for new cards). The original's
+	// resolved event remains the only normal withdrawal boundary.
+	for id, previous := range f.interactions {
+		if previous.MirrorOf == "" || previous.Manager != owner {
+			continue
+		}
+		if _, supplied := now[id]; supplied {
+			continue
+		}
+		if origin, ok := now[previous.MirrorOf]; ok && origin.MirrorOf == "" {
+			now[id] = previous
+			list = append(list, previous)
+		}
+	}
+	for id, mirror := range now {
+		if mirror.MirrorOf == "" {
+			continue
+		}
+		origin, ok := now[mirror.MirrorOf]
+		if !ok || !validDisplayMirror(origin, mirror) {
+			delete(now, id)
+		}
+	}
+	list = slices.DeleteFunc(list, func(ix proto.Interaction) bool {
+		_, ok := now[ix.ID]
+		return !ok
+	})
 	old := map[string]proto.Interaction{}
 	all := make(map[string]proto.Interaction, len(f.interactions)+len(now))
 	for id, ix := range f.interactions {
@@ -283,13 +352,22 @@ func (h *Hub) dropCard(owner, id string) {
 	f.mu.Lock()
 	ix, ok := f.interactions[id]
 	other := ok && cmp.Or(ix.Manager, assistantwire.AssistantID) != owner
+	ids := []string{id}
 	if ok && !other {
 		delete(f.interactions, id)
+		for copyID, mirror := range f.interactions {
+			if mirror.MirrorOf == id && mirror.Manager == ix.Manager {
+				delete(f.interactions, copyID)
+				ids = append(ids, copyID)
+			}
+		}
 	}
 	f.mu.Unlock()
 	if !other {
-		h.push.withdraw(id)
-		h.broadcast(map[string]any{"type": "interaction_resolved", "id": id})
+		for _, gone := range ids {
+			h.push.withdraw(gone)
+			h.broadcast(map[string]any{"type": "interaction_resolved", "id": gone})
+		}
 	}
 }
 
@@ -602,6 +680,7 @@ func (h *Hub) mutesSettle(c *busConn) {
 // that may only answer is held to a card's own choices first, here.
 func (h *Hub) fleetRoutesRelayed(api *http.ServeMux) {
 	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", h.withoutTerminalControls(h.withClientOp("resolve", func(w http.ResponseWriter, r *http.Request) {
+		h.normalizeDisplayMirror(r)
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			writeBodyErr(w, err, err)
@@ -642,6 +721,7 @@ func (h *Hub) fleetRoutesRelayed(api *http.ServeMux) {
 	// extension principals cannot speak as the owner here. The operation receipt
 	// and the manager's client_msg_id together make an unchanged retry one message.
 	api.HandleFunc("POST /api/v1/interactions/{id}/clarify", h.withoutTerminalControls(h.withClientOp("clarify", func(w http.ResponseWriter, r *http.Request) {
+		h.normalizeDisplayMirror(r)
 		if answerOnly(r) || principalOf(r.Context()).Role == roleExtension {
 			writeErr(w, http.StatusForbidden, errors.New("only the owner can ask an approval question"))
 			return

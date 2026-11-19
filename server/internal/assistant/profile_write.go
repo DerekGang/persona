@@ -222,6 +222,9 @@ func (s *Service) putSettings(w http.ResponseWriter, r *http.Request) {
 		if in.MainTasksQuiet != nil {
 			v.MainTasksQuiet = in.MainTasksQuiet
 		}
+		if in.ApprovalMirrorMain != nil {
+			v.ApprovalMirrorMain = in.ApprovalMirrorMain
+		}
 		if in.IdleAutoCompact != nil {
 			v.IdleAutoCompact = in.IdleAutoCompact
 		}
