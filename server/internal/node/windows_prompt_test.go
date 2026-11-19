@@ -22,7 +22,7 @@ func TestWindowsHerdrPromptPastesEveryRuntimeAsOneMessage(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			n, f, home := herdrNode(t)
 			f.reply("agent.get", map[string]any{"agent": agentOf(kind, startThread, proto.StatusIdle, "w1:p2", "w1:t2", "w1", home, "")})
-			prompt := "Context title\n\nContext body\nLast line: 中文 and tabs\tremain"
+			prompt := "方向 · 合成测试 · 说明\n\nContext body\nLast line: 中文 and tabs\tremain"
 			h := n.defaultHost().(*herdrHost)
 			if err := h.prompt(context.Background(), host.ParsePane("w1:p2"), prompt, true); err != nil {
 				t.Fatal(err)
@@ -81,7 +81,7 @@ func TestWindowsCodexStartPastesTheCompleteFirstMessage(t *testing.T) {
 	t.Cleanup(func() { codexStartPaste = oldPaste })
 	cwd := filepath.Join(filepath.Dir(n.dir), "proj")
 	home := filepath.Dir(cwd)
-	prompt := "Context title\n\nContext body\nLast line: 中文"
+	prompt := "方向 · 合成测试 · 说明\n\nContext body\nLast line: 中文"
 	f.setScreen("w1:p2", cxReady)
 	var initial, pasted string
 	var mu sync.Mutex

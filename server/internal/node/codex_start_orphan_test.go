@@ -20,10 +20,10 @@ func TestFailedCodexStartArchivesOnlyItsFreshPaneThread(t *testing.T) {
 	n.configureCodex(proto.CodexConfig{})
 	home, cwd := n.codexHome(), filepath.Join(filepath.Dir(n.dir), "proj")
 	began := time.Now()
-	path := writeWaitRollout(t, filepath.Dir(n.dir), cwd, startThread, began, "Context title")
+	path := writeWaitRollout(t, filepath.Dir(n.dir), cwd, startThread, began, "方向 · 合成测试 · 说明")
 	id := n.registerCodex(home, startThread, path)
 	other := "01a19a00-0000-7000-8000-00000000c0df"
-	writeWaitRollout(t, filepath.Dir(n.dir), cwd, other, began, "Context title")
+	writeWaitRollout(t, filepath.Dir(n.dir), cwd, other, began, "方向 · 合成测试 · 说明")
 	bus, _ := connectRemoteFixture(t, n, home, "app", startThread, other)
 	var closed atomic.Bool
 	bus.mu.Lock()
@@ -40,7 +40,7 @@ func TestFailedCodexStartArchivesOnlyItsFreshPaneThread(t *testing.T) {
 			closed.Store(true)
 		}
 	})
-	_, err := n.startCodex(context.Background(), n.defaultHost().(host.Launcher), cwd, "codex", []string{"codex"}, modelExecution{}, "Context title\n\nThe rest of the task", "w1", "", "")
+	_, err := n.startCodex(context.Background(), n.defaultHost().(host.Launcher), cwd, "codex", []string{"codex"}, modelExecution{}, "方向 · 合成测试 · 说明\n\nThe rest of the task", "w1", "", "")
 	if err == nil {
 		t.Fatal("incomplete first message counted as a successful start")
 	}
@@ -84,7 +84,7 @@ func TestFailedCodexIdentityRejectsAnOldOrOtherPanesThread(t *testing.T) {
 				at = began.Add(-time.Hour)
 			}
 			cwd := filepath.Join(filepath.Dir(n.dir), "proj")
-			writeWaitRollout(t, filepath.Dir(n.dir), cwd, startThread, at, "Context title")
+			writeWaitRollout(t, filepath.Dir(n.dir), cwd, startThread, at, "方向 · 合成测试 · 说明")
 			f.reply("agent.get", map[string]any{"agent": agentOf("codex", startThread, proto.StatusBlocked, "w1:p2", "w1:t2", "w1", cwd, "")})
 			if !old {
 				n.bindPane("w1:p9", startThread)
