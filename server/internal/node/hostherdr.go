@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/herdr"
 	"github.com/nwverse/persona/server/internal/host"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/nodeclient"
 )
 
@@ -230,10 +230,10 @@ func (h *herdrHost) prompt(ctx context.Context, pane host.PaneRef, text string, 
 			return err
 		}
 		if before == nil || before.Agent == "" {
-			return host.Mark(errors.New("no agent in the pane"), host.ErrNoAgent)
+			return host.ErrNoAgent
 		}
 		if before.AgentStatus == "blocked" {
-			return host.Mark(errors.New("the agent is waiting for an answer"), host.ErrAgentBlocked)
+			return host.ErrAgentBlocked
 		}
 		if err := t.c.PaneSendText(ctx, t.id, pasteStart+inertControls(text)+pasteEnd); err != nil {
 			return err
@@ -245,10 +245,10 @@ func (h *herdrHost) prompt(ctx context.Context, pane host.PaneRef, text string, 
 		}
 		after, err := t.c.AgentGet(ctx, t.id)
 		if err != nil {
-			return fmt.Errorf("cannot verify the agent after pasting: %w", err)
+			return errors.New(i18n.T(i18n.Default, "node-terminal-input.unverified_after_paste", i18n.Args{"reason": err.Error()}))
 		}
 		if after == nil || after.Agent != before.Agent || after.SessionID() != before.SessionID() || after.AgentStatus == "blocked" {
-			return errors.New("the agent changed or opened a dialog after pasting; the text was not submitted")
+			return errors.New(i18n.T(i18n.Default, "node-terminal-input.changed_after_paste"))
 		}
 		return t.c.PaneSendKeys(ctx, t.id, "enter")
 	}

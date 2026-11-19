@@ -160,9 +160,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except subprocess.CalledProcessError as error:
-        print("--- FAIL: CI test discovery", flush=True)
-        print(error.output or str(error), flush=True)
-        sys.exit(error.returncode)
+    sys.exit(main())

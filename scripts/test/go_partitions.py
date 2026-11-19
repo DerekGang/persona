@@ -43,7 +43,7 @@ def patterns(test_names, partitions=2, package="the package"):
 def list_patterns(cwd, package, env=None):
     """List one partitioned package's tests in the server module at cwd and split them."""
     listing = subprocess.check_output(["go", "test", "-list", ".*", package], cwd=cwd, env=env, text=True,
-                                      stderr=subprocess.STDOUT, timeout=600)
+                                      timeout=600)
     return patterns(names(listing), PACKAGES[package], package)
 
 

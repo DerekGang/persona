@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"time"
 
@@ -75,10 +74,10 @@ func (n *Node) failedCodexSession(ctx context.Context, pane string, began time.T
 		return "" // no unique writer identity
 	} else {
 		a, err := n.paneAgent(ctx, pane)
-		if err != nil || a == nil || a.Agent != "codex" || !validID(a.SessionID) {
+		if err != nil || a == nil || a.Agent != "codex" || !validID(a.SessionID()) {
 			return ""
 		}
-		id = n.codexPublicID(n.codexPaneHome(pane), a.SessionID)
+		id = n.codexPublicID(n.codexPaneHome(pane), a.SessionID())
 	}
 	if owner := held.owner[id]; owner != "" && owner != pane {
 		return ""
@@ -121,7 +120,7 @@ func (n *Node) closeFailedCodexStart(ctx context.Context, start codexAbandonedSt
 		}
 		select {
 		case <-cleanup.Done():
-			return fmt.Errorf("failed launch pane closed, but its session could not be archived: %w", err)
+			return errors.New(i18n.T(i18n.Default, "node-codex-start.session_cleanup_failed", i18n.Args{"reason": err.Error()}))
 		case <-time.After(250 * time.Millisecond): // the closed process releases its rollout writer lock
 		}
 	}

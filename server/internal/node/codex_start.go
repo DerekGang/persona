@@ -30,9 +30,10 @@ import (
 // Starting a Codex from the phone (docs/integrations/codex.md "Starting from the phone"). A Codex launcher (plain `codex`, or an alias whose
 // command is codex) runs in a new herdr tab with an optional first message as its prompt argument: Codex makes the thread
 // itself — on the shared app-server daemon for a plain 0.163, where #220 joins it (codex_daemon.go); in its own process
-// for 0.153 or a launcher with -c, on the terminal route. Neither the message nor the launcher's words (an alias can
-// carry a key) are parsed as shell code or typed onto the screen: they are written to a file only the user can read, the tab runs
-// `personad codex-start <file>`, and that runs the words with any message as one argument after "--". A start with a message answers once the new thread is known — the rollout in that directory, begun after the
+// for 0.153 or a launcher with -c, on the terminal route. Launcher words (an alias can carry a key) stay in a private
+// file: the tab runs `personad codex-start <file>`. On Unix the file also carries the message as one argv value after
+// "--". On Windows the TUI starts empty and receives the message as one bracketed paste (pasteCodexFirst); no shell
+// parses it. A start with a message answers once the new thread is known — the rollout in that directory, begun after the
 // launch, whose first message is exactly this one — with that thread's id, so the phone opens the session that is
 // there; it fails, with what the tab shows, when none comes in time. Without a message it returns a waiting row (codex_waiting.go).
 
