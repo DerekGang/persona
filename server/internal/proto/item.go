@@ -20,6 +20,10 @@ const (
 	KindNotice     = "notice"
 	KindImage      = "image"
 	KindRecap      = "recap" // Claude Code's "while you were away" summary
+	// KindVisualization is a Codex visualize reference: a self-contained HTML fragment on the node's disk that the
+	// Codex client draws inline. The item carries the node-side path, never the bytes; clients fetch them through the
+	// session visualization route.
+	KindVisualization = "visualization"
 	// KindFold stands for a run of the agent's work left out of a page (Item.Fold); only for callers that ask
 	// (fold_work).
 	KindFold = "fold"
@@ -236,6 +240,18 @@ type Item struct {
 	// reply. Text keeps the transcript's words, for the apps to show the original. Set by the node; absent for
 	// anything else, for text it cannot read, and from older nodes.
 	Botmux *Botmux `json:"botmux,omitempty"`
+	// Visualization is set on KindVisualization items: a Codex visualize marker's reference to an HTML fragment on
+	// the node. The bytes are not carried here; the session visualization route serves them after path checks.
+	Visualization *Visualization `json:"visualization,omitempty"`
+}
+
+// Visualization is one Codex visualize reference (the visualize plugin's in-conversation HTML contract): the
+// fragment's absolute path on the node, its display mode ("" for the regular 736 px surface, "wide" for up to
+// 1024 px) and an optional title.
+type Visualization struct {
+	Path  string `json:"path"`
+	Mode  string `json:"mode,omitempty"`
+	Title string `json:"title,omitempty"`
 }
 
 // Botmux is a BotMux-wrapped item's own words and the facts the apps show as tags (docs/protocol/protocol.md
