@@ -404,6 +404,12 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
 
+    def test_explicit_resolution_keeps_the_committed_resolved_superset(self):
+        root = Path(__file__).resolve().parents[2]
+        script = (root / 'scripts/ci/apple.sh').read_text()
+        resolve = script.split('resolve() {', 1)[1].split('\n}', 1)[0]
+        self.assertIn('-resolvePackageDependencies -disableAutomaticPackageResolution', resolve)
+
 
 class PostgresCleanupTests(unittest.TestCase):
     def test_server_fixture_removes_its_volume_on_success_and_failure(self):

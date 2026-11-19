@@ -102,7 +102,8 @@ UNSIGNED=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= D
 TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=)
 XCODE=(xcodebuild -project "$PROJECT" -configuration Debug -clonedSourcePackagesDirPath "$SPM/SourcePackages")
 resolve() {
-  ci_run "Resolve Swift packages ($1)" 900 "${XCODE[@]}" -scheme "$1" -resolvePackageDependencies
+  # Use the committed resolved superset for both optional-Meta configurations, matching release (#11063).
+  ci_run "Resolve Swift packages ($1)" 900 "${XCODE[@]}" -scheme "$1" -resolvePackageDependencies -disableAutomaticPackageResolution
 }
 result() {
   local name="$1"; shift
