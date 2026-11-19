@@ -77,7 +77,47 @@ import PersonaWire
         #expect(o.marks[key] != nil)
     }
 
-    @Test func onlyAnUnreadOneWaits() {
+    @Test func aStaleJustFinishedFrameStaysSeenUntilAcknowledgedOrANewTurn() throws {
+        var row = session(state: "idle")
+        row.work = try JSON.decoder.decode(WorkState.self, from: Data(#"{"phase":"done","line":"Merged","just_finished":true}"#.utf8))
+        var outbox = SeenOutbox()
+        outbox.mark(key, row, at: t0)
+        let stale = try #require(outbox.land([machine: [row]], at: t0 + 1)[machine]?.first)
+        #expect(stale.state == .idle && !stale.needsSeen() && stale.work?.line == "Merged")
+        #expect(outbox.due(at: t0 + SeenOutbox.confirmWithin) == [key])
+        var newTurn = row
+        newTurn.updatedAt = row.updatedAt?.addingTimeInterval(10)
+        let later = try #require(outbox.land([machine: [newTurn]], at: t0 + 10)[machine]?.first)
+        #expect(later.needsSeen() && outbox.marks.isEmpty)
+        outbox.mark(key, row, at: t0)
+        row.seenAt = row.seenAt?.addingTimeInterval(10)
+        row.markLocallySeen()
+        _ = outbox.land([machine: [row]], at: t0 + 1)
+        #expect(outbox.marks.isEmpty)
+    }
+
+    @Test func openingAndMarkingAllClearJustFinishedBeforeTheHubAnswers() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = AppModel(stateFolder: folder)
+        var first = session(state: "idle"), second = session("s2", state: "idle")
+        first.work = try JSON.decoder.decode(WorkState.self, from: Data(#"{"phase":"done","just_finished":true}"#.utf8))
+        second.work = first.work
+        let unread = session("s3", state: "unread")
+        model.applySessions([machine: [first, second, unread]])
+        model.visibleSession = key
+        model.markSeen(key)
+        #expect(model.session(key)?.needsSeen() == false)
+        #expect(model.heldInList == key && model.heldJustFinished)
+        model.markSeen([second.key, unread.key])
+        model.applySessions([machine: [first, second, unread]])
+        #expect([first.key, second.key, unread.key].allSatisfy { model.session($0)?.needsSeen() == false })
+        #expect(model.heldInList == key && model.heldJustFinished)
+        model.visibleSession = nil
+        #expect(model.heldInList == nil && !model.heldJustFinished)
+    }
+
+    @Test func onlyUnseenWorkWaits() {
         var o = SeenOutbox()
         o.mark(key, session(state: "idle"), at: t0)
         #expect(o.marks.isEmpty)

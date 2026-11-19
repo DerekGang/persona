@@ -32,9 +32,9 @@ nonisolated struct SeenOutbox {
 
     private(set) var marks: [SessionKey: Mark] = [:]
 
-    /// `session` as the app had it when the user looked at it. Only an unread one waits for the hub.
+    /// `session` as the app had it when the user looked at it. Unread and Just finished both wait for the hub.
     mutating func mark(_ key: SessionKey, _ session: Session, at now: Date) {
-        guard session.state == .unread else { return }
+        guard session.needsSeen() else { return }
         marks[key] = Mark(seenBefore: session.seenAt, updatedBefore: session.updatedAt, markedAt: now, sentAt: now)
     }
 
@@ -82,8 +82,8 @@ nonisolated struct SeenOutbox {
                 marks[key] = nil
                 continue
             }
-            if s.state == .unread {
-                list[i].state = .idle
+            if s.needsSeen() {
+                list[i].markLocallySeen()
                 out[key.machineRef] = list
             }
         }

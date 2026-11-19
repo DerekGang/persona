@@ -417,14 +417,15 @@ final class AppModel {
     /// Session whose chat is on screen; its completion pings are suppressed.
     var visibleSession: SessionKey? {
         didSet {
-            if heldInList != visibleSession { heldInList = nil }
+            if heldInList != visibleSession { heldInList = nil; heldJustFinished = false }
             // the recently opened conversations: the home screen menu's (#2191)
             if visibleSession != oldValue { RecentChatsStore.shared.shown(visibleSession) }
         }
     }
-    /// The open agent that was Unread and was marked seen by being open: the Agents list keeps it where it was until
+    /// The open agent that was Unread or Just finished: the Agents list keeps it in that section until
     /// its chat is left (`AgentListOrder.held`, #2213; user, 2026-11-05: it moves to Idle only after you leave).
     private(set) var heldInList: SessionKey?
+    private(set) var heldJustFinished = false
     private(set) var assistantConfig: APIClient.AssistantState? {
         didSet {
             if let g = hub?.group, let a = assistantConfig {
@@ -3600,9 +3601,12 @@ final class AppModel {
         sendSeen(key)
         // Optimistic: flip the local copy right away.
         if var list = sessionsByMachine[key.machineRef], let i = list.firstIndex(where: { $0.sessionID == key.sessionID }),
-           list[i].state == .unread {
-            if key == visibleSession { heldInList = key }
-            list[i].state = .idle
+           list[i].needsSeen() {
+            if key == visibleSession && (list[i].state == .unread || list[i].showsJustFinished(muted: isMuted(list[i]))) {
+                heldInList = key
+                heldJustFinished = list[i].state == .idle
+            }
+            list[i].markLocallySeen()
             sessionsByMachine[key.machineRef] = list
         }
     }
@@ -3641,12 +3645,12 @@ final class AppModel {
 
     /// Mark All as Read: every finished-unread one of these, in one update of the list.
     func markSeen(_ keys: [SessionKey]) {
-        let unread = keys.filter { session($0)?.state == .unread }
+        let unread = keys.filter { key in session(key).map { $0.needsSeen(muted: isMuted($0)) } == true }
         guard !unread.isEmpty else { return }
         for key in unread { sendSeen(key) }
         var lists = sessionsByMachine
         for key in unread {
-            if let i = lists[key.machineRef]?.firstIndex(where: { $0.sessionID == key.sessionID }) { lists[key.machineRef]![i].state = .idle }
+            if let i = lists[key.machineRef]?.firstIndex(where: { $0.sessionID == key.sessionID }) { lists[key.machineRef]![i].markLocallySeen() }
         }
         sessionsByMachine = lists
         Haptics.success()
