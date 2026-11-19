@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,6 +181,51 @@ func TestRepositoryProviderPendingReportsKeepLatestOwnership(t *testing.T) {
 			}
 			if !owned && todoNow(s, todo.ID).PRURL != "" {
 				t.Fatal("a rejected pending report entered the legacy PR route")
+			}
+		})
+	}
+}
+
+type aliasedReportProvider struct{ *acmeProvider }
+
+func (p aliasedReportProvider) RepositoryLink(ctx context.Context, repo repository.Identity, in repository.LinkInput) (repository.TaskLink, error) {
+	in.URL = strings.Replace(in.URL, "/changes/", "/reviews/", 1)
+	return p.acmeProvider.RepositoryLink(ctx, repo, in)
+}
+
+func TestRepositoryProviderCanonicalAddressKeepsOriginalOwnership(t *testing.T) {
+	for _, entry := range []string{"report", "artifacts"} {
+		t.Run(entry, func(t *testing.T) {
+			database, err := db.Open(t.Context(), newDatabase(t), db.ManagerSet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			s, provider, _ := acmeService(t, database)
+			s.repoExt = aliasedReportProvider{provider}
+			todo, err := s.createPlainTodo(t.Context(), "Repository work", "", db.TodoEdit{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			todo = repositoryReportTask(t, s, todo.ID)
+			const raw = "https://code.acme.test/team/app/changes/17"
+			const canonical = "https://code.acme.test/team/app/reviews/17"
+			text := "Created " + raw
+			reply := artifactReportProof(s.hub.(*fakeHub), todo, text, raw)
+			if entry == "report" {
+				a := todo.Agents[0]
+				s.advanceTaskReplyAt(t.Context(), todo, a.MachineID, a.SessionID, text, reply.TS)
+			} else {
+				work := artifactWork(todo)
+				work.TurnAt = reply.TS
+				work.Work.Artifacts = []proto.WorkArtifact{{Kind: "pr", Ref: raw}}
+				if err := s.importTaskRepositoryArtifacts(t.Context(), work); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s.reportedLinks.runs.Wait()
+			if _, links := savedArtifactURLs(t, s.store().(todoRepositoryStore), todo.ID); !slices.Equal(links, []string{canonical}) {
+				t.Fatalf("provider canonicalization discarded the original creation proof: %v", links)
 			}
 		})
 	}

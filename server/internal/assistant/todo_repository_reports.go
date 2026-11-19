@@ -250,7 +250,7 @@ func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo,
 	}
 	return s.importReportedLinks(ctx, todo.ID, urls, "pull_request",
 		func(ctx context.Context, links []repository.LinkInput) ([]string, error) {
-			return s.importOwnedTaskRepositoryLinkDetails(ctx, todo, machine, session, links, reportText, reportAt)
+			return s.importOwnedTaskRepositoryLinkDetails(ctx, todo, machine, session, owned, links, reportText, reportAt)
 		})
 }
 
@@ -400,9 +400,14 @@ func (s *Service) ownedTaskRepositoryLinkInputs(ctx context.Context, todo Todo, 
 }
 
 func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo Todo, machine, session string,
-	links []repository.LinkInput, reportText string, reportAt time.Time) ([]string, error) {
-	inputs, err := s.ownedTaskRepositoryLinkInputs(ctx, todo, machine, session, links, reportText, reportAt)
-	if err != nil || len(inputs) == 0 {
+	proof, inputs []repository.LinkInput, reportText string, reportAt time.Time) ([]string, error) {
+	if len(proof) == 0 || len(inputs) == 0 {
+		return nil, nil
+	}
+	// A provider may canonicalize an alias. Recheck its original authorized address,
+	// not the resulting metadata; the transaction stores only this resolver's inputs.
+	checked, err := s.ownedTaskRepositoryLinkInputs(ctx, todo, machine, session, proof, reportText, reportAt)
+	if err != nil || len(checked) != len(proof) {
 		return nil, err
 	}
 	owned := make([]string, 0, len(inputs))
