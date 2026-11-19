@@ -456,10 +456,11 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // Main had 4,560 B of room, so the budget was this ja size plus those 4,560 B.
 // #11090: a waiting to-do's label says what it waits on (lib/todo-wait-reason.ts waitReason and todoLook, read on the
 // first screen by Overview's task cards, the main chat's trays and the sidebar's By to-do rows; the seven
-// lib-state-labels waits_* words in place of task_waiting). 505 B in ja, measured in one environment against main
-// c4fc3ef324 (ja 479,301 B to 479,806 B; en 476,414 B to 476,898 B, zh-Hans 477,154 B to 477,624 B). Main had 3,430 B
-// of room; it takes those 505 B of #9745's room. This branch keeps its stricter existing 482,526 B limit, which the
-// measured 479,806 B fits within.
+// lib-state-labels waits_* words in place of task_waiting). 621 B in ja, measured in one environment against main
+// 591ad5d369 (ja 480,763 B to 481,384 B; en 477,858 B to 478,422 B, zh-Hans 478,582 B to 479,142 B; against main
+// c4fc3ef324 it was 505 B, ja 479,301 B to 479,806 B). Main had 2,717 B of room; the budget stays (merged with #9778
+// below, those 621 B come out of the room main had). This branch keeps its stricter existing 482,526 B limit, which
+// the measured 481,384 B fits within.
 // #9778 (#9745's follow-up): what is on its way kept to the sign-in it was made under (a change sent, queued or not
 // taken under an earlier one dropped, its answer changing nothing) and a hello's read a push or another tab's change
 // overtook left alone (lib/start-page.ts, lib/overview-cards.ts), and Arrange cards opening a folded cards' section and
