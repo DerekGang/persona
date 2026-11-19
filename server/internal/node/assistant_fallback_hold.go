@@ -24,12 +24,14 @@ const (
 )
 
 // assistantFallback is a conversation's last model switch that answered: on launcher, away from what it was asked
-// to run (from) to the model that answered (to), at at; until ends the hold (zero once over).
+// to run (from) to the model that answered (to), at at; until ends the hold (zero once over). newChoice records that
+// a later request explicitly chose a model instead of continuing this old recovery chain.
 type assistantFallback struct {
-	launcher string
-	from, to modelExecution
-	at       time.Time
-	until    time.Time
+	launcher  string
+	from, to  modelExecution
+	at        time.Time
+	until     time.Time
+	newChoice bool
 }
 
 // sameModelChoice: two requests for the same model, whatever the message around them.
@@ -62,6 +64,15 @@ func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution)
 	asked.NewModelChoice = false
 	f := n.fallbacks[id]
 	if f == nil {
+		// A cold restart can have a persisted marker without an in-memory hold. The requested model itself is the
+		// provenance in that case: anything other than the old configured model is a new explicit choice.
+		r := n.recoveryMarks[id]
+		if r == nil {
+			if st, ok := n.state.get(id); ok {
+				r = st.ModelRecovery
+			}
+		}
+		asked.NewModelChoice = modelRecoverySwitched(r) && asked.Model != r.From
 		return asked, false
 	}
 	now := time.Now()
@@ -71,7 +82,10 @@ func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution)
 	}
 	if !now.Before(f.until) || f.launcher != launcher || !sameModelChoice(asked, f.from) {
 		expired := !now.Before(f.until) && f.launcher == launcher && sameModelChoice(asked, f.from)
-		asked.NewModelChoice = f.launcher == launcher && !sameModelChoice(asked, f.from)
+		if f.launcher == launcher && !sameModelChoice(asked, f.from) {
+			f.newChoice = true
+			asked.NewModelChoice = true
+		}
 		f.until = time.Time{} // over; a refusal soon after still skips the same-model retry
 		return asked, expired
 	}
@@ -83,10 +97,11 @@ func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution)
 }
 
 // recentFallback: conversation id's last fallback answered within assistantRefusalSticky, and what the conversation
-// was asked to run before it (the model a hold keeps it away from). n.mu is held.
+// was asked to run before it (the model a hold keeps it away from). A superseded record is not a recovery budget to
+// inherit. n.mu is held.
 func (n *Node) recentFallback(id string) (from modelExecution, launcher string, ok bool) {
 	f := n.fallbacks[id]
-	if f == nil || time.Since(f.at) >= assistantRefusalSticky {
+	if f == nil || f.newChoice || time.Since(f.at) >= assistantRefusalSticky {
 		return modelExecution{}, "", false
 	}
 	return f.from, f.launcher, true

@@ -787,6 +787,65 @@ func TestRecoveryReturnHonorsNewModelChoice(t *testing.T) {
 	}
 }
 
+// An explicit pick of the old fallback also wins over a confirmed automatic return. Cover Returning, a reset time in
+// the past, a successful availability probe, and a cold restart with only the persisted marker. Unrelated availability
+// evidence must survive the user's choice.
+func TestRecoveryAutomaticReturnHonorsExplicitFallbackPick(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	past := time.Now().Add(-time.Minute)
+	for _, tc := range []struct {
+		name      string
+		returning bool
+		resetsAt  *time.Time
+		probe     bool
+		cold      bool
+	}{
+		{name: "returning", returning: true},
+		{name: "reset time", resetsAt: &past},
+		{name: "successful probe", probe: true},
+		{name: "cold returning", returning: true, cold: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, _ := recoveryTestNode(t, id, false, true)
+			n.putModelRecovery(id, &proto.ModelRecovery{From: "primary-model", To: "fallback-model", Returning: tc.returning, ResetsAt: tc.resetsAt})
+			if !tc.cold {
+				n.fallbacks = map[string]*assistantFallback{id: {launcher: "claude",
+					from: modelExecution{Model: "primary-model"}, to: modelExecution{Model: "fallback-model"},
+					at: time.Now(), until: time.Now().Add(assistantFallbackHold)}}
+			}
+			n.unavailable = map[string]time.Time{
+				unavailableKey("claude", "primary-model"): time.Now().Add(time.Hour),
+				unavailableKey("codex", "fallback-model"): time.Now().Add(time.Hour),
+			}
+			var probes atomic.Int32
+			assistantModelProbe = func(context.Context, *Node, string, string) bool {
+				probes.Add(1)
+				return tc.probe
+			}
+			picked := modelExecution{Model: "fallback-model"}
+			execution, expired := n.heldFallbackWithExpiry(id, "claude", picked)
+			execution = n.applyModelRecoveryReturn(context.Background(), id, picked.Model, execution, expired)
+			if execution.Model != picked.Model {
+				t.Fatalf("automatic return overrode the explicit fallback pick with %q", execution.Model)
+			}
+			if n.modelRecovery(id) != nil {
+				t.Fatal("the old recovery marker outlived the explicit fallback pick")
+			}
+			if _, _, ok := n.recentFallback(id); ok {
+				t.Fatal("the old fallback hold outlived the explicit fallback pick")
+			}
+			if probes.Load() != 0 {
+				t.Fatalf("the explicit pick triggered %d automatic-return probes", probes.Load())
+			}
+			for _, key := range []string{unavailableKey("claude", "primary-model"), unavailableKey("codex", "fallback-model")} {
+				if _, ok := n.unavailable[key]; !ok {
+					t.Fatalf("the explicit pick cleared unrelated availability evidence %q", key)
+				}
+			}
+		})
+	}
+}
+
 // A fallback belonging to the old model must not spend the new pick's first same-model retry. Only after that retry
 // fails may the ordinary bounded recovery move to another model.
 func TestNewModelPickKeepsItsFirstSameModelRetry(t *testing.T) {
@@ -818,8 +877,6 @@ func TestNewModelPickKeepsItsFirstSameModelRetry(t *testing.T) {
 	}
 	if second := waitRecoverySend(t, sent); second.Model != "primary-model" {
 		t.Fatalf("after the same-model retry, recovery used %q instead of the next model", second.Model)
-	} else if second.NewModelChoice {
-		t.Fatal("the recovery's own model inherited the user's new-choice marker")
 	}
 	waitRecovery(t, "the next-model recovery to finish", func() bool {
 		n.mu.Lock()
@@ -870,7 +927,7 @@ func TestExplicitPickOfHeldFallbackKeepsItsFirstRetry(t *testing.T) {
 	if execution.Model != picked.Model {
 		t.Fatalf("the old hold overrode the explicit pick: %+v", execution)
 	}
-	p := &assistantProc{id: id, agent: "claude", launcher: "claude", model: execution}
+	p := &assistantProc{id: id, agent: "claude", launcher: "claude", model: modelExecution{Model: execution.Model}} // reused process: no current-request marker
 	n.procs[id] = p
 	if !n.recoverAssistantResult(p, true, "API Error: 503 no eligible upstream account is currently available") {
 		t.Fatal("the explicit fallback pick's transient failure was not recovered")

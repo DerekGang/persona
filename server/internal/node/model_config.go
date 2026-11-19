@@ -49,8 +49,8 @@ type modelExecution struct {
 	// Interject: a message this one carries, sent while the conversation answers, moves its foreground work to the
 	// background (assistant_interject.go). Per message, never part of the fingerprint.
 	Interject bool `json:"-"`
-	// NewModelChoice marks an execution the current request chose instead of accepting the old fallback hold. It lets
-	// recovery distinguish an explicit pick of the held fallback from the hold itself; never part of the fingerprint.
+	// NewModelChoice is per-request provenance from heldFallbackWithExpiry, used only to stop an automatic return from
+	// overriding this send. The fallback record carries the equivalent state for later recovery; never a fingerprint.
 	NewModelChoice bool `json:"-"`
 	// SecretTicket: the hand-off a new Claude Code start puts in its environment (secretenv.go). Per start, never
 	// part of a fingerprint, never kept for a resume.
