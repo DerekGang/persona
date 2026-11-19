@@ -877,6 +877,45 @@ func TestAdminLinkSwitchWaitsForTheManager(t *testing.T) {
 	}
 }
 
+// During startup the assigned manager must report its machine even when the carrier is already up.
+func TestAdminLinkSwitchWaitsForAssignedManagerWithCarrierUp(t *testing.T) {
+	h := newTestHub(t)
+	const mid, owner = "lsw-box", "m-0e0e0e"
+	h.cfg.Machines = []MachineConfig{{ID: mid, Kind: "ssh"}}
+	h.devices.assign = map[string]string{mid: owner}
+	h.devices.warmUntil = time.Now().Add(devicesWarmGrace)
+	h.applyDeviceStatesFrom(devicesOwner, devicewire.States{})
+
+	mux := http.NewServeMux()
+	h.adminLinkSwitchRoutes(mux)
+	r := httptest.NewRequestWithContext(t.Context(), "POST", "/api/v1/admin/machines/"+mid+"/link-switch", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(w, r)
+		close(done)
+	}()
+	eventually(t, 5*time.Second, "the request waiting for the machine's manager", func() bool {
+		select {
+		case <-done:
+			t.Fatalf("answered before the machine's manager reported: %d %s", w.Code, w.Body.String())
+		default:
+		}
+		h.devices.mu.Lock()
+		defer h.devices.mu.Unlock()
+		return h.devices.up[owner] != nil
+	})
+	h.applyDeviceStatesFrom(owner, devicewire.States{Machines: []devicewire.State{{Machine: proto.Machine{ID: mid}}}})
+	select {
+	case <-done:
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("after the report, want 503 from forwarding without a bus connection: %d %s", w.Code, w.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still waiting after the machine's manager reported")
+	}
+}
+
 // The whole hub side with a real manager and a real Persona Link connection: begin hands the manager the computer as
 // kind link and its mirror follows; the code becomes a credential that connects; rolled_back with the code's hash
 // revokes exactly that credential (its cached lookup too) and closes its link as revoked (4002), and the computer is
