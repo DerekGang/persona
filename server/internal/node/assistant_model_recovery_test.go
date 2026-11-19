@@ -807,6 +807,18 @@ func TestNewModelPickKeepsItsFirstSameModelRetry(t *testing.T) {
 	if first := waitRecoverySend(t, sent); first.Model != picked.Model {
 		t.Fatalf("the first retry used %q, want the new pick %q", first.Model, picked.Model)
 	}
+	waitRecovery(t, "the new pick's first retry to finish", func() bool {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		r := n.recoveries[id]
+		return r != nil && !r.running
+	})
+	if !n.recoverAssistantResult(p, true, "API Error: 503 no eligible upstream account is currently available") {
+		t.Fatal("the new pick's second transient failure was not recovered")
+	}
+	if second := waitRecoverySend(t, sent); second.Model != "primary-model" {
+		t.Fatalf("after the same-model retry, recovery used %q instead of the next model", second.Model)
+	}
 }
 
 // A failure on the fallback already held for the old model is not a new pick: its same-model retry stays spent, so the
