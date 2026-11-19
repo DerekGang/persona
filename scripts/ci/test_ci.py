@@ -404,12 +404,14 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
 
-    def test_resolution_stages_the_superset_in_the_generated_workspace(self):
+    def test_resolved_variant_is_staged_only_in_the_disposable_source(self):
         root = Path(__file__).resolve().parents[2]
         script = (root / 'scripts/ci/apple.sh').read_text()
-        self.assertIn('WORKSPACE_RESOLVED="$PROJECT/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"', script)
-        self.assertIn('mkdir -p "$(dirname "$WORKSPACE_RESOLVED")"', script)
-        self.assertIn('cp "$SOURCE/apple/Packages/PersonaSSH/Package.resolved" "$WORKSPACE_RESOLVED"', script)
+        for required in ('scripts/ci/apple_resolved.py',
+                         '--tracked "$CI_ROOT/apple/Packages/PersonaSSH/Package.resolved"',
+                         '--staged "$SOURCE/apple/Packages/PersonaSSH/Package.resolved"',
+                         '--meta "$PERSONA_META_WEARABLES"'):
+            self.assertIn(required, script)
 
 
 class PostgresCleanupTests(unittest.TestCase):
