@@ -20,7 +20,7 @@ import { runningWorkflows, workflowLine, workflowShortLine } from "../lib/workfl
 import { ultracodeMarkShown } from "../lib/ultracode";
 import { Rolling } from "../ui/Rolling";
 import { OriginMark } from "../ui/ChannelMark";
-import { autoOrigin, originMarkLabel } from "../lib/conversation-origins";
+import { autoOrigin, openerFrom } from "../lib/conversation-origins";
 import { InfoTip } from "../ui/InfoTip";
 import { Icon, type IconName } from "../ui/icons";
 import { UltraMark } from "./chat/Ultracode";
@@ -199,7 +199,7 @@ const loadSessionDetails = () => import("./SessionRowDetails");
 const SessionDetails = lazy(loadSessionDetails);
 
 // `prefix`: a word before the title (a tab's name, a pane's agent), in `prefixClass`
-type SessionRowProps = { menuLabel?: string; /** The mark at the start when the state is not shown (a Persona conversation's; pinned: the pin). */ icon?: IconName; s: Session; k: string; reg: RegFn; hover: (k: string | null) => void; active: boolean; to: Route; go: GoFn; tab?: boolean; label?: string; prefix?: string; prefixClass?: string; hint?: string; /** The hint is whole, never cut (a lead's counts). */ hintFull?: boolean; host?: string; showState?: boolean; /** Put this row's machine at the start of its existing second line. */ showMachine?: boolean; showTodoTag?: boolean; onMenu?: RowMenuFn; endRoom?: boolean; /** A lead row whose own conversation is idle while something under it runs (the direction tree's `running`, #6626): draw the working arc anyway (#6230). An own needs-you / unread state still takes precedence. */ workingMark?: boolean;
+type SessionRowProps = { menuLabel?: string; /** The mark at the start when the state is not shown (a Persona conversation's; pinned: the pin). */ icon?: IconName; s: Session; k: string; reg: RegFn; hover: (k: string | null) => void; active: boolean; to: Route; go: GoFn; tab?: boolean; label?: string; prefix?: string; prefixClass?: string; hint?: string; /** The hint is whole, never cut (a lead's counts). */ hintFull?: boolean; host?: string; showState?: boolean; /** Put this row's machine at the start of its second line, or after its title when it has none (no added line). */ showMachine?: boolean; showTodoTag?: boolean; onMenu?: RowMenuFn; endRoom?: boolean; /** A lead row whose own conversation is idle while something under it runs (the direction tree's `running`, #6626): draw the working arc anyway (#6230). An own needs-you / unread state still takes precedence. */ workingMark?: boolean;
   /** 常驻 rows (#6214): the "在做 N · 等你 N" counts never fade on hover and the ⋯ sits in a reserved end slot instead
    * of covering them, so hovering removes no information. */
   keepTrailing?: boolean };
@@ -274,6 +274,8 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
   const machineName = useStore((state) => machineWithHub(given.machine_id, state.machines));
   const detailId = useId();
   const [detailsAt, setDetailsAt] = useState<{ anchor: Element; keyboard: boolean } | null>(null);
+  // the extension whose own icon the mark draws, which the row's tooltip names too (#10358)
+  const [openerName, setOpenerName] = useState<string>();
   const detail = withDetail ? rowDetail(s, now) : [];
   const workflow = showState && !s.assistant && st !== "offline" ? workflowShortLine(s) : "";
   const workflowTitle = workflow ? workflowLine(s, now) : "";
@@ -306,6 +308,9 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
   ) : false;
   const rowStateLabel = stateName(awaiting && st === "idle" ? "awaits_reply" : finished && st === "idle" ? "just_finished" : waiting && st === "working" ? "bg_waiting" : st);
   const machineBody = agentRow && showMachine && !!machineName;
+  // with no second line to open (an ordinary working or seen row) the chip rides the title line, so the row keeps its
+  // one-line height; with second content it starts that line
+  const machineInline = machineBody && !(line || childLine || plan || workflow || detail.length > 0);
   const secondary = (
     <>
       {line && <SecondLine line={line} draft={!!draft} />}
@@ -364,7 +369,7 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
       onBlur={() => { hover(null); setDetailsAt(null); }}
       aria-current={active ? "page" : undefined}
       aria-describedby={detailsAt ? detailId : undefined}
-      title={agentRow ? undefined : `${sessionTitle(s)}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${originMarkLabel(origin)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
+      title={agentRow ? undefined : `${sessionTitle(s)}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${openerFrom(origin, openerName)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
       // a touch screen: rows a finger can hit (44), and room at the end for the ⋯ that is always there; the open row
       // keeps its ⋯ too, so it has room for it
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-transform duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active && CURRENT_ROW, // room for "N agents" and the ⋯ beside it (instead of the ⋯'s own)
@@ -384,19 +389,20 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
           workflow's start and end, so the mark does not fade in again */}
       {ultra || machineBody || detail.length > 0 || workflow || line || childLine || plan ? (
         <span className={cx("flex min-w-0 flex-1 flex-col", titleMin, titleFirst)}>
-          {ultra ? (
+          {ultra || machineInline ? (
             <span className="flex min-w-0 items-center gap-1">
-              <span className={cx("min-w-0 truncate text-[13px]", active ? "font-medium text-ink" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
+              <span className={cx("min-w-0 truncate text-[13px]", active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
                 {label ?? sessionTitle(s)}
               </span>
-              <UltraMark size={10} />
+              {ultra && <UltraMark size={10} />}
+              {machineInline && <MachineChip name={machineName} />}
             </span>
           ) : (
             <span className={cx("truncate text-[13px]", active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
               {label ?? sessionTitle(s)}
             </span>
           )}
-          {machineBody ? (
+          {machineBody && !machineInline ? (
             <span className="flex min-w-0 items-start gap-1">
               <MachineChip name={machineName} />
               <span className="flex min-w-0 flex-1 flex-col">{secondary}</span>
@@ -424,7 +430,7 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
           <Icon name="todo" size={10} stroke={2} />
         </span>
       )}
-      {origin && <OriginMark origin={origin} size={16} />}
+      {origin && <OriginMark origin={origin} size={16} session={s} onName={setOpenerName} />}
       {tailShown && <span data-row-context className={cx(hintFull ? "shrink-0 whitespace-nowrap tabular-nums" : "max-w-[72px] min-w-6 shrink-[20] truncate", "text-[11px] text-ink-3")}>{tail}</span>}
       {ageAtEnd && <span data-row-age className={cx("shrink-0 text-[11px] text-ink-3", aside)}>{ago(s.updated_at, Date.now(), "narrow")}</span>}
       {pendingCount > 0 && <span data-pending-count className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-attention tabular-nums">{pendingCount}</span>}

@@ -33,12 +33,15 @@ export function useTips(tipId?: string, onClose?: () => void): { api: TipApi; la
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const current = useRef<Element | null>(null);
   const pending = useRef<Element | null>(null);
+  // the anchor that asked last: a hide for an earlier one must not take a newer request away
+  const owner = useRef<Element | null>(null);
   useEffect(() => () => clearTimeout(timer.current), []);
   const api = useMemo<TipApi>(() => ({
     id,
     show(anchor, content, delay = TIP_DELAY) {
       clearTimeout(timer.current);
       pending.current = anchor;
+      owner.current = anchor;
       const raise = () => {
         pending.current = null;
         current.current = anchor;
@@ -48,11 +51,12 @@ export function useTips(tipId?: string, onClose?: () => void): { api: TipApi; la
       else timer.current = setTimeout(raise, delay);
     },
     hide(anchor) {
-      // a card asked for by another anchor stays: the pointer left one lane as it entered the next
-      if (anchor && current.current !== anchor && pending.current !== anchor) return;
+      // a newer request supersedes this one: the pointer left one lane as it entered the next
+      if (anchor && owner.current !== anchor) return;
       clearTimeout(timer.current);
       pending.current = null;
       current.current = null;
+      owner.current = null;
       setShown(null);
     },
   }), [id]);
@@ -61,9 +65,17 @@ export function useTips(tipId?: string, onClose?: () => void): { api: TipApi; la
     closed.current?.();
   }, [api]);
   useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && hide();
-    // scrolling or resizing also cancels a card that is still waiting for its hover delay
-    const away = () => hide();
+    // nothing up and nothing waiting: Escape, a scroll and a resize do nothing, and one that makes a card
+    // that is up go must not take away a card another anchor has only just asked for
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && (current.current || pending.current)) hide();
+    };
+    // A card that is up, or still waiting, goes when the page moves under it: a waiting card would otherwise
+    // open at the anchor's old place. The owner check in hide(anchor) already keeps a stale anchor's own hide
+    // from taking a newer request away.
+    const away = () => {
+      if (current.current || pending.current) hide();
+    };
     addEventListener("keydown", key);
     addEventListener("scroll", away, true);
     addEventListener("resize", away);

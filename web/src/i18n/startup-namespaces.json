@@ -341,7 +341,6 @@
   "rewind.edit_last",
   "rewind.edit_wait",
   "rewind.editing",
-  "rewind.editing_hint",
   "rewind.hub_unsupported",
   "rewind.input_kept",
   "rewind.needs_full_device",

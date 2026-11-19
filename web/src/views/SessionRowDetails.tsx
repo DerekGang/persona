@@ -1,5 +1,5 @@
 // The structured details an Agent row shows on hover or keyboard focus (#9769). The tooltip and its content load on intent.
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { t } from "../i18n";
 import { sessionHost, sessionSource, sourceName } from "../lib/agent-groups";
 import { sessionAgentName } from "../lib/agent-kind";
@@ -20,10 +20,22 @@ export default function SessionRowDetails({ id, anchor, keyboard, onClose, ...pr
   stateLabel: string;
 }) {
   const { api, layer } = useTips(id, onClose);
+  // The card follows the row's intent (the mount: the pointer entered or focus landed), not its content. The card reads
+  // the props through this ref, so a session update while it is up rewrites it in place instead of hiding it and
+  // waiting out the delay again.
+  const latest = useRef(props);
+  latest.current = props;
   useEffect(() => {
-    api.show(anchor, () => <Details {...props} />, keyboard ? 0 : TIP_DELAY);
+    api.show(anchor, () => <Details {...latest.current} />, keyboard ? 0 : TIP_DELAY);
     return () => api.hide(anchor);
-  }, [api, id, anchor, keyboard, props.s, props.machine, props.machineName, props.stateLabel]);
+  }, [api, id, anchor, keyboard]);
+  // `layer` is the card while it is up: a content change then shows it again at once, at the same anchor, so it keeps
+  // its place. Before it is up the pending open keeps its delay; a late change reaches the card through the ref.
+  const up = useRef(false);
+  up.current = layer !== null;
+  useEffect(() => {
+    if (up.current) api.show(anchor, () => <Details {...latest.current} />, 0);
+  }, [api, anchor, props.s, props.machine, props.machineName, props.stateLabel]);
   return layer;
 }
 

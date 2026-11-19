@@ -6,8 +6,9 @@
 // long list cost nothing until someone looks into one.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { t } from "../../i18n";
+import { api } from "../../lib/api";
 import { shortPath } from "../../lib/format";
-import { filterQuery, PAGE_SIZE, SessionList, type ListChangeHint, type ListFilters } from "../../lib/session-list";
+import { filterQuery, PAGE_SIZE, SessionList, type ListChangeHint, type ListCounts, type ListFilters } from "../../lib/session-list";
 import { onHubEvent } from "../../lib/store";
 import { SectionList } from "../../lib/section-list";
 import { holdsPlace, JUST_FINISHED_KEY, type GroupDimension, type SessionGroup, type SessionPlace } from "../../lib/session-groups";
@@ -66,6 +67,22 @@ export function GroupedSessions<T>({ groups, dimension, kind, scope, source, ren
   );
 }
 
+/** A folded legacy section's own counts, for the machines its heading names: read as a heading, so the section still
+ *  reads no rows, and again when its numbers change, as an open section re-reads on the same sign. */
+function useGroupMachines(read: boolean, path: string, query: string, onMachines: (ids: readonly string[]) => void, stamp: string) {
+  useEffect(() => {
+    if (!read) return;
+    let live = true;
+    const abort = new AbortController();
+    void api<ListCounts>(`${path}${path.includes("?") ? "&" : "?"}${query}`, { signal: abort.signal }).then((counts) => {
+      // an older hub's answer in its place is no machine set: the heading shows none, its rows keep their chips
+      if (!live || !counts || typeof counts.machine !== "object" || !counts.machine) return;
+      onMachines(Object.keys(counts.machine).filter(Boolean).sort());
+    }, () => {});
+    return () => { live = false; abort.abort(); };
+  }, [read, path, query, stamp, onMachines]);
+}
+
 /** One machine's name, or how many machines a project spans. */
 function GroupMachineChip({ machines, machineName }: { machines: readonly string[]; machineName: (id: string) => string }) {
   const label = machines.length > 1 ? t("agents-groupedsessions.machine_count", { count: machines.length }) : machines[0] ? machineName(machines[0]) : "";
@@ -84,12 +101,17 @@ function GroupSection<T>({ group, first, startsOpen, dimension, kind, scope, sou
   const selected = filterQuery({ ...scope, ...group.filters }, {});
   const [readMachines, setReadMachines] = useState<{ selected: string; ids: readonly string[] }>();
   const onMachines = useCallback((ids: readonly string[]) => setReadMachines({ selected, ids }), [selected]);
-  // A legacy hub's global counts cannot pair a project with its machines. Its open section reads its own counts;
-  // folded sections keep their no-extra-reads behavior and show no machine chip until opened.
-  const readMachineCounts = (dimension === "project" || dimension === "group") && !group.rest && !placed.length && !group.filters.machine_id;
+  // A legacy hub's global counts cannot pair a project with its machines; a personal account groups sessions no
+  // computer puts together. Only a runtime project or a space names machines, on its heading and its rows.
+  const machineChips = kind !== "personal" && (dimension === "project" || dimension === "group");
+  const readMachineCounts = machineChips && !group.rest && !placed.length && !group.filters.machine_id;
+  // A folded section reads no rows to learn its machines from, so it reads its own counts instead: its heading names
+  // them, and its rows leave them out once there is one, before anyone opens it.
+  const query = [selected, source.roots ? "roots=1" : "", "counts=1"].filter(Boolean).join("&");
+  useGroupMachines(folded && readMachineCounts, source.path, query, onMachines, `${group.count}/${group.needs}`);
   const learned = readMachines?.selected === selected ? readMachines.ids : [];
   const machineIds = placed.length ? placed : group.filters.machine_id ? [group.filters.machine_id] : learned;
-  const headingMachines = dimension === "project" || dimension === "group" ? machineIds : [];
+  const headingMachines = machineChips ? machineIds : [];
   return (
     <div data-session-group={group.key} data-group-open={!folded}>
       <Section first={first} folded={folded} onToggle={toggle}

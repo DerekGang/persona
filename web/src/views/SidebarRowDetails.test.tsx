@@ -132,6 +132,21 @@ describe("an agent row's structured details card", () => {
     expect(anchor.hasAttribute("aria-describedby")).toBe(false);
   });
 
+  it("keeps a card that is up, with the new content, when the session updates", async () => {
+    const anchor = show(terminal);
+    await enter(anchor);
+    await act(async () => { vi.advanceTimersByTime(TIP_DELAY); });
+    await settle();
+    expect(tip()!.textContent).toContain("Release work");
+    show({ ...terminal, title: "Release work, updated", state: "needs_you" });
+    await act(() => vi.dynamicImportSettled());
+    // no hide and no second delay: the card is up at once, with what the update brought
+    expect(tip()).not.toBeNull();
+    expect(tip()!.textContent).toContain("Release work, updated");
+    expect(tip()!.textContent).toContain(t("lib-state-labels.needs_you"));
+    expect(anchor.hasAttribute("aria-describedby")).toBe(true);
+  });
+
   it.each(["scroll", "resize"])("stays closed after %s when the session updates", async (eventName) => {
     const anchor = show(terminal);
     await enter(anchor);
