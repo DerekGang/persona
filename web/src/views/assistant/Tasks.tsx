@@ -95,6 +95,7 @@ import { UltracodeChip } from "../chat/Ultracode";
 import { byTime } from "../../lib/times";
 import { requestHome } from "../../lib/child-sessions";
 import { stateName } from "../../lib/state-labels";
+import { waitOf } from "../../lib/todo-wait-reason";
 import { EDITABLE } from "../../lib/shortcuts";
 
 // ── what a task is now ──
@@ -115,13 +116,17 @@ export function useTaskLookup() {
 // shallow compare skips the render. A push about its own agent, card or machine still draws it again.
 
 /** What a task is now, from the store: its status and its lead agent. */
-function taskNowIn(s: State, todo: Todo, plans: Record<string, TaskPlan>): { status: TodoStatus; lead?: Session } {
+function taskNowIn(s: State, todo: Todo, plans: Record<string, TaskPlan>): TaskNow {
   const lookup = answeredLookup(taskSessionLookup(s), s.interactions, s.answered);
-  return { status: statusOf(todo, lookup, plans), lead: mostUrgentAgent(todo, lookup)?.session };
+  const status = statusOf(todo, lookup, plans);
+  return { status, lead: mostUrgentAgent(todo, lookup)?.session, wait: waitOf(todo, status, lookup) };
 }
 
+/** A task's status, lead agent and, while it waits, what it waits on (#11090, lib/todo-wait-reason.ts waitOf). */
+type TaskNow = { status: TodoStatus; lead?: Session; wait?: WaitReason };
+
 /** A task's status and lead agent (undefined without the task). */
-function useTaskNow(todo: Todo | undefined): { status: TodoStatus; lead?: Session } | undefined {
+function useTaskNow(todo: Todo | undefined): TaskNow | undefined {
   const plans = useFeed((s) => s.plans);
   return useStore((s) => (todo ? taskNowIn(s, todo, plans) : undefined));
 }
@@ -775,7 +780,8 @@ function TaskHandoffs({ item }: { item: FeedItem }) {
   return <HandoffCards handoffs={handoffs} />;
 }
 
-/** One slot, one row: live task/session state wins over historical feed metadata. */
+/** One slot, one row: live task/session state wins over historical feed metadata. `fresh`: a Finished row the owner has
+ *  not opened since it finished (#10922), drawn as new with Just finished's mark and word, as the To-dos page names it. */
 export function ProgressTaskRow(props: { card: TaskCardMetadata; conversation: string; activity?: BackgroundWork; countsOpen: boolean; fresh?: boolean; onOpen?: () => void }) {
   return <Suspense fallback={<Loading />}><ProgressTaskPart {...props} tasks={draftTasks} /></Suspense>;
 }
@@ -1294,7 +1300,7 @@ export function DayLine({ date }: { date: Date }) {
 }
 
 /** A task's state for other views (the side panel's header). */
-export function useTaskState(todo?: Todo): { status: TodoStatus; lead?: Session; failure?: string } | undefined {
+export function useTaskState(todo?: Todo): (TaskNow & { failure?: string }) | undefined {
   const now = useTaskNow(todo);
   const plans = useFeed((s) => s.plans);
   if (!todo || !now) return undefined;
