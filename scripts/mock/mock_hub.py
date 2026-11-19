@@ -26213,6 +26213,7 @@ class H(BaseHTTPRequestHandler):
         if file_operation_route(self, p): return
         if _sent and _sent.route(self, "GET", p, q): return
         if _web_push and _web_push.route(self, "GET", p): return
+        if text_lookup_mock.route(self, "GET", p, q, b"", broadcast): return  # MOCK_TEXT_LOOKUP (#10977)
         if _todo_view and _todo_view.route(self, "GET", p): return
         if providers_route(self, "GET", p, q, b""): return
         if MOCK_MESSAGING and p.startswith("/api/v1/messaging") and lark_messaging.route(self, "GET", p, q, b""): return
@@ -27382,6 +27383,7 @@ class H(BaseHTTPRequestHandler):
         if custom_models_route(self, self.command, p, parse_qs(urlparse(self.path).query), self.last_body): return
         if _sent and _sent.route(self, self.command, p, {}, self.last_body): return
         if _web_push and _web_push.route(self, self.command, p, self.last_body): return
+        if text_lookup_mock.route(self, self.command, p, parse_qs(urlparse(self.path).query), self.last_body, broadcast): return
         if _todo_view and _todo_view.route(self, self.command, p): return
         if PERSONAL_AGENTS and p.startswith("/api/v1/agents/sessions/") and p.rsplit("/", 1)[-1] in ("hide", "unhide"):
             sid, op = unquote(p[len("/api/v1/agents/sessions/"):].rsplit("/", 1)[0]), p.rsplit("/", 1)[-1]
@@ -32551,6 +32553,22 @@ if MOCK_TURN_USAGE in ("1", "multi", "unpriced"):
 import todo_view_mock  # noqa: E402
 MOCK_HELP.extend(todo_view_mock.HELP)
 _todo_view = todo_view_mock if todo_view_mock.install(globals()) else None
+
+
+# MOCK_TEXT_LOOKUP=1|off (#10977, scripts/mock/text_lookup_mock.py): the text_lookup extension point, a made-up dictionary.
+import text_lookup_mock  # noqa: E402
+_features_without_text_lookup = features
+if text_lookup_mock.ENABLED:
+    INBOX.insert(0, text_lookup_mock.inbox_row(ago(minutes=5)))
+
+
+def features():
+    return text_lookup_mock.features(_features_without_text_lookup())
+
+
+MOCK_HELP.append("MOCK_TEXT_LOOKUP=1|off  Word lookup (#10977): features carry text_lookup; 1: Relingo answers GET/POST "
+                 "/api/v1/text-lookup… from a made-up dictionary (context, deploy, latency…); off: available false. "
+                 "MOCK_TEXT_LOOKUP_UNDERLINE=1, MOCK_TEXT_LOOKUP_LATENCY=S; GET /mock/text-lookup?available=&underline=&fail=&latency=")
 
 
 if __name__ == "__main__":
