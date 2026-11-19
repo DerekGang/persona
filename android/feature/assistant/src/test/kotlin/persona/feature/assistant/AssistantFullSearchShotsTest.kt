@@ -12,6 +12,10 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -67,6 +71,10 @@ class AssistantFullSearchShotsTest {
         File(out(), "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    private fun mainResult() = rule.onNode(
+        hasText("Main conversation") and hasAnyAncestor(hasTestTag("full-search-list"))
+    )
+
     @Test fun emptySearchInEveryStyle() {
         var opened: SessionKey? = null
         var style by mutableStateOf(AppStyle.Glass)
@@ -86,7 +94,7 @@ class AssistantFullSearchShotsTest {
         rule.onNodeWithTag("full-search-field").assertIsDisplayed()
         rule.onNodeWithTag("full-search-close").assertIsDisplayed()
         rule.onNodeWithText("Recent").assertIsDisplayed()
-        rule.onNodeWithText("Main conversation").assertIsDisplayed()
+        mainResult().assertIsDisplayed()
         rule.onNodeWithText("Today's plan is ready.").assertDoesNotExist()
         rule.onNodeWithText("Weekend trip").assertIsDisplayed()
         for (s in AppStyle.entries) for (d in listOf(false, true)) {
@@ -94,9 +102,10 @@ class AssistantFullSearchShotsTest {
             androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
             capture("full-search-empty-${s.name.lowercase()}-${if (d) "dark" else "light"}")
         }
-        rule.onNodeWithTag("full-search-field").performTextReplacement("Main conversation")
+        rule.onNode(hasSetTextAction() and hasAnyAncestor(hasTestTag("full-search-field")))
+            .performTextReplacement("Main conversation")
         rule.onNodeWithText("Weekend trip").assertDoesNotExist()
-        rule.onNodeWithText("Main conversation").performClick()
+        mainResult().performClick()
         assertEquals(chats.first().key, opened)
     }
 
@@ -114,7 +123,7 @@ class AssistantFullSearchShotsTest {
                 }
             }
         }
-        rule.onNodeWithText("Main conversation", useUnmergedTree = true).assertIsDisplayed()
+        mainResult().assertIsDisplayed()
         capture("full-search-main-glass-light-large-text")
         dark = true
         androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
