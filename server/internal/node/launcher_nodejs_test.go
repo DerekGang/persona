@@ -4,11 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"testing"
 )
 
-func TestLauncherNodeEnvUsesResolvedNPMPrefix(t *testing.T) {
+func TestLauncherNodeDirUsesResolvedNPMPrefix(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a Unix npm launcher")
 	}
@@ -27,10 +26,5 @@ func TestLauncherNodeEnvUsesResolvedNPMPrefix(t *testing.T) {
 	}
 	if dir, needsNode := launcherNodeDir(launcher); !needsNode || dir != matched {
 		t.Fatalf("launcher needs Node: %t, matching bin: %q, want %q", needsNode, dir, matched)
-	}
-	env := []string{"FIXTURE=kept", "PATH=" + other}
-	want := []string{"FIXTURE=kept", "PATH=" + matched + string(os.PathListSeparator) + other}
-	if got := launcherNodeEnv(launcher, env); !slices.Equal(got, want) {
-		t.Fatalf("launcher environment = %v, want %v", got, want)
 	}
 }

@@ -42,6 +42,9 @@ const launcherModelsStale = 24 * time.Hour
 // launcherModelsTimeout covers a slow ~/.zshrc, the CLI's start and the gateway's /models.
 var launcherModelsTimeout = 45 * time.Second
 
+// Only the direct model probe asks personad launch to use the npm script's paired interpreter.
+const managedModelProbeEnv = "PERSONA_MANAGED_MODEL_PROBE"
+
 // modelCheckProbe is the model the override check asks the launcher to pass on (model_probe.go): any name the
 // launcher does not fix itself.
 const modelCheckProbe = "persona-model-override-check"
@@ -241,6 +244,7 @@ func (n *Node) agentModelsCommand(ctx context.Context, name, agent, dir string) 
 	if managed && agent == "claude" && canProbeManagedClaudeDirectly() {
 		cmd := exec.CommandContext(ctx, n.bin, append([]string{"launch", name}, args...)...)
 		cmd.Dir = dir
+		cmd.Env = append(cmd.Environ(), managedModelProbeEnv+"=1")
 		return cmd, nil
 	}
 	shell, err := interactiveShell()

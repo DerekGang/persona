@@ -55,24 +55,6 @@ func hasLauncherNode(dir string) bool {
 	return err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
 }
 
-// launcherNodeEnv supplies a paired Node.js interpreter even when its bin directory is missing from the service PATH.
-func launcherNodeEnv(exe string, env []string) []string {
-	bin, _ := launcherNodeDir(exe)
-	if bin == "" {
-		return env
-	}
-	path := envValue(env, "PATH")
-	sep := string(os.PathListSeparator)
-	first, _, _ := strings.Cut(path, sep)
-	if first == bin {
-		return env
-	}
-	if path != "" {
-		path = sep + path
-	}
-	return append(withoutEnv(env, []string{"PATH"}), "PATH="+bin+path)
-}
-
 func envNodeScript(path string) bool {
 	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
 		return false

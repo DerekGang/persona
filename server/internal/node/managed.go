@@ -489,8 +489,7 @@ func Launch(ctx context.Context, name string, args []string, ticket string) erro
 	if agent == "codex" && os.Getenv(codexBypassEnv) == "1" {
 		argv = codexBypassArgs(argv)
 	}
-	env = withoutEnv(env, []string{codexBypassEnv})
-	env = launcherNodeEnv(exe, env)
+	env = withoutEnv(env, []string{codexBypassEnv, managedModelProbeEnv})
 	exe, argv, env, _ = launchExec(agent, exe, argv, env)
 	return osproc.Exec(exe, argv, env)
 }
@@ -713,7 +712,16 @@ func launchExec(agent, exe string, argv, env []string) (string, []string, []stri
 		return sandbox.NewStatusReason("node-doctor.sandbox_unmanaged_agent", i18n.Args{"agent": agent})
 	}
 	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, "personad launch: "+format+"\n", a...) }
-	wrapped, wenv, st := wrapAgent("launch "+agent, home, identity.DataDir(home), cwd, settingsArgs(rest), inner, append([]string{exe}, rest...), env, logf)
+	command := append([]string{exe}, rest...)
+	if agent == "claude" && os.Getenv(managedModelProbeEnv) == "1" {
+		if dir, _ := launcherNodeDir(exe); dir != "" {
+			// Only the probe needs this interpreter. Keep the child environment's PATH order for every other command.
+			exe = filepath.Join(dir, "node")
+			command = append([]string{exe}, command...)
+			argv = command
+		}
+	}
+	wrapped, wenv, st := wrapAgent("launch "+agent, home, identity.DataDir(home), cwd, settingsArgs(rest), inner, command, env, logf)
 	if wrapped[0] == exe {
 		return exe, argv, env, st
 	}

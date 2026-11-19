@@ -250,8 +250,9 @@ The script frames what it prints with begin/end markers, and node reads only bet
   `--settings` is still overridden here, so the listed models omit its effects: disabling hooks can only be specified in `--settings`, and merging requires first reading the settings supplied by the function (#1411).
   For a Persona-managed Claude Code provider, model discovery invokes `personad launch` directly when the CLI and its
   interpreter can be located without shell startup. For npm installations, including Node Version Manager (NVM) and
-  Homebrew prefixes, Persona adds the matching Node.js directory to the child process's search path. When the user's
-  setup is needed to locate the CLI or Node.js, the probe runs through the user's interactive shell.
+  Homebrew prefixes, the probe runs the CLI with its matching Node.js executable and keeps the child's search path
+  in its original order. When the user's setup is needed to locate the CLI or Node.js, the probe runs through the
+  user's interactive shell.
 
 ## How herdr recognizes Agents started by launchers (`HERDR_AGENT`, #3454)
 
