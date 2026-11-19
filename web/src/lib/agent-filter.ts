@@ -31,9 +31,9 @@ export function agentFilter(value: string | null): AgentFilter {
   return AGENT_FILTERS.find((f) => f.key === value)?.key ?? "all";
 }
 
-// "botmux" beside the filters (#2786): a show / hide switch for botmux sessions, kept in this browser. It only hides
-// them from this list; the hub's per-machine switch (machine page › "Engine") still decides whether they are listed at all.
-export const BOTMUX_HIDDEN_KEY = "persona.agentHideBotmux";
+// "botmux" beside the filters (#2786): botmux sessions decoded, as they are, or hidden in this browser (lib/botmux-mode.ts).
+// Hiding only leaves them out of this list; the hub's per-machine switch (machine page › "Engine") still decides whether
+// they are listed at all.
 
 export const isBotmux = (s: Session) => sessionHost(s) === "botmux";
 

@@ -4,7 +4,8 @@ import { isPersonaStateDir, storedValue, storeValue } from "../lib/compatibility
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import { NARROW, useMedia } from "../lib/viewport";
-import { AGENT_FILTERS, agentFilter, applyFilter, arrangeSpaces, BOTMUX_HIDDEN_KEY, botmuxAndFilter, filterCounts, isBotmux, isSpaceMuted, matchingKeys, shownFilters, unreadOf, withoutBotmux, type AgentFilter, type FilterCounts } from "../lib/agent-filter";
+import { nextBotmuxMode, setBotmuxMode, useBotmuxMode, type BotmuxMode } from "../lib/botmux-mode";
+import { AGENT_FILTERS, agentFilter, applyFilter, arrangeSpaces, botmuxAndFilter, filterCounts, isBotmux, isSpaceMuted, matchingKeys, shownFilters, unreadOf, withoutBotmux, type AgentFilter, type FilterCounts } from "../lib/agent-filter";
 import { applyDimensionFilters, buildAgentFacets, DEFAULT_DIMENSION_FILTERS, hasActiveDimensionFilters, NO_FACETS, type AgentDimensionFilters } from "../lib/agent-chatlist-filter";
 import { getAgentListFilters, setAgentListFilters, useAgentListFilters } from "../lib/agent-list-filters";
 import { AGENT_SORT_KEY, AGENT_SORTS, agentSort, byUpdated, machineTreeByUpdate, projectsByUpdate, repoMachinesByUpdate, todoTreeByUpdate, type AgentSort } from "../lib/agent-sort";
@@ -725,29 +726,27 @@ function BoundedAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate,
   // too; on a hub that cannot select them (no sessions_quick_filters), the paged list's own state chips.
   const quickFilters = useStore((s) => s.features.includes(SESSIONS_QUICK_FILTERS_FEATURE));
   const [filter, setFilter] = useState(() => agentFilter(storedValue("persona.agentFilter")));
-  const [botmuxHidden, setBotmuxHidden] = useState(() => botmuxAndFilter(filter, localStorage.getItem(BOTMUX_HIDDEN_KEY) === "1", "filter").hidden);
-  const saveBotmuxHidden = useCallback((next: boolean) => {
-    localStorage.setItem(BOTMUX_HIDDEN_KEY, next ? "1" : "0");
-    setBotmuxHidden(next);
-  }, []);
+  const botmuxMode = useBotmuxMode();
+  const botmuxHidden = botmuxAndFilter(filter, botmuxMode === "hide", "filter").hidden;
   const chooseFilter = useCallback((f: AgentFilter) => {
-    if (botmuxAndFilter(f, botmuxHidden, "filter").hidden !== botmuxHidden) saveBotmuxHidden(false);
+    if (botmuxAndFilter(f, botmuxHidden, "filter").hidden !== botmuxHidden) setBotmuxMode("decode");
     storeValue("persona.agentFilter", f);
     setFilter(f);
     hover(null);
-  }, [botmuxHidden, hover, saveBotmuxHidden]);
+  }, [botmuxHidden, hover]);
   const toggleBotmux = useCallback(() => {
-    const next = botmuxAndFilter(filter, !botmuxHidden, "botmux");
-    saveBotmuxHidden(next.hidden);
+    const mode = nextBotmuxMode(botmuxHidden ? "hide" : botmuxMode);
+    const next = botmuxAndFilter(filter, mode === "hide", "botmux");
+    setBotmuxMode(mode);
     if (next.filter !== filter) chooseFilter(next.filter);
     hover(null);
-  }, [filter, botmuxHidden, saveBotmuxHidden, chooseFilter, hover]);
+  }, [filter, botmuxHidden, botmuxMode, chooseFilter, hover]);
   const quick = useMemo((): PagedQuickFilters | undefined => quickFilters ? {
     select: QUICK_SELECT[filter],
     exclude: botmuxHidden ? HIDE_BOTMUX : SHOW_ALL,
     // the switch shows while there are Lark sessions to hide, or they are hidden
-    bar: (counts) => <FilterBar selection={filter} counts={counts ?? NO_COUNTS} onChoose={chooseFilter} botmux={(counts?.feishu ?? 0) > 0 || botmuxHidden ? { hidden: botmuxHidden, onToggle: toggleBotmux } : undefined} />,
-  } : undefined, [quickFilters, filter, botmuxHidden, chooseFilter, toggleBotmux]);
+    bar: (counts) => <FilterBar selection={filter} counts={counts ?? NO_COUNTS} onChoose={chooseFilter} botmux={(counts?.feishu ?? 0) > 0 || botmuxHidden ? { mode: botmuxHidden ? "hide" : botmuxMode, onToggle: toggleBotmux } : undefined} />,
+  } : undefined, [quickFilters, filter, botmuxHidden, botmuxMode, chooseFilter, toggleBotmux]);
   const groupsRef = useRef<HTMLDivElement>(null);
   // the words ⌘K's "Filter Agents list" put on the list, its search (#6589): only its words, which the hub matches as
   // text; the Filter menu's choices are the complete list's, so a chip shows here only what this list is narrowed by
@@ -867,13 +866,10 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
   // the quick filter ("All" / "Needs you" / "Unread" / "Working"), stacked on any grouping; what it showed when chosen stays (`kept`)
   const [filter, setFilter] = useState(() => agentFilter(storedValue("persona.agentFilter")));
   const [kept, setKept] = useState<ReadonlySet<string>>(() => new Set());
-  // "botmux" beside the filters (#2786): botmux sessions shown or hidden in this browser
-  const [botmuxHidden, setBotmuxHidden] = useState(() => botmuxAndFilter(filter, localStorage.getItem(BOTMUX_HIDDEN_KEY) === "1", "filter").hidden);
+  // "botmux" beside the filters (#2786): botmux sessions decoded, shown as they are, or hidden in this browser (lib/botmux-mode.ts)
+  const botmuxMode = useBotmuxMode();
+  const botmuxHidden = botmuxAndFilter(filter, botmuxMode === "hide", "filter").hidden;
   const botmuxCount = useMemo(() => all.filter(isBotmux).length, [all]);
-  const saveBotmuxHidden = useCallback((next: boolean) => {
-    localStorage.setItem(BOTMUX_HIDDEN_KEY, next ? "1" : "0");
-    setBotmuxHidden(next);
-  }, []);
   const listed = useMemo(() => withoutBotmux(all, botmuxHidden), [all, botmuxHidden]);
   const facets = useMemo(() => buildAgentFacets(listed, machines, pins), [listed, machines, pins]);
   const dimActive = hasActiveDimensionFilters(dimFilters);
@@ -956,19 +952,20 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
   const filterInputs = useRef({ live, mutes });
   useLayoutEffect(() => { filterInputs.current = { live, mutes }; }, [live, mutes]);
   const choose = useCallback((f: AgentFilter) => {
-    if (botmuxAndFilter(f, botmuxHidden, "filter").hidden !== botmuxHidden) saveBotmuxHidden(false);
+    if (botmuxAndFilter(f, botmuxHidden, "filter").hidden !== botmuxHidden) setBotmuxMode("decode");
     storeValue("persona.agentFilter", f);
     setFilter(f);
     setKept(matchingKeys(filterInputs.current.live, f, filterInputs.current.mutes));
     hover(null);
-  }, [botmuxHidden, hover, saveBotmuxHidden]);
+  }, [botmuxHidden, hover]);
   const toggleBotmux = useCallback(() => {
-    const next = botmuxAndFilter(filter, !botmuxHidden, "botmux");
-    saveBotmuxHidden(next.hidden);
+    const mode = nextBotmuxMode(botmuxHidden ? "hide" : botmuxMode);
+    const next = botmuxAndFilter(filter, mode === "hide", "botmux");
+    setBotmuxMode(mode);
     if (next.filter !== filter) choose(next.filter);
     hover(null);
-  }, [filter, botmuxHidden, saveBotmuxHidden, choose, hover]);
-  const botmux = useMemo(() => botmuxCount > 0 || botmuxHidden ? { hidden: botmuxHidden, onToggle: toggleBotmux } : undefined, [botmuxCount, botmuxHidden, toggleBotmux]);
+  }, [filter, botmuxHidden, botmuxMode, choose, hover]);
+  const botmux = useMemo(() => botmuxCount > 0 || botmuxHidden ? { mode: botmuxHidden ? "hide" as const : botmuxMode, onToggle: toggleBotmux } : undefined, [botmuxCount, botmuxHidden, botmuxMode, toggleBotmux]);
   // Settings › Appearance › Show terminals in sidebar (off): the plain shells of each machine's terminal host, under its agents in "By machine"
   const showTerminals = useSidebarTerminals() && shownGrouping === "machine";
   const { listing: panes, refresh: refreshPanes } = usePanes(machines, showTerminals);
@@ -1208,10 +1205,17 @@ const GroupingBar = memo(function GroupingBar({ groupings, selection, onChoose }
   );
 });
 
+/** The botmux chip in each mode: what it shows, and what a click does next (decode → as it is → hidden → decode). */
+const BOTMUX_CHIP: Record<BotmuxMode, { icon: "check" | "code" | "x"; label: string; title: string }> = {
+  decode: { icon: "check", label: "lib-agent-filter.botmux", title: "lib-agent-filter.botmux_show_raw" },
+  all: { icon: "code", label: "lib-agent-filter.botmux_raw", title: "lib-agent-filter.botmux_hide" },
+  hide: { icon: "x", label: "lib-agent-filter.botmux", title: "lib-agent-filter.botmux_show" },
+};
+
 /** "All" / "Needs you" / "Unread" / "Working" with their counts (iOS QuickFilterBar): "All" and the states that have agents now; the
- * chosen one stays while it empties, so it can be left. Then "botmux" (#2786), when there are botmux sessions: a
- * show / hide switch that stacks on any filter. Hidden when there is nothing to pick. */
-const FilterBar = memo(function FilterBar({ selection, counts, onChoose, botmux }: { selection: AgentFilter; counts: FilterCounts; onChoose: (f: AgentFilter) => void; botmux?: { hidden: boolean; onToggle: () => void } }) {
+ * chosen one stays while it empties, so it can be left. Then "botmux" (#2786), when there are botmux sessions: their mode
+ * (decoded, as they are, hidden; lib/botmux-mode.ts), stacked on any filter. Hidden when there is nothing to pick. */
+const FilterBar = memo(function FilterBar({ selection, counts, onChoose, botmux }: { selection: AgentFilter; counts: FilterCounts; onChoose: (f: AgentFilter) => void; botmux?: { mode: BotmuxMode; onToggle: () => void } }) {
   const keys = shownFilters(selection, counts);
   if (keys.length < 2 && !botmux) return null;
   return (
@@ -1244,16 +1248,17 @@ const FilterBar = memo(function FilterBar({ selection, counts, onChoose, botmux 
       {botmux && (
         <button
           type="button"
-          aria-pressed={!botmux.hidden}
-          title={t(botmux.hidden ? "lib-agent-filter.botmux_show" : "lib-agent-filter.botmux_hide")}
+          aria-pressed={botmux.mode !== "hide"}
+          title={t(BOTMUX_CHIP[botmux.mode].title)}
           onClick={botmux.onToggle}
+          data-botmux-mode={botmux.mode}
           className={cx(
             "touch-hit relative z-10 flex h-6 items-center gap-1 whitespace-nowrap rounded-full px-[7px] text-[11.5px] transition-[background-color,color,box-shadow] duration-150",
-            botmux.hidden ? "text-ink-3 line-through hover:bg-hover hover:text-ink-2" : "text-ink-2 hover:bg-hover hover:text-ink",
+            botmux.mode === "hide" ? "text-ink-3 line-through hover:bg-hover hover:text-ink-2" : "text-ink-2 hover:bg-hover hover:text-ink",
           )}
         >
-          <Icon name={botmux.hidden ? "x" : "check"} size={10} stroke={2.4} />
-          {t("lib-agent-filter.botmux")}
+          <Icon name={BOTMUX_CHIP[botmux.mode].icon} size={10} stroke={2.4} />
+          {t(BOTMUX_CHIP[botmux.mode].label)}
         </button>
       )}
     </div>

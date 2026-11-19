@@ -1,0 +1,14 @@
+{
+  "via": "Sent from {source}",
+  "sent": "Sent to Lark",
+  "sent_final": "Final reply in Lark",
+  "bot": "{name} (bot)",
+  "quoted": "Quoted a message",
+  "topic": "Topic had earlier messages",
+  "attachments_one": "{count} attachment",
+  "attachments_other": "{count} attachments",
+  "voice": "Voice",
+  "truncated": "Cut short",
+  "original": "Original",
+  "hide_original": "Hide original"
+}

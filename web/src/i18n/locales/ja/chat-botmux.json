@@ -1,0 +1,14 @@
+{
+  "via": "{source} から送信",
+  "sent": "Lark に送信済み",
+  "sent_final": "Lark の最終返信",
+  "bot": "{name}（ボット）",
+  "quoted": "メッセージを引用",
+  "topic": "トピックに以前のメッセージあり",
+  "attachments_one": "添付 {count} 件",
+  "attachments_other": "添付 {count} 件",
+  "voice": "音声",
+  "truncated": "途中まで",
+  "original": "原文",
+  "hide_original": "原文を隠す"
+}

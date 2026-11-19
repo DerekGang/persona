@@ -113,6 +113,9 @@ func fold(run []proto.Item) proto.Item {
 			if it.ToolName != "" && len(fo.ToolNames) < proto.FoldToolNamesMax && !slices.Contains(fo.ToolNames, it.ToolName) {
 				fo.ToolNames = append(fo.ToolNames, it.ToolName)
 			}
+			if it.Botmux != nil {
+				fo.Botmux = append(fo.Botmux, *it.Botmux)
+			}
 		case it.Kind == proto.KindToolResult && it.IsError:
 			fo.Errors++
 		case it.Kind == proto.KindThinking && strings.TrimSpace(it.Text) != "":

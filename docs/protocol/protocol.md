@@ -5340,3 +5340,32 @@ save that needs a provider answers 409 `task_repositories_providers_starting`
 (`repository_providers_starting` on the repository routes) when the extensions
 are still starting at the end of its budget; it never reports the provider as
 not installed.
+
+## BotMux messages
+
+A botmux session's transcript (`docs/integrations/engines.md` "botmux") holds what botmux handed the agent, wrapped in blocks for the model, and the
+agent's replies as `botmux send` shell calls. The node reads them back (`server/internal/transcript/botmux.go`, cases in `spec/fixtures/botmux/cases.json`)
+and sets `botmux` on the item; `text` keeps the transcript's words, so a client can always show the original.
+
+```json
+{"role":"user","kind":"text","text":"<botmux_reminder>…</botmux_reminder>\n\n<user_message>\nship it\n</user_message>\n\n<sender … />",
+ "botmux":{"kind":"message","text":"ship it","sender":"Alex Chen","sender_type":"user","thread":true}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `message`: a Lark message; `trigger`: a turn handed to botmux's `/api/trigger` (the apps' own sends, `source` names who); `reply`: the agent's `botmux send` (on a `tool_use` item) |
+| `text` | The words without botmux's blocks and hint lines |
+| `sender`, `sender_type` | The Lark sender's display name and kind from `<sender />`; never its open_id or email |
+| `quoted`, `topic_context` | The message quoted another one; the topic had messages before the agent joined it (botmux's hint lines, Chinese or English) |
+| `thread`, `attachments`, `mentions` | Posted in a topic (`<message_location placement="thread">`); how many attachments; the mentioned names |
+| `final`, `voice` | A reply sent with `--response-kind final`; as voice |
+| `truncated` | The item was clipped inside the words: `text` is their start |
+
+A fold that hides `botmux send` calls lists their replies in `fold.botmux`, in order. Read: a `<user_message>` with only blocks around it, a trigger
+turn starting with `<botmux_task trusted="true">` (botmux's hook mode), or bare words followed by `<botmux_formatting>`; a reply is a single
+`botmux send` whose words are its arguments or a here-document. Anything else, botmux 1.x's plain preamble, hook-mode lines (already bare), a reply
+read from a file or a pipe, and items from older nodes carry no `botmux`: clients show them as before.
+
+Clients offer three modes for botmux sessions: show everything as it is, hide the sessions, or decode (the web's default): a message shows
+`botmux.text` with its facts as tags, a reply shows as the agent's message sent to Lark, and each can be opened to its original.

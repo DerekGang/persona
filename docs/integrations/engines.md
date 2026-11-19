@@ -257,6 +257,13 @@ Typical use: work Agents in botmux, personal Agents in herdr, viewed together.
   resumes suspended sessions itself (no separate herdr `claude --resume`, also for suspended beyond 7 days / unlisted), and sends replies back to Lark topics.
   Node gets dashboard token through `botmux dashboard current`, memory-only, connecting only to local 127.0.0.1. Claude receives botmux task tags and an external-event explanation.
 - **Unsupported**: screen reads, keys, dialogs (answer in Lark), close, rename, create, live terminal; app hides or explains by capabilities.
+- **Showing it as in Lark**: botmux wraps each Lark message in blocks for the model (`<user_message>`, `<sender />`, `<mentions>`, `<attachments>`,
+  `<message_location />`, `<botmux_reminder>`, `<botmux_formatting>`…) and the agent answers with `botmux send`. The node reads both back
+  (`server/internal/transcript/botmux.go`) into the item's `botmux` field: the words written in Lark, the sender's display name and a few facts for tags,
+  and the reply text of a `botmux send` call (also on a fold that hides the call). The transcript text is unchanged, so the original stays one tap away.
+  A message the apps sent arrives as a trigger turn (`<botmux_task>` plus the untrusted external event) and reads back as `kind: trigger`, the user's own
+  words. Apps do not write botmux's wrapper themselves: botmux resolves `<sender />` from Lark, has no field for a connector to claim one, and already
+  adds its reminder and formatting blocks to trigger turns. Formats and fallbacks: `docs/protocol/protocol.md` ("BotMux messages").
 - **Why it needs you / open in Lark**: reason from `botmux send --attention` goes into `attention_reason` while Needs you;
   app shows it in list rows / chat top. Raw observe topic link (`feishuThreadLink`, HTTPS only) becomes `external_url` for "Open in Lark."
   Both are raw botmux fields, not stable APIs; omit if absent.

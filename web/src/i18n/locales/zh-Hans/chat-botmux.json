@@ -1,0 +1,14 @@
+{
+  "via": "从 {source} 发送",
+  "sent": "已发到飞书",
+  "sent_final": "飞书最终回复",
+  "bot": "{name}（机器人）",
+  "quoted": "引用了消息",
+  "topic": "话题有前情",
+  "attachments_one": "{count} 个附件",
+  "attachments_other": "{count} 个附件",
+  "voice": "语音",
+  "truncated": "已截断",
+  "original": "原文",
+  "hide_original": "收起原文"
+}

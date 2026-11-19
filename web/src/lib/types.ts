@@ -664,6 +664,23 @@ export interface TokenUsage {
   fast?: boolean;
 }
 
+/** proto.Botmux: a BotMux-wrapped item's own words and the facts shown as tags. */
+export interface Botmux {
+  kind: "message" | "trigger" | "reply";
+  text: string;
+  sender?: string;
+  sender_type?: string;
+  quoted?: boolean;
+  topic_context?: boolean;
+  thread?: boolean;
+  attachments?: number;
+  mentions?: string[];
+  source?: string;
+  final?: boolean;
+  voice?: boolean;
+  truncated?: boolean;
+}
+
 export interface Item {
   id: string;
   seq: number;
@@ -681,10 +698,13 @@ export interface Item {
   queued?: boolean;
   wake?: boolean;
   task?: TaskNote;
-  fold?: { items: number; tools: number; thoughts: number; until?: string; through_seq: number; through_id?: string; images?: FoldImage[]; tasks?: FoldTaskSnapshot[]; latest_thinking?: Item; supervision_user?: boolean; changes?: FoldChange[] | null; usage?: TokenUsage[]; sources?: FoldSource[] };
+  fold?: { items: number; tools: number; thoughts: number; until?: string; through_seq: number; through_id?: string; images?: FoldImage[]; tasks?: FoldTaskSnapshot[]; latest_thinking?: Item; supervision_user?: boolean; changes?: FoldChange[] | null; usage?: TokenUsage[]; sources?: FoldSource[]; botmux?: Botmux[] };
   image?: { mime: string; data?: string; lazy?: boolean; size?: number; width?: number; height?: number };
   /** Sent by another Claude session (cross-session messaging), not typed by you: its name. */
   from?: string;
+  /** What a BotMux-wrapped message or `botmux send` call says without BotMux's blocks (docs/protocol/protocol.md
+   *  "BotMux messages"); `text` stays the original. Absent from older nodes. */
+  botmux?: Botmux;
   /** The client_msg_id of the message this came from, as the hub tied it (every item of it: the text, its images, a
    *  queued copy, or the notice it became); older hubs never send it (lib/echo.ts). */
   client_msg_id?: string;

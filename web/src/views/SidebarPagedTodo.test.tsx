@@ -139,12 +139,19 @@ describe("the sidebar's paged Agents by to-do", () => {
     await flush();
     expect(localStorage.getItem("persona.agentFilter")).toBe("feishu");
     expect(reads().some((q) => q.get("pane_source") === "feishu" && !q.has("state"))).toBe(true);
-    // hiding botmux leaves its origin out of every read and goes back to All
-    const botmux = host.querySelector<HTMLButtonElement>('button[aria-pressed]')!;
-    expect(botmux.textContent).toContain("botmux");
-    fetch.mockClear();
-    await act(async () => botmux.click());
+    // the botmux chip goes decoded → as they are → hidden (lib/botmux-mode.ts); showing them as they are keeps the filter
+    const botmux = () => host.querySelector<HTMLButtonElement>('button[data-botmux-mode]')!;
+    expect(botmux().textContent).toContain("botmux");
+    expect(botmux().dataset.botmuxMode).toBe("decode");
+    await act(async () => botmux().click());
     await flush();
+    expect(botmux().dataset.botmuxMode).toBe("all");
+    expect(localStorage.getItem("persona.agentFilter")).toBe("feishu");
+    // hiding botmux leaves its origin out of every read and goes back to All
+    fetch.mockClear();
+    await act(async () => botmux().click());
+    await flush();
+    expect(botmux().dataset.botmuxMode).toBe("hide");
     expect(localStorage.getItem("persona.agentFilter")).toBe("all");
     expect(reads().length).toBeGreaterThan(0);
     expect(reads().every((q) => q.get("exclude_pane_source") === "feishu")).toBe(true);
