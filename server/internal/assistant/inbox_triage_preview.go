@@ -40,6 +40,9 @@ func (s *Service) InboxTriagePreview(ctx context.Context, p assistantwire.InboxT
 		b.mu.Lock()
 		item := b.promptItemIn(it, language)
 		b.mu.Unlock()
+		if source == "larkcli" && it.Kind == KindDM {
+			item.Latest = it.Preview
+		}
 		if item.Described == "" {
 			item.Described = p.Kinds[it.Kind]
 		}
