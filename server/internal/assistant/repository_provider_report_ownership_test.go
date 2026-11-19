@@ -135,6 +135,56 @@ func TestRepositoryProviderOwnershipIsRecheckedAfterResolution(t *testing.T) {
 	}
 }
 
+func TestRepositoryProviderPendingReportsKeepLatestOwnership(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "reference replaces proof", true: "fresh proof"}[owned], func(t *testing.T) {
+			database, err := db.Open(t.Context(), newDatabase(t), db.ManagerSet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			s, provider, _ := acmeService(t, database)
+			release := make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			s.repoExt = slowAcme{provider, release}
+			todo, err := s.createPlainTodo(t.Context(), "Repository work", "", db.TodoEdit{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			const review = "https://code.acme.test/team/app/reviews/17"
+			ownedRepositoryReport(t, s, todo.ID, "Created "+review, review)
+			s.reportedLinks.mu.Lock()
+			asking := s.reportedLinks.asking[todo.ID+" "+review]
+			s.reportedLinks.mu.Unlock()
+			if !asking {
+				t.Fatal("the first proven report did not start an asynchronous resolution")
+			}
+			if owned {
+				ownedRepositoryReport(t, s, todo.ID, "Fresh creation "+review, review)
+			} else {
+				ownedRepositoryReport(t, s, todo.ID, "Deployment only mentions "+review)
+			}
+			close(release)
+			s.reportedLinks.runs.Wait()
+			if _, links := savedArtifactURLs(t, s.store().(todoRepositoryStore), todo.ID); slices.Contains(links, review) != owned {
+				t.Fatalf("pending resolution inherited stale authorization: links=%v wantLinked=%v", links, owned)
+			}
+			if got := provider.asked(); !slices.Equal(got, []string{"parse", "link", "describe"}) {
+				t.Fatal("the pending report repeated provider resolution", got)
+			}
+			if !owned && todoNow(s, todo.ID).PRURL != "" {
+				t.Fatal("a rejected pending report entered the legacy PR route")
+			}
+		})
+	}
+}
+
 // Provider routing fixtures still need a real task link and matching native creation evidence.
 func ownedRepositoryReport(t *testing.T, s *Service, id, text string, created ...string) bool {
 	t.Helper()
@@ -153,7 +203,7 @@ func TestRepositoryProviderReportsRequireTurnOwnership(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer database.Close()
-				s, _, _ := acmeService(t, database)
+				s, provider, _ := acmeService(t, database)
 				todo, err := s.createPlainTodo(t.Context(), "Deployment evidence", "", db.TodoEdit{})
 				if err != nil {
 					t.Fatal(err)
@@ -193,6 +243,11 @@ func TestRepositoryProviderReportsRequireTurnOwnership(t *testing.T) {
 					}
 				}
 				s.reportedLinks.runs.Wait()
+				if evidence == "reference only" || evidence == "earlier turn" {
+					if got := provider.asked(); len(got) != 0 {
+						t.Fatal("an unproven report reached the provider", got)
+					}
+				}
 				_, urls := savedArtifactURLs(t, s.store().(todoRepositoryStore), todo.ID)
 				if want := evidence == "created in turn"; slices.Contains(urls, review) != want {
 					t.Fatalf("provider resolution replaced ownership proof: links=%v wantLinked=%v", urls, want)

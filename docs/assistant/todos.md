@@ -1222,10 +1222,11 @@ lookup or catalog mutation. Recording a GitHub or GitLab association makes no
 provider call; automatic imports still require the ownership proof above. In a report, a
 provider extension's URL that is new is read by that extension in the background,
 and not again on that to-do for 5 minutes once it has answered (an attempt that
-failed or found it unavailable is tried on the next reply). That covers every address on its hosts in
-an Agent's reply, even one that is then not kept (a file page, an issue, another repository),
-so the extension learns the addresses you and your Agents mention in a to-do's work,
-as its install permission says. Reports skip such addresses while the extension is
+failed or found it unavailable is tried on the next reply). Automatic PR imports
+establish ownership before making that query; merely mentioning another PR, or
+marking a reference as a PR artifact, does not send its address to the provider.
+The provider may still reject a proven address as the wrong kind.
+Reports skip such addresses while the extension is
 unavailable, and the one-time import of older `pr_url` / `prs` references never
 asks an extension. A provider's resolved URL, kind and title are not ownership
 evidence: its background result passes the same requested-kind, report-turn and active Agent

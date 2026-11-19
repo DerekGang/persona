@@ -252,7 +252,7 @@ func TestTaskRepositoryArtifactsValidateExactPRURLs(t *testing.T) {
 		{Kind: "pr", Ref: "https://user:synthetic-secret@" + "github.com/example/project/pull/10"},
 		{Kind: "pr", Ref: "#11"},
 	}
-	if got := taskRepositoryArtifactLinks(artifacts); !slices.Equal(got, []string{artifactPR, "https://gitlab.example.com/team/api/-/merge_requests/9"}) {
+	if got := taskRepositoryArtifactLinks(artifacts, true); !slices.Equal(got, []string{artifactPR, "https://gitlab.example.com/team/api/-/merge_requests/9"}) {
 		t.Fatal("non-PR, unsafe or unresolved artifacts accepted", got)
 	}
 	text := "Related change: " + artifactPR + "\n" + researchNoPRCloseout + relatedMemoryFooter
@@ -260,7 +260,7 @@ func TestTaskRepositoryArtifactsValidateExactPRURLs(t *testing.T) {
 		t.Fatal("a non-PR closeout imported incidental PRs", got)
 	}
 	titled := []proto.WorkArtifact{{Kind: "pr", Ref: "Prepared [Keep task context](" + artifactPR + ") for review."}}
-	if got := taskRepositoryArtifactLinks(titled); !slices.Equal(got, []string{artifactPR}) {
+	if got := taskRepositoryArtifactLinks(titled, true); !slices.Equal(got, []string{artifactPR}) {
 		t.Fatal("a PR artifact's label hid its URL", got)
 	}
 	// Display clipping in closeout.Parse must not drop associations from the original record.

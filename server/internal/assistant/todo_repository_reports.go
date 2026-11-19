@@ -187,7 +187,7 @@ func taskRepositoryReportLinks(text string) []string {
 				artifacts = append(artifacts, proto.WorkArtifact{Kind: "pr", Ref: strings.TrimPrefix(line, prefix)})
 			}
 		}
-		return taskRepositoryArtifactLinks(artifacts)
+		return taskRepositoryArtifactLinks(artifacts, true)
 	}
 	urls := []string{}
 	for _, raw := range inboxTaskURL.FindAllString(text, -1) {
@@ -196,7 +196,8 @@ func taskRepositoryReportLinks(text string) []string {
 	return urls
 }
 
-func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
+// Provider-specific addresses are candidates, not native CLI text proof.
+func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact, includeProviderURLs bool) []string {
 	urls := []string{}
 	for _, artifact := range artifacts {
 		if artifact.Kind != "pr" {
@@ -214,7 +215,7 @@ func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
 			identity, link, err := repository.ParseTaskLink(u.String())
 			if err != nil {
 				// Unknown layouts remain candidates; their provider and ownership must both agree.
-				if !slices.Contains(repository.BuiltinHosts, u.Hostname()) && linkShape(repository.LinkInput{URL: raw}) == nil {
+				if includeProviderURLs && linkShape(repository.LinkInput{URL: raw}) == nil {
 					urls = append(urls, raw)
 				}
 				continue
@@ -235,14 +236,26 @@ func taskRepositoryArtifactLinks(artifacts []proto.WorkArtifact) []string {
 // PR-create outcome, or the node's independently read author and pushed checkout,
 // establishes ownership. Missing evidence leaves automatic linking closed.
 func (s *Service) importOwnedTaskRepositoryLinks(ctx context.Context, todo Todo, machine, session string, urls []string, reportText string, reportAt time.Time) ([]string, error) {
+	inputs := make([]repository.LinkInput, 0, len(urls))
+	for _, url := range urls {
+		inputs = append(inputs, repository.LinkInput{URL: url})
+	}
+	owned, err := s.ownedTaskRepositoryLinkInputs(ctx, todo, machine, session, inputs, reportText, reportAt)
+	if err != nil || len(owned) == 0 {
+		return nil, err
+	}
+	urls = make([]string, 0, len(owned))
+	for _, in := range owned {
+		urls = append(urls, in.URL)
+	}
 	return s.importReportedLinks(ctx, todo.ID, urls, "pull_request",
 		func(ctx context.Context, links []repository.LinkInput) ([]string, error) {
 			return s.importOwnedTaskRepositoryLinkDetails(ctx, todo, machine, session, links, reportText, reportAt)
 		})
 }
 
-func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo Todo, machine, session string,
-	links []repository.LinkInput, reportText string, reportAt time.Time) ([]string, error) {
+func (s *Service) ownedTaskRepositoryLinkInputs(ctx context.Context, todo Todo, machine, session string,
+	links []repository.LinkInput, reportText string, reportAt time.Time) ([]repository.LinkInput, error) {
 	var linked time.Time
 	for _, a := range todo.Agents {
 		if a.MachineID == machine && a.SessionID == session && a.ReleasedAt == nil && a.DismissedAt == nil {
@@ -258,6 +271,14 @@ func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo
 		urls = append(urls, in.URL)
 	}
 	proven := map[string]bool{}
+	markNativePR := func(raw string) {
+		if raw != "" && linkShape(repository.LinkInput{URL: raw}) == nil {
+			proven[raw] = true
+		}
+		for _, address := range taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: raw}}, false) {
+			proven[address] = true
+		}
+	}
 	pushed := map[string]string{}
 	pushCwd := ""
 	if items, ok := s.lastTurnItems(ctx, machine, session); ok {
@@ -301,9 +322,7 @@ func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo
 					pushed[push.Branch] = ""
 				}
 				if pr := git.PR; pr != nil && pr.Action == "created" {
-					for _, url := range taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: pr.URL}}) {
-						proven[url] = true
-					}
+					markNativePR(pr.URL)
 				}
 			}
 			call, found := calls[it.ToolUseID]
@@ -313,7 +332,7 @@ func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo
 			op, cwd := taskRepositoryNativeCommand(call)
 			switch output := it.Text + "\n" + it.Outcome.Tail; op {
 			case "create":
-				urls := taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: output}})
+				urls := taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: output}}, false)
 				slices.Sort(urls)
 				urls = slices.Compact(urls)
 				if len(urls) == 1 {
@@ -354,9 +373,7 @@ func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo
 				ownPush := pushSeen && (pushPath == cwd || pushPath == "" && cwd == sess.Cwd)
 				if result.Viewer != "" && (strings.EqualFold(pr.Author, result.Viewer) || ownPush) &&
 					result.Branch != "" && pr.Head == result.Branch && result.HeadOID != "" && pr.HeadOID == result.HeadOID {
-					for _, url := range taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: pr.URL}}) {
-						proven[url] = true
-					}
+					markNativePR(pr.URL)
 				}
 			}
 		}
@@ -379,9 +396,21 @@ func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo
 	}) {
 		return nil, nil
 	}
+	return inputs, nil
+}
+
+func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo Todo, machine, session string,
+	links []repository.LinkInput, reportText string, reportAt time.Time) ([]string, error) {
+	inputs, err := s.ownedTaskRepositoryLinkInputs(ctx, todo, machine, session, links, reportText, reportAt)
+	if err != nil || len(inputs) == 0 {
+		return nil, err
+	}
+	owned := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		owned = append(owned, in.URL)
+	}
 	var set repository.TaskSet
 	var changed bool
-	var err error
 	if slices.ContainsFunc(inputs, func(in repository.LinkInput) bool { return in.Resolved != nil }) {
 		st, ok := s.store().(todoRepositoryLinkDetailsStore)
 		if !ok {
@@ -417,7 +446,7 @@ func (s *Service) importOwnedTaskRepositoryLinkDetails(ctx context.Context, todo
 // Artifacts also arrive through stopped-turn triage, without a full transcript
 // subscription. Only the session's current task may inherit that turn's PRs.
 func (s *Service) importTaskRepositoryArtifacts(ctx context.Context, e db.SessionWork) error {
-	urls := taskRepositoryArtifactLinks(e.Work.Artifacts)
+	urls := taskRepositoryArtifactLinks(e.Work.Artifacts, true)
 	if len(urls) == 0 || e.TurnAt.IsZero() || e.Work.RetiredAt != nil {
 		return nil
 	}
