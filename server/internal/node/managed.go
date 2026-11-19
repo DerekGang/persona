@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -435,8 +436,13 @@ func canProbeManagedClaudeDirectly() bool {
 	if claude == "" {
 		return false
 	}
-	if dir, needsNode := launcherNodeDir(claude); dir != "" || !needsNode {
+	dir, needsNode := launcherNodeDir(claude)
+	if dir != "" {
 		return true
+	}
+	if !needsNode {
+		// An arbitrary wrapper may depend on tools added by the user's shell.
+		return nativeExecutable(claude)
 	}
 	_, err := exec.LookPath("node")
 	return err == nil

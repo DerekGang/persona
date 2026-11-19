@@ -81,7 +81,9 @@ func TestClaudeModelListErrors(t *testing.T) {
 }
 
 func TestManagedClaudeModelListWithNode(t *testing.T) {
-	for _, setup := range []string{"NVM", "Homebrew prefix", "Node on service PATH", "Node from shell startup"} {
+	for _, setup := range []string{
+		"NVM", "Homebrew prefix", "Node on service PATH", "Node from shell startup", "Claude shell wrapper",
+	} {
 		t.Run(setup, func(t *testing.T) {
 			testManagedClaudeWithNode(t, setup, false)
 		})
@@ -169,7 +171,12 @@ func testManagedClaudeWithNode(t *testing.T, setup string, ordinaryLaunch bool) 
 		writeExecutable(t, filepath.Join(prefix, "bin", "fixture-tool"), "#!/bin/sh\nexit 17\n")
 	}
 
-	shellSetup := setup == "Node from shell startup"
+	shellWrapper := setup == "Claude shell wrapper"
+	if shellWrapper {
+		cli = filepath.Join(home, "wrapped Claude", "cli.js")
+		writeExecutable(t, localClaude, "#!/bin/sh\nexec node "+shellQuote(cli)+` "$@"`+"\n")
+	}
+	shellSetup := setup == "Node from shell startup" || shellWrapper
 	wantPath := serviceBin
 	rc := `: > "$HOME/rc-ran"` + "\n/bin/sleep 20\n"
 	if shellSetup {
