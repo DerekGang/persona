@@ -111,12 +111,23 @@ func (n *Node) closeFailedCodexStart(ctx context.Context, start codexAbandonedSt
 	}
 	n.mu.Unlock()
 	n.state.stopped(start.session, proto.StopExit)
+	interrupted := false
 	for {
 		_, err := n.nativeArchive(cleanup, start.session, true)
 		if err == nil {
 			n.unclaimCodexThread(start.session)
 			n.notifySessions()
 			return nil
+		}
+		var coded *rpc.Error
+		if !interrupted && errors.As(err, &coded) && coded.Code == nativeArchiveBusy {
+			// A shared app-server can keep a turn waiting for input after its
+			// TUI exits. Only this failed launch's identified thread may stop.
+			if a, live := n.agent(start.session); live && a.PaneID != start.created.Pane.String() {
+				return err
+			}
+			_ = n.interruptCodex(cleanup, start.session)
+			interrupted = true // a lost reply is resolved by the next archive attempt
 		}
 		select {
 		case <-cleanup.Done():
