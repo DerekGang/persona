@@ -1784,6 +1784,15 @@
           "description": "the setting, from list (inbox.rules, mail.accounts, extension.\u003cid\u003e…)"
         },
         "value": {
+          "type": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "object",
+            "array",
+            "null"
+          ],
           "description": "set: the new value; add: the item (each setting's list entry says what)"
         },
         "id": {
@@ -2327,6 +2336,10 @@
                 "description": "the project directory: absolute path or ~/…"
               },
               "workspace": {
+                "type": [
+                  "string",
+                  "object"
+                ],
                 "description": "Task workspace policy. Omit to use the assistant preference and readonly/busy exceptions. new uses the machine engine and default branch task/\u003ctodo id\u003e; existing accepts an absolute/~/ path or a workspace id on that machine; none creates nothing. To choose a branch use {new:{branch:...}}. No custom worktree root.",
                 "oneOf": [
                   {
@@ -3038,6 +3051,7 @@
                 "type": "object",
                 "properties": {
                   "kind": {
+                    "type": "string",
                     "enum": [
                       "default",
                       "branch",
@@ -3057,8 +3071,10 @@
                 ],
                 "oneOf": [
                   {
+                    "type": "object",
                     "properties": {
                       "kind": {
+                        "type": "string",
                         "const": "default"
                       }
                     }
@@ -3080,6 +3096,7 @@
                       "minLength": 1
                     },
                     "kind": {
+                      "type": "string",
                       "enum": [
                         "issue",
                         "pull_request"
@@ -3172,6 +3189,7 @@
                 "minLength": 1
               },
               "kind": {
+                "type": "string",
                 "enum": [
                   "issue",
                   "pull_request"
@@ -3440,6 +3458,7 @@
                     "type": "object",
                     "properties": {
                       "kind": {
+                        "type": "string",
                         "enum": [
                           "default",
                           "branch",
@@ -3459,8 +3478,10 @@
                     ],
                     "oneOf": [
                       {
+                        "type": "object",
                         "properties": {
                           "kind": {
+                            "type": "string",
                             "const": "default"
                           }
                         }
@@ -3482,6 +3503,7 @@
                           "minLength": 1
                         },
                         "kind": {
+                          "type": "string",
                           "enum": [
                             "issue",
                             "pull_request"
