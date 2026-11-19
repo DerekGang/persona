@@ -39,6 +39,10 @@ import (
 // codexStartWait is how long a start waits for Codex's thread (a trust dialog, a slow ~/.zshrc, the first turn).
 var codexStartWait = 60 * time.Second
 
+// Windows starts the TUI empty and uses the same bracketed-paste path as a
+// subsequent message. No multiline prompt crosses a Windows launcher boundary.
+var codexStartPaste = runtime.GOOS == "windows"
+
 // codexArgv is how a Codex launcher runs: plain codex, or an alias's words; ok false when the launcher is not Codex's.
 func (n *Node) codexArgv(launcher string) ([]string, bool) {
 	launcherCache.Lock()
@@ -210,7 +214,12 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 	file := filepath.Join(dir, "start.json")
 	owner, _ := launch.(interface{ Kind() string })
 	isolateHooks := owner != nil && owner.Kind() == host.Orca
-	b, _ := json.Marshal(codexStartFile{Argv: argv, Prompt: prompt, Agent: herdrAgentFor(launch, "codex"), IsolateHooks: isolateHooks, Dir: cwd})
+	initial := prompt
+	if codexStartPaste {
+		initial = ""
+		prompt = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(inertControls(prompt))
+	}
+	b, _ := json.Marshal(codexStartFile{Argv: argv, Prompt: initial, Agent: herdrAgentFor(launch, "codex"), IsolateHooks: isolateHooks, Dir: cwd})
 	if err := os.WriteFile(file, b, 0o600); err != nil {
 		return nil, err
 	}
@@ -254,7 +263,21 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 			err = nil
 		}
 	} else {
-		id, err = n.waitCodexThread(ctx, pane, cwd, prompt, began)
+		if codexStartPaste {
+			err = n.waitCodexBox(ctx, pane)
+			if err == nil {
+				// Readiness alone does not establish an empty composer: never append
+				// the task to a draft typed by the user while this launch was waiting.
+				if err = n.codexReady(ctx, pane, true); err == nil {
+					err = n.codexType(ctx, pane, prompt, func(draft string) bool {
+						return stillPrompted(draft, prompt) || pastedRE.MatchString(draft)
+					})
+				}
+			}
+		}
+		if err == nil {
+			id, err = n.waitCodexThread(ctx, pane, cwd, prompt, began)
+		}
 	}
 	if err != nil {
 		shown, _ := n.readPane(ctx, pane, "recent-unwrapped", 30)
@@ -270,7 +293,8 @@ func (n *Node) startCodex(ctx context.Context, launch host.Launcher, cwd, launch
 		// A pane it did not open (a switch from Claude Code, engine_switch.go) is the user's terminal and is never
 		// closed: the switch quits what the start left in it (clearPane).
 		if adoptedPane(ctx) == nil {
-			cleanupErr = closeCodexStart(ctx, start)
+			start.session = n.failedCodexSession(ctx, pane, began)
+			cleanupErr = n.closeFailedCodexStart(ctx, start)
 		}
 		if cleanupErr != nil {
 			n.mu.Lock()
