@@ -123,7 +123,7 @@ capture_project pre-resolve
 # Allow-side evidence only: generate an independent Meta-enabled copy without resolving it.
 META_SOURCE="$OUTPUT/meta-enabled"
 mkdir -p "$META_SOURCE"
-rsync -a "$SOURCE/apple/" "$META_SOURCE/apple/"
+rsync -a "$SOURCE/" "$META_SOURCE/"
 ci_run 'Generate Meta-enabled diagnostic project' 120 env PERSONA_META_WEARABLES=YES \
   xcodegen generate --spec "$META_SOURCE/apple/project.yml" --project "$META_SOURCE/apple"
 ci_run 'Record Meta-enabled package declarations' 60 python3 -I - \
