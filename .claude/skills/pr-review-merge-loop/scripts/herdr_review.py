@@ -180,7 +180,9 @@ def wait_session_id(path, pane, unit, timeout=180):
         except (OSError, ValueError):
             pass
         if not scope_running(unit):
-            raise RuntimeError("interactive reviewer exited before creating its session")
+            screen = terminal_text(pane, "recent-unwrapped", 120)
+            raise RuntimeError("interactive reviewer exited before creating its session: "
+                               + json.dumps(screen, ensure_ascii=False)[-1200:])
         time.sleep(.2)
     raise RuntimeError("interactive reviewer did not publish its session ID")
 

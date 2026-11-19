@@ -164,6 +164,22 @@ class HelperTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not final"):
                 module["transcript_result"](path, marker, schema)
 
+    def test_interactive_session_id_uses_the_padded_slot_path(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        with tempfile.TemporaryDirectory(prefix="review-session-test-") as root:
+            path = Path(root) / "slot-00-session"
+            session_id = "12345678-1234-1234-1234-123456789abc"
+            with patch.dict(module["wait_session_id"].__globals__, {
+                    "scope_running": unittest.mock.Mock(return_value=True)}):
+                path.write_text(session_id + "\n")
+                self.assertEqual(module["wait_session_id"](path, "w3:p1", "pr-review-r00.scope"), session_id)
+            path.unlink()
+            with patch.dict(module["wait_session_id"].__globals__, {
+                    "terminal_text": unittest.mock.Mock(return_value="cc_k3: invalid PR review session path")}):
+                with self.assertRaisesRegex(RuntimeError, "invalid PR review session path"):
+                    module["wait_session_id"](path, "w3:p1", "pr-review-r00.scope", timeout=0.01)
+
+    def test_interactive_scope_waits_for_registration_before_exit(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
         with patch.dict(module["wait_scope_start"].__globals__, {
                 "scope_state": unittest.mock.Mock(
