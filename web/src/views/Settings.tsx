@@ -18,7 +18,7 @@ import { ExtensionThemePicker } from "../ui/ExtensionThemePicker";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { Group, Row, Pill, RowConfirm, Switch } from "./settings/SettingsParts";
 import { LanguageRow } from "./settings/LanguageRow";
-import { RecentChatsRow, TextSizeRow, ThemeColorPicker } from "./settings/LookSettings";
+import { RecentChatsRow, SidebarIconsRow, TextSizeRow, ThemeColorPicker } from "./settings/LookSettings";
 import { setReplyMotionEnabled, useReplyMotionSetting } from "../ui/stream/motion";
 import { setAgentDetails, useAgentDetails } from "../lib/context-usage";
 import { setSidebarTerminals, useSidebarTerminals } from "../lib/sidebar-terminals";
@@ -644,6 +644,7 @@ function General({ onModel }: { onModel: () => void }) {
           <Switch on={replyMotion} onChange={setReplyMotionEnabled} label={t("settings.reply_motion")} />
         </Row>
         <RecentChatsRow />
+        <SidebarIconsRow />
       </Group>
 
       <DesktopSettings />
