@@ -146,10 +146,10 @@ struct CallFollowUpTests {
 
     /// A replay is refused while a call is on, before its tape, recording state or audio opens. Without a call the same
     /// tape really plays its fixture audio and End lets the session and the replayed recording go (#10693).
-    @Test func aMeetingReplayRefusesOnACallAndPlaysWithoutOne() async {
+    @Test func aMeetingReplayRefusesOnACallAndPlaysWithoutOne() async throws {
         let capture = RecordingCapture.shared
-        guard capture.state == .idle else { return }
         let replay = MeetingReplay.shared
+        try #require(capture.state == .idle && !replay.running)
         let gate = capture.callGate
         defer { capture.callGate = gate; capture.error = nil }
         var tape = MeetingTape(title: "Replay call gate", startedAt: .now)
@@ -157,10 +157,10 @@ struct CallFollowUpTests {
         let audio = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/meeting-tape/audio.m4a")
 
         capture.callGate = { "End the call first" }
-        let refused = replay.play(tape, audioFile: audio)
-        #expect(!refused, "a live call did not refuse the replay")
+        let startedOnCall = replay.play(tape, audioFile: audio)
+        #expect(!startedOnCall, "a live call did not refuse the replay")
         #expect(replay.audio == nil && capture.state == .idle && capture.recordingID == nil)
-        if refused {
+        if startedOnCall {
             _ = capture.stop()
             await Self.waitUntil { !replay.running }
             replay.clearEnded()
