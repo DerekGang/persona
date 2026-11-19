@@ -84,6 +84,10 @@ func startedAssistant(t *testing.T, n *Node, host *fakeRuntime) string {
 func TestAssistantOnARuntimeStartsAndSendsWithTheSnapshot(t *testing.T) {
 	n, hub := runtimeNode(t)
 	assistantHub(hub)
+	n.dir = filepath.Join(n.home, ".persona")
+	cwd := filepath.Join(n.dir, "assistant")
+	privateMemory := filepath.Join(n.dir, "profiles", "claude", "projects", memoryKey(cwd), "memory")
+	writeNote(t, privateMemory, "runtime-copy.md", "A note from another profile.\n", time.Time{})
 	host := dialRuntime(t, n, assistantRuntimeHello())
 	if a, err := n.assistantAgent(context.Background(), "dsh"); err != nil || a != assistantOnRuntime {
 		t.Fatalf("assistantAgent: %q %v", a, err)
@@ -111,6 +115,12 @@ func TestAssistantOnARuntimeStartsAndSendsWithTheSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(p.Context, "测试时间") || !strings.Contains(p.Context, "MEMORY.md") {
 		t.Fatalf("the first message's context: %q", p.Context)
+	}
+	if p.MemoryDir != n.memoryDir(cwd) || !strings.Contains(p.Context, "(runtime-copy.md)") {
+		t.Fatalf("the runtime's first turn missed the merged memory: %s", sends[0])
+	}
+	if got := readNote(t, p.MemoryDir, "runtime-copy.md"); got != "A note from another profile.\n" {
+		t.Fatalf("the runtime's memory note: %q", got)
 	}
 	if st, ok := n.state.get(sid); !ok || st.Launcher != "dsh" || !strings.HasSuffix(st.Cwd, "/.persona/assistant") {
 		t.Fatalf("state %+v", st)

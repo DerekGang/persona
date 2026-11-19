@@ -52,6 +52,9 @@ func TestTaskExecutionResumesRuntimeOwnedConversation(t *testing.T) {
 	if got := len(host.got("session.send")); got != 8 || len(host.got("session.start")) != 0 {
 		t.Fatalf("runtime was restarted: sends=%d starts=%d", got, len(host.got("session.start")))
 	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("runtime task preparation wrote into the selected directory: %v %v", entries, err)
+	}
 	for _, args := range [][2]string{{t.TempDir(), ""}, {t.TempDir(), "dsh"}, {dir, "other-agent"}} {
 		if err := send(id, args[0], args[1]); err == nil || !strings.Contains(err.Error(), "context differs") {
 			t.Fatalf("incompatible runtime context accepted or classified as gone: %v", err)
