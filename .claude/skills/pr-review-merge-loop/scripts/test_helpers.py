@@ -27,6 +27,74 @@ class HelperTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module["forwarded_flags"](["--model", "other"], {"--model"})
 
+    def test_interactive_socket_keeps_large_prompt_out_of_argv(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        payload = (("Review exact diff\n" + "+ changed 行\n") * 9000) + "final schema and marker"
+        self.assertGreater(len(payload.encode("utf-8")), 131_072)
+        connection = unittest.mock.Mock()
+        connection.recv.side_effect = [b'{"id":"probe","result":{"type":"submitted"}}\n']
+        transport = module["socket_request"]
+        def fake_request(request, timeout=90):
+            return transport(request, timeout=timeout, socket_factory=lambda *_: connection)
+        with patch.dict(module["command"].__globals__,
+                        {"_config": {"socket_path": "/test/herdr.sock"}, "socket_request": fake_request}):
+            result = module["command"](
+                "agent", "prompt", "w6:p1", payload, "--wait", "--until", "working",
+                "--until", "blocked", "--timeout", "120000")
+        self.assertEqual(result, {"type": "submitted"})
+        request = json.loads(connection.sendall.call_args.args[0])
+        self.assertEqual(request["method"], "agent.prompt")
+        self.assertEqual(request["params"]["text"], payload)
+        self.assertEqual(request["params"]["wait"],
+                         {"timeout_ms": 120000, "until": ["working", "blocked"]})
+        connection.connect.assert_called_once_with("/test/herdr.sock")
+        connection.close.assert_called_once_with()
+
+    def test_interactive_socket_translates_existing_cli_arguments(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        cases = [
+            (("tab", "create", "--workspace", "w6", "--cwd", "/work", "--label", "pr-r00", "--no-focus"),
+             {"method": "tab.create", "params": {"workspace_id": "w6", "cwd": "/work",
+                                                   "label": "pr-r00", "focus": False}}),
+            (("tab", "close", "w6:t1"), {"method": "tab.close", "params": {"tab_id": "w6:t1"}}),
+            (("pane", "send-keys", "w6:p1", "down", "enter"),
+             {"method": "pane.send_keys", "params": {"pane_id": "w6:p1", "keys": ["down", "enter"]}}),
+            (("pane", "read", "w6:p1", "--source", "recent-unwrapped", "--lines", "200", "--format", "text"),
+             {"method": "pane.read", "params": {"pane_id": "w6:p1", "source": "recent_unwrapped",
+                                                 "lines": 200, "format": "text"}}),
+            (("agent", "list"), {"method": "agent.list", "params": {}}),
+        ]
+        for args, expected in cases:
+            with self.subTest(args=args):
+                request = unittest.mock.Mock(return_value={})
+                with patch.dict(module["command"].__globals__, {"socket_request": request}):
+                    module["command"](*args)
+                sent = request.call_args.args[0]
+                self.assertEqual(sent["method"], expected["method"])
+                self.assertEqual(sent["params"], expected["params"])
+
+    def test_interactive_terminal_reads_typed_socket_result(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        with patch.dict(module["terminal_text"].__globals__,
+                        {"_config": {"result_lines": 200}, "command": unittest.mock.Mock(
+                            return_value={"type": "pane_read", "read": {"text": "review result\n"}})}) as mocked:
+            self.assertEqual(module["terminal_text"]("w6:p1"), "review result\n")
+            self.assertEqual(mocked["command"].call_args.args[:3], ("pane", "read", "w6:p1"))
+
+    def test_interactive_socket_enforces_transport_bounds(self):
+        module = runpy.run_path(str(HERE / "herdr_review.py"))
+        with patch.dict(module["socket_request"].__globals__,
+                        {"_config": {"socket_path": "/test/herdr.sock"}}):
+            with self.assertRaisesRegex(RuntimeError, "2 MiB"):
+                module["socket_request"]({"id": "large", "method": "agent.prompt",
+                                          "params": {"target": "w6:p1", "text": "x" * 2_100_000}})
+            connection = unittest.mock.Mock()
+            connection.recv.return_value = b"x" * 65536
+            with self.assertRaisesRegex(RuntimeError, "4 MB"):
+                module["socket_request"]({"id": "large-response", "method": "agent.list", "params": {}},
+                                          socket_factory=lambda *_: connection)
+            connection.close.assert_called_once_with()
+
     def test_interactive_reviewer_keeps_visible_cli_and_validates_result(self):
         module = runpy.run_path(str(HERE / "herdr_review.py"))
         launch, schema = module["interactive_command"]("cc_k3", [

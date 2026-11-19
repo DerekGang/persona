@@ -16,6 +16,7 @@ import re
 import secrets
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -27,25 +28,74 @@ _terminated = False
 _config = None
 
 
-def command(*args, timeout=90):
-    result = subprocess.run(
-        [_config["herdr_command"], "--session", _config["session"], *args],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, timeout=timeout, check=False,
-    )
+def socket_request(request, timeout=90, socket_factory=socket.socket):
+    """Keep long prompts in Herdr's JSON body, not an operating-system argv."""
+    payload = json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+    if len(payload) > 2_100_000:
+        raise RuntimeError("interactive reviewer request exceeds its 2 MiB transport bound")
+    connection = socket_factory(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        value = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        if result.returncode == 0 and not result.stdout.strip() and args[:2] in (("pane", "run"), ("pane", "send-keys")):
-            return {}
-        raise RuntimeError("Herdr did not return JSON (%s %s): %s"
-                           % (args[:2], result.returncode, (result.stderr or result.stdout)[-500:])) from error
+        connection.settimeout(timeout)
+        connection.connect(_config["socket_path"])
+        connection.sendall(payload)
+        response = bytearray()
+        while not response.endswith(b"\n"):
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise RuntimeError("Herdr closed its socket before returning a response")
+            response.extend(chunk)
+            if len(response) > 4_000_000:
+                raise RuntimeError("Herdr response exceeds its 4 MB transport bound")
+        value = json.loads(response)
+    finally:
+        connection.close()
     if not isinstance(value, dict):
         raise RuntimeError("Herdr returned an unexpected response")
-    if result.returncode or "error" in value:
-        detail = value.get("error", {})
-        raise RuntimeError(str(detail.get("message") or detail.get("code") or result.stderr[-500:]))
+    if "error" in value:
+        detail = value["error"]
+        raise RuntimeError(str(detail.get("message") or detail.get("code") or detail))
     return value.get("result", value)
+
+
+def command(*args, timeout=90):
+    """Translate the existing CLI vocabulary to the equivalent socket API."""
+    request_id = "pr-review-" + secrets.token_hex(8)
+    if args[0] == "agent" and args[1] == "prompt":
+        pane, text = args[2:4]
+        wait = {"timeout_ms": int(args[args.index("--timeout") + 1]),
+                "until": [args[index + 1] for index, arg in enumerate(args) if arg == "--until"]}
+        request = {"method": "agent.prompt", "params": {"target": pane, "text": text, "wait": wait}}
+    elif args[0] == "pane" and args[1] == "run":
+        # pane.run accepts no input and returns no JSON on successful shell launch.
+        subprocess.run(
+            [_config["herdr_command"], "--session", _config["session"], *args],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=timeout, check=True)
+        return {}
+    else:
+        params = {}
+        index = 2
+        while index < len(args):
+            arg = args[index]
+            if arg.startswith("--"):
+                if arg == "--no-focus":
+                    params["focus"] = False
+                else:
+                    value = args[index + 1]
+                    if arg == "--source":
+                        value = value.replace("-", "_")
+                    params[arg[2:].replace("-", "_").replace("workspace", "workspace_id")] = (
+                        int(value) if arg == "--lines" else value)
+                    index += 1
+            elif not params:
+                params["workspace_id" if args[:2] == ("tab", "create") else
+                       "tab_id" if args[:2] == ("tab", "close") else
+                       "pane_id" if args[0] == "pane" else "target"] = arg
+            else:
+                params.setdefault("keys", []).append(arg)
+            index += 1
+        request = {"method": args[0] + "." + args[1].replace("-", "_"), "params": params}
+    return socket_request({"id": request_id, **request}, timeout=timeout)
 
 
 def interactive_command(launcher, flags):
@@ -252,15 +302,13 @@ def interactive_prompt(prompt, schema, marker):
 
 
 def terminal_text(pane, source="recent-unwrapped", lines=None):
-    result = subprocess.run(
-        [_config["herdr_command"], "--session", _config["session"], "pane", "read", pane,
-         "--source", source, "--lines", str(lines or int(_config.get("result_lines", 20000))),
-         "--format", "text"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, timeout=60, check=False)
-    if result.returncode:
-        raise RuntimeError("cannot read interactive reviewer terminal: " + result.stderr[-500:])
-    return result.stdout
+    result = command("pane", "read", pane, "--source", source,
+                     "--lines", str(lines or int(_config.get("result_lines", 20000))),
+                     "--format", "text", timeout=60)
+    if result.get("type") != "pane_read" or not isinstance(result.get("read"), dict) \
+            or not isinstance(result["read"].get("text"), str):
+        raise RuntimeError("Herdr returned an unexpected terminal response")
+    return result["read"]["text"]
 
 
 def wait_result(pane, unit, marker, timeout):
@@ -386,6 +434,11 @@ def main():
     for key in ("herdr_command", "session", "runtime_directory", "reviewer_launcher"):
         if not isinstance(_config.get(key), str) or not _config[key]:
             raise RuntimeError("missing reviewer configuration: " + key)
+    socket_path = _config.get("socket_path")
+    if not isinstance(socket_path, str) or not socket_path:
+        raise RuntimeError("missing reviewer configuration: socket_path")
+    if not Path(socket_path).is_absolute() or not Path(socket_path).is_socket():
+        raise RuntimeError("reviewer socket_path must name an existing Herdr socket")
     root = Path(_config["runtime_directory"]).expanduser()
     if not root.is_absolute():
         raise RuntimeError("runtime_directory must be absolute")

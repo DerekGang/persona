@@ -1,6 +1,7 @@
 {
   "herdr_command": "/path/to/herdr",
   "session": "agent",
+  "socket_path": "/path/to/private/herdr/sessions/agent/herdr.sock",
   "workspace": "w1",
   "runtime_directory": "/path/to/private/pr-review-runtime/herdr-review-runs",
   "reviewer_launcher": "cc_k3",
