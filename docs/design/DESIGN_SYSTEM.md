@@ -1313,6 +1313,17 @@ Explicit review-before-install is intentional even with Undo: uploaded instructi
 so selecting a file must not silently change behavior. Success refreshes the list and offers a bounded, unchanged-new-
 package-only Undo with retained recovery files; `docs/operations/hub-update.md` defines the state and discovery limits.
 
+**Web to-do images** (#11084): the existing New to-do `Dialog` takes JPEG/PNG images through the shared attachment
+picker and `AttachmentTray`; selection shows local thumbnails immediately, with an accessible Remove on each. Create is
+one single-flight busy action, with its failure inline in the dialog. Retry keeps every field, selected file and the
+operation ID; cancel releases the previews. The to-do detail uses the same tray and existing `ImageViewer` for zoom and
+download, not another gallery. Private image bytes are fetched with the to-do's credentials and manager, three at a
+time, with localized Retry on failure and object URLs released when replaced or closed. The no-image dialog and detail
+keep their previous layout and behavior. When `todo_images` is absent because any manager is too old to persist images,
+the picker is hidden and an image-less create is never sent. All controls use the existing 44 px touch expansion and en, zh-Hans and ja
+copy. The assistant manager owns persistence and handoff; the Web client does not invent a temporary upload or a local
+machine path.
+
 `EmptyStateView` (`apple/Persona/DesignSystem/Components.swift:385`): symbol, title, one-sentence message, optional prominent action. 92 uses. System `ContentUnavailableView` is used in about 22 other places and looks different (DS-15). Search results may use `ContentUnavailableView.search`. Web has no shared empty state outside admin; Android has `JEmptyState`. An offline current assistant (several assistants) takes the place of a merged list's empty state with its own: the assistant avatar faded with its offline mark, "<name> is offline" and when it last synced (web `OfflineState` in `web/src/views/ManagerParts.tsx`; Android `JAssistantOffline`, a `JEmptyState` whose `leading` slot holds `JManagerAvatar`; `docs/assistant/managers.md` "Clients").
 
 ### 3.10 Loading and error states
@@ -3318,7 +3329,9 @@ that view in its link mode: no text area, a row with the link icon saying it was
 text, that nothing is saved until Save, with **Paste something else** (the status line's action) to go back to the text
 area. The link is read at once and its drafts, choices and notes look exactly like a paste's, so the wizard does not
 grow a second way to review a provider; a refused link is one plain line about what is wrong with it, never its
-content. Copying a link starts from the provider's dialog: a ⋯ `IconButton` before Edit opens a `Menu` (one row, **Copy
+content. Android uses this same link mode for `persona://provider/import` (#5428). iOS has no paste step, so the hub's
+returned draft opens its existing connection form directly. On both phone apps the link itself is never shown and is
+dropped when the wizard closes. Copying a link starts from the provider's dialog: a ⋯ `IconButton` before Edit opens a `Menu` (one row, **Copy
 import link**), and the row opens a `Dialog` in place of the provider's (Edit does the same), with one line on what the
 link brings, a `Switch` **Put a key in the link** that is off, and **Copy link** as the one primary button. Turning the
 switch on widens what the link exposes, so, as in "Sharing a conversation publicly" (4.9), the key field comes with an
