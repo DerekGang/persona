@@ -95,8 +95,26 @@ ci_run 'Generate public unsigned Apple config' 60 python3 "$SOURCE/scripts/perso
 ci_run 'Generate Apple project' 120 xcodegen generate --spec "$SOURCE/apple/project.yml" --project "$SOURCE/apple"
 # Resolve against the standard generated-workspace file, not a local package's fallback copy (#11063).
 WORKSPACE_RESOLVED="$PROJECT/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+mkdir -p "$DIAGNOSTICS"
+if [ -e "$WORKSPACE_RESOLVED" ]; then
+  printf 'destination_pre_seed=present\n' > "$DIAGNOSTICS/workspace-seed.txt"
+else
+  printf 'destination_pre_seed=missing\n' > "$DIAGNOSTICS/workspace-seed.txt"
+fi
 mkdir -p "$(dirname "$WORKSPACE_RESOLVED")"
 cp "$SOURCE/apple/Packages/PersonaSSH/Package.resolved" "$WORKSPACE_RESOLVED"
+source_sha=$(shasum -a 256 "$SOURCE/apple/Packages/PersonaSSH/Package.resolved")
+destination_sha=$(shasum -a 256 "$WORKSPACE_RESOLVED")
+{
+  printf 'source_sha256=%s\n' "${source_sha%% *}"
+  printf 'destination_sha256=%s\n' "${destination_sha%% *}"
+  if cmp -s "$SOURCE/apple/Packages/PersonaSSH/Package.resolved" "$WORKSPACE_RESOLVED"; then
+    printf 'byte_identical=yes\n'
+  else
+    printf 'byte_identical=no\n'
+    exit 1
+  fi
+} >> "$DIAGNOSTICS/workspace-seed.txt"
 [ -s "$SOURCE/apple/PersonaTests/TokenBaseline.json" ] || { printf 'apple-ci: FAIL committed token baseline missing\n' >&2; exit 1; }
 
 UNSIGNED=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=)
@@ -108,6 +126,9 @@ XCODE=(xcodebuild -project "$PROJECT" -configuration Debug -clonedSourcePackages
 resolve() {
   ci_run "Resolve Swift packages ($1)" 900 "${XCODE[@]}" -scheme "$1" -resolvePackageDependencies
 }
+# Diagnostic ref only: verify the workspace seed and first real Resolve before any PR candidate run.
+resolve Persona
+exit 0
 result() {
   local name="$1"; shift
   ci_run "Inspect test results ($name)" 120 python3 "$CI_ROOT/scripts/ci/apple_result.py" "$OUTPUT/$name.xcresult" "$@"
