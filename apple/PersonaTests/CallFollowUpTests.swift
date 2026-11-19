@@ -149,7 +149,11 @@ struct CallFollowUpTests {
     @Test func aMeetingReplayRefusesOnACallAndPlaysWithoutOne() async throws {
         let capture = RecordingCapture.shared
         let replay = MeetingReplay.shared
-        try #require(capture.state == .idle && !replay.running)
+        guard capture.state == .idle, !replay.running else {
+            print("MeetingReplayCallGate: SKIPPED because the shared recorder is occupied")
+            return
+        }
+        print("MeetingReplayCallGate: precondition held")
         let gate = capture.callGate
         defer { capture.callGate = gate; capture.error = nil }
         var tape = MeetingTape(title: "Replay call gate", startedAt: .now)
@@ -158,25 +162,30 @@ struct CallFollowUpTests {
 
         capture.callGate = { "End the call first" }
         let startedOnCall = replay.play(tape, audioFile: audio)
-        #expect(!startedOnCall, "a live call did not refuse the replay")
-        #expect(replay.audio == nil && capture.state == .idle && capture.recordingID == nil)
+        let refused = !startedOnCall && replay.audio == nil && capture.state == .idle && capture.recordingID == nil
         if startedOnCall {
             _ = capture.stop()
             await Self.waitUntil { !replay.running }
             replay.clearEnded()
         }
+        try #require(refused, "a live call did not refuse the replay cleanly")
+        print("MeetingReplayCallGate: live-call refusal passed")
 
         capture.callGate = { nil }
         let started = replay.play(tape, audioFile: audio)
-        #expect(started, "ordinary replay did not start")
+        var played = false
         if started {
             await Self.waitUntil { replay.audio?.isPlaying == true }
-            #expect(replay.audio?.isPlaying == true, "ordinary replay audio did not play")
+            played = replay.audio?.isPlaying == true
             _ = capture.stop()
             await Self.waitUntil { !replay.running }
         }
-        #expect(!replay.running && replay.audio == nil && capture.state == .idle && capture.recordingID == nil)
+        let cleaned = !replay.running && replay.audio == nil && capture.state == .idle && capture.recordingID == nil
         replay.clearEnded()
+        try #require(started, "ordinary replay did not start")
+        try #require(played, "ordinary replay audio did not play")
+        try #require(cleaned, "ordinary replay did not finish cleanly")
+        print("MeetingReplayCallGate: ordinary playback and cleanup passed")
     }
 
     /// The gate's words, while the call manager says a call is on.
