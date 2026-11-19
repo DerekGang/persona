@@ -330,7 +330,11 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	case t.Parent != "":
 		rules = append(rules, prompts.RenderTaskWorker())
 	}
-	// One structured closeout carries delivery too when both switches are on.
+	// Files for the user are named by path, never pasted into the reply (task_files.go, #10511). Always asked for,
+	// unlike the closeout form below, which depends on a switch.
+	prompt += "\n\n" + prompts.RenderTaskFiles(answerLanguage(s.hello(ctx).Locale))
+	// The closeout's form, up front (agents_closeout_brief.go). One structured closeout carries delivery too when
+	// both switches are on.
 	delivery := !t.Readonly && s.doneNeedsDelivery(ctx)
 	brief := s.closeoutBrief(ctx, delivery)
 	if delivery { // what done means: live and checked (delivery.go)
