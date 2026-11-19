@@ -1021,12 +1021,12 @@ Provider responses carry only the description and `has_key`, never secrets. Defa
                    // what its next messages run on, model and effort optional; absent = it follows the default (Model configuration › Main chat for the main chat and a scheduled task's, otherwise what it runs). Summary rows carry it too
  "updated_at":"...","last_text":"first 200 characters of the last assistant text",
      "turn_error":"API Error: Connection lost mid-response… (only when stopped and this turn was interrupted by a model API error, otherwise absent; its task counts as \"interrupted\", #1516. Claude Code: the hub recognizes it from the start of the last line; Codex: the node reports it from task_complete.error / a failed turn/completed, #2185. Or, with turn_error_kind no_output / stopped, the hub's sentence in the user's language for a task Agent's turn that had no output at all, or that Persona's Stop interrupted before it had any, #10187)",
-     "turn_error_kind":"transient (optional: only when the agent itself states the error kind, Codex's codex_error_info: transient is worth a \"continue\", user needs the user to act, usage_limit is a subscription limit until it resets; otherwise judged from the turn_error text, docs/assistant/agent-work.md \"Triage\"; for Claude Code's \"Not logged in\", a wrong Key or a wrong model the hub fills in user; no_output / stopped are the hub's own word on a task Agent's turn with no output, turn_error then being its sentence, docs/assistant/todos.md \"Automatic completion\", #10187)",
+     "turn_error_kind":"transient (optional: only when the agent itself states the error kind, Codex's codex_error_info: transient is worth a \"continue\", user needs the user to act, usage_limit is a subscription limit until it resets, unrecoverable marks an invalid conversation that needs a new conversation instead of Continue; otherwise judged from the turn_error text, docs/assistant/agent-work.md \"Triage\"; for Claude Code's \"Not logged in\", a wrong Key or a wrong model the hub fills in user; no_output / stopped are the hub's own word on a task Agent's turn with no output, turn_error then being its sentence, docs/assistant/todos.md \"Automatic completion\", #10187)",
      "model_fallback":{"subtype":"model_refusal_fallback","original_model":"primary-model","fallback_model":"fallback-model","category":"synthetic-policy","scope":"session","explanation":"Upstream refused the request","text":"<the refusal's own words>"}, // optional: active refusal fallback; cleared by a confirmed model change. The public projection only (#2528), as in Item.model_refusal
      "model_restore":{"state":"next_start","to":"configured-model","at":"..."}, // optional: "back to the configured model" was asked for the active refusal fallback (#2528): the session's idle headless process was closed (or none ran), so its next start asks for `to`, the configured model as the node read it. Not proof it runs: it ends when a newer reply is written (from any model), the fallback record is replaced or gone, or the node restarts
      "turn_error_resets_at":"...",   // optional, with turn_error_kind usage_limit: when that subscription limit resets (RFC3339). Absent when the reset is not known
      "turn_error_resumes":true,   // optional: the CLI continues by itself once the limit resets. Absent or false: nothing of the CLI will, though the hub may still schedule a continuation (work.wake_at)
-     "turn_error_code":"not_logged_in (optional: only when the hub recognizes the problem from turn_error: not_logged_in / auth_failed / model_route / rate_limited / model_fallback_unavailable / tool_search_unsupported; model_fallback_unavailable means an active refusal fallback is unavailable, not a wrong configured model; tool_search_unsupported means the gateway refused on-demand tool loading, which a node with the capability assistant_tool_search_fallback has turned off for that launcher and model after one resend (an older node has not, so clients promise only a retry); clients use it to draw a \"fix it\" card, see the new-user onboarding plan section 5.2)","pending_interactions":1,
+     "turn_error_code":"not_logged_in (optional: only when the hub recognizes the problem from turn_error: not_logged_in / auth_failed / model_route / rate_limited / model_fallback_unavailable / compaction_sealed / tool_search_unsupported; compaction_sealed means native context is encrypted to another account; model_fallback_unavailable means an active refusal fallback is unavailable, not a wrong configured model; tool_search_unsupported means the gateway refused on-demand tool loading, which a node with the capability assistant_tool_search_fallback has turned off for that launcher and model after one resend (an older node has not, so clients promise only a retry); clients use it to draw a \"fix it\" card, see the new-user onboarding plan section 5.2)","pending_interactions":1,
  "work":{"phase":"blocked","on":"external","line":"Wait for the deploy to finish, then run the production tests","wait":"deploy finished","then":"run the production tests","every_minutes":5,
          "wake_at":"...","resets_at":"...","attempts":1,"max":6,"turn_at":"...","at":"...","by":"model"},
      // Work state (docs/assistant/agent-work.md): phase working | blocked | done; blocked's on is user (waiting for your decision; questions / link /
@@ -1845,8 +1845,8 @@ Clients report their errors and crashes only while `features` has `error_reports
 | POST | `/api/v1/workspace-board` | `{revision,action,...}` → the full updated board; `full` only, a stale revision gets 409 `conflict` |
 | GET | `/api/v1/workspace-board/settings` | `{enabled,can_write}`: the board switch (#2475), one per hub; when never set, inferred from whether the board has been changed, see "Workspace board" |
 | PUT | `/api/v1/workspace-board/settings` | `{enabled}` → `{enabled,can_write}`; `full` only, missing `enabled` returns 400 |
-| GET | `/api/v1/navigation` | `{"start"?, "pages"?}`: the page the apps open on and the sidebar's arrangement (#9071), one per hub, so the owner's for all their devices; `start` is left out until something is stored, see "Navigation" |
-| PUT | `/api/v1/navigation` | `{start?, pages?}` → the record; `full` only; neither, or one of another shape, returns 400 |
+| GET | `/api/v1/navigation` | `{"start"?, "pages"?, "overview"?}`: the page the apps open on, the sidebar's arrangement (#9071) and Overview's extension cards (#9745), one per hub, so the owner's for all their devices; each is left out until something is stored, see "Navigation" |
+| PUT | `/api/v1/navigation` | `{start?, pages?, overview?}` → the record; `full` only; none of them, or one of another shape, returns 400 |
 | GET | `/api/v1/workspaces` | `{workspaces:[Workspace],errors?:[{machine_id,error}]}`; workspace discovery independent of Agents, keeps the last known info on failure, readable by `answer` |
 | POST | `/api/v1/machines/{mid}/reconnect` | Reconnect that machine's node |
 | GET · POST | `/api/v1/machines/{mid}/codex/{sid}/takeover` | Signed-in full-device route; generic device-call APIs are denied. GET → `{token,cwd,transcript_path,continuation_prompt}` with a single-use two-minute token. POST requires `{token,confirm_stop:true}` only while the original writer is running; `false` is accepted once it has exited. The manager verifies process identity and terminal instance, then sends one Ctrl+D only with empty composer and no modal or queued input. It waits for process exit, a complete stable transcript ending, and a fresh writer scan; any failed check or timeout refuses. No signals or forced termination. Takeover resumes the same thread/session ID in a new terminal tab. The separate continue option alone starts an independent session with context and attached to-do preserved. `encrypted_context` is continuation-only. |
@@ -2284,7 +2284,7 @@ Server → client:
 | `saved_agent_searches` | `revision` (decimal string): the default manager committed a saved-query mutation; re-read the collection while its view is open, respecting the message's manager stamp. No query/name payload; see "Saved Agent searches" |
 | `workspace_board` | `revision`: a board change was saved; the client re-reads the full state; doesn't indicate an Agent state change |
 | `workspace_board_settings` | `enabled`: the board switch changed (`PUT /api/v1/workspace-board/settings`); clients show or hide the entry accordingly |
-| `navigation` | `start` and / or `pages`, whichever changed (`PUT /api/v1/navigation`, "Navigation"): clients keep the start page for their next opening and draw the sidebar's arrangement |
+| `navigation` | `start`, `pages` and / or `overview`, whichever changed (`PUT /api/v1/navigation`, "Navigation"): clients keep the start page for their next opening and draw the sidebar's arrangement and Overview's cards |
 | `urgent_call` | `{id, state, conversation}`: an urgent call moved on (answered, declined, missed, ended, cancelled when its card was answered elsewhere); a phone still ringing for it ends the call (`docs/assistant/urgent-call.md`) |
 | `kb_selection` | —: the knowledge base's selection was saved (`PUT /api/v1/kb/selection`, or a per-item change from the assistant); clients re-read `GET /api/v1/kb/selection` |
 | `todos` | —: pushed whenever to-dos or links change; clients re-fetch `GET /api/v1/todos`. From a manager that names `todo_view` (#10226) also when what a row's `view` files it under (its phase, section, reason, ask ids, the Inactive, Can wait and seen marks, its steps' count) changes with no write to the to-do: one of its runs changed (a card came, its turn ended or was seen) or time alone moved it (its `next_change_at` passed). Never for a working run's latest line, `since`, `next_change_at` or `rank` alone: those reach clients with the list's next read. The seen mark counts, so the first step after the owner looked at a working row pushes once. Settled with the writes' pushes; a run's change waits a second for the rest, and for time alone the manager looks at most once a minute. What the manager told the apps lives in its memory, so the first views it works out after it starts push once ([todos.md](../assistant/todos.md) "Live WebSocket pushes") |
@@ -5199,7 +5199,7 @@ The web shows a prefs change at once and then PUTs it. When the PUT fails (other
 
 ## Navigation
 
-The page the apps open on (#9071): `GET /api/v1/navigation` / `PUT /api/v1/navigation`, answered by the default manager
+The page the apps open on (#9071), the sidebar's arrangement and Overview's extension cards (#9745): `GET /api/v1/navigation` / `PUT /api/v1/navigation`, answered by the default manager
 (`server/internal/assistant/navigation.go`, relayed by the hub like the other `assistantwire.Routes`) and kept in its
 settings table under the key `navigation`, `{"start":"<page>"}`. A hub has one owner, so this is the user's choice and
 every device of theirs follows it.
@@ -5220,11 +5220,24 @@ every device of theirs follows it.
   to; `removed` the extensions' groups the user removed. The manager checks only the shape (at most 256 keys a list and 256 moves,
   32 groups, titles of at most 40 characters, ids once). Like `start`, it is left out until stored, and an app hands over the
   arrangement it kept while there was none.
-- PUT `{start?, pages?}` (at least one) changes only the fields it carries and pushes only those, so an app with an unsent change of
-  one field keeps it. It requires `full` (an `answer` credential gets 403; extension tokens never reach it, `extwire.RouteScopes` does
-  not list it); and broadcasts `{"type":"navigation","start"?:"<page>","pages"?:{…}}`.
+- `overview` is how the user arranged Overview's extension cards (#9745, `overview_card`, `docs/extensions/extensions.md` "UI slots"),
+  as the web keeps it (`web/src/lib/overview-cards.ts`): `[{"extension", "id", "hidden"?: true, "span"?: "half" | "full"}]`, the cards in
+  the user's order, each named by its extension's id and its card's, hidden or not, and half a row (the default) or the whole row.
+  Which cards there are is the apps' business: a card the list does not name (an extension installed since) comes after the
+  named ones, half a row and shown, in the hub's order (by extension, then the manifest's); an entry naming a card that is not
+  there now is passed over and kept until the user saves another arrangement, which names only the cards there are then.
+  The manager checks only the shape (at most 256 cards, ids of the shape an extension's and a UI contribution's have,
+  `^[a-z0-9][a-z0-9_-]{0,31}$`, each card once, `span` of `half` or `full`). `[]` is the default chosen (Reset), kept as such.
+  Like the others, it is left out until stored, and an app hands over the arrangement it kept while there was none.
+- PUT `{start?, pages?, overview?}` (at least one) changes only the fields it carries and pushes only those, so an app with an unsent
+  change of another field keeps it. It requires `full` (an `answer` credential gets 403; extension tokens never reach it,
+  `extwire.RouteScopes` does not list it); and broadcasts `{"type":"navigation","start"?:"<page>","pages"?:{…},"overview"?:[…]}`.
 - A hub or default manager from before answers 404: the web then keeps the choice in the browser only and says so in the
-  setting (`docs/web/web.md` "Start page"). iOS and Android do not read it yet.
+  setting (`docs/web/web.md` "Start page"). A default manager from before `overview` answers a PUT of only it 400 with its own
+  words (`start is required`, #9328; `start or pages is required`, #9351) and leaves it out of the record it answers; the web
+  sends the arrangement on its own and, on either, keeps it in the browser, says so where the cards are arranged
+  (`docs/web/web.md` "Overview's extension cards") and asks again at the next hello. Any other failure is not taken for that.
+  iOS and Android do not read the record yet.
 
 ## Tags in messages (parsed by clients)
 
