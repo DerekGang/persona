@@ -143,6 +143,25 @@ class AssistantDrawerShotsTest {
         capture("drawer-no-main-glass-light")
     }
 
+    @Test @Config(fontScale = 2f)
+    fun drawsTheMainRowAtLargestTextSize() {
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = AppStyle.Glass) {
+                Box(Modifier.testTag("shot").width(400.dp).height(800.dp).background(PersonaTheme.palette.background)) {
+                    AssistantDrawer("", {}, ConversationGroups(main, listOf(pinned), recent),
+                        active = null, hasMain = true, onEnd = null, onMain = {}, onOpen = {}, onInfo = {},
+                        onNew = {}, onSettings = {})
+                }
+            }
+        }
+        rule.onNodeWithText("主对话").assertExists()
+        capture("drawer-glass-light-large-text")
+        dark = true
+        androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+        capture("drawer-glass-dark-large-text")
+    }
+
     @Test fun navigationPagesAddTrailingChevronsAndKeepBadges() {
         var opened = ""
         rule.setContent {
