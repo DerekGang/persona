@@ -120,6 +120,27 @@ ci_run 'Build PersonaCore XCFramework before package resolution' 1200 "$SOURCE/n
 ci_run 'Generate public unsigned Apple config' 60 python3 "$SOURCE/scripts/persona_config.py" xcconfig
 ci_run 'Generate Apple project' 120 xcodegen generate --spec "$SOURCE/apple/project.yml" --project "$SOURCE/apple"
 capture_project pre-resolve
+# Allow-side evidence only: generate an independent Meta-enabled copy without resolving it.
+META_SOURCE="$OUTPUT/meta-enabled"
+mkdir -p "$META_SOURCE"
+rsync -a "$SOURCE/apple/" "$META_SOURCE/apple/"
+ci_run 'Generate Meta-enabled diagnostic project' 120 env PERSONA_META_WEARABLES=YES \
+  xcodegen generate --spec "$META_SOURCE/apple/project.yml" --project "$META_SOURCE/apple"
+ci_run 'Record Meta-enabled package declarations' 60 python3 -I - \
+  "$META_SOURCE/apple/Persona.xcodeproj/project.pbxproj" "$DIAGNOSTICS/meta-enabled-package-products.txt" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+checks = {
+    "remote_package_url": "repositoryURL = \"https://github.com/facebook/meta-wearables-dat-ios\";" in text,
+    "MWDATCore_product": "productName = MWDATCore;" in text,
+    "MWDATCamera_product": "productName = MWDATCamera;" in text,
+}
+lines = [f"{name}={'present' if present else 'missing'}" for name, present in checks.items()]
+with open(sys.argv[2], "w") as output:
+    output.write("\n".join(lines) + "\n")
+print("\n".join(lines))
+PY
+cp "$META_SOURCE/apple/Persona.xcodeproj/project.pbxproj" "$DIAGNOSTICS/meta-enabled-Persona-project.pbxproj"
 [ -s "$SOURCE/apple/PersonaTests/TokenBaseline.json" ] || { printf 'apple-ci: FAIL committed token baseline missing\n' >&2; exit 1; }
 
 UNSIGNED=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=)
