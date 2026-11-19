@@ -834,9 +834,11 @@ func TestAPairingCodeStartsNoSwitch(t *testing.T) {
 func TestAdminLinkSwitchWaitsForTheManager(t *testing.T) {
 	h := newTestHub(t)
 	h.devices.mu.Lock()
-	// No up channel yet: waitDevices makes it, which is how this test knows the request is waiting for the manager
-	// (a lookup before the wait answers 404 at once and never makes it).
+	// No up channel yet: waitDevicesFor makes one for this machine's non-default owner. A wait for the carrier instead
+	// would never satisfy this test, and a lookup before the wait would answer 404 without making either channel.
 	h.devices.up, h.devices.warmUntil = nil, time.Now().Add(5*time.Second)
+	h.devices.entries, h.devices.started = []MachineConfig{{ID: "lsw-box", Kind: "ssh"}}, true
+	h.devices.assign = map[string]string{"lsw-box": "manager-b"}
 	h.devices.mu.Unlock()
 	mux := http.NewServeMux()
 	h.adminLinkSwitchRoutes(mux)
@@ -847,18 +849,18 @@ func TestAdminLinkSwitchWaitsForTheManager(t *testing.T) {
 		done <- w.Code
 	}()
 	var up chan struct{}
-	eventually(t, 5*time.Second, "the request waiting for the manager", func() bool {
+	eventually(t, 5*time.Second, "the request waiting for the machine's manager", func() bool {
 		h.devices.mu.Lock()
 		defer h.devices.mu.Unlock()
-		up = h.devices.up
-		return up != nil
+		up = h.devices.up["manager-b"]
+		return up != nil && h.devices.up[devicesOwner] == nil
 	})
 	m := newMachine(h, MachineConfig{ID: "lsw-box", Kind: "ssh"})
 	h.fleet.mu.Lock()
 	h.machines, h.byID["lsw-box"] = append(h.machines, m), m
 	h.fleet.mu.Unlock()
 	h.devices.mu.Lock()
-	h.devices.upOpen = true
+	h.devices.upOpen = map[string]bool{"manager-b": true}
 	h.devices.mu.Unlock()
 	close(up)
 	select {
