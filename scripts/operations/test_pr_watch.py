@@ -2726,17 +2726,29 @@ class WatcherTests(unittest.TestCase):
         self.assertNotIn("Environment=ANTHROPIC", service)
         self.assertNotIn("/home/", service)
 
-    def test_ten_workers_start_and_stop_cleanly(self):
-        self.config["workers"] = 10
-        watcher = pr_watch.Watcher(self.config, verbose=False)
-        watcher.start_workers()
-        self.addCleanup(watcher.stopping.set)
-        self.assertEqual(len(watcher.workers), 10)
-        for _ in watcher.workers:
-            watcher.tasks.put((2, -1, ("", 0)))
-        for worker in watcher.workers:
-            worker.join(timeout=5)
-            self.assertFalse(worker.is_alive())
+    def test_configured_workers_start_and_stop_cleanly(self):
+        for count in (10, 20):
+            with self.subTest(workers=count):
+                self.config["workers"] = count
+                watcher = pr_watch.Watcher(self.config, verbose=False)
+                watcher.start_workers()
+                self.addCleanup(watcher.stopping.set)
+                self.assertEqual(len(watcher.workers), count)
+                for _ in watcher.workers:
+                    watcher.tasks.put((2, -1, ("", 0)))
+                for worker in watcher.workers:
+                    worker.join(timeout=5)
+                    self.assertFalse(worker.is_alive())
+
+    def test_worker_count_is_bounded(self):
+        for count in (-1, 0, 21):
+            with self.subTest(workers=count):
+                self.config["workers"] = count
+                watcher = pr_watch.Watcher(self.config, verbose=False)
+                with self.assertRaisesRegex(pr_watch_common.WatchError,
+                                            "workers must be between 1 and 20"):
+                    watcher.start_workers()
+                self.assertEqual(watcher.workers, [])
 
     def test_config_has_no_implicit_merge_or_repositories(self):
         path = self.root / "config.json"

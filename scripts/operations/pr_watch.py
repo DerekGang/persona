@@ -1566,8 +1566,8 @@ class Watcher:
 
     def start_workers(self):
         count = self.config["workers"]
-        if not 1 <= count <= 16:
-            raise WatchError("workers must be between 1 and 16")
+        if not 1 <= count <= 20:
+            raise WatchError("workers must be between 1 and 20")
         self.workers = [threading.Thread(target=self.worker, daemon=True) for _ in range(count)]
         for worker in self.workers:
             worker.start()
