@@ -14,7 +14,7 @@ function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
   return (
     <div className={end ? "flex flex-wrap justify-end gap-1" : "flex flex-wrap gap-1"} data-botmux-tags>
       {tags.map((tag) => (
-        <span key={tag} className="rounded-full bg-hover px-1.5 text-[11px] leading-[18px] text-ink-3 whitespace-nowrap">{tag}</span>
+        <span key={tag} className="rounded-full bg-hover px-1.5 text-[length:var(--chat-secondary)] leading-[18px] text-ink-3 whitespace-nowrap">{tag}</span>
       ))}
     </div>
   );
@@ -26,10 +26,10 @@ function BotmuxOriginal({ text, end }: { text: string; end?: boolean }) {
   if (!text) return null;
   return (
     <div className={end ? "flex w-full flex-col items-end gap-1" : "flex w-full flex-col items-start gap-1"}>
-      <button type="button" className="text-[11px] text-ink-3 hover:text-ink-2" aria-expanded={open} onClick={() => setOpen((v) => !v)} data-botmux-original>
+      <button type="button" className="text-[length:var(--chat-secondary)] text-ink-3 hover:text-ink-2" aria-expanded={open} onClick={() => setOpen((v) => !v)} data-botmux-original>
         {t(open ? "chat-botmux.hide_original" : "chat-botmux.original")}
       </button>
-      {open && <pre className="max-h-80 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-hover p-2 font-mono text-[11.5px] text-ink-2">{text}</pre>}
+      {open && <pre className="max-h-80 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-hover p-2 font-mono text-[length:var(--chat-secondary)] text-ink-2">{text}</pre>}
     </div>
   );
 }
