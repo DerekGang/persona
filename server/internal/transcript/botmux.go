@@ -15,8 +15,13 @@ import (
 // <attachments>, <message_location />, <botmux_reminder>, <botmux_formatting> and the like, and the agent answers
 // with `botmux send`. BotmuxMessage and BotmuxSend read those back for the apps (proto.Botmux): the words and a few
 // facts to show as tags. Anything they cannot read stays as it is (nil), and Item.Text always keeps the original.
-// The formats are BotMux 2.50 and later (docs/protocol/protocol.md "BotMux messages"); spec/fixtures/botmux is
+// The formats are BotMux 2.50 through 3.59.20 (docs/protocol/protocol.md "BotMux messages"); spec/fixtures/botmux is
 // shared with the web app.
+//
+// Reading the prompt wrapper and the command line back is a compatibility fallback. BotMux's wrapper is text for the
+// model, not a published format, and can change in any release. When BotMux offers a versioned, structured record of
+// each turn (the inbound message, its sender and attachments, and what was sent back), that record comes first and
+// this parsing stays only for sessions and BotMux versions without it.
 
 const (
 	botmuxOpen  = "<user_message>"
@@ -27,8 +32,8 @@ const (
 	botmuxTaskClose = "</botmux_task>"
 )
 
-// botmuxBlockRe is one top-level block: <tag …>…</tag> or <tag … />. Its name is in group 1 or 3.
-var botmuxBlockRe = lazyre.New(`(?s)<([a-z][a-z0-9_]*)\b[^<>]*>.*?</([a-z][a-z0-9_]*)>|<([a-z][a-z0-9_]*)\b[^<>]*/>`)
+// botmuxOpenTagRe is a block's opening tag at the start of the text, its name in group 1.
+var botmuxOpenTagRe = lazyre.New(`^<([a-z][a-z0-9_]*)\b[^<>]*>`)
 
 var (
 	botmuxSenderRe   = lazyre.New(`<sender\b([^<>]*)/>`)
@@ -58,20 +63,22 @@ func BotmuxMessage(s string) *proto.Botmux {
 	var body string
 	switch open := strings.Index(t, botmuxOpen); {
 	case open >= 0:
-		rest := t[open+len(botmuxOpen):]
+		rest, after := t[open+len(botmuxOpen):], ""
 		end := strings.Index(rest, botmuxClose)
 		if end < 0 { // clipped inside the words: what there is of them
 			body, b.Truncated = rest, true
-			if !botmuxOnlyBlocks(t[:open]) {
-				return nil
-			}
 		} else {
-			body = rest[:end]
-			if !botmuxOnlyBlocks(t[:open]) || !botmuxOnlyBlocks(rest[end+len(botmuxClose):]) {
-				return nil // something else that happens to use the tag
-			}
+			body, after = rest[:end], rest[end+len(botmuxClose):]
 		}
-		botmuxFacts(b, t[:open]+rest[min(len(rest), max(end, 0)+len(botmuxClose)):])
+		before, ok1 := botmuxBlocks(t[:open])
+		behind, ok2 := botmuxBlocks(after)
+		if !ok1 || !ok2 {
+			return nil // something else that happens to use the tag
+		}
+		for name, bs := range behind {
+			before[name] = append(before[name], bs...)
+		}
+		botmuxFacts(b, before)
 	case strings.HasPrefix(t, botmuxTaskOpen): // a trigger turn in BotMux's hook mode: its blocks go to the hook
 		body = t
 	case botmuxFormattingTail.MatchString(t): // bare: the words, then the formatting block
@@ -105,7 +112,38 @@ func BotmuxMessage(s string) *proto.Botmux {
 
 // botmuxOnlyBlocks: s has nothing but blocks (and blank space) outside them, as BotMux writes around the words.
 func botmuxOnlyBlocks(s string) bool {
-	return strings.TrimSpace(botmuxBlockRe.ReplaceAllString(s, "")) == ""
+	_, ok := botmuxBlocks(s)
+	return ok
+}
+
+// botmuxBlocks splits s into its top-level blocks, <tag …>…</tag> or <tag … />, keyed by tag name; ok is false when
+// anything else is outside them. A block ends at the closing tag of its own name, so children such as <identity>'s
+// <name> and <open_id> stay inside it.
+func botmuxBlocks(s string) (blocks map[string][]string, ok bool) {
+	blocks = map[string][]string{}
+	for {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return blocks, true
+		}
+		m := botmuxOpenTagRe.FindStringSubmatchIndex(s)
+		if m == nil {
+			return nil, false
+		}
+		name, head := s[m[2]:m[3]], s[:m[1]]
+		if strings.HasSuffix(head, "/>") {
+			blocks[name] = append(blocks[name], head)
+			s = s[m[1]:]
+			continue
+		}
+		end := strings.Index(s[m[1]:], "</"+name+">")
+		if end < 0 {
+			return nil, false
+		}
+		end += m[1] + len("</"+name+">")
+		blocks[name] = append(blocks[name], s[:end])
+		s = s[end:]
+	}
 }
 
 // botmuxTask is what a trigger turn asks, from its <botmux_task> block.
@@ -122,21 +160,28 @@ func botmuxTask(body string) (string, bool) {
 	return strings.TrimSpace(rest[:end]), true
 }
 
-// botmuxFacts reads the tags' facts off the blocks around the words.
-func botmuxFacts(b *proto.Botmux, blocks string) {
-	if m := botmuxSenderRe.FindStringSubmatch(blocks); m != nil {
+// botmuxFacts reads the tags' facts off the top-level blocks around the words, each from its own block only (a
+// routing or role block may quote the same tags as examples).
+func botmuxFacts(b *proto.Botmux, blocks map[string][]string) {
+	first := func(name string) string {
+		if bs := blocks[name]; len(bs) > 0 {
+			return bs[0]
+		}
+		return ""
+	}
+	if m := botmuxSenderRe.FindStringSubmatch(first("sender")); m != nil {
 		a := botmuxAttrs(m[1])
 		b.Sender, b.SenderType = a["name"], a["type"]
 	}
-	for _, m := range botmuxMentionRe.FindAllStringSubmatch(blocks, -1) {
+	for _, m := range botmuxMentionRe.FindAllStringSubmatch(first("mentions"), -1) {
 		if name := botmuxAttrs(m[1])["name"]; name != "" {
 			b.Mentions = append(b.Mentions, name)
 		}
 	}
-	if m := botmuxAttachRe.FindStringSubmatch(blocks); m != nil {
+	if m := botmuxAttachRe.FindStringSubmatch(first("attachments")); m != nil {
 		b.Attachments = len(botmuxAttachItem.FindAllStringIndex(m[1], -1))
 	}
-	if m := botmuxLocationRe.FindStringSubmatch(blocks); m != nil {
+	if m := botmuxLocationRe.FindStringSubmatch(first("message_location")); m != nil {
 		b.Thread = botmuxAttrs(m[1])["placement"] == "thread"
 	}
 }
@@ -149,21 +194,43 @@ func botmuxAttrs(s string) map[string]string {
 	return out
 }
 
-// botmuxSendFlags are `botmux send`'s flags that take a value (BotMux 3.59 cli.ts); the others take none.
-var botmuxSendFlags = map[string]bool{
-	"--mention": true, "--quote": true, "--reply-to": true, "--response-kind": true, "--expected-link": true, "--as": true,
-	"--plugin-card-action": true, "--chat-id": true, "--into": true, "--secretary-action": true, "--secretary-reason": true,
-	"--layout": true, "--session-id": true, "--image": true, "--images": true, "--file": true, "--files": true,
-	"--video": true, "--videos": true, "--video-cover": true, "--video-covers": true, "--card": true, "--card-file": true,
+// botmuxSendFlag is how a `botmux send` flag takes its value.
+type botmuxSendFlag int
+
+const (
+	sendFlagBool     botmuxSendFlag = iota + 1 // no value
+	sendFlagValue                              // the next word, or --flag=value
+	sendFlagOptional                           // only --flag=value; the next word is not its value
+	sendFlagGiveUp                             // the reply's words are not in the command, or nothing is sent
+)
+
+// botmuxSendFlags is `botmux send`'s flag table (BotMux 3.59 src/cli/send-invocation.ts SEND_FLAG_SPECS, the same from
+// 3.59.6 to 3.59.20). A flag not in it makes BotMux refuse the send, so BotmuxSend gives up on it too.
+var botmuxSendFlags = map[string]botmuxSendFlag{
+	"--card": sendFlagBool, "--text": sendFlagBool, "--top-level": sendFlagBool, "--no-quote": sendFlagBool,
+	"--mention-back": sendFlagBool, "--no-mention": sendFlagBool, "--voice": sendFlagBool, "--slash": sendFlagBool,
+	"--remote-runner-outbound": sendFlagBool, "--schedule-remove-self": sendFlagBool, "--anyway": sendFlagBool,
+	"--attention": sendFlagOptional, "--urgent": sendFlagOptional,
+	"--diff": sendFlagValue, "--image": sendFlagValue, "--images": sendFlagValue, "--file": sendFlagValue,
+	"--files": sendFlagValue, "--video": sendFlagValue, "--videos": sendFlagValue, "--video-cover": sendFlagValue,
+	"--video-covers": sendFlagValue, "--mention": sendFlagValue, "--expected-link": sendFlagValue, "--layout": sendFlagValue,
+	"--response-kind": sendFlagValue, "--image-mode": sendFlagValue, "--chat-id": sendFlagValue, "--into": sendFlagValue,
+	"--quote": sendFlagValue, "--reply-to": sendFlagValue, "--as": sendFlagValue, "--plugin-card-action": sendFlagValue,
+	"--completion-proposal-file": sendFlagValue, "--session-id": sendFlagValue,
+	// the body comes from a file or a card, --dry-run only renders locally, --help prints help
+	"--content-file": sendFlagGiveUp, "--card-file": sendFlagGiveUp, "--card-json": sendFlagGiveUp,
+	"--dry-run": sendFlagGiveUp, "--help": sendFlagGiveUp,
 }
 
-// botmuxSendMedia are the flags that attach files to a reply (several at once comma-separated).
+// botmuxSendMedia are the flags that attach a file to a reply, one per occurrence.
 var botmuxSendMedia = map[string]bool{
 	"--image": true, "--images": true, "--file": true, "--files": true, "--video": true, "--videos": true,
 }
 
-// BotmuxSend reads a shell call that is `botmux send`: the reply it posted, nil when the command is anything else or
-// its words cannot be told from the command alone (a file, stdin from another command, a substitution).
+// BotmuxSend reads a shell call that is `botmux send`: the reply it posted, nil when the command is anything else, its
+// words cannot be told from the command alone (a file, stdin from another command, a substitution), or BotMux would
+// refuse it (a flag it does not know, a flag missing its value). This reads the command line back, a compatibility
+// fallback: the transcript has no structured record of what was sent.
 func BotmuxSend(command string) *proto.Botmux {
 	if !strings.Contains(command, "botmux") || !strings.Contains(command, "send") {
 		return nil
@@ -179,30 +246,44 @@ func BotmuxSend(command string) *proto.Botmux {
 	var text []string
 	for i := 2; i < len(words); i++ {
 		w := words[i]
-		name, value, eq := strings.Cut(w, "=")
-		switch {
-		case w == "--content-file":
+		if w == "-h" || w == "--" { // help, or the separator BotMux refuses
 			return nil
-		case botmuxSendFlags[name]:
+		}
+		if !strings.HasPrefix(w, "--") { // `-5 degrees` and a lone `-` (stdin) are words too
+			text = append(text, w)
+			continue
+		}
+		name, value, eq := strings.Cut(w, "=")
+		switch botmuxSendFlags[name] {
+		case sendFlagBool:
+			if eq {
+				return nil
+			}
+			b.Voice = b.Voice || name == "--voice"
+		case sendFlagOptional:
+		case sendFlagValue:
 			if !eq {
-				if i+1 >= len(words) {
+				if i+1 >= len(words) || words[i+1] == "-h" || strings.HasPrefix(words[i+1], "--") {
 					return nil
 				}
 				i++
 				value = words[i]
 			}
+			if value == "" {
+				return nil
+			}
 			switch {
 			case name == "--response-kind" && value == "final":
 				b.Final = true
 			case botmuxSendMedia[name]:
-				b.Attachments += len(strings.Split(value, ","))
+				b.Attachments++
 			}
-		case w == "--voice":
-			b.Voice = true
-		case strings.HasPrefix(w, "--"):
-		default:
-			text = append(text, w)
+		default: // sendFlagGiveUp, or a flag BotMux does not know
+			return nil
 		}
+	}
+	if len(text) == 1 && text[0] == "-" { // a lone `-` reads the words from stdin
+		text = nil
 	}
 	b.Text = strings.TrimSpace(strings.Join(text, " "))
 	if b.Text == "" {

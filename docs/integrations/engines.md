@@ -263,7 +263,8 @@ Typical use: work Agents in botmux, personal Agents in herdr, viewed together.
   and the reply text of a `botmux send` call (also on a fold that hides the call). The transcript text is unchanged, so the original stays one tap away.
   A message the apps sent arrives as a trigger turn (`<botmux_task>` plus the untrusted external event) and reads back as `kind: trigger`, the user's own
   words. Apps do not write botmux's wrapper themselves: botmux resolves `<sender />` from Lark, has no field for a connector to claim one, and already
-  adds its reminder and formatting blocks to trigger turns. Formats and fallbacks: `docs/protocol/protocol.md` ("BotMux messages").
+  adds its reminder and formatting blocks to trigger turns. Reading the wrapper back is a compatibility fallback until botmux offers a structured,
+  versioned turn record; formats and fallbacks: `docs/protocol/protocol.md` ("BotMux messages").
 - **Why it needs you / open in Lark**: reason from `botmux send --attention` goes into `attention_reason` while Needs you;
   app shows it in list rows / chat top. Raw observe topic link (`feishuThreadLink`, HTTPS only) becomes `external_url` for "Open in Lark."
   Both are raw botmux fields, not stable APIs; omit if absent.

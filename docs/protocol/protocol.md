@@ -5373,10 +5373,21 @@ and sets `botmux` on the item; `text` keeps the transcript's words, so a client 
 | `final`, `voice` | A reply sent with `--response-kind final`; as voice |
 | `truncated` | The item was clipped inside the words: `text` is their start |
 
-A fold that hides `botmux send` calls lists their replies in `fold.botmux`, in order. Read: a `<user_message>` with only blocks around it, a trigger
-turn starting with `<botmux_task trusted="true">` (botmux's hook mode), or bare words followed by `<botmux_formatting>`; a reply is a single
-`botmux send` whose words are its arguments or a here-document. Anything else, botmux 1.x's plain preamble, hook-mode lines (already bare), a reply
-read from a file or a pipe, and items from older nodes carry no `botmux`: clients show them as before.
+A fold that hides `botmux send` calls lists their replies in `fold.botmux`, in order.
+
+**Compatibility fallback.** Everything above is read back from text botmux writes for the model, not from a published format; it is checked
+against botmux 3.59.6 through 3.59.20. When botmux offers a versioned, structured record of each turn (the inbound words, sender, attachments
+and placement, and the replies sent), the node reads that first and keeps this parsing only for sessions and botmux versions without it.
+
+- A message is read from a `<user_message>` with only top-level blocks around it (each block ends at the closing tag of its own name, so nested
+  blocks such as `<identity>` are fine; facts come only from the top-level `<sender />`, `<mentions>`, `<attachments>` and `<message_location />`),
+  a trigger turn starting with `<botmux_task trusted="true">` (botmux's hook mode), or bare words followed by `<botmux_formatting>`.
+- A reply is a single `botmux send` whose words are its arguments, or a here-document (also behind a lone `-`). Flags follow botmux's own table
+  (`src/cli/send-invocation.ts`): switches take no value, `--urgent` / `--attention` only `=value`, the others the next word or `=value`. A flag botmux
+  does not know, a missing value, `--`, `--help`, `--dry-run`, and a body from `--content-file`, `--card-file` or `--card-json` give no `botmux`, since
+  botmux would refuse the send or its words are not in the command. Each `--image(s)`, `--file(s)` and `--video(s)` counts as one attachment.
+- Anything else, botmux 1.x's plain preamble, hook-mode lines (already bare), a reply read from a file or a pipe, and items from older nodes carry
+  no `botmux`: clients show them as before.
 
 Clients offer three modes for botmux sessions: show everything as it is, hide the sessions, or decode (the web's default): a message shows
 `botmux.text` with its facts as tags, a reply shows as the agent's message sent to Lark, and each can be opened to its original.
