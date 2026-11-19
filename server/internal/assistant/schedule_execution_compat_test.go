@@ -114,6 +114,26 @@ func TestTaskExecutionLegacySourceEcho(t *testing.T) {
 	}
 }
 
+func TestTaskViewShowsManagedExecutionAgentWithoutNodeCatalog(t *testing.T) {
+	f := newFakeHub().withMachine()
+	f.answerNode(DeviceLaunchersList, func(string, json.RawMessage) (any, error) {
+		return nil, errors.New("synthetic catalog unavailable")
+	})
+	s := newTestService(t, f)
+	putLaunchers(t, s, storedLauncher{
+		ManagedLauncher: proto.ManagedLauncher{Name: "task-wrapper", Agent: "codex", BaseURL: "https://provider.example"},
+		Share:           shareAll,
+	})
+	setTasks(s, Task{ID: "job", Prompt: "Check files", Repeat: repeatInterval, EveryMinutes: 30, Enabled: true})
+	setModel(t, s, "task.job", ModelBinding{Provider: "launcher.task-wrapper", Model: "test-model"})
+
+	view, ok := s.taskView(t.Context(), "job")
+	if !ok || view.ExecutionError != "" || view.Execution == nil ||
+		view.Execution.Launcher != "task-wrapper" || view.Execution.Agent != "codex" {
+		t.Fatalf("task execution view: found=%t execution=%+v error=%q", ok, view.Execution, view.ExecutionError)
+	}
+}
+
 func TestTaskExecutionUnknownCatalogRetainsValidation(t *testing.T) {
 	for _, check := range []string{"model-id", "model-check", "effort", "model-effort", "scope"} {
 		t.Run(check, func(t *testing.T) {

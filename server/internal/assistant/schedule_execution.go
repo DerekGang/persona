@@ -89,6 +89,7 @@ func (s *Service) taskExecution(ctx context.Context, t Task, validate bool, bind
 	ex.Launcher, ex.Model, ex.Effort = strings.TrimPrefix(b.Provider, "launcher."), b.Model, b.Effort
 	ex.Fingerprint = s.taskBindingFingerprint(ctx, machine, b)
 	if !validate {
+		ex.Agent = s.launcherAgent(withUnhidden(ctx, ex.Launcher), machine, ex.Launcher)
 		if ex.Cwd == "" {
 			if d, ok := s.device(ctx, machine); ok {
 				ex.Cwd = s.assistantCwd(d)
