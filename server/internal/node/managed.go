@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -317,9 +316,11 @@ func agentExecutable(bin string) (string, error) {
 		filepath.Join(home, ".claude", "local", bin),
 		filepath.Join(home, ".volta", "bin", bin),
 	)
-	nvmDirs, _ := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", bin))
-	sort.Sort(sort.Reverse(sort.StringSlice(nvmDirs)))
-	candidates = append(candidates, nvmDirs...)
+	for _, dir := range nvmVersionsDirs(home) {
+		paths, _ := filepath.Glob(filepath.Join(dir, "*", "bin", bin))
+		slices.Reverse(paths)
+		candidates = append(candidates, paths...)
+	}
 	for _, np := range commonNodePaths() {
 		candidates = append(candidates, filepath.Join(filepath.Dir(np), bin))
 	}
@@ -348,8 +349,8 @@ func agentExecutable(bin string) (string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := loginShell(ctx, "command -v "+shellQuote(bin))
-	if out, err := cmd.Output(); err == nil {
+	// ErrWaitDelay means command -v succeeded, but an rc child kept the output pipe open.
+	if out, err := launcherShellOutput(ctx, "command -v "+shellQuote(bin)); err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		lines := strings.Split(strings.TrimSpace(terminalEscapes.ReplaceAllString(string(out), "")), "\n")
 		for i := len(lines) - 1; i >= 0; i-- {
 			line := strings.TrimSpace(lines[i])
@@ -467,6 +468,7 @@ func Launch(ctx context.Context, name string, args []string, ticket string) erro
 		argv = codexBypassArgs(argv)
 	}
 	env = withoutEnv(env, []string{codexBypassEnv})
+	env = nvmLauncherEnv(exe, env)
 	exe, argv, env, _ = launchExec(agent, exe, argv, env)
 	return osproc.Exec(exe, argv, env)
 }

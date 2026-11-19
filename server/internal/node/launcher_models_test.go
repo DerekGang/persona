@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/nodeclient"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -60,6 +62,93 @@ func TestClaudeModelListErrors(t *testing.T) {
 		if _, err := claudeModelList(io.Discard, strings.NewReader(out+"\n")); err == nil {
 			t.Errorf("%s: no error", name)
 		}
+	}
+}
+
+func TestManagedClaudeModelListWithNVM(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix npm launchers and node sockets")
+	}
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("no zsh")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no Node.js to run the npm launcher fixture")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := launchKeyHome(t)
+	n, _ := testNode(t)
+	n.home, n.dir = home, filepath.Dir(nodeclient.SocketPath())
+	programDir := filepath.Join(home, "Persona Link")
+	if err := os.MkdirAll(programDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	n.bin = filepath.Join(programDir, "personad")
+	if err := os.Symlink(self, n.bin); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(home, "custom NVM")
+	prefix := filepath.Join(root, "versions", "node", "v22.1.0")
+	bin := filepath.Join(prefix, "bin")
+	cli := writeExecutable(t, filepath.Join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"), `#!/usr/bin/env node
+const fs = require('node:fs');
+const readline = require('node:readline');
+const args = process.argv.slice(2);
+const settings = JSON.parse(fs.readFileSync(args[args.indexOf('--settings') + 1]));
+const rl = readline.createInterface({input: process.stdin});
+rl.on('line', (line) => {
+  const req = JSON.parse(line);
+  if (req.type !== 'control_request' || req.request.subtype !== 'initialize' ||
+      !settings.disableAllHooks || settings.env.ANTHROPIC_AUTH_TOKEN !== 'probe-fixture' ||
+      process.env.ANTHROPIC_AUTH_TOKEN !== 'probe-fixture' ||
+      !args.includes('stream-json') || !args.includes('--verbose')) {
+    throw new Error('Missing managed model probe configuration');
+  }
+  console.log(JSON.stringify({type: 'control_response', response: {
+    subtype: 'success', request_id: req.request_id, response: {models: [
+      {value: 'npm-model', displayName: 'NPM model'}
+    ]}
+  }}));
+});
+`)
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if rel, err := filepath.Rel(bin, cli); err != nil {
+		t.Fatal(err)
+	} else if err := os.Symlink(rel, filepath.Join(bin, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(node, filepath.Join(bin, "node")); err != nil {
+		t.Fatal(err)
+	}
+	wrong := writeExecutable(t, filepath.Join(home, "service-bin", "node"), "#!/bin/sh\nexit 17\n")
+	writeFile(t, filepath.Join(home, ".zshrc"), `: > "$HOME/rc-ran"
+/bin/sleep 20
+`)
+	t.Setenv("ZDOTDIR", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("PATH", filepath.Dir(wrong)+":/usr/bin:/bin")
+	t.Setenv("NVM_DIR", root)
+	t.Setenv("PERSONA_NODEJS", filepath.Join(bin, "node")) // Like a service whose Node.js path is known.
+	t.Setenv("NODE_OPTIONS", "")
+	t.Setenv("NODE_TEST_LAUNCH", "1")
+	n.setManaged([]proto.ManagedLauncher{{Name: "store", APIKey: "probe-fixture", Auth: "bearer"}})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := n.listenOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	models, err := n.listAgentModels(ctx, "store", "claude")
+	if err != nil || len(models) != 1 || models[0].ID != "npm-model" {
+		t.Fatalf("managed models = %+v, %v", models, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "rc-ran")); !os.IsNotExist(err) {
+		t.Fatalf("the model probe ran the shell rc: %v", err)
 	}
 }
 

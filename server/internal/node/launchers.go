@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/shellcmd"
 )
@@ -19,8 +21,8 @@ var launcherCache struct {
 	sync.Mutex
 	at       time.Time
 	list     []proto.Launcher
-	fetch    sync.Mutex // one login shell at a time
-	fetching bool       // a background refresh (cachedLaunchers) is running
+	fetch    singleflight.Group // concurrent asks share the login shell's result, including failure
+	fetching bool               // a background refresh (cachedLaunchers) is running
 	// codex: how each Codex launcher runs (codex_start.go), its words as the shell would run them.
 	codex map[string][]string
 	// settings: the --settings a claude alias brings itself, as its words give it (launcher_settings.go).
@@ -91,29 +93,47 @@ func launcherOutput(out string) string {
 // functions), then every alias that runs claude (`alias dmcc="ANTHROPIC_BASE_URL=… claude …"`), by name. A name
 // the helper lists is not repeated; none at all: plain claude.
 func (n *Node) launchers(ctx context.Context) ([]proto.Launcher, error) {
-	launcherCache.fetch.Lock()
-	defer launcherCache.fetch.Unlock()
-	launcherCache.Lock()
-	if time.Since(launcherCache.at) < time.Minute && launcherCache.list != nil {
-		list := launcherCache.list
+	result, err, _ := launcherCache.fetch.Do("shell", func() (any, error) {
+		launcherCache.Lock()
+		if time.Since(launcherCache.at) < time.Minute && launcherCache.list != nil {
+			list := launcherCache.list
+			launcherCache.Unlock()
+			return list, nil
+		}
+		launcherCache.Unlock()
+		// A caller can give up before the shell finishes. The scan still updates the cache for the next ask.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		out, err := scanLaunchers(ctx)
+		if err != nil {
+			return nil, err
+		}
+		list, codex, settings, scripts := mergeLaunchers(string(out))
+		launcherCache.Lock()
+		launcherCache.at, launcherCache.list, launcherCache.codex, launcherCache.settings = time.Now(), list, codex, settings
+		launcherCache.scripts = scripts
 		launcherCache.Unlock()
 		return list, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	launcherCache.Unlock()
-	// Not cut short when the caller gives up (the hub waits a few seconds per machine): a slow rc file still finishes
-	// and the next ask within the minute gets the list from the cache.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
-	defer cancel()
-	out, err := loginShell(ctx, launcherScript).Output()
-	if err != nil && len(out) == 0 {
+	return result.([]proto.Launcher), nil
+}
+
+func scanLaunchers(ctx context.Context) ([]byte, error) {
+	out, err := launcherShellOutput(ctx, launcherScript)
+	// Retain useful partial output. The shell can print an rc banner or the start of the frame before the timeout.
+	if err != nil && strings.Trim(launcherOutput(string(out)), "\x02\x1d\r\n\t ") == "" {
 		return nil, fmt.Errorf("list launchers: %w", err)
 	}
-	list, codex, settings, scripts := mergeLaunchers(string(out))
-	launcherCache.Lock()
-	launcherCache.at, launcherCache.list, launcherCache.codex, launcherCache.settings = time.Now(), list, codex, settings
-	launcherCache.scripts = scripts
-	launcherCache.Unlock()
-	return list, nil
+	return out, nil
+}
+
+func launcherShellOutput(ctx context.Context, script string) ([]byte, error) {
+	cmd := loginShell(ctx, script)
+	killGroupOnCancel(cmd)
+	return cmd.Output()
 }
 
 // mergeLaunchers is launcherScript's output as the launcher list: the helper's, then the aliases it does not name,

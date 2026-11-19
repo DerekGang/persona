@@ -1426,3 +1426,10 @@ pin while the final catalog bytes equal the earlier unpinned snapshot.
 ## A transcript directory is not the selected launcher's sign-in
 
 When restoring an assistant conversation, finding its newest transcript does not establish that a newly selected launcher can authenticate in that profile. Check private-profile ownership before stopping the old process or writing input; a later CLI sign-in error has already accepted the wrong launch and may forward a provider-only model. A refusal should preserve the original process and session state and explain how to continue. Regression coverage needs cold resumes and live idle processes, with both an omitted model and the old provider's explicit model (#10453).
+
+## Managed model discovery must tolerate a slow interactive shell (#10927)
+
+An interactive rc file can spend the entire discovery deadline in a version manager before the launcher command begins.
+A managed model probe has the command and provider settings already, so run it directly and test npm's
+`#!/usr/bin/env node` with a different Node.js on the service's PATH. Keep shell discovery for aliases and functions,
+and only cache output framed by the discovery command. A timed-out shell can print a banner without listing anything.

@@ -224,27 +224,41 @@ func (n *Node) launcherModelsAgent(ctx context.Context, name, agentType string) 
 	return "claude" // a probe that failed: as claude, like every other start
 }
 
-// agentModelsCommand is the command listAgentModels runs in shell to ask launcher name's agent for its models, in dir.
-func (n *Node) agentModelsCommand(ctx context.Context, shell, name, agent, dir string) (*exec.Cmd, error) {
-	var cmd *exec.Cmd
-	if agent == "codex" {
-		launcher := n.launcherForScript(name)
-		if _, managed := n.managedLauncher(name); managed {
-			// `personad launch` runs codex itself, not the shell's codex codexShell wraps: without the subcommand
-			// here the provider's codex started its TUI ("stdin is not a terminal") and listed nothing.
-			launcher += " app-server"
-		}
-		cmd = exec.CommandContext(ctx, shell, "-ic", codexShell(launcher), "persona")
-	} else {
+// agentModelsCommand asks the launcher for its agent's models in dir. Managed Claude launchers have a command and
+// settings of their own. Custom Claude launchers still use the shell for functions and aliases.
+func (n *Node) agentModelsCommand(ctx context.Context, name, agent, dir string) (*exec.Cmd, error) {
+	_, managed := n.managedLauncher(name)
+	var args []string
+	if agent != "codex" {
 		// No hooks: this claude is no session of the user's (Persona's own, or a hook of theirs, would see one start).
 		ours := filepath.Join(dir, "settings.json")
 		if err := os.WriteFile(ours, []byte(`{"disableAllHooks":true}`), 0o600); err != nil {
 			return nil, err
 		}
-		cmd = exec.CommandContext(ctx, shell, "-ic", n.launcherForScript(name)+` "$@"`, "persona",
-			"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-			"--settings", n.claudeSettings(ctx, name, ours, dir))
+		args = []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+			"--settings", n.claudeSettings(ctx, name, ours, dir)}
 	}
+	if managed && agent == "claude" {
+		cmd := exec.CommandContext(ctx, n.bin, append([]string{"launch", name}, args...)...)
+		cmd.Dir = dir
+		return cmd, nil
+	}
+	shell, err := interactiveShell()
+	if err != nil {
+		return nil, err
+	}
+	launcher := n.launcherForScript(name)
+	if agent == "codex" {
+		if managed {
+			// `personad launch` runs codex itself, not the shell's codex codexShell wraps: without the subcommand
+			// here the provider's codex started its TUI ("stdin is not a terminal") and listed nothing.
+			launcher += " app-server"
+		}
+		launcher = codexShell(launcher)
+	} else {
+		launcher += ` "$@"`
+	}
+	cmd := exec.CommandContext(ctx, shell, append([]string{"-ic", launcher, "persona"}, args...)...)
 	cmd.Dir = dir
 	return cmd, nil
 }
@@ -256,11 +270,7 @@ func (n *Node) listAgentModels(ctx context.Context, name, agent string) ([]proto
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
-	shell, err := interactiveShell()
-	if err != nil {
-		return nil, err
-	}
-	cmd, err := n.agentModelsCommand(ctx, shell, name, agent, dir)
+	cmd, err := n.agentModelsCommand(ctx, name, agent, dir)
 	if err != nil {
 		return nil, err
 	}
