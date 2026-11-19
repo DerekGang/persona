@@ -11,7 +11,7 @@ func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 	for _, background := range []bool{false, true} {
 		for _, strict := range []bool{false, true} {
 			for _, inherited := range []bool{false, true} {
-				for _, change := range []string{"model", "effort", "fingerprint", "launcher", "matching", "round model"} {
+				for _, change := range []string{"model", "effort", "fingerprint", "launcher", "interactive", "interactive effort", "matching", "round model"} {
 					if inherited && change == "launcher" {
 						continue // an omitted launcher inherits rather than asking for a different launcher
 					}
@@ -32,9 +32,14 @@ func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 						n := codexTestNode(t)
 						withFakeHub(t, n)
 						old := modelExecution{Strict: strict, Model: "old", Effort: "low", UseEffort: true, Fingerprint: "before", Origin: "task"}
+						if change == "interactive effort" {
+							old.Interactive = true
+						}
 						asked := old
 						launcher := "claude"
 						switch change {
+						case "interactive":
+							asked.Interactive = true
 						case "model", "round model":
 							asked.Model = "new"
 						case "effort":
@@ -53,6 +58,10 @@ func TestTaskStrictBusyExecutionNeverAdoptsOldModel(t *testing.T) {
 						in := &stdinBuf{}
 						p := &assistantProc{id: testThread, agent: "claude", launcher: "claude", cwd: t.TempDir(), stdin: in, exited: make(chan struct{}), born: time.Now(),
 							mode: "default", effort: old.Effort, model: old, fingerprint: n.executionFingerprint("claude", old), busy: !background}
+						if change == "interactive effort" {
+							// Its execution fingerprint still matches, but the interactive process started at another effort.
+							p.tui, p.effort = true, "high"
+						}
 						if change == "round model" {
 							p.round, p.toolSet = true, roundToolSet
 						}
