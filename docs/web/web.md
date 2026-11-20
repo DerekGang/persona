@@ -1483,7 +1483,9 @@ the same snapshot again with a new star ID, even if the original message has gon
 **Pages › Starred** shows the current assistant's saves, newest first. Its count is the number of saved
 messages for that assistant. Search matches words in the saved text, conversation title, and speaker.
 **Copy** copies the saved text. **Open original** opens the conversation at the saved message with the
-existing message-link behavior. When the runtime supplies only a line position, it checks a fingerprint of the
+existing message-link behavior. Workers and side chats open in their panels at the message. A link into a
+compact child card or an earlier engine opens the original transcript so the message can be shown. When the
+runtime supplies only a line position, it checks a fingerprint of the
 original transcript record before opening and reads it again at the final jump, even when the visible page
 has not detected a same-size rewrite. If a rewrite reuses that line, the replacement can be starred separately. The old snapshot stays available for Copy and Unstar and shows that its original is
 unavailable. Older snapshots without a fingerprint for a line position also stay readable. Star is offered for

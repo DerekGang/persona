@@ -297,9 +297,11 @@ function pageTarget(s: State, route: Route): PageTarget | undefined {
     return { link: undefined, to: "", mid: route.mid, sid: pane?.sid };
   }
   if (route.name !== "session") return undefined;
+  // A compact card or another engine's conversation cannot land on this transcript's message.
+  const exact = (): PageTarget => ({ link: "exact", to: "", mid: route.mid, sid: route.sid });
   // a link to a subagent's own conversation (#5030): its parent's chat, which shows the subagent's card (lib/subagent-link.ts)
   const sub = splitSubagentLink(route.sid);
-  if (sub) return { link: undefined, to: routePath({ ...route, sid: sub.parent }), mid: route.mid, sid: undefined };
+  if (sub) return route.at ? exact() : { link: undefined, to: routePath({ ...route, sid: sub.parent }), mid: route.mid, sid: undefined };
   const rows = pageRows(s, route.mid);
   const row = rows.find((r) => r.session_id === route.sid);
   // a lead's worker's (#5180): the lead's page, the worker in its Team panel
@@ -307,15 +309,15 @@ function pageTarget(s: State, route: Route): PageTarget | undefined {
   if (worker) return worker;
   // a side session's (#7944): its parent's page, the side in its Side sessions panel
   const side = sideTarget(rows, route.mid, row, inWorkView(route));
-  if (side) return side;
+  if (side) return route.at && side.child ? exact() : side;
   // a child session's (#5120): its parent's chat, which shows the child's card; known once its row is (a listed one, or
   // the lookup of an unlisted chat), the session itself until then
   const parent = row ? foldsUnder(row) : undefined;
-  if (parent && parent !== route.sid) return { link: undefined, to: routePath(withWorkView({ name: "session", mid: route.mid, sid: parent }, inWorkView(route))), mid: route.mid, sid: undefined, parent };
+  if (parent && parent !== route.sid) return route.at ? exact() : { link: undefined, to: routePath(withWorkView({ name: "session", mid: route.mid, sid: parent }, inWorkView(route))), mid: route.mid, sid: undefined, parent };
   // an earlier session of a conversation that moved between Claude Code and Codex (#5054): the conversation's own row,
   // whose chat reads that session's stretch in its place
   const home = engineSwitchHome(rows, route.sid);
-  if (home) return { link: undefined, to: routePath(withWorkView({ name: "session", mid: route.mid, sid: home.session_id }, inWorkView(route))), mid: route.mid, sid: undefined };
+  if (home) return route.at ? exact() : { link: undefined, to: routePath(withWorkView({ name: "session", mid: route.mid, sid: home.session_id }, inWorkView(route))), mid: route.mid, sid: undefined };
   // an old `/s/…` link of a pane in a tab becomes that tab's `/t/…`
   const tab = tabOfSessionLink(rows, route);
   // a `/s/…` link with only the front of an id (the 8-character ones shown everywhere, #2464): the whole id's link;
@@ -342,6 +344,7 @@ function Shell() {
   const tabLinkPath = target?.to ?? "";
   const linkMid = route.name === "session" ? route.mid : "";
   const linkSid = route.name === "session" ? route.sid : "";
+  const linkAt = route.name === "session" || route.name === "tab" ? route.at : undefined;
   const linkParent = target?.parent;
   const linkWorker = target?.worker;
   const linkSide = target?.side;
@@ -349,14 +352,14 @@ function Shell() {
   const targetMid = target?.mid ?? "";
   useEffect(() => {
     if (!tabLinkPath) return;
-    if (linkWorker && linkParent) askTeamWorker(targetMid, linkParent, linkWorker);
+    if (linkWorker && linkParent) askTeamWorker(targetMid, linkParent, linkWorker, linkAt);
     else if (linkSide && linkParent) {
-      askSide(targetMid, linkParent, linkSide);
+      askSide(targetMid, linkParent, linkSide, linkAt);
       // a row of the side's own (its Codex child): the side's chat opens at its card
       if (linkChild) followChildSession(targetMid, linkChild, linkSide);
     } else if (linkSid) followSubagentLink(linkMid, linkSid, linkParent);
     navigate(tabLinkPath, true);
-  }, [tabLinkPath, linkMid, linkSid, linkParent, linkWorker, linkSide, linkChild, targetMid]);
+  }, [tabLinkPath, linkMid, linkSid, linkAt, linkParent, linkWorker, linkSide, linkChild, targetMid]);
   // a tab not among the page's rows (a paged hub lists only active and pinned ones): asked of the hub before it is gone
   const tabRoute = route.name === "tab" ? route : undefined;
   const lookup = useTabLookup(tabRoute, !!tabRoute && loaded && !target?.sid);

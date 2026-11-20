@@ -19,7 +19,7 @@ import { clock } from "../../lib/format";
 import { sendDraft, type QuotedTask } from "../../lib/drafts";
 import type { ForwardPick } from "../../lib/forward";
 import { addContext, newContext } from "../../lib/links";
-import { starrable, useCanStar, type StarOrigin } from "../../lib/starred-rows";
+import { starrable, useStarAccess, type StarOrigin } from "../../lib/starred-rows";
 import type { Item } from "../../lib/types";
 import { copyText, cx, type MenuItem } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
@@ -139,7 +139,8 @@ export function MessageActions({
   const forwarded = itemId ?? messageId;
   const pick: ForwardPick | undefined = forwarded ? { itemId: forwarded, text, isUser: Boolean(isUser), ts, images, photos } : undefined;
   const chat = useChatActions();
-  const star = useCanStar() && chat && starrable(starSource) ? starSource : undefined;
+  const starAccess = useStarAccess();
+  const star = starAccess && chat && starrable(starSource) ? starSource : undefined;
   const actions = messageActions(chat, text, Boolean(isUser), ts, task, pick, editText);
   // the chat picks messages to forward (#3838): the checkbox over this one, when it is one to forward
   const picker = chat?.forward ? chat.pick : undefined;
@@ -149,7 +150,7 @@ export function MessageActions({
   const [menu, setMenu] = useState<{ anchor: HTMLElement | { x: number; y: number }; more?: boolean } | null>(null);
   const moreAnchor = menu?.more;
   const canFork = Boolean(itemId && chat?.fork && !itemId.startsWith("line") && itemId.includes("#"));
-  const hasMore = Boolean(star || canFork || onDelete || ((side || isUser) && chat?.canCompose) ||
+  const hasMore = Boolean((starAccess === "write" && star) || canFork || onDelete || ((side || isUser) && chat?.canCompose) ||
     (side && chat?.forward && pick) || (isUser && messageId && chat?.rewind && (editText ?? text).trim()));
   // Your bubble's hover bar sits to its left; in a narrow window a wide bubble leaves no room there and the bar fell
   // off the screen, its buttons still reached by Tab (audit item 73). Measured when the pointer comes or focus moves in

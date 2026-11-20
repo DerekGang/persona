@@ -87,6 +87,8 @@ export function useStarMark(source: StarSource | undefined): StarMark {
   return useSyncExternalStore(subscribe, () => (key && rows.get(key)) || empty, () => empty);
 }
 
-export function useCanStar() {
-  return useSyncExternalStore(subscribe, () => writable, () => false);
+export function useStarAccess() {
+  return useSyncExternalStore(subscribe, () => writable ? "write" : count != null ? "read" : null, () => null);
 }
+
+export const useCanStar = () => useStarAccess() === "write";

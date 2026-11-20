@@ -1,6 +1,7 @@
 // Run with MOCK_STARRED=1 PORT=18797 python3 scripts/mock/mock_hub.py and
 // PERSONA_HUB_URL=http://127.0.0.1:18797 vite --host 127.0.0.1 --port 5797.
-// node web/e2e/starred-messages.mjs [--shots tmp/starred-shots]
+// node web/e2e/starred-messages.mjs [--shots tmp/starred-shots] [--nested-sources team|hierarchy]
+// For team set MOCK_TEAM=1 in the mock. For hierarchy set MOCK_SIDE_SESSIONS=1 MOCK_CHILD_SESSIONS=1 MOCK_ENGINE_SWITCH=done.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +16,9 @@ const allowed = new Set([web, hub].map((url) => {
 }));
 const shotsArg = process.argv.indexOf("--shots");
 const shots = shotsArg < 0 ? undefined : process.argv[shotsArg + 1];
+const nestedArg = process.argv.indexOf("--nested-sources");
+const nestedSources = nestedArg < 0 ? undefined : process.argv[nestedArg + 1];
+assert.ok(nestedArg < 0 || nestedSources === "team" || nestedSources === "hierarchy", "choose a nested mock fixture: team or hierarchy");
 if (shots) mkdirSync(shots, { recursive: true });
 const shot = (page, name) => shots && page.screenshot({ path: join(shots, name + ".png"), animations: "disabled" });
 
@@ -52,11 +56,23 @@ const sourcePhase = async (phase) => {
   assert.ok(response.ok, `setting the positional source phase returned ${response.status}`);
 };
 
+async function fixtureReply(mid, sid) {
+  const source = `/api/v1/sessions/${encodeURIComponent(mid)}/${encodeURIComponent(sid)}/items?turns=2`;
+  const response = await fetch(hub + source, {
+    headers: { Authorization: "Bearer mock" },
+    signal: AbortSignal.timeout(8000),
+  });
+  assert.ok(response.ok, `reading the nested source returned ${response.status}`);
+  const reply = (await response.json()).items.findLast((item) => item.role === "assistant" && item.kind === "text");
+  assert.ok(reply?.id, `missing reply in the nested source ${sid}`);
+  return reply;
+}
+
 const browser = await chromium.launch({ headless: true, ...(process.env.STARRED_BROWSER ? { executablePath: process.env.STARRED_BROWSER } : { channel: "chrome" }) });
-async function device(theme, phone = false, { width = phone ? 390 : 1440, large = false } = {}) {
+async function device(theme, phone = false, { width = phone ? 390 : 1440, large = false, reducedMotion = "no-preference" } = {}) {
   const ctx = await browser.newContext({
     viewport: { width, height: phone ? 844 : 900 },
-    isMobile: phone, hasTouch: phone, colorScheme: theme, locale: "en-US",
+    isMobile: phone, hasTouch: phone, colorScheme: theme, reducedMotion, locale: "en-US",
     permissions: ["clipboard-read", "clipboard-write"],
   });
   await ctx.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin) ? route.continue() : route.abort());
@@ -275,7 +291,42 @@ try {
   await startup.page.getByRole("link", { name: /Starred/ }).first().waitFor();
   assert.equal(new URL(startup.page.url()).pathname, "/starred");
 
-  assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors, startup.errors), []);
+  const nestedErrors = [];
+  if (nestedSources) {
+    const cases = nestedSources === "team" ? [
+      ["worker", "server", "7ab5e000-0000-4000-8000-000000000003", true],
+    ] : [
+      ["side", "macbook", "a1f3c2d4-0000-4000-8000-0000000059a2", true],
+      ["child", "server", "paseo-9a5e0000-0000-4000-8000-000000000007", false],
+      ["earlier-engine", "macbook", "019a5054-0000-7000-8000-000000000002", false],
+    ];
+    for (const [kind, mid, sid, embedded] of cases) {
+      const item = await fixtureReply(mid, sid);
+      const title = `Saved message in ${kind}`;
+      await onHub("POST", "", {
+        machine_id: mid, session_id: sid, item_id: item.id, conversation: "agent", role: "assistant",
+        title, speaker: "Agent", text: item.text,
+      });
+      const nested = await device(kind === "side" ? "dark" : "light", false, { reducedMotion: "reduce" });
+      nestedErrors.push(nested.errors);
+      await nested.page.goto(web + "/starred?token=mock");
+      const card = nested.page.getByRole("article").filter({ hasText: title });
+      await card.getByRole("link", { name: "Open original" }).click();
+      const target = nested.page.locator(embedded ? '[role="tabpanel"] [data-search-hit]' : "[data-search-hit]");
+      try {
+        await target.waitFor();
+      } catch (error) {
+        await shot(nested.page, `starred-${kind}-landing-failure`);
+        throw new Error(`${kind} message ${item.id} did not land at ${new URL(nested.page.url()).pathname}`, { cause: error });
+      }
+      assert.equal((await target.textContent()).trim(), item.text.trim());
+      if (!embedded) assert.equal(new URL(nested.page.url()).pathname, `/s/${mid}/${encodeURIComponent(sid)}`);
+      if (embedded) await shot(nested.page, `starred-${kind}-original`);
+    }
+    console.log(`ok: saved messages land in their exact ${cases.map(([kind]) => kind).join(", ")} transcripts`);
+  }
+
+  assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors, startup.errors, ...nestedErrors), []);
   console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, largest text at 320 px, positional-ID reuse, displayed-speaker search, delayed start-page availability, and accurate full user-message snapshots");
 } finally {
   await browser.close();
