@@ -28,6 +28,7 @@ import { useScrollMemory } from "../lib/scroll-memory";
 import { useAgentSessions, useFullAgentSessions } from "../lib/sessions";
 import { useScoped } from "../lib/current-assistant";
 import { lazyPage } from "../lib/lazy-page";
+import { afterBack, onOverlayEntry } from "../lib/back-close";
 import { dropTodo, refresh, refreshTodos, useStore } from "../lib/store";
 import {
   addTodoDecision,
@@ -71,7 +72,7 @@ import { todoLook, waitOf, type WaitReason } from "../lib/todo-wait-reason";
 import type { AgentState, Interaction, Launcher, Machine } from "../lib/types";
 import { Button, cx, Dialog, IconButton, Loading, Menu, toast, useMenu } from "../ui/atoms";
 import { contextMenuProps } from "../ui/context-menu";
-import { SHEET_QUERY } from "../ui/overlay";
+import { NARROW_QUERY, SHEET_QUERY } from "../ui/overlay";
 import type { MenuAt } from "../ui/menu-model";
 import { SearchField } from "../ui/SearchField";
 import { StatusMark } from "../ui/StatusMark";
@@ -336,15 +337,20 @@ export function TodosView({
   };
   const savedDocument = savedEligible ? saved.state.document : null;
   const showSavedViews = savedDocument || (savedEligible && saved.state.error && !saved.state.unsupported);
+  const openSavedDialog = (mode: "manage" | "new") => {
+    const open = () => {
+      setSavedDialog({ scope: saved.scope, mode });
+      if (mode === "manage") void saved.model.refresh();
+    };
+    // The narrow menu removes a history entry. Wait for it before opening a lazy dialog.
+    if (matchMedia(NARROW_QUERY).matches && onOverlayEntry()) afterBack(open);
+    else open();
+  };
   const savedMenu: MenuItem[] = [
     ...(showSavedViews ? [{ key: "saved-todo-views", label: t("saved-todo-views.title"), divider: true,
-      onSelect: () => {
-        setSavedDialog({ scope: saved.scope, mode: "manage" });
-        // The page may have loaded before the socket or missed a broadcast in the background.
-        void saved.model.refresh();
-      } }] : []),
+      onSelect: () => openSavedDialog("manage") }] : []),
     ...(savedDocument?.can_write ? [{ key: "save-todo-view", label: t("saved-todo-views.save_current"),
-      onSelect: () => setSavedDialog({ scope: saved.scope, mode: "new" }) }] : []),
+      onSelect: () => openSavedDialog("new") }] : []),
     ...(overlay ? [{ key: "clear-todo-view", label: t("saved-todo-views.clear"), onSelect: () => setSavedView(undefined) }] : []),
   ];
   const inFilter = (td: Todo) => matchesListFilter(td, listFilter, tick);
@@ -2045,8 +2051,9 @@ function askText(ix: Interaction | undefined): string {
 
 // ── Todo Detail ──────────────────────────────────────────────
 
-// A task's brief (#3822) comes with the first to-do that has one, not with the page.
 const SavedTodoViewsDialog = lazyPage(() => import("./todos/SavedTodoViewsDialog").then((m) => m.SavedTodoViewsDialog));
+
+// A task's brief (#3822) comes with the first to-do that has one, not with the page.
 const TodoRequestGraph = lazy(() => import("./TodoRequestGraph"));
 const TaskBriefPanel = lazy(() => import("./assistant/TaskBrief").then((m) => ({ default: m.TaskBriefPanel })));
 const WorkspaceNaming = lazyPage(() => import("../ui/WorkspaceNaming").then((m) => m.WorkspaceNaming));

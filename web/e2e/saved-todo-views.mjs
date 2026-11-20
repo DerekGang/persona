@@ -105,6 +105,12 @@ try {
     const phone = await open(390, "dark");
     const initial = await request();
     assert.deepEqual(initial.views, []);
+    // On a cold narrow page the dialog takes over the filter menu's Back entry.
+    const firstLibrary = await library(phone);
+    await firstLibrary.getByText("No saved views yet", { exact: true }).waitFor();
+    await phone.evaluate(() => history.back());
+    await firstLibrary.waitFor({ state: "hidden" });
+    assert.ok(new URL(phone.url()).pathname.endsWith("/todos"), "Back closes the dialog without leaving To-dos");
     const phoneLibrary = await library(phone);
     await search(desktop).fill("review");
     await pick(desktop, /^Today/);
