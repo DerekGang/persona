@@ -4,7 +4,8 @@ import { lazy, memo, Suspense, useCallback, useId, useMemo, useState, useSyncExt
 import { t } from "../i18n";
 import { awaitsReply, justFinished, sessionSource, sourceName } from "../lib/agent-groups";
 import { addSection, arrangeSessions, assignSection, GROUP_LABEL, isDefaultView, providerLabel, refreshAgentSessions, removeSection, resetView, setView, SHOW_LABEL, SORT_LABEL, toggleProvider, togglePin, totalUnread, updateAgentPrefs, useAgentList, useAgentPrefs, viewOf, type AgentPrefs, type AgentSession, type GroupBy, type ShowMode, type SortBy } from "../lib/agents";
-import { ago, backgroundWaiting, sessionPreview, sourceSubtitle, sessionTitle, stateOf, tabLabel } from "../lib/format";
+import { ago, backgroundWaiting, sessionCan, sessionDisplayTab, sessionPreview, sourceSubtitle, sessionTitle, sessionTitleDetail, stateOf, tabLabel } from "../lib/format";
+import { useHerdrTabName } from "../lib/agents-display";
 import { firstAndCurrent } from "../lib/persona-nav";
 import { href, navigate, routePath, type Route } from "../lib/router";
 import { rememberSessionRow, useStore } from "../lib/store";
@@ -233,6 +234,9 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
   // itself, not the store, so the row holds it seen too
   const seenMark = useStore((st) => st.seen[runtimeIdentity(given)]);
   const s = heldSeen(answeredSession(given, Boolean(ix), justAnswered, pending), seenMark, Date.now());
+  const preferTab = useHerdrTabName();
+  const title = sessionTitle(s, preferTab);
+  const titleDetail = sessionTitleDetail(s, preferTab);
   const st = stateOf(s);
   // A lead row whose own conversation is idle while something under it runs (the tree's `running`: an Agent at work,
   // #6626) carries the working arc anyway (#6230). An own needs-you / unread / working state still wins, and Agent rows
@@ -248,11 +252,17 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
   const source = agentRow && !endRoom ? sessionSource(s) : undefined;
   // a Persona conversation the hub opened by itself (#3758, #5195): what opened it, in the source mark's place
   const origin = source ? undefined : autoOrigin(s);
-  const associatedTab = s.slot_id?.trim() || s.tab_id?.trim() ? tabLabel(s) : "";
+  // a desktop app's runtime that can be written to: its mark says where it is and the agent's mark which agent, so the
+  // runtime's name at the end only repeats them (it stays in the tooltip); a read-only one still says why
+  const sameAsMarks = source === "desktop" && s.source_kind === "runtime" && sessionCan(s, "send");
+  const hasTabAssociation = !!(s.slot_id?.trim() || s.tab_id?.trim());
+  const primaryTab = sessionDisplayTab(s, preferTab);
+  const associatedTab = hasTabAssociation && !primaryTab ? tabLabel(s) : "";
   const tabIdentity = associatedTab ? t("sidebar.tab_named", { label: associatedTab }) : "";
   // A structural tab row keeps its old plain-text fallback, but only a real association earns the localized identity.
-  const structuralTabHint = tab && !tabIdentity ? tabLabel(s) : "";
-  const tail = [agentRow ? "" : sourceSubtitle(s), hint ?? structuralTabHint, agentRow ? "" : tabIdentity].filter(Boolean).join(" · ");
+  const structuralTabHint = tab && !tabIdentity && !primaryTab ? tabLabel(s) : "";
+  // Agent rows keep source and terminal identity in their hover card instead of the row's end.
+  const tail = [agentRow || sameAsMarks ? "" : sourceSubtitle(s), hint ?? structuralTabHint, agentRow ? "" : tabIdentity].filter(Boolean).join(" · ");
   const preview = sessionPreview(s);
   // Settings › Appearance › show details on agent rows (#2430): a second line under an agent's title — folder · model · context · age
   const details = useAgentDetails();
@@ -369,7 +379,8 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
       onBlur={() => { hover(null); setDetailsAt(null); }}
       aria-current={active ? "page" : undefined}
       aria-describedby={detailsAt ? detailId : undefined}
-      title={agentRow ? undefined : `${sessionTitle(s)}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${openerFrom(origin, openerName)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
+      // its mark's name is in the row's tooltip too (an agent row's is in its hover card instead)
+      title={agentRow ? undefined : `${title}${titleDetail ? `\n${titleDetail}` : ""}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${openerFrom(origin, openerName)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
       // a touch screen: rows a finger can hit (44), and room at the end for the ⋯ that is always there; the open row
       // keeps its ⋯ too, so it has room for it
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-transform duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active && CURRENT_ROW, // room for "N agents" and the ⋯ beside it (instead of the ⋯'s own)
@@ -392,14 +403,14 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
           {ultra || machineInline ? (
             <span className="flex min-w-0 items-center gap-1">
               <span className={cx("min-w-0 truncate text-[13px]", active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
-                {label ?? sessionTitle(s)}
+                {label ?? title}
               </span>
               {ultra && <UltraMark size={10} />}
               {machineInline && <MachineChip name={machineName} />}
             </span>
           ) : (
             <span className={cx("truncate text-[13px]", active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
-              {label ?? sessionTitle(s)}
+              {label ?? title}
             </span>
           )}
           {machineBody && !machineInline ? (
@@ -413,11 +424,11 @@ export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, acti
         // a lead's name reads as a row, even with nothing second to say: the ⋯'s reserved slot must not take the title's
         // place. Drawn here, in place of the plain title, so the name shows once (it was drawn twice, "Per… Per…")
         <span className={cx("flex-1 truncate text-meta", titleMin, titleFirst, active ? "font-medium text-ink" : "text-ink-2")}>
-          {label ?? sessionTitle(s)}
+          {label ?? title}
         </span>
       ) : (
         <span className={cx("flex-1 truncate text-meta", titleMin, titleFirst, active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && "font-medium text-ink")}>
-          {label ?? sessionTitle(s)}
+          {label ?? title}
         </span>
       )}
       {host && <span className="shrink-0 rounded bg-hover px-1 text-[10px] leading-4 text-ink-3">{host}</span>}
