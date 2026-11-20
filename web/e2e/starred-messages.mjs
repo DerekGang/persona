@@ -293,6 +293,7 @@ try {
 
   const nestedErrors = [];
   if (nestedSources) {
+    await sourcePhase("reset");
     const cases = nestedSources === "team" ? [
       ["worker", "server", "7ab5e000-0000-4000-8000-000000000003", true],
     ] : [
