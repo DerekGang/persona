@@ -102,7 +102,7 @@ func (r BotmuxTurnsResponse) HasCapability(cap string) bool {
 // (including file/card replies whose text was not on the command line). Unmatched turns are left
 // untouched so wrapper parsing from markBotmux acts as a per-turn fallback.
 // Item.Text is never modified, and no open_id or messageId ever leaves the node.
-func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
+func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn, transcriptSessionID string) []proto.Item {
 	if len(items) == 0 || len(turns) == 0 {
 		return items
 	}
@@ -113,10 +113,12 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
 		if a == nil {
 			continue
 		}
+		if id := strings.TrimSpace(a.CLISessionID); id != "" && id != transcriptSessionID {
+			continue
+		}
 		if id := strings.TrimSpace(a.CLIEntryID); id != "" {
 			byEntry[id] = i
-		}
-		if h := strings.ToLower(strings.TrimSpace(a.InputSha256)); h != "" {
+		} else if h := strings.ToLower(strings.TrimSpace(a.InputSha256)); h != "" {
 			byHash[h] = append(byHash[h], i)
 		}
 	}
@@ -162,12 +164,8 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
 			}
 		}
 		for _, candidate := range itemInputHashCandidates(it) {
-			if idxs := byHash[candidate]; len(idxs) > 0 {
-				for _, idx := range idxs {
-					if !used[idx] {
-						return idx
-					}
-				}
+			if idxs := byHash[candidate]; len(idxs) == 1 && !used[idxs[0]] {
+				return idxs[0]
 			}
 		}
 		return -1

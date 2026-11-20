@@ -181,8 +181,8 @@ func (n *Node) pushItems(id string, items []proto.Item, span transcript.Span) {
 	f := n.files[id]
 	w := n.watches[id]
 	n.mu.Unlock()
-	agentUsage(f, items) // finished subagents' results carry what they used (agent_usage.go)
 	items = n.applyBotmuxTurnsCached(id, f, items)
+	agentUsage(f, items) // finished subagents' results carry what they used (agent_usage.go)
 	items = n.echoed(id, f, items)
 	_ = n.peer.Notify("session.items", withSpan(map[string]any{"session_id": id, "items": nonNil(items)}, span, true))
 	n.refreshWatchedBotmux(w)

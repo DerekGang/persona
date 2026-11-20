@@ -356,7 +356,11 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 			for ; j < len(s) && s[j] != '\''; j++ {
 				if s[j] == '\\' && j+1 < len(s) {
 					j++
-					cur.WriteString(ansiEscape(s[j]))
+					decoded, ok := ansiEscape(s[j])
+					if !ok {
+						return nil, "", "", false
+					}
+					cur.WriteByte(decoded)
 					continue
 				}
 				cur.WriteByte(s[j])
@@ -438,7 +442,7 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 			}
 			i = j
 		case strings.IndexByte("<>()`$&", c) >= 0:
-			if c == '$' && (i+1 >= len(s) || strings.IndexByte("({", s[i+1]) < 0 && !isNameByte(s[i+1])) {
+			if c == '$' && (i+1 >= len(s) || !shellParameterStart(s[i+1])) {
 				cur.WriteByte(c)
 				inWord = true
 				i++
@@ -478,17 +482,32 @@ func isNameByte(c byte) bool {
 	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
-// ansiEscape is $'…”s escape \c.
-func ansiEscape(c byte) string {
+func shellParameterStart(next byte) bool {
+	return isNameByte(next) || strings.IndexByte("({?*@#-$!", next) >= 0
+}
+
+func ansiEscape(c byte) (byte, bool) {
 	switch c {
+	case 'a':
+		return '\a', true
+	case 'b':
+		return '\b', true
+	case 'e', 'E':
+		return 0x1b, true
+	case 'f':
+		return '\f', true
 	case 'n':
-		return "\n"
+		return '\n', true
 	case 't':
-		return "\t"
+		return '\t', true
 	case 'r':
-		return "\r"
+		return '\r', true
+	case 'v':
+		return '\v', true
+	case '\\', '\'', '"', '?':
+		return c, true
 	}
-	return string(c)
+	return 0, false
 }
 
 // botmuxCommand is a Bash call's command line, for BotmuxSend (Codex's commands are Bash calls here too, codex.go).
@@ -557,11 +576,8 @@ func hasUnquotedHeredocExpansion(body string) bool {
 				return true
 			}
 		case '$':
-			if i+1 < len(body) {
-				next := body[i+1]
-				if next == '(' || next == '{' || isNameByte(next) || strings.IndexByte("?*@#-$!", next) >= 0 {
-					return true
-				}
+			if i+1 < len(body) && shellParameterStart(body[i+1]) {
+				return true
 			}
 		}
 	}

@@ -153,7 +153,7 @@ func TestBotmuxTurnsFixtures(t *testing.T) {
 			}
 			markBotmux(items)
 			if tc.Status == 200 && tc.Response != nil && tc.Response.OK && tc.Response.Schema == BotmuxTurnsSchema {
-				items = ApplyBotmuxTurns(items, tc.Response.Turns)
+				items = ApplyBotmuxTurns(items, tc.Response.Turns, "session-one")
 			}
 			if len(items) != len(tc.WantBotmux) {
 				t.Fatalf("items = %d, want %d", len(items), len(tc.WantBotmux))
@@ -291,7 +291,7 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 			Replies: []BotmuxTurnReply{{ResponseKind: "final", Text: "Confirmed card reply"}},
 			Anchor:  anchor,
 		}}
-		got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+		got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
 		for _, idx := range []int{1, 3, 5} {
 			if got[idx].Botmux != nil {
 				t.Fatalf("item %d must not receive reply overlay: %+v", idx, got[idx].Botmux)
@@ -321,7 +321,7 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 			},
 			Anchor: anchor,
 		}}
-		got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+		got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
 		if got[1].Botmux == nil || got[1].Botmux.Text != "Part one\n\nPart two" {
 			t.Fatalf("multi-send item 1 = %+v", got[1].Botmux)
 		}
@@ -346,7 +346,7 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 			},
 			Anchor: anchor,
 		}}
-		got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+		got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
 		if got[1].Botmux == nil || got[1].Botmux.Text != "wrapper one" {
 			t.Fatalf("mismatch must keep wrapper fallback, got %+v", got[1].Botmux)
 		}
@@ -362,7 +362,7 @@ func TestBotmuxTriggerUnknownSourceIsEmpty(t *testing.T) {
 		Inbound: []BotmuxTurnInbound{{Text: "run cron", Via: "trigger"}},
 		Anchor:  &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(userText)},
 	}}
-	got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+	got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
 	if got[0].Botmux == nil || got[0].Botmux.Kind != proto.BotmuxTrigger {
 		t.Fatalf("got %+v, want trigger", got[0].Botmux)
 	}
@@ -386,8 +386,55 @@ func TestBotmuxInputSha256MatchesTruncatedLongMessage(t *testing.T) {
 		Inbound: []BotmuxTurnInbound{{Text: "full structured text", Sender: &BotmuxTurnSender{Type: "user", Name: "Alex"}, Via: "lark"}},
 		Anchor:  &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(longRaw)},
 	}}
-	got := ApplyBotmuxTurns(DecorateBotmux([]proto.Item{item}), turns)
+	got := ApplyBotmuxTurns(DecorateBotmux([]proto.Item{item}), turns, "session-one")
 	if got[0].Botmux == nil || got[0].Botmux.Text != "full structured text" || got[0].Botmux.Sender != "Alex" {
 		t.Fatalf("clipped user item failed to match inputSha256: %+v", got[0].Botmux)
+	}
+}
+
+func TestBotmuxSendShellParametersAndANSIQuotes(t *testing.T) {
+	for _, parameter := range []string{"$?", "$*", "$@", "$#", "$$", "$-", "$!"} {
+		if got := BotmuxSend("botmux send " + parameter); got != nil {
+			t.Errorf("unquoted %s guessed a reply: %+v", parameter, got)
+		}
+		if got := BotmuxSend("botmux send '" + parameter + "'"); got == nil || got.Text != parameter {
+			t.Errorf("quoted %s lost its literal value: %+v", parameter, got)
+		}
+	}
+	for _, quoted := range []string{`$'\x41'`, `$'\101'`, `$'\u0041'`, `$'\cA'`, `$'\q'`} {
+		if got := BotmuxSend("botmux send " + quoted); got != nil {
+			t.Errorf("unsupported %s guessed a reply: %+v", quoted, got)
+		}
+	}
+	if got := BotmuxSend(`botmux send $'line\nit\'s\tready\\now'`); got == nil || got.Text != "line\nit's\tready\\now" {
+		t.Fatalf("ANSI-C escapes decoded incorrectly: %+v", got)
+	}
+}
+
+func TestBotmuxInputHashRequiresCompatibleAnchor(t *testing.T) {
+	item := proto.Item{ID: "entry#0", Role: "user", Kind: proto.KindText, Text: "ok"}
+	makeTurn := func(session, entry, text string) BotmuxTurn {
+		return BotmuxTurn{
+			Anchor:  &BotmuxTurnAnchor{CLISessionID: session, CLIEntryID: entry, InputSha256: sha256Hex(item.Text)},
+			Inbound: []BotmuxTurnInbound{{Text: text}},
+		}
+	}
+	for _, test := range []struct {
+		name  string
+		turns []BotmuxTurn
+		want  string
+	}{
+		{"another session", []BotmuxTurn{makeTurn("session-two", "", "wrong")}, ""},
+		{"another entry", []BotmuxTurn{makeTurn("session-one", "earlier", "wrong")}, ""},
+		{"session match", []BotmuxTurn{makeTurn("session-two", "", "wrong"), makeTurn("session-one", "", "matched")}, "matched"},
+		{"entry prefix", []BotmuxTurn{makeTurn("session-one", "earlier", "wrong"), makeTurn("session-one", "entry", "matched")}, "matched"},
+		{"ambiguous hash", []BotmuxTurn{makeTurn("session-one", "", "first"), makeTurn("session-one", "", "second")}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := ApplyBotmuxTurns([]proto.Item{item}, test.turns, "session-one")[0].Botmux
+			if test.want == "" && got != nil || test.want != "" && (got == nil || got.Text != test.want) {
+				t.Fatalf("matched %+v, want %q", got, test.want)
+			}
+		})
 	}
 }

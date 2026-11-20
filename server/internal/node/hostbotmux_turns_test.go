@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -228,6 +229,105 @@ func TestBotmuxWatchRepushesLateAndChangedFileReply(t *testing.T) {
 		if batch.n > 0 && (batch.fromSeq != 0 || batch.toSeq != 0 || batch.history == "") {
 			t.Fatalf("replacement should preserve the existing cursor and history: %+v", batch)
 		}
+	}
+}
+
+func TestBotmuxWatchRepushesWrapperReplyAfterResult(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.turnsStatus = http.StatusNotFound
+	n, _, home := herdrNode(t)
+	hub := withHub(t, n)
+	n.hosts = host.NewRegistry(fs.makeHost(""))
+	if err := n.refreshHosts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", "projects", "proj", sidA+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"type":"user","uuid":"u1","message":{"role":"user","content":"<user_message>Question</user_message>"}}`
+	if err := os.WriteFile(path, []byte(initial+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.watch(sidA, 1); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { n.unwatch(sidA) })
+	file, err := n.file(sidA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendLines := func(lines ...string) {
+		t.Helper()
+		dst, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, writeErr := dst.WriteString(strings.Join(lines, "\n") + "\n")
+		closeErr := dst.Close()
+		if writeErr != nil || closeErr != nil {
+			t.Fatalf("append transcript: write %v, close %v", writeErr, closeErr)
+		}
+		if err := n.refresh(sidA, file); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendLines(
+		`{"type":"assistant","uuid":"a1","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"other","name":"Bash","input":{"command":"echo ready"}}]}}`,
+		`{"type":"user","uuid":"r1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"other","content":"ok"}]}}`,
+		`{"type":"assistant","uuid":"a2","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"send","name":"Bash","input":{"command":"botmux send --response-kind final 'delivered'"}}]}}`,
+	)
+	waitFor(t, "undecorated send", func() bool {
+		items := hub.got()
+		return len(items) == 3 && items[2].ToolUseID == "send" && items[2].Botmux == nil
+	})
+	appendLines(`{"type":"user","uuid":"r2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"send","content":"ok"}]}}`)
+	waitFor(t, "replacement with the completed send", func() bool { return len(hub.got()) == 7 })
+	items := hub.got()[3:]
+	folds := transcript.FoldWork(items)
+	if items[0].ToolUseID != "other" || len(folds) != 1 || folds[0].Fold == nil ||
+		len(folds[0].Fold.Botmux) != 1 || folds[0].Fold.Botmux[0].Text != "delivered" {
+		t.Fatalf("replacement lost the run or its reply: %+v", items)
+	}
+	batches := hub.spans()
+	if last := batches[len(batches)-1]; last.fromSeq != 4 || last.toSeq != 5 {
+		t.Fatalf("replacement changed the live cursor: %+v", last)
+	}
+}
+
+func TestBotmuxExpiredCapsSurviveInconclusiveProbe(t *testing.T) {
+	for _, failure := range []string{"unknown session", "transport error", "different dashboard"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx := context.Background()
+			fs := newFakeBotmuxTurnsServer(t)
+			fs.caps = []string{transcript.BotmuxCapOwnerActor}
+			h := fs.makeHost("")
+			if caps := h.probeCaps(ctx, sidA); !caps.ownerActor {
+				t.Fatal("initial probe did not learn ownerActor")
+			}
+			h.mu.Lock()
+			h.caps.at = time.Now().Add(-2 * botmuxCapsTTL)
+			old := h.caps
+			h.mu.Unlock()
+			fs.mu.Lock()
+			fs.turnsStatus, fs.turnsErrCode = http.StatusNotFound, "unknown_session"
+			fs.mu.Unlock()
+			if failure != "unknown session" {
+				fs.srv.Close()
+			}
+			if failure == "different dashboard" {
+				h.run = newFakeBotmuxTurnsServer(t).makeHost("").run
+			}
+			caps := h.probeCaps(ctx, sidA)
+			if failure == "different dashboard" {
+				if caps.ownerActor {
+					t.Fatal("carried ownerActor over to a different dashboard")
+				}
+			} else if caps != old {
+				t.Fatalf("probe changed cached capabilities: %+v", caps)
+			}
+		})
 	}
 }
 
@@ -535,13 +635,23 @@ func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
 
 	t.Run("unknown_session backs off subsequent fetches", func(t *testing.T) {
 		fs := newFakeBotmuxTurnsServer(t)
+		fs.turns = []transcript.BotmuxTurn{{TurnID: "cached-turn", Seq: 1}}
+		h := fs.makeHost("")
+		want, _ := h.sessionTurns(ctx, sidA)
+		h.mu.Lock()
+		h.turnsCache[sidA].fetchedAt = time.Time{}
+		h.mu.Unlock()
+		fs.mu.Lock()
 		fs.turnsStatus = http.StatusNotFound
 		fs.turnsErrCode = "unknown_session"
-		h := fs.makeHost("")
-		_, _ = h.sessionTurns(ctx, sidA)
-		_, _ = h.sessionTurns(ctx, sidA)
-		if fs.turnsGets != 1 {
-			t.Fatalf("expected 1 GET before unknown_session backoff, got %d", fs.turnsGets)
+		fs.mu.Unlock()
+		for attempt := 0; attempt < 2; attempt++ {
+			if got, _ := h.sessionTurns(ctx, sidA); !reflect.DeepEqual(got, want) || len(got) != 1 {
+				t.Fatalf("attempt %d lost cached turns: %+v", attempt, got)
+			}
+		}
+		if fs.turnsGets != 2 {
+			t.Fatalf("expected initial GET and one GET before backoff, got %d", fs.turnsGets)
 		}
 	})
 
@@ -601,7 +711,7 @@ func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
 				return []byte(bmxOldDashboard(port, "tok")), nil
 			},
 		}
-		n, _, _ := herdrNode(t)
+		n, _, home := herdrNode(t)
 		n.hosts = host.NewRegistry(h)
 		if err := n.refreshHosts(ctx); err != nil {
 			t.Fatal(err)
@@ -611,6 +721,26 @@ func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
 		_ = n.applyBotmuxTurnsCached(sidA, nil, []proto.Item{{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: "<user_message>\nhi\n</user_message>"}})
 		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 			t.Fatalf("applyBotmuxTurnsCached blocked for %v on stalled dashboard", elapsed)
+		}
+		path := filepath.Join(home, ".claude", "projects", "proj", sidA+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line := `{"type":"user","uuid":"u1","message":{"role":"user","content":"<user_message>hi</user_message>"}}`
+		if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		start = time.Now()
+		result, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{"session_id": sidA, "after_seq": 0}))
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Fatalf("session.items blocked for %v on stalled dashboard", elapsed)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := result.(map[string]any)["items"].([]proto.Item)
+		if len(items) != 1 || items[0].Botmux == nil || items[0].Botmux.Text != "hi" {
+			t.Fatalf("session.items lost wrapper fallback: %+v", items)
 		}
 	})
 }

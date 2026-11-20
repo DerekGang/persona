@@ -29,6 +29,7 @@ const (
 	botmuxTurnsErrorBackoff     = 15 * time.Second
 	botmuxTurnsUnknownBackoff   = 15 * time.Second
 	botmuxTurnsBGTimeout        = 2 * time.Second
+	botmuxTurnsReadTimeout      = 200 * time.Millisecond
 )
 
 // botmuxCaps caches what a BotMux dashboard instance supports, keyed by its loopback URL, token, and CLI file stamp.
@@ -100,7 +101,7 @@ func (h *botmuxHost) refreshCapsAsync(sessionID string) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.capsProbing = false
-		if caps.known {
+		if caps.valid(h.base, h.token, stamp, time.Now()) {
 			clear(h.capsProbeAfter)
 			return
 		}
@@ -163,6 +164,14 @@ func (h *botmuxHost) probeCaps(ctx context.Context, sessionID string) botmuxCaps
 	if err != nil {
 		return botmuxCaps{}
 	}
+	lastKnown := func() botmuxCaps {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.caps.matches(h.base, h.token, stamp) {
+			return h.caps
+		}
+		return botmuxCaps{}
+	}
 	h.mu.Lock()
 	if h.caps.valid(base, token, stamp, now) {
 		c := h.caps
@@ -175,7 +184,7 @@ func (h *botmuxHost) probeCaps(ctx context.Context, sessionID string) botmuxCaps
 		if attempt > 0 {
 			base, token, err = h.dashboard(ctx, true)
 			if err != nil {
-				return botmuxCaps{}
+				return lastKnown()
 			}
 			h.mu.Lock()
 			if h.caps.valid(base, token, stamp, time.Now()) {
@@ -192,14 +201,14 @@ func (h *botmuxHost) probeCaps(ctx context.Context, sessionID string) botmuxCaps
 			continue
 		}
 		if err != nil {
-			return botmuxCaps{}
+			return lastKnown()
 		}
 		switch status {
 		case http.StatusNotFound:
 			// New BotMux returns 404 {"ok":false,"error":"unknown_session"} when the route exists
 			// but the session is not currently owned by an online daemon; do not cache that as an old BotMux.
 			if errCode == "unknown_session" {
-				return botmuxCaps{}
+				return lastKnown()
 			}
 			c := botmuxCaps{known: true, turnsAPI: false, ownerActor: false, base: base, token: token, stamp: stamp, at: time.Now()}
 			h.mu.Lock()
@@ -223,7 +232,10 @@ func (h *botmuxHost) probeCaps(ctx context.Context, sessionID string) botmuxCaps
 			h.mu.Unlock()
 			return c
 		default:
-			return botmuxCaps{}
+			if status == http.StatusUnauthorized || status == http.StatusForbidden || (status >= 300 && status < 400) {
+				return botmuxCaps{}
+			}
+			return lastKnown()
 		}
 	}
 	return botmuxCaps{}
@@ -380,7 +392,10 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 					h.unknownBackoff = map[string]time.Time{}
 				}
 				h.unknownBackoff[sessionID] = time.Now().Add(botmuxTurnsUnknownBackoff)
-			} else if h.setCapsLocked(botmuxCaps{known: true, turnsAPI: false, ownerActor: false, base: base, token: token, stamp: stamp, at: time.Now()}) {
+				h.mu.Unlock()
+				break
+			}
+			if h.setCapsLocked(botmuxCaps{known: true, turnsAPI: false, ownerActor: false, base: base, token: token, stamp: stamp, at: time.Now()}) {
 				noticeChanged = true
 			}
 			h.mu.Unlock()
@@ -504,6 +519,8 @@ func (n *Node) botmuxSessionID(sessionID string) string {
 // applyBotmuxTurns decorates BotMux wrapper items and overlays structured BotMux turn records for a BotMux session.
 // Non-BotMux sessions return items untouched with no decoration and no network calls.
 func (n *Node) applyBotmuxTurns(ctx context.Context, sessionID string, f *transcript.File, items []proto.Item) []proto.Item {
+	ctx, cancel := context.WithTimeout(ctx, botmuxTurnsReadTimeout)
+	defer cancel()
 	return n.applyBotmux(ctx, sessionID, f, items, false)
 }
 
@@ -533,19 +550,43 @@ func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.
 	if f != nil {
 		prefix, suffix = f.TurnWindow(items[0].Seq, items[len(items)-1].Seq)
 	}
+	transcriptID := n.botmuxTranscriptID(sessionID)
+	if cacheOnly {
+		suffix = nil
+	}
 	if len(prefix) > 0 || len(suffix) > 0 {
 		combined := make([]proto.Item, 0, len(prefix)+len(items)+len(suffix))
 		combined = append(combined, prefix...)
 		combined = append(combined, items...)
 		combined = append(combined, suffix...)
-		combined = decorateBotmuxTurns(combined, turns)
+		combined = decorateBotmuxTurns(combined, turns, transcriptID)
+		if cacheOnly && len(prefix) > 0 && slices.ContainsFunc(items, func(item proto.Item) bool {
+			return item.Kind == proto.KindToolResult
+		}) {
+			before := decorateBotmuxTurns(prefix, turns, transcriptID)
+			changed := botmuxChangedItems(before, combined)
+			for index, item := range changed {
+				if item.Seq >= items[0].Seq {
+					changed = changed[:index]
+					break
+				}
+			}
+			return append(f.WithImages(changed), combined[len(prefix):]...)
+		}
 		return combined[len(prefix) : len(prefix)+len(items)]
 	}
-	return decorateBotmuxTurns(items, turns)
+	return decorateBotmuxTurns(items, turns, transcriptID)
 }
 
-func decorateBotmuxTurns(items []proto.Item, turns []transcript.BotmuxTurn) []proto.Item {
-	return transcript.ApplyBotmuxTurns(transcript.DecorateBotmux(items), turns)
+func (n *Node) botmuxTranscriptID(sessionID string) string {
+	if source, ok := n.codexSource(sessionID); ok {
+		return source.thread
+	}
+	return sessionID
+}
+
+func decorateBotmuxTurns(items []proto.Item, turns []transcript.BotmuxTurn, transcriptID string) []proto.Item {
+	return transcript.ApplyBotmuxTurns(transcript.DecorateBotmux(items), turns, transcriptID)
 }
 
 func (n *Node) refreshWatchedBotmux(w *watch) {
@@ -568,8 +609,9 @@ func (n *Node) refreshWatchedBotmux(w *watch) {
 				return
 			}
 			items, history := w.f.LoadedItems()
-			before := decorateBotmuxTurns(items, previous)
-			after := decorateBotmuxTurns(items, h.cachedSessionTurns(bmxSID))
+			transcriptID := n.botmuxTranscriptID(w.id)
+			before := decorateBotmuxTurns(items, previous, transcriptID)
+			after := decorateBotmuxTurns(items, h.cachedSessionTurns(bmxSID), transcriptID)
 			changed := botmuxChangedItems(before, after)
 			if len(changed) > 0 {
 				agentUsage(w.f, changed)
@@ -586,7 +628,7 @@ func (n *Node) refreshWatchedBotmux(w *watch) {
 func botmuxChangedItems(before, after []proto.Item) []proto.Item {
 	changed := make([]bool, len(after))
 	hasChanges := false
-	for index := range after {
+	for index := range before {
 		if !reflect.DeepEqual(before[index].Botmux, after[index].Botmux) {
 			changed[index] = true
 			hasChanges = true

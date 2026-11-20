@@ -201,11 +201,14 @@ func (f *File) TurnWindow(firstSeq, lastSeq int) (prefix, suffix []proto.Item) {
 			f.ensureTurns(firstSeq, 1, maxContextItems)
 			startIdx = sort.Search(len(f.items), func(k int) bool { return f.items[k].Seq >= firstSeq })
 		}
-		for p := startIdx - 1; p >= 0 && startIdx-p <= maxContextItems; p-- {
+		for p := startIdx - 1; p >= max(0, startIdx-maxContextItems); p-- {
 			if isBotmuxUserItem(f.items[p]) {
 				prefix = append([]proto.Item(nil), f.items[p:startIdx]...)
 				break
 			}
+		}
+		if prefix == nil {
+			prefix = append([]proto.Item(nil), f.items[max(0, startIdx-maxContextItems):startIdx]...)
 		}
 	}
 	endIdx := sort.Search(len(f.items), func(k int) bool { return f.items[k].Seq > lastSeq })
