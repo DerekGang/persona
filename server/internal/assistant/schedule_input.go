@@ -15,19 +15,40 @@ import (
 	"github.com/nwverse/persona/server/internal/promptcontent"
 )
 
+// Rich editors put their serialized prompt only in structured_prompt. An older manager requires
+// prompt, so it rejects this write without changing the task or silently dropping its references.
+func readStructuredTaskPrompt(raw map[string]json.RawMessage) error {
+	content, rich := raw["structured_prompt"]
+	if !rich {
+		return nil
+	}
+	if _, plain := raw["prompt"]; plain {
+		return errors.New("specify only one task prompt")
+	}
+	var prompt string
+	if err := json.Unmarshal(content, &prompt); err != nil {
+		return err
+	}
+	if prefix, _ := taskPromptBody(prompt); prefix == "" {
+		return i18n.Err("assistant-schedule.input_context_unavailable")
+	}
+	raw["prompt"] = content
+	return nil
+}
+
 // taskInputContext resolves a draft through the existing task execution contract, without saving or preparing files.
-func (s *Service) taskInputContext(ctx context.Context, raw map[string]json.RawMessage) (Task, TaskExecution, error) {
+func (s *Service) taskInputContext(ctx context.Context, raw map[string]json.RawMessage) (taskInputTarget, error) {
 	t := Task{ID: "__input_draft"}
 	var id string
 	if v, ok := raw["id"]; ok {
 		if err := json.Unmarshal(v, &id); err != nil {
-			return t, TaskExecution{}, err
+			return taskInputTarget{}, err
 		}
 	}
 	if id != "" {
 		sc, err := s.lockedSchedule(ctx)
 		if err != nil {
-			return t, TaskExecution{}, err
+			return taskInputTarget{}, err
 		}
 		i := sc.indexLocked(id)
 		if i >= 0 {
@@ -35,14 +56,14 @@ func (s *Service) taskInputContext(ctx context.Context, raw map[string]json.RawM
 		}
 		sc.mu.Unlock()
 		if i < 0 {
-			return t, TaskExecution{}, i18n.Err("assistant-schedule.input_context_unavailable")
+			return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
 		}
 	}
 	previous := t
 	if v, ok := raw["session_id"]; ok {
 		var sid string
 		if err := json.Unmarshal(v, &sid); err != nil {
-			return t, TaskExecution{}, err
+			return taskInputTarget{}, err
 		}
 		// The edit route may detach the original chat, never attach an arbitrary one.
 		if sid == "" {
@@ -52,18 +73,16 @@ func (s *Service) taskInputContext(ctx context.Context, raw map[string]json.RawM
 	for key, dst := range map[string]any{"push": &t.Push, "repeat": &t.Repeat, "fresh_each_run": &t.FreshEachRun} {
 		if v, ok := raw[key]; ok {
 			if err := json.Unmarshal(v, dst); err != nil {
-				return t, TaskExecution{}, err
+				return taskInputTarget{}, err
 			}
 		}
 	}
 	isolateScheduledConversation(&t, s.mayBeMainNow(ctx))
 	edit, err := s.prepareTaskExecutionEdit(ctx, previous, &t, raw)
 	if err != nil {
-		return t, TaskExecution{}, err
+		return taskInputTarget{}, err
 	}
-	t = s.taskInputDestination(ctx, t)
-	ex, err := s.taskInputExecution(ctx, t, edit.record)
-	return t, ex, err
+	return s.taskInputExecution(ctx, t, edit.record)
 }
 
 // A task that wants visible updates runs in its own conversation when its source is another task's quiet chat.
@@ -74,35 +93,41 @@ func (s *Service) taskInputDestination(ctx context.Context, t Task) Task {
 	return t
 }
 
-func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelRecord) (TaskExecution, error) {
+type taskInputTarget struct {
+	TaskExecution
+	session, profile string
+}
+
+func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelRecord) (taskInputTarget, error) {
+	t = s.taskInputDestination(ctx, t)
 	if t.continuesSource() {
 		c, ok := s.session(ctx, t.MachineID, t.SessionID)
 		d, online := s.device(ctx, t.MachineID)
 		if !online || !d.Online || s.isWorkMachine(t.MachineID) || !ok || !c.Assistant || c.Cwd == "" || s.isGuest(ctx, t.MachineID, t.SessionID) {
-			return TaskExecution{}, i18n.Err("assistant-schedule.input_context_unavailable")
+			return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
 		}
 		if t.Space == SpaceHealth {
 			var canonical struct {
 				Cwd string `json:"cwd"`
 			}
 			if c.Space != SpaceHealth || s.call(ctx, t.MachineID, assistantwire.DeviceAssistantDirectory, map[string]any{"path": s.healthCwd(d)}, &canonical) != nil || canonical.Cwd != c.Cwd {
-				return TaskExecution{}, i18n.Err("assistant-schedule.input_context_unavailable")
+				return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
 			}
 		}
 		params := map[string]any{}
 		if err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.requestCtxLang(ctx)); err != nil {
-			return TaskExecution{}, err
+			return taskInputTarget{}, err
 		}
-		return *s.sourceTaskExecution(ctx, t, params), nil
+		return taskInputTarget{TaskExecution: *s.sourceTaskExecution(ctx, t, params), session: t.SessionID}, nil
 	}
 	base, err := s.taskModelBaseline(ctx, s.taskMachine(ctx, t))
 	if err != nil {
-		return TaskExecution{}, err
+		return taskInputTarget{}, err
 	}
 	if record == nil {
 		stored, err := s.modelRecord(ctx, "task."+t.ID)
 		if err != nil {
-			return TaskExecution{}, err
+			return taskInputTarget{}, err
 		}
 		record = &stored
 	}
@@ -120,37 +145,56 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 		}
 		if err = s.call(ctx, ex.MachineID, assistantwire.DeviceAssistantDirectory, map[string]any{"path": ex.Cwd}, &result); err == nil {
 			if result.Cwd == "" {
-				return ex, i18n.Err("assistant-schedule.input_context_unavailable")
+				return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
 			}
 			ex.Cwd = result.Cwd
 		}
 	}
-	return ex, err
+	if err != nil {
+		return taskInputTarget{}, err
+	}
+	target := taskInputTarget{TaskExecution: ex}
+	// startConversation uses the same signed-in profile as meetings. A compatible task-owned
+	// conversation keeps its own profile on resume (including the signed-out repair in resumeOwn).
+	if !t.startsFresh() && t.RunSessionID != "" && t.RunMachineID == ex.MachineID && t.RunLauncher == ex.Launcher &&
+		taskExecutionChangeReason(t, ex, record.Binding) == "" && !((t.pushesOnlyAsked() || t.Repeat != repeatOnce) && s.mayBeMain(ctx, t.RunSessionID)) {
+		target.session = t.RunSessionID
+		if c, ok := s.session(ctx, ex.MachineID, t.RunSessionID); ok && signedOut(c) && (c.Agent == "" || c.Agent == "claude") {
+			target.profile = meetingProfile
+		}
+	} else if ex.Launcher == "claude" || ex.Agent == "" || ex.Agent == "claude" {
+		target.profile = meetingProfile
+	}
+	return target, nil
 }
 
-func (s *Service) taskInputParams(ctx context.Context, t Task, ex TaskExecution, text string) map[string]any {
-	params := map[string]any{"cwd": ex.Cwd, "launcher": ex.Launcher, "text": text, "task_execution": true, "machine_id": ex.MachineID, "skill_owner": s.skillOwner()}
-	if t.continuesSource() {
-		params["session_id"] = t.SessionID // the node reads the saved profile
-	} else {
-		s.withNewConversationProfile(ctx, ex.MachineID, params)
+func (s *Service) taskInputParams(target taskInputTarget, text string) map[string]any {
+	params := map[string]any{"cwd": target.Cwd, "launcher": target.Launcher, "text": text, "task_execution": true, "machine_id": target.MachineID, "skill_owner": s.skillOwner()}
+	if target.session != "" {
+		params["session_id"] = target.session
+	}
+	if target.profile != "" {
+		params["config_dir"] = target.profile
 	}
 	return params
 }
 
 func (s *Service) validateTaskInput(ctx context.Context, t Task, record *modelRecord) error {
-	skills, err := assistantskills.References(t.Prompt)
+	if !t.PromptSelections {
+		return nil
+	}
+	prefix, _ := taskPromptBody(t.Prompt)
+	skills, err := assistantskills.References(prefix)
 	if err != nil {
 		return skillReferenceError()
 	}
-	files, err := promptcontent.Files(t.Prompt)
+	files, err := promptcontent.Files(prefix)
 	if err != nil {
 		return i18n.Err("assistant-schedule.selected_file_unavailable")
 	}
 	if len(skills) == 0 && len(files) == 0 {
 		return nil
 	}
-	t = s.taskInputDestination(ctx, t)
 	ex, err := s.taskInputExecution(ctx, t, record)
 	if err != nil {
 		return err
@@ -158,7 +202,7 @@ func (s *Service) validateTaskInput(ctx context.Context, t Task, record *modelRe
 	var ack struct {
 		Valid bool `json:"valid"`
 	}
-	if err := s.call(ctx, ex.MachineID, "assistant.content", s.taskInputParams(ctx, t, ex, t.Prompt), &ack); err != nil {
+	if err := s.call(ctx, ex.MachineID, "assistant.content", s.taskInputParams(ex, prefix), &ack); err != nil {
 		return err
 	}
 	if !ack.Valid {
@@ -179,21 +223,16 @@ func (s *Service) taskInputRoutes() {
 			apierr.Write(w, 400, errors.New("invalid request"))
 			return
 		}
-		task, ex, err := s.taskInputContext(r.Context(), raw)
+		ex, err := s.taskInputContext(r.Context(), raw)
 		if err != nil {
 			apierr.Call(w, err)
 			return
 		}
-		result := map[string]any{"execution": ex}
+		result := map[string]any{"execution": ex.TaskExecution}
 		var catalog bool
 		_ = json.Unmarshal(raw["catalog"], &catalog)
 		if catalog {
-			params := s.taskInputParams(r.Context(), task, ex, "")
-			sid := ""
-			if task.continuesSource() {
-				sid = task.SessionID
-			}
-			c, e := s.skillCatalogFor(r.Context(), ex.MachineID, sid, params)
+			c, e := s.skillCatalogFor(r.Context(), ex.MachineID, ex.session, s.taskInputParams(ex, ""))
 			if e != nil {
 				result["skill_error"] = e.Error()
 			} else {
@@ -210,5 +249,25 @@ func taskPromptBody(prompt string) (string, string) {
 	if prefix == "" {
 		return "", prompt
 	}
+	files, fileErr := promptcontent.Files(prefix)
+	skills, skillErr := assistantskills.References(prefix)
+	if fileErr == nil && skillErr == nil && len(files) == 0 && len(skills) == 0 {
+		return "", prompt
+	}
 	return strings.TrimSpace(prefix), strings.TrimLeft(body, "\r\n")
+}
+
+// Only the full-credential structured write can authorize new references. An ordinary edit
+// can keep exactly the envelope that the owner already authorized for this task.
+func (t *Task) setPrompt(prompt string, structured bool) {
+	keep := false
+	if structured || t.PromptSelections {
+		prefix, _ := taskPromptBody(prompt)
+		keep = prefix != "" && structured
+		if !structured && prefix != "" {
+			old, _ := taskPromptBody(t.Prompt)
+			keep = prefix == old
+		}
+	}
+	t.Prompt, t.PromptSelections = prompt, keep
 }

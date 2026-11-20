@@ -12,10 +12,16 @@ import (
 
 var leading = lazyre.New(`(?s)^\s*<` + compat.ContextPattern() + `\b([^>]*)>.*?</` + compat.ContextPattern() + `>`)
 
-// Split preserves every leading context byte while allowing a caller to wrap only the user's prose.
+// Split returns the scheduled picker envelope. A blank line ends the selections and begins literal prose.
 func Split(text string) (prefix, body string) {
 	rest := text
 	for {
+		if rest != text {
+			space := rest[:len(rest)-len(strings.TrimLeft(rest, " \t\r\n"))]
+			if strings.Count(space, "\n") >= 2 {
+				break
+			}
+		}
 		m := leading.FindStringIndex(rest)
 		if m == nil {
 			break

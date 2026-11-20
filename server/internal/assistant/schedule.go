@@ -55,11 +55,12 @@ type Task struct {
 	// runGrantBasis belongs only to the model/task snapshot consumed by this run, never the stored task.
 	runGrantBasis string
 
-	WorkoutID string `json:"workout_id,omitempty"`
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Prompt    string `json:"prompt"`
-	Repeat    string `json:"repeat"` // once / daily / interval / cron
+	WorkoutID        string `json:"workout_id,omitempty"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	Prompt           string `json:"prompt"`
+	PromptSelections bool   `json:"prompt_selections,omitempty"` // owner-approved envelope, never copied from a client Task
+	Repeat           string `json:"repeat"`                      // once / daily / interval / cron
 	// At is the task's next run.
 	At           time.Time `json:"at,omitempty"`
 	Time         string    `json:"time,omitempty"`     // daily: "HH:MM" in the user's time zone
@@ -213,6 +214,10 @@ func (t Task) labelIn(l i18n.Lang) string {
 	}
 	if t.Repeat == repeatOnce {
 		return i18n.T(l, "assistant-schedule.followup")
+	}
+	if t.PromptSelections {
+		_, body := taskPromptBody(t.Prompt)
+		return clip(oneLine(body), 30)
 	}
 	return clip(oneLine(t.Prompt), 30)
 }
@@ -699,12 +704,19 @@ var scheduleHeader = lazyre.New(`^(?:⏰[^\n]*（[^\n]*(?:跟进|定时任务)[^
 
 func stripScheduleHeader(p string) string {
 	p = strings.TrimSpace(p)
+	prefix, body := taskPromptBody(p)
+	if !scheduleHeader.MatchString(body) {
+		return p
+	}
 	for {
-		loc := scheduleHeader.FindStringIndex(p)
+		loc := scheduleHeader.FindStringIndex(body)
 		if loc == nil {
-			return p
+			if prefix != "" {
+				return strings.TrimSpace(prefix + "\n\n" + body)
+			}
+			return body
 		}
-		p = strings.TrimSpace(p[loc[1]:])
+		body = strings.TrimSpace(body[loc[1]:])
 	}
 }
 
@@ -962,7 +974,7 @@ func (s *Service) scheduleOwn(ctx context.Context, sessionID, title, rawPrompt, 
 	if title = strings.TrimSpace(title); title != "" {
 		t.Title = title
 	}
-	t.Prompt = prompt
+	t.setPrompt(prompt, false)
 	if push != nil { // left out: it keeps its push
 		t.Push = *push
 	}
@@ -1052,7 +1064,8 @@ func copiesRun(r ScheduleRun, title, rawPrompt string) bool {
 	if strings.TrimSpace(title) != "" {
 		return sameText(title, r.Title)
 	}
-	first, _, _ := strings.Cut(strings.TrimSpace(rawPrompt), "\n")
+	_, body := taskPromptBody(strings.TrimSpace(rawPrompt))
+	first, _, _ := strings.Cut(body, "\n")
 	return scheduleHeader.MatchString(first) && strings.HasPrefix(first, "⏰ "+r.Title+"（")
 }
 
@@ -1283,7 +1296,7 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, machine, self string,
 		t.Title = strings.TrimSpace(a.Title)
 	}
 	if a.Prompt != "" {
-		t.Prompt = stripScheduleHeader(a.Prompt)
+		t.setPrompt(stripScheduleHeader(a.Prompt), false)
 	}
 	if a.Time != "" || a.Weekdays != nil {
 		t.Repeat = repeatDaily
@@ -2751,7 +2764,10 @@ func (s *Service) forgetConversation(ctx context.Context, id string) (Task, bool
 // task's own conversation, which has had all that (and the knowledge-base hint) already; it is told the earlier
 // runs are above instead. The task's prompt is always there: it may have been edited, or compacted away.
 func taskPrompt(t Task, due, now time.Time, loc *time.Location, manual, kb, continued bool) string {
-	prefix, body := taskPromptBody(t.Prompt)
+	prefix, body := "", t.Prompt
+	if t.PromptSelections {
+		prefix, body = taskPromptBody(t.Prompt)
+	}
 	r := prompts.TaskRun{Label: t.label(), TodoID: t.TodoID, Once: t.Repeat == repeatOnce, Interval: t.Repeat == repeatInterval, Due: due.In(loc),
 		Prompt: body, KBHint: kb && t.calendar(), KnowledgeDir: t.kbDir, Continued: continued, PushAsked: t.pushesOnlyAsked(), InboxWorthy: t.inboxWorthy(), InboxEvery: t.inboxEvery(), Facts: t.factsText, State: taskStatePrompt(t)}
 	if r.Interval {
@@ -2875,7 +2891,8 @@ func (s *Service) taskView(ctx context.Context, id string) (Task, bool) {
 // body has them. A missing Until unmarshals as zero and would wipe a stored end time; null clears it.
 func editTask(old, in Task, now time.Time) Task {
 	t := old
-	t.Title, t.Prompt, t.Repeat, t.Enabled = in.Title, in.Prompt, in.Repeat, in.Enabled
+	t.Title, t.Repeat, t.Enabled = in.Title, in.Repeat, in.Enabled
+	t.setPrompt(in.Prompt, false)
 	t.Time, t.Weekdays, t.EveryMinutes, t.Cron = in.Time, in.Weekdays, in.EveryMinutes, in.Cron
 	t.PermissionMode = in.PermissionMode
 	t.Launcher, t.Model, t.Effort = "", "", ""
@@ -2951,6 +2968,10 @@ func (s *Service) scheduleRoutes() {
 		delete(raw, "run_if")
 		delete(raw, "until") // not a time.Time: "30m" and a local clock time would not unmarshal
 		ignoreTaskStateNote(raw)
+		if err := readStructuredTaskPrompt(raw); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		var in Task
 		encoded, _ := json.Marshal(raw)
 		if err := json.Unmarshal(encoded, &in); err != nil {
@@ -2958,6 +2979,9 @@ func (s *Service) scheduleRoutes() {
 			return
 		}
 		t := editTask(Task{ID: "task_" + randomHex(4), CreatedAt: now.UTC()}, in, now)
+		if _, rich := raw["structured_prompt"]; rich {
+			t.setPrompt(in.Prompt, true)
+		}
 		t.SessionID, t.Push, t.Inbox, t.RunIf = "", push, inbox, runIf
 		if err := editTaskState(&t, in, raw, now); err != nil {
 			writeTaskStateError(w, err)
@@ -3028,6 +3052,10 @@ func (s *Service) scheduleRoutes() {
 		}
 		old := sc.tasks[i]
 		sc.mu.Unlock()
+		if err := readStructuredTaskPrompt(raw); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		var in Task
 		encoded, _ := json.Marshal(raw)
 		if err := json.Unmarshal(encoded, &in); err != nil {
@@ -3040,6 +3068,9 @@ func (s *Service) scheduleRoutes() {
 			in.Repeat, in.Cron, in.At, in.Time, in.Weekdays, in.EveryMinutes = old.Repeat, old.Cron, old.At, "", nil, 0
 		}
 		t := editTask(old, in, now)
+		if _, rich := raw["structured_prompt"]; rich {
+			t.setPrompt(in.Prompt, true)
+		}
 		if hasRunIf {
 			t.RunIf = runIf
 		}

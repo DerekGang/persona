@@ -81,6 +81,8 @@ const (
 	// (#6282, docs/protocol/protocol.md "Assistant chat search"). The hub lists the assistant_search feature only while
 	// the default manager names it; the apps keep filtering titles and last messages without it.
 	CapabilityAssistantSearch = "assistant_search"
+	// CapabilityTaskInput: the manager validates and saves structured scheduled prompts.
+	CapabilityTaskInput = "task_input"
 	// CapabilityDirectionSessions: the manager files sessions under a direction and reads one direction
 	// (PUT /api/v1/assistant/sessions/{mid}/{sid}/direction, GET /api/v1/assistant/directions/{id}, and the tree's
 	// additive sessions; #11391). The hub lists direction_sessions only while the default manager names it.

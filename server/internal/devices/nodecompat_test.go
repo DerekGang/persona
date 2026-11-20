@@ -240,9 +240,7 @@ func TestMachineCallGatesAssistantConfigDir(t *testing.T) {
 	m := newMachine(d, MachineConfig{ID: "box", Name: "Box", Kind: "ssh", SSHHost: "box.invalid"})
 	without := current("old")
 	without.Capabilities = slices.DeleteFunc(slices.Clone(without.Capabilities), func(c string) bool { return c == nodeproto.AssistantConfigDir })
-	partial := current("no-strict-execution")
-	partial.Capabilities = slices.DeleteFunc(slices.Clone(partial.Capabilities), func(c string) bool { return c == nodeproto.TaskExecution })
-	for _, info := range []proto.NodeInfo{current("new"), without, partial, {Version: "pre-handshake"}} {
+	for _, info := range []proto.NodeInfo{current("new"), without, {Version: "pre-handshake"}} {
 		m.mu.Lock()
 		m.info, m.online = info, true
 		m.mu.Unlock()
@@ -435,9 +433,7 @@ func TestMachineCallGatesTaskExecution(t *testing.T) {
 	m := newMachine(d, MachineConfig{ID: "box", Name: "Box", Kind: "ssh", SSHHost: "box.invalid"})
 	without := current("old")
 	without.Capabilities = slices.DeleteFunc(slices.Clone(without.Capabilities), func(c string) bool { return c == nodeproto.TaskExecution })
-	partial := current("no-strict-execution")
-	partial.Capabilities = slices.DeleteFunc(slices.Clone(partial.Capabilities), func(c string) bool { return c == nodeproto.TaskExecution })
-	for _, info := range []proto.NodeInfo{current("new"), without, partial, {Version: "pre-handshake"}} {
+	for _, info := range []proto.NodeInfo{current("new"), without, {Version: "pre-handshake"}} {
 		m.mu.Lock()
 		m.info, m.online = info, true
 		m.mu.Unlock()
