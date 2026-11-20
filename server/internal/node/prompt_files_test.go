@@ -133,6 +133,74 @@ func TestAssistantContentMatchesFileAudienceRefusals(t *testing.T) {
 	}
 }
 
+func TestPromptFileRefusalKeepsWarmSpareAndConversationState(t *testing.T) {
+	f := cliTestBash(t)
+	n := f.n
+	n.machineID = "fixture"
+	cwd := resolved(t, t.TempDir())
+	warm := map[string]any{"cwd": cwd, "launcher": "claude", "model_fingerprint": "file-refusal-spare"}
+	if _, err := nodeCall(t, n, "assistant.warm", warm); err != nil {
+		t.Fatal(err)
+	}
+	n.mu.Lock()
+	spare := n.spare
+	n.mu.Unlock()
+	if spare == nil {
+		t.Fatal("missing warm spare")
+	}
+
+	selection := fmt.Sprintf(`<persona-context kind="file" path="notes.txt" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`, n.machineID, cwd)
+	send := map[string]any{
+		"cwd": cwd, "launcher": "claude", "model_fingerprint": warm["model_fingerprint"], "permission_mode": "default",
+		"task_input": true, "origin": "task", "origin_known": true, "text": selection,
+	}
+	_, err := nodeCall(t, n, "assistant.send", send)
+	assertFileRefusalDelivery(t, err)
+	n.mu.Lock()
+	stillSpare := n.spare == spare
+	n.mu.Unlock()
+	if !stillSpare || !spare.alive() || f.proc(spare.id) != nil {
+		t.Fatal("rejected send moved the warmed process into the conversation registry")
+	}
+	if _, ok := n.state.get(spare.id); ok {
+		t.Fatal("rejected send persisted the spare as a conversation")
+	}
+
+	coldID := newUUID()
+	send["new_session_id"] = coldID
+	_, err = nodeCall(t, n, "assistant.send", send)
+	assertFileRefusalDelivery(t, err)
+	if _, ok := n.state.get(coldID); ok || f.proc(coldID) != nil {
+		t.Fatal("rejected cold start left a conversation")
+	}
+	delete(send, "new_session_id")
+
+	notes := filepath.Join(cwd, "notes.txt")
+	writeFile(t, notes, "synthetic notes")
+	reply, err := nodeCall(t, n, "assistant.send", send)
+	if err != nil {
+		t.Fatalf("valid selection after refusal: %v", err)
+	}
+	var started struct {
+		ID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(reply, &started); err != nil || started.ID != spare.id || f.proc(spare.id) != spare {
+		t.Fatalf("valid selection did not reuse the spare: %s (%v)", reply, err)
+	}
+	f.idle(t, started.ID)
+	sent := f.file("stdin.jsonl")
+	if err := os.Remove(notes); err != nil {
+		t.Fatal(err)
+	}
+	send["session_id"], send["origin"] = started.ID, "channel"
+	_, err = nodeCall(t, n, "assistant.send", send)
+	assertFileRefusalDelivery(t, err)
+	st, ok := n.state.get(started.ID)
+	if !ok || st.Origin != "task" || f.proc(started.ID) != spare || f.file("stdin.jsonl") != sent {
+		t.Fatal("rejected selection changed the existing conversation or delivered another turn")
+	}
+}
+
 func assertFileRefusalDelivery(t *testing.T, err error) *rpc.Error {
 	t.Helper()
 	var refusal *rpc.Error

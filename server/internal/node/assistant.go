@@ -614,6 +614,19 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if proto.IsExternalLauncher(launcher) {
 		execution.StartupContext = ctx
 	}
+	// Validate the file scope before taking a spare or persisting a conversation.
+	fileCwd := cwd
+	if fileCwd == "" {
+		fileCwd = n.storedCwd(st.Cwd)
+	}
+	files, err := n.selectedFiles(ctx, text, fileCwd, launcher, execution.Runtime)
+	if err != nil {
+		return "", err
+	}
+	if len(files) > 0 {
+		// An empty cwd would let a new send adopt a spare in any directory. Require the directory that was checked.
+		cwd = fileCwd
+	}
 	var p *assistantProc
 	if id == "" && guest != nil {
 		// Never the warm spare: it was started with the assistant's tools. Its process reads Guest from the state.
@@ -654,17 +667,12 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	}
 	timing.mark("preflight_done", true)
 	if cwd == "" {
-		cwd = n.storedCwd(st.Cwd)
+		cwd = fileCwd
 	}
 	selectionSession := id
 	if !resume {
 		selectionSession = "" // a newly allocated Claude id has no resumable profile yet
 	}
-	files, err := n.selectedFiles(ctx, text, cwd, launcher, execution.Runtime)
-	if err != nil {
-		return "", err
-	}
-
 	selected, err := n.selectedSkills(ctx, selectionSession, cwd, launcher, text, execution)
 	if err != nil {
 		return "", err
@@ -918,7 +926,9 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 		return id, nil
 	}
 	if hasInput && (launcher != selectedLauncher || execution != selectedExecution || len(selected) > 0 && p.agent == "claude") {
-		if len(files) > 0 {
+		// A new native conversation uses the file scope checked before startup. A resumed one can retain an
+		// existing process's launcher and runtime while a switch waits.
+		if resume && len(files) > 0 {
 			files, err = n.selectedFiles(ctx, text, cwd, launcher, execution.Runtime)
 			if err != nil {
 				return "", err

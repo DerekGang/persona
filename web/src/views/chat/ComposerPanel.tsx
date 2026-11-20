@@ -7,6 +7,7 @@
 // folder keeps browsing, a file types `@path `, a workspace or a session becomes a context chip (Composer.tsx).
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { api, enc } from "../../lib/api";
+import { stampedHeaders } from "../../lib/manager-choice";
 import { PickerMenu, type PickerButton } from "./PickerMenu";
 import { useSkillCatalog, type CatalogMemory } from "./useSkillCatalog";
 import { SkillDetail, SkillRow } from "./SkillRow";
@@ -36,6 +37,8 @@ export interface MentionSource {
   sessions?: boolean;
   /** Stable file references use the same execution context as the task. */
   referenceFiles?: { machine: string; cwd: string; launcher: string; runtime: string };
+  /** The manager that resolved the task's file selection scope. */
+  fileManager?: string;
   /** Absolute paths the chat's tools read or wrote, newest first (read when the panel opens). */
   files: () => string[];
   /** Offer the hub's workspaces (GET /workspaces): the Persona assistant, which works on any computer. */
@@ -83,17 +86,20 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
   const cwd = source?.cwd;
   const target = source ? browseTarget(query, cwd) : null;
   const taskFiles = Boolean(source?.referenceFiles);
+  const fileManager = taskFiles ? source?.fileManager : undefined;
   const dir = !source || !machineId || source.allowsFileQuery?.(query) === false ? null : target ? target.dir : cwd ?? null;
+  const cacheKey = dir && (taskFiles ? JSON.stringify([fileManager, machineId, cwd, dir]) : dir);
 
   useEffect(() => {
-    if (!dir || !machineId || cache.current.has(dir)) return;
+    if (!dir || !machineId || !cacheKey || cache.current.has(cacheKey)) return;
     const ac = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
-      api<FsListing>(`/machines/${enc(machineId)}/fs?path=${enc(dir)}&cwd=${enc(cwd ?? "")}${taskFiles ? "&task_input=1" : ""}`, { signal: ac.signal })
-        .then((l) => { if (!ac.signal.aborted) cache.current.set(dir, l); })
+      api<FsListing>(`/machines/${enc(machineId)}/fs?path=${enc(dir)}&cwd=${enc(cwd ?? "")}${taskFiles ? "&task_input=1" : ""}`,
+        { signal: ac.signal, headers: stampedHeaders(fileManager) })
+        .then((l) => { if (!ac.signal.aborted) cache.current.set(cacheKey, l); })
         .catch(() => {
-          if (!ac.signal.aborted) cache.current.set(dir, null); // not a folder / unreadable: no rows from it
+          if (!ac.signal.aborted) cache.current.set(cacheKey, null); // not a folder / unreadable: no rows from it
         })
         .finally(() => {
           if (ac.signal.aborted) return;
@@ -106,9 +112,9 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
       ac.abort();
       setLoading(false);
     };
-  }, [dir, machineId, cwd, taskFiles]);
+  }, [cacheKey, dir, machineId, cwd, taskFiles, fileManager]);
 
-  const listing = dir ? cache.current.get(dir) : undefined;
+  const listing = cacheKey ? cache.current.get(cacheKey) : undefined;
   const rows = useMemo<MentionRow[]>(() => {
     if (!source) return [];
     if (target) {

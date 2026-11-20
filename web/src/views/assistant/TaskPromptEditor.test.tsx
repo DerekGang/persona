@@ -10,6 +10,8 @@ import { t } from "../../i18n";
 import { storeDraft } from "../../lib/drafts";
 import { HISTORY_PREFIX, recordSent } from "../../lib/send-history";
 import { reloadSavedPrompts, resetSavedPrompts } from "../../lib/saved-prompts";
+import { chooseManager, MANAGER_HEADER, resetManagerChoice } from "../../lib/manager-choice";
+import { useMentionRows, type MentionSource } from "../chat/ComposerPanel";
 
 const api = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/api", async (original) => ({ ...(await original<typeof import("../../lib/api")>()), api }));
@@ -46,7 +48,70 @@ beforeEach(() => {
   root = createRoot(host);
   api.mockReset();
 });
-afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); });
+afterEach(() => { act(() => root.unmount()); resetManagerChoice(); host.remove(); vi.useRealTimers(); });
+
+it("routes task files to the manager that resolved the input context", async () => {
+  const manager = "fixture-secondary";
+  chooseManager(manager);
+  const requests: { path: string; manager: string | null }[] = [];
+  api.mockImplementation(async (path, options) => {
+    requests.push({ path, manager: new Headers(options.headers).get(MANAGER_HEADER) });
+    if (path === contextPath) return { execution, task_input: true, catalog };
+    if (path.includes("/fs?")) return { path: "/current", entries: [{ name: "notes.txt", dir: false }], truncated: false };
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(draft);
+  await settle();
+  act(() => host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.click());
+  await settle();
+  expect(option("notes.txt")).toBeDefined();
+  expect(requests.filter((request) => request.path === contextPath).map((request) => request.manager)).toEqual([manager, manager]);
+  expect(requests.filter((request) => request.path.includes("/fs?"))).toEqual([
+    { path: "/machines/current/fs?path=%2Fcurrent&cwd=%2Fcurrent&task_input=1", manager },
+  ]);
+});
+
+it("isolates task listings by manager, machine, task directory, and browsed folder", async () => {
+  const files = () => [];
+  function Listing({ manager, machine, cwd, query }: { manager: string; machine: string; cwd: string; query: string }) {
+    const source: MentionSource = { cwd, files, sessions: false, fileManager: manager,
+      referenceFiles: { machine, cwd, launcher: "claude", runtime: "" } };
+    const { rows } = useMentionRows(query, source, machine);
+    return <ul>{rows.map((row) => row.kind === "file" && <li key={row.id}>{row.name}</li>)}</ul>;
+  }
+  const show = (manager: string, machine: string, cwd: string, query = "sub/") =>
+    act(() => root.render(<Listing manager={manager} machine={machine} cwd={cwd} query={query} />));
+  let finishAbandoned!: (reply: unknown) => void;
+  const listing = (name: string) => ({ entries: [{ name: `${name}.txt`, dir: false }] });
+  api.mockImplementation(async (path, options) => {
+    const url = new URL(path, "https://fixture.example");
+    const manager = new Headers(options.headers).get(MANAGER_HEADER);
+    if (manager === "abandoned") return new Promise((resolve) => { finishAbandoned = resolve; });
+    const machine = url.pathname.split("/")[2];
+    const cwd = url.searchParams.get("cwd")?.slice(1).replaceAll("/", "-");
+    return listing(`${manager}-${machine}-${cwd}-${url.searchParams.get("path")?.split("/").at(-1)}`);
+  });
+  for (const { manager, machine, cwd, query, name } of [
+    { manager: "first", machine: "one", cwd: "/workspace", name: "first-one-workspace-sub" },
+    { manager: "second", machine: "one", cwd: "/workspace", name: "second-one-workspace-sub" },
+    { manager: "second", machine: "two", cwd: "/workspace", name: "second-two-workspace-sub" },
+    { manager: "second", machine: "two", cwd: "/workspace/sub", query: "", name: "second-two-workspace-sub-sub" },
+    { manager: "second", machine: "two", cwd: "/workspace/sub", query: "nested/", name: "second-two-workspace-sub-nested" },
+  ]) {
+    show(manager, machine, cwd, query);
+    expect(host.textContent).toBe("");
+    await settle();
+    expect(host.textContent).toBe(`${name}.txt`);
+  }
+  show("abandoned", "one", "/workspace");
+  await settle();
+  const last = api.mock.calls.at(-1)![1].signal as AbortSignal;
+  show("first", "one", "/workspace");
+  await act(async () => finishAbandoned(listing("obsolete")));
+  expect(last.aborted).toBe(true);
+  expect(host.textContent).toBe("first-one-workspace-sub.txt");
+  expect(api.mock.calls).toHaveLength(6);
+});
 
 it("ignores an abandoned execution context and requests only the new task directory", async () => {
   let resolveOld!: (value: unknown) => void;
