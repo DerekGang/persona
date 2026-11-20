@@ -55,6 +55,7 @@ internal class GroupNames(val namespace: String?) {
         is MessageSendStateEvent -> value.copy(machineId = machineId(value.machineId))
         is ItemsEvent -> value.copy(machineId = machineId(value.machineId))
         is SessionsEvent -> value.copy(machineId = machineId(value.machineId), sessions = value.sessions.map(::session))
+        is SessionRowEvent -> value.copy(session = session(value.session))
         is MachinesEvent -> value.copy(machines = value.machines.map(::machine))
         is RevsEvent -> value.copy(machineId = machineId(value.machineId))
         is InteractionEvent -> value.copy(interaction = interaction(value.interaction))
@@ -125,6 +126,9 @@ internal fun DraftRepository.inGroup(names: GroupNames): DraftRepository {
         override suspend fun save(key: DraftKey, text: String, expectedVersion: Long,
             attachments: List<DraftAttachment>, sessionVersion: DraftSessionVersion?) =
             names.draft(source.save(names.rawDraftKey(key), text, expectedVersion, attachments, sessionVersion))
+        override suspend fun save(key: DraftKey, text: String, expectedVersion: Long,
+            attachments: List<DraftAttachment>, sessionVersion: DraftSessionVersion?, hasPickedSavedPrompt: Boolean) =
+            names.draft(source.save(names.rawDraftKey(key), text, expectedVersion, attachments, sessionVersion, hasPickedSavedPrompt))
     }
 }
 
@@ -473,6 +477,8 @@ internal fun SessionFiles.inGroup(names: GroupNames): SessionFiles {
         override fun editsFiles(machineId: String) = source.editsFiles(names.rawMachine(machineId))
         override suspend fun rename(machineId: String, cwd: String, path: String, name: String) =
             source.rename(names.rawMachine(machineId), cwd, path, name)
+        override suspend fun move(machineId: String, cwd: String, path: String, directory: String, conflict: SessionMoveConflictPolicy?) =
+            source.move(names.rawMachine(machineId), cwd, path, directory, conflict)
         override suspend fun trash(machineId: String, cwd: String, paths: List<String>) = source.trash(names.rawMachine(machineId), cwd, paths)
         override suspend fun restore(machineId: String, trashIds: List<String>) = source.restore(names.rawMachine(machineId), trashIds)
     }
