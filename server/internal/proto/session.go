@@ -232,6 +232,12 @@ type Session struct {
 	// optional effort metadata within the row size budget.
 	PendingEffort      *string `json:"pending_effort,omitempty"`
 	EffortChangeFailed bool    `json:"effort_change_failed,omitempty"`
+	// OffLauncher: Persona started this Claude Code Agent on Launcher, but the claude that runs it now was not started
+	// by Persona's command (it lacks Persona's --mcp-config): herdr's bare `claude --resume <id>` after a restart on a
+	// herdr older than 0.9.2, or a resume typed by hand (#11792). Launcher's settings, model, MCP and hooks do not
+	// apply to it, and a launcher switch to Launcher itself brings it back there. Beside EffortChangeFailed, in its
+	// padding: a Session stays in its allocation size class.
+	OffLauncher bool `json:"off_launcher,omitempty"`
 	// BotmuxExternalTrigger: on a botmux session whose botmux instance was probed and does not advertise ownerActor
 	// (an older botmux without GET /api/sessions/:id/turns or without actor:"owner"), sends go through the untrusted
 	// external-event trigger; clients show a one-line notice in the composer. False/omitted on all other sessions.
