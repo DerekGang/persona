@@ -26,5 +26,7 @@
   "conversation": "Conversation",
   "you": "You",
   "agent": "Agent",
-  "assistant": "Assistant"
+  "assistant": "Assistant",
+  "source_unavailable": "The original message is unavailable.",
+  "source_failed": "Couldn't check the original message. Try again."
 }

@@ -24,5 +24,7 @@
   "conversation": "会話",
   "you": "あなた",
   "agent": "エージェント",
-  "assistant": "アシスタント"
+  "assistant": "アシスタント",
+  "source_unavailable": "元のメッセージは利用できません。",
+  "source_failed": "元のメッセージを確認できませんでした。もう一度お試しください。"
 }

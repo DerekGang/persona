@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import { toast } from "../ui/atoms";
-import { api, ApiError, credentialOwner, errorText, getToken, subscribeCredentialOwner } from "./api";
+import { api, ApiError, credentialOwner, errorText, fullItem, getToken, subscribeCredentialOwner } from "./api";
 import { chosenManager, defaultKnown, onDefaultManager, onManagerChoice, shownManager, stampedHeaders } from "./manager-choice";
 import { setStarredRows, starKey, type Star, type StarInput, type StarSource } from "./starred-rows";
 import { onHubEvent } from "./store";
@@ -149,6 +149,20 @@ function bounded(input: StarInput): StarInput {
   return { ...input, text, omitted_chars: (input.omitted_chars ?? 0) + Math.max(0, length - MAX_TEXT) };
 }
 
+/** Preflight positional originals before leaving the snapshot page. The destination checks again when landing. */
+export async function checkStarSource(star: Star): Promise<"verified" | "unavailable" | "failed" | "retired"> {
+  const owner = request();
+  try {
+    const item = await fullItem(star.machine_id, star.session_id, star.item_id);
+    if (!owner.current()) return "retired";
+    return star.source_fingerprint && item.id === star.item_id && item.source_fingerprint === star.source_fingerprint
+      ? "verified" : "unavailable";
+  } catch (error) {
+    if (!owner.current()) return "retired";
+    return error instanceof ApiError && error.status === 404 ? "unavailable" : "failed";
+  }
+}
+
 export async function addStar(input: StarInput, loadText?: () => Promise<string>): Promise<void> {
   const key = starKey(input);
   if (pending.has(key) || !knowsManager() || !getToken()) return;
@@ -162,7 +176,7 @@ export async function addStar(input: StarInput, loadText?: () => Promise<string>
     if (!owner.current()) return;
     indexRead++;
     detailRead++;
-    index.set(key, star);
+    index.set(starKey(star), star);
     if (list.status === "ready") publishList({ ...list, stars: list.stars.some((s) => s.id === star.id) ? list.stars : [star, ...list.stars] });
     toast(t("starred.saved"), "ok");
   } catch (error) {

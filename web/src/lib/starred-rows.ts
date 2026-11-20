@@ -3,13 +3,14 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 /** Transcript location as the chat already holds it. */
-export type StarOrigin = { mid: string; sid: string; item: string };
+export type StarOrigin = { mid: string; sid: string; item: string; fingerprint?: string };
 
 export interface StarSource {
   machine_id: string;
   session_id: string;
   item_id: string;
   conversation: "assistant" | "agent";
+  source_fingerprint?: string;
 }
 
 export interface StarInput extends StarSource {
@@ -27,7 +28,11 @@ export interface Star extends StarInput {
   starred_at: string;
 }
 
-export const starKey = (s: StarSource) => JSON.stringify([s.machine_id, s.session_id, s.item_id]);
+export const positionalStar = (item: string) => /^line[0-9]+#[0-9]+$/.test(item);
+export function starKey(s: StarSource & { id?: string }) {
+  const proof = s.source_fingerprint || (s.id && positionalStar(s.item_id) ? `saved:${s.id}` : "");
+  return JSON.stringify([s.machine_id, s.session_id, s.item_id, proof]);
+}
 
 type StarMark = { id?: string; pending?: "add" | "remove" };
 const empty: StarMark = {};

@@ -2,6 +2,7 @@ package saved
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 const (
@@ -27,10 +29,11 @@ const (
 // StarSource identifies the original transcript item. Identical item IDs in
 // different conversations or transcripts remain independent.
 type StarSource struct {
-	Machine      string `json:"machine_id"`
-	Session      string `json:"session_id"`
-	Item         string `json:"item_id"`
-	Conversation string `json:"conversation"`
+	Machine           string `json:"machine_id"`
+	Session           string `json:"session_id"`
+	Item              string `json:"item_id"`
+	Conversation      string `json:"conversation"`
+	SourceFingerprint string `json:"source_fingerprint,omitempty"`
 }
 
 type StarInput struct {
@@ -98,6 +101,12 @@ func (in *StarInput) validate() error {
 		(in.Role != "user" && in.Role != "assistant") || in.Omitted < 0 || in.Omitted > 1_000_000_000 {
 		return errStarInput
 	}
+	if in.SourceFingerprint != "" {
+		if _, err := hex.DecodeString(in.SourceFingerprint); len(in.SourceFingerprint) != 32 || err != nil || !proto.PositionalItemID(in.Item) {
+			return errStarInput
+		}
+		in.SourceFingerprint = strings.ToLower(in.SourceFingerprint)
+	}
 	in.Title, in.Speaker = starLabel(in.Title), starLabel(in.Speaker)
 	in.Text = strings.ReplaceAll(in.Text, "\x00", "")
 	if strings.TrimSpace(in.Text) == "" {
@@ -150,11 +159,31 @@ func (b *starBook) change(ctx context.Context, apply func(*starCollection) (bool
 	return errStarConflict
 }
 
+func sameStarSource(star Star, in StarInput) bool {
+	if star.Machine != in.Machine || star.Session != in.Session || star.Item != in.Item {
+		return false
+	}
+	if !proto.PositionalItemID(in.Item) {
+		return true
+	}
+	if star.SourceFingerprint != in.SourceFingerprint {
+		return false
+	}
+	if in.SourceFingerprint != "" {
+		return true
+	}
+	// An older snapshot has no verified original. Its text remains available,
+	// and Undo can restore it without claiming the current item at this position.
+	return star.Role == in.Role && star.Text == in.Text && star.Omitted == in.Omitted &&
+		((star.WrittenAt == nil && in.WrittenAt == nil) ||
+			(star.WrittenAt != nil && in.WrittenAt != nil && star.WrittenAt.Equal(*in.WrittenAt)))
+}
+
 func (b *starBook) add(ctx context.Context, in StarInput) (Star, error) {
 	var out Star
 	err := b.change(ctx, func(doc *starCollection) (bool, error) {
 		for _, star := range doc.Stars {
-			if star.Machine == in.Machine && star.Session == in.Session && star.Item == in.Item {
+			if sameStarSource(star, in) {
 				out = star
 				return false, nil
 			}

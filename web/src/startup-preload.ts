@@ -512,8 +512,9 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // and its words load with the To-dos page. The budget is main's 482,970 B ceiling plus those 88 B.
 // #7524: Starred adds 406 B in ja against d984f96ab9 (483,143 B to 483,549 B) for the route, compact index bridge,
 // sidebar count, and chat menu entry. The snapshots, their operations, and the page stay lazy. Main already exceeds
-// its bound by 85 B in this environment. The measured merged size leaves 71 B under the updated bound.
-export const FIRST_SCREEN_BUDGET = 483_620;
+// its bound by 85 B in this environment. Guarding reused transcript positions adds 75 B in ja after moving deep-link
+// landing to a lazy chunk. The final ja measurement (483,624 B) leaves 66 B under the updated bound.
+export const FIRST_SCREEN_BUDGET = 483_690;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;

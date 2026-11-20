@@ -31,6 +31,16 @@ const onHub = async (method = "GET", suffix = "", json) => {
   return await response.json();
 };
 
+const sourcePhase = async (phase) => {
+  const response = await fetch(hub + "/mock/starred-source", {
+    method: "POST",
+    headers: { Authorization: "Bearer mock", "Content-Type": "application/json" },
+    body: JSON.stringify({ phase }),
+    signal: AbortSignal.timeout(8000),
+  });
+  assert.ok(response.ok, `setting the positional source phase returned ${response.status}`);
+};
+
 const browser = await chromium.launch({ headless: true, ...(process.env.STARRED_BROWSER ? { executablePath: process.env.STARRED_BROWSER } : { channel: "chrome" }) });
 async function device(theme, phone = false, { width = phone ? 390 : 1440, large = false } = {}) {
   const ctx = await browser.newContext({
@@ -156,11 +166,64 @@ try {
   assert.equal(await old.page.getByRole("link", { name: "Starred", exact: true }).count(), 0);
   await shot(old.page, "starred-older-assistant-320-large");
 
+  // A Claude/Codex fallback line ID denotes a position. Rewriting that line
+  // must bracket the historical snapshot away from the replacement's marker and link.
+  const reused = "line900#0";
+  const originalWords = "Original words from the reused line";
+  const replacementWords = "Replacement words from the reused line";
+  const bubble = (words) => desktop.page.locator("[data-user-bubble]").filter({ hasText: words });
+  const cardFor = (words) => desktop.page.getByRole("article").filter({ hasText: words });
+  const openStarred = async () => {
+    await desktop.page.getByRole("link", { name: /Starred/ }).first().click();
+    await desktop.page.getByRole("heading", { name: "Starred", exact: true }).waitFor();
+  };
+  const menu = async (words, action) => {
+    await bubble(words).getByText(words, { exact: true }).click({ button: "right" });
+    await desktop.page.getByRole("menuitem", { name: action, exact: true }).click();
+  };
+
+  await sourcePhase("original");
+  await desktop.page.goto(web + review);
+  await bubble(originalWords).waitFor();
+  await desktop.page.getByRole("link", { name: /Starred/ }).first().waitFor();
+  await menu(originalWords, "Star");
+  await bubble(originalWords).locator('[data-star-mark="saved"]').waitFor();
+  await openStarred();
+  const originalHref = await cardFor(originalWords).getByRole("link", { name: "Open original" }).getAttribute("href");
+  assert.match(new URL(originalHref, web).searchParams.get("at"), /^star:a{32}:line900#0$/);
+
+  await sourcePhase("replacement");
+  await cardFor(originalWords).getByRole("link", { name: "Open original" }).click();
+  await cardFor(originalWords).getByText("The original message is unavailable.").waitFor();
+  await shot(desktop.page, "starred-reconstructed-source");
+  assert.equal(new URL(desktop.page.url()).pathname, "/starred");
+
+  // Direct links also verify on landing, even without the snapshot-page preflight.
+  await desktop.page.goto(new URL(originalHref, web).href);
+  await bubble(replacementWords).waitFor();
+  await desktop.page.getByText("The original message is unavailable.").waitFor();
+  assert.equal(await desktop.page.locator("[data-search-hit]").count(), 0);
+  await desktop.page.getByRole("link", { name: /Starred/ }).first().waitFor();
+  assert.equal(await bubble(replacementWords).locator('[data-star-mark="saved"]').count(), 0);
+
+  await menu(replacementWords, "Star");
+  await bubble(replacementWords).locator('[data-star-mark="saved"]').waitFor();
+  const copies = (await onHub("GET", "?index=1")).refs.filter((ref) => ref.item_id === reused);
+  assert.deepEqual(copies.map((ref) => ref.source_fingerprint), ["b".repeat(32), "a".repeat(32)]);
+  await openStarred();
+  await cardFor(replacementWords).getByRole("link", { name: "Open original" }).click();
+  await desktop.page.locator("[data-search-hit]").waitFor();
+  assert.match(new URL(desktop.page.url()).searchParams.get("at"), /^star:b{32}:line900#0$/);
+  await menu(replacementWords, "Unstar");
+  await bubble(replacementWords).locator('[data-star-mark="saved"]').waitFor({ state: "hidden" });
+  assert.deepEqual((await onHub("GET", "?index=1")).refs.filter((ref) => ref.item_id === reused).map((ref) => ref.id), [copies[1].id]);
+
   assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors), []);
-  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, and largest text at 320 px");
+  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, largest text at 320 px, and witnessed positional-ID reuse");
 } finally {
   await browser.close();
   if (cleanup) {
+    await sourcePhase("reset");
     for (const star of (await onHub()).stars) await onHub("DELETE", "/" + encodeURIComponent(star.id));
   }
 }

@@ -24,7 +24,7 @@ import { TurnUsage } from "./TurnUsage";
 import type { ReplyTranslation } from "../../lib/reply-translation";
 import { ReplyTranslationButton } from "./ReplyTranslationButton";
 import { useChatActions, type ChatActions } from "./chat-actions";
-import { useCanStar, useStarMark, type StarOrigin, type StarSource } from "../../lib/starred-rows";
+import { positionalStar, useCanStar, useStarMark, type StarOrigin, type StarSource } from "../../lib/starred-rows";
 import { addStar, removeStar } from "../../lib/starred";
 import type { RewindRestore } from "../../lib/rewind";
 
@@ -127,10 +127,11 @@ function useWhileOpen(live: Rewind["block"] | undefined, open: boolean, closed: 
 }
 
 function starSource(origin: StarOrigin | undefined, chat: ChatActions | null): StarSource | undefined {
-  if (!origin || !chat) return undefined;
+  if (!origin || !chat || positionalStar(origin.item) && !origin.fingerprint) return undefined;
   return {
     machine_id: origin.mid, session_id: origin.sid, item_id: origin.item,
     conversation: chat.assistant ? "assistant" : "agent",
+    source_fingerprint: origin.fingerprint,
   };
 }
 

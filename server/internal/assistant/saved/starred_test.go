@@ -214,3 +214,44 @@ func TestStarredConcurrentProcessEdits(t *testing.T) {
 		}
 	}
 }
+
+func TestStarredDistinguishesReusedTranscriptPosition(t *testing.T) {
+	store := &starTestStore{}
+	_, mux, _ := newStarTestBook(store)
+	positional := testStar("line12#0")
+	post := func(input StarInput) Star {
+		t.Helper()
+		raw, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var posted struct{ Star Star }
+		doStar(t, mux, "POST", "", "full", string(raw), 200, &posted)
+		return posted.Star
+	}
+	legacy := post(positional)
+	positional.SourceFingerprint = strings.Repeat("a", 32)
+	original := post(positional)
+	positional.Text = "Different words at an earlier transcript position"
+	positional.SourceFingerprint = strings.Repeat("b", 32)
+	replacement := post(positional)
+	if legacy.ID == original.ID || original.ID == replacement.ID || legacy.ID == replacement.ID {
+		t.Fatal("a reconstructed or legacy source was mistaken for the same message")
+	}
+	if duplicate := post(positional); duplicate.ID != replacement.ID {
+		t.Fatal("retrying the same fingerprint produced a duplicate")
+	}
+
+	var index struct{ Refs []starRef }
+	doStar(t, mux, "GET", "?index=1", "full", "", 200, &index)
+	if len(index.Refs) != 3 || index.Refs[0].SourceFingerprint != replacement.SourceFingerprint ||
+		index.Refs[1].SourceFingerprint != original.SourceFingerprint || index.Refs[2].SourceFingerprint != "" {
+		t.Fatalf("compacted index collapsed positional references: %+v", index.Refs)
+	}
+	doStar(t, mux, "DELETE", "/"+replacement.ID, "full", "", 200, nil)
+	var list struct{ Stars []Star }
+	doStar(t, mux, "GET", "", "full", "", 200, &list)
+	if len(list.Stars) != 2 || list.Stars[0].ID != original.ID || list.Stars[1].ID != legacy.ID {
+		t.Fatal("unstar removed another snapshot at the same position")
+	}
+}

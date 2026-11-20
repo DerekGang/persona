@@ -324,7 +324,7 @@ func (f *File) Full(id string) (proto.Item, error) {
 		return it, nil
 	}
 	full, ok := f.reparse(it.Seq, ref, &scratch)[id]
-	if !ok {
+	if !ok || full.SourceFingerprint != it.SourceFingerprint {
 		return it, fmt.Errorf("item %s: line %d of the transcript changed, reload the chat", id, it.Seq)
 	}
 	it.Text, it.FullSize, it.Image = full.Text, 0, full.Image

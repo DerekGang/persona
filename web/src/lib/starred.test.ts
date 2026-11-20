@@ -4,6 +4,7 @@ import type { Star, StarInput } from "./starred-rows";
 
 const io = vi.hoisted(() => ({
   request: vi.fn(),
+  fullItem: vi.fn(),
   signal: new Map<string, () => void>(),
   toast: vi.fn(),
   rows: new Map<string, { id?: string; pending?: "add" | "remove" }>(),
@@ -12,6 +13,7 @@ const io = vi.hoisted(() => ({
 vi.mock("./api", async (original) => ({
   ...await original<typeof import("./api")>(),
   api: io.request,
+  fullItem: io.fullItem,
 }));
 vi.mock("./store", async (original) => ({
   ...await original<typeof import("./store")>(),
@@ -31,8 +33,9 @@ vi.mock("./starred-rows", async (original) => ({
 
 import { setPairedToken, setToken } from "./api";
 import { chooseManager, MANAGER_HEADER, resetManagerChoice, settleRosterDefault } from "./manager-choice";
-import { addStar, removeStar, resetStarredForTest, startStarred } from "./starred";
+import { addStar, checkStarSource, removeStar, resetStarredForTest, startStarred } from "./starred";
 import { starKey } from "./starred-rows";
+import { readStarTarget } from "../views/chat/land-message";
 
 const input: StarInput = {
   machine_id: "test-machine", session_id: "test-session", item_id: "test-item",
@@ -49,6 +52,7 @@ beforeEach(() => {
   refs = [];
   io.toast.mockReset();
   io.request.mockReset();
+  io.fullItem.mockReset();
   io.request.mockImplementation(async (_path: string, options: { method?: string }) => {
     if (!options.method) return { refs: refs.slice(), can_write: true };
     throw new Error("Unexpected write");
@@ -115,4 +119,34 @@ it("rereads compact references on changes, not full snapshots", async () => {
   expect(io.request.mock.calls.map(([path]) => path)).toEqual([
     "/assistant/starred?index=1", "/assistant/starred?index=1",
   ]);
+});
+
+it("keeps two proven revisions of a reused position independent in the compact index", async () => {
+  const first = { ...star, id: "original", item_id: "line12#0", source_fingerprint: "a".repeat(32) };
+  const second = { ...first, id: "replacement", source_fingerprint: "b".repeat(32) };
+  const legacy = { ...first, id: "legacy", source_fingerprint: undefined };
+  refs = [first, second, legacy];
+  startStarred();
+  await Promise.resolve();
+  expect(io.rows.get(starKey(first))?.id).toBe("original");
+  expect(io.rows.get(starKey(second))?.id).toBe("replacement");
+  expect(io.rows.get(starKey(legacy))?.id).toBe("legacy");
+  expect(io.rows.get(starKey({ ...second, source_fingerprint: "c".repeat(32) }))).toBeUndefined();
+  expect(readStarTarget(`star:${first.source_fingerprint}:${first.item_id}`)).toEqual({ fingerprint: first.source_fingerprint, item: first.item_id });
+  expect(readStarTarget("star:bad:line12#0")).toBeUndefined();
+});
+
+it("retires an in-flight positional original lookup after switching assistants", async () => {
+  const positional = { ...star, item_id: "line12#0", source_fingerprint: "a".repeat(32) };
+  const item = { id: positional.item_id, source_fingerprint: positional.source_fingerprint };
+  startStarred();
+  let complete: (data: typeof item) => void = () => {};
+  io.fullItem.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+  const checking = checkStarSource(positional);
+  chooseManager("another");
+  chooseManager(null);
+  complete(item);
+  await expect(checking).resolves.toBe("retired");
+  io.fullItem.mockResolvedValueOnce({ ...item, source_fingerprint: "b".repeat(32) });
+  await expect(checkStarSource(positional)).resolves.toBe("unavailable");
 });

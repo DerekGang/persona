@@ -1,10 +1,10 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { conversationPage } from "../lib/conversation-page";
 import { shortTime } from "../lib/format";
-import { href, onLinkClick, type Route } from "../lib/router";
-import { type Star, useStarMark } from "../lib/starred-rows";
-import { reloadStarred, removeStar, useStarredList } from "../lib/starred";
+import { href, navigate, onLinkClick, type Route } from "../lib/router";
+import { positionalStar, type Star, useStarMark } from "../lib/starred-rows";
+import { checkStarSource, reloadStarred, removeStar, useStarredList } from "../lib/starred";
 import { Button, copyText, IconButton, Loading } from "../ui/atoms";
 import { Icon } from "../ui/icons";
 import { Markdown } from "../ui/Markdown";
@@ -15,7 +15,8 @@ const PREVIEW_CHARS = 420;
 const PREVIEW_LINES = 6;
 
 export function starRoute(star: Star): Route {
-  const { machine_id: mid, session_id: sid, item_id: at } = star;
+  const { machine_id: mid, session_id: sid, item_id: item } = star;
+  const at = positionalStar(item) ? (star.source_fingerprint && `star:${star.source_fingerprint}:${item}`) || undefined : item;
   return star.conversation === "assistant" ? conversationPage(sid, mid, star.source_manager, at) : { name: "session", mid, sid, at, view: "chat" };
 }
 
@@ -103,11 +104,34 @@ function Notice({ icon, title, detail }: { icon: "star" | "search"; title: strin
 
 const StarCard = memo(function StarCard({ star, canWrite, afterRemove }: { star: Star; canWrite: boolean; afterRemove: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  const openRequest = useRef<symbol | undefined>(undefined);
+  useEffect(() => () => { openRequest.current = undefined; }, []);
+  const [sourceStatus, setSourceStatus] = useState<"checking" | "unavailable" | "failed">();
   const mark = useStarMark(star);
   const preview = useMemo(() => snapshotPreview(star.text), [star.text]);
   const title = star.title || t("starred.conversation");
   const speaker = star.speaker || t(star.role === "user" ? "starred.you" : star.conversation === "agent" ? "starred.agent" : "starred.assistant");
   const source = starRoute(star);
+  const positional = positionalStar(star.item_id);
+  const unavailable = sourceStatus === "unavailable" || positional && !star.source_fingerprint;
+  const openOriginal = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!positional) {
+      onLinkClick(event, source);
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+    event.preventDefault();
+    if (sourceStatus === "checking") return;
+    const request = Symbol();
+    openRequest.current = request;
+    setSourceStatus("checking");
+    void checkStarSource(star).then((result) => {
+      if (openRequest.current !== request || result === "retired") return;
+      openRequest.current = undefined;
+      setSourceStatus(result === "verified" ? undefined : result);
+      if (result === "verified") navigate(source);
+    });
+  };
   const date = star.written_at || star.starred_at;
   return (
     <li className="min-w-0 rounded-card border border-line bg-surface">
@@ -129,13 +153,16 @@ const StarCard = memo(function StarCard({ star, canWrite, afterRemove }: { star:
           )}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <a href={href(source)} onClick={(event) => onLinkClick(event, source)}
+          {!unavailable && <a href={href(source)} onClick={openOriginal} aria-busy={sourceStatus === "checking" || undefined}
             className="inline-flex min-h-11 pointer-fine:min-h-8 items-center gap-1.5 whitespace-nowrap rounded-control px-2.5 text-sm font-medium text-accent-ink hover:bg-hover">
-            <Icon name="external" />{t("starred.open")}
-          </a>
+            <Icon name="external" />{t(sourceStatus === "checking" ? "common.loading" : "starred.open")}
+          </a>}
           <Button icon="copy" className="min-h-11 pointer-fine:min-h-8" onClick={() => void copyText(star.text)}>{t("starred.copy")}</Button>
           {canWrite && <Button icon="star" className="min-h-11 pointer-fine:min-h-8" busy={mark.pending === "remove"} onClick={() => void removeStar(star).then((removed) => { if (removed) afterRemove(); })}>{t("starred.unstar")}</Button>}
         </div>
+        {(unavailable || sourceStatus === "failed") && <p role="status" className="text-xs text-ink-2">
+          {t(unavailable ? "starred.source_unavailable" : "starred.source_failed")}
+        </p>}
       </article>
     </li>
   );

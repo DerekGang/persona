@@ -33,7 +33,7 @@ export function MergedBubble({ msg, mid, sid }: { msg: UserMessage; mid: string;
       )}
       {msg.photos && <AttachedPhotos paths={msg.photos} mid={mid} sid={sid} />}
       {msg.files && <FileCards files={msg.files} mid={mid} />}
-      <MessageActions text={parts.join("\n\n")} isUser ts={msg.ts} side starSource={{ mid, sid, item: msg.id }} className="max-w-full">
+      <MessageActions text={parts.join("\n\n")} isUser ts={msg.ts} side starSource={{ mid, sid, item: msg.id, fingerprint: msg.rawInput?.[0]?.source_fingerprint }} className="max-w-full">
         <div className="flex max-w-full flex-col gap-2 rounded-[14px] bg-user-bubble px-3.5 py-2 text-[length:var(--chat-secondary)] leading-[1.55] text-ink" title={clock(msg.ts)} aria-label={t("chat-messages.message_count", { count: parts.length })}>
           {parts.map((part, i) => (
             <div key={i} className="flex flex-col gap-2">

@@ -5,7 +5,10 @@ import uuid
 
 
 BASE = "/api/v1/assistant/starred"
-FIELDS = ("machine_id", "session_id", "item_id", "conversation")
+SOURCE_FIELDS = ("machine_id", "session_id", "item_id", "source_fingerprint")
+POSITION = "line900#0"
+VERSIONS = {"original": ("Original words from the reused line", "a" * 32),
+            "replacement": ("Replacement words from the reused line", "b" * 32)}
 
 
 def register(d):
@@ -36,16 +39,17 @@ def register(d):
                 if session := (req.query.get("session") or [""])[0]:
                     selected = [s for s in selected if f"{s['machine_id']}/{s['session_id']}" == session]
                 if req.query.get("index") == ["1"]:
-                    body = {"refs": [{k: s[k] for k in (*FIELDS, "id")} for s in selected], "can_write": True}
+                    refs = [{k: s[k] for k in (*SOURCE_FIELDS, "id", "conversation") if k in s} for s in selected]
+                    body = {"refs": refs, "can_write": True}
                 else:
                     body = {"stars": selected, "can_write": True}
             elif req.method == "POST":
                 item = req.json()
-                key = tuple(item.get(k) for k in FIELDS)
-                if not all(key) or not str(item.get("text", "")).strip():
+                key = tuple(item.get(k) for k in SOURCE_FIELDS)
+                if not all(key[:3]) or not str(item.get("text", "")).strip():
                     h.send_json({"error": "A star needs a message"}, 400)
                     return True
-                star = next((s for s in stars if tuple(s[k] for k in FIELDS) == key), None)
+                star = next((s for s in stars if tuple(s.get(k) for k in SOURCE_FIELDS) == key), None)
                 if star is None:
                     star = dict(item, id="sm" + uuid.uuid4().hex, starred_at=hub.ago())
                     stars.insert(0, star)
@@ -66,5 +70,24 @@ def register(d):
         h.send_json(body)
         return True
 
+    def source(h, req):
+        phase = req.json().get("phase")
+        if mode != "1" or phase not in (*VERSIONS, "reset"):
+            h.send_json({"error": "Not found"}, 404)
+            return True
+        with lock:
+            items = [item for item in hub.ITEMS[hub.REVIEW] if item["id"] != POSITION]
+            hub.FULL.pop(POSITION, None)
+            if phase != "reset":
+                text, proof = VERSIONS[phase]
+                item = hub.it("user", "text", 1, id=POSITION, seq=900, text=text, source_fingerprint=proof)
+                items.append(item)
+                hub.FULL[POSITION] = item
+            hub.ITEMS[hub.REVIEW] = items
+            hub.HISTORY_NOW["token"] = hub.HISTORY if phase == "reset" else "starred-source-" + phase
+        h.send_json({"ok": True})
+        return True
+
+    d.route(("POST",), "/mock/starred-source", source)
     d.route(("GET", "POST"), BASE, route)
     d.route(("DELETE",), BASE + r"/([^/]+)", route)

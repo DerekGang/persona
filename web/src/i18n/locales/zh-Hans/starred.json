@@ -24,5 +24,7 @@
   "conversation": "对话",
   "you": "你",
   "agent": "Agent",
-  "assistant": "助手"
+  "assistant": "助手",
+  "source_unavailable": "原消息已不可用。",
+  "source_failed": "无法核实原消息，请重试。"
 }

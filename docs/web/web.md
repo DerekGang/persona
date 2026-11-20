@@ -1476,7 +1476,11 @@ the same snapshot again with a new star ID, even if the original message has gon
 **Pages › Starred** shows the current assistant's saves, newest first. Its count is the number of saved
 messages for that assistant. Search matches words in the saved text, conversation title, and speaker.
 **Copy** copies the saved text. **Open original** opens the conversation at the saved message with the
-existing message-link behavior. A moved, pruned, or deleted transcript can make the original unavailable.
+existing message-link behavior. When the runtime supplies only a line position, it checks a fingerprint of the
+original transcript record before opening and at the final jump. If a rewrite reuses that line, the replacement
+can be starred separately. The old snapshot stays available for Copy and Unstar and shows that its original is
+unavailable. Older snapshots without a fingerprint for a line position also stay readable. Star is offered for
+positional messages only when their node supplies the fingerprint.
 
 The manager keeps up to 300 text snapshots, at most 4,000 Unicode characters each, with a count of text
 left out. New saves retain the visible message text, title, author, and original time when available.

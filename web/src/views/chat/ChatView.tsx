@@ -4,7 +4,7 @@ import { useAssistantTitle, useManagerOffline } from "../ManagerParts";
 import { LinkManager, useShownManager } from "../../lib/manager-choice";
 import { alsoOpenText } from "../../lib/engines";
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, errorText, fullItem, pastHub, sessionPath } from "../../lib/api";
+import { api, ApiError, errorText, pastHub, sessionPath } from "../../lib/api";
 import { attentionReason, externalLink, failureReason, isStoppedAgent, resumeCommand, sessionCan, sessionCanRename, sessionDisplayTab, sessionMenuActions, sourceSubtitle, sessionTitle, sessionTitleDetail, shortPath, stateOf, tabLabel, uuid } from "../../lib/format";
 import { useHerdrTabName } from "../../lib/agents-display";
 import { conversationPage } from "../../lib/conversation-page";
@@ -46,7 +46,7 @@ import { t as tr } from "../../i18n";
 import { lastEditablePrompt, promptsOf, rewindBlock, rewindDone, rewindSession, rewindTarget, type RewindRestore } from "../../lib/rewind";
 import { EDIT_SEND_SETTLE_MS } from "../../lib/edit-last-key";
 import { sendDraft } from "../../lib/drafts";
-import { chatLines, freshWords, insideFold, openRecap, parseUserText, segments, type ChatLine, type UserMessage } from "../../lib/turns";
+import { chatLines, freshWords, openRecap, parseUserText, segments, type ChatLine, type UserMessage } from "../../lib/turns";
 import { foldsBackgroundRounds } from "../../lib/background-fold";
 import type { Interaction, Item, Session, Subagent } from "../../lib/types";
 import { anchoredScroll, followsAgain, isScrollbarPress, jumpLabel, leavesOnKey, leavesOnScrollbarDrag, leavesOnTouch, leavesOnWheel, followsAfterUnfold, UNFOLD_PAUSE, type ScrollAnchor } from "../../lib/disclosure";
@@ -207,8 +207,6 @@ const NO_RAIL_TICKS: NavRailTick[] = [];
  *  up, and how long it stays lit (Android: 3 s). */
 const FIND_MS = 400;
 const GIVE_UP_MS = 2000;
-/** How long landing on a message waits for the chat to stop loading before it pages back itself. */
-const LANDING_WAIT_MS = 5000;
 const HIT_MS = 3000;
 const SEARCH_NOTICE: Record<SearchLoadOutcome, string | null> = {
   start: null,
@@ -1705,9 +1703,11 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
     if (!picked) origin.current = null;
   }, [picked]);
   // brings an item into view, opening what holds it, and lights it: a search hit, or a forward's original (#3899)
-  const seekItem = useCallback((itemId: string, quiet = false) => {
+  const seekItem = useCallback((itemId: string, quiet = false, fingerprint?: string) => {
     const sc = scroller.current;
     if (!sc) return;
+    const sourceMatches = () => !fingerprint || trNow.current.items.some((i) => i.id === itemId && i.source_fingerprint === fingerprint);
+    if (!sourceMatches()) return void toast(t("starred.source_unavailable"));
     follow(false);
     revealItem(ctx.scope, itemId);
     const run = ++going.current;
@@ -1718,6 +1718,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
       giveUpMs: GIVE_UP_MS,
       // the rows that hold it take a few frames to open: the line it is on only once they had the time
       locate: (waited) => {
+        if (!sourceMatches()) return null;
         const exact = sc.querySelector<HTMLElement>(`[data-items~="${CSS.escape(itemId)}"]`);
         const lineId = exact || waited <= FIND_MS ? undefined : lineOfItem(linesNow.current, trNow.current.items, itemId);
         const el = exact ?? (lineId ? sc.querySelector<HTMLElement>(`[data-line="${CSS.escape(lineId)}"]`)?.firstElementChild : null);
@@ -1726,6 +1727,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
     }).then((r) => {
       if (r === "cancelled") return;
       clearReveal();
+      if (!sourceMatches()) return void toast(t("starred.source_unavailable"));
       if (r === "missing") return void (quiet || toast(t("chat-chatview.search_not_found")));
       const el = r.value;
       const tall = el.getBoundingClientRect().height > sc.clientHeight;
@@ -1804,44 +1806,20 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   }, [mid, sid, landAt]);
   const msgLanding = useRef(0);
   useEffect(() => {
-    const item = peekJump(mid, sid);
-    if (!item || tr.loading) return;
+    const target = peekJump(mid, sid);
+    if (!target || tr.loading || target.startsWith("star:") && !tr.firstRead) return;
     takeJump(mid, sid);
     const run = ++msgLanding.current;
-    const holds = () => trNow.current.items.some((i) => i.id === item);
-    if (holds()) return void requestAnimationFrame(() => seekItem(item, true));
-    if (!trNow.current.hasMore) {
-      void (async () => {
-        // A folded assistant reply is not a raw item: resolve it, then open only the fold that holds it.
-        const whole = await fullItem(mid, sid, item);
-        if (run !== msgLanding.current) return;
-        const fold = trNow.current.items.find((f) => insideFold(whole, f));
-        if (!fold) {
-          if (landAt) toast(t("chat-chatview.message_further_up"));
-          return;
-        }
-        openFoldRange(ctx.scope, fold.seq, fold.fold!.through_seq);
-        await trNow.current.expandFold(fold);
-        if (run !== msgLanding.current) return;
-        requestAnimationFrame(() => seekItem(item));
-      })().catch((error: unknown) => {
-        if (landAt && run === msgLanding.current && error instanceof ApiError && error.status === 404) toast(t("chat-chatview.search_not_found"));
+    const current = () => run === msgLanding.current;
+    void import("./land-message").then(({ landMessage }) => {
+      void landMessage({
+        target, mid, sid, scope: ctx.scope, fromLink: Boolean(landAt), current,
+        transcript: () => trNow.current, seek: seekItem, loadEarlier: (stop) => loadForSearch(() => {}, stop),
       });
-      return;
-    }
-    void (async () => {
-      // the chat may still be filling the screen with older pages: wait for that, then page back (again if it was busy)
-      for (let go = 0, until = performance.now() + LANDING_WAIT_MS; go < 3 && run === msgLanding.current && !holds(); go++) {
-        while ((trNow.current.loading || trNow.current.loadingEarlier) && performance.now() < until) await nextFrame();
-        await loadForSearch(() => {}, () => run !== msgLanding.current || holds());
-      }
-      if (run !== msgLanding.current) return;
-      if (holds()) requestAnimationFrame(() => seekItem(item));
-      else toast(t("chat-chatview.message_further_up"));
-    })().catch(() => {});
+    }, () => { if (current()) toast(t("chat-chatview.search_not_found")); });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a new landing is a new item asked for, not the items changing
-  }, [mid, sid, tr.loading, landAt, seekItem, loadForSearch]);
-  useEffect(() => () => void msgLanding.current++, [mid, sid]); // another chat ends a landing on its way
+  }, [mid, sid, tr.loading, tr.firstRead, landAt, seekItem, loadForSearch]);
+  useEffect(() => () => void msgLanding.current++, [mid, sid, landAt]); // a different destination ends a pending landing
   const rounds = useMemo(() => segs.filter((x) => x.user).length, [segs]);
 
   // the newest plan of the chat (PlanCard.tsx planCardStep draws its card): while that card is out of view, a pill above the composer
