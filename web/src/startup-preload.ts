@@ -491,9 +491,9 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // unfolded and in sight with Android's keyboard (lib/viewport.ts, views/chat/ChatView.tsx), and the classes behind the
 // keyboard-aware palette and dock, the attachment ✕'s corner reach and Overview's task-card overlay (styles.css).
 // Where the toasts sit on a phone is a chunk of its own (ui/toast-lift.tsx) a narrow screen loads after the shell.
-// Main had 221 B of room, so its budget is the phone fixes' ja size plus those 221 B. Carry #10822's measured 126 B
-// onto that 483,265 B main budget, keeping main's room.
-export const FIRST_SCREEN_BUDGET = 483_391;
+// Main had 221 B of room, so the budget is this ja size plus those 221 B.
+// Preserve the backend workspace branch ceiling (main's 482,526 B), and carry #10822's measured 126 B onto it.
+export const FIRST_SCREEN_BUDGET = 482_652;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
 const NAME_HASH = /-([A-Za-z0-9_-]{8})\.[^./]+$/;
