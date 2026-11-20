@@ -301,6 +301,9 @@ func (s *Service) effective(ctx context.Context, v Settings) Settings {
 	if v.Launcher == "" {
 		v.Launcher = "claude"
 	}
+	if def.SupervisionBatchMinutes != nil {
+		v.SupervisionBatchMinutes = def.SupervisionBatchMinutes
+	}
 	return v
 }
 
