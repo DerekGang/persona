@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -137,6 +138,15 @@ func TestDispatchCandidatesMatchesWorkerPresetsAndStaysReadOnly(t *testing.T) {
 	}
 }
 
+// dispatchTestLocaleWriter carries the same language interface as the manager's normal HTTP writer.
+type dispatchTestLocaleWriter struct {
+	http.ResponseWriter
+	lang i18n.Lang
+}
+
+func (w *dispatchTestLocaleWriter) Lang() i18n.Lang             { return w.lang }
+func (w *dispatchTestLocaleWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // The new route preserves the 502 status class but never repeats internal launcher or credential errors.
 func TestDispatchCandidatesInventoryErrorIsPublicAndFixed(t *testing.T) {
 	s, f := defaultsHub(t)
@@ -162,6 +172,30 @@ func TestDispatchCandidatesInventoryErrorIsPublicAndFixed(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), canary) {
 		t.Fatalf("the internal error leaked: %s", rec.Body.String())
+	}
+
+	// The production manager wraps responses with a locale-bearing writer. Its generic internal-error localization
+	// must not replace the fixed public field or move it to detail in any shipped language.
+	for _, lang := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja} {
+		t.Run(string(lang), func(t *testing.T) {
+			localized := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/assistant/dispatch/candidates?machine=box", nil)
+			req.Header.Set("Accept-Language", string(lang))
+			s.ServeHTTP(&dispatchTestLocaleWriter{ResponseWriter: localized, lang: lang}, req)
+			if localized.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d", localized.Code)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(localized.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["error"] != "launcher inventory unavailable" || body["code"] != "internal" || body["detail"] != nil {
+				t.Fatalf("localized body = %v", body)
+			}
+			if strings.Contains(localized.Body.String(), canary) {
+				t.Fatalf("the internal error leaked through the localized writer: %s", localized.Body.String())
+			}
+		})
 	}
 
 	rec = httptest.NewRecorder()

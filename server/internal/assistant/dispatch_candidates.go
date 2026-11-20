@@ -24,7 +24,11 @@ func (s *Service) dispatchCandidatesRoutes() {
 			return
 		}
 		if err != nil {
-			apierr.Write(w, http.StatusBadGateway, errLauncherInventoryUnavailable)
+			// Keep the public contract literal through the manager's locale-bearing writer too; the generic
+			// internal-error localization would otherwise replace error and move this string to detail.
+			apierr.WriteBody(w, http.StatusBadGateway, map[string]any{
+				"error": errLauncherInventoryUnavailable.Error(), "code": "internal",
+			})
 			return
 		}
 		writePresetRows(w, "candidates", toDispatchCandidates(rows))
