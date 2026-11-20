@@ -51,7 +51,6 @@ import type { Interaction, Item, Session, Subagent } from "../../lib/types";
 import { anchoredScroll, followsAgain, isScrollbarPress, jumpLabel, leavesOnKey, leavesOnScrollbarDrag, leavesOnTouch, leavesOnWheel, followsAfterUnfold, UNFOLD_PAUSE, type ScrollAnchor } from "../../lib/disclosure";
 import { Button, copyText, cx, Dialog, IconButton, Loading, Menu, toast, useMenu, useNow, type MenuItem } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
-import { StoppedAgentLine } from "./StoppedAgentLine";
 const TakeoverAction = lazy(() => import("./TakeoverAction"));
 import { scrollBehavior } from "../../ui/stream/motion";
 import { segmentChanges, shiftAbove } from "./offscreen";
@@ -168,6 +167,7 @@ const ShellQuestion = lazy(() => import("../ShellQuestionCard"));
 // only in a conversation that moved between Claude Code and Codex (#5054): its earlier sessions, read above the live one
 const EarlierStretches = lazy(() => import("./EarlierStretches"));
 const BotmuxComposerNotes = lazy(() => import("./BotmuxMessages").then((m) => ({ default: m.BotmuxComposerNotes })));
+const StoppedAgentLine = lazy(() => import("./StoppedAgentLine").then((m) => ({ default: m.StoppedAgentLine })));
 const QueueStrip = lazy(() => import("./QueueStrip").then((m) => ({ default: m.QueueStrip })));
 const NavRail = lazy(() => import("./NavRail").then((m) => ({ default: m.NavRail })));
 // Recovery cards are rare: their rendering and words load only when the session actually carries a fallback record.
@@ -2379,7 +2379,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
         {/* kept while a call is on (its draft, attachments and quotes stay), the bar in its place */}
         <div ref={composerBox} className="shrink-0" hidden={voiceState === "live" || Boolean(picker)}>
         {stoppedLine ? (
-          <StoppedAgentLine mid={mid} sid={sid} onTerminal={openTerminal} />
+          <Suspense fallback={null}><StoppedAgentLine mid={mid} sid={sid} onTerminal={openTerminal} /></Suspense>
         ) : (
         <Composer
           draftKey={draftKey}
