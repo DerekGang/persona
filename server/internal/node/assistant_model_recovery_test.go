@@ -955,3 +955,31 @@ func TestProtectedClaudeQuotaClassificationRetainsResetWait(t *testing.T) {
 		}
 	}
 }
+
+func TestProtectedSendWithoutLegacyRecoveryKeepsSharedAvailability(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	n, _ := recoveryTestNode(t, id, true, false)
+	key := unavailableKey("claude", "primary-model")
+	n.unavailable = map[string]time.Time{key: time.Now().Add(time.Hour)}
+	sentinel := errors.New("configured model selected")
+	probeKey := n.home + "\x00claude\x00primary-model"
+	modelProbeCache.Lock()
+	modelProbeCache.results[probeKey] = modelProbeResult{at: time.Now(), agent: "claude", err: sentinel}
+	modelProbeCache.Unlock()
+	t.Cleanup(func() {
+		modelProbeCache.Lock()
+		delete(modelProbeCache.results, probeKey)
+		modelProbeCache.Unlock()
+	})
+	st, _ := n.state.get(id)
+	_, err := n.assistantSend(context.Background(), id, st.Cwd, "claude", "next request", nil, "", "", modelExecution{Model: "primary-model", IsMain: true})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("configured model not selected: %v", err)
+	}
+	n.mu.Lock()
+	_, kept := n.unavailable[key]
+	n.mu.Unlock()
+	if !kept {
+		t.Fatal("a protected send without a legacy hold changed shared worker availability")
+	}
+}

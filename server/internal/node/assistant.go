@@ -558,7 +558,12 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if recovery == nil && id != "" && protected {
 		// Discard a pre-upgrade fallback hold/marker. The manager's current model choice is authoritative,
 		// even while that model is still quota-limited; do not probe or substitute another execution.
-		n.releaseModelRecovery(id, execution.Model)
+		n.mu.Lock()
+		legacyHold := n.fallbacks[id] != nil
+		n.mu.Unlock()
+		if legacyHold || n.modelRecovery(id) != nil {
+			n.releaseModelRecovery(id, execution.Model)
+		}
 	}
 	if recovery == nil && id != "" && !protected && !execution.Strict && !proto.IsExternalLauncher(launcher) {
 		askedModel := execution.Model
