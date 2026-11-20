@@ -401,8 +401,10 @@ internal fun routedFiles(wireId: (String) -> String = { it }, lookup: (machineId
         of(machineId).uploadFile(wireId(machineId), cwd, dir, name, file, conflict)
     override suspend fun copyFiles(machineId: String, cwd: String, paths: List<String>, dir: String, conflict: SessionFileConflict?) =
         of(machineId).copyFiles(wireId(machineId), cwd, paths, dir, conflict)
-    override suspend fun moveFiles(machineId: String, cwd: String, paths: List<String>, dir: String, conflict: SessionFileConflict?) =
-        of(machineId).moveFiles(wireId(machineId), cwd, paths, dir, conflict)
+    override suspend fun move(machineId: String, cwd: String, path: String, directory: String, conflict: SessionMoveConflictPolicy?) =
+        of(machineId).move(wireId(machineId), cwd, path, directory, conflict)
+    override suspend fun move(machineId: String, cwd: String, paths: List<String>, directory: String, conflict: SessionMoveConflictPolicy?) =
+        of(machineId).move(wireId(machineId), cwd, paths, directory, conflict)
     override suspend fun zipFiles(machineId: String, cwd: String, paths: List<String>, name: String, dir: String?) =
         of(machineId).zipFiles(wireId(machineId), cwd, paths, name, dir)
     override suspend fun chmod(machineId: String, cwd: String, path: String, mode: Int) = of(machineId).chmod(wireId(machineId), cwd, path, mode)

@@ -7,9 +7,7 @@
     <string name="files_action_download">ダウンロード</string>
     <string name="files_action_duplicate">複製</string>
     <string name="files_action_copy_to">コピー先…</string>
-    <string name="files_action_move_to">移動先…</string>
     <string name="files_action_copy_here">ここにコピー</string>
-    <string name="files_action_move_here">ここに移動</string>
     <string name="files_action_compress">圧縮</string>
     <string name="files_action_archive_name">アーカイブ.zip</string>
     <string name="files_action_compressed">%1$s を作成しました</string>
@@ -62,7 +60,10 @@
     <string name="files_action_downloading">ファイルをダウンロード中…</string>
     <string name="files_action_uploading">ファイルをアップロード中…</string>
     <string name="files_action_copying">コンピュータでコピー中…</string>
-    <string name="files_action_moving">コンピュータで移動中…</string>
     <string name="files_action_compressing">コンピュータで圧縮中…</string>
     <string name="files_action_bulk_conflict">選択した %1$d 項目で名前が重複するすべての項目に、この選択が適用されます。</string>
+    <plurals name="files_move_selection">
+        <item quantity="one">%1$d 項目を移動</item>
+        <item quantity="other">%1$d 項目を移動</item>
+    </plurals>
 </resources>

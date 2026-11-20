@@ -3,7 +3,7 @@ package persona.core.contracts.api
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Reads and supported file operations on the machine hosting a session. */
+/** Access to the machine hosting a session: reads and file changes where the hub offers them. */
 interface SessionFiles {
     suspend fun directory(machineId: String, cwd: String, path: String): SessionDirectory
     /** Relative paths beneath the displayed [folder], from one bounded search on the machine. */
@@ -60,7 +60,7 @@ interface SessionFiles {
      */
     suspend fun pull(machineId: String, cwd: String): SessionGitPull = throw UnsupportedOperationException("pull")
     /**
-     * Whether [rename], [trash] and [restore] work for [machineId] (its hub's `file_edit` feature). An unknown feature list
+     * Whether [rename], [move], [trash] and [restore] work for [machineId] (its hub's `file_edit` feature). An unknown feature list
      * (an older hub's reply) offers them and lets the answer tell, as iOS `FolderEdits.available`.
      */
     fun editsFiles(machineId: String): Boolean = false
@@ -76,8 +76,6 @@ interface SessionFiles {
                            conflict: SessionFileConflict? = null): SessionUploadedFile = throw UnsupportedOperationException("upload")
     suspend fun copyFiles(machineId: String, cwd: String, paths: List<String>, dir: String,
                           conflict: SessionFileConflict? = null): List<SessionFileChange> = throw UnsupportedOperationException("copy")
-    suspend fun moveFiles(machineId: String, cwd: String, paths: List<String>, dir: String,
-                          conflict: SessionFileConflict? = null): List<SessionFileChange> = throw UnsupportedOperationException("move")
     /** Without [dir] the node creates a temporary ZIP for [download]. */
     suspend fun zipFiles(machineId: String, cwd: String, paths: List<String>, name: String, dir: String? = null): SessionZippedFile =
         throw UnsupportedOperationException("zip")
@@ -89,6 +87,17 @@ interface SessionFiles {
      * already taken (409 `exists`).
      */
     suspend fun rename(machineId: String, cwd: String, path: String, name: String): String = throw UnsupportedOperationException("rename")
+    /**
+     * `POST …/files/move`: one [path] into [directory]. A null [conflict] leaves both items in place on 409 `exists`.
+     * The other policies are for a retry after the user chooses how to handle that conflict.
+     */
+    suspend fun move(machineId: String, cwd: String, path: String, directory: String, conflict: SessionMoveConflictPolicy? = null): SessionMovedFile =
+        throw UnsupportedOperationException("move")
+    /** Moves all selected paths in one request. A single-item transport still serves a single selection. */
+    suspend fun move(machineId: String, cwd: String, paths: List<String>, directory: String,
+                     conflict: SessionMoveConflictPolicy? = null): List<SessionMovedFile> =
+        paths.singleOrNull()?.let { listOf(move(machineId, cwd, it, directory, conflict)) }
+            ?: throw UnsupportedOperationException("move")
     /** `POST …/files/trash`: [paths] to the machine's trash, each with the id [restore] takes to put it back. */
     suspend fun trash(machineId: String, cwd: String, paths: List<String>): List<SessionTrashedFile> =
         throw UnsupportedOperationException("trash")
@@ -98,6 +107,13 @@ interface SessionFiles {
 
 /** `POST …/files/rename` and each of `…/files/restore`'s answers: where the file is now. */
 @Serializable data class SessionFilePath(val path: String)
+
+enum class SessionMoveConflictPolicy(val wire: String) { KeepBoth("keep"), Replace("replace") }
+
+/** Where the item came from and where it landed, including any numbered name chosen by the node. */
+@Serializable data class SessionMovedFile(val from: String, val to: String)
+
+@Serializable data class SessionMovedFiles(val moved: List<SessionMovedFile> = emptyList())
 
 /** One path `POST …/files/trash` moved to the machine's trash, and the opaque id that puts it back. */
 @Serializable data class SessionTrashedFile(val path: String, @SerialName("trash_id") val trashId: String)

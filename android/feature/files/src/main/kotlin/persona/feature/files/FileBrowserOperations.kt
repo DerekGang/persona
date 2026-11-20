@@ -5,8 +5,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -49,7 +47,7 @@ private data class Destination(val move: Boolean, val targets: List<FileBrowserT
 
 @Composable
 internal fun rememberFileBrowserActions(controller: FilesController, folder: String, readOnly: Boolean, machineOs: String?,
-    onOpenFolderTerminal: ((String) -> Unit)?): FileBrowserActions {
+    hidden: Boolean, moveStatus: FileMove?, report: (FileEdit) -> Unit, onOpenFolderTerminal: ((String) -> Unit)?): FileBrowserActions {
     val context = LocalContext.current
     val resources = LocalResources.current
     val feedback = LocalAppFeedback.current
@@ -127,17 +125,17 @@ internal fun rememberFileBrowserActions(controller: FilesController, folder: Str
             feedback?.notice(text(R.string.files_action_upload_unreadable), FeedbackStyle.Error)
         }
     }
-    fun moveOrCopy(action: Destination, dir: String) {
-        if (!controller.canWrite(dir) || (action.move && action.targets.any { !controller.canWrite(it.path) })) return
-        val paths = action.targets.map { it.path }
-        val name = action.targets.first().entry.name
-        runChange(name, if (action.move) R.string.files_action_moving else R.string.files_action_copying) {
+    fun copy(targets: List<FileBrowserTarget>, dir: String) {
+        if (!controller.canWrite(dir)) return
+        val paths = targets.map { it.path }
+        val name = targets.first().entry.name
+        runChange(name, R.string.files_action_copying) {
             val result = onFileConflict(name, { ask(it, paths.size) }) { choice ->
-                if (action.move) api.moveFiles(mid, cwd, paths, dir, choice) else api.copyFiles(mid, cwd, paths, dir, choice)
+                api.copyFiles(mid, cwd, paths, dir, choice)
             }
             if (result != null) {
                 refresh()
-                success(resources.getQuantityString(if (action.move) R.plurals.files_action_moved else R.plurals.files_action_copied, result.size, result.size))
+                success(resources.getQuantityString(R.plurals.files_action_copied, result.size, result.size))
             }
         }
     }
@@ -162,7 +160,7 @@ internal fun rememberFileBrowserActions(controller: FilesController, folder: Str
         }
         if (offers(SessionFileFeature.Copy)) add(JAction(text(R.string.files_action_copy_to), PersonaIcons.copy) { destination = Destination(false, targets) })
         if (safeTargets(targets)) {
-            if (offers(SessionFileFeature.Edit)) add(JAction(text(R.string.files_action_move_to), PersonaIcons.folder) { destination = Destination(true, targets) })
+            if (controller.editsFiles && moveStatus == null) add(JAction(text(R.string.files_move), PersonaIcons.folder) { destination = Destination(true, targets) })
             if (offers(SessionFileFeature.Zip)) add(JAction(text(R.string.files_action_compress), PersonaIcons.archive) { archive(targets, downloading = false) })
         }
     }
@@ -190,17 +188,21 @@ internal fun rememberFileBrowserActions(controller: FilesController, folder: Str
         }
     }
     destination?.let { action ->
-        DestinationFolderPicker(controller, folder, action, onDismiss = { destination = null }) { dir ->
+        val sources = action.targets.map { MoveSource(it.path, it.entry.dir) }
+        MoveDestinationSheet(sources, controller, hidden, copying = !action.move, onDismiss = { destination = null }) { dir ->
             destination = null
-            moveOrCopy(action, dir)
+            if (action.move) controller.move(sources, dir, report) else copy(action.targets, dir)
         }
+    }
+    (moveStatus as? FileMove.Conflict)?.let { conflict ->
+        MoveConflictDialog(conflict) { controller.answerMove(conflict, it, report) }
     }
     permissions?.let { FilePermissions(controller, it) { permissions = null } }
     questions.firstOrNull()?.let { question ->
         val dismiss = { question.answer.complete(null); Unit }
         JDialog(dismiss, title = stringResource(R.string.files_action_conflict, question.name),
             text = if (question.count > 1) stringResource(R.string.files_action_bulk_conflict, question.count) else null,
-            confirm = stringResource(R.string.files_action_keep) to { question.answer.complete(SessionFileConflict.Keep) }) {
+            confirm = stringResource(R.string.files_action_keep) to { question.answer.complete(SessionFileConflict.KeepBoth) }) {
             JButton(stringResource(R.string.files_action_replace), { question.answer.complete(SessionFileConflict.Replace) },
                 kind = JButtonKind.Destructive)
         }
@@ -222,7 +224,7 @@ internal fun rememberFileBrowserActions(controller: FilesController, folder: Str
             if (safeTargets(listOf(target)) && offers(SessionFileFeature.Copy)) add(JAction(text(R.string.files_action_duplicate), PersonaIcons.copy) {
                 val parent = FilesPaths.parent(target.path) ?: folder
                 runChange(target.entry.name, R.string.files_action_copying) {
-                    val changes = api.copyFiles(mid, cwd, listOf(target.path), parent, SessionFileConflict.Keep)
+                    val changes = api.copyFiles(mid, cwd, listOf(target.path), parent, SessionFileConflict.KeepBoth)
                     refresh()
                     success(resources.getQuantityString(R.plurals.files_action_copied, changes.size, changes.size))
                 }
@@ -236,7 +238,7 @@ internal fun rememberFileBrowserActions(controller: FilesController, folder: Str
 }
 
 @Composable
-private fun NewFileName(folder: Boolean, onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+internal fun NewFileName(folder: Boolean, onDismiss: () -> Unit, onCreate: (String) -> Unit) {
     val suggested = if (folder) "" else stringResource(R.string.files_action_untitled)
     var name by rememberSaveable(folder) { mutableStateOf(suggested) }
     val problem = if ('\\' in name) NameProblem.Slash else nameProblem(name)
@@ -245,61 +247,5 @@ private fun NewFileName(folder: Boolean, onDismiss: () -> Unit, onCreate: (Strin
         JTextField(name, { name = it }, Modifier.fillMaxWidth().testTag("files-create-name"), label = stringResource(R.string.files_rename_name),
             singleLine = true, autofill = false)
         if (problem != null && name.isNotBlank()) Text(nameProblemText(LocalResources.current, problem), color = PersonaTheme.palette.danger.text)
-    }
-}
-
-@Composable
-private fun DestinationFolderPicker(controller: FilesController, initial: String, action: Destination,
-    onDismiss: () -> Unit, choose: (String) -> Unit) {
-    val resources = LocalResources.current
-    var here by rememberSaveable(initial) { mutableStateOf(initial) }
-    var listing by remember(here) { mutableStateOf<SessionDirectory?>(null) }
-    var error by remember(here) { mutableStateOf<String?>(null) }
-    var newFolder by rememberSaveable(here) { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    var attempt by remember(here) { mutableIntStateOf(0) }
-    LaunchedEffect(controller, here, attempt) {
-        error = null
-        try { listing = controller.api.directory(controller.machineId, controller.cwd, here) }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { error = filesLoadError(resources, failure) }
-    }
-    val shown = listing?.path?.ifBlank { here } ?: here
-    if (newFolder) {
-        NewFileName(folder = true, onDismiss = { newFolder = false }) { name ->
-            newFolder = false
-            scope.launch {
-                try { here = controller.api.mkdir(controller.machineId, controller.cwd, shown, name) }
-                catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { error = editRefusalText(resources, editRefusal(failure, name)) }
-            }
-        }
-        return
-    }
-    val nested = action.targets.any { it.entry.dir && FilesPaths.isWithin(shown, it.path) }
-    val same = action.move && action.targets.all { FilesPaths.parent(it.path) == shown }
-    JSheet(onDismiss, title = stringResource(if (action.move) R.string.files_action_move_to else R.string.files_action_copy_to)) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
-            Text(shown, style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink2)
-            FilesPaths.parent(shown)?.let { up -> JRow(stringResource(R.string.files_up), leadingIcon = PersonaIcons.queueUp, onClick = { here = up }) }
-            if (listing != null && controller.canWrite(shown) && controller.api.supports(controller.machineId, SessionFileFeature.Mkdir)) {
-                JTextButton(stringResource(R.string.files_action_new_folder), { newFolder = true }, icon = PersonaIcons.folder)
-            }
-            when {
-                error != null -> {
-                    Text(requireNotNull(error), color = PersonaTheme.palette.danger.text)
-                    JButton(stringResource(R.string.files_retry), { attempt++ }, kind = JButtonKind.Quiet)
-                }
-                listing == null -> androidx.compose.material3.CircularProgressIndicator()
-                else -> LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth()) {
-                    items(listing!!.entries.filter { it.dir && !it.linkBroken }, key = { it.name }) { entry ->
-                        JRow(entry.name, leadingIcon = PersonaIcons.folder, onClick = { here = joinRemotePath(shown, entry.name) })
-                    }
-                    if (listing!!.truncated) item { Text(stringResource(R.string.files_too_many, listing!!.entries.size), style = PersonaTheme.type.callout) }
-                }
-            }
-            JButton(stringResource(if (action.move) R.string.files_action_move_here else R.string.files_action_copy_here), { choose(shown) },
-                enabled = listing != null && controller.canWrite(shown) && !nested && !same)
-        }
     }
 }

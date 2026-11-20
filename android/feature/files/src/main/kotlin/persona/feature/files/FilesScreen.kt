@@ -17,6 +17,8 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -118,8 +120,13 @@ private fun FilesBrowser(
     var trashing by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val report = rememberFileEditReport(controller)
     val readOnly = !controller.canWrite(here)
-    val edits = controller.editsFiles && !readOnly
-    val actions = rememberFileBrowserActions(controller, here, readOnly, machineOs, onOpenFolderTerminal)
+    val moveStatus by controller.moveStatus.collectAsStateWithLifecycle()
+    val edits = controller.editsFiles && !readOnly && moveStatus == null
+    val endSelection = { selecting = false; selected = arrayListOf<String>() }
+    val actions = rememberFileBrowserActions(controller, here, readOnly, machineOs, hidden, moveStatus, { result ->
+        if (result is FileEdit.Moved) endSelection()
+        report(result)
+    }, onOpenFolderTerminal)
     if (find) {
         FindInFolder(controller, here) { find = false }
         return
@@ -136,7 +143,6 @@ private fun FilesBrowser(
     val toggle: (String) -> Unit = { path ->
         selected = ArrayList(if (path in selected) selected - path else selected + path)
     }
-    val endSelection = { selecting = false; selected = arrayListOf<String>() }
     BackHandler(enabled = selecting, onBack = endSelection)
     val filePane = pane == FilesPane.Files || state.git?.isRepo == false
     val list = rememberLazyListState()
@@ -157,7 +163,9 @@ private fun FilesBrowser(
             JIconButton(PersonaIcons.retry, stringResource(R.string.files_refresh), { controller.directory(); controller.refreshGit() },
                 enabled = !state.directoryLoading && !state.gitLoading)
         },
-        bottomBar = if (selecting) ({
+        bottomBar = if (moveStatus == FileMove.Pending) ({
+            Box(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) { Notice(stringResource(R.string.files_moving)) }
+        }) else if (selecting) ({
             val batch = actions.selectedItems(targets).toMutableList()
             if (edits && targets.isNotEmpty() && targets.all { controller.canWrite(it.path) }) batch += JAction(stringResource(R.string.files_trash), PersonaIcons.delete, destructive = true) {
                 trashing = ArrayList(targets.map { it.path })
@@ -295,7 +303,7 @@ private fun LazyListScope.filesBrowser(state: FilesState, controller: FilesContr
 
 /**
  * One entry: its kind, the name (a hidden one quieter), size and when it changed, the Git change, ⋯. Its menu (⋯ or a long
- * press) inserts or copies the path, and with [rename] and [trash] renames it or moves it to the trash (iOS `FilesPane.entryRow`).
+ * press) inserts or copies the path and offers the available file changes (iOS `FilesPane.entryRow`).
  */
 @Composable
 private fun FileRow(entry: SessionFileEntry, change: SessionGitFile?, now: Instant, selecting: Boolean, checked: Boolean, highlighted: Boolean,
@@ -377,4 +385,4 @@ internal fun fileIcon(name: String): PhIcon = when (FilesPaths.extension(name)) 
 }
 
 /** The most entries a folder listing brings (the node cuts it there and says it's truncated). */
-private const val MAX_LISTED = 2000
+internal const val MAX_LISTED = 2000

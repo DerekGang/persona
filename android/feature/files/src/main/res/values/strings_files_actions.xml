@@ -7,9 +7,7 @@
     <string name="files_action_download">Download</string>
     <string name="files_action_duplicate">Duplicate</string>
     <string name="files_action_copy_to">Copy to…</string>
-    <string name="files_action_move_to">Move to…</string>
     <string name="files_action_copy_here">Copy here</string>
-    <string name="files_action_move_here">Move here</string>
     <string name="files_action_compress">Compress</string>
     <string name="files_action_archive_name">Archive.zip</string>
     <string name="files_action_compressed">Created %1$s</string>
@@ -65,7 +63,10 @@
     <string name="files_action_downloading">Downloading file…</string>
     <string name="files_action_uploading">Uploading files…</string>
     <string name="files_action_copying">Copying on the computer…</string>
-    <string name="files_action_moving">Moving on the computer…</string>
     <string name="files_action_compressing">Compressing on the computer…</string>
     <string name="files_action_bulk_conflict">Your choice applies to all name conflicts among the %1$d selected items.</string>
+    <plurals name="files_move_selection">
+        <item quantity="one">Move %1$d item</item>
+        <item quantity="other">Move %1$d items</item>
+    </plurals>
 </resources>

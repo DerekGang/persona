@@ -119,8 +119,8 @@ class HubSessionFiles internal constructor(
     override suspend fun copyFiles(machineId: String, cwd: String, paths: List<String>, dir: String, conflict: SessionFileConflict?) =
         edit<SessionCopiedFiles>(machineId, "copy", transferBody(cwd, paths, dir, conflict), COPY_ZIP_TIMEOUT_SECONDS).copied
 
-    override suspend fun moveFiles(machineId: String, cwd: String, paths: List<String>, dir: String, conflict: SessionFileConflict?) =
-        edit<SessionMovedFiles>(machineId, "move", transferBody(cwd, paths, dir, conflict)).moved
+    override suspend fun move(machineId: String, cwd: String, paths: List<String>, directory: String, conflict: SessionMoveConflictPolicy?) =
+        edit<SessionMovedFiles>(machineId, "move", transferBody(cwd, paths, directory, conflict)).moved
 
     private fun transferBody(cwd: String, paths: List<String>, dir: String, conflict: SessionFileConflict?) = buildJsonObject {
         putJsonArray("paths") { paths.forEach { add(it) } }
@@ -142,6 +142,9 @@ class HubSessionFiles internal constructor(
 
     override suspend fun rename(machineId: String, cwd: String, path: String, name: String) =
         edit<SessionFilePath>(machineId, "rename", buildJsonObject { put("path", path); put("cwd", cwd); put("name", name) }).path
+
+    override suspend fun move(machineId: String, cwd: String, path: String, directory: String, conflict: SessionMoveConflictPolicy?) =
+        move(machineId, cwd, listOf(path), directory, conflict).singleOrNull() ?: throw HubFailure(HubError.Protocol, retryable = false)
 
     override suspend fun trash(machineId: String, cwd: String, paths: List<String>) =
         edit<SessionTrashedFiles>(machineId, "trash", buildJsonObject { putJsonArray("paths") { paths.forEach { add(it) } }; put("cwd", cwd) }).trashed

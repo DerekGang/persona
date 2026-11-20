@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import persona.core.hub.HubFailure
 
 enum class FilesPane { Files, Git }
 
@@ -407,8 +408,64 @@ class FilesController(
         }
     }
 
-    /** Whether this machine's hub renames and trashes (`file_edit`): a row's menu offers Rename and Move to Trash then. */
+    /** Whether this machine's hub offers file changes (`file_edit`). */
     val editsFiles: Boolean get() = api.editsFiles(machineId)
+
+    private val mutableMove = MutableStateFlow<FileMove?>(null)
+    internal val moveStatus = mutableMove.asStateFlow()
+
+    /** The picker browses on the same machine without changing the folder behind it. */
+    internal fun destinationBrowser(scope: CoroutineScope) = FilesController(api, machineId, cwd, scope, describe, machineLocation = machineLocation)
+
+    internal fun move(sources: List<MoveSource>, directory: String, report: (FileEdit) -> Unit) {
+        if (!editsFiles || mutableMove.value != null || !canWrite(directory) || sources.isEmpty() ||
+            sources.any { !canWrite(it.path) || !it.canMoveInto(directory) }) return
+        sendMove(sources, directory, null, report)
+    }
+
+    internal fun answerMove(conflict: FileMove.Conflict, policy: SessionMoveConflictPolicy?, report: (FileEdit) -> Unit) {
+        if (mutableMove.value !== conflict) return
+        if (policy == null) mutableMove.value = null
+        else sendMove(conflict.sources, conflict.directory, policy, report)
+    }
+
+    private fun sendMove(sources: List<MoveSource>, directory: String, policy: SessionMoveConflictPolicy?, report: (FileEdit) -> Unit) {
+        mutableMove.value = FileMove.Pending
+        edits.launch {
+            val moved = try {
+                api.move(machineId, cwd, sources.map { it.path }, directory, policy)
+            } catch (cancelled: CancellationException) {
+                mutableMove.value = null
+                throw cancelled
+            } catch (error: Exception) {
+                val refusal = editRefusal(error, FilesPaths.name(sources.first().path))
+                if (policy == null && HubFailure.from(error).status == 409 && refusal is EditRefusal.Exists) {
+                    mutableMove.value = FileMove.Conflict(sources, directory, refusal.name)
+                } else {
+                    // A later item can fail after the machine has already moved an earlier one.
+                    if (sources.size > 1) refreshAfterMove()
+                    mutableMove.value = null
+                    report(FileEdit.Failed(refusal))
+                }
+                return@launch
+            }
+            refreshAfterMove()
+            mutableMove.value = null
+            if (moved.size == sources.size) {
+                report(FileEdit.Moved(FilesPaths.name(moved.first().to), FilesPaths.name(directory), moved.size))
+            } else {
+                report(FileEdit.Failed(editRefusal(HubFailure(persona.core.hub.HubError.Protocol), null)))
+            }
+        }
+    }
+
+    /** A moved folder can invalidate listings and previews at every path beneath it. */
+    private fun refreshAfterMove() {
+        listings.clear()
+        contents.clear()
+        directory()
+        refreshGit()
+    }
 
     /**
      * Renames [path] to [name] in its folder (`files/rename`), then reads the folder shown again (iOS `FolderEdits.rename`).

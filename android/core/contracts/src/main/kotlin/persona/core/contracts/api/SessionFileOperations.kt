@@ -8,7 +8,8 @@ enum class SessionFileFeature(val wire: String) {
     Edit("file_edit"), Copy("file_copy"), Zip("file_zip"), Chmod("file_chmod"), PaneCwd("pane_cwd"),
 }
 
-enum class SessionFileConflict(val wire: String) { Keep("keep"), Replace("replace") }
+/** Upload, copy and move use the same explicit conflict choices on the wire. */
+typealias SessionFileConflict = SessionMoveConflictPolicy
 
 @Serializable data class SessionFileSearch(val files: List<String> = emptyList(), val truncated: Boolean = false)
 @Serializable data class SessionWrittenFile(val path: String, val size: Long, val revision: String, val mtime: String? = null)
@@ -16,5 +17,4 @@ enum class SessionFileConflict(val wire: String) { Keep("keep"), Replace("replac
 @Serializable data class SessionZippedFile(val path: String, val name: String, val size: Long, val files: Int)
 @Serializable data class SessionFileChange(val from: String, val to: String)
 @Serializable data class SessionCopiedFiles(val copied: List<SessionFileChange> = emptyList())
-@Serializable data class SessionMovedFiles(val moved: List<SessionFileChange> = emptyList())
 @Serializable data class SessionFileMode(val path: String, val mode: Int)

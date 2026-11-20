@@ -39,6 +39,7 @@ private class ActionComputer : SessionFiles by EditorTestMachine() {
     var slowZip: CompletableDeferred<Unit>? = null
     var granted = 420
     var supportsWrites = true
+    var moveConflict = false
     override fun supports(machineId: String, feature: SessionFileFeature) = supportsWrites || feature == SessionFileFeature.Download
     override fun editsFiles(machineId: String) = supportsWrites
     override suspend fun directory(machineId: String, cwd: String, path: String): SessionDirectory {
@@ -72,9 +73,10 @@ private class ActionComputer : SessionFiles by EditorTestMachine() {
         if (conflict == null) throw HubFailure(HubError.Server, status = 409, code = "exists", body = """{"name":"draft.md"}""")
         return paths.map { SessionFileChange(it, joinRemotePath(dir, "draft 2.md")) }
     }
-    override suspend fun moveFiles(machineId: String, cwd: String, paths: List<String>, dir: String, conflict: SessionFileConflict?): List<SessionFileChange> {
-        calls += "move $paths $dir $conflict"
-        return paths.map { SessionFileChange(it, joinRemotePath(dir, FilesPaths.name(it))) }
+    override suspend fun move(machineId: String, cwd: String, paths: List<String>, directory: String, conflict: SessionMoveConflictPolicy?): List<SessionMovedFile> {
+        calls += "move $paths $directory $conflict"
+        if (moveConflict && conflict == null) throw HubFailure(HubError.Server, status = 409, code = "exists", body = """{"name":"draft.md"}""")
+        return paths.map { SessionMovedFile(it, joinRemotePath(directory, FilesPaths.name(it))) }
     }
     override suspend fun zipFiles(machineId: String, cwd: String, paths: List<String>, name: String, dir: String?): SessionZippedFile {
         calls += "zip $paths $name $dir"
@@ -174,18 +176,41 @@ class FileBrowserOperationsDeviceTest {
     @Test fun copyAsksBeforeReplacementMoveChoosesARemoteFolderAndDuplicateKeepsBoth() {
         show()
         menu("draft.md"); tap("Duplicate")
-        awaitCall("copy [$root/draft.md] $root Keep")
+        awaitCall("copy [$root/draft.md] $root KeepBoth")
         menu("draft.md"); tap("Copy to…"); tap("Notes"); tap("Copy here")
         awaitCall("copy [$root/draft.md] $root/Notes null")
         assertFalse(machine.calls.any { it.endsWith("Replace") })
         tap("Keep both")
-        awaitCall("copy [$root/draft.md] $root/Notes Keep")
-        menu("draft.md"); tap("Move to…"); tap("Notes"); tap("Move here")
+        awaitCall("copy [$root/draft.md] $root/Notes KeepBoth")
+        menu("draft.md"); tap("Move…"); tap("Notes"); tap("Move Here")
         awaitCall("move [$root/draft.md] $root/Notes null")
         menu("Notes"); tap("Open Terminal Here")
         awaitCall("terminal $root/Notes")
         menu("draft.md"); tap("Compress")
         awaitCall("zip [$root/draft.md] draft.zip $root")
+    }
+
+    @Test fun selectionMovesTheWholeBatchOnlyAfterTheChosenConflictPolicy() {
+        machine.moveConflict = true
+        show()
+        menu("photo.png"); tap("Select"); tap("draft.md")
+        rule.onNodeWithContentDescription("Move…").performClick()
+        rule.onNodeWithText("Move 2 items").assertExists()
+        rule.onNodeWithText("Move Here").assertIsNotEnabled()
+        tap("Notes")
+        shot("move-destination")
+        tap("Move Here")
+        val transfer = "move [$root/draft.md, $root/photo.png] $root/Notes"
+        awaitCall("$transfer null")
+        rule.onNodeWithText("Your choice applies to all name conflicts", substring = true).assertExists()
+        shot("move-conflict")
+        assertEquals(listOf("$transfer null"), machine.calls.filter { it.startsWith("move ") })
+        tap("Cancel")
+        rule.onNodeWithContentDescription("Move…").performClick()
+        tap("Notes"); tap("Move Here"); tap("Keep Both")
+        rule.waitUntil(6_000) { "Moved 2 items" in notices }
+        assertEquals(listOf("$transfer null", "$transfer null", "$transfer KeepBoth"), machine.calls.filter { it.startsWith("move ") })
+        rule.onNodeWithText("2 selected").assertDoesNotExist()
     }
 
     @Test fun permissionGridNamesTheChangeAndRequiresTheSecondConfirmation() {
@@ -233,14 +258,14 @@ class FileBrowserOperationsDeviceTest {
         rule.onNodeWithContentDescription("New").assertDoesNotExist()
         menu("child")
         rule.onNodeWithText("Download").assertExists()
-        for (label in listOf("Move to…", "Copy to…", "Compress", "Permissions")) rule.onNodeWithText(label).assertDoesNotExist()
+        for (label in listOf("Move…", "Copy to…", "Compress", "Permissions")) rule.onNodeWithText(label).assertDoesNotExist()
     }
 
     @Test fun copyMayReadFromOutsideTheHomeIntoANewWritableDestination() {
         show("/shared")
         menu("child"); tap("Copy to…")
         rule.onNode(hasText("Copy here") and hasClickAction()).assertIsNotEnabled()
-        tap("Up one level"); tap("home"); tap("reader"); tap("project")
+        rule.onAllNodesWithContentDescription("Up one level").onLast().performClick(); tap("home"); tap("reader"); tap("project")
         tap("New Folder")
         rule.onNode(hasSetTextAction()).performTextReplacement("handoff")
         tap("Create")
@@ -248,7 +273,7 @@ class FileBrowserOperationsDeviceTest {
         tap("Copy here")
         awaitCall("copy [/shared/child] $root/handoff null")
         tap("Keep both")
-        awaitCall("copy [/shared/child] $root/handoff Keep")
+        awaitCall("copy [/shared/child] $root/handoff KeepBoth")
     }
 
     @Test fun cancellingASlowFolderDownloadStopsTheRequestBeforeTheSavePicker() {

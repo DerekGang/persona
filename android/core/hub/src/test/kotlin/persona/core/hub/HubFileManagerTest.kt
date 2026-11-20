@@ -167,7 +167,7 @@ class HubFileManagerTest {
 
                 hub.respond("""{"path":"/home/demo/report 2.bin","name":"report 2.bin","size":260001}""")
                 assertEquals(SessionUploadedFile("/home/demo/report 2.bin", "report 2.bin", 260001),
-                    hub.files.uploadFile(mid, cwd, dir, name, local, SessionFileConflict.Keep))
+                    hub.files.uploadFile(mid, cwd, dir, name, local, SessionFileConflict.KeepBoth))
                 assertEquals("keep", hub.next("POST", "files").requestUrl!!.queryParameter("conflict"))
                 hub.respond("""{"error":"This folder is read-only","code":"read_only"}""", 409)
                 refused(409, "read_only") { hub.files.uploadFile(mid, cwd, dir, name, local, SessionFileConflict.Replace) }
@@ -183,15 +183,15 @@ class HubFileManagerTest {
             val paths = listOf("draft &.txt", "folder")
             hub.respond("""{"copied":[{"from":"draft &.txt","to":"draft & 2.txt"},{"from":"folder","to":"folder 2"}]}""")
             assertEquals(listOf(SessionFileChange(paths[0], "draft & 2.txt"), SessionFileChange(paths[1], "folder 2")),
-                hub.files.copyFiles(mid, cwd, paths, cwd, SessionFileConflict.Keep))
+                hub.files.copyFiles(mid, cwd, paths, cwd, SessionFileConflict.KeepBoth))
             hub.next("POST", "files/copy").hasJson("""{"paths":["draft &.txt","folder"],"cwd":"$cwd","dir":"$cwd","conflict":"keep"}""")
             hub.respond("""{"error":"Name taken","code":"exists"}""", 409)
-            refused(409, "exists") { hub.files.moveFiles(mid, cwd, paths, "~/out") }
+            refused(409, "exists") { hub.files.move(mid, cwd, paths, "~/out") }
             hub.next("POST", "files/move").hasJson("""{"paths":["draft &.txt","folder"],"cwd":"$cwd","dir":"~/out"}""")
-            hub.respond("""{"moved":[{"from":"folder","to":"~/out/folder"}]}""")
-            assertEquals(listOf(SessionFileChange("folder", "~/out/folder")),
-                hub.files.moveFiles(mid, cwd, listOf("folder"), "~/out", SessionFileConflict.Replace))
-            hub.next("POST", "files/move").hasJson("""{"paths":["folder"],"cwd":"$cwd","dir":"~/out","conflict":"replace"}""")
+            hub.respond("""{"moved":[{"from":"draft &.txt","to":"~/out/draft &.txt"},{"from":"folder","to":"~/out/folder"}]}""")
+            assertEquals(listOf(SessionMovedFile(paths[0], "~/out/draft &.txt"), SessionMovedFile(paths[1], "~/out/folder")),
+                hub.files.move(mid, cwd, paths, "~/out", SessionMoveConflictPolicy.Replace))
+            hub.next("POST", "files/move").hasJson("""{"paths":["draft &.txt","folder"],"cwd":"$cwd","dir":"~/out","conflict":"replace"}""")
 
             for (dir in listOf(null, "~/saved")) {
                 hub.respond("""{"path":"/result/Archive.zip","name":"Archive.zip","size":224,"files":5}""")

@@ -274,7 +274,7 @@ class FilesBrowserRouteTest {
         screen(machine)
         repeat(2) { rule.onNodeWithContentDescription("Up one level").performClick() }
         menu("Shared.txt")
-        rule.onNodeWithText("Move to…").assertDoesNotExist()
+        rule.onNodeWithText("Move…").assertDoesNotExist()
         tapAction("Copy to…")
         rule.onNodeWithText("Copy here").assertIsNotEnabled()
         val picker = isRoot() and hasAnyDescendant(hasText("Copy here"))
@@ -292,7 +292,7 @@ class FilesBrowserRouteTest {
         rule.onNodeWithText("1 selected").assertExists()
         rule.onNodeWithText("Clips").performClick()
         rule.onNodeWithText("2 selected").assertExists()
-        for (action in listOf("Download", "Copy to…", "Move to…", "Compress", "Move to Trash"))
+        for (action in listOf("Download", "Copy to…", "Move…", "Compress", "Move to Trash"))
             rule.onNodeWithContentDescription(action).assertIsDisplayed()
         captureThemes("selection")
         tapAction("Done")

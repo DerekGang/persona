@@ -7,9 +7,7 @@
     <string name="files_action_download">下载</string>
     <string name="files_action_duplicate">制作副本</string>
     <string name="files_action_copy_to">拷贝到…</string>
-    <string name="files_action_move_to">移动到…</string>
     <string name="files_action_copy_here">拷贝到这里</string>
-    <string name="files_action_move_here">移动到这里</string>
     <string name="files_action_compress">压缩</string>
     <string name="files_action_archive_name">归档.zip</string>
     <string name="files_action_compressed">已创建 %1$s</string>
@@ -62,7 +60,10 @@
     <string name="files_action_downloading">正在下载文件…</string>
     <string name="files_action_uploading">正在上传文件…</string>
     <string name="files_action_copying">正在电脑上拷贝…</string>
-    <string name="files_action_moving">正在电脑上移动…</string>
     <string name="files_action_compressing">正在电脑上压缩…</string>
     <string name="files_action_bulk_conflict">选择将应用于这 %1$d 项中的所有重名项目。</string>
+    <plurals name="files_move_selection">
+        <item quantity="one">移动 %1$d 项</item>
+        <item quantity="other">移动 %1$d 项</item>
+    </plurals>
 </resources>
