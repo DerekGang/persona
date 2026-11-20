@@ -4256,6 +4256,8 @@ export interface ConnectorArchiveChat {
   state?: string;
   /** When the conversation got to state; omitted when unknown. */
   state_at?: string;
+  /** Stable HTTP(S) link to the conversation at its source, when available. */
+  source_url?: string;
 }
 
 /**
@@ -5018,8 +5020,10 @@ export interface KBEntry {
    * absent on other kinds, before a match and from an older hub.
    */
   meeting_id?: string;
-  /** A project's per-field evidence, without the detail's resolved sources. Older hubs omit it. */
-  project_knowledge?: KBProjectKnowledge;
+  /** Reference-only for a project that stores pointers. Omitted means full. */
+  project_mode?: string;
+  freshness?: KBProjectFreshness;
+  sources?: KBProjectSource[];
 }
 
 /**
@@ -5090,46 +5094,57 @@ export interface KBDetail {
    * (docs/assistant/knowledge.md "Person profiles").
    */
   profiles?: Record<string, KBProfileRecord>;
-  /** A project's per-field evidence and canonical sources. Older hubs omit it. */
-  project_knowledge?: KBProjectKnowledge;
-}
-
-export interface KBProjectKnowledge {
-  /** The owner's project storage policy. Extensions can read it. */
-  policy: string;
-  /** The latest evidence position within this project. */
-  position: number;
-  /** At least one project field has uncovered updates. */
-  needs_review: boolean;
-  /** Per-field coverage, keyed by summary or one_line. */
-  fields: Record<string, KBProjectField>;
-  /** Canonical source pointers resolved for the detail. */
+  /** Reference-only for a project that stores pointers. Omitted means full. */
+  project_mode?: string;
+  freshness?: KBProjectFreshness;
   sources?: KBProjectSource[];
 }
 
-export interface KBProjectField {
-  status: string;
-  /** The last evidence position this value covers. Absent when unknown. */
-  cutoff?: number;
-  /** Later updates observed for this field. */
-  uncovered?: number;
-  /** Who last wrote the value, when recorded. */
-  writer?: string;
-  /** Who maintains the field now, when known. */
-  maintainer?: string;
-  /** Whether the field is locked against automatic updates. */
-  locked?: boolean;
-  /** The source pointers recorded for this field's value. */
-  source_refs?: string[];
+export interface KBProjectSource {
+  /** Canonical source identity shared across project views. */
+  id: string;
+  url?: string;
+  refs?: string[];
+  /** State observed at the source, such as merged. */
+  delivery_state?: string;
+  delivery_at?: string;
+  /** Unverified when only source delivery facts are available. */
+  environment_verification?: string;
 }
 
-export interface KBProjectSource {
-  /** The canonical source identity. */
+export interface KBProjectFreshness {
+  needs_review: boolean;
+  timeline_end: number;
+  evidence?: KBProjectEvidenceRef[];
+  fields: Record<string, KBProjectFieldFreshness>;
+}
+
+export interface KBProjectFieldFreshness {
+  /** Omitted when historical authorship is unknown. */
+  writer?: string;
+  source?: string;
+  cutoff?: KBProjectCutoff;
+  lock_reason?: string;
+  review_by: string;
+  needs_review: boolean;
+  review_reason?: string;
+  /** Omitted when the gap cannot be counted. */
+  uncovered_evidence_count?: number;
+}
+
+export interface KBProjectCutoff {
+  timeline_from: number;
+  timeline_through: number;
+  /** True if earlier timeline entries were outside this refresh window. */
+  timeline_truncated?: boolean;
+  sources?: KBProjectEvidenceRef[];
+}
+
+export interface KBProjectEvidenceRef {
   ref: string;
-  /** The state its source reported, such as merged. Deployment and acceptance need their own evidence. */
-  state?: string;
-  /** When the source reported the state, if known. */
-  state_at?: string;
+  /** Opaque revision of this input. */
+  position: string;
+  source_id?: string;
 }
 
 export interface KBProfileRecord {

@@ -1,4 +1,6 @@
-Update KB when a conversation settles something. Projects take name, kind, status, goal, role, aliases, links, <machine>:<path> dirs, summary and timeline. Explain future write limits before selecting reference-only storage; change policy only at the owner’s request. Honor refusals. Chats, people, docs, meetings and events take importance, relevance, tags, note and projects. Recordings take tags, pinned and projects; topics take name, note, aliases and tags. Manual tags survive automation. remove_* prevents relinking. Merge duplicate projects with merge_into; undo with unmerge.
+Write to the knowledge base: create or change a project (name, project_kind short|long, status, goal, my_role, aliases, link chats / people, code dirs as "<machine>:<path>" so Agents there belong to it, append a timeline `log` line, replace its summary), or tag / annotate a chat, person, doc, meeting, event, recording (a recording's content is the phone's: only its tags, pinned and projects; importance P0–P3, relevance 0–100, tags, note, link projects), or a topic (its points are curated: only its name, note, aliases and tags). Tags set here are kept over the automatic ones. `remove_*` (ids) unlink for good: Persona won't relink it by itself; the rest still updates. Use it whenever a conversation settles something about a project or person. Two projects that are the same work under two names: `merge_into`; two that were merged but are not: `unmerge` on the one merged away.
+
+Change `project_mode` or `source_urls` only at the user's direction. Use `reference-only` when the authoritative knowledge lives elsewhere. Save pointers and aliases there, and keep project details at the source. Use `full` in a separate call before writing details again.
 
 ```json
 {
@@ -15,11 +17,11 @@ Update KB when a conversation settles something. Projects take name, kind, statu
     },
     "merge_into": {
       "type": "string",
-      "description": "Projects: merge into this slug/name. Send alone."
+      "description": "projects only: fold this project into that one (slug or name); nothing else changes in the same call"
     },
     "unmerge": {
       "type": "boolean",
-      "description": "Projects: undo this slug/name’s merge. Send alone."
+      "description": "projects only: undo the merge that folded this project (slug or name) into another; nothing else changes in the same call"
     },
     "name": {
       "type": "string"
@@ -28,19 +30,19 @@ Update KB when a conversation settles something. Projects take name, kind, statu
       "type": "string",
       "enum": ["short", "long"]
     },
+    "project_mode": {
+      "type": "string",
+      "enum": ["full", "reference-only"],
+      "description": "projects only, at the user's direction: reference-only keeps pointers and retains existing history"
+    },
+    "source_urls": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "projects only, at the user's direction: replace external source URLs, or clear them with an empty list"
+    },
     "status": {
       "type": "string",
       "enum": ["active", "paused", "done"]
-    },
-    "storage_policy": {
-      "type": "string",
-      "enum": ["managed", "reference_only"],
-      "description": "Project storage for future writes."
-    },
-    "source_refs": {
-      "type": "array",
-      "items": {"type": "string"},
-      "description": "Projects: replace explicit source pointers; [] clears them."
     },
     "goal": {
       "type": "string"

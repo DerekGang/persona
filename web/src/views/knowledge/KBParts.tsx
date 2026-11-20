@@ -1,5 +1,5 @@
 // Small pieces the knowledge pages share: the kind tile, tinted pills, marked text, section headers, local icons.
-import { importanceTone, initial, isKind, markParts, projectKindLabel, relevanceTone, topicPointCount, type KBDetail, type KBEntry, type KBKind, type KBProjectKnowledge, type Tone } from "../../lib/kb";
+import { importanceTone, initial, isKind, markParts, projectKindLabel, relevanceTone, topicPointCount, type KBDetail, type KBEntry, type KBKind, type KBProjectFreshness, type Tone } from "../../lib/kb";
 import { cx } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { t } from "../../i18n";
@@ -116,13 +116,15 @@ export function Badges({ entry, status, asProject = false }: { entry: KBEntry; s
 }
 
 /** The fields waiting for review. Their gaps can overlap, so each keeps its own count. */
-export function ProjectReviewNote({ knowledge }: { knowledge?: KBProjectKnowledge }) {
-  if (!knowledge?.needs_review) return null;
+export function ProjectReviewNote({ freshness }: { freshness?: KBProjectFreshness }) {
+  if (!freshness?.needs_review) return null;
   const lines = (["summary", "one_line"] as const).flatMap(key => {
-    const field = knowledge.fields[key];
-    if (field.status !== "needs_review") return [];
+    const field = freshness.fields[key];
+    if (!field?.needs_review) return [];
     const label = key === "summary" ? t("knowledge-projectevidence.summary_review") : t("knowledge-projectevidence.overview_review");
-    return [field.uncovered !== undefined && field.uncovered > 0 ? t("knowledge-projectevidence.review_gap", { label, count: field.uncovered }) : label];
+    const count = field.uncovered_evidence_count;
+    const gapKey = field.cutoff && field.review_reason === "new_evidence" ? "knowledge-projectevidence.review_gap" : "knowledge-projectevidence.review_count";
+    return [count !== undefined && count > 0 ? t(gapKey, { label, count }) : label];
   });
   return (
     <span className="mt-1 flex items-start gap-1.5 text-xs leading-snug text-ink-2">

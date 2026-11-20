@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,7 +18,7 @@ func TestExtensionSDKReadsProjectEvidence(t *testing.T) {
 	s := newKBService(t, newFakeHub())
 	const path = "/api/v1/kb/projects/example"
 	for _, body := range []string{
-		`{"summary":"Release planned","source_refs":["docs/plan"]}`,
+		`{"summary":"Release planned","source_urls":["https://example.org/plan"]}`,
 		`{"log":"Release observed"}`,
 	} {
 		if r := request(s, http.MethodPut, path, body); r.Code != http.StatusOK {
@@ -51,21 +51,23 @@ func TestExtensionSDKReadsProjectEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []*wire.KBProjectKnowledge{list.Items[0].ProjectKnowledge, get.Detail.ProjectKnowledge} {
-		if k == nil || k.Policy != "managed" || !k.NeedsReview {
-			t.Fatalf("missing project review: %+v", k)
+	for _, freshness := range []*wire.KBProjectFreshness{list.Items[0].Freshness, get.Detail.Freshness} {
+		if freshness == nil || !freshness.NeedsReview {
+			t.Fatalf("missing project review: %+v", freshness)
 		}
-		f := k.Fields["summary"]
-		if f.Cutoff == nil || f.Uncovered != k.Position-*f.Cutoff || f.Uncovered < 1 || !f.Locked {
-			t.Fatalf("summary coverage: %+v at %d", f, k.Position)
+		field, ok := freshness.Fields["summary"]
+		if !ok || field.Cutoff != nil || field.Writer != "user" || field.ReviewBy != "user" ||
+			field.LockReason != "field_locked" || field.UncoveredEvidenceCount == nil || *field.UncoveredEvidenceCount != 1 {
+			t.Fatalf("manual summary coverage: %+v", field)
 		}
 	}
-	if len(list.Items[0].ProjectKnowledge.Sources) != 0 || len(get.Detail.ProjectKnowledge.Sources) == 0 {
-		t.Fatal("resolved sources belong to the detail")
+	if len(get.Detail.Sources) != 1 || get.Detail.Sources[0].ID != "https://example.org/plan" ||
+		!reflect.DeepEqual(list.Items[0].Sources, get.Detail.Sources) {
+		t.Fatalf("source identity across list/get: %+v / %+v", list.Items[0].Sources, get.Detail.Sources)
 	}
 
 	// A program can send raw JSON. The authenticated write path must still reject owner-only fields.
-	for _, field := range []string{`"storage_policy":"reference_only"`, `"source_refs":[]`} {
+	for _, field := range []string{`"project_mode":"reference-only"`, `"source_urls":[]`} {
 		params := json.RawMessage(`{"kind":"projects","id":"example",` + field + `}`)
 		if err := wire.ValidateParams("kb.update", params); err == nil {
 			t.Fatalf("SDK schema accepted %s", field)
@@ -74,21 +76,20 @@ func TestExtensionSDKReadsProjectEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, handled, err := s.kbRequest(ctx, assistantwire.MethodKBExtensionUpdate, raw); !handled || err == nil || !strings.Contains(err.Error(), "only the owner") {
+		if _, handled, err := s.kbRequest(ctx, assistantwire.MethodKBExtensionUpdate, raw); !handled || err == nil || !strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("manager accepted %s: handled=%v err=%v", field, handled, err)
 		}
 	}
 	get, err = sdk.KBGet(ctx, wire.KBGetParams{Kind: wire.KBKindProjects, ID: "example"})
-	if err != nil || get.Detail.ProjectKnowledge == nil || get.Detail.ProjectKnowledge.Policy != "managed" ||
-		!slices.ContainsFunc(get.Detail.ProjectKnowledge.Sources, func(s wire.KBProjectSource) bool { return s.Ref == "docs/plan" }) {
-		t.Fatalf("owner's choices after the refused writes: %+v, %v", get.Detail.ProjectKnowledge, err)
+	if err != nil || get.Detail.ProjectMode != "" || len(get.Detail.Sources) != 1 || get.Detail.Sources[0].URL != "https://example.org/plan" {
+		t.Fatalf("owner's choices after the refused writes: %+v, %v", get.Detail, err)
 	}
 
 	host.Answer(assistantwire.MethodKBGet, func(json.RawMessage) (any, error) {
 		return json.RawMessage(`{"detail":{"kind":"projects","id":"example","path":"projects/example","meta":{}}}`), nil
 	})
 	legacy, err := sdk.KBGet(ctx, wire.KBGetParams{Kind: wire.KBKindProjects, ID: "example"})
-	if err != nil || legacy.Detail.ID != "example" || legacy.Detail.ProjectKnowledge != nil {
+	if err != nil || legacy.Detail.ID != "example" || legacy.Detail.Freshness != nil || len(legacy.Detail.Sources) != 0 {
 		t.Fatalf("older hub detail: %+v, %v", legacy, err)
 	}
 }

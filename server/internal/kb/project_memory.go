@@ -37,8 +37,8 @@ func (e *Engine) AppendProjectMemory(slug string, record ProjectMemoryRecord) er
 	}
 	s.metaMu.Lock()
 	defer s.metaMu.Unlock()
-	if p, ok := s.Project(slug); ok && p.policy() == referenceOnly {
-		return ErrReferenceOnly
+	if err := s.checkProjectDetailWrite(slug, "project memory"); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

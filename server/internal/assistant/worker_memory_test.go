@@ -178,7 +178,7 @@ func TestWorkerMemoryReportThenDoneWritesOnceAndPreservesLog(t *testing.T) {
 func TestWorkerMemorySkipsDerivationForReferenceOnlyProject(t *testing.T) {
 	env := newWorkerMemoryEnv(t)
 	env.setProject(t, "explicit")
-	if _, err := env.e.Apply(kb.KindProject, "explicit", kb.Update{StoragePolicy: "reference_only"}); err != nil {
+	if _, err := env.e.ApplyUser(kb.KindProject, "explicit", kb.UserUpdate{ProjectMode: new("reference-only")}); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(env.log)

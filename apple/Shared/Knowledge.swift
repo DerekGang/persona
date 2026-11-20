@@ -44,7 +44,9 @@ nonisolated struct KBEntry: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var name: String
     var oneLine: String?
-    var projectKnowledge: KBProjectKnowledge?
+    var projectMode: String?
+    var freshness: KBProjectFreshness?
+    var sources: [KBProjectSource]?
     var importance: String?
     var relevance: Int
     var tags: [String]?
@@ -61,7 +63,8 @@ nonisolated struct KBEntry: Codable, Identifiable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case kind, id, name, importance, relevance, tags, updated, extra, source
-        case projectKnowledge = "project_knowledge"
+        case freshness, sources
+        case projectMode = "project_mode"
         case oneLine = "one_line"
         case recordingKind = "recording_kind"
         case meetingID = "meeting_id"
@@ -141,11 +144,14 @@ nonisolated struct KBDetail: Decodable, Sendable {
     var moments: [KBMomentRef]?
     /// A topic's knowledge points (docs/assistant/knowledge.md "Topics").
     var points: [KBTopicPoint]?
-    var projectKnowledge: KBProjectKnowledge?
+    var projectMode: String?
+    var freshness: KBProjectFreshness?
+    var sources: [KBProjectSource]?
 
     enum CodingKeys: String, CodingKey {
         case kind, id, path, meta, summary, log, recent, links, moments, points
-        case projectKnowledge = "project_knowledge"
+        case freshness, sources
+        case projectMode = "project_mode"
     }
 
     /// A recording's imported meeting (#8872): `meta.imported_meeting` and the link the hub resolves for it; nil without
@@ -256,13 +262,13 @@ nonisolated struct KBUpdate: Encodable, Sendable {
     var projectKind: String?
     var note: String?
     var log: String?
-    var storagePolicy: String?
-    var sourceRefs: [String]?
+    var projectMode: String?
+    var sourceURLs: [String]?
     enum CodingKeys: String, CodingKey {
         case importance, relevance, tags, status, note, log
         case projectKind = "project_kind"
-        case storagePolicy = "storage_policy"
-        case sourceRefs = "source_refs"
+        case projectMode = "project_mode"
+        case sourceURLs = "source_urls"
     }
 }
 

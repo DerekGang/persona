@@ -53,9 +53,7 @@ func (t *Tagging) kept(list string, ids []string) []string {
 // linkEdit is how an update changes links: as the user, whose removals are kept out of automatic writes and whose links
 // made by hand lift that, or as an extension, which changes links as before exclusions.
 type linkEdit struct {
-	writer string
-	cited  []string
-	user   bool
+	user bool
 	// lockLists: a list the update only removes from is locked whole, on both entries (locked_fields).
 	lockLists bool
 	// allow: the ids each list may have again ("people", "chats", "projects"), nothing linked by it.
@@ -75,7 +73,7 @@ func userEdit(u UserUpdate) linkEdit {
 			allow[list] = ids
 		}
 	}
-	return linkEdit{user: true, writer: UserWriter, lockLists: lock, allow: allow}
+	return linkEdit{user: true, lockLists: lock, allow: allow}
 }
 
 // extensionEdit is how an extension's update changes links: a removal locks as lock says, and nothing is excluded.
@@ -156,6 +154,16 @@ func UserUnsupported(kind string, u UserUpdate) []IgnoredField {
 	out := Unsupported(kind, u.Update)
 	if _, known := kindFields[kind]; !known {
 		return out
+	}
+	if kind != KindProject {
+		for _, f := range []struct {
+			name string
+			set  bool
+		}{{"project_mode", u.ProjectMode != nil}, {"source_urls", u.SourceURLs != nil}} {
+			if f.set {
+				out = append(out, IgnoredField{Field: f.name, Reason: kind + " entries do not use " + f.name})
+			}
+		}
 	}
 	own := allowFields[kind]
 	for name, ids := range map[string][]string{"allow_people": u.AllowPeople, "allow_chats": u.AllowChats, "allow_projects": u.AllowProjects} {

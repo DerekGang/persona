@@ -3,6 +3,7 @@ package kb
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,33 +32,11 @@ func (e *Engine) ObserveChanges() {
 }
 
 func (s *Store) notify(kind, id, what string) {
-	c := Change{Kind: kind, ID: id, What: what}
-	s.observeMu.Lock()
+	s.observeMu.RLock()
 	f := s.changed
-	if f == nil {
-		s.observeMu.Unlock()
-		return
-	}
-	if _, active := s.notifying[c]; active {
-		s.notifying[c] = true
-		s.observeMu.Unlock()
-		return
-	}
-	if s.notifying == nil {
-		s.notifying = make(map[Change]bool)
-	}
-	// An observer may itself ingest a newer revision of the same entity. Deliver that revision after the
-	// callback returns, when it can safely read the updated state.
-	for {
-		s.notifying[c] = false
-		s.observeMu.Unlock()
-		f(c)
-		s.observeMu.Lock()
-		if !s.notifying[c] {
-			delete(s.notifying, c)
-			s.observeMu.Unlock()
-			return
-		}
+	s.observeMu.RUnlock()
+	if f != nil {
+		f(Change{Kind: kind, ID: id, What: what})
 	}
 }
 
@@ -134,17 +113,29 @@ func (s *Store) putEntity(kind, id string, v any, t *Tagging, manual bool) (err 
 		return nil
 	} // forgotten during an external call
 	incoming := protectedEntity(v, t, current, manual)
-	if p, ok := v.(*Project); ok {
-		protectProjectWrite(p, current, incoming, manual)
+	if kind == KindProject && exists {
+		// Only a digest commit or a summary write can change the field records.
+		// Other project writers may have read their copy while a digest was running.
+		keys := []string{"field_coverage", "one_line_needs_summary_review", "one_line"}
+		if !manual {
+			keys = append(keys, "project_mode", "source_urls")
+			if string(current["project_mode"]) == `"reference-only"` {
+				keys = append(keys, "goal", "my_role", "note", "keywords", "status", "kind")
+			}
+		}
+		for _, key := range keys {
+			if value, ok := current[key]; ok {
+				incoming[key] = value
+			} else {
+				delete(incoming, key)
+			}
+		}
 	}
 	before, _ := json.Marshal(current)
 	after, _ := json.Marshal(incoming)
 	changed = !exists || !bytes.Equal(before, after)
 	if changed {
 		err = writeJSON(path, incoming)
-		if err == nil && kind == KindProject && !bytes.Equal(current["source_refs"], incoming["source_refs"]) {
-			s.chatRefProjects = nil
-		}
 	}
 	if err == nil {
 		switch entity := v.(type) {
@@ -239,7 +230,7 @@ func protectedEntity(v any, t *Tagging, current map[string]json.RawMessage, manu
 	return incoming
 }
 
-func (s *Store) putSummary(kind, id, text string, manual bool) error {
+func (s *Store) putSummary(kind, id, text string, manual bool, writer ...string) error {
 	if s.readOnly {
 		return ErrReadOnly
 	}
@@ -259,17 +250,17 @@ func (s *Store) putSummary(kind, id, text string, manual bool) error {
 	s.metaMu.Lock()
 	var t struct {
 		Tagging
-		Status        string `json:"status"`
-		StoragePolicy string `json:"storage_policy"`
+		Status string `json:"status"`
+		Mode   string `json:"project_mode"`
 	}
 	exists, err := readJSON(s.entityPath(kind, id), &t)
 	if err != nil {
 		unlock()
 		return err
 	}
-	if kind == KindProject && t.StoragePolicy == referenceOnly {
+	if kind == KindProject && t.Mode == referenceOnly {
 		unlock()
-		return ErrReferenceOnly
+		return fmt.Errorf("%w: cannot save summary", ErrReferenceOnly)
 	}
 	if !manual && (!exists || t.fieldLocked("summary") || (kind == KindPerson && t.Status == "ignored")) {
 		unlock()
@@ -280,24 +271,32 @@ func (s *Store) putSummary(kind, id, text string, manual bool) error {
 	old, _ := os.ReadFile(path)
 	changed := !bytes.Equal(old, next)
 	if changed {
-		var p *Project
-		if kind == KindProject {
-			p, _ = s.Project(id)
-		}
-		if p != nil && p.FieldEvidence != nil {
-			// An imported or merged text has no writer receipt. Invalidate the previous one before publishing the new text.
-			prior, _ := json.Marshal(p)
-			p.noteFact(p.localRef("summary"), projectVersion(string(next)))
-			delete(p.FieldEvidence.Fields, "summary")
-			p.Dirty = true
-			changed, err = s.saveProjectText(prior, p, next)
-		} else {
-			err = writeFile(path, next)
+		err = writeFile(path, next)
+	}
+	metaChanged := false
+	if err == nil && changed && kind == KindProject {
+		if p, ok := s.Project(id); ok {
+			if len(writer) > 0 {
+				p.recordProjectField("summary", string(next), writer[0], "kb.update", nil)
+			} else {
+				delete(p.FieldCoverage, "summary")
+			}
+			if p.OneLine != "" && (len(writer) > 0 || len(old) > 0) {
+				p.OneLineNeedsReview = true
+				if len(writer) > 0 && !p.fieldLocked("one_line") {
+					p.Dirty = true
+				}
+			}
+			err = writeJSON(s.entityPath(kind, id), p)
+			metaChanged = err == nil
 		}
 	}
 	unlock()
 	if err == nil && changed {
 		s.notify(kind, id, "summary")
+	}
+	if metaChanged {
+		s.notify(kind, id, "metadata")
 	}
 	return err
 }

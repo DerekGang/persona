@@ -273,9 +273,6 @@ func (e *Engine) ApplyExtension(kind, id string, u Update, w ExtensionWrite) (Ex
 			return ExtensionResult{}, fmt.Errorf("unlock: unknown field %q", f)
 		}
 	}
-	if kind == KindProject && (u.StoragePolicy != "" || u.SourceRefs != nil) {
-		return ExtensionResult{}, errors.New("only the owner can change project storage policy or explicit source references")
-	}
 	by := ExtensionWriter(w.Extension)
 	ignored := Unsupported(kind, u)
 	u = stripUnsupported(kind, u) // what the kind does not use is neither applied nor held (ExtensionResult.Ignored)
@@ -287,6 +284,9 @@ func (e *Engine) ApplyExtension(kind, id string, u Update, w ExtensionWrite) (Ex
 	e.Store.applyMu.Lock()
 	defer e.Store.applyMu.Unlock()
 	if kind == KindProject {
+		if err := e.projectSourceUpdate(id, &UserUpdate{Update: u}); err != nil {
+			return ExtensionResult{}, err
+		}
 		u = e.projectUpdate(u)
 	}
 	target := fieldRef{kind: kind, id: e.resolve(kind, id)}
@@ -324,14 +324,7 @@ func (e *Engine) ApplyExtension(kind, id string, u Update, w ExtensionWrite) (Ex
 	if u.Source == "" && u.Log != "" {
 		u.Source = w.Extension
 	}
-	links := extensionEdit(u)
-	links.writer = by
-	for _, evidence := range w.Evidence {
-		if evidence.Chat != "" {
-			links.cited = addUnique(links.cited, KindChat+"/"+evidence.Chat)
-		}
-	}
-	out, err := e.apply(kind, id, u, links)
+	out, err := e.apply(kind, id, UserUpdate{Update: u}, extensionEdit(u), by)
 	if err != nil || u.MergeInto != "" {
 		return ExtensionResult{ID: out, Before: before, Ignored: ignored}, err
 	}

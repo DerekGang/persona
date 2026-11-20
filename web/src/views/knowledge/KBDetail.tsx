@@ -279,7 +279,7 @@ function OwnedEntryDetail({ kind, id, query, reloadKey, onToggleSidebar, onBack,
               </div>
             </div>
             {e.one_line && <p className="mt-3.5 text-[14px] leading-relaxed text-ink">{e.one_line}</p>}
-            {kind === "projects" && <ProjectReviewNote knowledge={d ? d.project_knowledge : e.project_knowledge} />}
+            {kind === "projects" && <ProjectReviewNote freshness={d ? d.freshness : e.freshness} />}
             {e.tags && e.tags.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {e.tags.map((t) => (
@@ -330,9 +330,9 @@ function OwnedEntryDetail({ kind, id, query, reloadKey, onToggleSidebar, onBack,
 
           {d && (
             <div className="mt-7 flex flex-col gap-6" style={{ animation: "fade-in 200ms ease-out both" }}>
-              {d.kind === "projects" && d.project_knowledge && (
-                <ProjectEvidence detail={d} knowledge={d.project_knowledge} auth={auth} current={current} onOpen={onOpen} onMoment={setMoment} onSaved={onSaved} />
-              )}
+              {d.kind === "projects" && (d.freshness || d.project_mode || d.sources?.length) ? (
+                <ProjectEvidence detail={d} auth={auth} current={current} onOpen={onOpen} onMoment={setMoment} onSaved={onSaved} />
+              ) : null}
               {rec && handoff.latest && (
                 <RecordingHandoffRow
                   handoff={handoff.latest}
@@ -452,7 +452,7 @@ function OwnedEntryDetail({ kind, id, query, reloadKey, onToggleSidebar, onBack,
                 kind={kind}
                 id={id}
                 value={typeof d.meta?.pinned === "string" ? d.meta.pinned : ""}
-                readOnly={d.project_knowledge?.policy === "reference_only"}
+                readOnly={d.project_mode === "reference-only"}
                 auth={auth}
                 current={current}
                 refresh={load}

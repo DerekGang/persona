@@ -2,14 +2,14 @@ import SwiftUI
 
 /// A field can miss the same evidence as its neighbor. Keep the field names and counts together.
 struct KBProjectReviewNote: View {
-    var knowledge: KBProjectKnowledge?
+    var freshness: KBProjectFreshness?
 
     var body: some View {
-        if let knowledge, knowledge.needsReview {
+        if let freshness, freshness.needsReview {
             let notes = ["summary", "one_line"].compactMap { key -> String? in
-                guard let field = knowledge.fields[key], field.status == "needs_review" else { return nil }
+                guard let field = freshness.fields[key], field.needsReview else { return nil }
                 let title = key == "summary" ? String(localized: "Summary needs review") : String(localized: "Overview needs review")
-                guard let n = field.uncovered, n > 0 else { return title }
+                guard let n = field.uncoveredEvidenceCount, n > 0 else { return title }
                 return title + " · " + Self.newerUpdates(n)
             }
             Label {
@@ -28,7 +28,6 @@ struct KBProjectReviewNote: View {
 
 struct KBProjectEvidenceSection: View {
     var detail: KBDetail
-    var knowledge: KBProjectKnowledge
     var api: APIClient
     var saved: () async -> Void
     @State private var expanded = false
@@ -40,7 +39,7 @@ struct KBProjectEvidenceSection: View {
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
                     Label("Sources and coverage", systemImage: Theme.Icon.knowledge)
                     Spacer(minLength: Theme.Space.xs)
-                    if knowledge.policy == KBProjectPolicy.referenceOnly.rawValue {
+                    if detail.projectPolicy == .referenceOnly {
                         Text("References only").font(Theme.Font.caption).foregroundStyle(.secondary)
                     }
                     ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.caption).foregroundStyle(.secondary)
@@ -54,9 +53,11 @@ struct KBProjectEvidenceSection: View {
 
             if expanded {
                 ForEach(["summary", "one_line"], id: \.self) { key in
-                    coverage(key == "summary" ? String(localized: "Summary") : String(localized: "One-line overview"), knowledge.fields[key])
+                    if let freshness = detail.freshness, let field = freshness.fields[key] {
+                        coverage(key == "summary" ? String(localized: "Summary") : String(localized: "One-line overview"), field, end: freshness.timelineEnd)
+                    }
                 }
-                if let policy = KBProjectPolicy(rawValue: knowledge.policy) {
+                if let policy = detail.projectPolicy {
                     Button { editing = true } label: {
                         VStack(alignment: .leading, spacing: Theme.Space.xs) {
                             Label("Edit project storage", systemImage: Theme.Icon.edit)
@@ -70,45 +71,71 @@ struct KBProjectEvidenceSection: View {
                             KBProjectStorageEditor(draft: draft, id: detail.id, api: api, saved: saved)
                         }
                     }
+                } else if let mode = detail.projectMode, !mode.isEmpty {
+                    Text("Project mode: \(mode)").font(Theme.Font.caption).foregroundStyle(.secondary)
                 }
             }
         }
-        if expanded, let sources = knowledge.sources, !sources.isEmpty {
+        if expanded, let sources = detail.sources, !sources.isEmpty {
             Section {
                 ForEach(sources) { source in
                     VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                        sourceReference(source.ref)
-                        if let state = source.state, !state.isEmpty {
+                        if let text = source.url, let url = KBProjectStorageDraft.webURL(text) {
+                            Link(text, destination: url)
+                            if source.id != text {
+                                Text(source.id).font(Theme.Font.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                        } else {
+                            Text(source.id).textSelection(.enabled)
+                        }
+                        if let state = source.deliveryState, !state.isEmpty {
                             Text("Source status: \(sourceStatus(state))").font(Theme.Font.caption).foregroundStyle(.secondary)
-                            if let at = source.stateAt { Text(at.formatted(date: .abbreviated, time: .shortened)).font(Theme.Font.label).foregroundStyle(.secondary) }
+                        }
+                        if let at = source.deliveryAt {
+                            Text(at.formatted(date: .abbreviated, time: .shortened)).font(Theme.Font.label).foregroundStyle(.secondary)
+                        }
+                        if let verification = source.environmentVerification, !verification.isEmpty {
+                            Text(verification == "unverified" ? String(localized: "Environment unverified") : String(localized: "Environment verification: \(verification)"))
+                                .font(Theme.Font.caption).foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, Theme.Space.xxs)
+                    ForEach(source.refs ?? [], id: \.self) { ref in sourceReference(ref) }
                 }
             } header: {
                 Text("Sources")
             } footer: {
-                if sources.contains(where: { $0.state?.isEmpty == false }) {
+                if sources.contains(where: { $0.deliveryState?.isEmpty == false }) {
                     Text("Deployment and acceptance need their own evidence.")
                 }
             }
         }
     }
 
-    private func coverage(_ title: String, _ field: KBProjectKnowledge.Field?) -> some View {
+    private func coverage(_ title: String, _ field: KBProjectFreshness.Field, end: Int64) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             Text(title).font(Theme.Font.secondaryStrong)
-            if field?.locked == true { Label("Locked against automatic updates", systemImage: Theme.Icon.locked).font(Theme.Font.caption) }
-            if let cutoff = field?.cutoff {
-                Text("Evidence covered: \(cutoff) of \(knowledge.position)")
+            if let reason = field.lockReason, !reason.isEmpty {
+                Label(reason == "field_locked" ? String(localized: "Locked against automatic updates") : reason, systemImage: Theme.Icon.locked)
+            }
+            if let cutoff = field.cutoff {
+                Text("Timeline bytes \(cutoff.timelineFrom)–\(cutoff.timelineThrough) of \(end)")
+                if cutoff.timelineTruncated == true { Text("Earlier timeline omitted") }
             } else {
                 Text("Coverage unknown")
             }
-            if let n = field?.uncovered, n > 0 { Text(KBProjectReviewNote.newerUpdates(n)) }
-            Text(responsibility(field?.writer, writer: true))
-            Text(responsibility(field?.maintainer, writer: false))
-            if let refs = field?.sourceRefs, !refs.isEmpty {
-                Text("Based on: \(refs.joined(separator: " · "))").textSelection(.enabled)
+            if let n = field.uncoveredEvidenceCount {
+                Text(KBProjectReviewNote.newerUpdates(n))
+            } else if field.reviewReason != "reference-only" {
+                Text("Number of newer updates unknown")
+            }
+            if field.reviewReason == "summary_edited" { Text("Summary changed") }
+            if field.reviewReason == "evidence_changed" { Text("Source evidence changed") }
+            Text(responsibility(field.writer, writer: true))
+            Text(responsibility(field.reviewBy, writer: false))
+            if let origin = field.source, !origin.isEmpty { Text("Receipt source: \(origin)") }
+            if let refs = field.cutoff?.sources, !refs.isEmpty {
+                Text("Based on: \(refs.map(\.ref).joined(separator: " · "))").textSelection(.enabled)
             }
         }
         .font(Theme.Font.caption).foregroundStyle(.secondary)
@@ -119,8 +146,7 @@ struct KBProjectEvidenceSection: View {
     private func responsibility(_ value: String?, writer: Bool) -> String {
         switch value {
         case "user": return writer ? String(localized: "Written by you") : String(localized: "Maintained by you")
-        case "pipeline": return writer ? String(localized: "Written by Persona") : String(localized: "Maintained by Persona")
-        case "external" where !writer: return String(localized: "Maintained at the original source")
+        case "persona": return writer ? String(localized: "Written by Persona") : String(localized: "Maintained by Persona")
         case let value? where value.hasPrefix("ext:") && value.count > 4:
             let name = String(value.dropFirst(4))
             return writer ? String(localized: "Written by \(name)") : String(localized: "Maintained by \(name)")
@@ -139,7 +165,7 @@ struct KBProjectEvidenceSection: View {
 
     @ViewBuilder private func sourceReference(_ ref: String) -> some View {
         let parts = ref.split(separator: "/", omittingEmptySubsequences: false)
-        if let url = URL(string: ref), ["http", "https"].contains(url.scheme?.lowercased()), url.host() != nil, url.user() == nil {
+        if let url = KBProjectStorageDraft.webURL(ref) {
             Link(ref, destination: url)
         } else if parts.count == 2, parts[0] == "moments", let moment = detail.moments?.first(where: { $0.id == parts[1] }) {
             NavigationLink { KBMomentView(ref: moment) } label: { Text(ref) }
@@ -173,7 +199,7 @@ private struct KBProjectStorageEditor: View {
             Form {
                 Section {
                     Toggle("References only", isOn: Binding(get: { draft.policy == .referenceOnly }, set: {
-                        draft.policy = $0 ? .referenceOnly : .managed
+                        draft.policy = $0 ? .referenceOnly : .full
                     })).accessibilityIdentifier("kb.project.reference-only")
                 } footer: {
                     if draft.policy == .referenceOnly {
@@ -191,7 +217,12 @@ private struct KBProjectStorageEditor: View {
                 } header: {
                     Text("Source references")
                 } footer: {
-                    Text("One web address or knowledge entry per line, such as chats/planning.")
+                    if draft.validURLs {
+                        Text("Enter one HTTP or HTTPS address per line.")
+                    } else {
+                        Text("Use up to 30 HTTP or HTTPS addresses without credentials, up to 2048 bytes each.")
+                            .foregroundStyle(Theme.danger).accessibilityIdentifier("kb.project.invalid-urls")
+                    }
                 }
                 if let error { Text(error).foregroundStyle(Theme.danger).accessibilityIdentifier("kb.project.error") }
             }

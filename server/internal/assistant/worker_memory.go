@@ -122,7 +122,11 @@ func (s *Service) recordWorkerOutcome(ctx context.Context, t Todo, machine, sess
 	id := workerMemoryID(t.ID, machine, session, turn, itemIndex)
 	pending := make([]*kb.Project, 0, len(projects))
 	for _, p := range projects {
-		if p.StoragePolicy != "reference_only" && !e.ProjectMemoryHas(p.Slug, id) {
+		if p.Mode == "reference-only" {
+			s.logf("worker memory: skipped reference-only project %s", p.Slug)
+			continue
+		}
+		if !e.ProjectMemoryHas(p.Slug, id) {
 			pending = append(pending, p)
 		}
 	}

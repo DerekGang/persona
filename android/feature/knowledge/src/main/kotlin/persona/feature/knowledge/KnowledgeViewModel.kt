@@ -263,8 +263,8 @@ internal class KnowledgeDetailViewModel(
         val repository = connection.current.value ?: return
         val shown = page.value
         if (kind != KnowledgeKind.Projects || scope != repository.scope || scope != shown.scope ||
-            shown.detail?.projectKnowledge?.policy !in setOf("managed", "reference_only")) return
-        if (update.storagePolicy == null && update.sourceRefs == null) return
+            shown.detail?.editableProjectMode == null) return
+        if (update.projectMode == null && update.sourceUrls == null) return
         saveUpdate(repository, update)
     }
 

@@ -2,7 +2,5 @@
   "search_empty": "知识库里没有与「{query}」相关的内容。",
   "search_empty_no_query": "知识库里没有相关内容。",
   "list_empty": "知识库里还没有内容。",
-  "reference_only": "仅保留引用",
-  "project_field_review": "需要复核（{field}，截至第 {position} 条证据有 {uncovered} 条未覆盖）",
-  "project_field_unknown": "证据覆盖范围未知（{field}）"
+  "needs_review": "需要复核"
 }

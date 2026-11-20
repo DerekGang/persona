@@ -2,9 +2,8 @@ package kb
 
 import (
 	"context"
-	"slices"
+	"errors"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -126,7 +125,7 @@ func (e *Engine) RefreshProjects(ctx context.Context, max int) int {
 	var dirty []*Project
 	live := map[string]bool{}
 	for _, p := range e.Store.Projects() {
-		if p.Dirty && p.policy() != referenceOnly && p.Status != "ignored" && p.Live() {
+		if p.Dirty && p.Status != "ignored" && p.Live() && !p.referenceOnly() {
 			live[p.Slug] = true
 			if e.retries().projects.waits(p.Slug, "", now) {
 				continue
@@ -146,6 +145,11 @@ func (e *Engine) RefreshProjects(ctx context.Context, max int) int {
 			calls++
 		}
 		if err != nil {
+			if errors.Is(err, ErrReferenceOnly) {
+				e.retries().projects.clear(p.Slug)
+				e.logf("project %s: %v: skipped in-flight rewrite", p.Slug, err)
+				continue
+			}
 			if deferred(ctx, err) { // the connection is held, no model, or the run ended: the rest wait (still dirty)
 				break
 			}
@@ -169,7 +173,7 @@ func (e *Engine) refreshProject(ctx context.Context, p *Project) error {
 // refreshProjectCall rewrites p's summary; called: the model was asked (not for a project gone meanwhile).
 func (e *Engine) refreshProjectCall(ctx context.Context, p *Project) (called bool, err error) {
 	current, ok := e.Store.Project(p.Slug)
-	if !ok || current.policy() == referenceOnly {
+	if !ok || current.referenceOnly() {
 		return false, nil
 	}
 	p = current
@@ -179,38 +183,16 @@ func (e *Engine) refreshProjectCall(ctx context.Context, p *Project) (called boo
 	var d projectDigest
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	if err := e.modelFor("kb.project").JSONMax(cctx, prompts.RenderKBProject(owner), prompts.RenderKBProjectInput(in), 8000, &d); err != nil {
+	if err := e.modelFor("kb.project").JSONMax(cctx, prompts.RenderKBProject(owner), prompts.RenderKBProjectInput(in.KBProjectInput), 8000, &d); err != nil {
 		return true, err
 	}
 	return true, e.commitProject(p, in, d)
 }
 
-func (e *Engine) projectInput(p *Project) prompts.KBProjectInput {
-	in := prompts.KBProjectInput{Pinned: p.Pinned, Name: p.Name, Kind: p.Kind, Aliases: p.Aliases, Tags: e.TopTags(40),
-		Summary: e.Store.Summary(KindProject, p.Slug), Log: e.Store.Log(p.Slug, 40)}
-	chats := slices.Clone(p.Chats)
-	for _, ref := range p.SourceRefs {
-		if id, ok := strings.CutPrefix(ref, KindChat+"/"); ok {
-			chats = addUnique(chats, id)
-		}
-	}
-	for i, cid := range chats {
-		if i >= 8 {
-			break
-		}
-		sum := e.Store.Summary(KindChat, cid)
-		if r := []rune(sum); len(r) > 1500 {
-			sum = string(r[:1500]) + "…"
-		}
-		pc := prompts.KBProjectChat{ID: cid, Summary: sum}
-		if c, ok := e.Store.Chat(cid); ok && c.State != "" { // the source's fact, so the rewrite need not guess it (#9427)
-			pc.State = c.State
-			if !c.StateAt.IsZero() {
-				pc.StateAt = c.StateAt.In(e.Store.Zone()).Format("2006-01-02")
-			}
-		}
-		in.Chats = append(in.Chats, pc)
-	}
-	in.Moments = e.projectMomentsForPrompt(p, 5)
+func (e *Engine) projectInput(p *Project) projectInput {
+	tags := e.TopTags(40)
+	in, _ := e.projectEvidence(p, e.Store.projectTimeline(p, false))
+	in.Tags = tags
+	in.Summary = e.Store.Summary(KindProject, p.Slug)
 	return in
 }

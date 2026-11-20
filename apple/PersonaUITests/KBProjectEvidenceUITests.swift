@@ -10,8 +10,8 @@ final class KBProjectEvidenceUITests: XCTestCase {
         }
         hub = url
         let (bytes, _) = try await URLSession.shared.data(from: hub.appending(path: "mock/project-evidence/reset"))
-        guard (try? JSONDecoder().decode([String: String].self, from: bytes))?["fixture"] == "sample-delivery" else {
-            throw XCTSkip("Needs the sample-delivery project fixture")
+        guard (try? JSONDecoder().decode([String: String].self, from: bytes))?["fixture"] == "community-garden" else {
+            throw XCTSkip("Needs the community-garden project fixture")
         }
     }
 
@@ -38,7 +38,7 @@ final class KBProjectEvidenceUITests: XCTestCase {
         return app
     }
 
-    @MainActor private func row(_ app: XCUIApplication, named name: String = "Sample delivery") -> XCUIElement {
+    @MainActor private func row(_ app: XCUIApplication, named name: String = "Community garden") -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
     }
 
@@ -55,7 +55,7 @@ final class KBProjectEvidenceUITests: XCTestCase {
         XCTAssertTrue(project.waitForExistence(timeout: 18), app.debugDescription)
         shot(app, "list")
         XCTAssertTrue(project.label.contains("Summary needs review"), project.label)
-        XCTAssertTrue(project.label.contains("2 newer"), project.label)
+        XCTAssertTrue(project.label.contains("3 newer"), project.label)
         XCTAssertFalse(project.label.contains("Overview needs review"), project.label)
     }
 
@@ -64,23 +64,26 @@ final class KBProjectEvidenceUITests: XCTestCase {
         let project = row(app)
         XCTAssertTrue(project.waitForExistence(timeout: 18))
         project.tap()
-        XCTAssertTrue(app.staticTexts["Sample delivery"].waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Community garden"].waitForExistence(timeout: 12), app.debugDescription)
         shot(app, "detail")
         let sources = app.buttons["kb.project.evidence"]
         XCTAssertTrue(sources.waitForExistence(timeout: 4), app.debugDescription)
-        XCTAssertFalse(label(app, containing: "Writer unknown").exists)
+        XCTAssertFalse(label(app, containing: "Timeline bytes 13–87").exists)
         sources.tap()
-        let historic = label(app, containing: "Writer unknown")
+        let historic = label(app, containing: "Timeline bytes 13–87")
         XCTAssertTrue(historic.exists, app.debugDescription)
-        XCTAssertTrue(historic.label.contains("Locked") && historic.label.contains("Evidence covered: 1 of 3"))
+        XCTAssertTrue(historic.label.contains("Locked") && historic.label.contains("Timeline bytes 13–87 of 208"))
         XCTAssertTrue(historic.label.contains("Maintained by you"))
         reveal(app, app.buttons["kb.project.edit"])
-        let linked = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Release review", "chats/sample-review")).firstMatch
+        let linked = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Planting plan review", "chats/garden-review")).firstMatch
+        reveal(app, label(app, containing: "Source status: Merged"))
+        XCTAssertTrue(label(app, containing: "github:example/garden#4").exists)
         reveal(app, linked)
         XCTAssertTrue(label(app, containing: "Source status: Merged").exists, app.debugDescription)
+        XCTAssertTrue(label(app, containing: "Environment unverified").exists, app.debugDescription)
         XCTAssertTrue(label(app, containing: "Deployment and acceptance need their own evidence").exists)
         linked.tap()
-        XCTAssertTrue(app.staticTexts["Release review"].waitForExistence(timeout: 12), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Planting plan review"].waitForExistence(timeout: 12), app.debugDescription)
         XCTAssertTrue(label(app, containing: "Source delivery history.").waitForExistence(timeout: 8), app.debugDescription)
     }
 }
@@ -103,6 +106,16 @@ extension KBProjectEvidenceUITests {
         let save = app.buttons["kb.project.save"].firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 8))
         return save
+    }
+
+    @MainActor private func clearURLs(_ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<3 {
+            guard let value = field.value as? String, !value.isEmpty, value != "Source references" else { return }
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.9)).tap()
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count + 2))
+        }
+        XCTAssertTrue((field.value as? String ?? "").isEmpty || field.value as? String == "Source references",
+                      field.debugDescription, file: file, line: line)
     }
 
     @MainActor private func changePolicy(_ app: XCUIApplication) {
@@ -130,7 +143,7 @@ extension KBProjectEvidenceUITests {
         let toggle = app.switches["kb.project.reference-only"].firstMatch
         let refs = app.descendants(matching: .any).matching(identifier: "kb.project.pointers").firstMatch
         XCTAssertFalse(save.isEnabled)
-        XCTAssertEqual(refs.value as? String, "https://example.org/releases/sample")
+        XCTAssertEqual(refs.value as? String, "https://example.org/garden/planting-plan")
         changePolicy(app)
         XCTAssertEqual(toggle.value as? String, "1")
         shot(app, "storage-reference-only")
@@ -145,26 +158,22 @@ extension KBProjectEvidenceUITests {
         let saved = try await writes()
         XCTAssertEqual(saved.count, 1)
         let first = try XCTUnwrap(saved[0]["body"] as? [String: String])
-        XCTAssertEqual(first, ["storage_policy": "reference_only"])
+        XCTAssertEqual(first, ["project_mode": "reference-only"])
         XCTAssertFalse(app.buttons["kb.facts.edit"].exists)
         _ = editor(app)
         XCTAssertEqual(toggle.value as? String, "1")
-        for _ in 0..<3 {
-            guard let value = refs.value as? String, !value.isEmpty, value != "Source references" else { break }
-            refs.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.9)).tap()
-            refs.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count + 2))
-        }
+        clearURLs(refs)
         XCTAssertTrue(save.isEnabled, app.debugDescription)
         save.tap()
         XCTAssertTrue(save.waitForNonExistence(timeout: 8))
         let cleared = try await writes()
         let second = try XCTUnwrap(cleared.last?["body"] as? [String: [String]])
-        XCTAssertEqual(second, ["source_refs": []])
-        let linked = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "chats/sample-review")).firstMatch
+        XCTAssertEqual(second, ["source_urls": []])
+        let linked = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "chats/garden-review")).firstMatch
         reveal(app, linked)
         let facts = app.staticTexts["kb.facts"]
         reveal(app, facts)
-        XCTAssertTrue(facts.label.contains("Keep the original checklist."))
+        XCTAssertTrue(facts.label.contains("Keep the east entrance clear."))
         XCTAssertFalse(app.buttons["kb.facts.edit"].exists)
         app.terminate()
 
@@ -183,7 +192,7 @@ extension KBProjectEvidenceUITests {
         restore.tap()
         XCTAssertTrue(restore.waitForNonExistence(timeout: 8))
         let restored = try await writes()
-        XCTAssertEqual(restored.last?["body"] as? [String: String], ["storage_policy": "managed"])
+        XCTAssertEqual(restored.last?["body"] as? [String: String], ["project_mode": "full"])
     }
 
     @MainActor func testRejectedPointerKeepsTheDraftInTheEditor() async throws {
@@ -196,14 +205,65 @@ extension KBProjectEvidenceUITests {
         disclosure.tap()
         let save = editor(app)
         let pointers = app.descendants(matching: .any).matching(identifier: "kb.project.pointers").firstMatch
-        pointers.tap()
-        pointers.typeText("bad pointer")
+        clearURLs(pointers)
+        pointers.typeText("chats/invalid")
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertTrue(app.staticTexts["kb.project.invalid-urls"].exists)
+        clearURLs(pointers)
+        pointers.typeText("https://example.org/rejected")
+        XCTAssertEqual(pointers.value as? String, "https://example.org/rejected")
+        XCTAssertTrue(save.isEnabled)
         save.tap()
         XCTAssertTrue(app.staticTexts["kb.project.error"].waitForExistence(timeout: 8), app.debugDescription)
-        XCTAssertTrue((pointers.value as? String)?.contains("bad pointer") == true)
+        XCTAssertTrue((pointers.value as? String)?.contains("https://example.org/rejected") == true)
         XCTAssertTrue(save.isEnabled)
         let attempts = try await writes()
         XCTAssertTrue(attempts.isEmpty)
+    }
+
+    @MainActor func testSharedDeliveryKeepsItsIndependentUnknownCoverageAndOriginalOwnerURL() {
+        let app = launch()
+        let project = row(app, named: "Garden verification")
+        XCTAssertTrue(project.waitForExistence(timeout: 18))
+        XCTAssertTrue(project.label.contains("Summary needs review") && project.label.contains("Overview needs review"))
+        project.tap()
+        let section = app.buttons["kb.project.evidence"]
+        XCTAssertTrue(section.waitForExistence(timeout: 10))
+        section.tap()
+        let receipt = label(app, containing: "Writer unknown")
+        XCTAssertTrue(receipt.exists && receipt.label.contains("Coverage unknown") && receipt.label.contains("Maintained by Persona"))
+        _ = editor(app)
+        let urls = app.descendants(matching: .any).matching(identifier: "kb.project.pointers").firstMatch
+        XCTAssertEqual(urls.value as? String, "https://github.com/example/garden/issues/4#issuecomment-1")
+        app.buttons["sheet-close"].firstMatch.tap()
+        reveal(app, label(app, containing: "Environment unverified"))
+        XCTAssertTrue(label(app, containing: "Source status: Merged").exists)
+        XCTAssertTrue(label(app, containing: "github:example/garden#4").exists)
+    }
+
+    @MainActor func testEmptyProjectCanSwitchModesWithoutInventingEvidence() async throws {
+        let app = launch()
+        let project = row(app, named: "Empty garden")
+        XCTAssertTrue(project.waitForExistence(timeout: 18))
+        reveal(app, project)
+        XCTAssertFalse(project.label.contains("needs review"))
+        project.tap()
+        let evidence = app.buttons["kb.project.evidence"]
+        XCTAssertTrue(evidence.waitForExistence(timeout: 10))
+        evidence.tap()
+        XCTAssertFalse(label(app, containing: "Writer unknown").exists)
+        let save = editor(app)
+        XCTAssertFalse(save.isEnabled)
+        changePolicy(app)
+        save.tap()
+        XCTAssertTrue(save.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(evidence.label.contains("References only"))
+        _ = editor(app)
+        changePolicy(app)
+        save.tap()
+        XCTAssertTrue(save.waitForNonExistence(timeout: 8))
+        let sent = try await writes()
+        XCTAssertEqual(sent.compactMap { $0["body"] as? [String: String] }, [["project_mode": "reference-only"], ["project_mode": "full"]])
     }
 
     @MainActor func testOlderHubRetainsOriginalProjectControls() {
@@ -225,7 +285,7 @@ extension KBProjectEvidenceUITests {
         project.tap()
         let evidence = app.buttons["kb.project.evidence"]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10))
-        let overview = app.staticTexts["All items delivered."].firstMatch
+        let overview = app.staticTexts["The garden plan has been reviewed."].firstMatch
         XCTAssertGreaterThanOrEqual(overview.frame.minX, evidence.frame.minX - 1)
         let ask = app.buttons["Ask Persona"].firstMatch
         let start = app.buttons["Start Agent"].firstMatch
@@ -254,13 +314,17 @@ extension KBProjectEvidenceUITests {
                 XCTAssertTrue(evidence.waitForExistence(timeout: 10))
                 reveal(app, evidence)
                 evidence.tap()
-                let historic = label(app, containing: "Writer unknown")
+                let historic = label(app, containing: "Timeline bytes 13–87")
                 reveal(app, historic)
                 shot(app, "coverage-" + suffix)
                 _ = editor(app)
                 XCTAssertTrue(app.switches["kb.project.reference-only"].firstMatch.isHittable)
                 XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "kb.project.pointers").firstMatch.exists)
                 shot(app, "storage-" + suffix)
+                app.buttons["sheet-close"].firstMatch.tap()
+                reveal(app, label(app, containing: "Environment unverified"))
+                XCTAssertTrue(label(app, containing: "Source status: Merged").exists)
+                shot(app, "sources-" + suffix)
                 app.terminate()
             }
         }

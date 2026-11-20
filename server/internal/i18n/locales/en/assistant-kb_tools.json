@@ -2,7 +2,5 @@
   "search_empty": "Nothing in the knowledge base matches “{query}”.",
   "search_empty_no_query": "The knowledge base has no matching content.",
   "list_empty": "The knowledge base is empty so far.",
-  "reference_only": "Reference only",
-  "project_field_review": "Needs review ({field}, +{uncovered} through evidence {position})",
-  "project_field_unknown": "Unknown evidence coverage ({field})"
+  "needs_review": "Needs review"
 }

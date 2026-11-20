@@ -36,30 +36,63 @@ class KnowledgeRepositoryTest {
         }
     }
 
+    @Test fun sharedProjectExamplesRetainDifferentFieldCutoffsAndOneUnverifiedSource() = runBlocking {
+        MockWebServer().use { server ->
+            val repository = HttpKnowledgeRepository(HubScope("garden", "pair"), server.url("/").toString(), "fixture-token", OkHttpClient(), { true })
+            for (name in listOf("KBListResult", "KBGetResult")) {
+                val fixture = requireNotNull(javaClass.getResource("/project-evidence/$name.project-evidence.json"))
+                server.enqueue(MockResponse().setBody(fixture.readText()))
+            }
+            val row = repository.list(KnowledgeKind.Projects).items.single()
+            val detail = repository.detail(KnowledgeKind.Projects, row.id)
+            assertEquals(row.freshness, detail.freshness)
+            assertEquals(row.sources, detail.sources)
+            assertEquals("unverified", detail.sources.single().environmentVerification)
+            assertEquals("merged", detail.sources.single().deliveryState)
+            val fields = requireNotNull(detail.freshness).fields
+            assertEquals(75L, fields.getValue("summary").cutoff?.timelineThrough)
+            assertEquals(140L, fields.getValue("one_line").cutoff?.timelineThrough)
+            assertTrue(fields.getValue("summary").needsReview)
+            assertFalse(fields.getValue("one_line").needsReview)
+            assertNull(fields.getValue("summary").writer)
+        }
+    }
+
     @Test fun projectCoverageReadsOriginalSourcesAndWritesOnlyExplicitPointersOrPolicyToItsManager() = runBlocking {
         MockWebServer().use { server ->
             val repo = HttpKnowledgeRepository(HubScope("garden", "pair"), server.url("/").toString(), "fixture-token", OkHttpClient(), { true })
             withContext(RequestManager("m-garden")) {
-                val coverage = """{"policy":"managed","position":3,"needs_review":true,"fields":{
-                    "summary":{"status":"needs_review","cutoff":1,"uncovered":2,"locked":true,"writer":"ext:calendar","maintainer":"user","source_refs":["chats/planning"]},
-                    "one_line":{"status":"unknown","maintainer":"pipeline"}},"sources":[{"ref":"chats/planning","state":"merged","state_at":"2026-06-02T10:00:00Z"}]}"""
-                server.enqueue(MockResponse().setBody("""{"items":[{"kind":"projects","id":"orchard","name":"Orchard","project_knowledge":$coverage},
+                val coverage = """{"timeline_end":5000000000,"needs_review":true,"fields":{
+                    "summary":{"needs_review":true,"cutoff":{"timeline_from":10,"timeline_through":4000000000,"timeline_truncated":true,
+                    "sources":[{"ref":"chats/planning","position":"revision-1","source_id":"github:example/garden#1"}]},
+                    "uncovered_evidence_count":2,"lock_reason":"field_locked","writer":"ext:calendar","source":"kb.update","review_by":"user"},
+                    "one_line":{"needs_review":true,"review_reason":"summary_edited","review_by":"persona"}}}"""
+                val sources = """[{"id":"github:example/garden#1","url":"https://github.com/example/garden/pull/1","refs":["chats/planning","docs/status"],
+                    "delivery_state":"merged","delivery_at":"2026-06-02T10:00:00Z","environment_verification":"unverified"}]"""
+                server.enqueue(MockResponse().setBody("""{"items":[{"kind":"projects","id":"orchard","name":"Orchard","freshness":$coverage,"sources":$sources},
                     {"kind":"projects","id":"old","name":"Older project"}]}"""))
                 val items = repo.list(KnowledgeKind.Projects).items
-                val field = requireNotNull(items.first().projectKnowledge?.fields?.get("summary"))
-                assertEquals(1, field.cutoff); assertEquals(2, field.uncovered); assertTrue(field.locked)
-                assertEquals("ext:calendar", field.writer); assertEquals("user", field.maintainer)
-                assertEquals(listOf("chats/planning"), field.sourceRefs); assertNull(items.last().projectKnowledge)
+                val freshness = requireNotNull(items.first().freshness)
+                val field = freshness.fields.getValue("summary")
+                val cutoff = requireNotNull(field.cutoff)
+                assertEquals(5000000000L, freshness.timelineEnd)
+                assertEquals(4000000000L, cutoff.timelineThrough); assertTrue(cutoff.timelineTruncated)
+                assertEquals("github:example/garden#1", cutoff.sources.single().sourceId)
+                assertEquals(2, field.uncoveredEvidenceCount); assertEquals("field_locked", field.lockReason)
+                assertEquals("ext:calendar", field.writer); assertEquals("kb.update", field.source); assertEquals("user", field.reviewBy)
+                assertNull(freshness.fields.getValue("one_line").uncoveredEvidenceCount); assertNull(items.last().freshness)
                 assertEquals("m-garden", server.takeRequest().requestUrl?.queryParameter("manager"))
                 server.enqueue(MockResponse().setBody("""{"detail":{"kind":"projects","id":"orchard","path":"data/projects/orchard",
-                    "summary":"Two deliveries pending","log":["Previous order"],"meta":{"source_refs":["https://example.org/orchard"]},"project_knowledge":$coverage}}"""))
+                    "summary":"Two deliveries pending","log":["Previous order"],"meta":{"source_urls":["https://example.org/orchard"]},
+                    "project_mode":"reference-only","freshness":$coverage,"sources":$sources}}"""))
                 val detail = repo.detail(KnowledgeKind.Projects, "orchard")
-                assertEquals(items.first().projectKnowledge, detail.projectKnowledge)
-                assertEquals("merged", detail.projectKnowledge?.sources?.single()?.state)
-                assertEquals("Two deliveries pending", detail.summary); assertEquals(listOf("Previous order"), detail.log)
+                assertEquals(freshness, detail.freshness); assertEquals("reference-only", detail.projectMode)
+                val source = detail.sources.single(); assertEquals("merged", source.deliveryState); assertEquals("unverified", source.environmentVerification)
+                assertEquals(listOf("chats/planning", "docs/status"), source.refs)
                 assertEquals("m-garden", server.takeRequest().requestUrl?.queryParameter("manager"))
-                for ((update, expected) in listOf(KnowledgeUpdate(storagePolicy = "reference_only") to """{"storage_policy":"reference_only"}""",
-                    KnowledgeUpdate(sourceRefs = emptyList()) to """{"source_refs":[]}""",
+                for ((update, expected) in listOf(KnowledgeUpdate(projectMode = "reference-only") to """{"project_mode":"reference-only"}""",
+                    KnowledgeUpdate(projectMode = "full") to """{"project_mode":"full"}""", KnowledgeUpdate(sourceUrls = emptyList()) to """{"source_urls":[]}""",
+                    KnowledgeUpdate(sourceUrls = listOf("https://example.org/notes")) to """{"source_urls":["https://example.org/notes"]}""",
                     KnowledgeUpdate(tags = listOf("garden")) to """{"tags":["garden"]}""")) {
                     server.enqueue(MockResponse().setBody("{}")); repo.update(KnowledgeKind.Projects, "orchard", update)
                     val written = server.takeRequest(); assertEquals("PUT", written.method); assertEquals("m-garden", written.requestUrl?.queryParameter("manager"))

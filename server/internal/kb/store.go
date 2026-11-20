@@ -95,8 +95,9 @@ type Chat struct {
 
 	// State is where the conversation stands at its source (kbwire.ChatOpen, ChatMerged, ChatClosed; "" none
 	// reported) and StateAt since when, as Ingest last recorded them (#9427): the source's fact, never the model's.
-	State   string    `json:"state,omitempty"`
-	StateAt time.Time `json:"state_at,omitzero"`
+	State     string    `json:"state,omitempty"`
+	StateAt   time.Time `json:"state_at,omitzero"`
+	SourceURL string    `json:"source_url,omitempty"`
 }
 
 // Ended reports whether the conversation has ended at its source (a pull request merged or closed, an issue closed).
@@ -119,17 +120,10 @@ type Person struct {
 
 // Project is what a set of people and chats work towards: a short one (a feature, a launch) or a long one (a team's mission).
 type Project struct {
-	StoragePolicy string           `json:"storage_policy,omitempty"`
-	SourceRefs    []string         `json:"source_refs,omitempty"`
-	FieldEvidence *projectEvidence `json:"field_evidence,omitempty"`
-	// Only an explicit project update supplies these changes. Older in-flight metadata writers preserve the disk values.
-	setStoragePolicy bool
-	setSourceRefs    bool
-	forgottenSources map[string]bool
-	Slug             string `json:"slug"`
-	Name             string `json:"name"`
-	Kind             string `json:"kind"`   // short | long
-	Status           string `json:"status"` // active | paused | done | ignored (not a project: never revived, hidden) | merged
+	Slug   string `json:"slug"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`   // short | long
+	Status string `json:"status"` // active | paused | done | ignored (not a project: never revived, hidden) | merged
 	// MergedInto: merged (DedupeProjects, or by hand) into this project; kept for its history, hidden from lists.
 	MergedInto string   `json:"merged_into,omitempty"`
 	Aliases    []string `json:"aliases,omitempty"`
@@ -142,13 +136,17 @@ type Project struct {
 	Dirs       []string `json:"dirs,omitempty"`  // code directories ("<machine>:<path>"): Agents working there belong to it
 	// Keywords: words the project goes by in public talk (product, feature names), from the project rewrite; what
 	// finds its Moments posts. Moments are the posts the model judged to be about it (LinkMoments).
-	Keywords []string        `json:"keywords,omitempty"`
-	Moments  []ProjectMoment `json:"moments,omitempty"`
-	Merge    *ProjectMerge   `json:"merge,omitempty"` // merged projects: what the merge gave MergedInto, for unmerge
-	Dirty    bool            `json:"dirty,omitempty"` // has news its summary does not reflect yet
-	OneLine  string          `json:"one_line,omitempty"`
-	Created  time.Time       `json:"created"`
-	Updated  time.Time       `json:"updated"`
+	Keywords           []string                      `json:"keywords,omitempty"`
+	Moments            []ProjectMoment               `json:"moments,omitempty"`
+	Merge              *ProjectMerge                 `json:"merge,omitempty"` // merged projects: what the merge gave MergedInto, for unmerge
+	Dirty              bool                          `json:"dirty,omitempty"` // has news its summary does not reflect yet
+	OneLine            string                        `json:"one_line,omitempty"`
+	Mode               string                        `json:"project_mode,omitempty"`
+	SourceURLs         []string                      `json:"source_urls,omitempty"`
+	FieldCoverage      map[string]projectFieldRecord `json:"field_coverage,omitempty"`
+	OneLineNeedsReview bool                          `json:"one_line_needs_summary_review,omitempty"`
+	Created            time.Time                     `json:"created"`
+	Updated            time.Time                     `json:"updated"`
 	Tagging
 }
 
@@ -162,16 +160,15 @@ type ProjectMoment struct {
 // ProjectMerge is a merge as the project merged away records it (MergeProjects), so unmergeProject can undo it: its
 // own status before, and what the merge added to the project kept. Merges made before it was recorded have none.
 type ProjectMerge struct {
-	SourceRefs []string  `json:"source_refs,omitempty"`
-	At         time.Time `json:"at"`
-	Status     string    `json:"status,omitempty"`
-	Aliases    []string  `json:"aliases,omitempty"`
-	People     []string  `json:"people,omitempty"`
-	Chats      []string  `json:"chats,omitempty"`
-	Items      []string  `json:"items,omitempty"`
-	Dirs       []string  `json:"dirs,omitempty"`
-	Keywords   []string  `json:"keywords,omitempty"`
-	Moments    []string  `json:"moments,omitempty"` // post ids
+	At       time.Time `json:"at"`
+	Status   string    `json:"status,omitempty"`
+	Aliases  []string  `json:"aliases,omitempty"`
+	People   []string  `json:"people,omitempty"`
+	Chats    []string  `json:"chats,omitempty"`
+	Items    []string  `json:"items,omitempty"`
+	Dirs     []string  `json:"dirs,omitempty"`
+	Keywords []string  `json:"keywords,omitempty"`
+	Moments  []string  `json:"moments,omitempty"` // post ids
 	// Evicted: posts of the kept project's (its own, or another merged project's) past maxProjectMoments that come
 	// back as far as room allows when this merge is undone: those the merge pushed out, and those an unmerge of
 	// another project merged into it had no room for.
@@ -223,12 +220,11 @@ type Item struct {
 
 // Store reads and writes the data dir. Writes of one entity are serialized; files are replaced atomically.
 type Store struct {
-	readOnly        bool
-	Dir             string
-	mu              sync.Mutex
-	metaMu          sync.Mutex // acquire before mu when both are needed (projectInput reads Log under metaMu)
-	applyMu         sync.Mutex
-	chatRefProjects map[string][]string // explicit chat pointers only, lazily rebuilt under metaMu after an edit
+	readOnly bool
+	Dir      string
+	mu       sync.Mutex
+	metaMu   sync.Mutex // acquire before mu when both are needed (projectInput reads Log under metaMu)
+	applyMu  sync.Mutex
 
 	recMu      sync.Mutex   // a recording's read-compare-write (recordings.go)
 	recFilesMu sync.RWMutex // acquire before metaMu for recording snapshots and recovery
@@ -256,10 +252,9 @@ type Store struct {
 	// imports (notePerson), compression, edits and forgetting alike. Lock order: chatMu, then personMu, then metaMu;
 	// nothing holding metaMu takes personMu.
 	personMu  sync.Mutex
-	observeMu sync.Mutex
+	observeMu sync.RWMutex
 	changed   func(Change)
-	notifying map[Change]bool // pending repeats while an observer is processing this same persisted change
-	zone      *time.Location  // the user's zone, the archive's days and times are written in (zone.go); nil: time.Local
+	zone      *time.Location // the user's zone, the archive's days and times are written in (zone.go); nil: time.Local
 	// settled: the zone every file was last moved into without an error (Rezone skips the walk while it holds).
 	settled string
 	// ingestWrite is a per-store failure-injection seam; nil uses fsync and atomic replacement.
@@ -498,8 +493,29 @@ func (s *Store) PutSummary(kind, id, text string) error {
 }
 
 // AppendLog adds a line to a project's timeline (its time in the archive's zone).
-func (s *Store) AppendLog(slug string, at time.Time, source, line string) error {
-	return s.projectLog(slug, at, source, line, "", "")
+func (s *Store) AppendLog(slug string, at time.Time, source, line string) (err error) {
+	if s.readOnly {
+		return ErrReadOnly
+	}
+	s.metaMu.Lock()
+	if err := s.checkProjectDetailWrite(slug, "log"); err != nil {
+		s.metaMu.Unlock()
+		return err
+	}
+	s.mu.Lock()
+	defer func() {
+		s.mu.Unlock()
+		s.metaMu.Unlock()
+		if err == nil {
+			s.notify(KindProject, slug, "log")
+		}
+	}()
+	if _, err := s.settleLogLocked(slug); err != nil {
+		return err
+	}
+	zone := s.zoneLocked()
+	return appendFile(s.path(KindProject, slug, "log.md"), logHeader(zone),
+		fmt.Sprintf("- %s · %s · %s\n", at.In(zone).Format("2006-01-02 15:04"), source, oneLine(line)))
 }
 
 // Log returns the last n lines of a project's timeline, oldest first: nil when it has none; empty when n <= 0 and it

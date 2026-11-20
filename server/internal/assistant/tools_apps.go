@@ -15,6 +15,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
+	"github.com/nwverse/persona/server/internal/kbwire"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -95,8 +96,10 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		var b strings.Builder
 		lang := s.lang(ctx)
 		for _, x := range items {
-			fmt.Fprintf(&b, "- %s · %s [%s 相关%d] %s %s%s%s\n", x.ID, x.Name, orDash(x.Importance), x.Relevance,
-				strings.Join(x.Tags, ","), x.Extra, prefix(" — ", x.OneLine), prefix(" · ", projectReviewLine(lang, x)))
+			fmt.Fprintf(&b, "- %s · %s [%s 相关%d] %s %s%s", x.ID, x.Name, orDash(x.Importance), x.Relevance,
+				strings.Join(x.Tags, ","), x.Extra, prefix(" — ", x.OneLine))
+			writeProjectReview(&b, lang, x.ProjectMode, x.Freshness, x.Sources, true)
+			b.WriteByte('\n')
 		}
 		return b.String(), nil
 	case "kb_get":
@@ -112,8 +115,7 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if err != nil {
 			return "", fmt.Errorf("%s/%s: %w", a.Kind, a.ID, err)
 		}
-		// meta.json as the file has it (one edited by hand into something else: its text, as it is), a project's people
-		// folded to the first few (kb_get_fit.go).
+		// The public metadata, with a project's people folded to the first few (kb_get_fit.go).
 		meta, folded := []byte(d.Meta), ""
 		if a.Kind == kb.KindProject {
 			meta, folded = foldPeople(meta, d.Links, filepath.Join(d.Path, "meta.json"))
@@ -123,23 +125,19 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			meta = append(indented.Bytes(), '\n')
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "Path: %s\n\n", d.Path)
-		fmt.Fprintf(&b, "meta.json:\n%s%s\n", meta, folded)
+		var review strings.Builder
+		writeProjectReview(&review, s.lang(ctx), d.ProjectMode, d.Freshness, d.Sources, false)
+		if review.Len() > 0 && estTokens(d.Summary)+estTokens(string(meta))+estTokens(review.String()) > kbGetMaxTokens/2 {
+			b.WriteString(review.String())
+			b.WriteString("\n\n")
+			review.Reset()
+		}
+		fmt.Fprintf(&b, "Path: %s\n\nmeta.json:\n%s%s\n", d.Path, meta, folded)
 		if d.Summary != "" {
 			fmt.Fprintf(&b, "\nsummary.md:\n%s\n", d.Summary)
 		}
-		if k := d.ProjectKnowledge; k != nil {
-			var project struct {
-				OneLine string `json:"one_line"`
-			}
-			_ = json.Unmarshal(d.Meta, &project)
-			if k.NeedsReview || k.Position > 0 || k.Policy == "reference_only" || len(k.Sources) > 0 || d.Summary != "" || project.OneLine != "" {
-				data, err := json.Marshal(k)
-				if err != nil {
-					return "", err
-				}
-				fmt.Fprintf(&b, "\nproject_knowledge: %s\n", data)
-			}
+		if review.Len() > 0 {
+			fmt.Fprintf(&b, "\n%s\n", review.String())
 		}
 		if len(d.Log) > 0 {
 			fmt.Fprintf(&b, "\nlog.md (latest):\n%s\n", strings.Join(d.Log, "\n"))
@@ -203,7 +201,7 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			ID   string `json:"id"`
 			kb.UserUpdate
 		}
-		if err := json.Unmarshal(args, &a); err != nil {
+		if err := kbDecodeParams(name, args, &a); err != nil {
 			return "", err
 		}
 		if a.LockLists == nil { // a removal keeps out just that link; locking a whole list is the user's choice in the app
@@ -226,26 +224,50 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 	return "", fmt.Errorf("unknown tool %s", name)
 }
 
-// A project list row shows the gap for each field independently; both can refer to the same evidence.
-func projectReviewLine(lang i18n.Lang, entry kb.Entry) string {
-	k := entry.ProjectKnowledge
-	if k == nil {
-		return ""
+// writeProjectReview gives tools the same review state as the wire. The list
+// shows the timeline positions and counts, while detail includes each input revision.
+func writeProjectReview(b *strings.Builder, lang i18n.Lang, mode string, freshness *kbwire.ProjectFreshness, sources []kbwire.ProjectSource, compact bool) {
+	if mode == "" && freshness == nil && len(sources) == 0 {
+		return
 	}
-	var notes []string
-	if k.Policy == "reference_only" {
-		notes = append(notes, i18n.T(lang, "assistant-kb_tools.reference_only"))
-	}
-	for _, name := range []string{"summary", "one_line"} {
-		field := k.Fields[name]
-		if field.Status == "needs_review" {
-			notes = append(notes, i18n.T(lang, "assistant-kb_tools.project_field_review",
-				i18n.Args{"field": name, "uncovered": field.Uncovered, "position": k.Position}))
-		} else if field.Status == "unknown" && (field.Locked || name == "one_line" && entry.OneLine != "") {
-			notes = append(notes, i18n.T(lang, "assistant-kb_tools.project_field_unknown", i18n.Args{"field": name}))
+	if compact {
+		summary := &kbwire.ProjectFreshness{}
+		if freshness != nil {
+			summary.NeedsReview, summary.TimelineEnd = freshness.NeedsReview, freshness.TimelineEnd
+			summary.Fields = make(map[string]kbwire.ProjectFieldFreshness, len(freshness.Fields))
+			for name, field := range freshness.Fields {
+				if field.Cutoff != nil {
+					cutoff := *field.Cutoff
+					cutoff.Sources = nil
+					field.Cutoff = &cutoff
+				}
+				summary.Fields[name] = field
+			}
+			freshness = summary
 		}
+		var linked []kbwire.ProjectSource
+		for _, source := range sources {
+			if source.URL != "" || source.DeliveryState != "" {
+				source.Refs = nil
+				linked = append(linked, source)
+			}
+		}
+		sources = linked
+		if mode == "" && freshness == nil && len(sources) == 0 {
+			return
+		}
+		b.WriteString(" · ")
 	}
-	return strings.Join(notes, " · ")
+	if freshness != nil && freshness.NeedsReview {
+		b.WriteString(i18n.T(lang, "assistant-kb_tools.needs_review"))
+		b.WriteByte(' ')
+	}
+	raw, _ := json.Marshal(struct {
+		Mode      string                   `json:"project_mode,omitempty"`
+		Freshness *kbwire.ProjectFreshness `json:"freshness,omitempty"`
+		Sources   []kbwire.ProjectSource   `json:"sources,omitempty"`
+	}{mode, freshness, sources})
+	b.Write(raw)
 }
 
 func orDash(s string) string {

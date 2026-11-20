@@ -14,9 +14,9 @@ const contexts = baseline ? [["desktop", "light", "standard", "en"]] : [
   ["phone", "light", "large", "zh-Hans"], ["phone", "dark", "large", "ja"],
 ];
 const localized = {
-  en: { review: "Summary needs review", gap: "3 newer updates", title: "Sources and coverage", edit: "Edit storage", save: "Save", refs: "Source references" },
-  "zh-Hans": { review: "摘要待复核", gap: "有 3 条新进展", title: "来源与覆盖范围", edit: "编辑存储方式", save: "保存", refs: "来源引用" },
-  ja: { review: "要約に確認が必要", gap: "新しい更新 3 件", title: "情報源と対象範囲", edit: "保存方法を編集", save: "保存", refs: "参照先" },
+  en: { review: "Summary needs review", gap: "3 newer updates", title: "Sources and coverage", edit: "Edit storage", save: "Save", refs: "Source references", mode: "References only" },
+  "zh-Hans": { review: "摘要待复核", gap: "有 3 条新进展", title: "来源与覆盖范围", edit: "编辑存储方式", save: "保存", refs: "来源引用", mode: "仅保留引用" },
+  ja: { review: "要約に確認が必要", gap: "新しい更新 3 件", title: "情報源と対象範囲", edit: "保存方法を編集", save: "保存", refs: "参照先", mode: "参照のみ" },
 };
 const name = "Community garden";
 const overview = "The planting plan has been approved.";
@@ -33,35 +33,36 @@ try {
       localStorage.setItem("persona.text-size", scale);
       localStorage.setItem("persona.language", language);
     }, [theme, scale, language]);
-    let policy = "managed";
+    let policy;
     let refs = [pointer];
     const writes = [];
-    const knowledge = () => ({
-      policy, needs_review: true, position: 5,
+    const evidence = () => ({
+      needs_review: policy !== "reference-only", timeline_end: 218,
       fields: {
-        summary: { status: "needs_review", cutoff: 2, uncovered: 3, locked: true, maintainer: policy === "reference_only" ? "external" : "user", source_refs: [linked] },
-        one_line: { status: "current", cutoff: 5, uncovered: 0, writer: "pipeline", maintainer: policy === "reference_only" ? "external" : "pipeline", source_refs: [linked] },
+        summary: { needs_review: policy !== "reference-only", review_reason: policy === "reference-only" ? "reference-only" : "new_evidence", cutoff: { timeline_from: 0, timeline_through: 72, sources: [{ ref: linked, position: "initial-review" }] }, uncovered_evidence_count: policy === "reference-only" ? undefined : 3, lock_reason: "field_locked", review_by: "user" },
+        one_line: { needs_review: false, cutoff: { timeline_from: 0, timeline_through: 218, sources: [{ ref: linked, position: "merged-review" }] }, writer: "persona", source: "kb.project", review_by: "persona" },
       },
     });
+    const sources = () => [{ id: "github:example/garden#4", url: "https://github.com/example/garden/pull/4", refs: [linked], delivery_state: "merged", delivery_at: "2026-11-18T10:00:00Z", environment_verification: "unverified" }, ...refs.map(url => ({ id: url, url }))];
     const entry = { kind: "projects", id: "garden", name, one_line: overview, relevance: 65, importance: "P2", extra: "short · active", tags: ["garden"] };
     await context.route(/\/api\/v1\/kb\/projects(?:[/?]|$)/, async route => {
       const url = new URL(route.request().url());
-      if (url.pathname === "/api/v1/kb/projects") return route.fulfill({ json: { items: [{ ...entry, project_knowledge: knowledge() }] } });
+      if (url.pathname === "/api/v1/kb/projects") return route.fulfill({ json: { items: [{ ...entry, freshness: evidence(), project_mode: policy, sources: sources() }] } });
       if (url.pathname !== "/api/v1/kb/projects/garden") return route.fallback();
       if (route.request().method() === "PUT") {
         const body = route.request().postDataJSON();
         writes.push(body);
         await new Promise(resolve => setTimeout(resolve, 100));
-        if (body.storage_policy) policy = body.storage_policy;
-        if (body.source_refs) refs = body.source_refs;
+        if (body.project_mode) policy = body.project_mode === "full" ? undefined : body.project_mode;
+        if (body.source_urls) refs = body.source_urls;
         return route.fulfill({ json: { id: "garden" } });
       }
       return route.fulfill({ json: { detail: {
         kind: "projects", id: "garden", path: "knowledge/projects/garden",
-        meta: { ...entry, kind: "short", status: "active", pinned: "Keep the east entrance clear.", source_refs: refs },
+        meta: { ...entry, kind: "short", status: "active", pinned: "Keep the east entrance clear.", source_urls: refs },
         summary, log: ["2026-11-18 10:00 · Garden committee · The plan was approved."],
         links: [{ kind: "chats", id: "garden-review", name: "Planting plan review", relevance: 0 }],
-        project_knowledge: { ...knowledge(), sources: [{ ref: linked, state: "merged", state_at: "2026-11-18T10:00:00Z" }, ...refs.map(ref => ({ ref }))] },
+        project_mode: policy, freshness: evidence(), sources: sources(),
       } } });
     });
     const page = await context.newPage();
@@ -102,7 +103,8 @@ try {
       await shot("storage");
       await region.getByRole("button", { name: words.save }).click();
       await region.getByRole("button", { name: words.edit }).waitFor();
-      assert.deepEqual(writes, [{ storage_policy: "reference_only" }]);
+      assert.deepEqual(writes, [{ project_mode: "reference-only" }]);
+      await region.getByRole("heading", { name: words.mode, exact: true }).waitFor();
       await shot("reference-only");
       await region.getByRole("button", { name: words.edit }).click();
       const sw = region.getByRole("switch");
@@ -110,7 +112,7 @@ try {
       await sw.click();
       await region.getByRole("button", { name: words.save }).click();
       await region.getByRole("button", { name: words.edit }).waitFor();
-      assert.deepEqual(writes[1], { storage_policy: "managed" });
+      assert.deepEqual(writes[1], { project_mode: "full" });
     }
     assert.deepEqual(errors, []);
     console.log(`PASS ${layout} ${theme} ${scale} ${language}: ${baseline ? "baseline without review or storage controls" : "review shown, sources opened, policy toggled both ways"}`);

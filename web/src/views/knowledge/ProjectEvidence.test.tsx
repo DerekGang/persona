@@ -4,26 +4,25 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { initI18n } from "../../i18n";
 import { setToken } from "../../lib/api";
-import type { KBProjectKnowledge } from "../../lib/kb";
+import type { KBProjectFreshness } from "../../lib/kb";
 import { resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 import { lists, searches } from "./cache";
 import { EntryDetail } from "./KBDetail";
 import { ListPane } from "./KBList";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const initial = (): KBProjectKnowledge => ({
-  policy: "managed",
-  needs_review: true,
-  position: 3,
+const initial = (): KBProjectFreshness => ({
+  needs_review: true, timeline_end: 125, evidence: [{ ref: "chats/sample", position: "new-revision", source_id: "github:example/project#1" }],
   fields: {
-    summary: { status: "needs_review", cutoff: 0, uncovered: 3, locked: true, source_refs: ["chats/sample"] },
-    one_line: { status: "current", cutoff: 3, uncovered: 0, writer: "pipeline" },
+    summary: { needs_review: true, review_reason: "new_evidence", cutoff: { timeline_from: 10, timeline_through: 40, timeline_truncated: true, sources: [{ ref: "chats/sample", position: "old-revision" }] }, uncovered_evidence_count: 3, lock_reason: "field_locked", review_by: "user" },
+    one_line: { needs_review: false, cutoff: { timeline_from: 0, timeline_through: 125 }, uncovered_evidence_count: 0, review_by: "persona", writer: "persona", source: "kb.project" },
   },
 });
 const entry = { kind: "projects", id: "sample", name: "Sample project", one_line: "The changes merged.", relevance: 0, extra: "short · active" };
-const metadata = { ...entry, kind: "short", status: "active", pinned: "A historical correction", source_refs: ["https://example.org/project"] };
+const metadata = { ...entry, kind: "short", status: "active", pinned: "A historical correction", source_urls: ["https://example.org/project"] };
 let knowledge: ReturnType<typeof initial> | undefined;
 let refs: string[];
+let mode: string | undefined;
 let writes: { body: Record<string, unknown>; manager: string | null }[];
 let rejectSave: boolean;
 let host: HTMLDivElement;
@@ -51,21 +50,22 @@ beforeEach(async () => {
   lists.clear();
   searches.clear();
   knowledge = initial();
-  refs = [...metadata.source_refs];
+  mode = undefined;
+  refs = [...metadata.source_urls];
   writes = [];
   rejectSave = false;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     let result: unknown = {};
-    if (url === "/api/v1/kb/projects") result = { items: [{ ...entry, project_knowledge: knowledge }] };
+    if (url === "/api/v1/kb/projects") result = { items: [{ ...entry, freshness: knowledge, project_mode: mode }] };
     if (url === "/api/v1/kb/projects/sample") {
       if (init.method === "PUT") {
         const body = JSON.parse(String(init.body));
         writes.push({ body, manager: new Headers(init.headers).get("X-Persona-Manager") });
         if (rejectSave) return Response.json({ error: "Pointer is invalid" }, { status: 400 });
-        if (body.storage_policy && knowledge) knowledge = { ...knowledge, policy: body.storage_policy };
-        if (body.source_refs) refs = body.source_refs;
+        if (body.project_mode) mode = body.project_mode === "full" ? undefined : body.project_mode;
+        if (body.source_urls) refs = body.source_urls;
       } else {
-        result = { detail: { kind: "projects", id: "sample", path: "", summary: "Two items still pending.", meta: { ...metadata, source_refs: refs }, links: [{ kind: "chats", id: "sample", name: "Change request", relevance: 0 }], project_knowledge: knowledge && { ...knowledge, sources: [{ ref: "chats/sample", state: "merged" }, { ref: "projects/sample/log" }, ...refs.map(ref => ({ ref }))] } } };
+        result = { detail: { kind: "projects", id: "sample", path: "", summary: "Two items still pending.", meta: { ...metadata, source_urls: refs }, links: [{ kind: "chats", id: "sample", name: "Change request", relevance: 0 }], freshness: knowledge, project_mode: mode, sources: knowledge && [{ id: "github:example/project#1", url: "https://github.com/example/project/pull/1", refs: ["chats/sample"], delivery_state: "merged", environment_verification: "unverified" }, ...refs.map(url => ({ id: url, url }))] } };
       }
     }
     return Response.json(result);
@@ -94,10 +94,14 @@ it("shows the same gap on the detail and discloses coverage, locks, unknown writ
   expect(host.querySelector("details")?.open).toBe(false);
   const detail = openEvidence();
   expect(detail.open).toBe(true);
-  for (const value of ["Covers 0 of 3 updates", "Covers 3 of 3 updates", "Locked", "Writer unknown", "Persona", "Source status: Merged"]) expect(detail.textContent).toContain(value);
+  for (const value of ["Timeline bytes 10–40 of 125", "Timeline bytes 0–125 of 125", "Earlier entries were outside this window", "Locked", "Writer unknown", "Written by Persona", "kb.project", "old-revision", "Source status: Merged", "Environment unverified", "github:example/project#1"]) expect(detail.textContent).toContain(value);
   expect(detail.querySelector('a[href*="/kb/chats/sample"]')?.textContent).toBe("Change request");
-  expect(detail.textContent).toContain("projects/sample/log");
-  expect(Array.from(detail.querySelectorAll("a")).some(a => a.textContent === "projects/sample/log")).toBe(false);
+  expect(detail.querySelector('a[href="https://github.com/example/project/pull/1"]')).not.toBeNull();
+  const revisions = Array.from(detail.querySelectorAll("details"));
+  expect(revisions).toHaveLength(2);
+  expect(revisions.every(section => !section.open)).toBe(true);
+  await click(revisions.find(section => section.querySelector("summary")?.textContent === "Current source revisions")?.querySelector("summary"));
+  expect(revisions.find(section => section.open)?.textContent).toContain("new-revision");
   expect(writes).toHaveLength(0);
 });
 it("writes only the changed policy, preserves existing history, and can return to managed storage", async () => {
@@ -107,7 +111,7 @@ it("writes only the changed policy, preserves existing history, and can return t
   await click(host.querySelector<HTMLButtonElement>('[role="switch"]'));
   expect(writes).toHaveLength(0);
   await click(button("Save"));
-  expect(writes).toEqual([{ body: { storage_policy: "reference_only" }, manager: "sample-manager" }]);
+  expect(writes).toEqual([{ body: { project_mode: "reference-only" }, manager: "sample-manager" }]);
   expect(host.textContent).toContain("Two items still pending.");
   expect(host.textContent).toContain("A historical correction");
   const facts = Array.from(host.querySelectorAll("section")).find(s => s.querySelector("h2")?.textContent === "Confirmed facts");
@@ -115,7 +119,7 @@ it("writes only the changed policy, preserves existing history, and can return t
   await click(button("Edit storage"));
   await click(host.querySelector<HTMLButtonElement>('[role="switch"]'));
   await click(button("Save"));
-  expect(writes[1]?.body).toEqual({ storage_policy: "managed" });
+  expect(writes[1]?.body).toEqual({ project_mode: "full" });
 });
 it("retains a rejected edit and changes only explicit source references; linked chats stay separate", async () => {
   await act(async () => root.render(<Page />));
@@ -133,7 +137,7 @@ it("retains a rejected edit and changes only explicit source references; linked 
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("Pointer is invalid");
   rejectSave = false;
   await click(button("Save"));
-  expect(writes[1]?.body).toEqual({ source_refs: ["https://example.org/notes"] });
+  expect(writes[1]?.body).toEqual({ source_urls: ["https://example.org/notes"] });
   expect(host.querySelector('a[href*="/kb/chats/sample"]')).not.toBeNull();
 });
 it("keeps a legacy project readable without offering unsupported edits or inferring coverage", async () => {
@@ -146,24 +150,45 @@ it("keeps a legacy project readable without offering unsupported edits or inferr
 });
 
 it("keeps historical coverage and writers unknown, including a locked field", async () => {
-  knowledge = { policy: "managed", needs_review: false, position: 0, fields: { summary: { status: "unknown", locked: true, maintainer: "user" }, one_line: { status: "unknown", maintainer: "pipeline" } } };
+  knowledge = { needs_review: false, timeline_end: 0, fields: { summary: { needs_review: false, lock_reason: "field_locked", review_by: "user" }, one_line: { needs_review: false, review_by: "persona" } } };
   await act(async () => root.render(<Page />));
   const evidence = openEvidence().textContent!;
   expect(evidence.match(/Coverage unknown/g)).toHaveLength(2);
   expect(evidence.match(/Writer unknown/g)).toHaveLength(2);
   expect(evidence).toContain("Locked");
-  expect(evidence).toContain("Maintained by you");
-  expect(evidence).toContain("Maintained by Persona");
-  expect(evidence).not.toContain("Covers 0");
+  expect(evidence).toContain("Review by you");
+  expect(evidence).toContain("Review by Persona");
+  expect(evidence).not.toContain("Timeline bytes");
   expect(evidence).not.toContain("Written by you");
 });
 
 it("keeps overlapping field gaps separate, including a gap without a historical cutoff", async () => {
   knowledge = initial();
-  knowledge.fields.one_line = { status: "needs_review", uncovered: 1 };
+  knowledge.fields.one_line = { needs_review: true, uncovered_evidence_count: 1, review_reason: "coverage_unknown", review_by: "persona" };
   await act(async () => root.render(<Page list />));
   const row = host.querySelector('a[href*="/kb/projects/sample"]')!;
   expect(row.textContent).toContain("Summary needs review · 3 newer updates");
-  expect(row.textContent).toContain("Overview needs review · 1 newer update");
+  expect(row.textContent).toContain("Overview needs review · 1 update to review");
   expect(row.textContent).not.toContain("4 newer updates");
+});
+
+
+it("lets the owner set policy before a new project's first evidence", async () => {
+  knowledge = { needs_review: false, timeline_end: 0, fields: {} };
+  await act(async () => root.render(<Page />));
+  const detail = openEvidence();
+  expect(detail.textContent).not.toContain("Writer unknown");
+  await click(button("Edit storage"));
+  await click(host.querySelector<HTMLButtonElement>('[role="switch"]'));
+  await click(button("Save"));
+  expect(writes[0]?.body).toEqual({ project_mode: "reference-only" });
+});
+
+it("preserves an unrecognized storage mode without offering writes that assume full mode", async () => {
+  mode = "archive-preview";
+  await act(async () => root.render(<Page />));
+  const detail = openEvidence();
+  expect(detail.textContent).toContain("archive-preview");
+  expect(button("Edit storage")).toBeUndefined();
+  expect(writes).toHaveLength(0);
 });

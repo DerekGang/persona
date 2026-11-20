@@ -1,72 +1,119 @@
 import Foundation
 
-/// Project-local evidence positions are independent of the date on the entity. Older Hubs omit this object.
-nonisolated struct KBProjectKnowledge: Codable, Hashable, Sendable {
-    var policy: String
-    var position: Int
+/// The Hub's project receipts use byte offsets in log.md and opaque revisions for other evidence.
+nonisolated struct KBProjectFreshness: Codable, Hashable, Sendable {
     var needsReview: Bool
+    var timelineEnd: Int64
+    var evidence: [Evidence]?
     var fields: [String: Field]
-    var sources: [Source]?
 
     enum CodingKeys: String, CodingKey {
-        case policy, position, fields, sources
-        case needsReview = "needs_review"
+        case fields, evidence
+        case needsReview = "needs_review", timelineEnd = "timeline_end"
+    }
+
+    nonisolated struct Evidence: Codable, Hashable, Sendable {
+        var ref: String
+        var position: String
+        var sourceID: String?
+        enum CodingKeys: String, CodingKey { case ref, position, sourceID = "source_id" }
+    }
+
+    nonisolated struct Cutoff: Codable, Hashable, Sendable {
+        var timelineFrom: Int64
+        var timelineThrough: Int64
+        var timelineTruncated: Bool?
+        var sources: [Evidence]?
+
+        enum CodingKeys: String, CodingKey {
+            case sources, timelineFrom = "timeline_from", timelineThrough = "timeline_through", timelineTruncated = "timeline_truncated"
+        }
     }
 
     nonisolated struct Field: Codable, Hashable, Sendable {
-        var status: String
-        var cutoff: Int?
-        var uncovered: Int?
         var writer: String?
-        var maintainer: String?
-        var locked: Bool?
-        var sourceRefs: [String]?
+        var source: String?
+        var cutoff: Cutoff?
+        var lockReason: String?
+        var reviewBy: String?
+        var needsReview: Bool
+        var reviewReason: String?
+        var uncoveredEvidenceCount: Int?
 
         enum CodingKeys: String, CodingKey {
-            case status, cutoff, uncovered, writer, maintainer, locked
-            case sourceRefs = "source_refs"
+            case writer, source, cutoff, lockReason = "lock_reason", reviewBy = "review_by", needsReview = "needs_review"
+            case reviewReason = "review_reason", uncoveredEvidenceCount = "uncovered_evidence_count"
         }
     }
+}
 
-    nonisolated struct Source: Codable, Identifiable, Hashable, Sendable {
-        var ref: String
-        var state: String?
-        var stateAt: Date?
-        var id: String { ref }
+nonisolated struct KBProjectSource: Codable, Identifiable, Hashable, Sendable {
+    var id: String
+    var url: String?
+    var refs: [String]?
+    var deliveryState: String?
+    var deliveryAt: Date?
+    var environmentVerification: String?
 
-        enum CodingKeys: String, CodingKey {
-            case ref, state
-            case stateAt = "state_at"
-        }
+    enum CodingKeys: String, CodingKey {
+        case id, url, refs, deliveryState = "delivery_state", deliveryAt = "delivery_at", environmentVerification = "environment_verification"
     }
 }
 
 nonisolated enum KBProjectPolicy: String, Sendable {
-    case managed
-    case referenceOnly = "reference_only"
+    case full
+    case referenceOnly = "reference-only"
 }
 
-/// Only owner-supplied pointers can be replaced. Sources discovered through chats, receipts and history stay on the Hub.
+extension KBDetail {
+    nonisolated var hasProjectEvidence: Bool {
+        kind == KBKind.projects.rawValue && (projectMode != nil || freshness != nil || sources != nil)
+    }
+
+    nonisolated var projectPolicy: KBProjectPolicy? {
+        guard hasProjectEvidence else { return nil }
+        return KBProjectPolicy(rawValue: projectMode ?? KBProjectPolicy.full.rawValue)
+    }
+}
+
+/// Replace only explicit owner URLs. Linked chats and canonical delivery URLs are derived by the Hub.
 nonisolated struct KBProjectStorageDraft {
     private let savedPolicy: KBProjectPolicy
-    private let savedRefs: [String]
+    private let savedURLs: [String]
     var policy: KBProjectPolicy
     var references: String
 
     init?(_ detail: KBDetail) {
-        guard detail.kind == KBKind.projects.rawValue, let knowledge = detail.projectKnowledge,
-              let policy = KBProjectPolicy(rawValue: knowledge.policy) else { return nil }
-        let refs = detail.meta?["source_refs"]?.array?.compactMap(\.string) ?? []
+        guard let policy = detail.projectPolicy else { return nil }
+        let urls = detail.meta?["source_urls"]?.array?.compactMap(\.string) ?? []
         savedPolicy = policy
-        savedRefs = refs
+        savedURLs = urls
         self.policy = policy
-        references = refs.joined(separator: "\n")
+        references = urls.joined(separator: "\n")
+    }
+
+    private var urls: [String] {
+        references.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    static func webURL(_ value: String) -> URL? {
+        guard value.utf8.count <= 2048, value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              let parts = URLComponents(string: value), ["http", "https"].contains(parts.scheme?.lowercased()),
+              parts.host?.isEmpty == false, parts.user == nil, parts.password == nil else { return nil }
+        if value.contains("%"), value.range(of: "%(?![0-9A-Fa-f]{2})", options: .regularExpression) != nil { return nil }
+        // Foundation percent-encodes Unicode for opening. Leave the owner's spelling intact in source_urls.
+        return parts.url
+    }
+
+    var validURLs: Bool {
+        let values = urls
+        return values == savedURLs || values.count <= 30 && values.allSatisfy { Self.webURL($0) != nil }
     }
 
     var update: KBUpdate? {
-        let refs = references.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard policy != savedPolicy || refs != savedRefs else { return nil }
-        return KBUpdate(storagePolicy: policy == savedPolicy ? nil : policy.rawValue, sourceRefs: refs == savedRefs ? nil : refs)
+        let values = urls
+        guard validURLs, policy != savedPolicy || values != savedURLs else { return nil }
+        return KBUpdate(projectMode: policy == savedPolicy ? nil : policy.rawValue, sourceURLs: values == savedURLs ? nil : values)
     }
 }
 

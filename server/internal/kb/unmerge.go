@@ -12,6 +12,9 @@ import (
 // kbwire.Update, so the extension protocol (kb.update) has no way to send it.
 type UserUpdate struct {
 	Update
+	// ProjectMode and SourceURLs are the owner's project settings. An empty SourceURLs list clears the pointers.
+	ProjectMode *string  `json:"project_mode,omitempty"`
+	SourceURLs  []string `json:"source_urls,omitempty"`
 	// Unmerge (projects): undo the merge that folded this project into another (Unmerge); nothing else applies.
 	Unmerge bool `json:"unmerge,omitempty"`
 	// LockLists: a list a removal takes a link out of is locked whole too, on both entries, so automatic organizing
@@ -31,6 +34,9 @@ func (e *Engine) ApplyUser(kind, id string, u UserUpdate) (string, error) {
 	}
 	if kind != KindProject {
 		return "", errors.New("unmerge applies to projects")
+	}
+	if u.ProjectMode != nil || u.SourceURLs != nil {
+		return "", fmt.Errorf("%w: set project_mode or source_urls separately from unmerge", ErrInvalidProjectSource)
 	}
 	return e.Unmerge(id)
 }
@@ -88,8 +94,8 @@ func (e *Engine) unmergeProject(drop *Project) error {
 		return fmt.Errorf("%s is not merged", drop.Slug)
 	}
 	keep, found := e.Store.Project(drop.MergedInto)
-	if drop.policy() == referenceOnly || found && keep.policy() == referenceOnly {
-		return ErrReferenceOnly
+	if drop.referenceOnly() || found && keep.referenceOnly() {
+		return fmt.Errorf("%w: cannot unmerge projects", ErrReferenceOnly)
 	}
 	if found && !keep.Live() {
 		return fmt.Errorf("%s went into %s, which was merged into %s since: unmerge %s first", drop.Slug, keep.Slug, keep.MergedInto, keep.Slug)
@@ -126,10 +132,6 @@ func (e *Engine) unmergeProject(drop *Project) error {
 			keep.Chats = removeStrings(keep.Chats, removeStrings(rec.Chats, held.Chats))
 			keep.Items = removeStrings(keep.Items, removeStrings(rec.Items, held.Items))
 			keep.Dirs = removeStrings(keep.Dirs, removeStrings(rec.Dirs, held.Dirs))
-			if released := removeStrings(rec.SourceRefs, held.SourceRefs); len(released) > 0 {
-				keep.SourceRefs = removeStrings(keep.SourceRefs, released)
-				keep.setSourceRefs = true
-			}
 			keep.Keywords = removeStrings(keep.Keywords, removeStrings(rec.Keywords, held.Keywords))
 			gone := removeStrings(rec.Moments, held.Moments)
 			leaving := func(m ProjectMoment) bool { return slices.Contains(gone, m.ID) }
@@ -218,7 +220,7 @@ func (e *Engine) unmergeProject(drop *Project) error {
 // have without drop's, so unmerging sib later takes them off keep. A merge before drop's is not asked: keep had what
 // it brought when drop's came, so what rec lists is what the user took off keep in between. The caller writes sib.
 func handOver(rec *ProjectMerge, sib *Project, held *ProjectMerge) {
-	has := ProjectMerge{SourceRefs: sib.SourceRefs, People: sib.People, Chats: sib.Chats, Items: sib.Items, Dirs: sib.Dirs, Keywords: sib.Keywords,
+	has := ProjectMerge{People: sib.People, Chats: sib.Chats, Items: sib.Items, Dirs: sib.Dirs, Keywords: sib.Keywords,
 		Moments: momentIDs(sib.Moments), Moved: projectRefs(sib)} // Moved: sib's references, to match rec.Moved against
 	from, in, into, to := rec.joined(), has.joined(), held.joined(), sib.Merge.joined()
 	for i := range from {
@@ -230,7 +232,7 @@ func handOver(rec *ProjectMerge, sib *Project, held *ProjectMerge) {
 
 // joined are the lists of a merge record that name what the merge joined into the kept project, in a fixed order.
 func (m *ProjectMerge) joined() []*[]string {
-	return []*[]string{&m.SourceRefs, &m.People, &m.Chats, &m.Items, &m.Dirs, &m.Keywords, &m.Moments, &m.Moved}
+	return []*[]string{&m.People, &m.Chats, &m.Items, &m.Dirs, &m.Keywords, &m.Moments, &m.Moved}
 }
 
 // unmergeLogs takes drop's lines out of keep's timeline, where mergeLogs put them. A line both had before the merge

@@ -683,16 +683,6 @@ The same person in Lark, email, Messages, Telegram and GitHub has separate recor
 - Key: the manager's own `handles.key` (the built-in manager's in `~/.persona/managers/assistant/`, copied there once from `~/.persona`, [managers.md](managers.md) ("The built-in manager's own files")), on the manager's machine (hub machine by default), 32 random bytes, 0600, generated on first use; never in the database or logs. Losing it only means future hashes no longer match.
 - The same email in email and Messages gets the same hash. **Merging records into one person is not part of this step**: a separate future design must address splitting wrong merges and who confirms them.
 
-## Project conclusions and source references
-
-A project can have a recent modification time and an older summary. In the project list, **Needs review** means evidence has arrived after a conclusion’s last recorded review. Open the project to inspect the summary and one-line description separately. Each field can have a known writer, a current maintainer, a lock, source references and a coverage position. The position counts changes observed for this project. A cutoff of zero is a recorded position. A missing cutoff means historical coverage is unknown.
-
-For example, an owner writes “Two items pending” and locks the summary. When a linked source later reports that both were delivered, the summary stays as written. Its cutoff stays at the previous position. A successful rewrite can bring the unlocked one-line description up to date independently. A failed rewrite cannot advance either field’s cutoff. Open the linked source to inspect what it reported. A merged pull request records delivery at the source. Deployment and user acceptance require their own evidence.
-
-For a project whose authoritative details live elsewhere, choose **Reference only** and add its source pointers. Persona keeps existing content and accepts routing metadata such as the project name, aliases and links. Future project summaries, derived one-liners and timeline detail are blocked. A detail write returns a refusal. Switching back to **Managed** permits future writes and keeps the existing field locks. Clearing the owner’s explicit source pointers leaves linked chats and other recorded sources available. Existing projects default to managed storage.
-
-A `chats/<id>` pointer links to an existing archived conversation. Its observed source changes advance the project’s evidence position. An HTTP or HTTPS pointer opens the source in the owner’s browser. Adding it does not fetch the page. Two managed project views that share an observed canonical source, or have an owner-maintained source index, stay separate during automatic deduplication.
-
 ## Project deduplication
 
 The same work often has different names in different groups. Previously the model only saw project names during compression, so each group grew its own project (2026-11-01: "Codex integration proposal" and
@@ -919,6 +909,63 @@ Now every locked field has a holder, and writes follow **the user > an extension
 - The answer carries `before`: each written field's previous value (`summary` the old text), so the extension can keep its own undo log; undo is another `kb.update` with those values, plus `unlock` when the field was free before.
 - **Without extensions nothing changes**: no write adds `provenance`; the user's writes only remove entries that exist. The legacy `hub_api` HTTP `PUT` from an extension token still counts as the user.
 
+### Project freshness and reference-only sources
+
+A project's `updated` time records its latest project change. Its `freshness` records what the saved `summary` and
+`one_line` cover. HTTP project list and detail and RPC `kb.list` and `kb.get` use the same projection. The
+`personad mcp` tools `kb_list` and `kb_get` show **Needs review** and the field's review reason, responsible party,
+timeline positions and uncovered count. In the Web, iOS, and Android clients, open the project's sources and coverage to inspect each field and edit its storage settings. An empty project has a measured timeline end of zero and an empty `freshness.fields` map. Its owner can choose reference-only storage before adding content. Older Hubs can omit the whole projection.
+
+- `freshness.fields.summary` and `freshness.fields.one_line` describe the value actually saved. `writer` and `source`
+  identify a recorded write. `review_by` names the current maintainer, either `persona`, `user` or `ext:<id>`. A
+  legacy lock still belongs to the user under the lock contract. It supplies no historical writer or evidence cutoff.
+- `cutoff.timeline_from` and `cutoff.timeline_through` are byte offsets into the project's `log.md`, with an
+  exclusive end. `cutoff.sources` names the other inputs and their opaque revisions. A rewrite reads at most the
+  latest 40 timeline entries, the first eight linked chat summaries and delivery states, up to five linked Moments
+  posts, and pinned facts. The cutoff describes that input window. `timeline_truncated` marks earlier entries
+  outside it. Raw chat messages waiting for compression are also outside the recorded coverage.
+- `freshness.timeline_end` and `freshness.evidence` describe the current evidence positions in that scope.
+  `uncovered_evidence_count` counts newer timeline entries and current source revisions absent from the field's
+  cutoff. An uncompressed chat contributes one pending source revision. Where no cutoff is recorded, the count
+  describes retained evidence whose coverage is unknown. If the recorded timeline was replaced or cannot be read,
+  the count can be absent. Byte offsets include late-arriving entries with an older source timestamp.
+- A successful rewrite advances coverage only for the nonempty outputs it saves. A lock, omitted output, failed
+  model call, or metadata edit leaves the previous evidence record alone. The review gap is visible even when the
+  project is no longer `dirty`. A changed summary edited through `kb_update` or HTTP has a recorded writer and
+  unknown cutoff. A previously saved `one_line` keeps its own cutoff and shows `summary_edited` until refreshed.
+  The existing pipeline can refresh an unlocked one-line field. A locked line retains its text, cutoff and maintainer.
+
+When the authoritative knowledge lives elsewhere, set `project_mode: "reference-only"` through the owner's HTTP PUT
+or `kb_update`. Add external HTTP(S) pointers with `source_urls`, alongside a name, aliases or routing fields.
+`source_urls` replaces the list, an empty list clears it, and omitting it preserves it. The list accepts up to 30
+URLs of at most 2048 bytes each, without embedded credentials. This example is a body for
+`PUT /api/v1/kb/projects/garden`.
+
+```json
+{
+  "project_mode": "reference-only",
+  "source_urls": ["https://example.org/garden"],
+  "aliases": ["Garden guide"]
+}
+```
+
+- Reference-only projects remain available for routing by name, alias, source and linked entities. The pipeline
+  skips project rewrites and records skipped derived timeline writes in its logs without the payload. The policy
+  also skips project worker-memory extraction and blocks late worker-memory writes. Independently configured source archives keep their own data and
+  retention settings.
+- Writes carrying `summary`, `log`, `goal`, `my_role`, `note` or `pinned` are refused as a whole, naming the
+  fields, on the user and extension paths. A request that enables reference-only cannot carry those fields either.
+  Extensions cannot change the source settings. Merges and unmerges involving a reference-only project are refused.
+- Existing project text, history and locks stay on disk and remain readable. The mode marks that text as retained
+  history. To resume local detail writes, send `project_mode: "full"` in a separate request first. Previously
+  skipped writes are not replayed.
+- `sources` projects canonical identities without merging projects or moving history. A GitHub issue or pull
+  request is identified by the lowercased repository and its number, regardless of a comment anchor or issue / PR
+  URL spelling. Local references stay available in `refs`. `delivery_state` and `delivery_at` come from the
+  current archive observation. `environment_verification: "unverified"` means the Hub has no independent
+  deployment or acceptance evidence in this contract. A merged PR is a delivery fact, and verification still
+  requires evidence from the target environment.
+
 ### Fields each kind takes
 
 Every write path (`kb.update`, HTTP `PUT`, the assistant's `kb_update`) takes only the fields the entry's kind uses (`kb/fields.go`). Everything else is taken out of the update before it applies, so it is neither written, nor locked, nor attributed. The answer names it in `ignored: [{field, reason}]` (the assistant's tool says "Not saved: …"); fields used are written as before. Any kind takes `importance`, `relevance`, `tags`, `pinned` and `lock`, and in addition:
@@ -932,7 +979,9 @@ Every write path (`kb.update`, HTTP `PUT`, the assistant's `kb_update`) takes on
 | topics | `name`, `note`, `aliases` / `remove_aliases` (`summary` is refused: it is written from the points) |
 | recordings | `projects` / `remove_projects` |
 
-The user's paths (HTTP `PUT`, `kb_update`) also take `lock_lists` and the kind's `allow_*` lists ("Removed links" above); `kb.update` from an extension takes neither.
+The user's paths (HTTP `PUT`, `kb_update`) also take `lock_lists` and the kind's `allow_*` lists ("Removed links" above).
+For projects the owner can also send `project_mode` and `source_urls` ("Project freshness and reference-only sources").
+These settings are unavailable to extensions. `one_line` has no public write field. Unknown keys are rejected.
 
 A person's `summary` and `log` used to be dropped without a word (and `summary` was even locked, for nothing): summary.md is written from what is known of the person. What an extension knows of them goes in its `profile`.
 

@@ -679,7 +679,7 @@ struct KBRow: View {
                 if let line = entry.oneLine, !line.isEmpty {
                     Text(line).font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(2)
                 }
-                if entry.kind == KBKind.projects.rawValue { KBProjectReviewNote(knowledge: entry.projectKnowledge) }
+                if entry.kind == KBKind.projects.rawValue { KBProjectReviewNote(freshness: entry.freshness) }
                 // As many tags as fit whole (a cut "#Manage…" says nothing).
                 ViewThatFits(in: .horizontal) {
                     badges(tags: 2)
@@ -798,7 +798,7 @@ struct KBHitRow: View {
                 if hits.isEmpty, let line = result.entry.oneLine, !line.isEmpty {
                     Text(line).font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(2)
                 }
-                if result.entry.kind == KBKind.projects.rawValue { KBProjectReviewNote(knowledge: result.entry.projectKnowledge) }
+                if result.entry.kind == KBKind.projects.rawValue { KBProjectReviewNote(freshness: result.entry.freshness) }
                 ForEach(hits, id: \.self) { h in
                     VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                         Text(h.source).font(Theme.Font.label).foregroundStyle(.tertiary).lineLimit(1)
@@ -880,9 +880,9 @@ struct KnowledgeDetailView: View {
                     .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 8, trailing: 4))
             }
             if let d = detail?.detail {
-                if d.kind == KBKind.projects.rawValue, let knowledge = d.projectKnowledge, let api = capturedAPI,
+                if d.hasProjectEvidence, let api = capturedAPI,
                    api.sameSettingsScope(as: model.api) {
-                    KBProjectEvidenceSection(detail: d, knowledge: knowledge, api: api, saved: load)
+                    KBProjectEvidenceSection(detail: d, api: api, saved: load)
                 }
                 if let query, let matches = detail?.matches { found(matches, query: query, chat: d.kind == KBKind.chats.rawValue ? d.id : nil) }
                 if let facts = ItemFacts(kind: d.kind, meta: d.meta), !facts.isEmpty { factsSection(facts) }
@@ -905,7 +905,7 @@ struct KnowledgeDetailView: View {
                     } header: { sectionHeader(String(localized: "Agents on This Project"), agents.count) }
                 }
                 if let log = d.log, !log.isEmpty { timeline(log) }
-                KBFactsSection(facts: KBFacts.text(d.meta), readOnly: d.kind == KBKind.projects.rawValue && d.projectKnowledge?.policy == KBProjectPolicy.referenceOnly.rawValue, edit: { factsEditor = true }, delete: { Task { await deleteFacts() } })
+                KBFactsSection(facts: KBFacts.text(d.meta), readOnly: d.kind == KBKind.projects.rawValue && d.projectMode == KBProjectPolicy.referenceOnly.rawValue, edit: { factsEditor = true }, delete: { Task { await deleteFacts() } })
                 // Empty once the header's parts are taken out (a summary that is just the one line): no blank card.
                 // A topic's summary is written from its points (docs/assistant/knowledge.md "Topics"): the points instead.
                 if d.kind == KBKind.topics.rawValue {
@@ -1013,7 +1013,7 @@ struct KnowledgeDetailView: View {
 
     private var header: some View {
         let e = shown
-        let hasEvidence = e.kind == KBKind.projects.rawValue && e.projectKnowledge != nil
+        let hasEvidence = e.kind == KBKind.projects.rawValue && (e.freshness != nil || e.sources != nil || e.projectMode != nil)
         let badges = hasEvidence ? AnyLayout(LarkFlowLayout(spacing: Theme.Space.sm, lineSpacing: Theme.Space.xs))
                                  : AnyLayout(HStackLayout(spacing: Theme.Space.sm))
         let actions = hasEvidence ? AnyLayout(StackingButtonRow()) : AnyLayout(HStackLayout(spacing: Theme.Space.m))
@@ -1035,7 +1035,7 @@ struct KnowledgeDetailView: View {
                 Text(line).font(Theme.Font.body).foregroundStyle(.primary.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
             }
             if e.kind == KBKind.projects.rawValue, let api = capturedAPI, api.sameSettingsScope(as: model.api) {
-                KBProjectReviewNote(knowledge: e.projectKnowledge)
+                KBProjectReviewNote(freshness: e.freshness)
             }
             if let tags = e.tags, !tags.isEmpty {
                 LarkFlowLayout(spacing: 6, lineSpacing: 6) {
@@ -1379,7 +1379,9 @@ struct KnowledgeDetailView: View {
     nonisolated static func shown(_ entry: KBEntry, detail: KBDetailResponse?) -> KBEntry {
         guard let detail else { return entry }
         var e = entry
-        e.projectKnowledge = detail.detail.projectKnowledge
+        e.projectMode = detail.detail.projectMode
+        e.freshness = detail.detail.freshness
+        e.sources = detail.detail.sources
         guard let m = detail.detail.meta else { return e }
         if let n = m["name"]?.string ?? m["title"]?.string, !n.isEmpty { e.name = n }
         if let i = m["importance"]?.string { e.importance = i }

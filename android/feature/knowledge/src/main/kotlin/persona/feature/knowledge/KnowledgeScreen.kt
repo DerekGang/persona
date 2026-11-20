@@ -525,7 +525,7 @@ internal fun KnowledgeDetailScreen(
     openPoint?.let { (point, crumbs) ->
         PointSheet(point, crumbs, detail?.links.orEmpty(), { source -> openPoint = null; navigator.open(source, model.owner) }, { openPoint = null })
     }
-    if (storageEditing && detail?.projectKnowledge != null && entry?.isProject == true) {
+    if (storageEditing && detail?.editableProjectMode != null && entry?.isProject == true) {
         val scope = page.scope
         ProjectStorageEditor(detail, tagging, { model.saveProjectStorage(scope, it) }, { storageEditing = false })
     }

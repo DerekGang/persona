@@ -3,6 +3,7 @@ package kb
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"time"
 
@@ -11,11 +12,8 @@ import (
 
 // commitProject checks the frozen model input and writes both files under the same persistence lock.
 // Observers run after both writes, so a callback that forgets a source cannot be followed by a stale write.
-func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, d projectDigest) (err error) {
+func (e *Engine) commitProject(snapshot *Project, input projectInput, d projectDigest) (err error) {
 	s := e.Store
-	if s.readOnly {
-		return ErrReadOnly
-	}
 	s.metaMu.Lock()
 	var current *Project
 	var summaryChanged, metadataChanged bool
@@ -33,8 +31,11 @@ func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, 
 	}()
 	var ok bool
 	current, ok = s.Project(snapshot.Slug)
-	if !ok || current.policy() == referenceOnly {
+	if !ok {
 		return nil
+	}
+	if current.referenceOnly() {
+		return ErrReferenceOnly
 	}
 	before, _ := json.Marshal(current)
 	frozen, _ := json.Marshal(snapshot)
@@ -42,13 +43,14 @@ func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, 
 	// while the model works is not a change to the source data it read.
 	currentInput := e.projectInput(current)
 	currentInput.Language = input.Language
-	if !bytes.Equal(before, frozen) || prompts.RenderKBProjectInput(currentInput) != prompts.RenderKBProjectInput(input) {
+	if !bytes.Equal(before, frozen) || !sameProjectCutoff(currentInput.cutoff, input.cutoff) ||
+		currentInput.timelineHash != input.timelineHash || currentInput.timelineOK != input.timelineOK ||
+		prompts.RenderKBProjectInput(currentInput.KBProjectInput) != prompts.RenderKBProjectInput(input.KBProjectInput) {
 		return nil
 	}
-	refs := current.modelSourceRefs(input)
-	if line := oneLine(d.OneLine); line != "" && !current.fieldLocked("one_line") {
-		current.OneLine = line
-		current.cover("one_line", "pipeline", refs)
+	wroteOneLine := oneLine(d.OneLine) != "" && !current.fieldLocked("one_line")
+	if wroteOneLine {
+		current.OneLine = oneLine(d.OneLine)
 	}
 	if d.Goal != "" && !current.fieldLocked("goal") {
 		current.Goal = oneLine(d.Goal)
@@ -78,13 +80,31 @@ func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, 
 	}
 	current.Dirty = false
 	current.Updated = now
-	var next []byte
+	summary := input.Summary
 	if strings.TrimSpace(d.Summary) != "" && !current.fieldLocked("summary") {
-		next = []byte(strings.TrimSpace("# "+current.Name+"\n\n"+d.Summary) + "\n")
-		current.cover("summary", "pipeline", refs)
+		path := s.path(KindProject, current.Slug, "summary.md")
+		next := []byte(strings.TrimSpace("# "+current.Name+"\n\n"+d.Summary) + "\n")
+		old, _ := os.ReadFile(path)
+		if !bytes.Equal(old, next) {
+			if err = writeFile(path, next); err != nil {
+				return err
+			}
+			summaryChanged = true
+			if !wroteOneLine && current.OneLine != "" {
+				current.OneLineNeedsReview = true
+			}
+		}
+		summary = string(next)
+		current.recordProjectField("summary", summary, "persona", "kb.project", &input)
 	}
-	summaryChanged, err = s.saveProjectText(before, current, next)
-	if err != nil {
+	if wroteOneLine {
+		current.recordProjectField("one_line", current.OneLine, "persona", "kb.project", &input)
+		rec := current.FieldCoverage["one_line"]
+		rec.SummaryHash = evidenceHash([]byte(summary))
+		current.FieldCoverage["one_line"] = rec
+		current.OneLineNeedsReview = false
+	}
+	if err = writeJSON(s.entityPath(KindProject, current.Slug), current); err != nil {
 		return err
 	}
 	metadataChanged = true

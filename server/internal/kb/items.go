@@ -495,9 +495,10 @@ func (e *Engine) List(kind, tag string) []Entry {
 	}
 	switch kind {
 	case KindProject:
+		catalog := e.projectSourceLookup()
 		for _, p := range e.Store.Projects() {
 			if has(p.Tags) && p.Live() {
-				out = append(out, p.entry())
+				out = append(out, e.projectEntry(p, catalog))
 			}
 		}
 	case KindChat:
@@ -567,6 +568,9 @@ func (e *Engine) Prompt(projects, chats int) string {
 			if ended, _ := e.projectEnded(pr); ended {
 				continue
 			}
+		}
+		if p.ProjectMode == referenceOnly || p.Freshness != nil && p.Freshness.Fields["one_line"].NeedsReview {
+			p.OneLine = ""
 		}
 		d.Projects = append(d.Projects, digestEntry(p))
 	}

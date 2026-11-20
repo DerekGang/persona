@@ -8,47 +8,62 @@ import (
 // pull request merged or closed adds no message, so the chat records the state the source reports with every batch,
 // and the projects it belongs to are rewritten with it.
 
-// noteChatState puts the state sc reports on c; it reports whether that changed c's state. A source that reports no
-// state leaves c's as it is.
-func noteChatState(c *Chat, sc SourceChat, now time.Time) bool {
+// noteChatSource applies the source observations and reports changes to delivery state and URL separately.
+func noteChatSource(c *Chat, sc SourceChat, now time.Time) (stateChanged, urlChanged bool) {
+	if _, link := canonicalSourceURL(sc.SourceURL); link != "" && link != c.SourceURL {
+		c.SourceURL = link
+		urlChanged = true
+	}
 	if sc.State == "" || sc.State == c.State {
-		return false
+		return false, urlChanged
 	}
 	c.State, c.StateAt = sc.State, sc.StateAt.UTC()
 	if c.StateAt.IsZero() {
 		c.StateAt = now.UTC()
 	}
-	return true
+	return true, urlChanged
 }
 
-// recordChatState records the state sc reports on the stored chat id when it changed: Ingest's path for a batch with
-// no new lines.
-func (e *Engine) recordChatState(id string, sc SourceChat) (*Chat, error) {
-	if sc.State == "" {
-		return nil, nil
+// recordChatSource saves changed source metadata when Ingest has no new lines.
+func (e *Engine) recordChatSource(id string, sc SourceChat) error {
+	if sc.State == "" && sc.SourceURL == "" {
+		return nil
 	}
 	e.Store.chatMu.Lock()
 	if err := e.Store.recoverIngest(id); err != nil {
 		e.Store.chatMu.Unlock()
-		return nil, err
+		return err
 	}
 	c, ok := e.Store.Chat(id)
-	if !ok || !noteChatState(c, sc, time.Now()) {
+	if !ok {
 		e.Store.chatMu.Unlock()
-		return nil, nil
+		return nil
 	}
-	err := e.Store.PutChat(c)
+	stateChanged, urlChanged := noteChatSource(c, sc, time.Now())
+	var err error
+	if stateChanged || urlChanged {
+		err = e.Store.PutChat(c)
+	}
 	e.Store.chatMu.Unlock()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return c, nil
+	if stateChanged {
+		e.chatStateChanged(c)
+	}
+	return nil
 }
 
-// Record the linked source revision separately from the project modification time.
-func (e *Engine) chatProjectEvidence(c *Chat, arrived, compressed bool) {
-	for _, slug := range e.Store.projectsObservingChat(c) {
-		if err := e.Store.observeChatState(slug, c.ID, arrived, compressed); err != nil {
+// chatStateChanged marks the projects c belongs to for a rewrite, so their summary and one line follow the new state.
+// Their Updated stays: nothing was written into them yet.
+func (e *Engine) chatStateChanged(c *Chat) {
+	for _, slug := range c.Projects {
+		p, ok := e.Store.Project(slug)
+		if !ok || !p.Live() || p.referenceOnly() || p.Status == "ignored" || p.Dirty {
+			continue
+		}
+		p.Dirty = true
+		if err := e.Store.putEntity(KindProject, p.Slug, p, &p.Tagging, false); err != nil {
 			e.logf("project %s: %v", slug, err)
 		}
 	}
@@ -89,7 +104,7 @@ func (e *Engine) FinishProjects(now time.Time, busy func(slug string) bool) []st
 	}
 	var out []string
 	for _, p := range e.Store.Projects() {
-		if !p.Live() || p.policy() == referenceOnly || p.Status != "active" && p.Status != "paused" || p.Kind == "long" || p.fieldLocked("status") {
+		if !p.Live() || p.referenceOnly() || p.Status != "active" && p.Status != "paused" || p.Kind == "long" || p.fieldLocked("status") {
 			continue
 		}
 		if busy != nil && busy(p.Slug) {

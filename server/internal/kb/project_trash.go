@@ -81,7 +81,6 @@ func (e *Engine) DeleteProject(slug string, now time.Time) (TrashEntry, error) {
 	// Under metaMu, which a pipeline write holds while it checks that the project is still there: once moved, none
 	// can write it back.
 	st.metaMu.Lock()
-	st.chatRefProjects = nil
 	var moved [][2]string // from, to: put back if a later move fails, so nothing is left half in the trash
 	move := func(from, to string) error {
 		err := os.Rename(from, to)
@@ -178,7 +177,6 @@ func (e *Engine) RestoreProject(id string) (TrashEntry, error) {
 		return TrashEntry{}, fmt.Errorf("%s: %w", id, ErrNotFound)
 	}
 	st.metaMu.Lock()
-	st.chatRefProjects = nil
 	for _, slug := range append([]string{entry.Slug}, entry.Merged...) {
 		if st.projectLive(slug) {
 			st.metaMu.Unlock()
@@ -248,11 +246,10 @@ func appendLogFile(path string, raw []byte) error {
 // forgetTrash removes for good the trash entries that hold anything a forgotten source brought in (its chats, people,
 // items or posts, or timeline lines it wrote): a restore must not bring them back.
 func (e *Engine) forgetTrash(chats, people, posts []string, items map[string]bool, names map[string]bool) error {
-	goneRefs := forgottenProjectRefs(chats, people, posts, items)
 	for id, projects := range e.Store.trashedProjects() {
 		hit := false
 		for _, p := range projects {
-			hit = hit || p.eraseSourceEvidence(goneRefs) || slices.ContainsFunc(p.Chats, func(c string) bool { return slices.Contains(chats, c) }) ||
+			hit = hit || slices.ContainsFunc(p.Chats, func(c string) bool { return slices.Contains(chats, c) }) ||
 				slices.ContainsFunc(p.People, func(c string) bool { return slices.Contains(people, c) }) ||
 				slices.ContainsFunc(p.Items, func(k string) bool { return items[k] }) ||
 				slices.ContainsFunc(p.Moments, func(m ProjectMoment) bool { return slices.Contains(posts, m.ID) })

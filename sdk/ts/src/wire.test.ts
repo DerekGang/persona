@@ -1,27 +1,28 @@
 import { expect, test } from "bun:test";
-import { connect, Hub, type Contributes, type KBGetResult, type KBListResult, type Manifest } from "./index.ts";
+import { connect, Hub, type KBGetResult, type KBListResult, type Contributes, type Manifest } from "./index.ts";
 import { testFixtures } from "./test-fixtures.ts";
 
 const fixture = new URL("Manifest.custom-contributions.json", testFixtures);
 
-test("kb.read returns the project's field evidence from the public SDK", async () => {
-  const field = { status: "needs_review", cutoff: 0, uncovered: 1, locked: true };
-  const project = { policy: "managed", position: 1, needs_review: true, fields: { summary: field } };
-  const row = { kind: "projects", id: "example", name: "Example", relevance: 40, updated: "2026-11-04T09:03:00Z" };
-  let result: unknown = { items: [{ ...row, project_knowledge: project }], tags: [], total: 1 };
+test("kb.read keeps project field coverage and canonical delivery separate", async () => {
+  const read = (name: string) => Bun.file(new URL("plugin/" + name, testFixtures)).json();
+  let result: unknown = await read("KBListResult.project-evidence.json");
   const hub = new Hub(line => hub.answer({ id: JSON.parse(line).id, result }));
   const list = await hub.call<KBListResult>("kb.list", { kind: "projects" });
-  const evidence = list.items[0].project_knowledge;
-  expect(evidence?.fields.summary.cutoff).toBe(0);
-  expect(evidence?.fields.summary.writer).toBeUndefined();
-  expect(evidence?.sources).toBeUndefined();
-  const detail = { kind: "projects", id: "example", path: "projects/example", meta: {} };
-  const sources = [{ ref: "chats/example-review", state: "merged", state_at: "2026-11-04T09:03:00Z" }];
-  result = { detail: { ...detail, project_knowledge: { ...project, sources } } };
+  const field = list.items[0].freshness?.fields.summary;
+  expect(field?.cutoff?.timeline_through).toBe(75);
+  expect(field?.uncovered_evidence_count).toBe(2);
+  expect(field?.writer).toBeUndefined();
+
+  result = await read("KBGetResult.project-evidence.json");
   const get = () => hub.call<KBGetResult>("kb.get", { kind: "projects", id: "example" });
-  expect((await get()).detail.project_knowledge?.sources?.[0]?.state).toBe("merged");
-  result = { detail };
-  expect((await get()).detail.project_knowledge).toBeUndefined();
+  const detail = (await get()).detail;
+  expect(detail.sources).toEqual(list.items[0].sources);
+  expect(detail.sources?.[0]?.delivery_state).toBe("merged");
+  expect(detail.sources?.[0]?.environment_verification).toBe("unverified");
+
+  result = { detail: { kind: "projects", id: "example", path: "projects/example", meta: {} } };
+  expect((await get()).detail.freshness).toBeUndefined();
 });
 
 test("generated contributions keep typed UI and arbitrary JSON keys", async () => {
