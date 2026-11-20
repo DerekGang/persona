@@ -437,7 +437,11 @@ func (s *Service) sendToSession(ctx context.Context, machine, sid, text string) 
 	s.work.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return s.call(ctx, machine, DeviceSessionSend, map[string]any{"session_id": sid, "text": text}, nil)
+	params := map[string]any{"session_id": sid, "text": text}
+	if err := s.protectedContinuationModel(ctx, machine, sid, params); err != nil {
+		return err
+	}
+	return s.call(ctx, machine, DeviceSessionSend, params, nil)
 }
 
 // sendModelRetry ties uncertain delivery retries to one message, rather than
@@ -452,5 +456,19 @@ func (s *Service) sendModelRetry(ctx context.Context, e db.SessionWork, text str
 	// PostgreSQL timestamps retain microseconds. Use that same precision before
 	// and after loading a due row so a crash cannot change its once-only send ID.
 	id := fmt.Sprintf("model-retry:%s:%d:%d", e.SessionID, e.TurnAt.Truncate(time.Microsecond).UnixNano(), e.Retries)
-	return s.call(ctx, e.MachineID, DeviceSessionSendOnce, map[string]any{"session_id": e.SessionID, "text": text, "client_msg_id": id}, nil)
+	params := map[string]any{"session_id": e.SessionID, "text": text, "client_msg_id": id}
+	if err := s.protectedContinuationModel(ctx, e.MachineID, e.SessionID, params); err != nil {
+		return err
+	}
+	return s.call(ctx, e.MachineID, DeviceSessionSendOnce, params, nil)
+}
+
+// protectedContinuationModel re-resolves owner-facing conversations on a continuation after a quota/service failure.
+// Worker sends keep their existing execution. A pre-upgrade observed fallback is never a configured choice.
+func (s *Service) protectedContinuationModel(ctx context.Context, machine, sid string, params map[string]any) error {
+	cfg := s.settings(ctx)
+	if cfg.Main != "" && cfg.Main == sid && cfg.mainRouteMachine() == machine || s.isLeader(ctx, sid) || s.isBackground(ctx, sid) {
+		return s.sendModel(ctx, machine, sid, params, s.lang(ctx))
+	}
+	return nil
 }

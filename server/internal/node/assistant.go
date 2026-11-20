@@ -553,7 +553,14 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if err := n.ensureManaged(ctx, launcher); err != nil { // the conversation's own provider (managed.go)
 		return "", err
 	}
-	if recovery == nil && id != "" && !execution.Strict && !proto.IsExternalLauncher(launcher) {
+	execution.IsMain = isMain && guest == nil
+	protected := strictProtectedExecution(execution) || n.recoveryProtected(id)
+	if recovery == nil && id != "" && protected {
+		// Discard a pre-upgrade fallback hold/marker. The manager's current model choice is authoritative,
+		// even while that model is still quota-limited; do not probe or substitute another execution.
+		n.releaseModelRecovery(id, execution.Model)
+	}
+	if recovery == nil && id != "" && !protected && !execution.Strict && !proto.IsExternalLauncher(launcher) {
 		askedModel := execution.Model
 		// The fallback that answered (#3788). holdExpired is declared apart: ":=" would shadow execution in this block.
 		var holdExpired bool
