@@ -54,8 +54,10 @@ async function rowCount(page, n) {
   await page.waitForFunction((count) => document.querySelectorAll('ol[aria-label="Starred"] li > article').length === count, n);
 }
 
+let cleanup = false;
 try {
   assert.deepEqual((await onHub()).stars, [], "use an empty mock");
+  cleanup = true;
   const desktop = await device("light");
   await desktop.page.goto(web + review + "&token=mock");
   const desktopUser = desktop.page.locator("[data-user-bubble]").filter({ hasText: "PR #42" }).first();
@@ -98,6 +100,14 @@ try {
   await card.getByRole("link", { name: "Open original" }).click();
   await mobile.page.waitForFunction(() => new URLSearchParams(location.search).has("at"));
   await mobile.page.locator("[data-search-hit]").waitFor();
+  await shot(mobile.page, "agent-message-phone-dark");
+
+  await desktop.page.locator(`a[href*="${encodeURIComponent(stored[0].item_id)}"]`).click();
+  await desktop.page.locator("[data-search-hit]").waitFor();
+  assert.equal(new URL(desktop.page.url()).searchParams.get("at"), stored[0].item_id);
+  await shot(desktop.page, "assistant-message-light");
+  await desktop.page.getByRole("link", { name: /Starred/ }).first().click();
+
   const source = await onHub("POST", "", {
     machine_id: "macbook", session_id: stored[1].session_id, item_id: "removed-example",
     conversation: "agent", role: "assistant", title: "Former conversation", speaker: "Agent",
@@ -110,8 +120,19 @@ try {
   await orphan.getByRole("link", { name: "Open original" }).click();
   assert.equal(new URL(desktop.page.url()).searchParams.get("at"), source.star.item_id);
 
-  assert.deepEqual(desktop.errors.concat(mobile.errors), []);
+  const old = await device("light");
+  await old.page.route("**/api/v1/assistant/starred**", (route) => route.fulfill({
+    status: 404, contentType: "application/json", body: '{"error":"Not found"}',
+  }));
+  await old.page.goto(web + "/starred?token=mock");
+  await old.page.getByRole("heading", { name: "Starred messages are unavailable" }).waitFor();
+  assert.equal(await old.page.getByRole("link", { name: "Starred", exact: true }).count(), 0);
+
+  assert.deepEqual(desktop.errors.concat(mobile.errors, old.errors), []);
   console.log("ok: Agent and Assistant menus, persisted markers, two-device push, filter, copy, remove, undo, deep link, and source-independent snapshot");
 } finally {
   await browser.close();
+  if (cleanup) {
+    for (const star of (await onHub()).stars) await onHub("DELETE", "/" + encodeURIComponent(star.id));
+  }
 }
