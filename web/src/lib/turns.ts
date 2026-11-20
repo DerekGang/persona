@@ -45,7 +45,7 @@ export interface UserMessage {
   source?: MessageSource;
   /** The previous visible message has the same source and no intervening reply or work. */
   continuedSource?: boolean;
-  /** Original injected input blocks, before display parsing or shortening. */
+  /** Original input blocks, before display parsing or shortening. */
   rawInput?: Item[];
   /** A scheduled task's or follow-up's input while background rounds fold (docs/assistant/assistant.md "Background
    *  rounds"): only its one line is shown, never the prompt (`injected.detail`, `rawInput`). */
