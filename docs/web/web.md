@@ -1466,6 +1466,30 @@ or writes them: the main chat's fixed payload stays as it was.
   `views/chat/MessageActions.save-prompt.test.tsx`; end to end against the mock hub (`MOCK_SAVED_PROMPTS=1`), wide and phone,
   light and dark: `node web/e2e/saved-prompts.mjs <web URL> --hub <mock hub URL> [--shots <dir>]`.
 
+### Starred messages (#7524)
+
+Use **Star** from a text message's menu in an Assistant or Agent chat. The menu opens with its More
+button, a right click, or a long press. A small star marks the saved message. **Unstar** is available in
+the same menu and on the **Starred** page. Removing a star offers **Undo** in the notification. It saves
+the same snapshot again with a new star ID, even if the original message has gone away.
+
+**Pages › Starred** shows the current assistant's saves, newest first. Its count is the number of saved
+messages for that assistant. Search matches words in the saved text, conversation title, and speaker.
+**Copy** copies the saved text. **Open original** opens the conversation at the saved message with the
+existing message-link behavior. A moved, pruned, or deleted transcript can make the original unavailable.
+
+The manager keeps up to 300 text snapshots, at most 4,000 Unicode characters each, with a count of text
+left out. New saves retain the visible message text, title, author, and original time when available.
+Edits and deletion of the original do not change the snapshot. The browser asks for identifiers alone
+to mark the chats and show the sidebar count. It reads snapshot text while the Starred page is open,
+refreshing on reconnect, after a write, and on notifications from the selected assistant. An older hub
+or assistant hides Star from the menus and explains the missing capability if someone opens `/starred`
+directly. The protocol is in `docs/protocol/protocol.md` ("REST (App → hub)").
+
+To verify the web flow, run the mock hub with `MOCK_STARRED=1` and follow the commands in
+`web/e2e/starred-messages.mjs`. It drives two isolated browser contexts and verifies cross-device changes,
+search, copy, Undo, exact links, and a snapshot whose original is absent.
+
 ### Exporting a conversation (#7375)
 
 **Export Conversation…** in every chat's ⋯ (Agent chats and Persona conversations) saves the whole conversation as one

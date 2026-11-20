@@ -685,6 +685,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
     () => ({
       draftKey,
       title,
+      sourceManager: session?.manager ?? mainCache?.manager,
       canCompose,
       // `now`: the message menu's Select messages (#9469), Forward to's chunk starts picking with it, showing nothing
       forward: (p: ForwardPick, now?: boolean) => openForward({ from: { chat: forwardFrom(), picks: [p] }, select: { first: p, start: setPicker }, now }),
@@ -695,7 +696,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
       assistant: Boolean(assistant),
       rewind: canRewind ? { block: rewindLive, code: rewindCode, run: (messageId, text, restore) => rewindTo(mid, sid, draftKey, items.current, messageId, text, restore, rewindDeclared) } : undefined,
     }),
-    [draftKey, title, canCompose, canFork, canRewind, rewindCode, rewindDeclared, rewindLive, mid, sid, assistant, persona.name, forwardFrom, picker],
+    [draftKey, title, session?.manager, mainCache?.manager, canCompose, canFork, canRewind, rewindCode, rewindDeclared, rewindLive, mid, sid, assistant, persona.name, forwardFrom, picker],
   );
   // the assistant works on any computer, so its @ menu offers workspaces too
   const shownManager = useShownManager();
@@ -1815,12 +1816,17 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
         const whole = await fullItem(mid, sid, item);
         if (run !== msgLanding.current) return;
         const fold = trNow.current.items.find((f) => insideFold(whole, f));
-        if (!fold) return;
+        if (!fold) {
+          if (landAt) toast(t("chat-chatview.message_further_up"));
+          return;
+        }
         openFoldRange(ctx.scope, fold.seq, fold.fold!.through_seq);
         await trNow.current.expandFold(fold);
         if (run !== msgLanding.current) return;
         requestAnimationFrame(() => seekItem(item));
-      })().catch(() => {});
+      })().catch((error: unknown) => {
+        if (landAt && run === msgLanding.current && error instanceof ApiError && error.status === 404) toast(t("chat-chatview.search_not_found"));
+      });
       return;
     }
     void (async () => {

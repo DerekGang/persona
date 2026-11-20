@@ -83,6 +83,7 @@ const History = lazyPage(() => import("./views/assistant/History").then((m) => m
 const Profile = lazyPage(() => import("./views/assistant/Profile").then((m) => m.Profile), { routes: ["profile"] });
 const Routines = lazyPage(() => import("./views/assistant/Routines").then((m) => m.Routines), { routes: ["routines"] });
 const Inbox = lazyPage(() => import("./views/inbox/Inbox").then((m) => m.Inbox), { routes: ["inbox"] });
+const StarredMessages = lazyPage(() => import("./views/StarredMessages").then((m) => m.StarredMessages), { routes: ["starred"] });
 const Messages = lazyPage(() => import("./views/messages/Messages").then((m) => m.Messages), { routes: ["messages"] });
 const Knowledge = lazyPage(() => import("./views/knowledge/Knowledge").then((m) => m.Knowledge), { routes: ["kb"] });
 const TodosView = lazyPage(() => import("./views/Todos").then((m) => m.TodosView), { routes: ["todos"] });
@@ -321,7 +322,8 @@ function pageTarget(s: State, route: Route): PageTarget | undefined {
   // several sessions starting with it are listed to pick from (SessionChoices)
   const link = resolveSessionLink(rows, route.mid, route.sid, s.loaded);
   const resolved = tab ?? (link.kind === "prefix" ? sessionLinkRoute(rows, link.session, route.view) : undefined);
-  const to = resolved ? routePath(withWorkView(resolved, inWorkView(route))) : "";
+  const landing = resolved && (resolved.name === "session" || resolved.name === "tab") && route.at ? { ...resolved, at: route.at } : resolved;
+  const to = landing ? routePath(withWorkView(landing, inWorkView(route))) : "";
   const shown = link.kind === "exact" || link.kind === "unlisted";
   return { link: link.kind, to, mid: route.mid, sid: shown ? route.sid : undefined };
 }
@@ -491,7 +493,7 @@ function Shell() {
 
   const extensionTitle = useExtensionPlace(route.name === "extension" ? route.extension : "", route.name === "extension" ? route.ui : "")?.title;
   const title =
-    inWorkView(route) || route.name === "terminal" ? t("work-entry.title") : pane ? agentTitle || "Agent" : route.name === "persona" ? "Persona" : route.name === "persona-new" ? t("app.title_new_chat") : route.name === "history" ? t("app.title_history") : route.name === "health" ? t("app.title_health") : route.name === "profile" ? t("app.title_profile") : route.name === "inbox" ? t("app.title_inbox") : route.name === "messages" ? t("app.title_messages")
+    inWorkView(route) || route.name === "terminal" ? t("work-entry.title") : pane ? agentTitle || "Agent" : route.name === "persona" ? "Persona" : route.name === "persona-new" ? t("app.title_new_chat") : route.name === "history" ? t("app.title_history") : route.name === "health" ? t("app.title_health") : route.name === "profile" ? t("app.title_profile") : route.name === "inbox" ? t("app.title_inbox") : route.name === "messages" ? t("app.title_messages") : route.name === "starred" ? t("starred.title")
       : route.name === "request" ? t("app.title_request") : route.name === "routines" ? t("app.title_routines") : route.name === "kb" ? t("app.title_kb") : route.name === "workspace-board" ? t("app.title_workspace_board") : route.name === "todos" ? t("app.title_todos") : route.name === "machines" || route.name === "machine" ? t("app.title_machines") : route.name === "space" ? route.space : route.name === "settings" ? t("app.title_settings")
       : route.name === "agents" ? t("app.title_agents") : route.name === "agent-list" ? "Agents" : route.name === "agent-archives" ? t("app.title_agent_archives") : route.name === "compare" ? t("app.title_compare_runs") : route.name === "extension" ? extensionTitle || t("app.title_extension") : route.name === "subscriptions" ? t("app.title_subscriptions") : route.name === "not-found" ? t("app.title_not_found") : t("app.title_home");
 
@@ -536,6 +538,9 @@ function Shell() {
       break;
     case "messages":
       main = <Messages id={route.id} onToggleSidebar={toggle} />;
+      break;
+    case "starred":
+      main = <StarredMessages onToggleSidebar={toggle} />;
       break;
     case "routines":
       main = <Routines onToggleSidebar={toggle} />;

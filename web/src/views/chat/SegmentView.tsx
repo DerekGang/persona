@@ -127,6 +127,7 @@ export function UserBubble({ msg, mid, sid, pending, sendState, starting, onDele
           <BubbleText text={msg.text} blocks={msg.contexts} mid={mid} sid={sid} own={own} pending />
         ) : (
           <MessageActions text={msg.text} editText={skillEditText(msg.contexts, msg.text)} isUser ts={msg.ts} side messageId={onDelete ? undefined : msg.id} onDelete={onDelete}
+            starSource={!onDelete && !sendState ? { mid, sid, item: msg.id } : undefined}
             images={msg.images} photos={msg.photos} className="max-w-full">
             <BubbleText text={msg.text} blocks={msg.contexts} ts={msg.ts} mid={mid} sid={sid} own={own} />
           </MessageActions>
@@ -265,6 +266,7 @@ export const Answer = memo(function Answer({ item, streaming, mid, sid, fade, no
   const cwd = mid && sid ? getSession(mid, sid)?.cwd : undefined;
   return (
     <MessageActions text={text} ts={item?.ts} itemId={item?.id} bar={bar} usage={bar ? usage : undefined} usageMs={bar ? usageMs : undefined}
+      starSource={!live && mid && sid && item?.id ? { mid, sid, item: item.id } : undefined}
       translationSource={item?.full_size ? {
         key: JSON.stringify([mid, sid, item.id, item.text, item.full_size, noCloseout]),
         load: async () => {
