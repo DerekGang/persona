@@ -56,7 +56,7 @@ describe("botmux sessions in the chat", () => {
     const session = { machine_id: "m", session_id: "s", title: "t", cwd: "/tmp", status: "idle", botmux_external_trigger: true } as Session;
     await act(async () => root.render(<AgentStatusLine session={session} />));
     expect(host.innerHTML).toContain('data-testid="botmux-external-trigger-note"');
-    expect(host.textContent?.trim().length).toBeGreaterThan(0);
+    expect(host.textContent).toContain("3.59.23");
     act(() => root.unmount());
   });
 

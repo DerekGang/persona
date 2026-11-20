@@ -5886,8 +5886,8 @@ and caches the result per botmux instance (invalidated on dashboard restart, tok
 background probe when capabilities are unknown or expired, keeping the last known result for that instance until the probe succeeds. It never probes with a real
 message and never retries a delivered turn. When `capabilities` includes `ownerActor`, `POST /api/trigger` sends top-level `actor: "owner"` with
 `target.kind: "turn"`, `botId`, and `sessionId` (omitting `envelope.payload` and `envelope.rawText`), and verifies the echoed `actor: "owner"` in the
-response. On older botmux instances (`404` or `ownerActor` absent), sends use the external-event trigger and the session row sets
-`botmux_external_trigger: true` so clients show a one-line notice in the composer.
+response. On older botmux instances (below 3.59.23, `404` or `ownerActor` absent), sends use the external-event trigger and the session row sets
+`botmux_external_trigger: true` so clients show a one-line upgrade notice (`3.59.23+`) in the composer.
 
 **Wrapper fallback rules** (checked against botmux 3.59.6 through 3.59.20):
 
