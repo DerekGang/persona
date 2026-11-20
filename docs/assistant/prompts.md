@@ -125,11 +125,32 @@ The checker has negative tests for new files/directories, replacing an omission 
 mentions, include cycles and attempts to raise the baseline. Judge behavior and recording-language live checks
 still follow the rules below when those prompts change.
 
+### Channel, bot and shared prompts (#6275)
+
+The three delivery paths read the owner’s configured language when they prepare the new turn. Plugin IM uses
+`channelForward` for `channel/message`. A public mention selects `channel/mention_message` and retains its chat,
+thread and public audience. Feishu uses `botSendIn` for `bot/message`. A private reminder can include its to-do
+and the quoted message. A group topic carries only its own authorized reply. The templates retain each channel’s
+format, destination and confirmation instructions. Sender names, forwarded messages, attachment paths and the
+owner’s text keep their source language. Feishu rich posts retain the provider parser’s existing variant order
+(`zh_cn`, `en_us`, `ja_jp`) regardless of the owner’s language.
+
+When a conversation ends without a text answer, `askAgain` sends `channel/answer_again` once. Its context block
+has no owner text. The channel reader finds the turn by its client message ID and transcript probe. The author
+sentinel, context boundaries and structured `shared/message_source` metadata keep their existing wire meaning.
+`shared/all_stopped` supplies an internal observation in English.
+
+`shared/kb_blocks` receives the Inbox prompt’s language alongside the stored chat and project profiles. Only the
+profile headings change language. `shared/user_rules` supplies the precedence heading for Inbox triage, grouping,
+task selection and Agent delegation. The rule itself is the owner’s original text. The delegate retains its
+explicit Chinese language aliases. Caller goldens cover English, Japanese, Simplified Chinese and empty-language
+deliveries, including the shared blocks in the first processing turn. Empty language retains the original bytes.
+
 ### Inbox language migration
 
 Inbox request builders capture the owner's language once per model request (including grouping retries and draft
-rewrites), and use it for both instructions and input labels. Inbox-specific rule and knowledge wrappers keep the
-shared fragments' other callers unchanged. New processing conversations, their queued handling notes and handoffs
+rewrites), and use it for both instructions and input labels. Shared rule and knowledge fragments follow that
+same language. New processing conversations, their queued handling notes and handoffs
 also use the owner's current language. A later language change affects the next delivery, never a stored recap,
 chain entry, decision, folder, externally authored source description, quoted message or existing knowledge page.
 
@@ -287,9 +308,9 @@ localize Persona Link's client UI; they do not supply the language of model prom
 | `channel/message.md` | Representation of the owner's bot message from a plugin channel (WeChat, etc.; `docs/extensions/channels.md`) in a Persona chat: where replies return, format (plain text or Markdown), whether questions can be answered there, quoted messages, forwarded history, attachments saved to the computer, content the bot cannot forward | `assistant/channels_plugin.go` `channelForward` |
 | `channel/mention_message.md` | A public mention turn, in Chinese, English and Japanese: the answer returns as the owner; private context from other chats, sessions, mail and health stays undisclosed unless explicitly requested; chat, topic, gathered context, quote and forwarded history are data blocks. Used only for `mention` channels, including when their target is the main chat (#11130) | `assistant/channels_plugin.go` `channelForward` |
 | `channel/answer_again.md` | When a channel turn ends without an answer (empty or only a placeholder such as "No response requested."), hub asks the Persona chat once for that turn's answer | `assistant/channels_answer.go` `askAgain` (#4588) |
-| `shared/kb_blocks.md` | `<persona-context>` blocks for chat profiles + project profiles (shared by Lark /agent and AI twin) | |
+| `shared/kb_blocks.md` | Localized headings for stored chat and project profiles | `inbox/agent.md` through `startInboxAgents` |
 | `shared/mcp_language.md` | Owner-language guidance for newly generated MCP arguments, preserving source data and permission boundaries | All MCP definitions |
-| `shared/user_rules.md` | "User-defined rules" section (shared by triage and judging) | |
+| `shared/user_rules.md` | Localized precedence heading and the owner's original rules | `inbox/triage.md`, `inbox/group.md`, `inbox/judge.md`, `agents/delegate.md` |
 
 Since #1571, prompts and context for Lark `/agent` (in chats / document comments) live with `/agent` in the Lark integration plugin. This repository has no `lark/` directory (`docs/extensions/lark-agent.md`).
 
@@ -325,7 +346,7 @@ Source-sensitive text remains literal: conversation title kinds are fixed enum v
 | `mcp/dispatch/` | `dispatch_start` (an Agent hands a subtask to a new Agent on another connected computer), `dispatch_read` (its state and final reply, and the computers there are), #3253 | Every agent while `agents.dispatch.enabled` is true, not assistant chats, work computers or guests (`dispatchToolNames` in `assistant/dispatch.go`) |
 | `mcp/todo/` | `todo_repositories_get`, `todo_repositories_set`, `todo_repository_links_set`, `todo_repository_links_add` (canonical repository and issue/PR metadata, independent of task progress; also available to task Agents, scoped to their actively linked open to-do); `todo_decisions`, `todo_decision_add` (an agent reads the decisions of the todo it works on and notes its own), `todo_bind_thread` (binds that todo to a chat thread), #5279; the assistant's `todo_list`, `todo_get`, `todo_create`, `todo_update`, `todo_complete`, `todo_reopen`, `todo_delete` (the user's to-dos, with due date, reminder and priority), #1683; `concern_report` (the main conversation reports a concern's outcome and closes it; `todo_create` / `todo_list` take kind concern), #3561; in a leader `todo_create` records a piece of its direction, #5846 | Same as above |
 | `mcp/mail/` | `mail_accounts`, `mail_search`, `mail_read`, `mail_save_attachment`, `mail_send` | All chats (`Tools` in `mail/mcp.go`); `mail_save_attachment` is answered by the node on the agent's machine (`node/mailattachment.go`) |
-| `mcp/github/` | `github_search`, `github_read`, `github_diff`, `github_checks` (read-only); `github_comment`, `github_review` (writes, gated) | Assistant, when GitHub connector status is `ok` (`connector/github/tools.go`; golden `mcp_tools.assistant_with_github`) |
+| `mcp/github/` | `github_search`, `github_read`, `github_diff`, `github_checks` (read-only); `github_comment`, `github_review` (writes, gated) | Assistant, when GitHub connector status is `ok` (`connector/github/tools.go`; golden `mcp_tools/assistant_with_github.diff.golden`) |
 | `mcp/browser/` | `browser_run`, `browser_look` | Assistant, when the ego browser extension is on for some machine (`browserTools` in `extmgr/browser.go`) |
 | `mcp/computer/` | `computer_state`, `computer_run` | Assistant, when the Cua computer-use extension is on for some machine (`computerTools` in `extmgr/computer.go`) |
 | `mcp/iphone/` | `iphone_status`, `iphone_look`, `iphone_do` | Assistant, when the iphone extension is on for some Mac and a paired iPhone consented (`iphoneTools` in `extmgr/iphone.go`) |
@@ -339,7 +360,7 @@ When the assistant runs on an Agent runtime, tools for commands such as `ol` are
 and node's `gateTools` passes them to the runtime through `runtime.sock` (`node/assistant_runtime.go`).
 
 Tool **lists and order** remain in code (the two functions above look up `prompts.Tool(name)` by name), as do call handlers. To add a tool, add a file in the relevant directory,
-add its name to the list, write its handler, and use `UPDATE_GOLDEN=1` to update the `mcp_tools.*` / `mail_tools` goldens. `TestEveryMCPToolIsUsed` catches tool files with no provider. `TestMCPToolsTableListsEveryTool` keeps the table above in sync: every `mcp/<dir>/` needs a row that lists all of its tools.
+add its name to the list, write its handler, and use `UPDATE_GOLDEN=1` to update the `mcp_tools/` / `mail_tools` goldens (a new tool adds its own file and a line in its list's index). `TestEveryMCPToolIsUsed` catches tool files with no provider. `TestMCPToolsTableListsEveryTool` keeps the table above in sync: every `mcp/<dir>/` needs a row that lists all of its tools.
 
 For to-dos, shared assistant instructions cover routing and responsibility; parameter formats, defaults and operation rules live in each tool's description/schema. Keep rules needed by task Agents in the association tools themselves: those callers do not receive the assistant's shared instructions. When consolidating text, preserve schema constraints and inspect both the tool snapshots and every affected shared-instruction variant before updating the size baseline through its guarded updater.
 
@@ -391,14 +412,16 @@ Note that `scheduleHeader` in `assistant/schedule.go` recognizes copied-back old
 
 ## Golden tests
 
-MCP tool goldens are in `hub/mcp_tools_golden_test.go` (three lists: assistant with / without Lark, regular chats), `mail/mcp_golden_test.go` and, for a meeting's room, `assistant/meeting_conversation_test.go` (`meeting_room.tools`). They compare the transmitted `json.Marshal` content (goldens are indented for readability, with a one-to-one correspondence before and after indentation).
+MCP tool goldens are in `hub/mcp_tools_golden_test.go` (the assistant's list, its variants with GitHub signed in and with iMessage handed over, and the regular Agents' list), `mail/mcp_golden_test.go` and, for a meeting's room, `assistant/meeting_conversation_test.go` (`meeting_room.tools`). They compare the transmitted `json.Marshal` content (goldens are indented for readability, with a one-to-one correspondence before and after indentation).
+
+The hub's lists keep one golden per tool (#11252), so changing a tool's description or schema rewrites one small file and two PRs that change different tools never touch the same golden. Under `hub/testdata/prompts/mcp_tools/`, a list has `<list>.index.golden` (its tool names in order, one per line) and `<list>/<tool>.golden` (each tool as sent, indented); a variant has only `<variant>.diff.golden`, its difference from its base list: tools it leaves out, tools it offers changed in the same place, and tools it adds or moves, each new or changed tool in full. A run of added tools that ends the list is placed `at` the end, so a tool the base gains does not change the variant's difference. A tool both base lists offer (the mail tools) has a file in each, since the lists are built separately. `UPDATE_GOLDEN=1 go test ./internal/hub -run TestGoldenMCPTools` rewrites the index, the tool files and the differences, and deletes the files of tools a list no longer has (inside that list's directory only); without it the test fails on any difference, the order included, and on a stale file. Tests that read a whole list rebuild it with `mcptoolgolden.Load` (`internal/mcptoolgolden`), byte for byte what the list's single golden held before.
 
 `hub/prompts_golden_test.go`, `assistant/prompts_golden_test.go`, `kb/prompts_golden_test.go`, and `node/prompts_golden_test.go` test at the caller layer (fake Lark gateway, fake model recording received
 system / user text, knowledge base in a temporary directory), so they also cover data conversion. The clock in the snapshot's "Now" line is replaced with a placeholder before comparison.
 On 2026-11-01, these goldens were generated from the original code before the move; after the move, identical inputs produced byte-for-byte identical output.
 When assistant business logic moved to `server/internal/assistant` on 2026-11-04 (`docs/assistant/assistant.md`, "Boundary with hub"), its prompt goldens moved unchanged to `assistant/testdata/prompts/`, without regeneration. After assistant settings, main chat, and chat creation moved there the same day, `assistant_claude_md.*` and `main_handoff*` goldens also moved unchanged to `assistant/testdata/prompts/` (`assistant/claude_md_test.go`), byte-for-byte identical. When Inbox moved to the manager the same day, `inbox_triage.*`, `inbox_draft.*`, `inbox_judge*`, `inbox_agent.*`, and `inbox_group.*` goldens moved unchanged to `assistant/testdata/prompts/` (`assistant/inbox_golden_test.go`), without regeneration and byte-for-byte identical. When translation followed, `translate_*` moved there unchanged too (`assistant/inbox_translate_test.go`), also byte-for-byte identical.
 
-A size ratchet watches the same goldens' weight (#6881, step P0 of `docs/design/proposals/assistant-instructions.md` 4a): `assistant/prompt_size_ratchet_test.go` measures the UTF-8 size of every `## ` section of the `assistant_claude_md.*` goldens (the part before the first heading counts as `#head`), of every tool object in `hub/testdata/prompts/mcp_tools.assistant.golden` (the compact `json.Marshal` of the whole tool, description and input schema included) of each `supervise.*` golden as a whole, and of the single `supervision_instructions.golden` fragment, and compares the numbers with the baseline `assistant/testdata/prompt_sizes.json`. Any piece growing past its baseline fails the test: growth is a decision made when the baseline is updated, never something a change slips in. The baseline's total only goes down, like the Apple token ratchet (`TokenRatchetTests` in `apple/PersonaTests`): instructions grow one rule at a time, so a rule that has to grow is shortened or moved elsewhere first. A single piece may still grow when text moves between prompts and the total falls by more (a move into the shared instructions shrinks the goldens it came from); such a PR says where the text moved to. `PROMPT_SIZE_UPDATE=1 go test ./internal/assistant -run PromptSizeRatchet` rewrites the baseline after a shrink or such a move — it adds new keys and drops removed ones (a renamed heading shows up as a removal plus an addition) and refuses to write a larger total.
+A size ratchet watches the same goldens' weight (#6881, step P0 of `docs/design/proposals/assistant-instructions.md` 4a): `assistant/prompt_size_ratchet_test.go` measures the UTF-8 size of every `## ` section of the `assistant_claude_md.*` goldens (the part before the first heading counts as `#head`), of every tool object in the assistant's list (`hub/testdata/prompts/mcp_tools/`, rebuilt with `mcptoolgolden.Load`; the compact `json.Marshal` of the whole tool, description and input schema included, under the key `mcp_tools.assistant#<tool>`) of each `supervise.*` golden as a whole, and of the single `supervision_instructions.golden` fragment, and compares the numbers with the baseline `assistant/testdata/prompt_sizes.json`. Any piece growing past its baseline fails the test: growth is a decision made when the baseline is updated, never something a change slips in. The baseline's total only goes down, like the Apple token ratchet (`TokenRatchetTests` in `apple/PersonaTests`): instructions grow one rule at a time, so a rule that has to grow is shortened or moved elsewhere first. A single piece may still grow when text moves between prompts and the total falls by more (a move into the shared instructions shrinks the goldens it came from); such a PR says where the text moved to. `PROMPT_SIZE_UPDATE=1 go test ./internal/assistant -run PromptSizeRatchet` rewrites the baseline after a shrink or such a move — it adds new keys and drops removed ones (a renamed heading shows up as a removal plus an addition) and refuses to write a larger total.
 
 ## Behaviour checks
 
@@ -418,7 +441,7 @@ Goldens pin the text a prompt renders to, not what a model decides on it. The ju
 
 When you change one of these prompts, the hub's rules after the model, or the model behind the purpose, run that judge's live check before and after, and put both tables in the PR. A real case a judge got wrong goes in as a new synthetic case, rewritten so it names no real person, project or message.
 
-Supervision events have behaviour cases of their own (#6879), since a supervising conversation is a whole conversation, not one judging call. `assistant/testdata/behaviour/supervision.json` lists synthetic cases, each naming a CLAUDE.md golden as the system prompt and a supervision event golden as the message; the model gets the assistant's tool list (`hub/testdata/prompts/mcp_tools.assistant.golden`, plus a Bash tool) and canned tool results, and the case checks the calls it makes: calls expected (optionally only after an evidence call such as `agent_read`), groups of which one must happen, and calls forbidden. Because the cases read the goldens, regenerating the goldens after a prompt change is what puts the new text under test.
+Supervision events have behaviour cases of their own (#6879), since a supervising conversation is a whole conversation, not one judging call. `assistant/testdata/behaviour/supervision.json` lists synthetic cases, each naming a CLAUDE.md golden as the system prompt and a supervision event golden as the message; the model gets the assistant's tool list (rebuilt from `hub/testdata/prompts/mcp_tools/` with `mcptoolgolden.Load`, plus a Bash tool) and canned tool results, and the case checks the calls it makes: calls expected (optionally only after an evidence call such as `agent_read`), groups of which one must happen, and calls forbidden. Because the cases read the goldens, regenerating the goldens after a prompt change is what puts the new text under test.
 
 - `TestSupervisionBehaviourCasesAreWellFormed` and `TestSupervisionBehaviourChecks` run with the other tests and need no model: every golden, tool and argument a case names exists, and the checks score sample calls as intended.
 - `TestSupervisionBehaviourLive` runs each case `PERSONA_LIVE_RUNS` times (default 5) against `PERSONA_LIVE_AI` (Messages API only; `PERSONA_LIVE_CASE` runs one case; `PERSONA_LIVE_PARALLEL` bounds the concurrent runs, default 4) and prints passes per case. It calls the model directly, without Claude Code's own system prompt, the snapshot or earlier turns.

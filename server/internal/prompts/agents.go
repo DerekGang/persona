@@ -186,7 +186,12 @@ type AgentDelegate struct {
 	Rules    string // the user's own rules, trimmed: manager.json agents.delegate.rules
 }
 
-func RenderAgentDelegate(d AgentDelegate) string { return render("agents/delegate", d) }
+func RenderAgentDelegate(d AgentDelegate) string {
+	if d.Language == "zh-Hans" || d.Language == "简体中文" {
+		d.Language = ""
+	}
+	return render("agents/delegate", d)
+}
 
 // AgentDelegateInput is the question to decide on and what is known around it (agents/delegate_input).
 type AgentDelegateInput struct {
@@ -310,7 +315,7 @@ func RenderAgentCloseoutAsk(c AgentCloseoutAsk) string {
 type AgentCloseoutBrief struct {
 	Form     string // the closeout's form (closeout.Example)
 	Language string // the user's language, for the sentences inside it
-	// AfterDelivery: the same prompt asks for the delivery line (assistant/task_delivery); the block goes after it.
+	// AfterDelivery: the same block carries the task delivery disposition and responsible party.
 	AfterDelivery bool
 	// Session: it is a session's starting context, not part of a task's prompt: it says whose words these are.
 	Session bool

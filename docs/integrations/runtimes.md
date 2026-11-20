@@ -60,6 +60,7 @@ Optional (for each one present, the SDK declares the capability in `runtime.hell
 | `archive({session_id})` / `unarchive({session_id})` | The runtime's own reversible archive (`caps.archive`, declared only when both exist): when the user archives a session in Persona, it is archived in the runtime too, and restored with it. Archive an idle session without stopping or closing anything (Persona refuses busy sessions first) and keep it restorable; both must be idempotent (already archived / restored is success). A runtime whose archive also stops the session, or that has no way back, leaves them out: the archive is then Persona's alone (`docs/protocol/protocol.md`, "Agent session archives") |
 | `createWorkspace({cwd, workspace_id, branch, create_branch, base, name, key})` / `prepareWorkspace({cwd, repo_root})` | Workspaces of its own (`caps.workspaces`, declared only when both exist: the node asks where the worktrees go before each one it has made): a worktree it makes as a workspace of its own / the folder it puts a repository's worktrees in. With them it lists its workspaces through `rt.workspacesChanged(list)`. Only an engine's are used; see "Workspaces" below |
 | `renameWorkspace({workspace_id, title})` / `renameWorkspace({space_id, title})`, `archiveWorkspace({workspace_id})` | With `caps.workspaces`: a workspace's title (resolves to `{workspace}`, its row now) or a space's name (resolves to `{space_name}`, the name it shows now) / the workspace archived, a worktree it made removed from the disk (its branch kept). Without them those requests are `unsupported`; see "Workspaces" below |
+| `listHistory({since, until, cursor, limit})` | Sessions active in a time window, archived, finished and offline ones too (`caps.history`); returns `{rows, next_cursor, complete}`. See "History" below |
 | `watchChanged(id, watching, {transcript})` | The phone starts / stops watching a session (when a new node connects or the runtime stops, all stop): for runtimes that only follow a session while someone is watching (Paseo subscribes to the timeline per session). A watch is the one sign that someone has the chat open: every App watches a chat it opens, the manager watches only the turn of a message a channel delivered there, and background reads never watch. A runtime whose engine would start a stopped agent just to read it (Paseo loads an agent it let go, relaunching its provider, #8132) reads such a session only while it is watched, and answers other reads from what it already has or refuses them with `RpcError(…, 'not_loaded')` (`items`, `item`) |
 
 In `createRuntime`'s options, a runtime that runs several Agents can also pass `launchers: [{name, model, agent, models, auto_accept}]`: besides `launcher`, the new-session form then has these entries, one per provider,
@@ -116,12 +117,25 @@ Things shared across runtimes but not part of the protocol are in the SDK too, f
 | What | Does what |
 | --- | --- |
 | `rt.recent(rows, {days, max, pinned})`, `rt.touched(id)` | Picks the sessions to list: running / waiting for an answer (`pinned`) and ones the phone touched (last 50) are always listed; the rest within `days` days fill up to `max`, newest first. A session open on the phone must stay listed |
+| `rt.history(rows, {since, until, cursor, limit}, {complete})` (also `historyPage`) | Answers `listHistory` from all the runtime's session rows (or what it read from storage): window, order, paging and cursor. See "History" below |
 | `page(items, params, {history, toSeq})` | Paging for `session.items` (from the end by turns / count, backwards, catch-up, by range) |
 | `appToolName(name, own)` | Maps tool names to the set the App draws (`bash`→`Bash`, `read`→`Read`…); the runtime adds its own (DSH's `ask_user_question`, pi's `find`); parameter names are converted by each runtime |
 | `scriptedModel()` in `testing/model.mjs` | A scriptable fake model for end-to-end tests (DSH's llm-mock-server, switching scripts by phase) |
 | `conformance()` in `testing/conformance.mjs` | Generic end-to-end acceptance: text turns (thinking, reply, turn end, paging), approval, denial with a reason, questions, streaming, interrupt, push continuity; a runtime only passes its own tool parameters and then checks what's specific to it |
 
 Not in the SDK (used by only one runtime, or the two read different things): each one's way of reading its session storage, and keeping companion processes alive.
+
+## History
+
+The list carries only recent sessions (`rt.recent`). A caller reading an older period (an extension looking back 90 days) asks for sessions by a time window instead (`docs/protocol/protocol.md`, "Session history"). A runtime that keeps older sessions implements `listHistory({since, until, cursor, limit})` → `{rows, next_cursor, complete}`:
+
+- `since` / `until`: RFC 3339 (the SDK passes `until` as now when the caller left it out). A session is in the window when its time is in `[since, until)`; its time is `active_at`, else `updated_at`, else `started_at`.
+- Archived, finished and offline sessions are listed too; archived ones with `archived: true`. Deleted ones never are (the SDK drops rows with `status: "deleted"` or `deleted: true`).
+- Rows are `listSessions` rows, plus these optional fields when the runtime knows them: `active_at` (when it was last active, e.g. its last message; give it when archiving moves `updated_at`), `started_at`, `origin` (`user`, or `automation` for a session a scheduled job started) and `user_messages` (how many messages the user wrote in it).
+- Newest first, ties by `session_id`; `limit` defaults to 200, at most 500; `next_cursor` is an opaque string, empty on the last page.
+- `complete`: whether it can vouch that the window is fully listed (false when its storage was pruned).
+
+`rt.history(rows, params)` does all of that from the rows it is given, so most runtimes write `listHistory: (p) => rt.history(allRows(), p)`. A session listed only here is still read with `items` (node asks the runtimes about a session it does not know); `send` and `watch` may refuse it with `not_found`.
 
 ## Content
 
@@ -185,9 +199,10 @@ Not in the SDK (used by only one runtime, or the two read different things): eac
   node rejects a second process with the same id (`runtime_conflict`). If a runtime changes its id but still runs the same kind of Agent, set `agent` to that Agent (a renamed DSH sets `dsh`), and session rows carry `agent_label`.
 - Session ids are unique on the machine, at most 128 characters, and can't be paths. `launcher` names shouldn't clash with launchers in `~/.zshrc` (on a clash the shell's wins and the runtime's isn't listed, except where every start goes to the runtime as an engine with `caps.same_kind`: there its own wins);
   if two runtimes' launchers clash, only the one that connected first provides it.
-  The ordinary `agy` executable discovered on PATH is a terminal fallback, not an explicit shell override: its connected
-  companion supplies the launcher, models and assistant support. An actual alias, function or helper definition of that
-  name keeps shell precedence. Discovery provenance stays inside the node and adds no wire field (#9181).
+  A local `agy` launcher supplies the model catalog and starts in a pane when the selected host is herdr (#10237),
+  including when herdr is the default and the node detects the local CLI. The connected companion serves Assistant
+  and terminal-less Agent requests (the node RPC can target `host: "agy"`). A shell alias, function or helper definition
+  named `agy` still has precedence over automatic companion selection (#9181).
 
 ## Minimal example
 
@@ -511,8 +526,12 @@ model change or check that finds it idle.
 
 Idle sessions can switch model, thinking level and permission mode through ACP. Native configuration updates determine
 the displayed model and effort. Each accepted field is published even if another field fails, and failures reach the caller.
-`auto` keeps native safe-operation approval, while Persona's explicit full bypass answers permission requests automatically.
-External session models stay unspecified until native metadata is available. Session discovery does not resume them.
+`auto` keeps native safe-operation approval when agy accepts it. If agy applies `default` instead, the companion changes
+to `bypassPermissions` through agy's `accept-edits`, answers later permission requests automatically, publishes that final
+mode and adds one reloadable notice through the existing localized runtime-notice path. A session's explicit mode remains
+authoritative over later settings-file changes. A mode taken from agy's settings is read again on each session projection
+and applied again before the next prompt, so changing `agentMode` needs no companion restart. External session models stay
+unspecified until native metadata is available. Session discovery does not resume them.
 
 Availability checks use optional `check({launcher, cwd, prompt})` (`caps.check`) through the companion's authenticated
 ACP client. They run the existing one-word probe, cancel tool permission requests, and close their temporary session

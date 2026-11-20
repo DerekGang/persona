@@ -1,4 +1,5 @@
 {
+  "task_instructions_resume": "这个启动器无法在仅恢复会话时保留任务约定。请发送一条继续消息，或选回原来的启动器。本次没有启动或发送任何内容。",
   "skill_unavailable": "所选技能已不可用或执行环境已变化，请移除后重新选择。消息未发送。",
   "readonly_unsupported": "此启动方式无法应用只读模式。请选择支持只读且没有冲突权限参数的终端启动器。",
   "launcher_kind_missing": "那台电脑的引擎里没有能跑这类 Agent 的 provider，没有启动，也没有改用别的。选它的一个 provider，或在它的设置里打开一个。",
@@ -44,6 +45,7 @@
   "open_elsewhere_agents_list": "这个标签停在 Claude Code 的 agents 列表上：打开终端，用方向键选中一个会话、回车进去后再发。这次没有发送。",
   "modes_on_computer": "这个 Claude 会话运行在电脑上的 Claude 里（桌面 App 或其他终端），它的模式、思考强度和模型请在那里改。",
   "modes_not_running": "这个 Agent 没在运行。先在它的终端页点「恢复」，再改这一项。",
+  "effort_change_pending": "思考强度变更尚未确认，消息未发送。如果变更失败，请重新选择思考强度。",
   "agent_stopped": "这个 Agent 已经停了。对话和终端还在，它不再收消息，这次没有发送。要它接着做，在它的终端页点「恢复」。",
   "resume_not_allowed": "这个 Agent 不能自动恢复。请在它的终端页点「恢复」。",
   "stop_not_saved": "未能保存停止记录。这次没有启动或停止 Agent，也没有关闭终端，请重试。",
