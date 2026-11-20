@@ -19,7 +19,7 @@ const val WORKTREE = "WORKTREE"
 /** A page shown over the browser. Pages stack: a commit's file opens over the commit, a linked file over its README. */
 sealed interface FileSelection {
     /** [line] (1-based): opened from a message's `path:12`, the text scrolls to that line and marks it. */
-    data class File(val path: String, val line: Int? = null) : FileSelection
+    data class File(val path: String, val line: Int? = null, val edit: Boolean = false) : FileSelection
     data class Diff(val file: SessionGitFile, val staged: Boolean) : FileSelection
     data class Commit(val hash: String) : FileSelection
     /** One file of a commit: its part of the commit's diff (the commit is read once and kept). */
@@ -48,6 +48,9 @@ data class FilesState(
     val root: String = "",
     /** The folder the browser shows. */
     val here: String = "",
+    val backFolders: List<String> = emptyList(),
+    val forwardFolders: List<String> = emptyList(),
+    val highlightedPath: String? = null,
     val directory: SessionDirectory? = null,
     val directoryLoading: Boolean = false,
     val directoryError: String? = null,
@@ -83,8 +86,8 @@ data class FilesState(
 
 /** Owned by the session pane; leaving it cancels its coroutine scope. */
 class FilesController(
-    private val api: SessionFiles,
-    private val machineId: String,
+    internal val api: SessionFiles,
+    internal val machineId: String,
     val cwd: String,
     private val scope: CoroutineScope,
     /** Why a load failed, in words for the page (the hub's message when the machine said why). */
@@ -93,7 +96,12 @@ class FilesController(
     private val pulled: (updated: Boolean) -> String = { if (it) "updated" else "up to date" },
     /** The hub connection: coming back online reads again what failed while it was away. */
     private val connection: StateFlow<ConnectionState>? = null,
+    private val machineLocation: () -> Pair<String?, String?> = { null to null },
 ) {
+    internal fun canWrite(path: String): Boolean {
+        val (home, os) = machineLocation()
+        return FilesPaths.writable(path, home, os)
+    }
     private val mutable = MutableStateFlow(FilesState(root = cwd, here = cwd))
     val state = mutable.asStateFlow()
     private var directoryJob: Job? = null
@@ -106,6 +114,12 @@ class FilesController(
     private var previewGeneration = 0
     /** Folders already listed: going back up shows them at once while they refresh. */
     private val listings = LinkedHashMap<String, SessionDirectory>()
+    internal val sessionFolder: String
+        get() {
+            listings[cwd]?.path?.takeIf { it.isNotEmpty() }?.let { return it }
+            val home = machineLocation().first
+            return if (home != null && FilesPaths.isHome(cwd)) joinRemotePath(home, cwd.removePrefix("~")) else cwd
+        }
     /** Files shown lately: back to a page under the one on top (a README under the file it links) shows it at once. */
     private val contents = object : LinkedHashMap<String, SessionFileContent>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SessionFileContent>?) = size > 4
@@ -135,7 +149,7 @@ class FilesController(
         val asked = initialPath?.trim()?.takeIf { it.isNotEmpty() }
         when {
             asked == null -> directory()
-            FilesPaths.namesDirectory(asked) -> browse(FilesPaths.resolve(asked, cwd), top = true)
+            FilesPaths.namesDirectory(asked) -> browse(FilesPaths.resolve(asked, cwd), top = true, first = true)
             else -> {
                 mutable.update { it.copy(direct = true) }
                 preview(FileSelection.File(FilesPaths.resolve(asked, cwd), initialLine?.takeIf { it > 0 }))
@@ -145,6 +159,13 @@ class FilesController(
 
     /** Lists [path] (the folder shown by default); keeps showing what was there before while it reloads. */
     fun directory(path: String = state.value.here) {
+        if (path != state.value.here && listings[path]?.path != state.value.here) mutable.update { now ->
+            now.copy(backFolders = (now.backFolders + now.here).takeLast(50), forwardFolders = emptyList(), highlightedPath = null)
+        }
+        readDirectory(path)
+    }
+
+    private fun readDirectory(path: String) {
         directoryJob?.cancel()
         val generation = ++directoryGeneration
         mutable.update {
@@ -160,6 +181,9 @@ class FilesController(
                     // The hub answers with the folder it read ("~" expanded, "a/../b" cleaned): the breadcrumb follows.
                     val resolved = result.path.ifEmpty { path }
                     it.copy(directory = result, directoryLoading = false, here = resolved,
+                        highlightedPath = it.highlightedPath?.let { file ->
+                            if (resolved != path && FilesPaths.parent(file) == path) joinRemotePath(resolved, FilesPaths.name(file)) else file
+                        },
                         root = if (it.root == path) resolved else it.root)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -186,13 +210,35 @@ class FilesController(
     /** Into a folder: below the top it extends the breadcrumb; anywhere else it becomes the top. */
     fun open(path: String) = browse(path, top = !FilesPaths.isWithin(path, state.value.root))
 
-    private fun browse(path: String, top: Boolean) {
+    fun previousFolder() = moveInHistory(back = true)
+    fun nextFolder() = moveInHistory(back = false)
+
+    private fun moveInHistory(back: Boolean) {
+        val now = state.value
+        val path = (if (back) now.backFolders else now.forwardFolders).lastOrNull() ?: return
+        mutable.update {
+            it.copy(backFolders = if (back) it.backFolders.dropLast(1) else it.backFolders + it.here,
+                forwardFolders = if (back) it.forwardFolders + it.here else it.forwardFolders.dropLast(1),
+                highlightedPath = null, root = if (FilesPaths.isWithin(path, it.root)) it.root else path)
+        }
+        readDirectory(path)
+    }
+
+    /** Reveal the file even when its preview was opened directly from the conversation. */
+    fun showInFolder(path: String) {
+        val parent = FilesPaths.parent(path) ?: return
+        open(parent)
+        mutable.update { it.copy(highlightedPath = joinRemotePath(it.here, FilesPaths.name(path))) }
+    }
+
+    private fun browse(path: String, top: Boolean, first: Boolean = false) {
         mutable.update {
             it.copy(root = if (top) path else it.root, stack = emptyList(), direct = false,
                 content = null, diff = null, commit = null, compare = null, previewError = null)
         }
         previewJob?.cancel()
-        directory(path)
+        previewGeneration++
+        if (first) readDirectory(path) else directory(path)
     }
 
     /** One level up: the breadcrumb's top moves up too when the browser is already there (as far as the root). */
@@ -275,6 +321,8 @@ class FilesController(
     /** Opens [selection] over the page shown now. */
     fun push(selection: FileSelection) = show(state.value.stack + selection)
 
+    fun openEditor(path: String) = push(FileSelection.File(path, edit = true))
+
     /** Reloads the page shown now. */
     fun reload() = show(state.value.stack, fresh = true)
 
@@ -330,7 +378,7 @@ class FilesController(
                         val folder = file.path.ifEmpty { top.path }
                         when {
                             !file.isDir -> { contents[top.path] = file; mutable.update { it.copy(content = file) } }
-                            state.value.direct -> browse(folder, top = true)
+                            state.value.direct -> browse(folder, top = true, first = true)
                             else -> open(folder)
                         }
                     }

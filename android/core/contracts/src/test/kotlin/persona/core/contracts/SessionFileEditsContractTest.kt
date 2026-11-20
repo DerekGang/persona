@@ -27,8 +27,13 @@ class SessionFileEditsContractTest {
         }
         // The browser offers no Rename or Move to Trash, and a call fails as unsupported rather than doing anything.
         assertFalse(readOnly.editsFiles("m"))
+        assertTrue(SessionFileFeature.entries.none { readOnly.supports("m", it) })
         for (call in listOf<suspend () -> Unit>({ readOnly.rename("m", "/w", "a", "b") }, { readOnly.trash("m", "/w", listOf("a")) },
-                { readOnly.restore("m", listOf("t1")) })) {
+                { readOnly.restore("m", listOf("t1")) }, { readOnly.fileInfo("m", "/w", "a") }, { readOnly.findFiles("m", "/w") },
+                { readOnly.mkdir("m", "/w", ".", "b") }, { readOnly.writeText("m", "/w", "a", "", create = true) },
+                { readOnly.uploadFile("m", "/w", ".", "a", java.io.File("unopened")) },
+                { readOnly.copyFiles("m", "/w", listOf("a"), ".") }, { readOnly.moveFiles("m", "/w", listOf("a"), ".") },
+                { readOnly.zipFiles("m", "/w", listOf("a"), "archive") }, { readOnly.chmod("m", "/w", "a", 0) })) {
             try { call(); fail("Expected UnsupportedOperationException") } catch (_: UnsupportedOperationException) {}
         }
     }

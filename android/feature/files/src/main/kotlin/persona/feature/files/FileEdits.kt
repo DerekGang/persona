@@ -31,7 +31,7 @@ import persona.core.hub.HubFailure
 
 // Renaming and moving to the trash in the file browser (docs/protocol/protocol.md "Changing files", iOS FolderEdits): the
 // machine allows these writes only inside the home. A trash goes to the machine's trash and the toast's Undo puts it back;
-// there is no permanent delete. Moving between folders, uploading and selecting several are not here yet.
+// there is no permanent delete.
 
 /** Why a name can't be a file's, said before asking (iOS `FolderEdits.nameProblem`); the machine checks again. */
 internal enum class NameProblem { Empty, Dots, Slash }
@@ -144,7 +144,9 @@ internal fun rememberFileEditReport(controller: FilesController): (FileEdit) -> 
                 }
                 is FileEdit.Trashed -> {
                     val name = FilesPaths.name(edit.paths.first())
-                    val message = resources.getString(R.string.files_trashed, name)
+                    val count = edit.paths.size
+                    val message = if (count == 1) resources.getString(R.string.files_trashed, name)
+                        else resources.getString(R.string.files_trashed_many, count)
                     if (edit.trashIds.isEmpty()) feedback?.notice(message, FeedbackStyle.Success)
                     else {
                         // A toast with a button plays no haptic of its own: the success one plays here, as iOS's does.
