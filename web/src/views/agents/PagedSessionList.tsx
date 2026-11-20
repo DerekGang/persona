@@ -24,7 +24,7 @@ import { nestUnderParents } from "../../lib/side-sessions";
 import { sameValue } from "../../lib/stable-lines";
 import { lazyPage } from "../../lib/lazy-page";
 import { NeedsCount, ShowMoreRow } from "../SidebarSection";
-import type { GroupedSessionsProps, GroupedSource } from "./GroupedSessions";
+import type { GroupedSessionsProps, GroupedSource, WithGroupTerminals } from "./GroupedSessions";
 import { useSessionGroups } from "./use-session-groups";
 
 // The list drawn by group is a chunk of its own, loaded when a Browse by is chosen (or was, last time): the default
@@ -65,14 +65,16 @@ export interface PagedSessionListProps<T> {
    *  lists show the same control; this list draws that bar first, then the state chips and what ⌘K put on it, as the
    *  complete list does, with no value pill or search field of its own. A search lists its matches flat. `label` names
    *  the dimension. */
-  grouping?: PagedGrouping;
+  grouping?: PagedGrouping<T>;
   /** The words a failed read of the list's rows or groups is said in, given its reason (the reason alone by default): the
    *  sidebar's says it could not read the Agents list, as its complete list does. */
   failureText?: (reason: string) => string;
 }
 
-export interface PagedGrouping {
+export interface PagedGrouping<T> {
   dimension: GroupDimension; bar: ReactNode; label: string; todos?: TodoNames; quick?: PagedQuickFilters;
+  /** Online computers can have a shell even when the Hub counts no Agents there. */
+  terminals?: { computers: readonly string[]; withGroup: WithGroupTerminals<T> };
   /** The sections follow this scope's fold-all (useFolded). */ foldScope?: string;
   /** "Recently updated" (the title row's ⋯): the computers' and projects' sections by their newest session. */ byUpdate?: boolean;
   /** The words ⌘K's "Filter Agents list" put on the list (#6589), sent as the search: the sidebar's list has no field of
@@ -263,16 +265,25 @@ export function PagedSessionList<T>({ root, path, identity, compare, removeIdent
   // as far as the root's newest page tells (the hub reads no group's time); the ones it has none of keep their order
   // after them, and the sessions on no space stay last. Its to-dos keep the To-dos page's order there too.
   const byUpdate = Boolean(grouping?.byUpdate) && (dimension === "machine" || dimension === "group");
+  const terminals = dimension === "machine" && !q && !Object.keys(chip).length ? grouping?.terminals : undefined;
   const allGroups = useMemo(() => {
-    if (!byUpdate || !grouped.groups || !placeOf) return grouped.groups;
+    let groups = grouped.groups;
+    if (!groups) return null;
+    if (terminals) {
+      const counted = new Set(groups.map(g => g.key));
+      groups = groups.concat(terminals.computers.filter(id => !counted.has(id)).map(id => ({
+        key: id, name: id, count: 0, needs: 0, places: [], filters: { machine_id: id },
+      })));
+    }
+    if (!byUpdate || !placeOf) return groups;
     const places = rootPage.rows.map(placeOf);
     const rank = (g: SessionGroup) => {
       if (g.rest) return places.length + 1;
       const at = places.findIndex((p) => holdsPlace(g, dimension as GroupDimension, p));
       return at < 0 ? places.length : at;
     };
-    return grouped.groups.map((g) => ({ g, at: rank(g) })).sort((a, b) => a.at - b.at).map(({ g }) => g);
-  }, [byUpdate, grouped.groups, placeOf, rootPage.rows, dimension]);
+    return groups.map((g) => ({ g, at: rank(g) })).sort((a, b) => a.at - b.at).map(({ g }) => g);
+  }, [byUpdate, grouped.groups, placeOf, rootPage.rows, dimension, terminals]);
   // the picked group follows what the hub says of it now (a project gains a directory); gone from the scope, it stays picked
   useEffect(() => {
     if (!picked || !allGroups) return;
@@ -468,7 +479,7 @@ export function PagedSessionList<T>({ root, path, identity, compare, removeIdent
       {sections && <>
         {allGroups && allGroups.length > 0 && <Suspense fallback={loadingLine}>
           <GroupedSessions groups={allGroups} dimension={dimension as GroupDimension} kind={personal ? "personal" : "runtime"} scope={groupScope} source={source}
-            renderRow={renderRow} groupName={groupName} machineName={machineName} open={openPlace} foldScope={grouping?.foldScope} />
+            renderRow={renderRow} groupName={groupName} machineName={machineName} open={openPlace} foldScope={grouping?.foldScope} withTerminals={terminals?.withGroup} />
         </Suspense>}
         {!allGroups && !grouped.error && loadingLine}
         {grouped.error && <ListError text={failureText(grouped.error)} onRetry={grouped.retry} />}

@@ -5,7 +5,7 @@ import { isSidebarAgent } from "../lib/sidebar-agent";
 import { storedValue, storeValue } from "../lib/compatibility";
 // Beautiful UI's Sidebar Nav: workspace row, quick search, sections, one gliding highlight. Persona's main conversation
 // is the first entry (the app opens on the assistant); a new conversation and a new agent are the "+" of their sections (#1239).
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import { NARROW, useMedia } from "../lib/viewport";
 import { AGENT_FILTERS, agentFilter, applyFilter, arrangeSpaces, filterCounts, isSpaceMuted, matchesFilter, matchingKeys, shownFilters, unreadOf, withoutBotmux, type AgentFilter, type FilterCounts } from "../lib/agent-filter";
@@ -34,7 +34,7 @@ import { conversationPage } from "../lib/conversation-page";
 import { href, navigate, onLinkClick, showsSession, type Route } from "../lib/router";
 import { useScrollMemory } from "../lib/scroll-memory";
 import { retryFullAgentSessions, useAgentSessions, useFullAgentSessions } from "../lib/sessions";
-import { getState, refresh, refreshTodos, useHubUnreachable, useStore } from "../lib/store";
+import { getState, refreshTodos, useHubUnreachable, useStore } from "../lib/store";
 import { SESSIONS_SIDE_FOLD_FEATURE } from "../lib/side-fold";
 import { conversationTitle, mergeConversations } from "./assistant/conversations";
 import { useShownManager } from "../lib/manager-choice";
@@ -49,7 +49,7 @@ import { HubNoticeLine as HubNoticeLineContent } from "./agents/HubNoticeRow";
 import { DeleteSessionDialog, RenameDialog, RenameSpaceDialog } from "./chat/SessionDialogs";
 import { AGENT_ARCHIVES_FEATURE } from "../lib/agent-archives";
 import { AgentRowMenu, MarkSeenDialog as MarkSeenDialogContent, SpaceMenu } from "./AgentMenus";
-import { NodeMenu } from "./NodeMenu";
+import { useSidebarNodeMenu } from "./NodeMenu";
 import { NodePrompt as NodePromptContent } from "./NodePrompt";
 import { SidebarUsage as SidebarUsageContent } from "./UsageBars";
 import "../lib/node-palette";
@@ -57,8 +57,8 @@ import type { MenuNode } from "../lib/node-actions";
 import type { MenuAt } from "../ui/menu-model";
 import { useSidebarTerminals } from "../lib/sidebar-terminals";
 import { usePanes } from "../lib/terminal-panes";
-import { buildTerminalTree, shellsOnly, type TermSpace } from "../lib/terminals";
 import type { LinkTargetSpace } from "./LinkTodoDialog";
+import { lazyPage } from "../lib/lazy-page";
 import { lazyDialog } from "./LazyOverlay";
 import { FoldScope, useFolded } from "../lib/use-folded";
 import { clipsOverflow, glideBox, glideStyle, sameBox, type GlideBox, type Span } from "../lib/glide";
@@ -66,13 +66,14 @@ import { AGENTS_FOLD, onGrouping, pagedAgentList } from "../lib/sidebar-api";
 import { jumpHint, useBindings } from "../lib/shortcuts";
 import { markAllSeenLabel, stateCount } from "../lib/state-labels";
 import { PagedSessionList, type PagedQuickFilters } from "./agents/PagedSessionList";
+import type { WithGroupTerminals } from "./agents/GroupedSessions";
 import { ListError } from "../ui/ListError";
 import { SESSION_LIST_STYLE } from "../ui/list-metrics";
 import { RUNTIME_AGENTS_PATH, supportsPagedAgents, runtimeActiveAt, runtimeAgents, runtimeIdentity, runtimeNeedsYou, runtimeOrder, runtimeParentIdentity, runtimePlace, runtimeRemoval } from "../lib/runtime-list";
 import { SESSIONS_CATALOG_FEATURE, SESSIONS_JUST_FINISHED_FEATURE, SESSIONS_QUICK_FILTERS_FEATURE, SESSIONS_TODO_FEATURE, type GroupDimension, type TodoNames } from "../lib/session-groups";
 import { type ListFilters } from "../lib/session-list";
 import { NoComputers, useAddComputer } from "./machines/AddComputerEntry";
-import { BADGE_CLASS, DOT_CLASS, type GoFn, GroupCount, holdsRow, morePagesMenu, type NavPage, type NodeMenuFn, pageIconStyle, pageLabel, type RegFn, rowKey, type RowMenuFn, Section, SidebarGroup, GroupFoldButton, useActiveKey, useGo, useNavPages } from "./SidebarParts";
+import { BADGE_CLASS, DOT_CLASS, type GoFn, GroupCount, holdsRow, morePagesMenu, type NavPage, pageIconStyle, pageLabel, type RegFn, rowKey, type RowMenuFn, Section, SidebarGroup, GroupFoldButton, useActiveKey, useGo, useNavPages } from "./SidebarParts";
 import { NavRow, PersonalAgents, PersonaRow, SessionRow, SubHeading } from "./SidebarRows";
 import { GroupBranch, LooseSection, MachineSection, RepoMachineSection, SessionTally, type SpaceMenuFn, type WorkspaceTreeActions, SpaceSection, TodoTreeView } from "./SidebarTree";
 import { CollapseButton, PagesTally } from "./SidebarRail";
@@ -94,6 +95,8 @@ const NodePrompt = memo(NodePromptContent);
 const SidebarUsage = memo(SidebarUsageContent);
 const LinkTodoDialog = memo(lazyDialog(() => import("./LinkTodoDialog").then((m) => m.LinkTodoDialog)));
 const MarkSeenDialog = memo(MarkSeenDialogContent);
+const MachineShells = lazyPage(() => import("./SidebarShells").then(m => m.MachineShells));
+const PagedMachineShells = lazyPage(() => import("./SidebarShells").then(m => m.PagedMachineShells));
 
 /** Brings `el` to the middle of its nearest scrolling ancestor when it is not fully in view (rows loading above it
  *  later still leave it on screen). Not `scrollIntoView`: that also scrolls the clipped (overflow-hidden) box of a
@@ -714,6 +717,16 @@ const PAGED_DIMENSION: Record<Exclude<AgentGrouping, "repo">, GroupDimension> = 
 
 function BoundedAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, add = true, grouping, todosUnread = false, chooseGrouping }: AgentsBlockProps & { grouping: Exclude<AgentGrouping, "repo">; /** By to-do shown by status: its to-dos cannot be read */ todosUnread?: boolean; chooseGrouping: (g: AgentGrouping) => void }) {
   const machines = useStore(selectSidebarMachines);
+  const showTerminals = useSidebarTerminals() && grouping === "machine";
+  const terminals = useMemo(() => {
+    if (!showTerminals) return undefined;
+    const online = new Map(machines.filter(m => m.online).map(m => [m.id, m]));
+    const withGroup: WithGroupTerminals<Session> = (group, folded, section) => {
+      const machine = online.get(group.key);
+      return machine ? <PagedMachineShells machine={machine} folded={folded} discover={group.count === 0} section={section} reg={reg} hover={hover} activeKey={activeKey} go={go} /> : section();
+    };
+    return { computers: [...online.keys()], withGroup };
+  }, [showTerminals, machines, reg, hover, activeKey, go]);
   const catalog = useStore((s) => s.features.includes(SESSIONS_CATALOG_FEATURE));
   const justFinished = useStore((s) => s.features.includes(SESSIONS_JUST_FINISHED_FEATURE));
   // a hub that folds side sessions (#7944) leaves them out of the list: nothing to nest under a parent
@@ -769,6 +782,7 @@ function BoundedAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate,
     label: AGENT_GROUPINGS.find((g) => g.key === grouping)?.label ?? "",
     todos: todoNames,
     quick,
+    terminals,
     // its sections follow the title row's fold-all, as the complete list's groups do
     foldScope: AGENTS_FOLD,
     byUpdate,
@@ -776,7 +790,7 @@ function BoundedAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate,
     query: listQuery,
     // the to-dos' failure under the chips, lined up with the list's own errors below (the chips' row is padded)
     chips: <><AgentFilterChips filters={queryOnly} onChange={setQuery} facets={NO_FACETS} />{todosUnread && <div className="-mx-1"><TodosUnread /></div>}</>,
-  }), [grouping, todoNames, groupings, chooseGrouping, quick, byUpdate, listQuery, queryOnly, setQuery, todosUnread]);
+  }), [grouping, todoNames, groupings, chooseGrouping, quick, byUpdate, listQuery, queryOnly, setQuery, todosUnread, terminals]);
   return <div data-sidebar-agents ref={groupsRef}>
     {/* the complete list's title row (#6662): fold all, the ⋯ with its sorts and the archived Agents, and "+" */}
     <div className={cx(SESSION_LIST_STYLE.heading, TITLE_ROW_TOUCH)}>
@@ -955,13 +969,20 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
   // Settings › Appearance › Show terminals in sidebar (off): the plain shells of each machine's terminal host, under its agents in "By machine"
   const showTerminals = useSidebarTerminals() && shownGrouping === "machine";
   const { listing: panes, refresh: refreshPanes } = usePanes(machines, showTerminals);
-  const shellTrees = useMemo(() => {
-    if (!showTerminals) return undefined;
-    return Object.fromEntries(machines.map((m) => [m.id, shellsOnly(buildTerminalTree(panes[m.id]?.data, []))])) as Record<string, TermSpace[]>;
-  }, [showTerminals, machines, panes]);
+  const shellSessions = useMemo(() => {
+    if (!showTerminals) return;
+    // Include pinned and filtered-out Agents: each live Agent still owns its pane.
+    const byMachine = new Map<string, Session[]>();
+    for (const row of all) {
+      const rows = byMachine.get(row.machine_id);
+      if (rows) rows.push(row);
+      else byMachine.set(row.machine_id, [row]);
+    }
+    return byMachine;
+  }, [showTerminals, all]);
   const [rowMenu, setRowMenu] = useState<{ s: Session; anchor: HTMLElement; at?: MenuAt } | null>(null);
   const [spaceMenu, setSpaceMenu] = useState<{ sp: Space; anchor: HTMLElement; at?: MenuAt; fold?: MenuNode["fold"] } | null>(null);
-  const [nodeMenu, setNodeMenu] = useState<{ node: MenuNode; at: MenuAt; header?: string } | null>(null);
+  const { onNodeMenu, nodeMenu } = useSidebarNodeMenu(refreshPanes);
   const [renaming, setRenaming] = useState<Session | null>(null);
   const [renamingSpace, setRenamingSpace] = useState<Session | null>(null);
   const [deleting, setDeleting] = useState<Session | null>(null);
@@ -971,7 +992,6 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
   const onRowMenu = useCallback<RowMenuFn>((s, anchor, at) => setRowMenu((m) => (!at && m?.anchor === anchor ? null : { s, anchor, at })), []);
   // stable too: TabRow builds the menu of a tab with several panes on onNodeMenu, and that menu is its lead row's onMenu
   const onSpaceMenu = useCallback<SpaceMenuFn>((sp, anchor, at, fold) => setSpaceMenu((m) => (!at && m?.anchor === anchor ? null : { sp, anchor, at, fold })), []);
-  const onNodeMenu = useCallback<NodeMenuFn>((node, at, header, toggle) => setNodeMenu((m) => (toggle && m?.at.anchor && m.at.anchor === at.anchor ? null : { node, at, header })), []);
   const [recentFolded, toggleRecent] = useFolded("recent", true, { holds: holdsRow(recent, activeKey), scope: AGENTS_FOLD });
   const [idleFolded, toggleIdle] = useFolded("idle-spaces", true, { scope: AGENTS_FOLD });
   const [pinnedFolded, togglePinned] = useFolded("agents-pinned", false, { holds: holdsRow(pinnedAgents, activeKey), scope: AGENTS_FOLD });
@@ -1110,9 +1130,15 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
 
       {loose.length > 0 && <LooseSection sessions={loose} reg={reg} hover={hover} activeKey={activeKey} go={go} onRowMenu={onRowMenu} />}
 
-      </> : shownGrouping === "machine" ? machineTree.map((m) => (
-        <MachineSection key={m.key} m={m} shells={shellTrees?.[m.machine.id]} {...tree} />
-      )) : shownGrouping === "repo" ? (
+      </> : shownGrouping === "machine" ? machineTree.map((m) => {
+        const layout = shellSessions && panes[m.machine.id]?.data;
+        return <MachineSection key={m.key} m={m} {...tree} shells={layout && (
+          <Suspense fallback={null}>
+            <MachineShells machine={m.machine} layout={layout} rows={shellSessions?.get(m.machine.id)}
+              reg={reg} hover={hover} go={go} activeKey={activeKey} onNodeMenu={onNodeMenu} />
+          </Suspense>
+        )} />;
+      }) : shownGrouping === "repo" ? (
         repoMachines.map((m) => (
           <RepoMachineSection key={m.key} m={m} flat={repoMachines.length <= 1} machines={machines} reg={reg} hover={hover} activeKey={activeKey} go={go} onRowMenu={onRowMenu} {...workspaceActions} />
         ))
@@ -1152,7 +1178,7 @@ function LegacyAgentsBlock({ reg, hover, activeKey, go, onNewAgent, onNavigate, 
           onLinkTodo={(sp) => setLinkTargetSpace({ machineId: sp.machineId, space: sp.name })}
         />
       )}
-      {nodeMenu && <NodeMenu node={nodeMenu.node} at={nodeMenu.at} header={nodeMenu.header} onClose={() => setNodeMenu(null)} changed={() => { void refresh().catch(() => {}); void refreshPanes(); }} />}
+      {nodeMenu}
       {renaming && <RenameDialog open session={renaming} onClose={() => setRenaming(null)} />}
       {renamingSpace && <RenameSpaceDialog open session={renamingSpace} onClose={() => setRenamingSpace(null)} />}
       {deleting && <DeleteSessionDialog open session={deleting} machineName={machineWithHub(deleting.machine_id, machines)} onClose={() => setDeleting(null)} />}
