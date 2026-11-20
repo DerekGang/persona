@@ -481,7 +481,12 @@ func (h *Hub) sendMessageOnce(w http.ResponseWriter, r *http.Request, m *Machine
 		if h.store != nil {
 			commit := context.WithoutCancel(ctx)
 			recorded, err := h.settleProjectReviewOwner(commit, r, m.cfg.ID, sid, id, outcome, indirect)
-			if !recorded {
+			if recorded && err != nil {
+				// The receipt outranks the review notice: left in "sending", a retry of this id would be answered
+				// "unknown" and a later drain could type the text again. Settle it alone; the notice is lost.
+				h.logf("send %s: project review owner input not queued: %v", id, err)
+			}
+			if !recorded || err != nil {
 				err = h.store.SettleSend(commit, id, outcome)
 			}
 			if err != nil {

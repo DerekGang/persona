@@ -153,6 +153,58 @@ func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
 	t.Log("authenticated app -> Hub Postgres -> reconnect -> manager Postgres: online and offline references, zero raw words; disable stopped intake")
 }
 
+// relayDownStore fails the combined receipt-and-notice write, as a transient database error would.
+type relayDownStore struct{ *db.DB }
+
+func (relayDownStore) SettleProjectReviewOwner(context.Context, db.ProjectReviewOwnerRelay) error {
+	return fmt.Errorf("relay write failed")
+}
+
+// A failed review notice never costs the send its receipt: the same id retried is answered as delivered, not
+// "unknown", and nothing is typed twice.
+func TestProjectReviewRelayFailureKeepsSendReceipt(t *testing.T) {
+	h, server, store := newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	ctx := context.Background()
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"box","session_id":"review"},"app_inputs":true,"projects":["project-one"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dialAssistantWithStore(t, h, server.URL, false, manager, func(o *assistant.BusOptions) { o.ConfigFile, o.Outbox = config, manager })
+	h.store = relayDownStore{store}
+	const token = "relay-down-device-token"
+	if err := store.CreateDeviceToken(ctx, db.DeviceToken{ID: "relay-down-device", Name: "Test app", Role: roleFull}, hashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	var typed atomic.Int32
+	pipeNode(t, h, "box", func(context.Context) error { typed.Add(1); return nil })
+	for try := range 2 {
+		req, err := http.NewRequest(http.MethodPost, server.URL+sendPath,
+			strings.NewReader(`{"text":"private words","human":true,"submission":{"kind":"human_input"},"client_msg_id":"relay-down"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("send %d: %s %s", try, res.Status, body)
+		}
+	}
+	if n := typed.Load(); n != 1 {
+		t.Fatalf("typed %d times, want 1", n)
+	}
+	if state, err := store.ClaimSend(ctx, "relay-down", "box", "s1"); err != nil || state != sendDelivered {
+		t.Fatalf("receipt after a failed relay write: %q %v", state, err)
+	}
+}
+
 func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
 	ctx := context.Background()
 	h, server, hubDB := newBusHub(t)
