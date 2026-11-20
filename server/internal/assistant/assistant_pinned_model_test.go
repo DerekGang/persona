@@ -62,11 +62,11 @@ func TestProtectedQuotaRuntimeResumeIsLeftAlone(t *testing.T) {
 	setSettings(t, s, func(v *Settings) { v.MachineID, v.Main = "box", "s1" })
 	reset := time.Now().Add(time.Hour)
 	c := limitTurn("s1", reset, true)
-	c.Assistant = true
+	c.Assistant, c.UpdatedAt = true, time.Now()
 	f.setSessions("box", c)
 	triage(t, s, "s1")
-	e := entryOf(t, s, "s1")
-	if e.Work.On != proto.WaitExternal || e.WakeAt != nil {
+	// A runtime-owned assistant can still project as working, so no manager wait row is required.
+	if e, tracked := s.workEntry([2]string{"box", "s1"}); tracked && (e.Work.On != proto.WaitExternal || e.WakeAt != nil) {
 		t.Fatalf("runtime-owned quota wait: %+v", e)
 	}
 	s.workTick(context.Background(), reset.Add(time.Hour))
