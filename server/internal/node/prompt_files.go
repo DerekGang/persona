@@ -23,7 +23,12 @@ func checkFileReferenceAudience(ctx context.Context, text, origin string, guest,
 }
 
 func fileSelectionUnavailable(ctx context.Context) error {
-	return refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.selected_file_unavailable"), nil)
+	return fileSelectionRefusal(ctx, "assistant-schedule.selected_file_unavailable")
+}
+
+// These content refusals occur before delivery and require a new selection or a different execution context.
+func fileSelectionRefusal(ctx context.Context, messageKey string) error {
+	return refusal("file_unavailable", i18n.T(i18n.From(ctx), messageKey), map[string]any{"retryable": false})
 }
 
 // selectedFiles uses the same path guard as the file viewer, on the executing node, on every turn.
@@ -76,7 +81,7 @@ func (n *Node) selectedFiles(ctx context.Context, text, cwd, launcher, runtime s
 }
 
 func fileRuntimeUnsupported(ctx context.Context) error {
-	return refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.file_runtime_unsupported"), nil)
+	return fileSelectionRefusal(ctx, "assistant-schedule.file_runtime_unsupported")
 }
 
 func (n *Node) validatePromptContent(ctx context.Context, id, cwd, launcher, text string, execution modelExecution) error {

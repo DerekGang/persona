@@ -116,8 +116,8 @@ func TestAssistantContentMatchesFileAudienceRefusals(t *testing.T) {
 			_, checkErr := nodeCall(t, f.n, "assistant.content", params)
 			if tc.refused {
 				_, sendErr := nodeCall(t, f.n, "assistant.send", params)
-				var check, send *rpc.Error
-				if !errors.As(checkErr, &check) || !errors.As(sendErr, &send) || check.Code != "file_unavailable" || check.Code != send.Code || check.Message != send.Message {
+				check, send := assertFileRefusalDelivery(t, checkErr), assertFileRefusalDelivery(t, sendErr)
+				if check.Message != send.Message {
 					t.Errorf("content error %v does not match send error %v", checkErr, sendErr)
 				}
 			} else if checkErr != nil {
@@ -131,4 +131,20 @@ func TestAssistantContentMatchesFileAudienceRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertFileRefusalDelivery(t *testing.T, err error) *rpc.Error {
+	t.Helper()
+	var refusal *rpc.Error
+	if !errors.As(err, &refusal) || refusal.Code != "file_unavailable" {
+		t.Fatalf("expected a file refusal, got %v", err)
+	}
+	var data struct {
+		Delivered string `json:"delivered"`
+		Retryable *bool  `json:"retryable"`
+	}
+	if err := json.Unmarshal(refusal.Data, &data); err != nil || data.Delivered != deliveredNone || data.Retryable == nil || *data.Retryable {
+		t.Errorf("file refusal must report no delivery and explicit non-retryability: %s (%v)", refusal.Data, err)
+	}
+	return refusal
 }

@@ -164,6 +164,9 @@ func TestTaskSourceFallbackDeliveryBoundary(t *testing.T) {
 		{"link closed", rpc.ErrClosed, false},
 		{"reply lost", context.DeadlineExceeded, false},
 		{"other refusal", errors.New("send failed"), false},
+		{"file refusal without delivery evidence", &rpc.Error{Code: "file_unavailable", Message: "file unavailable"}, false},
+		{"file error after delivery", &rpc.Error{Code: "file_unavailable", Message: "file unavailable", Data: []byte(`{"delivered":"yes","retryable":false}`)}, false},
+		{"file error with unknown delivery", &rpc.Error{Code: "file_unavailable", Message: "file unavailable", Data: []byte(`{"delivered":"unknown","retryable":false}`)}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeHub().withMachine()

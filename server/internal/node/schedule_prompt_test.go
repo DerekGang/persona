@@ -462,13 +462,13 @@ func TestScheduledRuntimeSourceRejectsFileSelection(t *testing.T) {
 			"session_id": sid, "cwd": cwd, "text": selection("dsh"),
 			"task_execution": true, "task_input": true, "resume_only": true,
 		})
-		if refusalCode(err) != "file_unavailable" || !strings.Contains(err.Error(), want) {
+		if refusal := assertFileRefusalDelivery(t, err); !strings.Contains(refusal.Message, want) {
 			t.Errorf("selected send on a runtime-owned conversation: %v", err)
 		}
 		_, err = nodeCall(t, n, "assistant.content", map[string]any{
 			"session_id": sid, "cwd": cwd, "launcher": "claude", "text": selection("claude"), "task_execution": true,
 		})
-		if refusalCode(err) != "file_unavailable" || !strings.Contains(err.Error(), want) {
+		if refusal := assertFileRefusalDelivery(t, err); !strings.Contains(refusal.Message, want) {
 			t.Errorf("content approval on a runtime-owned conversation: %v", err)
 		}
 	}
