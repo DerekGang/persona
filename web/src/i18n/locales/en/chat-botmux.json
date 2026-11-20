@@ -11,5 +11,8 @@
   "truncated": "Cut short",
   "original": "Original",
   "hide_original": "Hide original",
-  "external_trigger_notice": "Older botmux: replies from Persona arrive as external events rather than as the owner."
+  "external_trigger_notice": "Older botmux: replies from Persona arrive as external events rather than as the owner.",
+  "raw": "botmux · raw",
+  "show_raw": "Show raw botmux transcripts",
+  "decode": "Decode botmux transcripts"
 }

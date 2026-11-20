@@ -4,6 +4,7 @@
 import { memo, type ReactNode, useMemo, useState } from "react";
 import { t } from "../../i18n";
 import { botmuxReplies, botmuxTags, decodedUser, originalText } from "../../lib/botmux";
+import { useBotmuxMode } from "../../lib/botmux-mode";
 import { alsoOpenText } from "../../lib/engines";
 import { attentionReason, externalLink } from "../../lib/format";
 import type { Step, UserMessage } from "../../lib/turns";
@@ -111,5 +112,6 @@ export function BotmuxComposerNotes({ session }: { session: Session }) {
 
 /** Default export for single-chunk lazy loading from SegmentView. */
 export default function BotmuxPart(props: { msg: UserMessage; bubble: (decoded: UserMessage) => ReactNode } | { steps: readonly Step[]; mid: string }) {
+  if (useBotmuxMode() === "all") return "msg" in props ? props.bubble(props.msg) : null;
   return "msg" in props ? <BotmuxUser msg={props.msg} bubble={props.bubble} /> : <BotmuxReplies steps={props.steps} mid={props.mid} />;
 }

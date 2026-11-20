@@ -25,8 +25,5 @@
   "filter": "筛选",
   "remove_filter": "移除{name}",
   "search_as_code_off": "关闭代码检索",
-  "query_chip": "搜索",
-  "botmux_raw": "botmux · 原文",
-  "botmux_show_raw": "显示 botmux 会话原文",
-  "botmux_decode": "显示解码后的 botmux 会话"
+  "query_chip": "搜索"
 }

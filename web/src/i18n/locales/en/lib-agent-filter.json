@@ -25,8 +25,5 @@
   "filter": "Filter",
   "remove_filter": "Remove {name}",
   "search_as_code_off": "Turn off Search as Code",
-  "query_chip": "Search",
-  "botmux_raw": "botmux · raw",
-  "botmux_show_raw": "Show raw botmux transcripts",
-  "botmux_decode": "Decode botmux transcripts"
+  "query_chip": "Search"
 }

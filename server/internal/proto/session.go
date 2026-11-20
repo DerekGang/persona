@@ -232,6 +232,10 @@ type Session struct {
 	// optional effort metadata within the row size budget.
 	PendingEffort      *string `json:"pending_effort,omitempty"`
 	EffortChangeFailed bool    `json:"effort_change_failed,omitempty"`
+	// BotmuxExternalTrigger: on a botmux session whose botmux instance was probed and does not advertise ownerActor
+	// (an older botmux without GET /api/sessions/:id/turns or without actor:"owner"), sends go through the untrusted
+	// external-event trigger; clients show a one-line notice in the composer. False/omitted on all other sessions.
+	BotmuxExternalTrigger bool `json:"botmux_external_trigger,omitempty"`
 	// Ultracode is Claude Code's independent session-only workflow switch: nil means unknown.
 	// UltracodePending (beside AsksRead) means a requested change waits for an idle input box; LostAt asks the client
 	// to offer reopening after a resumed process reset an enabled switch. Reopening or dismissing the notice clears
@@ -409,10 +413,6 @@ type Session struct {
 	// conversation in the same terminal with --permission-mode bypassPermissions (node/mode_restart.go, #6476). Until
 	// then PermissionMode is the mode it still runs in. Kept here, in the flags' padding, as SuggestionRisky is.
 	BypassPending bool `json:"bypass_pending,omitempty"`
-	// BotmuxExternalTrigger: on a botmux session whose botmux instance was probed and does not advertise ownerActor
-	// (an older botmux without GET /api/sessions/:id/turns or without actor:"owner"), sends go through the untrusted
-	// external-event trigger; clients show a one-line notice in the composer. False/omitted on all other sessions.
-	BotmuxExternalTrigger bool `json:"botmux_external_trigger,omitempty"`
 	// TurnError: the agent's latest turn ended in a model API error (the connection lost mid-response, overloaded,
 	// rate limited, the model service down…). The node sets it when the agent's own record says the turn failed
 	// (Codex: a rollout's task_complete.error, an app-server's failed turn, #2185); otherwise the hub reads it off the

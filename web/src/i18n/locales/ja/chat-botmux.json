@@ -11,5 +11,8 @@
   "truncated": "途中まで",
   "original": "原文",
   "hide_original": "原文を隠す",
-  "external_trigger_notice": "旧版 botmux：Persona からの送信はオーナーではなく外部イベントとして届きます。"
+  "external_trigger_notice": "旧版 botmux：Persona からの送信はオーナーではなく外部イベントとして届きます。",
+  "raw": "botmux · 原文",
+  "show_raw": "botmux セッションを原文で表示",
+  "decode": "botmux セッションを整形して表示"
 }

@@ -25,8 +25,5 @@
   "filter": "フィルタ",
   "remove_filter": "{name} を外す",
   "search_as_code_off": "コード検索をオフ",
-  "query_chip": "検索",
-  "botmux_raw": "botmux · 原文",
-  "botmux_show_raw": "botmux セッションを原文で表示",
-  "botmux_decode": "botmux セッションを整形して表示"
+  "query_chip": "検索"
 }
