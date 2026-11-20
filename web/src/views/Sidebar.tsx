@@ -5,10 +5,9 @@ import { isSidebarAgent } from "../lib/sidebar-agent";
 import { storedValue, storeValue } from "../lib/compatibility";
 // Beautiful UI's Sidebar Nav: workspace row, quick search, sections, one gliding highlight. Persona's main conversation
 // is the first entry (the app opens on the assistant); a new conversation and a new agent are the "+" of their sections (#1239).
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import { NARROW, useMedia } from "../lib/viewport";
-import { nextBotmuxMode, setBotmuxMode, useBotmuxMode } from "../lib/botmux-mode";
 import { AGENT_FILTERS, agentFilter, applyFilter, arrangeSpaces, filterCounts, isSpaceMuted, matchesFilter, matchingKeys, shownFilters, unreadOf, withoutBotmux, type AgentFilter, type FilterCounts } from "../lib/agent-filter";
 import { applyDimensionFilters, buildAgentFacets, DEFAULT_DIMENSION_FILTERS, hasActiveDimensionFilters, NO_FACETS, type AgentDimensionFilters } from "../lib/agent-chatlist-filter";
 import { getAgentListFilters, setAgentListFilters, useAgentListFilters } from "../lib/agent-list-filters";
@@ -94,6 +93,7 @@ const HubNoticeLine = memo(HubNoticeLineContent);
 const NodePrompt = memo(NodePromptContent);
 const SidebarUsage = memo(SidebarUsageContent);
 const LinkTodoDialog = memo(lazyDialog(() => import("./LinkTodoDialog").then((m) => m.LinkTodoDialog)));
+const BotmuxModeChip = lazy(() => import("./BotmuxModeChip"));
 const MarkSeenDialog = memo(MarkSeenDialogContent);
 
 /** Brings `el` to the middle of its nearest scrolling ancestor when it is not fully in view (rows loading above it
@@ -1196,8 +1196,7 @@ const GroupingBar = memo(function GroupingBar({ groupings, selection, onChoose }
 /** Quick filters describe the visible inventory; an empty Lark filter is never offered. */
 const FilterBar = memo(function FilterBar({ selection, counts, onChoose }: { selection: AgentFilter; counts: FilterCounts; onChoose: (f: AgentFilter) => void }) {
   const keys = shownFilters(selection, counts);
-  const botmuxMode = useBotmuxMode();
-  if (keys.length < 2 && counts.feishu === 0) return null;
+  if (keys.length < 2) return null;
   return (
     <div className="mt-1.5 flex flex-wrap gap-0.5 px-1">
       <div role="radiogroup" aria-label={t("sidebar.quick_filters")} className="contents">
@@ -1225,18 +1224,7 @@ const FilterBar = memo(function FilterBar({ selection, counts, onChoose }: { sel
         );
       })}
       </div>
-      {counts.feishu > 0 && (
-        <button
-          type="button"
-          title={t(botmuxMode === "decode" ? "lib-agent-filter.botmux_show_raw" : "lib-agent-filter.botmux_decode")}
-          onClick={() => setBotmuxMode(nextBotmuxMode(botmuxMode))}
-          data-botmux-mode={botmuxMode}
-          className="touch-hit relative z-10 flex h-6 items-center gap-1 whitespace-nowrap rounded-full px-[7px] text-[11.5px] text-ink-2 hover:bg-hover hover:text-ink"
-        >
-          <Icon name={botmuxMode === "decode" ? "check" : "code"} size={10} stroke={2.4} />
-          {botmuxMode === "decode" ? "botmux" : t("lib-agent-filter.botmux_raw")}
-        </button>
-      )}
+      {counts.feishu > 0 && <Suspense fallback={null}><BotmuxModeChip /></Suspense>}
     </div>
   );
 });
