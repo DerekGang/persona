@@ -20,6 +20,10 @@ export function starRoute(star: Star): Route {
   return star.conversation === "assistant" ? conversationPage(sid, mid, star.source_manager, at) : { name: "session", mid, sid, at, view: "chat" };
 }
 
+function starSpeaker(star: Star): string {
+  return star.speaker || t(star.role === "user" ? "starred.you" : star.conversation === "agent" ? "starred.agent" : "starred.assistant");
+}
+
 function searchText(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase();
 }
@@ -28,7 +32,7 @@ export function searchStars(stars: readonly Star[], query: string): readonly Sta
   const terms = searchText(query.trim()).split(/\s+/).filter(Boolean);
   if (!terms.length) return stars;
   return stars.filter((star) => {
-    const value = searchText(`${star.text}\n${star.title}\n${star.speaker}`);
+    const value = searchText(`${star.text}\n${star.title}\n${starSpeaker(star)}`);
     return terms.every((term) => value.includes(term));
   });
 }
@@ -110,7 +114,7 @@ const StarCard = memo(function StarCard({ star, canWrite, afterRemove }: { star:
   const mark = useStarMark(star);
   const preview = useMemo(() => snapshotPreview(star.text), [star.text]);
   const title = star.title || t("starred.conversation");
-  const speaker = star.speaker || t(star.role === "user" ? "starred.you" : star.conversation === "agent" ? "starred.agent" : "starred.assistant");
+  const speaker = starSpeaker(star);
   const source = starRoute(star);
   const positional = positionalStar(star.item_id);
   const unavailable = sourceStatus === "unavailable" || positional && !star.source_fingerprint;

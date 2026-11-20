@@ -255,3 +255,37 @@ func TestStarredDistinguishesReusedTranscriptPosition(t *testing.T) {
 		t.Fatal("unstar removed another snapshot at the same position")
 	}
 }
+
+func TestStarredKeepsConversationKindsIndependent(t *testing.T) {
+	_, mux, _ := newStarTestBook(&starTestStore{})
+	post := func(input StarInput) Star {
+		t.Helper()
+		raw, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response struct{ Star Star }
+		doStar(t, mux, "POST", "", "full", string(raw), 200, &response)
+		return response.Star
+	}
+	for _, item := range []string{"runtime-message#0", "line12#0"} {
+		agent := testStar(item)
+		if strings.HasPrefix(item, "line") {
+			agent.SourceFingerprint = strings.Repeat("a", 32)
+		}
+		assistant := agent
+		assistant.Conversation = "assistant"
+		assistant.Text = "An independent snapshot in the assistant chat"
+		a, b := post(agent), post(assistant)
+		if a.ID == b.ID || b.Text != assistant.Text || b.Conversation != "assistant" {
+			t.Fatal("equal item IDs in different conversation kinds were collapsed")
+		}
+		if again := post(assistant); again.ID != b.ID {
+			t.Fatal("retry of the same assistant source created a second snapshot")
+		}
+		doStar(t, mux, "DELETE", "/"+b.ID, "full", "", 200, nil)
+		if again := post(agent); again.ID != a.ID || again.Text != a.Text {
+			t.Fatal("removing one conversation's snapshot also removed the other")
+		}
+	}
+}

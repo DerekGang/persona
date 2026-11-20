@@ -160,7 +160,7 @@ func (b *starBook) change(ctx context.Context, apply func(*starCollection) (bool
 }
 
 func sameStarSource(star Star, in StarInput) bool {
-	if star.Machine != in.Machine || star.Session != in.Session || star.Item != in.Item {
+	if star.Machine != in.Machine || star.Session != in.Session || star.Item != in.Item || star.Conversation != in.Conversation {
 		return false
 	}
 	if !proto.PositionalItemID(in.Item) {

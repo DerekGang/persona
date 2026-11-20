@@ -117,7 +117,7 @@ export function useNavPages() {
     inbox: { k: "inbox", to: { name: "inbox" }, icon: "inbox", label: t("sidebar.nav_inbox"), short: t("sidebar.nav_inbox_short"), badge: inbox || undefined, badgeTone: "attention", title: inbox ? t("sidebar.inbox_badge_title", { count: inbox }) : undefined },
     health: { k: "health", to: { name: "health" }, icon: "heart", label: t("sidebar.nav_health"), short: t("sidebar.nav_health_short") },
     messages: larkHome && { k: "messages", to: { name: "messages" }, icon: "chat", label: t("sidebar.nav_messages") },
-    starred: stars !== undefined && { k: "starred", to: { name: "starred" }, icon: "star", label: t("starred.title"), badge: stars || undefined, badgeLabel: t("starred.count", { count: stars }) },
+    starred: stars != null && { k: "starred", to: { name: "starred" }, icon: "star", label: t("starred.title"), badge: stars || undefined, badgeLabel: t("starred.count", { count: stars }) },
     "workspace-board": boardOn && { k: "workspace-board", to: { name: "workspace-board" }, icon: "layers", label: t("sidebar.nav_board"), short: t("sidebar.nav_board_short") },
     todos: todosSupported !== false && { k: "todos", to: { name: "todos" }, icon: "todo", label: t("sidebar.nav_todos"), badge: todosBadge || undefined, badgeLabel: todosBadgeLabel, title: todosBadgeLabel },
     routines: { k: "routines", to: { name: "routines" }, icon: "clock", label: t("sidebar.nav_routines"), short: t("sidebar.nav_routines_short") },
@@ -142,9 +142,10 @@ export function useNavPages() {
   const { sections, more } = arrangeSections(all, useSidebarPrefs());
   const pages = sections.flatMap((s) => s.pages);
   // the start page this load opened on, if it is not there after all, gives way to the main chat (lib/start-page.ts)
-  useStartPageCheck((k) => all.some((p) => p.k === k), extensionPages, board !== null);
+  const starredKnown = stars !== undefined;
+  useStartPageCheck((k) => all.some((p) => p.k === k), extensionPages, board !== null, starredKnown);
 
-  return { phase, online, total, main, pages, sections, more, all };
+  return { phase, online, total, main, pages, sections, more, all, starredKnown };
 }
 
 /** The pages under "More" as menu rows (the phone's grid, the rail): a choice opens the page, then `onNavigate`

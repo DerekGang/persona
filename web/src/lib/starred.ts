@@ -14,7 +14,7 @@ type List = { stars: readonly Star[]; status: "loading" | "ready" | "unsupported
 const blank = (): List => ({ stars: [], status: "loading", error: "", canWrite: false });
 let list = blank();
 let index = new Map<string, Ref>();
-let indexed = false;
+let indexState: "pending" | "ready" | "unavailable" = "pending";
 let indexWrite = false;
 const pending = new Map<string, "add" | "remove">();
 const listeners = new Set<() => void>();
@@ -40,7 +40,14 @@ function publishRows() {
   const rows = new Map<string, { id?: string; pending?: "add" | "remove" }>();
   for (const [key, ref] of index) rows.set(key, { id: ref.id });
   for (const [key, operation] of pending) rows.set(key, { id: index.get(key)?.id, pending: operation });
-  setStarredRows(rows, indexed ? index.size : undefined, indexWrite);
+  setStarredRows(rows, indexState === "ready" ? index.size : indexState === "unavailable" ? null : undefined, indexWrite);
+}
+
+function clearIndex(state: "pending" | "unavailable") {
+  index = new Map();
+  indexState = state;
+  indexWrite = false;
+  publishRows();
 }
 
 function publishList(next: List) {
@@ -58,17 +65,12 @@ async function readIndex() {
     const result = await api<{ refs: Ref[]; can_write: boolean }>(PATH + "?index=1", owner.options);
     if (n !== indexRead || !owner.current()) return;
     index = new Map(result.refs.map((ref) => [starKey(ref), ref]));
-    indexed = true;
+    indexState = "ready";
     indexWrite = result.can_write;
     publishRows();
   } catch (error) {
     if (n !== indexRead || !owner.current()) return;
-    if (error instanceof ApiError && (error.status === 404 || error.status === 403)) {
-      index = new Map();
-      indexed = false;
-      indexWrite = false;
-      publishRows();
-    }
+    if (error instanceof ApiError && (error.status === 404 || error.status === 403)) clearIndex("unavailable");
   }
 }
 
@@ -81,12 +83,16 @@ export async function reloadStarred() {
     if (n !== detailRead || !owner.current() || !detailUsers) return;
     indexRead++;
     index = new Map(result.stars.map((star) => [starKey(star), star]));
-    indexed = true;
+    indexState = "ready";
     indexWrite = result.can_write;
     publishRows();
     publishList({ stars: result.stars, canWrite: result.can_write, status: "ready", error: "" });
   } catch (error) {
     if (n !== detailRead || !owner.current() || !detailUsers) return;
+    if (error instanceof ApiError && (error.status === 404 || error.status === 403)) {
+      indexRead++;
+      clearIndex("unavailable");
+    }
     if (error instanceof ApiError && error.status === 404) {
       publishList({ ...blank(), status: "unsupported" });
     } else {
@@ -103,11 +109,8 @@ function refresh() {
 function resetOwner() {
   generation++;
   manager = shownManager();
-  index.clear();
   pending.clear();
-  indexed = false;
-  indexWrite = false;
-  publishRows();
+  clearIndex("pending");
   publishList(blank());
   refresh();
 }
@@ -225,10 +228,7 @@ export function resetStarredForTest() {
   stop = undefined;
   generation++;
   detailUsers = 0;
-  index = new Map();
-  indexed = false;
-  indexWrite = false;
   pending.clear();
-  publishRows();
+  clearIndex("pending");
   publishList(blank());
 }

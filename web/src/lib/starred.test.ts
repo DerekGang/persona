@@ -150,3 +150,13 @@ it("retires an in-flight positional original lookup after switching assistants",
   io.fullItem.mockResolvedValueOnce({ ...item, source_fingerprint: "b".repeat(32) });
   await expect(checkStarSource(positional)).resolves.toBe("unavailable");
 });
+
+it("indexes identical item IDs separately in Agent and Assistant chats", async () => {
+  const agent = { ...star, id: "agent-star" };
+  const assistant = { ...star, conversation: "assistant" as const, id: "assistant-star" };
+  refs = [agent, assistant];
+  startStarred();
+  await Promise.resolve();
+  expect(io.rows.get(starKey(agent))?.id).toBe(agent.id);
+  expect(io.rows.get(starKey(assistant))?.id).toBe(assistant.id);
+});

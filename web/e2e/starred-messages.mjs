@@ -98,9 +98,10 @@ try {
   await shot(desktop.page, "starred-desktop-light");
   await shot(mobile.page, "starred-phone-dark");
   const search = mobile.page.getByRole("textbox", { name: "Search starred messages" });
-  await search.fill("PR #42");
+  await search.fill("You PR #42");
   await rowCount(mobile.page, 1);
   const card = mobile.page.getByRole("article");
+  await card.getByText("You", { exact: true }).waitFor();
   await card.getByRole("button", { name: "Copy", exact: true }).click();
   assert.match(await mobile.page.evaluate(() => navigator.clipboard.readText()), /PR #42/);
   await card.getByRole("button", { name: "Unstar" }).click();
@@ -226,8 +227,32 @@ try {
   await bubble(replacementWords).locator('[data-star-mark="saved"]').waitFor({ state: "hidden" });
   assert.deepEqual((await onHub("GET", "?index=1")).refs.filter((ref) => ref.item_id === reused).map((ref) => ref.id), [copies[1].id]);
 
-  assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors), []);
-  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, largest text at 320 px, and witnessed positional-ID reuse");
+  const startup = await device("light");
+  await startup.page.addInitScript(() => {
+    localStorage.setItem("persona.token", "mock");
+    localStorage.setItem("persona.startPage", "starred");
+  });
+  let allowIndex;
+  const delayed = new Promise((resolve) => { allowIndex = resolve; });
+  await startup.page.route("**/api/v1/assistant/starred*", async (route) => {
+    await delayed;
+    await route.continue();
+  });
+  try {
+    await Promise.all([
+      startup.page.waitForRequest((request) => new URL(request.url()).searchParams.has("index") && request.url().includes("/assistant/starred?")),
+      startup.page.goto(web + "/"),
+    ]);
+    assert.equal(new URL(startup.page.url()).pathname, "/starred");
+  } finally {
+    allowIndex();
+  }
+  await startup.page.getByRole("heading", { name: "Starred", exact: true }).waitFor();
+  await startup.page.getByRole("link", { name: /Starred/ }).first().waitFor();
+  assert.equal(new URL(startup.page.url()).pathname, "/starred");
+
+  assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors, startup.errors), []);
+  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, largest text at 320 px, positional-ID reuse, displayed-speaker search, and delayed start-page availability");
 } finally {
   await browser.close();
   if (cleanup) {

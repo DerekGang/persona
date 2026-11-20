@@ -5,7 +5,7 @@ import uuid
 
 
 BASE = "/api/v1/assistant/starred"
-SOURCE_FIELDS = ("machine_id", "session_id", "item_id", "source_fingerprint")
+SOURCE_FIELDS = ("machine_id", "session_id", "item_id", "conversation", "source_fingerprint")
 POSITION = "line900#0"
 VERSIONS = {"original": ("Original words from the reused line", "a" * 32),
             "replacement": ("Replacement words from the reused line", "b" * 32)}
@@ -39,14 +39,14 @@ def register(d):
                 if session := (req.query.get("session") or [""])[0]:
                     selected = [s for s in selected if f"{s['machine_id']}/{s['session_id']}" == session]
                 if req.query.get("index") == ["1"]:
-                    refs = [{k: s[k] for k in (*SOURCE_FIELDS, "id", "conversation") if k in s} for s in selected]
+                    refs = [{k: s[k] for k in (*SOURCE_FIELDS, "id") if k in s} for s in selected]
                     body = {"refs": refs, "can_write": True}
                 else:
                     body = {"stars": selected, "can_write": True}
             elif req.method == "POST":
                 item = req.json()
                 key = tuple(item.get(k) for k in SOURCE_FIELDS)
-                if not all(key[:3]) or not str(item.get("text", "")).strip():
+                if not all(key[:4]) or not str(item.get("text", "")).strip():
                     h.send_json({"error": "A star needs a message"}, 400)
                     return True
                 star = next((s for s in stars if tuple(s.get(k) for k in SOURCE_FIELDS) == key), None)
