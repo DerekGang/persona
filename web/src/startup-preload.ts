@@ -510,10 +510,12 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // clock), and ownerNeeds keeps why each to-do counts. 88 B in each language, measured in one environment against main
 // 136308faf5 (ja 482,906 B to 482,994 B; en 479,979 B to 480,067 B, zh-Hans 480,757 B to 480,845 B); the rows' mark
 // and its words load with the To-dos page. The budget is main's 482,970 B ceiling plus those 88 B.
-// #7524: Starred adds 406 B in ja against d984f96ab9 (483,143 B to 483,549 B) for the route, compact index bridge,
-// sidebar count, and chat menu entry. The snapshots, their operations, and the page stay lazy. Main already exceeds
-// its bound by 85 B in this environment. Guarding reused transcript positions adds 75 B in ja after moving deep-link
-// landing to a lazy chunk. The final ja measurement (483,624 B) leaves 66 B under the updated bound.
+// #11804 + #11820: Antigravity queue/send-now runtime copy and launcher-scoped Assistant sign-in guidance add
+// 85 B to the ja first screen (ja 483,143 B, en 480,233 B, zh-Hans 480,987 B). The budget is main's 483,058 B
+// ceiling plus those 85 B.
+// #7524: Starred adds 529 B in ja against 456badee29 (483,143 B to 483,672 B) for the route, compact index,
+// sidebar and message identity. The snapshots, their operations and deep-link paging load on demand.
+// The bound leaves 18 B above the measured ja size.
 export const FIRST_SCREEN_BUDGET = 483_690;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").
