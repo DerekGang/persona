@@ -47,10 +47,12 @@ func (s *Service) syncCodexInteractions(machine string, params json.RawMessage) 
 		}
 		ix.MachineID = machine
 		ix = cleanTitle(ix)
-		// Codex cards do not pass through waitInteractionPrepared. Record the
-		// same manager-owned display intent before history and publication so
-		// the hub accepts the copy and reconnects can retain it.
-		if _, ok := s.mainApprovalMirror(context.Background(), ix); ok {
+		// Codex cards do not pass through waitInteractionPrepared. Restore the
+		// same pending occurrence's intent after a restart; only a new occurrence
+		// uses the current preference. Record it before history and publication.
+		if intent, found := s.recordedApprovalMirrorIntent(context.Background(), ix); found {
+			ix.MirrorMain = intent
+		} else if _, ok := s.mainApprovalMirror(context.Background(), ix); ok {
 			ix.MirrorMain = true
 		}
 		listed[ix.ID] = ix

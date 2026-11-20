@@ -281,16 +281,172 @@ func TestApprovalMirrorsRequireClientCapabilityEverywhere(t *testing.T) {
 	}
 }
 
-func TestDisplayMirrorActionsRelayTheAuthoritativePath(t *testing.T) {
-	h := newTestHub(t)
-	const token = "test-mirror-owner-token"
-	h.store = &tokenStore{memStore: *newMemStore(), rows: map[string]db.DeviceToken{
-		hashToken(token): {ID: "device-1", Name: "Trusted device", Role: roleFull},
-	}, rev: map[string]bool{}}
+func mirrorPairForTest(id string) (proto.Interaction, proto.Interaction) {
+	origin := proto.Interaction{ID: id, MachineID: "box", SessionID: "side", Kind: proto.IxPermission,
+		MirrorMain: true, CanClarify: true, CreatedAt: time.Unix(1000, 0).UTC()}
+	mirror := origin
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	return origin, mirror
+}
+
+func TestDisplayMirrorIDNamespaceRejectsAuthoritativeCollisions(t *testing.T) {
+	for _, snapshot := range []bool{false, true} {
+		for _, collisionFirst := range []bool{false, true} {
+			name := "live/copy-first"
+			if snapshot {
+				name = "snapshot/copy-first"
+			}
+			if collisionFirst {
+				name = "live/collision-first"
+				if snapshot {
+					name = "snapshot/collision-first"
+				}
+			}
+			t.Run(name, func(t *testing.T) {
+				h := newTestHub(t)
+				c := &client{out: make(chan []byte, 8), urlFeatures: map[string]bool{featureApprovalMirrors: true}}
+				addTestClient(h, c)
+				origin, mirror := mirrorPairForTest("ix_collision")
+				collision := origin
+				collision.ID, collision.MirrorMain, collision.SessionID = mirror.ID, false, "other"
+				if snapshot {
+					list := []proto.Interaction{origin, mirror, collision}
+					if collisionFirst {
+						list = []proto.Interaction{collision, origin, mirror}
+					}
+					h.takeFleetInteractionsFrom(assistantwire.AssistantID, list)
+				} else {
+					if collisionFirst {
+						reportInteraction(t, h, collision)
+					}
+					reportInteraction(t, h, origin)
+					reportInteraction(t, h, mirror)
+					if !collisionFirst {
+						reportInteraction(t, h, collision)
+					}
+				}
+				got := h.pendingInteractions()
+				ids := map[string]proto.Interaction{}
+				for _, ix := range got {
+					ids[ix.ID] = ix
+				}
+				if len(ids) != 2 || ids[origin.ID].ID != origin.ID || ids[mirror.ID].MirrorOf != origin.ID {
+					t.Fatalf("authoritative collision changed display state: %+v", got)
+				}
+				for len(c.out) > 0 {
+					var event struct {
+						Type        string            `json:"type"`
+						Interaction proto.Interaction `json:"interaction"`
+					}
+					if json.Unmarshal(wireReceive(t, c), &event) != nil || event.Type != "interaction" || event.Interaction.ID == collision.ID && event.Interaction.MirrorOf == "" {
+						t.Fatalf("reserved authoritative ID was broadcast: %+v", event)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestDisplayMirrorLiveUpdateWithdrawsEveryInvalidCopy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*proto.Interaction)
+	}{
+		{name: "display intent removed", edit: func(ix *proto.Interaction) { ix.MirrorMain = false }},
+		{name: "kind changed", edit: func(ix *proto.Interaction) { ix.Kind = proto.IxQuestion }},
+		{name: "private", edit: func(ix *proto.Interaction) { ix.Private = true }},
+		{name: "moved into destination", edit: func(ix *proto.Interaction) { ix.SessionID = "main" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHub(t)
+			c := &client{out: make(chan []byte, 8), urlFeatures: map[string]bool{featureApprovalMirrors: true}}
+			addTestClient(h, c)
+			origin, mirror := mirrorPairForTest("ix_invalid_update")
+			reportInteraction(t, h, origin)
+			reportInteraction(t, h, mirror)
+			for range 2 {
+				_ = wireReceive(t, c)
+			}
+			updated := origin
+			tc.edit(&updated)
+			reportInteraction(t, h, updated)
+			var originalEvent, resolvedEvent struct {
+				Type        string            `json:"type"`
+				ID          string            `json:"id"`
+				Interaction proto.Interaction `json:"interaction"`
+			}
+			if json.Unmarshal(wireReceive(t, c), &originalEvent) != nil || originalEvent.Type != "interaction" || originalEvent.Interaction.ID != origin.ID {
+				t.Fatalf("original update event = %+v", originalEvent)
+			}
+			if json.Unmarshal(wireReceive(t, c), &resolvedEvent) != nil || resolvedEvent.Type != "interaction_resolved" || resolvedEvent.ID != mirror.ID {
+				t.Fatalf("invalid copy withdrawal = %+v", resolvedEvent)
+			}
+			got := h.pendingInteractions()
+			if len(got) != 1 || got[0].ID != origin.ID || len(c.out) != 0 {
+				t.Fatalf("invalid copy stayed actionable: %+v", got)
+			}
+		})
+	}
+}
+
+func TestDisplayMirrorOperationReceiptUsesAuthoritativeTarget(t *testing.T) {
+	for _, tc := range []struct {
+		action, body, op string
+	}{
+		{action: "resolve", body: `{"allow":true}`, op: "00000000-0000-4000-8000-000000000001"},
+		{action: "clarify", body: `{"text":"Why?","client_msg_id":"receipt-question"}`, op: "00000000-0000-4000-8000-000000000002"},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			h := newTestHub(t)
+			h.store = &receiptStore{memStore: newMemStore(), ops: &clientOpsStore{ops: map[string]db.ClientOp{}}}
+			got := mirrorManagerRequests(t, h)
+			origin, mirror := mirrorPairForTest("ix_receipt")
+			h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
+			routes := h.routes()
+			request := func(id string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+id+"/"+tc.action, strings.NewReader(tc.body))
+				r.RemoteAddr = "127.0.0.1:12345"
+				r.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+				r.Header.Set("X-Persona-Op-Id", tc.op)
+				w := httptest.NewRecorder()
+				routes.ServeHTTP(w, r)
+				return w
+			}
+			first := request(mirror.ID)
+			if first.Code != http.StatusOK {
+				t.Fatalf("first action: %d %s", first.Code, first.Body)
+			}
+			select {
+			case req := <-got:
+				want := "/api/v1/interactions/" + origin.ID + "/" + tc.action
+				if req.Path != want {
+					t.Fatalf("forwarded path = %q, want %q", req.Path, want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("first action did not reach the manager")
+			}
+			if tc.action == "resolve" {
+				reportResolved(t, h, origin.ID, "")
+			}
+			second := request(origin.ID)
+			if second.Code != first.Code || second.Body.String() != first.Body.String() {
+				t.Fatalf("cross-card retry = %d %s, first = %d %s", second.Code, second.Body, first.Code, first.Body)
+			}
+			select {
+			case req := <-got:
+				t.Fatalf("recorded operation reached the manager twice: %+v", req)
+			default:
+			}
+		})
+	}
+}
+
+func mirrorManagerRequests(t *testing.T, h *Hub) <-chan assistantwire.HTTPRequest {
+	t.Helper()
 	hubIn, assistantOut := io.Pipe()
 	assistantIn, hubOut := io.Pipe()
 	hp, ap := rpc.New("h", hubOut), rpc.New("a", assistantOut)
-	got := make(chan assistantwire.HTTPRequest, 2)
+	got := make(chan assistantwire.HTTPRequest, 8)
 	ap.OnRequest = func(_ context.Context, method string, params json.RawMessage) (any, error) {
 		if method != assistantwire.MethodHTTP {
 			return nil, errors.New("unexpected " + method)
@@ -315,6 +471,16 @@ func TestDisplayMirrorActionsRelayTheAuthoritativePath(t *testing.T) {
 		_ = assistantOut.Close()
 	})
 	h.bus.current = map[string]*busConn{busAssistant: {peer: hp}}
+	return got
+}
+
+func TestDisplayMirrorActionsRelayTheAuthoritativePath(t *testing.T) {
+	h := newTestHub(t)
+	const token = "test-mirror-owner-token"
+	h.store = &tokenStore{memStore: *newMemStore(), rows: map[string]db.DeviceToken{
+		hashToken(token): {ID: "device-1", Name: "Trusted device", Role: roleFull},
+	}, rev: map[string]bool{}}
+	got := mirrorManagerRequests(t, h)
 	origin := proto.Interaction{ID: "ix_authoritative", MachineID: "box", SessionID: "side", Kind: proto.IxPermission,
 		Manager: assistantwire.AssistantID, MirrorMain: true, CanClarify: true}
 	mirror := origin

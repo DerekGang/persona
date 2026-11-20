@@ -11,11 +11,15 @@ import (
 // A client that only knows the authoritative model keeps its pre-mirror counts.
 const featureApprovalMirrors = "approval_mirrors"
 
+func reservedDisplayOriginal(ix proto.Interaction) bool {
+	return ix.MirrorOf == "" && strings.HasPrefix(ix.ID, proto.ApprovalMirrorIDPrefix)
+}
+
 // validDisplayMirror rejects orphaned, nested, private or same-conversation
 // copies. A mirror is display state only and never substitutes for its origin.
 func validDisplayMirror(origin, mirror proto.Interaction) bool {
 	return mirror.ID != "" && mirror.ID == proto.ApprovalMirrorID(origin.ID) && mirror.MirrorOf == origin.ID && mirror.ID != origin.ID &&
-		origin.MirrorOf == "" && origin.MirrorMain && !mirror.MirrorMain && origin.Kind == proto.IxPermission && !origin.Private && !mirror.Private &&
+		!reservedDisplayOriginal(origin) && origin.MirrorOf == "" && origin.MirrorMain && !mirror.MirrorMain && origin.Kind == proto.IxPermission && !origin.Private && !mirror.Private &&
 		origin.Manager == mirror.Manager &&
 		(origin.MachineID != mirror.MachineID || origin.SessionID != mirror.SessionID)
 }
@@ -33,6 +37,15 @@ func refreshedDisplayMirror(origin, mirror proto.Interaction) proto.Interaction 
 	out.FoldedUnder, out.FoldedAs, out.FoldedSide = mirror.FoldedUnder, mirror.FoldedAs, mirror.FoldedSide
 	out.Muted = mirror.Muted
 	return out
+}
+
+// withNormalizedDisplayMirror makes the authoritative target part of the
+// request before an operation receipt hashes its path, not just before relay.
+func (h *Hub) withNormalizedDisplayMirror(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h.normalizeDisplayMirror(r)
+		next(w, r)
+	}
 }
 
 // normalizeDisplayMirror rewrites an action on a display copy before any owner,

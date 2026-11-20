@@ -96,7 +96,7 @@ func init() {
 	})
 	handleBusEvent(assistantwire.EventFleetInteraction, func(h *Hub, c *busConn, params json.RawMessage) {
 		var p assistantwire.FleetInteraction
-		if json.Unmarshal(params, &p) != nil || p.Interaction.ID == "" {
+		if json.Unmarshal(params, &p) != nil || p.Interaction.ID == "" || reservedDisplayOriginal(p.Interaction) {
 			return
 		}
 		if !h.cardAllowed(c.managerID(), p.Interaction) {
@@ -131,12 +131,12 @@ func init() {
 				if mirror.MirrorOf != p.Interaction.ID || mirror.Manager != p.Interaction.Manager {
 					continue
 				}
-				if p.Interaction.Private {
+				mirror = refreshedDisplayMirror(p.Interaction, mirror)
+				if !validDisplayMirror(p.Interaction, mirror) {
 					delete(f.interactions, id)
 					resolved = append(resolved, id)
 					continue
 				}
-				mirror = refreshedDisplayMirror(p.Interaction, mirror)
 				f.interactions[id] = mirror
 				updated = append(updated, mirror)
 			}
@@ -269,7 +269,9 @@ func (h *Hub) takeFleetInteractions(list []proto.Interaction) {
 // (re)connected: those gone are over for the apps, the others are sent as they are. The other managers' stay.
 func (h *Hub) takeFleetInteractionsFrom(owner string, list []proto.Interaction) {
 	// Only cards on its own machines, or naming none (ownership.go cardAllowed).
-	list = slices.DeleteFunc(slices.Clone(list), func(ix proto.Interaction) bool { return !h.cardAllowed(owner, ix) })
+	list = slices.DeleteFunc(slices.Clone(list), func(ix proto.Interaction) bool {
+		return reservedDisplayOriginal(ix) || !h.cardAllowed(owner, ix)
+	})
 	f := &h.reported
 	f.mu.Lock()
 	// Another manager's card with the same id stays its (it is not this one's to replace).
@@ -707,8 +709,7 @@ func (h *Hub) mutesSettle(c *busConn) {
 // (it answers them as the hub did); while it is not connected they are answered 503 assistant_offline. A device
 // that may only answer is held to a card's own choices first, here.
 func (h *Hub) fleetRoutesRelayed(api *http.ServeMux) {
-	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", h.withoutTerminalControls(h.withClientOp("resolve", func(w http.ResponseWriter, r *http.Request) {
-		h.normalizeDisplayMirror(r)
+	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", h.withoutTerminalControls(h.withNormalizedDisplayMirror(h.withClientOp("resolve", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			writeBodyErr(w, err, err)
@@ -743,13 +744,12 @@ func (h *Hub) fleetRoutesRelayed(api *http.ServeMux) {
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		h.forwardOwned(w, h.captureOwnerAnswer(r), h.byInteraction)
-	})))
+	}))))
 	// A clarification is an owner's free-text message to the originating
 	// conversation, not a card answer. Restricted answer-only devices and
 	// extension principals cannot speak as the owner here. The operation receipt
 	// and the manager's client_msg_id together make an unchanged retry one message.
-	api.HandleFunc("POST /api/v1/interactions/{id}/clarify", h.withoutTerminalControls(h.withClientOp("clarify", func(w http.ResponseWriter, r *http.Request) {
-		h.normalizeDisplayMirror(r)
+	api.HandleFunc("POST /api/v1/interactions/{id}/clarify", h.withoutTerminalControls(h.withNormalizedDisplayMirror(h.withClientOp("clarify", func(w http.ResponseWriter, r *http.Request) {
 		if answerOnly(r) || principalOf(r.Context()).Role == roleExtension {
 			writeErr(w, http.StatusForbidden, errors.New("only the owner can ask an approval question"))
 			return
@@ -790,7 +790,7 @@ func (h *Hub) fleetRoutesRelayed(api *http.ServeMux) {
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		h.forwardOwned(w, r, h.byInteraction)
-	})))
+	}))))
 	// Body client_id uses the same durable operation receipts as resolve.
 	api.HandleFunc("POST /api/v1/interactions/{id}/choose", h.withReplyReceipt("choose", h.serveChoose))
 	// "Change answer": a question the assistant answered gets the user's answer (assistant/fleet_delegate.go); a device that may

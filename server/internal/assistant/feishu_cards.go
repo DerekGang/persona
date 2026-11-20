@@ -143,7 +143,7 @@ func (s *Service) postInteractionCard(ctx context.Context, ix proto.Interaction)
 	}
 	s.keepBotCardLocked(ix.ID, &botCard{}) // claimed: a second announce of the same card does not post twice
 	b.mu.Unlock()
-	reply, to, topic := s.interactionPlace(ix)
+	reply, to, topic := s.interactionPlace(ctx, ix)
 	ctx = feishuSendAs(ctx, string(ix.Kind), ix.MachineID, ix.SessionID)
 	fallback := ""
 	switch ix.Kind {
@@ -219,8 +219,13 @@ func chatRefused(err error) bool {
 // run was asked in one. A conversation can have a private chat's run and a topic's at once (they are not folded into
 // one); then the owner's DM wins, where only the owner sees the card (an approval or a plan must not be shown to a
 // group), and of several runs of one place the one asked last decides.
-func (s *Service) interactionPlace(ix proto.Interaction) (reply string, to feishuTarget, note *topicNote) {
+func (s *Service) interactionPlace(ctx context.Context, ix proto.Interaction) (reply string, to feishuTarget, note *topicNote) {
 	private, topic := s.interactionRuns(ix)
+	// An eligible Assistant approval always goes to the owner directly, even
+	// when its only existing run is in a topic.
+	if private == nil && topic != nil && s.nonMainAssistantPermission(ctx, ix) {
+		return "", feishuTarget{}, nil
+	}
 	switch {
 	case private != nil && topic != nil:
 		// The card is not in the topic that asked: a short line there says it went to the DM.

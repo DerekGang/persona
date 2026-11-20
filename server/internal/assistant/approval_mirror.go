@@ -76,6 +76,43 @@ func (s *Service) mainApprovalMirror(ctx context.Context, ix proto.Interaction) 
 	return mirror, true
 }
 
+// sameApprovalOccurrence distinguishes a resumed card from a later operation
+// whose runtime happened to reuse its ID. Zero creation times are not an identity.
+func sameApprovalOccurrence(a, b proto.Interaction) bool {
+	return !a.CreatedAt.IsZero() && a.ID == b.ID && a.MachineID == b.MachineID && a.SessionID == b.SessionID && a.CreatedAt.Equal(b.CreatedAt)
+}
+
+// recordedApprovalMirrorIntent restores both true and false for the same
+// pending occurrence. Only a genuinely new card falls back to the current setting.
+func (s *Service) recordedApprovalMirrorIntent(ctx context.Context, ix proto.Interaction) (intent, found bool) {
+	if !ix.Resumable || ix.CreatedAt.IsZero() {
+		return false, false
+	}
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[ix.ID]
+	if p != nil {
+		same := sameApprovalOccurrence(ix, p.ix)
+		intent := p.ix.MirrorMain
+		s.fleet.mu.Unlock()
+		if same {
+			return intent, true
+		}
+		return false, false
+	}
+	s.fleet.mu.Unlock()
+	st, ok := s.store().(interactionRecorder)
+	if !ok {
+		return false, false
+	}
+	readCtx, cancel := context.WithTimeout(ctx, historyTimeout)
+	defer cancel()
+	rec, err := st.InteractionRecord(readCtx, ix.ID)
+	if err != nil || rec == nil || rec.Status != "pending" || !sameApprovalOccurrence(ix, rec.Interaction) {
+		return false, false
+	}
+	return rec.Interaction.MirrorMain, true
+}
+
 // pendingDisplayInteractions is the reconnect snapshot: authoritative pending
 // operations plus their display copies, adjacent and in the same order.
 func (s *Service) pendingDisplayInteractions(ctx context.Context) []proto.Interaction {

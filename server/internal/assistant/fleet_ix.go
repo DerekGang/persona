@@ -1140,15 +1140,15 @@ func (s *Service) expireLoop(ctx context.Context) {
 	}
 }
 
-// errReservedCard: a card from a node (a hook, a runtime, a daemon, a Codex list) or an extension may not pass for the
-// password card or the hand-off card: only the assistant's secret_run tool makes the one (secret_run.go) and only the
-// manager's Agent start the other, and the clients show them as those cards, the password card with no Agent's name on it.
+// errReservedCard: a node, runtime or extension may not pass for a manager-owned
+// password, hand-off or approval-display identity.
 var errReservedCard = errors.New("the tool names " + proto.SecretRunTool + " and " + proto.SecretHandoffTool +
-	" are reserved for the manager's password and hand-off cards")
+	" and approval display IDs are reserved for manager-owned cards")
 
-// reservedCard: ix calls itself the password card or the hand-off card.
+// reservedCard: ix calls itself the password card, the hand-off card, or an
+// authoritative operation inside the display-copy ID namespace.
 func reservedCard(ix proto.Interaction) bool {
-	return ix.ToolName == proto.SecretRunTool || ix.ToolName == proto.SecretHandoffTool
+	return ix.ToolName == proto.SecretRunTool || ix.ToolName == proto.SecretHandoffTool || strings.HasPrefix(ix.ID, proto.ApprovalMirrorIDPrefix)
 }
 
 // askHub is fleet.ask: a card one of the hub's own features asks (a mail send, Cua's apps, persona_settings),

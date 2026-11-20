@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/channel"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -161,6 +162,17 @@ func TestApprovalMirrorEligibilityAndSettingOff(t *testing.T) {
 	}
 }
 
+func TestApprovalMirrorIDNamespaceIsReservedForNodes(t *testing.T) {
+	ix := mirrorTestCard("ix_reserved")
+	ix.ID = approvalMirrorID("ix_some_other_approval")
+	if !reservedCard(ix) {
+		t.Fatal("a node-controlled card entered the display-copy ID namespace")
+	}
+	if reservedCard(mirrorTestCard("ix_authoritative")) {
+		t.Fatal("an ordinary authoritative ID was rejected")
+	}
+}
+
 func TestNodeInteractionCannotDeclareMirrorIdentity(t *testing.T) {
 	ft := newMirrorFleetTest(t)
 	ix := mirrorTestCard("ix_runtime_forgery")
@@ -243,6 +255,81 @@ func TestCodexApprovalMirrorRecordsAuthoritativeIntent(t *testing.T) {
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
 	if got := ft.s.pendingDisplayInteractions(context.Background()); len(got) != 2 {
 		t.Fatalf("setting off withdrew an existing Codex copy from reconnects: %+v", got)
+	}
+}
+
+func TestCodexApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ix := mirrorTestCard("ix_codex_restart")
+	ix.CreatedAt = time.Unix(1000, 0).UTC()
+	listCodex(ft.s, ix)
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
+	restarted := func() *Service {
+		f := newFakeHub()
+		f.mu.Lock()
+		f.hello.ApprovalMirrors = true
+		f.mu.Unlock()
+		return newRestartedService(t, Options{Hub: f, Store: func() Store { return ft.st }, Logf: t.Logf, Devices: ft.d})
+	}
+
+	// A node relist before the restored in-memory map arrives must use the
+	// durable occurrence, not reconstruct intent from the new preference.
+	same := restarted()
+	listCodex(same, ix)
+	pending := same.pendingInteractions()
+	if len(pending) != 1 || !pending[0].MirrorMain || len(same.pendingDisplayInteractions(context.Background())) != 2 {
+		t.Fatalf("same pending occurrence lost its mirror after restart: %+v", pending)
+	}
+
+	changed := ix
+	changed.CreatedAt = changed.CreatedAt.Add(time.Second)
+	different := restarted()
+	listCodex(different, changed)
+	if pending := different.pendingInteractions(); len(pending) != 1 || pending[0].MirrorMain {
+		t.Fatalf("a new occurrence inherited the old occurrence's mirror: %+v", pending)
+	}
+
+	// The inverse is also occurrence state: an old unmirrored card must not
+	// become mirrored merely because the current default is on.
+	ft.st.fmu.Lock()
+	for i := range ft.st.recs {
+		if ft.st.recs[i].Interaction.ID == ix.ID {
+			ft.st.recs[i].Interaction.MirrorMain = false
+		}
+	}
+	ft.st.fmu.Unlock()
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = nil })
+	unmirrored := restarted()
+	listCodex(unmirrored, ix)
+	if pending := unmirrored.pendingInteractions(); len(pending) != 1 || pending[0].MirrorMain {
+		t.Fatalf("an old unmirrored occurrence gained a copy from the current setting: %+v", pending)
+	}
+}
+
+func TestFeishuAssistantApprovalWithTopicRunUsesDirectChat(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
+	ft.f.answerApp(AppFeishu, FeishuStatusGet, func(json.RawMessage) (any, error) {
+		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_a", PairedAt: time.Unix(100, 0),
+			Features: FeishuFeatures{Main: true, Cards: true, AllCards: false}}, nil
+	})
+	ft.f.answerApp(AppFeishu, FeishuPost, func(json.RawMessage) (any, error) {
+		return map[string]any{"message_id": "om_approval"}, nil
+	})
+	c := &ft.s.chans
+	c.mu.Lock()
+	c.st.Runs = append(c.st.Runs, &channel.Run{ID: "run_topic", Channel: channel.Feishu,
+		MachineID: "mac", SessionID: "side", Started: time.Now(), ReplyTo: "om_topic",
+		Ext: map[string]string{"chat": "oc_topic", "thread": "omt_topic"}})
+	c.mu.Unlock()
+	ft.s.feishuInteraction(mirrorTestCard("ix_direct_topic"))
+	posts := ft.f.appParams(AppFeishu, FeishuPost)
+	if len(posts) != 1 {
+		t.Fatalf("direct bot posts = %d, want 1", len(posts))
+	}
+	replyTo, _ := posts[0]["reply_to"].(string)
+	if posts[0]["chat_id"] != nil || posts[0]["in_thread"] != nil || replyTo != "" {
+		t.Fatalf("approval went to its topic run instead of a new direct-chat card: %+v", posts[0])
 	}
 }
 
