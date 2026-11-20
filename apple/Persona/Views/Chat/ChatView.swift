@@ -30,6 +30,7 @@ struct ChatView: View {
     @Environment(\.taskHandoffActions) private var taskHandoff
     @State private var handoffLanding: TaskHandoffReading?
     @State private var handoffRestore: Task<Void, Never>?
+    @State private var handoffVisit: UInt = 0
     #endif
     @State private var position = ScrollPosition(edge: .top) // .top is the newest end of the flipped list
     /// Where the chat stands with its newest end: ↓, following and holding back all come from it (#1046). Changed
@@ -1023,6 +1024,7 @@ struct ChatView: View {
             fullPage.document = { fullPageDocument() }
             fullPage.setShown(true)
             scratch.handoffSourceVisible = true
+            if style == .assistant { handoffVisit &+= 1 }
             openTaskHandoff()
             if let reading = taskHandoff?.takeReading(key) {
                 handoffLanding = reading
@@ -3201,10 +3203,20 @@ struct ChatView: View {
         scrollToEnd()
     }
 
+    private nonisolated struct RowPlacement: Equatable, Sendable {
+        var frame: CGRect
+        var visit: UInt
+    }
+
     /// The list's rows, newest first: apart from `chatScroll`, which as one expression Swift 6.2 could not type-check in time.
     private func chatRows(store: ChatStore, lines: [ChatLine], pending: [PendingMessage]) -> some View {
         let rows = store.rows
         let newestID = lines.last?.id
+        #if os(iOS)
+        let visit = style == .assistant ? handoffVisit : 0
+        #else
+        let visit: UInt = 0
+        #endif
         return LazyVStack(alignment: .leading, spacing: Theme.Space.l) {
             // Newest first (the list is drawn upside down): the end sentinel, live text, unsent messages, lines (a failed
             // message among them, before the first line written after it).
@@ -3291,10 +3303,14 @@ struct ChatView: View {
                     .flippedBack()
                     .debugLineY(line.id, scratch)
                     // In the list's content, which scrolling does not change: reported only when the stack places it.
-                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ChatPin.space)) }) { frame in
-                        if line.id == newestID { newestPlaced(line.id, at: frame.minY) }
+                    // A covered Assistant row drops its cached frame. Returning can reuse the same layout:
+                    // report it once for the new visit even when the row has not moved.
+                    .onGeometryChange(for: RowPlacement.self, of: {
+                        RowPlacement(frame: $0.frame(in: .named(ChatPin.space)), visit: visit)
+                    }) { placement in
+                        if line.id == newestID { newestPlaced(line.id, at: placement.frame.minY) }
                         #if os(iOS)
-                        if style == .assistant { scratch.handoffRows[line.id] = frame }
+                        if style == .assistant { scratch.handoffRows[line.id] = placement.frame }
                         #endif
                     }
                     #if os(iOS)

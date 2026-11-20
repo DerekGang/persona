@@ -110,6 +110,16 @@ final class DispatchedTaskCardTests: XCTestCase {
     }
 
     @MainActor func testHandoffNamesOriginAndReturnsToTheVisibleDispatch() async throws {
+        try await checkConsecutiveHandoffs(sourceChangesOnFirstVisit: true)
+    }
+
+    /// An unchanged source can keep its SwiftUI rows between pushes. Its second hand-off must still
+    /// capture the visible message before an update arrives behind the Agent.
+    @MainActor func testUnchangedSourceRowsKeepTheirReadingPositionForTheNextHandoff() async throws {
+        try await checkConsecutiveHandoffs(sourceChangesOnFirstVisit: false)
+    }
+
+    @MainActor private func checkConsecutiveHandoffs(sourceChangesOnFirstVisit: Bool) async throws {
         let app = launch()
         let card = link(app, "todo_task_widget")
         let original = card.frame.minY
@@ -120,7 +130,7 @@ final class DispatchedTaskCardTests: XCTestCase {
         XCTAssertTrue(origin.waitForExistence(timeout: 5), "The Agent must name its originating conversation")
         XCTAssertTrue(origin.label.contains("今天要处理的事"), origin.label)
         attach("handoff-agent")
-        try await fixture("append")
+        if sourceChangesOnFirstVisit { try await fixture("append") }
         origin.tap()
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         let restored = NSPredicate { _, _ in abs(card.frame.minY - original) <= 4 }
@@ -135,6 +145,7 @@ final class DispatchedTaskCardTests: XCTestCase {
         back(app)
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: restored, object: nil)], timeout: 5)
         XCTAssertEqual(card.frame.minY, original, accuracy: 4)
+        attach("handoff-system-returned")
     }
 
     @MainActor func testFailedCardOpensEditableTodoWithRetryAndRemove() throws {
