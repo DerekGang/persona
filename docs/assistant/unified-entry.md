@@ -218,6 +218,10 @@ rule below. Native clients keep their existing two-entry presentation until they
   keeps them in Needs you (without the Agent's cards). Before, each task listing the Agent showed and counted the same
   approval. The shared cases (`spec/fixtures/entries`) pin it; the whole-client Needs you rule is #5974's.
 
+An open task whose delivery is held for the owner appears in **Needs you** with the reason for the hold.
+A structured decision already shown for the task keeps its controls. A wait assigned to CI, a reviewer or an Agent
+continues to use the normal task placement.
+
 The split is one pure function per client: web `assistantEntries` (`web/src/lib/assistant-entries.ts`), Android
 `assistantEntries` (`persona.core.domain.tasks`), iOS / iPad / Mac `AssistantEntries.split`
 (`apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift`, #3393). All three replay `spec/fixtures/entries`, which pins
@@ -475,7 +479,8 @@ lines, and in the user's own color and alignment they read as something the user
   to-do and its `wake` (`created`, `active`, `resumed`) is the badge; a started plan's `tasks[].todo_id` identify its tasks
   (a plan's tasks are New). Live to-do titles override plan titles. A plan task without a to-do keeps its title as a card
   with no link, red "Didn't start: <reason>" from the plan task's `error`, and its per-task feed items do not add
-  duplicate cards. Agents linked within 120 s of the first are each a card; a later Agent is not on this hand-off.
+  duplicate cards. Agents linked within 120 s of the first are each a card; a later Agent is not on this hand-off. The web
+  anchors "the first" at the card's feed line (#11854, below); iOS and Android still take the to-do's earliest Agents.
   The title is the session's, then the Agent row's, then the task's. The second line is that Agent's `activity_at` (else `updated_at`) as a relative time and
   its state; before there is an Agent it says "Starting the agent", a task closed without one "Closed
   before an Agent started", a task the list no longer has "This task no longer exists".
@@ -500,7 +505,9 @@ are drawn the same whichever way they open; the owner then asked for the side pa
 page one setting away (#5424):
 
 - **One card per Agent.** Each Agent a dispatch started or a task took over is one full-width card where the dispatch is in the chat, stacked by plan order, with no heading over them. This covers a started plan, a standalone `task` item, and a message that started a new Agent for its task (`routed` with `new_agent`).
-  - A task's line shows the Agents the hand-off went to: its first Agents, linked within two minutes of each other. That covers the plan's several Agents and a retry. An Agent linked later has its own card where that happened.
+  - A task's line shows the Agents the hand-off went to: the first Agents linked from its feed line's time on (for a standalone `task` line an Agent linked up to 30 s before still counts, since that line is written just after its link; a plan line has no look-behind, since its Agents start after it, so a previous continuation's Agent linked just before never stands in for the plan's own), within two minutes of each other. That covers the plan's several Agents and a retry. An Agent linked later has its own card where that happened (#11854, `handoffAgents` in `web/src/views/assistant/Handoff.tsx`).
+  - After a plan continues a to-do (task_plan's `continues`), the card under that plan is the Agent it started; until that Agent is linked the card says it is starting, never an older Agent. Cards under earlier plans keep the Agents those plans started: a plan whose `todo_id` the continuation cleared finds its to-do again through its `continues` / `reuse_todo`, or as the one to-do whose `plan_id` is that plan.
+  - A line with nothing linked since (a task that took over an Agent already running, an earlier plan with no Agent of its own) or with no usable time shows the newest Agents still linked, else the one released last.
   - **Head:** a round ↳ mark, the Agent session's title (the task's until it has one) and a badge: **New**, **Already active** when the task took over an Agent that was running already, or **Resumed** when the hand-off's message resumed a closed one.
   - **Second line:** "last active …" and the Agent's state word. The state shows that an Agent needs you without opening anything.
   - **End:** ↗.
@@ -667,6 +674,10 @@ contains several candidates, the tool lists their ids and first words so the sen
 none, or its start is outside the transcript page, the sender can give the exact words of an earlier request or omit
 `quote`.
 
+A Codex transcript page can show a message steered into a running turn with the same shape as the turn's first
+message. On Codex, or when the manager cannot identify the session, select the message by id or exact words. In
+the list of choices, copy the displayed id to select the whole entry; the text next to it is a preview.
+
 A message id or the owner's exact words can select from the last ten turns. An id takes precedence. Text matches
 the newest owner message or verified incoming quote that contains it, with at least four characters and runs of
 whitespace compared as a single space. The receiver gets the original spacing. A selected passage sets
@@ -676,10 +687,47 @@ Just me question remains ineligible afterwards. A refusal uses no relay allowanc
 The hub keeps the verified words for 14 days, up to 64 entries in `assistant.quotes`, keyed by sender and the id
 in the receiver's `<persona-context kind="owner-request" message_id="…">` block. A whole message keeps its id.
 Each passage has its own stable reference so different receivers can pass on their own passage using the id in
-their block. The receiver's brief takes the stored words by that reference and the relay item's source. Only a
+their block. A source message's id selects the whole message when the receiver has it. The receiver's brief takes
+the stored words by that reference and the relay item's source. On upgrade, the manager discards retained quote
+records whose source predates the shareability check. The owner can select an eligible original message again. Only a
 block directly following the canonical relay context counts (`prompts.ParseRelayQuoteID`). The brief keeps
 `started_by` as `leader` or `assistant`, trigger `conversation`, and the conversation ids in `request.via`.
 A scope change requiring the owner's approval still needs a message they wrote in the conversation making it.
+
+**Hand-overs** (#11699, `server/internal/assistant/relay_handover.go`). A `conversation_send` that carries a verified
+quote and has a direction's lead conversation (`assistant.leaders`, not a task leader Agent) on either end is one
+hand-over: from the main conversation to a lead, from a lead back to it, or between a lead and any other conversation.
+The hub records it once the send is accepted, sent at once or queued (setting `assistant.handovers`, by id, kept like
+the quotes: 14 days, at most 64, the oldest dropped first): the sending and receiving conversation, the receiver's
+title, where the owner wrote the words (conversation and message id), its state and code, and when it was made and
+last changed. A send refused at once (the sending model has the error), one without a quote and one between two
+conversations neither of which is a lead are none. Its state follows what the relay does with the message, is written
+only once it is true and never goes back, and each change is one log line:
+
+- `queued`: the message waits in the receiver's queue.
+- `delivered`: the message went in: sent at once, from the queue, or a try in doubt later found in the receiver's
+  transcript. A try in doubt is never `delivered` on its own.
+- `answered`: the receiver's first `conversation_send` back to the sender since the hand-over was delivered went into
+  the sender, however much later, while the hand-over is kept.
+- `not_delivered`: the message will not be tried again; its code is the refusal's when it was refused for good after
+  it was queued, `gone` when it was dropped because the receiver is gone. The sender still gets the line that says so
+  (`docs/assistant/assistant.md`, "Between conversations").
+
+A try in doubt that did go in starts the receiver's turn before any look finds it, so an answer sent in that turn
+goes in while the hand-over is still `queued`: it counts once the look finds the try, which makes the hand-over
+`delivered` and then `answered`. If the looks never find it and the message is sent again, that answer does not count.
+A hand-over past its 14 days is no longer answered or changed. One queued for a background supervisor that is gone
+follows its message to where it waits now (the new background supervisor or the main conversation), receiver and title
+included; with nowhere to move it is `not_delivered` with `gone`. An end or a move is saved before the queue without
+the message is.
+
+An answer is matched on the hand-overs, not on the relay's hop record, which forgets after an hour, when the owner
+speaks in the receiver, or when a third conversation's request reaches it. The reply names the hand-over it answers
+(`answers` on the queued message): of the pair's hand-overs that are delivered or still in doubt, the oldest that no
+other reply on its way names.
+A reply that is refused or dropped leaves its hand-over `delivered` for the next one. In a lead's queue a hand-over goes
+after the outcomes to report and before the rest (`docs/assistant/assistant.md`, "Messages from the system wait for the
+owner"). Nothing reads the hand-overs yet but the log: no route, event or client shows them.
 
 **Required.** `task_plan` refuses a writable task (`readonly` false) without `done_when` (at least one criterion) and
 `expect_minutes`, and a read-only task without `goal` and `expect_minutes`; the refusal names what is missing and
