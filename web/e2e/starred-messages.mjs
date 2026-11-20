@@ -252,7 +252,12 @@ try {
   await cardFor(replacementWords).getByRole("link", { name: "Open original" }).click();
   await desktop.page.locator("[data-search-hit]").waitFor();
   assert.match(new URL(desktop.page.url()).searchParams.get("at"), /^star:b{32}:line900#0$/);
-  await menu(replacementWords, "Unstar");
+  const [removed] = await Promise.all([
+    desktop.page.waitForResponse((response) => response.request().method() === "DELETE" &&
+      new URL(response.url()).pathname === `${path}/${copies[0].id}`),
+    menu(replacementWords, "Unstar"),
+  ]);
+  assert.ok(removed.ok());
   await bubble(replacementWords).locator('[data-star-mark="saved"]').waitFor({ state: "hidden" });
   assert.deepEqual((await onHub("GET", "?index=1")).refs.filter((ref) => ref.item_id === reused).map((ref) => ref.id), [copies[1].id]);
 
