@@ -3,16 +3,17 @@
 // (lib/botmux-mode.ts); loaded with the first botmux session opened, not with the first screen.
 import { memo, type ReactNode, useMemo, useState } from "react";
 import { t } from "../../i18n";
-import { botmuxReplies, botmuxTags, decodedUser, originalText } from "../../lib/botmux";
+import { botmuxReplies, botmuxTags, decodedUser } from "../../lib/botmux";
 import { useBotmuxMode } from "../../lib/botmux-mode";
 import { alsoOpenText } from "../../lib/engines";
 import { attentionReason, externalLink } from "../../lib/format";
 import type { Step, UserMessage } from "../../lib/turns";
-import type { Botmux, Session } from "../../lib/types";
+import type { Botmux, Item, Session } from "../../lib/types";
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
 import { FailureNote } from "./FailureNote";
+import { useFullText } from "./FullText";
 
 function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
   const tags = botmuxTags(b);
@@ -27,15 +28,30 @@ function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
 }
 
 /** "Original": the transcript's words, as the agent read them. */
-function BotmuxOriginal({ text, end }: { text: string; end?: boolean }) {
+function BotmuxOriginal({ items, mid, sid }: { items?: Item[]; mid: string; sid: string }) {
   const [open, setOpen] = useState(false);
-  if (!text) return null;
+  const textItems = items?.filter((item) => item.kind === "text" && (item.text?.trim() || item.full_size));
+  if (!textItems?.length) return null;
   return (
-    <div className={end ? "flex w-full flex-col items-end gap-1" : "flex w-full flex-col items-start gap-1"}>
+    <div className="flex w-full flex-col items-end gap-1">
       <button type="button" className="text-[length:var(--chat-secondary)] text-ink-3 hover:text-ink-2" aria-expanded={open} onClick={() => setOpen((v) => !v)} data-botmux-original>
         {t(open ? "chat-botmux.hide_original" : "chat-botmux.original")}
       </button>
-      {open && <pre className="max-h-80 w-full overflow-auto whitespace-pre-wrap break-words rounded-lg bg-hover p-2 font-mono text-[length:var(--chat-secondary)] text-ink-2">{text}</pre>}
+      {open && (
+        <div className="max-h-80 w-full overflow-auto rounded-lg bg-hover p-2 font-mono text-[length:var(--chat-secondary)] text-ink-2">
+          {textItems.map((item) => <BotmuxOriginalText key={item.id} item={item} mid={mid} sid={sid} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotmuxOriginalText({ item, mid, sid }: { item: Item; mid: string; sid: string }) {
+  const full = useFullText(item, mid, sid);
+  return (
+    <div>
+      <pre className="whitespace-pre-wrap break-words">{full.text}</pre>
+      {full.more}
     </div>
   );
 }
@@ -58,14 +74,14 @@ export const BotmuxReplies = memo(function BotmuxReplies({ steps, mid }: { steps
 
 /** A message botmux handed the agent, as written in Lark: its tags, its words in `bubble` (the chat's user bubble), and
  *  the original on request. */
-export function BotmuxUser({ msg, bubble }: { msg: UserMessage; bubble: (decoded: UserMessage) => ReactNode }) {
+export function BotmuxUser({ msg, mid, sid, bubble }: { msg: UserMessage; mid: string; sid: string; bubble: (decoded: UserMessage) => ReactNode }) {
   const decoded = decodedUser(msg);
   if (!decoded) return null;
   return (
     <div className="ml-auto flex max-w-[min(100%,488px)] min-w-0 flex-col items-end gap-1" data-botmux-message={msg.botmux!.kind}>
       <BotmuxTags b={msg.botmux!} end />
       {(decoded.text || decoded.images.length > 0) && bubble(decoded)}
-      <BotmuxOriginal text={originalText(msg)} end />
+      <BotmuxOriginal items={msg.rawInput} mid={mid} sid={sid} />
     </div>
   );
 }
@@ -113,7 +129,7 @@ export function BotmuxComposerNotes({ session, retry }: { session: Session; retr
 }
 
 /** Default export for single-chunk lazy loading from SegmentView. */
-export default function BotmuxPart(props: { msg: UserMessage; bubble: (decoded: UserMessage) => ReactNode } | { steps: readonly Step[]; mid: string }) {
+export default function BotmuxPart(props: { msg: UserMessage; mid: string; sid: string; bubble: (decoded: UserMessage) => ReactNode } | { steps: readonly Step[]; mid: string }) {
   if (useBotmuxMode() === "all") return "msg" in props ? props.bubble(props.msg) : null;
-  return "msg" in props ? <BotmuxUser msg={props.msg} bubble={props.bubble} /> : <BotmuxReplies steps={props.steps} mid={props.mid} />;
+  return "msg" in props ? <BotmuxUser {...props} /> : <BotmuxReplies steps={props.steps} mid={props.mid} />;
 }

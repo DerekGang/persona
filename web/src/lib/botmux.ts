@@ -14,11 +14,6 @@ export function decodedUser(msg: UserMessage): UserMessage | undefined {
   return { ...msg, text: b.text, contexts: [], files: undefined };
 }
 
-/** The transcript's own words of the message, for "Original". */
-export function originalText(msg: UserMessage): string {
-  return (msg.rawInput ?? []).filter((i) => i.kind === "text").map((i) => i.text ?? "").join("\n").trim();
-}
-
 /** The tags under a message or a reply, in reading order. */
 export function botmuxTags(b: Botmux): string[] {
   const tags: string[] = [];

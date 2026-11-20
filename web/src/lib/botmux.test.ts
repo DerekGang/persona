@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { botmuxReplies, botmuxTags, decodedUser, originalText } from "./botmux";
+import { botmuxReplies, botmuxTags, decodedUser } from "./botmux";
 import type { Step, UserMessage } from "./turns";
 import type { Item } from "./types";
 
@@ -10,7 +10,7 @@ const msg: UserMessage = { id: "u1#0", text: raw, images: [], contexts: [], rawI
 describe("decodedUser", () => {
   it("shows the words written in Lark and keeps the original", () => {
     expect(decodedUser(msg)?.text).toBe("ship it");
-    expect(originalText(msg)).toBe(raw);
+    expect(decodedUser(msg)?.rawInput).toEqual([item]);
   });
   it("leaves a message the node did not read alone", () => {
     expect(decodedUser({ ...msg, botmux: undefined })).toBeUndefined();

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as api from "../../lib/api";
 import { setBotmuxMode } from "../../lib/botmux-mode";
 import { segments } from "../../lib/turns";
 import type { Item, Session } from "../../lib/types";
@@ -28,7 +29,10 @@ async function render(): Promise<string> {
   return html;
 }
 
-afterEach(() => localStorage.clear());
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
 
 describe("botmux sessions in the chat", () => {
   it("decoded (the default): the words written in Lark, the sender as a tag, and the reply sent there", async () => {
@@ -40,6 +44,51 @@ describe("botmux sessions in the chat", () => {
     expect(html).toContain("data-botmux-original");
     expect(html).toContain("data-botmux-reply");
     expect(html).toContain("shipped v2");
+  });
+
+  it("loads a paged Original text item and retries a failed request", async () => {
+    const pagedItem: Item = {
+      id: "u1#1", seq: 1, role: "user", kind: "text",
+      text: "Original prefix\n…（已截断，点开看全文，共 90000 字节）", full_size: 90000,
+    };
+    const completeText = "Original prefix\nThe rest of the transcript";
+    let failRequest!: (error: Error) => void;
+    const request = new Promise<Item>((_resolve, reject) => { failRequest = reject; });
+    const fullItem = vi.spyOn(api, "fullItem").mockReturnValueOnce(request)
+      .mockResolvedValueOnce({ ...pagedItem, text: completeText, full_size: undefined });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const fullTextButton = () => host.querySelector<HTMLButtonElement>("[data-full-text]");
+
+    try {
+      await act(async () => { await import("./BotmuxMessages"); });
+      await act(async () => root.render(<SegmentView seg={segments([items[0], pagedItem])[0]} live={false} mid="machine" sid="session" expandFold={async () => {}} />));
+      expect(fullTextButton()).toBeNull();
+      expect(fullItem).not.toHaveBeenCalled();
+
+      await act(async () => host.querySelector<HTMLButtonElement>("[data-botmux-original]")!.click());
+      expect(Array.from(host.querySelectorAll("pre"), (pre) => pre.textContent)).toEqual([raw, "Original prefix"]);
+      expect(host.querySelectorAll("[data-full-text]")).toHaveLength(1);
+      expect(fullTextButton()?.dataset.fullText).toBe("idle");
+      expect(fullItem).not.toHaveBeenCalled();
+
+      await act(async () => fullTextButton()!.click());
+      expect(fullItem).toHaveBeenNthCalledWith(1, "machine", "session", pagedItem.id);
+      expect(fullTextButton()?.dataset.fullText).toBe("loading");
+      expect(fullTextButton()?.disabled).toBe(true);
+
+      await act(async () => failRequest(new Error("Network failure")));
+      expect(fullTextButton()?.dataset.fullText).toBe("failed");
+      expect(fullTextButton()?.disabled).toBe(false);
+      expect(fullTextButton()?.textContent).toContain("重试");
+
+      await act(async () => fullTextButton()!.click());
+      expect(fullItem).toHaveBeenNthCalledWith(2, "machine", "session", pagedItem.id);
+      expect(Array.from(host.querySelectorAll("pre"), (pre) => pre.textContent)).toEqual([raw, completeText]);
+      expect(fullTextButton()).toBeNull();
+    } finally {
+      act(() => root.unmount());
+    }
   });
 
   it("as they are: the transcript's words, no tags, no reply block", async () => {
