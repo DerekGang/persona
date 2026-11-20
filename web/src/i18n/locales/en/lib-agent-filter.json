@@ -2,9 +2,6 @@
   "all": "All",
   "feishu": "Lark group",
   "terminal": "Terminal",
-  "botmux": "botmux",
-  "botmux_show": "Show botmux sessions",
-  "botmux_hide": "Hide botmux sessions",
   "search_in": "Search in",
   "scope_all": "Full text",
   "scope_title": "Title",
@@ -30,5 +27,6 @@
   "search_as_code_off": "Turn off Search as Code",
   "query_chip": "Search",
   "botmux_raw": "botmux · raw",
-  "botmux_show_raw": "Show botmux sessions as they are"
+  "botmux_show_raw": "Show raw botmux transcripts",
+  "botmux_decode": "Decode botmux transcripts"
 }

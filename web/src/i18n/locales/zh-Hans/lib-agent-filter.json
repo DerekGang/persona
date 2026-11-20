@@ -2,9 +2,6 @@
   "all": "全部",
   "feishu": "飞书群",
   "terminal": "终端",
-  "botmux": "botmux",
-  "botmux_show": "显示 botmux 会话",
-  "botmux_hide": "隐藏 botmux 会话",
   "search_in": "搜索范围",
   "scope_all": "全文",
   "scope_title": "仅标题",
@@ -30,5 +27,6 @@
   "search_as_code_off": "关闭代码检索",
   "query_chip": "搜索",
   "botmux_raw": "botmux · 原文",
-  "botmux_show_raw": "显示 botmux 会话原文"
+  "botmux_show_raw": "显示 botmux 会话原文",
+  "botmux_decode": "显示解码后的 botmux 会话"
 }

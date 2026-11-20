@@ -11,7 +11,6 @@ import type { Botmux, Session } from "../../lib/types";
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
-import { FailureNote } from "./FailureNote";
 
 function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
   const tags = botmuxTags(b);
@@ -101,13 +100,11 @@ function ConflictNote({ session }: { session: Session }) {
   );
 }
 
-/** Conditional host notices above the composer (attention, failure, multi-host conflict), loaded lazily. */
-export function BotmuxComposerNotes({ session, failureNote, onRetry }: { session: Session; failureNote: boolean; onRetry: () => void }) {
+export function BotmuxComposerNotes({ session }: { session: Session }) {
   return (
     <>
       <AttentionNote session={session} />
       <ConflictNote session={session} />
-      {failureNote && <FailureNote session={session} onRetry={onRetry} />}
     </>
   );
 }

@@ -49,7 +49,7 @@ The first rule that holds wins.
 | 4 | `agent_running` | An agent is working or starting | Working |
 | 5 | `closed` | `done_at` is set | Just finished for 24 hours or until seen, then Done |
 | 5a | `parked` (web) | Open and the current review is parked | Parked until the hub changes its state, including past its fallback `until`; never Done just because its agent stopped |
-| 6 | `accepted` | The latest review accepted it and no review came since, even when the hub reopened it (see "Accepted tasks") | Just finished for 24 hours after the review or until seen, then Done |
+| 6 | `accepted` | Its ledger says `accepted` and the latest review accepted it, even when the hub reopened it; a plan's new Agent starts a new round instead (see "Accepted tasks") | Just finished for 24 hours after the review or until seen, then Done |
 | 7 | `deployed` | `delivery.state` is `live` | Just finished for 24 hours or until seen, then Done |
 | 8 | `finished_unseen` | An agent finished a turn nobody has seen, the review is pending, or its ask says done / please verify; not seen since it last moved | Just finished |
 | 9 | `pr_open` | Fresh facts of one of its PRs (`pr_status` matching `pr_url`, or an earlier PR in `other_prs`, #7935) say open and non-draft; no active agent or owner decision, and not accepted or deployed (rules 6 and 7 keep finished work finished whatever its PR facts say; an open concern, which those rules skip, still waits for merge). Stale, absent or mismatched facts do not imply waiting for merge; merged/closed facts suppress legacy `delivery.state=pr` | Parked (merge wait) on the web; Waiting for merge on other clients |
@@ -214,6 +214,9 @@ top of the list (#5707). Now the owner files it:
 - **Opening it** counts too: the iPhone marks it seen when its page opens (the list behind has it in Done on the way
   back); the web when the page leaves it (another to-do, the list, another page), so its row does not move while it is
   read. Nothing is said about it. The Mac (frozen) and Android do neither yet; both file what another device marked.
+- **In the Assistant's tray** (#10922) opening a row of its Finished entry marks the task seen on every client, and
+  the row stays there, as Done, until 24 hours after the task finished: seeing a task changes only whether it is new
+  (`docs/assistant/unified-entry.md` "Needs you and In progress").
 - The mark is the to-do's `seen_at` on the hub (`PUT` / `DELETE /api/v1/todos/{id}/seen`, feature `todo_seen`), so every
   device agrees. It is not activity: `updated_at` stays, so it neither shelves nor unshelves anything. A client of a hub
   without `todo_seen` offers neither.
@@ -239,7 +242,7 @@ is not a closed to-do; only a review or the user closes it; once the owner has s
 counted). **Parked**, **inactive** and **done** count the to-dos in the Parked, Shelved and Done sections as their titles
 do (a merged row's related to-dos under the row's section), so the header and each section's title say the same number;
 what closed in the last 24 hours and was not seen yet is under Just finished and counted there, not as done. The
-sidebar's To-dos badge shows the same open count without quiet tasks (#1731), as before; the page lists and counts them. A task whose agent never started (rule 1) counts as open while it waits on the owner.
+sidebar's To-dos badge (web, #11085) counts the open to-dos that need the owner, not those Agents are on, and never more than this open count: what waits on the owner (Waiting on you, or work held for their OK) counts, a to-do its own Agent is on (Working) or whose pieces Agents are doing does not, and the rest counts (`docs/assistant/todos.md`, "Sidebar and main navigation"). Quiet tasks (#1731) are left out of it as before; the page lists and counts them. iOS and Android still badge this open count. A task whose agent never started (rule 1) counts as open while it waits on the owner.
 
 The counts are the same whatever the list is grouped by (web audit item 12), and so is where each to-do is:
 
@@ -337,6 +340,16 @@ The acceptance now stands until a newer review replaces it (`acceptanceStands` i
   covers judged ones ("5/5"). The next review, if the supervisor runs one, judges them as usual.
 
 A task the user reopens by hand also keeps the accepted verdict until the next review; the checkbox closes it again.
+
+**A new Agent from a plan starts a new round, not more work** (#11553). When a plan's task takes the to-do over with
+a new Agent (`task_plan` with `continues`, or with its `todo_id`), the hub keeps the earlier `accepted` or
+`cancelled` review in `reviews` as history. It puts the ledger back to going on: `state` "", `round` 0, no owner wait
+(`startSupervisionRound` in `server/internal/assistant/supervise.go`). Rule 6 no longer applies to it. The row shows
+**Supervised**, and the to-do stays in Working, Waiting on you or Other open while the new Agent works or stops. The new
+round's stops reach its supervisor like any task's. Before, the continued to-do kept the earlier round's green
+**Accepted** in Working, went to Just finished whenever its new Agent stopped, and its supervisor never heard of a stop
+short of done. A ledger continued before this change keeps its old state until its next review: records are not
+migrated.
 
 ## Clients
 
