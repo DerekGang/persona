@@ -32,17 +32,18 @@ const onHub = async (method = "GET", suffix = "", json) => {
 };
 
 const browser = await chromium.launch({ headless: true, ...(process.env.STARRED_BROWSER ? { executablePath: process.env.STARRED_BROWSER } : { channel: "chrome" }) });
-async function device(theme, phone = false) {
+async function device(theme, phone = false, { width = phone ? 390 : 1440, large = false } = {}) {
   const ctx = await browser.newContext({
-    viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    viewport: { width, height: phone ? 844 : 900 },
     isMobile: phone, hasTouch: phone, colorScheme: theme, locale: "en-US",
     permissions: ["clipboard-read", "clipboard-write"],
   });
   await ctx.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin) ? route.continue() : route.abort());
-  await ctx.addInitScript((theme) => {
+  await ctx.addInitScript(({ theme, large }) => {
     localStorage.setItem("persona.language", "en");
     localStorage.setItem("persona.theme", theme);
-  }, theme);
+    if (large) localStorage.setItem("persona.text-size", "large");
+  }, { theme, large });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -120,16 +121,43 @@ try {
   await orphan.getByRole("link", { name: "Open original" }).click();
   assert.equal(new URL(desktop.page.url()).searchParams.get("at"), source.star.item_id);
 
-  const old = await device("light");
+  await desktop.page.getByRole("link", { name: /Starred/ }).first().click();
+  await rowCount(desktop.page, 3);
+  await onHub("POST", "", {
+    machine_id: "macbook", session_id: stored[1].session_id, item_id: "long-example",
+    conversation: "agent", role: "assistant", title: "Long review snapshot", speaker: "Reviewer",
+    text: "## Findings\n\n" + Array.from({ length: 9 }, (_, i) => `- Note ${i + 1} for the documentation review.\n`).join("") +
+      "\nA unique note after the folded preview.",
+    omitted_chars: 23,
+  });
+  const largeWide = await device("light", false, { large: true });
+  const largeNarrow = await device("dark", true, { width: 320, large: true });
+  for (const [name, layout] of [["desktop", largeWide], ["phone-320", largeNarrow]]) {
+    await layout.page.goto(web + "/starred?token=mock");
+    const long = layout.page.getByRole("article").filter({ hasText: "Long review snapshot" });
+    await long.getByText("23 more characters in the original message").waitFor();
+    assert.equal(await long.getByText("A unique note after the folded preview.").count(), 0);
+    await shot(layout.page, `starred-${name}-large-folded`);
+    await long.getByRole("button", { name: "Show saved text" }).click();
+    await long.getByText("A unique note after the folded preview.").waitFor();
+    assert.equal(await long.evaluate((card) => [...card.querySelectorAll("button, a")].every((action) => {
+      const box = action.getBoundingClientRect();
+      return box.left >= 0 && box.right <= innerWidth && box.height > 0;
+    })), true, "all actions fit at the largest supported text size");
+    await shot(layout.page, `starred-${name}-large-expanded`);
+  }
+
+  const old = await device("light", true, { width: 320, large: true });
   await old.page.route("**/api/v1/assistant/starred**", (route) => route.fulfill({
     status: 404, contentType: "application/json", body: '{"error":"Not found"}',
   }));
   await old.page.goto(web + "/starred?token=mock");
   await old.page.getByRole("heading", { name: "Starred messages are unavailable" }).waitFor();
   assert.equal(await old.page.getByRole("link", { name: "Starred", exact: true }).count(), 0);
+  await shot(old.page, "starred-older-assistant-320-large");
 
-  assert.deepEqual(desktop.errors.concat(mobile.errors, old.errors), []);
-  console.log("ok: Agent and Assistant menus, persisted markers, two-device push, filter, copy, remove, undo, deep link, and source-independent snapshot");
+  assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors), []);
+  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, and largest text at 320 px");
 } finally {
   await browser.close();
   if (cleanup) {
