@@ -1793,13 +1793,13 @@ What the apps draw and when they ask (the user's own Agents' and assistant's rep
 One protocol for every picture of a person or a conversation the apps show. Who it serves: everyone, who recognises a face faster than a letter; the apps never reach a third party for one.
 
 - **The value a source gives**: one string, `avatar`, wherever a source names a picture (step 1: a connector's Inbox thing, `InboxThing.avatar`). `https://…` is an address on the open internet that the manager fetches; anything else is one of the source's own media refs, whose bytes its extension gives (a connector's `Media(ref)`, the same refs its conversation page carries). An `http://` address, or a value over 2 KiB, is none. A value names fixed bytes: a changed picture gets a new value (a new ref, a new address, or a version in it), which is what makes caching for good safe.
-- **What the apps get**: never the value. The lists name the picture's hub path beside the field that has one, `avatar_url` = `/api/v1/avatars/{source}/{value as unpadded base64url}` (`extwire.AvatarURL`), made when listed (stored items keep the source's value). Step 1: an Inbox item's `connector.avatar_url`. Older fields keep the meaning older apps know (a Feishu item's `avatar`, a conversation page's `avatar` refs); without `avatar_url` (an older hub, a source that sends none) the apps draw the initial.
+- **What the apps get**: the manager lists the hub path in `avatar_url`, `/api/v1/avatars/{source}/{value as unpadded base64url}` (`extwire.AvatarURL`). Inbox items list `connector.avatar_url`; the stored item keeps the source value. Connector thread pages (#10994) list optional `avatar_url` on `chat`, `chat.author` and each message's `sender`. Their existing `avatar` fields still carry the original values. An updated app reading a thread from an older hub loads its legacy ref through `/api/v1/connectors/{id}/media?ref=`. A missing or unavailable picture shows the initial.
 - **`GET /api/v1/avatars/{source}/{value}?size=<px>`** (the extension manager's, `extmgr/avatars.go`): full devices only (403 otherwise); no extension scope opens it. `{source}` is an installed connector (404 otherwise; a ref also needs its `threads`). Stateless: the value is in the path. `size` is rounded up to 64, 128, 256 or 512 (none: 128). The picture is decoded, turned upright, scaled to fit (never enlarged) and encoded again (JPEG, PNG when transparent), which drops its metadata and anything that is not the picture: an extension's bytes are never served as they came. A ref whose bytes the connector's conversation page kept (`cache/connector-media/`) is drawn from them, signed out too.
 - **Fetching an address**: `remoteimage`'s Avatars profile, the checks of "Remote images (#9473)" with these limits: `https` only, at the start and at every redirect (at most 3); every answer for the host public, the checked numbers dialled (no rebinding), a fake-IP proxy's names through the same DoH (`manager.json` `remote_images.doh`); no cookies, credentials or Referer; PNG, JPEG, WebP and GIF (its first frame) only, read from the bytes (HEIC, AVIF, SVG and everything else refused); 4 MiB per source, 16 megapixels, 10 s per fetch. An extension's bytes are held to the same types and sizes.
 - **Limits**: a device may start 300 fetches a minute; only fetches count (a picture from the cache, or another size drawn from a kept source, costs nothing), so a screen of new rows loads whole. The same picture is fetched once however many ask; a value that failed is answered from memory for 2 minutes.
 - **Cache**: `cache/avatars/<source>/` in the manager's directory, one subdirectory per source, at most 256 MiB for all of them, the least recently used dropped first; a cache, deletable at any time. Nothing is invalidated by hand (a new picture is a new value). A source's directory goes with its data (Delete Saved Data).
 - **Answer**: the picture with its own `Content-Type`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, max-age=31536000, immutable`; or a JSON error with `code`: `bad_url` (404 for a path that is not an avatar, 400), `address_not_allowed` (403), `too_large` (413), `unsupported_type` (415), `bad_image` (422), `rate_limited` (429, `Retry-After`), `fetch_failed` (502, the connector signed out or failing included), `timeout` (504). The apps draw the initial on any error.
-- **The apps**: one loader each. iOS `ChatAvatar` (`docs/design/DESIGN_SYSTEM.md` "3.8 Chips, badges, avatars, marks"), the web's `Monogram` with `src` (`ItemAvatar`): the initial at once and while loading, the picture over it, the initial on failure; asked at the route's size covering the pixels drawn and kept by the app's caches.
+- **The apps**: iOS uses `ChatAvatar` and the web uses `Monogram` for connector Inbox rows and thread senders and authors. Each requests the pixels needed for the displayed size from the item's manager and reuses its image cache. The initial stands in for a missing or failed picture.
 - **Steps**: 1 (#10923) connector Inbox rows, Telegram's first; 2 connector conversation pages; 3 messaging extensions (their `media/<key>` and `https` people and conversations); 4 Feishu (its keys through the route, gateway paths mapped, #1353); GitHub rows #10931, Android #10932.
 
 ## Extension install, upgrade and uninstall progress (`extension_operations`, #3277)
@@ -2158,7 +2158,7 @@ Clients report their errors and crashes only while `features` has `error_reports
 | GET | `/api/v1/devices/push` | `{direct,devices:[{device_id,name,kind,updated_at,push}],web:[{device_id,browser?,service?,current,updated_at,last_ok_at?,failed_at?,status?,error?}]}`: whether the hub has its own APNs key, every device it pushes to with its way, and every browser with Web Push ("Web Push (browsers)" below; `personad hub doctor`; not for a watch) |
 | POST | `/api/v1/devices/{id}/live-activity` | Live Activity tokens: `{"push_to_start_token"}`, `{"activity_id","push_token"}` (rotates; sent repeatedly), `{"activity_id","ended":true}` (`docs/apple/live-activity.md`); returns `{"ok":true}` after saving. A failed save returns 503 `internal` with a localized unavailable message so the client can retry. A device whose push registration was retired gets 409 `push_registration_required` instead, until it registers again. The write observes request cancellation and has a 5-second timeout (or the earlier request deadline) |
 | GET | `/api/v1/fleet` | `{"fleet": FleetState}`: the current Live Activity content (pulled when the App returns to the foreground); `stats` has all the numbers and each machine's load |
-| GET | `/api/v1/usage/windows` | `{"accounts": [{id, provider, name, plan?, windows: [{label, window_minutes, used_percent, resets_at?, model?}], sampled_at, stale?, local?, sources?, problem?}], "checked_at"}`: Codex / Claude subscription quota windows read by each computer's node from local files, plus those the manager reads from account-pool gateways (`local`: seen on a computer, `sources`: gateway names, `problem`: `unreachable` / `error`, `model`: a single-model window); the manager merges the same account and sorts by the fullest window, the hub forwards, and 503 `assistant_offline` when the manager is absent; no data is `[]` (`docs/server/usage-windows.md`, #2432, #2595) |
+| GET | `/api/v1/usage/windows` | `{"accounts": [{id, provider, name, plan?, windows: [{label, window_minutes, used_percent, resets_at?, model?}], sampled_at, stale?, local?, sources?, problem?}], "checked_at"}`: Codex / Claude subscription quota windows from computer nodes and account-pool gateways (`local`: seen on a computer, `sources`: gateway names, `problem`: `unreachable` / `error`, `model`: a single-model window); the manager groups the rows as described in `docs/server/usage-windows.md` and sorts by the fullest window. The hub forwards the response or returns 503 `assistant_offline` when the manager is absent. No data is `[]` (#2432, #2595) |
 | GET | `/api/v1/metrics` | `{"machines": [{machine_id, online, system, latest: MetricSample \| none, points: [MetricPoint], usage?: {today: {in, cache_write, cache_read, out, req}, per_minute, recent: [60 per-minute totals, oldest first]}}], "step": 60}`: current values and trends on each card of the App's **Machines** page, for every machine in configured order; `points` is the last hour, one per minute; `latest` is only present if a sample arrived within 30 seconds (`docs/server/machines.md`) |
 | GET | `/api/v1/machines/{id}/metrics?range=1h\|6h\|24h` | `{"metrics": {as above, one machine}, "range", "step"}`: the machine detail charts, step 10 / 60 / 240 seconds (about 360 points); unknown machine 404, bad range 400 |
 | GET | `/api/v1/machines/{id}/usage?range=1h\|24h\|7d[&model=…][&launcher=…]` | `{"usage": {machine_id, online, range, step, points: [{t, in, cache_write, cache_read, out, req, gap?}], total, models: [{name, …sums}], launchers: [{name, …sums}], launchers_known, stored}}`: a machine's token usage (`docs/server/machines.md` ("Token usage")); steps 60 / 600 / 3600 seconds, a point is the step's sums; `model` / `launcher` filter (`launcher=-` is the unknown launcher); `models` are under the launcher filter and `launchers` under the model filter, largest first; `launchers_known` false for an older node; default range 24h, bad range 400, unknown machine 404 |
@@ -3804,7 +3804,7 @@ trade-offs in `docs/plans/plan-orca-support.md` ("herdr-core host")).
   If herdr isn't installed, a pinned version is installed first (waits up to 15 seconds; if not done, returns an "Installing herdr …" error, finishes installing in the background and then starts itself; `docs/integrations/engines.md` ("When herdr is not installed")).
 - `herdr.server.status` (hub → node, no params, returns `{running, known, installing, install_error}`): `installing` means the node is installing herdr,
   `install_error` is why the last install failed (empty string if it never failed); `GET /api/v1/machines/{mid}/herdr` passes them through as is (omitted when absent).
-- `usage.windows` (hub → node, no params, returns `{enabled, collected_at, accounts: [UsageAccount]}`, #2432): subscription quota windows the node gets from reading this machine's Codex rollouts and the files Claude's status line writes.
+- `usage.windows` (manager → node, no params, returns `{enabled, collected_at, accounts: [UsageNodeAccount]}`, #2432): subscription quota windows from Codex app-server, Codex rollouts, and Claude status line files. Each item has the established usage account fields and optional Codex `account_key` and `source_key` digests. These keys are for the manager's grouping and are absent from the client API.
   It only reads local files and never touches credentials. When `usage_windows` in `node.configure` (hub.json `machines[].usage_windows`) is false it returns `{enabled: false, accounts: []}`. Old nodes don't have this method; the hub treats them as having no data (`docs/server/usage-windows.md`).
 - Operations without a pane (new, resume session, rename) go to the set's default host (the node's `defaultHost` / `defaultKind`; classic herdr for
   herdr + Herdr App); per-pane operations (read screen, send, keys, close) are routed by the host kind of the pane id, and each host's panes are limited
@@ -4649,7 +4649,7 @@ History rows are only read: they never enter the live list, never make anything 
   - The node connects to the daemon's WebSocket endpoint per `daemons.json` next to `runtime.sock`; the request carries `Authorization: Bearer <token>` and the subprotocol `persona-runtime.v1`, and the daemon must answer with this subprotocol.
   - Once connected, one text message is one line as above; the protocol is exactly the same as on the local socket.
 - **What the node rewrites in between**:
-  - `runtime`, `name`, `launcher` in hello are replaced with the configured values, and `agent` too (if configured); `instance` is set by the node to `daemon:<id>` (when it reconnects the old connection is closed); `caps` keeps only start / send / interrupt / rename / close, no `assistant`.
+  - `runtime`, `name`, `launcher` in hello are replaced with the configured values, and `agent` too (if configured); `instance` is set by the node to `daemon:<id>` (when it reconnects the old connection is closed); `caps` keeps only start / send / interrupt / rename / close / execution / history, no `assistant`; `sessions.history` is forwarded with the window as it is, its rows namespaced like `runtime.sessions` rows (`<id>.<session id>`, `history_runtime` the configured id), and their `session.items` routed back by that prefix.
   - Session ids get the prefix `<id>.`, `space_id` gets `<id>:`, and interaction ids are replaced with stable hashes; the prefixes are removed when replying to the daemon.
   - `pane_id`, `resume_argv`, `agent_label` in session rows are dropped, and `features` doesn't tell it about `resume_argv` and `handover`; when it returns `code: handover` for `session.send`, the node turns it into `not_running` and doesn't hand it to another runtime.
 - **What the daemon can't see or use**:
@@ -5793,22 +5793,42 @@ in-flight command remains unknown until its execution can be established; it is 
 
 ## Agents display settings
 
-The default manager keeps the paired hub's `agents.show_botmux` boolean in its
+The default manager keeps the paired hub's `agents.show_botmux` and
+`agents.use_herdr_tab_name` booleans in its
 existing settings store, following the Agents triage route's ownership and role
 checks. These are authenticated routes relayed by the hub; clients do not select
 another manager for this shared preference.
 
 | Method | Path | Response / request |
 | --- | --- | --- |
-| GET | `/api/v1/agents/display-settings` | `{show_botmux: true, configured: false}` when unset; otherwise the saved boolean and `configured: true`. Authenticated answer-only devices may read. |
-| PUT | `/api/v1/agents/display-settings` | Full access only (403 otherwise). Requires `{show_botmux: boolean}`. Optional `only_if_unset: true` uses an atomic insert without updating an existing key. Both forms return the current saved value with `configured: true`, including when another writer won. |
+| GET | `/api/v1/agents/display-settings` | Defaults to `{show_botmux: true, configured: false, use_herdr_tab_name: false}`. `configured` reports whether `show_botmux` was saved. Authenticated answer-only devices may read. |
+| PUT | `/api/v1/agents/display-settings` | Full access only (403 otherwise). Send one of `{show_botmux: boolean}` or `{use_herdr_tab_name: boolean}`. For `show_botmux`, optional `only_if_unset: true` uses an atomic insert without updating an existing key. Returns the current settings, including when another writer won. |
 
 Invalid or missing booleans return 400; unavailable storage or failed reads/writes
 return 503, never a default presented as a successful save. The conditional
-migration and an explicit update serialize at the unique settings key across
+migration and an explicit botmux update serialize at the unique settings key across
 processes. Clients remove legacy local preferences only after a configured value
-is confirmed. Refresh on reconnect and the next Agents list refresh. This is a
-display preference only: Web paged lists use `exclude_pane_source=feishu`, complete
+is confirmed. Refresh on reconnect and the next Agents list refresh. For botmux,
+Web paged lists use `exclude_pane_source=feishu`, complete
 lists exclude botmux hosts before grouping/counting. Inventory and `seeBotmux`
 to-do attribution are unchanged. The per-computer inventory switch is independent
 ([engines.md](../integrations/engines.md), “Botmux display preference”).
+
+For an Agent with a named herdr or Herdr App tab, Web and Feishu use `slot_name`
+as the primary name when `use_herdr_tab_name` is true. They also use it when
+`title` is empty or is only a shell prompt such as `user@host:~/work`.
+Inventory refreshes carry the current tab label. The unified Web Rename dialog
+posts `tab_name` and, for a supported CLI, the same `title` to the existing
+session rename route. Other managers read the same preference through the
+hub's `app.call` method `agents.display.get`, which relays the default
+manager's display settings.
+
+Named assistant dispatches send `title` with `tab_name` in `session.start`.
+The synchronous terminal reply uses the actual tab label when available,
+including a suffix added for uniqueness. The manager persists the initial
+Persona title for subsequent inventory reads.
+
+With tab naming enabled, automatic naming calls the node's
+`session.rename_tab_if_current` with `session_id`, `tab_id`,
+`expected_tab_name` and `tab_name`. The node checks the live slot and its current
+host label before changing it and replies with `{ok: true}` on success.
