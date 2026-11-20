@@ -1,0 +1,44 @@
+{
+  "name": "task_scope",
+  "description": "Change what a task you supervise does or what done means (its todo id). The original brief stays intact: log what changed and why, apply done_when and expect_minutes, restart the clock, and show the owner the change in their next digest. Only this log changes done_when after dispatch; agent_supervise and agent_send(task) on your task use it too. Give the whole new done_when list: omitted criteria are recorded as dropped and named in the completion report. Adding an owner-only step not already in scope (deploy, merge, release, external send/comment, delete, spend, production change) requires the owner's message to have started this turn; otherwise ask_user or task_review needs_user, then retry after their answer. Only the supervisor may call it. It does not notify the Agent: use agent_send. For an overdue but still valid task, explain why and give new expect_minutes.",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "todo_id",
+      "change",
+      "why"
+    ],
+    "properties": {
+      "todo_id": {
+        "type": "string",
+        "description": "the task's todo id (todo_…)"
+      },
+      "inbox_item": {
+        "type": "string",
+        "description": "Inbox source; omit for the conversation's sole eligible open handoff. Several require an id. Links the existing task and its Agents."
+      },
+      "change": {
+        "type": "string",
+        "description": "what changes, in one sentence the owner can read (Chinese), e.g. 「不再要求灰度验证，改为只在测试环境验证」"
+      },
+      "why": {
+        "type": "string",
+        "description": "why, in one sentence (Chinese)"
+      },
+      "done_when": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 6,
+        "items": {
+          "type": "string"
+        },
+        "description": "the criteria after the change, the whole list; leave it out to keep them as they are"
+      },
+      "expect_minutes": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "how long the task should take from now; leave it out (or 0) to keep it"
+      }
+    }
+  }
+}

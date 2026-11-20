@@ -94,6 +94,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		t.TodoID, t.Error, t.ErrorCode, t.ErrorArgs, t.RetryWith = "", "", "", nil, nil
 		t.WorkspaceResolved, t.ReservedTodoID, t.WorkspaceInferred = nil, "", false
 		t.OwnerStarted = false // the hub's: only the owner's Start on the card sets it (startPlan)
+		t.RequestGate, t.Queue = "", nil
 		t.CloseTabOnAccept, t.TerminalTarget, t.TerminalCleanup = false, taskTerminalTarget{}, ""
 		t.TerminalAuthorized = false
 		// The hub's too: the scheduled round this plan comes from is the hub's to tell (scheduledRoundOf, #8045).
@@ -103,6 +104,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		t.Reroute = nil
 		t.Title, t.Prompt, t.Cwd = strings.TrimSpace(t.Title), strings.TrimSpace(t.Prompt), strings.TrimSpace(t.Cwd)
 		t.Model = strings.TrimSpace(t.Model)
+		t.Speed = strings.TrimSpace(t.Speed)
 		t.Permission = strings.TrimSpace(t.Permission)
 		if err := t.checkRole(scope != nil); err != nil {
 			return "", fmt.Errorf("task %d: %w", i+1, err)
@@ -145,7 +147,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 			if err != nil {
 				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
-			t.Attachments, t.Mentioned, t.AttachFrom = atts, s.mentionedAttachments(ctx, machine, sessionID, t.Prompt, atts), ""
+			t.Attachments, t.Mentioned, t.AttachFrom = atts, s.mentionedAttachments(ctx, machine, sessionID, t.Prompt+"\n\n"+t.Context, atts), ""
 			if t.Project, err = s.todoProject(ctx, t.Project); err != nil {
 				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
@@ -167,14 +169,9 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		// What it runs on the computer it lands on (#2640): a default that computer lacks is swapped now, so the card
 		// names the launcher that will run and its why says so; a launcher this plan names that it lacks is refused.
 		takesModes := true
-		if m, ok := s.machineByName(ctx, t.Machine); ok {
-			params := map[string]any{"launcher": t.Launcher, "model": t.Model, "effort": t.Effort, "tier": t.Tier}
-			own, err := s.resolveStart(ctx, params)
-			if err != nil {
-				return "", fmt.Errorf("task %d: %w", i+1, err)
-			}
-			// The card shows the mode that runs: Allow all for Claude Code and an Auto Accept provider (#8141).
-			fit, err := s.fitTaskLauncher(ctx, t, m, own, params)
+		if _, ok := s.machineByName(ctx, t.Machine); ok {
+			own := t.launchPick()
+			fit, err := s.fitPlanTaskSpeed(ctx, t)
 			if err != nil {
 				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
@@ -184,8 +181,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 			// traex, omp…: no mode, no effort (launcher_modes.go). One the call names is refused now, rather than by
 			// the computer once the task starts; one a tier filled in is dropped. pi, cursor, agy: dropped either way.
 			if takesModes = startTakesModes(fit.agent); !takesModes {
-				launcher, _ := params["launcher"].(string)
-				if err := startModesRefused(launcher, fit.agent, asked, own.effort); err != nil {
+				if err := startModesRefused(t.Launcher, fit.agent, asked, own.effort); err != nil {
 					return "", fmt.Errorf("task %d: %w", i+1, err)
 				}
 				t.Effort = ""
@@ -223,6 +219,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 			if err := s.planPieces(&a.Tasks[i]); err != nil {
 				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
+			a.Tasks[i].RequestGate = s.planRequestGate(a.Tasks[i])
 		}
 	}
 	if err := s.planBriefs(ctx, machine, sessionID, a.Tasks); err != nil {
@@ -242,7 +239,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 	if scope == nil && !s.inHealth(ctx, sessionID) {
 		if round, inRound = s.scheduledRoundOf(ctx, machine, sessionID); inRound && round.grantEligible() && s.claudeConversation(ctx, machine, sessionID) {
 			for i := range a.Tasks { // the card offers to let this schedule start these by itself
-				a.Tasks[i].Schedule, a.Tasks[i].ScheduleTitle, a.Tasks[i].ScheduleBasis = round.ID, round.labelIn(s.lang(ctx)), round.grantBasis()
+				a.Tasks[i].Schedule, a.Tasks[i].ScheduleTitle, a.Tasks[i].ScheduleBasis = round.ID, round.labelIn(s.lang(ctx)), round.runGrantBasis
 			}
 		}
 	}
@@ -288,7 +285,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 	if inRound {
 		granted = func() func(PlanTask) bool { return s.scheduleGrantCover(ctx, round, machine, sessionID) }
 	}
-	if health || !s.planStartsAtOnceUnder(ctx, p.Tasks, granted) {
+	if health || slices.ContainsFunc(p.Tasks, func(task PlanTask) bool { return task.RequestGate != "" }) || !s.planStartsAtOnceUnder(ctx, p.Tasks, granted) {
 		s.event(ctx, map[string]any{"type": "task_plan", "plan": s.planWithSuggestion(ctx, p, s.lang(ctx))})
 		// A card below the answer is easy to miss: push it as well.
 		titles := make([]string, 0, len(p.Tasks))
@@ -430,6 +427,9 @@ func applyPlanEdit(t *PlanTask, e PlanTask) {
 	}
 	if s := strings.TrimSpace(e.Effort); s != "" {
 		t.Effort = s
+	}
+	if s := strings.TrimSpace(e.Speed); s != "" {
+		t.Speed = s
 	}
 	if s := strings.TrimSpace(e.Permission); s != "" {
 		t.Permission = s
