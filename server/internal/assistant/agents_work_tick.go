@@ -340,7 +340,7 @@ func (s *Service) workWake(ctx context.Context, v *workView, k [2]string, now ti
 	if latest, ok := s.workEntry(k); !ok || latest.Work.RetiredAt != nil || latest.Work.Deferred || !latest.TurnAt.Equal(e.TurnAt) {
 		return
 	}
-	send := func() error { return s.sendToSession(ctx, k[0], c.SessionID, text) }
+	send := func() error { return s.sendWorkText(ctx, k[0], c.SessionID, text, kind == "limit_continued") }
 	if kind == "continued" {
 		send = func() error { return s.sendModelRetry(ctx, e, text) }
 	}

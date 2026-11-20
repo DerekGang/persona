@@ -431,6 +431,11 @@ func sessionNotFound(err error) bool {
 
 // sendToSession sends text to sid as the manager (the next working is its doing, not the user's).
 func (s *Service) sendToSession(ctx context.Context, machine, sid, text string) error {
+	return s.sendWorkText(ctx, machine, sid, text, false)
+}
+
+// sendWorkText resolves a model only for a quota continuation; ordinary manager messages retain their send path.
+func (s *Service) sendWorkText(ctx context.Context, machine, sid, text string, quotaContinuation bool) error {
 	s.work.mu.Lock()
 	s.work.init()
 	s.work.sent[[2]string{machine, sid}] = time.Now()
@@ -438,8 +443,10 @@ func (s *Service) sendToSession(ctx context.Context, machine, sid, text string) 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	params := map[string]any{"session_id": sid, "text": text}
-	if err := s.protectedContinuationModel(ctx, machine, sid, params); err != nil {
-		return err
+	if quotaContinuation {
+		if err := s.protectedContinuationModel(ctx, machine, sid, params); err != nil {
+			return err
+		}
 	}
 	return s.call(ctx, machine, DeviceSessionSend, params, nil)
 }

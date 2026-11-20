@@ -74,3 +74,16 @@ func TestProtectedQuotaRuntimeResumeIsLeftAlone(t *testing.T) {
 		t.Fatal("interrupted the runtime's own quota continuation")
 	}
 }
+
+func TestProtectedOrdinaryManagerSendKeepsExistingParams(t *testing.T) {
+	s, f := workService(t)
+	setSettings(t, s, func(v *Settings) { v.MachineID, v.Main = "box", "s1" })
+	if err := s.sendToSession(context.Background(), "box", "s1", "ordinary manager message"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.agentSent) != 1 || len(f.agentSent[0]) != 2 || f.agentSent[0]["text"] != "ordinary manager message" {
+		t.Fatalf("ordinary manager send changed: %v", f.agentSent)
+	}
+}
