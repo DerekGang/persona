@@ -7,6 +7,8 @@ import uuid
 BASE = "/api/v1/assistant/starred"
 SOURCE_FIELDS = ("machine_id", "session_id", "item_id", "conversation", "source_fingerprint")
 POSITION = "line900#0"
+LONG_USER = "fixture-long-user#0"
+LONG_USER_VISIBLE = "User-visible long note " + "🐈" * 6500
 VERSIONS = {"original": ("Original words from the reused line", "a" * 32),
             "replacement": ("Replacement words from the reused line", "b" * 32)}
 
@@ -72,7 +74,7 @@ def register(d):
 
     def source(h, req):
         phase = req.json().get("phase")
-        if mode != "1" or phase not in (*VERSIONS, "reset", "stale"):
+        if mode != "1" or phase not in (*VERSIONS, "reset", "stale", "long-user"):
             h.send_json({"error": "Not found"}, 404)
             return True
         with lock:
@@ -81,9 +83,17 @@ def register(d):
                 hub.FULL.pop(POSITION, None)
                 h.send_json({"ok": True})
                 return True
-            items = [item for item in hub.ITEMS[hub.REVIEW] if item["id"] != POSITION]
+            items = [item for item in hub.ITEMS[hub.REVIEW] if item["id"] not in (POSITION, LONG_USER)]
             hub.FULL.pop(POSITION, None)
-            if phase != "reset":
+            hub.FULL.pop(LONG_USER, None)
+            if phase == "long-user":
+                raw = '<persona-context kind="skill-instructions">' + "h" * 25000 + "</persona-context>\n" + LONG_USER_VISIBLE
+                size = len(raw.encode())
+                cut = raw[:24 * 1024] + f"\n…（已截断，点开看全文，共 {size} 字节）"
+                item = hub.it("user", "text", 1, id=LONG_USER, seq=901, text=cut, full_size=size)
+                items.append(item)
+                hub.FULL[LONG_USER] = {k: v for k, v in item.items() if k != "full_size"} | {"text": raw}
+            elif phase != "reset":
                 text, proof = VERSIONS[phase]
                 item = hub.it("user", "text", 1, id=POSITION, seq=900, text=text, source_fingerprint=proof)
                 items.append(item)

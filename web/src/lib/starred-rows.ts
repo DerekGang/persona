@@ -1,9 +1,17 @@
 // Chat and sidebar only need the compact index. Load the requests and write
 // handling separately from the first screen and never pull snapshot text here.
 import { useEffect, useSyncExternalStore } from "react";
+import type { Item } from "./types";
 
 /** Transcript location as the chat already holds it. */
-export type StarOrigin = { mid: string; sid: string; item: string; fingerprint?: string };
+export type StarOrigin = {
+  mid: string;
+  sid: string;
+  item: string;
+  fingerprint?: string;
+  userInputs?: readonly Item[];
+  merged?: boolean;
+};
 
 export interface StarSource {
   machine_id: string;
@@ -29,6 +37,9 @@ export interface Star extends StarInput {
 }
 
 export const positionalStar = (item: string) => /^line[0-9]+#[0-9]+$/.test(item);
+export const starrable = (source?: StarOrigin): source is StarOrigin =>
+  !!source && (!positionalStar(source.item) || !!source.fingerprint);
+
 export function starKey(s: StarSource & { id?: string }) {
   const proof = s.source_fingerprint || (s.id && positionalStar(s.item_id) ? `saved:${s.id}` : "");
   return JSON.stringify([s.machine_id, s.session_id, s.item_id, s.conversation, proof]);

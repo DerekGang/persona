@@ -1477,13 +1477,15 @@ the same snapshot again with a new star ID, even if the original message has gon
 messages for that assistant. Search matches words in the saved text, conversation title, and speaker.
 **Copy** copies the saved text. **Open original** opens the conversation at the saved message with the
 existing message-link behavior. When the runtime supplies only a line position, it checks a fingerprint of the
-original transcript record before opening and reads it again at the final jump, even when the visible page has not detected a same-size rewrite. If a rewrite reuses that line, the replacement
-can be starred separately. The old snapshot stays available for Copy and Unstar and shows that its original is
+original transcript record before opening and reads it again at the final jump, even when the visible page
+has not detected a same-size rewrite. If a rewrite reuses that line, the replacement can be starred separately. The old snapshot stays available for Copy and Unstar and shows that its original is
 unavailable. Older snapshots without a fingerprint for a line position also stay readable. Star is offered for
 positional messages only when their node supplies the fingerprint.
 
 The manager keeps up to 300 text snapshots, at most 4,000 Unicode characters each, with a count of text
 left out. New saves retain the visible message text, title, author, and original time when available.
+If a user message was shortened for the chat page, Star fetches the full text blocks and applies the same
+user-message formatting before deciding which characters to save and how many were left out.
 Edits and deletion of the original do not change the snapshot. The browser asks for identifiers alone
 to mark the chats and show the sidebar count. It reads snapshot text while the Starred page is open,
 refreshing on reconnect, after a write, and on notifications from the selected assistant. An older hub

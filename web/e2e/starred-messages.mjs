@@ -240,6 +240,17 @@ try {
   await bubble(replacementWords).locator('[data-star-mark="saved"]').waitFor({ state: "hidden" });
   assert.deepEqual((await onHub("GET", "?index=1")).refs.filter((ref) => ref.item_id === reused).map((ref) => ref.id), [copies[1].id]);
 
+  await sourcePhase("long-user");
+  await desktop.page.goto(web + review);
+  const longUser = desktop.page.locator('[data-user-bubble][data-items~="fixture-long-user#0"]');
+  await longUser.locator(".group\\/msg > div").first().click({ button: "right" });
+  await desktop.page.getByRole("menuitem", { name: "Star", exact: true }).click();
+  await longUser.locator('[data-star-mark="saved"]').waitFor();
+  const fullUserText = [...("User-visible long note " + "🐈".repeat(6500))];
+  const userStar = (await onHub()).stars.find((star) => star.item_id === "fixture-long-user#0");
+  assert.equal(userStar.text, fullUserText.slice(0, 4000).join(""));
+  assert.equal(userStar.omitted_chars, fullUserText.length - 4000);
+
   const startup = await device("light");
   await startup.page.addInitScript(() => {
     localStorage.setItem("persona.token", "mock");
@@ -265,7 +276,7 @@ try {
   assert.equal(new URL(startup.page.url()).pathname, "/starred");
 
   assert.deepEqual(desktop.errors.concat(mobile.errors, largeWide.errors, largeNarrow.errors, old.errors, startup.errors), []);
-  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, largest text at 320 px, positional-ID reuse, displayed-speaker search, and delayed start-page availability");
+  console.log("ok: both message menus and exact links, two-device push, filter, copy, undo, orphaned snapshot, older assistant, largest text at 320 px, positional-ID reuse, displayed-speaker search, delayed start-page availability, and accurate full user-message snapshots");
 } finally {
   await browser.close();
   if (cleanup) {

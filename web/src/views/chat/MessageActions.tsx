@@ -19,7 +19,7 @@ import { clock } from "../../lib/format";
 import { sendDraft, type QuotedTask } from "../../lib/drafts";
 import type { ForwardPick } from "../../lib/forward";
 import { addContext, newContext } from "../../lib/links";
-import { useCanStar, type StarOrigin } from "../../lib/starred-rows";
+import { starrable, useCanStar, type StarOrigin } from "../../lib/starred-rows";
 import type { Item } from "../../lib/types";
 import { copyText, cx, type MenuItem } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
@@ -140,6 +140,7 @@ export function MessageActions({
   const pick: ForwardPick | undefined = forwarded ? { itemId: forwarded, text, isUser: Boolean(isUser), ts, images, photos } : undefined;
   const chat = useChatActions();
   const canStar = useCanStar();
+  const star = canStar && chat && starrable(starSource) && text.trim() ? starSource : undefined;
   const actions = messageActions(chat, text, Boolean(isUser), ts, task, pick, editText);
   // the chat picks messages to forward (#3838): the checkbox over this one, when it is one to forward
   const picker = chat?.forward ? chat.pick : undefined;
@@ -149,7 +150,7 @@ export function MessageActions({
   const [menu, setMenu] = useState<{ anchor: HTMLElement | { x: number; y: number }; more?: boolean } | null>(null);
   const moreAnchor = menu?.more;
   const canFork = Boolean(itemId && chat?.fork && !itemId.startsWith("line") && itemId.includes("#"));
-  const hasMore = Boolean((starSource && canStar) || (side && (chat?.canCompose || (chat?.forward && pick))) || canFork || (isUser && (chat?.canCompose || (messageId && chat?.rewind && (editText ?? text).trim()))) || onDelete);
+  const hasMore = Boolean(star || (side && (chat?.canCompose || (chat?.forward && pick))) || canFork || (isUser && (chat?.canCompose || (messageId && chat?.rewind && (editText ?? text).trim()))) || onDelete);
   // Your bubble's hover bar sits to its left; in a narrow window a wide bubble leaves no room there and the bar fell
   // off the screen, its buttons still reached by Tab (audit item 73). Measured when the pointer comes or focus moves in
   // (not for every bubble as the chat opens): with no room, the same buttons sit under the bubble instead, so the one
@@ -179,12 +180,12 @@ export function MessageActions({
 
   return (
     <div
-      className={cx("group/msg", (side || corner || PickRow || starSource) && "relative", PickRow && (side ? "isolate" : "isolate pl-7"), className)}
+      className={cx("group/msg", (side || corner || PickRow || star) && "relative", PickRow && (side ? "isolate" : "isolate pl-7"), className)}
       onPointerEnter={side ? (e) => e.pointerType !== "touch" && placeBar(e.currentTarget) : undefined}
       onFocus={side ? (e) => placeBar(e.currentTarget) : undefined}
     >
-      {!picking && starSource && canStar && (
-        <Suspense fallback={null}><StarBadge origin={starSource} /></Suspense>
+      {!picking && star && (
+        <Suspense fallback={null}><StarBadge origin={star} /></Suspense>
       )}
       {PickRow && picker && pick && <PickRow pick={picker} message={pick} side={side} />}
       <div
@@ -238,7 +239,7 @@ export function MessageActions({
       {canTranslate && translation.error && <p role="alert" className="mt-1 text-xs text-red">{translation.error}</p>}
       {picking ? null : bar ? (
         <Suspense fallback={<div data-reply-bar="loading" className="mt-1.5 hidden h-6 [@media(hover:hover)]:block" />}>
-          <ReplyBar text={text} ts={ts} pinned={latest} itemId={itemId} more={actions} star={starSource} loadStar={translationSource?.load} usage={usage} usageMs={usageMs} persona={chat?.assistant} translation={canTranslate ? translation : undefined} />
+          <ReplyBar text={text} ts={ts} pinned={latest} itemId={itemId} more={actions} star={star} loadStar={translationSource?.load} usage={usage} usageMs={usageMs} persona={chat?.assistant} translation={canTranslate ? translation : undefined} />
         </Suspense>
       ) : (side || corner) && (
       <div
@@ -314,7 +315,7 @@ export function MessageActions({
       )}
       {menu && !picking && <MessageMenu
         anchor={menu.anchor} onClose={close} primary={actions} more={menu.more}
-        itemId={itemId} text={text} ts={ts} star={starSource} loadStar={translationSource?.load} rewindText={editText ?? text} messageId={messageId} isUser={isUser} onDelete={onDelete} pick={pick}
+        itemId={itemId} text={text} ts={ts} star={star} loadStar={translationSource?.load} rewindText={editText ?? text} messageId={messageId} isUser={isUser} onDelete={onDelete} pick={pick}
         onSelectText={() => setSelecting(true)}
       />}
       <SelectMessageText open={selecting} onClose={() => setSelecting(false)} text={text} />

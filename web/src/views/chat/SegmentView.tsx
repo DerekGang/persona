@@ -127,7 +127,7 @@ export function UserBubble({ msg, mid, sid, pending, sendState, starting, onDele
           <BubbleText text={msg.text} blocks={msg.contexts} mid={mid} sid={sid} own={own} pending />
         ) : (
           <MessageActions text={msg.text} editText={skillEditText(msg.contexts, msg.text)} isUser ts={msg.ts} side messageId={onDelete ? undefined : msg.id} onDelete={onDelete}
-            starSource={!onDelete && !sendState ? { mid, sid, item: msg.id, fingerprint: msg.rawInput?.[0]?.source_fingerprint } : undefined}
+            starSource={!onDelete && !sendState ? { mid, sid, item: msg.id, fingerprint: msg.rawInput?.[0]?.source_fingerprint, userInputs: msg.rawInput } : undefined}
             images={msg.images} photos={msg.photos} className="max-w-full">
             <BubbleText text={msg.text} blocks={msg.contexts} ts={msg.ts} mid={mid} sid={sid} own={own} />
           </MessageActions>
