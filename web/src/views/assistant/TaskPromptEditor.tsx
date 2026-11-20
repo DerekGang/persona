@@ -40,6 +40,7 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
   const mention = useMemo<MentionSource | undefined>(() => ex && supported ? {
     cwd: ex.cwd, files: () => [], sessions: false,
     referenceFiles: fileScope(ex),
+    allowsFileQuery: (query) => !/^(?:[~/]|[A-Za-z]:)/.test(query) && !query.includes("\\") && !query.split("/").includes(".."),
     skills: { manager, launcher: ex.launcher, environment: JSON.stringify([key, scopeOf(ex)]), catalog: async (signal) => {
       const reply = await api<InputContext>("/assistant/tasks/input-context", { method: "POST", json: { ...JSON.parse(request), catalog: true }, signal, headers: { [MANAGER_HEADER]: manager } });
       if (scopeOf(reply.execution) !== scopeOf(ex) || !reply.catalog) throw new Error(reply.skill_error || t("chat-composer.skills_changed"));
