@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/host"
@@ -31,6 +32,8 @@ const (
 	botmuxTurnsBGTimeout        = 2 * time.Second
 	botmuxTurnsReadTimeout      = 200 * time.Millisecond
 )
+
+var errBotmuxTurnsTooLarge = fmt.Errorf("botmux: turns response exceeds %d bytes", botmuxTurnsMaxBytes)
 
 // botmuxCaps caches what a BotMux dashboard instance supports, keyed by its loopback URL, token, and CLI file stamp.
 // A dashboard restart (new URL/token) or CLI upgrade (new stamp) invalidates the cache automatically.
@@ -195,6 +198,9 @@ func (h *botmuxHost) probeCaps(ctx context.Context, sessionID string) botmuxCaps
 			h.mu.Unlock()
 		}
 		status, res, errCode, err := h.fetchTurnsPage(ctx, base, token, sessionID, "0", 1)
+		if errors.Is(err, errBotmuxTurnsTooLarge) {
+			return lastKnown()
+		}
 		stale := err != nil || status == http.StatusUnauthorized || status == http.StatusForbidden ||
 			(status >= 300 && status < 400)
 		if stale && attempt == 0 {
@@ -355,6 +361,9 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 		}
 		if c.cursor != "" {
 			cursor = c.cursor
+			if seq, err := strconv.ParseInt(cursor, 10, 64); err == nil && seq > 0 {
+				cursor = strconv.FormatInt(seq-1, 10)
+			}
 		}
 	}
 	h.mu.Unlock()
@@ -451,7 +460,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 				sc.turns = append(sc.turns, turn)
 			}
 		}
-		if res.Next != "" {
+		if len(res.Turns) > 0 && res.Next != "" {
 			sc.cursor = res.Next
 		}
 		sc.fetchedAt = time.Now()
@@ -491,7 +500,16 @@ func (h *botmuxHost) fetchTurnsPage(
 		return 0, res, "", err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, botmuxTurnsMaxBytes))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, botmuxTurnsMaxBytes+1))
+	if len(b) > botmuxTurnsMaxBytes {
+		if h.logf != nil {
+			h.logf("%v", errBotmuxTurnsTooLarge)
+		}
+		return resp.StatusCode, res, "", errBotmuxTurnsTooLarge
+	}
+	if err != nil {
+		return resp.StatusCode, res, "", err
+	}
 	if resp.StatusCode == http.StatusOK {
 		if err := json.Unmarshal(b, &res); err != nil {
 			return resp.StatusCode, res, "", err

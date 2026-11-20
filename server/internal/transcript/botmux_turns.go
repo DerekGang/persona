@@ -3,6 +3,7 @@ package transcript
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"path"
 	"slices"
 	"strings"
@@ -192,41 +193,39 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn, transcriptSessionI
 		if len(turn.Replies) == 0 {
 			continue
 		}
-		// Collect completed, successful `botmux send` tool_use items in this turn, counting how many
-		// send invocations each Bash call contains.
-		type sendCandidate struct {
-			itemIdx int
-			count   int
+		repliesByID := make(map[string]BotmuxTurnReply, len(turn.Replies))
+		for _, reply := range turn.Replies {
+			if reply.MessageID != "" {
+				repliesByID[reply.MessageID] = reply
+			}
 		}
-		var candidates []sendCandidate
-		totalSends := 0
 		for j := start + 1; j < end; j++ {
 			it := &items[j]
 			if it.Kind != proto.KindToolUse {
 				continue
 			}
-			if !botmuxToolResultSucceeded(resultsByToolUse[it.ToolUseID]) {
+			result := resultsByToolUse[it.ToolUseID]
+			if !botmuxToolResultSucceeded(result) {
 				continue
 			}
-			if cmd := botmuxCommand(it.ToolName, it.ToolInput); cmd != "" {
-				if c := countBotmuxSendInvocations(cmd); c > 0 {
-					candidates = append(candidates, sendCandidate{itemIdx: j, count: c})
-					totalSends += c
+			sendCount := countBotmuxSendInvocations(botmuxCommand(it.ToolName, it.ToolInput))
+			if sendCount == 0 {
+				continue
+			}
+			messageIDs := botmuxSendReceiptIDs(result.Text)
+			if len(messageIDs) > sendCount {
+				continue
+			}
+			var replies []BotmuxTurnReply
+			for _, messageID := range messageIDs {
+				if reply, ok := repliesByID[messageID]; ok {
+					replies = append(replies, reply)
+					delete(repliesByID, messageID)
 				}
 			}
-		}
-		// Only overlay by position when the number of successful send invocations matches len(turn.Replies).
-		// On a mismatch (e.g. a partial retry or unseen invocation), keep the safe per-call wrapper fallback.
-		if totalSends != len(turn.Replies) {
-			continue
-		}
-		ri := 0
-		for _, cand := range candidates {
-			slice := turn.Replies[ri : ri+cand.count]
-			ri += cand.count
-			if bm := botmuxFromReplies(slice, items[cand.itemIdx].Botmux); bm != nil {
+			if bm := botmuxFromReplies(replies, it.Botmux); bm != nil {
 				dst := clone()
-				dst[cand.itemIdx].Botmux = bm
+				dst[j].Botmux = bm
 			}
 		}
 	}
@@ -235,6 +234,24 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn, transcriptSessionI
 		return items
 	}
 	return out
+}
+
+func botmuxSendReceiptIDs(text string) []string {
+	var messageIDs []string
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var receipt struct {
+			Success   bool   `json:"success"`
+			MessageID string `json:"messageId"`
+		}
+		if json.Unmarshal([]byte(line), &receipt) == nil && receipt.Success && receipt.MessageID != "" {
+			messageIDs = append(messageIDs, receipt.MessageID)
+		}
+	}
+	return messageIDs
 }
 
 func itemInputHashCandidates(it proto.Item) []string {

@@ -491,7 +491,7 @@
           "role": "user",
           "kind": "tool_result",
           "tool_use_id": "tu1",
-          "text": "{\"ok\":true}"
+          "text": "{\"success\":true,\"messageId\":\"om_example_r1\"}"
         },
         {
           "id": "a2#0",
@@ -510,7 +510,7 @@
           "role": "user",
           "kind": "tool_result",
           "tool_use_id": "tu2",
-          "text": "{\"ok\":true}"
+          "text": "{\"success\":true,\"messageId\":\"om_example_r2\"}"
         }
       ],
       "want_botmux": [
@@ -705,7 +705,7 @@
           "role": "user",
           "kind": "tool_result",
           "tool_use_id": "tu_new",
-          "text": "{\"ok\":true}"
+          "text": "{\"success\":true,\"messageId\":\"om_example_r_new\"}"
         }
       ],
       "want_botmux": [

@@ -282,13 +282,13 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 			{ID: "r3", Seq: 7, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t3", Text: "ok"},
 			// Succeeded real send (card-file)
 			{ID: "a4", Seq: 8, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t4", ToolInput: json.RawMessage(`{"command":"botmux send --card-file /tmp/b.json"}`)},
-			{ID: "r4", Seq: 9, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t4", Text: `{"ok":true}`},
+			{ID: "r4", Seq: 9, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t4", Text: `{"success":true,"messageId":"om_card"}`},
 		}
 		turns := []BotmuxTurn{{
 			TurnID:  "turn1",
 			Seq:     1,
 			Inbound: []BotmuxTurnInbound{{Text: "run", Via: "lark"}},
-			Replies: []BotmuxTurnReply{{ResponseKind: "final", Text: "Confirmed card reply"}},
+			Replies: []BotmuxTurnReply{{MessageID: "om_card", ResponseKind: "final", Text: "Confirmed card reply"}},
 			Anchor:  anchor,
 		}}
 		got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
@@ -302,22 +302,23 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 		}
 	})
 
-	t.Run("multi-send in one Bash command aligns when counts match", func(t *testing.T) {
+	t.Run("multi-send in one Bash command follows receipt order", func(t *testing.T) {
 		items := []proto.Item{
 			{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
 			{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send --content-file /tmp/1.md && botmux send --content-file /tmp/2.md"}`)},
-			{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: "ok"},
+			{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: "sent\n" +
+				`{"success":true,"messageId":"om_one"}` + "\n" + `{"success":true,"messageId":"om_two"}`},
 			{ID: "a2", Seq: 4, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t2", ToolInput: json.RawMessage(`{"command":"botmux send --response-kind final --card-file /tmp/3.json"}`)},
-			{ID: "r2", Seq: 5, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t2", Text: "ok"},
+			{ID: "r2", Seq: 5, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t2", Text: `{"success":true,"messageId":"om_three"}`},
 		}
 		turns := []BotmuxTurn{{
 			TurnID:  "turn1",
 			Seq:     1,
 			Inbound: []BotmuxTurnInbound{{Text: "run", Via: "lark"}},
 			Replies: []BotmuxTurnReply{
-				{ResponseKind: "progress", Text: "Part one"},
-				{ResponseKind: "progress", Text: "Part two"},
-				{ResponseKind: "final", Text: "Part three"},
+				{MessageID: "om_three", ResponseKind: "final", Text: "Part three"},
+				{MessageID: "om_two", ResponseKind: "progress", Text: "Part two"},
+				{MessageID: "om_one", ResponseKind: "progress", Text: "Part one"},
 			},
 			Anchor: anchor,
 		}}
@@ -330,7 +331,7 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 		}
 	})
 
-	t.Run("mismatched send count skips positional overlay and keeps wrapper fallback", func(t *testing.T) {
+	t.Run("missing receipt keeps wrapper fallback", func(t *testing.T) {
 		items := []proto.Item{
 			{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
 			{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send 'wrapper one'"}`)},
@@ -341,14 +342,44 @@ func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) 
 			Seq:     1,
 			Inbound: []BotmuxTurnInbound{{Text: "run", Via: "lark"}},
 			Replies: []BotmuxTurnReply{
-				{ResponseKind: "progress", Text: "Structured 1"},
-				{ResponseKind: "final", Text: "Structured 2"},
+				{MessageID: "om_other", ResponseKind: "final", Text: "Structured reply"},
 			},
 			Anchor: anchor,
 		}}
 		got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
-		if got[1].Botmux == nil || got[1].Botmux.Text != "wrapper one" {
-			t.Fatalf("mismatch must keep wrapper fallback, got %+v", got[1].Botmux)
+		if got[1].Botmux == nil || got[1].Botmux.Text != "wrapper one" || got[1].Botmux.Final {
+			t.Fatalf("missing receipt must keep wrapper fallback, got %+v", got[1].Botmux)
+		}
+	})
+
+	t.Run("omitted reply never shifts later replies even with equal counts", func(t *testing.T) {
+		items := []proto.Item{
+			{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
+			{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send 'first fallback'"}`)},
+			{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: `{"success":true,"messageId":"om_missing"}`},
+			{ID: "a2", Seq: 4, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t2", ToolInput: json.RawMessage(`{"command":"botmux send --card-file /tmp/second.json"}`)},
+			{ID: "r2", Seq: 5, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t2", Text: `{"success":true,"messageId":"om_second"}`},
+		}
+		turns := []BotmuxTurn{{
+			TurnID: "turn1",
+			Replies: []BotmuxTurnReply{
+				{MessageID: "om_second", ResponseKind: "final", Text: "Second card"},
+			},
+			Anchor: anchor,
+		}}
+		for _, extra := range []bool{false, true} {
+			if extra {
+				turns[0].Replies = append(turns[0].Replies, BotmuxTurnReply{
+					MessageID: "om_unseen", ResponseKind: "progress", Text: "Unseen reply",
+				})
+			}
+			got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
+			if got[1].Botmux == nil || got[1].Botmux.Text != "first fallback" || got[1].Botmux.Final {
+				t.Fatalf("extra=%t: first send must retain its fallback, got %+v", extra, got[1].Botmux)
+			}
+			if got[3].Botmux == nil || got[3].Botmux.Text != "Second card" || !got[3].Botmux.Final {
+				t.Fatalf("extra=%t: second send must receive its final reply, got %+v", extra, got[3].Botmux)
+			}
 		}
 	})
 }

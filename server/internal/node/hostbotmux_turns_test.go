@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,7 @@ type fakeBotmuxTurnsServer struct {
 	turns        []transcript.BotmuxTurn
 	echoActor    bool
 	turnsGets    int
+	turnsSince   []string
 	triggers     []map[string]any
 	srv          *httptest.Server
 }
@@ -47,6 +49,7 @@ func newFakeBotmuxTurnsServer(t *testing.T) *fakeBotmuxTurnsServer {
 		}
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/turns") {
 			fs.turnsGets++
+			fs.turnsSince = append(fs.turnsSince, r.URL.Query().Get("since"))
 			w.Header().Set("Content-Type", "application/json")
 			if fs.turnsStatus != http.StatusOK {
 				w.WriteHeader(fs.turnsStatus)
@@ -182,7 +185,7 @@ func TestBotmuxWatchRepushesLateAndChangedFileReply(t *testing.T) {
 	lines := []string{
 		`{"type":"user","uuid":"u1","message":{"role":"user","content":"<user_message>Question</user_message>"}}`,
 		`{"type":"assistant","uuid":"a1","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"tool1","name":"Bash","input":{"command":"botmux send --card-file /tmp/card.json"}}]}}`,
-		`{"type":"user","uuid":"r1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool1","content":"ok"}]}}`,
+		`{"type":"user","uuid":"r1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool1","content":"{\"success\":true,\"messageId\":\"om_reply\"}"}]}}`,
 		`{"type":"assistant","uuid":"a2","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"tool2","name":"Bash","input":{"command":"echo done"}}]}}`,
 		`{"type":"user","uuid":"r2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool2","content":"ok"}]}}`,
 	}
@@ -204,7 +207,7 @@ func TestBotmuxWatchRepushesLateAndChangedFileReply(t *testing.T) {
 			Seq:    int64(index + 1),
 			Anchor: &transcript.BotmuxTurnAnchor{CLIEntryID: "u1"},
 			Replies: []transcript.BotmuxTurnReply{{
-				ResponseKind: "final", Text: text,
+				MessageID: "om_reply", ResponseKind: "final", Text: text,
 			}},
 		}}
 		fs.mu.Unlock()
@@ -492,7 +495,7 @@ func TestBotmuxStructuredReadIncrementalAndFold(t *testing.T) {
 		`{"type":"assistant","uuid":"a2","timestamp":"2026-11-19T01:01:01Z","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"go test ./..."}}]}}`,
 		`{"type":"user","uuid":"r2","timestamp":"2026-11-19T01:01:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"ok"}]}}`,
 		`{"type":"assistant","uuid":"a3","timestamp":"2026-11-19T01:01:03Z","message":{"role":"assistant","id":"m3","content":[{"type":"tool_use","id":"tu3","name":"Bash","input":{"command":"botmux send --card-file /tmp/card.json"}}]}}`,
-		`{"type":"user","uuid":"r3","timestamp":"2026-11-19T01:01:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu3","content":"ok"}]}}`,
+		`{"type":"user","uuid":"r3","timestamp":"2026-11-19T01:01:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu3","content":"{\"success\":true,\"messageId\":\"om_r1\"}"}]}}`,
 	}
 	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -559,6 +562,67 @@ func TestBotmuxStructuredReadIncrementalAndFold(t *testing.T) {
 	}
 	if gotUpdated != "Updated card reply" {
 		t.Fatalf("expected updated late reply, got %q", gotUpdated)
+	}
+}
+
+func TestBotmuxSessionTurnsRefetchesCurrentCursor(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.turns = []transcript.BotmuxTurn{{TurnID: "earlier", Seq: 4}, {TurnID: "current", Seq: 5}}
+	h := fs.makeHost("")
+	initial, _ := h.sessionTurns(ctx, sidA)
+	if len(initial) != 2 || len(initial[1].Replies) != 0 {
+		t.Fatalf("expected two turns with no reply at the cursor, got %+v", initial)
+	}
+
+	fs.mu.Lock()
+	fs.turns[1].Replies = []transcript.BotmuxTurnReply{{MessageID: "om_reply", Text: "Late reply"}}
+	fs.turns = append(fs.turns, transcript.BotmuxTurn{TurnID: "late", Seq: 5})
+	fs.mu.Unlock()
+	h.mu.Lock()
+	h.turnsCache[sidA].fetchedAt = time.Time{}
+	h.mu.Unlock()
+
+	got, _ := h.sessionTurns(ctx, sidA)
+	if len(got) != 3 || got[0].TurnID != "earlier" || got[1].TurnID != "current" ||
+		len(got[1].Replies) != 1 || got[1].Replies[0].Text != "Late reply" || got[2].TurnID != "late" {
+		t.Fatalf("expected cached history, updated turn and new turn without duplicates, got %+v", got)
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if want := []string{"0", "4"}; !reflect.DeepEqual(fs.turnsSince, want) {
+		t.Fatalf("since values = %v, want %v", fs.turnsSince, want)
+	}
+}
+
+func TestBotmuxFetchTurnsPageResponseSize(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		extra int
+	}{
+		{name: "exact limit"},
+		{name: "one byte over", extra: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"ok":true}`
+			body += strings.Repeat(" ", botmuxTurnsMaxBytes+test.extra-len(body))
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			defer srv.Close()
+			h := &botmuxHost{client: srv.Client()}
+			status, res, _, err := h.fetchTurnsPage(context.Background(), srv.URL, "test", sidA, "0", 1)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if test.extra > 0 {
+				if !errors.Is(err, errBotmuxTurnsTooLarge) || res.OK {
+					t.Fatalf("oversize response was accepted or parsed: %+v, %v", res, err)
+				}
+			} else if err != nil || !res.OK {
+				t.Fatalf("response at limit was rejected: %+v, %v", res, err)
+			}
+		})
 	}
 }
 
@@ -789,7 +853,7 @@ func TestBotmuxFoldExpandAndAfterSeqPreserveStructuredReplies(t *testing.T) {
 		`{"type":"assistant","uuid":"a1","timestamp":"2026-11-19T01:00:01Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
 		`{"type":"user","uuid":"r1","timestamp":"2026-11-19T01:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok"}]}}`,
 		`{"type":"assistant","uuid":"a2","timestamp":"2026-11-19T01:00:03Z","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"botmux send --card-file /tmp/card.json"}}]}}`,
-		`{"type":"user","uuid":"r2","timestamp":"2026-11-19T01:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"{\"ok\":true}"}]}}`,
+		`{"type":"user","uuid":"r2","timestamp":"2026-11-19T01:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"{\"success\":true,\"messageId\":\"om_r1\"}"}]}}`,
 	}
 	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
