@@ -23,6 +23,7 @@ import { makeSessionLookup } from "../lib/todos";
 import { useRestoredTodos } from "../lib/todo-restore";
 import { useLarkOn, useStore } from "../lib/store";
 import { connPhase } from "../lib/connection";
+import { useStarredCount } from "../lib/starred-rows";
 import { useWorkspaceBoardSetting } from "../lib/workspace-board-setting";
 import type { Session } from "../lib/types";
 import type { MenuItem } from "../ui/atoms";
@@ -113,6 +114,7 @@ export function useNavPages() {
   // off unless turned on in Settings › General › Agent (#2475); null until the hub answered
   const board = useWorkspaceBoardSetting().enabled;
   const boardOn = board === true;
+  const stars = useStarredCount(useStore((s) => s.features.includes("starred_messages")));
 
   const main = assistant?.main ? assistant.conversations.find((c) => c.session_id === assistant.main) : undefined;
   const page: Record<(typeof NAV_PAGES)[number], NavPage | false> = {
@@ -120,6 +122,7 @@ export function useNavPages() {
     inbox: { k: "inbox", to: { name: "inbox" }, icon: "inbox", label: t("sidebar.nav_inbox"), short: t("sidebar.nav_inbox_short"), badge: inbox || undefined, badgeTone: "attention", title: inbox ? t("sidebar.inbox_badge_title", { count: inbox }) : undefined },
     health: { k: "health", to: { name: "health" }, icon: "heart", label: t("sidebar.nav_health"), short: t("sidebar.nav_health_short") },
     messages: larkHome && { k: "messages", to: { name: "messages" }, icon: "chat", label: t("sidebar.nav_messages") },
+    starred: stars !== undefined && { k: "starred", to: { name: "starred" }, icon: "star", label: t("starred.title"), badge: stars || undefined, badgeLabel: t("starred.count", { count: stars }) },
     "workspace-board": boardOn && { k: "workspace-board", to: { name: "workspace-board" }, icon: "layers", label: t("sidebar.nav_board"), short: t("sidebar.nav_board_short") },
     todos: todosSupported !== false && { k: "todos", to: { name: "todos" }, icon: "todo", label: t("sidebar.nav_todos"), badge: todosBadge || undefined, badgeLabel: todosBadgeLabel, title: todosBadgeLabel },
     routines: { k: "routines", to: { name: "routines" }, icon: "clock", label: t("sidebar.nav_routines"), short: t("sidebar.nav_routines_short") },
@@ -136,7 +139,7 @@ export function useNavPages() {
           return tint({ k: key, to: pageRoute(u.extension, u.id), icon: navIcon(u.icon), label: u.title, badge: u.badge?.text || undefined, badgeTone: BADGE_TONE[toneOf(u.badge?.tone)], title: u.extension_name ? `${u.title} · ${u.extension_name}` : u.title, group: u.group }, colorOf(u.icon_color));
         })
       : []),
-    ...(page[k] ? [tint(page[k], k === "terminal" ? undefined : BUILTIN_PAGE_COLORS[k])] : []),
+    ...(page[k] ? [tint(page[k], k === "terminal" || k === "starred" ? undefined : BUILTIN_PAGE_COLORS[k])] : []),
   ]);
 
   // as arranged in Settings › General › Sidebar pages: the list, and the pages that wait under More (docs/web/web.md "The sidebar's pages")
