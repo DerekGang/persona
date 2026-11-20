@@ -533,15 +533,19 @@ func (h *botmuxHost) fetchTurnsPage(
 	return resp.StatusCode, res, errBody.Error, nil
 }
 
-// botmuxSessionID returns the BotMux session ID when sessionID belongs to a BotMux session, or "" otherwise.
-func (n *Node) botmuxSessionID(sessionID string) string {
+// botmuxSessionID identifies a BotMux transcript and reports whether its session can be refreshed.
+func (n *Node) botmuxSessionID(sessionID string) (id string, live bool) {
 	n.mu.Lock()
-	pane := n.agents[sessionID].PaneID
+	agent, listed := n.agents[sessionID]
+	pane := agent.PaneID
+	if !listed {
+		pane = n.lastPanes[sessionID]
+	}
 	n.mu.Unlock()
 	if ref := host.ParsePane(pane); ref.Kind == host.Botmux {
-		return ref.ID
+		return ref.ID, listed && agent.AgentStatus != proto.StatusOffline
 	}
-	return ""
+	return "", false
 }
 
 // applyBotmuxTurns decorates BotMux wrapper items and overlays structured BotMux turn records for a BotMux session.
@@ -562,13 +566,13 @@ func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.
 	if len(items) == 0 {
 		return items
 	}
-	bmxSID := n.botmuxSessionID(sessionID)
+	bmxSID, live := n.botmuxSessionID(sessionID)
 	if bmxSID == "" {
 		return items
 	}
 	var turns []transcript.BotmuxTurn
 	if h, ok := n.hosts.Get(host.Botmux).(*botmuxHost); ok {
-		if cacheOnly {
+		if cacheOnly || !live {
 			turns = h.cachedSessionTurns(bmxSID)
 		} else {
 			turns, _ = h.sessionTurns(ctx, bmxSID)
@@ -621,8 +625,8 @@ func (n *Node) refreshWatchedBotmux(w *watch) {
 	if w == nil || w.ctx == nil || w.ctx.Err() != nil || n.peer == nil {
 		return
 	}
-	bmxSID := n.botmuxSessionID(w.id)
-	if bmxSID == "" {
+	bmxSID, live := n.botmuxSessionID(w.id)
+	if !live || bmxSID == "" {
 		return
 	}
 	if h, ok := n.hosts.Get(host.Botmux).(*botmuxHost); ok {
@@ -633,7 +637,8 @@ func (n *Node) refreshWatchedBotmux(w *watch) {
 			n.mu.Lock()
 			watched := n.watches[w.id] == w
 			n.mu.Unlock()
-			if !watched || w.ctx.Err() != nil || n.botmuxSessionID(w.id) != bmxSID {
+			current, live := n.botmuxSessionID(w.id)
+			if !watched || w.ctx.Err() != nil || !live || current != bmxSID {
 				return
 			}
 			items, history := w.f.LoadedItems()

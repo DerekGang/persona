@@ -264,6 +264,58 @@ func TestBotmuxDecorateAndFoldSkipRunningAndErroredSends(t *testing.T) {
 	}
 }
 
+func TestBotmuxDecorateSendOutcome(t *testing.T) {
+	for _, status := range []string{
+		"", proto.OutcomeOK, proto.OutcomeBackground, proto.OutcomeTimedOut,
+		proto.OutcomeFailed, proto.OutcomeNoMatch, proto.OutcomeDenied, proto.OutcomeBlocked,
+		proto.OutcomeInterrupted, "unknown",
+	} {
+		t.Run("status="+status, func(t *testing.T) {
+			items := []proto.Item{
+				{Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "send", ToolInput: json.RawMessage(`{"command":"botmux send 'hello'"}`)},
+				{Kind: proto.KindToolResult, ToolUseID: "send", Outcome: &proto.ToolOutcome{Status: status}},
+			}
+			if got := DecorateBotmux(items)[0].Botmux; (got != nil) != (status == "" || status == proto.OutcomeOK) {
+				t.Fatalf("unexpected decoration for outcome %q: %+v", status, got)
+			}
+		})
+	}
+}
+
+func TestBotmuxDecorateSendShellStatus(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{"semicolon", `/missing/botmux send 'hello'; true`, false},
+		{"or", `botmux send 'hello' || true`, false},
+		{"pipe", `botmux send 'hello' | cat`, false},
+		{"background", `botmux send 'hello' &`, false},
+		{"newline", "botmux send 'hello'\ntrue", false},
+		{"masked chain", `cd /tmp && botmux send 'hello' && echo ok || true`, false},
+		{"background chain", `cd /tmp && botmux send 'hello' &`, false},
+		{"heredoc then newline", "botmux send <<'EOF'\nhello\nEOF\ntrue", false},
+		{"and chain", "cd /tmp &&\nbotmux send 'hello' && echo ok", true},
+		{"quoted operators", "botmux send 'hello; || | &\nworld' # comment", true},
+		{"heredoc", "cd /tmp && botmux send <<'EOF'\nhello; || | &\nEOF", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input, err := json.Marshal(map[string]string{"command": test.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			items := []proto.Item{
+				{Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "send", ToolInput: input},
+				{Kind: proto.KindToolResult, ToolUseID: "send", Text: "ok"},
+			}
+			if got := DecorateBotmux(items)[0].Botmux; (got != nil) != test.want {
+				t.Fatalf("decoration = %+v, want present = %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) {
 	userText := "<user_message>\nrun\n</user_message>"
 	anchor := &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(userText)}

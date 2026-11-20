@@ -8,6 +8,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // BotMux (the Lark topic ↔ coding CLI bridge, docs/integrations/engines.md "botmux") hands the agent each Lark
@@ -629,10 +630,32 @@ func botmuxToolResultSucceeded(res *proto.Item) bool {
 	if res == nil || res.IsError {
 		return false
 	}
-	if res.Outcome != nil && res.Outcome.ExitCode != nil && *res.Outcome.ExitCode != 0 {
-		return false
+	if outcome := res.Outcome; outcome != nil {
+		if (outcome.Status != "" && outcome.Status != proto.OutcomeOK) ||
+			(outcome.ExitCode != nil && *outcome.ExitCode != 0) {
+			return false
+		}
 	}
 	return !botmuxResultReportsFailure(res.Text)
+}
+
+func botmuxSendStatusPreserved(command string) bool {
+	script, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	return err == nil && len(script.Stmts) == 1 && botmuxStatusPreservingStmt(script.Stmts[0])
+}
+
+func botmuxStatusPreservingStmt(stmt *syntax.Stmt) bool {
+	if stmt.Background || stmt.Negated || stmt.Coprocess {
+		return false
+	}
+	switch cmd := stmt.Cmd.(type) {
+	case *syntax.CallExpr:
+		return true
+	case *syntax.BinaryCmd:
+		return cmd.Op == syntax.AndStmt && botmuxStatusPreservingStmt(cmd.X) && botmuxStatusPreservingStmt(cmd.Y)
+	default:
+		return false
+	}
 }
 
 // DecorateBotmux populates Item.Botmux from BotMux wrappers (user lines) and completed, successful
@@ -665,6 +688,9 @@ func DecorateBotmux(items []proto.Item) []proto.Item {
 			if cmd := botmuxCommand(it.ToolName, it.ToolInput); cmd != "" {
 				if botmuxToolResultSucceeded(results[it.ToolUseID]) {
 					bm = BotmuxSend(cmd)
+					if bm != nil && !botmuxSendStatusPreserved(cmd) {
+						bm = nil
+					}
 				}
 			}
 		default:

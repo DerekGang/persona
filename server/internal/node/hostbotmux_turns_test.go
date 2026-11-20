@@ -616,6 +616,50 @@ func TestBotmuxStructuredReadIncrementalAndFold(t *testing.T) {
 	if gotUpdated != "Updated card reply" {
 		t.Fatalf("expected updated late reply, got %q", gotUpdated)
 	}
+
+	t.Run("offline history uses fallback and cached turns without refresh", func(t *testing.T) {
+		n.setAgents(nil)
+		n.mu.Lock()
+		_, listed := n.agents[sidA]
+		n.mu.Unlock()
+		if listed {
+			t.Fatal("BotMux session is still listed")
+		}
+
+		h.mu.Lock()
+		h.turnsCache[sidA].fetchedAt = time.Now().Add(-botmuxTurnsFetchMinInterval - time.Second)
+		h.mu.Unlock()
+		fs.mu.Lock()
+		getsBefore := fs.turnsGets
+		fs.mu.Unlock()
+
+		resp, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{"session_id": sidA, "limit": 50}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var page struct {
+			Items []proto.Item `json:"items"`
+		}
+		if err := json.Unmarshal(bmxMustJSON(resp), &page); err != nil {
+			t.Fatal(err)
+		}
+		decoded := make(map[string]string)
+		for _, item := range page.Items {
+			if item.Botmux != nil {
+				decoded[item.ID] = item.Botmux.Text
+			}
+		}
+		for id, want := range map[string]string{"u1#0": "old turn", "a1#0": "old reply", "a3#0": "Updated card reply"} {
+			if got := decoded[id]; got != want {
+				t.Errorf("offline item %s = %q, want %q", id, got, want)
+			}
+		}
+		fs.mu.Lock()
+		defer fs.mu.Unlock()
+		if fs.turnsGets != getsBefore {
+			t.Errorf("offline read requested turns: %d additional GETs", fs.turnsGets-getsBefore)
+		}
+	})
 }
 
 func TestBotmuxSessionTurnsRefetchesCurrentCursor(t *testing.T) {
