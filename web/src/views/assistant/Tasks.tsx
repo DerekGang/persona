@@ -70,8 +70,7 @@ import { feedWake, HandoffCard, HandoffCards, taskHandoffs } from "./Handoff";
 import { latestReview, parkedLine, progressLine } from "../../lib/supervision";
 import { namedLauncher, providerIdNote, providerTitle, useProviderNames } from "../../lib/provider-names";
 import { useChosenManager, useLinkManager } from "../../lib/manager-choice";
-import { AnsweredSummary, InteractionCard, underCard } from "../chat/Interactions";
-import { NextWaitingRow } from "../chat/NextWaitingRow";
+import { AnsweredSummary, InteractionCard, NextWaitingRow, underCard } from "../chat/Interactions";
 import type { RuleCard } from "../../lib/rule-suggestion";
 import { cardLine } from "../chat/dock";
 import { interactionKicker } from "../../lib/row-line";
@@ -1115,7 +1114,7 @@ function OwnAskRow({ ix, onOpen }: { ix: Interaction; onOpen: () => void }) {
   );
 }
 
-export const AssistantActionBar = memo(function AssistantActionBar({ conversation, ownAsks = NO_ASKS, streaming = false, offerNext }: {
+export const AssistantActionBar = memo(function AssistantActionBar({ conversation, ownAsks = NO_ASKS, streaming, offerNext }: {
   conversation: string;
   ownAsks?: Interaction[];
   /** A growing answer keeps the one-line entries, but hides detailed trays and the next-chat link (#7770). */
@@ -1132,7 +1131,7 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   const lastOwn = useRef<string | null>(null);
   const setTray = (next: AssistantTray | null) => {
     // Streaming must not open or replace a tray. An already open one stays mounted while hidden, preserving any draft.
-    if (streaming && next !== null) return;
+    if (streaming && next) return;
     setTrayNow(next);
     setExpanded(false);
     setOpenRows(new Set());
@@ -1255,12 +1254,12 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   };
   const answeredHere = offerNext && Object.values(answered).some((card) =>
     card.ix.machine_id === offerNext.mid && (card.ix.session_id === offerNext.sid || card.ix.folded_under === offerNext.sid));
-  const next = offerNext && answeredHere && ownAsks.length === 0 && !streaming ? (
+  const next = offerNext && answeredHere && !ownAsks.length && !streaming ? (
     <NextWaitingRow
       mid={offerNext.mid}
       sid={offerNext.sid}
       compact
-      className={cx(DOCK_CAPSULE, "max-w-[240px] gap-2 bg-field font-medium text-ink hover:bg-hover")}
+      className={cx(DOCK_CAPSULE, "max-w-60 gap-2 bg-field font-medium text-ink transition-colors hover:bg-hover")}
     />
   ) : null;
   return (

@@ -519,8 +519,6 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const stopped = Boolean(stoppedTurn && stoppedTurn === lastSeg?.user?.id);
   const canShowPreview = state !== "offline" && state !== "needs_you" && !stopped && !turnFailure;
   const streaming = Boolean(tr.streaming) && !tr.streamEnded && (state === "working" || canShowPreview);
-  // The action row yields to any streamed answer, even before the hub moves the session to working (#7770).
-  const streamingNow = Boolean(tr.streaming);
   const working = state === "working" || streaming || outgoing > 0 || awaiting;
   // The user's time stays in its row until the finished reply can show its own. An item that lands
   // while the turn is still running otherwise removes a line above the live work and moves it up.
@@ -2317,7 +2315,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
             {voiceState === "live" && <TaskQuestions conversation={sid} />}
             {/* The conversation's own cards are in the chat under the bar (#4883, as iOS): Needs you counts them and
                 lists a row for each that closes the tray onto its card. */}
-            {voiceState !== "live" && <AssistantActionBar key={sid} conversation={sid} ownAsks={interactions} streaming={streamingNow} offerNext={assistant || inPage ? { mid, sid } : undefined} />}
+            {voiceState !== "live" && <AssistantActionBar key={sid} conversation={sid} ownAsks={interactions} streaming={!!tr.streaming} offerNext={assistant || inPage ? { mid, sid } : undefined} />}
             {voiceState !== "live" && <RouteChip conversation={sid} />}
             {/* items handed to this conversation that are still open: "Wrap up" asks it for the final write-back (#5932) */}
             {voiceState !== "live" && isMain && <Suspense fallback={null}><LazyWrapUpChips conversation={sid} /></Suspense>}

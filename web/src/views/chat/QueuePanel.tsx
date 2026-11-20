@@ -45,6 +45,8 @@ const PHOTO_THUMB_SIZE = 96;
 const HOLD_MS = 1500;
 /** How long a keyboard reorder's handle takes the focus back when its row is drawn again (the agent re-queues them). */
 const REFOCUS_MS = 5000;
+const QUEUE_SUMMARY_CLASSES =
+  "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 text-left text-[11.5px] font-medium text-ink-3";
 
 interface Row {
   raw: string;
@@ -313,7 +315,7 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
           data-queue-summary
           data-queue-toggle
           onClick={() => setOpen((o) => !o)}
-          className="touch-hit flex h-7 w-full min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 text-left text-[11.5px] font-medium text-ink-3 transition-colors hover:bg-hover"
+          className={cx("touch-hit", QUEUE_SUMMARY_CLASSES, "transition-colors hover:bg-hover")}
         >
           <Icon name="inbox" size={13} />
           <span className="min-w-0 flex-1 truncate">{t("chat-queuepanel.summary", { count: queued.length })}</span>
@@ -321,7 +323,7 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
           <Icon name="chevron" size={12} stroke={2.2} className={cx("shrink-0 transition-transform duration-200", open && "rotate-180")} />
         </button>
       ) : (
-        <div data-queue-summary className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded-[8px] px-1.5 text-left text-[11.5px] font-medium text-ink-3">
+        <div data-queue-summary className={QUEUE_SUMMARY_CLASSES}>
           <Icon name="inbox" size={13} />
           <span className="min-w-0 flex-1 truncate">{t("chat-queuepanel.summary", { count: queued.length })}</span>
         </div>
