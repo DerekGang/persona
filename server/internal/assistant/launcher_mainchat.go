@@ -34,57 +34,116 @@ const (
 )
 
 func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainChatFit, error) {
+	fit, refusal, _ := s.mainChatFitState(ctx, machine, name, false)
+	return fit, refusal
+}
+
+// mainChatFitState also reports whether gone is a discovery miss that may recover. A stored provider outside the
+// machine's scope is not a transient miss and must not hold a message for the rediscovery window.
+func (s *Service) mainChatFitState(ctx context.Context, machine, name string, refresh bool) (mainChatFit, error, bool) {
 	if proto.IsExternalLauncher(name) {
 		_, err := s.externalTarget(ctx, machine, name)
 		if err != nil {
-			return mainChatRefused, err
+			return mainChatRefused, err, false
 		}
-		return mainChatFits, nil
+		return mainChatFits, nil, false
 	}
 	if name == "" || name == "claude" {
-		return mainChatFits, nil
+		return mainChatFits, nil, false
 	}
 	ctx = withUnhidden(withSettingsMemo(ctx), name)
 	if m, managed := s.managedNamed(ctx, name); managed { // the same on every machine in its scope, except managed agy (needs the agy runtime there)
 		if !s.usableOn(ctx, m, machine) {
-			return mainChatGone, nil
+			return mainChatGone, nil, false
 		}
 		if m.Kind == "api" || m.Agent != "agy" {
 			allowed, err := s.assistantProviders(ctx, machine, nil)
 			if err != nil || allowed[name] {
-				return mainChatFits, nil
+				return mainChatFits, nil, false
 			}
-			return mainChatRefused, s.mainChatRefusal(ctx, machine, name, "")
+			return mainChatRefused, s.mainChatRefusal(ctx, machine, name, ""), false
 		}
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	if refresh {
+		cctx = withLauncherRefresh(cctx)
+	}
 	picker, err := s.pickerLaunchers(cctx, machine)
 	if err != nil || !slices.ContainsFunc(picker, func(l ConfiguredLauncher) bool {
 		source := compat.Source(l.Source)
 		return l.Source != "" && source != "persona" && source != "builtin"
 	}) {
-		return mainChatFits, nil // the machine's own list did not come: a shell launcher may still be there
+		return mainChatFits, nil, false // the machine's own list did not come: a shell launcher may still be there
 	}
 	fits, err := s.assistantLaunchersOf(cctx, machine, picker)
 	named := func(l ConfiguredLauncher) bool { return l.Name == name }
 	switch {
 	case err != nil || slices.ContainsFunc(fits, named):
-		return mainChatFits, nil
+		return mainChatFits, nil, false
 	case slices.ContainsFunc(picker, named):
 		label := launcherLabel(picker[slices.IndexFunc(picker, named)])
 		instead, _ := assistantFor(fits, name)
-		return mainChatRefused, s.mainChatRefusal(ctx, machine, label, launcherLabel(instead))
+		return mainChatRefused, s.mainChatRefusal(ctx, machine, label, launcherLabel(instead)), false
 	}
-	return mainChatGone, nil
+	return mainChatGone, nil, true
+}
+
+const (
+	defaultLauncherRecoveryWait = 30 * time.Second
+	maxLauncherRecoveryWait     = 2 * time.Minute
+)
+
+var launcherRecoveryPoll = time.Second
+
+func (s *Service) launcherRecovery(ctx context.Context, machine, name string) (time.Duration, []string) {
+	cfg := s.hello(ctx).Models.LauncherRecovery[machine]
+	wait := defaultLauncherRecoveryWait
+	if cfg.WaitSeconds > 0 {
+		wait = time.Duration(cfg.WaitSeconds) * time.Second
+	}
+	if wait > maxLauncherRecoveryWait {
+		wait = maxLauncherRecoveryWait
+	}
+	return wait, cfg.Fallbacks[name]
+}
+
+// waitMainChatLauncher retries fresh discovery inside one total budget. Request cancellation wins; exhaustion returns
+// the original miss so finishMainChatModel can use an explicitly configured substitute or refuse the send.
+func (s *Service) waitMainChatLauncher(ctx context.Context, machine, name string, wait time.Duration) (mainChatFit, error) {
+	wctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	ticker := time.NewTicker(launcherRecoveryPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-wctx.Done():
+			if ctx.Err() != nil {
+				return mainChatGone, ctx.Err()
+			}
+			return mainChatGone, nil
+		case <-ticker.C:
+			fit, refusal, _ := s.mainChatFitState(wctx, machine, name, true)
+			if ctx.Err() != nil {
+				return mainChatGone, ctx.Err()
+			}
+			if wctx.Err() != nil {
+				return mainChatGone, nil
+			}
+			if fit != mainChatGone {
+				return fit, refusal
+			}
+		}
+	}
 }
 
 // finishMainChatModel validates the binding after model resolution, including a default or a legacy fallback that
-// was not the caller's explicit pick. A launcher that can't run the assistant there (gone, or not one for it) gives way
-// to one of the same agent kind (mainChatInstead), never another: a Codex conversation started on Claude, or the
-// other way round, ran without the configured model or credentials (#4659). The model stays when the substitute's list
-// has it. With no substitute, nothing is sent and the user is told why. note says which launcher runs instead, in the
-// user's language.
+// was not the caller's explicit pick. A discovery miss gets one bounded rediscovery window. If the launcher still
+// cannot run Assistant there, only launchers explicitly named in its recovery policy may replace it, and only ones of
+// the same agent kind (mainChatInstead): a Codex conversation started on Claude, or the other way round, would run
+// without the configured model or credentials (#4659). Built-in claude has no implicit priority or eligibility. The
+// model stays when an approved substitute's list has it. With no approved substitute, nothing is sent and the user is
+// told why. note says which launcher runs instead, in the user's language.
 func (s *Service) finishMainChatModel(ctx context.Context, machine, purpose string, params map[string]any, picked bool) (note string, err error) {
 	name, _ := params["launcher"].(string)
 	if proto.IsExternalLauncher(name) {
@@ -94,18 +153,26 @@ func (s *Service) finishMainChatModel(ctx context.Context, machine, purpose stri
 		_, err := s.externalTarget(ctx, machine, name)
 		return "", err // never swap an explicit external selection
 	}
-	fit, refusal := s.mainChatFit(ctx, machine, name)
+	fit, refusal, transient := s.mainChatFitState(ctx, machine, name, false)
+	wait, fallbacks := s.launcherRecovery(ctx, machine, name)
+	if fit == mainChatGone && transient && wait > 0 {
+		s.logf("[%s] resolved assistant launcher %s is missing; refreshing discovery for up to %s", machine, name, wait)
+		fit, refusal = s.waitMainChatLauncher(ctx, machine, name, wait)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+	}
 	if fit == mainChatFits {
 		return "", nil
 	}
-	launchers, err := s.assistantLaunchers(ctx, machine)
+	launchers, err := s.assistantLaunchers(withLauncherRefresh(ctx), machine)
 	if err != nil {
 		return "", err
 	}
 	kind := agentKind(s.launcherAgent(withUnhidden(ctx, name), machine, name))
 	d, _ := s.device(ctx, machine)
 	where := firstNonEmpty(d.Name, machine)
-	to := s.mainChatInstead(ctx, d, name, kind, launchers)
+	to := s.mainChatInstead(ctx, d, name, kind, launchers, fallbacks)
 	if to == "" {
 		if refusal != nil {
 			return "", refusal
@@ -154,24 +221,23 @@ func withLauncherNote(ctx context.Context) (context.Context, *string) {
 	return context.WithValue(ctx, launcherNoteKey{}, n), n
 }
 
-// mainChatInstead is the launcher of agent kind that runs the assistant on machine d in place of name: for Claude,
-// plain claude first when d has Claude Code (its node said a version, or its list names claude) and the user did not
-// hide it, as launcherInstead; then the main chat's list in order. A launcher whose latest health check failed (signed
-// out, out of quota, …) is left out. "" when none fits.
-func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind string, launchers []ConfiguredLauncher) string {
-	var names []string
-	if kind == "claude" && !slices.Contains(s.hiddenLaunchers(ctx), "claude") &&
-		(d.ClaudeVersion != "" || slices.ContainsFunc(launchers, func(l ConfiguredLauncher) bool { return l.Name == "claude" })) {
-		names = append(names, "claude")
-	}
-	for _, l := range launchers {
-		if !proto.IsExternalLauncher(l.Name) && l.Source != proto.ExternalLauncherSource &&
-			agentKind(cmp.Or(l.AgentType, l.Agent)) == kind && !slices.Contains(names, l.Name) {
-			names = append(names, l.Name)
-		}
-	}
+// mainChatInstead chooses only from names, the resolved launcher's explicitly configured ordered substitutes. Every
+// candidate must currently run Assistant on the machine, have the same agent kind, and have no failed health check.
+// In particular, plain claude is not implicitly preferred or eligible. "" when no approved substitute fits.
+func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind string, launchers []ConfiguredLauncher, names []string) string {
 	for _, n := range names {
-		if _, bad := s.launcherUnusable(ctx, d.ID, n); n != name && !bad {
+		if n == name || proto.IsExternalLauncher(n) {
+			continue
+		}
+		i := slices.IndexFunc(launchers, func(l ConfiguredLauncher) bool { return l.Name == n })
+		if i < 0 {
+			continue
+		}
+		l := launchers[i]
+		if l.Source == proto.ExternalLauncherSource || agentKind(cmp.Or(l.AgentType, l.Agent)) != kind {
+			continue
+		}
+		if _, bad := s.launcherUnusable(ctx, d.ID, n); !bad {
 			return n
 		}
 	}

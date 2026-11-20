@@ -32,7 +32,8 @@ func (s *Service) taskModelBaseline(ctx context.Context, machine string) (ModelB
 	}
 	d, _ := s.device(ctx, machine)
 	kind := agentKind(s.launcherAgent(ctx, s.settings(ctx).MachineID, name))
-	if replacement := s.mainChatInstead(ctx, d, name, kind, launchers); replacement != "" {
+	_, fallbacks := s.launcherRecovery(ctx, machine, name)
+	if replacement := s.mainChatInstead(ctx, d, name, kind, launchers, fallbacks); replacement != "" {
 		local.Provider = launcherProvider(replacement)
 		return local, nil
 	}

@@ -89,12 +89,13 @@ func launcherOutput(out string) string {
 
 // launchers lists the launchers of this machine's login shell: the `_claude_launchers` helper's (claude wrapper
 // functions), then every alias that runs claude (`alias dmcc="ANTHROPIC_BASE_URL=… claude …"`), by name. A name
-// the helper lists is not repeated; none at all: plain claude.
-func (n *Node) launchers(ctx context.Context) ([]proto.Launcher, error) {
+// the helper lists is not repeated; none at all: plain claude. refresh true bypasses and replaces the one-minute
+// cache; the manager uses it only while recovering a specific Assistant launcher missing from the cached snapshot.
+func (n *Node) launchers(ctx context.Context, refresh ...bool) ([]proto.Launcher, error) {
 	launcherCache.fetch.Lock()
 	defer launcherCache.fetch.Unlock()
 	launcherCache.Lock()
-	if time.Since(launcherCache.at) < time.Minute && launcherCache.list != nil {
+	if !(len(refresh) > 0 && refresh[0]) && time.Since(launcherCache.at) < time.Minute && launcherCache.list != nil {
 		list := launcherCache.list
 		launcherCache.Unlock()
 		return list, nil

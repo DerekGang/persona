@@ -46,7 +46,9 @@ func TestMainChatFallbackKeepsTheAgentKind(t *testing.T) {
 		t.Fatalf("hidden: %v %v", p, err)
 	}
 
-	// Gone from the computer: plain claude, same kind, same model; the note says so.
+	// Gone from the computer: the explicitly approved plain claude is the same kind and keeps the model; the note says so.
+	fastLauncherRecovery(t)
+	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{"server": {WaitSeconds: 1, Fallbacks: map[string][]string{"wrap": {"claude"}}}}
 	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}}
 	if p, err := sendMain(t, s); err != nil || p["launcher"] != "claude" || p["model"] != "claude-opus-5-5" {
 		t.Fatalf("gone: %v %v", p, err)
@@ -75,6 +77,8 @@ func TestMainChatFallbackKeepsTheAgentKind(t *testing.T) {
 func TestMainChatFallbackToAManagedLauncherDropsAModelItLacks(t *testing.T) {
 	ctx := context.Background()
 	s, f := kindFixture(t)
+	fastLauncherRecovery(t)
+	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{"server": {WaitSeconds: 1, Fallbacks: map[string][]string{"wrap": {"gw"}}}}
 	f.devices[0].ClaudeVersion = ""
 	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}}
 	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "gw", BaseURL: "https://gw.example", Model: "m1"}})
