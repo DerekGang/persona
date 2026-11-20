@@ -1793,13 +1793,13 @@ What the apps draw and when they ask (the user's own Agents' and assistant's rep
 One protocol for every picture of a person or a conversation the apps show. Who it serves: everyone, who recognises a face faster than a letter; the apps never reach a third party for one.
 
 - **The value a source gives**: one string, `avatar`, wherever a source names a picture (step 1: a connector's Inbox thing, `InboxThing.avatar`). `https://…` is an address on the open internet that the manager fetches; anything else is one of the source's own media refs, whose bytes its extension gives (a connector's `Media(ref)`, the same refs its conversation page carries). An `http://` address, or a value over 2 KiB, is none. A value names fixed bytes: a changed picture gets a new value (a new ref, a new address, or a version in it), which is what makes caching for good safe.
-- **What the apps get**: never the value. The lists name the picture's hub path beside the field that has one, `avatar_url` = `/api/v1/avatars/{source}/{value as unpadded base64url}` (`extwire.AvatarURL`), made when listed (stored items keep the source's value). Step 1: an Inbox item's `connector.avatar_url`. Older fields keep the meaning older apps know (a Feishu item's `avatar`, a conversation page's `avatar` refs); without `avatar_url` (an older hub, a source that sends none) the apps draw the initial.
+- **What the apps get**: the manager lists the hub path in `avatar_url`, `/api/v1/avatars/{source}/{value as unpadded base64url}` (`extwire.AvatarURL`). Inbox items list `connector.avatar_url`; the stored item keeps the source value. Connector thread pages (#10994) list optional `avatar_url` on `chat`, `chat.author` and each message's `sender`. Their existing `avatar` fields still carry the original values. An updated app reading a thread from an older hub loads its legacy ref through `/api/v1/connectors/{id}/media?ref=`. A missing or unavailable picture shows the initial.
 - **`GET /api/v1/avatars/{source}/{value}?size=<px>`** (the extension manager's, `extmgr/avatars.go`): full devices only (403 otherwise); no extension scope opens it. `{source}` is an installed connector (404 otherwise; a ref also needs its `threads`). Stateless: the value is in the path. `size` is rounded up to 64, 128, 256 or 512 (none: 128). The picture is decoded, turned upright, scaled to fit (never enlarged) and encoded again (JPEG, PNG when transparent), which drops its metadata and anything that is not the picture: an extension's bytes are never served as they came. A ref whose bytes the connector's conversation page kept (`cache/connector-media/`) is drawn from them, signed out too.
 - **Fetching an address**: `remoteimage`'s Avatars profile, the checks of "Remote images (#9473)" with these limits: `https` only, at the start and at every redirect (at most 3); every answer for the host public, the checked numbers dialled (no rebinding), a fake-IP proxy's names through the same DoH (`manager.json` `remote_images.doh`); no cookies, credentials or Referer; PNG, JPEG, WebP and GIF (its first frame) only, read from the bytes (HEIC, AVIF, SVG and everything else refused); 4 MiB per source, 16 megapixels, 10 s per fetch. An extension's bytes are held to the same types and sizes.
 - **Limits**: a device may start 300 fetches a minute; only fetches count (a picture from the cache, or another size drawn from a kept source, costs nothing), so a screen of new rows loads whole. The same picture is fetched once however many ask; a value that failed is answered from memory for 2 minutes.
 - **Cache**: `cache/avatars/<source>/` in the manager's directory, one subdirectory per source, at most 256 MiB for all of them, the least recently used dropped first; a cache, deletable at any time. Nothing is invalidated by hand (a new picture is a new value). A source's directory goes with its data (Delete Saved Data).
 - **Answer**: the picture with its own `Content-Type`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `Cache-Control: private, max-age=31536000, immutable`; or a JSON error with `code`: `bad_url` (404 for a path that is not an avatar, 400), `address_not_allowed` (403), `too_large` (413), `unsupported_type` (415), `bad_image` (422), `rate_limited` (429, `Retry-After`), `fetch_failed` (502, the connector signed out or failing included), `timeout` (504). The apps draw the initial on any error.
-- **The apps**: one loader each. iOS `ChatAvatar` (`docs/design/DESIGN_SYSTEM.md` "3.8 Chips, badges, avatars, marks"), the web's `Monogram` with `src` (`ItemAvatar`): the initial at once and while loading, the picture over it, the initial on failure; asked at the route's size covering the pixels drawn and kept by the app's caches.
+- **The apps**: iOS uses `ChatAvatar` and the web uses `Monogram` for connector Inbox rows and thread senders and authors. Each requests the pixels needed for the displayed size from the item's manager and reuses its image cache. The initial stands in for a missing or failed picture.
 - **Steps**: 1 (#10923) connector Inbox rows, Telegram's first; 2 connector conversation pages; 3 messaging extensions (their `media/<key>` and `https` people and conversations); 4 Feishu (its keys through the route, gateway paths mapped, #1353); GitHub rows #10931, Android #10932.
 
 ## Extension install, upgrade and uninstall progress (`extension_operations`, #3277)
@@ -5799,22 +5799,42 @@ in-flight command remains unknown until its execution can be established; it is 
 
 ## Agents display settings
 
-The default manager keeps the paired hub's `agents.show_botmux` boolean in its
+The default manager keeps the paired hub's `agents.show_botmux` and
+`agents.use_herdr_tab_name` booleans in its
 existing settings store, following the Agents triage route's ownership and role
 checks. These are authenticated routes relayed by the hub; clients do not select
 another manager for this shared preference.
 
 | Method | Path | Response / request |
 | --- | --- | --- |
-| GET | `/api/v1/agents/display-settings` | `{show_botmux: true, configured: false}` when unset; otherwise the saved boolean and `configured: true`. Authenticated answer-only devices may read. |
-| PUT | `/api/v1/agents/display-settings` | Full access only (403 otherwise). Requires `{show_botmux: boolean}`. Optional `only_if_unset: true` uses an atomic insert without updating an existing key. Both forms return the current saved value with `configured: true`, including when another writer won. |
+| GET | `/api/v1/agents/display-settings` | Defaults to `{show_botmux: true, configured: false, use_herdr_tab_name: false}`. `configured` reports whether `show_botmux` was saved. Authenticated answer-only devices may read. |
+| PUT | `/api/v1/agents/display-settings` | Full access only (403 otherwise). Send one of `{show_botmux: boolean}` or `{use_herdr_tab_name: boolean}`. For `show_botmux`, optional `only_if_unset: true` uses an atomic insert without updating an existing key. Returns the current settings, including when another writer won. |
 
 Invalid or missing booleans return 400; unavailable storage or failed reads/writes
 return 503, never a default presented as a successful save. The conditional
-migration and an explicit update serialize at the unique settings key across
+migration and an explicit botmux update serialize at the unique settings key across
 processes. Clients remove legacy local preferences only after a configured value
-is confirmed. Refresh on reconnect and the next Agents list refresh. This is a
-display preference only: Web paged lists use `exclude_pane_source=feishu`, complete
+is confirmed. Refresh on reconnect and the next Agents list refresh. For botmux,
+Web paged lists use `exclude_pane_source=feishu`, complete
 lists exclude botmux hosts before grouping/counting. Inventory and `seeBotmux`
 to-do attribution are unchanged. The per-computer inventory switch is independent
 ([engines.md](../integrations/engines.md), “Botmux display preference”).
+
+For an Agent with a named herdr or Herdr App tab, Web and Feishu use `slot_name`
+as the primary name when `use_herdr_tab_name` is true. They also use it when
+`title` is empty or is only a shell prompt such as `user@host:~/work`.
+Inventory refreshes carry the current tab label. The unified Web Rename dialog
+posts `tab_name` and, for a supported CLI, the same `title` to the existing
+session rename route. Other managers read the same preference through the
+hub's `app.call` method `agents.display.get`, which relays the default
+manager's display settings.
+
+Named assistant dispatches send `title` with `tab_name` in `session.start`.
+The synchronous terminal reply uses the actual tab label when available,
+including a suffix added for uniqueness. The manager persists the initial
+Persona title for subsequent inventory reads.
+
+With tab naming enabled, automatic naming calls the node's
+`session.rename_tab_if_current` with `session_id`, `tab_id`,
+`expected_tab_name` and `tab_name`. The node checks the live slot and its current
+host label before changing it and replies with `{ok: true}` on success.
