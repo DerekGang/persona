@@ -33,7 +33,8 @@ func (s *Service) checkExistingTaskInbox(conversation string, source PlanTask, t
 	return nil
 }
 
-func (s *Service) linkExistingTaskInbox(ctx context.Context, conversation string, source PlanTask, todoID string, agents []SessionRef) error {
+// A confirmed handoff keeps the backlink on the origin and names an Agent on the receiving task.
+func (s *Service) linkExistingTaskInbox(ctx context.Context, conversation string, source PlanTask, todoID, agentTodoID string, agents []SessionRef) error {
 	if source.InboxItem == "" {
 		return nil
 	}
@@ -44,9 +45,16 @@ func (s *Service) linkExistingTaskInbox(ctx context.Context, conversation string
 	if err := s.checkExistingTaskInbox(conversation, source, todo); err != nil {
 		return err
 	}
+	agentTodo := todo
+	if agentTodoID != todoID {
+		agentTodo, ok = s.todoNow(agentTodoID)
+		if !ok || !taskOpen(agentTodo) {
+			return fmt.Errorf("the receiving task %s is no longer open; its Agent was not linked", agentTodoID)
+		}
+	}
 	activeAgents := make([]SessionRef, 0, len(agents))
 	for _, ref := range agents {
-		for _, a := range todo.Agents {
+		for _, a := range agentTodo.Agents {
 			if a.MachineID == ref.MachineID && a.SessionID == ref.SessionID && a.ReleasedAt == nil && a.DismissedAt == nil {
 				activeAgents = append(activeAgents, ref)
 				break
@@ -54,7 +62,7 @@ func (s *Service) linkExistingTaskInbox(ctx context.Context, conversation string
 		}
 	}
 	if len(agents) > 0 && len(activeAgents) == 0 {
-		return fmt.Errorf("the Agent no longer works on task %s; its Inbox item was not linked", todo.ID)
+		return fmt.Errorf("the Agent no longer works on task %s; its Inbox item was not linked", agentTodoID)
 	}
 	b := &s.inbox
 	b.mu.Lock()

@@ -417,13 +417,16 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if err := s.ensureTodosLoaded(ctx); err != nil {
 			return "", err
 		}
-		own, onTask := s.openTodoOfAgent(am.ID, c.SessionID)
-		mayLink := a.Task != nil || onTask && othersTask(c, own, self) == nil
+		inboxTodo, onTask := s.openTodoOfAgent(am.ID, c.SessionID)
+		mayLink := a.Task != nil || onTask && othersTask(c, inboxTodo, self) == nil
+		if handoff != nil {
+			inboxTodo, mayLink = s.todoNow(handoff.origin)
+		}
 		if !exitText(a.Text) && mayLink {
 			if err := s.planInboxSource(ctx, machine, self, &source); err != nil {
 				return "", err
 			}
-			if err := s.checkExistingTaskInbox(self, source, own); err != nil {
+			if err := s.checkExistingTaskInbox(self, source, inboxTodo); err != nil {
 				return "", err
 			}
 		} else if source.InboxItem != "" {
@@ -438,7 +441,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		} else if !ok {
 			return "The user declined on the phone: nothing was sent to that agent.", nil
 		}
-		if err := s.checkExistingTaskInbox(self, source, own); err != nil {
+		if err := s.checkExistingTaskInbox(self, source, inboxTodo); err != nil {
 			return "", fmt.Errorf("%w; nothing was sent", err)
 		}
 		var task *handedTask
@@ -457,11 +460,15 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			// Delivery succeeded; ending the send's wait must not discard its durable Inbox link.
 			sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
-			id := own.ID
+			id := inboxTodo.ID
 			if task != nil {
 				id = task.todo.ID
 			}
-			if err := s.linkExistingTaskInbox(sctx, self, source, id, []SessionRef{{MachineID: am.ID, SessionID: c.SessionID}}); err != nil {
+			agentTodo := id
+			if handoff != nil {
+				agentTodo = handoff.Target.TodoID
+			}
+			if err := s.linkExistingTaskInbox(sctx, self, source, id, agentTodo, []SessionRef{{MachineID: am.ID, SessionID: c.SessionID}}); err != nil {
 				if task != nil && task.made && errors.Is(err, errInboxTaskClaimed) {
 					// Delivery cannot be undone, but a refused claim must not leave a duplicate task.
 					if undoErr := s.removeTodo(sctx, task.todo.ID); undoErr != nil {

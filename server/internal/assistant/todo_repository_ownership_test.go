@@ -221,8 +221,9 @@ func TestTaskRepositoryOwnershipConflictingSavedLinkIsNotAnAcceptedClaim(t *test
 }
 
 func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testing.T) {
-	for _, name := range []string{"created", "pushed", "viewed", "echoed", "conditional", "dry run", "push dry run value",
-		"push dry run bundle", "delete refspec", "mirror", "deleted output", "deleted with structured evidence", "merely up to date",
+	for _, name := range []string{"created", "pushed", "pushed with options", "viewed", "echoed", "conditional", "dry run", "push dry run value",
+		"push dry run bundle", "abbreviated dry run", "abbreviated delete", "delete refspec", "mirror", "deleted output",
+		"deleted with structured evidence", "merely up to date",
 		"create dry run", "create dry run value", "help", "help value", "web", "dynamic flags", "failed",
 		"read tool", "wrong result", "older call", "ambiguous output"} {
 		t.Run(name, func(t *testing.T) {
@@ -232,14 +233,21 @@ func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testi
 			args := map[string]string{"cmd": "gh pr create --title Fix --body-file /tmp/body.md", "workdir": "/code/feature"}
 			tool, output := "functions.exec_command", artifactPR
 			switch name {
-			case "pushed", "dry run", "push dry run value", "push dry run bundle":
+			case "pushed", "pushed with options", "dry run", "push dry run value", "push dry run bundle", "abbreviated dry run", "abbreviated delete":
 				args["cmd"] = "git push fork HEAD:fix/parser"
-				if name == "dry run" {
+				switch name {
+				case "pushed with options":
+					args["cmd"] = "git push -uv --force-with-lease fork HEAD:fix/parser"
+				case "dry run":
 					args["cmd"] += " --dry-run"
-				} else if name == "push dry run value" {
+				case "push dry run value":
 					args["cmd"] += " --dry-run=true"
-				} else if name == "push dry run bundle" {
+				case "push dry run bundle":
 					args["cmd"] += " -nu"
+				case "abbreviated dry run":
+					args["cmd"] = "git push --dry fork HEAD:fix/parser"
+				case "abbreviated delete":
+					args["cmd"] = "git push --del fork fix/parser"
 				}
 				output = "To https://github.com/contributor/project.git\n   123..abc HEAD -> fix/parser\n"
 				artifactNodeProof(f, artifactPR, "someone-else", "contributor", "fix/parser", "fix/parser", "abc", "abc")
@@ -300,7 +308,7 @@ func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testi
 			work.Work.Artifacts = work.Work.Artifacts[:1]
 			s.putWork(t.Context(), work)
 			_, saved := savedArtifactURLs(t, st, todo.ID)
-			want := name == "created" || name == "pushed"
+			want := name == "created" || name == "pushed" || name == "pushed with options"
 			if slices.Contains(saved, artifactPR) != want {
 				t.Fatalf("native CLI result %s: links=%v", name, saved)
 			}

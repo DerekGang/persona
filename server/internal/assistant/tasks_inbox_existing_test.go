@@ -103,7 +103,7 @@ func TestExistingTaskInboxHandoffBindsSendAndScopeWithoutTaskPlan(t *testing.T) 
 			if err := again.ensureTodosLoaded(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if err := again.linkExistingTaskInbox(t.Context(), "conv1", source, todo.ID,
+			if err := again.linkExistingTaskInbox(t.Context(), "conv1", source, todo.ID, todo.ID,
 				[]SessionRef{{MachineID: todo.Agents[0].MachineID, SessionID: todo.Agents[0].SessionID}}); err != nil {
 				t.Fatal(err)
 			}
@@ -205,14 +205,14 @@ func TestExistingTaskInboxHandoffRechecksBeforeLinkingAndKeepsProcessingConversa
 	it.DoneAt = new(time.Now())
 	s.inbox.mu.Unlock()
 	ref := SessionRef{MachineID: todo.Agents[0].MachineID, SessionID: todo.Agents[0].SessionID}
-	if err := s.linkExistingTaskInbox(t.Context(), "conv1", source, todo.ID, []SessionRef{ref}); err == nil {
+	if err := s.linkExistingTaskInbox(t.Context(), "conv1", source, todo.ID, todo.ID, []SessionRef{ref}); err == nil {
 		t.Fatal("filed item linked after preflight")
 	}
 	s.inbox.mu.Lock()
 	it.DoneAt = nil
 	it.Agent = &InboxAgent{State: AgentRunning, MachineID: "server", SessionID: "processing-conversation"}
 	s.inbox.mu.Unlock()
-	if err := s.linkExistingTaskInbox(context.Background(), "conv1", source, todo.ID, []SessionRef{ref}); err != nil {
+	if err := s.linkExistingTaskInbox(context.Background(), "conv1", source, todo.ID, todo.ID, []SessionRef{ref}); err != nil {
 		t.Fatal(err)
 	}
 	s.inbox.mu.Lock()

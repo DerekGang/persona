@@ -60,12 +60,23 @@ func taskRepositoryNativeCommand(it proto.Item) (op, cwd string) {
 	}
 	for _, arg := range call.Args[2:] {
 		flag, _, _ := strings.Cut(arg.Lit(), "=")
-		if strings.HasPrefix(flag, "-") && !strings.HasPrefix(flag, "--") && strings.ContainsAny(flag[1:], "nd") {
+		switch {
+		case flag == "", flag == "-":
 			return "", ""
-		}
-		switch flag {
-		case "", "-n", "--dry-run", "-d", "--delete", "--mirror":
-			return "", ""
+		case strings.HasPrefix(flag, "--"):
+			// Git also accepts unique option prefixes. Require the full spelling
+			// of known publishing options so a dry run cannot prove publication.
+			switch flag {
+			case "--all", "--atomic", "--follow-tags", "--force", "--force-if-includes", "--force-with-lease",
+				"--ipv4", "--ipv6", "--no-verify", "--porcelain", "--progress", "--push-option", "--quiet",
+				"--recurse-submodules", "--repo", "--set-upstream", "--signed", "--tags", "--thin", "--verbose":
+			default:
+				return "", ""
+			}
+		case strings.HasPrefix(flag, "-"):
+			if strings.Trim(flag[1:], "vqfu46") != "" && flag != "-o" {
+				return "", ""
+			}
 		}
 		if ref := strings.TrimPrefix(flag, "+"); strings.HasPrefix(ref, ":") && ref != ":" {
 			return "", "" // an empty source deletes the destination ref

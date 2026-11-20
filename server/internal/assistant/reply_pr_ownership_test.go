@@ -116,6 +116,8 @@ func TestTaskDoneDeliveryRequiresStateAfterExcludingMentionedPR(t *testing.T) {
 	}{
 		{"omitted", replyOtherPR + " is merged.", `{"verdict":"done"}`, "", false},
 		{"invalid", replyOtherPR + " is merged.", `{"verdict":"done","delivery":"unknown"}`, "", false},
+		{"suppressed delivery mark", replyOtherPR + " is deployed.\n<closeout status=\"done\" merged=\"yes\" deployed=\"yes\">\n" +
+			"artifact: pr " + replyOtherPR + "\ndelivery: live\n</closeout>", `{"verdict":"done"}`, "", false},
 		{"explicit none", "The report cites " + replyOtherPR, `{"verdict":"done","delivery":"none"}`, deliveryNone, true},
 		{"ordinary research", "The investigation is complete.", `{"verdict":"done"}`, deliveryNone, true},
 	} {

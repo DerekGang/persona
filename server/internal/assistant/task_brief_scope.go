@@ -240,7 +240,7 @@ func (s *Service) toolTaskScope(ctx context.Context, machine, self string, args 
 			agents = append(agents, SessionRef{MachineID: a.MachineID, SessionID: a.SessionID})
 		}
 	}
-	if err := s.linkExistingTaskInbox(ctx, self, source, t.ID, agents); err != nil {
+	if err := s.linkExistingTaskInbox(ctx, self, source, t.ID, t.ID, agents); err != nil {
 		return "", fmt.Errorf("scope updated on task %s, but its Inbox link was not saved: %w", t.ID, err)
 	}
 	s.clearOverdue(t.ID)
