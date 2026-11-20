@@ -143,7 +143,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 			if err != nil {
 				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
-			t.Attachments, t.Mentioned, t.AttachFrom = atts, s.mentionedAttachments(ctx, machine, sessionID, t.Prompt, atts), ""
+			t.Attachments, t.Mentioned, t.AttachFrom = atts, s.mentionedAttachments(ctx, machine, sessionID, t.Prompt+"\n\n"+t.Context, atts), ""
 			if t.Project, err = s.todoProject(ctx, t.Project); err != nil {
 				return "", fmt.Errorf("task %d: %w", i+1, err)
 			}
@@ -235,7 +235,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 	if scope == nil && !s.inHealth(ctx, sessionID) {
 		if round, inRound = s.scheduledRoundOf(ctx, machine, sessionID); inRound && round.grantEligible() && s.claudeConversation(ctx, machine, sessionID) {
 			for i := range a.Tasks { // the card offers to let this schedule start these by itself
-				a.Tasks[i].Schedule, a.Tasks[i].ScheduleTitle, a.Tasks[i].ScheduleBasis = round.ID, round.labelIn(s.lang(ctx)), round.grantBasis()
+				a.Tasks[i].Schedule, a.Tasks[i].ScheduleTitle, a.Tasks[i].ScheduleBasis = round.ID, round.labelIn(s.lang(ctx)), round.runGrantBasis
 			}
 		}
 	}
