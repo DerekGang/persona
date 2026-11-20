@@ -346,3 +346,66 @@ func TestProjectReviewPairedFeishuOwnerInput(t *testing.T) {
 	}
 	t.Log("paired owner handover arrived once; other sender, bot, unbound chat, elsewhere, and review target excluded")
 }
+
+// The hub queues an input with its own clock, and a new Agent's first prompt before the to-do link.
+// Neither a later task update nor that ordering may take an authorized input out of its project.
+func TestProjectReviewOwnerInputAssignmentEpoch(t *testing.T) {
+	ctx := context.Background()
+	store := todoTestDB(t)
+	s, _ := reviewTestService(t, store)
+	target, _ := json.Marshal(reviewTarget)
+	alpha := reviewNewTask(t, s, "alpha", "todo_epoch", reviewSource)
+	linked := alpha.Agents[0].LinkedAt
+	notes := "a later edit"
+	if _, err := s.editTodo(ctx, alpha.ID, db.TodoEdit{Notes: &notes}); err != nil {
+		t.Fatal(err)
+	}
+	if updated, _ := s.todoNow(alpha.ID); !linked.Before(updated.UpdatedAt) {
+		t.Fatalf("fixture: the edit did not move UpdatedAt past the link: %v %v", linked, updated.UpdatedAt)
+	}
+	cases := []struct {
+		id     string
+		at     time.Time
+		scoped bool
+	}{
+		{"first-agent:" + reviewSource.SessionID, linked.Add(-time.Second), true},
+		{"after-link-before-edit", linked, true},
+		{"before-link", linked.Add(-time.Second), false},
+		{"first-agent:another-session", linked.Add(-time.Second), false},
+		{"no-time", time.Time{}, false},
+	}
+	for _, c := range cases {
+		if err := s.projectReviewOwnerInput(ctx, assistantwire.ProjectReviewOwnerInput{SessionRef: reviewSource, MessageID: c.id, At: c.at}); err != nil {
+			t.Fatal(err)
+		}
+		next, ok, err := store.NextProjectReview(ctx, string(target))
+		if err != nil || !ok || !strings.Contains(string(next.Event), c.id) {
+			t.Fatalf("%s: not queued: %s %v %v", c.id, next.Event, ok, err)
+		}
+		if got := strings.Contains(string(next.Event), alpha.ID); got != c.scoped {
+			t.Errorf("%s: scoped=%v, want %v: %s", c.id, got, c.scoped, next.Event)
+		}
+		if err := store.SettleProjectReview(ctx, next.ID, "test_drained"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestProjectReviewOutcomeTriageOnlyIsReviewOnly(t *testing.T) {
+	cases := []struct {
+		reply      string
+		reviewOnly bool
+		want       string
+	}{
+		{"done\nPROJECT_REVIEW_RECEIPT id-1 triage_only", true, "triage_only"},
+		{"PROJECT_REVIEW_RECEIPT id-1 triage_only", false, ""},
+		{"PROJECT_REVIEW_RECEIPT id-1 facts_recorded", false, "facts_recorded"},
+		{"PROJECT_REVIEW_RECEIPT id-1 facts_recorded", true, ""},
+		{"PROJECT_REVIEW_RECEIPT id-2 no_change", false, ""},
+	}
+	for _, c := range cases {
+		if got := projectReviewOutcome(c.reply, "id-1", c.reviewOnly); got != c.want {
+			t.Errorf("%q reviewOnly=%v: got %q, want %q", c.reply, c.reviewOnly, got, c.want)
+		}
+	}
+}

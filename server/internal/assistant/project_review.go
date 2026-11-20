@@ -115,9 +115,19 @@ func (s *Service) projectReviewOwnerInput(ctx context.Context, in assistantwire.
 	b := projectReviewBinding{SessionRef: in.SessionRef}
 	// A source without one current authorized task is a review signal only.
 	// In particular the main conversation may discuss multiple projects.
+	// in.At is the hub's clock when it queued the input. The task is authorized again at delivery
+	// (projectReviewStep), so a later task update does not take the input out of scope.
+	// The hub queues a new Agent's first prompt before the to-do link: that session did not exist
+	// before this start, so its first input belongs to the task it is linked to.
+	at := in.At
+	if in.MessageID == "first-agent:"+in.SessionID {
+		at = time.Time{}
+	} else if at.IsZero() {
+		in.Unscoped = true
+	}
 	if !in.Unscoped {
-		if task, ok := s.taskOf(ctx, in.MachineID, in.SessionID); ok && !in.At.IsZero() && !in.At.Before(task.UpdatedAt) {
-			if binding, found := p.taskBinding(in.SessionRef, task, in.At); found {
+		if task, ok := s.taskOf(ctx, in.MachineID, in.SessionID); ok {
+			if binding, found := p.taskBinding(in.SessionRef, task, at); found {
 				b = binding
 			}
 		}
@@ -397,7 +407,10 @@ func projectReviewOutcome(reply, id string, reviewOnly bool) string {
 	}
 	switch fields[2] {
 	case "triage_only":
-		return fields[2]
+		// Only a review-only event may be settled without reconciling a project.
+		if reviewOnly {
+			return fields[2]
+		}
 	case "facts_recorded", "no_change", "needs_evidence":
 		if !reviewOnly {
 			return fields[2]

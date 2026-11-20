@@ -592,8 +592,9 @@ session available by its original ID.
 The hub and manager both need binaries that include project review and their respective Postgres
 migrations. Apply changes with the manager's service restart. To pause intake and delivery, set
 `enabled` to `false` and let the restarted manager connect to the hub. Applying that setting leaves
-the delivery history and outstanding rows in Postgres. Changes to project authorization are
-rechecked before delivery.
+the delivery history and outstanding rows in Postgres. Turning App input off (or disabling the
+section) drops the App inputs the hub has not yet passed to that manager, so turning it back on
+does not replay them. Changes to project authorization are rechecked before delivery.
 For an audit, use the manager's `project_review_deliveries` table. Its event ID, attempts, last
 outcome and settlement timestamp show what was queued, retried or processed.
 

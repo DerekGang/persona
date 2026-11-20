@@ -53,7 +53,9 @@ func (d *DB) SetProjectReviewAppInputs(ctx context.Context, manager string, enab
 		_, err := d.pool.Exec(ctx, `INSERT INTO project_review_owner_managers VALUES ($1) ON CONFLICT DO NOTHING`, manager)
 		return err
 	}
-	_, err := d.pool.Exec(ctx, `DELETE FROM project_review_owner_managers WHERE manager=$1`, manager)
+	// Turning App inputs off also drops what is still queued: it must not replay when they are turned back on.
+	_, err := d.pool.Exec(ctx, `WITH off AS (DELETE FROM project_review_owner_managers WHERE manager=$1)
+		DELETE FROM project_review_owner_relay WHERE manager=$1`, manager)
 	return err
 }
 

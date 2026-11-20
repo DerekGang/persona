@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,6 +134,10 @@ func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
 	}
 	b.stop()
 	<-b.done
+	post("queued-before-disable", token, sendPath)
+	if pending, err = store.PendingProjectReviewOwners(ctx); err != nil || len(pending) != 1 {
+		t.Fatalf("offline input before disabling: %+v %v", pending, err)
+	}
 	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":false}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +145,7 @@ func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
 	post("while-disabled", token, sendPath)
 	pending, err = store.PendingProjectReviewOwners(ctx)
 	if err != nil || len(pending) != 0 {
-		t.Fatalf("disabled route kept admitting events: %+v %v", pending, err)
+		t.Fatalf("disabled route kept admitting events or kept a backlog to replay: %+v %v", pending, err)
 	}
 	t.Log("authenticated app -> Hub Postgres -> reconnect -> manager Postgres: online and offline references, zero raw words; disable stopped intake")
 }
@@ -165,8 +170,11 @@ func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
 	})
 	var starts atomic.Int32
 	startReceiptNode(t, h, func(context.Context, json.RawMessage) (any, error) {
-		starts.Add(1)
-		return map[string]any{"session": proto.Session{SessionID: "app-started-agent", Agent: "codex"}}, nil
+		id := "app-started-agent"
+		if n := starts.Add(1); n > 1 {
+			id = fmt.Sprintf("app-started-agent-%d", n)
+		}
+		return map[string]any{"session": proto.Session{SessionID: id, Agent: "codex"}}, nil
 	})
 	const token = "isolated-main-owner-device-token"
 	if err := hubDB.CreateDeviceToken(ctx, db.DeviceToken{ID: "project-review-main-device", Name: "Test app", Role: roleFull}, hashToken(token)); err != nil {
@@ -232,12 +240,15 @@ func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
 	if n := starts.Load(); n != 1 {
 		t.Fatalf("new Agent start repeated %d times", n)
 	}
+	// A screenshot with no words is the owner's first input too.
+	post("/api/v1/sessions", token, "10000000-0100-4000-8000-000000000008",
+		`{"machine_id":"machine","agent_type":"codex","launcher":"codex","cwd":"/code","tab_name":"Shot","images":[{"mime":"image/png","data":"iVBORw0KGgo="}]}`)
 	if err := h.deliverProjectReviewOwners(ctx); err != nil {
 		t.Fatal(err)
 	}
 	const target = `{"machine_id":"server","session_id":"review"}`
 	want := map[string]bool{"first-assistant:" + main: true, "first-assistant:" + separate.Session.SessionID: true,
-		nextOp: true, "first-agent:app-started-agent": true}
+		nextOp: true, "first-agent:app-started-agent": true, "first-agent:app-started-agent-2": true}
 	for len(want) > 0 {
 		event, ok, err := manager.NextProjectReview(ctx, target)
 		var captured struct{ Reference, Project string }
