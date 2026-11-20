@@ -3,11 +3,14 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 func TestPromptFilesBindExecutionAndFailBeforeDelivery(t *testing.T) {
@@ -82,5 +85,50 @@ func TestPromptFilesBindExecutionAndFailBeforeDelivery(t *testing.T) {
 	}
 	if f.file("stdin.jsonl") != before {
 		t.Fatal("sent after file refusal")
+	}
+}
+
+func TestAssistantContentMatchesFileAudienceRefusals(t *testing.T) {
+	f := cliTestBash(t)
+	f.n.machineID = "fixture"
+	cwd := resolved(t, t.TempDir())
+	writeFile(t, filepath.Join(cwd, "notes.txt"), "Synthetic notes")
+	selection := fmt.Sprintf(`<persona-context kind="file" path="notes.txt" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`, f.n.machineID, cwd)
+	for _, tc := range []struct {
+		name                         string
+		guest                        []string
+		rawOrigin, storedOrigin      string
+		originKnown, public, refused bool
+	}{
+		{name: "ordinary"},
+		{name: "guest", guest: []string{"lark_agent_reply"}, refused: true},
+		{name: "public input", public: true, refused: true},
+		{name: "persisted Inbox", storedOrigin: originInbox, refused: true},
+		{name: "manager-attested Inbox", rawOrigin: originInbox, originKnown: true, refused: true},
+		{name: "persisted Inbox beats an unattested origin", rawOrigin: "task", storedOrigin: originInbox, refused: true},
+		{name: "manager reattested ordinary", storedOrigin: originInbox, originKnown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := newUUID()
+			f.n.state.put(id, sessionState{Cwd: cwd, Launcher: "claude", Guest: tc.guest, Origin: tc.storedOrigin, OriginKnown: true})
+			params := map[string]any{"session_id": id, "cwd": cwd, "launcher": "claude", "text": selection,
+				"origin": tc.rawOrigin, "origin_known": tc.originKnown, "public": tc.public, "task_execution": true, "task_input": true}
+			_, checkErr := nodeCall(t, f.n, "assistant.content", params)
+			if tc.refused {
+				_, sendErr := nodeCall(t, f.n, "assistant.send", params)
+				var check, send *rpc.Error
+				if !errors.As(checkErr, &check) || !errors.As(sendErr, &send) || check.Code != "file_unavailable" || check.Code != send.Code || check.Message != send.Message {
+					t.Errorf("content error %v does not match send error %v", checkErr, sendErr)
+				}
+			} else if checkErr != nil {
+				t.Errorf("ordinary selection refused: %v", checkErr)
+			}
+			for _, text := range []string{"", "Review ordinary text"} {
+				params["text"] = text
+				if _, err := nodeCall(t, f.n, "assistant.content", params); err != nil {
+					t.Errorf("content check rejected input without file references: %q: %v", text, err)
+				}
+			}
+		})
 	}
 }

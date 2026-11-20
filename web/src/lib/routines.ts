@@ -255,13 +255,13 @@ export function untilLabel(d: Date, now: Date): string {
   return t("lib-routines.in_days", { count: Math.max(daysBetween(now, d), 1) });
 }
 
-/** Its title, or the first line of the visible prompt for an untitled follow-up. */
-export function taskTitle(task: Pick<Task, "title" | "prompt" | "prompt_selections">): string {
+/** Its title, the first line of the visible prompt, or a label for its schedule type. */
+export function taskTitle(task: Pick<Task, "title" | "prompt" | "prompt_selections" | "repeat">): string {
   if (task.title?.trim()) return task.title.trim();
   const prompt = task.prompt ?? "";
   const text = task.prompt_selections ? splitSkillDraft(prompt, true).text : prompt;
   const first = text.split("\n").find((l) => l.trim()) ?? "";
-  return first.trim() || t("lib-routines.scheduled_follow_up");
+  return first.trim() || (task.repeat === "once" ? t("lib-routines.scheduled_follow_up") : t("lib-routines.scheduled_task"));
 }
 
 /** The rule in words: "Every weekday at 09:00" / "Every 30 minutes" / "Once · New chat" / "0 10 1 * * · At 10:00, on day 1 of the month"

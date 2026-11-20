@@ -1686,7 +1686,10 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		id, err := n.fork(ctx, p.SessionID, p.AtItemID)
 		return map[string]any{"session_id": id}, err
 	case "assistant.content":
-		return map[string]any{"valid": true}, n.validatePromptContent(withSkillOwner(context.WithValue(ctx, taskInputKey{}, true), p.SkillOwner), p.SessionID, p.Cwd, p.Launcher, p.Text, modelExecution{Strict: p.TaskExecution, Runtime: p.Runtime, ConfigDir: p.ConfigDir})
+		execution := modelExecution{Strict: p.TaskExecution, Runtime: p.Runtime, ConfigDir: p.ConfigDir,
+			Origin: p.Origin, OriginKnown: p.OriginKnown, Public: p.Public}
+		sctx := withSkillOwner(context.WithValue(ctx, taskInputKey{}, true), p.SkillOwner)
+		return map[string]any{"valid": true}, n.validatePromptContent(sctx, p.SessionID, p.Cwd, p.Launcher, p.Text, execution)
 	case "assistant.directory":
 		directory, err := n.taskDirectory(p.Path)
 		if errors.Is(err, os.ErrNotExist) {

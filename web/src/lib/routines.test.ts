@@ -78,17 +78,22 @@ describe("words", () => {
   });
 
   it("titles a follow-up without one by its prompt", () => {
-    expect(taskTitle({ title: "", prompt: "\n周五发周报前核对数据\n第二行" })).toBe("周五发周报前核对数据");
-    expect(taskTitle({ title: "  周报 ", prompt: "x" })).toBe("周报");
+    expect(taskTitle({ repeat: "once", title: "", prompt: "\n周五发周报前核对数据\n第二行" })).toBe("周五发周报前核对数据");
+    expect(taskTitle({ repeat: "once", title: "  周报 ", prompt: "x" })).toBe("周报");
   });
 
   it("titles an untitled follow-up from the text after its selected references", () => {
     const skill = '<persona-context kind="skill" ref="review">\nproject\n</persona-context>';
     const file = '<persona-context kind="file" path="report.md">\nreport.md\n</persona-context>';
-    const selected = { title: "", prompt_selections: true };
+    const selected = { repeat: "once" as const, title: "", prompt_selections: true };
     expect(taskTitle({ ...selected, prompt: `${skill}\n${file}\n\n\n 核对周报 \n第二行` })).toBe("核对周报");
     expect(taskTitle({ ...selected, prompt: file })).toBe("定时跟进");
-    expect(taskTitle({ title: "", prompt: `${skill}\n\n原文` })).toBe(skill.split("\n")[0]);
+    for (const repeat of ["interval", "cron"] as const) {
+      expect(taskTitle({ ...selected, repeat, prompt: file })).toBe("定时任务");
+      expect(taskTitle({ ...selected, repeat, prompt: file, title: "Review" })).toBe("Review");
+      expect(taskTitle({ ...selected, repeat, prompt: `${file}\n\nReview notes` })).toBe("Review notes");
+    }
+    expect(taskTitle({ repeat: "once", title: "", prompt: `${skill}\n\n原文` })).toBe(skill.split("\n")[0]);
   });
 
   it("says the next and the last run", () => {

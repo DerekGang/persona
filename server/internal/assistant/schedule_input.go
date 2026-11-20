@@ -244,6 +244,9 @@ func (s *Service) checkTaskContent(ctx context.Context, ex taskInputTarget, pref
 	}
 	if ex.session != "" {
 		params["session_id"] = ex.session
+		if origin, known := s.managerOriginDecision(ctx, ex.MachineID, ex.session, "", false); known {
+			params["origin"], params["origin_known"] = origin, true
+		}
 	}
 	if ex.Runtime != "" {
 		params["runtime"] = ex.Runtime

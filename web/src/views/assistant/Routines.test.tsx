@@ -167,6 +167,25 @@ describe("routine run history loading", () => {
   });
 });
 
+it.each([
+  { repeat: "interval" as const, title: "", body: "", label: "定时任务" },
+  { repeat: "cron" as const, title: "", body: "", label: "定时任务" },
+  { repeat: "once" as const, title: "", body: "", label: "定时跟进" },
+  { repeat: "interval" as const, title: "Explicit title", body: "Review notes", label: "Explicit title" },
+  { repeat: "cron" as const, title: "", body: "Review notes", label: "Review notes" },
+])("shows $label for the $repeat task with a selected reference", async ({ repeat, title, body, label }) => {
+  const selected = '<persona-context kind="skill" ref="review">Review</persona-context>';
+  tasksReply = () => json({ tasks: [{
+    ...task, repeat, title, prompt: `${selected}\n\n${body}`, prompt_selections: true,
+    at: "2099-01-01T09:00:00Z", every_minutes: 30, cron: "@hourly",
+  }] });
+  runsReply = () => json({ runs: [] });
+
+  await render();
+
+  expect(rowOf(label)?.textContent).toContain(label);
+});
+
 it("pauses a routine without changing its saved selections or execution settings", async () => {
   const prompt = '<persona-context kind="skill" ref="review">Review</persona-context>\n\nReview notes';
   const selected: Task = { ...task, prompt, prompt_selections: true, execution_machine_id: "box", cwd: "/work" };

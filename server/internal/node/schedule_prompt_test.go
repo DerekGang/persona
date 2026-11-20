@@ -326,6 +326,98 @@ func TestScheduledPromptFirstUseOfDefaultDirectory(t *testing.T) {
 	}
 }
 
+func TestScheduledInboxSourceRefusesSelectedFilesWithoutChangingTask(t *testing.T) {
+	f := cliTestBash(t)
+	f.n.machineID = "inbox-fixture"
+	cwd := resolved(t, t.TempDir())
+	writeFile(t, filepath.Join(cwd, "notes.txt"), "Synthetic notes")
+	selection := fmt.Sprintf(`<persona-context kind="file" path="notes.txt" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`, f.n.machineID, cwd)
+	raw, err := nodeCall(t, f.n, "assistant.send", map[string]any{"cwd": cwd, "launcher": "claude", "text": "Start a fixture chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(raw, &source); err != nil || source.SessionID == "" {
+		t.Fatalf("start fixture: %s (%v)", raw, err)
+	}
+	f.idle(t, source.SessionID)
+
+	service := assistant.New(assistant.Options{Hub: schedulePromptHub{node: f.n}})
+	result := service.Tool(t.Context(), assistant.ToolCall{
+		Name: "schedule_followup", MachineID: f.n.machineID, SessionID: source.SessionID,
+		Arguments: json.RawMessage(`{"at":"30m","title":"Review the fixture","prompt":"Review notes later"}`),
+	})
+	if result.IsError {
+		t.Fatalf("schedule the existing follow-up: %+v", result)
+	}
+	call := func(method, route string, fields map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		service.ServeHTTP(rec, httptest.NewRequest(method, route, bytes.NewReader(raw)).WithContext(t.Context()))
+		return rec
+	}
+	getTask := func() assistant.Task {
+		t.Helper()
+		rec := call(http.MethodGet, "/api/v1/assistant/followups", nil)
+		var list struct{ Followups []assistant.Task }
+		if err := json.Unmarshal(rec.Body.Bytes(), &list); rec.Code != http.StatusOK || err != nil || len(list.Followups) != 1 {
+			t.Fatalf("follow-ups: %d %s (%v)", rec.Code, rec.Body, err)
+		}
+		return list.Followups[0]
+	}
+	task := getTask()
+	if task.SessionID != source.SessionID {
+		t.Fatalf("fixture task did not keep its source: %+v", task)
+	}
+	route := "/api/v1/assistant/tasks/" + task.ID
+	original := selection + "\n\nReview the selected notes."
+	if rec := call(http.MethodPut, route, map[string]any{"structured_prompt": original}); rec.Code != http.StatusOK {
+		t.Fatalf("ordinary source could not save a file selection: %d %s", rec.Code, rec.Body)
+	}
+
+	// An existing saved selection is checked again when the source acquires the Inbox policy.
+	state, ok := f.n.state.get(source.SessionID)
+	if !ok {
+		t.Fatal("source has no Node state")
+	}
+	state.Origin, state.OriginKnown = originInbox, true
+	f.n.state.put(source.SessionID, state)
+	if rec := call(http.MethodPut, route, map[string]any{"structured_prompt": selection + "\n\nEdited prompt"}); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), "file_unavailable") {
+		t.Errorf("Inbox source did not refuse the edit with the file error: %d %s", rec.Code, rec.Body)
+	}
+	if kept := getTask(); kept.Prompt != original || !kept.PromptSelections || kept.SessionID != source.SessionID || kept.Title != task.Title {
+		t.Errorf("refused edit changed the saved task: %+v", kept)
+	}
+	if rec := call(http.MethodPost, route+"/run", nil); rec.Code == http.StatusOK || !strings.Contains(rec.Body.String(), "file_unavailable") {
+		t.Errorf("Inbox source did not refuse to run the saved selection: %d %s", rec.Code, rec.Body)
+	}
+	if inputs := emptyStartUserInputs(t, f.file("stdin.jsonl")); len(inputs) != 1 {
+		t.Fatalf("file selection reached a turn: %+v", inputs)
+	}
+
+	const plain = "Review the fixture without a file"
+	if rec := call(http.MethodPut, route, map[string]any{"prompt": plain}); rec.Code != http.StatusOK {
+		t.Fatalf("ordinary prompt save: %d %s", rec.Code, rec.Body)
+	}
+	rec := call(http.MethodPost, route+"/run", nil)
+	var run struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); rec.Code != http.StatusOK || err != nil || run.SessionID != source.SessionID {
+		t.Fatalf("ordinary prompt did not continue its Inbox source: %d %s (%v)", rec.Code, rec.Body, err)
+	}
+	f.idle(t, run.SessionID)
+	if inputs := emptyStartUserInputs(t, f.file("stdin.jsonl")); len(inputs) != 2 {
+		t.Fatalf("expected one initial and one ordinary follow-up turn, got %d", len(inputs))
+	}
+}
+
 func TestScheduledRuntimeSourceRejectsFileSelection(t *testing.T) {
 	n, hub := runtimeNode(t)
 	n.machineID = "runtime-fixture"

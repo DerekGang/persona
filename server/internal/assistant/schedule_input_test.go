@@ -130,6 +130,29 @@ func TestTaskInputSourceUsesOneSkillEnvironment(t *testing.T) {
 	}
 }
 
+func TestTaskInputContentUsesManagerOriginDecision(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newStorelessService(t, f)
+	const machine, source = "server", "inbox-source"
+	target := taskInputTarget{TaskExecution: TaskExecution{MachineID: machine, Cwd: "/work", Launcher: "claude"}, session: source}
+	for _, tc := range []struct{ stored, expected string }{{OriginInbox, OriginInbox}, {OriginUser, ""}} {
+		s.originSet(t.Context(), machine, source, tc.stored, "", "")
+		f.answerNode("assistant.content", func(node string, raw json.RawMessage) (any, error) {
+			var params map[string]any
+			if err := json.Unmarshal(raw, &params); err != nil {
+				t.Fatal(err)
+			}
+			if node != machine || params["session_id"] != source || params["origin"] != tc.expected || params["origin_known"] != true {
+				t.Fatalf("content check used a different origin decision: %s %v", node, params)
+			}
+			return map[string]bool{"valid": true}, nil
+		})
+		if err := s.checkTaskContent(t.Context(), target, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
 	const oldCron = "0 9 * * *"
 	const ownDir = "/home/me/.persona/assistant"

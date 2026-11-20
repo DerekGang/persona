@@ -295,6 +295,16 @@ func serviceTierRefusal(ctx context.Context, code string) error {
 	return refusal(code, i18n.T(i18n.From(ctx), "rpc-errors."+code), nil)
 }
 
+// assistantInputOrigin resolves an existing conversation's origin for both content checks and sends.
+func assistantInputOrigin(st sessionState, requested modelExecution, resume bool) (origin string, known bool) {
+	origin, known = requested.Origin, requested.OriginKnown || st.OriginKnown || !resume
+	if resume && !requested.OriginKnown && (st.OriginKnown || st.Origin != "" || origin == "") {
+		// A persisted decision, including a legacy non-empty Inbox origin, wins over an unattested caller value.
+		origin = st.Origin
+	}
+	return origin, known
+}
+
 // assistantSend delivers a user message, starting or restarting the headless claude when needed.
 // id == "" starts a new conversation and returns its id.
 func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string, images []proto.Image, mode, effort string, options ...modelExecution) (_ string, sendErr error) {
@@ -433,14 +443,8 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 			n.state.put(id, st)
 		}
 	}
-	requestedOrigin := executionOption(options)
-	origin, originKnown := requestedOrigin.Origin, requestedOrigin.OriginKnown || st.OriginKnown || !resume
-	if resume && !requestedOrigin.OriginKnown && (st.OriginKnown || st.Origin != "" || origin == "") {
-		// An unattested caller origin is not evidence. A persisted decision, including a legacy non-empty Inbox origin,
-		// wins over it; only an explicit origin_known can replace that decision with an ordinary empty origin.
-		origin = st.Origin
-	}
-	if resume && requestedOrigin.OriginDecisionRequired && !originKnown && guest == nil {
+	origin, originKnown := assistantInputOrigin(st, requested, resume)
+	if resume && requested.OriginDecisionRequired && !originKnown && guest == nil {
 		// A pre-upgrade record has no ordinary-origin decision. Neither an older manager's send nor a non-empty caller
 		// origin proves one; wait for the new manager's explicit origin_known instead of starting ordinary built-ins.
 		return "", errAssistantOriginUnknown
@@ -459,10 +463,8 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 		// Persona's explicit MCP allowlist effective; the manager/node origin policy remains the outbound boundary.
 		mode = "default"
 	}
-	if guest != nil || public || origin == originInbox {
-		if refs, err := promptcontent.Files(text); err != nil || len(refs) > 0 {
-			return "", refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.selected_file_unavailable"), nil)
-		}
+	if err := checkFileReferenceAudience(ctx, text, origin, guest != nil, public); err != nil {
+		return "", err
 	}
 	if guest != nil {
 		if refs, err := assistantskills.References(text); err != nil || len(refs) != 0 {
