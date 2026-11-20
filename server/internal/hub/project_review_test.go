@@ -45,10 +45,10 @@ func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
 		t.Fatal(err)
 	}
 	pipeNode(t, h, "box", func(context.Context) error { return nil })
-	post := func(id, auth, path string) {
+	post := func(id, auth, path string, extra ...string) {
 		t.Helper()
 		req, err := http.NewRequest(http.MethodPost, server.URL+path,
-			strings.NewReader(`{"text":"private words","human":true,"submission":{"kind":"human_input"},"client_msg_id":"`+id+`"}`))
+			strings.NewReader(`{"text":"private words","human":true,"submission":{"kind":"human_input"},`+strings.Join(extra, "")+`"client_msg_id":"`+id+`"}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,6 +67,9 @@ func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
 	post("owner-message", token, sendPath)
 	post("forged-owner", h.cfg.Token, sendPath)
 	post("unbound", token, "/api/v1/sessions/box/other/messages")
+	// Siri, Shortcuts and the share sheet: delivered, but never the owner's own input (a mark of any kind counts).
+	post("shared", token, sendPath, `"via":"share",`)
+	post("intent-object", token, sendPath, `"via":{"kind":"intent"},`)
 
 	pending, err := store.PendingProjectReviewOwners(ctx)
 	if err != nil || len(pending) != 2 {
@@ -374,26 +377,33 @@ func TestProjectReviewFirstInputBeforeListing(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "https://example.com/api/v1/sessions", nil)
 	trusted := r.WithContext(context.WithValue(r.Context(), trustedSubmissionKey{}, devicewire.Submission{Kind: "human_input"}))
 	cases := []struct {
-		name    string
-		req     *http.Request
-		started proto.Session
-		want    bool
+		name     string
+		req      *http.Request
+		started  proto.Session
+		indirect bool
+		want     bool
 	}{
-		{"plain Agent", trusted, proto.Session{SessionID: "plain", Cwd: "/code"}, true},
-		{"space", trusted, proto.Session{SessionID: "space", Cwd: "/code", Space: "health"}, false},
-		{"meeting", trusted, proto.Session{SessionID: "meeting", Cwd: "/code", Origin: "meeting"}, false},
-		{"untrusted", r, proto.Session{SessionID: "untrusted", Cwd: "/code"}, false},
+		{"plain Agent", trusted, proto.Session{SessionID: "plain", Cwd: "/code"}, false, true},
+		{"space", trusted, proto.Session{SessionID: "space", Cwd: "/code", Space: "health"}, false, false},
+		{"meeting", trusted, proto.Session{SessionID: "meeting", Cwd: "/code", Origin: "meeting"}, false, false},
+		{"untrusted", r, proto.Session{SessionID: "untrusted", Cwd: "/code"}, false, false},
+		{"share sheet", trusted, proto.Session{SessionID: "shared", Cwd: "/code"}, true, false},
 	}
 	for _, c := range cases {
 		started := c.started
-		p, ok := h.projectReviewAppSource(c.req, "machine", started.SessionID, "first-agent:"+started.SessionID, &started)
+		p, ok := h.projectReviewAppSource(c.req, "machine", started.SessionID, "first-agent:"+started.SessionID, &started, c.indirect)
 		if ok != c.want || ok && (p.Unscoped || p.Machine != "machine" || p.Session != started.SessionID) {
 			t.Errorf("%s: got %+v %v, want eligible=%v", c.name, p, ok, c.want)
 		}
 	}
 	// Another session's returned row is never used for this one.
 	other := proto.Session{SessionID: "other", Space: "health"}
-	if _, ok := h.projectReviewAppSource(trusted, "machine", "plain", "first-agent:plain", &other); !ok {
+	if _, ok := h.projectReviewAppSource(trusted, "machine", "plain", "first-agent:plain", &other, false); !ok {
 		t.Error("a mismatched started session changed eligibility")
+	}
+	for via, want := range map[any]bool{nil: false, "": false, "share": true, "intent": true, false: true, 0.0: true} {
+		if got := viaMarked(via); got != want {
+			t.Errorf("viaMarked(%#v)=%v, want %v", via, got, want)
+		}
 	}
 }

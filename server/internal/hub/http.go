@@ -869,7 +869,13 @@ func (h *Hub) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = h.captureHumanSubmission(r, p.Prompt)
-	// Taken before the to-do handoff adds its own words and images: only the owner's own input counts.
+	// Taken before the to-do handoff adds its own words and images: only the owner's own input counts. "via" stays out
+	// of p, so the node never gets it.
+	var mark struct {
+		Via any `json:"via"`
+	}
+	_ = json.Unmarshal(body, &mark)
+	indirect := viaMarked(mark.Via)
 	firstInput := p.ResumeSessionID == "" && (strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0)
 	if p.TodoID != "" && principalOf(r.Context()).Role != roleFull {
 		writeErr(w, http.StatusForbidden, errors.New("read-only role cannot modify todos"))
@@ -1026,7 +1032,7 @@ func (h *Hub) startSession(w http.ResponseWriter, r *http.Request) {
 		// Before the machine lists it, the returned session says where it runs.
 		started := res.Session
 		started.Cwd = cmp.Or(started.Cwd, startCwd(m, p.Cwd))
-		h.recordAcceptedProjectReviewInput(ctx, r, m.cfg.ID, started.SessionID, "first-agent:"+started.SessionID, &started)
+		h.recordAcceptedProjectReviewInput(ctx, r, m.cfg.ID, started.SessionID, "first-agent:"+started.SessionID, &started, indirect)
 	}
 	if firstInput && p.TodoID == "" {
 		// Recorded as soon as the node has the session, before the listing wait: a restart in between would lose it

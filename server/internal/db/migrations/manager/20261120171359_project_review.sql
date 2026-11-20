@@ -13,6 +13,8 @@ CREATE TABLE project_review_deliveries (
     attempts integer NOT NULL DEFAULT 0,
     history_after bigint,
     review_only boolean,
+    -- Reserved scoped, then sent as triage after authorization was revoked: either receipt settles it.
+    scope_downgraded boolean NOT NULL DEFAULT false,
     retry_at timestamptz NOT NULL DEFAULT now(),
     outcome text NOT NULL DEFAULT '',
     settled_at timestamptz

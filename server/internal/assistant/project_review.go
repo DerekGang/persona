@@ -138,7 +138,9 @@ func (s *Service) projectReviewOwnerInput(ctx context.Context, in assistantwire.
 func (s *Service) projectReviewTurn(ctx context.Context, task Todo, row proto.Session, end turnClose, state string) {
 	p := s.projectReview
 	b, ok := p.taskBinding(SessionRef{MachineID: row.MachineID, SessionID: row.SessionID}, task, end.At)
-	if !ok || end.At.IsZero() || !projectReviewRef.MatchString(end.Key) || (state != turnDone && state != turnInterrupted) {
+	// A turn without its own id ends at an item; Codex names an aborted turn's item by position (line12#0).
+	if !ok || end.At.IsZero() || !projectReviewRef.MatchString(end.Key) && !proto.PositionalItemID(end.Key) ||
+		(state != turnDone && state != turnInterrupted) {
 		return
 	}
 	kind, phase := "execution_completed", "completed"
@@ -324,6 +326,13 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 		if err := p.db.ReserveProjectReviewHistory(ctx, delivery.ID, after, reviewOnly); err != nil {
 			return projectReviewIdle, err
 		}
+	} else if reviewOnly && !delivery.ReviewOnly {
+		// Authorization ended after a scoped attempt was reserved: the retry sends only the triage prompt, and the
+		// receipt is checked against what was sent. Save that before sending, or a triage_only receipt never settles
+		// it and every later event for the target waits behind it.
+		if err := p.db.DowngradeProjectReview(ctx, delivery.ID); err != nil {
+			return projectReviewIdle, err
+		}
 	}
 	if reviewOnly {
 		delivery.Event = json.RawMessage(`{"kind":"review_only"}`)
@@ -385,7 +394,7 @@ func (s *Service) projectReviewReceipt(ctx context.Context, target SessionRef, m
 						return true, "", err
 					}
 				}
-				return true, projectReviewOutcome(reply.Text, e.ID, e.ReviewOnly), nil
+				return true, projectReviewOutcome(reply.Text, e.ID, e.ReviewOnly, !e.ReviewOnly || e.Downgraded), nil
 			case item.Role == "assistant" && item.Kind == proto.KindText && !item.Narration:
 				reply = item
 			}
@@ -399,7 +408,9 @@ func (s *Service) projectReviewReceipt(ctx context.Context, target SessionRef, m
 	}
 }
 
-func projectReviewOutcome(reply, id string, reviewOnly bool) string {
+// projectReviewOutcome reads the receipt line. triage: a triage prompt was sent; scoped: a scoped one may have been
+// (a downgraded delivery's first, unconfirmed attempt may have landed before its triage resend).
+func projectReviewOutcome(reply, id string, triage, scoped bool) string {
 	lines := strings.Split(strings.TrimSpace(reply), "\n")
 	fields := strings.Fields(lines[len(lines)-1])
 	if len(fields) != 3 || fields[0] != "PROJECT_REVIEW_RECEIPT" || fields[1] != id {
@@ -408,11 +419,11 @@ func projectReviewOutcome(reply, id string, reviewOnly bool) string {
 	switch fields[2] {
 	case "triage_only":
 		// Only a review-only event may be settled without reconciling a project.
-		if reviewOnly {
+		if triage {
 			return fields[2]
 		}
 	case "facts_recorded", "no_change", "needs_evidence":
-		if !reviewOnly {
+		if scoped {
 			return fields[2]
 		}
 	}

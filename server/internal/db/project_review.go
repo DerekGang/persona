@@ -73,13 +73,15 @@ type ProjectReviewDelivery struct {
 	Attempts     int
 	HistoryAfter *int
 	ReviewOnly   bool
+	// Downgraded: reserved with a scoped prompt, later resent as triage. The scoped text may have landed first.
+	Downgraded bool
 }
 
 // NextProjectReview returns the head, even if it is waiting for its next attempt.
 func (d *DB) NextProjectReview(ctx context.Context, target string) (ProjectReviewDelivery, bool, error) {
 	var e ProjectReviewDelivery
-	err := d.pool.QueryRow(ctx, `SELECT id,event,retry_at,attempts,history_after,coalesce(review_only,false) FROM project_review_deliveries
-		WHERE target=$1 AND settled_at IS NULL ORDER BY seq LIMIT 1`, target).Scan(&e.ID, &e.Event, &e.RetryAt, &e.Attempts, &e.HistoryAfter, &e.ReviewOnly)
+	err := d.pool.QueryRow(ctx, `SELECT id,event,retry_at,attempts,history_after,coalesce(review_only,false),scope_downgraded FROM project_review_deliveries
+		WHERE target=$1 AND settled_at IS NULL ORDER BY seq LIMIT 1`, target).Scan(&e.ID, &e.Event, &e.RetryAt, &e.Attempts, &e.HistoryAfter, &e.ReviewOnly, &e.Downgraded)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return e, false, nil
 	}
@@ -102,5 +104,12 @@ func (d *DB) SettleProjectReview(ctx context.Context, id, outcome string) error 
 func (d *DB) ReserveProjectReviewHistory(ctx context.Context, id string, after int, reviewOnly bool) error {
 	_, err := d.pool.Exec(ctx, `UPDATE project_review_deliveries
 		SET history_after=$2,review_only=$3 WHERE id=$1 AND history_after IS NULL AND settled_at IS NULL`, id, after, reviewOnly)
+	return err
+}
+
+// DowngradeProjectReview records that a reserved scoped delivery is now sent as triage only. It never upgrades.
+func (d *DB) DowngradeProjectReview(ctx context.Context, id string) error {
+	_, err := d.pool.Exec(ctx, `UPDATE project_review_deliveries SET review_only=true,scope_downgraded=true
+		WHERE id=$1 AND history_after IS NOT NULL AND review_only IS NOT TRUE AND settled_at IS NULL`, id)
 	return err
 }

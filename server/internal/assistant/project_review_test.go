@@ -393,19 +393,75 @@ func TestProjectReviewOwnerInputAssignmentEpoch(t *testing.T) {
 
 func TestProjectReviewOutcomeTriageOnlyIsReviewOnly(t *testing.T) {
 	cases := []struct {
-		reply      string
-		reviewOnly bool
-		want       string
+		reply          string
+		triage, scoped bool
+		want           string
 	}{
-		{"done\nPROJECT_REVIEW_RECEIPT id-1 triage_only", true, "triage_only"},
-		{"PROJECT_REVIEW_RECEIPT id-1 triage_only", false, ""},
-		{"PROJECT_REVIEW_RECEIPT id-1 facts_recorded", false, "facts_recorded"},
-		{"PROJECT_REVIEW_RECEIPT id-1 facts_recorded", true, ""},
-		{"PROJECT_REVIEW_RECEIPT id-2 no_change", false, ""},
+		{"done\nPROJECT_REVIEW_RECEIPT id-1 triage_only", true, false, "triage_only"},
+		{"PROJECT_REVIEW_RECEIPT id-1 triage_only", false, true, ""},
+		{"PROJECT_REVIEW_RECEIPT id-1 facts_recorded", false, true, "facts_recorded"},
+		{"PROJECT_REVIEW_RECEIPT id-1 facts_recorded", true, false, ""},
+		{"PROJECT_REVIEW_RECEIPT id-2 no_change", false, true, ""},
+		// downgraded: the scoped attempt may have landed before the triage resend
+		{"PROJECT_REVIEW_RECEIPT id-1 no_change", true, true, "no_change"},
+		{"PROJECT_REVIEW_RECEIPT id-1 triage_only", true, true, "triage_only"},
 	}
 	for _, c := range cases {
-		if got := projectReviewOutcome(c.reply, "id-1", c.reviewOnly); got != c.want {
-			t.Errorf("%q reviewOnly=%v: got %q, want %q", c.reply, c.reviewOnly, got, c.want)
+		if got := projectReviewOutcome(c.reply, "id-1", c.triage, c.scoped); got != c.want {
+			t.Errorf("%q triage=%v scoped=%v: got %q, want %q", c.reply, c.triage, c.scoped, got, c.want)
 		}
+	}
+}
+
+// A scoped attempt is reserved and its send goes unconfirmed; the task loses its project before the retry. The retry
+// sends only the triage prompt, and the triage_only receipt it asks for must settle the delivery, or the target's
+// queue waits behind it forever. The event is an interrupted Codex turn, whose end is a positional item id.
+func TestProjectReviewDowngradeAfterReservation(t *testing.T) {
+	ctx := context.Background()
+	store := todoTestDB(t)
+	s, f := reviewTestService(t, store)
+	target, _ := json.Marshal(reviewTarget)
+	f.sessions["box"] = []proto.Session{{SessionID: reviewTarget.SessionID, Status: proto.StatusIdle, Agent: "codex", Model: reviewTestModel}}
+	alpha := reviewNewTask(t, s, "alpha", "todo_downgrade", reviewSource)
+	row := proto.Session{MachineID: reviewSource.MachineID, SessionID: reviewSource.SessionID}
+	if !proto.PositionalItemID("line12#0") {
+		t.Fatal("fixture: not a positional item id")
+	}
+	s.projectReviewTurn(ctx, alpha, row, turnClose{Key: "line12#0", At: reviewTestTime}, turnInterrupted)
+	e, ok, err := store.NextProjectReview(ctx, string(target))
+	if err != nil || !ok || !strings.Contains(string(e.Event), `"reference": "line12#0"`) || !strings.Contains(string(e.Event), "execution_interrupted") {
+		t.Fatalf("interrupted Codex turn not queued: %s %v %v", e.Event, ok, err)
+	}
+	f.failSendOnce = map[string]error{"box/review": errors.New("node disconnected")}
+	if _, err := s.projectReviewStep(ctx, e.RetryAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	e, _, _ = store.NextProjectReview(ctx, string(target))
+	if e.HistoryAfter == nil || e.ReviewOnly || e.Downgraded || len(f.sentOnce) != 0 {
+		t.Fatalf("fixture: want a reserved scoped attempt, got %+v sends=%d", e, len(f.sentOnce))
+	}
+	f.failSendOnce = nil
+	s.projectReview.Projects = nil // authorization revoked between attempts
+	if _, err := s.projectReviewStep(ctx, e.RetryAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.sentOnce) != 1 {
+		t.Fatalf("retry not sent: %d", len(f.sentOnce))
+	}
+	if msg := f.sentOnce[0]["text"].(string); strings.Contains(msg, alpha.ID) || !strings.Contains(msg, e.ID+" triage_only") {
+		t.Fatalf("retry after revocation was not the triage prompt: %s", msg)
+	}
+	e, _, _ = store.NextProjectReview(ctx, string(target))
+	if !e.ReviewOnly || !e.Downgraded {
+		t.Fatalf("downgrade not saved before the send: %+v", e)
+	}
+	f.items = append(f.items, proto.Item{Seq: 1, Role: "user", Kind: proto.KindText, ClientMsgID: e.ID},
+		proto.Item{Seq: 2, Role: "assistant", Kind: proto.KindText, Text: "PROJECT_REVIEW_RECEIPT " + e.ID + " triage_only", Model: reviewTestModel},
+		proto.Item{Seq: 3, Kind: "turn_duration", ID: "review-finished"})
+	if _, err := s.projectReviewStep(ctx, e.RetryAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if head, ok, err := store.NextProjectReview(ctx, string(target)); err != nil || ok {
+		t.Fatalf("triage receipt did not settle the downgraded delivery: %+v %v %v", head, ok, err)
 	}
 }

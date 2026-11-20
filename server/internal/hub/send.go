@@ -285,6 +285,7 @@ func (h *Hub) sendMessageOnce(w http.ResponseWriter, r *http.Request, m *Machine
 	if isText && strings.TrimSpace(text) != "" || p["images"] != nil {
 		r = h.captureHumanSubmission(r, text)
 	}
+	indirect := viaMarked(p["via"]) // Siri or the share sheet: delivered, but not the owner's own input for project review
 	for _, reserved := range []string{"creation_id", "incarnation", "caller", "submission", "share_authority", "skill_owner"} {
 		delete(p, reserved)
 	}
@@ -352,7 +353,7 @@ func (h *Hub) sendMessageOnce(w http.ResponseWriter, r *http.Request, m *Machine
 			// Older owner messages to it are kept undelivered: this one is kept behind them, never sent first.
 			if id, _ := asSent["client_msg_id"].(string); id != "" && rpcCodeOf(err) == assistantwire.CodeUndeliveredAhead {
 				if status, body, ok := h.keepUndelivered(r.Context(), m, sid, asSent, assistantwire.CodeUndeliveredAhead, ""); ok {
-					h.recordAcceptedProjectReviewInput(r.Context(), r, m.cfg.ID, sid, id, nil)
+					h.recordAcceptedProjectReviewInput(r.Context(), r, m.cfg.ID, sid, id, nil, indirect)
 					writeRaw(w, status, body)
 					return
 				}
@@ -479,7 +480,7 @@ func (h *Hub) sendMessageOnce(w http.ResponseWriter, r *http.Request, m *Machine
 		}
 		if h.store != nil {
 			commit := context.WithoutCancel(ctx)
-			recorded, err := h.settleProjectReviewOwner(commit, r, m.cfg.ID, sid, id, outcome)
+			recorded, err := h.settleProjectReviewOwner(commit, r, m.cfg.ID, sid, id, outcome, indirect)
 			if !recorded {
 				err = h.store.SettleSend(commit, id, outcome)
 			}

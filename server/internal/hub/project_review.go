@@ -20,11 +20,19 @@ type projectReviewOwnerStore interface {
 	AckProjectReviewOwner(context.Context, string) error
 }
 
+// viaMarked: the app's "via" says it sent the message through Siri, Shortcuts, an App Intent or the share sheet. Such
+// a message is never the owner's own words (assistant/start.go messageParams); a mark of any kind but "" counts.
+func viaMarked(via any) bool {
+	text, isText := via.(string)
+	return via != nil && !(isText && text == "")
+}
+
 // Only the authenticated device message route knows who supplied the input.
 // Do not infer this from transcript roles, body metadata or forward text.
 // started is the session a start just returned, for when the machine has not listed it yet.
-func (h *Hub) projectReviewAppSource(r *http.Request, machine, session, id string, started *proto.Session) (db.ProjectReviewOwnerRelay, bool) {
-	if _, trusted := r.Context().Value(trustedSubmissionKey{}).(devicewire.Submission); !trusted || session == "" || id == "" {
+// indirect: the request carried a "via" mark (viaMarked); it is delivered as usual but never counts as owner input.
+func (h *Hub) projectReviewAppSource(r *http.Request, machine, session, id string, started *proto.Session, indirect bool) (db.ProjectReviewOwnerRelay, bool) {
+	if _, trusted := r.Context().Value(trustedSubmissionKey{}).(devicewire.Submission); !trusted || indirect || session == "" || id == "" {
 		return db.ProjectReviewOwnerRelay{}, false
 	}
 	unscoped := h.isMainOn(machine, session)
@@ -44,11 +52,11 @@ func (h *Hub) projectReviewAppSource(r *http.Request, machine, session, id strin
 		Unscoped: unscoped}, true
 }
 
-func (h *Hub) settleProjectReviewOwner(ctx context.Context, r *http.Request, machine, session, id, outcome string) (bool, error) {
+func (h *Hub) settleProjectReviewOwner(ctx context.Context, r *http.Request, machine, session, id, outcome string, indirect bool) (bool, error) {
 	if outcome != sendDelivered && outcome != sendLater {
 		return false, nil
 	}
-	p, eligible := h.projectReviewAppSource(r, machine, session, id, nil)
+	p, eligible := h.projectReviewAppSource(r, machine, session, id, nil, indirect)
 	store, ok := h.store.(projectReviewOwnerStore)
 	if !ok || !eligible {
 		return false, nil
@@ -119,8 +127,8 @@ func (h *Hub) setProjectReviewAppInputs(ctx context.Context, manager string, ena
 	return store.SetProjectReviewAppInputs(ctx, manager, enabled)
 }
 
-func (h *Hub) recordAcceptedProjectReviewInput(ctx context.Context, r *http.Request, machine, session, id string, started *proto.Session) {
-	p, eligible := h.projectReviewAppSource(r, machine, session, id, started)
+func (h *Hub) recordAcceptedProjectReviewInput(ctx context.Context, r *http.Request, machine, session, id string, started *proto.Session, indirect bool) {
+	p, eligible := h.projectReviewAppSource(r, machine, session, id, started, indirect)
 	if store, ok := h.store.(projectReviewOwnerStore); ok && eligible {
 		bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()

@@ -594,7 +594,10 @@ migrations. Apply changes with the manager's service restart. To pause intake an
 `enabled` to `false` and let the restarted manager connect to the hub. Applying that setting leaves
 the delivery history and outstanding rows in Postgres. Turning App input off (or disabling the
 section) drops the App inputs the hub has not yet passed to that manager, so turning it back on
-does not replay them. Changes to project authorization are rechecked before delivery.
+does not replay them. Changes to project authorization are rechecked before delivery. An event
+whose authorization ends after its scoped attempt was reserved is resent as triage only; its row's
+`scope_downgraded` records that, and either receipt then settles it, since the scoped attempt may
+have landed first.
 For an audit, use the manager's `project_review_deliveries` table. Its event ID, attempts, last
 outcome and settlement timestamp show what was queued, retried or processed.
 
@@ -604,6 +607,8 @@ Boundaries of this version:
   through the authenticated App paths. A follow-up that wakes a task's Agent still produces that task's usual
   completion or blocking event once its turn ends, like any other turn of a reviewed task.
 - The review target never reviews its own messages or turns, and messages the manager sends to it are not owner input.
+- Messages and Agent starts the App marks with `via` (Siri, Shortcuts, an App Intent, the share sheet) are
+  delivered as usual but are not owner input.
 - Terminal input typed straight into an Agent, generic extension channels, guest, health and meeting conversations,
   and App clients that send a message without a stable client message ID are not captured.
 - A hub restart while a start's `session.start` call to the node is still in flight can lose that start's first
