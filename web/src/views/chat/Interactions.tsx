@@ -13,7 +13,7 @@ import { isSessionReview } from "../../lib/types";
 import type { Interaction } from "../../lib/types";
 import { defaults, elicitationDraft, elicitationResolution, elicitationSource, fields, numberInputMode, saveElicitationDraft, urlHost, urlTarget, validate, type ElicitationAction, type Field, type Values } from "../../lib/elicitation";
 import { answerLines } from "../../lib/answered";
-import { answerBlock, interactionCanAnswer, sessionTitle } from "../../lib/format";
+import { answerBlock, interactionCanAnswer } from "../../lib/format";
 import { modeTitle, PERMISSION_MODES } from "../../lib/session-actions";
 import { interactionAsk } from "../../lib/inbox";
 import { plainMarkdown } from "../../lib/plain-markdown";
@@ -26,12 +26,11 @@ import { isSide } from "../../lib/side-fold";
 import { Button, Collapse, cx, EASE, Kbd, Loading, Menu, SECRET_INPUT, toast, useMenu } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
-import { ANSWERED_LIST_MAX, cardFold, cardLine, nextWaiting, PLAN_MAX, showsAnswered } from "./dock";
+import { ANSWERED_LIST_MAX, cardFold, cardLine, PLAN_MAX, showsAnswered } from "./dock";
 import { useCardCut } from "./card-cut";
 import { answeredShown, answeredTally, keptAnswers, latestAnswer, nextRun, runPosition, tallyDetail, answeredHideAt } from "./card-stack";
 import { ScrollFold } from "./fold-scroll";
-import { cardState } from "../../lib/card-focus";
-import { href, onLinkClick, type Route } from "../../lib/router";
+import { NextWaitingRow } from "./NextWaitingRow";
 import { t } from "../../i18n";
 import { StatusMark } from "../../ui/StatusMark";
 import { useVoiceAsking } from "../../lib/voice/calls";
@@ -1594,32 +1593,5 @@ function FoldRow({ label, detail, onClick }: { label: string; detail: string; on
       <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">{detail}</span>
       <Icon name="chevronRight" size={14} stroke={2.2} className="shrink-0 text-ink-3" />
     </button>
-  );
-}
-
-/** "N more need you · Next: <agent> · <what it asks> ›", opening that chat with that card first (lib/card-focus.ts).
- *  Mounted only right after an answer here: the cards of other chats coming and going redraw this, not the chat. */
-function NextWaitingRow({ mid, sid }: { mid: string; sid: string }) {
-  const next = useStore((s) => nextWaiting(s.interactions, mid, sid));
-  const session = useStore((s) => (next ? (s.sessions[next.ix.machine_id] ?? []).find((x) => x.session_id === next.ix.session_id) : undefined));
-  if (!next) return null;
-  const { ix, count } = next;
-  // named as "Overview"'s "Needs you" row names it, worded as the folded cards' line (cardLine)
-  const title = ix.session_title?.trim() || (session ? sessionTitle(session) : ix.cwd || t("home.session"));
-  const ask = plainMarkdown(cardLine(ix)).replace(/\s+/g, " ").trim();
-  const to: Route = { name: "session", mid: ix.machine_id, sid: ix.session_id };
-  return (
-    <a
-      href={href(to)}
-      data-chat-next-waiting
-      onClick={(e) => onLinkClick(e, to, cardState(ix.id))}
-      className="flex h-11 shrink-0 items-center gap-2 rounded-card bg-surface px-3.5 shadow-card transition-colors hover:bg-hover"
-      style={{ animation: `fade-up 250ms ${EASE} both` }}
-    >
-      <span className="size-1.5 shrink-0 rounded-full bg-attention" />
-      <span className="shrink-0 text-[13px] font-medium whitespace-nowrap text-ink">{t("chat-interactions.next_waiting", { count })}</span>
-      <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">{t("chat-interactions.next_waiting_detail", { title, ask })}</span>
-      <Icon name="chevronRight" size={14} stroke={2.2} className="shrink-0 text-ink-3" />
-    </a>
   );
 }
