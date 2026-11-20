@@ -216,40 +216,125 @@ func TestTaskInputLiteralPromptsStayLiteral(t *testing.T) {
 			t.Fatalf("literal task promoted to a selection: %+v %s", task, msg)
 		}
 	}
-	unknown := Task{}
-	const unknownBlock = `<persona-context kind="quote">Quoted</persona-context>`
-	unknown.setPrompt(unknownBlock+"\n\nRead", true)
-	if unknown.PromptSelections || !unknown.grantEligible() {
-		t.Fatal("an ordinary leading context changed grant eligibility")
+	body, _ = json.Marshal(map[string]any{"structured_prompt": "Read the notes", "repeat": "interval", "every_minutes": 30})
+	if r := request(s, "POST", "/api/v1/assistant/tasks", string(body)); r.Code != 400 {
+		t.Fatalf("structured writes require selections: %d %s", r.Code, r.Body.String())
 	}
 }
 
-func TestTaskInputSelfFollowupKeepsOwnerSelections(t *testing.T) {
+func TestTaskInputToolPromptEditsAreLiteral(t *testing.T) {
+	for _, tool := range []string{"followup", "routine"} {
+		t.Run(tool, func(t *testing.T) {
+			s := newStorelessService(t, newFakeHub())
+			const prefix = `<persona-context kind="skill" ref="example">Example</persona-context>`
+			task := Task{ID: "job", Title: "Review", Prompt: prefix + "\n\nReview notes", PromptSelections: true, Repeat: repeatDaily, Time: "12:00", Enabled: true}
+			setTasks(s, task)
+			run := ScheduleRun{Kind: "routine", RefID: task.ID, Title: task.Title, Status: runOK, MachineID: "server", SessionID: "run"}
+			s.recordRun(run)
+			rendered := taskPrompt(task, time.Now(), time.Now(), time.UTC, false, false, false)
+			if !sameText(rendered, task.Prompt) || !copiesRun(run, "", rendered) {
+				t.Fatalf("run header no longer identifies its task: %q", rendered)
+			}
+
+			metadata, _ := json.Marshal(map[string]any{"id": task.ID, "title": task.Title})
+			if _, err := s.toolScheduleRoutine(t.Context(), "server", "run", metadata); err != nil {
+				t.Fatal(err)
+			}
+			kept, _ := taskByID(s, task.ID)
+			if kept.Title != task.Title || kept.Prompt != task.Prompt || !kept.PromptSelections {
+				t.Fatal("a metadata-only edit removed the owner's selections")
+			}
+
+			if tool == "followup" {
+				args, _ := json.Marshal(map[string]any{"at": "30m", "prompt": rendered})
+				if _, err := s.toolScheduleFollowup(t.Context(), "server", "run", args); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				args, _ := json.Marshal(map[string]any{"id": task.ID, "prompt": task.Prompt})
+				if _, err := s.toolScheduleRoutine(t.Context(), "server", "run", args); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tasks := s.tasksView(t.Context(), nil)
+			if len(tasks) != 1 || tasks[0].ID != task.ID || tasks[0].Prompt != task.Prompt || tasks[0].PromptSelections {
+				t.Fatalf("tool write must save literal text on the existing task: %+v", tasks)
+			}
+		})
+	}
+}
+
+func TestTaskInputToolCannotChangeApprovedRun(t *testing.T) {
 	s := newStorelessService(t, newFakeHub())
-	const prefix = `<persona-context kind="skill" ref="one">First</persona-context>`
-	task := Task{ID: "job", Title: "Review", Prompt: prefix + "\n\nReview notes", PromptSelections: true, Repeat: repeatInterval, EveryMinutes: 30, Enabled: true}
+	task := Task{ID: "job", Title: "Review", Prompt: "Example selection", PromptSelections: true, Repeat: repeatDaily, Time: "12:00", Enabled: true, Until: time.Now().Add(-time.Hour)}
 	setTasks(s, task)
-	run := ScheduleRun{Kind: "routine", RefID: task.ID, Title: task.Title, Status: runOK, MachineID: "server", SessionID: "run"}
-	s.recordRun(run)
-	rendered := taskPrompt(task, time.Now(), time.Now(), time.UTC, false, false, false)
-	if !sameText(rendered, task.Prompt) || !copiesRun(run, "", rendered) {
-		t.Fatalf("run header no longer identifies its task: %q", rendered)
+	for _, edit := range []struct {
+		field string
+		value any
+	}{
+		{"title", "Updated"},
+		{"time", "13:00"},
+		{"model", "different-model"},
+		{"fresh_each_run", true},
+		{"inbox", "every"},
+	} {
+		t.Run(edit.field, func(t *testing.T) {
+			args, _ := json.Marshal(map[string]any{"id": task.ID, edit.field: edit.value})
+			if _, err := s.toolScheduleRoutine(t.Context(), "server", "", args); !errors.Is(err, errTaskSelectionsOwner) {
+				t.Fatalf("task run settings require owner authorization, got %v", err)
+			}
+			kept, _ := taskByID(s, task.ID)
+			if kept.Title != task.Title || kept.Time != task.Time || !kept.PromptSelections {
+				t.Fatal("refused edit changed the task")
+			}
+		})
 	}
-	args, _ := json.Marshal(map[string]any{"at": "30m", "prompt": rendered})
-	if _, err := s.toolScheduleFollowup(t.Context(), "server", "run", args); err != nil {
+	if _, err := s.toolScheduleRoutine(t.Context(), "server", "", json.RawMessage(`{"id":"job","enabled":false}`)); err != nil {
 		t.Fatal(err)
 	}
-	tasks := s.tasksView(t.Context(), nil)
-	if len(tasks) != 1 || tasks[0].Prompt != task.Prompt || !tasks[0].PromptSelections {
-		t.Fatalf("copied run changed task or its selections: %+v", tasks)
+	disabled, _ := taskByID(s, task.ID)
+	if disabled.Enabled || !disabled.PromptSelections || !disabled.Until.Equal(task.Until) {
+		t.Fatal("disabling the task changed the approved run settings")
 	}
-	args, _ = json.Marshal(map[string]any{"id": task.ID, "prompt": strings.Replace(task.Prompt, `ref="one"`, `ref="other"`, 1)})
-	if _, err := s.toolScheduleRoutine(t.Context(), "server", "run", args); err != nil {
-		t.Fatal(err)
+	if _, err := s.toolScheduleRoutine(t.Context(), "server", "", json.RawMessage(`{"id":"job","enabled":true}`)); !errors.Is(err, errTaskSelectionsOwner) {
+		t.Fatalf("reactivation requires owner authorization, got %v", err)
 	}
-	updated, _ := taskByID(s, task.ID)
-	if updated.PromptSelections {
-		t.Fatal("model-authored replacement retained selection authority")
+	// This is the last model-write check after the schedule lock was released.
+	// The owner may have saved selections in between those operations.
+	inherit := ""
+	if err := s.setTaskModel(t.Context(), task.ID, &inherit, nil, nil); !errors.Is(err, errTaskSelectionsOwner) {
+		t.Fatalf("late model write was not refused: %v", err)
+	}
+}
+
+func TestTaskInputOwnerMetadataKeepsSelections(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newTestService(t, f)
+	task := Task{ID: "job", Title: "Review", Prompt: `<persona-context kind="skill" ref="example">Example</persona-context>` + "\n\nReview notes",
+		PromptSelections: true, Repeat: repeatDaily, Time: "12:00", Enabled: true}
+	setTasks(s, task)
+	f.answerNode("assistant.directory", func(string, json.RawMessage) (any, error) {
+		return map[string]string{"cwd": "/work/project"}, nil
+	})
+	f.answerNode("assistant.content", func(string, json.RawMessage) (any, error) { return map[string]bool{"valid": true}, nil })
+
+	updates := []struct {
+		name string
+		path string
+		body any
+	}{
+		{"existing client", "/api/v1/assistant/routines", map[string]any{"routines": []Task{task}}},
+		{"omitted prompt", "/api/v1/assistant/tasks/" + task.ID, map[string]any{"title": "Updated", "repeat": task.Repeat, "time": task.Time, "enabled": true}},
+	}
+	for _, update := range updates {
+		t.Run(update.name, func(t *testing.T) {
+			body, _ := json.Marshal(update.body)
+			r := request(s, "PUT", update.path, string(body))
+			kept, _ := taskByID(s, task.ID)
+			if r.Code != 200 || kept.Prompt != task.Prompt || !kept.PromptSelections {
+				t.Fatalf("metadata edit lost the owner's selections: %d %s", r.Code, r.Body.String())
+			}
+		})
 	}
 }
 

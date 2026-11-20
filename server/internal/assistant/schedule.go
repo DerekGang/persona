@@ -890,7 +890,9 @@ func (s *Service) toolScheduleFollowup(ctx context.Context, machine, sessionID s
 		return "", err
 	}
 	if err := s.setTaskModel(ctx, t.ID, a.Launcher, a.Model, a.Effort); err != nil {
-		_, _ = s.deleteTask(ctx, t.ID) // a task that cannot run with what was asked is not left behind
+		if !errors.Is(err, errTaskSelectionsOwner) {
+			_, _ = s.deleteTask(ctx, t.ID) // a task that cannot run with what was asked is not left behind
+		}
 		return "", err
 	}
 	s.broadcastSchedule()
@@ -974,7 +976,7 @@ func (s *Service) scheduleOwn(ctx context.Context, sessionID, title, rawPrompt, 
 	if title = strings.TrimSpace(title); title != "" {
 		t.Title = title
 	}
-	t.setPrompt(prompt, false)
+	t.setLiteralPrompt(prompt)
 	if push != nil { // left out: it keeps its push
 		t.Push = *push
 	}
@@ -1255,14 +1257,28 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, machine, self string,
 		return "", err
 	}
 	needsOwn := hasTaskModel(a.Launcher, a.Model, a.Effort)
-	if a.ID != "" && needsOwn {
-		// Check before the save: a bad launcher must not leave the rest of the change applied.
+	changesRun := needsOwn || a.Time != "" || a.Weekdays != nil || a.Cron != "" || a.Until != nil ||
+		a.FreshEachRun != nil || a.Push != nil || a.Inbox != nil || a.Report != nil || a.RunIf != nil || a.TodoID != nil
+	title := strings.TrimSpace(a.Title)
+	requiresOwner := func(t Task) bool {
+		enables := a.Enabled != nil && *a.Enabled && !t.Enabled
+		renames := a.Title != "" && title != t.Title // the title is part of the rendered prompt
+		return t.PromptSelections && a.Prompt == "" && (changesRun || enables || renames)
+	}
+	if a.ID != "" && (changesRun || a.Enabled != nil || a.Title != "") {
+		// Refuse before model validation or pre-run command approval. Recheck
+		// under the schedule lock in case the owner edits the task meanwhile.
 		if prev, ok := s.taskView(ctx, a.ID); ok && prev.Space == space {
-			if prev.SessionID != "" {
-				return "", errTaskModelNeedsOwnConversation
+			if requiresOwner(prev) {
+				return "", errTaskSelectionsOwner
 			}
-			if err := s.validateTaskModel(ctx, a.ID, a.Launcher, a.Model, a.Effort); err != nil {
-				return "", err
+			if needsOwn {
+				if prev.SessionID != "" {
+					return "", errTaskModelNeedsOwnConversation
+				}
+				if err := s.validateTaskModel(ctx, a.ID, a.Launcher, a.Model, a.Effort); err != nil {
+					return "", err
+				}
 			}
 		}
 	}
@@ -1288,15 +1304,19 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, machine, self string,
 			return "", fmt.Errorf("no task %q (list_followups lists them)", a.ID)
 		}
 		t = sc.tasks[i]
+		if requiresOwner(t) {
+			sc.mu.Unlock()
+			return "", errTaskSelectionsOwner
+		}
 		old = t
 	} else {
 		t = Task{ID: "rt_" + randomHex(4), Repeat: repeatDaily, Enabled: true, Space: space, CreatedBy: "assistant", CreatedAt: time.Now().UTC()}
 	}
 	if a.Title != "" {
-		t.Title = strings.TrimSpace(a.Title)
+		t.Title = title
 	}
 	if a.Prompt != "" {
-		t.setPrompt(stripScheduleHeader(a.Prompt), false)
+		t.setLiteralPrompt(stripScheduleHeader(a.Prompt))
 	}
 	if a.Time != "" || a.Weekdays != nil {
 		t.Repeat = repeatDaily
@@ -1328,22 +1348,28 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, machine, self string,
 	if a.FreshEachRun != nil {
 		t.FreshEachRun = *a.FreshEachRun
 	}
-	if err := bindScheduleTodo(&t, a.TodoID); err != nil {
-		sc.mu.Unlock()
-		return "", err
+	if t.PromptSelections {
+		// Only a pause may have changed. Preserve the saved run settings,
+		// including an elapsed end time.
+		disabledTransition(old, &t, now)
+	} else {
+		if err := bindScheduleTodo(&t, a.TodoID); err != nil {
+			sc.mu.Unlock()
+			return "", err
+		}
+		applyUntil(&t, end, hasUntil, clearUntil)
+		dropStaleUntil(&t, hasUntil, now)
+		isolateScheduledConversation(&t, mayBeMain)
+		if err := s.checkTaskSourceRestore(ctx, old, t); err != nil {
+			sc.mu.Unlock()
+			return "", err
+		}
+		if err := checkTask(&t, now); err != nil {
+			sc.mu.Unlock()
+			return "", err
+		}
+		rearm(old, &t, now)
 	}
-	applyUntil(&t, end, hasUntil, clearUntil)
-	dropStaleUntil(&t, hasUntil, now)
-	isolateScheduledConversation(&t, mayBeMain)
-	if err := s.checkTaskSourceRestore(ctx, old, t); err != nil {
-		sc.mu.Unlock()
-		return "", err
-	}
-	if err := checkTask(&t, now); err != nil {
-		sc.mu.Unlock()
-		return "", err
-	}
-	rearm(old, &t, now)
 	tasks := slices.Clone(sc.tasks)
 	if i < 0 {
 		tasks = append(tasks, t)
@@ -1356,7 +1382,7 @@ func (s *Service) toolScheduleRoutine(ctx context.Context, machine, self string,
 		return "", err
 	}
 	if err := s.setTaskModel(ctx, t.ID, a.Launcher, a.Model, a.Effort); err != nil {
-		if i < 0 {
+		if i < 0 && !errors.Is(err, errTaskSelectionsOwner) {
 			_, _ = s.deleteTask(ctx, t.ID) // a task that cannot run with what was asked is not left behind
 		}
 		return "", err
@@ -2892,7 +2918,11 @@ func (s *Service) taskView(ctx context.Context, id string) (Task, bool) {
 func editTask(old, in Task, now time.Time) Task {
 	t := old
 	t.Title, t.Repeat, t.Enabled = in.Title, in.Repeat, in.Enabled
-	t.setPrompt(in.Prompt, false)
+	// An old client may echo the approved prompt when saving metadata. Any
+	// replacement is literal unless the owner uses the structured route.
+	if in.Prompt != old.Prompt {
+		t.setLiteralPrompt(in.Prompt)
+	}
 	t.Time, t.Weekdays, t.EveryMinutes, t.Cron = in.Time, in.Weekdays, in.EveryMinutes, in.Cron
 	t.PermissionMode = in.PermissionMode
 	t.Launcher, t.Model, t.Effort = "", "", ""
@@ -2980,7 +3010,7 @@ func (s *Service) scheduleRoutes() {
 		}
 		t := editTask(Task{ID: "task_" + randomHex(4), CreatedAt: now.UTC()}, in, now)
 		if _, rich := raw["structured_prompt"]; rich {
-			t.setPrompt(in.Prompt, true)
+			t.PromptSelections = true
 		}
 		t.SessionID, t.Push, t.Inbox, t.RunIf = "", push, inbox, runIf
 		if err := editTaskState(&t, in, raw, now); err != nil {
@@ -3062,6 +3092,15 @@ func (s *Service) scheduleRoutes() {
 			apierr.Write(w, 400, err)
 			return
 		}
+		if in.Prompt == "" {
+			in.Prompt = old.Prompt
+			for field := range raw {
+				if strings.EqualFold(field, "prompt") {
+					in.Prompt = "" // an explicit empty prompt is still invalid
+					break
+				}
+			}
+		}
 		if _, has := raw["cron"]; !has && old.Repeat == repeatCron {
 			// An app that does not know cron tasks keeps the task's rule (an older iOS app reads one as a one-off,
 			// Android and the web send its repeat back without the expression).
@@ -3069,7 +3108,7 @@ func (s *Service) scheduleRoutes() {
 		}
 		t := editTask(old, in, now)
 		if _, rich := raw["structured_prompt"]; rich {
-			t.setPrompt(in.Prompt, true)
+			t.PromptSelections = true
 		}
 		if hasRunIf {
 			t.RunIf = runIf

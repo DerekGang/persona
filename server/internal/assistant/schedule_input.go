@@ -269,17 +269,9 @@ func taskPromptBody(prompt string) (string, string) {
 	return strings.TrimSpace(prefix), strings.TrimLeft(body, "\r\n")
 }
 
-// Only the full-credential structured write can authorize new references. An ordinary edit
-// can keep exactly the envelope that the owner already authorized for this task.
-func (t *Task) setPrompt(prompt string, structured bool) {
-	keep := false
-	if structured || t.PromptSelections {
-		prefix, _ := taskPromptBody(prompt)
-		keep = prefix != "" && structured
-		if !structured && prefix != "" {
-			old, _ := taskPromptBody(t.Prompt)
-			keep = prefix == old
-		}
-	}
-	t.Prompt, t.PromptSelections = prompt, keep
+var errTaskSelectionsOwner = errors.New("change the run settings of a task with selected content in the Persona app")
+
+// A tool-authored prompt is literal even when it matches the task's previous text.
+func (t *Task) setLiteralPrompt(prompt string) {
+	t.Prompt, t.PromptSelections = prompt, false
 }
