@@ -189,6 +189,8 @@ final class PersonaQueueUITests: XCTestCase {
         XCTAssertTrue(strip.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "排队中 1 条")).firstMatch.exists)
         XCTAssertFalse(app.buttons["queue-relayed-summary"].exists)
         XCTAssertEqual(items.count, 0, "a relayed-only queue has no rows to expand")
+        XCTAssertNotEqual(strip.elementType, .button, "a relayed-only summary must not expose a no-op disclosure")
+        XCTAssertEqual(strip.buttons.count, 0, "a relayed-only summary has no Send Now ghost or disclosure button")
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "来自「早报")).firstMatch.exists)
 
         let assistant = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(string: hub + "/api/v1/assistant")!)) as? [String: Any]

@@ -7145,41 +7145,26 @@ struct QueueStrip: View {
     private static let visibleRows: CGFloat = 3
 
     var body: some View {
-        DisclosureGroup(isExpanded: Binding(get: { expanded && drawnCount > 0 }, set: { expanded = drawnCount > 0 && $0 })) {
-            Color.clear.frame(height: 0)
-        } label: {
-            Group {
-                if typeSize >= Theme.interfaceLargestTypeSize {
-                    // At the interface's largest size, where the accessibility sizes land too, Send Now (which keeps its
-                    // width) left the title a few characters and took the tap that opens the strip (#4846, #7730):
-                    // unless both fit on one line, the title wraps and Send Now has the line under it. Smaller sizes
-                    // keep the one line, the title cut short where it must be.
-                    ViewThatFits(in: .horizontal) {
-                        oneLine
-                        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
-                                tray
-                                title.multilineTextAlignment(.leading) // the label centers wrapped lines
-                            }
-                            sendNowPlaceholder
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else {
-                    oneLine
+        Group {
+            if drawnCount > 0 {
+                DisclosureGroup(isExpanded: $expanded) {
+                    Color.clear.frame(height: 0)
+                } label: {
+                    summary
                 }
+            } else {
+                // Relayed-only messages still count, but there are no rows to disclose and no Send Now action.
+                summary
             }
-            .font(Theme.Font.labelStrong)
-            .foregroundStyle(.secondary)
-            .contentShape(.rect)
-            .accessibilityIdentifier("queue-strip")
         }
         .tint(.secondary)
         .padding(Theme.Space.m)
         .surface(in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
-        // Expanded rows float over the chat instead of changing the footer height (#7770): the summary's height and
-        // the newest end stay fixed whether the queue has one, three or zero expanded rows.
-        .overlay(alignment: .top) {
+        .transition(.opacity)
+        .accessibilityIdentifier("queue-strip")
+        // Expanded rows float behind the summary instead of changing the footer height (#7770): its height and the
+        // newest end stay fixed, and the one real Send Now button remains above the rows in layout and hit order.
+        .background(alignment: .top) {
             if expanded && drawnCount > 0 {
                 ScrollView {
                     rows
@@ -7194,17 +7179,38 @@ struct QueueStrip: View {
                 .transition(.opacity)
             }
         }
-        .transition(.opacity)
-        // Keep the actual Send Now control above expanded rows in z-order as well as in layout order. Its padding uses
-        // the same coordinate basis as the placeholder inside the padded label; only this copy receives taps/VoiceOver.
-        .overlay(alignment: typeSize >= Theme.interfaceLargestTypeSize ? .bottomTrailing : .topTrailing) {
-            sendNowButton
-                .padding(Theme.Space.m)
-        }
         .onChange(of: drawnCount) { _, new in if new == 0 { expanded = false } }
     }
 
     private var tray: some View { ThemedIcon("tray.and.arrow.down").accessibilityHidden(true) }
+
+    @ViewBuilder private var summary: some View {
+        Group {
+            if typeSize >= Theme.interfaceLargestTypeSize {
+                // At the interface's largest size, where the accessibility sizes land too, Send Now (which keeps its
+                // width) left the title a few characters and took the tap that opens the strip (#4846, #7730):
+                // unless both fit on one line, the title wraps and Send Now has the line under it. Smaller sizes
+                // keep the one line, the title cut short where it must be.
+                ViewThatFits(in: .horizontal) {
+                    oneLine
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+                            tray
+                            title.multilineTextAlignment(.leading) // the label centers wrapped lines
+                        }
+                        sendNowButton
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                oneLine
+            }
+        }
+        .font(Theme.Font.labelStrong)
+        .foregroundStyle(.secondary)
+        .contentShape(.rect)
+    }
+
     private var title: Text { Text("\(total) queued · \(agent) will handle them in order [Queue Strip]") }
 
     /// The tray, the title on one line and Send Now at the end.
@@ -7213,16 +7219,8 @@ struct QueueStrip: View {
             tray
             title.lineLimit(1)
             Spacer(minLength: 0)
-            sendNowPlaceholder
+            sendNowButton
         }
-    }
-
-    /// The original button's layout slot, without a second accessibility or hit target behind expanded rows.
-    private var sendNowPlaceholder: some View {
-        sendNowButton
-            .opacity(0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
     }
 
     /// Send Now when a Claude in a terminal has the user's own messages queued, or the spinner while the queue is being
@@ -7236,7 +7234,6 @@ struct QueueStrip: View {
                 Label("Send Now [Queue Strip]", systemImage: Theme.Icon.sendNow).lineLimit(1).fixedSize()
             }
             .buttonStyle(.plain)
-            .font(Theme.Font.labelStrong)
             .foregroundStyle(Theme.accent)
             .accessibilityHint(sendNowHint)
             .accessibilityIdentifier("queue-send-now")
