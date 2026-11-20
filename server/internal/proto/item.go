@@ -242,6 +242,11 @@ type Item struct {
 	// Visualization is set on KindVisualization items: a Codex visualize marker's reference to an HTML fragment on
 	// the node. The bytes are not carried here; the session visualization route serves them after path checks.
 	Visualization *Visualization `json:"visualization,omitempty"`
+	// RawTextSHA256 and RawTextTrimmedSHA256 hold the SHA-256 hex digest of the untruncated user Text (and its
+	// \r\n-trimmed form when different), populated before light/clip truncation for local node-side matching
+	// (e.g. BotMux structured turn anchors). Never serialized over the wire.
+	RawTextSHA256        string `json:"-"`
+	RawTextTrimmedSHA256 string `json:"-"`
 }
 
 // Visualization is one Codex visualize reference (the visualize plugin's in-conversation HTML contract): the

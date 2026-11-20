@@ -59,4 +59,21 @@ describe("botmux sessions in the chat", () => {
     expect(host.textContent?.trim().length).toBeGreaterThan(0);
     act(() => root.unmount());
   });
+
+  it("suppresses errored botmux send replies and renders unknown trigger source generically", async () => {
+    const erroredItems: Item[] = [
+      { id: "u2#0", seq: 1, role: "user", kind: "text", text: "raw", botmux: { kind: "trigger", text: "cron tick", mentions: ["Alice", "Alice"] } },
+      { id: "a2#0", seq: 2, role: "assistant", kind: "tool_use", tool_name: "Bash", tool_use_id: "t2", tool_input: { command: "botmux send 'fail'" }, botmux: { kind: "reply", text: "fail" } },
+      { id: "r2#0", seq: 3, role: "user", kind: "tool_result", tool_use_id: "t2", is_error: true, text: "error" },
+    ];
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    await act(async () => root.render(<SegmentView seg={segments(erroredItems)[0]} live={false} mid="m" sid="s" expandFold={async () => {}} />));
+    await act(async () => { await import("./BotmuxMessages"); await new Promise((r) => setTimeout(r, 0)); });
+    const html = host.innerHTML;
+    expect(html).toContain("外部触发");
+    expect(html).not.toContain("从 Persona 发送");
+    expect(html).not.toContain("data-botmux-reply");
+    act(() => root.unmount());
+  });
 });

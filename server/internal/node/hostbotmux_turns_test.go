@@ -330,11 +330,16 @@ func TestBotmuxStructuredReadIncrementalAndFold(t *testing.T) {
 		t.Fatalf("folded --card-file reply should carry structured text, got %+v", foldedReplies)
 	}
 
-	// Late reply arrives with higher seq: incremental fetch updates the cached turn without re-fetching from 0.
+	// Late reply arrives with higher seq: after the recency window elapses, incremental fetch updates the cached turn without re-fetching from 0.
 	fs.mu.Lock()
 	fs.turns[0].Seq = 9
 	fs.turns[0].Replies[0].Text = "Updated card reply"
 	fs.mu.Unlock()
+	h.mu.Lock()
+	if sc := h.turnsCache[sidA]; sc != nil {
+		sc.fetchedAt = time.Now().Add(-botmuxTurnsFetchMinInterval - time.Second)
+	}
+	h.mu.Unlock()
 	rawResp2, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{"session_id": sidA, "fold_work": true, "limit": 50}))
 	if err != nil {
 		t.Fatalf("session.items 2: %v", err)
@@ -365,5 +370,278 @@ func TestBotmuxListKeyIncludesExternalTrigger(t *testing.T) {
 	b := []proto.Session{{SessionID: sidA, PaneID: "botmux:" + sidA, UpdatedAt: time.Unix(100, 0), BotmuxExternalTrigger: true}}
 	if listKey(a) == listKey(b) {
 		t.Fatal("listKey must change when BotmuxExternalTrigger toggles")
+	}
+}
+
+func TestBotmuxOwnerActorUnechoedSurvivesStructuredRead(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.caps = []string{transcript.BotmuxCapOwnerActor}
+	fs.echoActor = false
+	h := fs.makeHost("")
+
+	// Prompt 1 probes capabilities (ownerActor=true), sends actor="owner", server does not echo it -> sticky fallback.
+	if err := h.Prompt(ctx, host.PaneRef{Kind: host.Botmux, ID: sidA}, "first"); err != nil {
+		t.Fatalf("prompt 1: %v", err)
+	}
+	if len(fs.triggers) != 1 || fs.triggers[0]["actor"] != "owner" {
+		t.Fatalf("prompt 1 should have attempted actor=owner: %+v", fs.triggers)
+	}
+	if !h.externalTriggerNotice() {
+		t.Fatal("expected externalTriggerNotice() == true after unechoed actor")
+	}
+
+	// Structured read between two Prompts returns capabilities: ["ownerActor"], must NOT clear the sticky fallback.
+	if _, _ = h.sessionTurns(ctx, sidA); !h.externalTriggerNotice() {
+		t.Fatal("sessionTurns must not overwrite sticky unechoed ownerActor=false")
+	}
+
+	// Prompt 2 must stay in external-event mode (no actor="owner").
+	if err := h.Prompt(ctx, host.PaneRef{Kind: host.Botmux, ID: sidA}, "second"); err != nil {
+		t.Fatalf("prompt 2: %v", err)
+	}
+	if len(fs.triggers) != 2 || fs.triggers[1]["actor"] != nil {
+		t.Fatalf("prompt 2 must omit actor after unechoed fallback + structured read: %+v", fs.triggers[1])
+	}
+
+	// Dashboard restart (token rotation) clears the sticky negative record and allows ownerActor again.
+	fs.mu.Lock()
+	fs.token = "tok_restarted"
+	fs.echoActor = true
+	fs.mu.Unlock()
+	if err := h.Prompt(ctx, host.PaneRef{Kind: host.Botmux, ID: sidA}, "third"); err != nil {
+		t.Fatalf("prompt 3: %v", err)
+	}
+	if len(fs.triggers) != 3 || fs.triggers[2]["actor"] != "owner" {
+		t.Fatalf("prompt 3 after dashboard token rotation should re-enable actor=owner: %+v", fs.triggers[2])
+	}
+}
+
+func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("recent cursor skips redundant HTTP fetch", func(t *testing.T) {
+		fs := newFakeBotmuxTurnsServer(t)
+		fs.caps = []string{transcript.BotmuxCapOwnerActor}
+		h := fs.makeHost("")
+		_, _ = h.sessionTurns(ctx, sidA)
+		_, _ = h.sessionTurns(ctx, sidA)
+		if fs.turnsGets != 1 {
+			t.Fatalf("expected 1 GET within recency window, got %d", fs.turnsGets)
+		}
+	})
+
+	t.Run("unknown_session backs off subsequent fetches", func(t *testing.T) {
+		fs := newFakeBotmuxTurnsServer(t)
+		fs.turnsStatus = http.StatusNotFound
+		fs.turnsErrCode = "unknown_session"
+		h := fs.makeHost("")
+		_, _ = h.sessionTurns(ctx, sidA)
+		_, _ = h.sessionTurns(ctx, sidA)
+		if fs.turnsGets != 1 {
+			t.Fatalf("expected 1 GET before unknown_session backoff, got %d", fs.turnsGets)
+		}
+	})
+
+	t.Run("transport error does not refresh dashboard CLI and backs off", func(t *testing.T) {
+		fs := newFakeBotmuxTurnsServer(t)
+		h := fs.makeHost("")
+		var cliCalls int
+		origRun := h.run
+		h.run = func(ctx context.Context, args ...string) ([]byte, error) {
+			if len(args) > 0 && args[0] == "dashboard" {
+				cliCalls++
+			}
+			return origRun(ctx, args...)
+		}
+		// Prime dashboard URL once, then close the server to force a transport error.
+		if _, _, err := h.dashboard(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+		fs.srv.Close()
+
+		_, _ = h.sessionTurns(ctx, sidA)
+		if cliCalls != 1 {
+			t.Fatalf("transport error must not trigger dashboard CLI refresh; cliCalls = %d, want 1", cliCalls)
+		}
+		_, _ = h.sessionTurns(ctx, sidA)
+		if cliCalls != 1 {
+			t.Fatalf("backoff must suppress subsequent dashboard calls; cliCalls = %d, want 1", cliCalls)
+		}
+	})
+
+	t.Run("pushItems cached path does not block on stalled dashboard", func(t *testing.T) {
+		block := make(chan struct{})
+		defer close(block)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-block:
+			case <-r.Context().Done():
+			}
+		}))
+		defer srv.Close()
+		port := srv.URL[strings.LastIndex(srv.URL, ":")+1:]
+		h := &botmuxHost{
+			client: srv.Client(),
+			base:   "http://127.0.0.1:" + port,
+			token:  "tok",
+			run: func(_ context.Context, args ...string) ([]byte, error) {
+				if len(args) > 0 && args[0] == "observe" {
+					return json.Marshal(map[string]any{
+						"schemaVersion": 1,
+						"daemons": []any{map[string]any{
+							"larkAppId": bmxApp,
+							"probe":     map[string]any{"status": "ok"},
+							"sessions":  []any{bmxRow(sidA, "claude-code", "alive", "idle", false, "topic")},
+						}},
+					})
+				}
+				return []byte(bmxOldDashboard(port, "tok")), nil
+			},
+		}
+		n, _, _ := herdrNode(t)
+		n.hosts = host.NewRegistry(h)
+		if err := n.refreshHosts(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		start := time.Now()
+		_ = n.applyBotmuxTurnsCached(sidA, nil, []proto.Item{{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: "<user_message>\nhi\n</user_message>"}})
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("applyBotmuxTurnsCached blocked for %v on stalled dashboard", elapsed)
+		}
+	})
+}
+
+func TestBotmuxFoldExpandAndAfterSeqPreserveStructuredReplies(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.caps = []string{transcript.BotmuxCapOwnerActor}
+
+	rawUser := "<botmux_reminder>reply</botmux_reminder>\n\n<user_message>\nship card\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_owner\" name=\"Alex\" />"
+	fs.turns = []transcript.BotmuxTurn{{
+		TurnID: "t_card",
+		Seq:    10,
+		At:     1763520000000,
+		Inbound: []transcript.BotmuxTurnInbound{{
+			MessageID: "om_1",
+			Text:      "ship card",
+			Sender:    &transcript.BotmuxTurnSender{Type: "user", Name: "Alex"},
+			Via:       "owner_actor",
+		}},
+		Replies: []transcript.BotmuxTurnReply{{
+			MessageID:    "om_r1",
+			ResponseKind: "final",
+			At:           1763520010000,
+			Text:         "Structured card body",
+		}},
+		Anchor: &transcript.BotmuxTurnAnchor{
+			CLIID:       "claude-code",
+			InputSha256: sha256Of(rawUser),
+		},
+	}}
+
+	h := fs.makeHost("")
+	n, _, home := herdrNode(t)
+	n.hosts = host.NewRegistry(h)
+	if err := n.refreshHosts(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	p := filepath.Join(home, ".claude", "projects", "proj", sidA+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		fmt.Sprintf(`{"type":"user","uuid":"u1","timestamp":"2026-11-19T01:00:00Z","message":{"role":"user","content":%q}}`, rawUser),
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-11-19T01:00:01Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-11-19T01:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok"}]}}`,
+		`{"type":"assistant","uuid":"a2","timestamp":"2026-11-19T01:00:03Z","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"botmux send --card-file /tmp/card.json"}}]}}`,
+		`{"type":"user","uuid":"r2","timestamp":"2026-11-19T01:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"{\"ok\":true}"}]}}`,
+	}
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1) Expand the fold (from_seq=2, through_seq=5): user item (seq 1) is NOT in the returned range.
+	rangeResp, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{
+		"session_id":  sidA,
+		"from_seq":    2,
+		"through_seq": 5,
+	}))
+	if err != nil {
+		t.Fatalf("range session.items: %v", err)
+	}
+	var rangePage struct {
+		Items []proto.Item `json:"items"`
+	}
+	b, _ := json.Marshal(rangeResp)
+	_ = json.Unmarshal(b, &rangePage)
+	var foundRange *proto.Botmux
+	for _, it := range rangePage.Items {
+		if it.ToolUseID == "tu2" && it.Kind == proto.KindToolUse {
+			foundRange = it.Botmux
+		}
+	}
+	if foundRange == nil || foundRange.Text != "Structured card body" || !foundRange.Final {
+		t.Fatalf("fold expand lost structured --card-file reply: %+v", foundRange)
+	}
+
+	// 2) Incremental AfterSeq (after_seq=3): only seq 4..5 returned, no user item.
+	afterResp, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{
+		"session_id": sidA,
+		"after_seq":  3,
+	}))
+	if err != nil {
+		t.Fatalf("after_seq session.items: %v", err)
+	}
+	var afterPage struct {
+		Items []proto.Item `json:"items"`
+	}
+	b2, _ := json.Marshal(afterResp)
+	_ = json.Unmarshal(b2, &afterPage)
+	var foundAfter *proto.Botmux
+	for _, it := range afterPage.Items {
+		if it.ToolUseID == "tu2" && it.Kind == proto.KindToolUse {
+			foundAfter = it.Botmux
+		}
+	}
+	if foundAfter == nil || foundAfter.Text != "Structured card body" || !foundAfter.Final {
+		t.Fatalf("after_seq batch lost structured --card-file reply: %+v", foundAfter)
+	}
+}
+
+func TestBotmuxNonBotmuxSessionNotDecorated(t *testing.T) {
+	ctx := context.Background()
+	n, _, home := herdrNode(t)
+	plainSID := "11111111-1111-4111-8111-111111111111"
+	p := filepath.Join(home, ".claude", "projects", "proj", plainSID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"user","uuid":"u1","timestamp":"2026-11-19T01:00:00Z","message":{"role":"user","content":"<user_message>\nhello from normal chat\n</user_message>"}}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-11-19T01:00:01Z","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"botmux send 'manual test'"}}]}}`,
+		`{"type":"user","uuid":"r1","timestamp":"2026-11-19T01:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"{\"ok\":true}"}]}}`,
+	}
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rawResp, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{"session_id": plainSID, "limit": 50}))
+	if err != nil {
+		t.Fatalf("session.items: %v", err)
+	}
+	var page struct {
+		Items []proto.Item `json:"items"`
+	}
+	b, _ := json.Marshal(rawResp)
+	_ = json.Unmarshal(b, &page)
+	if len(page.Items) != 3 {
+		t.Fatalf("items = %d, want 3", len(page.Items))
+	}
+	for i, it := range page.Items {
+		if it.Botmux != nil {
+			t.Fatalf("non-BotMux session item[%d] must not be decorated: %+v", i, it.Botmux)
+		}
 	}
 }

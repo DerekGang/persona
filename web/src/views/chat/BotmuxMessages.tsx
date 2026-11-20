@@ -19,8 +19,8 @@ function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
   if (!tags.length) return null;
   return (
     <div className={end ? "flex flex-wrap justify-end gap-1" : "flex flex-wrap gap-1"} data-botmux-tags>
-      {tags.map((tag) => (
-        <span key={tag} className="rounded-full bg-hover px-1.5 text-[length:var(--chat-secondary)] leading-[18px] text-ink-3 whitespace-nowrap">{tag}</span>
+      {tags.map((tag, i) => (
+        <span key={`${tag}-${i}`} className="rounded-full bg-hover px-1.5 text-[length:var(--chat-secondary)] leading-[18px] text-ink-3 whitespace-nowrap">{tag}</span>
       ))}
     </div>
   );

@@ -1,5 +1,6 @@
 {
   "via": "从 {source} 发送",
+  "triggered": "外部触发",
   "sent": "已发到飞书",
   "sent_final": "飞书最终回复",
   "bot": "{name}（机器人）",

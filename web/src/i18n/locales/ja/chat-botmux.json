@@ -1,5 +1,6 @@
 {
   "via": "{source} から送信",
+  "triggered": "トリガー送信",
   "sent": "Lark に送信済み",
   "sent_final": "Lark の最終返信",
   "bot": "{name}（ボット）",

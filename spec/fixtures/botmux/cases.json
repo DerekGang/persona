@@ -488,8 +488,16 @@
           }
         },
         {
-          "id": "a2#0",
+          "id": "r1#0",
           "seq": 3,
+          "role": "user",
+          "kind": "tool_result",
+          "tool_use_id": "tu1",
+          "text": "{\"ok\":true}"
+        },
+        {
+          "id": "a2#0",
+          "seq": 4,
           "role": "assistant",
           "kind": "tool_use",
           "tool_name": "Bash",
@@ -497,6 +505,14 @@
           "tool_input": {
             "command": "botmux send --response-kind final --card-file /tmp/card.json"
           }
+        },
+        {
+          "id": "r2#0",
+          "seq": 5,
+          "role": "user",
+          "kind": "tool_result",
+          "tool_use_id": "tu2",
+          "text": "{\"ok\":true}"
         }
       ],
       "want_botmux": [
@@ -528,11 +544,13 @@
           "kind": "reply",
           "text": "Running tests from content file."
         },
+        null,
         {
           "kind": "reply",
           "text": "Shipped v2 (card summary).",
           "final": true
-        }
+        },
+        null
       ]
     },
     {
@@ -658,15 +676,23 @@
           }
         },
         {
-          "id": "u_new#0",
+          "id": "r_old#0",
           "seq": 3,
+          "role": "user",
+          "kind": "tool_result",
+          "tool_use_id": "tu_old",
+          "text": "{\"ok\":true}"
+        },
+        {
+          "id": "u_new#0",
+          "seq": 4,
           "role": "user",
           "kind": "text",
           "text": "<botmux_reminder>reply with botmux send</botmux_reminder>\n\n<user_message>\nfollow up as owner\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_example_owner\" name=\"Alex Chen\" /><message_location placement=\"thread\" />"
         },
         {
           "id": "a_new#0",
-          "seq": 4,
+          "seq": 5,
           "role": "assistant",
           "kind": "tool_use",
           "tool_name": "Bash",
@@ -674,6 +700,14 @@
           "tool_input": {
             "command": "botmux send --card-file /tmp/final-card.json"
           }
+        },
+        {
+          "id": "r_new#0",
+          "seq": 6,
+          "role": "user",
+          "kind": "tool_result",
+          "tool_use_id": "tu_new",
+          "text": "{\"ok\":true}"
         }
       ],
       "want_botmux": [
@@ -688,6 +722,7 @@
           "text": "legacy reply",
           "final": true
         },
+        null,
         {
           "kind": "message",
           "text": "follow up as owner",
@@ -699,7 +734,8 @@
           "kind": "reply",
           "text": "Done via card.",
           "final": true
-        }
+        },
+        null
       ]
     },
     {
@@ -725,6 +761,14 @@
           "tool_input": {
             "command": "botmux send 'still works on old botmux'"
           }
+        },
+        {
+          "id": "r_404#0",
+          "seq": 3,
+          "role": "user",
+          "kind": "tool_result",
+          "tool_use_id": "tu_404",
+          "text": "{\"ok\":true}"
         }
       ],
       "want_botmux": [
@@ -737,7 +781,8 @@
         {
           "kind": "reply",
           "text": "still works on old botmux"
-        }
+        },
+        null
       ]
     }
   ]

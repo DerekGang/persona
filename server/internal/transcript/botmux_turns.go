@@ -133,6 +133,14 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
 		return out
 	}
 
+	// Index tool results by ToolUseID so reply matching only considers completed, successful calls.
+	resultsByToolUse := map[string]*proto.Item{}
+	for i := range items {
+		if items[i].Kind == proto.KindToolResult && items[i].ToolUseID != "" {
+			resultsByToolUse[items[i].ToolUseID] = &items[i]
+		}
+	}
+
 	// Find all user text item indices (turn boundaries).
 	var userIdx []int
 	for i := range items {
@@ -153,7 +161,7 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
 				}
 			}
 		}
-		for _, candidate := range inputHashCandidates(it.Text) {
+		for _, candidate := range itemInputHashCandidates(it) {
 			if idxs := byHash[candidate]; len(idxs) > 0 {
 				for _, idx := range idxs {
 					if !used[idx] {
@@ -186,25 +194,41 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
 		if len(turn.Replies) == 0 {
 			continue
 		}
-		// Match structured replies (in order) to `botmux send` tool_use items in this turn.
-		var sendIdx []int
+		// Collect completed, successful `botmux send` tool_use items in this turn, counting how many
+		// send invocations each Bash call contains.
+		type sendCandidate struct {
+			itemIdx int
+			count   int
+		}
+		var candidates []sendCandidate
+		totalSends := 0
 		for j := start + 1; j < end; j++ {
 			it := &items[j]
 			if it.Kind != proto.KindToolUse {
 				continue
 			}
-			if cmd := botmuxCommand(it.ToolName, it.ToolInput); cmd != "" && isBotmuxSendCommand(cmd) {
-				sendIdx = append(sendIdx, j)
+			if !botmuxToolResultSucceeded(resultsByToolUse[it.ToolUseID]) {
+				continue
+			}
+			if cmd := botmuxCommand(it.ToolName, it.ToolInput); cmd != "" {
+				if c := countBotmuxSendInvocations(cmd); c > 0 {
+					candidates = append(candidates, sendCandidate{itemIdx: j, count: c})
+					totalSends += c
+				}
 			}
 		}
-		for ri, reply := range turn.Replies {
-			if ri >= len(sendIdx) {
-				break
-			}
-			j := sendIdx[ri]
-			if bm := botmuxFromReply(reply, items[j].Botmux); bm != nil {
+		// Only overlay by position when the number of successful send invocations matches len(turn.Replies).
+		// On a mismatch (e.g. a partial retry or unseen invocation), keep the safe per-call wrapper fallback.
+		if totalSends != len(turn.Replies) {
+			continue
+		}
+		ri := 0
+		for _, cand := range candidates {
+			slice := turn.Replies[ri : ri+cand.count]
+			ri += cand.count
+			if bm := botmuxFromReplies(slice, items[cand.itemIdx].Botmux); bm != nil {
 				dst := clone()
-				dst[j].Botmux = bm
+				dst[cand.itemIdx].Botmux = bm
 			}
 		}
 	}
@@ -213,6 +237,16 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn) []proto.Item {
 		return items
 	}
 	return out
+}
+
+func itemInputHashCandidates(it proto.Item) []string {
+	if it.RawTextSHA256 != "" {
+		if it.RawTextTrimmedSHA256 != "" && it.RawTextTrimmedSHA256 != it.RawTextSHA256 {
+			return []string{it.RawTextSHA256, it.RawTextTrimmedSHA256}
+		}
+		return []string{it.RawTextSHA256}
+	}
+	return inputHashCandidates(it.Text)
 }
 
 func inputHashCandidates(text string) []string {
@@ -286,8 +320,6 @@ func botmuxFromInbound(inbound []BotmuxTurnInbound, existing *proto.Botmux) *pro
 		b.Kind = proto.BotmuxTrigger
 		if existing != nil && existing.Source != "" {
 			b.Source = existing.Source
-		} else {
-			b.Source = "Persona"
 		}
 	}
 	if existing != nil && existing.TopicContext {
@@ -334,12 +366,54 @@ func botmuxFromReply(r BotmuxTurnReply, existing *proto.Botmux) *proto.Botmux {
 	}
 }
 
-// isBotmuxSendCommand reports whether cmd invokes `botmux send` (excluding --help and --dry-run),
-// including forms whose body is not on the command line (--content-file, --card-file, --card-json, pipes).
-func isBotmuxSendCommand(cmd string) bool {
-	if !strings.Contains(cmd, "botmux") {
-		return false
+func botmuxFromReplies(replies []BotmuxTurnReply, existing *proto.Botmux) *proto.Botmux {
+	if len(replies) == 0 {
+		return nil
 	}
+	if len(replies) == 1 {
+		return botmuxFromReply(replies[0], existing)
+	}
+	var parts []string
+	final := false
+	for _, r := range replies {
+		if t := strings.TrimSpace(r.Text); t != "" {
+			parts = append(parts, t)
+		}
+		if r.ResponseKind == "final" {
+			final = true
+		}
+	}
+	text := strings.Join(parts, "\n\n")
+	if text == "" && existing != nil {
+		text = existing.Text
+	}
+	var voice bool
+	var attachments int
+	if existing != nil {
+		voice = existing.Voice
+		attachments = existing.Attachments
+	}
+	if text == "" && !voice && attachments == 0 {
+		return nil
+	}
+	return &proto.Botmux{
+		Kind:        proto.BotmuxReply,
+		Text:        text,
+		Final:       final,
+		Voice:       voice,
+		Attachments: attachments,
+	}
+}
+
+// countBotmuxSendInvocations counts syntactically valid `botmux send` invocations in cmd
+// (excluding --help, -h, --dry-run, unknown flags, and invalid flag syntax), including forms whose
+// body is not on the command line (--content-file, --card-file, --card-json, heredocs, pipes).
+// Heredoc bodies are skipped so lines inside a message are not miscounted as separate commands.
+func countBotmuxSendInvocations(cmd string) int {
+	if !strings.Contains(cmd, "botmux") || !strings.Contains(cmd, "send") {
+		return 0
+	}
+	count := 0
 	for _, seg := range splitShellSegments(cmd) {
 		words := splitShellWordsSimple(seg)
 		// Skip leading KEY=VAL environment assignments.
@@ -349,19 +423,69 @@ func isBotmuxSendCommand(cmd string) bool {
 		if len(words) < 2 || path.Base(words[0]) != "botmux" || words[1] != "send" {
 			continue
 		}
-		if slices.Contains(words[2:], "--help") || slices.Contains(words[2:], "-h") || slices.Contains(words[2:], "--dry-run") {
-			continue
+		if isValidBotmuxSendArgs(words[2:]) {
+			count++
 		}
-		return true
 	}
-	return false
+	return count
 }
 
-// splitShellSegments splits a shell command on unquoted ;, &&, ||, |, and newlines.
+func isValidBotmuxSendArgs(words []string) bool {
+	// Strip shell redirections (e.g. 2>&1, >/dev/null, <<'EOF') before checking flags.
+	cleaned := make([]string, 0, len(words))
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		if w == ">" || w == ">>" || w == "1>" || w == "2>" || w == "&>" || w == "<<" || w == "<<-" {
+			i++ // skip redirection target / delimiter
+			continue
+		}
+		if strings.HasPrefix(w, ">") || strings.HasPrefix(w, "1>") || strings.HasPrefix(w, "2>") ||
+			strings.HasPrefix(w, "&>") || strings.HasPrefix(w, "<<") {
+			continue
+		}
+		cleaned = append(cleaned, w)
+	}
+	for i := 0; i < len(cleaned); i++ {
+		w := cleaned[i]
+		if w == "-h" || w == "--" {
+			return false
+		}
+		if !strings.HasPrefix(w, "--") {
+			continue
+		}
+		name, value, eq := strings.Cut(w, "=")
+		switch botmuxSendFlags[name] {
+		case sendFlagBool:
+			if eq {
+				return false
+			}
+		case sendFlagOptional:
+		case sendFlagValue, sendFlagFileValue:
+			if !eq {
+				if i+1 >= len(cleaned) || cleaned[i+1] == "-h" || strings.HasPrefix(cleaned[i+1], "--") {
+					return false
+				}
+				i++
+				value = cleaned[i]
+			}
+			if value == "" {
+				return false
+			}
+		default: // sendFlagGiveUp (--help, --dry-run) or unknown flag
+			return false
+		}
+	}
+	return true
+}
+
+// splitShellSegments splits a shell command on unquoted ;, &&, ||, |, and newlines,
+// skipping heredoc bodies so lines inside a heredoc are not treated as separate commands.
 func splitShellSegments(s string) []string {
 	var out []string
 	var cur strings.Builder
 	var quote byte
+	var pendingDelim string
+	var pendingStrip bool
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if quote != 0 {
@@ -387,12 +511,76 @@ func splitShellSegments(s string) []string {
 				i++
 				cur.WriteByte(s[i])
 			}
-		case ';', '\n':
+		case '<':
+			if pendingDelim == "" && strings.HasPrefix(s[i:], "<<") && !strings.HasPrefix(s[i:], "<<<") {
+				cur.WriteString("<<")
+				i += 2
+				strip := false
+				if i < len(s) && s[i] == '-' {
+					strip = true
+					cur.WriteByte('-')
+					i++
+				}
+				for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+					cur.WriteByte(s[i])
+					i++
+				}
+				j := i
+				for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\n' && s[j] != ';' && s[j] != '|' && s[j] != '&' {
+					j++
+				}
+				if d, _, ok := parseHeredocDelim(s[i:j]); ok {
+					pendingDelim = d
+					pendingStrip = strip
+				}
+				cur.WriteString(s[i:j])
+				i = j - 1
+				continue
+			}
+			cur.WriteByte(c)
+		case '\n':
+			if seg := strings.TrimSpace(cur.String()); seg != "" {
+				out = append(out, seg)
+			}
+			cur.Reset()
+			if pendingDelim != "" {
+				// Skip heredoc body lines until the matching delimiter line.
+				rest := s[i+1:]
+				pos := 0
+				for pos < len(rest) {
+					nl := strings.IndexByte(rest[pos:], '\n')
+					var line string
+					var nextPos int
+					if nl < 0 {
+						line = rest[pos:]
+						nextPos = len(rest)
+					} else {
+						line = rest[pos : pos+nl]
+						nextPos = pos + nl + 1
+					}
+					checkLine := line
+					if pendingStrip {
+						checkLine = strings.TrimLeft(checkLine, "\t")
+					}
+					pos = nextPos
+					if checkLine == pendingDelim {
+						break
+					}
+				}
+				i += pos
+				pendingDelim = ""
+				pendingStrip = false
+			}
+		case ';':
 			if seg := strings.TrimSpace(cur.String()); seg != "" {
 				out = append(out, seg)
 			}
 			cur.Reset()
 		case '&', '|':
+			if c == '&' && ((i > 0 && s[i-1] == '>') || (i+1 < len(s) && s[i+1] == '>')) {
+				cur.WriteByte(c)
+				continue
+			}
 			if i+1 < len(s) && s[i+1] == c {
 				i++
 			}

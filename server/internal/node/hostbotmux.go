@@ -61,8 +61,12 @@ type botmuxHost struct {
 	tooOld string
 	// caps caches the read-only GET /api/sessions/:id/turns probe for the current BotMux instance, and turnsCache
 	// keeps incrementally fetched structured turns per session (hostbotmux_turns.go).
-	caps       botmuxCaps
-	turnsCache map[string]*botmuxSessionTurnsCache
+	caps              botmuxCaps
+	ownerUnechoed     botmuxOwnerUnechoed
+	turnsCache        map[string]*botmuxSessionTurnsCache
+	turnsBackoffUntil time.Time
+	unknownBackoff    map[string]time.Time
+	turnsRefreshing   map[string]bool
 }
 
 var (

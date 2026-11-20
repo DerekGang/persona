@@ -198,10 +198,11 @@ func botmuxAttrs(s string) map[string]string {
 type botmuxSendFlag int
 
 const (
-	sendFlagBool     botmuxSendFlag = iota + 1 // no value
-	sendFlagValue                              // the next word, or --flag=value
-	sendFlagOptional                           // only --flag=value; the next word is not its value
-	sendFlagGiveUp                             // the reply's words are not in the command, or nothing is sent
+	sendFlagBool      botmuxSendFlag = iota + 1 // no value
+	sendFlagValue                               // the next word, or --flag=value
+	sendFlagOptional                            // only --flag=value; the next word is not its value
+	sendFlagFileValue                           // value flag whose reply body is opaque to wrapper parsing (--content-file, --card-file, --card-json)
+	sendFlagGiveUp                              // nothing is sent (--dry-run, --help)
 )
 
 // botmuxSendFlags is `botmux send`'s flag table (BotMux 3.59 src/cli/send-invocation.ts SEND_FLAG_SPECS, the same from
@@ -217,8 +218,9 @@ var botmuxSendFlags = map[string]botmuxSendFlag{
 	"--response-kind": sendFlagValue, "--image-mode": sendFlagValue, "--chat-id": sendFlagValue, "--into": sendFlagValue,
 	"--quote": sendFlagValue, "--reply-to": sendFlagValue, "--as": sendFlagValue, "--plugin-card-action": sendFlagValue,
 	"--completion-proposal-file": sendFlagValue, "--session-id": sendFlagValue,
-	// the body comes from a file or a card, --dry-run only renders locally, --help prints help
-	"--content-file": sendFlagGiveUp, "--card-file": sendFlagGiveUp, "--card-json": sendFlagGiveUp,
+	// the body comes from a file or a card (real send, opaque to wrapper parsing)
+	"--content-file": sendFlagFileValue, "--card-file": sendFlagFileValue, "--card-json": sendFlagFileValue,
+	// --dry-run only renders locally, --help prints help
 	"--dry-run": sendFlagGiveUp, "--help": sendFlagGiveUp,
 }
 
@@ -302,7 +304,7 @@ func BotmuxSend(command string) *proto.Botmux {
 // an input redirect) or a quote or here-document is not closed.
 func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 	var cur strings.Builder
-	inWord, delim, strip := false, "", false
+	inWord, delim, strip, delimQuoted := false, "", false, false
 	flush := func() {
 		if inWord {
 			words = append(words, cur.String())
@@ -331,7 +333,13 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 				return nil, "", "", false
 			}
 			body, ok := heredocBody(s[i+nl+1:], delim, strip)
-			return words, body, "", ok
+			if !ok {
+				return nil, "", "", false
+			}
+			if !delimQuoted && hasUnquotedHeredocExpansion(body) {
+				return nil, "", "", false
+			}
+			return words, body, "", true
 		case c == ' ' || c == '\t':
 			flush()
 			i++
@@ -398,8 +406,9 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 			for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\n' {
 				j++
 			}
-			delim = strings.Trim(s[i:j], `'"`)
-			if delim == "" {
+			var delimOK bool
+			delim, delimQuoted, delimOK = parseHeredocDelim(s[i:j])
+			if !delimOK {
 				return nil, "", "", false
 			}
 			i = j
@@ -496,17 +505,154 @@ func botmuxCommand(name string, input json.RawMessage) string {
 	return in.Command
 }
 
-// markBotmux sets Botmux on the items BotMux wrapped (user lines) or the agent's `botmux send` calls.
-func markBotmux(items []proto.Item) {
-	for i := range items {
-		it := &items[i]
-		switch {
-		case it.Role == "user" && it.Kind == proto.KindText && it.From == "":
-			it.Botmux = BotmuxMessage(it.Text)
-		case it.Kind == proto.KindToolUse:
-			if cmd := botmuxCommand(it.ToolName, it.ToolInput); cmd != "" {
-				it.Botmux = BotmuxSend(cmd)
+// parseHeredocDelim parses a POSIX shell here-document delimiter word, reporting whether any character
+// was quoted (single quote, double quote, or backslash), which suppresses shell expansion in the body.
+func parseHeredocDelim(raw string) (delim string, quoted, ok bool) {
+	var b strings.Builder
+	for i := 0; i < len(raw); {
+		switch raw[i] {
+		case '\'':
+			end := strings.IndexByte(raw[i+1:], '\'')
+			if end < 0 {
+				return "", false, false
+			}
+			b.WriteString(raw[i+1 : i+1+end])
+			quoted = true
+			i += end + 2
+		case '"':
+			end := strings.IndexByte(raw[i+1:], '"')
+			if end < 0 {
+				return "", false, false
+			}
+			b.WriteString(raw[i+1 : i+1+end])
+			quoted = true
+			i += end + 2
+		case '\\':
+			if i+1 >= len(raw) {
+				return "", false, false
+			}
+			b.WriteByte(raw[i+1])
+			quoted = true
+			i += 2
+		default:
+			b.WriteByte(raw[i])
+			i++
+		}
+	}
+	if b.Len() == 0 {
+		return "", false, false
+	}
+	return b.String(), quoted, true
+}
+
+// hasUnquotedHeredocExpansion reports whether an unquoted heredoc body contains shell expansions
+// ($var, ${...}, $(...), $((...)), backticks, or backslash escapes that the shell evaluates before sending.
+func hasUnquotedHeredocExpansion(body string) bool {
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '`':
+			return true
+		case '\\':
+			if i+1 < len(body) && strings.IndexByte("$`\\\n", body[i+1]) >= 0 {
+				return true
+			}
+		case '$':
+			if i+1 < len(body) {
+				next := body[i+1]
+				if next == '(' || next == '{' || isNameByte(next) || strings.IndexByte("?*@#-$!", next) >= 0 {
+					return true
+				}
 			}
 		}
 	}
+	return false
+}
+
+// botmuxResultReportsFailure reports whether a tool_result's text carries a BotMux JSON error payload ({"ok":false}).
+func botmuxResultReportsFailure(text string) bool {
+	s := strings.TrimSpace(text)
+	if s == "" || !strings.Contains(s, `"ok"`) {
+		return false
+	}
+	check := func(raw string) bool {
+		raw = strings.TrimSpace(raw)
+		if !strings.HasPrefix(raw, "{") {
+			return false
+		}
+		var body struct {
+			OK *bool `json:"ok"`
+		}
+		return json.Unmarshal([]byte(raw), &body) == nil && body.OK != nil && !*body.OK
+	}
+	if check(s) {
+		return true
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if check(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// botmuxToolResultSucceeded reports whether res represents a completed, successful `botmux send` tool execution.
+func botmuxToolResultSucceeded(res *proto.Item) bool {
+	if res == nil || res.IsError {
+		return false
+	}
+	if res.Outcome != nil && res.Outcome.ExitCode != nil && *res.Outcome.ExitCode != 0 {
+		return false
+	}
+	return !botmuxResultReportsFailure(res.Text)
+}
+
+// DecorateBotmux populates Item.Botmux from BotMux wrappers (user lines) and completed, successful
+// `botmux send` tool calls. Only call this for known BotMux sessions; ordinary sessions must not be decorated.
+// Running or errored `botmux send` calls are left undecorated so they are not labeled as delivered to Lark.
+func DecorateBotmux(items []proto.Item) []proto.Item {
+	if len(items) == 0 {
+		return items
+	}
+	results := map[string]*proto.Item{}
+	for i := range items {
+		if items[i].Kind == proto.KindToolResult && items[i].ToolUseID != "" {
+			results[items[i].ToolUseID] = &items[i]
+		}
+	}
+	var out []proto.Item
+	clone := func() []proto.Item {
+		if out == nil {
+			out = append([]proto.Item(nil), items...)
+		}
+		return out
+	}
+	for i := range items {
+		it := &items[i]
+		var bm *proto.Botmux
+		switch {
+		case it.Role == "user" && it.Kind == proto.KindText && it.From == "":
+			bm = BotmuxMessage(it.Text)
+		case it.Kind == proto.KindToolUse:
+			if cmd := botmuxCommand(it.ToolName, it.ToolInput); cmd != "" {
+				if botmuxToolResultSucceeded(results[it.ToolUseID]) {
+					bm = BotmuxSend(cmd)
+				}
+			}
+		default:
+			continue
+		}
+		if bm != nil || it.Botmux != nil {
+			dst := clone()
+			dst[i].Botmux = bm
+		}
+	}
+	if out == nil {
+		return items
+	}
+	return out
+}
+
+// markBotmux is an in-place convenience wrapper around DecorateBotmux for tests.
+func markBotmux(items []proto.Item) {
+	copy(items, DecorateBotmux(items))
 }

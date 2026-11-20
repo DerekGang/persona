@@ -1,5 +1,6 @@
 {
   "via": "Sent from {source}",
+  "triggered": "Triggered",
   "sent": "Sent to Lark",
   "sent_final": "Final reply in Lark",
   "bot": "{name} (bot)",

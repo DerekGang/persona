@@ -428,9 +428,9 @@ function webStep(s: Step): boolean {
   return s.kind === "tool" ? s.use.tool_name === "WebSearch" || s.use.tool_name === "WebFetch" : s.kind === "fold" && Boolean(s.item.fold?.sources?.length);
 }
 
-/** A step that sent a reply to Lark (botmux send), or folded work that holds some. */
+/** A step that sent a reply to Lark (completed, successful `botmux send`), or folded work that holds some. */
 function botmuxStep(s: Step): boolean {
-  return s.kind === "tool" ? s.use.botmux?.kind === "reply" : s.kind === "fold" && Boolean(s.item.fold?.botmux?.length);
+  return s.kind === "tool" ? s.use.botmux?.kind === "reply" && Boolean(s.result) && !s.result?.is_error : s.kind === "fold" && Boolean(s.item.fold?.botmux?.length);
 }
 
 /** The message's transcript item that carried the switch's block (its rest is fetched from it when the hub cut it). */

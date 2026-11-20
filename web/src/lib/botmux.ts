@@ -22,7 +22,7 @@ export function originalText(msg: UserMessage): string {
 /** The tags under a message or a reply, in reading order. */
 export function botmuxTags(b: Botmux): string[] {
   const tags: string[] = [];
-  if (b.kind === "trigger") tags.push(t("chat-botmux.via", { source: b.source || "Persona" }));
+  if (b.kind === "trigger") tags.push(b.source ? t("chat-botmux.via", { source: b.source }) : t("chat-botmux.triggered"));
   if (b.kind === "reply") tags.push(t(b.final ? "chat-botmux.sent_final" : "chat-botmux.sent"));
   if (b.sender) tags.push(b.sender_type === "bot" ? t("chat-botmux.bot", { name: b.sender }) : b.sender);
   if (b.quoted) tags.push(t("chat-botmux.quoted"));
@@ -34,11 +34,11 @@ export function botmuxTags(b: Botmux): string[] {
   return tags;
 }
 
-/** The replies an exchange sent to Lark, in order: its `botmux send` calls, and those its folded work hides. */
+/** The replies an exchange sent to Lark, in order: its completed, successful `botmux send` calls, and those its folded work hides. */
 export function botmuxReplies(steps: readonly Step[]): { id: string; reply: Botmux }[] {
   const out: { id: string; reply: Botmux }[] = [];
   for (const s of steps) {
-    if (s.kind === "tool" && s.use.botmux?.kind === "reply") out.push({ id: s.use.id, reply: s.use.botmux });
+    if (s.kind === "tool" && s.use.botmux?.kind === "reply" && s.result && !s.result.is_error) out.push({ id: s.use.id, reply: s.use.botmux });
     else if (s.kind === "fold") s.item.fold?.botmux?.forEach((reply, i) => out.push({ id: `${s.item.id}:${i}`, reply }));
   }
   return out;

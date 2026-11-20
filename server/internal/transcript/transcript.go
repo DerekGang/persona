@@ -459,7 +459,6 @@ func ParseLine(seq int, line []byte, meta *Meta) []proto.Item {
 	} else {
 		items = parseLine(seq, line, meta)
 	}
-	markBotmux(items)
 	if len(items) > 0 && items[0].Role == "user" && items[0].Kind == proto.KindText {
 		meta.Turns++
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -46,8 +47,8 @@ func TestBotmuxFixtures(t *testing.T) {
 	}
 }
 
-// A BotMux session's transcript: the user line and the `botmux send` call carry what they say, the text stays the
-// original, and a folded run keeps its replies.
+// A BotMux session's transcript: ParseLine itself leaves Botmux nil (so non-BotMux sessions are never
+// mis-decorated), and DecorateBotmux + FoldWork populates the user line and completed `botmux send` replies.
 func TestBotmuxParseAndFold(t *testing.T) {
 	lines := []string{
 		`{"type":"user","uuid":"u1","timestamp":"2026-11-19T01:00:00Z","message":{"role":"user","content":"<botmux_reminder>reply with botmux send</botmux_reminder>\n\n<user_message>\nship it\n</user_message>\n\n<sender type=\"user\" open_id=\"ou_example_alex\" name=\"Alex Chen\" />"}}`,
@@ -64,6 +65,12 @@ func TestBotmuxParseAndFold(t *testing.T) {
 	if len(items) != 5 {
 		t.Fatalf("items = %d, want 5: %+v", len(items), items)
 	}
+	for i, it := range items {
+		if it.Botmux != nil {
+			t.Fatalf("ParseLine must not unconditionally set Botmux (item %d = %+v)", i, it.Botmux)
+		}
+	}
+	items = DecorateBotmux(items)
 	user := items[0]
 	if user.Botmux == nil || user.Botmux.Text != "ship it" || user.Botmux.Sender != "Alex Chen" {
 		t.Fatalf("user botmux = %+v", user.Botmux)
@@ -155,4 +162,207 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+func TestBotmuxSendUnquotedHeredocExpansion(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		want string // "" means nil
+	}{
+		{"quoted_single_dollar", "botmux send <<'EOF'\nhello $USER $(date) `id`\nEOF", "hello $USER $(date) `id`"},
+		{"quoted_double_dollar", "botmux send <<\"EOF\"\nhello $USER\nEOF", "hello $USER"},
+		{"quoted_backslash_delim", "botmux send <<\\EOF\nhello $USER\nEOF", "hello $USER"},
+		{"unquoted_plain", "botmux send <<EOF\nplain reply without expansion\nEOF", "plain reply without expansion"},
+		{"unquoted_var", "botmux send <<EOF\nhello $USER\nEOF", ""},
+		{"unquoted_braced_var", "botmux send <<EOF\nhello ${USER}\nEOF", ""},
+		{"unquoted_cmd_sub", "botmux send <<EOF\nnow: $(date)\nEOF", ""},
+		{"unquoted_arith", "botmux send <<EOF\nsum: $((1+2))\nEOF", ""},
+		{"unquoted_backtick", "botmux send <<EOF\nnow: `date`\nEOF", ""},
+		{"unquoted_escaped_dollar", "botmux send <<EOF\ncost \\$5\nEOF", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BotmuxSend(tc.cmd)
+			if tc.want == "" {
+				if got != nil {
+					t.Fatalf("expected nil, got %+v", got)
+				}
+				return
+			}
+			if got == nil || got.Text != tc.want {
+				t.Fatalf("got %+v, want text %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBotmuxDecorateAndFoldSkipRunningAndErroredSends(t *testing.T) {
+	items := []proto.Item{
+		{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: "<user_message>\nhi\n</user_message>"},
+		// 1) Still running (no tool_result)
+		{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "tu_run", ToolInput: json.RawMessage(`{"command":"botmux send 'in flight'"}`)},
+		// 2) Tool error (IsError: true)
+		{ID: "a2", Seq: 3, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "tu_err", ToolInput: json.RawMessage(`{"command":"botmux send 'failed err'"}`)},
+		{ID: "r2", Seq: 4, Role: "user", Kind: proto.KindToolResult, ToolUseID: "tu_err", IsError: true, Text: "command failed"},
+		// 3) BotMux ok:false JSON error
+		{ID: "a3", Seq: 5, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "tu_okfalse", ToolInput: json.RawMessage(`{"command":"botmux send 'failed json'"}`)},
+		{ID: "r3", Seq: 6, Role: "user", Kind: proto.KindToolResult, ToolUseID: "tu_okfalse", Text: `{"ok":false,"error":"rate_limited"}`},
+		// 4) Succeeded
+		{ID: "a4", Seq: 7, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "tu_ok", ToolInput: json.RawMessage(`{"command":"botmux send --response-kind final 'delivered'"}`)},
+		{ID: "r4", Seq: 8, Role: "user", Kind: proto.KindToolResult, ToolUseID: "tu_ok", Text: `{"ok":true}`},
+	}
+
+	got := DecorateBotmux(items)
+	if got[1].Botmux != nil {
+		t.Fatalf("running send must not be decorated: %+v", got[1].Botmux)
+	}
+	if got[2].Botmux != nil {
+		t.Fatalf("is_error send must not be decorated: %+v", got[2].Botmux)
+	}
+	if got[4].Botmux != nil {
+		t.Fatalf("ok:false send must not be decorated: %+v", got[4].Botmux)
+	}
+	if got[6].Botmux == nil || got[6].Botmux.Text != "delivered" || !got[6].Botmux.Final {
+		t.Fatalf("succeeded send = %+v, want delivered/final", got[6].Botmux)
+	}
+
+	// Even if an errored item somehow had Botmux pre-populated, FoldWork must exclude it from Fold.Botmux.
+	withForced := append([]proto.Item(nil), got[2:]...)
+	withForced[0].Botmux = &proto.Botmux{Kind: proto.BotmuxReply, Text: "should not appear"}
+	folded := FoldWork(withForced)
+	if len(folded) != 1 || folded[0].Fold == nil {
+		t.Fatalf("expected 1 fold item, got %+v", folded)
+	}
+	if len(folded[0].Fold.Botmux) != 1 || folded[0].Fold.Botmux[0].Text != "delivered" {
+		t.Fatalf("Fold.Botmux must exclude failed sends, got %+v", folded[0].Fold.Botmux)
+	}
+}
+
+func TestBotmuxTurnsReplyMatchingSkipsFailuresAndHandlesMultiSend(t *testing.T) {
+	userText := "<user_message>\nrun\n</user_message>"
+	anchor := &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(userText)}
+
+	t.Run("skips failed, ok:false, invalid-flag, and running sends", func(t *testing.T) {
+		items := []proto.Item{
+			{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
+			// Failed with IsError
+			{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send --card-file /tmp/a.json"}`)},
+			{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", IsError: true, Text: "exit 1"},
+			// Failed with ok:false
+			{ID: "a2", Seq: 4, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t2", ToolInput: json.RawMessage(`{"command":"botmux send 'retry 1'"}`)},
+			{ID: "r2", Seq: 5, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t2", Text: `{"ok":false,"error":"bad"}`},
+			// Invalid unknown flag even with ok result
+			{ID: "a3", Seq: 6, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t3", ToolInput: json.RawMessage(`{"command":"botmux send --unknown-flag foo"}`)},
+			{ID: "r3", Seq: 7, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t3", Text: "ok"},
+			// Succeeded real send (card-file)
+			{ID: "a4", Seq: 8, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t4", ToolInput: json.RawMessage(`{"command":"botmux send --card-file /tmp/b.json"}`)},
+			{ID: "r4", Seq: 9, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t4", Text: `{"ok":true}`},
+		}
+		turns := []BotmuxTurn{{
+			TurnID:  "turn1",
+			Seq:     1,
+			Inbound: []BotmuxTurnInbound{{Text: "run", Via: "lark"}},
+			Replies: []BotmuxTurnReply{{ResponseKind: "final", Text: "Confirmed card reply"}},
+			Anchor:  anchor,
+		}}
+		got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+		for _, idx := range []int{1, 3, 5} {
+			if got[idx].Botmux != nil {
+				t.Fatalf("item %d must not receive reply overlay: %+v", idx, got[idx].Botmux)
+			}
+		}
+		if got[7].Botmux == nil || got[7].Botmux.Text != "Confirmed card reply" || !got[7].Botmux.Final {
+			t.Fatalf("succeeded item 7 = %+v, want Confirmed card reply", got[7].Botmux)
+		}
+	})
+
+	t.Run("multi-send in one Bash command aligns when counts match", func(t *testing.T) {
+		items := []proto.Item{
+			{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
+			{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send --content-file /tmp/1.md && botmux send --content-file /tmp/2.md"}`)},
+			{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: "ok"},
+			{ID: "a2", Seq: 4, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t2", ToolInput: json.RawMessage(`{"command":"botmux send --response-kind final --card-file /tmp/3.json"}`)},
+			{ID: "r2", Seq: 5, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t2", Text: "ok"},
+		}
+		turns := []BotmuxTurn{{
+			TurnID:  "turn1",
+			Seq:     1,
+			Inbound: []BotmuxTurnInbound{{Text: "run", Via: "lark"}},
+			Replies: []BotmuxTurnReply{
+				{ResponseKind: "progress", Text: "Part one"},
+				{ResponseKind: "progress", Text: "Part two"},
+				{ResponseKind: "final", Text: "Part three"},
+			},
+			Anchor: anchor,
+		}}
+		got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+		if got[1].Botmux == nil || got[1].Botmux.Text != "Part one\n\nPart two" {
+			t.Fatalf("multi-send item 1 = %+v", got[1].Botmux)
+		}
+		if got[3].Botmux == nil || got[3].Botmux.Text != "Part three" || !got[3].Botmux.Final {
+			t.Fatalf("item 3 = %+v", got[3].Botmux)
+		}
+	})
+
+	t.Run("mismatched send count skips positional overlay and keeps wrapper fallback", func(t *testing.T) {
+		items := []proto.Item{
+			{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
+			{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send 'wrapper one'"}`)},
+			{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: "ok"},
+		}
+		turns := []BotmuxTurn{{
+			TurnID:  "turn1",
+			Seq:     1,
+			Inbound: []BotmuxTurnInbound{{Text: "run", Via: "lark"}},
+			Replies: []BotmuxTurnReply{
+				{ResponseKind: "progress", Text: "Structured 1"},
+				{ResponseKind: "final", Text: "Structured 2"},
+			},
+			Anchor: anchor,
+		}}
+		got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+		if got[1].Botmux == nil || got[1].Botmux.Text != "wrapper one" {
+			t.Fatalf("mismatch must keep wrapper fallback, got %+v", got[1].Botmux)
+		}
+	})
+}
+
+func TestBotmuxTriggerUnknownSourceIsEmpty(t *testing.T) {
+	userText := "opaque trigger text"
+	items := []proto.Item{{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText}}
+	turns := []BotmuxTurn{{
+		TurnID:  "t1",
+		Seq:     1,
+		Inbound: []BotmuxTurnInbound{{Text: "run cron", Via: "trigger"}},
+		Anchor:  &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(userText)},
+	}}
+	got := ApplyBotmuxTurns(DecorateBotmux(items), turns)
+	if got[0].Botmux == nil || got[0].Botmux.Kind != proto.BotmuxTrigger {
+		t.Fatalf("got %+v, want trigger", got[0].Botmux)
+	}
+	if got[0].Botmux.Source != "" {
+		t.Fatalf("unknown trigger source must stay empty, got %q", got[0].Botmux.Source)
+	}
+}
+
+func TestBotmuxInputSha256MatchesTruncatedLongMessage(t *testing.T) {
+	longRaw := "<user_message>\n" + strings.Repeat("abcdefghij", pageTextLen/5) + "\n</user_message>"
+	if len(longRaw) <= pageTextLen {
+		t.Fatalf("test message too short: %d <= %d", len(longRaw), pageTextLen)
+	}
+	item, cut := light(proto.Item{ID: "u_long#0", Seq: 1, Role: "user", Kind: proto.KindText, Text: longRaw}, false)
+	if !cut || item.Text == longRaw {
+		t.Fatalf("expected light() to clip long message")
+	}
+	turns := []BotmuxTurn{{
+		TurnID:  "t_long",
+		Seq:     1,
+		Inbound: []BotmuxTurnInbound{{Text: "full structured text", Sender: &BotmuxTurnSender{Type: "user", Name: "Alex"}, Via: "lark"}},
+		Anchor:  &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(longRaw)},
+	}}
+	got := ApplyBotmuxTurns(DecorateBotmux([]proto.Item{item}), turns)
+	if got[0].Botmux == nil || got[0].Botmux.Text != "full structured text" || got[0].Botmux.Sender != "Alex" {
+		t.Fatalf("clipped user item failed to match inputSha256: %+v", got[0].Botmux)
+	}
 }
