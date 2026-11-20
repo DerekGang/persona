@@ -257,3 +257,8 @@ const (
 
 // SourceSend is emitted only by a devices manager holding source provenance.
 const SourceSend = "session.source_send"
+
+// NodeInfoQuery is sent by the manager during connection setup.
+type NodeInfoQuery struct {
+	ManagerFeatures []string `json:"manager_features,omitempty"`
+}
