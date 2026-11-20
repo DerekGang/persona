@@ -31,6 +31,17 @@ const onHub = async (method = "GET", suffix = "", json) => {
   return await response.json();
 };
 
+const navigation = async (start) => {
+  const response = await fetch(hub + "/api/v1/navigation", {
+    method: start === undefined ? "GET" : "PUT",
+    headers: { Authorization: "Bearer mock", "Content-Type": "application/json" },
+    ...(start === undefined ? {} : { body: JSON.stringify({ start }) }),
+    signal: AbortSignal.timeout(8000),
+  });
+  assert.ok(response.ok, `mock navigation returned ${response.status}`);
+  return await response.json();
+};
+
 const sourcePhase = async (phase) => {
   const response = await fetch(hub + "/mock/starred-source", {
     method: "POST",
@@ -66,8 +77,10 @@ async function rowCount(page, n) {
 }
 
 let cleanup = false;
+let previousStart = "";
 try {
   assert.deepEqual((await onHub()).stars, [], "use an empty mock");
+  previousStart = (await navigation()).start ?? "";
   cleanup = true;
   const desktop = await device("light");
   await desktop.page.goto(web + review + "&token=mock");
@@ -84,7 +97,7 @@ try {
   await mobile.page.getByRole("heading", { name: "Starred", exact: true }).waitFor();
   await rowCount(mobile.page, 1);
   // The mobile list is open while a separate device stars an Assistant reply.
-  await desktop.page.goto(web + "/");
+  await desktop.page.goto(web + "/persona");
   const reply = desktop.page.locator("[data-answer=true]").last();
   await reply.waitFor();
   await reply.locator("p").first().click({ button: "right" });
@@ -257,6 +270,7 @@ try {
   await browser.close();
   if (cleanup) {
     await sourcePhase("reset");
+    await navigation(previousStart);
     for (const star of (await onHub()).stars) await onHub("DELETE", "/" + encodeURIComponent(star.id));
   }
 }
