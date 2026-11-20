@@ -11,12 +11,13 @@ import { PERMISSIONS_COMMAND } from "../../lib/permissions-command";
 import type { MentionSource } from "../chat/ComposerPanel";
 import { t } from "../../i18n";
 
-interface InputContext { execution: TaskExecution; task_input?: boolean; input_error?: string; catalog?: SkillCatalog; skill_error?: string }
+interface InputContext { execution: TaskExecution; task_input?: boolean; input_error?: string; catalog?: SkillCatalog; skill_error?: string; skill_scope?: string }
 const commands = AGENT_COMMANDS.filter((command) => !command.agent && command.word !== WORKFLOWS_COMMAND && command.word !== PERMISSIONS_COMMAND);
 const fileScope = (ex: TaskExecution) => ({ machine: ex.machine_id, cwd: ex.cwd ?? "", launcher: ex.launcher, runtime: ex.runtime ?? "" });
 // Older Claude sessions omit the agent in the session protocol.
 const agentOf = (ex: TaskExecution) => ex.agent || "claude";
-const scopeOf = (ex: TaskExecution) => JSON.stringify([fileScope(ex), agentOf(ex), ex.model, ex.effort, ex.fingerprint]);
+const scopeOf = ({ execution: ex, skill_scope }: InputContext) =>
+  JSON.stringify([fileScope(ex), agentOf(ex), ex.model, ex.effort, ex.fingerprint, skill_scope]);
 
 export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: Task; saved: Task | null; disabled: boolean; onChange: (value: string, hasSelections: boolean) => void }) {
   const id = useId();
@@ -35,26 +36,28 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
     return () => { clearTimeout(timer); controller.abort(); };
   }, [key, request, manager]);
   const current = state.key === key ? state : undefined;
-  const ex = current?.context?.execution;
+  const context = current?.context;
+  const ex = context?.execution;
+  const scope = context ? scopeOf(context) : "";
   const { text, skills: refs } = useMemo(() => draft.prompt_selections ? splitSkillDraft(draft.prompt, true) : { text: draft.prompt, skills: [] }, [draft.prompt, draft.prompt_selections]);
   const invalidFile = ex && refs.some((ref) => ref.kind === "file" && Object.entries(fileScope(ex)).some(([field, value]) => (ref.attrs?.[field] ?? "") !== value));
   const inputError = current?.error || current?.context?.input_error;
-  const supported = ex && current?.context?.task_input === true && ["claude", "codex"].includes(agentOf(ex));
+  const supported = ex && context?.task_input === true && ["claude", "codex"].includes(agentOf(ex));
   const mention = useMemo<MentionSource | undefined>(() => ex && supported ? {
     cwd: ex.cwd, files: () => [], sessions: false,
     referenceFiles: fileScope(ex),
     fileManager: manager,
     allowsFileQuery: (query) => !/^(?:[~/]|[A-Za-z]:)/.test(query) && !query.includes("\\") && !query.split("/").includes(".."),
-    skills: { manager, launcher: ex.launcher, environment: JSON.stringify([key, scopeOf(ex)]), catalog: async (signal) => {
+    skills: { manager, launcher: ex.launcher, environment: JSON.stringify([owner, manager, scope]), catalog: async (signal) => {
       const reply = await api<InputContext>("/assistant/tasks/input-context", { method: "POST", json: { ...JSON.parse(request), catalog: true }, signal, headers: { [MANAGER_HEADER]: manager } });
       if (reply.task_input !== true) {
         if (!signal.aborted) setState((previous) => previous.key === key ? { key, context: reply } : previous);
         throw new Error(reply.input_error || t("assistant-taskeditor.input_unsupported"));
       }
-      if (scopeOf(reply.execution) !== scopeOf(ex) || !reply.catalog) throw new Error(reply.skill_error || t("chat-composer.skills_changed"));
+      if (scopeOf(reply) !== scope || !reply.catalog) throw new Error(reply.skill_error || t("chat-composer.skills_changed"));
       return reply.catalog;
     } },
-  } : undefined, [ex, supported, key, manager, request]);
+  } : undefined, [ex, supported, key, manager, owner, request, scope]);
   return (
     <div>
       <fieldset disabled={disabled} className="min-w-0">

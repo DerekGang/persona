@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -277,7 +279,11 @@ func (s *Service) taskInputRoutes() {
 			apierr.Call(w, err)
 			return
 		}
-		result := map[string]any{"execution": ex.TaskExecution, "task_input": false}
+		// The browser compares this alongside the visible execution scope. A source may keep its own profile
+		// even when the launcher and directory match the task's own conversation.
+		scope, _ := json.Marshal([2]string{ex.session, ex.profile})
+		sum := sha256.Sum256(scope)
+		result := map[string]any{"execution": ex.TaskExecution, "skill_scope": hex.EncodeToString(sum[:]), "task_input": false}
 		if err := s.checkTaskContent(r.Context(), ex, ""); err != nil {
 			result["input_error"] = i18n.Localize(err, s.requestLang(r))
 			apierr.WriteJSON(w, result)

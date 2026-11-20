@@ -12,9 +12,11 @@ import { HISTORY_PREFIX, recordSent } from "../../lib/send-history";
 import { reloadSavedPrompts, resetSavedPrompts } from "../../lib/saved-prompts";
 import { chooseManager, MANAGER_HEADER, resetManagerChoice } from "../../lib/manager-choice";
 import { useMentionRows, type MentionSource } from "../chat/ComposerPanel";
+import { toast } from "../../ui/atoms";
 
 const api = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/api", async (original) => ({ ...(await original<typeof import("../../lib/api")>()), api }));
+vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root, host: HTMLDivElement;
@@ -47,8 +49,78 @@ beforeEach(() => {
   document.body.append(host);
   root = createRoot(host);
   api.mockReset();
+  vi.mocked(toast).mockClear();
 });
 afterEach(() => { act(() => root.unmount()); resetManagerChoice(); host.remove(); vi.useRealTimers(); });
+
+it("keeps a selected Skill across schedule edits and detects directory and catalog scope changes", async () => {
+  let skillScope = "original";
+  api.mockImplementation(async (path, options) => {
+    if (path === contextPath) return { execution: { ...execution, cwd: options.json.cwd }, task_input: true, skill_scope: skillScope, catalog };
+    if (path.includes("/fs?")) return { entries: [] };
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const selected = {
+    ...draft, prompt_selections: true,
+    prompt: '<persona-context kind="skill" title="Index receipts" ref="opaque">project</persona-context>\n\nRead the notes',
+  };
+  render(selected);
+  await settle();
+  const edited: Task = { ...selected, repeat: "daily", push: "asked", fresh_each_run: true };
+  render(edited);
+  await settle();
+  expect(toast).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Index receipts");
+  expect(field().value).toBe("Read the notes");
+  act(() => host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.click());
+  await settle();
+  expect(api.mock.calls.filter(([path]) => path === contextPath).slice(-2).map(([, options]) => options.json)).toEqual([
+    expect.objectContaining({ cwd: "/current", repeat: "daily", push: "asked", fresh_each_run: true }),
+    expect.objectContaining({ cwd: "/current", repeat: "daily", push: "asked", fresh_each_run: true, catalog: true }),
+  ]);
+
+  render({ ...edited, cwd: "/other" });
+  await settle();
+  expect(toast).toHaveBeenLastCalledWith(t("chat-composer.skills_changed"), "error");
+  expect(toast).toHaveBeenCalledTimes(1);
+  skillScope = "resolved-conversation-profile";
+  render({ ...edited, cwd: "/other", fresh_each_run: false });
+  await settle();
+  expect(toast).toHaveBeenCalledTimes(2);
+  expect(host.textContent).toContain("Index receipts");
+});
+
+it("discards an abandoned catalog response after getting a different manager's catalog", async () => {
+  let finishOld!: (reply: unknown) => void;
+  let oldSignal: AbortSignal | undefined;
+  const listing = (name: string) => ({ execution, task_input: true, catalog: { ...catalog, skills: [{ id: name, name, source: "project" }] } });
+  api.mockImplementation(async (path, options) => {
+    if (path.includes("/fs?")) return { entries: [] };
+    const manager = new Headers(options.headers).get(MANAGER_HEADER);
+    if (manager === "old-manager" && options.json.catalog) {
+      oldSignal = options.signal;
+      return new Promise((resolve) => { finishOld = resolve; });
+    }
+    return listing("Current Skill");
+  });
+  chooseManager("old-manager");
+  render(draft);
+  await settle();
+  const plus = () => host.querySelector<HTMLButtonElement>("[data-composer-plus]")!;
+  act(() => plus().click());
+  await settle();
+  expect(finishOld).toBeTypeOf("function");
+  act(() => chooseManager("new-manager"));
+  await settle();
+  if (!host.querySelector("[data-composer-panel]")) act(() => plus().click());
+  await settle();
+  expect(option("Current Skill")).toBeDefined();
+  await act(async () => finishOld({ ...listing("Stale Skill"), task_input: false }));
+  expect(oldSignal?.aborted).toBe(true);
+  expect(option("Stale Skill")).toBeUndefined();
+  expect(option("Current Skill")).toBeDefined();
+  expect(plus().disabled).toBe(false);
+});
 
 it("routes task files to the manager that resolved the input context", async () => {
   const manager = "fixture-secondary";

@@ -157,6 +157,7 @@ func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
 	const oldCron = "0 9 * * *"
 	const ownDir = "/home/me/.persona/assistant"
 	const sourceDir = "/work/source"
+	scopes := make(map[string]string)
 	for _, tc := range []struct {
 		name, repeat string
 		cron         *string
@@ -204,9 +205,15 @@ func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
 			}
 			body, _ := json.Marshal(draft)
 			preview := request(s, "POST", "/api/v1/assistant/tasks/input-context", string(body))
-			if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"task_input":true`) || contentCalls != 1 {
+			var context struct {
+				TaskInput  bool   `json:"task_input"`
+				SkillScope string `json:"skill_scope"`
+			}
+			if err := json.Unmarshal(preview.Body.Bytes(), &context); err != nil || preview.Code != http.StatusOK ||
+				!context.TaskInput || context.SkillScope == "" || contentCalls != 1 {
 				t.Fatalf("context preview: %d %s", preview.Code, preview.Body.String())
 			}
+			scopes[tc.name] = context.SkillScope
 			if kept, _ := taskByID(s, old.ID); kept.Repeat != old.Repeat || kept.Cron != old.Cron || kept.Prompt != old.Prompt {
 				t.Fatal("preview changed the stored task")
 			}
@@ -235,6 +242,9 @@ func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
 				t.Fatalf("run used the wrong session or selection mode: session %q, task_input %v", session, send["task_input"])
 			}
 		})
+	}
+	if scopes["legacy one-off echo"] != scopes["explicit cron update"] || scopes["explicit one-off"] == scopes["explicit cron update"] {
+		t.Fatal("catalog scope must follow the resolved conversation, including when the schedule changes")
 	}
 }
 
