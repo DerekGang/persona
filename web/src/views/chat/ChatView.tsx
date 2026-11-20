@@ -2,7 +2,6 @@
 import { useAssistantIdentity } from "../../lib/assistant-identity";
 import { useAssistantTitle, useManagerOffline } from "../ManagerParts";
 import { LinkManager, useShownManager } from "../../lib/manager-choice";
-import { alsoOpenText } from "../../lib/engines";
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, errorText, fullItem, pastHub, sessionPath } from "../../lib/api";
 import { attentionReason, externalLink, failureReason, isStoppedAgent, resumeCommand, sessionCan, sessionCanRename, sessionDisplayTab, sessionMenuActions, sourceSubtitle, sessionTitle, sessionTitleDetail, shortPath, stateOf, tabLabel, uuid } from "../../lib/format";
@@ -63,7 +62,7 @@ import { CLEAR_MAIN_FEATURE, clearMainContext, isClearCommand, mainCommands } fr
 import { PendingCards } from "./Interactions";
 import { focusedCard, focusedFirst } from "../../lib/card-focus";
 import { COMPOSER_INPUT, lostWith } from "../../lib/dock-focus";
-import { FailureNote, showsFailureNote } from "./FailureNote";
+import { showsFailureNote } from "./failure-note-state";
 import { LazyCloseoutCard } from "./closeout-chunks";
 import { shownCloseout } from "../../lib/closeout";
 import { AWAIT_MS, awaitingTurn, DOCK_MAX, turnStart } from "./dock";
@@ -1856,7 +1855,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const [retriedOn, setRetried] = useState<{ chat: string; reason?: string }>();
   const retried = retriedOn?.chat === `${mid}/${sid}` ? retriedOn.reason : undefined;
   const failureNote = Boolean(session && !assistant && showsFailureNote(session, { retried }));
-  const botmuxNotes = Boolean(session && !assistant && (attentionReason(session) || alsoOpenText(session)));
+  const botmuxNotes = session && !assistant && (failureNote || attentionReason(session) || session.also_open_in?.length);
   // a turn that failed on the refusal fallback's missing model (#2528): "Continue" would send it to the same model; the
   // main conversation's setup gate would only open its missing step, as it does for every send while it holds (`deliver`)
   const canRetry =
@@ -2337,24 +2336,18 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
         {gate.dialog}
         {session && botmuxNotes && (
           <Suspense fallback={null}>
-            <BotmuxComposerNotes session={session} />
-          </Suspense>
-        )}
-        {/* a resume turned ultracode off (#3428): one line with "Turn back on" */}
-        {session && !assistant && <UltracodeLostNote session={session} />}
-        {session && failureNote && (
-          <FailureNote
-            session={session}
-            onRetry={() => {
+            <BotmuxComposerNotes session={session} retry={failureNote ? () => {
               const chat = `${mid}/${sid}`;
               const reason = failureReason(session);
               setRetried({ chat, reason });
               void retryError().then((went) => {
-                if (!went) setRetried((r) => (r?.chat === chat && r.reason === reason ? undefined : r));
+                if (!went) setRetried((retry) => retry?.chat === chat && retry.reason === reason ? undefined : retry);
               });
-            }}
-          />
+            } : undefined} />
+          </Suspense>
         )}
+        {/* a resume turned ultracode off (#3428): one line with "Turn back on" */}
+        {session && !assistant && <UltracodeLostNote session={session} />}
         {voiceState === "ended" && <VoiceEnded owner={voiceOwner} />}
         {/* the error the chat stopped on, right over the composer as cindy places it (#5313); keyed by the error, so a new
             one opens with its details folded */}

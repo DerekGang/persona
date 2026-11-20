@@ -12,6 +12,7 @@ import type { Botmux, Session } from "../../lib/types";
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
+import { FailureNote } from "./FailureNote";
 
 function BotmuxTags({ b, end }: { b: Botmux; end?: boolean }) {
   const tags = botmuxTags(b);
@@ -101,11 +102,12 @@ function ConflictNote({ session }: { session: Session }) {
   );
 }
 
-export function BotmuxComposerNotes({ session }: { session: Session }) {
+export function BotmuxComposerNotes({ session, retry }: { session: Session; retry?: () => void }) {
   return (
     <>
       <AttentionNote session={session} />
       <ConflictNote session={session} />
+      {retry && <FailureNote session={session} onRetry={retry} />}
     </>
   );
 }
