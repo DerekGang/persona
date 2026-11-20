@@ -7,17 +7,18 @@ import (
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/devicewire"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // Task-specific wire parameters and execution evidence stay together; runTask owns the scheduling lifecycle.
-func taskSourceParams(t Task, text, cwd string) map[string]any {
+func (s *Service) taskSourceParams(ctx context.Context, t Task, text, cwd string, lang i18n.Lang) (map[string]any, error) {
 	params := map[string]any{"session_id": t.SessionID, "text": text, "message_source": taskMessageSource(t), "permission_mode": t.PermissionMode, "resume_only": true}
 	if cwd != "" {
 		params["cwd"], params["task_execution"] = cwd, true
 	}
-	return params
+	return params, s.sendModel(ctx, t.MachineID, t.SessionID, params, lang)
 }
 
 func taskResumeParams(t Task, text string, ex TaskExecution) map[string]any {
@@ -40,7 +41,10 @@ func (s *Service) sourceTaskExecution(ctx context.Context, t Task, params map[st
 	used, _ := params["launcher"].(string)
 	model, _ := params["model"].(string)
 	effort, _ := params["effort"].(string)
-	return &TaskExecution{MachineID: t.MachineID, Launcher: used, Model: model, Effort: effort, Agent: c.Agent, Cwd: c.Cwd, PermissionMode: cmp.Or(t.PermissionMode, c.PermissionMode)}
+	cwd, _ := params["cwd"].(string)
+	runtime, _ := params["runtime"].(string)
+	return &TaskExecution{MachineID: t.MachineID, Launcher: used, Model: model, Effort: effort,
+		Agent: c.Agent, Cwd: cmp.Or(cwd, c.Cwd), Runtime: runtime, PermissionMode: cmp.Or(t.PermissionMode, c.PermissionMode)}
 }
 
 // A pre-dispatch refusal may select the task's own conversation. A lost RPC response is not such proof.

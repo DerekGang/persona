@@ -110,6 +110,7 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 		if !online || !d.Online || s.isWorkMachine(t.MachineID) || !ok || !c.Assistant || c.Cwd == "" || s.isGuest(ctx, t.MachineID, t.SessionID) {
 			return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
 		}
+		sourceCwd := "" // Ordinary continuations use the source conversation's directory.
 		if t.Space == SpaceHealth {
 			var canonical struct {
 				Cwd string `json:"cwd"`
@@ -117,12 +118,15 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 			if c.Space != SpaceHealth || s.call(ctx, t.MachineID, assistantwire.DeviceAssistantDirectory, map[string]any{"path": s.healthCwd(d)}, &canonical) != nil || canonical.Cwd != c.Cwd {
 				return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
 			}
+			sourceCwd = canonical.Cwd
 		}
-		params := map[string]any{}
-		if err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.requestCtxLang(ctx)); err != nil {
+		params, err := s.taskSourceParams(ctx, t, "", sourceCwd, s.requestCtxLang(ctx))
+		if err != nil {
 			return taskInputTarget{}, err
 		}
-		return taskInputTarget{TaskExecution: *s.sourceTaskExecution(ctx, t, params), session: t.SessionID}, nil
+		// An omitted profile lets the node resolve the source session's profile just as it does on send.
+		profile, _ := params["config_dir"].(string)
+		return taskInputTarget{TaskExecution: *s.sourceTaskExecution(ctx, t, params), session: t.SessionID, profile: profile}, nil
 	}
 	base, err := s.taskModelBaseline(ctx, s.taskMachine(ctx, t))
 	if err != nil {
@@ -172,11 +176,8 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 	return target, nil
 }
 
-func (s *Service) taskInputParams(target taskInputTarget, text string) map[string]any {
-	params := map[string]any{"cwd": target.Cwd, "launcher": target.Launcher, "text": text, "task_execution": true, "machine_id": target.MachineID, "skill_owner": s.skillOwner()}
-	if target.session != "" {
-		params["session_id"] = target.session
-	}
+func (target taskInputTarget) environmentParams() map[string]any {
+	params := map[string]any{"cwd": target.Cwd, "launcher": target.Launcher}
 	if target.profile != "" {
 		params["config_dir"] = target.profile
 	}
@@ -212,7 +213,15 @@ func (s *Service) checkTaskContent(ctx context.Context, ex taskInputTarget, pref
 	var ack struct {
 		Valid bool `json:"valid"`
 	}
-	if err := s.call(ctx, ex.MachineID, "assistant.content", s.taskInputParams(ex, prefix), &ack); err != nil {
+	params := ex.environmentParams()
+	params["text"], params["skill_owner"] = prefix, s.skillOwner()
+	if ex.session != "" {
+		params["session_id"] = ex.session
+	}
+	if ex.Runtime != "" {
+		params["runtime"] = ex.Runtime
+	}
+	if err := s.call(ctx, ex.MachineID, "assistant.content", params, &ack); err != nil {
 		return err
 	}
 	if !ack.Valid {
@@ -248,7 +257,9 @@ func (s *Service) taskInputRoutes() {
 		var catalog bool
 		_ = json.Unmarshal(raw["catalog"], &catalog)
 		if catalog {
-			c, e := s.skillCatalogFor(r.Context(), ex.MachineID, ex.session, s.taskInputParams(ex, ""))
+			params := ex.environmentParams()
+			params["task_execution"] = true // use the task's resolved directory for a new conversation
+			c, e := s.skillCatalogFor(r.Context(), ex.MachineID, ex.session, params)
 			if e != nil {
 				result["skill_error"] = e.Error()
 			} else {

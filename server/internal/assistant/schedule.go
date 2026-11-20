@@ -2025,8 +2025,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			// A follow-up the assistant scheduled for itself is a turn of that conversation: it keeps the
 			// conversation's launcher like a message from the phone does. On the task's category launcher (Agents
 			// then) it moved the main conversation onto another one (plain claude, not logged in there) for good (#1518).
-			params := taskSourceParams(t, taskPrompt(t, due, now, loc, manual, kb, false), sourceCwd)
-			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
+			params, err := s.taskSourceParams(ctx, t, taskPrompt(t, due, now, loc, manual, kb, false), sourceCwd, s.lang(ctx))
 			if err == nil {
 				if err := s.validateTaskSelections(ctx, t.MachineID, t.SessionID, params, t.PromptSelections); err != nil {
 					return s.failTaskRun(ctx, t, run, err, false)
@@ -3269,9 +3268,9 @@ func (s *Service) scheduleRoutes() {
 			} else {
 				rearm(Task{}, &t, now)
 			}
-			// The legacy batch editor can preserve selections for metadata and
-			// pauses. Changes to an approved run go through the task endpoint.
-			if t.PromptSelections && taskInputEditNeedsValidation(prev, t) {
+			// Only the task endpoint can change the run settings of a task
+			// whose saved prompt has selections, including replacing that prompt.
+			if prev.PromptSelections && taskInputEditNeedsValidation(prev, t) {
 				sc.mu.Unlock()
 				apierr.Write(w, http.StatusBadRequest, errTaskSelectionsOwner)
 				return

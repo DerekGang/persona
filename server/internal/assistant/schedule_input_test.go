@@ -50,6 +50,85 @@ func TestTaskInputContextUsesDraftExecutionWithoutSaving(t *testing.T) {
 	}
 }
 
+func TestTaskInputSourceUsesOneSkillEnvironment(t *testing.T) {
+	f := readyHub()
+	s := newTestService(t, f)
+	const (
+		machine  = "server"
+		source   = "source-chat"
+		cwd      = "/work/review"
+		launcher = "claude-review"
+	)
+	f.known[source] = true
+	f.setSessions(machine, proto.Session{SessionID: source, Cwd: cwd, Launcher: launcher, Assistant: true})
+	f.zshrc = map[string][]proto.Launcher{machine: {{Name: "claude", Agent: "claude"}, {Name: launcher, Agent: "claude"}}}
+	task := Task{ID: "review", Title: "Review", Prompt: "Read the notes", Repeat: repeatOnce,
+		At: time.Now().Add(time.Hour), Enabled: true, MachineID: machine, SessionID: source}
+	setTasks(s, task)
+
+	// The source owns its profile on the node. A task-owned chat without this session
+	// would have a different inventory, even if it exposed a skill with the same name.
+	profile := t.TempDir()
+	catalog := assistantskills.Catalog{Version: 1, Complete: true,
+		Skills: assistantskills.Bind(profile, []assistantskills.Entry{{Name: "Review notes", Source: "user"}})}
+	readContext := func(node string, raw json.RawMessage) map[string]any {
+		t.Helper()
+		var p map[string]any
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatal(err)
+		}
+		if node != machine || p["session_id"] != source || p["cwd"] != cwd || p["launcher"] != launcher ||
+			p["config_dir"] != nil || p["skill_owner"] != s.skillOwner() {
+			t.Fatalf("source skill context differs: %s %v", node, p)
+		}
+		return p
+	}
+	contentCalls, catalogCalls := 0, 0
+	f.answerNode("assistant.content", func(node string, raw json.RawMessage) (any, error) {
+		p := readContext(node, raw)
+		if len(p) != 5 {
+			t.Errorf("assistant.content received unexpected fields: %v", p)
+		}
+		if text, _ := p["text"].(string); contentCalls > 0 {
+			if _, err := assistantskills.Resolve(text, catalog.Skills); err != nil || text == "" {
+				t.Fatalf("save did not validate the selected source skill: %q, %v", text, err)
+			}
+		}
+		contentCalls++
+		return map[string]bool{"valid": true}, nil
+	})
+	f.answerNode("skills.list", func(node string, raw json.RawMessage) (any, error) {
+		p := readContext(node, raw)
+		if len(p) != 6 || p["catalog"] != true || p["machine_id"] != machine {
+			t.Fatalf("catalog received unexpected fields: %v", p)
+		}
+		catalogCalls++
+		return catalog, nil
+	})
+
+	w := request(s, "POST", "/api/v1/assistant/tasks/input-context", `{"id":"review","catalog":true}`)
+	var preview struct {
+		TaskInput bool `json:"task_input"`
+		Catalog   assistantskills.Catalog
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &preview); w.Code != 200 || err != nil || !preview.TaskInput || len(preview.Catalog.Skills) != 1 {
+		t.Fatalf("preview: %d %s (%v)", w.Code, w.Body, err)
+	}
+	prompt := `<persona-context kind="skill" ref="` + preview.Catalog.Skills[0].ID + `">Review notes</persona-context>` + "\n\nReview the notes"
+	body, _ := json.Marshal(map[string]any{"structured_prompt": prompt})
+	if r := request(s, "PUT", "/api/v1/assistant/tasks/review", string(body)); r.Code != 200 {
+		t.Fatalf("save: %d %s", r.Code, r.Body)
+	}
+	if r := request(s, "POST", "/api/v1/assistant/tasks/review/run", "{}"); r.Code != 200 {
+		t.Fatalf("run: %d %s", r.Code, r.Body)
+	}
+	last := f.lastSend(t)
+	if last["session_id"] != source || last["launcher"] != launcher || last["config_dir"] != nil ||
+		last["task_input"] != true || last["skill_owner"] != s.skillOwner() || contentCalls != 2 || catalogCalls != 2 {
+		t.Fatalf("dispatch did not retain the previewed source: %v; content %d, catalog %d", last, contentCalls, catalogCalls)
+	}
+}
+
 func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
 	const oldCron = "0 9 * * *"
 	const ownDir = "/home/me/.persona/assistant"
@@ -619,6 +698,49 @@ func TestTaskInputOwnerEnableValidatesSavedSelections(t *testing.T) {
 	kept, _ = taskByID(s, task.ID)
 	if r.Code != 200 || !kept.Enabled || !kept.PromptSelections || kept.Prompt != task.Prompt || checks != 1 || f.sent() != 0 {
 		t.Fatalf("enable: %d %s; stored %+v; validation calls %d", r.Code, r.Body, kept, checks)
+	}
+}
+
+func TestTaskInputLegacyBatchKeepsStoredApproval(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newTestService(t, f)
+	const approved = `<persona-context kind="skill" ref="review">Review</persona-context>` + "\n\nReview notes"
+	task := Task{ID: "review", Title: "Review", Prompt: approved, PromptSelections: true, Repeat: repeatDaily, Time: "12:00", Enabled: true}
+	plain := Task{ID: "plain", Title: "Plain", Prompt: "Summarize yesterday", Repeat: repeatDaily, Time: "09:00", Enabled: true}
+	setTasks(s, task, plain)
+	batch := func(tasks ...Task) int {
+		body, _ := json.Marshal(map[string]any{"routines": tasks})
+		return request(s, "PUT", "/api/v1/assistant/routines", string(body)).Code
+	}
+
+	changed := task
+	changed.Prompt = "Summarize the review notes"
+	changed.Time = "13:00"
+	renamed := plain
+	renamed.Title = "Summary"
+	status := batch(renamed, changed)
+	kept, _ := taskByID(s, task.ID)
+	keptPlain, _ := taskByID(s, plain.ID)
+	if status != 400 || !reflect.DeepEqual(kept, task) || !reflect.DeepEqual(keptPlain, plain) {
+		t.Fatalf("legacy batch changed an approved routine or partially saved: %d", status)
+	}
+
+	paused := task
+	paused.Title, paused.Enabled = "Daily review", false
+	renamed.Prompt = "Summarize today"
+	status = batch(renamed, paused)
+	kept, _ = taskByID(s, task.ID)
+	keptPlain, _ = taskByID(s, plain.ID)
+	if status != 200 || kept.Enabled || kept.Title != paused.Title || !kept.PromptSelections || kept.Prompt != approved ||
+		keptPlain.Title != renamed.Title || keptPlain.Prompt != renamed.Prompt {
+		t.Fatalf("legacy metadata or plain edit failed: %d", status)
+	}
+
+	body, _ := json.Marshal(map[string]any{"prompt": changed.Prompt, "time": changed.Time})
+	r := request(s, "PUT", "/api/v1/assistant/tasks/review", string(body))
+	kept, _ = taskByID(s, task.ID)
+	if r.Code != 200 || kept.PromptSelections || kept.Prompt != changed.Prompt || kept.Time != changed.Time || f.sent() != 0 {
+		t.Fatalf("single-task plain replacement failed: %d %s", r.Code, r.Body)
 	}
 }
 

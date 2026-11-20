@@ -2,6 +2,8 @@
 import { Suspense } from "react";
 import { lazyPage } from "../../lib/lazy-page";
 import { removeContext, useContexts, type ContextRef } from "../../lib/links";
+import { t } from "../../i18n";
+import { OverlayBoundary } from "../LazyOverlay";
 
 const ChipList = lazyPage(() => import("./ContextChipList").then((m) => m.ContextChipList));
 
@@ -12,5 +14,19 @@ export function ContextChips({ draftKey }: { draftKey: string }) {
 
 export function ContextChipList({ refs, onRemove }: { refs: ContextRef[]; onRemove: (id: string) => void }) {
   if (!refs.length) return null;
-  return <Suspense fallback={null}><ChipList refs={refs} onRemove={onRemove} /></Suspense>;
+  const fallback = (
+    <div className="flex flex-wrap gap-1">
+      {refs.map((ref) => (
+        <span key={ref.id} className="flex min-w-0 items-center gap-1 rounded-full bg-accent-tint px-2 text-sm text-accent-ink">
+          <span className="truncate">{ref.title || ref.text}</span>
+          <button type="button" aria-label={t("link-contextchips.remove_label")} onClick={() => onRemove(ref.id)}>×</button>
+        </span>
+      ))}
+    </div>
+  );
+  return (
+    <OverlayBoundary open onClose={() => {}} fallback={fallback}>
+      <Suspense fallback={null}><ChipList refs={refs} onRemove={onRemove} /></Suspense>
+    </OverlayBoundary>
+  );
 }
