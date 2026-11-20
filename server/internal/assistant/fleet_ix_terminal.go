@@ -34,7 +34,7 @@ func (s *Service) syncPlanInteractions(machine string) {
 // permission that names its tool call (one without an id is never guessed at; Codex's and a runtime's cards end
 // through their own sources). Callers hold s.fleet.mu.
 func terminalReconciled(p *pending) bool {
-	if p.local != nil || p.claimed {
+	if p.local != nil || p.claimed || detachedApprovalWaitingLocked(p) {
 		return false
 	}
 	switch p.ix.Kind {
@@ -115,9 +115,9 @@ func planCallFinished(ix proto.Interaction, items []proto.Item) bool {
 
 func (s *Service) finishExternalPlan(p *pending) {
 	s.fleet.mu.Lock()
-	if s.fleet.interactions[p.ix.ID] != p || p.claimed {
+	if s.fleet.interactions[p.ix.ID] != p || p.claimed || detachedApprovalWaitingLocked(p) {
 		s.fleet.mu.Unlock()
-		return // the phone answered (its answer is the history's) or this card was replaced while the read was in flight
+		return // the phone answered, a newer card replaced this one, or the terminal result only released the turn
 	}
 	delete(s.fleet.interactions, p.ix.ID)
 	if p.orphaned != nil {

@@ -323,11 +323,21 @@ func (h *Hub) withdrawCardsOn(mid, to string) {
 	f := &h.reported
 	f.mu.Lock()
 	var gone []string
+	withdrawn := map[string]bool{}
 	for id, ix := range f.interactions {
 		if cmp.Or(ix.Manager, assistantwire.AssistantID) == to {
 			continue
 		}
 		if ix.MachineID == mid || ix.MachineID == "" && ix.SessionID != "" && on[ix.SessionID] {
+			gone = append(gone, id)
+			withdrawn[id] = true
+			delete(f.interactions, id)
+		}
+	}
+	for id, ix := range f.interactions {
+		if withdrawn[ix.MirrorOf] {
+			// A display copy lives at Main's destination, not on the moved
+			// machine. It must end with its authoritative card nonetheless.
 			gone = append(gone, id)
 			delete(f.interactions, id)
 		}

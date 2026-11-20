@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -281,6 +283,94 @@ func TestApprovalMirrorsRequireClientCapabilityEverywhere(t *testing.T) {
 	}
 }
 
+func TestApprovalMirrorRESTBindsWebCapabilityToClientInstance(t *testing.T) {
+	h := newTestHub(t)
+	older := &client{out: make(chan []byte, 8)}
+	upgraded := &client{out: make(chan []byte, 8)}
+	addTestClient(h, older, upgraded)
+	h.onClientHello(older, []byte(`{"platform":"web","version":"1"}`))
+	h.onClientHello(upgraded, []byte(`{"platform":"web","version":"1","instance":"tab-upgraded","features":["approval_mirrors"]}`))
+	<-older.out    // client_hello_ack
+	<-upgraded.out // client_hello_ack
+	origin, mirror := mirrorPairForTest("ix_web_tab")
+	reportInteraction(t, h, origin)
+	reportInteraction(t, h, mirror)
+	<-older.out // the original only
+	for range 2 {
+		<-upgraded.out // the original and its copy
+	}
+
+	for _, tc := range []struct {
+		name     string
+		instance string
+		want     int
+	}{
+		{name: "older tab has no instance", want: 1},
+		{name: "older tab instance is not the capable connection", instance: "tab-older", want: 1},
+		{name: "requesting upgraded tab", instance: "tab-upgraded", want: 2},
+		{name: "unknown instance", instance: "tab-unknown", want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "https://example.com/api/v1/interactions", nil)
+			r.RemoteAddr = "127.0.0.1:1234"
+			r.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+			r.Header.Set("X-Persona-Client", "web/1")
+			if tc.instance != "" {
+				r.Header.Set("X-Persona-Client-Instance", tc.instance)
+			}
+			w := httptest.NewRecorder()
+			h.routes().ServeHTTP(w, r)
+			var body struct {
+				Interactions []proto.Interaction `json:"interactions"`
+			}
+			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &body) != nil || len(body.Interactions) != tc.want {
+				t.Fatalf("REST cards = %d %s, want %d", w.Code, w.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestDisplayMirrorOwnershipMoveWithdrawsCopyWithOrigin(t *testing.T) {
+	h := newTestHub(t)
+	c := &client{out: make(chan []byte, 8), urlFeatures: map[string]bool{featureApprovalMirrors: true}}
+	addTestClient(h, c)
+	origin, mirror := mirrorPairForTest("ix_moved_origin")
+	origin.Manager, mirror.Manager = "m-old", "m-old"
+	mirror.MachineID = "main-machine"
+	kept, keptMirror := mirrorPairForTest("ix_unmoved_origin")
+	kept.Manager, keptMirror.Manager = "m-new", "m-new"
+	kept.MachineID, keptMirror.MachineID = "other", "other"
+	h.reported.interactions = map[string]proto.Interaction{
+		origin.ID: origin, mirror.ID: mirror, kept.ID: kept, keptMirror.ID: keptMirror,
+	}
+	h.withdrawCardsOn("box", "m-new")
+	got := h.pendingInteractions()
+	if len(got) != 2 {
+		t.Fatalf("machine move left an orphaned display copy: %+v", got)
+	}
+	ids := map[string]bool{}
+	for _, ix := range got {
+		ids[ix.ID] = true
+	}
+	if !ids[kept.ID] || !ids[keptMirror.ID] {
+		t.Fatalf("machine move withdrew the wrong manager's cards: %+v", got)
+	}
+	resolved := map[string]bool{}
+	for range 2 {
+		var event struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if json.Unmarshal(wireReceive(t, c), &event) != nil || event.Type != "interaction_resolved" {
+			t.Fatalf("machine move event = %+v", event)
+		}
+		resolved[event.ID] = true
+	}
+	if !resolved[origin.ID] || !resolved[mirror.ID] {
+		t.Fatalf("machine move resolution events = %v, want original and copy", resolved)
+	}
+}
+
 func mirrorPairForTest(id string) (proto.Interaction, proto.Interaction) {
 	origin := proto.Interaction{ID: id, MachineID: "box", SessionID: "side", Kind: proto.IxPermission,
 		MirrorMain: true, CanClarify: true, CreatedAt: time.Unix(1000, 0).UTC()}
@@ -438,6 +528,169 @@ func TestDisplayMirrorOperationReceiptUsesAuthoritativeTarget(t *testing.T) {
 			default:
 			}
 		})
+	}
+}
+
+func TestDisplayMirrorOperationReceiptSurvivesWithdrawal(t *testing.T) {
+	sequences := []struct {
+		name                     string
+		firstMirror, retryMirror bool
+	}{
+		{name: "mirror then same stale mirror", firstMirror: true, retryMirror: true},
+		{name: "mirror then original", firstMirror: true, retryMirror: false},
+		{name: "original then stale mirror", firstMirror: false, retryMirror: true},
+	}
+	opNumber := 100
+	for _, tc := range []struct {
+		action, body string
+	}{
+		{action: "resolve", body: `{"allow":true}`},
+		{action: "clarify", body: `{"text":"Why?","client_msg_id":"receipt-question"}`},
+	} {
+		for _, sequence := range sequences {
+			t.Run(tc.action+"/"+sequence.name, func(t *testing.T) {
+				opNumber++
+				h := newTestHub(t)
+				h.store = &receiptStore{memStore: newMemStore(), ops: &clientOpsStore{ops: map[string]db.ClientOp{}}}
+				got := mirrorManagerRequests(t, h)
+				origin, mirror := mirrorPairForTest("ix_withdrawal_receipt")
+				origin.Manager, mirror.Manager = assistantwire.AssistantID, assistantwire.AssistantID
+				h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
+				routes := h.routes()
+				request := func(useMirror bool) *httptest.ResponseRecorder {
+					id := origin.ID
+					if useMirror {
+						id = mirror.ID
+					}
+					r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+url.PathEscape(id)+"/"+tc.action, strings.NewReader(tc.body))
+					r.RemoteAddr = "127.0.0.1:12345"
+					r.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+					r.Header.Set("X-Persona-Op-Id", fmt.Sprintf("00000000-0000-4000-8000-%012d", opNumber))
+					w := httptest.NewRecorder()
+					routes.ServeHTTP(w, r)
+					return w
+				}
+				first := request(sequence.firstMirror)
+				if first.Code != http.StatusOK {
+					t.Fatalf("first action: %d %s", first.Code, first.Body)
+				}
+				select {
+				case req := <-got:
+					want := "/api/v1/interactions/" + url.PathEscape(origin.ID) + "/" + tc.action
+					if req.Path != want {
+						t.Fatalf("forwarded path = %q, want %q", req.Path, want)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("first action did not reach the manager")
+				}
+				reportResolved(t, h, origin.ID, "")
+				if got := h.pendingInteractions(); len(got) != 0 {
+					t.Fatalf("resolution did not withdraw original and copy: %+v", got)
+				}
+				second := request(sequence.retryMirror)
+				if second.Code != first.Code || second.Body.String() != first.Body.String() {
+					t.Fatalf("retry = %d %s, first = %d %s", second.Code, second.Body, first.Code, first.Body)
+				}
+				select {
+				case req := <-got:
+					t.Fatalf("recorded operation reached the manager twice: %+v", req)
+				default:
+				}
+			})
+		}
+	}
+}
+
+func TestDisplayMirrorRecordedReceiptRestoresEscapedOpaquePath(t *testing.T) {
+	ops := &clientOpsStore{ops: map[string]db.ClientOp{}}
+	h := newTestHub(t)
+	h.store = &receiptStore{memStore: newMemStore(), ops: ops}
+	origin, mirror := mirrorPairForTest("tenant/approval")
+	const opID = "00000000-0000-4000-8000-000000000098"
+	target, _ := json.Marshal(map[string]string{"path": "/api/v1/interactions/tenant/approval/resolve", "query": ""})
+	ops.ops[opID] = db.ClientOp{ID: opID, Target: target}
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+mirror.ID+"/resolve", strings.NewReader(`{"allow":true}`))
+	r.Header.Set("X-Persona-Op-Id", opID)
+	r.SetPathValue("id", mirror.ID)
+	var gotPath, gotRawPath, gotID string
+	h.withNormalizedDisplayMirror(func(_ http.ResponseWriter, r *http.Request) {
+		gotPath, gotRawPath, gotID = r.URL.EscapedPath(), r.URL.RawPath, r.PathValue("id")
+	})(httptest.NewRecorder(), r)
+	if gotID != origin.ID || gotPath != "/api/v1/interactions/tenant%2Fapproval/resolve" ||
+		gotRawPath != "/api/v1/interactions/tenant%2Fapproval/resolve" || r.URL.Path != "/api/v1/interactions/tenant/approval/resolve" {
+		t.Fatalf("recorded stale-copy normalization = id %q, escaped path %q, RawPath %q, Path %q", gotID, gotPath, gotRawPath, r.URL.Path)
+	}
+}
+
+func TestDisplayMirrorActionsEscapeOpaqueAuthoritativeID(t *testing.T) {
+	for _, tc := range []struct{ action, body string }{
+		{action: "resolve", body: `{"allow":true}`},
+		{action: "clarify", body: `{"text":"Why?","client_msg_id":"opaque-question"}`},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			h := newTestHub(t)
+			got := mirrorManagerRequests(t, h)
+			origin, mirror := mirrorPairForTest("tenant/approval")
+			origin.Manager, mirror.Manager = assistantwire.AssistantID, assistantwire.AssistantID
+			h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+mirror.ID+"/"+tc.action, strings.NewReader(tc.body))
+			r.RemoteAddr = "127.0.0.1:12345"
+			r.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+			w := httptest.NewRecorder()
+			h.routes().ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("action: %d %s", w.Code, w.Body)
+			}
+			select {
+			case req := <-got:
+				want := "/api/v1/interactions/tenant%2Fapproval/" + tc.action
+				if req.Path != want {
+					t.Fatalf("forwarded path = %q, want %q", req.Path, want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("action did not reach the manager")
+			}
+		})
+	}
+}
+
+func TestDisplayMirrorRecordedReceiptRejectsArbitraryAlias(t *testing.T) {
+	h := newTestHub(t)
+	h.store = &receiptStore{memStore: newMemStore(), ops: &clientOpsStore{ops: map[string]db.ClientOp{}}}
+	got := mirrorManagerRequests(t, h)
+	origin, mirror := mirrorPairForTest("ix_recorded_alias")
+	origin.Manager, mirror.Manager = assistantwire.AssistantID, assistantwire.AssistantID
+	h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
+	routes := h.routes()
+	request := func(id string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+url.PathEscape(id)+"/resolve", strings.NewReader(`{"allow":true}`))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+		r.Header.Set("X-Persona-Op-Id", "00000000-0000-4000-8000-000000000099")
+		w := httptest.NewRecorder()
+		routes.ServeHTTP(w, r)
+		return w
+	}
+	if first := request(origin.ID); first.Code != http.StatusOK {
+		t.Fatalf("first action: %d %s", first.Code, first.Body)
+	}
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first action did not reach the manager")
+	}
+	reportResolved(t, h, origin.ID, "")
+	if got := h.pendingInteractions(); len(got) != 0 {
+		t.Fatalf("resolution did not withdraw original and copy: %+v", got)
+	}
+	alias := proto.ApprovalMirrorID("an-unrelated-approval")
+	if second := request(alias); second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "op_id_reused") {
+		t.Fatalf("unrelated stale alias borrowed the recorded operation: %d %s", second.Code, second.Body)
+	}
+	select {
+	case req := <-got:
+		t.Fatalf("unrelated alias reached the manager: %+v", req)
+	default:
 	}
 }
 

@@ -289,6 +289,13 @@ func (s *Service) keepWaiting(p *pending) bool {
 	}
 }
 
+// detachedApprovalWaitingLocked reports whether the original terminal call has
+// already received its non-final waiting result. Its later tool result and a
+// late node dismissal are not new decisions on the retained card. fleet.mu is held.
+func detachedApprovalWaitingLocked(p *pending) bool {
+	return p != nil && p.ix.Detachable && p.prepared != nil && p.prepared.waiting && !p.prepared.terminal
+}
+
 // approvalNudgeDeadline returns the live effective deadline for a card the Lark
 // sweep is about to nudge. A question pauses that deadline; completed pauses have
 // already moved the published deadline by their cumulative duration. Reading the

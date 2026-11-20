@@ -12,6 +12,7 @@ import (
 // All access is protected by client.mu; identity here never replaces the authenticated device or role.
 type clientMeta struct {
 	DeviceID string          `json:"device_id"`
+	Instance string          `json:"instance"`
 	Platform string          `json:"platform"`
 	Version  string          `json:"version"`
 	Build    json.RawMessage `json:"build"`

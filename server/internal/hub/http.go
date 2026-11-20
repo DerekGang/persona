@@ -376,6 +376,7 @@ func logRequests(h *Hub, next http.Handler) http.Handler {
 		if !compat.HeaderConflict(r.Header, "X-Persona-Client") {
 			client = parseRequestClient(compat.Header(r.Header, "X-Persona-Client"))
 		}
+		client.Instance = parseRequestClientInstance(r.Header.Get("X-Persona-Client-Instance"))
 		r = r.WithContext(context.WithValue(r.Context(), requestClientKey{}, client))
 		id := requestID(r.Header.Get("X-Client-Request-Id"))
 		w.Header().Set("X-Request-Id", id)

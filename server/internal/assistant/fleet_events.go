@@ -60,6 +60,14 @@ func (s *Service) NodeEvent(machine, event string, params json.RawMessage) bool 
 			ID string `json:"id"`
 		}
 		if json.Unmarshal(params, &p) == nil {
+			s.fleet.mu.Lock()
+			waiting := detachedApprovalWaitingLocked(s.fleet.interactions[p.ID])
+			s.fleet.mu.Unlock()
+			if waiting {
+				// The original terminal call already returned its non-final waiting
+				// result. A later dismissal cannot decide the retained owner card.
+				return false
+			}
 			if s.endPreparedByID(p.ID, "dismissed", "The approval was dismissed on the computer; this card did not apply the change.") {
 				return false
 			}

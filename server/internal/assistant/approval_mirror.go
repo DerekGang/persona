@@ -120,6 +120,9 @@ func (s *Service) pendingDisplayInteractions(ctx context.Context) []proto.Intera
 	out := make([]proto.Interaction, 0, len(pending)*2)
 	for _, ix := range pending {
 		out = append(out, ix)
+		if !ix.MirrorMain {
+			continue // an existing unmirrored occurrence must not gain a copy here
+		}
 		if mirror, ok := s.mainApprovalMirror(ctx, ix); ok {
 			out = append(out, mirror)
 		}

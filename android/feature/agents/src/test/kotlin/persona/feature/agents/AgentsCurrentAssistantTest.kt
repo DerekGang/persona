@@ -143,6 +143,15 @@ class AgentsCurrentAssistantTest {
         assertEquals(listOf("c1", "c3", "c4", "c5"), cards())
     }
 
+    @Test fun resolvedDisplayCopiesDoNotEnterRequestHistory() {
+        val model = model()
+        rule.waitForIdle() // let the pending collector see the original/copy pair
+        requests.value = emptyList()
+        rule.waitUntil(5_000) { model.requestHistory.value.isNotEmpty() }
+        assertEquals(6, model.requestHistory.value.size)
+        assertFalse(model.requestHistory.value.any { it.isDisplayMirror })
+    }
+
     /**
      * A new to-do linked at once to an agent is made under the agent's own assistant, whichever is current when it is made
      * (#3374 follow-up): never the current one's to-do on another assistant's agent. The sheet offers that assistant's.

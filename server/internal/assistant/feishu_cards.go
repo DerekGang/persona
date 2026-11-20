@@ -224,7 +224,7 @@ func (s *Service) interactionPlace(ctx context.Context, ix proto.Interaction) (r
 	// An eligible Assistant approval always goes to the owner directly, even
 	// when its only existing run is in a topic.
 	if private == nil && topic != nil && s.nonMainAssistantPermission(ctx, ix) {
-		return "", feishuTarget{}, nil
+		return "", feishuTarget{}, &topicNote{reply: topic.ReplyTo, to: runTo(s.runExts(topic, "chat", "thread"))}
 	}
 	switch {
 	case private != nil && topic != nil:

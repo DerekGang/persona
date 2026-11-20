@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -10,6 +12,8 @@ import (
 // featureApprovalMirrors is the client capability for receiving display copies.
 // A client that only knows the authoritative model keeps its pre-mirror counts.
 const featureApprovalMirrors = "approval_mirrors"
+
+const displayMirrorAPIPrefix = "/api/v1/interactions/"
 
 func reservedDisplayOriginal(ix proto.Interaction) bool {
 	return ix.MirrorOf == "" && strings.HasPrefix(ix.ID, proto.ApprovalMirrorIDPrefix)
@@ -44,8 +48,53 @@ func refreshedDisplayMirror(origin, mirror proto.Interaction) proto.Interaction 
 func (h *Hub) withNormalizedDisplayMirror(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		h.normalizeDisplayMirror(r)
+		h.normalizeRecordedDisplayMirror(r)
 		next(w, r)
 	}
+}
+
+// setDisplayMirrorOrigin preserves both forms of an opaque authoritative ID:
+// Path is decoded for gates and receipt identity, RawPath for the manager relay.
+func setDisplayMirrorOrigin(r *http.Request, origin, suffix string) {
+	r.SetPathValue("id", origin)
+	r.URL.Path = displayMirrorAPIPrefix + origin + suffix
+	r.URL.RawPath = displayMirrorAPIPrefix + url.PathEscape(origin) + suffix
+	if r.URL.RawPath == r.URL.Path {
+		r.URL.RawPath = ""
+	}
+}
+
+// normalizeRecordedDisplayMirror resolves a stale copy only through the
+// operation's durable receipt. The recorded path must name the same action and
+// hash back to this exact display ID; an arbitrary alias cannot redirect a retry.
+func (h *Hub) normalizeRecordedDisplayMirror(r *http.Request) {
+	id := r.PathValue("id")
+	if !strings.HasPrefix(id, proto.ApprovalMirrorIDPrefix) || h.store == nil {
+		return
+	}
+	opID := strings.ToLower(r.Header.Get("X-Persona-Op-Id"))
+	if opID == "" {
+		return
+	}
+	op, err := h.store.ClientOp(r.Context(), opID)
+	if err != nil || op == nil {
+		return
+	}
+	var target struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal(op.Target, &target) != nil {
+		return
+	}
+	suffix := strings.TrimPrefix(r.URL.Path, displayMirrorAPIPrefix+id)
+	if suffix == r.URL.Path || suffix == "" || !strings.HasPrefix(target.Path, displayMirrorAPIPrefix) || !strings.HasSuffix(target.Path, suffix) {
+		return
+	}
+	origin := strings.TrimSuffix(strings.TrimPrefix(target.Path, displayMirrorAPIPrefix), suffix)
+	if origin == "" || proto.ApprovalMirrorID(origin) != id || target.Path != displayMirrorAPIPrefix+origin+suffix {
+		return
+	}
+	setDisplayMirrorOrigin(r, origin, suffix)
 }
 
 // normalizeDisplayMirror rewrites an action on a display copy before any owner,
@@ -63,11 +112,9 @@ func (h *Hub) normalizeDisplayMirror(r *http.Request) {
 	}
 	origin, ok := f.interactions[mirror.MirrorOf]
 	if ok && validDisplayMirror(origin, mirror) {
-		r.SetPathValue("id", origin.ID)
-		prefix := "/api/v1/interactions/" + id
-		if suffix := strings.TrimPrefix(r.URL.Path, prefix); suffix != r.URL.Path {
-			r.URL.Path = "/api/v1/interactions/" + origin.ID + suffix
-			r.URL.RawPath = ""
+		suffix := strings.TrimPrefix(r.URL.Path, displayMirrorAPIPrefix+id)
+		if suffix != r.URL.Path && suffix != "" {
+			setDisplayMirrorOrigin(r, origin.ID, suffix)
 		}
 	}
 }

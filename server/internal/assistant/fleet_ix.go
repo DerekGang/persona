@@ -205,6 +205,9 @@ func (s *Service) tellCard(ix proto.Interaction) {
 		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: ix.ID})
 		return
 	}
+	if !ix.MirrorMain {
+		return // display intent is created before publication, never inferred here
+	}
 	mirror, ok := s.mainApprovalMirror(context.Background(), ix)
 	if !ok {
 		return
@@ -334,9 +337,11 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 	if ix.ExpiresAt.IsZero() {
 		ix.ExpiresAt = time.Now().Add(s.notifyTimings().hookTimeout()).UTC()
 	}
-	// Record display intent before the interaction enters durable history. Once
-	// set, reconnects preserve this copy even when the preference is later off.
-	if !ix.MirrorMain {
+	// Restore this exact pending occurrence before considering the current
+	// preference. A resumable node hook carries no manager-owned display fields.
+	if intent, found := s.recordedApprovalMirrorIntent(ctx, ix); found {
+		ix.MirrorMain = intent
+	} else if !ix.MirrorMain {
 		if _, ok := s.mainApprovalMirror(ctx, ix); ok {
 			ix.MirrorMain = true
 		}
@@ -346,6 +351,12 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 		restartPrepared := false
 		s.fleet.mu.Lock()
 		if p := s.fleet.interactions[ix.ID]; p != nil && p.local == nil {
+			// Detachable commands have their own same-ID replay boundary: a late
+			// Allow carries ApprovalID and is never returned as execution permission.
+			if !ix.Detachable && !ix.CreatedAt.IsZero() && !sameApprovalOccurrence(ix, p.ix) {
+				s.fleet.mu.Unlock()
+				return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
+			}
 			if p.prepared != nil {
 				// The reconnecting hook is now the caller whose lifetime governs the
 				// initial wait. The disconnected context must not expire a card its
@@ -382,6 +393,9 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 			return s.await(ctx, p)
 		}
 		s.fleet.mu.Unlock()
+		if err := s.checkRecordedInteractionOccurrence(ctx, ix); err != nil {
+			return proto.Resolution{}, err
+		}
 		status, r, ended := s.outcome(ix.ID)
 		if ended {
 			return r, nil
@@ -571,6 +585,31 @@ func (s *Service) orphanLocked(p *pending) bool {
 	return true
 }
 
+// checkRecordedInteractionOccurrence keeps an ordinary runtime's reused id from
+// taking an earlier operation's pending state or answer. Zero creation times
+// retain the legacy id-only resume behavior. Detachable commands instead use
+// their separate replay and one-time-grant boundary, which never turns a late
+// approval back into permission to replay the original hook.
+func (s *Service) checkRecordedInteractionOccurrence(ctx context.Context, ix proto.Interaction) error {
+	if ix.Detachable || ix.CreatedAt.IsZero() {
+		return nil
+	}
+	st, ok := s.store().(interactionRecorder)
+	if !ok {
+		return nil
+	}
+	readCtx, cancel := context.WithTimeout(ctx, historyTimeout)
+	defer cancel()
+	rec, err := st.InteractionRecord(readCtx, ix.ID)
+	if err != nil {
+		return err
+	}
+	if rec != nil && !sameApprovalOccurrence(ix, rec.Interaction) {
+		return fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
+	}
+	return nil
+}
+
 // outcome reports how a resumable interaction no longer pending here ended: the answer given before its hook could
 // read it (the manager or node restarted right then), or a dismiss when it was cancelled or expired. status is the
 // history's ("pending": recorded, never ended).
@@ -620,6 +659,8 @@ func (s *Service) recordEnd(id, status string, r *proto.Resolution) {
 		s.logf("record interaction outcome: %v", err)
 	}
 }
+
+var errInteractionIDReused = errors.New("interaction id belongs to a different occurrence")
 
 // errNotPending: the interaction was answered, withdrawn or expired already.
 var errNotPending = errors.New("no longer pending")

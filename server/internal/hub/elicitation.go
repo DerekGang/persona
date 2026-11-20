@@ -75,6 +75,11 @@ func (h *Hub) requestHasApprovalMirrors(r *http.Request) bool {
 	for c := range h.clients {
 		c.mu.Lock()
 		matches := c.device == who.ID && c.meta.Platform == rc.Platform && c.meta.Version == rc.Version
+		if rc.Platform == "web" {
+			// Every tab says web/1 and shares the browser credential. Only the
+			// requesting tab's own hello can opt its REST snapshot into copies.
+			matches = matches && rc.Instance != "" && c.meta.Instance == rc.Instance
+		}
 		c.mu.Unlock()
 		if matches && c.wants(featureApprovalMirrors) {
 			return true

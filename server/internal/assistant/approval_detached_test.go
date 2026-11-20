@@ -409,6 +409,91 @@ func TestDetachedDisconnectKeepsResumableCardForReconnect(t *testing.T) {
 	})
 }
 
+func TestDetachedWaitingSurvivesTerminalReconcileAndNodeDismiss(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		shortDetachedTimers(t)
+		at := time.Now()
+		items := []proto.Item{
+			{ID: "call#0", Seq: 10, TS: at.Add(-time.Millisecond), Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "bash-call"},
+			{ID: "result#0", Seq: 11, TS: at.Add(time.Second), Role: "user", Kind: proto.KindToolResult, ToolUseID: "bash-call", Text: approvalops.WaitingText},
+		}
+		ft := planFleet(t, true, func(int) ([]proto.Item, bool, error) { return items, false, nil })
+		preparedTestConversation(ft)
+		ix := detachedTestCard("ix_detached_terminal_result")
+		ix.ToolUseID, ix.CreatedAt, ix.ExpiresAt = "bash-call", at, at.Add(time.Hour)
+		done := startDetachedTest(t, ft, ix)
+		elapse(30 * time.Millisecond)
+		if got := awaitDetachedTest(t, done); got.err != nil || !got.res.Pending {
+			t.Fatalf("initial result = %+v, %v", got.res, got.err)
+		}
+
+		// The pending tool result is the turn being released, not a decision in
+		// the terminal. A revision scan and a late node dismissal must both leave
+		// the authoritative card available to its owner.
+		ft.s.syncPlanInteractions("mac")
+		elapse(0)
+		ft.s.NodeEvent("mac", "interaction.dismiss", json.RawMessage(`{"id":"`+ix.ID+`"}`))
+		if got := len(ft.s.pendingInteractions()); got != 1 {
+			status, res, _ := ft.st.InteractionOutcome(context.Background(), ix.ID)
+			t.Fatalf("waiting card was withdrawn: pending=%d status=%s resolution=%+v", got, status, res)
+		}
+		allow := true
+		if err := ft.s.resolve(ix.ID, proto.Resolution{Allow: &allow}); err != nil {
+			t.Fatal(err)
+		}
+		waitApprovalResult(t, ft, ix.ID)
+		retry := detachedTestCard("ix_detached_terminal_result_retry")
+		got, err := ft.s.nodeInteraction(context.Background(), retry)
+		if err != nil || got.Allow == nil || !*got.Allow || got.ApprovalID != ix.ID {
+			t.Fatalf("owner's exact continuation = %+v, %v", got, err)
+		}
+	})
+}
+
+func TestDetachedWaitingWinsAnInFlightTerminalReconcile(t *testing.T) {
+	at := time.Now()
+	started, release := make(chan struct{}), make(chan struct{})
+	items := []proto.Item{
+		{ID: "call#0", Seq: 10, TS: at.Add(-time.Millisecond), Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "bash-call"},
+		{ID: "result#0", Seq: 11, TS: at.Add(time.Second), Role: "user", Kind: proto.KindToolResult, ToolUseID: "bash-call", Text: approvalops.WaitingText},
+	}
+	ft := planFleet(t, false, func(int) ([]proto.Item, bool, error) {
+		close(started)
+		<-release
+		return items, false, nil
+	})
+	ix := detachedTestCard("ix_detached_reconcile_race")
+	ix.ToolUseID, ix.CreatedAt, ix.ExpiresAt = "bash-call", at, at.Add(time.Hour)
+	p := &pending{ix: ix, done: make(chan proto.Resolution, 1), prepared: &preparedApproval{}}
+	putPending(ft.s, p)
+	done := make(chan struct{})
+	go func() {
+		ft.s.checkPlanInteraction("mac", p)
+		close(done)
+	}()
+	<-started
+	ft.s.fleet.mu.Lock()
+	p.prepared.clarified, p.prepared.waiting = true, true
+	ft.s.fleet.mu.Unlock()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("terminal reconciliation did not finish")
+	}
+	ft.s.fleet.mu.Lock()
+	kept := ft.s.fleet.interactions[ix.ID] == p
+	ft.s.fleet.mu.Unlock()
+	if !kept {
+		t.Fatal("a reconciliation begun before the waiting state withdrew the retained card")
+	}
+	select {
+	case r := <-p.done:
+		t.Fatalf("waiting card received a terminal dismissal: %+v", r)
+	default:
+	}
+}
+
 func TestConsumedContinuationDoesNotAskForAnotherRetry(t *testing.T) {
 	ft := newFleetTest(t)
 	preparedTestConversation(ft)

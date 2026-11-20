@@ -5,6 +5,7 @@ import { appSocketReady, applyMachine, checkSocket, connect, disconnect, getStat
 import { offlineNow } from "./feedback";
 import { liveEntry, resetLive } from "./live";
 import { messageFeedback } from "./message-send";
+import { clientInstance } from "./device-id";
 
 class FakeSocket {
   static OPEN = 1;
@@ -447,6 +448,14 @@ describe("client_hello heartbeat", () => {
     const hello = last().sent.map((m) => JSON.parse(m)).find((m) => m.type === "client_hello");
     expect(hello.device_id).toBeTruthy();
     expect(hello.device_id).toBe(localStorage.getItem("persona.notifyDevice"));
+  });
+
+  it("names this tab's instance, matching the REST capability binding", () => {
+    connect();
+    last().open();
+    const hello = last().sent.map((m) => JSON.parse(m)).find((m) => m.type === "client_hello");
+    expect(hello.instance).toBeTruthy();
+    expect(hello.instance).toBe(clientInstance());
   });
 });
 

@@ -8,6 +8,8 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/channel"
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -306,6 +308,64 @@ func TestCodexApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
 	}
 }
 
+func TestHookApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		recorded       bool
+		currentDefault *bool
+	}{
+		{name: "mirrored occurrence survives setting off", recorded: true, currentDefault: new(false)},
+		{name: "unmirrored occurrence survives setting on", recorded: false, currentDefault: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := newMirrorFleetTest(t)
+			setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = tc.currentDefault })
+			ix := mirrorTestCard("ix_hook_restart_" + map[bool]string{true: "mirrored", false: "unmirrored"}[tc.recorded])
+			ix.CreatedAt = time.Unix(1000, 0).UTC()
+			recorded := ix
+			recorded.MirrorMain = tc.recorded
+			ft.st.fmu.Lock()
+			ft.st.recs = append(ft.st.recs, db.InteractionRecord{Interaction: recorded, Status: "pending"})
+			ft.st.status[ix.ID] = "pending"
+			ft.st.fmu.Unlock()
+			f := newFakeHub()
+			f.mu.Lock()
+			f.hello.ApprovalMirrors = true
+			f.mu.Unlock()
+			restarted := newRestartedService(t, Options{Hub: f, Store: func() Store { return ft.st }, Logf: t.Logf, Devices: ft.d})
+			done := make(chan error, 1)
+			go func() {
+				_, err := restarted.waitInteraction(context.Background(), ix)
+				done <- err
+			}()
+			waitFor(t, "resumable hook reclaim", func() bool { return len(restarted.pendingInteractions()) == 1 })
+			pending := restarted.pendingInteractions()
+			if len(pending) != 1 || pending[0].MirrorMain != tc.recorded {
+				t.Fatalf("reclaimed occurrence intent = %+v, want mirror_main=%v", pending, tc.recorded)
+			}
+			wantCards := 1
+			if tc.recorded {
+				wantCards = 2
+			}
+			if got := restarted.pendingDisplayInteractions(context.Background()); len(got) != wantCards {
+				t.Fatalf("reclaimed display cards = %+v, want %d", got, wantCards)
+			}
+			yes := true
+			if err := restarted.resolve(ix.ID, proto.Resolution{Allow: &yes}); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("reclaimed hook did not finish")
+			}
+		})
+	}
+}
+
 func TestFeishuAssistantApprovalWithTopicRunUsesDirectChat(t *testing.T) {
 	ft := newMirrorFleetTest(t)
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
@@ -315,6 +375,9 @@ func TestFeishuAssistantApprovalWithTopicRunUsesDirectChat(t *testing.T) {
 	})
 	ft.f.answerApp(AppFeishu, FeishuPost, func(json.RawMessage) (any, error) {
 		return map[string]any{"message_id": "om_approval"}, nil
+	})
+	ft.f.answerApp(AppFeishu, FeishuText, func(json.RawMessage) (any, error) {
+		return map[string]any{"message_id": "om_handoff"}, nil
 	})
 	c := &ft.s.chans
 	c.mu.Lock()
@@ -330,6 +393,12 @@ func TestFeishuAssistantApprovalWithTopicRunUsesDirectChat(t *testing.T) {
 	replyTo, _ := posts[0]["reply_to"].(string)
 	if posts[0]["chat_id"] != nil || posts[0]["in_thread"] != nil || replyTo != "" {
 		t.Fatalf("approval went to its topic run instead of a new direct-chat card: %+v", posts[0])
+	}
+	notes := topicNotes(ft.f)
+	line := i18n.T(ft.s.botLang(context.Background()), "assistant-feishu_cards.sent_to_dm")
+	if len(notes) != 1 || notes[0]["text"] != line || notes[0]["reply_to"] != "om_topic" ||
+		notes[0]["chat_id"] != "oc_topic" || notes[0]["in_thread"] != true {
+		t.Fatalf("topic did not receive its existing direct-chat handoff notice: %+v", notes)
 	}
 }
 

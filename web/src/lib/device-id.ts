@@ -33,3 +33,10 @@ export function helloDeviceId(): string | undefined {
   const { id, kept } = deviceId();
   return kept ? id : undefined;
 }
+
+// This document's instance ties a REST request to its own socket's client_hello. Keep it only in memory: duplicated tabs
+// inherit sessionStorage, so a persisted value would let an older tab borrow the upgraded tab's approval_mirrors capability.
+let pageInstance: string | undefined;
+export function clientInstance(): string {
+  return pageInstance ??= randomId();
+}

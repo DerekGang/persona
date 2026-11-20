@@ -9,6 +9,7 @@ import { currentLanguage, t } from "../i18n";
 import type { Item } from "./types";
 import { clearFeedCache } from "./feed-cache";
 import { credentialEpoch, renewCredentialEpoch } from "./credential-epoch";
+import { clientInstance } from "./device-id";
 
 let ownerToken: string | undefined;
 let ownerEpoch: string | undefined;
@@ -104,7 +105,8 @@ export function handleUnauthorized(fn: () => void): () => void {
 
 /**
  * Who this page is to the hub: the platform and version its socket's client_hello names, and every request's
- * X-Persona-Client. The hub answers a request with what this page's socket declared (MCP forms and links: only to a
+ * X-Persona-Client; X-Persona-Client-Instance names this tab and matches client_hello.instance, so a capability such as
+ * approval_mirrors cannot be borrowed from another tab. The hub answers a request with what this page's socket declared
  * request whose platform and version match a connection that declared them, docs/protocol/protocol.md "MCP elicitation").
  */
 export const CLIENT_PLATFORM = "web";
@@ -212,6 +214,7 @@ async function request<T>(path: string, init: ApiOptions, binary = false): Promi
   // the hub writes its error and status text in the interface language (docs/protocol/i18n.md "Protocol")
   if (!headers.has("Accept-Language")) headers.set("Accept-Language", currentLanguage());
   CLIENT_HEADERS.forEach(name => headers.set(name, `${CLIENT_PLATFORM}/${CLIENT_VERSION}`));
+  headers.set("X-Persona-Client-Instance", clientInstance());
   const op = OP_HEADERS.map(name => headers.get(name)).find(Boolean);
   if (op) OP_HEADERS.forEach(name => headers.set(name, op));
   // the manager the assistant page shows, on the assistant's requests (lib/manager-choice.ts); none for the default

@@ -300,6 +300,54 @@ func TestResumableAnsweredDuringGap(t *testing.T) {
 	}
 }
 
+// A resumable id is a reference to one occurrence, not permission to reuse its answer.
+func TestResumableReusedIDDoesNotInheritAnotherOccurrence(t *testing.T) {
+	for _, state := range []string{"live", "pending", "resolved"} {
+		t.Run(state, func(t *testing.T) {
+			ft := newFleetTest(t)
+			old := resumable("ix_reused_" + state)
+			old.CreatedAt = time.Unix(1000, 0).UTC()
+			var cancelOld context.CancelFunc
+			var oldDone chan struct{}
+			switch state {
+			case "live":
+				var ctx context.Context
+				ctx, cancelOld = context.WithCancel(context.Background())
+				oldDone = make(chan struct{})
+				go func() {
+					_, _ = ft.s.waitInteraction(ctx, old)
+					close(oldDone)
+				}()
+				ft.waitPending(1)
+			case "pending":
+				ft.s.record(old)
+			case "resolved":
+				ft.s.record(old)
+				allow := true
+				if err := ft.st.FinishInteraction(context.Background(), old.ID, "resolved", &proto.Resolution{Allow: &allow}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			changed := old
+			changed.CreatedAt = changed.CreatedAt.Add(time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			r, err := ft.s.waitInteraction(ctx, changed)
+			cancel()
+			if err == nil || !strings.Contains(err.Error(), "different occurrence") {
+				t.Fatalf("reused id returned the old operation: resolution=%+v err=%v", r, err)
+			}
+			if cancelOld != nil {
+				cancelOld()
+				select {
+				case <-oldDone:
+				case <-time.After(time.Second):
+					t.Fatal("the original waiter did not finish")
+				}
+			}
+		})
+	}
+}
+
 // Nobody claims it in time: it ends as cancelled, and a late hook is told to hand over to the terminal.
 func TestResumableGraceEnds(t *testing.T) {
 	old := resumeGrace
