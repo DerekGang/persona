@@ -134,6 +134,10 @@ type Interaction struct {
 	// honors it only for a permission in one of its assistant conversations with complete input and ExecutionCwd;
 	// a later Allow creates a one-time grant for the exact original call rather than executing it in another process.
 	Detachable bool `json:"detachable,omitempty"`
+	// WriteOperation is the node command gate's classification for display routing:
+	// true only for a known write, never for a GET/HEAD or an unknown command. It
+	// does not authorize execution; the ordinary approval path remains the gate.
+	WriteOperation bool `json:"write_operation,omitempty"`
 	// ExecutionCwd is where this command actually runs, which can differ from the conversation's display directory
 	// (Cwd). The node sets it for a detachable command; the manager requires it and includes it in the exact-call grant.
 	ExecutionCwd string `json:"execution_cwd,omitempty"`

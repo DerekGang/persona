@@ -127,6 +127,72 @@ func TestDisplayMirrorFromEarlierOccurrenceCannotResolveLaterCard(t *testing.T) 
 	}
 }
 
+func TestDisplayMirrorNormalizationPinsTheOccurrenceForTheManagerClaim(t *testing.T) {
+	h := newTestHub(t)
+	first := proto.Interaction{ID: "ix_normalized_mirror", SessionID: "side", Kind: proto.IxPermission,
+		MirrorMain: true, CreatedAt: time.Unix(1000, 0).UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	firstMirror := first
+	firstMirror.ID, firstMirror.MirrorOf, firstMirror.MirrorMain, firstMirror.SessionID = proto.ApprovalMirrorID(first.ID, first.CreatedAt), first.ID, false, "main"
+	reportInteraction(t, h, first)
+	reportInteraction(t, h, firstMirror)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+firstMirror.ID+"/resolve", strings.NewReader(`{"allow":true}`))
+	r.SetPathValue("id", firstMirror.ID)
+	r.Header.Set(assistantwire.InteractionCreatedAtHeader, "client-forged")
+	h.normalizeDisplayMirror(r)
+	if got := r.PathValue("id"); got != first.ID {
+		t.Fatalf("mirror normalized to %q, want %q", got, first.ID)
+	}
+	raw := r.Header.Get(assistantwire.InteractionCreatedAtHeader)
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil || !at.Equal(first.CreatedAt) {
+		t.Fatalf("normalized occurrence = %q, %v; want %s", raw, err, first.CreatedAt)
+	}
+	// Replace the origin only after normalization. The already-captured request
+	// still names the first occurrence for the manager's final claim check.
+	reportResolvedAt(t, h, first.ID, first.CreatedAt)
+	second := first
+	second.CreatedAt = second.CreatedAt.Add(time.Second)
+	secondMirror := second
+	secondMirror.ID, secondMirror.MirrorOf, secondMirror.MirrorMain, secondMirror.SessionID = proto.ApprovalMirrorID(second.ID, second.CreatedAt), second.ID, false, "main"
+	reportInteraction(t, h, second)
+	reportInteraction(t, h, secondMirror)
+	if got := r.Header.Get(assistantwire.InteractionCreatedAtHeader); got != raw {
+		t.Fatalf("replacement changed the in-flight occurrence from %q to %q", raw, got)
+	}
+}
+
+func TestEarlierOccurrenceResolutionKeepsLaterOriginalAndMirror(t *testing.T) {
+	h := newTestHub(t)
+	first := proto.Interaction{ID: "ix_resolution_reused", SessionID: "side", Kind: proto.IxPermission,
+		MirrorMain: true, CreatedAt: time.Unix(1000, 0).UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	firstMirror := first
+	firstMirror.ID, firstMirror.MirrorOf, firstMirror.MirrorMain, firstMirror.SessionID = proto.ApprovalMirrorID(first.ID, first.CreatedAt), first.ID, false, "main"
+	reportInteraction(t, h, first)
+	reportInteraction(t, h, firstMirror)
+	second := first
+	second.CreatedAt = second.CreatedAt.Add(time.Second)
+	secondMirror := second
+	secondMirror.ID, secondMirror.MirrorOf, secondMirror.MirrorMain, secondMirror.SessionID = proto.ApprovalMirrorID(second.ID, second.CreatedAt), second.ID, false, "main"
+	reportInteraction(t, h, second)
+	reportInteraction(t, h, secondMirror)
+	reportResolvedAt(t, h, first.ID, first.CreatedAt)
+	pending := h.pendingInteractions()
+	if len(pending) != 2 {
+		t.Fatalf("an earlier occurrence withdrew the later cards: %+v", pending)
+	}
+	ids := map[string]bool{}
+	for _, ix := range pending {
+		ids[ix.ID] = true
+	}
+	if !ids[second.ID] || !ids[secondMirror.ID] {
+		t.Fatalf("later original and mirror are not both pending: %+v", pending)
+	}
+	reportResolvedAt(t, h, second.ID, second.CreatedAt)
+	if got := h.pendingInteractions(); len(got) != 0 {
+		t.Fatalf("the matching occurrence did not resolve normally: %+v", got)
+	}
+}
+
 func TestDisplayMirrorSnapshotRejectsPrivateAndOrphanedCopies(t *testing.T) {
 	h := newTestHub(t)
 	origin := proto.Interaction{ID: "ix_private", SessionID: "side", Kind: proto.IxPermission, MirrorMain: true, Private: true}
@@ -762,7 +828,7 @@ func TestDisplayMirrorActionsRelayTheAuthoritativePath(t *testing.T) {
 	}, rev: map[string]bool{}}
 	got := mirrorManagerRequests(t, h)
 	origin := proto.Interaction{ID: "ix_authoritative", MachineID: "box", SessionID: "side", Kind: proto.IxPermission,
-		Manager: assistantwire.AssistantID, MirrorMain: true, CanClarify: true}
+		Manager: assistantwire.AssistantID, MirrorMain: true, CanClarify: true, CreatedAt: time.Unix(1500, 0).UTC()}
 	mirror := origin
 	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
@@ -784,6 +850,15 @@ func TestDisplayMirrorActionsRelayTheAuthoritativePath(t *testing.T) {
 			want := "/api/v1/interactions/" + origin.ID + "/" + tc.action
 			if req.Path != want {
 				t.Fatalf("%s forwarded path = %q, want %q", tc.action, req.Path, want)
+			}
+			values := req.Header[assistantwire.InteractionCreatedAtHeader]
+			raw := ""
+			if len(values) > 0 {
+				raw = values[0]
+			}
+			at, err := time.Parse(time.RFC3339Nano, raw)
+			if err != nil || !at.Equal(origin.CreatedAt) {
+				t.Fatalf("%s forwarded occurrence = %q, %v; want %s", tc.action, raw, err, origin.CreatedAt)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%s did not reach the manager", tc.action)

@@ -160,14 +160,20 @@ func init() {
 		}
 		f := &h.reported
 		f.mu.Lock()
-		if ix, ok := f.interactions[p.ID]; ok && ix.Manager != c.managerID() {
+		current, exists := f.interactions[p.ID]
+		if exists && current.Manager != c.managerID() {
 			f.mu.Unlock()
 			return // another manager's
+		}
+		if exists && !p.CreatedAt.IsZero() && !current.CreatedAt.Equal(p.CreatedAt) {
+			f.mu.Unlock()
+			return // a delayed resolution for an earlier occurrence
 		}
 		delete(f.interactions, p.ID)
 		ids := []string{p.ID}
 		for id, ix := range f.interactions {
-			if ix.MirrorOf == p.ID && ix.Manager == c.managerID() {
+			if ix.MirrorOf == p.ID && ix.Manager == c.managerID() &&
+				(p.CreatedAt.IsZero() || ix.CreatedAt.Equal(p.CreatedAt)) {
 				delete(f.interactions, id)
 				ids = append(ids, id)
 			}

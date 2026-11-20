@@ -10,16 +10,28 @@ import (
 )
 
 // defaultApprovalMirrorTools limits the two new routes to operations that can
-// change something. Read-only runtime tools are deliberately absent. Extension
-// writes are admitted through ToolAccess below, so installing a connector does
-// not require editing this list. An explicit approval_mirror_tools replaces the
-// complete list and the extension fallback for new cards.
+// change something. Read-only runtime tools are deliberately absent. A node
+// command gate contributes only its explicit WriteOperation classification;
+// extension writes are admitted through ToolAccess below, so installing a
+// connector does not require editing this list. After the read-only exclusion,
+// an explicit approval_mirror_tools replaces the complete write list and both
+// fallbacks.
 var defaultApprovalMirrorTools = []string{
-	"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
-	"agent_archive", "agent_interrupt", "agent_send", "agent_start", "agent_supervise",
-	"cancel_followup", "conversation_send", "kb_update", "mail_send", "notify_user",
-	"persona_settings", "schedule_followup", "schedule_routine", "supervision_finish",
-	"task_plan", "task_review", "task_scope", "todo_complete", "todo_update",
+	"Write", "Edit", "MultiEdit", "NotebookEdit",
+	"agent_archive", "agent_autoname", "agent_interrupt", "agent_send", "agent_start", "agent_supervise",
+	"cancel_followup", "conversation_new", "conversation_send", "direction_name", "kb_update", "mail_send", "notify_user",
+	"persona_settings", "repository_add", "schedule_followup", "schedule_routine", "skill_import", "supervision_finish",
+	"task_plan", "task_review", "task_scope", "todo_complete", "todo_create", "todo_delete", "todo_reopen", "todo_update",
+}
+
+// These reads stay out even if a malformed card claims write metadata or an
+// explicit custom allowlist names one. The allowlist selects among writes; it
+// is not a way to route read-only confirmations.
+var defaultApprovalMirrorReadTools = map[string]bool{
+	"Read": true, "Glob": true, "Grep": true, "WebFetch": true, "WebSearch": true,
+	"inbox_suggest": true, "kb_get": true, "kb_list": true, "kb_search": true,
+	"lark_chats": true, "lark_messages": true, "lark_search": true,
+	"larkcli_chats": true, "larkcli_messages": true, "larkcli_search": true,
 }
 
 func approvalMirrorToolName(name string) string {
@@ -50,25 +62,38 @@ func approvalMirrorToolNames(v Settings) []string {
 func (s *Service) approvalMirrorToolAllowed(ctx context.Context, ix proto.Interaction) bool {
 	v := s.settings(ctx)
 	name := approvalMirrorToolName(ix.ToolName)
-	if name != "" && slices.Contains(approvalMirrorToolNames(v), name) {
+	if defaultApprovalMirrorReadTools[name] {
+		return false
+	}
+	// A command gate's explicit classification wins over any configured name:
+	// an unknown or read-only command is not made a write by calling its card a
+	// write tool. Bypass-mode writes carry no Always keys and use the same bit.
+	if name == "Bash" || slices.ContainsFunc(ix.AlwaysKeys, func(key string) bool { return strings.HasPrefix(key, "lark:") }) {
+		if !ix.WriteOperation {
+			return false
+		}
+		if v.ApprovalMirrorTools != nil {
+			return name != "" && slices.Contains(cleanApprovalMirrorTools(*v.ApprovalMirrorTools), name)
+		}
 		return true
 	}
-	// A configured list is an exact replacement. With the default list, an
-	// existing command-gate write route or an installed extension's own
-	// read/write declaration decides instead.
-	if v.ApprovalMirrorTools != nil {
-		return false
-	}
-	for _, key := range ix.AlwaysKeys {
-		if strings.HasPrefix(key, "lark:") {
-			return true
+	extensionKnown, extensionReadOnly := false, false
+	if name != "" && s.ext != nil {
+		extensionKnown, extensionReadOnly = s.ext.ToolAccess(name)
+		if extensionKnown && extensionReadOnly {
+			return false
 		}
 	}
-	if name == "" || s.ext == nil {
-		return false
+	if v.ApprovalMirrorTools != nil {
+		return name != "" && slices.Contains(cleanApprovalMirrorTools(*v.ApprovalMirrorTools), name)
 	}
-	known, readOnly := s.ext.ToolAccess(name)
-	return known && !readOnly
+	if name != "" && slices.Contains(defaultApprovalMirrorTools, name) {
+		return true
+	}
+	if ix.WriteOperation {
+		return true
+	}
+	return extensionKnown && !extensionReadOnly
 }
 
 // approvalMirrorMain controls display copies for new cards. Existing copies keep
@@ -160,6 +185,24 @@ func sameApprovalOccurrence(a, b proto.Interaction) bool {
 		return aerr == nil && berr == nil && af == bf
 	}
 	return !a.CreatedAt.IsZero() && a.CreatedAt.Equal(b.CreatedAt)
+}
+
+// sameDurableApprovalOccurrence is the strict-finalization counterpart. Zero
+// timestamps are equal for legacy tombstones; detachable calls retain exact
+// fingerprint identity even when a replay refreshed its display timestamp.
+func sameDurableApprovalOccurrence(a, b proto.Interaction) bool {
+	if a.ID != b.ID || a.MachineID != b.MachineID || a.SessionID != b.SessionID {
+		return false
+	}
+	if a.Detachable || b.Detachable {
+		if !a.Detachable || !b.Detachable {
+			return false
+		}
+		af, aerr := detachedFingerprint(a)
+		bf, berr := detachedFingerprint(b)
+		return aerr == nil && berr == nil && af == bf
+	}
+	return a.CreatedAt.Equal(b.CreatedAt)
 }
 
 // recordedApprovalMirrorIntent restores both true and false for the same

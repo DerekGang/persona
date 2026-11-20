@@ -65,7 +65,13 @@ func (h *Hub) withClientOp(kind string, next http.HandlerFunc) http.HandlerFunc 
 			writeErr(w, http.StatusServiceUnavailable, errors.New("no database"))
 			return
 		}
-		target, _ := json.Marshal(map[string]string{"path": r.URL.Path, "query": r.URL.Query().Encode()})
+		targetFields := map[string]string{"path": r.URL.Path, "query": r.URL.Query().Encode()}
+		if occurrence := r.Header.Get(assistantwire.InteractionCreatedAtHeader); occurrence != "" {
+			// A mirror retry must keep the occurrence normalized on its first try,
+			// even if the origin has since been replaced under the same ID.
+			targetFields["occurrence"] = occurrence
+		}
+		target, _ := json.Marshal(targetFields)
 		valid := len(bytes.TrimSpace(raw)) == 0 || json.Valid(raw)
 		canonical, _ := json.Marshal([]any{kind, json.RawMessage(target), valid, opDigestParams(kind, raw, params)})
 		sum := sha256.Sum256(canonical)

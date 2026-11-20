@@ -3,9 +3,11 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	approvalops "github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/channel"
 	"github.com/nwverse/persona/server/internal/db"
@@ -40,6 +42,7 @@ func mirrorTestCard(id string) proto.Interaction {
 	ix.SessionTitle = "Originating conversation"
 	ix.ToolName = "Bash"
 	ix.ToolInput = json.RawMessage(`{"command":"printf ok"}`)
+	ix.WriteOperation = true // a command-gate write fixture, not an unknown Bash confirmation
 	return ix
 }
 
@@ -164,6 +167,53 @@ func TestApprovalMirrorEligibilityAndSettingOff(t *testing.T) {
 	}
 }
 
+func TestResolveOccurrenceConstraintRejectsAReplacementAfterNormalization(t *testing.T) {
+	for _, prepared := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prepared_%v", prepared), func(t *testing.T) {
+			ft := newFleetTest(t)
+			preparedTestConversation(ft)
+			current := detachedTestCard("ix_normalized_then_replaced")
+			current.CreatedAt = time.Unix(2000, 0).UTC()
+			p := &pending{ix: current, done: make(chan proto.Resolution, 1)}
+			applies := 0
+			if prepared {
+				current.CanClarify = true
+				p.ix = current
+				p.prepared = &preparedApproval{caller: context.Background(), deliveries: map[string]clarifyDelivery{}, op: approvalops.Operation{Apply: func(context.Context, proto.Resolution) (string, error) {
+					applies++
+					return "must not run", nil
+				}}}
+			}
+			ft.s.fleet.mu.Lock()
+			ft.s.fleet.interactions = map[string]*pending{current.ID: p}
+			ft.s.fleet.mu.Unlock()
+			normalizedAt := time.Unix(1000, 0).UTC()
+			allow := true
+			err := ft.s.resolveApprovedAt(context.Background(), current.ID, proto.Resolution{Allow: &allow}, nil, &normalizedAt)
+			if err == nil {
+				t.Fatal("the old normalized click claimed the replacement")
+			}
+			ft.s.fleet.mu.Lock()
+			claimed := p.claimed
+			ft.s.fleet.mu.Unlock()
+			if claimed || applies != 0 || len(ft.s.pendingInteractions()) != 1 {
+				t.Fatalf("replacement changed after the stale click: claimed=%v applies=%d pending=%d", claimed, applies, len(ft.s.pendingInteractions()))
+			}
+			if prepared {
+				if err := ft.s.clarifyAt(context.Background(), current.ID, "stale question", "stale-question-1", nil, &normalizedAt); err == nil {
+					t.Fatal("the old normalized clarification reached the replacement")
+				}
+				ft.s.fleet.mu.Lock()
+				attempt := p.prepared.attempt
+				ft.s.fleet.mu.Unlock()
+				if attempt != nil {
+					t.Fatal("the stale clarification claimed an attempt on the replacement")
+				}
+			}
+		})
+	}
+}
+
 func TestApprovalMirrorRoutesOnlyWriteTools(t *testing.T) {
 	ft := newMirrorFleetTest(t)
 	ctx := context.Background()
@@ -175,6 +225,7 @@ func TestApprovalMirrorRoutesOnlyWriteTools(t *testing.T) {
 		t.Run("read "+name, func(t *testing.T) {
 			ix := mirrorTestCard("ix_read_" + name)
 			ix.ToolName = name
+			ix.WriteOperation = false
 			if ft.s.nonMainAssistantPermission(ctx, ix) || ft.s.feishuCardWanted(ctx, ix) {
 				t.Fatalf("read-only tool %q entered a new route", name)
 			}
@@ -192,7 +243,15 @@ func TestApprovalMirrorRoutesOnlyWriteTools(t *testing.T) {
 		{"Bash", `{"command":"mkdir -p /tmp/example"}`},
 		{"persona_settings", `{"action":"set","key":"assistant.main_tasks_quiet","value":true}`},
 		{"schedule_routine", `{"title":"Review","time":"18:00"}`},
+		{"conversation_new", `{"text":"Follow up"}`},
+		{"direction_name", `{"name":"Release"}`},
+		{"todo_create", `{"title":"Review"}`},
 		{"todo_complete", `{"id":"todo_example"}`},
+		{"todo_delete", `{"id":"todo_example"}`},
+		{"todo_reopen", `{"id":"todo_example"}`},
+		{"repository_add", `{"url":"https://example.com/repository"}`},
+		{"skill_import", `{"op":"install","reference":"example"}`},
+		{"agent_autoname", `{"agent_id":"agent_example"}`},
 		{"mcp__persona__mail_send", `{"to":"me@example.com","subject":"Review"}`},
 	} {
 		t.Run("write "+tc.name, func(t *testing.T) {
@@ -208,9 +267,28 @@ func TestApprovalMirrorRoutesOnlyWriteTools(t *testing.T) {
 	}
 	gated := mirrorTestCard("ix_gated_external_write")
 	gated.ToolName = "Configured external action"
-	gated.AlwaysKeys = []string{"lark:POST /messages"}
+	gated.WriteOperation = true
+	gated.AlwaysKeys = nil // bypass-mode writes have no remembered route keys
 	if !ft.s.nonMainAssistantPermission(ctx, gated) || !ft.s.feishuCardWanted(ctx, gated) {
-		t.Fatal("an existing command-gate external write route was not admitted")
+		t.Fatal("a classified command-gate external write was not admitted")
+	}
+	gatedRead := mirrorTestCard("ix_gated_external_read")
+	gatedRead.ToolName = "Configured external action"
+	gatedRead.WriteOperation = false
+	gatedRead.AlwaysKeys = []string{"lark:GET /messages"}
+	if ft.s.nonMainAssistantPermission(ctx, gatedRead) || ft.s.feishuCardWanted(ctx, gatedRead) {
+		t.Fatal("a GET confirmation entered a write-only route through its Always key")
+	}
+	unknownBash := mirrorTestCard("ix_unknown_bash")
+	unknownBash.WriteOperation = false
+	if ft.s.nonMainAssistantPermission(ctx, unknownBash) {
+		t.Fatal("an unclassified Bash confirmation entered a write-only route")
+	}
+	mislabelledRead := mirrorTestCard("ix_mislabelled_read")
+	mislabelledRead.ToolName = "Read"
+	mislabelledRead.WriteOperation = true
+	if ft.s.nonMainAssistantPermission(ctx, mislabelledRead) {
+		t.Fatal("a known read tool bypassed the default exclusion through write metadata")
 	}
 }
 
@@ -224,20 +302,38 @@ func TestApprovalMirrorToolAllowlistIsConfigurable(t *testing.T) {
 	}{{"lark_chats", false}, {"lark_agent_reply", true}, {"computer_run", true}} {
 		ix := mirrorTestCard("ix_ext_" + tc.tool)
 		ix.ToolName = tc.tool
+		ix.WriteOperation = false
 		if got := ft.s.nonMainAssistantPermission(ctx, ix); got != tc.want {
 			t.Fatalf("extension tool %s routed=%v, want %v", tc.tool, got, tc.want)
 		}
 	}
-	configured := []string{" Read ", "Read", ""}
+	configured := []string{" Read ", "persona_settings", "lark_chats", "Configured external action", ""}
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorTools = &configured })
-	if got := ft.s.view(ctx, false).ApprovalMirrorTools; len(got) != 1 || got[0] != "Read" {
-		t.Fatalf("effective custom allowlist = %q, want Read", got)
+	if got := ft.s.view(ctx, false).ApprovalMirrorTools; len(got) != 4 || got[0] != "Read" || got[1] != "persona_settings" {
+		t.Fatalf("effective custom allowlist = %q, want the normalized configured tools", got)
 	}
 	read := mirrorTestCard("ix_custom_read")
 	read.ToolName = "Read"
-	write := mirrorTestCard("ix_custom_bash")
-	if !ft.s.nonMainAssistantPermission(ctx, read) || ft.s.nonMainAssistantPermission(ctx, write) {
+	customWrite := mirrorTestCard("ix_custom_write")
+	customWrite.ToolName = "persona_settings"
+	otherWrite := mirrorTestCard("ix_custom_bash")
+	if ft.s.nonMainAssistantPermission(ctx, read) {
+		t.Fatal("a custom allowlist routed a read-only tool")
+	}
+	if !ft.s.nonMainAssistantPermission(ctx, customWrite) || ft.s.nonMainAssistantPermission(ctx, otherWrite) {
 		t.Fatal("custom allowlist did not replace the default and extension fallback")
+	}
+	extensionRead := mirrorTestCard("ix_custom_extension_read")
+	extensionRead.ToolName = "lark_chats"
+	if ft.s.nonMainAssistantPermission(ctx, extensionRead) {
+		t.Fatal("a custom allowlist bypassed an extension's read-only declaration")
+	}
+	configuredGET := mirrorTestCard("ix_custom_gate_get")
+	configuredGET.ToolName = "Configured external action"
+	configuredGET.WriteOperation = false
+	configuredGET.AlwaysKeys = []string{"lark:GET /messages"}
+	if ft.s.nonMainAssistantPermission(ctx, configuredGET) {
+		t.Fatal("a custom gate title bypassed the GET classification")
 	}
 	empty := []string{}
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorTools = &empty })
@@ -366,14 +462,6 @@ func TestCodexApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
 		t.Fatalf("same pending occurrence lost its mirror after restart: %+v", pending)
 	}
 
-	changed := ix
-	changed.CreatedAt = changed.CreatedAt.Add(time.Second)
-	different := restarted()
-	listCodex(different, changed)
-	if pending := different.pendingInteractions(); len(pending) != 1 || pending[0].MirrorMain {
-		t.Fatalf("a new occurrence inherited the old occurrence's mirror: %+v", pending)
-	}
-
 	// Startup cleanup may cancel a non-resumable row before the still-open node
 	// dialog is listed again. Its unchanged occurrence keeps the recorded intent.
 	if err := ft.st.FinishInteraction(context.Background(), ix.ID, "cancelled", nil); err != nil {
@@ -407,6 +495,46 @@ func TestCodexApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
 	listCodex(unmirrored, ix)
 	if pending := unmirrored.pendingInteractions(); len(pending) != 1 || pending[0].MirrorMain {
 		t.Fatalf("an old unmirrored occurrence gained a copy from the current setting: %+v", pending)
+	}
+}
+
+func TestCodexLaterOccurrenceIsDurableAcrossRestart(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	first := mirrorTestCard("ix_codex_later_occurrence")
+	first.Resumable = false
+	first.CreatedAt = time.Unix(1000, 0).UTC()
+	listCodex(ft.s, first)
+	if err := ft.st.FinishInteraction(context.Background(), first.ID, "resolved", nil); err != nil {
+		t.Fatal(err)
+	}
+	restarted := func() *Service {
+		f := newFakeHub()
+		f.mu.Lock()
+		f.hello.ApprovalMirrors = true
+		f.mu.Unlock()
+		return newRestartedService(t, Options{Hub: f, Store: func() Store { return ft.st }, Logf: t.Logf, Devices: ft.d})
+	}
+	later := first
+	later.CreatedAt = first.CreatedAt.Add(time.Second)
+	listCodex(restarted(), later)
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
+	rec, err := ft.st.InteractionRecord(context.Background(), later.ID)
+	if err != nil || rec == nil || rec.Status != "pending" || !rec.Interaction.CreatedAt.Equal(later.CreatedAt) || !rec.Interaction.MirrorMain {
+		t.Fatalf("later occurrence was not persisted: %+v, %v", rec, err)
+	}
+	same := restarted()
+	listCodex(same, later)
+	if pending := same.pendingInteractions(); len(pending) != 1 || !pending[0].MirrorMain ||
+		len(same.pendingDisplayInteractions(context.Background())) != 2 {
+		t.Fatalf("later occurrence lost its own mirror intent after restart: %+v", pending)
+	}
+	// A delayed older scan cannot overwrite the newer durable occurrence.
+	if err := ft.st.InsertInteraction(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = ft.st.InteractionRecord(context.Background(), later.ID)
+	if rec == nil || !rec.Interaction.CreatedAt.Equal(later.CreatedAt) {
+		t.Fatalf("an older scan replaced the newer occurrence: %+v", rec)
 	}
 }
 

@@ -149,6 +149,7 @@ type fleetReport struct {
 type fleetStore interface {
 	InsertInteraction(ctx context.Context, ix proto.Interaction) error
 	FinishInteraction(ctx context.Context, id, status string, res *proto.Resolution) error
+	FinishInteractionOccurrence(ctx context.Context, ix proto.Interaction, status string, res *proto.Resolution) (matched, currentTerminal bool, err error)
 	InteractionOutcome(ctx context.Context, id string) (status string, res *proto.Resolution, err error)
 	Interactions(ctx context.Context, machine, session string, limit int) ([]db.InteractionRecord, error)
 	AllowAlways(ctx context.Context, session, tool string, keys []string) error
@@ -185,6 +186,11 @@ func (g guardedStore) InsertInteraction(ctx context.Context, ix proto.Interactio
 func (g guardedStore) FinishInteraction(ctx context.Context, id, status string, res *proto.Resolution) (err error) {
 	defer guard(&err)
 	return g.st.FinishInteraction(ctx, id, status, res)
+}
+
+func (g guardedStore) FinishInteractionOccurrence(ctx context.Context, ix proto.Interaction, status string, res *proto.Resolution) (matched, currentTerminal bool, err error) {
+	defer guard(&err)
+	return g.st.FinishInteractionOccurrence(ctx, ix, status, res)
 }
 
 func (g guardedStore) InteractionOutcome(ctx context.Context, id string) (status string, res *proto.Resolution, err error) {

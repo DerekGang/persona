@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
@@ -30,6 +31,18 @@ var FleetRoutes = []string{
 	"POST /api/v1/sessions/{mid}/{sid}/seen",
 }
 
+func requestedInteractionOccurrence(r *http.Request) (*time.Time, error) {
+	raw := r.Header.Get(assistantwire.InteractionCreatedAtHeader)
+	if raw == "" {
+		return nil, nil
+	}
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return nil, errors.New("invalid interaction occurrence")
+	}
+	return &at, nil
+}
+
 // fleetHandler serves FleetRoutes, the rest going to next.
 func (s *Service) fleetHandler(next http.Handler) http.Handler {
 	mux := http.NewServeMux()
@@ -43,11 +56,16 @@ func (s *Service) fleetHandler(next http.Handler) http.Handler {
 		res.Remembered = false              // only the manager's own "Always allow" answers say so
 		res.Late = false                    // only the history's record of an answer after expiry says so
 		id := r.PathValue("id")
+		expected, err := requestedInteractionOccurrence(r)
+		if err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
 		var approver *assistantwire.HandoffApprover // the device the hub vouched may approve a hand-off card
 		if a, ok := assistantwire.HandoffApproverOf(r.Context()); ok {
 			approver = &a
 		}
-		if err := s.resolveApproved(r.Context(), id, res, approver); err != nil {
+		if err := s.resolveApprovedAt(r.Context(), id, res, approver, expected); err != nil {
 			switch {
 			case errors.Is(err, errHandoffElsewhere):
 				apierr.WriteCode(w, http.StatusForbidden, proto.CodeSecretHandoffElsewhere, err)
@@ -73,7 +91,12 @@ func (s *Service) fleetHandler(next http.Handler) http.Handler {
 		}
 		// This endpoint has no resolution or field-value envelope: clarification
 		// cannot allow, deny, dismiss or attribute the card.
-		if err := s.clarify(r.Context(), r.PathValue("id"), in.Text, strings.TrimSpace(in.ClientMsgID), nil); err != nil {
+		expected, err := requestedInteractionOccurrence(r)
+		if err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.clarifyAt(r.Context(), r.PathValue("id"), in.Text, strings.TrimSpace(in.ClientMsgID), nil, expected); err != nil {
 			switch {
 			case errors.Is(err, errClarifyUnavailable):
 				apierr.Write(w, http.StatusGone, err)

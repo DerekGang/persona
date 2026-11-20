@@ -467,11 +467,11 @@ func TestResumableSurvivesAManagerRestart(t *testing.T) {
 // cancelled (db ExpireStaleInteractions).
 type restoreMem struct{ *fleetMem }
 
-func (r *restoreMem) ExpireStaleInteractions(context.Context) ([]proto.Interaction, []string, error) {
+func (r *restoreMem) ExpireStaleInteractions(context.Context) ([]proto.Interaction, []proto.Interaction, error) {
 	r.fmu.Lock()
 	defer r.fmu.Unlock()
 	var out []proto.Interaction
-	var cancelled []string
+	var cancelled []proto.Interaction
 	for _, rec := range r.recs {
 		switch id := rec.Interaction.ID; {
 		case r.status[id] != "pending":
@@ -479,7 +479,7 @@ func (r *restoreMem) ExpireStaleInteractions(context.Context) ([]proto.Interacti
 			out = append(out, rec.Interaction)
 		default:
 			r.status[id] = "cancelled"
-			cancelled = append(cancelled, id)
+			cancelled = append(cancelled, rec.Interaction)
 		}
 	}
 	return out, cancelled, nil
@@ -509,19 +509,19 @@ func TestRestartResolvesTheCardsTheLastManagerLeft(t *testing.T) {
 	if status, _, _ := st.InteractionOutcome(context.Background(), asked.ID); status != "cancelled" {
 		t.Fatalf("status %q", status)
 	}
-	var resolved []string
+	var resolved []assistantwire.FleetResolved
 	for _, tl := range f2.told {
 		var p assistantwire.FleetResolved
 		if tl.event == assistantwire.EventFleetResolved && json.Unmarshal(tl.params, &p) == nil {
-			resolved = append(resolved, p.ID)
+			resolved = append(resolved, p)
 		}
 		var full assistantwire.FleetInteractions
 		if tl.event == assistantwire.EventFleetInteractions && json.Unmarshal(tl.params, &full) == nil && len(full.Interactions) != 0 {
 			t.Fatalf("the hub's full list = %+v", full.Interactions)
 		}
 	}
-	if !slices.Equal(resolved, []string{asked.ID}) {
-		t.Fatalf("resolved for the hub = %v, want [%s]", resolved, asked.ID)
+	if len(resolved) != 1 || resolved[0].ID != asked.ID || asked.CreatedAt.IsZero() || !resolved[0].CreatedAt.Equal(asked.CreatedAt) {
+		t.Fatalf("resolved for the hub = %+v, want occurrence %s at %s", resolved, asked.ID, asked.CreatedAt)
 	}
 }
 

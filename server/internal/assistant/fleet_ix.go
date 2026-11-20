@@ -202,7 +202,7 @@ func (s *Service) tellCard(ix proto.Interaction) {
 		return ok
 	}
 	if !held() {
-		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: ix.ID})
+		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: ix.ID, CreatedAt: ix.CreatedAt})
 		return
 	}
 	if !ix.MirrorMain {
@@ -218,7 +218,7 @@ func (s *Service) tellCard(ix proto.Interaction) {
 	// A mirror is held only through its authoritative interaction. Recheck after
 	// publishing it so a concurrent resolution cannot leave an orphaned copy.
 	if !held() {
-		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: mirror.ID})
+		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: mirror.ID, CreatedAt: mirror.CreatedAt})
 	}
 }
 
@@ -288,6 +288,14 @@ func (s *Service) nodeInteraction(ctx context.Context, ix proto.Interaction) (pr
 	ix.Detachable = ix.Detachable && ix.Kind == proto.IxPermission && ix.SessionID != "" && inAssistant &&
 		len(ix.ToolInput) > 0 && ix.ExecutionCwd != ""
 	if ix.Detachable && ix.Resumable {
+		// A journaled original is already an outcome, never a new operation. Do
+		// this before detachedOriginalReplay, Always and new-card registration so
+		// even a replay ahead of restoreInteractions fails closed.
+		if r, ok, err := s.journaledDetachedReplay(ctx, ix); err != nil {
+			return proto.Resolution{}, err
+		} else if ok {
+			return r, nil
+		}
 		// The original request is never its own continuation. In particular it
 		// must not spend its unused grant or re-enter through a newly stored
 		// Always rule. A late outcome carries ApprovalID and waitDetachedCard
@@ -349,6 +357,16 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 			ix.MirrorMain = true
 		}
 	}
+	var recovered *approvalJournalEntry
+	if ix.Resumable && ix.Detachable {
+		entry, found, err := s.approvalJournalRecord(ctx, ix)
+		if err != nil {
+			return proto.Resolution{}, err
+		}
+		if found {
+			recovered = &entry
+		}
+	}
 	again := false
 	if ix.Resumable {
 		restartPrepared := false
@@ -359,6 +377,16 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 			if (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix) {
 				s.fleet.mu.Unlock()
 				return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
+			}
+			if p.prepared == nil && recovered != nil {
+				// A restored process has no executable operation. Close a journaled
+				// occurrence before its replay can attach an ordinary waiter and
+				// before an owner answer can turn recovery into an execution Allow.
+				s.fleet.mu.Unlock()
+				if err := s.finishRecoveredApproval(*recovered); err != nil {
+					return proto.Resolution{}, err
+				}
+				return s.await(ctx, p)
 			}
 			if p.prepared != nil {
 				// The reconnecting hook is now the caller whose lifetime governs the
@@ -670,15 +698,40 @@ func (s *Service) record(ix proto.Interaction) {
 }
 
 func (s *Service) recordEnd(id, status string, r *proto.Resolution) {
+	if err := s.recordEndStrict(id, status, r); err != nil {
+		s.logf("record interaction outcome: %v", err)
+	}
+}
+
+func (s *Service) recordEndStrict(id, status string, r *proto.Resolution) error {
 	st := s.fleetStore()
 	if st == nil {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
 	defer cancel()
-	if err := st.FinishInteraction(ctx, id, status, r); err != nil {
-		s.logf("record interaction outcome: %v", err)
+	return st.FinishInteraction(ctx, id, status, r)
+}
+
+// recordEndOccurrenceStrict requires a durable terminal record for this exact
+// occurrence. A different pending occurrence under the same ID is left alone
+// and keeps the journal undelivered; once that occurrence is terminal, its row
+// itself prevents the older original from replaying through an Always rule.
+func (s *Service) recordEndOccurrenceStrict(ix proto.Interaction, status string, r *proto.Resolution) error {
+	st := s.fleetStore()
+	if st == nil {
+		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
+	defer cancel()
+	matched, currentTerminal, err := st.FinishInteractionOccurrence(ctx, ix, status, r)
+	if err != nil {
+		return err
+	}
+	if !matched && !currentTerminal {
+		return fmt.Errorf("interaction %s now belongs to a different pending occurrence", ix.ID)
+	}
+	return nil
 }
 
 var errInteractionIDReused = errors.New("interaction id belongs to a different occurrence")
@@ -741,6 +794,10 @@ func (s *Service) resolveWithStanding(id string, r proto.Resolution, remember bo
 // resolveApproved is resolve for an app's answer the hub relayed, with the device it vouched may approve a hand-off
 // card (nil: none). Only this way does a hand-off card take more than a no (secret_handoff.go).
 func (s *Service) resolveApproved(ctx context.Context, id string, r proto.Resolution, approver *assistantwire.HandoffApprover) error {
+	return s.resolveApprovedAt(ctx, id, r, approver, nil)
+}
+
+func (s *Service) resolveApprovedAt(ctx context.Context, id string, r proto.Resolution, approver *assistantwire.HandoffApprover, expected *time.Time) error {
 	if mine, err := s.sessionReviewResolve(ctx, id, r, approver); mine {
 		return err
 	}
@@ -756,18 +813,23 @@ func (s *Service) resolveApproved(ctx context.Context, id string, r proto.Resolu
 		// preserve the same owner-activity notification as every other answer path.
 		s.ownerHeard(ownerSession)
 	}
-	return s.resolveAnswer(ctx, id, r, true, nil, approver)
+	return s.resolveAnswerAt(ctx, id, r, true, nil, approver, expected)
 }
 
 func (s *Service) resolveAnswer(ctx context.Context, id string, r proto.Resolution, remember bool, authorization *standingResolution,
 	approver *assistantwire.HandoffApprover) error {
+	return s.resolveAnswerAt(ctx, id, r, remember, authorization, approver, nil)
+}
+
+func (s *Service) resolveAnswerAt(ctx context.Context, id string, r proto.Resolution, remember bool, authorization *standingResolution,
+	approver *assistantwire.HandoffApprover, expected *time.Time) error {
 	r.ModeActor = nil // provenance is never taken from an answer body
 	s.fleet.mu.Lock()
 	prepared := s.fleet.interactions[id]
 	isPrepared := prepared != nil && prepared.prepared != nil
 	s.fleet.mu.Unlock()
 	if isPrepared {
-		return s.resolvePreparedAnswer(ctx, prepared, r, remember, authorization)
+		return s.resolvePreparedAnswerAt(ctx, prepared, r, remember, authorization, expected)
 	}
 	// A manager work card is answered in the manager, not by the stopped agent. Its local dismiss/defer choices remain
 	// valid, but an answer that would send text must be refused before the card is claimed and its answer is retried.
@@ -778,6 +840,10 @@ func (s *Service) resolveAnswer(ctx context.Context, id string, r proto.Resoluti
 	}
 	s.fleet.mu.Lock()
 	p := s.fleet.interactions[id]
+	if p != nil && expected != nil && !p.ix.CreatedAt.Equal(*expected) {
+		s.fleet.mu.Unlock()
+		return fmt.Errorf("interaction %s is %w", id, errNotPending)
+	}
 	handoff := p != nil && p.ix.ToolName == proto.SecretHandoffTool
 	if handoff && !proto.SecretHandoffDeclines(r) && (approver == nil || approver.DeviceID == "" || authorization != nil) {
 		s.fleet.mu.Unlock()
@@ -1032,7 +1098,7 @@ func (s *Service) finished(p *pending) {
 	s.taskPlanApproval()
 	go s.urgentCardDone(p.ix.ID) // a call about it stops ringing (urgent_call_loop.go)
 	s.fleet.mu.Lock()
-	done := assistantwire.FleetResolved{ID: p.ix.ID, AnsweredBy: p.answeredBy}
+	done := assistantwire.FleetResolved{ID: p.ix.ID, CreatedAt: p.ix.CreatedAt, AnsweredBy: p.answeredBy}
 	if done.AnsweredBy != "" {
 		done.Reason, done.Answers = p.answeredReason, p.answeredWith
 	}
@@ -1458,13 +1524,14 @@ func (s *Service) cancelMachineInteractions(machineID string) {
 // question asked again (#4568). A card that was on its way up to the user finds its route again (restoreRoute); one
 // the assistant was deciding on goes on (resumeDelegations). Both before the hub gets the full list (FleetUp).
 func (s *Service) restoreInteractions(ctx context.Context) {
-	st, ok := s.store().(interface {
-		ExpireStaleInteractions(ctx context.Context) ([]proto.Interaction, []string, error)
+	store := s.store()
+	st, ok := store.(interface {
+		ExpireStaleInteractions(ctx context.Context) ([]proto.Interaction, []proto.Interaction, error)
 	})
 	if !ok {
 		return
 	}
-	resumable, cancelled, err := func() (out []proto.Interaction, cancelled []string, err error) {
+	resumable, cancelled, err := func() (out []proto.Interaction, cancelled []proto.Interaction, err error) {
 		defer guard(&err) // a test's store may not keep the table
 		return st.ExpireStaleInteractions(ctx)
 	}()
@@ -1472,18 +1539,52 @@ func (s *Service) restoreInteractions(ctx context.Context) {
 		s.logf("expire stale interactions: %v", err)
 		return
 	}
-	for _, id := range cancelled {
-		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: id})
+	for _, ix := range cancelled {
+		s.hub.Tell(assistantwire.EventFleetResolved, assistantwire.FleetResolved{ID: ix.ID, CreatedAt: ix.CreatedAt})
 	}
-	var back []proto.Interaction
+	s.restoreInteractionSnapshots(ctx, store, resumable)
+}
+
+// restoreInteractionSnapshots installs only rows that are still the same pending
+// occurrence. A transient per-row read schedules another snapshot pass, never a
+// second ExpireStaleInteractions call: expiring again could cancel cards created
+// after startup. The fleet mutex keeps each revalidation serialized with journal
+// recovery, including on retries.
+func (s *Service) restoreInteractionSnapshots(ctx context.Context, store Store, snapshot []proto.Interaction) {
+	recorder, canValidate := store.(interactionRecorder)
+	if !canValidate {
+		s.fleet.mu.Lock()
+		for _, ix := range snapshot {
+			if s.ixMapLocked()[ix.ID] == nil {
+				s.fleet.mu.Unlock()
+				s.logf("restore interaction %s without occurrence validation is unavailable", ix.ID)
+				s.fleet.mu.Lock()
+			}
+		}
+		s.fleet.mu.Unlock()
+		return
+	}
+	var back, retry []proto.Interaction
 	s.fleet.mu.Lock()
 	m := s.ixMapLocked()
-	for _, ix := range resumable {
-		if m[ix.ID] == nil {
-			m[ix.ID] = &pending{ix: ix, done: make(chan proto.Resolution, 1)} // not told: whether it rang is not kept
-			s.orphanLocked(m[ix.ID])
-			back = append(back, ix)
+	for _, ix := range snapshot {
+		if m[ix.ID] != nil {
+			continue
 		}
+		readCtx, cancel := context.WithTimeout(ctx, historyTimeout)
+		rec, err := recorder.InteractionRecord(readCtx, ix.ID)
+		cancel()
+		if err != nil {
+			retry = append(retry, ix)
+			s.logf("revalidate restored interaction %s: %v", ix.ID, err)
+			continue
+		}
+		if rec == nil || rec.Status != "pending" || !sameDurableApprovalOccurrence(ix, rec.Interaction) {
+			continue
+		}
+		m[ix.ID] = &pending{ix: ix, done: make(chan proto.Resolution, 1)} // not told: whether it rang is not kept
+		s.orphanLocked(m[ix.ID])
+		back = append(back, ix)
 	}
 	s.fleet.mu.Unlock()
 	var unrouted []proto.Interaction
@@ -1493,6 +1594,14 @@ func (s *Service) restoreInteractions(ctx context.Context) {
 		}
 	}
 	s.resumeDelegations(ctx, unrouted...)
+	if len(retry) > 0 {
+		time.AfterFunc(time.Minute, func() {
+			if s.runCtx().Err() != nil {
+				return
+			}
+			s.restoreInteractionSnapshots(s.runCtx(), store, retry)
+		})
+	}
 }
 
 // restoreRoute puts card ix, restored after a restart, back on its way to the supervisor of the task it belongs to:

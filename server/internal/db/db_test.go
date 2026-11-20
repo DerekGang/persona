@@ -1074,8 +1074,8 @@ func TestMarkInteractionResumableKeepsTheCardAcrossARestart(t *testing.T) {
 		len(kept[0].Questions) != 0 {
 		t.Fatalf("kept %+v, %v", kept, err)
 	}
-	if !slices.Equal(cancelled, []string{"ixkept"}) {
-		t.Fatalf("cancelled %v: only the one never marked", cancelled)
+	if len(cancelled) != 1 || cancelled[0].ID != "ixkept" || !cancelled[0].CreatedAt.Equal(at) {
+		t.Fatalf("cancelled %v: only the one never marked, with its occurrence", cancelled)
 	}
 }
 
@@ -1105,8 +1105,10 @@ func TestInteractions(t *testing.T) {
 	if err != nil || len(kept) != 1 || kept[0].ID != "ix3" || !kept[0].Resumable {
 		t.Fatalf("kept %+v, %v", kept, err)
 	}
-	// The ones it cancelled come back by id: the apps are told they are over (#4568).
-	if slices.Sort(cancelled); !slices.Equal(cancelled, []string{"ix2", "ix4"}) {
+	// The ones it cancelled come back with their occurrence: a delayed withdrawal
+	// cannot end a later interaction that reused the same ID.
+	slices.SortFunc(cancelled, func(a, b proto.Interaction) int { return strings.Compare(a.ID, b.ID) })
+	if !slices.EqualFunc(cancelled, []proto.Interaction{{ID: "ix2"}, {ID: "ix4"}}, func(a, b proto.Interaction) bool { return a.ID == b.ID }) {
 		t.Fatalf("cancelled %v", cancelled)
 	}
 	recs, err := d.Interactions(ctx, "server", "s", 10)
@@ -1200,6 +1202,165 @@ func TestPendingInteractionsIndexed(t *testing.T) {
 		if plan := strings.Join(lines, "\n"); !strings.Contains(plan, "interactions_pending") {
 			t.Fatalf("%s\nplan:\n%s", q, plan)
 		}
+	}
+}
+
+func TestFinishInteractionOccurrenceRestoresMissingRowAndIsIdempotent(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	at := time.Unix(1100, 0).UTC()
+	ix := proto.Interaction{ID: "ix_finish_missing", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission, CreatedAt: at}
+	res := &proto.Resolution{Dismiss: true}
+	matched, terminal, err := d.FinishInteractionOccurrence(ctx, ix, "resolved", res)
+	if err != nil || !matched || !terminal {
+		t.Fatalf("missing occurrence finish = matched %v terminal %v, %v", matched, terminal, err)
+	}
+	rec, err := d.InteractionRecord(ctx, ix.ID)
+	if err != nil || rec == nil || rec.Status != "resolved" || rec.Resolution == nil || !rec.Resolution.Dismiss ||
+		!rec.Interaction.CreatedAt.Equal(at) {
+		t.Fatalf("restored terminal occurrence = %+v, %v", rec, err)
+	}
+	matched, terminal, err = d.FinishInteractionOccurrence(ctx, ix, "resolved", res)
+	if err != nil || !matched || !terminal {
+		t.Fatalf("idempotent occurrence finish = matched %v terminal %v, %v", matched, terminal, err)
+	}
+	matched, terminal, err = d.FinishInteractionOccurrence(ctx, ix, "dismissed", res)
+	if err == nil || matched || !terminal {
+		t.Fatalf("conflicting terminal finish = matched %v terminal %v, %v; want a conflict", matched, terminal, err)
+	}
+	rec, _ = d.InteractionRecord(ctx, ix.ID)
+	if rec == nil || rec.Status != "resolved" {
+		t.Fatalf("conflicting finish changed the original outcome: %+v", rec)
+	}
+}
+
+func TestFinishInteractionOccurrenceFinalizesDetachableTombstone(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	ix := proto.Interaction{ID: "ix_finish_detachable_tombstone", MachineID: "m1", SessionID: "s1",
+		Kind: proto.IxPermission, Detachable: true, CreatedAt: time.Unix(1150, 0).UTC()}
+	matched, terminal, err := d.FinishInteractionOccurrence(ctx, ix, "resolved", &proto.Resolution{Dismiss: true})
+	if err != nil || !matched || !terminal {
+		t.Fatalf("detachable tombstone = matched %v terminal %v, %v", matched, terminal, err)
+	}
+	rec, err := d.InteractionRecord(ctx, ix.ID)
+	if err != nil || rec == nil || rec.Status != "resolved" {
+		t.Fatalf("detachable tombstone remained actionable: %+v, %v", rec, err)
+	}
+}
+
+func TestFinishInteractionOccurrenceAcceptsJSONBRoundTrip(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	ix := proto.Interaction{ID: "ix_finish_jsonb_order", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission,
+		Detachable: true, ToolName: "Bash", ExecutionCwd: "/tmp/one",
+		ToolInput: json.RawMessage(`{"z":1,"command":"pwd","x":{"z":2,"a":3}}`), CreatedAt: time.Unix(1175, 0).UTC()}
+	if err := d.InsertInteraction(ctx, ix); err != nil {
+		t.Fatal(err)
+	}
+	before, err := d.InteractionRecord(ctx, ix.ID)
+	if err != nil || before == nil {
+		t.Fatalf("read JSONB fixture: %+v, %v", before, err)
+	}
+	if string(before.Interaction.ToolInput) == string(ix.ToolInput) {
+		t.Fatalf("JSONB did not reorder this regression fixture: %s", before.Interaction.ToolInput)
+	}
+	matched, terminal, err := d.FinishInteractionOccurrence(ctx, ix, "resolved", nil)
+	if err != nil || !matched || !terminal {
+		t.Fatalf("original call versus JSONB row = matched %v terminal %v, %v", matched, terminal, err)
+	}
+}
+
+func TestFinishInteractionOccurrencePreservesANewerOccurrence(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	at := time.Unix(1200, 0).UTC()
+	first := proto.Interaction{ID: "ix_finish_reused", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission, CreatedAt: at}
+	if err := d.InsertInteraction(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishInteraction(ctx, first.ID, "resolved", nil); err != nil {
+		t.Fatal(err)
+	}
+	later := first
+	later.CreatedAt = at.Add(time.Second)
+	if err := d.InsertInteraction(ctx, later); err != nil {
+		t.Fatal(err)
+	}
+	matched, terminal, err := d.FinishInteractionOccurrence(ctx, first, "dismissed", nil)
+	if err != nil || matched || terminal {
+		t.Fatalf("old finish against a pending newer occurrence = matched %v terminal %v, %v", matched, terminal, err)
+	}
+	rec, _ := d.InteractionRecord(ctx, later.ID)
+	if rec == nil || rec.Status != "pending" || !rec.Interaction.CreatedAt.Equal(later.CreatedAt) {
+		t.Fatalf("old finish changed the newer pending occurrence: %+v", rec)
+	}
+	if err := d.FinishInteraction(ctx, later.ID, "resolved", nil); err != nil {
+		t.Fatal(err)
+	}
+	matched, terminal, err = d.FinishInteractionOccurrence(ctx, first, "dismissed", nil)
+	if err != nil || matched || !terminal {
+		t.Fatalf("old finish against a terminal newer occurrence = matched %v terminal %v, %v", matched, terminal, err)
+	}
+	rec, _ = d.InteractionRecord(ctx, later.ID)
+	if rec == nil || rec.Status != "resolved" || !rec.Interaction.CreatedAt.Equal(later.CreatedAt) {
+		t.Fatalf("old finish changed the newer terminal occurrence: %+v", rec)
+	}
+}
+
+func TestFinishInteractionOccurrenceMatchesDetachableCallBytes(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	at := time.Unix(1300, 0).UTC()
+	original := proto.Interaction{ID: "ix_finish_detachable", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission,
+		Detachable: true, ToolName: "Bash", ExecutionCwd: "/tmp/one", ToolInput: json.RawMessage(`{"command":"first"}`), CreatedAt: at}
+	different := original
+	different.ToolInput = json.RawMessage(`{"command":"second"}`)
+	if err := d.InsertInteraction(ctx, different); err != nil {
+		t.Fatal(err)
+	}
+	matched, terminal, err := d.FinishInteractionOccurrence(ctx, original, "dismissed", nil)
+	if err != nil || matched || terminal {
+		t.Fatalf("different detachable call = matched %v terminal %v, %v", matched, terminal, err)
+	}
+	rec, _ := d.InteractionRecord(ctx, original.ID)
+	var input struct {
+		Command string `json:"command"`
+	}
+	if rec != nil {
+		_ = json.Unmarshal(rec.Interaction.ToolInput, &input)
+	}
+	if rec == nil || rec.Status != "pending" || input.Command != "second" {
+		t.Fatalf("different call was finalized: %+v", rec)
+	}
+	matched, terminal, err = d.FinishInteractionOccurrence(ctx, different, "resolved", nil)
+	if err != nil || !matched || !terminal {
+		t.Fatalf("exact detachable call = matched %v terminal %v, %v", matched, terminal, err)
+	}
+}
+
+func TestInteractionLaterOccurrenceReplacesTerminalRow(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	at := time.Unix(1000, 0).UTC()
+	first := proto.Interaction{ID: "ix_reused", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission, CreatedAt: at}
+	if err := d.InsertInteraction(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishInteraction(ctx, first.ID, "resolved", &proto.Resolution{Dismiss: false}); err != nil {
+		t.Fatal(err)
+	}
+	later := first
+	later.CreatedAt = at.Add(time.Second)
+	later.MirrorMain = true
+	if err := d.InsertInteraction(ctx, later); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := d.InteractionRecord(ctx, later.ID)
+	if err != nil || rec == nil || rec.Status != "pending" || rec.Resolution != nil ||
+		!rec.Interaction.CreatedAt.Equal(later.CreatedAt) || !rec.Interaction.MirrorMain {
+		t.Fatalf("later occurrence = %+v, %v", rec, err)
+	}
+	if err := d.InsertInteraction(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = d.InteractionRecord(ctx, later.ID)
+	if rec == nil || !rec.Interaction.CreatedAt.Equal(later.CreatedAt) {
+		t.Fatalf("older occurrence replaced the latest row: %+v", rec)
 	}
 }
 

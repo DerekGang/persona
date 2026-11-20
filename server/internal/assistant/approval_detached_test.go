@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	approvalops "github.com/nwverse/persona/server/internal/approval"
+	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -29,6 +32,100 @@ func (s *relayWriteFailStore) PutSetting(ctx context.Context, key string, value 
 		return errors.New("synthetic relay queue write failure")
 	}
 	return s.fleetMem.PutSetting(ctx, key, value)
+}
+
+type grantWriteFailStore struct {
+	*fleetMem
+	fail atomic.Bool
+}
+
+func (s *grantWriteFailStore) PutSetting(ctx context.Context, key string, value any) error {
+	if key == detachedGrantSetting && s.fail.Load() {
+		return errors.New("synthetic grant revocation write failure")
+	}
+	return s.fleetMem.PutSetting(ctx, key, value)
+}
+
+type recoveryFailStore struct {
+	*restoreMem
+	failID string
+}
+
+func (s *recoveryFailStore) FinishInteraction(ctx context.Context, id, status string, r *proto.Resolution) error {
+	if id == s.failID {
+		return errors.New("synthetic recovered interaction write failure")
+	}
+	return s.restoreMem.FinishInteraction(ctx, id, status, r)
+}
+
+func (s *recoveryFailStore) FinishInteractionOccurrence(ctx context.Context, ix proto.Interaction, status string, r *proto.Resolution) (bool, bool, error) {
+	if ix.ID == s.failID {
+		return false, false, errors.New("synthetic recovered interaction write failure")
+	}
+	return s.restoreMem.FinishInteractionOccurrence(ctx, ix, status, r)
+}
+
+type journalReadFailStore struct {
+	*restoreMem
+	fail atomic.Bool
+}
+
+func (s *journalReadFailStore) Setting(ctx context.Context, key string, out any) (bool, error) {
+	if key == approvalJournalKey && s.fail.Load() {
+		return false, errors.New("synthetic approval journal read failure")
+	}
+	return s.restoreMem.Setting(ctx, key, out)
+}
+
+type restoreReadFailStore struct {
+	*restoreMem
+	id   string
+	fail atomic.Bool
+}
+
+func (s *restoreReadFailStore) InteractionRecord(ctx context.Context, id string) (*db.InteractionRecord, error) {
+	if id == s.id && s.fail.Load() {
+		return nil, errors.New("synthetic restored interaction read failure")
+	}
+	return s.restoreMem.InteractionRecord(ctx, id)
+}
+
+type restoreInterleaveStore struct {
+	*restoreMem
+	snapshot     chan struct{}
+	release      chan struct{}
+	snapshotOnce sync.Once
+	releaseOnce  sync.Once
+}
+
+func (s *restoreInterleaveStore) ExpireStaleInteractions(ctx context.Context) ([]proto.Interaction, []proto.Interaction, error) {
+	resumable, cancelled, err := s.restoreMem.ExpireStaleInteractions(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.snapshotOnce.Do(func() { close(s.snapshot) })
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+	return resumable, cancelled, nil
+}
+
+func putTerminalOccurrenceJournal(t *testing.T, ft *fleetTest, ix proto.Interaction, status, detail string) approvalJournalEntry {
+	t.Helper()
+	createdAt, fingerprint, err := approvalJournalOccurrence(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+		CreatedAt: createdAt, Fingerprint: fingerprint, Status: status,
+		Result: approvalResultText(ix.ID, status, detail), Continuation: ix.Detachable && status == "approved",
+		UpdatedAt: time.Now().UTC()}
+	if err := ft.st.PutSetting(context.Background(), approvalJournalKey, []approvalJournalEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	return entry
 }
 
 func detachedTestCard(id string) proto.Interaction {
@@ -404,6 +501,62 @@ func TestInterruptedApprovedGrantIsRevokedDuringRecovery(t *testing.T) {
 	}
 }
 
+func TestFailedGrantRevocationKeepsRecoveryUntilAnotherRestart(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	st := &grantWriteFailStore{fleetMem: ft.st}
+	ft.s.store = func() Store { return st }
+	ix := detachedTestCard("ix_revocation_write_failure")
+	if err := ft.s.approvalJournalStarted(context.Background(), ix); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.approvalJournalApplying(context.Background(), ix); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	st.fail.Store(true)
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.recoverApprovalJournals(context.Background())
+	if got := storedApprovalJournal(t, ft); len(got) != 1 || got[0].Status != "failed" {
+		t.Fatalf("failed durable revocation was forgotten: %+v", got)
+	}
+	freshRetry := ix
+	freshRetry.ID = "ix_revocation_write_failure_retry"
+	if got, ok, err := restarted.consumeDetachedGrant(context.Background(), freshRetry); err != nil || !ok || got.Allow != nil || !got.Dismiss || got.ApprovalID != ix.ID {
+		t.Fatalf("a non-approved persisted grant executed through a fresh retry id: %+v ok=%v err=%v", got, ok, err)
+	}
+
+	st.fail.Store(false)
+	second := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	second.recoverApprovalJournals(context.Background())
+	if got, ok, err := second.consumeDetachedGrant(context.Background(), ix); err != nil || ok || got.Allow != nil {
+		t.Fatalf("revocation did not converge after the write recovered: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestNonApprovedJournalCannotBeSpentThroughFreshRetry(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_nonapproved_original")
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+		Status: "failed", Result: approvalResultText(ix.ID, "failed", "Execution is uncertain."), UpdatedAt: time.Now().UTC()}
+	if err := ft.st.PutSetting(context.Background(), approvalJournalKey, []approvalJournalEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return ft.st }, Logf: testLogf(t), Devices: ft.d})
+	retry := ix
+	retry.ID = "ix_nonapproved_fresh_retry"
+	got, ok, err := restarted.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow != nil || !got.Dismiss || got.ApprovalID != ix.ID {
+		t.Fatalf("fresh retry spent a non-approved grant: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestDetachedWaitingRestartFinishesTheRestoredCard(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -445,6 +598,545 @@ func TestDetachedWaitingRestartFinishesTheRestoredCard(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestDetachedRestoredReplayCannotAllowBeforeRecovery(t *testing.T) {
+	for _, restore := range []bool{true, false} {
+		t.Run(fmt.Sprintf("restore_%v", restore), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				shortDetachedTimers(t)
+				ft := newFleetTest(t)
+				preparedTestConversation(ft)
+				ix := detachedTestCard("ix_detached_replay_before_recovery")
+				done := startDetachedTest(t, ft, ix)
+				elapse(30 * time.Millisecond)
+				if got := awaitDetachedTest(t, done); got.err != nil || !got.res.Pending {
+					t.Fatalf("initial result = %+v, %v", got.res, got.err)
+				}
+				st := &restoreMem{fleetMem: ft.st}
+				restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+				if restore {
+					restarted.restoreInteractions(context.Background())
+				}
+				replayed := make(chan detachedTestResult, 1)
+				go func() {
+					res, err := restarted.nodeInteraction(context.Background(), detachedTestCard(ix.ID))
+					replayed <- detachedTestResult{res, err}
+				}()
+				elapse(0)
+				allow := true
+				_ = restarted.resolve(ix.ID, proto.Resolution{Allow: &allow})
+				got := awaitDetachedTest(t, replayed)
+				if got.err != nil || (got.res.Allow != nil && *got.res.Allow) || !got.res.Dismiss {
+					t.Fatalf("restored replay before recovery = %+v, %v; want no execution", got.res, got.err)
+				}
+				restarted.recoverApprovalJournals(context.Background())
+				if result := waitFakeApprovalResult(t, ft.f, ix.ID); !strings.Contains(result, "cancelled") {
+					t.Fatalf("restart continuation = %q, want cancellation", result)
+				}
+			})
+		})
+	}
+}
+
+func TestDetachedTerminalJournalClosesRestoredCard(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_detached_terminal_before_history")
+	result := approvalResultText(ix.ID, "approved", "Retry the same tool now through its original approval hook.")
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+		Status: "approved", Result: result, Continuation: true, UpdatedAt: time.Now().UTC()}
+	if err := ft.st.PutSetting(context.Background(), approvalJournalKey, []approvalJournalEntry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a crash after the terminal journal write but before the pending
+	// interaction row and its restored live card received that outcome.
+	ft.s.record(ix)
+	st := &restoreMem{fleetMem: ft.st}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.restoreInteractions(context.Background())
+	if got := len(restarted.pendingInteractions()); got != 1 {
+		t.Fatalf("restored setup pending = %d, want 1", got)
+	}
+	restarted.recoverApprovalJournals(context.Background())
+	if got := len(restarted.pendingInteractions()); got != 0 {
+		t.Fatalf("terminal journal left an answerable restored card: pending=%d", got)
+	}
+	status, resolution, err := st.InteractionOutcome(context.Background(), ix.ID)
+	if err != nil || status != "resolved" || resolution == nil || !resolution.Dismiss || (resolution.Allow != nil && *resolution.Allow) {
+		t.Fatalf("recovered terminal interaction = status %q resolution %+v err %v", status, resolution, err)
+	}
+	if got := waitFakeApprovalResult(t, ft.f, ix.ID); got != result {
+		t.Fatalf("terminal continuation = %q, want the recorded result %q", got, result)
+	}
+}
+
+func TestRecoveryFinalizesWholeBatchBeforeDeliveringAnyResult(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	a := detachedTestCard("ix_recovery_batch_a")
+	b := detachedTestCard("ix_recovery_batch_b")
+	entries := []approvalJournalEntry{}
+	for _, ix := range []proto.Interaction{a, b} {
+		entries = append(entries, approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+			Status: "denied", Result: approvalResultText(ix.ID, "denied", "Nothing was executed."), UpdatedAt: time.Now().UTC()})
+		ft.s.record(ix)
+	}
+	if err := ft.st.PutSetting(context.Background(), approvalJournalKey, entries); err != nil {
+		t.Fatal(err)
+	}
+	st := &recoveryFailStore{restoreMem: &restoreMem{fleetMem: ft.st}, failID: b.ID}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.restoreInteractions(context.Background())
+	restarted.recoverApprovalJournals(context.Background())
+	if got := storedApprovalJournal(t, ft); len(got) != 2 {
+		t.Fatalf("a recovered result was forgotten after its sibling failed: %+v", got)
+	}
+	if status, _, _ := st.InteractionOutcome(context.Background(), a.ID); status != "resolved" {
+		t.Fatalf("first recovered interaction = %q, want resolved", status)
+	}
+	if status, _, _ := st.InteractionOutcome(context.Background(), b.ID); status != "pending" {
+		t.Fatalf("failed recovered interaction = %q, want pending for the retry", status)
+	}
+	// Even an explicit concurrent drain cannot deliver A while B's interaction is
+	// not durable. Otherwise a crash could leave B pending without its journal.
+	restarted.deliverApprovalResults()
+	ft.f.mu.Lock()
+	sent := len(ft.f.sends)
+	ft.f.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("recovery delivered %d results before the whole batch was durable", sent)
+	}
+
+	st.failID = ""
+	restarted.recoverApprovalJournals(context.Background())
+	for _, ix := range []proto.Interaction{a, b} {
+		if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "resolved" {
+			t.Fatalf("retried recovered interaction %s = %q", ix.ID, status)
+		}
+		waitFakeApprovalResult(t, ft.f, ix.ID)
+	}
+}
+
+func TestRecoveredApprovedJournalFinalizesAMissingInteractionBeforeItsGrantCanBeSpent(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_recovery_missing_history")
+	putTerminalOccurrenceJournal(t, ft, ix, "approved", "Retry the exact call once.")
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	// No InsertInteraction: the original best-effort history write was lost.
+	st := &restoreMem{fleetMem: ft.st}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.recoverApprovalJournals(context.Background())
+	if status, _, err := st.InteractionOutcome(context.Background(), ix.ID); err != nil || status != "resolved" {
+		t.Fatalf("missing history after recovery = %q, %v; want a durable terminal row", status, err)
+	}
+	waitFakeApprovalResult(t, ft.f, ix.ID)
+	retry := ix
+	retry.ID = "ix_recovery_missing_history_retry"
+	got, ok, err := restarted.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("exact retry after recovery = %+v ok=%v err=%v", got, ok, err)
+	}
+	replayCtx, cancelReplay := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	replayed, err := restarted.nodeInteraction(replayCtx, detachedTestCard(ix.ID))
+	cancelReplay()
+	if err == nil && replayed.Allow != nil && *replayed.Allow {
+		t.Fatalf("the consumed original executed again after its missing history was recovered: %+v", replayed)
+	}
+}
+
+func TestRecoveryDoesNotFinishANewerPendingOccurrence(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	first := detachedTestCard("ix_recovery_reused_id")
+	putTerminalOccurrenceJournal(t, ft, first, "denied", "Nothing was executed.")
+	ft.s.record(first)
+	if err := ft.st.FinishInteraction(context.Background(), first.ID, "resolved", nil); err != nil {
+		t.Fatal(err)
+	}
+	newer := first
+	newer.CreatedAt = first.CreatedAt.Add(time.Second)
+	newer.ToolInput = json.RawMessage(`{"command":"printf newer"}`)
+	if err := ft.st.InsertInteraction(context.Background(), newer); err != nil {
+		t.Fatal(err)
+	}
+	st := &restoreMem{fleetMem: ft.st}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.restoreInteractions(context.Background())
+	if got := restarted.pendingInteractions(); len(got) != 1 || !got[0].CreatedAt.Equal(newer.CreatedAt) {
+		t.Fatalf("restored occurrences = %+v, want only the newer one", got)
+	}
+	restarted.recoverApprovalJournals(context.Background())
+	if status, _, _ := st.InteractionOutcome(context.Background(), newer.ID); status != "pending" {
+		t.Fatalf("the old journal finalized the newer occurrence: %q", status)
+	}
+	if got := storedApprovalJournal(t, ft); len(got) != 1 || got[0].Finalized {
+		t.Fatalf("old journal was released while the newer occurrence was pending: %+v", got)
+	}
+	ft.f.mu.Lock()
+	sent := len(ft.f.sends)
+	ft.f.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("old result delivered while the newer occurrence was pending: %d sends", sent)
+	}
+	deny := false
+	if err := restarted.resolve(newer.ID, proto.Resolution{Allow: &deny}); err != nil {
+		t.Fatal(err)
+	}
+	restarted.recoverApprovalJournals(context.Background())
+	waitFakeApprovalResult(t, ft.f, first.ID)
+	if status, resolution, _ := st.InteractionOutcome(context.Background(), newer.ID); status != "resolved" || resolution == nil || resolution.Allow == nil || *resolution.Allow {
+		t.Fatalf("newer occurrence outcome = %q %+v, want its own denial", status, resolution)
+	}
+}
+
+func TestRestoreSnapshotCannotResurrectAnInteractionAfterRecovery(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_restore_recovery_interleave")
+	putTerminalOccurrenceJournal(t, ft, ix, "denied", "Nothing was executed.")
+	ft.s.record(ix)
+	st := &restoreInterleaveStore{restoreMem: &restoreMem{fleetMem: ft.st}, snapshot: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() { st.releaseOnce.Do(func() { close(st.release) }) })
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restored := make(chan struct{})
+	go func() {
+		restarted.restoreInteractions(context.Background())
+		close(restored)
+	}()
+	select {
+	case <-st.snapshot:
+	case <-time.After(5 * time.Second):
+		t.Fatal("restore did not take its pending snapshot")
+	}
+	restarted.recoverApprovalJournals(context.Background())
+	st.releaseOnce.Do(func() { close(st.release) })
+	select {
+	case <-restored:
+	case <-time.After(5 * time.Second):
+		t.Fatal("restore did not finish")
+	}
+	if got := restarted.pendingInteractions(); len(got) != 0 {
+		t.Fatalf("restore resurrected a recovered interaction: %+v", got)
+	}
+	if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "resolved" {
+		t.Fatalf("recovered occurrence = %q, want resolved", status)
+	}
+	waitFakeApprovalResult(t, ft.f, ix.ID)
+}
+
+func TestLiveFinalizerRetainsItsJournalUntilHistoryIsDurable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		shortDetachedTimers(t)
+		ft := newFleetTest(t)
+		preparedTestConversation(ft)
+		ix := detachedTestCard("ix_live_history_failure")
+		st := &recoveryFailStore{restoreMem: &restoreMem{fleetMem: ft.st}}
+		ft.s.store = func() Store { return st }
+		done := startDetachedTest(t, ft, ix)
+		elapse(30 * time.Millisecond)
+		if got := awaitDetachedTest(t, done); got.err != nil || !got.res.Pending {
+			t.Fatalf("initial result = %+v, %v", got.res, got.err)
+		}
+		st.failID = ix.ID
+		allow := true
+		if err := ft.s.resolve(ix.ID, proto.Resolution{Allow: &allow}); err != nil {
+			t.Fatal(err)
+		}
+		elapse(0)
+		if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "pending" {
+			t.Fatalf("fault-injected history status = %q, want pending", status)
+		}
+		entries := storedApprovalJournal(t, ft)
+		if len(entries) != 1 || entries[0].Finalized {
+			t.Fatalf("result was finalized without durable history: %+v", entries)
+		}
+		ft.f.mu.Lock()
+		sent := len(ft.f.sends)
+		ft.f.mu.Unlock()
+		if sent != 0 {
+			t.Fatalf("result delivered without durable history: %d sends", sent)
+		}
+		st.failID = ""
+		ft.s.deliverApprovalResults()
+		waitFakeApprovalResult(t, ft.f, ix.ID)
+		if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "resolved" {
+			t.Fatalf("retried history status = %q, want resolved", status)
+		}
+	})
+}
+
+func TestInitialJournalReadFailureRetriesRecovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ft := newFleetTest(t)
+		preparedTestConversation(ft)
+		ix := detachedTestCard("ix_initial_journal_read_failure")
+		putTerminalOccurrenceJournal(t, ft, ix, "denied", "Nothing was executed.")
+		ft.s.record(ix)
+		st := &journalReadFailStore{restoreMem: &restoreMem{fleetMem: ft.st}}
+		st.fail.Store(true)
+		restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+		restarted.recoverApprovalJournals(context.Background())
+		restarted.approvals.mu.Lock()
+		recovering, done, retry := restarted.approvals.recovering, restarted.approvals.recoveryDone, restarted.approvals.recoveryRetry
+		restarted.approvals.mu.Unlock()
+		if !recovering || done || !retry {
+			t.Fatalf("failed initial read did not retain a closed retry gate: recovering=%v done=%v retry=%v", recovering, done, retry)
+		}
+		st.fail.Store(false)
+		elapse(time.Minute)
+		waitFakeApprovalResult(t, ft.f, ix.ID)
+		restarted.approvals.mu.Lock()
+		recovering, done = restarted.approvals.recovering, restarted.approvals.recoveryDone
+		restarted.approvals.mu.Unlock()
+		if recovering || !done {
+			t.Fatalf("retry did not complete recovery: recovering=%v done=%v", recovering, done)
+		}
+	})
+}
+
+func TestRecoveryAcceptsLiveTerminalHistoryBeforeDelivery(t *testing.T) {
+	for _, tc := range []struct {
+		journalStatus string
+		historyStatus string
+	}{{"denied", "resolved"}, {"failed", "failed"}, {"covered", "resolved"}} {
+		t.Run(tc.journalStatus, func(t *testing.T) {
+			ft := newFleetTest(t)
+			preparedTestConversation(ft)
+			ix := detachedTestCard("ix_live_terminal_before_delivery_" + tc.journalStatus)
+			entry := putTerminalOccurrenceJournal(t, ft, ix, tc.journalStatus, "The live operation already ended.")
+			entry.Finalized = true // the strict live history write succeeded; delivery did not run
+			putApprovalJournal(t, ft, entry)
+			ft.s.record(ix)
+			resolution := &proto.Resolution{Dismiss: true}
+			if tc.journalStatus == "denied" {
+				allow := false
+				resolution = &proto.Resolution{Allow: &allow}
+			}
+			if err := ft.st.FinishInteraction(context.Background(), ix.ID, tc.historyStatus, resolution); err != nil {
+				t.Fatal(err)
+			}
+			st := &restoreMem{fleetMem: ft.st}
+			restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+			restarted.recoverApprovalJournals(context.Background())
+			waitFakeApprovalResult(t, ft.f, ix.ID)
+			if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != tc.historyStatus {
+				t.Fatalf("recovery changed the live terminal status to %q, want %q", status, tc.historyStatus)
+			}
+		})
+	}
+}
+
+func TestUnfinishedLegacyJournalKeepsItsOccurrenceCutoff(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_legacy_cutoff")
+	updatedAt := time.Now().Add(-time.Hour).UTC()
+	ix.CreatedAt = updatedAt.Add(time.Minute)
+	putApprovalJournal(t, ft, approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID, UpdatedAt: updatedAt})
+	ft.s.record(ix)
+	st := &restoreMem{fleetMem: ft.st}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.restoreInteractions(context.Background())
+	restarted.recoverApprovalJournals(context.Background())
+	if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "pending" {
+		t.Fatalf("legacy recovery cancelled the newer card: %q", status)
+	}
+	entries := storedApprovalJournal(t, ft)
+	if len(entries) != 1 || !entries[0].UpdatedAt.Equal(updatedAt) || entries[0].Finalized {
+		t.Fatalf("legacy cutoff changed during recovery: %+v", entries)
+	}
+	deny := false
+	if err := restarted.resolve(ix.ID, proto.Resolution{Allow: &deny}); err != nil {
+		t.Fatal(err)
+	}
+	restarted.recoverApprovalJournals(context.Background())
+	waitFakeApprovalResult(t, ft.f, ix.ID)
+}
+
+func TestInitialJournalRetryDoesNotCancelAnApprovalCreatedByThisProcess(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		shortDetachedTimers(t)
+		approvalWaitingWindow = time.Hour // advance past the retry, not the live card's own window
+		ft := newFleetTest(t)
+		preparedTestConversation(ft)
+		st := &journalReadFailStore{restoreMem: &restoreMem{fleetMem: ft.st}}
+		st.fail.Store(true)
+		restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+		restarted.recoverApprovalJournals(context.Background())
+		st.fail.Store(false)
+		live := &fleetTest{t: t, s: restarted, d: ft.d, f: ft.f, st: ft.st}
+		ix := detachedTestCard("ix_created_before_initial_retry")
+		done := startDetachedTest(t, live, ix)
+		elapse(30 * time.Millisecond)
+		if got := awaitDetachedTest(t, done); got.err != nil || !got.res.Pending {
+			t.Fatalf("new live approval = %+v, %v", got.res, got.err)
+		}
+		elapse(time.Minute)
+		if got := restarted.pendingInteractions(); len(got) != 1 || got[0].ID != ix.ID {
+			t.Fatalf("startup retry cancelled a current-process approval: %+v", got)
+		}
+		allow := true
+		if err := restarted.resolve(ix.ID, proto.Resolution{Allow: &allow}); err != nil {
+			t.Fatal(err)
+		}
+		waitFakeApprovalResult(t, ft.f, ix.ID)
+	})
+}
+
+func TestOlderDenialDoesNotRevokeANewerOccurrenceGrant(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	first := detachedTestCard("ix_old_denial_new_grant")
+	putTerminalOccurrenceJournal(t, ft, first, "denied", "Nothing was executed.")
+	newer := first
+	newer.CreatedAt = first.CreatedAt.Add(time.Second)
+	newer.ToolInput = json.RawMessage(`{"command":"printf newer"}`)
+	if err := ft.s.putDetachedGrant(context.Background(), newer, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	st := &restoreMem{fleetMem: ft.st}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.recoverApprovalJournals(context.Background())
+	waitFakeApprovalResult(t, ft.f, first.ID)
+	retry := newer
+	retry.ID = "ix_newer_occurrence_retry"
+	got, ok, err := restarted.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("older denial revoked the newer occurrence's grant: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestRestoreRetriesATransientOccurrenceRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ft := newFleetTest(t)
+		preparedTestConversation(ft)
+		ix := detachedTestCard("ix_restore_transient_read")
+		ft.s.record(ix)
+		st := &restoreReadFailStore{restoreMem: &restoreMem{fleetMem: ft.st}, id: ix.ID}
+		st.fail.Store(true)
+		restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+		restarted.restoreInteractions(context.Background())
+		if got := restarted.pendingInteractions(); len(got) != 0 {
+			t.Fatalf("failed read installed an unvalidated card: %+v", got)
+		}
+		st.fail.Store(false)
+		elapse(time.Minute)
+		got := restarted.pendingInteractions()
+		if len(got) != 1 || got[0].ID != ix.ID || !got[0].CreatedAt.Equal(ix.CreatedAt) {
+			t.Fatalf("transient read permanently dropped the resumable card: %+v", got)
+		}
+	})
+}
+
+func TestDetachedFingerprintCanonicalizesJSONKeyOrder(t *testing.T) {
+	first := detachedTestCard("ix_canonical_fingerprint")
+	first.ToolInput = json.RawMessage(`{"command":"pwd","x":1,"nested":{"z":2,"a":3}}`)
+	second := first
+	second.ToolInput = json.RawMessage(`{"nested":{"a":3,"z":2},"x":1,"command":"pwd"}`)
+	a, err := detachedFingerprint(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := detachedFingerprint(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Fatal("JSON object key order changed the detached occurrence identity")
+	}
+	second.ToolInput = json.RawMessage(`{"nested":{"a":3,"z":2},"x":1,"command":"printf changed"}`)
+	b, err = detachedFingerprint(second)
+	if err != nil || a == b {
+		t.Fatalf("a changed command kept the same fingerprint: err=%v", err)
+	}
+}
+
+func TestPreCanonicalDetachedGrantRemainsConsumable(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_pr1_raw_grant")
+	ix.ToolInput = json.RawMessage(`{"x":1,"command":"pwd"}`)
+	legacy, err := legacyDetachedFingerprint(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := detachedFingerprint(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy == canonical {
+		t.Fatal("fixture did not distinguish the PR1 raw and canonical fingerprints")
+	}
+	if err := ft.st.PutSetting(context.Background(), detachedGrantSetting, map[string]detachedGrant{ix.ID: {
+		Fingerprint: legacy, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	// Repeating Apply after an upgrade is idempotent with the old on-disk form.
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+		t.Fatalf("old grant was rejected as a different approval: %v", err)
+	}
+	retry := ix
+	retry.ID = "ix_pr1_raw_grant_retry"
+	got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("PR1 grant did not survive canonicalization: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestLiveJournaledDetachedReconnectStillWaitsForTheOwner(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		shortDetachedTimers(t)
+		ft := newFleetTest(t)
+		preparedTestConversation(ft)
+		ix := detachedTestCard("ix_live_journaled_reconnect")
+		done := startDetachedTest(t, ft, ix)
+		elapse(30 * time.Millisecond)
+		if got := awaitDetachedTest(t, done); got.err != nil || !got.res.Pending {
+			t.Fatalf("initial result = %+v, %v", got.res, got.err)
+		}
+		ft.s.approvals.mu.Lock()
+		ft.s.approvals.recoveryDone = true
+		ft.s.approvals.mu.Unlock()
+		reconnected := startDetachedTest(t, ft, detachedTestCard(ix.ID))
+		elapse(30 * time.Millisecond)
+		got := awaitDetachedTest(t, reconnected)
+		if got.err != nil || !got.res.Pending || !got.res.Dismiss || got.res.Allow != nil {
+			t.Fatalf("live reconnect = %+v, %v; want the same pending wait", got.res, got.err)
+		}
+		allow := true
+		if err := ft.s.resolve(ix.ID, proto.Resolution{Allow: &allow}); err != nil {
+			t.Fatal(err)
+		}
+		waitFakeApprovalResult(t, ft.f, ix.ID)
+	})
+}
+
+func TestApprovalJournalPersistsOnlyTheCallDigest(t *testing.T) {
+	ft := newFleetTest(t)
+	ix := detachedTestCard("ix_journal_digest_only")
+	ix.ToolInput = json.RawMessage(`{"command":"printf synthetic-secret-argument"}`)
+	if err := ft.s.approvalJournalStarted(context.Background(), ix); err != nil {
+		t.Fatal(err)
+	}
+	entries := storedApprovalJournal(t, ft)
+	if len(entries) != 1 || len(entries[0].Fingerprint) != 64 {
+		t.Fatalf("journal occurrence = %+v, want one SHA-256 digest", entries)
+	}
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "synthetic-secret-argument") || strings.Contains(string(raw), `"command"`) {
+		t.Fatalf("journal persisted raw tool arguments: %s", raw)
 	}
 }
 

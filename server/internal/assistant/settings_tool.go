@@ -72,8 +72,8 @@ func (s *Service) ownSettings() []ownSetting {
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.mainTasksQuiet(ctx)), nil },
 			set: s.setMainTasksQuiet},
 		{Setting: Setting{Key: "assistant.approval_mirror_main", Title: "Show approvals in the main chat", Actions: getSet,
-			About: "on (the default): a non-private permission from another Assistant conversation also appears in the main conversation; " +
-				"answering either copy resolves the same request. Off applies to new cards. Agent, private and health conversations are unchanged",
+			About: "on (the default): a non-private approval for a change in another Assistant conversation also appears in the main conversation; " +
+				"read-only requests stay in their original conversation, and answering either copy of a routed request resolves the same request. Off applies to new cards. Agent, private and health conversations are unchanged",
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.approvalMirrorMain(ctx)), nil },
 			set: s.setApprovalMirrorMain},

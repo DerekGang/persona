@@ -1,10 +1,14 @@
 package assistant
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -38,10 +42,26 @@ type detachedGrantBook struct {
 	grants map[string]detachedGrant // authoritative interaction id -> one unused approval
 }
 
-// detachedFingerprint deliberately compares the complete input bytes, not a
-// parsed command or a route. Reformatting JSON is insufficient to consume a
-// grant, which is conservative and keeps a changed call behind a fresh card.
+// detachedFingerprint compares the complete canonical input value, not a parsed
+// command or a route. Object key order and formatting are not identity: a
+// PostgreSQL JSONB round trip may change both. The command and every other value
+// still must match, so a changed call stays behind a fresh card.
 func detachedFingerprint(ix proto.Interaction) (string, error) {
+	input, err := canonicalDetachedInput(ix.ToolInput)
+	if err != nil {
+		return "", err
+	}
+	return detachedFingerprintInput(ix, input)
+}
+
+// legacyDetachedFingerprint is the PR1 on-disk grant representation. Its raw
+// JSON bytes remain accepted so an upgrade cannot strand an already approved
+// one-time continuation. New grants use detachedFingerprint above.
+func legacyDetachedFingerprint(ix proto.Interaction) (string, error) {
+	return detachedFingerprintInput(ix, ix.ToolInput)
+}
+
+func detachedFingerprintInput(ix proto.Interaction, input json.RawMessage) (string, error) {
 	b, err := json.Marshal(struct {
 		Machine string          `json:"machine"`
 		Session string          `json:"session"`
@@ -49,8 +69,46 @@ func detachedFingerprint(ix proto.Interaction) (string, error) {
 		Kind    string          `json:"kind"`
 		Tool    string          `json:"tool"`
 		Input   json.RawMessage `json:"input"`
-	}{ix.MachineID, ix.SessionID, ix.ExecutionCwd, ix.Kind, ix.ToolName, ix.ToolInput})
+	}{ix.MachineID, ix.SessionID, ix.ExecutionCwd, ix.Kind, ix.ToolName, input})
 	return string(b), err
+}
+
+func canonicalDetachedInput(raw json.RawMessage) (json.RawMessage, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		// A journal tombstone intentionally omits the executable call. Treat its
+		// absent input as JSON null so two identical tombstones can be finalized;
+		// live detachable requests still require non-empty input at ingress.
+		return json.RawMessage("null"), nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return nil, fmt.Errorf("decode the exact tool input: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode the complete tool input: %w", err)
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize the exact tool input: %w", err)
+	}
+	return canonical, nil
+}
+
+// detachedFingerprintDigest binds a journal without persisting the command or
+// other tool arguments that the fingerprint contains.
+func detachedFingerprintDigest(ix proto.Interaction) (string, error) {
+	fingerprint, err := detachedFingerprint(ix)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(fingerprint))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func (s *Service) loadDetachedGrantsLocked(ctx context.Context) error {
@@ -94,6 +152,10 @@ func (s *Service) putDetachedGrant(ctx context.Context, ix proto.Interaction, r 
 	if err != nil {
 		return err
 	}
+	legacyFingerprint, err := legacyDetachedFingerprint(ix)
+	if err != nil {
+		return err
+	}
 	b := &s.detached
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -101,7 +163,7 @@ func (s *Service) putDetachedGrant(ctx context.Context, ix proto.Interaction, r 
 		return err
 	}
 	if old, ok := b.grants[ix.ID]; ok {
-		if old.Fingerprint == fingerprint && old.EditedText == r.EditedText {
+		if (old.Fingerprint == fingerprint || old.Fingerprint == legacyFingerprint) && old.EditedText == r.EditedText {
 			return nil
 		}
 		return errors.New("the approval already has a different continuation grant")
@@ -140,6 +202,10 @@ func (s *Service) consumeDetachedGrant(ctx context.Context, ix proto.Interaction
 	if err != nil {
 		return proto.Resolution{}, false, err
 	}
+	legacyFingerprint, err := legacyDetachedFingerprint(ix)
+	if err != nil {
+		return proto.Resolution{}, false, err
+	}
 	b := &s.detached
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -160,8 +226,18 @@ func (s *Service) consumeDetachedGrant(ctx context.Context, ix proto.Interaction
 	now := time.Now().UTC()
 	for _, id := range ids {
 		grant := b.grants[id]
-		if grant.Fingerprint != fingerprint || !grant.ExpiresAt.After(now) {
+		if (grant.Fingerprint != fingerprint && grant.Fingerprint != legacyFingerprint) || !grant.ExpiresAt.After(now) {
 			continue
+		}
+		// A normal retry has a fresh interaction ID. Check the candidate grant's
+		// own journal, not the new request's ID, before allowing its exact call.
+		entry, journaled, err := s.approvalJournalGrantRecord(ctx, id, grant.Fingerprint)
+		if err != nil {
+			return proto.Resolution{}, false, fmt.Errorf("check detached approval journal: %w", err)
+		}
+		if journaled && (entry.Status != "approved" || entry.Result == "") {
+			return proto.Resolution{Dismiss: true, ApprovalID: id,
+				Message: "This approval did not complete with an approved outcome; its continuation cannot execute."}, true, nil
 		}
 		grants := cloneDetachedGrants(b.grants)
 		delete(grants, id)
@@ -174,6 +250,49 @@ func (s *Service) consumeDetachedGrant(ctx context.Context, ix proto.Interaction
 			Message: "Allowed once by the earlier approval of this exact call."}, true, nil
 	}
 	return proto.Resolution{}, false, nil
+}
+
+// journaledDetachedReplay closes a recovered original before it can reach an
+// Always rule or register a fresh executable operation. An active process-local
+// prepared approval is not recovered: its reconnecting hook keeps the ordinary
+// prepared waiter. The returned resolution is always non-executing, even if an
+// older terminal database row contained an Allow.
+func (s *Service) journaledDetachedReplay(ctx context.Context, ix proto.Interaction) (proto.Resolution, bool, error) {
+	entry, found, err := s.approvalJournalRecord(ctx, ix)
+	if err != nil || !found {
+		return proto.Resolution{}, false, err
+	}
+	if err := s.checkRecordedInteractionOccurrence(ctx, ix); err != nil {
+		return proto.Resolution{}, true, err
+	}
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[ix.ID]
+	local := p != nil && (p.local != nil || p.prepared != nil && !p.prepared.terminal)
+	s.fleet.mu.Unlock()
+	if local {
+		return proto.Resolution{}, false, nil
+	}
+	b := &s.approvals
+	b.mu.Lock()
+	done := b.recoveryDone
+	if !done {
+		// Recovery will release delivery after its complete batch is final. Until
+		// then, finalizing this replay must not start a drain of its siblings.
+		b.recovering = true
+	}
+	b.mu.Unlock()
+	if !done {
+		if err := s.finishRecoveredApproval(entry); err != nil {
+			return proto.Resolution{}, true, err
+		}
+	}
+	_, r, ended := s.outcome(ix.ID)
+	if !ended {
+		r = proto.Resolution{Reason: "assistant_restarted"}
+	}
+	r.Allow, r.Approve, r.Pending = nil, nil, false
+	r.Dismiss, r.ApprovalID = true, ix.ID
+	return r, true, nil
 }
 
 // detachedOriginalReplay identifies the original resumable request whose card has
@@ -195,6 +314,13 @@ func (s *Service) detachedOriginalReplay(ctx context.Context, ix proto.Interacti
 	if unused {
 		return true, nil
 	}
+	_, journaled, err := s.approvalJournalRecord(ctx, ix)
+	if err != nil {
+		return false, err
+	}
+	if journaled {
+		return true, nil
+	}
 	st := s.fleetStore()
 	if st == nil {
 		return false, nil
@@ -209,25 +335,67 @@ func (s *Service) detachedOriginalReplay(ctx context.Context, ix proto.Interacti
 }
 
 // revokeDetachedGrant makes an interrupted or otherwise unsuccessful approval
-// unusable. A failed persistent delete still removes the in-memory grant, so
-// this process fails closed and the next recovery retries the durable delete.
-func (s *Service) revokeDetachedGrant(ctx context.Context, id string) error {
+// unusable. It re-reads the durable book on every attempt so a previous failed
+// delete is really retried, not hidden by the in-memory cache. A newer occurrence
+// may reuse the interaction ID with a different call fingerprint; an older
+// journal must not revoke that newer grant. Legacy journals without a fingerprint
+// retain the conservative ID-wide revocation.
+func detachedGrantMatchesJournal(grant detachedGrant, entry approvalJournalEntry) bool {
+	if entry.Fingerprint == "" {
+		return true
+	}
+	digest := sha256.Sum256([]byte(grant.Fingerprint))
+	return hex.EncodeToString(digest[:]) == entry.Fingerprint
+}
+
+func (s *Service) revokeDetachedGrant(ctx context.Context, entry approvalJournalEntry) error {
 	b := &s.detached
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if err := s.loadDetachedGrantsLocked(ctx); err != nil {
-		return err
+	id := entry.ID
+	var grants map[string]detachedGrant
+	if st := s.store(); st != nil {
+		if _, err := st.Setting(ctx, detachedGrantSetting, &grants); err != nil {
+			if b.loaded {
+				if grant, ok := b.grants[id]; ok && detachedGrantMatchesJournal(grant, entry) {
+					delete(b.grants, id)
+				}
+			}
+			return fmt.Errorf("read detached approval grant for revocation: %w", err)
+		}
+	} else {
+		if err := s.loadDetachedGrantsLocked(ctx); err != nil {
+			return err
+		}
+		grants = cloneDetachedGrants(b.grants)
 	}
-	if _, ok := b.grants[id]; !ok {
+	if grants == nil {
+		grants = map[string]detachedGrant{}
+	}
+	grant, ok := grants[id]
+	if !ok {
+		if b.loaded {
+			delete(b.grants, id)
+		}
 		return nil
 	}
-	grants := cloneDetachedGrants(b.grants)
+	if !detachedGrantMatchesJournal(grant, entry) {
+		return nil
+	}
 	delete(grants, id)
 	if err := s.saveDetachedGrantsLocked(ctx, grants); err != nil {
-		delete(b.grants, id)
+		if b.loaded {
+			if cached, exists := b.grants[id]; exists && detachedGrantMatchesJournal(cached, entry) {
+				delete(b.grants, id)
+			}
+		}
 		return fmt.Errorf("revoke detached approval grant: %w", err)
 	}
-	b.grants = grants
+	if b.loaded {
+		if cached, exists := b.grants[id]; exists && detachedGrantMatchesJournal(cached, entry) {
+			delete(b.grants, id)
+		}
+	}
 	return nil
 }
 

@@ -271,7 +271,7 @@ func (s *Service) keepWaiting(p *pending) bool {
 				s.logf("approval %s: could not keep the unanswered card waiting, it expires: %v", ix.ID, err)
 				return false
 			}
-			s.approvalJournalAborted(context.Background(), ix.ID)
+			s.approvalJournalAborted(context.Background(), ix)
 			return ended // ended meanwhile: nothing more to do; its caller gone: it expires as before
 		}
 		a.clarified, a.waiting = true, true
@@ -438,6 +438,10 @@ func validateClarifyQuestion(text string) error {
 // state. Different questions submitted concurrently are processed in order;
 // only a replay of the same delivery is deduplicated.
 func (s *Service) clarify(ctx context.Context, id, text, clientMsgID string, origin *clarificationOrigin) error {
+	return s.clarifyAt(ctx, id, text, clientMsgID, origin, nil)
+}
+
+func (s *Service) clarifyAt(ctx context.Context, id, text, clientMsgID string, origin *clarificationOrigin, expected *time.Time) error {
 	if err := validateClarifyQuestion(text); err != nil {
 		return err
 	}
@@ -448,6 +452,10 @@ func (s *Service) clarify(ctx context.Context, id, text, clientMsgID string, ori
 
 	s.fleet.mu.Lock()
 	p := s.fleet.interactions[id]
+	if p != nil && expected != nil && !p.ix.CreatedAt.Equal(*expected) {
+		s.fleet.mu.Unlock()
+		return errClarifyUnavailable
+	}
 	if p == nil || p.prepared == nil || !p.ix.CanClarify {
 		s.fleet.mu.Unlock()
 		return errClarifyUnavailable
@@ -473,7 +481,7 @@ func (s *Service) clarify(ctx context.Context, id, text, clientMsgID string, ori
 			}
 			return running.err
 		}
-		return s.clarify(ctx, id, text, clientMsgID, origin)
+		return s.clarifyAt(ctx, id, text, clientMsgID, origin, expected)
 	}
 	attempt := &clarifyAttempt{done: make(chan struct{}), first: !a.clarified,
 		clientMsgID: clientMsgID, text: text, originKey: originKey}
@@ -569,7 +577,7 @@ func (s *Service) finishClarifyAttempt(p *pending, attempt *clarifyAttempt, run 
 		s.show(tell)
 	}
 	if err != nil && attempt.first {
-		s.approvalJournalAborted(context.Background(), p.ix.ID)
+		s.approvalJournalAborted(context.Background(), p.ix)
 	}
 	if run != nil && attempt.err == nil {
 		s.startChannelRun(run)
@@ -609,10 +617,14 @@ func (s *Service) approvalAnswerTurnEnded(r SessionRef) {
 // approvalBook is defined here; its durable journal implementation is in
 // approval_journal.go.
 type approvalBook struct {
-	mu         sync.Mutex
-	loaded     bool
-	list       []approvalJournalEntry
-	delivering bool
-	again      bool
-	retry      bool
+	mu            sync.Mutex
+	loaded        bool
+	list          []approvalJournalEntry
+	delivering    bool
+	again         bool
+	retry         bool
+	recovering    bool
+	recoveryDone  bool
+	recoveryRetry bool
+	recoverySeq   uint64
 }

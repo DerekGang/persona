@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	approvalops "github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/i18n"
@@ -16,6 +17,10 @@ import (
 // owner operation, then records the honest terminal outcome. In particular it
 // never treats clarification, a proxy answer or a remembered grant as Allow.
 func (s *Service) resolvePreparedAnswer(ctx context.Context, p *pending, r proto.Resolution, remember bool, authorization *standingResolution) error {
+	return s.resolvePreparedAnswerAt(ctx, p, r, remember, authorization, nil)
+}
+
+func (s *Service) resolvePreparedAnswerAt(ctx context.Context, p *pending, r proto.Resolution, remember bool, authorization *standingResolution, expected *time.Time) error {
 	if authorization != nil || r.Remembered {
 		// Other prepared operations still require a fresh owner decision. A
 		// detachable command is the narrow exception: before release its original
@@ -37,6 +42,10 @@ func (s *Service) resolvePreparedAnswer(ctx context.Context, p *pending, r proto
 	r = honest(p.ix, r)
 
 	s.fleet.mu.Lock()
+	if expected != nil && !p.ix.CreatedAt.Equal(*expected) {
+		s.fleet.mu.Unlock()
+		return fmt.Errorf("interaction %s is %w", p.ix.ID, errNotPending)
+	}
 	if s.fleet.interactions[p.ix.ID] != p || p.prepared.terminal || p.claimed {
 		kept := r
 		if p.resolution != nil {
@@ -50,7 +59,7 @@ func (s *Service) resolvePreparedAnswer(ctx context.Context, p *pending, r proto
 		a := p.prepared.attempt
 		s.fleet.mu.Unlock()
 		<-a.done
-		return s.resolvePreparedAnswer(ctx, p, r, remember, authorization)
+		return s.resolvePreparedAnswerAt(ctx, p, r, remember, authorization, expected)
 	}
 	p.claimed = true
 	p.resolution = &r
@@ -221,12 +230,12 @@ func (s *Service) endPreparedIf(p *pending, status, text string, guard func(*pre
 // finishPrepared publishes one terminal state and hands the original caller its
 // result if it is still waiting. The durable result journal is updated before
 // the card disappears, so a restart cannot silently lose the outcome.
-func (s *Service) finishPrepared(p *pending, status string) {
+func (s *Service) finishPrepared(p *pending, status string) error {
 	s.fleet.mu.Lock()
 	a := p.prepared
 	if a == nil || a.finished {
 		s.fleet.mu.Unlock()
-		return
+		return nil
 	}
 	a.finished = true
 	r := a.result
@@ -252,9 +261,20 @@ func (s *Service) finishPrepared(p *pending, status string) {
 		told := redacted(p.ix, r)
 		kept = &told
 	}
-	s.recordEnd(p.ix.ID, status, kept)
+	var historyErr error
 	if clarified {
-		s.approvalJournalFinished(context.Background(), p.ix, journalStatus, text)
+		historyErr = s.recordEndOccurrenceStrict(p.ix, status, kept)
+		if historyErr != nil {
+			s.logf("record approval occurrence outcome: %v", historyErr)
+		}
+	} else {
+		s.recordEnd(p.ix.ID, status, kept)
+	}
+	if clarified {
+		// The delivery drain retries an unfinalized occurrence before it can hand
+		// off or remove this result. A failed history write therefore cannot leave
+		// a pending row behind without its recovery journal.
+		s.approvalJournalFinished(context.Background(), p.ix, journalStatus, text, historyErr == nil)
 	}
 	if kept != nil {
 		s.channelsEnded(p.ix, kept)
@@ -268,4 +288,5 @@ func (s *Service) finishPrepared(p *pending, status string) {
 	default:
 	}
 	s.finishInteraction(p.ix.ID)
+	return historyErr
 }

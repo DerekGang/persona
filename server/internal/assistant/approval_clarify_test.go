@@ -472,6 +472,7 @@ func TestClarifiedApprovalRestartReportsCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitPreparedTest(t, done)
+	reloadApprovalJournalForRestart(ft.s)
 	ft.s.recoverApprovalJournals(context.Background())
 	if applies.Load() != 0 {
 		t.Fatal("restart recovery executed a process-local operation")
@@ -491,6 +492,7 @@ func TestClarifiedApprovalRestartReportsInterruptedApplyAsUncertain(t *testing.T
 	if err := ft.s.approvalJournalApplying(context.Background(), proto.Interaction{ID: "ix_interrupted", MachineID: "mac", SessionID: "s1"}); err != nil {
 		t.Fatal(err)
 	}
+	reloadApprovalJournalForRestart(ft.s)
 	ft.s.recoverApprovalJournals(context.Background())
 	result := waitApprovalResult(t, ft, "ix_interrupted")
 	if !strings.Contains(result, "uncertain") || strings.Contains(result, "cancelled without executing") {
