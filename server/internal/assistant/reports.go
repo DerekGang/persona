@@ -175,15 +175,46 @@ func (s *Service) advanceTaskReplyAt(ctx context.Context, t Todo, machine, sessi
 	if pr != "" && !slices.Contains(urls, pr) {
 		urls = append(urls, pr)
 	}
-	accepted, err := s.importOwnedTaskRepositoryLinks(ctx, t, machine, session, urls, text, at)
+	accepted, err := s.importOwnedTaskRepositoryLinks(ctx, t, machine, session, urls, text, at,
+		func(ctx context.Context, accepted []acceptedReportLink) {
+			link := taskReplyAcceptedPR(pr, accepted)
+			if link.canonical == "" || len(s.taskRepositoryReportTurn(ctx, t, machine, session, text, at)) == 0 {
+				return
+			}
+			current, active := s.openTodoOfAgent(machine, session)
+			if !active || current.ID != t.ID ||
+				!taskRepositoryAgentLinkedAt(current, machine, session).Equal(taskRepositoryAgentLinkedAt(t, machine, session)) ||
+				current.PRURL != t.PRURL && !sameReplyPR(current.PRURL, link.canonical) {
+				return
+			}
+			if s.applyTaskReplyStage(ctx, current, machine, session, text, stage, link, d, marked) {
+				go s.askAcceptance(current, machine, session, text)
+			}
+		})
 	if err != nil {
 		s.logf("task %s: owned repository links not saved: %v", t.ID, err)
 	}
-	if !slices.Contains(accepted, pr) {
-		pr = ""
-		if stage == "review" || stage == "merge" {
-			stage = "develop"
+	return s.applyTaskReplyStage(ctx, t, machine, session, text, stage, taskReplyAcceptedPR(pr, accepted), d, marked)
+}
+
+// Apply the stored spelling, including when the provider supplied it after the report was read.
+func taskReplyAcceptedPR(pr string, accepted []acceptedReportLink) acceptedReportLink {
+	if pr == "" && len(accepted) == 1 {
+		return accepted[0] // a provider-specific URL can be absent from stageOf's syntax
+	}
+	for _, link := range accepted {
+		if sameReplyPR(link.raw, pr) || sameReplyPR(link.canonical, pr) {
+			return link
 		}
+	}
+	return acceptedReportLink{}
+}
+
+func (s *Service) applyTaskReplyStage(ctx context.Context, t Todo, machine, session, text, stage string, link acceptedReportLink,
+	d TodoDelivery, marked bool) bool {
+	pr := link.canonical
+	if pr == "" && (stage == "review" || stage == "merge") {
+		stage = "develop"
 	}
 	if changeSeen(text, d, marked) {
 		s.restage(ctx, t.ID, func(st *todoStage) { st.Change = true }) // a commit, a branch or a held delivery: code work, PR link or not
@@ -191,7 +222,7 @@ func (s *Service) advanceTaskReplyAt(ctx context.Context, t Todo, machine, sessi
 	if pr != "" {
 		s.learnRepoRoot(ctx, machine, session, pr)
 	}
-	if replyNamesOtherPR(text, cmp.Or(pr, t.PRURL)) && (!marked || d.State != deliveryNone) {
+	if replyNamesOtherPR(text, cmp.Or(pr, t.PRURL), link.raw) && (!marked || d.State != deliveryNone) {
 		if pr != "" {
 			s.setTaskStage(ctx, t.ID, "review", pr)
 		}
@@ -409,7 +440,7 @@ func (s *Service) setTaskStage(ctx context.Context, id, stage, pr string) {
 
 func (s *Service) setTaskStageKind(ctx context.Context, id, stage, pr, kind string, verified bool) {
 	if pr != "" {
-		if _, err := s.importReportedLinks(ctx, id, []string{pr}, "", nil); err != nil {
+		if _, err := s.importReportedLinks(ctx, id, []string{pr}, "", nil, nil); err != nil {
 			s.logf("task %s: repository link not saved: %v", id, err)
 		}
 	}

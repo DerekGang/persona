@@ -95,8 +95,17 @@ func TestTaskRepositoryOwnershipRequiresIndependentPublishedHead(t *testing.T) {
 				if name == "wrong push branch" {
 					pushBranch = "another/branch"
 				}
-				f.setItems(proto.Item{Kind: proto.KindToolResult, TS: todo.Agents[0].LinkedAt.Add(time.Millisecond),
-					Outcome: &proto.ToolOutcome{Status: proto.OutcomeOK, Git: &proto.OutcomeGit{Push: &proto.OutcomePush{Branch: pushBranch}}}})
+				at := todo.Agents[0].LinkedAt.Add(time.Millisecond)
+				raw, err := json.Marshal(map[string]string{"cmd": "git push fork HEAD:" + pushBranch})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.setItems(
+					proto.Item{Kind: proto.KindToolUse, TS: at, ToolUseID: "push", ToolName: "functions.exec_command", ToolInput: raw},
+					proto.Item{Kind: proto.KindToolResult, TS: at, ToolUseID: "push", Text: " * [new branch] HEAD -> " + pushBranch,
+						Outcome: &proto.ToolOutcome{Status: proto.OutcomeOK}},
+					proto.Item{Kind: proto.KindNotice, TS: artifactTurnAt(todo)},
+				)
 			}
 			if name == "old node" {
 				f.answerNode("git.pr", func(string, json.RawMessage) (any, error) {
@@ -213,7 +222,8 @@ func TestTaskRepositoryOwnershipConflictingSavedLinkIsNotAnAcceptedClaim(t *test
 
 func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testing.T) {
 	for _, name := range []string{"created", "pushed", "viewed", "echoed", "conditional", "dry run", "push dry run value",
-		"push dry run bundle", "create dry run", "create dry run value", "help", "help value", "web", "dynamic flags", "failed",
+		"push dry run bundle", "delete refspec", "mirror", "deleted output", "deleted with structured evidence", "merely up to date",
+		"create dry run", "create dry run value", "help", "help value", "web", "dynamic flags", "failed",
 		"read tool", "wrong result", "older call", "ambiguous output"} {
 		t.Run(name, func(t *testing.T) {
 			st := repositorystore.New(todoTestDB(t))
@@ -232,6 +242,20 @@ func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testi
 					args["cmd"] += " -nu"
 				}
 				output = "To https://github.com/contributor/project.git\n   123..abc HEAD -> fix/parser\n"
+				artifactNodeProof(f, artifactPR, "someone-else", "contributor", "fix/parser", "fix/parser", "abc", "abc")
+			case "delete refspec", "mirror", "deleted output", "deleted with structured evidence", "merely up to date":
+				args["cmd"] = "git push fork HEAD:fix/parser"
+				output = "To https://github.com/contributor/project.git\n - [deleted]         (none) -> fix/parser\n"
+				switch name {
+				case "delete refspec":
+					args["cmd"] = "git push fork +:fix/parser"
+					output = "   123..abc HEAD -> fix/parser\n"
+				case "mirror":
+					args["cmd"] = "git push --mirror fork"
+					output = "   123..abc HEAD -> fix/parser\n"
+				case "merely up to date":
+					output = " = [up to date]      HEAD -> fix/parser\n"
+				}
 				artifactNodeProof(f, artifactPR, "someone-else", "contributor", "fix/parser", "fix/parser", "abc", "abc")
 			case "viewed":
 				args["cmd"] = "gh pr view --json url"
@@ -262,6 +286,8 @@ func TestTaskRepositoryOwnershipUsesNativeCLIResultsNotReportedCommands(t *testi
 			result := proto.Item{Kind: proto.KindToolResult, ToolUseID: "native", Text: output, TS: at,
 				Outcome: &proto.ToolOutcome{Status: proto.OutcomeOK}}
 			switch name {
+			case "deleted with structured evidence":
+				result.Outcome.Git = &proto.OutcomeGit{Push: &proto.OutcomePush{Branch: "fix/parser"}}
 			case "failed":
 				result.IsError, result.Outcome.Status = true, proto.OutcomeFailed
 			case "wrong result":

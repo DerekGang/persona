@@ -9,7 +9,8 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-var repositoryPushResult = lazyre.New(`(?m)[ \t]([^\s]+)[ \t]+->[ \t]+([^\s]+)`)
+// Match ref updates and new branches in git push's summary. A successful exit can also report deletions or no changes.
+var repositoryPushResult = lazyre.New(`(?m)^[ \t]*(?:(?:\+[ \t]+)?[[:xdigit:]]{3,}\.{2,3}[[:xdigit:]]{3,}|\*[ \t]+\[new branch\])[ \t]+[^\s]+[ \t]+->[ \t]+([^\s]+)`)
 
 // Recognize only a directly executed shell command, not a quoted example, echo,
 // conditional, script body or read command that happens to contain these words.
@@ -63,8 +64,11 @@ func taskRepositoryNativeCommand(it proto.Item) (op, cwd string) {
 			return "", ""
 		}
 		switch flag {
-		case "", "-n", "--dry-run", "-d", "--delete":
+		case "", "-n", "--dry-run", "-d", "--delete", "--mirror":
 			return "", ""
+		}
+		if ref := strings.TrimPrefix(flag, "+"); strings.HasPrefix(ref, ":") && ref != ":" {
+			return "", "" // an empty source deletes the destination ref
 		}
 	}
 	return "push", input.Workdir

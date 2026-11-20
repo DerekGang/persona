@@ -109,6 +109,56 @@ func TestTaskDoneDeliveryDoesNotUseMentionedPR(t *testing.T) {
 	}
 }
 
+func TestTaskDoneDeliveryRequiresStateAfterExcludingMentionedPR(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, judgment, state string
+		closes                      bool
+	}{
+		{"omitted", replyOtherPR + " is merged.", `{"verdict":"done"}`, "", false},
+		{"invalid", replyOtherPR + " is merged.", `{"verdict":"done","delivery":"unknown"}`, "", false},
+		{"explicit none", "The report cites " + replyOtherPR, `{"verdict":"done","delivery":"none"}`, deliveryNone, true},
+		{"ordinary research", "The investigation is complete.", `{"verdict":"done"}`, deliveryNone, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := newTaskService(t)
+			todo := startedTask(t, s, f)
+			deliveryOn(t, s)
+			f.setItems(proto.Item{Role: "assistant", Kind: proto.KindText, Text: tc.text})
+			f.judge = tc.judgment
+			check, err := s.judgeTaskDone(t.Context(), todo)
+			state := ""
+			if check.Delivery != nil {
+				state = check.Delivery.State
+			}
+			if err != nil || check.WouldClose != tc.closes || state != tc.state {
+				t.Fatalf("check=%+v, state=%q, err=%v; want closes=%v, state=%q", check, state, err, tc.closes, tc.state)
+			}
+		})
+	}
+}
+
+func TestTaskReplyPreservesCanonicalOwnedPR(t *testing.T) {
+	for _, tc := range []struct{ name, reported, canonical string }{
+		{"GitHub case", "https://github.com/Example/Project/pull/7", artifactPR},
+		{"GitHub HTTP", "http://github.com/example/project/pull/7", artifactPR},
+		{"GitLab legacy route", "https://gitlab.com/group/project/merge_requests/17", "https://gitlab.com/group/project/-/merge_requests/17"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := repositorystore.New(todoTestDB(t))
+			s, f := newQuietServiceOn(t, st)
+			todo := agentTask(t, s, f)
+			text := "Merged " + tc.reported
+			reply := artifactReportProof(f, todo, text, tc.canonical)
+			a := todo.Agents[0]
+			s.advanceTaskReplyAt(t.Context(), todo, a.MachineID, a.SessionID, text, reply.TS)
+			_, saved := savedArtifactURLs(t, st, todo.ID)
+			if got := todoNow(s, todo.ID); got.PRURL != tc.canonical || got.Stage != "merge" || !slices.Equal(saved, []string{tc.canonical}) {
+				t.Fatalf("canonical link not applied: PR=%q stage=%q associations=%v", got.PRURL, got.Stage, saved)
+			}
+		})
+	}
+}
+
 func TestTaskDoneSignalsUseOnlyOwnedPR(t *testing.T) {
 	for _, tc := range []struct {
 		name, saved, proof, text string

@@ -141,10 +141,20 @@ func TestTaskPlanRepositoryReferencesRejectUnsafeURLs(t *testing.T) {
 		"https://me@example.com/example/project/issues/17",
 		links[0] + "?private_token=%zz",
 		links[0] + "?tracking=one;private_token=test-only",
+		links[0] + "?private_token=test-only#%zz",
+		links[0] + "#%zz",
+		"https://%zz:@github.com/example/project/issues/17",
+		"https://github.com:invalid/example/project/issues/17",
+		"https://github.com/example/proj%zz/issues/17",
+		links[3] + "#%zz",
 	} {
-		if refs, err := planRepositoryReferences(PlanTask{Prompt: raw}); err == nil || len(refs) != 0 {
-			t.Fatalf("unsafe reference was accepted: refs=%v, error=%v", refs, err)
+		if refs, err := planRepositoryReferences(PlanTask{Prompt: raw}); err == nil || !strings.Contains(err.Error(), "unsafe repository") ||
+			len(refs) != 0 || strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "test-only") {
+			t.Fatalf("unsafe reference %q was accepted or echoed: refs=%v, error=%v", raw, refs, err)
 		}
+	}
+	if refs, err := planRepositoryReferences(PlanTask{Prompt: "https://example.com/docs#%zz"}); err != nil || len(refs) != 0 {
+		t.Fatalf("unrelated malformed URL was treated as a repository reference: refs=%v, error=%v", refs, err)
 	}
 }
 
@@ -173,7 +183,7 @@ func TestTaskPlanRepositoryRejectsUnsafeURLsBeforePlanning(t *testing.T) {
 	}
 	t.Run("whole plan without a saved match", func(t *testing.T) {
 		first := briefTask(nil)["tasks"].([]map[string]any)[0]
-		second := briefTask(map[string]any{"prompt": "https://github.com/example/other/pull/19?signature=test-only"})["tasks"].([]map[string]any)[0]
+		second := briefTask(map[string]any{"prompt": "https://github.com/example/other/pull/19?signature=test-only#%zz"})["tasks"].([]map[string]any)[0]
 		got, isErr := tool(t, s, "task_plan", map[string]any{"tasks": []map[string]any{first, second}})
 		if !isErr || !strings.Contains(got, "task 2: unsafe repository") || strings.Contains(got, "test-only") {
 			t.Fatalf("unsafe second task was admitted or echoed: %s", got)

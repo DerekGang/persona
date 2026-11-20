@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -111,13 +112,13 @@ func githubPROwnershipCandidate(raw string) bool {
 
 // replyNamesOtherPR prevents an unqualified status word from being applied to the task's PR when the reply
 // also names a different change. A bare #number can refer to a dependency even without the word PR.
-func replyNamesOtherPR(text, pr string) bool {
+func replyNamesOtherPR(text, pr string, aliases ...string) bool {
 	links := prLink.FindAllString(text, -1)
 	if deliveryCloseout(text) != "" {
 		links = append(links, taskRepositoryReportLinks(text)...)
 	}
 	for _, link := range links {
-		if !sameReplyPR(link, pr) {
+		if !sameReplyPR(link, pr) && !slices.ContainsFunc(aliases, func(alias string) bool { return sameReplyPR(link, alias) }) {
 			return true
 		}
 	}
@@ -400,7 +401,7 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 		if sameReplyPR(pr, current) {
 			pr = current
 		} else {
-			owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr}, text, replyAt)
+			owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr}, text, replyAt, nil)
 			if err != nil {
 				return "", false, fmt.Errorf("task %s: delivery PR ownership could not be verified: %w", t.ID, err)
 			}
@@ -410,7 +411,7 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 			if len(owned) != 1 {
 				return "", false, fmt.Errorf("task %s: the reported PR has no verified ownership or belongs to another open to-do", t.ID)
 			}
-			pr = owned[0] // the importer verified this one candidate and returns its stored canonical URL
+			pr = owned[0].canonical // the importer verified this one candidate and returns its stored canonical URL
 		}
 		if recovered != "" && !sameReplyPR(recovered, pr) {
 			return "", false, fmt.Errorf("task %s: its active agents report different delivery PR artifacts; clarify before accepting", t.ID)

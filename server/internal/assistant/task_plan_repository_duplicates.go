@@ -2,12 +2,20 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/assistant/repository"
+	"github.com/nwverse/persona/server/internal/lazyre"
+)
+
+var (
+	unsafePlanRepositoryURL = errors.New("unsafe repository issue/PR URL: remove credentials or invalid query parameters; nothing was dispatched")
+	// A malformed authority, path or fragment may keep net/url from exposing the link's route.
+	planRepositoryURLShape = lazyre.New(`(?i)^https?://[^/]+/(?:[^/]+/[^/]+/(?:issues|pull)|(?:[^/]+/){2,}(?:-/)?merge_requests|(?:[^/]+/){2,}-/issues)/[1-9][0-9]{0,19}/?$`)
 )
 
 // TaskDistinctFrom explains why a new task is separate from an existing to-do
@@ -23,6 +31,13 @@ func planRepositoryReferences(t PlanTask) (map[string]bool, error) {
 		raw = strings.TrimRight(raw, ".,;:!?)]}，。；：！）》」』") // i18n-ignore: URL punctuation, not displayed text
 		u, err := url.Parse(raw)
 		if err != nil {
+			address := raw
+			if i := strings.IndexAny(raw, "?#"); i >= 0 {
+				address = raw[:i]
+			}
+			if planRepositoryURLShape.MatchString(address) {
+				return nil, unsafePlanRepositoryURL
+			}
 			continue
 		}
 		// Identify the link without credentials, then validate the original before admitting it.
@@ -34,7 +49,7 @@ func planRepositoryReferences(t PlanTask) (map[string]bool, error) {
 			continue
 		}
 		if _, err := repository.Parse(raw, identity.Provider); err != nil {
-			return nil, fmt.Errorf("unsafe repository issue/PR URL: remove credentials or invalid query parameters; nothing was dispatched")
+			return nil, unsafePlanRepositoryURL
 		}
 		refs[link.CanonicalURL] = true
 	}

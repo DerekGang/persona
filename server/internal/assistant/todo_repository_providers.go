@@ -466,21 +466,26 @@ func (s *Service) claimedHost(raw string) bool {
 	return ok
 }
 
-type reportedLinkSave func(context.Context, []repository.LinkInput) ([]string, error)
+type acceptedReportLink struct {
+	raw, canonical string
+}
+
+type reportedLinkSave func(context.Context, []repository.LinkInput) ([]acceptedReportLink, error)
 
 // importReportedLinks records the links an agent reported (only: the one kind kept, "" for any): built-in and saved
 // ones now, offline as before; the ones a provider must be asked about later, off the hub's event loops
 // (askReportedLater). save applies the report's ownership check to both paths; nil is for deliberate stage updates.
 // A link whose provider is off or gone is skipped and logged.
-func (s *Service) importReportedLinks(ctx context.Context, id string, raws []string, only string, save reportedLinkSave) ([]string, error) {
+func (s *Service) importReportedLinks(ctx context.Context, id string, raws []string, only string, save reportedLinkSave,
+	onDeferred func(context.Context, []acceptedReportLink)) ([]acceptedReportLink, error) {
 	if save == nil {
-		save = func(ctx context.Context, links []repository.LinkInput) ([]string, error) {
+		save = func(ctx context.Context, links []repository.LinkInput) ([]acceptedReportLink, error) {
 			return nil, s.importReported(ctx, id, links)
 		}
 	}
 	if only != "" {
 		write := save
-		save = func(ctx context.Context, links []repository.LinkInput) ([]string, error) {
+		save = func(ctx context.Context, links []repository.LinkInput) ([]acceptedReportLink, error) {
 			kept := make([]repository.LinkInput, 0, len(links))
 			for _, in := range links {
 				_, link, err := repository.ParseTaskLinkInput(in)
@@ -519,7 +524,17 @@ func (s *Service) importReportedLinks(ctx context.Context, id string, raws []str
 			links = append(links, *in)
 		}
 	}
-	s.askReportedLater(ctx, id, later, only, save)
+	saveLater := save
+	if onDeferred != nil {
+		saveLater = func(ctx context.Context, links []repository.LinkInput) ([]acceptedReportLink, error) {
+			accepted, err := save(ctx, links)
+			if err == nil && len(accepted) != 0 {
+				onDeferred(ctx, accepted)
+			}
+			return accepted, err
+		}
+	}
+	s.askReportedLater(ctx, id, later, only, saveLater)
 	return save(ctx, links)
 }
 
@@ -550,12 +565,11 @@ func (s *Service) reportedLink(src linkSources, raw, only string) (*repository.L
 	return &repository.LinkInput{URL: link.CanonicalURL}, false, nil
 }
 
-// keptLink is a resolved link as recorded, when it is of the kind kept (only; "" any).
+// keptLink preserves both the reported address and the provider's canonical link.
 func keptLink(in repository.LinkInput, only string) *repository.LinkInput {
 	if only != "" && in.Resolved.Link.Kind != only {
 		return nil
 	}
-	in.URL = in.Resolved.Link.CanonicalURL
 	return &in
 }
 
@@ -643,7 +657,9 @@ func (s *Service) askReportedLater(ctx context.Context, id string, raws []string
 				}
 			default:
 				if _, link, err := repository.ParseTaskLink(raw); err == nil && (only == "" || link.Kind == only) {
-					links = append(links, repository.LinkInput{URL: link.CanonicalURL})
+					in := repository.LinkInput{URL: link.CanonicalURL}
+					links = append(links, in)
+					resolved[raw] = in
 				}
 			}
 		}
@@ -669,7 +685,9 @@ func (s *Service) askReportedLater(ctx context.Context, id string, raws []string
 				b.resolved = map[string]repository.LinkInput{}
 			}
 			for raw, link := range resolved {
-				b.resolved[id+" "+raw] = link
+				if link.Resolved != nil { // built-in links are handled directly once providers are listed
+					b.resolved[id+" "+raw] = link
+				}
 			}
 		}
 		b.mu.Unlock()
