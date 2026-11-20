@@ -1,5 +1,8 @@
 {
   "search_empty": "ナレッジベースに「{query}」に関連する内容はありません。",
   "search_empty_no_query": "ナレッジベースに該当する内容はありません。",
-  "list_empty": "ナレッジベースにはまだ内容がありません。"
+  "list_empty": "ナレッジベースにはまだ内容がありません。",
+  "reference_only": "参照のみ",
+  "project_field_review": "要確認（{field}、証拠 {position} までに未反映 {uncovered} 件）",
+  "project_field_unknown": "証拠の対象範囲は不明（{field}）"
 }

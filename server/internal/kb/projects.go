@@ -320,14 +320,25 @@ func (e *Engine) evolveProject(name, kind string, aliases []string, myRole strin
 	p.Chats = addUnique(p.Chats, c.ID)
 	people := e.externalPeople(c.People)
 	p.People = addUnique(p.People, people...)
-	if strings.TrimSpace(update) != "" {
-		_ = e.Store.AppendLog(p.Slug, now, c.Name, update)
+	withDetail := strings.TrimSpace(update) != "" && p.policy() != referenceOnly
+	if strings.TrimSpace(update) != "" && p.policy() == referenceOnly {
+		e.logf("project %s: %v", p.Slug, ErrReferenceOnly)
+	}
+	if withDetail {
 		p.Dirty = true
 		if p.Status == "done" {
 			p.Status = "active"
 		}
 	}
-	_ = e.Store.PutProject(p)
+	if err := e.Store.PutProject(p); err != nil {
+		return ""
+	}
+	if withDetail {
+		revision := chatEvidenceVersion(c)
+		if err := e.Store.projectLog(p.Slug, now, c.Name, update, KindChat+"/"+c.ID, revision); err != nil {
+			e.logf("project %s: %v", p.Slug, err)
+		}
+	}
 	for _, pid := range people {
 		_, _, _ = e.Store.updatePerson(pid, false, nil, func(per *Person) bool {
 			if per.Status == "ignored" || per.Status == "self" {

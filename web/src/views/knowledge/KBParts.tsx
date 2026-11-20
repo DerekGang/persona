@@ -1,5 +1,5 @@
 // Small pieces the knowledge pages share: the kind tile, tinted pills, marked text, section headers, local icons.
-import { importanceTone, initial, isKind, markParts, projectKindLabel, relevanceTone, topicPointCount, type KBDetail, type KBEntry, type KBKind, type Tone } from "../../lib/kb";
+import { importanceTone, initial, isKind, markParts, projectKindLabel, relevanceTone, topicPointCount, type KBDetail, type KBEntry, type KBKind, type KBProjectKnowledge, type Tone } from "../../lib/kb";
 import { cx } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { t } from "../../i18n";
@@ -112,6 +112,23 @@ export function Badges({ entry, status, asProject = false }: { entry: KBEntry; s
         </TonePill>
       )}
     </>
+  );
+}
+
+/** The fields waiting for review. Their gaps can overlap, so each keeps its own count. */
+export function ProjectReviewNote({ knowledge }: { knowledge?: KBProjectKnowledge }) {
+  if (!knowledge?.needs_review) return null;
+  const lines = (["summary", "one_line"] as const).flatMap(key => {
+    const field = knowledge.fields[key];
+    if (field.status !== "needs_review") return [];
+    const label = key === "summary" ? t("knowledge-projectevidence.summary_review") : t("knowledge-projectevidence.overview_review");
+    return [field.uncovered !== undefined && field.uncovered > 0 ? t("knowledge-projectevidence.review_gap", { label, count: field.uncovered }) : label];
+  });
+  return (
+    <span className="mt-1 flex items-start gap-1.5 text-xs leading-snug text-ink-2">
+      <Icon name="clock" size={14} className="mt-px shrink-0 text-orange" />
+      <span>{lines.length ? lines.join(t("knowledge-projectevidence.join")) : t("knowledge-projectevidence.needs_review")}</span>
+    </span>
   );
 }
 

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="knowledge_evidence_title">来源与覆盖范围</string>
+    <string name="knowledge_evidence_summary">摘要</string>
+    <string name="knowledge_evidence_overview">一句话简介</string>
+    <string name="knowledge_evidence_summary_review">摘要待复核</string>
+    <string name="knowledge_evidence_overview_review">简介待复核</string>
+    <string name="knowledge_evidence_review">待复核</string>
+    <string name="knowledge_evidence_cutoff_unknown">覆盖范围未知</string>
+    <string name="knowledge_evidence_locked">已锁定</string>
+    <string name="knowledge_evidence_writer_user">由你撰写</string>
+    <string name="knowledge_evidence_writer_persona">由 Persona 撰写</string>
+    <string name="knowledge_evidence_writer_extension">由 %1$s 撰写</string>
+    <string name="knowledge_evidence_writer_unknown">撰写者未知</string>
+    <string name="knowledge_evidence_based_on">依据：%1$s</string>
+    <string name="knowledge_evidence_sources">来源</string>
+    <string name="knowledge_evidence_source_status">来源状态：%1$s</string>
+    <string name="knowledge_evidence_open">未关闭</string>
+    <string name="knowledge_evidence_closed">已关闭</string>
+    <string name="knowledge_evidence_merged">已合并</string>
+    <string name="knowledge_evidence_reference_only">仅保留引用</string>
+    <string name="knowledge_evidence_managed">由 Persona 维护</string>
+    <string name="knowledge_evidence_reference_hint">保留原始来源链接和已有笔记。此后不再写入新的摘要或时间线条目。</string>
+    <string name="knowledge_evidence_managed_hint">Persona 可以更新本项目的简介、摘要和时间线。</string>
+    <string name="knowledge_evidence_edit">编辑存储方式</string>
+    <string name="knowledge_evidence_refs">来源引用</string>
+    <string name="knowledge_evidence_refs_hint">每行一个网页地址或知识库条目，例如 chats/planning。</string>
+    <string name="knowledge_evidence_maintainer_user">由你维护</string>
+    <string name="knowledge_evidence_maintainer_persona">由 Persona 维护</string>
+    <string name="knowledge_evidence_maintainer_external">由原始来源维护</string>
+    <string name="knowledge_evidence_maintainer_extension">由 %1$s 维护</string>
+    <string name="knowledge_evidence_maintainer_unknown">维护者未知</string>
+    <string name="knowledge_evidence_summary_unknown">摘要覆盖情况未知</string>
+    <string name="knowledge_evidence_overview_unknown">概览覆盖情况未知</string>
+    <string name="knowledge_evidence_verification">部署情况需要单独验证。</string>
+    <string name="knowledge_evidence_cancel">取消</string>
+    <string name="knowledge_evidence_write_forbidden">此设备没有修改此条目的权限。</string>
+    <plurals name="knowledge_evidence_newer">
+        <item quantity="one">%1$s · 有 %2$d 条较新更新</item>
+        <item quantity="other">%1$s · 有 %2$d 条较新更新</item>
+    </plurals>
+    <plurals name="knowledge_evidence_cutoff">
+        <item quantity="one">已覆盖 %1$d/%2$d 条更新</item>
+        <item quantity="other">已覆盖 %1$d/%2$d 条更新</item>
+    </plurals>
+</resources>

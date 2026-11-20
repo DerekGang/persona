@@ -92,7 +92,7 @@ func dedupeCandidates(projects []*Project) []dedupeCandidate {
 			smaller := min(len(a.People), len(b.People))
 			// Everyone is in a few big groups: people alone count only when it is a good part of the smaller side.
 			byPeople := shared >= dedupeMinShared && smaller > 0 && float64(shared)/float64(smaller) >= 0.3
-			if !byPeople && chats == 0 && items == 0 && words < 2 {
+			if (!byPeople && chats == 0 && items == 0 && words < 2) || shareTrackedSource(a, b) {
 				continue
 			}
 			score := float64(chats)*3 + float64(items) + float64(words)*2
@@ -263,7 +263,25 @@ func (e *Engine) MergeProjects(keepSlug, dropSlug, why string) error {
 	return e.mergeProjects(keepSlug, dropSlug, why, false)
 }
 
-func protectedProject(p *Project) bool { return p.Pinned != "" || p.Locked || len(p.LockedFields) > 0 }
+func protectedProject(p *Project) bool {
+	return p.policy() == referenceOnly || len(p.SourceRefs) > 0 || p.Pinned != "" || p.Locked || len(p.LockedFields) > 0
+}
+
+// Two views of the same canonical evidence keep their independent histories. A user may still merge them explicitly.
+func shareTrackedSource(a, b *Project) bool {
+	if a.FieldEvidence == nil || b.FieldEvidence == nil {
+		return false
+	}
+	if len(a.FieldEvidence.Marks) > len(b.FieldEvidence.Marks) {
+		a, b = b, a
+	}
+	for ref := range a.FieldEvidence.Marks {
+		if _, shared := b.FieldEvidence.Marks[ref]; shared {
+			return true
+		}
+	}
+	return false
+}
 
 func (e *Engine) mergeProjects(keepSlug, dropSlug, why string, manual bool) error {
 	if keepSlug == dropSlug {
@@ -277,8 +295,11 @@ func (e *Engine) mergeProjects(keepSlug, dropSlug, why string, manual bool) erro
 	if !ok || !drop.Live() {
 		return fmt.Errorf("%s: %w", dropSlug, ErrNotFound)
 	}
+	if keep.policy() == referenceOnly || drop.policy() == referenceOnly {
+		return ErrReferenceOnly
+	}
 	if !manual {
-		if protectedProject(keep) || protectedProject(drop) {
+		if protectedProject(keep) || protectedProject(drop) || shareTrackedSource(keep, drop) {
 			return errors.New("automatic merge would change a protected project")
 		}
 		for _, id := range drop.Chats {
@@ -304,6 +325,14 @@ func (e *Engine) mergeProjects(keepSlug, dropSlug, why string, manual bool) erro
 	// What keep gains is recorded on drop (ProjectMerge) so an unmerge takes back just that: the lists only grow
 	// at their ends here.
 	rec := &ProjectMerge{At: time.Now().UTC(), Status: drop.Status}
+	if len(drop.SourceRefs) > 0 {
+		refs, err := canonicalProjectRefs(append(slices.Clone(keep.SourceRefs), drop.SourceRefs...))
+		if err != nil {
+			return err
+		}
+		rec.SourceRefs = removeStrings(refs, keep.SourceRefs)
+		keep.SourceRefs, keep.setSourceRefs = refs, len(rec.SourceRefs) != 0
+	}
 	nAliases, nPeople, nChats, nItems, nDirs, nKeywords := len(keep.Aliases), len(keep.People), len(keep.Chats), len(keep.Items), len(keep.Dirs), len(keep.Keywords)
 	keptMoments := keep.Moments
 	// drop's name always becomes an alias (its mentions should find keep) unless a third project goes by it; its

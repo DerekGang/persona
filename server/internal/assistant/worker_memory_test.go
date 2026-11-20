@@ -175,6 +175,26 @@ func TestWorkerMemoryReportThenDoneWritesOnceAndPreservesLog(t *testing.T) {
 	assertFileUnchanged(t, env.log, before)
 }
 
+func TestWorkerMemorySkipsDerivationForReferenceOnlyProject(t *testing.T) {
+	env := newWorkerMemoryEnv(t)
+	env.setProject(t, "explicit")
+	if _, err := env.e.Apply(kb.KindProject, "explicit", kb.Update{StoragePolicy: "reference_only"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(env.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.record(t)
+	env.f.mu.Lock()
+	asked := len(env.f.outcomeAsked)
+	env.f.mu.Unlock()
+	if records := workerMemoryRecords(t, env.e, "explicit"); asked != 0 || len(records) != 0 {
+		t.Fatalf("reference-only project: %d model requests, %d worker memory records", asked, len(records))
+	}
+	assertFileUnchanged(t, env.log, before)
+}
+
 // Ownership is explicit todo.Project first, then ProjectsForWork(machine,cwd). With neither, even a project whose name
 // is the todo's title receives nothing.
 func TestRecordWorkerOutcomeOwnership(t *testing.T) {

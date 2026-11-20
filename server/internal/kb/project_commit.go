@@ -3,7 +3,6 @@ package kb
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"time"
 
@@ -14,6 +13,9 @@ import (
 // Observers run after both writes, so a callback that forgets a source cannot be followed by a stale write.
 func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, d projectDigest) (err error) {
 	s := e.Store
+	if s.readOnly {
+		return ErrReadOnly
+	}
 	s.metaMu.Lock()
 	var current *Project
 	var summaryChanged, metadataChanged bool
@@ -31,7 +33,7 @@ func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, 
 	}()
 	var ok bool
 	current, ok = s.Project(snapshot.Slug)
-	if !ok {
+	if !ok || current.policy() == referenceOnly {
 		return nil
 	}
 	before, _ := json.Marshal(current)
@@ -43,8 +45,10 @@ func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, 
 	if !bytes.Equal(before, frozen) || prompts.RenderKBProjectInput(currentInput) != prompts.RenderKBProjectInput(input) {
 		return nil
 	}
-	if !current.fieldLocked("one_line") {
-		current.OneLine = oneLine(d.OneLine)
+	refs := current.modelSourceRefs(input)
+	if line := oneLine(d.OneLine); line != "" && !current.fieldLocked("one_line") {
+		current.OneLine = line
+		current.cover("one_line", "pipeline", refs)
 	}
 	if d.Goal != "" && !current.fieldLocked("goal") {
 		current.Goal = oneLine(d.Goal)
@@ -74,18 +78,13 @@ func (e *Engine) commitProject(snapshot *Project, input prompts.KBProjectInput, 
 	}
 	current.Dirty = false
 	current.Updated = now
+	var next []byte
 	if strings.TrimSpace(d.Summary) != "" && !current.fieldLocked("summary") {
-		path := s.path(KindProject, current.Slug, "summary.md")
-		next := []byte(strings.TrimSpace("# "+current.Name+"\n\n"+d.Summary) + "\n")
-		old, _ := os.ReadFile(path)
-		if !bytes.Equal(old, next) {
-			if err = writeFile(path, next); err != nil {
-				return err
-			}
-			summaryChanged = true
-		}
+		next = []byte(strings.TrimSpace("# "+current.Name+"\n\n"+d.Summary) + "\n")
+		current.cover("summary", "pipeline", refs)
 	}
-	if err = writeJSON(s.entityPath(KindProject, current.Slug), current); err != nil {
+	summaryChanged, err = s.saveProjectText(before, current, next)
+	if err != nil {
 		return err
 	}
 	metadataChanged = true

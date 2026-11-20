@@ -31,11 +31,33 @@ func (e *Engine) ObserveChanges() {
 }
 
 func (s *Store) notify(kind, id, what string) {
-	s.observeMu.RLock()
+	c := Change{Kind: kind, ID: id, What: what}
+	s.observeMu.Lock()
 	f := s.changed
-	s.observeMu.RUnlock()
-	if f != nil {
-		f(Change{Kind: kind, ID: id, What: what})
+	if f == nil {
+		s.observeMu.Unlock()
+		return
+	}
+	if _, active := s.notifying[c]; active {
+		s.notifying[c] = true
+		s.observeMu.Unlock()
+		return
+	}
+	if s.notifying == nil {
+		s.notifying = make(map[Change]bool)
+	}
+	// An observer may itself ingest a newer revision of the same entity. Deliver that revision after the
+	// callback returns, when it can safely read the updated state.
+	for {
+		s.notifying[c] = false
+		s.observeMu.Unlock()
+		f(c)
+		s.observeMu.Lock()
+		if !s.notifying[c] {
+			delete(s.notifying, c)
+			s.observeMu.Unlock()
+			return
+		}
 	}
 }
 
@@ -112,11 +134,17 @@ func (s *Store) putEntity(kind, id string, v any, t *Tagging, manual bool) (err 
 		return nil
 	} // forgotten during an external call
 	incoming := protectedEntity(v, t, current, manual)
+	if p, ok := v.(*Project); ok {
+		protectProjectWrite(p, current, incoming, manual)
+	}
 	before, _ := json.Marshal(current)
 	after, _ := json.Marshal(incoming)
 	changed = !exists || !bytes.Equal(before, after)
 	if changed {
 		err = writeJSON(path, incoming)
+		if err == nil && kind == KindProject && !bytes.Equal(current["source_refs"], incoming["source_refs"]) {
+			s.chatRefProjects = nil
+		}
 	}
 	if err == nil {
 		switch entity := v.(type) {
@@ -231,12 +259,17 @@ func (s *Store) putSummary(kind, id, text string, manual bool) error {
 	s.metaMu.Lock()
 	var t struct {
 		Tagging
-		Status string `json:"status"`
+		Status        string `json:"status"`
+		StoragePolicy string `json:"storage_policy"`
 	}
 	exists, err := readJSON(s.entityPath(kind, id), &t)
 	if err != nil {
 		unlock()
 		return err
+	}
+	if kind == KindProject && t.StoragePolicy == referenceOnly {
+		unlock()
+		return ErrReferenceOnly
 	}
 	if !manual && (!exists || t.fieldLocked("summary") || (kind == KindPerson && t.Status == "ignored")) {
 		unlock()
@@ -247,7 +280,20 @@ func (s *Store) putSummary(kind, id, text string, manual bool) error {
 	old, _ := os.ReadFile(path)
 	changed := !bytes.Equal(old, next)
 	if changed {
-		err = writeFile(path, next)
+		var p *Project
+		if kind == KindProject {
+			p, _ = s.Project(id)
+		}
+		if p != nil && p.FieldEvidence != nil {
+			// An imported or merged text has no writer receipt. Invalidate the previous one before publishing the new text.
+			prior, _ := json.Marshal(p)
+			p.noteFact(p.localRef("summary"), projectVersion(string(next)))
+			delete(p.FieldEvidence.Fields, "summary")
+			p.Dirty = true
+			changed, err = s.saveProjectText(prior, p, next)
+		} else {
+			err = writeFile(path, next)
+		}
 	}
 	unlock()
 	if err == nil && changed {

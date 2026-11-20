@@ -16,13 +16,14 @@ type DayMessage struct {
 
 // Detail is everything about one entity: its metadata, compressed context, a project's timeline, a chat's latest text.
 type Detail struct {
-	Kind    string          `json:"kind"`
-	ID      string          `json:"id"`
-	Path    string          `json:"path"` // absolute, for reading more with file tools
-	Meta    json.RawMessage `json:"meta"`
-	Summary string          `json:"summary,omitempty"`
-	Log     []string        `json:"log,omitempty"`
-	Recent  string          `json:"recent,omitempty"`
+	ProjectKnowledge *ProjectKnowledge `json:"project_knowledge,omitempty"`
+	Kind             string            `json:"kind"`
+	ID               string            `json:"id"`
+	Path             string            `json:"path"` // absolute, for reading more with file tools
+	Meta             json.RawMessage   `json:"meta"`
+	Summary          string            `json:"summary,omitempty"`
+	Log              []string          `json:"log,omitempty"`
+	Recent           string            `json:"recent,omitempty"`
 	// Links are the linked projects, chats and people, named and ranked.
 	Links []Entry `json:"links,omitempty"`
 	// Removed: the links the user removed by hand (meta's excluded), named as Links are; automatic organizing leaves
@@ -80,6 +81,8 @@ type MomentRef struct {
 
 // Update is a change by hand (the app) or by the assistant. Set fields only; tagging set here is locked.
 type Update struct {
+	StoragePolicy  string   `json:"storage_policy,omitempty"` // projects: managed or reference_only
+	SourceRefs     []string `json:"source_refs,omitzero"`     // projects: replace the explicit source pointers, including with []
 	Pinned         *string  `json:"pinned,omitempty"`
 	Lock           *bool    `json:"lock,omitempty"`
 	RemovePeople   []string `json:"remove_people,omitempty"`
@@ -176,15 +179,16 @@ type Hit struct {
 
 // Entry is a row of a ranked list.
 type Entry struct {
-	Kind       string    `json:"kind"`
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	OneLine    string    `json:"one_line,omitempty"`
-	Importance string    `json:"importance,omitempty"`
-	Relevance  int       `json:"relevance"`
-	Tags       []string  `json:"tags,omitempty"`
-	Updated    time.Time `json:"updated"`
-	Extra      string    `json:"extra,omitempty"` // projects: short / long · status; chats: dm / group…
+	ProjectKnowledge *ProjectKnowledge `json:"project_knowledge,omitempty"`
+	Kind             string            `json:"kind"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	OneLine          string            `json:"one_line,omitempty"`
+	Importance       string            `json:"importance,omitempty"`
+	Relevance        int               `json:"relevance"`
+	Tags             []string          `json:"tags,omitempty"`
+	Updated          time.Time         `json:"updated"`
+	Extra            string            `json:"extra,omitempty"` // projects: short / long · status; chats: dm / group…
 	// Source is where it came from: a chat's source (lark, mail, wechat, github…); a document's, meeting's or event's
 	// connector, so an app can show which app a meeting was imported from (#8872).
 	Source string `json:"source,omitempty"`

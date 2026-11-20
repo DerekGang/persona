@@ -122,7 +122,7 @@ func (s *Service) recordWorkerOutcome(ctx context.Context, t Todo, machine, sess
 	id := workerMemoryID(t.ID, machine, session, turn, itemIndex)
 	pending := make([]*kb.Project, 0, len(projects))
 	for _, p := range projects {
-		if !e.ProjectMemoryHas(p.Slug, id) {
+		if p.StoragePolicy != "reference_only" && !e.ProjectMemoryHas(p.Slug, id) {
 			pending = append(pending, p)
 		}
 	}

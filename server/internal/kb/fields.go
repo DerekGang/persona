@@ -19,7 +19,7 @@ var commonFields = []string{"importance", "lock", "pinned", "relevance", "tags"}
 
 var kindFields = map[string][]string{
 	KindProject: {"aliases", "chats", "dirs", "goal", "log", "merge_into", "my_role", "name", "note", "people", "project_kind",
-		"remove_aliases", "remove_chats", "remove_people", "source", "status", "summary"},
+		"remove_aliases", "remove_chats", "remove_people", "source", "source_refs", "status", "storage_policy", "summary"},
 	KindChat:    {"name", "projects", "remove_people", "remove_projects", "summary"},
 	KindPerson:  {"note", "profile", "projects", "remove_chats", "remove_projects", "status"},
 	KindDoc:     {"note", "projects", "remove_projects"},
@@ -40,7 +40,7 @@ func setFields(u Update) []string {
 		"importance": u.Importance != "", "relevance": u.Relevance != nil, "tags": u.Tags != nil, "summary": u.Summary != "",
 		"log": u.Log != "", "source": u.Source != "", "aliases": len(u.Aliases) > 0, "chats": len(u.Chats) > 0,
 		"people": len(u.People) > 0, "dirs": len(u.Dirs) > 0, "projects": len(u.Projects) > 0, "merge_into": u.MergeInto != "",
-		"profile": u.Profile != nil,
+		"profile": u.Profile != nil, "storage_policy": u.StoragePolicy != "", "source_refs": u.SourceRefs != nil,
 	} {
 		if set {
 			out = append(out, name)
@@ -117,6 +117,10 @@ func stripUnsupported(kind string, u Update) Update {
 			u.Projects = nil
 		case "merge_into":
 			u.MergeInto = ""
+		case "storage_policy":
+			u.StoragePolicy = ""
+		case "source_refs":
+			u.SourceRefs = nil
 		case "profile":
 			u.Profile = nil
 		}

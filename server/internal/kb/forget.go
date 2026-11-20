@@ -115,10 +115,13 @@ func (e *Engine) ForgetSource(source string, archiveSources ...string) (Forgotte
 			out.Posts = append(out.Posts, post.ID)
 		}
 	}
+	goneRefs := forgottenProjectRefs(out.Chats, out.People, out.Posts, itemKeys)
 	goneMoment := func(m ProjectMoment) bool { return slices.Contains(out.Posts, m.ID) }
 	var cut []string // projects whose timeline lost lines
 	for _, p := range e.Store.Projects() {
 		before := entityMap(p)
+		p.forgottenSources = goneRefs
+		p.eraseSourceEvidence(goneRefs)
 		p.Chats = slices.DeleteFunc(slices.Clone(p.Chats), func(id string) bool { return slices.Contains(out.Chats, id) })
 		p.People = slices.DeleteFunc(slices.Clone(p.People), func(id string) bool { return slices.Contains(out.People, id) })
 		p.Items = slices.DeleteFunc(slices.Clone(p.Items), func(id string) bool { return itemKeys[id] })

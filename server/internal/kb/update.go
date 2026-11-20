@@ -29,8 +29,15 @@ func (e *Engine) Ingest(ctx context.Context, src Source, sc SourceChat, msgs []S
 	// Reserve live ingestion through attachment preparation too: a replay must
 	// not overwrite the first version's files. History and compression can still
 	// run while a connector downloads, so reread their metadata before commit.
+	var evidence *Chat
+	var arrived bool
 	e.Store.ingestMu.Lock()
-	defer e.Store.ingestMu.Unlock()
+	defer func() {
+		e.Store.ingestMu.Unlock()
+		if evidence != nil {
+			e.chatProjectEvidence(evidence, arrived, false)
+		}
+	}()
 	cut := e.textCutoff()
 	e.Store.chatMu.Lock()
 	c, exists, r, err := e.Store.ingestState(src.Name(), sc, cut)
@@ -46,7 +53,9 @@ func (e *Engine) Ingest(ctx context.Context, src Source, sc SourceChat, msgs []S
 	unchanged := func() (int, error) {
 		if exists {
 			// No new lines, but the source may report a new state (a pull request merged): record it all the same.
-			if err := e.recordChatState(c.ID, sc); err != nil {
+			var err error
+			evidence, err = e.recordChatState(c.ID, sc)
+			if err != nil {
 				return 0, err
 			}
 			e.index(KindChat, c.ID, c.Name, c.Tagging, c.OneLine, c.LastAt)
@@ -178,7 +187,7 @@ func (e *Engine) Ingest(ctx context.Context, src Source, sc SourceChat, msgs []S
 	}
 	c.Messages += len(lines)
 	c.Pending += len(lines)
-	stateChanged := noteChatState(c, sc, time.Now())
+	noteChatState(c, sc, time.Now())
 	usual := ""
 	if selecting {
 		usual = sel.UsualRule(ret, facts)
@@ -187,9 +196,7 @@ func (e *Engine) Ingest(ctx context.Context, src Source, sc SourceChat, msgs []S
 	if err := e.Store.commitIngest(c, lines, r, selecting, usual); err != nil {
 		return 0, err
 	}
-	if stateChanged {
-		e.chatStateChanged(c)
-	}
+	evidence, arrived = c, true
 	// After the commit: a window saved before it would say messages are stored that a failed commit never wrote.
 	if err := saveWindow(); err != nil {
 		e.logf("selection context of %s: %v", c.ID, err)
@@ -222,7 +229,9 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 	case KindChat, KindPerson, KindProject, KindRecording, KindTopic:
 		meta = e.Store.path(kind, id, "meta.json")
 		d.Path = e.Store.path(kind, id)
-		d.Summary = e.Store.Summary(kind, id)
+		if kind != KindProject {
+			d.Summary = e.Store.Summary(kind, id)
+		}
 	case KindDoc, KindMeeting, KindEvent:
 		meta = filepath.Join(e.Store.Dir, kind, SafeID(id)+".json")
 		d.Path = meta
@@ -242,6 +251,13 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 		if err == nil && raw == nil {
 			err = ErrNotFound
 		}
+	} else if kind == KindProject {
+		// Freeze the conclusion, receipt and timeline together. Linked recordings take their own files lock.
+		e.Store.metaMu.Lock()
+		raw, err = os.ReadFile(meta)
+		d.Summary = e.Store.Summary(kind, id)
+		d.Log = e.Store.Log(id, 30)
+		e.Store.metaMu.Unlock()
 	} else {
 		raw, err = os.ReadFile(meta)
 	}
@@ -253,8 +269,17 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 		d.Meta = metaWithNameSource(metaWithMeeting(raw, meeting))
 	}
 	if kind == KindProject {
-		d.Log = e.Store.Log(id, 30)
-		if p, ok := e.Store.Project(id); ok {
+		var p Project
+		if json.Unmarshal(raw, &p) == nil {
+			if p.FieldEvidence != nil {
+				var public map[string]json.RawMessage
+				if json.Unmarshal(raw, &public) == nil {
+					delete(public, "field_evidence")
+					d.Meta, _ = json.Marshal(public)
+				}
+			}
+			d.ProjectKnowledge = p.knowledge()
+			d.ProjectKnowledge.Sources = e.projectSources(&p)
 			for _, x := range p.Moments {
 				if m, ok := e.Store.MomentPost(x.ID); ok {
 					f := momentForPrompt(m, x.Note, 200, e.Store.Zone())
@@ -458,6 +483,9 @@ func (e *Engine) apply(kind, id string, u Update, le linkEdit) (string, error) {
 	switch kind {
 	case KindProject:
 		if u.MergeInto != "" {
+			if u.StoragePolicy != "" || u.SourceRefs != nil {
+				return "", errors.New("change project storage settings separately from a merge")
+			}
 			from, into := e.Store.Project(id)
 			if !into {
 				from = e.FindProject(id)
@@ -487,6 +515,9 @@ func (e *Engine) apply(kind, id string, u Update, le linkEdit) (string, error) {
 				return "", errors.New("a project needs a name")
 			}
 			p = &Project{Slug: Slug(name), Name: name, Kind: "short", Status: "active", Created: now}
+		}
+		if err := p.applyPolicy(u); err != nil {
+			return "", err
 		}
 		if u.Name != "" {
 			p.Name = u.Name
@@ -542,18 +573,6 @@ func (e *Engine) apply(kind, id string, u Update, le linkEdit) (string, error) {
 				p.People = addUnique(p.People, p.kept("people", c.People)...) // not the people the user took off it
 			}
 		}
-		if u.Log != "" {
-			src := u.Source
-			if src == "" {
-				src = "Persona"
-			}
-			if err := e.Store.AppendLog(p.Slug, now, src, u.Log); err != nil {
-				return "", err
-			}
-			if u.Summary == "" {
-				p.Dirty = true
-			}
-		}
 		p.Aliases = removeStrings(p.Aliases, u.RemoveAliases)
 		p.People = removeStrings(p.People, u.RemovePeople)
 		p.Chats = removeStrings(p.Chats, u.RemoveChats)
@@ -564,8 +583,17 @@ func (e *Engine) apply(kind, id string, u Update, le linkEdit) (string, error) {
 		if err := e.Store.putEntity(KindProject, p.Slug, p, &p.Tagging, true); err != nil {
 			return "", err
 		}
+		if u.Log != "" {
+			src := u.Source
+			if src == "" {
+				src = "Persona"
+			}
+			if err := e.Store.AppendLog(p.Slug, now, src, u.Log); err != nil {
+				return "", err
+			}
+		}
 		if u.Summary != "" {
-			if err := e.Store.putSummary(KindProject, p.Slug, u.Summary, true); err != nil {
+			if err := e.Store.writeProjectSummary(p.Slug, u.Summary, le.writer, le.cited); err != nil {
 				return "", err
 			}
 		}
@@ -813,8 +841,7 @@ func (e *Engine) entries(projects, chats, people []string) []Entry {
 	var out []Entry
 	for _, slug := range projects {
 		if p, ok := e.Store.Project(slug); ok && p.Live() {
-			out = append(out, Entry{Kind: KindProject, ID: p.Slug, Name: p.Name, OneLine: p.OneLine, Importance: p.Importance,
-				Relevance: p.Relevance, Tags: p.Tags, Updated: p.Updated, Extra: p.Kind + " · " + p.Status})
+			out = append(out, p.entry())
 		}
 	}
 	var cs, ps []Entry

@@ -84,7 +84,7 @@ func (e *Engine) LinkMoments(ctx context.Context, max int) int {
 	}
 	var projects []*Project
 	for _, p := range e.Store.Projects() {
-		if p.Live() && p.Status != "ignored" && p.Status != "done" && len(p.Keywords) > 0 {
+		if p.Live() && p.policy() != referenceOnly && p.Status != "ignored" && p.Status != "done" && len(p.Keywords) > 0 {
 			projects = append(projects, p)
 		}
 	}
@@ -205,7 +205,7 @@ func (e *Engine) judgeMoments(ctx context.Context, p *Project, cands []*MomentPo
 	}
 	// Reread: the project may have changed while the model thought.
 	cur, ok := e.Store.Project(p.Slug)
-	if !ok || !cur.Live() {
+	if !ok || !cur.Live() || cur.policy() == referenceOnly {
 		return 0, nil
 	}
 	var added []ProjectMoment
@@ -228,8 +228,8 @@ func (e *Engine) judgeMoments(ctx context.Context, p *Project, cands []*MomentPo
 	for _, m := range added {
 		if time.Since(m.At) < 14*24*time.Hour {
 			post := byID[m.ID]
-			_ = e.Store.AppendLog(cur.Slug, m.At, "公司圈 · "+momentForPrompt(post, "", 0, e.Store.Zone()).Author,
-				textfmt.FirstNonEmpty(m.Note, clip(oneLine(post.Text), 60)))
+			_ = e.Store.projectLog(cur.Slug, m.At, "公司圈 · "+momentForPrompt(post, "", 0, e.Store.Zone()).Author,
+				textfmt.FirstNonEmpty(m.Note, clip(oneLine(post.Text), 60)), "moments/"+m.ID, projectVersion(m.ID))
 			cur.Dirty = true
 		}
 	}
@@ -264,7 +264,7 @@ func (e *Engine) projectMomentsForPrompt(p *Project, n int) []prompts.KBMoment {
 func (e *Engine) SeedKeywords(recent time.Duration) int {
 	n := 0
 	for _, p := range e.Store.Projects() {
-		if !p.Live() || p.Status == "ignored" || p.Status == "done" || len(p.Keywords) > 0 || p.Dirty || time.Since(p.Updated) > recent {
+		if !p.Live() || p.policy() == referenceOnly || p.Status == "ignored" || p.Status == "done" || len(p.Keywords) > 0 || p.Dirty || time.Since(p.Updated) > recent {
 			continue
 		}
 		p.Dirty = true

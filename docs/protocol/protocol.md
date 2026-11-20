@@ -5078,6 +5078,12 @@ The knowledge base belongs to a manager (the assistant). The hub forwards these 
 | PUT | `/api/v1/kb/selection` | The whole document, validated: `400` says what is wrong (unknown rule names, an `order` without every rule exactly once, days outside 1–36500, `context` outside 0–200, items without a source, kind or id), `403` from a read-only device; returns the stored document and sends a `kb_selection` event |
 | GET | `/api/v1/kb/selection/candidates?source=` | A connector's chats for the per-item picker: `{source, cached?, listed_at, chats:[{id, name, kind, source, bot?, muted?, collapsed?, done?, estimate?, item, read, days?}]}`; `read` is `whole`, `personal` or `none`; `cached` when the history import runs or is stopped and the list comes from its plan; `404` when the connector offers no history |
 
+### Project evidence and storage
+
+For projects, list entries and details can include `project_knowledge`. The manager daemon returns the same object in `kb.list` and `kb.get`. It contains `policy` (`managed` or `reference_only`), project-local evidence `position`, `needs_review` and `fields` keyed by `summary` and `one_line`. Each field has `status` (`unknown`, `current` or `needs_review`), an optional numeric `cutoff`, optional `uncovered` change count, and any recorded `writer`, `maintainer`, `locked` or `source_refs`. An omitted cutoff represents unknown coverage. An older manager can omit the entire object. The existing entity `updated` timestamp retains its meaning.
+
+Detail adds `project_knowledge.sources` as canonical references with an optional connector-reported `state` and `state_at`. Use `detail.meta.source_refs` for the editable subset. An owner update accepts `storage_policy` and/or `source_refs` on a project. Omitting the list preserves it. Sending `[]` clears only the explicit pointers. Reference-only storage rejects project detail writes and preserves existing history. Extensions cannot select the policy or replace the owner’s pointers. Field locks continue to apply when managed writing resumes. The `one_line` projection remains read-only. See the [project evidence guide](../assistant/knowledge.md#project-conclusions-and-source-references).
+
 ### Recording sync (#3235)
 
 After transcription, recordings from the phone (including ones the watch sends back to the phone) are synced into the knowledge base's `recordings` through these endpoints ([recording.md](../apple/recording.md), [knowledge.md](../assistant/knowledge.md) ("Recordings")). Only the transcript text is sent, never audio.

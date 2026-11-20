@@ -5,6 +5,8 @@ import persona.core.contracts.api.KnowledgeKind
 import persona.core.contracts.api.KnowledgeUpdate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import persona.core.contracts.api.RequestManager
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.mockwebserver.MockResponse
@@ -31,6 +33,39 @@ class KnowledgeRepositoryTest {
             assertFalse(readOnly.retryable)
             assertEquals(HubError.Server, readOnly.kind)
             assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test fun projectCoverageReadsOriginalSourcesAndWritesOnlyExplicitPointersOrPolicyToItsManager() = runBlocking {
+        MockWebServer().use { server ->
+            val repo = HttpKnowledgeRepository(HubScope("garden", "pair"), server.url("/").toString(), "fixture-token", OkHttpClient(), { true })
+            withContext(RequestManager("m-garden")) {
+                val coverage = """{"policy":"managed","position":3,"needs_review":true,"fields":{
+                    "summary":{"status":"needs_review","cutoff":1,"uncovered":2,"locked":true,"writer":"ext:calendar","maintainer":"user","source_refs":["chats/planning"]},
+                    "one_line":{"status":"unknown","maintainer":"pipeline"}},"sources":[{"ref":"chats/planning","state":"merged","state_at":"2026-06-02T10:00:00Z"}]}"""
+                server.enqueue(MockResponse().setBody("""{"items":[{"kind":"projects","id":"orchard","name":"Orchard","project_knowledge":$coverage},
+                    {"kind":"projects","id":"old","name":"Older project"}]}"""))
+                val items = repo.list(KnowledgeKind.Projects).items
+                val field = requireNotNull(items.first().projectKnowledge?.fields?.get("summary"))
+                assertEquals(1, field.cutoff); assertEquals(2, field.uncovered); assertTrue(field.locked)
+                assertEquals("ext:calendar", field.writer); assertEquals("user", field.maintainer)
+                assertEquals(listOf("chats/planning"), field.sourceRefs); assertNull(items.last().projectKnowledge)
+                assertEquals("m-garden", server.takeRequest().requestUrl?.queryParameter("manager"))
+                server.enqueue(MockResponse().setBody("""{"detail":{"kind":"projects","id":"orchard","path":"data/projects/orchard",
+                    "summary":"Two deliveries pending","log":["Previous order"],"meta":{"source_refs":["https://example.org/orchard"]},"project_knowledge":$coverage}}"""))
+                val detail = repo.detail(KnowledgeKind.Projects, "orchard")
+                assertEquals(items.first().projectKnowledge, detail.projectKnowledge)
+                assertEquals("merged", detail.projectKnowledge?.sources?.single()?.state)
+                assertEquals("Two deliveries pending", detail.summary); assertEquals(listOf("Previous order"), detail.log)
+                assertEquals("m-garden", server.takeRequest().requestUrl?.queryParameter("manager"))
+                for ((update, expected) in listOf(KnowledgeUpdate(storagePolicy = "reference_only") to """{"storage_policy":"reference_only"}""",
+                    KnowledgeUpdate(sourceRefs = emptyList()) to """{"source_refs":[]}""",
+                    KnowledgeUpdate(tags = listOf("garden")) to """{"tags":["garden"]}""")) {
+                    server.enqueue(MockResponse().setBody("{}")); repo.update(KnowledgeKind.Projects, "orchard", update)
+                    val written = server.takeRequest(); assertEquals("PUT", written.method); assertEquals("m-garden", written.requestUrl?.queryParameter("manager"))
+                    assertEquals(expected, written.body.readUtf8())
+                }
+            }
         }
     }
 

@@ -1559,6 +1559,8 @@ Managers are **assistants** to the user (助手, アシスタント; the code an
 
 ## Inbox AI drafting and handoff; knowledge base categories, entries and tagging
 
+Project rows and details show which summary or one-line overview needs review, the number of newer updates and any unknown coverage reported by the selected assistant. **Sources and coverage** opens the individual cutoff, lock, writer, maintainer and original references. A connector’s reported status and time describe its source. Deployment requires separate verification. **Edit storage** switches between managed and references-only and edits the project’s explicit source pointers. Existing summaries and timelines remain visible. A read-only refusal keeps the local edit in the sheet. Hubs without `project_knowledge` keep the ordinary project page.
+
 Behavior ported 2026-11-02 from the old main-line App (`81dc6928`), using the corresponding iOS features as reference (`apple/Persona/Views/Inbox/InboxActions.swift`, `KnowledgeView.swift`).
 
 Inbox (`feature/inbox`):

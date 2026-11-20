@@ -1143,8 +1143,8 @@ func (e *Engine) summarizeRecording(ctx context.Context, r *Recording) (called b
 		}
 		cur.Projects = addUnique(cur.Projects, pr.Slug)
 		pr.Items = addUnique(pr.Items, KindRecording+"/"+cur.ID)
-		if u := oneLine(p.Update); u != "" {
-			_ = st.AppendLog(pr.Slug, now, "录音 · "+cur.Name, u)
+		if u := oneLine(p.Update); u != "" && pr.policy() != referenceOnly {
+			_ = st.projectLog(pr.Slug, now, "录音 · "+cur.Name, u, KindRecording+"/"+cur.ID, projectVersion(recordingAbout(r)))
 			pr.Dirty = true
 		}
 		_ = st.putEntity(KindProject, pr.Slug, pr, &pr.Tagging, false)

@@ -33,6 +33,26 @@ export function kindTitle(k: string): string {
 
 // ── wire types ──────────────────────────────────────────
 
+export interface KBFieldCoverage {
+  status: "current" | "needs_review" | "unknown";
+  cutoff?: number;
+  uncovered?: number;
+  writer?: string;
+  /** Who maintains the field now; independent of the historical writer. */
+  maintainer?: string;
+  locked?: boolean;
+  source_refs?: string[];
+}
+
+export interface KBProjectKnowledge {
+  policy: "managed" | "reference_only";
+  needs_review: boolean;
+  position: number;
+  fields: { summary: KBFieldCoverage; one_line: KBFieldCoverage };
+  /** Detail only. Includes both explicit references and linked sources. */
+  sources?: { ref: string; state?: string; state_at?: string }[];
+}
+
 export interface KBEntry {
   kind: string;
   id: string;
@@ -42,6 +62,7 @@ export interface KBEntry {
   relevance: number;
   tags?: string[] | null;
   updated?: string;
+  project_knowledge?: KBProjectKnowledge;
   /** projects: "short · active" (kind · status); chats: dm / group…; topics: how many knowledge points, in decimal */
   extra?: string;
   /** recordings: meeting, note or day (#8870); absent from an older hub */
@@ -90,6 +111,7 @@ export interface KBDetail {
   path: string;
   meta?: Record<string, unknown> | null;
   summary?: string;
+  project_knowledge?: KBProjectKnowledge;
   log?: string[] | null;
   recent?: string;
   links?: KBEntry[] | null;
@@ -428,6 +450,8 @@ export interface KBDay {
 
 /** `PUT /kb/{kind}/{id}` (the hub's kb.Update); tagging set here is locked against the automatic one. */
 export interface KBUpdate {
+  storage_policy?: KBProjectKnowledge["policy"];
+  source_refs?: string[];
   remove_people?: string[];
   remove_chats?: string[];
   remove_projects?: string[];

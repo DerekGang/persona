@@ -45,6 +45,7 @@ data class KnowledgeEntry(
     @SerialName("meeting_id") val meetingId: String? = null,
     /** Client-only: the imported meeting this recording stands for in the merged Meetings list. */
     @Transient val imported: KnowledgeEntry? = null,
+    @SerialName("project_knowledge") val projectKnowledge: ProjectKnowledge? = null,
 ) {
     val key: String get() = "$kind/$id"
 }
@@ -68,7 +69,33 @@ data class KnowledgeDetail(
     val minutes: RecordingMinutes? = null,
     /** A topic's knowledge points (topics only, docs/assistant/knowledge.md "Topics"). */
     val points: List<TopicPoint>? = null,
+    @SerialName("project_knowledge") val projectKnowledge: ProjectKnowledge? = null,
 )
+
+/** The hub's project-local evidence revisions. Its modification date conveys no coverage. */
+@Serializable
+data class ProjectKnowledge(
+    val policy: String = "",
+    val position: Int = 0,
+    @SerialName("needs_review") val needsReview: Boolean = false,
+    val fields: Map<String, ProjectFieldCoverage> = emptyMap(),
+    /** Detail only, including linked sources and the project's explicit pointers. */
+    val sources: List<ProjectKnowledgeSource> = emptyList(),
+)
+
+@Serializable
+data class ProjectFieldCoverage(
+    val status: String = "unknown",
+    val cutoff: Int? = null,
+    val uncovered: Int = 0,
+    val writer: String? = null,
+    val maintainer: String? = null,
+    val locked: Boolean = false,
+    @SerialName("source_refs") val sourceRefs: List<String> = emptyList(),
+)
+
+@Serializable
+data class ProjectKnowledgeSource(val ref: String, val state: String? = null, @SerialName("state_at") val stateAt: String? = null)
 
 /** A source a knowledge point was said in; [day] is YYYY-MM-DD. */
 @Serializable
@@ -161,6 +188,9 @@ data class KnowledgeUpdate(
     val tags: List<String>? = null,
     val status: String? = null,
     @SerialName("project_kind") val projectKind: String? = null,
+    @SerialName("storage_policy") val storagePolicy: String? = null,
+    /** Replaces explicit pointers only. An empty list clears them, and null preserves them. */
+    @SerialName("source_refs") val sourceRefs: List<String>? = null,
 )
 
 @Serializable

@@ -683,6 +683,16 @@ The same person in Lark, email, Messages, Telegram and GitHub has separate recor
 - Key: the manager's own `handles.key` (the built-in manager's in `~/.persona/managers/assistant/`, copied there once from `~/.persona`, [managers.md](managers.md) ("The built-in manager's own files")), on the manager's machine (hub machine by default), 32 random bytes, 0600, generated on first use; never in the database or logs. Losing it only means future hashes no longer match.
 - The same email in email and Messages gets the same hash. **Merging records into one person is not part of this step**: a separate future design must address splitting wrong merges and who confirms them.
 
+## Project conclusions and source references
+
+A project can have a recent modification time and an older summary. In the project list, **Needs review** means evidence has arrived after a conclusion’s last recorded review. Open the project to inspect the summary and one-line description separately. Each field can have a known writer, a current maintainer, a lock, source references and a coverage position. The position counts changes observed for this project. A cutoff of zero is a recorded position. A missing cutoff means historical coverage is unknown.
+
+For example, an owner writes “Two items pending” and locks the summary. When a linked source later reports that both were delivered, the summary stays as written. Its cutoff stays at the previous position. A successful rewrite can bring the unlocked one-line description up to date independently. A failed rewrite cannot advance either field’s cutoff. Open the linked source to inspect what it reported. A merged pull request records delivery at the source. Deployment and user acceptance require their own evidence.
+
+For a project whose authoritative details live elsewhere, choose **Reference only** and add its source pointers. Persona keeps existing content and accepts routing metadata such as the project name, aliases and links. Future project summaries, derived one-liners and timeline detail are blocked. A detail write returns a refusal. Switching back to **Managed** permits future writes and keeps the existing field locks. Clearing the owner’s explicit source pointers leaves linked chats and other recorded sources available. Existing projects default to managed storage.
+
+A `chats/<id>` pointer links to an existing archived conversation. Its observed source changes advance the project’s evidence position. An HTTP or HTTPS pointer opens the source in the owner’s browser. Adding it does not fetch the page. Two managed project views that share an observed canonical source, or have an owner-maintained source index, stay separate during automatic deduplication.
+
 ## Project deduplication
 
 The same work often has different names in different groups. Previously the model only saw project names during compression, so each group grew its own project (2026-11-01: "Codex integration proposal" and

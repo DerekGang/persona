@@ -233,6 +233,9 @@ func (e *Engine) Compress(ctx context.Context, c *Chat) error {
 	if err != nil || !written {
 		return err
 	}
+	if strings.TrimSpace(d.Summary) != "" {
+		e.chatProjectEvidence(c, false, true)
+	}
 	e.index(KindChat, c.ID, c.Name, c.Tagging, c.OneLine, c.LastAt)
 	// A DM is mostly about the other person: their profile follows it.
 	if c.Kind == "dm" || c.Kind == "mail" {

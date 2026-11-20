@@ -1,6 +1,6 @@
 {
   "name": "kb_list",
-  "description": "List knowledge-base entities of one kind ranked by importance (P0 first), relevance to the user, recency: projects (short = a feature / launch, long = a team mission), chats, people, docs, meetings, events, recordings (the user's phone / watch recordings; newest first, saying which have meeting minutes, which are all-day recordings with a day recap and its state, and which transcripts have expired), topics (knowledge points curated by subject out of the timelines and chats: concepts, decisions with their reasons, practices, pitfalls, facts, open questions; the biggest first). Transcripts stay for recording_days (14 days by default), minutes and recaps for minutes_days (forever by default). Meetings, events and recordings show when they started, in the user's time zone. Optional tag filter.",
+  "description": "List entities by importance (P0 first), relevance and recency. Optional tag. Projects (short: feature/launch, long: team mission) flag conclusions with newer evidence. Also lists chats, people, docs, meetings and events. Phone/watch recordings come newest first with minutes, day recap state and transcript expiry. Transcripts last recording_days (default 14), minutes/recaps minutes_days (default forever). Meetings, events and recordings give the start in the user’s time zone. Topics rank by size, organizing timeline/chat knowledge into concepts, decisions and reasons, practices, pitfalls, facts and open questions.",
   "input_schema": {
     "type": "object",
     "required": [

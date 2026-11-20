@@ -23,39 +23,32 @@ func noteChatState(c *Chat, sc SourceChat, now time.Time) bool {
 
 // recordChatState records the state sc reports on the stored chat id when it changed: Ingest's path for a batch with
 // no new lines.
-func (e *Engine) recordChatState(id string, sc SourceChat) error {
+func (e *Engine) recordChatState(id string, sc SourceChat) (*Chat, error) {
 	if sc.State == "" {
-		return nil
+		return nil, nil
 	}
 	e.Store.chatMu.Lock()
 	if err := e.Store.recoverIngest(id); err != nil {
 		e.Store.chatMu.Unlock()
-		return err
+		return nil, err
 	}
 	c, ok := e.Store.Chat(id)
 	if !ok || !noteChatState(c, sc, time.Now()) {
 		e.Store.chatMu.Unlock()
-		return nil
+		return nil, nil
 	}
 	err := e.Store.PutChat(c)
 	e.Store.chatMu.Unlock()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	e.chatStateChanged(c)
-	return nil
+	return c, nil
 }
 
-// chatStateChanged marks the projects c belongs to for a rewrite, so their summary and one line follow the new state.
-// Their Updated stays: nothing was written into them yet.
-func (e *Engine) chatStateChanged(c *Chat) {
-	for _, slug := range c.Projects {
-		p, ok := e.Store.Project(slug)
-		if !ok || !p.Live() || p.Status == "ignored" || p.Dirty {
-			continue
-		}
-		p.Dirty = true
-		if err := e.Store.putEntity(KindProject, p.Slug, p, &p.Tagging, false); err != nil {
+// Record the linked source revision separately from the project modification time.
+func (e *Engine) chatProjectEvidence(c *Chat, arrived, compressed bool) {
+	for _, slug := range e.Store.projectsObservingChat(c) {
+		if err := e.Store.observeChatState(slug, c.ID, arrived, compressed); err != nil {
 			e.logf("project %s: %v", slug, err)
 		}
 	}
@@ -96,7 +89,7 @@ func (e *Engine) FinishProjects(now time.Time, busy func(slug string) bool) []st
 	}
 	var out []string
 	for _, p := range e.Store.Projects() {
-		if !p.Live() || p.Status != "active" && p.Status != "paused" || p.Kind == "long" || p.fieldLocked("status") {
+		if !p.Live() || p.policy() == referenceOnly || p.Status != "active" && p.Status != "paused" || p.Kind == "long" || p.fieldLocked("status") {
 			continue
 		}
 		if busy != nil && busy(p.Slug) {

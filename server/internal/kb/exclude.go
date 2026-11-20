@@ -53,7 +53,9 @@ func (t *Tagging) kept(list string, ids []string) []string {
 // linkEdit is how an update changes links: as the user, whose removals are kept out of automatic writes and whose links
 // made by hand lift that, or as an extension, which changes links as before exclusions.
 type linkEdit struct {
-	user bool
+	writer string
+	cited  []string
+	user   bool
 	// lockLists: a list the update only removes from is locked whole, on both entries (locked_fields).
 	lockLists bool
 	// allow: the ids each list may have again ("people", "chats", "projects"), nothing linked by it.
@@ -73,7 +75,7 @@ func userEdit(u UserUpdate) linkEdit {
 			allow[list] = ids
 		}
 	}
-	return linkEdit{user: true, lockLists: lock, allow: allow}
+	return linkEdit{user: true, writer: UserWriter, lockLists: lock, allow: allow}
 }
 
 // extensionEdit is how an extension's update changes links: a removal locks as lock says, and nothing is excluded.

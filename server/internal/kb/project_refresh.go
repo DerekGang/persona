@@ -2,7 +2,9 @@ package kb
 
 import (
 	"context"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,7 +126,7 @@ func (e *Engine) RefreshProjects(ctx context.Context, max int) int {
 	var dirty []*Project
 	live := map[string]bool{}
 	for _, p := range e.Store.Projects() {
-		if p.Dirty && p.Status != "ignored" && p.Live() {
+		if p.Dirty && p.policy() != referenceOnly && p.Status != "ignored" && p.Live() {
 			live[p.Slug] = true
 			if e.retries().projects.waits(p.Slug, "", now) {
 				continue
@@ -167,7 +169,7 @@ func (e *Engine) refreshProject(ctx context.Context, p *Project) error {
 // refreshProjectCall rewrites p's summary; called: the model was asked (not for a project gone meanwhile).
 func (e *Engine) refreshProjectCall(ctx context.Context, p *Project) (called bool, err error) {
 	current, ok := e.Store.Project(p.Slug)
-	if !ok {
+	if !ok || current.policy() == referenceOnly {
 		return false, nil
 	}
 	p = current
@@ -186,7 +188,13 @@ func (e *Engine) refreshProjectCall(ctx context.Context, p *Project) (called boo
 func (e *Engine) projectInput(p *Project) prompts.KBProjectInput {
 	in := prompts.KBProjectInput{Pinned: p.Pinned, Name: p.Name, Kind: p.Kind, Aliases: p.Aliases, Tags: e.TopTags(40),
 		Summary: e.Store.Summary(KindProject, p.Slug), Log: e.Store.Log(p.Slug, 40)}
-	for i, cid := range p.Chats {
+	chats := slices.Clone(p.Chats)
+	for _, ref := range p.SourceRefs {
+		if id, ok := strings.CutPrefix(ref, KindChat+"/"); ok {
+			chats = addUnique(chats, id)
+		}
+	}
+	for i, cid := range chats {
 		if i >= 8 {
 			break
 		}

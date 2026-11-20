@@ -93,9 +93,10 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			return i18n.T(s.lang(ctx), "assistant-kb_tools.list_empty"), nil
 		}
 		var b strings.Builder
+		lang := s.lang(ctx)
 		for _, x := range items {
-			fmt.Fprintf(&b, "- %s · %s [%s 相关%d] %s %s%s\n", x.ID, x.Name, orDash(x.Importance), x.Relevance,
-				strings.Join(x.Tags, ","), x.Extra, prefix(" — ", x.OneLine))
+			fmt.Fprintf(&b, "- %s · %s [%s 相关%d] %s %s%s%s\n", x.ID, x.Name, orDash(x.Importance), x.Relevance,
+				strings.Join(x.Tags, ","), x.Extra, prefix(" — ", x.OneLine), prefix(" · ", projectReviewLine(lang, x)))
 		}
 		return b.String(), nil
 	case "kb_get":
@@ -122,9 +123,23 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			meta = append(indented.Bytes(), '\n')
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "Path: %s\n\nmeta.json:\n%s%s\n", d.Path, meta, folded)
+		fmt.Fprintf(&b, "Path: %s\n\n", d.Path)
+		fmt.Fprintf(&b, "meta.json:\n%s%s\n", meta, folded)
 		if d.Summary != "" {
 			fmt.Fprintf(&b, "\nsummary.md:\n%s\n", d.Summary)
+		}
+		if k := d.ProjectKnowledge; k != nil {
+			var project struct {
+				OneLine string `json:"one_line"`
+			}
+			_ = json.Unmarshal(d.Meta, &project)
+			if k.NeedsReview || k.Position > 0 || k.Policy == "reference_only" || len(k.Sources) > 0 || d.Summary != "" || project.OneLine != "" {
+				data, err := json.Marshal(k)
+				if err != nil {
+					return "", err
+				}
+				fmt.Fprintf(&b, "\nproject_knowledge: %s\n", data)
+			}
 		}
 		if len(d.Log) > 0 {
 			fmt.Fprintf(&b, "\nlog.md (latest):\n%s\n", strings.Join(d.Log, "\n"))
@@ -209,6 +224,28 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		return out, nil
 	}
 	return "", fmt.Errorf("unknown tool %s", name)
+}
+
+// A project list row shows the gap for each field independently; both can refer to the same evidence.
+func projectReviewLine(lang i18n.Lang, entry kb.Entry) string {
+	k := entry.ProjectKnowledge
+	if k == nil {
+		return ""
+	}
+	var notes []string
+	if k.Policy == "reference_only" {
+		notes = append(notes, i18n.T(lang, "assistant-kb_tools.reference_only"))
+	}
+	for _, name := range []string{"summary", "one_line"} {
+		field := k.Fields[name]
+		if field.Status == "needs_review" {
+			notes = append(notes, i18n.T(lang, "assistant-kb_tools.project_field_review",
+				i18n.Args{"field": name, "uncovered": field.Uncovered, "position": k.Position}))
+		} else if field.Status == "unknown" && (field.Locked || name == "one_line" && entry.OneLine != "") {
+			notes = append(notes, i18n.T(lang, "assistant-kb_tools.project_field_unknown", i18n.Args{"field": name}))
+		}
+	}
+	return strings.Join(notes, " · ")
 }
 
 func orDash(s string) string {
