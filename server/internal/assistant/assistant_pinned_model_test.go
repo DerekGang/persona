@@ -56,3 +56,21 @@ func TestProtectedQuotaWaitContinuesOnConfiguredModel(t *testing.T) {
 		})
 	}
 }
+
+func TestProtectedQuotaRuntimeResumeIsLeftAlone(t *testing.T) {
+	s, f := workService(t)
+	setSettings(t, s, func(v *Settings) { v.MachineID, v.Main = "box", "s1" })
+	reset := time.Now().Add(time.Hour)
+	c := limitTurn("s1", reset, true)
+	c.Assistant = true
+	f.setSessions("box", c)
+	triage(t, s, "s1")
+	e := entryOf(t, s, "s1")
+	if e.Work.On != proto.WaitExternal || e.WakeAt != nil {
+		t.Fatalf("runtime-owned quota wait: %+v", e)
+	}
+	s.workTick(context.Background(), reset.Add(time.Hour))
+	if len(f.sentToAgents()) != 0 {
+		t.Fatal("interrupted the runtime's own quota continuation")
+	}
+}

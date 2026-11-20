@@ -541,7 +541,7 @@ func (s *Service) backfillWork(ctx context.Context, v *workView, now time.Time) 
 			if n >= 3 {
 				return
 			}
-			if c.HiddenByDirectory() || c.Assistant && !turnErrorTransient(c) || c.State != proto.StateUnread || c.Work != nil || now.Sub(c.UpdatedAt) > workBackfill ||
+			if c.HiddenByDirectory() || c.Assistant && !turnErrorTransient(c) && !s.protectedQuotaWait(ctx, d.ID, c) || c.State != proto.StateUnread || c.Work != nil || now.Sub(c.UpdatedAt) > workBackfill ||
 				now.Sub(c.UpdatedAt) < settle || !full && (c.TurnError == "" || !turnErrorTransient(c)) {
 				continue
 			}

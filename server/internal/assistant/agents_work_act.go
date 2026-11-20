@@ -466,9 +466,23 @@ func (s *Service) sendModelRetry(ctx context.Context, e db.SessionWork, text str
 // protectedContinuationModel re-resolves owner-facing conversations on a continuation after a quota/service failure.
 // Worker sends keep their existing execution. A pre-upgrade observed fallback is never a configured choice.
 func (s *Service) protectedContinuationModel(ctx context.Context, machine, sid string, params map[string]any) error {
-	cfg := s.settings(ctx)
-	if cfg.Main != "" && cfg.Main == sid && cfg.mainRouteMachine() == machine || s.isLeader(ctx, sid) || s.isBackground(ctx, sid) {
+	if s.protectedModelConversation(ctx, machine, sid) {
 		return s.sendModel(ctx, machine, sid, params, s.lang(ctx))
 	}
 	return nil
+}
+
+func (s *Service) protectedModelConversation(ctx context.Context, machine, sid string) bool {
+	cfg := s.settings(ctx)
+	return cfg.Main != "" && cfg.Main == sid && cfg.mainRouteMachine() == machine || s.isLeader(ctx, sid) || s.isBackground(ctx, sid)
+}
+
+// protectedQuotaWait admits only mechanical quota waits to assistant work tracking. Other assistant failures never
+// enter the worker's semantic triage or automatic actions. A runtime's own continuation must remain undisturbed.
+func (s *Service) protectedQuotaWait(ctx context.Context, machine string, c proto.Session) bool {
+	if !c.Assistant || c.TurnErrorKind != proto.TurnErrorUsageLimit || !s.protectedModelConversation(ctx, machine, c.SessionID) {
+		return false
+	}
+	_, reset := usageLimitReset(c)
+	return reset || c.TurnErrorResumes
 }
