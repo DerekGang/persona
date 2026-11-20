@@ -138,7 +138,7 @@ describe("the 常驻 rows' disclosure", () => {
   it("opens to the tasks with their state words, each task to its agents and theirs; the fold is kept", async () => {
     await renderSidebar();
     act(() => disclosure("lead-a").click());
-    await flush();
+    await act(() => vi.dynamicImportSettled());
     expect(disclosure("lead-a").getAttribute("aria-expanded")).toBe("true");
     expect(disclosure("lead-a").getAttribute("aria-label")).toBe(t("sidebar.direction_tasks_collapse", { name: "Product" }));
     expect(localStorage.getItem("fold:direction:lead-a")).toBe("0");
@@ -164,7 +164,7 @@ describe("the 常驻 rows' disclosure", () => {
     expect(disclosure("lead-a").getAttribute("aria-expanded")).toBe("false");
     expect(localStorage.getItem("fold:direction:lead-a")).toBeNull();
     act(() => disclosure("lead-a").click());
-    await flush();
+    await act(() => vi.dynamicImportSettled());
     const open = direction("lead-a")!;
     const task = open.querySelector<HTMLButtonElement>(`button[aria-label="${t("sidebar.task_agents", { name: "Pick the icon" })}"]`)!;
     expect(task.getAttribute("aria-expanded")).toBe("false");
