@@ -527,6 +527,7 @@ func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 		allStopped := false
 		stalled := map[string]bool{}
 		for _, g := range watchSignals(t, agents, now, group) {
+			s.projectReviewStall(ctx, g, agents)
 			allStopped = allStopped || g.Kind == sigAllStopped
 			stalled[g.Session] = stalled[g.Session] || g.Kind == sigStalled
 			if g.Kind == sigNeedsYou && routed[[2]string{g.Machine, g.Session}] {
@@ -537,6 +538,7 @@ func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 		if !allStopped && t.Supervision.state(t) == "" { // going on: neither parked nor with the owner nor waiting for review
 			for _, c := range currentTaskAgents(agents, supersededAgents(t, agents)) {
 				if g, ok := s.noProgressSignal(t, c, now); ok && !stalled[c.SessionID] {
+					s.projectReviewStall(ctx, g, []proto.Session{c})
 					s.signal(g)
 				}
 			}

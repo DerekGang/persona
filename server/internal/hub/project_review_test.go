@@ -1,0 +1,388 @@
+package hub
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/assistant"
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/devicewire"
+	"github.com/nwverse/persona/server/internal/proto"
+)
+
+func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
+	h, server, store := newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	ctx := context.Background()
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"box","session_id":"review"},
+		"app_inputs":true,"projects":["project-one"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := func() *testAssistant {
+		return dialAssistantWithStore(t, h, server.URL, false, manager, func(o *assistant.BusOptions) {
+			o.ConfigFile, o.Outbox = config, manager
+		})
+	}
+	a := start()
+	if !h.managerCan(assistantwire.AssistantID, assistantwire.CapabilityProjectReview) {
+		t.Fatal("project review capability missing")
+	}
+	const token = "isolated-project-review-device-token"
+	if err := store.CreateDeviceToken(ctx, db.DeviceToken{ID: "review-device", Name: "Test app", Role: roleFull}, hashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	pipeNode(t, h, "box", func(context.Context) error { return nil })
+	post := func(id, auth, path string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, server.URL+path,
+			strings.NewReader(`{"text":"private words","human":true,"submission":{"kind":"human_input"},"client_msg_id":"`+id+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+auth)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("app send %s: %s", id, res.Status)
+		}
+	}
+	post("owner-message", token, sendPath)
+	post("owner-message", token, sendPath)
+	post("forged-owner", h.cfg.Token, sendPath)
+	post("unbound", token, "/api/v1/sessions/box/other/messages")
+
+	pending, err := store.PendingProjectReviewOwners(ctx)
+	if err != nil || len(pending) != 2 {
+		t.Fatalf("trusted app inputs before routing: %+v %v", pending, err)
+	}
+	a.stop()
+	<-a.done
+	post("owner-while-manager-offline", token, sendPath)
+	if err := h.deliverProjectReviewOwners(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = store.PendingProjectReviewOwners(ctx)
+	if err != nil || len(pending) != 3 {
+		t.Fatalf("lost manager notices on disconnect: %+v %v", pending, err)
+	}
+	b := start()
+	if err := h.deliverProjectReviewOwners(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the hub replaying after a lost receipt. The manager already committed this ID.
+	if err := store.SettleProjectReviewOwner(ctx, db.ProjectReviewOwnerRelay{
+		MessageID: "owner-message", Manager: assistantwire.AssistantID, Machine: "box", Session: "s1", SendOutcome: sendDelivered,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deliverProjectReviewOwners(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = store.PendingProjectReviewOwners(ctx)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("unacknowledged manager notices: %+v %v", pending, err)
+	}
+
+	const target = `{"machine_id":"box","session_id":"review"}`
+	next, ok, err := manager.NextProjectReview(ctx, target)
+	if err != nil || !ok {
+		t.Fatalf("missing durable manager event: %+v %v", next, err)
+	}
+	var event map[string]any
+	if err := json.Unmarshal(next.Event, &event); err != nil || event["kind"] != "owner_input" ||
+		event["project"] != "" || event["reference"] != "owner-message" ||
+		strings.Contains(string(next.Event), "private words") {
+		t.Fatalf("wrong event: %s %v", next.Event, err)
+	}
+	if err := manager.SettleProjectReview(ctx, next.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	unbound, ok, err := manager.NextProjectReview(ctx, target)
+	if err != nil || !ok || !strings.Contains(string(unbound.Event), "unbound") ||
+		!strings.Contains(string(unbound.Event), `"project": ""`) {
+		t.Fatalf("unbound input inferred a project: %s %v %v", unbound.Event, ok, err)
+	}
+	if err := manager.SettleProjectReview(ctx, unbound.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	offline, ok, err := manager.NextProjectReview(ctx, target)
+	if err != nil || !ok || !strings.Contains(string(offline.Event), "owner-while-manager-offline") {
+		t.Fatalf("missing offline input %s: %v %v", offline.Event, ok, err)
+	}
+	if err := manager.SettleProjectReview(ctx, offline.ID, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := manager.NextProjectReview(ctx, target); err != nil || ok {
+		t.Fatalf("unauthorized or duplicate input made it to the queue: %v %v", ok, err)
+	}
+	b.stop()
+	<-b.done
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":false}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start()
+	post("while-disabled", token, sendPath)
+	pending, err = store.PendingProjectReviewOwners(ctx)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("disabled route kept admitting events: %+v %v", pending, err)
+	}
+	t.Log("authenticated app -> Hub Postgres -> reconnect -> manager Postgres: online and offline references, zero raw words; disable stopped intake")
+}
+
+func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
+	ctx := context.Background()
+	h, server, hubDB := newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	node := newAssistantNode(t, h)
+	node.m.info.Home = "/home/me"
+	node.m.online = true
+	if err := manager.PutSetting(ctx, "assistant", assistant.Settings{MachineID: "server"}); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"app_inputs":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"server","session_id":"review"},"projects":["alpha","beta"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a := dialAssistantWithStore(t, h, server.URL, false, manager, func(o *assistant.BusOptions) {
+		o.ConfigFile, o.Outbox = config, manager
+	})
+	var starts atomic.Int32
+	startReceiptNode(t, h, func(context.Context, json.RawMessage) (any, error) {
+		starts.Add(1)
+		return map[string]any{"session": proto.Session{SessionID: "app-started-agent", Agent: "codex"}}, nil
+	})
+	const token = "isolated-main-owner-device-token"
+	if err := hubDB.CreateDeviceToken(ctx, db.DeviceToken{ID: "project-review-main-device", Name: "Test app", Role: roleFull}, hashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	post := func(path, auth, op, body string) []byte {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, server.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+auth)
+		req.Header.Set("X-Persona-Op-Id", op)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		out, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("app request %s: %d %s %v", path, resp.StatusCode, out, err)
+		}
+		return out
+	}
+
+	const chatPath = "/api/v1/assistant/conversations"
+	const chatOp = "10000000-0100-4000-8000-000000000001"
+	var first struct{ Session proto.Session }
+	if err := json.Unmarshal(post(chatPath, token, chatOp, `{"prompt":"private original","main":true}`), &first); err != nil || first.Session.SessionID == "" {
+		t.Fatalf("did not start main: %+v %v", first, err)
+	}
+	if err := json.Unmarshal(post(chatPath, token, chatOp, `{"prompt":"private original","main":true}`), &first); err != nil {
+		t.Fatal(err)
+	}
+	main := first.Session.SessionID
+	editSessions(node.m, func([]proto.Session) []proto.Session { return []proto.Session{first.Session} })
+
+	const nextOp = "10000000-0100-4000-8000-000000000002"
+	mainPath := "/api/v1/sessions/server/" + main + "/messages"
+	for range 2 {
+		post(mainPath, token, nextOp, `{"text":"another private original"}`)
+	}
+	const newChatOp = "10000000-0100-4000-8000-000000000007"
+	var separate struct{ Session proto.Session }
+	for range 2 {
+		if err := json.Unmarshal(post(chatPath, token, newChatOp, `{"prompt":"new conversation private original"}`), &separate); err != nil ||
+			separate.Session.SessionID == "" || separate.Session.SessionID == main {
+			t.Fatalf("did not start a new assistant conversation: %+v %v", separate, err)
+		}
+	}
+	// A token with no paired device and body-supplied roles cannot originate owner input.
+	post(mainPath, h.cfg.Token, "10000000-0100-4000-8000-000000000003", `{"text":"forward","human":true}`)
+	post(chatPath, token, "10000000-0100-4000-8000-000000000004", `{"prompt":"app forwarded words","via":"share"}`)
+	if _, err := a.svc.Start(ctx, assistantwire.StartParams{Text: "scheduled internal start", Origin: "schedule"}); err != nil {
+		t.Fatal(err)
+	}
+	post("/api/v1/sessions/server/review/messages", token, "10000000-0100-4000-8000-000000000005", `{"text":"management output"}`)
+	for range 2 {
+		post("/api/v1/sessions", token, "10000000-0100-4000-8000-000000000006",
+			`{"machine_id":"machine","agent_type":"codex","launcher":"codex","cwd":"/code","tab_name":"Task","prompt":"start private work"}`)
+	}
+	if n := starts.Load(); n != 1 {
+		t.Fatalf("new Agent start repeated %d times", n)
+	}
+	if err := h.deliverProjectReviewOwners(ctx); err != nil {
+		t.Fatal(err)
+	}
+	const target = `{"machine_id":"server","session_id":"review"}`
+	want := map[string]bool{"first-assistant:" + main: true, "first-assistant:" + separate.Session.SessionID: true,
+		nextOp: true, "first-agent:app-started-agent": true}
+	for len(want) > 0 {
+		event, ok, err := manager.NextProjectReview(ctx, target)
+		var captured struct{ Reference, Project string }
+		if err != nil || !ok || json.Unmarshal(event.Event, &captured) != nil || !want[captured.Reference] ||
+			captured.Project != "" || strings.Contains(string(event.Event), "private") {
+			t.Fatalf("want one of %v: got %s (%v, %v)", want, event.Event, ok, err)
+		}
+		delete(want, captured.Reference)
+		if err := manager.SettleProjectReview(ctx, event.ID, "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if event, ok, err := manager.NextProjectReview(ctx, target); err != nil || ok {
+		t.Fatalf("automation, forward, retry, or management source loop: %s %v %v", event.Event, ok, err)
+	}
+	t.Log("authenticated new main and separate Assistant chats, main continuation and first Agent input once each; retries, app share, internal start and review session excluded")
+}
+
+func TestProjectReviewReceiptThroughBus(t *testing.T) {
+	ctx := context.Background()
+	h, server, hubDB := newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	node := newAssistantNode(t, h)
+	node.m.online = true
+	editSessions(node.m, func([]proto.Session) []proto.Session {
+		return []proto.Session{{SessionID: "review", Agent: "codex", Model: "gpt-6.2-sol", Status: proto.StatusIdle},
+			{SessionID: "work", Agent: "codex", Model: "gpt-6.2-sol", Status: proto.StatusIdle}}
+	})
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"app_inputs":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"server","session_id":"review"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := func() *testAssistant {
+		return dialAssistantWithStore(t, h, server.URL, true, manager, func(o *assistant.BusOptions) {
+			o.ConfigFile, o.Outbox = config, manager
+		})
+	}
+	a := start()
+	const token = "isolated-project-review-receipt-token"
+	if err := hubDB.CreateDeviceToken(ctx, db.DeviceToken{ID: "review-receipt-device", Role: roleFull}, hashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/sessions/server/work/messages",
+		strings.NewReader(`{"text":"private original","client_msg_id":"bus-input"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("App input: %s", res.Status)
+	}
+	if err := h.deliverProjectReviewOwners(ctx); err != nil {
+		t.Fatal(err)
+	}
+	const target = `{"machine_id":"server","session_id":"review"}`
+	var delivery db.ProjectReviewDelivery
+	until := func(message string, condition func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(8 * time.Second)
+		for !condition() {
+			if time.Now().After(deadline) {
+				t.Fatal(message)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	until("real bus send did not leave a persistent pending receipt", func() bool {
+		var ok bool
+		delivery, ok, err = manager.NextProjectReview(ctx, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok && delivery.HistoryAfter != nil && delivery.Attempts > 0 && node.sent() >= 2
+	})
+	a.stop()
+	<-a.done
+	node.mu.Lock()
+	node.items = []proto.Item{
+		{Seq: 1, Role: "user", Kind: proto.KindText, ClientMsgID: delivery.ID},
+		{Seq: 2, Role: "assistant", Kind: proto.KindText, Model: "gpt-6.2-sol", Text: "PROJECT_REVIEW_RECEIPT " + delivery.ID + " triage_only"},
+		{Seq: 3, Kind: "turn_duration"},
+		{Seq: 4, Role: "user", Kind: proto.KindText, ClientMsgID: "later-bus-input"},
+		{Seq: 5, Role: "assistant", Kind: proto.KindText, Model: "other-model", Text: "later response"},
+		{Seq: 6, Kind: "turn_duration"},
+	}
+	node.mu.Unlock()
+	start()
+	until("manager restart did not consume the original receipt", func() bool {
+		_, ok, err := manager.NextProjectReview(ctx, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return !ok
+	})
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	count := 0
+	for _, sent := range node.sends {
+		if sent["session_id"] == "review" && sent["client_msg_id"] == delivery.ID {
+			count++
+			if msg, _ := sent["text"].(string); strings.Contains(msg, "private original") || !strings.Contains(msg, delivery.ID+" triage_only") {
+				t.Fatalf("unexpected review payload: %s", msg)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("review was sent %d times, want 1", count)
+	}
+	t.Log("App → Hub → Manager → Hub's guarded native send → isolated node transcript; previous receipt consumed after Manager restart and a newer turn; one send, zero pending")
+}
+
+// A start records its first input before the machine lists the new session; the session the node returned still
+// keeps space and meeting conversations out, and an untrusted request never counts.
+func TestProjectReviewFirstInputBeforeListing(t *testing.T) {
+	h := newTestHub(t)
+	registerMachine(h, newMachine(h, MachineConfig{ID: "machine"}))
+	r := httptest.NewRequest(http.MethodPost, "https://example.com/api/v1/sessions", nil)
+	trusted := r.WithContext(context.WithValue(r.Context(), trustedSubmissionKey{}, devicewire.Submission{Kind: "human_input"}))
+	cases := []struct {
+		name    string
+		req     *http.Request
+		started proto.Session
+		want    bool
+	}{
+		{"plain Agent", trusted, proto.Session{SessionID: "plain", Cwd: "/code"}, true},
+		{"space", trusted, proto.Session{SessionID: "space", Cwd: "/code", Space: "health"}, false},
+		{"meeting", trusted, proto.Session{SessionID: "meeting", Cwd: "/code", Origin: "meeting"}, false},
+		{"untrusted", r, proto.Session{SessionID: "untrusted", Cwd: "/code"}, false},
+	}
+	for _, c := range cases {
+		started := c.started
+		p, ok := h.projectReviewAppSource(c.req, "machine", started.SessionID, "first-agent:"+started.SessionID, &started)
+		if ok != c.want || ok && (p.Unscoped || p.Machine != "machine" || p.Session != started.SessionID) {
+			t.Errorf("%s: got %+v %v, want eligible=%v", c.name, p, ok, c.want)
+		}
+	}
+	// Another session's returned row is never used for this one.
+	other := proto.Session{SessionID: "other", Space: "health"}
+	if _, ok := h.projectReviewAppSource(trusted, "machine", "plain", "first-agent:plain", &other); !ok {
+		t.Error("a mismatched started session changed eligibility")
+	}
+}

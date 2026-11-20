@@ -364,13 +364,14 @@ func (c *busConn) refuse(h *Hub, err error) (any, error) {
 // busManagerHello is what manager.hello says that the hub keeps for now; the rest (apps, the machine's summary) is
 // the follow-up's.
 type busManagerHello struct {
-	ID           string   `json:"id"`
-	Host         string   `json:"host"`
-	OS           string   `json:"os"`
-	Arch         string   `json:"arch"`
-	Deploy       string   `json:"deploy"`
-	Version      string   `json:"version"`
-	Capabilities []string `json:"capabilities"`
+	ID                     string   `json:"id"`
+	Host                   string   `json:"host"`
+	OS                     string   `json:"os"`
+	Arch                   string   `json:"arch"`
+	Deploy                 string   `json:"deploy"`
+	Version                string   `json:"version"`
+	Capabilities           []string `json:"capabilities"`
+	ProjectReviewAppInputs *bool    `json:"project_review_app_inputs,omitempty"`
 }
 
 // busHelloReply is manager.hello's answer: who the hub knows the service as, the managers, and the assistant's hello
@@ -402,6 +403,11 @@ func (h *Hub) managerHello(ctx context.Context, c *busConn, params json.RawMessa
 	if err := h.busAccept(ctx, c, busPresence{Host: clip(p.Host, 200), OS: clip(p.OS, 40), Arch: clip(p.Arch, 40),
 		Deploy: clip(p.Deploy, 40), Version: clip(p.Version, 80), Capabilities: capabilityList(p.Capabilities)}); err != nil {
 		return nil, err
+	}
+	if p.ProjectReviewAppInputs != nil {
+		if err := h.setProjectReviewAppInputs(ctx, c.ident.ID, *p.ProjectReviewAppInputs); err != nil {
+			return c.refuse(h, err)
+		}
 	}
 	if c.ident.Role == bus.RoleManager && !slices.Contains(p.Capabilities, assistantwire.CapabilityConfigOwn) {
 		h.bus.mu.Lock()

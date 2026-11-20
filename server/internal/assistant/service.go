@@ -64,6 +64,8 @@ type Options struct {
 type Service struct {
 	// agentDirs keeps each computer's hidden Agent folders (hidden_agent_dirs.go); nil: none.
 	agentDirs AgentDirs
+	// projectReview relays owner input and task events to the configured review session (project_review.go); nil: off.
+	projectReview *projectReview
 	// remoteImages fetches the pictures replies name by address for the apps (remote_image.go).
 	remoteImages *remoteimage.Fetcher
 	// inboxExt is what the extensions wrote for the Inbox, read at most once a minute (extension_context.go).
