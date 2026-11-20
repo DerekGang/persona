@@ -46,7 +46,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
         "properties": {
           "title": {
             "type": "string",
-            "description": "{{if eq .Lang "en"}}the task in a short line the user reads on the card (English, under 20 characters){{else if eq .Lang "ja"}}カードに表示する短いタスク名（日本語、20文字未満）{{else}}the task in a short line the user reads on the card (Chinese, under 20 characters){{end}}"
+            "description": "{{if eq .Lang "en"}}Card title in English, under 20 characters.{{else if eq .Lang "ja"}}カードのタイトルを日本語で20文字未満にします。{{else}}Card title in Chinese, under 20 characters.{{end}}"
           },
           "context": {"type": "string", "description": "facts the manager cannot resolve; omit project background"},
           "prompt": {
@@ -55,7 +55,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
           },
           "machine": {
             "type": "string",
-            "description": "machine id; fixed target by default"
+            "description": "Machine id; fixed by default."
           },
           "machine_policy": {
             "type": "string",
@@ -64,7 +64,7 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
           },
           "cwd": {
             "type": "string",
-            "description": "the project directory: absolute path or ~/…"
+            "description": "Absolute or ~/ project directory."
           },
           "workspace": {
             "type": ["string", "object"],
@@ -109,11 +109,11 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
           },
           "user_requested": {
             "type": "boolean",
-            "description": "true when the user asked for this very task in their latest message (told you to do it, to have an agent do it, to go ahead and start); false when it is your own idea or inferred from something they did not ask for"
+            "description": "True only for this task/start requested in the user's latest message; false for inferred work/your own idea."
           },
           "why": {
             "type": "string",
-            "description": "{{if eq .Lang "en"}}one line (English) on why this machine, directory and model{{else if eq .Lang "ja"}}このコンピュータ、ディレクトリ、モデルを選ぶ理由を日本語で一行に記述します{{else}}one line (Chinese) on why this machine, directory and model{{end}}"
+            "description": "{{if eq .Lang "en"}}One-line reason in English for the machine, directory and model.{{else if eq .Lang "ja"}}マシン、ディレクトリ、モデルを選んだ理由を日本語で一行に記述します。{{else}}Chinese one-line reason for machine, directory and model.{{end}}"
           },
           "done_when": {
             "type": "array",
@@ -121,11 +121,11 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
             "items": {
               "type": "string"
             },
-            "description": "{{if eq .Lang "en"}}what done means: results you will check before you accept it (English, one each), e.g. PR merged to master; light/dark screenshots attached to the PR; production hub deployed and verified; the agent is told them. Required for a writable task (at least one); with continues the effective criteria from the original to-do apply and this is ignored{{else if eq .Lang "ja"}}完了として受け入れる前に確認する結果を、日本語で一項目ずつ記述します。例：PR のマージ、PR への浅色・深色スクリーンショットの添付、本番 hub のデプロイと検証。Agent に伝えられます。書き込み可能なタスクは一つ以上必須です。continues 指定時は元のタスクの有効な完了条件が適用され、この値は無視されます{{else}}what done means: results you will check before you accept it (Chinese, one each), e.g. 「PR 合并到 master」「浅色 / 深色截图贴进 PR」「线上 hub 已部署并验证」; the agent is told them. Required for a writable task (at least one); with continues the effective criteria from the original to-do apply and this is ignored{{end}}"
+            "description": "{{if eq .Lang "en"}}Acceptance results told to Agent in English, one per entry. Nonempty for writable tasks; ignored with continues, which uses original todo's effective criteria.{{else if eq .Lang "ja"}}Agent に伝える受け入れ条件を日本語で一項目ずつ記述します。書き込み可能なタスクでは一つ以上必須です。continues 指定時は元の to-do の有効な完了条件が適用され、この値は無視されます。{{else}}Chinese acceptance results told to Agent, one per entry. Nonempty for writable tasks; ignored with continues, which uses original todo's effective criteria.{{end}}"
           },
           "goal": {
             "type": "string",
-            "description": "{{if eq .Lang "en"}}the work in one sentence, as the owner would say what they get from it (English); required for a read-only task, the title when left out of a writable one{{else if eq .Lang "ja"}}ユーザーが得る結果として作業の目標を日本語の一文で記述します。読み取り専用タスクでは必須です。書き込み可能なタスクで省略した場合はタイトルを使います{{else}}the work in one sentence, as the owner would say what they get from it (Chinese); required for a read-only task, the title when left out of a writable one{{end}}"
+            "description": "{{if eq .Lang "en"}}Owner's one-line outcome in English. Required read-only; writable defaults to title.{{else if eq .Lang "ja"}}オーナーが得る結果を日本語の一文で記述します。読み取り専用タスクでは必須です。書き込み可能なタスクで省略した場合はタイトルを使います。{{else}}Owner's one-line Chinese outcome. Required read-only; writable defaults to title.{{end}}"
           },
           "out_of_bounds": {
             "type": "array",
@@ -133,23 +133,23 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
             "items": {
               "type": "string"
             },
-            "description": "{{if eq .Lang "en"}}optional: what the agent must not do or touch (English, one each), e.g. do not merge; do not change production{{else if eq .Lang "ja"}}任意：Agent が行ってはいけない操作や触れてはいけない対象を日本語で一項目ずつ記述します。例：マージしない、本番環境を変更しない{{else}}optional: what the agent must not do or touch (Chinese, one each), e.g. 「不合并」「不动线上」{{end}}"
+            "description": "{{if eq .Lang "en"}}Optional forbidden actions/areas, in English, one per entry.{{else if eq .Lang "ja"}}任意：Agent が行ってはいけない操作や触れてはいけない対象を日本語で一項目ずつ記述します。{{else}}Optional forbidden actions/areas, in Chinese, one per entry.{{end}}"
           },
           "continues": {
             "type": "string",
-            "description": "optional: the original todo id this task continues. Continuations always reuse this same todo and its original brief and effective criteria; never split work to a new todo. At Start, stop/release still-active prior Agents and reopen this todo if closed. Refuse unauthorized takeovers, an unreachable prior Agent that cannot be stopped, and legacy open successor duplicates. Failed starts keep this todo. Needs continues_why; if no permission change is wanted, agent_send can follow up the same live Agent"
+            "description": "Original todo id; needs continues_why. Reuse todo, original brief and effective criteria even on failed Start; never split. Start stops/releases active prior Agents and reopens if closed. Refuse unauthorized takeover, unreachable Agents that cannot be stopped, or open legacy successors. No permission change: agent_send may follow up its live Agent."
           },
           "scope_revision": {
             "type": "string",
-            "description": "with continues after a scope change: the exact scope_revision returned by task_scope; refuse planning if it is stale"
+            "description": "With continues after a scope change: exact task_scope scope_revision; refuse stale plans."
           },
           "continues_why": {
             "type": "string",
-            "description": "with continues: one line on why the earlier task stopped or needs a replacement; kept on this continuation's plan"
+            "description": "With continues: one-line stop/replacement reason saved on this plan."
           },
           "started_why": {
             "type": "string",
-            "description": "when the owner did not just ask for this (your own idea, something a 督办 message or a routine led to): one line on why you start it; kept on the brief"
+            "description": "If not just owner-requested (own idea, 督办 or routine): one-line start reason saved in brief."
           },
           "attachments": {
             "type": "array",
@@ -162,26 +162,26 @@ Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-ch
           "expect_minutes": {
             "type": "integer",
             "minimum": 0,
-            "description": "about how long the task should take, in minutes; required (above 0) unless continues is given. A task with no progress for 1.5× that (at least 20 minutes) counts as stuck, and one with no end after 3× that (at least a day) is raised to you as overdue"
+            "description": "Estimated minutes; positive unless continues. Stuck after 1.5× without progress (minimum 20 minutes); overdue reported after 3× without end (minimum one day)."
           },
           "project": {
             "type": "string",
-            "description": "optional: its knowledge-base project, an existing one's slug or name (kb_list projects), set when the area of work is clear; never a near-duplicate"
+            "description": "Existing kb_list projects slug/name for a clear long-term area; no near-duplicates."
           },
           "part_of": {
             "type": "string",
-            "description": "optional: the request to-do this is a piece of"
+            "description": "Optional request todo this is a piece of."
           },
           "after": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "with part_of: the pieces it waits for"
+            "description": "With part_of: prerequisite pieces."
           },
           "todo_id": {
             "type": "string",
-            "description": "optional: an open or failed-start todo this conversation opened or supervises, with no live Agent (stopped ones are released at Start). To stop a live Agent or reopen a done one use continues; given both, they name the same todo"
+            "description": "Open or failed-start todo this chat opened/supervises; no live Agent. Release stopped Agents at Start. For stopping/reopening use continues/continues_why. Both IDs must match."
           },
           "inbox_item": {
             "type": "string",
