@@ -20,10 +20,12 @@ import (
 
 var launcherCache struct {
 	sync.Mutex
-	at       time.Time
-	list     []proto.Launcher
-	fetch    singleflight.Group // concurrent asks share the login shell's result, including failure
-	fetching bool               // a background refresh (cachedLaunchers) is running
+	at         time.Time
+	list       []proto.Launcher
+	generation uint64            // incremented whenever a discovery publishes a new list
+	fetch      singleflight.Group // concurrent ordinary asks share the login shell's result, including failure
+	shell      sync.Mutex        // one login shell at a time, including forced refreshes
+	fetching   bool              // a background refresh (cachedLaunchers) is running
 	// codex: how each Codex launcher runs (codex_start.go), its words as the shell would run them.
 	codex map[string][]string
 	// settings: the --settings a claude alias brings itself, as its words give it (launcher_settings.go).
@@ -90,36 +92,75 @@ func launcherOutput(out string) string {
 	return out
 }
 
+// launcherFetchObserverKey carries a test-only entered signal. It runs after the caller snapshots the cache generation
+// and before it queues for the shell lock, so a concurrency test does not need a fixed sleep to establish that order.
+type launcherFetchObserverKey struct{}
+
 // launchers lists the launchers of this machine's login shell: the `_claude_launchers` helper's (claude wrapper
 // functions), then every alias that runs claude (`alias dmcc="ANTHROPIC_BASE_URL=… claude …"`), by name. A name
-// the helper lists is not repeated; none at all: plain claude.
-func (n *Node) launchers(ctx context.Context) ([]proto.Launcher, error) {
-	result, err, _ := launcherCache.fetch.Do("shell", func() (any, error) {
-		launcherCache.Lock()
-		if time.Since(launcherCache.at) < time.Minute && launcherCache.list != nil {
-			list := launcherCache.list
-			launcherCache.Unlock()
-			return list, nil
-		}
-		launcherCache.Unlock()
-		// A caller can give up before the shell finishes. The scan still updates the cache for the next ask.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
-		defer cancel()
-		out, err := scanLaunchers(ctx)
+// the helper lists is not repeated; none at all: plain claude. Ordinary concurrent asks share one shell's result.
+// refresh true bypasses and replaces the one-minute cache; the manager uses it only while recovering a specific
+// Assistant launcher missing from the cached snapshot.
+func (n *Node) launchers(ctx context.Context, refresh ...bool) ([]proto.Launcher, error) {
+	forced := len(refresh) > 0 && refresh[0]
+	// Forced recovery must run its own discovery when the cache has not advanced. Sharing another forced refresh's
+	// failed result would hide that recovery, while ordinary asks retain singleflight's sharing of failures.
+	if !forced {
+		result, err, _ := launcherCache.fetch.Do("shell", func() (any, error) {
+			return n.discoverLaunchers(ctx, false)
+		})
 		if err != nil {
-			return lastLaunchers(err)
+			return nil, err
 		}
-		list, codex, settings, scripts := mergeLaunchers(string(out))
-		launcherCache.Lock()
-		launcherCache.at, launcherCache.list, launcherCache.codex, launcherCache.settings = time.Now(), list, codex, settings
-		launcherCache.scripts = scripts
+		return result.([]proto.Launcher), nil
+	}
+	return n.discoverLaunchers(ctx, true)
+}
+
+func (n *Node) discoverLaunchers(ctx context.Context, forced bool) ([]proto.Launcher, error) {
+	launcherCache.Lock()
+	observed := launcherCache.generation
+	launcherCache.Unlock()
+	if entered, _ := ctx.Value(launcherFetchObserverKey{}).(func()); entered != nil {
+		entered()
+	}
+	launcherCache.shell.Lock()
+	defer launcherCache.shell.Unlock()
+	launcherCache.Lock()
+	// A detached discovery may have finished while this call waited for the shell lock. Its newly published list is the
+	// freshest possible answer, even for a forced refresh; running another shell now could hide that recovery again.
+	if launcherCache.list != nil && ((!forced && time.Since(launcherCache.at) < time.Minute) ||
+		(forced && launcherCache.generation != observed)) {
+		list := launcherCache.list
 		launcherCache.Unlock()
 		return list, nil
-	})
-	if err != nil {
+	}
+	launcherCache.Unlock()
+	// Only the discovery that already started outlives its RPC caller. A canceled caller that merely queued for the
+	// shell lock must not start another detached shell after the active discovery fails without publishing a list.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return result.([]proto.Launcher), nil
+	// Not cut short when the caller gives up (the hub waits a few seconds per machine): a slow rc file still finishes
+	// and the next ask within the minute gets the list from the cache.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+	out, err := scanLaunchers(ctx)
+	if err != nil {
+		// Ordinary reads may keep the last good list, but a forced recovery refresh must report the failed read rather
+		// than presenting that stale list as fresh evidence.
+		if forced {
+			return nil, err
+		}
+		return lastLaunchers(err)
+	}
+	list, codex, settings, scripts := mergeLaunchers(string(out))
+	launcherCache.Lock()
+	launcherCache.at, launcherCache.list, launcherCache.codex, launcherCache.settings = time.Now(), list, codex, settings
+	launcherCache.scripts = scripts
+	launcherCache.generation++
+	launcherCache.Unlock()
+	return list, nil
 }
 
 func scanLaunchers(ctx context.Context) ([]byte, error) {
@@ -136,7 +177,6 @@ func scanLaunchers(ctx context.Context) ([]byte, error) {
 	// Retain useful partial output. The shell can print an rc banner or the start of the frame before the timeout.
 	if err != nil && strings.Trim(launcherOutput(string(out)), "\x02\x1d\r\n\t ") == "" {
 		return nil, fmt.Errorf("list launchers: %w", err)
-	}
 	}
 	return out, nil
 }
