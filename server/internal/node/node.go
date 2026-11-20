@@ -1288,17 +1288,28 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			}
 		}
 		ls, err := n.launchers(ctx, p.Refresh)
+		forced := len(p.Refresh) > 0 && p.Refresh[0]
 		bl := n.runtimes.launchers()
 		if len(bl) > 0 {
 			// Explicit shell launchers keep their names; a discovered CLI fallback yields to its connected runtime.
-			// Overlays never erase a shell-discovery error: a partial catalog is not proof that an alias disappeared.
+			// Ordinary pickers keep independently usable overlays when shell discovery fails. Forced recovery reads
+			// retain the error: a partial catalog is not fresh evidence that an alias disappeared.
 			ls = n.runtimes.withShell(bl, ls)
+			if !forced {
+				err = nil
+			}
 		}
 		if withDesktop, added := n.withDesktopLauncher(ls); added { // Claude's desktop app (claudedesktop_new.go)
 			ls = withDesktop
+			if !forced {
+				err = nil
+			}
 		}
 		if withApp, added := n.withCodexAppLauncher(ls); added { // the Codex App (codexapp_new.go)
 			ls = withApp
+			if !forced {
+				err = nil
+			}
 		}
 		shell, rcFile := launcherShell()
 		out := map[string]any{"launchers": typedLaunchers(ls), "shell": shell, "rc_file": rcFile}

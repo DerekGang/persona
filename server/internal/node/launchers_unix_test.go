@@ -4,6 +4,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -374,7 +375,7 @@ func TestLaunchersCanceledQueuedRefreshDoesNotStartAnotherShell(t *testing.T) {
 	}
 }
 
-func TestLaunchersListKeepsShellDiscoveryErrorWithRuntime(t *testing.T) {
+func TestLaunchersListShellDiscoveryErrorWithRuntimeOnlyWhenForced(t *testing.T) {
 	n, _ := runtimeNode(t)
 	dialRuntime(t, n, dshHello())
 	home := t.TempDir()
@@ -393,7 +394,20 @@ func TestLaunchersListKeepsShellDiscoveryErrorWithRuntime(t *testing.T) {
 		launcherCache.Unlock()
 	})
 	if _, err := nodeCall(t, n, "launchers.list", map[string]any{"refresh": true}); err == nil {
-		t.Fatal("a runtime overlay hid the shell discovery error")
+		t.Fatal("a runtime overlay hid the forced shell discovery error")
+	}
+	raw, err := nodeCall(t, n, "launchers.list", map[string]any{})
+	if err != nil {
+		t.Fatalf("an ordinary picker lost its independently usable runtime: %v", err)
+	}
+	var listed struct {
+		Launchers []proto.Launcher `json:"launchers"`
+	}
+	if err := json.Unmarshal(raw, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(listed.Launchers, func(l proto.Launcher) bool { return l.Name == "dsh" }) {
+		t.Fatalf("ordinary picker lost the runtime after shell discovery failed: %s", raw)
 	}
 }
 

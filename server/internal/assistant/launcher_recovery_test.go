@@ -94,6 +94,63 @@ func TestMainChatLauncherRefreshFailureDoesNotCountAsRecovery(t *testing.T) {
 	}
 }
 
+func TestMainChatLauncherIncompleteRefreshDoesNotCountAsRecovery(t *testing.T) {
+	s, f := kindFixture(t)
+	// An older node, or a response whose shell entries are all hidden, may contain only managed/built-in entries.
+	// Those entries can be explicit substitutes, but they do not prove that the requested shell alias is back.
+	f.launcherList = []proto.Launcher{{Name: "managed", Source: "persona"}}
+	r := s.mainChatFitState(context.Background(), "server", "wrap", true)
+	if r.fit != mainChatGone || !r.transient {
+		t.Fatalf("incomplete forced catalog released the original send: %+v", r)
+	}
+}
+
+func TestMainChatLauncherUsesCatalogFromWithinRecoveryBudget(t *testing.T) {
+	old := launcherRecoveryPoll
+	launcherRecoveryPoll = 2 * time.Second
+	t.Cleanup(func() { launcherRecoveryPoll = old })
+	s, f := kindFixture(t)
+	setLauncherRecovery(f, 2, map[string][]string{"wrap": {"claude"}})
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}}
+	params := map[string]any{"launcher": "wrap", "model": "claude-opus-5-5"}
+	type result struct {
+		note string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		note, err := s.finishMainChatModel(context.Background(), "server", "assistant", params, false)
+		done <- result{note: note, err: err}
+	}()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		fresh := false
+		for _, call := range launcherListCalls(f) {
+			fresh = fresh || call["refresh"] == true
+		}
+		if fresh {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("recovery did not make a fresh discovery at the start of its budget")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	// Any discovery after the recovery budget now fails. The fresh catalog obtained inside the budget must still be
+	// enough to select the explicit fallback; an additional post-deadline read would instead return this error.
+	f.mu.Lock()
+	f.failLauncherRefresh = true
+	f.mu.Unlock()
+	select {
+	case got := <-done:
+		if got.err != nil || params["launcher"] != "claude" || !strings.Contains(got.note, "claude") {
+			t.Fatalf("post-budget discovery displaced the in-budget catalog: params %v, note %q, err %v", params, got.note, got.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovery did not finish within its budget")
+	}
+}
+
 func TestMainChatLauncherUsesOnlyConfiguredOrderedFallbacks(t *testing.T) {
 	fastLauncherRecovery(t)
 	s, f := kindFixture(t)
@@ -236,6 +293,7 @@ func TestMainChatLauncherAllowsExplicitDefaultFallback(t *testing.T) {
 }
 
 func TestTaskBaselineUsesOnlyConfiguredRemoteFallback(t *testing.T) {
+	fastLauncherRecovery(t)
 	f := newFakeHub().withMachine()
 	f.sessions["remote"] = nil
 	f.zshrc = map[string][]proto.Launcher{
@@ -244,14 +302,69 @@ func TestTaskBaselineUsesOnlyConfiguredRemoteFallback(t *testing.T) {
 	}
 	s := newTestService(t, f)
 	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.main", Model: "selected-model"})
+	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{
+		"remote": {WaitSeconds: 1},
+	}
 	if got, err := s.taskModelBaseline(context.Background(), "remote"); err != nil || got.Provider != "launcher.main" {
 		t.Fatalf("unconfigured remote fallback: %+v, err %v", got, err)
 	}
 	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{
-		"remote": {Fallbacks: map[string][]string{"main": {"remote"}}},
+		"remote": {WaitSeconds: 1, Fallbacks: map[string][]string{"main": {"remote"}}},
 	}
 	if got, err := s.taskModelBaseline(context.Background(), "remote"); err != nil || got.Provider != "launcher.remote" {
 		t.Fatalf("configured remote fallback: %+v, err %v", got, err)
+	}
+	refreshes := 0
+	for _, call := range launcherListCalls(f) {
+		if call["refresh"] == true {
+			refreshes++
+		}
+	}
+	if refreshes == 0 {
+		t.Fatal("a remote fallback was selected without fresh discovery")
+	}
+}
+
+func TestTaskBaselineWaitsForRemoteLauncherRecovery(t *testing.T) {
+	fastLauncherRecovery(t)
+	f := newFakeHub().withMachine()
+	f.sessions["remote"] = nil
+	f.zshrc = map[string][]proto.Launcher{
+		"server": {{Name: "main", Source: "zshrc"}},
+		"remote": {{Name: "remote", Source: "zshrc"}},
+	}
+	s := newTestService(t, f)
+	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.main", Model: "selected-model"})
+	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{
+		"remote": {WaitSeconds: 1, Fallbacks: map[string][]string{"main": {"remote"}}},
+	}
+	type result struct {
+		binding ModelBinding
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		binding, err := s.taskModelBaseline(context.Background(), "remote")
+		done <- result{binding: binding, err: err}
+	}()
+	waitFor(t, "a fresh remote launcher read", func() bool {
+		for _, call := range launcherListCalls(f) {
+			if call["refresh"] == true {
+				return true
+			}
+		}
+		return false
+	})
+	f.mu.Lock()
+	f.zshrc["remote"] = []proto.Launcher{{Name: "main", Source: "zshrc"}, {Name: "remote", Source: "zshrc"}}
+	f.mu.Unlock()
+	select {
+	case got := <-done:
+		if got.err != nil || got.binding.Provider != "launcher.main" {
+			t.Fatalf("remote recovery was replaced by its configured fallback: %+v, err %v", got.binding, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote launcher recovery did not finish")
 	}
 }
 

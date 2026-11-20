@@ -33,35 +33,44 @@ const (
 	mainChatGone
 )
 
-func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainChatFit, error) {
-	fit, refusal, _ := s.mainChatFitState(ctx, machine, name, false)
-	return fit, refusal
+type mainChatFitResult struct {
+	fit          mainChatFit
+	refusal      error
+	transient    bool
+	launchers    []ConfiguredLauncher
+	discoveryErr error
 }
 
-// mainChatFitState also reports whether gone is a discovery miss that may recover. A stored provider outside the
-// machine's scope is not a transient miss and must not hold a message for the rediscovery window.
-func (s *Service) mainChatFitState(ctx context.Context, machine, name string, refresh bool) (mainChatFit, error, bool) {
+func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainChatFit, error) {
+	r := s.mainChatFitState(ctx, machine, name, false)
+	return r.fit, r.refusal
+}
+
+// mainChatFitState also reports whether gone is a discovery miss that may recover, the Assistant-compatible catalog
+// from this read, and a discovery error. Recovery reuses that catalog at its deadline instead of starting an unbudgeted
+// final read. A stored provider outside the machine's scope is not a transient miss and must not hold a message.
+func (s *Service) mainChatFitState(ctx context.Context, machine, name string, refresh bool) mainChatFitResult {
 	if proto.IsExternalLauncher(name) {
 		_, err := s.externalTarget(ctx, machine, name)
 		if err != nil {
-			return mainChatRefused, err, false
+			return mainChatFitResult{fit: mainChatRefused, refusal: err}
 		}
-		return mainChatFits, nil, false
+		return mainChatFitResult{fit: mainChatFits}
 	}
 	if name == "" || name == "claude" {
-		return mainChatFits, nil, false
+		return mainChatFitResult{fit: mainChatFits}
 	}
 	ctx = withUnhidden(withSettingsMemo(ctx), name)
 	if m, managed := s.managedNamed(ctx, name); managed { // the same on every machine in its scope, except managed agy (needs the agy runtime there)
 		if !s.usableOn(ctx, m, machine) {
-			return mainChatGone, nil, false
+			return mainChatFitResult{fit: mainChatGone}
 		}
 		if m.Kind == "api" || m.Agent != "agy" {
 			allowed, err := s.assistantProviders(ctx, machine, nil)
 			if err != nil || allowed[name] {
-				return mainChatFits, nil, false
+				return mainChatFitResult{fit: mainChatFits}
 			}
-			return mainChatRefused, s.mainChatRefusal(ctx, machine, name, ""), false
+			return mainChatFitResult{fit: mainChatRefused, refusal: s.mainChatRefusal(ctx, machine, name, "")}
 		}
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -72,27 +81,38 @@ func (s *Service) mainChatFitState(ctx context.Context, machine, name string, re
 	picker, err := s.pickerLaunchers(cctx, machine)
 	if err != nil {
 		if refresh {
-			return mainChatGone, nil, true // a failed retry is not evidence that the missing launcher recovered
+			return mainChatFitResult{fit: mainChatGone, transient: true, discoveryErr: err} // a failed retry is not recovery
 		}
-		return mainChatFits, nil, false // an ordinary unreadable list is not proof that a shell launcher is gone
+		return mainChatFitResult{fit: mainChatFits, discoveryErr: err} // an ordinary unreadable list is not proof of a miss
 	}
+	fits, fitErr := s.assistantLaunchersOf(cctx, machine, picker)
 	if !slices.ContainsFunc(picker, func(l ConfiguredLauncher) bool {
 		source := compat.Source(l.Source)
 		return l.Source != "" && source != "persona" && source != "builtin"
 	}) {
-		return mainChatFits, nil, false // the machine's own list did not come: a shell launcher may still be there
+		if refresh {
+			// Managed/built-in entries can be valid substitutes, but their presence alone is not evidence that the
+			// requested shell launcher recovered. Older nodes and hidden shell catalogs must not release the send early.
+			return mainChatFitResult{fit: mainChatGone, transient: true, launchers: fits, discoveryErr: fitErr}
+		}
+		return mainChatFitResult{fit: mainChatFits} // the machine's own ordinary list did not come
 	}
-	fits, err := s.assistantLaunchersOf(cctx, machine, picker)
 	named := func(l ConfiguredLauncher) bool { return l.Name == name }
+	if fitErr != nil {
+		if refresh {
+			return mainChatFitResult{fit: mainChatGone, transient: true, discoveryErr: fitErr}
+		}
+		return mainChatFitResult{fit: mainChatFits}
+	}
 	switch {
-	case err != nil || slices.ContainsFunc(fits, named):
-		return mainChatFits, nil, false
+	case slices.ContainsFunc(fits, named):
+		return mainChatFitResult{fit: mainChatFits, launchers: fits}
 	case slices.ContainsFunc(picker, named):
 		label := launcherLabel(picker[slices.IndexFunc(picker, named)])
 		instead, _ := assistantFor(fits, name)
-		return mainChatRefused, s.mainChatRefusal(ctx, machine, label, launcherLabel(instead)), false
+		return mainChatFitResult{fit: mainChatRefused, refusal: s.mainChatRefusal(ctx, machine, label, launcherLabel(instead)), launchers: fits}
 	}
-	return mainChatGone, nil, true
+	return mainChatFitResult{fit: mainChatGone, transient: true, launchers: fits}
 }
 
 const (
@@ -114,31 +134,37 @@ func (s *Service) launcherRecovery(ctx context.Context, machine, name string) (t
 	return wait, cfg.Fallbacks[name]
 }
 
-// waitMainChatLauncher retries fresh discovery inside one total budget. Request cancellation wins; exhaustion returns
-// the original miss so finishMainChatModel can use an explicitly configured substitute or refuse the send.
-func (s *Service) waitMainChatLauncher(ctx context.Context, machine, name string, wait time.Duration) (mainChatFit, error) {
+// waitMainChatLauncher retries fresh discovery inside one total budget, starting immediately. Request cancellation
+// wins. The last successful fresh result, including its catalog, is retained at exhaustion so fallback selection needs
+// no read after the deadline and a launcher found by the last successful read is used rather than replaced. If no
+// catalog arrived, the latest discovery error is returned.
+func (s *Service) waitMainChatLauncher(ctx context.Context, machine, name string, wait time.Duration) mainChatFitResult {
 	wctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	ticker := time.NewTicker(launcherRecoveryPoll)
 	defer ticker.Stop()
+	last := mainChatFitResult{fit: mainChatGone, transient: true}
+	haveCatalog := false
 	for {
+		if wctx.Err() != nil {
+			return last
+		}
+		r := s.mainChatFitState(wctx, machine, name, true)
+		if ctx.Err() != nil {
+			return mainChatFitResult{fit: mainChatGone, transient: true, discoveryErr: ctx.Err()}
+		}
+		if r.fit != mainChatGone {
+			return r
+		}
+		if r.discoveryErr == nil {
+			last, haveCatalog = r, true
+		} else if !haveCatalog {
+			last = r // report the discovery failure only when no fresh catalog ever arrived
+		}
 		select {
 		case <-wctx.Done():
-			if ctx.Err() != nil {
-				return mainChatGone, ctx.Err()
-			}
-			return mainChatGone, nil
+			return last
 		case <-ticker.C:
-			fit, refusal, _ := s.mainChatFitState(wctx, machine, name, true)
-			if ctx.Err() != nil {
-				return mainChatGone, ctx.Err()
-			}
-			if wctx.Err() != nil {
-				return mainChatGone, nil
-			}
-			if fit != mainChatGone {
-				return fit, refusal
-			}
 		}
 	}
 }
@@ -159,31 +185,40 @@ func (s *Service) finishMainChatModel(ctx context.Context, machine, purpose stri
 		_, err := s.externalTarget(ctx, machine, name)
 		return "", err // never swap an explicit external selection
 	}
-	fit, refusal, transient := s.mainChatFitState(ctx, machine, name, false)
+	r := s.mainChatFitState(ctx, machine, name, false)
 	wait, fallbacks := s.launcherRecovery(ctx, machine, name)
-	if fit == mainChatGone && transient && wait > 0 {
+	recovered := r.fit == mainChatGone && r.transient && wait > 0
+	if recovered {
 		s.logf("[%s] resolved assistant launcher %s is missing; refreshing discovery for up to %s", machine, name, wait)
-		fit, refusal = s.waitMainChatLauncher(ctx, machine, name, wait)
+		r = s.waitMainChatLauncher(ctx, machine, name, wait)
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
 	}
-	if fit == mainChatFits {
+	if r.fit == mainChatFits {
 		return "", nil
 	}
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	launchers, err := s.assistantLaunchers(withLauncherRefresh(cctx), machine)
-	if err != nil {
-		return "", err
+	if r.discoveryErr != nil {
+		return "", r.discoveryErr
+	}
+	launchers := r.launchers
+	if !recovered && launchers == nil {
+		// A non-transient managed-provider miss has no picker snapshot to reuse. This is not a post-deadline retry.
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		var err error
+		launchers, err = s.assistantLaunchers(withLauncherRefresh(cctx), machine)
+		if err != nil {
+			return "", err
+		}
 	}
 	kind := s.mainChatLauncherKind(ctx, machine, name)
 	d, _ := s.device(ctx, machine)
 	where := firstNonEmpty(d.Name, machine)
 	to := s.mainChatInstead(ctx, d, name, kind, launchers, fallbacks)
 	if to == "" {
-		if refusal != nil {
-			return "", refusal
+		if r.refusal != nil {
+			return "", r.refusal
 		}
 		return "", i18n.Err("assistant-start.launcher_no_substitute", i18n.Args{"launcher": name, "machine": where})
 	}
