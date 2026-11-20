@@ -1,7 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { stateOf } from "../lib/format";
 import { usePanes } from "../lib/terminal-panes";
-import { buildTerminalTree, liveHerdrPanes, shellsOnly, type PanesResponse, type ShellSpace, type TermSpace } from "../lib/terminals";
+import { liveHerdrPanes, shellsOnly, type ShellSpace } from "../lib/sidebar-shells";
+import { buildTerminalTree, type PanesResponse, type TermSpace } from "../lib/terminals";
 import type { Machine, Session } from "../lib/types";
 import { useSidebarNodeMenu } from "./NodeMenu";
 import { GroupCount, type GoFn, type NodeMenuFn, type RegFn } from "./SidebarParts";
