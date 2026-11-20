@@ -20,8 +20,8 @@ type Props = {
   id: string;
   /** Its name as the row shows it, for the disclosure's label. */
   name: string;
-  /** The row #4610 draws for it. */
-  row: React.ReactNode;
+  /** Its conversation link, with the hub's Agent counts when available. */
+  row: (agents?: Direction["agent_counts"]) => React.ReactNode;
   reg: RegFn;
   hover: (k: string | null) => void;
   go: GoFn;
@@ -32,7 +32,7 @@ type Props = {
 export function SidebarDirectionRow({ id, row, ...p }: Props) {
   const tree = useDirectionTree();
   const node = useMemo(() => tree?.directions.find((d) => d.id === id && !d.secretary), [tree, id]);
-  if (!node) return <>{row}</>;
+  if (!node) return <>{row()}</>;
   return <DirectionTasks key={id} id={id} row={row} node={node} {...p} />;
 }
 
@@ -65,7 +65,7 @@ const DirectionTasks = memo(function DirectionTasks({ id, name, row, node, reg, 
           // nothing to open: the name stays in the column of the others
           <span aria-hidden className={cx(chevron, "invisible")} />
         )}
-        <div className="min-w-0 flex-1">{row}</div>
+        <div className="min-w-0 flex-1">{row(node.agent_counts)}</div>
       </div>
       {tasks > 0 && (
         <Collapse open={!folded} sidebarFold>
