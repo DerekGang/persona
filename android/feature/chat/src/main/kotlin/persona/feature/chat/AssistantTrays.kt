@@ -32,6 +32,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.time.ZoneId
@@ -45,6 +46,8 @@ import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.answer.*
 import persona.core.domain.tasks.BackgroundWork
 import persona.core.domain.tasks.FinishedEntry
+import persona.core.domain.tasks.HoldUnblock
+import persona.core.domain.tasks.hold
 import persona.core.domain.tasks.TriageStatus
 import persona.core.domain.tasks.NeedsYouEntry
 import persona.core.domain.tasks.NeedsYouGroup
@@ -366,17 +369,19 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                                 items(deciding.filter(group::has), key = { it.key }) { entry ->
                                     val todo = entry.todo
                                     val row = progressByTodo[todo.id]
+                                    val deliveryApproval = todo.hold?.unblock == HoldUnblock.User
+                                    val gate = todo.hold?.takeIf { deliveryApproval }?.gate
                                     when {
                                         todo.ask?.outcome == "decide" -> TaskDecisionCard(todo, host, enabled) { openTask(host, todo) }
                                         entry.status == TriageStatus.Failed || entry.status == TriageStatus.Interrupted ->
                                             TrayOutcomeRow(entry, host, enabled, taskBusy)
-                                        !todo.awaitsDecision(clock) && row != null -> Column {
+                                        !todo.awaitsDecision(clock) && !deliveryApproval && row != null -> Column {
                                             Text(stringResource(R.string.chat_tray_unattended),
                                                 Modifier.padding(horizontal = Tokens.Space.l, vertical = Tokens.Space.xs),
                                                 style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3)
                                             TrayProgressRow(row, onClick = { openTask(host, todo) })
                                         }
-                                        else -> TrayDecisionRow(todo.title, todo.ask?.verdict ?: row?.text.orEmpty(), R.string.chat_tray_review,
+                                        else -> TrayDecisionRow(todo.title, todo.ask?.verdict ?: gate ?: row?.text.orEmpty(), R.string.chat_tray_review,
                                             "assistant-review-${row?.id ?: "todo:${todo.id}"}", enabled, onOpen = { openTask(host, todo) }) { openTask(host, todo) }
                                     }
                                 }
@@ -480,8 +485,8 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                             if (schedules.isNotEmpty() || backgroundRecords) item { JSectionHeader(stringResource(R.string.chat_tray_quiet)) }
                             items(schedules, key = { "schedule:${it.id}" }) { schedule ->
                                 JRow(schedule.title, subtitle = schedule.lastError?.takeIf(String::isNotBlank)
-                                    ?: schedule.nextRun?.let { stringResource(R.string.chat_tray_next_run, it) }
-                                    ?: schedule.lastStatus, subtitleLines = 1, onClick = { onSchedule(schedule) },
+                                    ?: schedule.nextRun?.let { stringResource(R.string.chat_tray_next_run, formatTrayScheduleTime(it, currentLocale)) }
+                                    ?: schedule.lastStatus, subtitleLines = 2, onClick = { onSchedule(schedule) },
                                     leading = { AssistantTrayMark(null) }, trailing = {
                                         Text(when (schedule.repeats) {
                                             ScheduledTask.INTERVAL -> stringResource(R.string.chat_tray_interval, schedule.everyMinutes)
@@ -679,6 +684,13 @@ private fun TrayShelvedLine(count: Int, onClick: () -> Unit) {
 
 internal fun trayPullRequestNumber(reference: String): String? =
     Regex("/(?:pull|merge_requests)/(\\d+)(?:$|[/?#])").find(reference)?.groupValues?.get(1)
+
+/** Formats a wire schedule timestamp for the tray and its detail sheet: clock alone today, month/day + clock on another day. */
+internal fun formatTrayScheduleTime(raw: String, locale: Locale, zone: ZoneId = ZoneId.systemDefault(), now: Instant = Instant.now()): String {
+    val at = parseTime(raw) ?: return raw
+    val today = at.atZone(zone).toLocalDate() == now.atZone(zone).toLocalDate()
+    return LocalizedFormats.format(at, if (today) LocalizedFormats.TIME else LocalizedFormats.MONTH_DAY_TIME, locale, zone)
+}
 
 @Composable
 private fun TrayProgressRow(row: TrayProgress, activity: BackgroundWork? = null, waiting: Boolean = false,

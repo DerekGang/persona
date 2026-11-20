@@ -38,7 +38,7 @@ import {
 } from "../../lib/feed";
 import { backgroundWorkLine, type BackgroundWork } from "../../lib/background-work";
 import { workflowCounts } from "../../lib/workflows";
-import { dockAgents, type DockAgent, isRemovable, mostUrgentAgent, openAsk, taskNow, todoStatus, type SessionLookup, type Todo, type TodoStatus } from "../../lib/todos";
+import { dockAgents, type DockAgent, heldDelivery, isRemovable, mostUrgentAgent, openAsk, taskNow, todoStatus, type SessionLookup, type Todo, type TodoStatus } from "../../lib/todos";
 import { usageLimitLabel } from "../../lib/usage-limit";
 import { openAgent, openTask } from "../../lib/handoff";
 import { navigate } from "../../lib/router";
@@ -61,6 +61,7 @@ const HeldPushesEntry = lazyPage(() => import("./HeldPushes").then((m) => m.Held
 // Agent did not start (#10365), which comes with the first such row.
 const NeedsYouPart = lazy(() => import("./TaskDecision"));
 const WaitingTaskPart = lazyPage(() => import("./TaskDecision").then((m) => m.WaitingTaskRow));
+const DeliveryApprovalRow = lazy(() => import("./WaitingTaskRow"));
 // Progress and Just finished rows are only drawn after opening In progress.
 const ProgressTaskPart = lazyPage(() => import("./TaskDecision").then((m) => m.ProgressTaskRow));
 /** The suggested rule's line of a card, drawn right after it; nothing for a card without the field, unless Always
@@ -68,7 +69,7 @@ const ProgressTaskPart = lazyPage(() => import("./TaskDecision").then((m) => m.P
 const ruleLine = (of: RuleCard) => (of.suggestion || underCard.made?.has(of.id!)) && <Suspense fallback={null}><NeedsYouPart rule={of} /></Suspense>;
 underCard.line = ruleLine;
 import { SentLine } from "./Sent";
-import { feedWake, HandoffCard, HandoffCards, taskHandoffs } from "./Handoff";
+import { feedWake, HandoffCard, HandoffCards, TASK_LINE_SLACK_MS, taskHandoffs } from "./Handoff";
 import { namedLauncher, providerIdNote, providerTitle, useProviderNames } from "../../lib/provider-names";
 import { useChosenManager, useLinkManager } from "../../lib/manager-choice";
 import { AnsweredSummary, InteractionCard, underCard } from "../chat/Interactions";
@@ -126,7 +127,7 @@ function taskNowIn(s: State, todo: Todo, plans: Record<string, TaskPlan>): TaskN
 type TaskNow = { status: TodoStatus; lead?: Session; wait?: WaitReason };
 
 /** A task's status and lead agent (undefined without the task). */
-function useTaskNow(todo: Todo | undefined): TaskNow | undefined {
+export function useTaskNow(todo: Todo | undefined): TaskNow | undefined {
   const plans = useFeed((s) => s.plans);
   return useStore((s) => (todo ? taskNowIn(s, todo, plans) : undefined));
 }
@@ -458,7 +459,7 @@ export const FeedLineView = memo(function FeedLineView({ item, simplified = fals
     if (item.kind === "plan") {
       const shown = plan ?? itemPlan(item);
       if (!shown) return null;
-      return shown.state === "started" ? <PlanHandoffs plan={shown} /> : <PlanCard plan={shown} />;
+      return shown.state === "started" ? <PlanHandoffs plan={shown} since={item.at} /> : <PlanCard plan={shown} />;
     }
     if (item.kind === "task") return planned ? null : <TaskHandoffs item={item} />;
     if (item.kind === "message" && !cardSent(item) && !cardFiled(item)) return null;
@@ -762,13 +763,34 @@ const EMPTY_FEED: FeedItem[] = [];
 const EMPTY_CARDS: TaskCardMetadata[] = [];
 
 /** A started plan's tasks in the conversation (#3700, #5096): a hand-off card for each Agent they started (one per task
- *  while its Agent is starting, or says why it did not start), in plan order; live to-do titles over the plan's. */
-function PlanHandoffs({ plan }: { plan: TaskPlan }) {
+ *  while its Agent is starting, or says why it did not start), in plan order; live to-do titles over the plan's. `since`:
+ *  the plan line's time, so each card keeps the Agents this plan started (#11854). */
+function PlanHandoffs({ plan, since }: { plan: TaskPlan; since?: string }) {
   const plans = useFeed((s) => s.plans);
   const handoffs = useStoreRows((s) =>
-    plan.tasks.flatMap((task, i) => taskHandoffs(task.todo_id ? s.todos.find((x) => x.id === task.todo_id) : undefined, { key: `${plan.id}/${i}`, title: task.title, error: task.error, todoId: task.todo_id }, "created", plans, s.todosLoaded)),
+    plan.tasks.flatMap((task, i) => {
+      const id = planTaskTodo(plan, i, s.todos);
+      // a later plan that continued the to-do holds it now; this plan's todo_id was cleared then (tasks_start.go)
+      const superseded = Boolean(id && !task.todo_id && Object.values(plans).some((p) => p.id !== plan.id && p.tasks.some((x) => x.todo_id === id)));
+      return taskHandoffs(id ? s.todos.find((x) => x.id === id) : undefined, { key: `${plan.id}/${i}`, title: task.title, error: task.error, todoId: id, superseded }, "created", plans, s.todosLoaded, since);
+    }),
   );
   return <HandoffCards handoffs={handoffs} />;
+}
+
+/** The to-do plan task i ran on: its todo_id, or, once a later plan continued that to-do and cleared it (#11854), the
+ *  one it continued or reused, else the one only this task can have made (the to-do keeps the plan it came from). A
+ *  task that failed to start keeps none: its card says why. */
+function planTaskTodo(plan: TaskPlan, i: number, todos: Todo[]): string | undefined {
+  const task = plan.tasks[i];
+  if (!task) return undefined;
+  if (task.todo_id) return task.todo_id;
+  if (task.error || plan.state !== "started") return undefined;
+  if (task.continues || task.reuse_todo) return task.continues || task.reuse_todo;
+  const bare = plan.tasks.filter((x) => !x.todo_id && !x.error && !x.continues && !x.reuse_todo);
+  const held = new Set(plan.tasks.map((x) => x.todo_id || x.continues || x.reuse_todo).filter(Boolean));
+  const made = todos.filter((x) => x.plan_id === plan.id && !held.has(x.id));
+  return bare.length === 1 && made.length === 1 ? made[0]!.id : undefined;
 }
 
 /** A task the conversation dispatched on its own (agent_start), or one made of an Agent already running
@@ -776,7 +798,7 @@ function PlanHandoffs({ plan }: { plan: TaskPlan }) {
 function TaskHandoffs({ item }: { item: FeedItem }) {
   const plans = useFeed((s) => s.plans);
   const wake = feedWake(field(item, "wake"));
-  const handoffs = useStoreRows((s) => (item.ref ? taskHandoffs(s.todos.find((x) => x.id === item.ref), { key: item.id, title: "", todoId: item.ref }, wake, plans, s.todosLoaded) : []));
+  const handoffs = useStoreRows((s) => (item.ref ? taskHandoffs(s.todos.find((x) => x.id === item.ref), { key: item.id, title: "", todoId: item.ref }, wake, plans, s.todosLoaded, item.at, TASK_LINE_SLACK_MS) : []));
   return <HandoffCards handoffs={handoffs} />;
 }
 
@@ -944,6 +966,12 @@ export function NeedsYouBody({ item, nested = false }: { item: NeedsYouItem; nes
     return (
       <Suspense fallback={<div data-needs-row={item.key} {...taskOpenAttr} className="truncate rounded-control bg-danger-wash px-3 py-2 text-sm">{todo.title}</div>}>
         <NeedsYouPart rowKey={item.key} failed={todo} countsOpenAttr={taskOpenAttr} />
+      </Suspense>
+    );
+  if (heldDelivery(todo)?.unblock === "user")
+    return (
+      <Suspense fallback={<div data-needs-row={rowKey} {...taskOpenAttr} className="truncate rounded-control bg-field px-3 py-2 text-sm">{todo.title}</div>}>
+        <DeliveryApprovalRow rowKey={rowKey} todo={todo} status={status} countsOpenAttr={taskOpenAttr} />
       </Suspense>
     );
   return <Suspense fallback={<div data-needs-row={rowKey} {...taskOpenAttr} className="px-3 py-2 text-sm text-ink-2">{todo.title}</div>}>

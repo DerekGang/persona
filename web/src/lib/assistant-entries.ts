@@ -4,7 +4,7 @@ import { cardBucket, taskCardSlots, type TaskCardMetadata } from "./task-cards";
 import { acceptanceStands, decisionDismissed, linkedParkInteraction, parkInteractionID, reviewState, withoutParkInteraction } from "./supervision";
 import { STOP_FOLLOWUP_MS, taskExecution } from "./task-execution";
 import { finishedAt, JUST_DONE_MS, supersededFailedStarts, triage } from "./todo-triage";
-import { awaitsReview, dockAgents, makeSessionLookup, openAsk, todoRank, todoStatus, withInteractionLookup, type SessionLookup, type Todo, type TodoStatus } from "./todos";
+import { awaitsReview, dockAgents, heldDelivery, makeSessionLookup, openAsk, todoRank, todoStatus, withInteractionLookup, type SessionLookup, type Todo, type TodoStatus } from "./todos";
 import { byTime } from "./times";
 import { homeKey } from "./folded-rows";
 import type { Interaction, Session } from "./types";
@@ -193,10 +193,11 @@ export function assistantEntries(input: AssistantEntriesInput): AssistantEntries
     const unfinished = own.length === active.length && !settled && !!todo.agents?.some((a) => !a.released_at && !a.start_error)
       && !execution.running && !external && status !== "usage_limit" && execution.closeout?.status !== "done";
     const unattended = unfinished && execution.unattendedSince > 0 && now - execution.unattendedSince > STOP_FOLLOWUP_MS;
+    const deliveryApproval = heldDelivery(todo)?.unblock === "user";
     if (asks.length) asking.push({ kind: "task", key, todo, status, asks, countsOpen });
-    else if (waits || decision || unattended) {
+    else if (waits || decision || unattended || deliveryApproval) {
       // Only the review decision is hidden; a live Agent question above still has its home.
-      if (!(status !== "needs_you" && decision && (decisionDismissed(todo) || input.deferred?.[decisionLaterKey(todo)]))) {
+      if (deliveryApproval || !(status !== "needs_you" && decision && (decisionDismissed(todo) || input.deferred?.[decisionLaterKey(todo)]))) {
         deciding.push({ item: { kind: "task", key, todo, status, asks, countsOpen: countsOpen || unattended }, rank: todoRank(todo, status), at: card.at });
       }
     }
