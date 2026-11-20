@@ -17,10 +17,11 @@ import (
 
 var launcherCache struct {
 	sync.Mutex
-	at       time.Time
-	list     []proto.Launcher
-	fetch    sync.Mutex // one login shell at a time
-	fetching bool       // a background refresh (cachedLaunchers) is running
+	at         time.Time
+	list       []proto.Launcher
+	generation uint64     // incremented whenever a discovery publishes a new list
+	fetch      sync.Mutex // one login shell at a time
+	fetching   bool       // a background refresh (cachedLaunchers) is running
 	// codex: how each Codex launcher runs (codex_start.go), its words as the shell would run them.
 	codex map[string][]string
 	// settings: the --settings a claude alias brings itself, as its words give it (launcher_settings.go).
@@ -92,10 +93,17 @@ func launcherOutput(out string) string {
 // the helper lists is not repeated; none at all: plain claude. refresh true bypasses and replaces the one-minute
 // cache; the manager uses it only while recovering a specific Assistant launcher missing from the cached snapshot.
 func (n *Node) launchers(ctx context.Context, refresh ...bool) ([]proto.Launcher, error) {
+	forced := len(refresh) > 0 && refresh[0]
+	launcherCache.Lock()
+	observed := launcherCache.generation
+	launcherCache.Unlock()
 	launcherCache.fetch.Lock()
 	defer launcherCache.fetch.Unlock()
 	launcherCache.Lock()
-	if !(len(refresh) > 0 && refresh[0]) && time.Since(launcherCache.at) < time.Minute && launcherCache.list != nil {
+	// A detached discovery may have finished while this call waited for the shell lock. Its newly published list is the
+	// freshest possible answer, even for a forced refresh; running another shell now could hide that recovery again.
+	if launcherCache.list != nil && ((!forced && time.Since(launcherCache.at) < time.Minute) ||
+		(forced && launcherCache.generation != observed)) {
 		list := launcherCache.list
 		launcherCache.Unlock()
 		return list, nil
@@ -118,6 +126,7 @@ func (n *Node) launchers(ctx context.Context, refresh ...bool) ([]proto.Launcher
 	launcherCache.Lock()
 	launcherCache.at, launcherCache.list, launcherCache.codex, launcherCache.settings = time.Now(), list, codex, settings
 	launcherCache.scripts = scripts
+	launcherCache.generation++
 	launcherCache.Unlock()
 	return list, nil
 }

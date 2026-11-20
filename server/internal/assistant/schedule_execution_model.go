@@ -31,19 +31,15 @@ func (s *Service) taskModelBaseline(ctx context.Context, machine string) (ModelB
 		return local, nil
 	}
 	d, _ := s.device(ctx, machine)
-	kind := agentKind(s.launcherAgent(ctx, s.settings(ctx).MachineID, name))
+	kind := s.mainChatLauncherKind(ctx, s.settings(ctx).MachineID, name)
 	_, fallbacks := s.launcherRecovery(ctx, machine, name)
 	if replacement := s.mainChatInstead(ctx, d, name, kind, launchers, fallbacks); replacement != "" {
 		local.Provider = launcherProvider(replacement)
 		return local, nil
 	}
-	// Without an explicit backend choice, a computer's other headless-compatible default is valid too.
-	for _, l := range launchers {
-		if _, bad := s.launcherUnusable(ctx, machine, l.Name); !bad {
-			return ModelBinding{Provider: launcherProvider(l.Name)}, nil
-		}
-	}
-	return local, nil // normal validation reports an authoritative unavailable configuration
+	// An inherited launcher is still the user's resolved backend. Never replace it with an arbitrary local default;
+	// normal validation reports the authoritative unavailable configuration when no explicit substitute fits.
+	return local, nil
 }
 
 // Compare the binding even when the selected computer cannot report a launcher identity.

@@ -125,7 +125,7 @@ func TestSendRefusesOrReplacesALauncherThatCannotRunTheAssistant(t *testing.T) {
 	ctx := context.Background()
 	s, f := mainChatFixture(t)
 	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{"server": {Fallbacks: map[string][]string{
-		"cc-relay": {"gw"}, "codex-gw": {"gw"},
+		"cc-relay": {"gw"}, "codex-gw": {"cx"},
 	}}}
 	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.gw"})
 	f.setSessions("server", proto.Session{SessionID: "side", Launcher: "cc-relay", Model: "kimi", Assistant: true},
@@ -139,7 +139,13 @@ func TestSendRefusesOrReplacesALauncherThatCannotRunTheAssistant(t *testing.T) {
 	}
 	for _, sid := range []string{"side", "side-codex"} {
 		p, err := s.SendParams(ctx, SendParams{MachineID: "server", SessionID: sid, Params: map[string]any{"text": "hi"}})
-		if err != nil || p["launcher"] != "gw" || p["model"] != nil {
+		wantLauncher, wantModel := "gw", any(nil)
+		if sid == "side" {
+			wantModel = "kimi" // an approved substitute keeps a model its unreadable list cannot rule out
+		} else {
+			wantLauncher = "cx"
+		}
+		if err != nil || p["launcher"] != wantLauncher || p["model"] != wantModel {
 			t.Fatalf("%s left on a launcher that can't run it: %v %v", sid, p, err)
 		}
 	}

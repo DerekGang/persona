@@ -69,6 +69,31 @@ func TestMainChatLauncherRecoversWithFreshDiscovery(t *testing.T) {
 	}
 }
 
+func TestMainChatLauncherRefreshFailureDoesNotCountAsRecovery(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setLauncherRecovery(f, 1, nil)
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}}
+	f.failLauncherRefresh = true
+	params := map[string]any{"launcher": "wrap", "model": "claude-opus-5-5"}
+	note, err := s.finishMainChatModel(context.Background(), "server", "assistant", params, false)
+	if err == nil || !strings.Contains(err.Error(), "launcher refresh failed") || note != "" {
+		t.Fatalf("failed refresh was accepted as recovery: params %v, note %q, err %v", params, note, err)
+	}
+	if params["launcher"] != "wrap" || params["model"] != "claude-opus-5-5" {
+		t.Fatalf("failed refresh changed the binding: %v", params)
+	}
+	refreshes := 0
+	for _, call := range launcherListCalls(f) {
+		if call["refresh"] == true {
+			refreshes++
+		}
+	}
+	if refreshes < 2 {
+		t.Fatalf("recovery stopped after the first failed refresh: %v", launcherListCalls(f))
+	}
+}
+
 func TestMainChatLauncherUsesOnlyConfiguredOrderedFallbacks(t *testing.T) {
 	fastLauncherRecovery(t)
 	s, f := kindFixture(t)
@@ -149,6 +174,44 @@ func TestMainChatLauncherRecoveryHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestMainChatLauncherFallbackDiscoveryHonorsCancellation(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setLauncherRecovery(f, 1, map[string][]string{"wrap": {"claude"}})
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	params := map[string]any{"launcher": "wrap", "model": "claude-opus-5-5"}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.finishMainChatModel(ctx, "server", "assistant", params, false)
+		done <- err
+	}()
+	waitFor(t, "the first fresh discovery", func() bool {
+		for _, call := range launcherListCalls(f) {
+			if call["refresh"] == true {
+				return true
+			}
+		}
+		return false
+	})
+	gate := make(chan struct{})
+	f.mu.Lock()
+	f.launcherGate = gate
+	f.mu.Unlock()
+	t.Cleanup(func() { close(gate) })
+	waitFor(t, "the fallback discovery", func() bool { return len(launcherListCalls(f)) >= 4 })
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("fallback discovery cancellation returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation left fallback discovery blocked")
+	}
+}
+
 func TestLauncherRecoveryWaitDefaultsAndIsBounded(t *testing.T) {
 	s, f := kindFixture(t)
 	if wait, _ := s.launcherRecovery(context.Background(), "server", "wrap"); wait != 30*time.Second {
@@ -157,5 +220,96 @@ func TestLauncherRecoveryWaitDefaultsAndIsBounded(t *testing.T) {
 	setLauncherRecovery(f, 999, nil)
 	if wait, _ := s.launcherRecovery(context.Background(), "server", "wrap"); wait != 2*time.Minute {
 		t.Fatalf("configured wait was not capped: %s", wait)
+	}
+}
+
+func TestMainChatLauncherAllowsExplicitDefaultFallback(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setLauncherRecovery(f, 1, map[string][]string{"wrap": {"claude"}})
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}}
+	params := map[string]any{"launcher": "wrap", "model": "claude-opus-5-5"}
+	note, err := s.finishMainChatModel(context.Background(), "server", "assistant", params, false)
+	if err != nil || params["launcher"] != "claude" || params["model"] != "claude-opus-5-5" || !strings.Contains(note, "claude") {
+		t.Fatalf("explicit default fallback: params %v, note %q, err %v", params, note, err)
+	}
+}
+
+func TestTaskBaselineUsesOnlyConfiguredRemoteFallback(t *testing.T) {
+	f := newFakeHub().withMachine()
+	f.sessions["remote"] = nil
+	f.zshrc = map[string][]proto.Launcher{
+		"server": {{Name: "main", Source: "zshrc"}},
+		"remote": {{Name: "remote", Source: "zshrc"}},
+	}
+	s := newTestService(t, f)
+	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.main", Model: "selected-model"})
+	if got, err := s.taskModelBaseline(context.Background(), "remote"); err != nil || got.Provider != "launcher.main" {
+		t.Fatalf("unconfigured remote fallback: %+v, err %v", got, err)
+	}
+	f.hello.Models.LauncherRecovery = map[string]LauncherRecovery{
+		"remote": {Fallbacks: map[string][]string{"main": {"remote"}}},
+	}
+	if got, err := s.taskModelBaseline(context.Background(), "remote"); err != nil || got.Provider != "launcher.remote" {
+		t.Fatalf("configured remote fallback: %+v, err %v", got, err)
+	}
+}
+
+func TestStartOnMissingLauncherUsesRecoveryInsteadOfDefault(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.claude", Model: "claude-opus-5-5"})
+	setLauncherRecovery(f, 1, map[string][]string{"wrap": {"custom-b"}})
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}, {Name: "custom-b"}}
+	f.agentModels["custom-b"] = []proto.AgentModel{{ID: "claude-opus-5-5"}}
+	_, err := s.startOn(context.Background(), "server", StartParams{Text: "hi", Launcher: "wrap", Model: "claude-opus-5-5"}, false)
+	if err != nil {
+		t.Fatalf("start with configured recovery: %v", err)
+	}
+	if f.sent() != 1 || f.sends[0]["launcher"] != "custom-b" || f.sends[0]["model"] != "claude-opus-5-5" {
+		t.Fatalf("start bypassed the original launcher's recovery: %v", f.sends)
+	}
+}
+
+func TestSideConversationMissingLauncherUsesRecoveryInsteadOfDefault(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.claude", Model: "claude-opus-5-5"})
+	setLauncherRecovery(f, 1, map[string][]string{"wrap": {"custom-b"}})
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}, {Name: "custom-b"}}
+	f.agentModels["custom-b"] = []proto.AgentModel{{ID: "claude-opus-5-5"}}
+	f.setSessions("server", proto.Session{SessionID: "side", Launcher: "wrap", Model: "claude-opus-5-5", Assistant: true})
+	p, err := s.SendParams(context.Background(), SendParams{MachineID: "server", SessionID: "side", Params: map[string]any{"text": "hi"}})
+	if err != nil || p["launcher"] != "custom-b" || p["model"] != "claude-opus-5-5" {
+		t.Fatalf("side conversation bypassed recovery: %v, %v", p, err)
+	}
+}
+
+func TestSideConversationMissingLauncherWithoutFallbackDoesNotSend(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.claude", Model: "claude-opus-5-5"})
+	setLauncherRecovery(f, 1, nil)
+	f.launcherList = []proto.Launcher{{Name: "cx", Agent: "codex"}, {Name: "custom-b"}}
+	f.setSessions("server", proto.Session{SessionID: "side", Launcher: "wrap", Model: "claude-opus-5-5", Assistant: true})
+	_, err := s.SendParams(context.Background(), SendParams{MachineID: "server", SessionID: "side", Params: map[string]any{"text": "hi"}})
+	if err == nil || !strings.Contains(err.Error(), "wrap") || f.sent() != 0 {
+		t.Fatalf("unapproved default was used: err %v, sends %v", err, f.sends)
+	}
+}
+
+func TestMissingShellCodexUsesLastSeenAgentKindForFallback(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	setLauncherRecovery(f, 1, map[string][]string{"shell-codex": {"custom-b", "cx"}})
+	f.launcherList = []proto.Launcher{{Name: "custom-b"}, {Name: "cx", Agent: "codex"}}
+	s.models.zshrcMu.Lock()
+	s.models.zshrc = map[string][]proto.Launcher{"server": {{Name: "shell-codex", Agent: "codex", Source: "zshrc"}}}
+	s.models.zshrcSync = map[string]LauncherSync{}
+	s.models.zshrcMu.Unlock()
+	params := map[string]any{"launcher": "shell-codex", "model": "gpt-5"}
+	note, err := s.finishMainChatModel(context.Background(), "server", "assistant", params, false)
+	if err != nil || params["launcher"] != "cx" || !strings.Contains(note, "cx") {
+		t.Fatalf("missing shell Codex was treated as Claude: params %v, note %q, err %v", params, note, err)
 	}
 }

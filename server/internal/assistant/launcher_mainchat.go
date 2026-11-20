@@ -70,7 +70,13 @@ func (s *Service) mainChatFitState(ctx context.Context, machine, name string, re
 		cctx = withLauncherRefresh(cctx)
 	}
 	picker, err := s.pickerLaunchers(cctx, machine)
-	if err != nil || !slices.ContainsFunc(picker, func(l ConfiguredLauncher) bool {
+	if err != nil {
+		if refresh {
+			return mainChatGone, nil, true // a failed retry is not evidence that the missing launcher recovered
+		}
+		return mainChatFits, nil, false // an ordinary unreadable list is not proof that a shell launcher is gone
+	}
+	if !slices.ContainsFunc(picker, func(l ConfiguredLauncher) bool {
 		source := compat.Source(l.Source)
 		return l.Source != "" && source != "persona" && source != "builtin"
 	}) {
@@ -165,11 +171,13 @@ func (s *Service) finishMainChatModel(ctx context.Context, machine, purpose stri
 	if fit == mainChatFits {
 		return "", nil
 	}
-	launchers, err := s.assistantLaunchers(withLauncherRefresh(ctx), machine)
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	launchers, err := s.assistantLaunchers(withLauncherRefresh(cctx), machine)
 	if err != nil {
 		return "", err
 	}
-	kind := agentKind(s.launcherAgent(withUnhidden(ctx, name), machine, name))
+	kind := s.mainChatLauncherKind(ctx, machine, name)
 	d, _ := s.device(ctx, machine)
 	where := firstNonEmpty(d.Name, machine)
 	to := s.mainChatInstead(ctx, d, name, kind, launchers, fallbacks)
@@ -242,6 +250,28 @@ func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind stri
 		}
 	}
 	return ""
+}
+
+// mainChatLauncherKind keeps the agent identity of a launcher that has just disappeared from discovery. The last
+// successful per-machine snapshot is evidence; without it, preserve the historical Claude default for launchers that
+// never declared an agent. In particular, a missing shell Codex alias must not become Claude merely because its current
+// catalog entry is gone.
+func (s *Service) mainChatLauncherKind(ctx context.Context, machine, name string) string {
+	if agent := s.launcherAgent(withUnhidden(ctx, name), machine, name); agent != "" {
+		return agentKind(agent)
+	}
+	seen, _ := s.zshrcLaunchersLastSeen(ctx)
+	for _, m := range seen {
+		if m.MachineID != machine {
+			continue
+		}
+		for _, l := range m.Launchers {
+			if l.Name == name && l.Agent != "" {
+				return agentKind(l.Agent)
+			}
+		}
+	}
+	return agentKind("")
 }
 
 // agentKind is the agent a launcher starts: claude when it names none (or is gone: it ran the main chat's kind).
