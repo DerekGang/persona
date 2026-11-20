@@ -64,12 +64,15 @@ class ModelPillTest {
         assertFalse(switchesNext(null, on = true))
     }
 
-    @Test fun aSwitchDrawnAtOnceStandsUntilTheNextPush() {
-        val drawn = DrawnSwitch(PendingSwitch("work", "glm-5.3"), rev = 7)
-        assertEquals(PendingSwitch("work", "glm-5.3"), drawn.over(agent).pendingSwitch)
-        assertNull("the next push says what the hub has", drawn.over(agent.copy(rev = 8)).pendingSwitch)
-        assertNull("dropped at once", DrawnSwitch(null, 7).over(agent.copy(pendingSwitch = PendingSwitch("work"))).pendingSwitch)
-        assertEquals(agent, (null as DrawnSwitch?).over(agent))
+    @Test fun aSwitchDrawnAtOnceStandsUntilAWholeRowIsObserved() {
+        val drawn = DrawnSwitch(PendingSwitch("work", "glm-5.3"), observation = 1L)
+        assertEquals(PendingSwitch("work", "glm-5.3"), drawn.over(agent, 1L).pendingSwitch)
+        assertEquals("a transcript size change isn't evidence of a new switch", drawn.switch,
+            drawn.over(agent.copy(rev = 8), 1L).pendingSwitch)
+        assertNull("a fresh whole row wins even at the same transcript size", drawn.over(agent, 2L).pendingSwitch)
+        assertNull("a local cancel gives immediate feedback",
+            DrawnSwitch(null, 1L).over(agent.copy(pendingSwitch = PendingSwitch("work")), 1L).pendingSwitch)
+        assertEquals(agent, (null as DrawnSwitch?).over(agent, 1L))
     }
 
     @Test fun whatThePhoneKeepsReadsBack() {
@@ -105,16 +108,18 @@ class ModelPillTest {
         assertEquals("Switching from My Grok to Claude Code needs a new conversation",
             words.reason(persona.core.domain.models.PanelReason.OtherEngine("grok", "claude")))
         assertEquals("My Grok", words.engine("grok"))
-        assertEquals(persona.core.designsystem.AgentMarkSpec(null, "My Grok", null), words.mark("grok"))
+        assertEquals(persona.core.designsystem.AgentMarkSpec(persona.core.designsystem.AgentMarkKind.Grok, "My Grok", null), words.mark("grok"))
         // A provider whose name is a mark the design system has draws it.
         assertEquals(persona.core.designsystem.AgentMarkKind.Trae, words.mark("traecli")?.kind)
         assertEquals("Claude Code", words.engine("claude"))
         val (content, spoken) = pillContent(persona.core.domain.models.PillView(persona.core.domain.models.PillSetup("grok", "grok", "Grok 5", null)),
             null, ultracode = false, res, names)
-        assertEquals(persona.core.designsystem.AgentMarkSpec(null, "My Grok", null), content.engine)
+        assertEquals(persona.core.designsystem.AgentMarkSpec(persona.core.designsystem.AgentMarkKind.Grok, "My Grok", null), content.engine)
         assertEquals("Select model. Current: Grok 5", spoken)
         // Without names (a Persona chat's pill): the engine's id, as before.
         assertEquals("paseo", panelWords(res).engine("paseo"))
+        assertEquals(persona.core.designsystem.AgentMarkSpec(null, "custom-provider", null),
+            panelWords(res).mark("custom-provider"))
     }
 
     /** Records what the pill asks the hub. */
