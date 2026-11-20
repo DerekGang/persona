@@ -1988,6 +1988,11 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			// then) it moved the main conversation onto another one (plain claude, not logged in there) for good (#1518).
 			params := taskSourceParams(t, taskPrompt(t, due, now, loc, manual, kb, false), sourceCwd)
 			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
+			if err == nil {
+				if err := s.validateTaskSelections(ctx, t.MachineID, t.SessionID, params); err != nil {
+					return s.failTaskRun(ctx, t, run, err, false)
+				}
+			}
 			unsent := err != nil // model preparation has not sent the task's message
 			if err == nil {
 				s.noteRound(m.ID, t.SessionID, t.ID, t.runGrantBasis, time.Now()) // before it is sent: its turn may plan at once (schedule_grant.go)
@@ -2126,6 +2131,9 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 func (s *Service) resumeOwn(ctx context.Context, machine, sid string, params map[string]any) error {
 	if c, ok := s.session(ctx, machine, sid); ok && signedOut(c) && (c.Agent == "" || c.Agent == "claude") {
 		params["config_dir"] = meetingProfile
+	}
+	if err := s.validateTaskSelections(ctx, machine, sid, params); err != nil {
+		return err
 	}
 	err := s.call(ctx, machine, DeviceAssistantSend, params, nil)
 	if _, asked := params["config_dir"]; asked && (nodeOutdated(err) || profileRefused(err)) {
@@ -2743,13 +2751,17 @@ func (s *Service) forgetConversation(ctx context.Context, id string) (Task, bool
 // task's own conversation, which has had all that (and the knowledge-base hint) already; it is told the earlier
 // runs are above instead. The task's prompt is always there: it may have been edited, or compacted away.
 func taskPrompt(t Task, due, now time.Time, loc *time.Location, manual, kb, continued bool) string {
+	prefix, body := taskPromptBody(t.Prompt)
 	r := prompts.TaskRun{Label: t.label(), TodoID: t.TodoID, Once: t.Repeat == repeatOnce, Interval: t.Repeat == repeatInterval, Due: due.In(loc),
-		Prompt: t.Prompt, KBHint: kb && t.calendar(), KnowledgeDir: t.kbDir, Continued: continued, PushAsked: t.pushesOnlyAsked(), InboxWorthy: t.inboxWorthy(), InboxEvery: t.inboxEvery(), Facts: t.factsText, State: taskStatePrompt(t)}
+		Prompt: body, KBHint: kb && t.calendar(), KnowledgeDir: t.kbDir, Continued: continued, PushAsked: t.pushesOnlyAsked(), InboxWorthy: t.inboxWorthy(), InboxEvery: t.inboxEvery(), Facts: t.factsText, State: taskStatePrompt(t)}
 	if r.Interval {
 		r.Every = everyText(t.EveryMinutes)
 	}
 	if late := now.Sub(due); !manual && !t.calendar() && late > 2*time.Minute {
 		r.Late = humanDuration(late)
+	}
+	if prefix != "" {
+		return prefix + "\n\n" + prompts.RenderTaskRun(r)
 	}
 	return prompts.RenderTaskRun(r)
 }
@@ -2889,6 +2901,7 @@ func editTask(old, in Task, now time.Time) Task {
 }
 
 func (s *Service) scheduleRoutes() {
+	s.taskInputRoutes()
 	s.handle("GET /api/v1/assistant/tasks", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.scheduleReadable(r.Context()); err != nil {
 			apierr.Write(w, http.StatusServiceUnavailable, err)
@@ -2964,6 +2977,10 @@ func (s *Service) scheduleRoutes() {
 		edit, err := s.prepareTaskExecutionEdit(r.Context(), Task{}, &t, raw)
 		if err != nil {
 			writeTaskExecutionError(w, err)
+			return
+		}
+		if err := s.validateTaskInput(r.Context(), t, edit.record); err != nil {
+			apierr.Call(w, err)
 			return
 		}
 		if err := s.commitTaskExecutionEdit(r.Context(), nil, t, edit); err != nil {
@@ -3067,6 +3084,10 @@ func (s *Service) scheduleRoutes() {
 		edit, err := s.prepareTaskExecutionEdit(r.Context(), old, &t, raw)
 		if err != nil {
 			writeTaskExecutionError(w, err)
+			return
+		}
+		if err := s.validateTaskInput(r.Context(), t, edit.record); err != nil {
+			apierr.Call(w, err)
 			return
 		}
 		if err := s.commitTaskExecutionEdit(r.Context(), &old, t, edit); err != nil {

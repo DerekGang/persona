@@ -30,6 +30,10 @@ export interface MentionSource {
   cwd?: string;
   /** This chat's draft key ("mid/sid"), left out of the sessions. */
   self?: string;
+  /** Scheduled prompts have no live session to quote. */
+  sessions?: boolean;
+  /** Stable file references use the same execution context as the task. */
+  referenceFiles?: { machine: string; cwd: string; launcher: string; runtime: string };
   /** Absolute paths the chat's tools read or wrote, newest first (read when the panel opens). */
   files: () => string[];
   /** Offer the hub's workspaces (GET /workspaces): the Persona assistant, which works on any computer. */
@@ -68,24 +72,27 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
   const sessions = useStore((s) => (source ? s.sessions : NO_SESSIONS));
   const machines = useStore((s) => (source ? s.machines : NO_MACHINES));
   const workspaces = useWorkspaces(Boolean(source?.workspaces));
-  const cache = useRef(new Map<string, FsListing | null>());
+  const cache = useMemo(() => new Map<string, FsListing | null>(), [machineId, source?.cwd, source?.skills?.environment]);
   const [, setTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const files = useMemo(() => source?.files() ?? [], [source]);
 
   const cwd = source?.cwd;
   const target = source ? browseTarget(query, cwd) : null;
-  const dir = !source || !machineId ? null : target ? target.dir : cwd ?? null;
+  // Task file references are relative to the selected directory on the executing computer.
+  const taskFiles = Boolean(source?.referenceFiles);
+  const outsideTask = taskFiles && (/^(?:[~/]|[A-Za-z]:)/.test(query) || query.includes("\\") || query.split("/").includes(".."));
+  const dir = !source || !machineId || outsideTask ? null : target ? target.dir : cwd ?? null;
 
   useEffect(() => {
-    if (!dir || !machineId || cache.current.has(dir)) return;
+    if (!dir || !machineId || cache.has(dir)) return;
     const ac = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
-      api<FsListing>(`/machines/${enc(machineId)}/fs?path=${enc(dir)}&cwd=${enc(cwd ?? "")}`, { signal: ac.signal })
-        .then((l) => { if (!ac.signal.aborted) cache.current.set(dir, l); })
+      api<FsListing>(`/machines/${enc(machineId)}/fs?path=${enc(dir)}&cwd=${enc(cwd ?? "")}${taskFiles ? "&task_input=1" : ""}`, { signal: ac.signal })
+        .then((l) => { if (!ac.signal.aborted) cache.set(dir, l); })
         .catch(() => {
-          if (!ac.signal.aborted) cache.current.set(dir, null); // not a folder / unreadable: no rows from it
+          if (!ac.signal.aborted) cache.set(dir, null); // not a folder / unreadable: no rows from it
         })
         .finally(() => {
           if (ac.signal.aborted) return;
@@ -98,9 +105,9 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
       ac.abort();
       setLoading(false);
     };
-  }, [dir, machineId, cwd]);
+  }, [dir, machineId, cwd, cache, taskFiles]);
 
-  const listing = dir ? cache.current.get(dir) : undefined;
+  const listing = dir ? cache.get(dir) : undefined;
   const rows = useMemo<MentionRow[]>(() => {
     if (!source) return [];
     if (target) {
@@ -135,7 +142,7 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
         out.push({ kind: "workspace", id: `workspace:${w.id}`, name: workspaceTitle(w), detail: workspaceDetail(w, name), workspace: w });
       }
     }
-    for (const s of otherSessions(Object.values(sessions).flat(), source.self, q)) {
+    for (const s of source.sessions === false ? [] : otherSessions(Object.values(sessions).flat(), source.self, q)) {
       out.push({ kind: "session", id: `session:${s.machine_id}/${s.session_id}`, name: displayTitle(s), detail: sessionDetail(s), session: s });
     }
     // A large skill inventory must not crowd the existing resource groups out of the empty panel.

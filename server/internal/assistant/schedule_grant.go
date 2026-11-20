@@ -16,6 +16,7 @@ import (
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/promptcontent"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -70,7 +71,8 @@ func (t Task) grantBasis(binding ...ModelBinding) string {
 // comes from outside (the briefing's facts list Inbox matters, the report's lines, a state note an earlier run
 // wrote), they run in a conversation of their own, outside the health space.
 func (t Task) grantEligible() bool {
-	return !t.Facts && !t.Report && t.SessionID == "" && t.Space == "" && (t.StateNote == nil || strings.TrimSpace(t.StateNote.Text) == "")
+	prefix, _ := promptcontent.Split(t.Prompt)
+	return prefix == "" && !t.Facts && !t.Report && t.SessionID == "" && t.Space == "" && (t.StateNote == nil || strings.TrimSpace(t.StateNote.Text) == "")
 }
 
 // liveGrant is t's grant while it still applies: given under t as it is now, with a kind in it.

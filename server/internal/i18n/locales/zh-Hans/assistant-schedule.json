@@ -63,5 +63,8 @@
   "todo_wait": "继续等",
   "todo_wait_cost": "可能再过一个定时窗口，任务仍没有推进。",
   "todo_change_result": "请督办在现有授权范围内提出另一种做法。",
-  "todo_wait_result": "保留已经确认的做法，等下一次定时检查。"
+  "todo_wait_result": "保留已经确认的做法，等下一次定时检查。",
+  "selected_file_unavailable": "所选文件不可用或执行上下文已更改，请移除后重新选择。",
+  "file_runtime_unsupported": "该 agent 暂不支持文件选择，请使用文本或选择其他 agent。",
+  "input_context_unavailable": "任务或其原始对话不可用，请重新打开任务后重试。"
 }

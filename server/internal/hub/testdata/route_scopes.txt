@@ -440,6 +440,7 @@ assistant.ask        POST /api/v1/assistant/conversations/{id}/stop
 -                    POST /api/v1/assistant/rule-suggestions/{id}/not-now
 -                    POST /api/v1/assistant/saved-prompts
 -                    POST /api/v1/assistant/tasks
+-                    POST /api/v1/assistant/tasks/input-context
 -                    POST /api/v1/assistant/tasks/{id}/fresh
 -                    POST /api/v1/assistant/tasks/{id}/run
 -                    POST /api/v1/assistant/urgent-call/test
