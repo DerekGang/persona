@@ -28,6 +28,7 @@ type fakeBotmuxTurnsServer struct {
 	token        string
 	turnsStatus  int
 	turnsErrCode string
+	schema       string
 	caps         []string
 	turns        []transcript.BotmuxTurn
 	echoActor    bool
@@ -39,7 +40,7 @@ type fakeBotmuxTurnsServer struct {
 
 func newFakeBotmuxTurnsServer(t *testing.T) *fakeBotmuxTurnsServer {
 	t.Helper()
-	fs := &fakeBotmuxTurnsServer{token: "tok1", turnsStatus: http.StatusOK, echoActor: true}
+	fs := &fakeBotmuxTurnsServer{token: "tok1", turnsStatus: http.StatusOK, schema: transcript.BotmuxTurnsSchema, echoActor: true}
 	fs.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fs.mu.Lock()
 		defer fs.mu.Unlock()
@@ -74,7 +75,7 @@ func newFakeBotmuxTurnsServer(t *testing.T) *fakeBotmuxTurnsServer {
 			}
 			_ = json.NewEncoder(w).Encode(transcript.BotmuxTurnsResponse{
 				OK:           true,
-				Schema:       transcript.BotmuxTurnsSchema,
+				Schema:       fs.schema,
 				Capabilities: fs.caps,
 				Next:         fmt.Sprintf("%d", lastSeq),
 				Turns:        page,
@@ -232,6 +233,58 @@ func TestBotmuxWatchRepushesLateAndChangedFileReply(t *testing.T) {
 		if batch.n > 0 && (batch.fromSeq != 0 || batch.toSeq != 0 || batch.history == "") {
 			t.Fatalf("replacement should preserve the existing cursor and history: %+v", batch)
 		}
+	}
+	fs.mu.Lock()
+	fs.turnsStatus = http.StatusNotFound
+	fs.mu.Unlock()
+	h.mu.Lock()
+	h.turnsCache[sidA].fetchedAt = time.Time{}
+	h.mu.Unlock()
+	waitFor(t, "downgrade clears the structured reply", func() bool {
+		items := hub.got()
+		return len(items) == 12 && items[8].ToolUseID == "tool1" && items[8].Botmux == nil && items[11].ToolUseID == "tool2"
+	})
+}
+
+func TestBotmuxCachedTurnsRejectStaleDashboard(t *testing.T) {
+	for _, scenario := range []string{"base", "token", "stamp", "schema"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			fs := newFakeBotmuxTurnsServer(t)
+			fs.turns = []transcript.BotmuxTurn{{TurnID: "turn-1", Seq: 1}}
+			bin := filepath.Join(t.TempDir(), "botmux")
+			if err := os.WriteFile(bin, []byte("old"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h := fs.makeHost(bin)
+			h.sessionTurns(ctx, sidA)
+			if len(h.cachedSessionTurns(sidA)) != 1 {
+				t.Fatal("expected structured cache")
+			}
+			switch scenario {
+			case "base":
+				h.base = "http://127.0.0.1:1"
+			case "token":
+				h.token = "rotated"
+			case "stamp":
+				if err := os.WriteFile(bin, []byte("upgraded"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "schema":
+				fs.mu.Lock()
+				fs.schema = "unsupported"
+				fs.mu.Unlock()
+				h.turnsCache[sidA].fetchedAt = time.Time{}
+				h.sessionTurns(ctx, sidA)
+			}
+			if got := h.cachedSessionTurns(sidA); got != nil {
+				t.Fatalf("stale structured cache: %+v", got)
+			}
+			h.turnsBackoffUntil = time.Now().Add(botmuxTurnsErrorBackoff)
+			if got, _ := h.sessionTurns(ctx, sidA); got != nil {
+				t.Fatalf("stale structured cache during backoff: %+v", got)
+			}
+		})
 	}
 }
 

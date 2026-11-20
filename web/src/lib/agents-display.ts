@@ -2,6 +2,7 @@
 // and to-do attribution stay unchanged. The old local key is migration input only.
 import { useSyncExternalStore } from "react";
 import { api, credentialOwner, onCredentialChange } from "./api";
+import { useBotmuxMode } from "./botmux-mode";
 
 const LEGACY = "persona.agentHideBotmux";
 const PATH = "/agents/display-settings";
@@ -80,7 +81,8 @@ export function retryAgentsDisplay(): Promise<void> {
 
 export function useBotmuxHidden(): boolean {
   // An unavailable preference might hide these sessions. Keep the last acknowledged choice.
-  return useAgentsDisplay().value?.show_botmux !== true;
+  const mode = useBotmuxMode();
+  return useAgentsDisplay().value?.show_botmux !== true || mode === "hide";
 }
 
 export function useHerdrTabName(): boolean {

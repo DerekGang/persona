@@ -179,6 +179,31 @@
       }
     },
     {
+      "name": "inline_comment",
+      "command": "botmux send 'done' # notify Lark",
+      "want": { "kind": "reply", "text": "done" }
+    },
+    {
+      "name": "literal_hashes",
+      "command": "# prepare reply\nbotmux send done#1 '#quoted' \\#escaped # ignored",
+      "want": { "kind": "reply", "text": "done#1 #quoted #escaped" }
+    },
+    {
+      "name": "heredoc_comment_and_literal_hash",
+      "command": "botmux send <<'EOF' # send heading\n# Heading\nEOF",
+      "want": { "kind": "reply", "text": "# Heading" }
+    },
+    {
+      "name": "compound_sends",
+      "command": "botmux send 'one' && botmux send 'two'",
+      "want": null
+    },
+    {
+      "name": "heredoc_then_send",
+      "command": "botmux send <<'EOF'\none\nEOF\nbotmux send 'two'",
+      "want": null
+    },
+    {
       "name": "heredoc_final",
       "command": "botmux send --response-kind final --mention-back <<'EOF'\n## 结论\n\n- 测试全部通过\nEOF",
       "want": {

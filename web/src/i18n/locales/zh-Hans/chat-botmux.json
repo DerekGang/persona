@@ -15,5 +15,7 @@
   "external_trigger_notice": "旧版 botmux：从 Persona 发送的消息会以外部事件触发而非主人身份，升级到 3.59.23+ 可启用完整支持。",
   "raw": "botmux · 原文",
   "show_raw": "显示 botmux 会话原文",
+  "hide": "隐藏 botmux 会话",
+  "hidden": "botmux · 已隐藏",
   "decode": "显示解码后的 botmux 会话"
 }

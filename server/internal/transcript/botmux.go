@@ -244,6 +244,9 @@ func BotmuxSend(command string) *proto.Botmux {
 	if !ok || len(words) < 2 || (words[0] != "botmux" && path.Base(words[0]) != "botmux") || words[1] != "send" {
 		return nil
 	}
+	if strings.Contains(rest, "botmux") && strings.Contains(rest, "send") {
+		return nil
+	}
 	b := &proto.Botmux{Kind: proto.BotmuxReply}
 	var text []string
 	for i := 2; i < len(words); i++ {
@@ -299,8 +302,7 @@ func BotmuxSend(command string) *proto.Botmux {
 
 // shellWords splits the first simple command of s the way sh would: quotes, backslashes, $'…', output redirects and one
 // here-document (its body in heredoc). What follows it (after ;, &&, ||, | or a new line, the here-document's body
-// first) does not change its words; rest is the next command when it runs after this one (; && or a new line) and
-// there is no here-document. ok is false when the words depend on running something (a substitution, a subshell,
+// first) does not change its words. Rest retains the trailing shell text. ok is false when the words depend on running something (a substitution, a subshell,
 // an input redirect) or a quote or here-document is not closed.
 func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 	var cur strings.Builder
@@ -324,25 +326,36 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 				case strings.HasPrefix(s[i:], "&&"):
 					return words, "", s[i+2:], true
 				case c == ';' || c == '\n':
+					if c == '\n' && len(words) == 0 {
+						i++
+						continue
+					}
 					return words, "", s[i+1:], true
 				}
-				return words, "", "", true // a pipe or ||: what comes next is not simply next
+				return words, "", s[i:], true
 			}
 			nl := strings.IndexByte(s[i:], '\n')
 			if nl < 0 {
 				return nil, "", "", false
 			}
-			body, ok := heredocBody(s[i+nl+1:], delim, strip)
+			body, tail, ok := heredocBody(s[i+nl+1:], delim, strip)
 			if !ok {
 				return nil, "", "", false
 			}
 			if !delimQuoted && hasUnquotedHeredocExpansion(body) {
 				return nil, "", "", false
 			}
-			return words, body, "", true
+			return words, body, s[i:i+nl] + tail, true
 		case c == ' ' || c == '\t':
 			flush()
 			i++
+		case c == '#' && !inWord:
+			nl := strings.IndexByte(s[i:], '\n')
+			if nl < 0 {
+				i = len(s)
+			} else {
+				i += nl
+			}
 		case c == '\'':
 			end := strings.IndexByte(s[i+1:], '\'')
 			if end < 0 {
@@ -464,7 +477,7 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 
 // heredocBody is a here-document's lines up to its delimiter; ok is false when the delimiter never comes (a clipped
 // command).
-func heredocBody(s, delim string, strip bool) (string, bool) {
+func heredocBody(s, delim string, strip bool) (string, string, bool) {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		if strip {
@@ -472,10 +485,10 @@ func heredocBody(s, delim string, strip bool) (string, bool) {
 			lines[i] = l
 		}
 		if l == delim {
-			return strings.Join(lines[:i], "\n"), true
+			return strings.Join(lines[:i], "\n"), strings.Join(lines[i+1:], "\n"), true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 func isNameByte(c byte) bool {

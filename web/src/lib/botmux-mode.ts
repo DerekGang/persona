@@ -1,22 +1,22 @@
 // How the web shows botmux sessions (docs/protocol/protocol.md "BotMux messages"), switched by the sidebar's botmux chip
-// (#2786): "decode" (the default) shows what was written in Lark and the replies the agent sent there; "all" shows the
-// transcript as it is. Session visibility is handled by the shared Agents display setting.
+// (#10764): "decode" shows Lark messages and replies, "all" shows raw transcripts, and "hide" hides BotMux sessions.
 import { useSyncExternalStore } from "react";
 
-export type BotmuxMode = "decode" | "all";
+export type BotmuxMode = "decode" | "all" | "hide";
 
 export const BOTMUX_MODE_KEY = "persona.agentBotmuxMode";
 
 /** The stored mode; the default where there is no storage (a server render) or it cannot be read. */
-export function readBotmuxMode(store: Storage | undefined = globalThis.localStorage): BotmuxMode {
+export function readBotmuxMode(store?: Storage): BotmuxMode {
   try {
-    return store?.getItem(BOTMUX_MODE_KEY) === "all" ? "all" : "decode";
+    const storage = store ?? globalThis.localStorage;
+    const mode = storage?.getItem(BOTMUX_MODE_KEY);
+    if (mode === "all" || mode === "hide" || mode === "decode") return mode;
+    return storage?.getItem("persona.agentHideBotmux") === "1" ? "hide" : "decode";
   } catch {
     return "decode";
   }
 }
-
-export const nextBotmuxMode = (mode: BotmuxMode): BotmuxMode => mode === "decode" ? "all" : "decode";
 
 const BOTMUX_MODE_EVENT = "persona-botmux-mode";
 
@@ -33,7 +33,11 @@ export const getBotmuxMode = (): BotmuxMode => readBotmuxMode();
 
 export function setBotmuxMode(next: BotmuxMode) {
   if (next === getBotmuxMode()) return;
-  localStorage.setItem(BOTMUX_MODE_KEY, next);
+  try {
+    globalThis.localStorage.setItem(BOTMUX_MODE_KEY, next);
+  } catch {
+    return;
+  }
   window.dispatchEvent(new Event(BOTMUX_MODE_EVENT));
 }
 

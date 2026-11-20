@@ -74,6 +74,7 @@ type botmuxSessionTurnsCache struct {
 	stamp     string
 	cursor    string
 	fetchedAt time.Time
+	invalid   bool
 	turns     []transcript.BotmuxTurn
 	byID      map[string]int
 }
@@ -130,6 +131,13 @@ func (h *botmuxHost) setCapsLocked(next botmuxCaps) (noticeChanged bool) {
 	}
 	prevNotice := h.caps.known && !h.caps.ownerActor
 	h.caps = next
+	if !next.turnsAPI {
+		for _, cached := range h.turnsCache {
+			if next.matches(cached.base, cached.token, cached.stamp) {
+				cached.invalid = true
+			}
+		}
+	}
 	nextNotice := h.caps.known && !h.caps.ownerActor
 	return prevNotice != nextNotice
 }
@@ -249,16 +257,24 @@ func (h *botmuxHost) probeCaps(ctx context.Context, sessionID string) botmuxCaps
 
 // cachedSessionTurns returns already-cached structured turns for sessionID with no network or CLI calls.
 func (h *botmuxHost) cachedSessionTurns(sessionID string) []transcript.BotmuxTurn {
-	if sessionID == "" {
-		return nil
-	}
+	stamp := botmuxStamp(h.bin)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.cachedSessionTurnsLocked(sessionID, stamp)
+}
+
+func (h *botmuxHost) cachedSessionTurnsLocked(sessionID, stamp string) []transcript.BotmuxTurn {
 	sc := h.turnsCache[sessionID]
-	if sc == nil || len(sc.turns) == 0 {
+	if !h.usableTurnsLocked(sc, stamp) || len(sc.turns) == 0 {
 		return nil
 	}
 	return slices.Clone(sc.turns)
+}
+
+func (h *botmuxHost) usableTurnsLocked(cached *botmuxSessionTurnsCache, stamp string) bool {
+	return cached != nil && !cached.invalid &&
+		h.caps.matches(h.base, h.token, stamp) && h.caps.turnsAPI &&
+		cached.base == h.base && cached.token == h.token && cached.stamp == stamp
 }
 
 // refreshSessionTurnsAsync triggers a deduplicated, short-timeout background fetch for sessionID
@@ -274,16 +290,11 @@ func (h *botmuxHost) refreshSessionTurnsAsync(parent context.Context, sessionID 
 		h.mu.Unlock()
 		return
 	}
-	if now.Before(h.turnsBackoffUntil) || now.Before(h.unknownBackoff[sessionID]) {
-		h.mu.Unlock()
-		return
-	}
-	if h.caps.valid(h.base, h.token, stamp, now) && !h.caps.turnsAPI {
-		h.mu.Unlock()
-		return
-	}
-	if sc := h.turnsCache[sessionID]; sc != nil && sc.base == h.base && sc.token == h.token && sc.stamp == stamp &&
-		!sc.fetchedAt.IsZero() && now.Sub(sc.fetchedAt) < botmuxTurnsFetchMinInterval {
+	cached := h.turnsCache[sessionID]
+	stale := cached != nil && !h.usableTurnsLocked(cached, stamp)
+	if !stale && (now.Before(h.turnsBackoffUntil) || now.Before(h.unknownBackoff[sessionID]) ||
+		h.caps.valid(h.base, h.token, stamp, now) && !h.caps.turnsAPI ||
+		cached != nil && now.Sub(cached.fetchedAt) < botmuxTurnsFetchMinInterval) {
 		h.mu.Unlock()
 		return
 	}
@@ -292,8 +303,13 @@ func (h *botmuxHost) refreshSessionTurnsAsync(parent context.Context, sessionID 
 	}
 	h.turnsRefreshing[sessionID] = true
 	var previous []transcript.BotmuxTurn
-	if cached := h.turnsCache[sessionID]; cached != nil {
-		previous = slices.Clone(cached.turns)
+	if cached != nil {
+		if len(cached.turns) > 0 {
+			previous = slices.Clone(cached.turns)
+		}
+		if stale {
+			delete(h.turnsCache, sessionID)
+		}
 	}
 	h.mu.Unlock()
 
@@ -322,11 +338,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 	now := time.Now()
 	h.mu.Lock()
 	if now.Before(h.turnsBackoffUntil) || now.Before(h.unknownBackoff[sessionID]) {
-		sc := h.turnsCache[sessionID]
-		var cached []transcript.BotmuxTurn
-		if sc != nil && len(sc.turns) > 0 {
-			cached = slices.Clone(sc.turns)
-		}
+		cached := h.cachedSessionTurnsLocked(sessionID, stamp)
 		h.mu.Unlock()
 		return cached, false
 	}
@@ -336,11 +348,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 	if err != nil {
 		h.mu.Lock()
 		h.turnsBackoffUntil = time.Now().Add(botmuxTurnsErrorBackoff)
-		sc := h.turnsCache[sessionID]
-		var cached []transcript.BotmuxTurn
-		if sc != nil && len(sc.turns) > 0 {
-			cached = slices.Clone(sc.turns)
-		}
+		cached := h.cachedSessionTurnsLocked(sessionID, stamp)
 		h.mu.Unlock()
 		return cached, false
 	}
@@ -350,7 +358,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 		return nil, false
 	}
 	cursor := "0"
-	if c := h.turnsCache[sessionID]; c != nil && c.base == base && c.token == token && c.stamp == stamp {
+	if c := h.turnsCache[sessionID]; base == h.base && token == h.token && h.usableTurnsLocked(c, stamp) {
 		if !c.fetchedAt.IsZero() && now.Sub(c.fetchedAt) < botmuxTurnsFetchMinInterval {
 			var cached []transcript.BotmuxTurn
 			if len(c.turns) > 0 {
@@ -426,6 +434,10 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 		}
 
 		h.mu.Lock()
+		if base != h.base || token != h.token {
+			h.mu.Unlock()
+			break
+		}
 		h.turnsBackoffUntil = time.Time{}
 		delete(h.unknownBackoff, sessionID)
 		if h.setCapsLocked(botmuxCaps{
@@ -443,7 +455,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 			h.turnsCache = map[string]*botmuxSessionTurnsCache{}
 		}
 		sc := h.turnsCache[sessionID]
-		if sc == nil || sc.base != base || sc.token != token || sc.stamp != stamp {
+		if !h.usableTurnsLocked(sc, stamp) {
 			sc = &botmuxSessionTurnsCache{
 				base:  base,
 				token: token,
@@ -474,11 +486,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sc := h.turnsCache[sessionID]
-	if sc == nil || len(sc.turns) == 0 {
-		return nil, noticeChanged
-	}
-	return slices.Clone(sc.turns), noticeChanged
+	return h.cachedSessionTurnsLocked(sessionID, stamp), noticeChanged
 }
 
 func (h *botmuxHost) fetchTurnsPage(

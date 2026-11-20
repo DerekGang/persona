@@ -134,6 +134,7 @@ describe("the sidebar's paged Agents by to-do", () => {
   });
 
   it("shows the complete list's quick filters where the hub selects them, and reads each chip as the complete list matches it", async () => {
+    await import("./BotmuxModeChip");
     localStorage.setItem("persona.agentFilter", "working");
     const fetch = await render(["sessions_list", "sessions_lookup", "sessions_agents_only", "sessions_todo", "sessions_quick_filters"]);
     const chips = () => [...host.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="快速筛选"] button')];
@@ -155,6 +156,17 @@ describe("the sidebar's paged Agents by to-do", () => {
     expect(botmuxMode()?.dataset.botmuxMode).toBe("all");
     expect(localStorage.getItem("persona.agentFilter")).toBe("feishu");
     expect(reads()).toHaveLength(0);
+    await act(async () => botmuxMode()?.click());
+    await flush();
+    expect(botmuxMode()?.dataset.botmuxMode).toBe("hide");
+    expect(chips().some((button) => button.textContent!.startsWith("飞书群"))).toBe(false);
+    expect(reads().length).toBeGreaterThan(0);
+    expect(reads().every((query) => query.get("exclude_pane_source") === "feishu")).toBe(true);
+    await act(async () => botmuxMode()?.click());
+    await flush();
+    expect(botmuxMode()?.dataset.botmuxMode).toBe("decode");
+    expect(chips().map((button) => button.getAttribute("aria-label"))).toContain("飞书群 1");
+    await act(async () => botmuxMode()?.click());
     fetch.mockClear();
     await act(async () => saveAgentsDisplay(false));
     await flush();
