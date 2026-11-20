@@ -74,9 +74,10 @@ it("selects a task-scoped slash skill with the keyboard and preserves prose and 
   });
   let raw = "";
   function Form() {
-    const [prompt, setPrompt] = useState("");
-    raw = prompt;
-    return <TaskPromptEditor draft={{ ...draft, repeat: "daily", fresh_each_run: true, prompt }} saved={null} disabled={false} onChange={setPrompt} />;
+    const [task, setTask] = useState<Task>({ ...draft, repeat: "daily", fresh_each_run: true });
+    raw = task.prompt;
+    return <TaskPromptEditor draft={task} saved={null} disabled={false}
+      onChange={(prompt, prompt_selections) => setTask({ ...task, prompt, prompt_selections })} />;
   }
   act(() => root.render(<Form />));
   await settle();
@@ -98,11 +99,12 @@ it("selects a task-scoped slash skill with the keyboard and preserves prose and 
 
 it("retains a saved prompt when the execution computer is unavailable", async () => {
   api.mockRejectedValue(new Error("Computer unavailable"));
-  const task = { ...draft, id: "existing", prompt: "Keep my note" };
+  const literal = '<persona-context kind="skill" ref="example">Example</persona-context>\n\nKeep my note';
+  const task = { ...draft, id: "existing", prompt: literal };
   const changed = vi.fn();
   act(() => root.render(<TaskPromptEditor draft={task} saved={task} disabled={false} onChange={changed} />));
   await settle();
-  expect(field().value).toBe("Keep my note");
+  expect(field().value).toBe(literal);
   expect(host.querySelector("[role=alert]")?.textContent).toContain("Computer unavailable");
   expect(host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.disabled).toBe(true);
   expect(changed).not.toHaveBeenCalled();

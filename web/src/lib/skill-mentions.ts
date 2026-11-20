@@ -54,6 +54,8 @@ export function splitSkillDraft(raw: string, includeFiles = false): { text: stri
   const kept: string[] = [];
   let rest = raw;
   for (;;) {
+    // Scheduled prompts separate picker records from literal prose with a blank line.
+    if (includeFiles && skills.length && /^\r?\n\r?\n/.test(rest)) break;
     const m = LEAD_CONTEXT_RE.exec(rest);
     if (!m) break;
     const tag = new RegExp(CONTEXT_RE.source).exec(m[0]);

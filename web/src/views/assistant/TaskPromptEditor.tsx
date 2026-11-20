@@ -2,7 +2,7 @@
 import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { api, credentialOwner, errorText, subscribeCredentialOwner } from "../../lib/api";
 import { MANAGER_HEADER, useShownManager } from "../../lib/manager-choice";
-import { taskBody, type Task, type TaskExecution } from "../../lib/routines";
+import { taskInputSettings, type Task, type TaskExecution } from "../../lib/routines";
 import { splitSkillDraft, type SkillCatalog } from "../../lib/skill-mentions";
 import { contextXML } from "../../lib/context-xml";
 import { AGENT_COMMANDS, Composer } from "../chat/Composer";
@@ -13,16 +13,14 @@ import { t } from "../../i18n";
 
 interface InputContext { execution: TaskExecution; catalog?: SkillCatalog; skill_error?: string }
 const commands = AGENT_COMMANDS.filter((command) => !command.agent && command.word !== WORKFLOWS_COMMAND && command.word !== PERMISSIONS_COMMAND);
-const executionKeys = ["session_id", "push", "repeat", "fresh_each_run", "launcher", "model", "effort", "cwd", "execution_machine_id", "model_revision"];
 const fileScope = (ex: TaskExecution) => ({ machine: ex.machine_id, cwd: ex.cwd ?? "", launcher: ex.launcher, runtime: ex.runtime ?? "" });
 const scopeOf = (ex: TaskExecution) => JSON.stringify([fileScope(ex), ex.agent, ex.model, ex.effort, ex.fingerprint]);
 
-export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: Task; saved: Task | null; disabled: boolean; onChange: (value: string) => void }) {
+export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: Task; saved: Task | null; disabled: boolean; onChange: (value: string, hasSelections: boolean) => void }) {
   const id = useId();
   const manager = useShownManager();
   const owner = useSyncExternalStore(subscribeCredentialOwner, credentialOwner, () => "");
-  const patch = taskBody(draft, saved);
-  const request = JSON.stringify({ id: saved?.id, ...Object.fromEntries(executionKeys.filter((key) => key in patch).map((key) => [key, patch[key]])) });
+  const request = JSON.stringify({ id: saved?.id, ...taskInputSettings(draft, saved) });
   const key = JSON.stringify([owner, manager, request]);
   const [state, setState] = useState<{ key: string; context?: InputContext; error?: string }>({ key: "" });
   useEffect(() => {
@@ -36,7 +34,7 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
   }, [key, request, manager]);
   const current = state.key === key ? state : undefined;
   const ex = current?.context?.execution;
-  const { text, skills: refs } = useMemo(() => splitSkillDraft(draft.prompt, true), [draft.prompt]);
+  const { text, skills: refs } = useMemo(() => draft.prompt_selections ? splitSkillDraft(draft.prompt, true) : { text: draft.prompt, skills: [] }, [draft.prompt, draft.prompt_selections]);
   const invalidFile = ex && refs.some((ref) => ref.kind === "file" && Object.entries(fileScope(ex)).some(([field, value]) => (ref.attrs?.[field] ?? "") !== value));
   const supported = ex?.agent === "claude" || ex?.agent === "codex";
   const mention = useMemo<MentionSource | undefined>(() => ex && supported ? {
@@ -56,7 +54,7 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
           placeholder={t("assistant-taskeditor.prompt_placeholder")}
           editor={{
             text, refs, label: t("assistant-taskeditor.section_prompt"),
-            onChange: (body, selected) => onChange(selected.length ? `${selected.map(contextXML).join("\n")}\n\n${body}` : body),
+            onChange: (body, selected) => onChange(selected.length ? `${selected.map(contextXML).join("\n")}\n\n${body}` : body, selected.length > 0),
           }}
           disabled={disabled}
           machineId={ex?.machine_id}

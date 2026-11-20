@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
 import { getContexts, type ContextRef } from "../../lib/links";
+import { loadPages } from "../../lib/lazy-page";
 import { t } from "../../i18n";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+beforeAll(() => loadPages());
 
 it("edits and removes a task reference without chat sends, history or stored chat drafts", async () => {
   const sent = vi.fn(async () => true);

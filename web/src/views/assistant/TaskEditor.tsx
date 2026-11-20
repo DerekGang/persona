@@ -295,7 +295,7 @@ export function TaskEditor({
 
           <section>
             <SectionTitle>{t("assistant-taskeditor.section_prompt")}</SectionTitle>
-            {hasInput ? <Suspense fallback={<Spinner />}><TaskPromptEditor draft={draft} saved={saved} disabled={working} onChange={(prompt) => set({ prompt })} /></Suspense> : <textarea
+            {hasInput ? <Suspense fallback={<Spinner />}><TaskPromptEditor draft={draft} saved={saved} disabled={working} onChange={(prompt, prompt_selections) => set({ prompt, prompt_selections })} /></Suspense> : <textarea
               className={textareaClass}
               rows={6}
               value={draft.prompt}

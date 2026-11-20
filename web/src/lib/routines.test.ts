@@ -318,3 +318,15 @@ describe("taskConversations (#2824)", () => {
       .toEqual([{ sid: "own", at: "2026-11-05T09:00:00Z" }, { sid: "old", at: "2026-11-01T09:00:00Z" }]);
   });
 });
+
+it("writes a selected reference only to the rich prompt field while plain and quoted text remain compatible", () => {
+  const text = '<persona-context kind="skill" ref="opaque">Inbox</persona-context>\n\nReview the receipts';
+  const saved = task({ prompt: text, prompt_selections: true });
+  for (const body of [taskBody(saved), taskBody({ ...saved, enabled: !saved.enabled }, saved)]) {
+    expect(body.structured_prompt).toBe(text);
+    expect(body).not.toHaveProperty("prompt");
+  }
+  // Owner typed identical markup before pickers existed (or a tool authored the plain task).
+  expect(taskBody({ ...saved, prompt_selections: false }, saved)).toHaveProperty("prompt", text);
+  expect(sameTask(saved, { ...saved, prompt_selections: false })).toBe(false);
+});

@@ -1236,7 +1236,7 @@ execution controls are not added here. Acceptance uses isolated RPC/CLI and brow
 
 In the Web task editor, type `@` to choose a file or skill, or `/` to choose a skill or reusable prompt.
 The editor uses Assistant's composer and keyboard menus. Selections appear as removable chips. Save writes
-the text and its leading context tags together. Reopening the task restores both. Plain text uses the existing
+the text and its leading context tags together and marks the task as containing selections. Reopening the task restores both. Plain text uses the existing
 task format, including when an older hub supplies the editor.
 
 The task's effective computer, launcher and working directory determine the available references. A changed
