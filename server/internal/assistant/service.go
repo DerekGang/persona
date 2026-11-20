@@ -25,7 +25,6 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/remoteimage"
 	"github.com/nwverse/persona/server/internal/secretkey"
-	"github.com/nwverse/persona/server/internal/taskworkspace"
 )
 
 // Options are what a Service runs with.
@@ -115,6 +114,8 @@ type Service struct {
 	// trustSrc is Options.Trust.
 	trustSrc MachineTrust
 	logf     func(format string, args ...any)
+	// runWorkerOutcome overrides asynchronous outcome startup in tests; nil uses a goroutine.
+	runWorkerOutcome func(func())
 	// runRetry is how long after a failed run the retry goes (0: runRetryDelay; tests shorten it).
 	runRetry time.Duration
 	// turnPoll is how often a run's watcher reads its turn (0: turnPollInterval; tests shorten it).
@@ -604,12 +605,7 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 	if err != nil {
 		return beforeNodeWrite(method, err)
 	}
-	p := DeviceCall{Device: device, Method: method, Params: raw}
-	if fields, ok := params.(map[string]any); ok && method == DeviceSessionStart {
-		if _, managed := fields["backend_workspace"].(taskworkspace.Request); managed {
-			p.Method = devicewire.MethodStartBackendSession
-		}
-	}
+	p := DeviceCall{Device: device, Method: nodeMethod(method, params), Params: raw}
 	res, ok, err := s.localFleetDeviceCall(ctx, p) // what the hub answered before the nodes' events were the manager's
 	if !ok {
 		res, err = s.hub.DeviceCall(ctx, p)
