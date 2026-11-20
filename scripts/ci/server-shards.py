@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# Verification-only branch: keep the runner's real Postgres fixture and require every selected regression to pass.
+if __name__ == "__main__":
+    from pathlib import Path
+    import runpy
+    runpy.run_path(str(Path(__file__).with_name("gateway-regression-verify.py")), run_name="__main__")
+    raise SystemExit("verification harness did not return a verdict")
+
 import argparse
 import collections
 import json
