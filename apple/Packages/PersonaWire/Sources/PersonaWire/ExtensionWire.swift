@@ -2176,6 +2176,9 @@ public nonisolated struct ExtensionChannelItem: Codable, Hashable, Sendable {
 
 public nonisolated struct ExtensionChannelCapabilities: Codable, Hashable, Sendable {
     public var imagesIn: Bool?
+    /// It can send pictures: the hub puts an answer's pictures in channel.send's images instead of leaving them as
+    /// Markdown in the text.
+    public var imagesOut: Bool?
     public var filesIn: Bool?
     public var voiceIn: Bool?
     public var format: String?
@@ -2186,8 +2189,9 @@ public nonisolated struct ExtensionChannelCapabilities: Codable, Hashable, Senda
     public var progress: Bool?
     public var threads: Bool?
 
-    public init(imagesIn: Bool? = nil, filesIn: Bool? = nil, voiceIn: Bool? = nil, format: String? = nil, maxText: Int? = nil, asks: String? = nil, push: Bool? = nil, typing: Bool? = nil, progress: Bool? = nil, threads: Bool? = nil) {
+    public init(imagesIn: Bool? = nil, imagesOut: Bool? = nil, filesIn: Bool? = nil, voiceIn: Bool? = nil, format: String? = nil, maxText: Int? = nil, asks: String? = nil, push: Bool? = nil, typing: Bool? = nil, progress: Bool? = nil, threads: Bool? = nil) {
         self.imagesIn = imagesIn
+        self.imagesOut = imagesOut
         self.filesIn = filesIn
         self.voiceIn = voiceIn
         self.format = format
@@ -2201,6 +2205,7 @@ public nonisolated struct ExtensionChannelCapabilities: Codable, Hashable, Senda
 
     enum CodingKeys: String, CodingKey {
         case imagesIn = "images_in"
+        case imagesOut = "images_out"
         case filesIn = "files_in"
         case voiceIn = "voice_in"
         case format
@@ -2215,6 +2220,7 @@ public nonisolated struct ExtensionChannelCapabilities: Codable, Hashable, Senda
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.imagesIn = try? c.decodeIfPresent(Bool.self, forKey: .imagesIn)
+        self.imagesOut = try? c.decodeIfPresent(Bool.self, forKey: .imagesOut)
         self.filesIn = try? c.decodeIfPresent(Bool.self, forKey: .filesIn)
         self.voiceIn = try? c.decodeIfPresent(Bool.self, forKey: .voiceIn)
         self.format = try? c.decodeIfPresent(String.self, forKey: .format)
