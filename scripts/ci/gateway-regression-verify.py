@@ -29,8 +29,9 @@ def main():
     parser.add_argument("--database-file", required=True)
     args = parser.parse_args()
     wanted = {(package, name) for package, names in REQUIRED.items() for name in names}
-    required_cases = {("node", "TestStopRPCPersistsItsProvenance/gateway/" + shape)
-                      for shape in ("quota", "capacity")}
+    required_cases = {("node", "TestStopRPCPersistsItsProvenance/gateway/" + shape + suffix)
+                      for shape in ("quota", "capacity")
+                      for suffix in ("", "_closed_before_classification")}
     pattern = "^(" + "|".join(re.escape(name) for _, name in sorted(wanted)) + ")$"
     command = [sys.executable, str(ROOT / "scripts/test/server_test_env.py"), "--database-file", args.database_file,
                "--", "go", "test", "-json", "-count=1", "-p", "1", "-timeout=4m", "-run", pattern]
