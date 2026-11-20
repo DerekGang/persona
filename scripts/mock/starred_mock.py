@@ -72,10 +72,15 @@ def register(d):
 
     def source(h, req):
         phase = req.json().get("phase")
-        if mode != "1" or phase not in (*VERSIONS, "reset"):
+        if mode != "1" or phase not in (*VERSIONS, "reset", "stale"):
             h.send_json({"error": "Not found"}, 404)
             return True
         with lock:
+            if phase == "stale":
+                # Same-size overwrite: the node's regular page is unchanged, but Full can't verify the raw source.
+                hub.FULL.pop(POSITION, None)
+                h.send_json({"ok": True})
+                return True
             items = [item for item in hub.ITEMS[hub.REVIEW] if item["id"] != POSITION]
             hub.FULL.pop(POSITION, None)
             if phase != "reset":

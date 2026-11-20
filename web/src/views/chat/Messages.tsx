@@ -23,7 +23,7 @@ import { t } from "../../i18n";
 export function MergedBubble({ msg, mid, sid }: { msg: UserMessage; mid: string; sid: string }) {
   const parts = msg.parts ?? [msg.text];
   return (
-    <div className="flex flex-col items-end gap-1.5 pl-[12%]" data-items={msg.id}>
+    <div className="flex flex-col items-end gap-1.5 pl-[12%]" data-items={msg.id} data-source-fingerprint={msg.rawInput?.[0]?.source_fingerprint}>
       {msg.images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {msg.images.map((im) => (

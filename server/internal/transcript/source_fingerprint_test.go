@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,5 +86,37 @@ func TestCodexFallbackSourceFingerprint(t *testing.T) {
 	a, b := parse("Original Codex answer"), parse("Different Codex reply")
 	if a[0] != "line12#0" || a[0] != b[0] || a[1] == b[1] {
 		t.Fatal("Codex replacement at the same position reused the original proof")
+	}
+}
+
+func TestShortPositionalFullRejectsSameSizeRewrite(t *testing.T) {
+	const original = `{"type":"user","timestamp":"2026-11-20T00:00:00Z","message":{"role":"user","content":"First words"}}` + "\n"
+	const replacement = `{"type":"user","timestamp":"2026-11-20T00:00:00Z","message":{"role":"user","content":"Other words"}}` + "\n"
+	if len(original) != len(replacement) {
+		t.Fatal("fixture must preserve the file size")
+	}
+	path := filepath.Join(t.TempDir(), "work.jsonl")
+	write := func(text string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(original)
+	file := NewFile(path)
+	items, err := file.Refresh()
+	if err != nil || len(items) != 1 || items[0].FullSize != 0 || items[0].SourceFingerprint == "" {
+		t.Fatalf("expected one uncut positional item: %+v, %v", items, err)
+	}
+	first := items[0]
+	if current, err := file.Full(first.ID); err != nil || current.SourceFingerprint != first.SourceFingerprint {
+		t.Fatalf("the original should be readable before the rewrite: %v", err)
+	}
+	write(replacement)
+	if fresh, err := file.Refresh(); err != nil || len(fresh) != 0 {
+		t.Fatalf("the equal-size rewrite should exercise the old cached page: %d items, %v", len(fresh), err)
+	}
+	if _, err := file.Full(first.ID); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("Full verified an obsolete uncut positional item: %v", err)
 	}
 }

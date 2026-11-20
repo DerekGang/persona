@@ -192,6 +192,14 @@ try {
   const originalHref = await cardFor(originalWords).getByRole("link", { name: "Open original" }).getAttribute("href");
   assert.match(new URL(originalHref, web).searchParams.get("at"), /^star:a{32}:line900#0$/);
 
+  // A same-size in-place edit can leave the page's record stale even after reloading.
+  await sourcePhase("stale");
+  await desktop.page.goto(new URL(originalHref, web).href);
+  await bubble(originalWords).waitFor();
+  await desktop.page.getByText("The original message is unavailable.").waitFor();
+  assert.equal(await desktop.page.locator("[data-search-hit]").count(), 0);
+  await openStarred();
+
   await sourcePhase("replacement");
   await cardFor(originalWords).getByRole("link", { name: "Open original" }).click();
   await cardFor(originalWords).getByText("The original message is unavailable.").waitFor();

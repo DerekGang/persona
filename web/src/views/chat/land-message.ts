@@ -1,6 +1,7 @@
 // Deep links and forwarded originals page back only when someone asks to open a message.
 import { t } from "../../i18n";
 import { ApiError, fullItem } from "../../lib/api";
+import type { Item } from "../../lib/types";
 import { insideFold } from "../../lib/turns";
 import { toast } from "../../ui/atoms";
 import { openFoldRange } from "./expanded";
@@ -15,6 +16,12 @@ export function readStarTarget(target: string) {
   return match ? { fingerprint: match[1]!, item: match[2]! } : undefined;
 }
 
+export interface LandingProof {
+  selector: string;
+  matches: (items: readonly Item[]) => boolean;
+  unavailable: () => void;
+}
+
 interface Landing {
   target: string;
   mid: string;
@@ -23,7 +30,7 @@ interface Landing {
   fromLink: boolean;
   current: () => boolean;
   transcript: () => Transcript;
-  seek: (item: string, quiet?: boolean, fingerprint?: string) => void;
+  seek: (item: string, quiet?: boolean, proof?: LandingProof) => void;
   loadEarlier: (stop: () => boolean) => Promise<unknown>;
 }
 
@@ -31,20 +38,34 @@ export async function landMessage({ target, mid, sid, scope, fromLink, current, 
   if (!current()) return;
   const saved = readStarTarget(target);
   const item = saved?.item ?? target;
+  const proof: LandingProof | undefined = saved ? {
+    selector: `[data-source-fingerprint="${saved.fingerprint}"]`,
+    matches: (items) => items.some((entry) => entry.id === item && entry.source_fingerprint === saved.fingerprint),
+    unavailable: () => toast(t("starred.source_unavailable")),
+  } : undefined;
   const open = (quiet = false) => requestAnimationFrame(() => {
-    if (current()) seek(item, quiet, saved?.fingerprint);
+    if (current()) seek(item, quiet, proof);
   });
   const holds = () => transcript().items.some((i) => i.id === item);
-  if (saved && transcript().error) return void toast(t("starred.source_failed"));
+  let verified: Item | undefined;
+  if (saved) {
+    // A page can still hold the old item after an equal-length rewrite. Check the raw line even for an item
+    // already on screen, including when the user opened this link directly.
+    try {
+      verified = await fullItem(mid, sid, item);
+      if (!current()) return;
+      if (verified.id !== item || verified.source_fingerprint !== saved.fingerprint) return proof?.unavailable();
+    } catch (error) {
+      if (current()) toast(t(error instanceof ApiError && error.status === 404 ? "starred.source_unavailable" : "starred.source_failed"));
+      return;
+    }
+  }
   if (holds()) return void open(!saved);
   if (!transcript().hasMore) {
     try {
-      // A folded reply is not a raw item. Open only the fold that holds a verified result.
-      const whole = await fullItem(mid, sid, item);
+      // A folded reply is not on screen. Open the fold that holds the original.
+      const whole = verified ?? await fullItem(mid, sid, item);
       if (!current()) return;
-      if (saved && (whole.id !== item || whole.source_fingerprint !== saved.fingerprint)) {
-        return void toast(t("starred.source_unavailable"));
-      }
       const fold = transcript().items.find((f) => insideFold(whole, f));
       if (!fold) {
         if (fromLink) toast(t("chat-chatview.message_further_up"));
