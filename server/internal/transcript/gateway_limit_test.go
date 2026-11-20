@@ -17,6 +17,7 @@ func TestGatewayUsageLimitReset(t *testing.T) {
 		{"supplied quota", gatewayQuota + "18:02 UTC (in 12h7m)", at, at.Add(12*time.Hour + 7*time.Minute), true},
 		{"next day", gatewayQuota + "04:00 UTC (in 22h5m)", at, time.Date(2026, 11, 20, 4, 0, 0, 0, time.UTC), true},
 		{"dated", gatewayQuota + "2026-11-21 04:00 UTC (in 2d)", at, time.Date(2026, 11, 21, 4, 0, 0, 0, time.UTC), true},
+		{"dated without timestamp", gatewayQuota + "2026-11-21 04:00 UTC (in 2d)", time.Time{}, time.Date(2026, 11, 21, 4, 0, 0, 0, time.UTC), true},
 		{"missing timestamp", gatewayQuota + "18:02 UTC", time.Time{}, time.Time{}, false},
 		{"invalid clock", gatewayQuota + "25:02 UTC", at, time.Time{}, false},
 		{"invalid date", gatewayQuota + "2026-02-30 18:02 UTC", at, time.Time{}, false},

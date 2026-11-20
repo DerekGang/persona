@@ -103,11 +103,14 @@ var gatewayAvailable = lazyre.New(`(?i)available again at (?:(\d{4}-\d{2}-\d{2})
 // timestamp, never the time a stopped session happens to be listed after its reset.
 func GatewayAvailableAgain(text string, at time.Time) (time.Time, bool) {
 	m := gatewayAvailable.FindStringSubmatch(text)
-	if m == nil || at.IsZero() {
+	if m == nil {
 		return time.Time{}, false
 	}
 	date := m[1]
 	if date == "" {
+		if at.IsZero() {
+			return time.Time{}, false
+		}
 		date = at.UTC().Format("2006-01-02")
 	}
 	t, err := time.Parse("2006-01-02 15:04", date+" "+m[2])
