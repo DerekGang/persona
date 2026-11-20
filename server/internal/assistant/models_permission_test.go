@@ -221,3 +221,35 @@ func TestModelTierPermissionApprovalShowsAndPersistsMode(t *testing.T) {
 		t.Fatalf("permission not changed after approval: %+v", after)
 	}
 }
+
+func TestAssistantPermissionDefaultLeavesRunningModelFingerprint(t *testing.T) {
+	s, _, _ := modelService(t)
+	ctx := context.Background()
+	binding := ModelBinding{Provider: "launcher.claude", Model: "test-model"}
+	fingerprint := func() any {
+		t.Helper()
+		params := map[string]any{"session_id": "current", "permission_mode": "default"}
+		if err := s.applyModel(ctx, "assistant", params); err != nil {
+			t.Fatal(err)
+		}
+		if params["permission_mode"] != "default" || params["model_fingerprint"] == nil {
+			t.Fatalf("existing conversation options changed: %+v", params)
+		}
+		return params["model_fingerprint"]
+	}
+	setModel(t, s, "assistant", binding)
+	before := fingerprint()
+	binding.PermissionMode = "plan"
+	setModel(t, s, "assistant", binding)
+	if after := fingerprint(); after != before {
+		t.Fatalf("new default changed running model fingerprint: %v → %v", before, after)
+	}
+	if got := s.launchPermissionDefault(ctx, "assistant", "server", "claude", startAgent{agent: "claude"}, launchPermission{}, true); got != "plan" {
+		t.Fatalf("fresh start mode = %q, want plan", got)
+	}
+	binding.Model = "different-model"
+	setModel(t, s, "assistant", binding)
+	if after := fingerprint(); after == before {
+		t.Fatal("a model change must change the running model fingerprint")
+	}
+}
