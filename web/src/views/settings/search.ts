@@ -41,6 +41,7 @@ export const SEARCH_INDEX: SearchGroup[] = [
   { tab: "general", group: t("language.label"), anchor: "language" },
   { tab: "general", group: t("settings.reply_motion"), anchor: "reply-motion" },
   { tab: "general", group: t("ui-look.recent_chats"), anchor: "recent-chats" },
+  { tab: "general", group: t("ui-look.sidebar_icons"), hint: words(t("ui-look.sidebar_icons_monochrome"), t("ui-look.sidebar_icons_colored")), anchor: "sidebar-icons" },
   { tab: "general", group: t("settings.start_page"), anchor: "start-page" },
   { tab: "general", group: t("settings.start_page_open_on"), hint: t("settings.start_page_main"), anchor: "open-on" },
   { tab: "general", group: t("settings.sidebar_pages"), anchor: "sidebar-pages" },
@@ -153,6 +154,7 @@ export const SEARCH_INDEX: SearchGroup[] = [
   // Labs: each module's settings by their names and choices (Labs.tsx; the form marks a field's row
   // configuration-<document>-<field>)
   { tab: "labs", group: t("settings-nav.tab_labs"), hint: t("settings-labs.trial"), anchor: "labs" },
+  { tab: "labs", group: path(t("settings-labs.work_area"), t("settings-labs.work_title")), anchor: "configuration-assistant-work-work_guide" },
   { tab: "labs", group: path(t("settings-labs.area_agents"), t("settings-labs.terminal_renderer")), hint: words(t("settings-labs.terminal_renderer_standard"), t("settings-labs.terminal_renderer_webgl")), anchor: "configuration-terminal-renderer" },
   // This hub
   { tab: "hub", group: t("settings-hubsettings.version"), hint: words(t("settings-hubsettings.last_check"), t("settings-hubsettings.branch"), t("settings-hubsettings.current_commit"), t("settings-hubsettings.latest_commit")), anchor: "hub-version" },
