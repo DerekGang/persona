@@ -328,6 +328,15 @@ func (h *botmuxHost) refreshSessionTurnsAsync(parent context.Context, sessionID 
 	}()
 }
 
+func (h *botmuxHost) backOffTurnsOnError(ctx context.Context, err error) {
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return
+	}
+	h.mu.Lock()
+	h.turnsBackoffUntil = time.Now().Add(botmuxTurnsErrorBackoff)
+	h.mu.Unlock()
+}
+
 // sessionTurns returns the cached + incrementally fetched structured turns for sessionID.
 // Returns (nil, capsChanged) when the BotMux instance does not support the endpoint or cannot be reached.
 func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]transcript.BotmuxTurn, bool) {
@@ -346,11 +355,8 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 
 	base, token, err := h.dashboard(ctx, false)
 	if err != nil {
-		h.mu.Lock()
-		h.turnsBackoffUntil = time.Now().Add(botmuxTurnsErrorBackoff)
-		cached := h.cachedSessionTurnsLocked(sessionID, stamp)
-		h.mu.Unlock()
-		return cached, false
+		h.backOffTurnsOnError(ctx, err)
+		return h.cachedSessionTurns(sessionID), false
 	}
 	h.mu.Lock()
 	if h.caps.valid(base, token, stamp, now) && !h.caps.turnsAPI {
@@ -387,9 +393,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 			refreshed = true
 			base, token, err = h.dashboard(ctx, true)
 			if err != nil {
-				h.mu.Lock()
-				h.turnsBackoffUntil = time.Now().Add(botmuxTurnsErrorBackoff)
-				h.mu.Unlock()
+				h.backOffTurnsOnError(ctx, err)
 				break
 			}
 			cursor = "0"
@@ -397,9 +401,7 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 			continue
 		}
 		if err != nil {
-			h.mu.Lock()
-			h.turnsBackoffUntil = time.Now().Add(botmuxTurnsErrorBackoff)
-			h.mu.Unlock()
+			h.backOffTurnsOnError(ctx, err)
 			break
 		}
 		if status == http.StatusNotFound {

@@ -736,6 +736,64 @@ func TestBotmuxOwnerActorUnechoedSurvivesStructuredRead(t *testing.T) {
 	}
 }
 
+func TestBotmuxSessionTurnsCallerContextDoesNotBackOff(t *testing.T) {
+	tests := []struct {
+		name       string
+		newContext func() (context.Context, context.CancelFunc)
+		wantErr    error
+	}{
+		{
+			name: "deadline exceeded",
+			newContext: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+		{
+			name: "canceled",
+			newContext: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+			wantErr: context.Canceled,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fs := newFakeBotmuxTurnsServer(t)
+			fs.turns = []transcript.BotmuxTurn{{TurnID: "cached-turn", Seq: 1}}
+			h := fs.makeHost("")
+			want, _ := h.sessionTurns(context.Background(), sidA)
+			if len(want) != 1 {
+				t.Fatalf("failed to seed cached turns: %+v", want)
+			}
+			h.mu.Lock()
+			h.turnsCache[sidA].fetchedAt = time.Time{}
+			h.mu.Unlock()
+
+			ctx, cancel := test.newContext()
+			defer cancel()
+			if ctx.Err() != test.wantErr {
+				t.Fatalf("context error = %v, want %v", ctx.Err(), test.wantErr)
+			}
+			if got, _ := h.sessionTurns(ctx, sidA); !reflect.DeepEqual(got, want) {
+				t.Fatalf("caller error lost cached turns: %+v", got)
+			}
+			if !h.turnsBackoffUntil.IsZero() {
+				t.Errorf("caller error set host-wide backoff until %v", h.turnsBackoffUntil)
+			}
+
+			fs.mu.Lock()
+			fs.turns = []transcript.BotmuxTurn{{TurnID: "other-session-turn", Seq: 1}}
+			fs.mu.Unlock()
+			if got, _ := h.sessionTurns(context.Background(), sidB); len(got) != 1 || got[0].TurnID != "other-session-turn" {
+				t.Fatalf("another session could not fetch structured turns: %+v", got)
+			}
+		})
+	}
+}
+
 func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
 	ctx := context.Background()
 
@@ -790,12 +848,29 @@ func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
 		fs.srv.Close()
 
 		_, _ = h.sessionTurns(ctx, sidA)
+		if !time.Now().Before(h.turnsBackoffUntil) {
+			t.Fatal("transport error did not set host-wide backoff")
+		}
 		if cliCalls != 1 {
 			t.Fatalf("transport error must not trigger dashboard CLI refresh; cliCalls = %d, want 1", cliCalls)
 		}
 		_, _ = h.sessionTurns(ctx, sidA)
 		if cliCalls != 1 {
 			t.Fatalf("backoff must suppress subsequent dashboard calls; cliCalls = %d, want 1", cliCalls)
+		}
+	})
+
+	t.Run("dashboard failure backs off other sessions", func(t *testing.T) {
+		fs := newFakeBotmuxTurnsServer(t)
+		fs.turnsStatus = http.StatusServiceUnavailable
+		h := fs.makeHost("")
+		_, _ = h.sessionTurns(ctx, sidA)
+		if !time.Now().Before(h.turnsBackoffUntil) {
+			t.Fatal("dashboard failure did not set host-wide backoff")
+		}
+		_, _ = h.sessionTurns(ctx, sidB)
+		if fs.turnsGets != 1 {
+			t.Fatalf("expected only one GET during host-wide backoff, got %d", fs.turnsGets)
 		}
 	})
 
