@@ -6,7 +6,7 @@
 import { t } from "../i18n";
 import { agentId, providerAgent } from "./agent-kind";
 import {
-  ALL_EFFORTS, defaultModel, effortChoices, effortRule, followedBinding, launcherAgent, modelName, takesEffort, typedModelOffered, type AgentModel, type LauncherModels, type PickerTier,
+  ALL_EFFORTS, defaultDetail, defaultModel, effortChoices, effortRule, followedBinding, launcherAgent, listedModel, modelName, pickerLauncher, startPicks, takesEffort, typedModelOffered, type AgentModel, type LauncherModels, type PickerTier,
   type UnavailableLauncher,
 } from "./launcher-models";
 import { launcherBlock } from "./launcher-health";
@@ -82,6 +82,8 @@ export interface NewAgentPanel {
   providers: PanelProvider[];
   state: PanelState;
   presets: PanelPreset[];
+  /** Compare shortcuts using the same launcher binding and supported picks as Start. A null setup means Follow. */
+  setupKey: (setup: PanelConfig | null, preset?: string) => string | undefined;
 }
 
 /**
@@ -123,6 +125,9 @@ export function newAgentPanel({ launchers, listOf, choice, configured, runs, tie
     // Claude Code's `default` entry is folded into the Default row; a real model marked default stays a row of its own
     const folded = d?.id === DEFAULT_ROW ? d : undefined;
     const locked = list?.locked;
+    // A real, lone default is a catalog choice. The synthetic Default offered for an empty reply is not one.
+    if (list) p.catalogCount = locked ? Math.min(all.length, 1) : all.length - Number(Boolean(folded && all.length > 1));
+    if (e.loading && (p.error || p.catalogCount === 0)) p.loading = true;
     // the Default row: what runs with no model sent, in its name (the model settings' model, the model the default entry
     // stands for, the launcher's own --model when it fixes it); a launcher that fixes it says why under it
     const runsModel = defaultRuns(l, list, followed);
@@ -191,7 +196,24 @@ export function newAgentPanel({ launchers, listOf, choice, configured, runs, tie
     const description = x.description || [runsOn?.name ?? x.launcher, x.model && modelTitle(list, x.model), x.effort && effortTitle(x.effort)].filter(Boolean).join(" · ");
     return { key: x.name, name: x.name, ...(description ? { description } : {}), setup };
   });
-  return { providers, state, presets };
+  const setupKey = (setup: PanelConfig | null, preset?: string): string | undefined => {
+    const tier = preset ? tiers.find((x) => x.name === preset) : undefined;
+    const picked = tier ? { launcher: tier.launcher, model: tier.model ?? "", effort: tier.effort ?? "" }
+      : setup ? formChoice(setup) : { launcher: "", model: "", effort: "" };
+    const binding = followedBinding(picked.launcher, configured);
+    const provider = pickerLauncher(picked.launcher, binding);
+    const launcher = launchers.find((l) => l.name === provider);
+    const list = listOf(provider).list;
+    if (!launcher || list === undefined) return undefined;
+    const agent = launcherAgent(provider, launchers, list);
+    const picks = startPicks({ agent, launcher, list, model: picked.model, effort: picked.effort, followed: binding });
+    const models = list?.models ?? [];
+    const id = list?.locked ? launcher.model : picks.model || defaultDetail(models, binding) || (!defaultModel(models) ? launcher.model : "");
+    const model = id ? listedModel(models, id) : defaultModel(models);
+    const effort = picks.effort || settingsEffort(agent, picked, binding) || model?.default_effort;
+    return JSON.stringify([provider, model?.resolved || model?.id || id || "", effort || ""]);
+  };
+  return { providers, state, presets, setupKey };
 }
 
 /** What a pick puts in the form: the launcher and model (a provider's Default row is no model), the effort. */
