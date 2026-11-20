@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,91 @@ func TestTaskInputContextUsesDraftExecutionWithoutSaving(t *testing.T) {
 	b, _ := s.modelRecord(context.Background(), "task.__input_draft")
 	if b.Revision != 0 {
 		t.Fatal("discovery saved a model override")
+	}
+}
+
+func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
+	const oldCron = "0 9 * * *"
+	const ownDir = "/home/me/.persona/assistant"
+	const sourceDir = "/work/source"
+	for _, tc := range []struct {
+		name, repeat string
+		cron         *string
+		wantRule     string
+		wantSession  string
+		wantDir      string
+	}{
+		{"legacy one-off echo", repeatOnce, nil, oldCron, "", ownDir},
+		{"explicit one-off", repeatOnce, new(""), "", "origin", sourceDir},
+		{"explicit cron update", repeatCron, new("@hourly"), "@hourly", "", ownDir},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := readyHub()
+			f.known["origin"] = true
+			f.setSessions("server", proto.Session{SessionID: "origin", Assistant: true, Cwd: sourceDir, Launcher: "claude", Agent: "claude"})
+			f.answerNode("assistant.directory", func(string, json.RawMessage) (any, error) {
+				return map[string]string{"cwd": ownDir}, nil
+			})
+			f.answerNode("skills.list", func(string, json.RawMessage) (any, error) {
+				return assistantskills.Catalog{Version: 1, Complete: true, Skills: []assistantskills.Entry{{ID: "review", Name: "Review"}}}, nil
+			})
+			contentCalls := 0
+			f.answerNode("assistant.content", func(_ string, raw json.RawMessage) (any, error) {
+				var target struct {
+					SessionID string `json:"session_id"`
+					Cwd       string `json:"cwd"`
+				}
+				if err := json.Unmarshal(raw, &target); err != nil {
+					return nil, err
+				}
+				if target.SessionID != tc.wantSession || target.Cwd != tc.wantDir {
+					t.Errorf("content check %d resolved session %q and cwd %q, want %q and %q", contentCalls+1, target.SessionID, target.Cwd, tc.wantSession, tc.wantDir)
+				}
+				contentCalls++
+				return map[string]bool{"valid": true}, nil
+			})
+			s := newTestService(t, f)
+			old := Task{ID: "job", Title: "Review", Prompt: "Original", Repeat: repeatCron, Cron: oldCron,
+				Enabled: true, MachineID: "server", SessionID: "origin", FreshEachRun: true}
+			setTasks(s, old)
+
+			draft := map[string]any{"id": old.ID, "repeat": tc.repeat, "session_id": old.SessionID}
+			if tc.cron != nil {
+				draft["cron"] = *tc.cron
+			}
+			body, _ := json.Marshal(draft)
+			preview := request(s, "POST", "/api/v1/assistant/tasks/input-context", string(body))
+			if preview.Code != http.StatusOK || !strings.Contains(preview.Body.String(), `"task_input":true`) || contentCalls != 1 {
+				t.Fatalf("context preview: %d %s", preview.Code, preview.Body.String())
+			}
+			if kept, _ := taskByID(s, old.ID); kept.Repeat != old.Repeat || kept.Cron != old.Cron || kept.Prompt != old.Prompt {
+				t.Fatal("preview changed the stored task")
+			}
+
+			draft["title"] = old.Title
+			draft["at"] = time.Now().Add(time.Hour).UTC()
+			draft["enabled"] = true
+			draft["structured_prompt"] = `<persona-context kind="skill" ref="review">Review</persona-context>` + "\n\nCheck the notes"
+			body, _ = json.Marshal(draft)
+			saved := request(s, "PUT", "/api/v1/assistant/tasks/"+old.ID, string(body))
+			if saved.Code != http.StatusOK || contentCalls != 2 {
+				t.Fatalf("save: %d %s", saved.Code, saved.Body.String())
+			}
+			task, _ := taskByID(s, old.ID)
+			if task.Cron != tc.wantRule || task.continuesSource() != (tc.wantSession != "") || !task.PromptSelections {
+				t.Fatalf("saved rule or destination differs from preview: repeat %q, cron %q, continues source %t", task.Repeat, task.Cron, task.continuesSource())
+			}
+
+			run := request(s, "POST", "/api/v1/assistant/tasks/"+old.ID+"/run", "{}")
+			if run.Code != http.StatusOK {
+				t.Fatalf("Run now: %d %s", run.Code, run.Body.String())
+			}
+			send := f.lastSend(t)
+			session, _ := send["session_id"].(string)
+			if session != tc.wantSession || send["task_input"] != true {
+				t.Fatalf("run used the wrong session or selection mode: session %q, task_input %v", session, send["task_input"])
+			}
+		})
 	}
 }
 

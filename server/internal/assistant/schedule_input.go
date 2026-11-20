@@ -70,13 +70,15 @@ func (s *Service) taskInputContext(ctx context.Context, raw map[string]json.RawM
 			t.SessionID = ""
 		}
 	}
-	for key, dst := range map[string]any{"push": &t.Push, "repeat": &t.Repeat, "fresh_each_run": &t.FreshEachRun} {
+	for key, dst := range map[string]any{"push": &t.Push, "repeat": &t.Repeat, "cron": &t.Cron, "fresh_each_run": &t.FreshEachRun} {
 		if v, ok := raw[key]; ok {
 			if err := json.Unmarshal(v, dst); err != nil {
 				return taskInputTarget{}, err
 			}
 		}
 	}
+	_, hasCron := raw["cron"]
+	keepLegacyCronRule(previous, &t, hasCron)
 	isolateScheduledConversation(&t, s.mayBeMainNow(ctx))
 	edit, err := s.prepareTaskExecutionEdit(ctx, previous, &t, raw)
 	if err != nil {

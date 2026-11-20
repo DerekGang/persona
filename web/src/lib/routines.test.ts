@@ -3,7 +3,7 @@ import { initI18n } from "../i18n";
 import {
   taskConversations,
   blankTask, clockLabel, dayLabel, everyLabel, fromLocalInput, fromTemplate, lastRunText, momentLabel, nextHour, nextText, normalizeDays,
-  parseTime, repeatsLabel, ruleText, runDays, runDetail, runsWith, sameTask, splitTasks, taskBody, taskTitle, TEMPLATES, toLocalInput, untilLabel, untilText, withPush,
+  parseTime, repeatsLabel, ruleText, runDays, runDetail, runsWith, sameTask, splitTasks, taskBody, taskInputSettings, taskTitle, TEMPLATES, toLocalInput, untilLabel, untilText, withPush,
   upcoming, validateTask, withRepeat, type Run, type Task,
 } from "./routines";
 
@@ -233,6 +233,17 @@ describe("the editor", () => {
     expect(withRepeat(task({ repeat: "daily" }), "cron", now).cron).toBe("0 9 * * 1-5");
     expect(withRepeat(cron, "cron", now).cron).toBe("*/30 9-18 * * 1-5");
     expect(splitTasks([cron]).repeating).toEqual([cron]);
+  });
+
+  it("previews and saves the same explicit cron rule when the draft changes repeat", () => {
+    const saved = task({ repeat: "cron", cron: "0 9 * * *" });
+    const changed = { ...saved, cron: " 0 10 * * * " };
+    const oneOff = withRepeat(saved, "once", now);
+    for (const [draft, cron] of [[changed, "0 10 * * *"], [oneOff, ""]] as const) {
+      const rule = { repeat: draft.repeat, cron };
+      expect(taskInputSettings(draft, saved)).toMatchObject(rule);
+      expect(taskBody(draft, saved)).toMatchObject(rule);
+    }
   });
 
   it("keeps the editor valid when the rule changes", () => {

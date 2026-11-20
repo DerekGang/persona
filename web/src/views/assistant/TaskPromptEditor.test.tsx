@@ -7,6 +7,9 @@ import { blankTask, type Task } from "../../lib/routines";
 import { loadPages } from "../../lib/lazy-page";
 import { splitSkillDraft } from "../../lib/skill-mentions";
 import { t } from "../../i18n";
+import { storeDraft } from "../../lib/drafts";
+import { HISTORY_PREFIX, recordSent } from "../../lib/send-history";
+import { reloadSavedPrompts, resetSavedPrompts } from "../../lib/saved-prompts";
 
 const api = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/api", async (original) => ({ ...(await original<typeof import("../../lib/api")>()), api }));
@@ -96,6 +99,59 @@ it("selects a task-scoped slash skill with the keyboard and preserves prose and 
   expect(preview.map(([, options]) => options.json.catalog ?? false)).toEqual([false, true]);
   expect(preview[1][1].json).toMatchObject({ cwd: "/current", repeat: "daily", fresh_each_run: true });
   expect(preview[1][1].json).not.toHaveProperty("id");
+});
+
+it("keeps task typing and saved prompt selection out of chat drafts and send history", async () => {
+  const chat = "chat-fixture";
+  const reusable = { id: "saved-review", name: "fixture-review", text: "Review the synthetic notes." };
+  const existing = { ...draft, id: "job", prompt: "Original task prompt" };
+  const chatStorage = () => Object.fromEntries(Object.keys(localStorage)
+    .filter((key) => key.startsWith("draft:") || key.startsWith(HISTORY_PREFIX))
+    .map((key) => [key, localStorage.getItem(key)]));
+  localStorage.clear();
+  storeDraft(chat, "Unsent chat draft");
+  recordSent(chat, "Previously sent chat message");
+  const before = chatStorage();
+  expect(before).toHaveProperty("draft:chat-fixture", "Unsent chat draft");
+  expect(before[HISTORY_PREFIX + chat]).toContain("Previously sent chat message");
+  api.mockImplementation(async (path) => {
+    if (path === contextPath) return { execution, task_input: true };
+    if (path === "/assistant/saved-prompts") return { prompts: [reusable] };
+    throw new Error("Unexpected request");
+  });
+  function Form() {
+    const [task, setTask] = useState(existing);
+    return <TaskPromptEditor draft={task} saved={existing} disabled={false}
+      onChange={(prompt, prompt_selections) => setTask({ ...task, prompt, prompt_selections })} />;
+  }
+  const open = () => act(() => root.render(<Form />));
+  const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(400); });
+  try {
+    await act(async () => { await reloadSavedPrompts(); });
+    open();
+    type("Typed only in the task");
+    await flush();
+    expect(field().value).toBe("Typed only in the task");
+    expect(chatStorage()).toEqual(before);
+
+    type(`/${reusable.name}`);
+    await flush();
+    expect(option(reusable.name)).toBeDefined();
+    act(() => field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    expect(field().value).toBe(reusable.text);
+    act(() => window.dispatchEvent(new Event("pagehide")));
+    expect(chatStorage()).toEqual(before);
+
+    act(() => root.render(null));
+    expect(chatStorage()).toEqual(before);
+    open();
+    await flush();
+    expect(field().value).toBe(existing.prompt);
+    expect(chatStorage()).toEqual(before);
+  } finally {
+    act(() => { root.render(null); resetSavedPrompts(); });
+    localStorage.clear();
+  }
 });
 
 it("retains a saved prompt when the execution computer is unavailable", async () => {

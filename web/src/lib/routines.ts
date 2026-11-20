@@ -461,6 +461,8 @@ export function taskInputSettings(d: Task, saved?: Task | null): Record<string, 
 
   if (Object.keys(body).length) body.model_revision = saved?.model_revision ?? 0;
   body.repeat = d.repeat;
+  // Presence distinguishes a deliberate rule change from an old client's repeat echo.
+  body.cron = d.repeat === "cron" ? (d.cron ?? "").trim() : "";
   body.session_id = d.session_id ?? "";
   if ((d.push ?? "") !== (saved?.push ?? "")) body.push = d.push ?? "";
   if (d.repeat !== "once" && Boolean(d.fresh_each_run) !== Boolean(saved?.fresh_each_run)) body.fresh_each_run = Boolean(d.fresh_each_run);
@@ -482,8 +484,6 @@ export function taskBody(d: Task, saved?: Task | null): Record<string, unknown> 
     time: d.repeat === "daily" ? d.time ?? "" : "",
     weekdays: d.repeat === "daily" ? normalizeDays(d.weekdays) : [],
     every_minutes: d.repeat === "interval" ? d.every_minutes ?? 0 : 0,
-    // always sent, so a hub that knows cron tasks changes the rule (left out, it keeps a cron task's); an older one ignores it
-    cron: d.repeat === "cron" ? (d.cron ?? "").trim() : "",
     permission_mode: d.permission_mode ?? "",
   };
   const at = d.repeat === "daily" || d.repeat === "cron" ? null : parseTime(d.at);

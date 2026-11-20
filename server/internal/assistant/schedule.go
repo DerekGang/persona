@@ -2912,6 +2912,15 @@ func (s *Service) taskView(ctx context.Context, id string) (Task, bool) {
 	return Task{}, false
 }
 
+// Clients that omit cron may represent an existing cron task as a one-off.
+// Keep its saved rule in both input discovery and the eventual edit.
+func keepLegacyCronRule(saved Task, draft *Task, hasCron bool) {
+	if !hasCron && saved.Repeat == repeatCron {
+		draft.Repeat, draft.Cron, draft.At = saved.Repeat, saved.Cron, saved.At
+		draft.Time, draft.Weekdays, draft.EveryMinutes = "", nil, 0
+	}
+}
+
 // editTask applies what the app changed (the hub's own fields and where runs go are kept; SessionID can only be
 // cleared, to run in a new conversation each time). Push and Until are kept: the routes set them only when the
 // body has them. A missing Until unmarshals as zero and would wipe a stored end time; null clears it.
@@ -3101,11 +3110,8 @@ func (s *Service) scheduleRoutes() {
 				}
 			}
 		}
-		if _, has := raw["cron"]; !has && old.Repeat == repeatCron {
-			// An app that does not know cron tasks keeps the task's rule (an older iOS app reads one as a one-off,
-			// Android and the web send its repeat back without the expression).
-			in.Repeat, in.Cron, in.At, in.Time, in.Weekdays, in.EveryMinutes = old.Repeat, old.Cron, old.At, "", nil, 0
-		}
+		_, hasCron := raw["cron"]
+		keepLegacyCronRule(old, &in, hasCron)
 		t := editTask(old, in, now)
 		if _, rich := raw["structured_prompt"]; rich {
 			t.PromptSelections = true
