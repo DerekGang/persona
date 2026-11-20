@@ -18,6 +18,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistant/repository"
 	"github.com/nwverse/persona/server/internal/assistant/saved"
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
 	"github.com/nwverse/persona/server/internal/prompts"
@@ -145,8 +146,9 @@ type Service struct {
 
 	// prepared is what this hub last gave a machine's node for a directory (key: machine id NUL directory), the
 	// CLAUDE.md and the plugin skills, by prepareSpaceIf; refreshInstructions gives again what differs.
-	preparedMu sync.Mutex
-	prepared   map[string]preparedState
+	prepareLocks cardLocks
+	preparedMu   sync.Mutex
+	prepared     map[string]preparedState
 
 	epoch string
 	// born is when this manager started: a background supervisor started before it may be in a profile with no login
@@ -165,27 +167,28 @@ type Service struct {
 	// interrupts: the interrupted receipts re-sent when their tasks change (interruptions.go).
 	interrupts interruptBook
 
-	titles       titleBook            // titles.go
-	phoneKept    keptPhoneTools       // fleet_tools.go: the phone's tools as the hub last listed them
-	agentNames   agentNamingBook      // agent_naming.go
-	prefs        settingsBook         // profile.go
-	main         mainBook             // start.go
-	archived     archiveBook          // conversations.go
-	tags         conversationTagsBook // conversation_tags.go
-	origins      originBook           // origins.go
-	guests       guestBook            // guest.go
-	relays       relayBook            // conversations.go
-	chatReplies  chatReplyBook        // chat_reply.go: what conversations that wrote as the user were told of the chats
-	undelivered  undeliveredBook      // undelivered.go: the owner's messages that could not go in
-	quotes       quoteBook            // relay_quote.go: the owner's messages relays carried, verified
-	avail        availBook            // availability.go
-	quiet        quietBook            // quiet.go
-	taskFileBook taskFileBook         // task_files.go: the files tasks handed over, by todo id
-	supervise    superviseBook        // supervise_signals.go
-	progress     progressBook         // supervise_progress.go
-	preempt      preemptBook          // owner_preempt.go
-	tbriefs      taskBriefBook        // task_brief.go
-	search       searchIndex          // search_index.go
+	titles           titleBook             // titles.go
+	phoneKept        keptPhoneTools        // fleet_tools.go: the phone's tools as the hub last listed them
+	agentNames       agentNamingBook       // agent_naming.go
+	prefs            settingsBook          // profile.go
+	main             mainBook              // start.go
+	archived         archiveBook           // conversations.go
+	tags             conversationTagsBook  // conversation_tags.go
+	directionFilings directionSessionsBook // direction_sessions.go
+	origins          originBook            // origins.go
+	guests           guestBook             // guest.go
+	relays           relayBook             // conversations.go
+	chatReplies      chatReplyBook         // chat_reply.go: what conversations that wrote as the user were told of the chats
+	undelivered      undeliveredBook       // undelivered.go: the owner's messages that could not go in
+	quotes           quoteBook             // relay_quote.go: the owner's messages relays carried, verified
+	avail            availBook             // availability.go
+	quiet            quietBook             // quiet.go
+	taskFileBook     taskFileBook          // task_files.go: the files tasks handed over, by todo id
+	supervise        superviseBook         // supervise_signals.go
+	progress         progressBook          // supervise_progress.go
+	preempt          preemptBook           // owner_preempt.go
+	tbriefs          taskBriefBook         // task_brief.go
+	search           searchIndex           // search_index.go
 
 	deletedConversations conversationDeleteBook // conversation_delete.go
 	conversationWrites   sync.RWMutex
@@ -349,6 +352,7 @@ func New(o Options) *Service {
 	s.startPresetRoutes()
 	s.startDefaultsRoutes() // start_defaults_routes.go
 	s.directionTreeRoutes()
+	s.directionSessionRoutes()
 	s.routeRoutes()
 	s.agentRouteRoutes()
 	s.directionNameRoutes()
@@ -466,9 +470,14 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 			return beforeNodeWrite(method, err)
 		}
 	}
-	if p, ok := params.(map[string]any); ok && (method == DeviceAssistantSend || method == DeviceAssistantWarm || method == DeviceSessionSend || method == DeviceSessionSendOnce) {
+	taken := false // the node took this send (or may have): a direction's notes block it carried counts as given
+	if p, ok := params.(map[string]any); ok && (method == DeviceAssistantSend || method == DeviceAssistantWarm || method == DeviceSessionSend ||
+		method == DeviceSessionSendOnce || method == assistantwire.DeviceAssistantAnswerAgain) {
 		id, _ := p["session_id"].(string)
-		if err := s.putSupervisionInstructions(ctx, device, id, p); err != nil {
+		pctx, carry := withNotesCarry(ctx)
+		// Settled however this returns: a send refused before it left was not taken (direction_notes.go).
+		defer func() { s.notesSendOutcome(ctx, carry, taken) }()
+		if err := s.putSupervisionInstructions(pctx, device, id, p); err != nil {
 			return beforeNodeWrite(method, err)
 		}
 		if method == DeviceAssistantSend || method == DeviceSessionSend || method == DeviceSessionSendOnce {
@@ -489,6 +498,9 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 			}
 			if origin != "" {
 				p["origin"] = origin
+			}
+			if !originKnown || (origin != "" && origin != OriginTask) || p["is_main"] == true {
+				delete(p, devicewire.LegacyTaskExecution)
 			}
 			if method == DeviceSessionSend || method == DeviceSessionSendOnce {
 				cfg := s.settings(ctx)
@@ -593,6 +605,8 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 	if !ok {
 		res, err = s.hub.DeviceCall(ctx, p)
 	}
+	// Not taken: refused before anything was typed, or it never reached the computer (relay_refusal.go).
+	taken = err == nil || !sendNotTaken(err)
 	if taskRoot != "" && (method == DeviceSessionSend || method == deviceTaskStart) {
 		s.noteTaskSpaceResult(ctx, taskRoot, device, res)
 	}
@@ -696,13 +710,18 @@ func (s *Service) device(ctx context.Context, id string) (Device, bool) {
 
 // startParams are what a new conversation starts with.
 type startParams struct {
-	Text           string               `json:"text"`
-	PermissionMode string               `json:"permission_mode,omitempty"`
-	Purpose        string               `json:"purpose,omitempty"` // the model configuration's purpose; "" is the assistant's
-	Space          string               `json:"space,omitempty"`   // "health" starts it in the health space (docs/assistant/health.md)
-	Origin         string               `json:"origin,omitempty"`  // where it comes from (origins.go); "" is the user's
-	OriginRef      string               `json:"origin_ref,omitempty"`
-	Source         *proto.MessageSource `json:"source,omitempty"`
+	TaskModel           *ModelBinding
+	MachineID           string
+	Cwd                 string
+	TaskExecution       bool
+	LegacyTaskExecution bool
+	Text                string               `json:"text"`
+	PermissionMode      string               `json:"permission_mode,omitempty"`
+	Purpose             string               `json:"purpose,omitempty"` // the model configuration's purpose; "" is the assistant's
+	Space               string               `json:"space,omitempty"`   // "health" starts it in the health space (docs/assistant/health.md)
+	Origin              string               `json:"origin,omitempty"`  // where it comes from (origins.go); "" is the user's
+	OriginRef           string               `json:"origin_ref,omitempty"`
+	Source              *proto.MessageSource `json:"source,omitempty"`
 	// NewSessionID starts the conversation under this id (a Claude Code one; another agent picks its own).
 	NewSessionID string `json:"new_session_id,omitempty"`
 }

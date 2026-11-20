@@ -69,6 +69,8 @@ const (
 	AssistantSupervisionInstructions = "assistant_supervision_instructions"
 	// SessionSkills: session.skills and validated explicit skill selections on ordinary session.send.
 	SessionSkills = "session_skills_v1"
+	// TaskExecution validates task directories and refuses execution substitutions.
+	TaskExecution = "task_execution"
 	// OwnerControls separates verified owner actions from legacy RPCs that can carry arbitrary params.
 	OwnerControls = "owner_controls_v1"
 	// SourcePermissions isolates node-attested Agent messages from caller parameters.
@@ -227,8 +229,11 @@ const (
 // (nodeupdate.Restart), and persona-link's scheduled-task supervisor restarts it without its usual delay.
 const RestartExitCode = 75
 
+// TaskWorkspace supports explicit backend-created task workspaces.
+const TaskWorkspace = "task_workspace_v1"
+
 // Announced is what a node built from this code announces.
-var Announced = []string{TaskInstructions, SourcePermissions, OwnerControls, SessionSkills, ShareProjection, CreationReceipt, PersonaContracts, ManagerUpdateInventory, MCPWait, Sessions, SessionEchoStatus, ModelConfiguration, AssistantConfigDir, AssistantSupervisionInstructions, AssistantServiceTier, SessionStartSpeed, NodeUpdate, Engines, MachineUID, HerdrServer, PluginNodeCall, Ultracode, HealthSpaces, Preview, SecretRun, Clipboard, SecretEnv, LauncherSwitch, ModelHTTP, EngineSwitch, ModelRun, LauncherSwitchNow, LauncherSwitchIdle, PaneCwd, NodeUpdateIdle, PaneNewSpace, MachineDiagnose, StartGoal, StartContinue, LauncherCheckAssistantTurn, StartAnswer, AssistantToolSearchFallback, NodeLanes}
+var Announced = []string{TaskWorkspace, TaskInstructions, SourcePermissions, OwnerControls, SessionSkills, ShareProjection, CreationReceipt, PersonaContracts, ManagerUpdateInventory, MCPWait, Sessions, SessionEchoStatus, ModelConfiguration, AssistantConfigDir, AssistantSupervisionInstructions, AssistantServiceTier, SessionStartSpeed, TaskExecution, NodeUpdate, Engines, MachineUID, HerdrServer, PluginNodeCall, Ultracode, HealthSpaces, Preview, SecretRun, Clipboard, SecretEnv, LauncherSwitch, ModelHTTP, EngineSwitch, ModelRun, LauncherSwitchNow, LauncherSwitchIdle, PaneCwd, NodeUpdateIdle, PaneNewSpace, MachineDiagnose, StartGoal, StartContinue, LauncherCheckAssistantTurn, StartAnswer, AssistantToolSearchFallback, NodeLanes}
 
 // ShareProjection is the bounded complete-source sharing projection, not light Items.
 const ShareProjection = "share_projection.v1"

@@ -191,6 +191,7 @@ type Node struct {
 	firstWait sync.WaitGroup             // first messages being checked (firstprompt.go)
 	engLists  sync.WaitGroup             // new engines' session lists being built in the background (useEngine)
 	lostFirst lostPrompts                // session id -> why its first message did not go in (firstprompt.go)
+	workSent  workSent                   // Cursor / agy pane -> when a message last went in (worksent.go)
 	events    *herdrEvents               // herdr's event stream (herdrevents.go)
 	hostSig   map[string]*watcherSignals // change signals of the registered watcher hosts, by host kind (herdrevents.go)
 	cdirs     *claudeDirs                // Claude Code config directories in use (claudedirs.go)
@@ -222,6 +223,9 @@ type Node struct {
 	fileOps    fileOperations // copy / zip progress polled by the phone and web (fileoperation.go)
 	sysOnce    sync.Once      // system: read once (metrics.go)
 	sys        proto.System
+
+	// startsBegun: when the latest start of a session that starts does not hold began (transcript_files.go).
+	startsBegun startsBegun
 
 	// share: what the node keeps of launcher switches outside the state records, shared by a resident node's Nodes
 	// (switch_share.go, attach.go); nil until the first use when attach set none (switches).
@@ -344,6 +348,8 @@ type Node struct {
 
 	// assistantPrepared keeps each assistant directory's last prepare state (clicall.go).
 	assistantPrepared map[string]assistantPrepareState
+	// Keep both native skill directories and their startup instructions consistent across concurrent prepares and launches.
+	assistantSkillsMu sync.Mutex
 
 	// claudeV is claude's version as last asked (agentplugin.go).
 	claudeV claudeVersionCache
@@ -568,7 +574,7 @@ func (n *Node) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 	}
 	go n.meterUsage(ctx, n.stateReady)
 	go n.backfillUsage(ctx, n.stateReady) // the days before the hub's history, once (usage_backfill.go)
-	go n.runUsageWindows(ctx.Done())
+	go n.runUsageWindows(ctx)
 	go n.sampleMetrics(ctx)
 	go n.watchPorts(ctx)
 	go n.modelRecoveryLoop(ctx)
@@ -746,6 +752,12 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 	if strings.HasPrefix(method, "node.update.") {
 		return n.handleUpdate(ctx, method, params)
 	}
+	if method == "task.workspace.capabilities" {
+		return map[string]any{"capability": "task_workspace_v1"}, nil
+	}
+	if strings.HasPrefix(method, "task.workspace.") {
+		return n.taskWorkspace(ctx, strings.TrimPrefix(method, "task.workspace."), params)
+	}
 	switch method {
 	case nodeproto.SourceSend:
 		method = "session.send"
@@ -761,6 +773,8 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		ctx = promptLanguageContext(ctx, params)
 	}
 	switch method {
+	case "sessions.history": // sessions active in a time window, inactive ones too (sessions_history.go)
+		return n.sessionsHistory(ctx, params)
 	case "workspace.naming.resolve":
 		return n.resolveWorkspaceNaming(ctx, params)
 	case "session.share_projection":
@@ -853,13 +867,14 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		Pane                    string        `json:"pane"`      // panes.*: a pane the host lists
 		InPane                  string        `json:"in_pane"`   // session.start: a failed start's kept tab to start in (startremedy.go)
 		Direction               string        `json:"direction"` // panes.split: right or down
-		TabID                   string        `json:"tab_id"`    // tabs.*
+		TabID                   string        `json:"tab_id"`    // tabs.*, guarded session tab rename
 		Label                   string        `json:"label"`     // tabs.rename
 		Kind                    string        `json:"kind"`      // tabs.*, panes.git: the host kind ("" the engine's)
 		Op                      string        `json:"op"`        // panes.git: fetch, pull or push
 		Action                  string        `json:"action"`    // launchers.repair: which of its fixed repairs
 		TabName                 *string       `json:"tab_name"`
-		TZ                      string        `json:"tz"` // the user's time zone
+		ExpectedTabName         string        `json:"expected_tab_name"` // guarded session tab rename from automatic naming
+		TZ                      string        `json:"tz"`                // the user's time zone
 		// HTTP is a quota plugin's request to send to a launcher's gateway (launchers.http); nil asks for the gateway.
 		HTTP             *quota.Request                `json:"http,omitempty"`
 		Async            bool                          `json:"async"`
@@ -875,6 +890,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		TaskInstructions string                        `json:"task_instructions"`
 		Goal             string                        `json:"goal"` // session.start: a /goal typed after the first message is in (startgoal.go)
 		DismissLost      bool                          `json:"dismiss_lost"`
+		TaskExecution    bool                          `json:"task_execution"`
 		ResumeOnly       bool                          `json:"resume_only"`
 		OnlyRunning      bool                          `json:"only_running"` // assistant.compact: refuse not_running rather than start the process
 		IsMain           bool                          `json:"is_main"`
@@ -1254,8 +1270,8 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			n.setLiveReplies(*c.ClaudeLiveReplies)
 		}
 		return map[string]any{"claude_dirs": n.claudeConfigDirs()}, nil
-	case "usage.windows": // subscription rate-limit windows read from local files (usagewindows.go, #2432)
-		return n.usageSnapshot(false), nil
+	case "usage.windows": // subscription rate-limit windows collected on this computer (usagewindows.go, #2432)
+		return n.usageSnapshot(), nil
 	case "launchers.list":
 		if p.Source == proto.ExternalLauncherSource {
 			return n.externalLauncherList(ctx, p.Refresh)
@@ -1425,6 +1441,12 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			if err := n.saveStopCause(ctx, p.ResumeSessionID, proto.StopUnknown); err != nil {
 				return nil, err
 			}
+			if p.ResumeAutomatic {
+				// The assistant's own resume that does not bring the Agent up leaves it stopped by that step, not by the
+				// user: resume_failed, which the assistant may try again, never unknown (#11441).
+				id := p.ResumeSessionID
+				defer func() { n.noteResumeFailed(id, resultErr) }()
+			}
 		}
 		if p.ResumeSessionID != "" && p.Host == "" {
 			p.Host = n.startKind(n.withResumeHost(ctx, p.ResumeSessionID))
@@ -1579,6 +1601,9 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			ctx = context.WithValue(ctx, taskTerminalStartKey{}, &mark)
 		}
 		s, err := n.start(ctx, r.cwd, r.launcher, p.Prompt, p.ResumeSessionID, r.workspaceID, r.mode, r.effort, r.tab, newID, p.AgentType, r.execution)
+		if err == nil && s != nil && p.ResumeSessionID == "" && p.Title != nil && strings.TrimSpace(*p.Title) != "" {
+			s.Title = cmp.Or(s.HerdrTabName(), strings.TrimSpace(*p.Title))
+		}
 		if err == nil && p.ResumeSessionID != "" {
 			n.forkStarted(p.ResumeSessionID)
 		}
@@ -1592,6 +1617,8 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 	case "session.fork": // "Branch to new chat" (fork.go)
 		id, err := n.fork(ctx, p.SessionID, p.AtItemID)
 		return map[string]any{"session_id": id}, err
+	case "assistant.directory":
+		return n.taskDirectory(p.Path)
 	case "assistant.execution":
 		return n.assistantExecution(ctx, p.SessionID), nil
 	case "assistant.send", assistantwire.DeviceAssistantAnswerAgain:
@@ -1647,7 +1674,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		sctx = withClientMsgID(sctx, opts.ClientMsgID) // a runtime's message goes under it (assistant_runtime.go)
 		sctx = withSupervisionDelivery(sctx, p.MessageSource)
 		send := func() (string, error) {
-			return n.assistantSend(sctx, p.SessionID, p.Cwd, p.Launcher, p.Text, p.Images, p.PermissionMode, p.Effort, (modelExecution{PlanThen: p.PlanThen, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Runtime: n.externalRuntime(p.SessionID, p.Launcher, p.Runtime), External: p.External, IsMain: p.IsMain, MainCompactWindow: p.MainCompact, FollowsSetting: p.FollowsSetting, ConfigDir: p.ConfigDir, Origin: p.Origin, OriginKnown: p.OriginKnown, OriginDecisionRequired: true, Public: p.Public, Interject: p.Interject, Interactive: p.Interactive}).withSupervision(p.SupervisionInstructions))
+			return n.assistantSend(sctx, p.SessionID, p.Cwd, p.Launcher, p.Text, p.Images, p.PermissionMode, p.Effort, (modelExecution{Strict: p.TaskExecution, PlanThen: p.PlanThen, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, Runtime: n.externalRuntime(p.SessionID, p.Launcher, p.Runtime), External: p.External, IsMain: p.IsMain, MainCompactWindow: p.MainCompact, FollowsSetting: p.FollowsSetting, ConfigDir: p.ConfigDir, Origin: p.Origin, OriginKnown: p.OriginKnown, OriginDecisionRequired: true, Public: p.Public, Interject: p.Interject, Interactive: p.Interactive}).withSupervision(p.SupervisionInstructions))
 		}
 		if p.NewSessionID == "" && p.SessionID == "" && opts.ClientMsgID != "" {
 			// A new conversation's first message with its client_msg_id (one a person's own app opened, the manager's
@@ -1701,14 +1728,23 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 	case "assistant.guest_delete": // a meeting's room, at its transcript's cut (assistant_guest.go)
 		return n.assistantGuestDelete(params)
 	case "session.modes":
-		if err := n.setModelAndModes(ctx, p.SessionID, p.Model, p.PermissionMode, p.Effort); err != nil { // model: model_switch.go
+		var options struct {
+			QueueEffort bool `json:"queue_effort"`
+		}
+		_ = json.Unmarshal(params, &options)
+		pending, err := n.setModelAndModes(ctx, p.SessionID, p.Model, p.PermissionMode, p.Effort, options.QueueEffort)
+		if err != nil {
 			return nil, err
 		}
-		return n.modesAnswer(p.SessionID, p.PermissionMode), nil
+		answer := n.modesAnswer(p.SessionID, p.PermissionMode)
+		if pending {
+			answer["pending_effort"] = p.Effort
+		}
+		return answer, nil
 	case "assistant.compact": // the user compacting an assistant conversation, or the hub a meeting's room (assistant_compact.go)
 		return ok(n.assistantCompact(ctx, p.SessionID, p.OnlyRunning))
 	case "assistant.handoff": // what a new main conversation is told about the old one
-		return n.assistantHandoff(p.SessionID)
+		return n.assistantHandoff(ctx, p.SessionID)
 	case "assistant.warm":
 		return ok(n.assistantWarm(p.Cwd, p.Launcher, (modelExecution{PlanThen: p.PlanThen, Model: p.Model, Effort: p.Effort, UseEffort: p.ModelFingerprint != "", Fingerprint: p.ModelFingerprint, ConfigDir: p.ConfigDir, IsMain: p.IsMain, MainCompactWindow: p.MainCompact, Interactive: p.Interactive}).withSupervision(p.SupervisionInstructions)))
 	case "assistant.memory":
@@ -2047,7 +2083,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		_ = json.Unmarshal(params, &a)
 		f, err := n.file(p.SessionID)
 		if err != nil {
-			return nil, readErr(err)
+			return nil, n.readErr(p.SessionID, err)
 		}
 		n.refresh(p.SessionID, f)
 		it, err := f.Full(a.ItemID)
@@ -2075,7 +2111,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		_ = json.Unmarshal(params, &a)
 		f, err := n.file(p.SessionID)
 		if err != nil {
-			return nil, readErr(err)
+			return nil, n.readErr(p.SessionID, err)
 		}
 		n.refresh(p.SessionID, f)
 		it, err := f.Full(a.ItemID)
@@ -2087,13 +2123,19 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 	case "session.items":
 		f, err := n.file(p.SessionID)
 		if err != nil {
-			if n.startingSession(p.SessionID) { // nothing written yet: an empty chat, not an error
+			if n.startingSession(p.SessionID) { // nothing written yet: an empty chat; else not_found with its reason
 				if p.UserInputs {
 					return proto.UserInputIndex{Inputs: []proto.UserInputPosition{}}, nil
 				}
 				return map[string]any{"items": []proto.Item{}, "has_more": false}, nil
 			}
-			return nil, readErr(err)
+			if session, _, _ := strings.Cut(p.SessionID, subagentSep); p.BeforeSeq > 0 && !p.UserInputs && n.knownSession(session) {
+				// An older page of a session the node knows (or of its subagent): the end of its history, as before
+				// #11388. Only the latest page says why there is none; released apps ask an older page again on an
+				// error (#11450).
+				return map[string]any{"items": []proto.Item{}, "has_more": false}, nil
+			}
+			return nil, n.readErr(p.SessionID, err)
 		}
 		if err := n.refresh(p.SessionID, f); err != nil && p.UserInputs {
 			return nil, err
@@ -2309,6 +2351,11 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		return ok(n.renameWorktree(worktreeComposerContext(ctx, params), in.Kind, in.WorkspaceID, in.Name))
 	case "session.rename":
 		return ok(n.renameSession(ctx, p.SessionID, p.TabName, p.Title))
+	case assistantwire.DeviceSessionRenameTabIfCurrent:
+		if p.TabName == nil || strings.TrimSpace(*p.TabName) == "" || p.ExpectedTabName == "" {
+			return nil, fmt.Errorf("current and new tab names are required")
+		}
+		return ok(n.renameObservedTab(ctx, p.SessionID, p.TabID, p.ExpectedTabName, *p.TabName))
 	case "todo.sync_session_tokens":
 		var in struct {
 			Tokens map[string]map[string]string `json:"tokens"`
@@ -2411,11 +2458,12 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			}
 			n.mu.Unlock()
 		}
-		return map[string]any{"skills": assistantskills.List(assistantskills.UserDir(), n.signedInConnectors(cwd))}, nil
+		return map[string]any{"skills": assistantskills.List(assistantskills.UserDir(), n.skillSelection(cwd))}, nil
 	case "assistant.prepare":
 		var a struct {
-			Dir      string `json:"dir"`
-			ClaudeMD string `json:"claude_md"`
+			Dir         string `json:"dir"`
+			ClaudeMD    string `json:"claude_md"`
+			WorkGuideMD string `json:"work_guide_md"`
 			// Connectors are the hub's signed in: the built-in skills that need one go in the directory (Requires).
 			Connectors []string `json:"connectors"`
 			// CLIs are their command lines (name → connector id), on the assistant's PATH (node/clicall.go).
@@ -2433,19 +2481,15 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
-		// The same instructions for both agents: Claude reads CLAUDE.md, Codex AGENTS.md.
-		for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(a.ClaudeMD), 0o600); err != nil {
-				return nil, err
-			}
-		}
+		n.assistantSkillsMu.Lock()
+		defer n.assistantSkillsMu.Unlock()
 		// Before every message: a connector signed out since the last one takes its skill (and tg) away.
 		key := assistantPrepareDir(dir)
 		n.mu.Lock()
 		if n.assistantPrepared == nil {
 			n.assistantPrepared = map[string]assistantPrepareState{}
 		}
-		n.assistantPrepared[key] = assistantPrepareState{connectors: a.Connectors, clis: a.CLIs}
+		n.assistantPrepared[key] = assistantPrepareState{connectors: a.Connectors, clis: a.CLIs, workGuide: a.WorkGuideMD != ""}
 		n.mu.Unlock()
 		var need []string
 		if a.PluginSkills != nil {
@@ -2454,7 +2498,17 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 				n.logger.Printf("assistant: plugin skills: %v", err)
 			}
 		}
-		n.syncAssistantSkills(dir)
+		if err := n.syncAssistantSkills(dir); err != nil {
+			n.logger.Printf("assistant: skills: %v", err)
+		} else if a.WorkGuideMD != "" && assistantskills.WorkGuideReady(dir) {
+			a.ClaudeMD = a.WorkGuideMD
+		}
+		// The same instructions for both agents: Claude reads CLAUDE.md, Codex AGENTS.md.
+		for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(a.ClaudeMD), 0o600); err != nil {
+				return nil, err
+			}
+		}
 		return map[string]any{"cwd": dir, "plugin_skills_need": need}, nil
 	case "session.info":
 		return n.sessionInfo(ctx, p.SessionID)
