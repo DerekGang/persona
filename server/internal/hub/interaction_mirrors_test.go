@@ -26,7 +26,7 @@ func TestDisplayMirrorUpdatesAndResolvesTogether(t *testing.T) {
 	origin := proto.Interaction{ID: "ix_origin", SessionID: "side", SessionTitle: "Originating conversation",
 		Kind: proto.IxPermission, MirrorMain: true, Summary: "before", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Minute).UTC()}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	forged := mirror
 	forged.ID = "ix_runtime_chosen"
 	if validDisplayMirror(origin, forged) {
@@ -100,11 +100,38 @@ func TestDisplayMirrorUpdatesAndResolvesTogether(t *testing.T) {
 	}
 }
 
+func TestDisplayMirrorFromEarlierOccurrenceCannotResolveLaterCard(t *testing.T) {
+	h := newTestHub(t)
+	first := proto.Interaction{ID: "ix_reused_mirror", SessionID: "side", Kind: proto.IxPermission,
+		MirrorMain: true, CreatedAt: time.Unix(1000, 0).UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	firstMirror := first
+	firstMirror.ID, firstMirror.MirrorOf, firstMirror.MirrorMain, firstMirror.SessionID = proto.ApprovalMirrorID(first.ID, first.CreatedAt), first.ID, false, "main"
+	reportInteraction(t, h, first)
+	reportInteraction(t, h, firstMirror)
+	reportResolved(t, h, first.ID, "")
+
+	second := first
+	second.CreatedAt = second.CreatedAt.Add(time.Second)
+	secondMirror := second
+	secondMirror.ID, secondMirror.MirrorOf, secondMirror.MirrorMain, secondMirror.SessionID = proto.ApprovalMirrorID(second.ID, second.CreatedAt), second.ID, false, "main"
+	reportInteraction(t, h, second)
+	reportInteraction(t, h, secondMirror)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/"+firstMirror.ID+"/resolve", strings.NewReader(`{"allow":true}`))
+	r.SetPathValue("id", firstMirror.ID)
+	h.normalizeDisplayMirror(r)
+	if got := r.PathValue("id"); got != firstMirror.ID {
+		t.Fatalf("the first occurrence's stale mirror normalized to %q, leaving the later occurrence answerable", got)
+	}
+	if got := h.pendingInteractions(); len(got) != 2 {
+		t.Fatalf("the stale click changed the later occurrence: %+v", got)
+	}
+}
+
 func TestDisplayMirrorSnapshotRejectsPrivateAndOrphanedCopies(t *testing.T) {
 	h := newTestHub(t)
 	origin := proto.Interaction{ID: "ix_private", SessionID: "side", Kind: proto.IxPermission, MirrorMain: true, Private: true}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	h.takeFleetInteractionsFrom(assistantwire.AssistantID, []proto.Interaction{mirror, origin})
 	got := h.pendingInteractions()
 	if len(got) != 1 || got[0].ID != origin.ID {
@@ -120,7 +147,7 @@ func TestDisplayMirrorSnapshotKeepsLiveCopyWithoutManagerCopy(t *testing.T) {
 	h := newTestHub(t)
 	origin := proto.Interaction{ID: "ix_existing", SessionID: "side", Kind: proto.IxPermission, MirrorMain: true, Summary: "before", ExpiresAt: time.Now().Add(time.Minute).UTC()}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	mirror.Manager = assistantwire.AssistantID
 	origin.Manager = assistantwire.AssistantID
 	h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
@@ -159,7 +186,7 @@ func TestDisplayMirrorSnapshotRefreshesContentAndDeduplicatesIDs(t *testing.T) {
 		Questions: []proto.Question{{Question: "authoritative question", Options: []proto.QuestionOption{{Label: "Allow"}}}},
 		ToolInput: json.RawMessage(`{"command":"authoritative"}`)}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	forged := mirror
 	forged.Summary = "forged"
 	forged.ExpiresAt = origin.ExpiresAt.Add(time.Hour)
@@ -199,7 +226,7 @@ func TestApprovalMirrorsRequireClientCapabilityEverywhere(t *testing.T) {
 	<-capable.out // client_hello_ack
 	origin := proto.Interaction{ID: "ix_capability", SessionID: "side", Kind: proto.IxPermission, MirrorMain: true}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	reportInteraction(t, h, origin)
 	reportInteraction(t, h, mirror)
 	for range 2 {
@@ -375,7 +402,7 @@ func mirrorPairForTest(id string) (proto.Interaction, proto.Interaction) {
 	origin := proto.Interaction{ID: id, MachineID: "box", SessionID: "side", Kind: proto.IxPermission,
 		MirrorMain: true, CanClarify: true, CreatedAt: time.Unix(1000, 0).UTC()}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	return origin, mirror
 }
 
@@ -737,7 +764,7 @@ func TestDisplayMirrorActionsRelayTheAuthoritativePath(t *testing.T) {
 	origin := proto.Interaction{ID: "ix_authoritative", MachineID: "box", SessionID: "side", Kind: proto.IxPermission,
 		Manager: assistantwire.AssistantID, MirrorMain: true, CanClarify: true}
 	mirror := origin
-	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID), origin.ID, false, "main"
+	mirror.ID, mirror.MirrorOf, mirror.MirrorMain, mirror.SessionID = proto.ApprovalMirrorID(origin.ID, origin.CreatedAt), origin.ID, false, "main"
 	h.reported.interactions = map[string]proto.Interaction{origin.ID: origin, mirror.ID: mirror}
 	routes := h.routes()
 	for _, tc := range []struct{ action, body string }{

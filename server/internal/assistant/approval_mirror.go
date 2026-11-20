@@ -2,9 +2,74 @@ package assistant
 
 import (
 	"context"
+	"slices"
+	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
+
+// defaultApprovalMirrorTools limits the two new routes to operations that can
+// change something. Read-only runtime tools are deliberately absent. Extension
+// writes are admitted through ToolAccess below, so installing a connector does
+// not require editing this list. An explicit approval_mirror_tools replaces the
+// complete list and the extension fallback for new cards.
+var defaultApprovalMirrorTools = []string{
+	"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
+	"agent_archive", "agent_interrupt", "agent_send", "agent_start", "agent_supervise",
+	"cancel_followup", "conversation_send", "kb_update", "mail_send", "notify_user",
+	"persona_settings", "schedule_followup", "schedule_routine", "supervision_finish",
+	"task_plan", "task_review", "task_scope", "todo_complete", "todo_update",
+}
+
+func approvalMirrorToolName(name string) string {
+	return strings.TrimPrefix(strings.TrimSpace(name), "mcp__persona__")
+}
+
+func cleanApprovalMirrorTools(names []string) []string {
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		name = approvalMirrorToolName(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func approvalMirrorToolNames(v Settings) []string {
+	if v.ApprovalMirrorTools != nil {
+		return cleanApprovalMirrorTools(*v.ApprovalMirrorTools)
+	}
+	return slices.Clone(defaultApprovalMirrorTools)
+}
+
+func (s *Service) approvalMirrorToolAllowed(ctx context.Context, ix proto.Interaction) bool {
+	v := s.settings(ctx)
+	name := approvalMirrorToolName(ix.ToolName)
+	if name != "" && slices.Contains(approvalMirrorToolNames(v), name) {
+		return true
+	}
+	// A configured list is an exact replacement. With the default list, an
+	// existing command-gate write route or an installed extension's own
+	// read/write declaration decides instead.
+	if v.ApprovalMirrorTools != nil {
+		return false
+	}
+	for _, key := range ix.AlwaysKeys {
+		if strings.HasPrefix(key, "lark:") {
+			return true
+		}
+	}
+	if name == "" || s.ext == nil {
+		return false
+	}
+	known, readOnly := s.ext.ToolAccess(name)
+	return known && !readOnly
+}
 
 // approvalMirrorMain controls display copies for new cards. Existing copies keep
 // following their authoritative card until that card resolves.
@@ -12,10 +77,10 @@ func (s *Service) approvalMirrorMain(ctx context.Context) bool {
 	return quietOn(s.settings(ctx).ApprovalMirrorMain)
 }
 
-// approvalMirrorID is stable across updates and reconnects without accepting a
-// node-chosen display ID in the authoritative interaction's namespace.
-func approvalMirrorID(id string) string {
-	return proto.ApprovalMirrorID(id)
+// approvalMirrorID is stable across updates and reconnects of one occurrence,
+// and distinct when a runtime later reuses the original ID for another card.
+func approvalMirrorID(ix proto.Interaction) string {
+	return proto.ApprovalMirrorID(ix.ID, ix.CreatedAt)
 }
 
 // assistantApprovalMirrorEligible is the boundary that persisted display intent
@@ -27,10 +92,12 @@ func (s *Service) assistantApprovalMirrorEligible(ctx context.Context, ix proto.
 }
 
 // nonMainAssistantPermission is the narrow routing boundary shared by the main
-// conversation copy and the bot's direct chat. Agent sessions, private cards,
-// health conversations, questions and display copies themselves never opt in.
+// conversation copy and the bot's direct chat. Only owner-decision write tools
+// opt in. Agent sessions, private cards, health conversations, questions and
+// display copies themselves never opt in. Existing main copies bypass this
+// new-card filter until their authoritative operation ends.
 func (s *Service) nonMainAssistantPermission(ctx context.Context, ix proto.Interaction) bool {
-	if !s.assistantApprovalMirrorEligible(ctx, ix) {
+	if !s.assistantApprovalMirrorEligible(ctx, ix) || !s.approvalMirrorToolAllowed(ctx, ix) {
 		return false
 	}
 	v := s.settings(ctx)
@@ -66,7 +133,7 @@ func (s *Service) mainApprovalMirror(ctx context.Context, ix proto.Interaction) 
 		return proto.Interaction{}, false
 	}
 	mirror := ix
-	mirror.ID = approvalMirrorID(ix.ID)
+	mirror.ID = approvalMirrorID(ix)
 	mirror.MirrorOf = ix.ID
 	mirror.MirrorMain = false
 	mirror.MachineID = mainMachine
@@ -77,40 +144,60 @@ func (s *Service) mainApprovalMirror(ctx context.Context, ix proto.Interaction) 
 }
 
 // sameApprovalOccurrence distinguishes a resumed card from a later operation
-// whose runtime happened to reuse its ID. Zero creation times are not an identity.
+// whose runtime happened to reuse its ID. Ordinary cards use their creation
+// timestamp. A detachable original replay may refresh it, so exact call bytes
+// are its occurrence identity instead.
 func sameApprovalOccurrence(a, b proto.Interaction) bool {
-	return !a.CreatedAt.IsZero() && a.ID == b.ID && a.MachineID == b.MachineID && a.SessionID == b.SessionID && a.CreatedAt.Equal(b.CreatedAt)
+	if a.ID != b.ID || a.MachineID != b.MachineID || a.SessionID != b.SessionID {
+		return false
+	}
+	if a.Detachable || b.Detachable {
+		if !a.Detachable || !b.Detachable {
+			return false
+		}
+		af, aerr := detachedFingerprint(a)
+		bf, berr := detachedFingerprint(b)
+		return aerr == nil && berr == nil && af == bf
+	}
+	return !a.CreatedAt.IsZero() && a.CreatedAt.Equal(b.CreatedAt)
 }
 
 // recordedApprovalMirrorIntent restores both true and false for the same
-// pending occurrence. Only a genuinely new card falls back to the current setting.
-func (s *Service) recordedApprovalMirrorIntent(ctx context.Context, ix proto.Interaction) (intent, found bool) {
-	if !ix.Resumable || ix.CreatedAt.IsZero() {
-		return false, false
+// pending occurrence, together with its canonical creation time for the display
+// ID. A non-resumable node-listed dialog may be relisted after startup cleanup
+// cancelled its row; only the identical timestamp with no owner answer restores
+// that intent. Only a genuinely new card falls back to the current setting.
+func (s *Service) recordedApprovalMirrorIntent(ctx context.Context, ix proto.Interaction) (intent bool, at time.Time, found bool) {
+	if ix.CreatedAt.IsZero() {
+		return false, time.Time{}, false
 	}
 	s.fleet.mu.Lock()
 	p := s.fleet.interactions[ix.ID]
 	if p != nil {
 		same := sameApprovalOccurrence(ix, p.ix)
-		intent := p.ix.MirrorMain
+		intent, at := p.ix.MirrorMain, p.ix.CreatedAt
 		s.fleet.mu.Unlock()
 		if same {
-			return intent, true
+			return intent, at, true
 		}
-		return false, false
+		return false, time.Time{}, false
 	}
 	s.fleet.mu.Unlock()
 	st, ok := s.store().(interactionRecorder)
 	if !ok {
-		return false, false
+		return false, time.Time{}, false
 	}
 	readCtx, cancel := context.WithTimeout(ctx, historyTimeout)
 	defer cancel()
 	rec, err := st.InteractionRecord(readCtx, ix.ID)
-	if err != nil || rec == nil || rec.Status != "pending" || !sameApprovalOccurrence(ix, rec.Interaction) {
-		return false, false
+	if err != nil || rec == nil || !sameApprovalOccurrence(ix, rec.Interaction) {
+		return false, time.Time{}, false
 	}
-	return rec.Interaction.MirrorMain, true
+	startupCancelled := !ix.Resumable && rec.Status == "cancelled" && rec.Resolution == nil
+	if rec.Status != "pending" && !startupCancelled {
+		return false, time.Time{}, false
+	}
+	return rec.Interaction.MirrorMain, rec.Interaction.CreatedAt, true
 }
 
 // pendingDisplayInteractions is the reconnect snapshot: authoritative pending

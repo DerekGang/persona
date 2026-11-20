@@ -19,6 +19,18 @@ type detachedTestResult struct {
 	err error
 }
 
+type relayWriteFailStore struct {
+	*fleetMem
+	fail atomic.Bool
+}
+
+func (s *relayWriteFailStore) PutSetting(ctx context.Context, key string, value any) error {
+	if key == relayKey && s.fail.Load() {
+		return errors.New("synthetic relay queue write failure")
+	}
+	return s.fleetMem.PutSetting(ctx, key, value)
+}
+
 func detachedTestCard(id string) proto.Interaction {
 	return proto.Interaction{ID: id, MachineID: "mac", SessionID: "s1", Cwd: "/home/u/.persona/assistant",
 		ExecutionCwd: "/home/u/.persona/assistant", Kind: proto.IxPermission,
@@ -317,6 +329,28 @@ func TestDetachedFingerprintUsesTheExecutionDirectory(t *testing.T) {
 	}
 }
 
+func TestDetachedReusedIDDoesNotInheritAnImmediateAllow(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	original := detachedTestCard("ix_detached_immediate_reused")
+	done := startDetachedTest(t, ft, original)
+	allow := true
+	if err := ft.s.resolve(original.ID, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	if got := awaitDetachedTest(t, done); got.err != nil || got.res.Allow == nil || !*got.res.Allow || got.res.ApprovalID != "" {
+		t.Fatalf("immediate original Allow = %+v, %v", got.res, got.err)
+	}
+
+	changed := detachedTestCard(original.ID)
+	changed.CreatedAt = changed.CreatedAt.Add(time.Second)
+	changed.ToolInput = json.RawMessage(`{"command":"printf different"}`)
+	res, err := ft.s.nodeInteraction(context.Background(), changed)
+	if !errors.Is(err, errInteractionIDReused) || (res.Allow != nil && *res.Allow) {
+		t.Fatalf("different command with a reused id = %+v, %v; want occurrence rejection", res, err)
+	}
+}
+
 func TestOriginalReplayDoesNotSpendGrantBeforeTheRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		shortDetachedTimers(t)
@@ -367,6 +401,50 @@ func TestInterruptedApprovedGrantIsRevokedDuringRecovery(t *testing.T) {
 	}
 	if result := waitFakeApprovalResult(t, ft.f, ix.ID); !strings.Contains(result, "uncertain") {
 		t.Fatalf("recovered outcome = %q, want the interrupted-apply warning", result)
+	}
+}
+
+func TestDetachedWaitingRestartFinishesTheRestoredCard(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		recoverFirst bool
+	}{{"restore then recover", false}, {"recover then restore", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				shortDetachedTimers(t)
+				ft := newFleetTest(t)
+				preparedTestConversation(ft)
+				ix := detachedTestCard("ix_detached_restart_waiting")
+				done := startDetachedTest(t, ft, ix)
+				elapse(30 * time.Millisecond)
+				if got := awaitDetachedTest(t, done); got.err != nil || !got.res.Pending {
+					t.Fatalf("initial result = %+v, %v", got.res, got.err)
+				}
+
+				st := &restoreMem{fleetMem: ft.st}
+				restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+				if tc.recoverFirst {
+					restarted.recoverApprovalJournals(context.Background())
+					restarted.restoreInteractions(context.Background())
+				} else {
+					restarted.restoreInteractions(context.Background())
+					restarted.recoverApprovalJournals(context.Background())
+				}
+				if got := len(restarted.pendingInteractions()); got != 0 {
+					t.Fatalf("restored waiting card survived its cancelled journal: pending=%d", got)
+				}
+				if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "cancelled" {
+					t.Fatalf("restored outcome = %q, want cancelled", status)
+				}
+				if result := waitFakeApprovalResult(t, ft.f, ix.ID); !strings.Contains(result, "cancelled") {
+					t.Fatalf("restart continuation = %q, want the durable cancellation", result)
+				}
+				replayed, err := restarted.nodeInteraction(context.Background(), detachedTestCard(ix.ID))
+				if err != nil || (replayed.Allow != nil && *replayed.Allow) || !replayed.Dismiss {
+					t.Fatalf("original replay after restart = %+v, %v; want no execution", replayed, err)
+				}
+			})
+		})
 	}
 }
 
@@ -516,6 +594,68 @@ func TestConsumedContinuationDoesNotAskForAnotherRetry(t *testing.T) {
 	result := waitFakeApprovalResult(t, ft.f, ix.ID)
 	if !strings.Contains(result, "Do not retry") || strings.Contains(result, "Retry the same tool now") {
 		t.Fatalf("consumed continuation instructed a duplicate retry: %q", result)
+	}
+}
+
+func TestQueuedConsumedContinuationDoesNotAskForAnotherRetry(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_queued_consumed_continuation")
+	allow := true
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	working := proto.Session{MachineID: "mac", SessionID: "s1", Assistant: true, Agent: "claude", Status: proto.StatusWorking, State: proto.StateWorking}
+	ft.f.setSessions("mac", working)
+	ft.d.setSessions("mac", []proto.Session{working})
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID, Status: "approved",
+		Result: approvalResultText(ix.ID, "approved", detachedContinuationText(ix, proto.Resolution{Allow: &allow})), Continuation: true}
+	if err := ft.s.deliverApprovalResult(entry); err != nil {
+		t.Fatal(err)
+	}
+	retry := ix
+	retry.ID = "ix_queued_consumed_continuation_retry"
+	got, err := ft.s.nodeInteraction(context.Background(), retry)
+	if err != nil || got.Allow == nil || !*got.Allow {
+		t.Fatalf("matching call did not consume the grant while the result queued: %+v, %v", got, err)
+	}
+	idle := working
+	idle.Status, idle.State = proto.StatusIdle, proto.StateIdle
+	ft.f.setSessions("mac", idle)
+	ft.d.setSessions("mac", []proto.Session{idle})
+	ft.s.drainRelays("mac", []proto.Session{idle})
+	result := waitFakeApprovalResult(t, ft.f, ix.ID)
+	if !strings.Contains(result, "Do not retry") || strings.Contains(result, "Retry the same tool now") {
+		t.Fatalf("queued consumed continuation instructed a duplicate retry: %q", result)
+	}
+}
+
+func TestFailedRelayWriteKeepsContinuationForRestart(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	st := &relayWriteFailStore{fleetMem: ft.st}
+	st.fail.Store(true)
+	ft.s.store = func() Store { return st }
+	ix := detachedTestCard("ix_relay_write_failure")
+	working := proto.Session{MachineID: "mac", SessionID: "s1", Assistant: true, Agent: "claude", Status: proto.StatusWorking, State: proto.StateWorking}
+	ft.f.setSessions("mac", working)
+	ft.d.setSessions("mac", []proto.Session{working})
+	putApprovalJournal(t, ft, approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID, Status: "approved",
+		Result: approvalResultText(ix.ID, "approved", detachedContinuationText(ix, proto.Resolution{}))})
+	ft.s.deliverApprovalResults()
+	if got := storedApprovalJournal(t, ft); len(got) != 1 || got[0].Result == "" {
+		t.Fatalf("a failed relay write discarded the only durable continuation: %+v", got)
+	}
+
+	st.fail.Store(false)
+	idle := working
+	idle.Status, idle.State = proto.StatusIdle, proto.StateIdle
+	ft.f.setSessions("mac", idle)
+	ft.d.setSessions("mac", []proto.Session{idle})
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.deliverApprovalResults()
+	if result := waitFakeApprovalResult(t, ft.f, ix.ID); !strings.Contains(result, "Retry the same tool now") {
+		t.Fatalf("continuation after the relay writer recovered = %q", result)
 	}
 }
 

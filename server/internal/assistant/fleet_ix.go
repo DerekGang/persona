@@ -308,7 +308,10 @@ func (s *Service) nodeInteraction(ctx context.Context, ix proto.Interaction) (pr
 		}
 	}
 	if r, ok := s.alwaysAllowed(ctx, ix); ok {
-		if ix.Resumable { // its hook's earlier attempt left the card pending: it is answered too
+		if ix.Resumable { // its hook's earlier attempt left the card pending: only that same occurrence is answered too
+			if err := s.checkRememberedInteractionOccurrence(ctx, ix); err != nil {
+				return proto.Resolution{}, err
+			}
 			_ = s.resolveRemembered(ix.ID, r, false)
 		}
 		return r, nil
@@ -339,8 +342,8 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 	}
 	// Restore this exact pending occurrence before considering the current
 	// preference. A resumable node hook carries no manager-owned display fields.
-	if intent, found := s.recordedApprovalMirrorIntent(ctx, ix); found {
-		ix.MirrorMain = intent
+	if intent, at, found := s.recordedApprovalMirrorIntent(ctx, ix); found {
+		ix.MirrorMain, ix.CreatedAt = intent, at
 	} else if !ix.MirrorMain {
 		if _, ok := s.mainApprovalMirror(ctx, ix); ok {
 			ix.MirrorMain = true
@@ -351,9 +354,9 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 		restartPrepared := false
 		s.fleet.mu.Lock()
 		if p := s.fleet.interactions[ix.ID]; p != nil && p.local == nil {
-			// Detachable commands have their own same-ID replay boundary: a late
-			// Allow carries ApprovalID and is never returned as execution permission.
-			if !ix.Detachable && !ix.CreatedAt.IsZero() && !sameApprovalOccurrence(ix, p.ix) {
+			// Detachable original replays use exact call identity; ordinary
+			// resumable cards use their creation timestamp.
+			if (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix) {
 				s.fleet.mu.Unlock()
 				return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
 			}
@@ -585,13 +588,13 @@ func (s *Service) orphanLocked(p *pending) bool {
 	return true
 }
 
-// checkRecordedInteractionOccurrence keeps an ordinary runtime's reused id from
-// taking an earlier operation's pending state or answer. Zero creation times
-// retain the legacy id-only resume behavior. Detachable commands instead use
-// their separate replay and one-time-grant boundary, which never turns a late
-// approval back into permission to replay the original hook.
+// checkRecordedInteractionOccurrence keeps a runtime's reused id from taking
+// an earlier operation's pending state or answer. Ordinary zero creation times
+// retain the legacy id-only resume behavior. Detachable original replays use
+// exact call identity, and a late approval still never becomes permission to
+// replay that original hook.
 func (s *Service) checkRecordedInteractionOccurrence(ctx context.Context, ix proto.Interaction) error {
-	if ix.Detachable || ix.CreatedAt.IsZero() {
+	if !ix.Detachable && ix.CreatedAt.IsZero() {
 		return nil
 	}
 	st, ok := s.store().(interactionRecorder)
@@ -608,6 +611,24 @@ func (s *Service) checkRecordedInteractionOccurrence(ctx context.Context, ix pro
 		return fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
 	}
 	return nil
+}
+
+// checkRememberedInteractionOccurrence keeps an Always rule for a new request
+// from resolving an older pending card with the same ID. A matching live card
+// is the occurrence to answer; otherwise durable history makes the same check.
+func (s *Service) checkRememberedInteractionOccurrence(ctx context.Context, ix proto.Interaction) error {
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[ix.ID]
+	if p != nil {
+		mismatch := (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix)
+		s.fleet.mu.Unlock()
+		if mismatch {
+			return fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
+		}
+		return nil
+	}
+	s.fleet.mu.Unlock()
+	return s.checkRecordedInteractionOccurrence(ctx, ix)
 }
 
 // outcome reports how a resumable interaction no longer pending here ended: the answer given before its hook could
@@ -1248,7 +1269,9 @@ func (s *Service) ixInAssistant(ctx context.Context, ix proto.Interaction) bool 
 	}
 	sess := proto.Session{SessionID: ix.SessionID, Cwd: ix.Cwd}
 	if sess.Cwd == "" {
-		if c, ok := s.session(ctx, ix.MachineID, ix.SessionID); ok {
+		if c, ok := s.nodeSession(ix.MachineID, ix.SessionID); ok {
+			sess = c
+		} else if c, ok := s.session(ctx, ix.MachineID, ix.SessionID); ok {
 			sess = c
 		}
 	}

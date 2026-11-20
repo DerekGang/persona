@@ -22,7 +22,7 @@ func reservedDisplayOriginal(ix proto.Interaction) bool {
 // validDisplayMirror rejects orphaned, nested, private or same-conversation
 // copies. A mirror is display state only and never substitutes for its origin.
 func validDisplayMirror(origin, mirror proto.Interaction) bool {
-	return mirror.ID != "" && mirror.ID == proto.ApprovalMirrorID(origin.ID) && mirror.MirrorOf == origin.ID && mirror.ID != origin.ID &&
+	return mirror.ID != "" && mirror.ID == proto.ApprovalMirrorID(origin.ID, origin.CreatedAt) && mirror.MirrorOf == origin.ID && mirror.ID != origin.ID &&
 		!reservedDisplayOriginal(origin) && origin.MirrorOf == "" && origin.MirrorMain && !mirror.MirrorMain && origin.Kind == proto.IxPermission && !origin.Private && !mirror.Private &&
 		origin.Manager == mirror.Manager &&
 		(origin.MachineID != mirror.MachineID || origin.SessionID != mirror.SessionID)
@@ -91,7 +91,7 @@ func (h *Hub) normalizeRecordedDisplayMirror(r *http.Request) {
 		return
 	}
 	origin := strings.TrimSuffix(strings.TrimPrefix(target.Path, displayMirrorAPIPrefix), suffix)
-	if origin == "" || proto.ApprovalMirrorID(origin) != id || target.Path != displayMirrorAPIPrefix+origin+suffix {
+	if origin == "" || !proto.ApprovalMirrorReceiptID(origin, id) || target.Path != displayMirrorAPIPrefix+origin+suffix {
 		return
 	}
 	setDisplayMirrorOrigin(r, origin, suffix)

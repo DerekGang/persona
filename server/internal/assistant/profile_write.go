@@ -235,6 +235,10 @@ func (s *Service) putSettings(w http.ResponseWriter, r *http.Request) {
 		if in.ApprovalMirrorMain != nil {
 			v.ApprovalMirrorMain = in.ApprovalMirrorMain
 		}
+		if in.ApprovalMirrorTools != nil {
+			tools := cleanApprovalMirrorTools(*in.ApprovalMirrorTools)
+			v.ApprovalMirrorTools = &tools
+		}
 		if in.IdleAutoCompact != nil {
 			v.IdleAutoCompact = in.IdleAutoCompact
 		}

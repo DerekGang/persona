@@ -348,6 +348,43 @@ func TestResumableReusedIDDoesNotInheritAnotherOccurrence(t *testing.T) {
 	}
 }
 
+func TestAlwaysForANewOccurrenceDoesNotResolveThePendingOriginal(t *testing.T) {
+	ft := newFleetTest(t)
+	old := alwaysIx("ix_always_reused", "s1", "tool:old")
+	old.CreatedAt = time.Unix(1000, 0).UTC()
+	first := make(chan detachedTestResult, 1)
+	go func() {
+		res, err := ft.s.nodeInteraction(context.Background(), old)
+		first <- detachedTestResult{res: res, err: err}
+	}()
+	ft.waitPending(1)
+
+	changed := alwaysIx(old.ID, "s1", "tool:new")
+	changed.CreatedAt = old.CreatedAt.Add(time.Second)
+	if err := ft.st.AllowAlways(context.Background(), "s1", "Bash", changed.AlwaysKeys); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ft.s.nodeInteraction(context.Background(), changed)
+	if !errors.Is(err, errInteractionIDReused) || (res.Allow != nil && *res.Allow) {
+		t.Fatalf("Always for the new occurrence = %+v, %v; want occurrence rejection", res, err)
+	}
+	if got := len(ft.s.pendingInteractions()); got != 1 {
+		t.Fatalf("the new occurrence's Always rule resolved the original: pending=%d", got)
+	}
+	select {
+	case got := <-first:
+		t.Fatalf("the original waiter received the unrelated Always answer: %+v", got)
+	default:
+	}
+	deny := false
+	if err := ft.s.resolve(old.ID, proto.Resolution{Allow: &deny}); err != nil {
+		t.Fatal(err)
+	}
+	if got := awaitDetachedTest(t, first); got.err != nil || (got.res.Allow != nil && *got.res.Allow) {
+		t.Fatalf("original cleanup = %+v, %v", got.res, got.err)
+	}
+}
+
 // Nobody claims it in time: it ends as cancelled, and a late hook is told to hand over to the terminal.
 func TestResumableGraceEnds(t *testing.T) {
 	old := resumeGrace

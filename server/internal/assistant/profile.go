@@ -73,10 +73,13 @@ type Settings struct {
 	MainTasksQuiet *bool `json:"main_tasks_quiet,omitempty"`
 	// ApprovalMirrorMain shows eligible non-main assistant permission cards in Main too. Nil is on;
 	// changing it applies to new cards, and every existing copy still resolves with its authoritative card.
-	ApprovalMirrorMain     *bool `json:"approval_mirror_main,omitempty"`
-	IdleAutoCompact        *bool `json:"idle_auto_compact,omitempty"`
-	IdleAutoCompactMinutes *int  `json:"idle_auto_compact_minutes,omitempty"`
-	IdleAutoCompactTokens  *int  `json:"idle_auto_compact_tokens,omitempty"`
+	ApprovalMirrorMain *bool `json:"approval_mirror_main,omitempty"`
+	// ApprovalMirrorTools replaces the write-tool allowlist for new main-conversation and direct-bot
+	// copies. Nil uses the default; an empty list disables both routes. Existing copies still finish.
+	ApprovalMirrorTools    *[]string `json:"approval_mirror_tools,omitempty"`
+	IdleAutoCompact        *bool     `json:"idle_auto_compact,omitempty"`
+	IdleAutoCompactMinutes *int      `json:"idle_auto_compact_minutes,omitempty"`
+	IdleAutoCompactTokens  *int      `json:"idle_auto_compact_tokens,omitempty"`
 	// StartRequestedTasks: a task_plan task the user asked for in so many words starts without the card's "Start"
 	// (#2559). nil is on (the default).
 	StartRequestedTasks     *bool  `json:"start_requested_tasks,omitempty"`
@@ -591,6 +594,7 @@ type assistantView struct {
 	NotesEffective         string             `json:"notes_effective"`  // what the assistant is told about the user
 	MainTasksQuiet         bool               `json:"main_tasks_quiet"` // in effect (the setting's own is left out while unset)
 	ApprovalMirrorMain     bool               `json:"approval_mirror_main"`
+	ApprovalMirrorTools    []string           `json:"approval_mirror_tools"`
 	IdleAutoCompact        bool               `json:"idle_auto_compact"`
 	IdleAutoCompactMinutes int                `json:"idle_auto_compact_minutes"`
 	IdleAutoCompactTokens  int                `json:"idle_auto_compact_tokens"`
@@ -660,6 +664,7 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 	effectiveRules, _ := workspacenaming.Effective(v.WorkspaceRules, workspacenaming.Rules{})
 	out := assistantView{WorkspaceNamingVersion: workspacenaming.Version, EffectiveWorkspaceRules: effectiveRules, Settings: v, Manager: s.managerIdentity(), PermissionDefaults: s.permissionDefaults(), Conversations: []proto.Session{}, NotesEffective: s.notes(ctx), MainTasksQuiet: quietOn(v.MainTasksQuiet),
 		ApprovalMirrorMain:  quietOn(v.ApprovalMirrorMain),
+		ApprovalMirrorTools: approvalMirrorToolNames(v),
 		StartRequestedTasks: quietOn(v.StartRequestedTasks), RecordingDays: recordingDaysOf(v), MinutesDays: kb.MinutesDaysFor(minutesDaysSetting(v), recordingDaysOf(v)),
 		IdleAutoCompact: s.idleAutoCompact(ctx), IdleAutoCompactMinutes: s.idleAutoCompactMinutes(ctx), IdleAutoCompactTokens: s.idleAutoCompactTokens(ctx),
 		MeetingAttendanceDefault: meetingAttendanceOf(v), KBTopics: quietOn(v.KBTopics),

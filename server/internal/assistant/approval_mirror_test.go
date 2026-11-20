@@ -65,7 +65,7 @@ func TestApprovalMirrorDisplayKeepsOneAuthoritativeRequest(t *testing.T) {
 		switch p.Interaction.ID {
 		case ix.ID:
 			original = p.Interaction
-		case approvalMirrorID(ix.ID):
+		case approvalMirrorID(ix):
 			mirror = p.Interaction
 		default:
 			t.Fatalf("unexpected display card: %+v", p.Interaction)
@@ -164,9 +164,91 @@ func TestApprovalMirrorEligibilityAndSettingOff(t *testing.T) {
 	}
 }
 
+func TestApprovalMirrorRoutesOnlyWriteTools(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ctx := context.Background()
+	ft.f.answerApp(AppFeishu, FeishuStatusGet, func(json.RawMessage) (any, error) {
+		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_a", PairedAt: time.Unix(100, 0),
+			Features: FeishuFeatures{Main: true, Cards: true, AllCards: false}}, nil
+	})
+	for _, name := range []string{"Read", "lark_messages", "mcp__persona__lark_messages", "kb_get", "inbox_suggest"} {
+		t.Run("read "+name, func(t *testing.T) {
+			ix := mirrorTestCard("ix_read_" + name)
+			ix.ToolName = name
+			if ft.s.nonMainAssistantPermission(ctx, ix) || ft.s.feishuCardWanted(ctx, ix) {
+				t.Fatalf("read-only tool %q entered a new route", name)
+			}
+			if _, ok := ft.s.mainApprovalMirror(ctx, ix); ok {
+				t.Fatalf("read-only tool %q gained a main copy", name)
+			}
+			// Narrowing new routing does not strand a copy that already exists.
+			ix.MirrorMain = true
+			if _, ok := ft.s.mainApprovalMirror(ctx, ix); !ok {
+				t.Fatalf("existing copy for %q was withdrawn", name)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, input string }{
+		{"Bash", `{"command":"mkdir -p /tmp/example"}`},
+		{"persona_settings", `{"action":"set","key":"assistant.main_tasks_quiet","value":true}`},
+		{"schedule_routine", `{"title":"Review","time":"18:00"}`},
+		{"todo_complete", `{"id":"todo_example"}`},
+		{"mcp__persona__mail_send", `{"to":"me@example.com","subject":"Review"}`},
+	} {
+		t.Run("write "+tc.name, func(t *testing.T) {
+			ix := mirrorTestCard("ix_write_" + tc.name)
+			ix.ToolName, ix.ToolInput = tc.name, json.RawMessage(tc.input)
+			if !ft.s.nonMainAssistantPermission(ctx, ix) || !ft.s.feishuCardWanted(ctx, ix) {
+				t.Fatalf("write tool %q missed a new route", tc.name)
+			}
+			if _, ok := ft.s.mainApprovalMirror(ctx, ix); !ok {
+				t.Fatalf("write tool %q has no main copy", tc.name)
+			}
+		})
+	}
+	gated := mirrorTestCard("ix_gated_external_write")
+	gated.ToolName = "Configured external action"
+	gated.AlwaysKeys = []string{"lark:POST /messages"}
+	if !ft.s.nonMainAssistantPermission(ctx, gated) || !ft.s.feishuCardWanted(ctx, gated) {
+		t.Fatal("an existing command-gate external write route was not admitted")
+	}
+}
+
+func TestApprovalMirrorToolAllowlistIsConfigurable(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ctx := context.Background()
+	ft.s.SetExtensions(&guestExt{})
+	for _, tc := range []struct {
+		tool string
+		want bool
+	}{{"lark_chats", false}, {"lark_agent_reply", true}, {"computer_run", true}} {
+		ix := mirrorTestCard("ix_ext_" + tc.tool)
+		ix.ToolName = tc.tool
+		if got := ft.s.nonMainAssistantPermission(ctx, ix); got != tc.want {
+			t.Fatalf("extension tool %s routed=%v, want %v", tc.tool, got, tc.want)
+		}
+	}
+	configured := []string{" Read ", "Read", ""}
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorTools = &configured })
+	if got := ft.s.view(ctx, false).ApprovalMirrorTools; len(got) != 1 || got[0] != "Read" {
+		t.Fatalf("effective custom allowlist = %q, want Read", got)
+	}
+	read := mirrorTestCard("ix_custom_read")
+	read.ToolName = "Read"
+	write := mirrorTestCard("ix_custom_bash")
+	if !ft.s.nonMainAssistantPermission(ctx, read) || ft.s.nonMainAssistantPermission(ctx, write) {
+		t.Fatal("custom allowlist did not replace the default and extension fallback")
+	}
+	empty := []string{}
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorTools = &empty })
+	if ft.s.nonMainAssistantPermission(ctx, read) || len(ft.s.view(ctx, false).ApprovalMirrorTools) != 0 {
+		t.Fatal("an explicitly empty allowlist must disable new copies")
+	}
+}
+
 func TestApprovalMirrorIDNamespaceIsReservedForNodes(t *testing.T) {
 	ix := mirrorTestCard("ix_reserved")
-	ix.ID = approvalMirrorID("ix_some_other_approval")
+	ix.ID = approvalMirrorID(proto.Interaction{ID: "ix_some_other_approval"})
 	if !reservedCard(ix) {
 		t.Fatal("a node-controlled card entered the display-copy ID namespace")
 	}
@@ -247,7 +329,7 @@ func TestCodexApprovalMirrorRecordsAuthoritativeIntent(t *testing.T) {
 		switch p.Interaction.ID {
 		case ix.ID:
 			original = p.Interaction
-		case approvalMirrorID(ix.ID):
+		case approvalMirrorID(ix):
 			mirror = p.Interaction
 		}
 	}
@@ -263,6 +345,7 @@ func TestCodexApprovalMirrorRecordsAuthoritativeIntent(t *testing.T) {
 func TestCodexApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
 	ft := newMirrorFleetTest(t)
 	ix := mirrorTestCard("ix_codex_restart")
+	ix.Resumable = false // production Codex dialogs are node-listed, not hook-resumable
 	ix.CreatedAt = time.Unix(1000, 0).UTC()
 	listCodex(ft.s, ix)
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
@@ -290,6 +373,25 @@ func TestCodexApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
 	if pending := different.pendingInteractions(); len(pending) != 1 || pending[0].MirrorMain {
 		t.Fatalf("a new occurrence inherited the old occurrence's mirror: %+v", pending)
 	}
+
+	// Startup cleanup may cancel a non-resumable row before the still-open node
+	// dialog is listed again. Its unchanged occurrence keeps the recorded intent.
+	if err := ft.st.FinishInteraction(context.Background(), ix.ID, "cancelled", nil); err != nil {
+		t.Fatal(err)
+	}
+	afterCleanup := restarted()
+	listCodex(afterCleanup, ix)
+	if pending := afterCleanup.pendingInteractions(); len(pending) != 1 || !pending[0].MirrorMain || len(afterCleanup.pendingDisplayInteractions(context.Background())) != 2 {
+		t.Fatalf("the open dialog lost its mirror after startup cleanup: %+v", pending)
+	}
+	ft.st.fmu.Lock()
+	ft.st.status[ix.ID] = "pending"
+	for i := range ft.st.recs {
+		if ft.st.recs[i].Interaction.ID == ix.ID {
+			ft.st.recs[i].Status = "pending"
+		}
+	}
+	ft.st.fmu.Unlock()
 
 	// The inverse is also occurrence state: an old unmirrored card must not
 	// become mirrored merely because the current default is on.
@@ -363,6 +465,84 @@ func TestHookApprovalMirrorRestoresOnlyTheSamePendingOccurrence(t *testing.T) {
 				t.Fatal("reclaimed hook did not finish")
 			}
 		})
+	}
+}
+
+func TestDetachedReplayRestoresRecordedMirrorIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		recorded       bool
+		currentDefault *bool
+	}{
+		{name: "mirrored original survives setting off", recorded: true, currentDefault: new(false)},
+		{name: "unmirrored original survives setting on", recorded: false, currentDefault: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := newMirrorFleetTest(t)
+			setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = tc.currentDefault })
+			ix := detachedTestCard("ix_detached_mirror_" + map[bool]string{true: "mirrored", false: "unmirrored"}[tc.recorded])
+			ix.SessionID = "side"
+			ix.CreatedAt = time.Unix(1000, 0).UTC()
+			recorded := ix
+			recorded.MirrorMain = tc.recorded
+			ft.st.fmu.Lock()
+			ft.st.recs = append(ft.st.recs, db.InteractionRecord{Interaction: recorded, Status: "pending"})
+			ft.st.status[ix.ID] = "pending"
+			ft.st.fmu.Unlock()
+
+			restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return ft.st }, Logf: t.Logf, Devices: ft.d})
+			replay := ix
+			replay.CreatedAt = replay.CreatedAt.Add(time.Second) // a detachable original replay may refresh its timestamp
+			done := make(chan detachedTestResult, 1)
+			go func() {
+				res, err := restarted.nodeInteraction(context.Background(), replay)
+				done <- detachedTestResult{res: res, err: err}
+			}()
+			waitFor(t, "detachable original replay", func() bool { return len(restarted.pendingInteractions()) == 1 })
+			pending := restarted.pendingInteractions()
+			if len(pending) != 1 || pending[0].MirrorMain != tc.recorded {
+				t.Fatalf("replayed display intent = %+v, want mirror_main=%v", pending, tc.recorded)
+			}
+			wantCards := 1
+			if tc.recorded {
+				wantCards = 2
+			}
+			if got := restarted.pendingDisplayInteractions(context.Background()); len(got) != wantCards {
+				t.Fatalf("replayed display cards = %+v, want %d", got, wantCards)
+			}
+			deny := false
+			if err := restarted.resolve(ix.ID, proto.Resolution{Allow: &deny}); err != nil {
+				t.Fatal(err)
+			}
+			if got := awaitDetachedTest(t, done); got.err != nil || (got.res.Allow != nil && *got.res.Allow) {
+				t.Fatalf("denied replay = %+v, %v", got.res, got.err)
+			}
+		})
+	}
+}
+
+func TestJustMeCodexApprovalHasNoMainOrDirectChatCopy(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ft.s.justMeSent("mac", "side")
+	ft.s.justMeStarted("mac", "side", true, false)
+	ft.f.answerApp(AppFeishu, FeishuStatusGet, func(json.RawMessage) (any, error) {
+		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_a", PairedAt: time.Unix(100, 0),
+			Features: FeishuFeatures{Main: true, Cards: true, AllCards: false}}, nil
+	})
+	ft.f.answerApp(AppFeishu, FeishuPost, func(json.RawMessage) (any, error) {
+		return map[string]any{"message_id": "om_private"}, nil
+	})
+	ix := mirrorTestCard("ix_just_me_codex")
+	listCodex(ft.s, ix)
+	pending := ft.s.pendingInteractions()
+	if len(pending) != 1 || !pending[0].Private {
+		t.Fatalf("Just me Codex card = %+v, want one private original", pending)
+	}
+	if got := ft.s.pendingDisplayInteractions(context.Background()); len(got) != 1 {
+		t.Fatalf("Just me display cards = %+v, want no main copy", got)
+	}
+	if posts := ft.f.appParams(AppFeishu, FeishuPost); len(posts) != 0 {
+		t.Fatalf("Just me approval reached the direct bot chat: %+v", posts)
 	}
 }
 

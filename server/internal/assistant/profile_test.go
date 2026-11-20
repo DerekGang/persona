@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -102,6 +103,31 @@ func TestPutSettings(t *testing.T) {
 	}
 	if code, out := put(`{"main":"-"}`); code != http.StatusOK || out["main"] != nil {
 		t.Fatalf("clear main: %d %v", code, out)
+	}
+}
+
+func TestPutApprovalMirrorTools(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newTestService(t, f)
+	put := func(body string) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/assistant", strings.NewReader(body)))
+		out := map[string]any{}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+		return out
+	}
+	out := put(`{"approval_mirror_tools":[" Read ","mcp__persona__Read","Read",""]}`)
+	if got := out["approval_mirror_tools"]; !reflect.DeepEqual(got, []any{"Read"}) {
+		t.Fatalf("normalized allowlist = %#v", got)
+	}
+	if got := put(`{}`)["approval_mirror_tools"]; !reflect.DeepEqual(got, []any{"Read"}) {
+		t.Fatalf("an unrelated write replaced the allowlist: %#v", got)
+	}
+	if got := put(`{"approval_mirror_tools":[]}`)["approval_mirror_tools"]; !reflect.DeepEqual(got, []any{}) {
+		t.Fatalf("empty allowlist = %#v, want []", got)
 	}
 }
 

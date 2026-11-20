@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	approvalops "github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -269,7 +271,7 @@ func (s *Service) deliverApprovalResult(a approvalJournalEntry) error {
 			return fmt.Errorf("check detached continuation before delivery: %w", err)
 		}
 		if !pending {
-			a.Result = fmt.Sprintf("Approval %s is no longer pending. Its one-time continuation was already consumed or is no longer available. Do not retry it automatically; check whether the exact call already ran.", a.ID)
+			a.Result = consumedContinuationText(a.ID)
 		}
 	}
 	if _, deleted, err := s.deletedConversation(ctx, a.MachineID, a.SessionID); err != nil {
@@ -289,7 +291,7 @@ func (s *Service) deliverApprovalResult(a approvalJournalEntry) error {
 		return errors.New("the originating conversation is not currently listed")
 	}
 	msg := relayMsg{From: approvalResultFrom + a.ID, FromTitle: "Approval result", Tool: askAnswerTool,
-		Text: a.Result, At: a.UpdatedAt, Private: a.Private}
+		Text: a.Result, At: a.UpdatedAt, Private: a.Private, Continuation: a.Continuation}
 	if msg.At.IsZero() {
 		msg.At = time.Now().UTC()
 	}
@@ -311,6 +313,31 @@ func (s *Service) deliverApprovalResult(a approvalJournalEntry) error {
 	return s.queueApprovalResult(a.MachineID, a.SessionID, msg)
 }
 
+func consumedContinuationText(id string) string {
+	return fmt.Sprintf("Approval %s is no longer pending. Its one-time continuation was already consumed or is no longer available. Do not retry it automatically; check whether the exact call already ran.", id)
+}
+
+// tryQueuedApprovalRelay rechecks a detached continuation at the last possible
+// boundary. Grant consumption stays excluded through the actual send, including
+// when an Always rule would let the requested retry execute without a prompt.
+func (s *Service) tryQueuedApprovalRelay(ctx context.Context, machine, to string, original relayMsg) (relayMsg, time.Duration, error) {
+	if !original.Continuation {
+		return s.tryQueuedRelay(ctx, machine, to, &original)
+	}
+	msg := original
+	s.detached.mu.Lock()
+	defer s.detached.mu.Unlock()
+	id := strings.TrimPrefix(msg.From, approvalResultFrom)
+	pending, err := s.detachedContinuationPendingLocked(ctx, id)
+	if err != nil {
+		return msg, time.Minute, fmt.Errorf("recheck queued detached continuation: %w", err)
+	}
+	if !pending {
+		msg.Text = consumedContinuationText(id)
+	}
+	return s.tryQueuedRelay(ctx, machine, to, &msg)
+}
+
 // queueApprovalResult deduplicates by the stable once_id before persisting.
 func (s *Service) queueApprovalResult(machine, to string, msg relayMsg) error {
 	b := &s.relays
@@ -328,7 +355,18 @@ func (s *Service) queueApprovalResult(machine, to string, msg relayMsg) error {
 	}
 	msg.QueuedAt, msg.Depth = time.Now().UTC(), len(b.st.Queue[to])+1
 	b.st.Queue[to] = append(b.st.Queue[to], msg)
-	s.saveRelayLocked()
+	if err := s.saveRelayLocked(); err != nil {
+		// The journal still owns this result. Do not acknowledge an in-memory-only
+		// queue entry that a restart could lose; let the durable journal retry it.
+		q := b.st.Queue[to]
+		if len(q) == 1 {
+			delete(b.st.Queue, to)
+		} else {
+			b.st.Queue[to] = q[:len(q)-1]
+		}
+		b.mu.Unlock()
+		return fmt.Errorf("persist approval result relay: %w", err)
+	}
 	b.mu.Unlock()
 	if c, ok := s.session(context.Background(), machine, to); ok {
 		s.drainRelays(machine, []proto.Session{c})
@@ -376,12 +414,47 @@ func (s *Service) recoverApprovalJournals(ctx context.Context) {
 	}
 	b.mu.Unlock()
 	for _, a := range unfinished {
-		s.fleet.mu.Lock()
-		p := s.fleet.interactions[a.ID]
-		s.fleet.mu.Unlock()
-		if p != nil && p.prepared != nil {
-			s.endPrepared(p, "cancelled", "The assistant restarted; nothing was applied unless the result says its outcome is uncertain.")
-		}
+		s.finishRecoveredApproval(a.ID, "The assistant restarted; nothing was applied unless the result says its outcome is uncertain.")
 	}
 	s.deliverApprovalResults()
+}
+
+// finishRecoveredApproval closes both sides of an interrupted retained card:
+// its durable interaction and any restored live waiter. A restored card has no
+// process-local operation. Its tombstone is claimed and terminal before it is
+// published, so the ordinary prepared finalizer can wake waiters and withdraw
+// every display copy without any Apply becoming reachable.
+func (s *Service) finishRecoveredApproval(id, text string) {
+	r := proto.Resolution{Dismiss: true, Reason: "assistant_restarted"}
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[id]
+	s.fleet.mu.Unlock()
+	if p == nil {
+		// Recovery may run before restoreInteractions. Close the row now so that
+		// restoration cannot bring the cancelled operation back as an ordinary card.
+		s.recordEnd(id, "cancelled", &r)
+		s.fleet.mu.Lock()
+		p = s.fleet.interactions[id]
+		s.fleet.mu.Unlock()
+		if p == nil {
+			return
+		}
+	}
+	s.fleet.mu.Lock()
+	if s.fleet.interactions[id] != p || p.claimed {
+		s.fleet.mu.Unlock()
+		return
+	}
+	if p.prepared != nil {
+		s.fleet.mu.Unlock()
+		s.endPrepared(p, "cancelled", text)
+		return
+	}
+	a := &preparedApproval{terminal: true, result: r, outcome: approvalops.Outcome{Text: text}, reportStatus: "cancelled"}
+	p.prepared, p.claimed, p.resolution = a, true, &r
+	if p.resolved == nil {
+		p.resolved = make(chan struct{})
+	}
+	s.fleet.mu.Unlock()
+	s.finishPrepared(p, "cancelled")
 }

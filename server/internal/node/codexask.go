@@ -68,14 +68,39 @@ type codexCard struct {
 
 type codexCards struct {
 	mu        sync.Mutex
-	tails     map[string]*codexTail     // session id → its rollout
-	sent      string                    // the card ids last listed to the hub
-	held      map[string]time.Time      // card id → answered from the phone: not listed again until then
-	heldIn    map[string]string         // card id → the session of a held card
-	dismissed map[string]dismissedCard  // card id → handed back to the computer from the phone
-	approvals map[string]bool           // session id → last screen scan saw a Codex approval dialog
-	pagerAt   map[string]time.Time      // pane → when its transcript pager was last closed to show a dialog
-	joins     map[string]codexJoinState // session id → joining it on its app-server (codex_daemon.go)
+	tails     map[string]*codexTail              // session id → its rollout
+	sent      string                             // the card ids last listed to the hub
+	held      map[string]time.Time               // card id → answered from the phone: not listed again until then
+	heldIn    map[string]string                  // card id → the session of a held card
+	dismissed map[string]dismissedCard           // card id → handed back to the computer from the phone
+	approvals map[string]bool                    // session id → last screen scan saw a Codex approval dialog
+	created   map[string]codexApprovalOccurrence // approval card id → its first-seen occurrence while open
+	pagerAt   map[string]time.Time               // pane → when its transcript pager was last closed to show a dialog
+	joins     map[string]codexJoinState          // session id → joining it on its app-server (codex_daemon.go)
+}
+
+type codexApprovalOccurrence struct {
+	session string
+	at      time.Time
+}
+
+// approvalOccurrenceCard keeps one open dialog's identity stable across screen
+// scans. approvalGone / setApproval(false) clear it, so a later dialog with the
+// same node ID is a new occurrence rather than a continuation of this card.
+func (c *codexCards) approvalOccurrenceCard(session string, a codexAgent, title string, d *screen.CodexApprovalDialog) proto.Interaction {
+	ix := approvalCard(session, a, title, d)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.created == nil {
+		c.created = map[string]codexApprovalOccurrence{}
+	}
+	occurrence, ok := c.created[ix.ID]
+	if !ok || occurrence.session != session {
+		occurrence = codexApprovalOccurrence{session: session, at: ix.CreatedAt}
+		c.created[ix.ID] = occurrence
+	}
+	ix.CreatedAt = occurrence.at
+	return ix
 }
 
 // watchCodexCards lists the open Codex questions and approvals to the hub whenever they change.
@@ -187,7 +212,7 @@ func (n *Node) codexCardsNow(ctx context.Context, only string) []codexCard {
 			if only == "" {
 				n.cx.setApproval(id, true)
 			}
-			out = append(out, codexCard{ix: approvalCard(id, a, title, d), pane: a.pane, approval: d})
+			out = append(out, codexCard{ix: n.cx.approvalOccurrenceCard(id, a, title, d), pane: a.pane, approval: d})
 		} else if read {
 			if only == "" {
 				n.cx.setApproval(id, false)
@@ -221,6 +246,11 @@ func (c *codexCards) forget(live map[string]codexAgent) {
 			delete(c.tails, id)
 		}
 	}
+	for id, occurrence := range c.created {
+		if _, ok := live[occurrence.session]; !ok {
+			delete(c.created, id)
+		}
+	}
 	for id, until := range c.held {
 		if time.Now().After(until) {
 			delete(c.held, id)
@@ -248,6 +278,11 @@ type dismissedCard struct {
 func (c *codexCards) approvalGone(session string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for id, occurrence := range c.created {
+		if occurrence.session == session {
+			delete(c.created, id)
+		}
+	}
 	for id, d := range c.dismissed {
 		if d.session == session && strings.HasPrefix(id, "cxa_") {
 			delete(c.dismissed, id)
@@ -314,6 +349,11 @@ func (c *codexCards) setApproval(id string, on bool) {
 	defer c.mu.Unlock()
 	if !on {
 		delete(c.approvals, id)
+		for card, occurrence := range c.created {
+			if occurrence.session == id {
+				delete(c.created, card)
+			}
+		}
 		return
 	}
 	if c.approvals == nil {

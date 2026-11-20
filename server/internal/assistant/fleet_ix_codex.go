@@ -47,11 +47,14 @@ func (s *Service) syncCodexInteractions(machine string, params json.RawMessage) 
 		}
 		ix.MachineID = machine
 		ix = cleanTitle(ix)
+		// Node-listed cards do not pass through waitInteractionPrepared, so apply
+		// the turn's privacy before either display or direct-chat routing reads it.
+		ix.Private = ix.Private || s.justMeNow(ix.MachineID, ix.SessionID)
 		// Codex cards do not pass through waitInteractionPrepared. Restore the
 		// same pending occurrence's intent after a restart; only a new occurrence
 		// uses the current preference. Record it before history and publication.
-		if intent, found := s.recordedApprovalMirrorIntent(context.Background(), ix); found {
-			ix.MirrorMain = intent
+		if intent, at, found := s.recordedApprovalMirrorIntent(context.Background(), ix); found {
+			ix.MirrorMain, ix.CreatedAt = intent, at
 		} else if _, ok := s.mainApprovalMirror(context.Background(), ix); ok {
 			ix.MirrorMain = true
 		}
