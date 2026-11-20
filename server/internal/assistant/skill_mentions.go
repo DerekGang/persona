@@ -133,6 +133,9 @@ func (s *Service) validateTaskSelections(ctx context.Context, machine, sid strin
 	if len(files) > 0 || params["skill_owner"] != nil {
 		params["task_input"] = true
 	}
+	if len(files) > 0 {
+		params["prompt_language"] = s.requestCtxLang(ctx).Name()
+	}
 	return nil
 }
 

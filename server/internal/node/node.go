@@ -1739,7 +1739,7 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		}
 		sctx := withSkillOwner(ctx, p.SkillOwner)
 		if p.TaskInput {
-			sctx = context.WithValue(sctx, taskInputKey{}, true)
+			sctx = context.WithValue(promptLanguageContext(sctx, params), taskInputKey{}, true)
 		}
 		if method == assistantwire.DeviceAssistantAnswerAgain {
 			var guard struct {

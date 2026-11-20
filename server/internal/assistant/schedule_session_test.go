@@ -728,7 +728,7 @@ func TestReferenceOnlySilentRunMatchesItsOwnTurn(t *testing.T) {
 	render := func(t Task) string {
 		return prompts.MessageSourceText(taskPrompt(t, at, at, time.UTC, true, false, false), taskMessageSource(t))
 	}
-	sent := render(task) + "\n\n" + prompts.RenderAssistantSelectedFiles([]prompts.AssistantSelectedFile{{Name: "notes.txt", Path: "/work/notes.txt"}})
+	sent := render(task) + "\n\n" + prompts.RenderAssistantSelectedFiles([]prompts.AssistantSelectedFile{{Name: "notes.txt", Path: "/work/notes.txt"}}, "")
 	line := fmt.Sprintf(`{"uuid":"u1","parentUuid":null,"type":"user","message":{"role":"user","content":%q}}`, sent)
 	log := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(log, []byte(line+"\n"), 0o600); err != nil {

@@ -945,7 +945,7 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 		}
 	}
 	if len(files) > 0 {
-		text += "\n\n" + prompts.RenderAssistantSelectedFiles(files)
+		text += "\n\n" + prompts.RenderAssistantSelectedFiles(files, agentPromptLanguage(ctx))
 	}
 	retryMode, retryEffort := n.modesOf(id) // retain the request before an unconfirmed control can roll it back
 	// Controls do not depend on the live context. Start their acknowledged sync

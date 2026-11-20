@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,11 +26,12 @@ import (
 type schedulePromptHub struct {
 	node    *Node
 	offline bool
+	locale  i18n.Lang
 }
 
 func (h schedulePromptHub) Hello(context.Context) (assistant.Hello, error) {
 	id := h.node.machineID
-	return assistant.Hello{Assistant: assistant.Placement{MachineID: id, Machines: []string{id}, Launcher: "claude"}}, nil
+	return assistant.Hello{Assistant: assistant.Placement{MachineID: id, Machines: []string{id}, Launcher: "claude"}, Locale: string(h.locale)}, nil
 }
 
 func (h schedulePromptHub) DeviceCall(ctx context.Context, p assistant.DeviceCall) (json.RawMessage, error) {
@@ -82,8 +84,10 @@ func TestScheduledPromptDeliveryThroughNode(t *testing.T) {
 	f := cliTestBash(t)
 	f.n.machineID = "fixture"
 	cwd := t.TempDir()
-	file := filepath.Join(cwd, "notes.txt")
-	selection := fmt.Sprintf(`<persona-context kind="file" path="notes.txt" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`, f.n.machineID, cwd)
+	name := "Q&A [review] 資料.txt"
+	file := filepath.Join(cwd, name)
+	selection := fmt.Sprintf(`<persona-context kind="file" path="%s" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`,
+		html.EscapeString(name), f.n.machineID, html.EscapeString(cwd))
 	const notes = "Explain this example from our documentation."
 	literal := selection + "\n\n" + notes
 	service := assistant.New(assistant.Options{Hub: schedulePromptHub{node: f.n}})
@@ -175,9 +179,18 @@ func TestScheduledPromptDeliveryThroughNode(t *testing.T) {
 	// uses the fixture on disk and receives the corresponding instructions.
 	writeFile(t, file, "Synthetic meeting notes")
 	selectedPrompt := selection + "\n\nRead the selected notes."
-	run(create("structured_prompt", selectedPrompt))
-	if text := input(4); !strings.Contains(text, "file-instructions") || !strings.Contains(text, resolved(t, file)) {
-		t.Fatalf("the selected task did not deliver file instructions: %q", text)
+	turns := 3
+	for _, locale := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja} {
+		service = assistant.New(assistant.Options{Hub: schedulePromptHub{node: f.n, locale: locale}})
+		run(create("structured_prompt", selectedPrompt))
+		turns++
+		text := input(turns)
+		start := strings.Index(text, `<persona-context kind="file-instructions">`)
+		physical := resolved(t, file)
+		if start < 0 || !strings.Contains(text[start:], physical) {
+			t.Fatalf("the selected task did not deliver the exact file path: %q", text)
+		}
+		goldenNode(t, "selected_files."+string(locale), strings.ReplaceAll(text[start:], filepath.Dir(physical), "/fixture"))
 	}
 
 	for _, tc := range []struct {
@@ -199,7 +212,7 @@ func TestScheduledPromptDeliveryThroughNode(t *testing.T) {
 			if !errors.As(err, &refusal) || refusal.Code != "file_unavailable" {
 				t.Fatalf("file selection was not refused: %v", err)
 			}
-			input(4)
+			input(turns)
 		})
 	}
 }
