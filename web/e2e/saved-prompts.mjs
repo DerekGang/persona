@@ -32,10 +32,11 @@ const hub = (flag("--hub") ?? "").replace(/\/$/, "");
 const shots = flag("--shots");
 const templates = args.includes("--templates");
 const legacyTemplates = args.includes("--legacy-templates");
+const largeText = args.includes("--large-text");
 const executable = flag("--executable");
 const channel = flag("--channel") ?? "chrome";
 if (!base || !hub) {
-  console.error("usage: node web/e2e/saved-prompts.mjs <web URL> --hub <mock hub URL> [--templates | --legacy-templates] [--shots <dir>] [--channel msedge | --executable <chromium>]");
+  console.error("usage: node web/e2e/saved-prompts.mjs <web URL> --hub <mock hub URL> [--templates | --legacy-templates] [--large-text] [--shots <dir>] [--channel msedge | --executable <chromium>]");
   process.exit(2);
 }
 for (const url of [base, hub]) {
@@ -77,10 +78,11 @@ async function open(browser, theme, phone) {
     const origin = new URL(route.request().url()).origin;
     return [new URL(base).origin, new URL(hub).origin].includes(origin) ? route.continue() : route.abort();
   });
-  await ctx.addInitScript((theme) => {
+  await ctx.addInitScript(({ theme, largeText }) => {
     localStorage.setItem("persona.language", "en");
     localStorage.setItem("persona.theme", theme);
-  }, theme);
+    if (largeText) localStorage.setItem("persona.text-size", "large");
+  }, { theme, largeText });
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   const errors = [];
@@ -275,7 +277,7 @@ const browser = await chromium.launch(executable ? { executablePath: executable 
 try {
   for (const phone of legacyTemplates ? [false] : [false, true]) {
     for (const theme of legacyTemplates ? ["light"] : ["light", "dark"]) {
-      const where = `${phone ? "phone" : "wide"}-${theme}`;
+      const where = `${phone ? "phone" : "wide"}-${theme}${largeText ? "-large" : ""}`;
       const name = `summary-${Date.now().toString(36).slice(-4)}`;
       const { ctx, page, errors } = await open(browser, theme, phone);
       if (templates || legacyTemplates) await templateFlow(page, where, name, phone);
