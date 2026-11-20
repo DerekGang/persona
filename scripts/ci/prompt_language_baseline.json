@@ -60,19 +60,6 @@
       "assistant/workspace_mention.md"
     ]
   },
-  "bot": {
-    "count": 1,
-    "files": [
-      "bot/message.md"
-    ]
-  },
-  "channel": {
-    "count": 2,
-    "files": [
-      "channel/answer_again.md",
-      "channel/message.md"
-    ]
-  },
   "kb": {
     "count": 13,
     "files": [
@@ -89,13 +76,6 @@
       "kb/recording_input.md",
       "kb/recording_title_input.md",
       "kb/topic_summary.md"
-    ]
-  },
-  "shared": {
-    "count": 2,
-    "files": [
-      "shared/kb_blocks.md",
-      "shared/user_rules.md"
     ]
   }
 }
