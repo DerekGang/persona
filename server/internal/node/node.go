@@ -1291,7 +1291,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 			}
 		}
 		ls, err := n.launchers(ctx, p.Refresh)
-		forced := len(p.Refresh) > 0 && p.Refresh[0]
+		forced := p.Refresh
 		bl := n.runtimes.launchers()
 		if len(bl) > 0 {
 			// Explicit shell launchers keep their names; a discovered CLI fallback yields to its connected runtime.
