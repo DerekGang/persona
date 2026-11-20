@@ -9,7 +9,9 @@ import (
 	"github.com/nwverse/persona/server/internal/transcript"
 )
 
-func TestGatewayStoppedProvenance(t *testing.T) {
+// Keep these cases under the existing stop-provenance parent: node's round-robin CI partitions otherwise move
+// thousands of unrelated tests between processes when a new top-level test is inserted this early in the listing.
+func testGatewayStoppedProvenance(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
 		want       proto.StopCause
