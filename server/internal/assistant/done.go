@@ -18,6 +18,7 @@ import (
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/textfmt"
 	"github.com/nwverse/persona/server/internal/transcript"
 )
 
@@ -229,7 +230,8 @@ func turnExchange(items []proto.Item) (ask, answer string) {
 			break
 		}
 	}
-	return ask, strings.TrimSpace(taskReplyItem(items).Text)
+	reply := taskReplyItem(items)
+	return ask, turnReplyText(reply.Text, reply.FullSize > 0)
 }
 
 func taskReplyItem(items []proto.Item) proto.Item {
@@ -239,6 +241,20 @@ func taskReplyItem(items []proto.Item) proto.Item {
 		}
 	}
 	return proto.Item{}
+}
+
+// Indentation is significant in a Markdown report. A clipped excerpt ending exactly at its rule
+// still has more text after it and cannot be read as the final report.
+func turnReplyText(text string, clipped bool) string {
+	if !strings.Contains(text, "### Persona ") {
+		return strings.TrimSpace(text)
+	}
+	if clipped {
+		if _, ok := textfmt.FinalWorkReport(text); ok {
+			return text + "\n…"
+		}
+	}
+	return text
 }
 
 // userStoppedNotice is the notice the transcript reader puts where the user stopped a turn (Claude Code's "[Request
