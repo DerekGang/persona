@@ -17,6 +17,8 @@ type SaveDraft = {
 };
 type Draft = SaveDraft | { mode: "delete"; id: string; name: string; revision: string };
 
+const touchButton = "[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+
 const draftValues = (draft: SaveDraft) => ({
   name: draft.name ?? draft.baseline.name,
   criteria: draft.criteria ?? draft.baseline.criteria,
@@ -94,16 +96,16 @@ export function SavedTodoViewsDialog({ model, mode, criteria, onApply, onClose }
   };
 
   return <Dialog open onClose={close} title={title} footer={draft ? <>
-    <Button tone="quiet" disabled={state.busy} onClick={close}>{t("common.cancel")}</Button>
-    <Button tone={draft.mode === "delete" ? "danger" : "primary"} disabled={!canSubmit}
+    <Button className={touchButton} tone="quiet" disabled={state.busy} onClick={close}>{t("common.cancel")}</Button>
+    <Button className={touchButton} tone={draft.mode === "delete" ? "danger" : "primary"} disabled={!canSubmit}
       busy={state.busy} onClick={() => void submit()}>{t(draft.mode === "delete" ? "saved-todo-views.delete" : "saved-todo-views.save")}</Button>
-  </> : <Button tone="quiet" disabled={state.busy} onClick={onClose}>{t("saved-todo-views.done")}</Button>}>
+  </> : <Button className={touchButton} tone="quiet" disabled={state.busy} onClick={onClose}>{t("saved-todo-views.done")}</Button>}>
     <div className="min-w-0 space-y-3">
       {state.unsupported && <p role="status" className="text-sm text-ink-3">{t("saved-todo-views.unsupported")}</p>}
       {!document && state.loading && <Loading />}
       {stale || state.error ? <div className="space-y-2" role="alert">
         <p className="break-words text-sm text-red">{stale ? t("saved-todo-views.conflict") : state.error}</p>
-        <Button busy={state.loading} disabled={state.busy} onClick={() => void reload()}>{t("saved-todo-views.reload")}</Button>
+        <Button className={touchButton} busy={state.loading} disabled={state.busy} onClick={() => void reload()}>{t("saved-todo-views.reload")}</Button>
       </div> : null}
 
       {draft?.mode === "save" && values && <form className="min-w-0 space-y-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
@@ -113,11 +115,11 @@ export function SavedTodoViewsDialog({ model, mode, criteria, onApply, onClose }
         <div>
           <label htmlFor={fieldID} className="mb-1 block text-sm font-medium text-ink">{t("saved-todo-views.name")}</label>
           <input id={fieldID} maxLength={TODO_VIEW_NAME_LIMIT * 2} value={values.name} disabled={!ready}
-            className="w-full rounded-control bg-field px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-accent"
+            className="w-full rounded-control bg-field px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-accent [@media(pointer:coarse)]:min-h-11"
             onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         </div>
         <p className="break-words text-sm text-ink-2">{criteriaText(values.criteria)}</p>
-        {draft.id && <Button tone="quiet" disabled={!ready} onClick={() => setDraft({ ...draft, criteria })}>{t("saved-todo-views.use_current")}</Button>}
+        {draft.id && <Button className={touchButton} tone="quiet" disabled={!ready} onClick={() => setDraft({ ...draft, criteria })}>{t("saved-todo-views.use_current")}</Button>}
         {values.name.trim() && problem && <p role="alert" className="text-sm text-red">{problem}</p>}
         {atLimit && <p role="alert" className="text-sm text-ink-2">{t("saved-todo-views.limit", { count: TODO_VIEW_LIMIT })}</p>}
       </form>}
@@ -134,16 +136,16 @@ export function SavedTodoViewsDialog({ model, mode, criteria, onApply, onClose }
               <span className="block break-words text-label text-ink-3">{criteriaText(view.criteria)}</span>
             </button>
             {document.can_write && <div className="flex flex-wrap gap-2">
-              <Button tone="quiet" disabled={!ready} aria-label={t("saved-todo-views.edit_named", { name: view.name })} onClick={() => edit(view)}>
+              <Button className={touchButton} tone="quiet" disabled={!ready} aria-label={t("saved-todo-views.edit_named", { name: view.name })} onClick={() => edit(view)}>
                 {t("saved-todo-views.edit")}
               </Button>
-              <Button tone="quiet" disabled={!ready} aria-label={t("saved-todo-views.delete_named", { name: view.name })} onClick={() => remove(view)}>
+              <Button className={touchButton} tone="quiet" disabled={!ready} aria-label={t("saved-todo-views.delete_named", { name: view.name })} onClick={() => remove(view)}>
                 {t("saved-todo-views.delete")}
               </Button>
             </div>}
           </li>)}
         </ol>
-        {document.can_write && <Button icon="plus" disabled={!ready || document.views.length >= TODO_VIEW_LIMIT} onClick={() => edit()}>{t("saved-todo-views.save_current")}</Button>}
+        {document.can_write && <Button className={touchButton} icon="plus" disabled={!ready || document.views.length >= TODO_VIEW_LIMIT} onClick={() => edit()}>{t("saved-todo-views.save_current")}</Button>}
       </>}
     </div>
   </Dialog>;
