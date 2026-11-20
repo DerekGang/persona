@@ -221,7 +221,7 @@ async function request<T>(path: string, init: ApiOptions, binary = false): Promi
   // the hub writes its error and status text in the interface language (docs/protocol/i18n.md "Protocol")
   if (!headers.has("Accept-Language")) headers.set("Accept-Language", currentLanguage());
   CLIENT_HEADERS.forEach(name => headers.set(name, `${CLIENT_PLATFORM}/${CLIENT_VERSION}`));
-  headers.set("X-Persona-Client-Instance", clientInstance());
+  headers.set("X-Persona-Client-Instance", clientInstance);
   const op = OP_HEADERS.map(name => headers.get(name)).find(Boolean);
   if (op) OP_HEADERS.forEach(name => headers.set(name, op));
   // the manager the assistant page shows, on the assistant's requests (lib/manager-choice.ts); none for the default

@@ -185,7 +185,7 @@ describe("声明能力", () => {
     await api("/interactions", { token: "t" });
     const headers = fetcher.mock.calls[0][1].headers as Headers;
     expect(headers.get("X-Persona-Client")).toBe("web/1");
-    expect(headers.get("X-Persona-Client-Instance")).toBe(clientInstance());
+    expect(headers.get("X-Persona-Client-Instance")).toBe(clientInstance);
     expect(CLIENT_FEATURES).toContain("elicitation");
   });
 });

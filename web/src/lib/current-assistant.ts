@@ -71,8 +71,7 @@ export function useScopedTodos() {
 
 /** The current assistant's authoritative pending cards. Conversation views read the store directly so they can show copies. */
 export function useScopedInteractions() {
-  const cards = useScoped(useStore((s) => directoryVisibleCards(s.interactions)));
-  return useMemo(() => cards.filter((ix) => !ix.mirror_of), [cards]);
+  return useScoped(useStore((s) => directoryVisibleCards(s.interactions)));
 }
 
 /** The agents the pages list: the current assistant's with several (from the complete list: the hub's first page

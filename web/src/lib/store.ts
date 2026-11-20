@@ -761,7 +761,7 @@ function sendHello(sock: WebSocket) {
   // the interface language: this connection's text, and the user's language for pushes and the assistant (docs/protocol/i18n.md)
   // and what it can render: MCP forms and links come only to a socket that says so
   // device_id: this browser's (lib/device-id.ts), so the hub pushes nothing to it while a page is open (#7459)
-  sock.send(JSON.stringify({ type: "client_hello", platform: CLIENT_PLATFORM, version: CLIENT_VERSION, instance: clientInstance(), features: [...CLIENT_FEATURES, ...helloExtras()], locale: currentLanguage(), device_id: helloDeviceId(), heartbeat: { pong_timeout: CLIENT_PONG_TIMEOUT } }));
+  sock.send(JSON.stringify({ type: "client_hello", platform: CLIENT_PLATFORM, version: CLIENT_VERSION, instance: clientInstance, features: [...CLIENT_FEATURES, ...helloExtras()], locale: currentLanguage(), device_id: helloDeviceId(), heartbeat: { pong_timeout: CLIENT_PONG_TIMEOUT } }));
 }
 
 /** Sets what client_hello declares beyond CLIENT_FEATURES, from the next hello on. */

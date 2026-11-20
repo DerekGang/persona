@@ -455,7 +455,7 @@ describe("client_hello heartbeat", () => {
     last().open();
     const hello = last().sent.map((m) => JSON.parse(m)).find((m) => m.type === "client_hello");
     expect(hello.instance).toBeTruthy();
-    expect(hello.instance).toBe(clientInstance());
+    expect(hello.instance).toBe(clientInstance);
   });
 });
 
