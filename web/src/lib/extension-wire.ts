@@ -341,6 +341,7 @@ export interface Contributes {
   auth_relay?: AuthRelayItem[];
   secret_providers?: SecretProviderItem[];
   repository_providers?: RepositoryProviderItem[];
+  text_lookup?: TextLookupItem[];
   messaging?: MessagingItem[];
   /** Extra keys are opaque JSON; declared properties keep their own types. */
   [key: string]: unknown;
@@ -574,6 +575,19 @@ export interface RepositoryProviderItem {
    * kinds stay issue and pull_request.
    */
   link_kinds?: RepositoryLinkLabel[];
+}
+
+/**
+ * A dictionary the apps ask for the meaning of a word the user taps (text_lookup.state, text_lookup.lookup,
+ * text_lookup.save, text_lookup.remove). Needs the program to speak the protocol. Only English (languages ["en"]) for
+ * now.
+ */
+export interface TextLookupItem {
+  id: string;
+  /** What the dictionary is called, in a few words. */
+  name?: string;
+  /** The languages it looks up. Only "en" is accepted for now; omitted means ["en"]. */
+  languages?: string[];
 }
 
 /**
@@ -1395,6 +1409,80 @@ export interface AuthRelayResult {
   /** The app the page authorized (or asked to), as the page names it. */
   app?: string;
   reason?: AuthRelayReason;
+}
+
+/**
+ * text_lookup.state's parameters: which contribution to ask for the words the user saved and whether saved words are
+ * underlined.
+ */
+export interface TextLookupStateParams {
+  contribution: string;
+}
+
+/**
+ * What text_lookup.state answers. words is capped by the manager at 5000.
+ */
+export interface TextLookupStateResult {
+  underline_saved: boolean;
+  words?: string[];
+}
+
+/**
+ * text_lookup.lookup's parameters: the word the user tapped, an optional sentence around it, the word's language and
+ * the language of the app.
+ */
+export interface TextLookupLookupParams {
+  contribution: string;
+  word: string;
+  context?: string;
+  lang: string;
+  ui_lang: string;
+}
+
+/**
+ * One meaning of a looked-up word.
+ */
+export interface TextLookupSense {
+  pos?: string;
+  text: string;
+}
+
+/**
+ * What text_lookup.lookup answers: found is false when the dictionary has no entry.
+ */
+export interface TextLookupLookupResult {
+  found: boolean;
+  word: string;
+  lemma?: string;
+  phonetic?: string;
+  senses?: TextLookupSense[];
+  saved: boolean;
+}
+
+/**
+ * text_lookup.save's parameters: the word to remember, an optional sentence around it and where the user saved it
+ * from.
+ */
+export interface TextLookupSaveParams {
+  contribution: string;
+  word: string;
+  context?: string;
+  source?: string;
+}
+
+/**
+ * text_lookup.remove's parameters: the saved word to forget.
+ */
+export interface TextLookupRemoveParams {
+  contribution: string;
+  word: string;
+}
+
+/**
+ * What text_lookup.save and text_lookup.remove answer: whether the word is saved afterwards.
+ */
+export interface TextLookupSavedResult {
+  saved: boolean;
 }
 
 /**

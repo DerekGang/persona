@@ -540,3 +540,17 @@ node web/e2e/font-preferences.mjs http://127.0.0.1:<web-port> <artifact-director
 ```
 
 Use exclusively owned mock/Vite processes and a fresh Chrome profile. This drives the real Settings page at wide/phone widths, light/dark and standard/large text, captures Default and Custom, checks immediate and cross-tab application/reset, before-paint reload, zero additional font requests and actual CJK/symbol fallback faces. It mounts the production single-pane and Full UI renderers against the synthetic hub and checks their first font family, retained-view attachment and unchanged size; it does not verify a live shell. All network access is restricted to the supplied loopback origin. Results and sixteen screenshots go outside the repository; a four-minute watchdog bounds the run.
+
+## Click a word to look it up (#10977)
+
+```sh
+(cd web && PERSONA_HUB_URL=http://127.0.0.1:<unused port> npx vite --port <web port> --strictPort --host 127.0.0.1 &)
+node web/e2e/text-lookup.mjs <loopback-web-origin> <artifact-directory> [--chromium <executable>]
+```
+
+Opens the real app with every hub request and the socket answered in the browser by invented data. In light and dark
+it clicks a word in an assistant reply, an Agent transcript and an Inbox item and waits for the word card with its
+meaning; it checks the saved-word underline is painted (Custom Highlight ranges, one style element, the text node
+not split); and with `available: false` and with no `text_lookup` feature it checks the same click adds no card, no
+style and no highlight. Fails on any page error. Writes `results.json` and screenshots; a 180-second watchdog ends
+the run with a timeout verdict.

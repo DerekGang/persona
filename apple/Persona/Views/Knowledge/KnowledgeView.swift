@@ -907,6 +907,7 @@ struct KnowledgeDetailView: View {
                 } else if let sum = d.summary, case let profile = Self.profile(sum, oneLine: shown.oneLine), !profile.isEmpty {
                     Section("Profile") {
                         Markdown(Links.markdown(MathMarkdown.rewrite(profile))).markdownTheme(.persona).readingContent().textSelection(.enabled)
+                            .textLookupSurface("knowledge")
                             .padding(.vertical, Theme.Space.sm)
                     }
                 }
@@ -1463,7 +1464,7 @@ struct KBMomentView: View {
                 }
                 if let chunks {
                     ForEach(Array(chunks.enumerated()), id: \.offset) { _, c in
-                        Markdown(c).markdownTheme(.persona).readingContent()
+                        Markdown(c).markdownTheme(.persona).readingContent().textLookupSurface("knowledge")
                     }
                 } else if let error {
                     Label(error, systemImage: Theme.Icon.error).foregroundStyle(Theme.danger).font(Theme.Font.caption)
