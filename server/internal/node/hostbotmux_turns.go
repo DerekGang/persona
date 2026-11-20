@@ -549,7 +549,7 @@ func decorateBotmuxTurns(items []proto.Item, turns []transcript.BotmuxTurn) []pr
 }
 
 func (n *Node) refreshWatchedBotmux(w *watch) {
-	if w == nil || w.ctx.Err() != nil || n.peer == nil {
+	if w == nil || w.ctx == nil || w.ctx.Err() != nil || n.peer == nil {
 		return
 	}
 	bmxSID := n.botmuxSessionID(w.id)
