@@ -417,7 +417,8 @@ func triageTodo(t listedTodo, look triageLookup, now, restoredAt time.Time, loc 
 		return at(triageDone, ruleFailedStart)
 	case status == "needs_you" || status == "interrupted":
 		return at(triageWaiting, ruleAgentAsks)
-	case t.DoneAt == nil && !dismissed && (review == reviewNeedsUser || ask != nil && (ask.Outcome == outcomeDecide || ask.Outcome == outcomeCannot)):
+	case t.DoneAt == nil && (t.Delivery.waitsForOwner() ||
+		!dismissed && (review == reviewNeedsUser || ask != nil && (ask.Outcome == outcomeDecide || ask.Outcome == outcomeCannot))):
 		return at(triageWaiting, ruleOwnerDecides)
 	case t.DoneAt == nil && review == reviewParked && triageExecuting(t.Todo, look):
 		return at(triageWorking, ruleAgentRunning)

@@ -46,6 +46,8 @@ import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.answer.*
 import persona.core.domain.tasks.BackgroundWork
 import persona.core.domain.tasks.FinishedEntry
+import persona.core.domain.tasks.HoldUnblock
+import persona.core.domain.tasks.hold
 import persona.core.domain.tasks.TriageStatus
 import persona.core.domain.tasks.NeedsYouEntry
 import persona.core.domain.tasks.NeedsYouGroup
@@ -367,17 +369,18 @@ internal fun AssistantTrays(host: AssistantTaskHost, state: AssistantTrayState,
                                 items(deciding.filter(group::has), key = { it.key }) { entry ->
                                     val todo = entry.todo
                                     val row = progressByTodo[todo.id]
+                                    val gate = todo.hold?.takeIf { it.unblock == HoldUnblock.User }?.gate
                                     when {
                                         todo.ask?.outcome == "decide" -> TaskDecisionCard(todo, host, enabled) { openTask(host, todo) }
                                         entry.status == TriageStatus.Failed || entry.status == TriageStatus.Interrupted ->
                                             TrayOutcomeRow(entry, host, enabled, taskBusy)
-                                        !todo.awaitsDecision(clock) && row != null -> Column {
+                                        !todo.awaitsDecision(clock) && todo.hold?.unblock != HoldUnblock.User && row != null -> Column {
                                             Text(stringResource(R.string.chat_tray_unattended),
                                                 Modifier.padding(horizontal = Tokens.Space.l, vertical = Tokens.Space.xs),
                                                 style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3)
                                             TrayProgressRow(row, onClick = { openTask(host, todo) })
                                         }
-                                        else -> TrayDecisionRow(todo.title, todo.ask?.verdict ?: row?.text.orEmpty(), R.string.chat_tray_review,
+                                        else -> TrayDecisionRow(todo.title, todo.ask?.verdict ?: gate ?: row?.text.orEmpty(), R.string.chat_tray_review,
                                             "assistant-review-${row?.id ?: "todo:${todo.id}"}", enabled, onOpen = { openTask(host, todo) }) { openTask(host, todo) }
                                     }
                                 }
