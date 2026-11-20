@@ -304,8 +304,7 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 	if launcher != "" && !shellcmd.NameRe.MatchString(launcher) {
 		return "", fmt.Errorf("invalid launcher %q", launcher)
 	}
-	_, _, runtimeKnown := n.runtimes.belongs(id)
-	strictRuntime := executionOption(options).Strict && runtimeKnown
+	strictRuntime := n.strictRuntimeSession(id, executionOption(options).Strict)
 	if id != "" && !validID(id) && !n.runtimeAssistant(id) && !strictRuntime {
 		return "", fmt.Errorf("invalid session id %q", id)
 	}
@@ -499,11 +498,11 @@ func (n *Node) assistantSend(ctx context.Context, id, cwd, launcher, text string
 			return "", err
 		}
 	}
-	if onRuntime, runs := n.assistantRuntime(rl), n.runtimeAssistant(id) || strictRuntime; guest != nil && (onRuntime != nil || runs) {
+	if onRuntime, runs := n.assistantRuntimeRoute(id, rl, strictRuntime); guest != nil && (onRuntime != nil || runs) {
 		return "", errGuestAgent
 	} else if onRuntime != nil || runs {
 		if refs, err := promptcontent.Files(text); err != nil || len(refs) > 0 {
-			return "", refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.file_runtime_unsupported"), nil)
+			return "", fileRuntimeUnsupported(ctx)
 		}
 		if origin == originInbox {
 			// External runtimes do not yet attest the origin on their first callback. Refuse rather than leave an

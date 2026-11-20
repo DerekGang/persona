@@ -52,6 +52,8 @@ type Task struct {
 	FreshEachRun bool           `json:"fresh_each_run,omitempty"`
 	StateNote    *TaskStateNote `json:"state_note,omitempty"`
 	stateRunKey  string
+	// promptRunID is set only on the dispatched snapshot of a reference-only prompt.
+	promptRunID string
 	// runGrantBasis belongs only to the model/task snapshot consumed by this run, never the stored task.
 	runGrantBasis string
 
@@ -1808,7 +1810,9 @@ func (s *Service) recordRun(r ScheduleRun) string {
 	if r.TodoProgress != nil && (r.Status == runSkipped || r.Status == runFailed && r.SessionID == "") {
 		r.TodoProgress = &ScheduleTodoAssessment{TodoID: r.TodoProgress.TodoID, State: "not_run", Reason: r.Error}
 	}
-	r.ID = "run_" + randomHex(4)
+	if r.ID == "" {
+		r.ID = "run_" + randomHex(4)
+	}
 	sc, err := s.lockedSchedule(context.Background())
 	if err != nil {
 		s.logf("schedule run %s %s not recorded: %v", r.Kind, r.RefID, err)
@@ -1929,7 +1933,7 @@ func taskMessageSource(t Task) *proto.MessageSource {
 	if t.Repeat == repeatOnce {
 		kind = proto.SourceFollowup
 	}
-	return &proto.MessageSource{Kind: kind, ConversationID: t.SessionID, Title: t.label(), Push: t.Push}
+	return &proto.MessageSource{Kind: kind, ConversationID: t.SessionID, Title: t.label(), Push: t.Push, ScheduleRunID: t.promptRunID}
 }
 
 func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (proto.Session, error) {
@@ -2014,6 +2018,11 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 		t.kbDir = s.kb.dir // the hint names where the knowledge base is, not the default
 	}
 	t.factsText = s.runFacts(ctx, t, time.Now()) // the run's facts, worked out once (north_star.go)
+	if prefix, body := t.promptParts(); prefix != "" && strings.TrimSpace(body) == "" {
+		// Identical titles and references can occur in consecutive runs in the same chat.
+		run.ID = "run_" + randomHex(12)
+		t.promptRunID = run.ID
+	}
 	isolateScheduledConversation(&t, s.mayBeMainNow(ctx))
 	// A schedule the owner let start some kinds by itself runs each round in a new conversation of its own whose
 	// context leaves out the live snapshot (schedule_grant.go cleanRound): only such a round may use the grant. Not a
@@ -2558,9 +2567,19 @@ func silentRun(items []proto.Item, t Task, ran bool) bool {
 	if !silentTurn(items) {
 		return false
 	}
-	_, body := t.promptParts()
-	if ask, _ := turnExchange(items); !runAsk(ask, body) {
-		return false
+	if t.promptRunID != "" {
+		// splitLastTurn starts at the latest unqueued prompt when one is present.
+		item := items[0]
+		source := prompts.ItemSource(item)
+		if item.Role != "user" || item.Kind != proto.KindText || item.Queued || item.ClientMsgID != "" || item.From != "" ||
+			source == nil || source.ScheduleRunID != t.promptRunID || (source.Kind != proto.SourcePatrol && source.Kind != proto.SourceFollowup) {
+			return false
+		}
+	} else {
+		_, body := t.promptParts()
+		if ask, _ := turnExchange(items); !runAsk(ask, body) {
+			return false
+		}
 	}
 	if ran {
 		return true

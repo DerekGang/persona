@@ -100,6 +100,7 @@ func (s *Service) taskInputDestination(ctx context.Context, t Task) Task {
 type taskInputTarget struct {
 	TaskExecution
 	session, profile string
+	strict           bool
 }
 
 func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelRecord) (taskInputTarget, error) {
@@ -126,7 +127,8 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 		}
 		// An omitted profile lets the node resolve the source session's profile just as it does on send.
 		profile, _ := params["config_dir"].(string)
-		return taskInputTarget{TaskExecution: *s.sourceTaskExecution(ctx, t, params), session: t.SessionID, profile: profile}, nil
+		return taskInputTarget{TaskExecution: *s.sourceTaskExecution(ctx, t, params), session: t.SessionID,
+			profile: profile, strict: params["task_execution"] == true}, nil
 	}
 	base, err := s.taskModelBaseline(ctx, s.taskMachine(ctx, t))
 	if err != nil {
@@ -161,7 +163,7 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 	if err != nil {
 		return taskInputTarget{}, err
 	}
-	target := taskInputTarget{TaskExecution: ex}
+	target := taskInputTarget{TaskExecution: ex, strict: true}
 	// startConversation uses the same signed-in profile as meetings. A compatible task-owned
 	// conversation keeps its own profile on resume (including the signed-out repair in resumeOwn).
 	if !t.startsFresh() && t.RunSessionID != "" && t.RunMachineID == ex.MachineID && t.RunLauncher == ex.Launcher &&
@@ -215,6 +217,9 @@ func (s *Service) checkTaskContent(ctx context.Context, ex taskInputTarget, pref
 	}
 	params := ex.environmentParams()
 	params["text"], params["skill_owner"] = prefix, s.skillOwner()
+	if ex.strict {
+		params["task_execution"] = true
+	}
 	if ex.session != "" {
 		params["session_id"] = ex.session
 	}

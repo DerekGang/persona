@@ -1628,7 +1628,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		id, err := n.fork(ctx, p.SessionID, p.AtItemID)
 		return map[string]any{"session_id": id}, err
 	case "assistant.content":
-		return map[string]any{"valid": true}, n.validatePromptContent(withSkillOwner(context.WithValue(ctx, taskInputKey{}, true), p.SkillOwner), p.SessionID, p.Cwd, p.Launcher, p.Text, modelExecution{Runtime: p.Runtime, ConfigDir: p.ConfigDir})
+		return map[string]any{"valid": true}, n.validatePromptContent(withSkillOwner(context.WithValue(ctx, taskInputKey{}, true), p.SkillOwner), p.SessionID, p.Cwd, p.Launcher, p.Text, modelExecution{Strict: p.TaskExecution, Runtime: p.Runtime, ConfigDir: p.ConfigDir})
 	case "assistant.directory":
 		return n.taskDirectory(p.Path)
 	case "assistant.execution":

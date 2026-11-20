@@ -27,7 +27,7 @@ func (n *Node) selectedFiles(ctx context.Context, text, cwd, launcher, runtime s
 		return nil, refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.selected_file_unavailable"), nil)
 	}
 	if n.assistantRuntime(launcher) != nil {
-		return nil, refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.file_runtime_unsupported"), nil)
+		return nil, fileRuntimeUnsupported(ctx)
 	}
 	n.mu.Lock()
 	machine := n.machineID
@@ -62,7 +62,17 @@ func (n *Node) selectedFiles(ctx context.Context, text, cwd, launcher, runtime s
 	return out, nil
 }
 
+func fileRuntimeUnsupported(ctx context.Context) error {
+	return refusal("file_unavailable", i18n.T(i18n.From(ctx), "assistant-schedule.file_runtime_unsupported"), nil)
+}
+
 func (n *Node) validatePromptContent(ctx context.Context, id, cwd, launcher, text string, execution modelExecution) error {
+	st, _ := n.state.get(id)
+	strictRuntime := n.strictRuntimeSession(id, execution.Strict)
+	if onRuntime, runs := n.assistantRuntimeRoute(id, launcherOr(launcher, st.Launcher), strictRuntime); onRuntime != nil || runs {
+		// The picker also checks this with no prompt, before it offers selections.
+		return fileRuntimeUnsupported(ctx)
+	}
 	if _, err := n.selectedFiles(ctx, text, cwd, launcher, execution.Runtime); err != nil {
 		return err
 	}
