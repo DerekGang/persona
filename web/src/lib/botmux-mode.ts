@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 export type BotmuxMode = "decode" | "all" | "hide";
 
 export const BOTMUX_MODE_KEY = "persona.agentBotmuxMode";
+export const LEGACY_BOTMUX_HIDDEN_KEY = "persona.agentHideBotmux";
 
 /** The stored mode; the default where there is no storage (a server render) or it cannot be read. */
 export function readBotmuxMode(store?: Storage): BotmuxMode {
@@ -12,7 +13,7 @@ export function readBotmuxMode(store?: Storage): BotmuxMode {
     const storage = store ?? globalThis.localStorage;
     const mode = storage?.getItem(BOTMUX_MODE_KEY);
     if (mode === "all" || mode === "hide" || mode === "decode") return mode;
-    return storage?.getItem("persona.agentHideBotmux") === "1" ? "hide" : "decode";
+    return storage?.getItem(LEGACY_BOTMUX_HIDDEN_KEY) === "1" ? "hide" : "decode";
   } catch {
     return "decode";
   }

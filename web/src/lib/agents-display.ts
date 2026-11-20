@@ -2,9 +2,8 @@
 // and to-do attribution stay unchanged. The old local key is migration input only.
 import { useSyncExternalStore } from "react";
 import { api, credentialOwner, onCredentialChange } from "./api";
-import { useBotmuxMode } from "./botmux-mode";
+import { LEGACY_BOTMUX_HIDDEN_KEY, useBotmuxMode } from "./botmux-mode";
 
-const LEGACY = "persona.agentHideBotmux";
 const PATH = "/agents/display-settings";
 export interface AgentsDisplay { show_botmux: boolean; configured: boolean; use_herdr_tab_name?: boolean }
 type DisplayChange = { show_botmux: boolean } | { use_herdr_tab_name: boolean };
@@ -21,8 +20,8 @@ function checked(value: AgentsDisplay): AgentsDisplay {
     (value.use_herdr_tab_name !== undefined && typeof value.use_herdr_tab_name !== "boolean")) throw new Error("Invalid Agents display settings");
   return value;
 }
-function legacyHidden() { try { return localStorage.getItem(LEGACY) === "1"; } catch { return false; } }
-function forgetLegacy() { try { localStorage.removeItem(LEGACY); } catch { /* a later read may retry */ } }
+function legacyHidden() { try { return localStorage.getItem(LEGACY_BOTMUX_HIDDEN_KEY) === "1"; } catch { return false; } }
+function forgetLegacy() { try { localStorage.removeItem(LEGACY_BOTMUX_HIDDEN_KEY); } catch { /* a later read may retry */ } }
 
 /** Called on hello and each Agents list refresh. Stale reads cannot undo a save or a new credential. */
 export function refreshAgentsDisplay(): Promise<void> {
