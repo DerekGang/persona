@@ -11,12 +11,21 @@ export interface ModeOption {
   detail: string;
 }
 
+// The locale is selected after modules load and can change while the app is open.
+function permissionOption(id: string, key: string, detail = key): ModeOption {
+  return {
+    id,
+    get title() { return t(`lib-session-actions.mode_${key}`); },
+    get detail() { return t(`lib-session-actions.mode_${detail}_detail`); },
+  };
+}
+
 export const PERMISSION_MODES: ModeOption[] = [
-  { id: "default", title: t("lib-session-actions.mode_default"), detail: t("lib-session-actions.mode_default_detail") },
-  { id: "acceptEdits", title: t("lib-session-actions.mode_accept_edits"), detail: t("lib-session-actions.mode_accept_edits_detail") },
-  { id: "plan", title: t("lib-session-actions.mode_plan"), detail: t("lib-session-actions.mode_plan_detail") },
-  { id: "auto", title: t("lib-session-actions.mode_auto"), detail: t("lib-session-actions.mode_auto_detail") },
-  { id: "bypassPermissions", title: t("lib-session-actions.mode_bypass_permissions"), detail: t("lib-session-actions.mode_bypass_permissions_detail") },
+  permissionOption("default", "default"),
+  permissionOption("acceptEdits", "accept_edits"),
+  permissionOption("plan", "plan"),
+  permissionOption("auto", "auto"),
+  permissionOption("bypassPermissions", "bypass_permissions"),
 ];
 
 export const EFFORTS: ModeOption[] = [
@@ -50,7 +59,8 @@ export const BYPASS_WARNING = t("lib-session-actions.bypass_warning");
  * Claude with the new mode (#2416). So does an agent whose Claude was started with a flag that puts "Allow all" in
  * its mode cycle (`bypass`: Session.bypass_available, or it is in that mode now; #1379). Other agents keep
  * SWITCHABLE_MODES. */
-const ALL_MODES = PERMISSION_MODES.map((m) => (m.id === BYPASS_MODE ? { ...m, detail: t("lib-session-actions.mode_bypass_permissions_assistant_detail") } : m));
+const ALL_MODES = PERMISSION_MODES.map((m) => m.id === BYPASS_MODE
+  ? permissionOption(m.id, "bypass_permissions", "bypass_permissions_assistant") : m);
 
 export function switchableModes(assistant: boolean | undefined, agent?: string, bypass?: boolean): ModeOption[] {
   return assistant || agent === "agy" || bypass ? ALL_MODES : SWITCHABLE_MODES;
@@ -82,7 +92,7 @@ export function hasModes(s: Session | undefined): boolean {
 
 /** A session's own approval, the first of the modes a session lists (`listedModesOf`): "Launcher default", not "Ask",
  *  since the agent's own settings may already approve everything (#8261). */
-export const LAUNCHER_DEFAULT: ModeOption = { id: "default", title: t("lib-session-actions.mode_launcher_default"), detail: t("lib-session-actions.mode_launcher_default_detail") };
+export const LAUNCHER_DEFAULT = permissionOption("default", "launcher_default");
 
 /** The permission modes the composer switches a session of an agent that is not Claude Code between (#8261, the node's
  *  `capabilities.permission_modes`): its own approval and Full access, on Paseo's Grok, OpenCode or Codex. Undefined with
@@ -102,7 +112,7 @@ export function listedModeNow(s: Session, listed: string[]): string {
  *  back (a switch, unlike Claude Code's start-only Full access), the rest as Claude Code names them. */
 export function listedModeOption(id: string): ModeOption {
   if (id === "default") return LAUNCHER_DEFAULT;
-  if (id === BYPASS_MODE) return { id, title: t("lib-session-actions.mode_bypass_permissions"), detail: t("lib-session-actions.mode_bypass_listed_detail") };
+  if (id === BYPASS_MODE) return permissionOption(id, "bypass_permissions", "bypass_listed");
   return PERMISSION_MODES.find((m) => m.id === id) ?? { id, title: id, detail: "" };
 }
 
