@@ -1,6 +1,7 @@
 {
   "execution_context_unavailable": "Cannot verify the task conversation’s execution context. Reconnect its agent and try again.",
   "followup": "Follow-up",
+  "task_label": "Scheduled task",
   "morning": "Morning brief",
   "evening": "Evening review",
   "unavailable": "Can’t read scheduled tasks right now (the database isn’t responding). Try again in a bit.",

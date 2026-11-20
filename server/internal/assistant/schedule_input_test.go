@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantskills"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/promptcontent"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -768,5 +769,39 @@ func TestTaskInputDiscoveryNeedsTargetAcknowledgement(t *testing.T) {
 	w := request(s, "POST", "/api/v1/assistant/tasks", `{"title":"Ordinary","prompt":"Check notes","repeat":"interval","every_minutes":30}`)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
+	}
+}
+
+func TestScheduledPromptLabelsKeepReferenceOnlyTasksVisible(t *testing.T) {
+	s := newStorelessService(t, newFakeHub().withMachine())
+	refs := `<persona-context kind="skill" ref="review">Review</persona-context>`
+	for _, tc := range []struct {
+		name, repeat, title, prompt, label string
+		selections                         bool
+	}{
+		{"interval with only references", repeatInterval, "", refs, "Scheduled task", true},
+		{"cron with only references", repeatCron, "", refs + "\n\n  ", "Scheduled task", true},
+		{"explicit title wins", repeatInterval, "My review", refs, "My review", true},
+		{"selected prompt with text", repeatCron, "", refs + "\n\nReview drafts", "Review drafts", true},
+		{"ordinary text", repeatInterval, "", "Check the build", "Check the build", false},
+		{"follow-up", repeatOnce, "", refs, "Follow-up", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := Task{ID: "review", Title: tc.title, Repeat: tc.repeat, Enabled: true, Prompt: tc.prompt,
+				PromptSelections: tc.selections, EveryMinutes: 30, Cron: "@hourly"}
+			if got := task.labelIn(i18n.En); got != tc.label {
+				t.Errorf("display label = %q, want %q", got, tc.label)
+			}
+			label := taskMessageSource(task).Title
+			setTasks(s, task)
+			if views := s.taskViews(t.Context()); len(views) != 1 || views[0].Label != label {
+				t.Errorf("task snapshot does not carry run label %q: %+v", label, views)
+			}
+			now := time.Now()
+			header := taskPrompt(task, now, now, time.UTC, false, false, false)
+			if label == "" || !strings.Contains(header, label) {
+				t.Errorf("schedule header %q does not carry run label %q", header, label)
+			}
+		})
 	}
 }

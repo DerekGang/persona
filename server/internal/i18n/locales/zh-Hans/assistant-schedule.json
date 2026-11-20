@@ -1,6 +1,7 @@
 {
   "execution_context_unavailable": "暂时无法核对任务对话的执行环境。请重新连接其 Agent 后重试。",
   "followup": "定时跟进",
+  "task_label": "定时任务",
   "morning": "早报",
   "evening": "晚间回顾",
   "unavailable": "暂时读不到定时任务（数据库没有响应），过一会儿再试",

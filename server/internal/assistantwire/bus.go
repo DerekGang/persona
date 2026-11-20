@@ -202,6 +202,8 @@ const (
 	// sent. The hub keeps an owner's message with an id (MethodKeepUndelivered); the manager sends it again once the
 	// conversation is idle, resolving the role again, so it starts on the new role and the old one never gets it.
 	CodeConversationBusy = "busy"
+	// CodeTaskDirectoryMissing distinguishes a missing directory from permission and validation failures.
+	CodeTaskDirectoryMissing = "task_directory_missing"
 	// CodeSupervisionRuntime means the runtime cannot receive separate supervision instructions. Nothing was sent.
 	CodeSupervisionRuntime = "assistant_supervision_runtime"
 	// CodeBodyIncomplete: MethodHTTPStreamed's body did not arrive whole (the relay was not there, broke or carried

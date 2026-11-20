@@ -1,6 +1,7 @@
 {
   "execution_context_unavailable": "タスクの会話の実行環境を確認できません。Agent を再接続して再試行してください。",
   "followup": "フォローアップ",
+  "task_label": "スケジュールタスク",
   "morning": "朝のまとめ",
   "evening": "夜の振り返り",
   "unavailable": "定期タスクを読み込めません（データベースが応答していません）。しばらくしてからもう一度お試しください。",

@@ -13,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/promptcontent"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // Rich editors put their serialized prompt only in structured_prompt. An older manager requires
@@ -38,7 +39,7 @@ func readStructuredTaskPrompt(raw map[string]json.RawMessage) error {
 	return nil
 }
 
-// taskInputContext resolves a draft through the existing task execution contract, without saving or preparing files.
+// taskInputContext resolves the task execution environment without saving the draft or starting a conversation.
 func (s *Service) taskInputContext(ctx context.Context, raw map[string]json.RawMessage) (taskInputTarget, error) {
 	t := Task{ID: "__input_draft"}
 	var id string
@@ -144,21 +145,7 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 	b := mergeModel(base, record.Binding)
 	ex, err := s.taskExecution(ctx, t, true, b)
 	if err == nil && ex.Cwd == "" {
-		if d, ok := s.device(ctx, ex.MachineID); ok {
-			ex.Cwd = s.assistantCwd(d)
-			if t.Space == SpaceHealth {
-				ex.Cwd = s.healthCwd(d)
-			}
-		}
-		var result struct {
-			Cwd string `json:"cwd"`
-		}
-		if err = s.call(ctx, ex.MachineID, assistantwire.DeviceAssistantDirectory, map[string]any{"path": ex.Cwd}, &result); err == nil {
-			if result.Cwd == "" {
-				return taskInputTarget{}, i18n.Err("assistant-schedule.input_context_unavailable")
-			}
-			ex.Cwd = result.Cwd
-		}
+		ex.Cwd, err = s.taskInputDefaultDirectory(ctx, ex.MachineID, t.Space)
 	}
 	if err != nil {
 		return taskInputTarget{}, err
@@ -176,6 +163,41 @@ func (s *Service) taskInputExecution(ctx context.Context, t Task, record *modelR
 		target.profile = meetingProfile
 	}
 	return target, nil
+}
+
+// Only a verified missing default allows preparation. Explicit paths and permission errors still
+// go through taskExecution's existing checks.
+func (s *Service) taskInputDefaultDirectory(ctx context.Context, machine, space string) (string, error) {
+	d, ok := s.device(ctx, machine)
+	if !ok || !d.Online {
+		return "", i18n.Err("assistant-schedule.execution_offline")
+	}
+	cwd := s.assistantCwd(d)
+	if space == SpaceHealth {
+		cwd = s.healthCwd(d)
+	}
+	resolve := func(path string) (string, error) {
+		var result struct {
+			Cwd string `json:"cwd"`
+		}
+		if err := s.call(ctx, machine, assistantwire.DeviceAssistantDirectory, map[string]any{"path": path}, &result); err != nil {
+			return "", err
+		}
+		if result.Cwd == "" {
+			return "", i18n.Err("assistant-schedule.input_context_unavailable")
+		}
+		return result.Cwd, nil
+	}
+	path, err := resolve(cwd)
+	var nodeErr *rpc.Error
+	if !errors.As(err, &nodeErr) || nodeErr.Code != assistantwire.CodeTaskDirectoryMissing {
+		return path, err
+	}
+	prepared, err := s.prepareSpace(ctx, machine, space)
+	if err != nil {
+		return "", err
+	}
+	return resolve(prepared)
 }
 
 func (target taskInputTarget) environmentParams() map[string]any {

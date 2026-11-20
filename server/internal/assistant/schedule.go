@@ -209,7 +209,7 @@ func (t Task) kind() string {
 // label is how the task is called in what the assistant reads, titles and the snapshot (Chinese, as the prompts).
 func (t Task) label() string { return t.labelIn(i18n.Default) }
 
-// labelIn is label for people in l (a push): only an untitled follow-up's name is the hub's own text.
+// labelIn uses the person's language for fallback names.
 func (t Task) labelIn(l i18n.Lang) string {
 	if t.Title != "" {
 		return t.Title
@@ -217,11 +217,12 @@ func (t Task) labelIn(l i18n.Lang) string {
 	if t.Repeat == repeatOnce {
 		return i18n.T(l, "assistant-schedule.followup")
 	}
-	if t.PromptSelections {
-		_, body := taskPromptBody(t.Prompt)
-		return clip(oneLine(body), 30)
+	prefix, body := t.promptParts()
+	label := clip(oneLine(body), 30)
+	if label == "" && prefix != "" {
+		return i18n.T(l, "assistant-schedule.task_label")
 	}
-	return clip(oneLine(t.Prompt), 30)
+	return label
 }
 
 // done: a once task that already ran.

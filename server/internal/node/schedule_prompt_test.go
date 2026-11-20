@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/assistant"
+	"github.com/nwverse/persona/server/internal/assistantskills"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -21,7 +23,8 @@ import (
 // The in-process hub supplies the single test machine and routes device calls to
 // the real node handler. No model or hub service is needed by the Claude fixture.
 type schedulePromptHub struct {
-	node *Node
+	node    *Node
+	offline bool
 }
 
 func (h schedulePromptHub) Hello(context.Context) (assistant.Hello, error) {
@@ -32,7 +35,7 @@ func (h schedulePromptHub) Hello(context.Context) (assistant.Hello, error) {
 func (h schedulePromptHub) DeviceCall(ctx context.Context, p assistant.DeviceCall) (json.RawMessage, error) {
 	if p.Device == assistant.DeviceAll && p.Method == assistant.DeviceDevicesList {
 		d := assistant.Device{ID: h.node.machineID, Name: "Fixture", Home: h.node.home, DataDir: h.node.dir,
-			Online: true, Reachable: true, ModelConfiguration: true}
+			Online: !h.offline, Reachable: !h.offline, ModelConfiguration: true}
 		return json.Marshal(map[string]any{"devices": []assistant.Device{d}})
 	}
 	if p.Device != h.node.machineID {
@@ -83,7 +86,7 @@ func TestScheduledPromptDeliveryThroughNode(t *testing.T) {
 	selection := fmt.Sprintf(`<persona-context kind="file" path="notes.txt" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`, f.n.machineID, cwd)
 	const notes = "Explain this example from our documentation."
 	literal := selection + "\n\n" + notes
-	service := assistant.New(assistant.Options{Hub: schedulePromptHub{f.n}})
+	service := assistant.New(assistant.Options{Hub: schedulePromptHub{node: f.n}})
 
 	request := func(method, route string, body any, result any) {
 		t.Helper()
@@ -201,6 +204,128 @@ func TestScheduledPromptDeliveryThroughNode(t *testing.T) {
 	}
 }
 
+func TestScheduledPromptFirstUseOfDefaultDirectory(t *testing.T) {
+	f := cliTestBash(t)
+	f.n.machineID = "remote-fixture"
+	hub := &schedulePromptHub{node: f.n}
+	service := assistant.New(assistant.Options{Hub: hub})
+	cwd := filepath.Join(resolved(t, f.n.dir), "assistant")
+	skillDir := filepath.Join(f.n.home, ".claude", "skills", "fixture-review")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: fixture-review\ndescription: Review fixture notes\n---\nRead the notes.\n")
+
+	call := func(method, route string, fields map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		service.ServeHTTP(rec, httptest.NewRequest(method, route, bytes.NewReader(raw)).WithContext(t.Context()))
+		return rec
+	}
+	preview := func(directory string) *httptest.ResponseRecorder {
+		t.Helper()
+		return call(http.MethodPost, "/api/v1/assistant/tasks/input-context", map[string]any{
+			"execution_machine_id": f.n.machineID, "launcher": "claude", "cwd": directory, "catalog": true,
+		})
+	}
+	decode := func(rec *httptest.ResponseRecorder, out any) {
+		t.Helper()
+		if err := json.Unmarshal(rec.Body.Bytes(), out); rec.Code != http.StatusOK || err != nil {
+			t.Fatalf("%d %s (%v)", rec.Code, rec.Body, err)
+		}
+	}
+	assertMissing := func(dir string) {
+		t.Helper()
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("directory %q should not be created: %v", dir, err)
+		}
+	}
+
+	assertMissing(cwd)
+	hub.offline = true
+	if rec := preview(""); rec.Code == http.StatusOK {
+		t.Fatalf("offline preview accepted: %s", rec.Body)
+	}
+	hub.offline = false
+	assertMissing(cwd)
+
+	custom := t.TempDir()
+	missing := filepath.Join(custom, "missing")
+	if rec := preview(missing); rec.Code == http.StatusOK {
+		t.Fatalf("missing custom directory accepted: %s", rec.Body)
+	}
+	assertMissing(missing)
+	assertMissing(cwd)
+	type inputContext struct {
+		Execution assistant.TaskExecution
+		TaskInput bool `json:"task_input"`
+		Catalog   assistantskills.Catalog
+	}
+	var selected inputContext
+	decode(preview(custom), &selected)
+	if !selected.TaskInput || selected.Execution.Cwd != resolved(t, custom) || f.n.assistantDirectoryPrepared(custom) {
+		t.Fatalf("custom directory lost its own environment or was prepared: %+v", selected)
+	}
+	assertMissing(cwd)
+
+	var first inputContext
+	decode(preview(""), &first)
+	if !first.TaskInput || first.Execution.Cwd != cwd || first.Execution.Launcher != "claude" || first.Execution.MachineID != f.n.machineID {
+		t.Fatalf("default preview picked the wrong environment: %+v", first)
+	}
+	var skill string
+	for _, entry := range first.Catalog.Skills {
+		if entry.Name == "fixture-review" {
+			skill = entry.ID
+		}
+	}
+	if skill == "" || !f.n.assistantDirectoryPrepared(cwd) {
+		t.Fatalf("default preview did not prepare the directory and discover the fixture skill: %+v", first.Catalog)
+	}
+	// Reopen an existing selection after the managed directory has disappeared.
+	// The selected user Skill still exists in the same profile.
+	if err := os.Rename(cwd, filepath.Join(f.n.dir, "parked-assistant")); err != nil {
+		t.Fatal(err)
+	}
+	assertMissing(cwd)
+	prompt := fmt.Sprintf(`<persona-context kind="skill" ref="%s">fixture-review</persona-context>`, skill)
+	var saved struct{ Task assistant.Task }
+	decode(call(http.MethodPost, "/api/v1/assistant/tasks", map[string]any{
+		"title": "Review", "repeat": "daily", "time": "09:00", "enabled": true,
+		"execution_machine_id": f.n.machineID, "structured_prompt": prompt,
+	}), &saved)
+	if saved.Task.ID == "" || saved.Task.Cwd != "" || !saved.Task.PromptSelections {
+		t.Fatalf("save did not retain the default-directory binding: %+v", saved.Task)
+	}
+	file := filepath.Join(cwd, "notes.txt")
+	writeFile(t, file, "Synthetic notes")
+	prompt += "\n" + fmt.Sprintf(`<persona-context kind="file" path="notes.txt" machine="%s" cwd="%s" launcher="claude">Notes</persona-context>`, f.n.machineID, cwd)
+	decode(call(http.MethodPut, "/api/v1/assistant/tasks/"+saved.Task.ID, map[string]any{"structured_prompt": prompt}), &saved)
+	var run struct {
+		SessionID string `json:"session_id"`
+	}
+	decode(call(http.MethodPost, "/api/v1/assistant/tasks/"+saved.Task.ID+"/run", nil), &run)
+	if run.SessionID == "" {
+		t.Fatal("task did not run")
+	}
+	f.idle(t, run.SessionID)
+	inputs := emptyStartUserInputs(t, f.file("stdin.jsonl"))
+	if len(inputs) != 1 {
+		t.Fatalf("input discovery and validation should not start conversations, got %d turns", len(inputs))
+	}
+	gotFile := false
+	for _, content := range inputs[0].Message.Content {
+		gotFile = gotFile || strings.Contains(content.Text, "file-instructions") && strings.Contains(content.Text, resolved(t, file))
+	}
+	if !gotFile {
+		t.Fatal("the run did not resolve the file selected from the default directory")
+	}
+}
+
 func TestScheduledRuntimeSourceRejectsFileSelection(t *testing.T) {
 	n, hub := runtimeNode(t)
 	n.machineID = "runtime-fixture"
@@ -214,7 +339,7 @@ func TestScheduledRuntimeSourceRejectsFileSelection(t *testing.T) {
 		}
 		return map[string]any{"ok": true}, nil
 	}
-	service := assistant.New(assistant.Options{Hub: schedulePromptHub{n}})
+	service := assistant.New(assistant.Options{Hub: schedulePromptHub{node: n}})
 	source, err := service.Start(t.Context(), assistant.StartParams{Launcher: "dsh", MachineID: n.machineID,
 		Cwd: cwd, Text: "Review the notes later", Untitled: true})
 	if err != nil || source.SessionID != id {

@@ -1688,7 +1688,11 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 	case "assistant.content":
 		return map[string]any{"valid": true}, n.validatePromptContent(withSkillOwner(context.WithValue(ctx, taskInputKey{}, true), p.SkillOwner), p.SessionID, p.Cwd, p.Launcher, p.Text, modelExecution{Strict: p.TaskExecution, Runtime: p.Runtime, ConfigDir: p.ConfigDir})
 	case "assistant.directory":
-		return n.taskDirectory(p.Path)
+		directory, err := n.taskDirectory(p.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, &rpc.Error{Code: assistantwire.CodeTaskDirectoryMissing, Message: err.Error()}
+		}
+		return directory, err
 	case "assistant.execution":
 		return n.assistantExecution(ctx, p.SessionID), nil
 	case "assistant.send", assistantwire.DeviceAssistantAnswerAgain:
