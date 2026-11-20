@@ -68,6 +68,9 @@ type Service struct {
 	projectReview *projectReview
 	// remoteImages fetches the pictures replies name by address for the apps (remote_image.go).
 	remoteImages *remoteimage.Fetcher
+	// channelPicture fetches an answer's pictures for a channel that sends them (channels_images.go): remoteImages.Get,
+	// a fake in tests.
+	channelPicture func(ctx context.Context, caller, rawURL string, size int) (*remoteimage.Image, error)
 	// inboxExt is what the extensions wrote for the Inbox, read at most once a minute (extension_context.go).
 	inboxExt inboxExtensionCache
 	// extTr are the extensions' transcription jobs running now (extension_transcribe.go).
