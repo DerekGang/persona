@@ -5880,7 +5880,8 @@ A fold that hides `botmux send` calls lists their replies in `fold.botmux`, in o
 replies also appear in `fold.botmux`).
 
 **Version probe and sending (`botmux_external_trigger`).** The node probes capabilities through the read-only `GET /api/sessions/:id/turns` endpoint
-and caches the result per botmux instance (invalidated on dashboard restart, token rotation, CLI binary upgrade, or TTL). It never probes with a real
+and caches the result per botmux instance (invalidated on dashboard restart, token rotation, or CLI binary upgrade). Session listing starts a
+background probe when capabilities are unknown or expired, keeping the last known result for that instance until the probe succeeds. It never probes with a real
 message and never retries a delivered turn. When `capabilities` includes `ownerActor`, `POST /api/trigger` sends top-level `actor: "owner"` with
 `target.kind: "turn"`, `botId`, and `sessionId` (omitting `envelope.payload` and `envelope.rawText`), and verifies the echoed `actor: "owner"` in the
 response. On older botmux instances (`404` or `ownerActor` absent), sends use the external-event trigger and the session row sets
@@ -5890,7 +5891,8 @@ response. On older botmux instances (`404` or `ownerActor` absent), sends use th
 
 - A message is read from a `<user_message>` with only top-level blocks around it (each block ends at the closing tag of its own name, so nested
   blocks such as `<identity>` are fine; facts come only from the top-level `<sender />`, `<mentions>`, `<attachments>` and `<message_location />`),
-  a trigger turn starting with `<botmux_task trusted="true">` (botmux's hook mode), or bare words followed by `<botmux_formatting>`.
+  a trigger turn with a top-level `<botmux_task trusted="true">` (including the hook-mode prefix), or bare words followed by `<botmux_formatting>`.
+  A task tag inside `<user_message>` is message text. Trigger source attribution comes only from the top-level task block.
 - A reply is a single `botmux send` whose words are its arguments, or a here-document (also behind a lone `-`). Flags follow botmux's own table
   (`src/cli/send-invocation.ts`): switches take no value, `--urgent` / `--attention` only `=value`, the others the next word or `=value`. A flag botmux
   does not know, a missing value, `--`, `--help`, `--dry-run`, and a body from `--content-file`, `--card-file` or `--card-json` give no `botmux` in

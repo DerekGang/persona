@@ -129,6 +129,108 @@ func sha256Of(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func TestBotmuxSessionListRefreshesExpiredCapabilities(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.turnsStatus = http.StatusNotFound
+	h := fs.makeHost("")
+	n, _, _ := herdrNode(t)
+	n.hosts = host.NewRegistry(h)
+	if err := n.refreshHosts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	notice := func() bool {
+		for _, row := range n.sessionList(ctx, false) {
+			if row.SessionID == sidA {
+				return row.BotmuxExternalTrigger
+			}
+		}
+		t.Fatal("BotMux session missing from the list")
+		return false
+	}
+	notice()
+	waitFor(t, "initial capability probe", notice)
+
+	h.mu.Lock()
+	h.caps.at = time.Now().Add(-botmuxCapsTTL)
+	h.mu.Unlock()
+	fs.mu.Lock()
+	fs.turnsStatus = http.StatusOK
+	fs.caps = []string{transcript.BotmuxCapOwnerActor}
+	fs.mu.Unlock()
+	if !notice() {
+		t.Fatal("expired capabilities hid the last known notice")
+	}
+	waitFor(t, "capability re-probe", func() bool { return !notice() })
+}
+
+func TestBotmuxWatchRepushesLateAndChangedFileReply(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	h := fs.makeHost("")
+	n, _, home := herdrNode(t)
+	hub := withHub(t, n)
+	n.hosts = host.NewRegistry(h)
+	if err := n.refreshHosts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", "projects", "proj", sidA+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"type":"user","uuid":"u1","message":{"role":"user","content":"<user_message>Question</user_message>"}}`,
+		`{"type":"assistant","uuid":"a1","message":{"role":"assistant","id":"m1","content":[{"type":"tool_use","id":"tool1","name":"Bash","input":{"command":"botmux send --card-file /tmp/card.json"}}]}}`,
+		`{"type":"user","uuid":"r1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool1","content":"ok"}]}}`,
+		`{"type":"assistant","uuid":"a2","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"tool2","name":"Bash","input":{"command":"echo done"}}]}}`,
+		`{"type":"user","uuid":"r2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool2","content":"ok"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{"session_id": sidA, "fold_work": true, "limit": 50})); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.watch(sidA, 5); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { n.unwatch(sidA) })
+
+	for index, text := range []string{"Complete card reply", "Updated card reply"} {
+		fs.mu.Lock()
+		fs.turns = []transcript.BotmuxTurn{{
+			TurnID: "turn-1",
+			Seq:    int64(index + 1),
+			Anchor: &transcript.BotmuxTurnAnchor{CLIEntryID: "u1"},
+			Replies: []transcript.BotmuxTurnReply{{
+				ResponseKind: "final", Text: text,
+			}},
+		}}
+		fs.mu.Unlock()
+		h.mu.Lock()
+		h.turnsCache[sidA].fetchedAt = time.Time{}
+		h.mu.Unlock()
+		waitFor(t, text, func() bool {
+			for _, item := range hub.got() {
+				if item.Kind == proto.KindToolUse && item.ToolUseID == "tool1" &&
+					item.Botmux != nil && item.Botmux.Text == text {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	items := hub.got()
+	if len(items) != 8 || items[3].ToolUseID != "tool2" || items[7].ToolUseID != "tool2" {
+		t.Fatalf("replacements should include each complete folded run, got %+v", items)
+	}
+	for _, batch := range hub.spans() {
+		if batch.n > 0 && (batch.fromSeq != 0 || batch.toSeq != 0 || batch.history == "") {
+			t.Fatalf("replacement should preserve the existing cursor and history: %+v", batch)
+		}
+	}
+}
+
 func TestBotmuxVersionProbeAndOwnerActorSend(t *testing.T) {
 	ctx := context.Background()
 	bin := filepath.Join(t.TempDir(), "botmux")

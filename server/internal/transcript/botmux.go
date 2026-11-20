@@ -62,9 +62,13 @@ func BotmuxMessage(s string) *proto.Botmux {
 	b := &proto.Botmux{Kind: proto.BotmuxMessage}
 	var body string
 	switch open := strings.Index(t, botmuxOpen); {
+	case open < 0 && botmuxFormattingTail.MatchString(t):
+		body = botmuxFormattingTail.ReplaceAllString(t, "")
+	case strings.HasPrefix(t, botmuxTaskOpen):
+		return botmuxTask(t)
 	case open >= 0:
 		rest, after := t[open+len(botmuxOpen):], ""
-		end := strings.Index(rest, botmuxClose)
+		end := strings.LastIndex(rest, botmuxClose)
 		if end < 0 { // clipped inside the words: what there is of them
 			body, b.Truncated = rest, true
 		} else {
@@ -79,19 +83,15 @@ func BotmuxMessage(s string) *proto.Botmux {
 			before[name] = append(before[name], bs...)
 		}
 		botmuxFacts(b, before)
-	case strings.HasPrefix(t, botmuxTaskOpen): // a trigger turn in BotMux's hook mode: its blocks go to the hook
-		body = t
-	case botmuxFormattingTail.MatchString(t): // bare: the words, then the formatting block
-		body = botmuxFormattingTail.ReplaceAllString(t, "")
+		if len(before["sender"]) == 0 {
+			for _, block := range before["botmux_task"] {
+				if task := botmuxTask(block); task != nil {
+					return task
+				}
+			}
+		}
 	default:
 		return nil
-	}
-	if task, ok := botmuxTask(body); ok {
-		b.Kind, b.Text = proto.BotmuxTrigger, task
-		if m := botmuxSourceRe.FindStringSubmatch(body); m != nil {
-			_ = json.Unmarshal([]byte(m[1]), &b.Source)
-		}
-		return b
 	}
 	body = strings.TrimSpace(body)
 	for {
@@ -147,17 +147,17 @@ func botmuxBlocks(s string) (blocks map[string][]string, ok bool) {
 }
 
 // botmuxTask is what a trigger turn asks, from its <botmux_task> block.
-func botmuxTask(body string) (string, bool) {
-	start := strings.Index(body, botmuxTaskOpen)
-	if start < 0 {
-		return "", false
+func botmuxTask(block string) *proto.Botmux {
+	body, ok := strings.CutPrefix(block, botmuxTaskOpen)
+	if !ok {
+		return nil
 	}
-	rest := body[start+len(botmuxTaskOpen):]
-	end := strings.Index(rest, botmuxTaskClose)
-	if end < 0 {
-		return strings.TrimSpace(rest), true
+	body, _, _ = strings.Cut(body, botmuxTaskClose)
+	task := &proto.Botmux{Kind: proto.BotmuxTrigger, Text: strings.TrimSpace(body)}
+	if match := botmuxSourceRe.FindStringSubmatch(body); match != nil {
+		_ = json.Unmarshal([]byte(match[1]), &task.Source)
 	}
-	return strings.TrimSpace(rest[:end]), true
+	return task
 }
 
 // botmuxFacts reads the tags' facts off the top-level blocks around the words, each from its own block only (a

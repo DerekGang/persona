@@ -101,10 +101,12 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 			seen[id] = true
 			continue
 		}
-		viaBotmux := host.ParsePane(a.PaneID).Kind == host.Botmux
+		pane := host.ParsePane(a.PaneID)
+		viaBotmux := pane.Kind == host.Botmux
 		if viaBotmux {
 			if h, ok := n.hosts.Get(host.Botmux).(*botmuxHost); ok {
 				s.BotmuxExternalTrigger = h.externalTriggerNotice()
+				h.refreshCapsAsync(pane.ID)
 			}
 		}
 		switch {

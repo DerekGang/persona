@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"time"
 
@@ -43,7 +44,11 @@ type botmuxCaps struct {
 }
 
 func (c botmuxCaps) valid(base, token, stamp string, now time.Time) bool {
-	return c.known && c.base == base && c.token == token && c.stamp == stamp && now.Sub(c.at) < botmuxCapsTTL
+	return c.matches(base, token, stamp) && now.Sub(c.at) < botmuxCapsTTL
+}
+
+func (c botmuxCaps) matches(base, token, stamp string) bool {
+	return c.known && c.base == base && c.token == token && c.stamp == stamp
 }
 
 // botmuxOwnerUnechoed records that /api/trigger did not echo actor="owner" for a specific (base, token, stamp).
@@ -71,19 +76,44 @@ type botmuxSessionTurnsCache struct {
 
 func (h *botmuxHost) externalTriggerNotice() bool {
 	stamp := botmuxStamp(h.bin)
-	now := time.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if !h.caps.known || h.caps.ownerActor {
-		return false
+	return h.caps.matches(h.base, h.token, stamp) && !h.caps.ownerActor
+}
+
+func (h *botmuxHost) refreshCapsAsync(sessionID string) {
+	stamp := botmuxStamp(h.bin)
+	now := time.Now()
+	h.mu.Lock()
+	if h.capsProbing || h.caps.valid(h.base, h.token, stamp, now) ||
+		now.Before(h.capsProbeAfter[sessionID]) || h.turnsRefreshing[sessionID] {
+		h.mu.Unlock()
+		return
 	}
-	if h.caps.stamp != stamp || now.Sub(h.caps.at) >= botmuxCapsTTL {
-		return false
-	}
-	if h.base != "" && (h.caps.base != h.base || h.caps.token != h.token) {
-		return false
-	}
-	return true
+	h.capsProbing = true
+	h.mu.Unlock()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), botmuxTurnsBGTimeout)
+		defer cancel()
+		caps := h.probeCaps(ctx, sessionID)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.capsProbing = false
+		if caps.known {
+			clear(h.capsProbeAfter)
+			return
+		}
+		if h.capsProbeAfter == nil {
+			h.capsProbeAfter = map[string]time.Time{}
+		}
+		for id, until := range h.capsProbeAfter {
+			if !now.Before(until) {
+				delete(h.capsProbeAfter, id)
+			}
+		}
+		h.capsProbeAfter[sessionID] = time.Now().Add(botmuxTurnsUnknownBackoff)
+	}()
 }
 
 func (h *botmuxHost) setCapsLocked(next botmuxCaps) (noticeChanged bool) {
@@ -215,7 +245,7 @@ func (h *botmuxHost) cachedSessionTurns(sessionID string) []transcript.BotmuxTur
 
 // refreshSessionTurnsAsync triggers a deduplicated, short-timeout background fetch for sessionID
 // when not within recency or error backoff windows. Never blocks the caller.
-func (h *botmuxHost) refreshSessionTurnsAsync(sessionID string) {
+func (h *botmuxHost) refreshSessionTurnsAsync(parent context.Context, sessionID string, onChange func([]transcript.BotmuxTurn)) {
 	if sessionID == "" {
 		return
 	}
@@ -243,6 +273,10 @@ func (h *botmuxHost) refreshSessionTurnsAsync(sessionID string) {
 		h.turnsRefreshing = map[string]bool{}
 	}
 	h.turnsRefreshing[sessionID] = true
+	var previous []transcript.BotmuxTurn
+	if cached := h.turnsCache[sessionID]; cached != nil {
+		previous = slices.Clone(cached.turns)
+	}
 	h.mu.Unlock()
 
 	go func() {
@@ -251,9 +285,12 @@ func (h *botmuxHost) refreshSessionTurnsAsync(sessionID string) {
 			delete(h.turnsRefreshing, sessionID)
 			h.mu.Unlock()
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), botmuxTurnsBGTimeout)
+		ctx, cancel := context.WithTimeout(parent, botmuxTurnsBGTimeout)
 		defer cancel()
-		_, _ = h.sessionTurns(ctx, sessionID)
+		h.sessionTurns(ctx, sessionID)
+		if current := h.cachedSessionTurns(sessionID); !reflect.DeepEqual(previous, current) {
+			onChange(previous)
+		}
 	}()
 }
 
@@ -455,10 +492,11 @@ func (h *botmuxHost) fetchTurnsPage(
 
 // botmuxSessionID returns the BotMux session ID when sessionID belongs to a BotMux session, or "" otherwise.
 func (n *Node) botmuxSessionID(sessionID string) string {
-	if a, ok := n.agent(sessionID); ok {
-		if ref := host.ParsePane(a.PaneID); ref.Kind == host.Botmux {
-			return ref.ID
-		}
+	n.mu.Lock()
+	pane := n.agents[sessionID].PaneID
+	n.mu.Unlock()
+	if ref := host.ParsePane(pane); ref.Kind == host.Botmux {
+		return ref.ID
 	}
 	return ""
 }
@@ -487,7 +525,6 @@ func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.
 	if h, ok := n.hosts.Get(host.Botmux).(*botmuxHost); ok {
 		if cacheOnly {
 			turns = h.cachedSessionTurns(bmxSID)
-			h.refreshSessionTurnsAsync(bmxSID)
 		} else {
 			turns, _ = h.sessionTurns(ctx, bmxSID)
 		}
@@ -501,15 +538,74 @@ func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.
 		combined = append(combined, prefix...)
 		combined = append(combined, items...)
 		combined = append(combined, suffix...)
-		combined = transcript.DecorateBotmux(combined)
-		if len(turns) > 0 {
-			combined = transcript.ApplyBotmuxTurns(combined, turns)
-		}
+		combined = decorateBotmuxTurns(combined, turns)
 		return combined[len(prefix) : len(prefix)+len(items)]
 	}
-	out := transcript.DecorateBotmux(items)
-	if len(turns) > 0 {
-		out = transcript.ApplyBotmuxTurns(out, turns)
+	return decorateBotmuxTurns(items, turns)
+}
+
+func decorateBotmuxTurns(items []proto.Item, turns []transcript.BotmuxTurn) []proto.Item {
+	return transcript.ApplyBotmuxTurns(transcript.DecorateBotmux(items), turns)
+}
+
+func (n *Node) refreshWatchedBotmux(w *watch) {
+	if w == nil || w.ctx.Err() != nil || n.peer == nil {
+		return
+	}
+	bmxSID := n.botmuxSessionID(w.id)
+	if bmxSID == "" {
+		return
+	}
+	if h, ok := n.hosts.Get(host.Botmux).(*botmuxHost); ok {
+		h.refreshSessionTurnsAsync(w.ctx, bmxSID, func(previous []transcript.BotmuxTurn) {
+			mu := n.pushLock(w.id)
+			mu.Lock()
+			defer mu.Unlock()
+			n.mu.Lock()
+			watched := n.watches[w.id] == w
+			n.mu.Unlock()
+			if !watched || w.ctx.Err() != nil || n.botmuxSessionID(w.id) != bmxSID {
+				return
+			}
+			items, history := w.f.LoadedItems()
+			before := decorateBotmuxTurns(items, previous)
+			after := decorateBotmuxTurns(items, h.cachedSessionTurns(bmxSID))
+			changed := botmuxChangedItems(before, after)
+			if len(changed) > 0 {
+				agentUsage(w.f, changed)
+				changed = n.echoed(w.id, w.f, w.f.WithImages(changed))
+				_ = n.peer.Notify("session.items", map[string]any{
+					"session_id": w.id, "items": changed, "history": history,
+				})
+			}
+		})
+	}
+}
+
+// When an updated reply was folded, resend the entire run so replacing the fold preserves its other items.
+func botmuxChangedItems(before, after []proto.Item) []proto.Item {
+	changed := make([]bool, len(after))
+	hasChanges := false
+	for index := range after {
+		if !reflect.DeepEqual(before[index].Botmux, after[index].Botmux) {
+			changed[index] = true
+			hasChanges = true
+		}
+	}
+	if !hasChanges {
+		return nil
+	}
+	var out []proto.Item
+	index := 0
+	for _, item := range transcript.FoldWork(after) {
+		end := index + 1
+		if item.Fold != nil {
+			end = index + item.Fold.Items
+		}
+		if slices.Contains(changed[index:end], true) {
+			out = append(out, after[index:end]...)
+		}
+		index = end
 	}
 	return out
 }
