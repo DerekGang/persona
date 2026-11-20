@@ -24,10 +24,10 @@ import { WorkspaceChoices } from "./NewAgentWorkspaces";
 import { AttachmentTray } from "../ui/AttachmentTray";
 import { modelPurpose, modelSummary, type ModelBinding } from "../lib/model-config";
 import {
-  effortChoices, effortRule, fitEffort, followedBinding, inlineTextStart, launcherAgent, listedModes, machineLaunchers, pickerLauncher, startPicks, takesEffort, tierLeftOut, type LauncherDefault, type PickerTier,
+  effortChoices, effortRule, fitEffort, followedBinding, inlineTextStart, launcherAgent, listedModes, machineLaunchers, pickerLauncher, takesEffort, type LauncherDefault, type PickerTier,
   type UnavailableLauncher,
 } from "../lib/launcher-models";
-import { choiceCarries, modelTitle, type ModelChoice } from "../lib/new-agent-panel";
+import { choiceCarries, modelTitle, startPicks, tierLeftOut, type ModelChoice } from "../lib/new-agent-panel";
 import { readModels } from "../lib/session-models";
 import { BYPASS_MODE, BYPASS_WARNING, effortTitle, listedModeOption, modeTitle, PERMISSION_MODES } from "../lib/session-actions";
 import {

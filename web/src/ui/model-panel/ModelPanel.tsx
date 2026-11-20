@@ -803,7 +803,7 @@ function FollowRow({ follow, frozen, aliases, onPick }: { follow: NonNullable<Mo
           if (!frozen) onPick();
         }}
         className={cx(
-          "group/row relative z-[1] flex min-h-11 w-full items-center gap-2 rounded-control px-3 py-2 text-[14px] leading-[1.43] text-ink outline-none select-none",
+          "group/row relative z-[1] flex min-h-11 w-full shrink-0 items-center gap-2 rounded-control px-3 py-2 text-[14px] leading-[1.43] text-ink outline-none select-none",
           "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent",
           frozen ? "cursor-not-allowed" : "cursor-pointer",
         )}

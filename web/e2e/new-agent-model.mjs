@@ -15,7 +15,7 @@
 //   (cd web && PERSONA_HUB_URL=http://127.0.0.1:18741 npx vite --port 5201 --strictPort &)
 //   node web/e2e/new-agent-model.mjs http://127.0.0.1:5201 --hub http://127.0.0.1:18741 [--shots <dir>] [--channel msedge]
 //
-// Runs wide (1280) and phone width (390), light and dark, in Chinese, then once in English (1280, light); --shots saves
+// Runs wide (1280) and phone width (390), light and dark, then in English at standard and large text size; --shots saves
 // each state as web-new-agent-model-<state>-<width>-<theme>.png (the English pass adds -en). Prints one line per check
 // and a verdict; exits 1 on a failure.
 import { mkdirSync } from "node:fs";
@@ -81,28 +81,30 @@ async function until(check, what, tries = 60) {
 // a model row of the panel: its key is "model:<launcher>\n<model id>" (\a is the line break in a CSS string)
 const rowSel = (launcher, model) => `[data-panel-row="model:${launcher}\\a ${model}"]`;
 
-async function open(browser, { theme, width, lang }) {
+async function open(browser, { theme, width, lang, textSize = "standard" }) {
   const ctx = await browser.newContext({
     viewport: { width, height: width > 600 ? 1000 : 844 }, deviceScaleFactor: 2, colorScheme: theme, locale: WORDS[lang].locale, hasTouch: width <= 600,
   });
   const page = await ctx.newPage();
   await page.goto(`${base}/?token=mock`);
   await page.waitForFunction(() => localStorage.getItem("persona.token"), null, { timeout: 15000 });
-  await page.evaluate(({ theme, lang }) => {
+  await page.evaluate(({ theme, lang, textSize }) => {
     localStorage.setItem("persona.theme", theme);
     localStorage.setItem("persona.language", lang);
+    localStorage.setItem("persona.text-size", textSize);
     localStorage.setItem("new.machine", "server");
-  }, { theme, lang });
+    localStorage.setItem("persona.modelPanel..agent.recent", JSON.stringify([{ provider: "claude", model: "default" }]));
+  }, { theme, lang, textSize });
   await page.reload();
   await page.waitForSelector("main", { timeout: 15000 });
   return { ctx, page };
 }
 
-function shooter(page, { theme, width, lang }) {
+function shooter(page, { theme, width, lang, textSize }) {
   return async (state) => {
     if (!shots) return;
     await page.waitForTimeout(400); // the sheet's slide-up, the panel's growing out of the pill
-    await page.screenshot({ path: join(shots, `web-new-agent-model-${state}-${width}-${theme}${lang === "en" ? "-en" : ""}.png`) });
+    await page.screenshot({ path: join(shots, `web-new-agent-model-${state}-${width}-${theme}${lang === "en" ? "-en" : ""}${textSize === "large" ? "-large" : ""}.png`) });
   };
 }
 
@@ -215,7 +217,7 @@ async function startNow(page, dialog, tag, w) {
 async function run(browser, pass) {
   const { theme, width, lang } = pass;
   const w = WORDS[lang];
-  const tag = `${width}/${theme}/${lang}`;
+  const tag = `${width}/${theme}/${lang}/${pass.textSize ?? "standard"}`;
   const { ctx, page } = await open(browser, pass);
   const shot = shooter(page, pass);
 
@@ -233,6 +235,12 @@ async function run(browser, pass) {
   if ((await follow.getAttribute("aria-pressed")) !== "true") fail(`${tag}: the follow row isn't checked`);
   const followText = (await follow.textContent()) ?? "";
   if (!followText.includes(w.follow) || !followText.includes(FOLLOWED)) fail(`${tag}: the follow row says ${followText}`);
+  const labelFits = await follow.evaluate((row) => {
+    const bounds = row.getBoundingClientRect();
+    const text = row.firstElementChild.getBoundingClientRect();
+    return text.top >= bounds.top && text.bottom <= bounds.bottom;
+  });
+  if (!labelFits) fail(`${tag}: the Follow label, its setup and its recent alias overflow their clickable row`);
   if (await panel.locator(`${rowSel("claude", "default")}[data-current]`).count()) fail(`${tag}: explicit Default is checked along with Follow`);
   const next = panel.locator(rowSel("claude", "opus"));
   await next.hover({ position: { x: 35, y: 12 } });
@@ -405,6 +413,7 @@ async function run(browser, pass) {
 const PASSES = [
   ...[1280, 390].flatMap((width) => ["light", "dark"].map((theme) => ({ width, theme, lang: "zh-Hans" }))),
   { width: 1280, theme: "light", lang: "en" },
+  { width: 390, theme: "dark", lang: "en", textSize: "large" },
 ];
 const browser = await chromium.launch({ channel });
 try {
