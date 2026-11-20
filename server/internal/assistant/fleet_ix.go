@@ -234,6 +234,9 @@ func (s *Service) markTold(ix proto.Interaction) {
 // nodeInteraction is a node's interaction.create: allowed right away when "Always allow in this session" already covers it, else
 // shown and waited for.
 func (s *Service) nodeInteraction(ctx context.Context, ix proto.Interaction) (proto.Resolution, error) {
+	// Display-copy identity is manager-owned. A runtime cannot redirect its own
+	// waiter, or another conversation's approval, through a forged mirror field.
+	ix.MirrorOf, ix.MirrorMain = "", false
 	if reservedCard(ix) {
 		return proto.Resolution{}, errReservedCard
 	}
@@ -330,6 +333,13 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 	ix.Private = ix.Private || s.justMeNow(ix.MachineID, ix.SessionID)
 	if ix.ExpiresAt.IsZero() {
 		ix.ExpiresAt = time.Now().Add(s.notifyTimings().hookTimeout()).UTC()
+	}
+	// Record display intent before the interaction enters durable history. Once
+	// set, reconnects preserve this copy even when the preference is later off.
+	if !ix.MirrorMain {
+		if _, ok := s.mainApprovalMirror(ctx, ix); ok {
+			ix.MirrorMain = true
+		}
 	}
 	again := false
 	if ix.Resumable {

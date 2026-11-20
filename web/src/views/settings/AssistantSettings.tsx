@@ -502,12 +502,15 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
             <option value="prompt">{t("settings-assistantsettings.readonly_mode_prompt")}</option>
           </select>
         </Row>
-        {typeof info?.approval_mirror_main === "boolean" && (
+      </Group>
+
+      {typeof info?.approval_mirror_main === "boolean" && (
+        <Group anchor="approval-routing">
           <Row label={t("settings-assistantsettings.approval_mirror_main")} hint={t("settings-assistantsettings.approval_mirror_main_hint")} wrapHint stackOnNarrow anchor="approval-mirror-main">
             <Switch on={info.approval_mirror_main} onChange={(on) => void setApprovalMirror(on)} disabled={mirrorBusy || info.manager !== manager} label={t("settings-assistantsettings.approval_mirror_main")} />
           </Row>
-        )}
-      </Group>
+        </Group>
+      )}
 
       <PageBoundary page="standing-authorizations">
         <Suspense fallback={<Group anchor="standing-authorizations" title={t("settings-standing.title")}><Loading /></Group>}>

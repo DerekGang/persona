@@ -83,6 +83,7 @@ export const SEARCH_INDEX: SearchGroup[] = [
   },
   { tab: "persona", group: t("settings-assistantsettings.default_permissions"), anchor: "default-permissions" },
   { tab: "persona", group: t("settings-assistantsettings.readonly_mode"), anchor: "readonly-mode" },
+  { tab: "persona", group: t("settings-assistantsettings.approval_mirror_main"), anchor: "approval-mirror-main" },
   { tab: "persona", group: t("settings-standing.title"), anchor: "standing-authorizations" },
   { tab: "persona", group: t("settings-assistantsettings.meeting_attendance"), hint: t("settings-assistantsettings.meetings_title"), anchor: "meetings" },
   { tab: "persona", group: t("settings-assistantsettings.recordings_title"), hint: words(t("settings-assistantsettings.recording_days"), t("settings-assistantsettings.minutes_days")), anchor: "recordings" },

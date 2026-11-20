@@ -331,7 +331,7 @@ final class AppModel {
 
     /// `directoryVisibleInteractions` with a resolver the caller reads the same pass with.
     func directoryVisibleInteractions(reading session: (SessionKey) -> Session?) -> [Interaction] {
-        pendingInteractions.filter { session($0.sessionKey)?.hiddenByDirectory != true }
+        aggregatePendingInteractions.filter { session($0.sessionKey)?.hiddenByDirectory != true }
     }
 
     /// The sessions whose visibility the cards and counts read from an exact lookup when no list holds them: pending
@@ -1458,6 +1458,9 @@ final class AppModel {
     var pendingInteractions: [Interaction] {
         interactions.values.sorted { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
     }
+
+    /// One request wherever cards are aggregated. `pendingInteractions` also retains display copies for conversations.
+    var aggregatePendingInteractions: [Interaction] { pendingInteractions.filter { !$0.isDisplayMirror } }
 
     /// The hub-level group's Persona conversations (each hub has its own Persona), newest first.
     var assistantConversations: [Session] { assistantLists(for: hub?.group ?? "").open }
@@ -2979,6 +2982,11 @@ final class AppModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.sessionsCoalesce) { [weak self] in self?.applyPendingSessions() }
     }
 
+    /// A display copy is another place to answer the same request, not another arrival to announce.
+    static func announcesInteraction(_ ix: Interaction, replacing previous: Interaction?) -> Bool {
+        !ix.isDisplayMirror && Delegated.announces(ix, replacing: previous)
+    }
+
     func handle(_ ev: ServerEvent, group: String) {
         #if DEBUG || PERF_SIGNPOST
         PerfTrace.push(Self.perfName(ev))
@@ -3223,7 +3231,7 @@ final class AppModel {
             // pending-card snapshot after a hello that resumed still lists a card until the node ends it, and one this
             // device had answered came back answerable (#1521). A failed answer takes the id out first (`putBack`).
             guard !endedInteractionIDs.contains(ix.uid) else { break }
-            let announces = Delegated.announces(ix, replacing: interactions[ix.uid])
+            let announces = Self.announcesInteraction(ix, replacing: interactions[ix.uid])
             interactions[ix.uid] = ix
             noteScreenCard(ix, live: true)
             if announces { Haptics.attention() }
@@ -4752,7 +4760,7 @@ final class AppModel {
         }
         // A directory-hidden session's cards count nowhere, as the pages leave them out (`directoryVisibleInteractions`).
         let session = cardSessionResolver()
-        for ix in interactions.values where session(ix.sessionKey)?.hiddenByDirectory != true {
+        for ix in interactions.values where !ix.isDisplayMirror && session(ix.sessionKey)?.hiddenByDirectory != true {
             guard scope.has(ix.manager ?? session(ix.sessionKey)?.manager, group: ix.group) else { continue }
             // A quiet task's agent asking is the main conversation's to tell (#1731): its count goes there, not on Agents.
             switch place(ix.sessionKey) {
@@ -5112,8 +5120,8 @@ final class AppModel {
 
     func watchSummary() -> WatchSummary {
         // A quiet task's agent and its questions are the main conversation's (#1731).
-        let (live, asking) = QuietTasks.leavingOut(sessions: allSessions.filter { $0.status.isLive }, interactions: pendingInteractions,
-                                                   quiet: isQuiet)
+        let (live, asking) = QuietTasks.leavingOut(sessions: allSessions.filter { $0.status.isLive },
+                                                   interactions: aggregatePendingInteractions, quiet: isQuiet)
         // Connectors' items too: the watch lists them read-only under their own label (#2727).
         let inbox = InboxStore.shared.items.filter { !$0.isDone && $0.triage == .action }
         // A task's agent asking: the watch names the task (docs/assistant/unified-entry.md「Steps」). Muted agents and spaces

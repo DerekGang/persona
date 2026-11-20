@@ -39,12 +39,20 @@ func (s *Service) syncCodexInteractions(machine string, params json.RawMessage) 
 	}
 	listed := map[string]proto.Interaction{}
 	for _, ix := range p.Interactions {
+		// Display-copy identity is manager-owned at every node-controlled ingress.
+		ix.MirrorOf, ix.MirrorMain = "", false
 		if reservedCard(ix) {
 			s.logf("[%s] codex card %s: %v", machine, ix.ID, errReservedCard)
 			continue
 		}
 		ix.MachineID = machine
 		ix = cleanTitle(ix)
+		// Codex cards do not pass through waitInteractionPrepared. Record the
+		// same manager-owned display intent before history and publication so
+		// the hub accepts the copy and reconnects can retain it.
+		if _, ok := s.mainApprovalMirror(context.Background(), ix); ok {
+			ix.MirrorMain = true
+		}
 		listed[ix.ID] = ix
 	}
 	s.fleet.mu.Lock()

@@ -7,11 +7,15 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+// featureApprovalMirrors is the client capability for receiving display copies.
+// A client that only knows the authoritative model keeps its pre-mirror counts.
+const featureApprovalMirrors = "approval_mirrors"
+
 // validDisplayMirror rejects orphaned, nested, private or same-conversation
 // copies. A mirror is display state only and never substitutes for its origin.
 func validDisplayMirror(origin, mirror proto.Interaction) bool {
-	return mirror.ID != "" && mirror.MirrorOf == origin.ID && mirror.ID != origin.ID &&
-		origin.MirrorOf == "" && origin.Kind == proto.IxPermission && !origin.Private && !mirror.Private &&
+	return mirror.ID != "" && mirror.ID == proto.ApprovalMirrorID(origin.ID) && mirror.MirrorOf == origin.ID && mirror.ID != origin.ID &&
+		origin.MirrorOf == "" && origin.MirrorMain && !mirror.MirrorMain && origin.Kind == proto.IxPermission && !origin.Private && !mirror.Private &&
 		origin.Manager == mirror.Manager &&
 		(origin.MachineID != mirror.MachineID || origin.SessionID != mirror.SessionID)
 }
@@ -22,6 +26,7 @@ func refreshedDisplayMirror(origin, mirror proto.Interaction) proto.Interaction 
 	out := origin
 	out.ID = mirror.ID
 	out.MirrorOf = mirror.MirrorOf
+	out.MirrorMain = false
 	out.MachineID = mirror.MachineID
 	out.SessionID = mirror.SessionID
 	out.Manager = mirror.Manager

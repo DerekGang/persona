@@ -116,6 +116,9 @@ func init() {
 				f.mu.Unlock()
 				return // no display copy without its live authoritative permission
 			}
+			// Display content is authoritative-only. Even a malformed manager event
+			// cannot show one operation while its action resolves another.
+			p.Interaction = refreshedDisplayMirror(origin, p.Interaction)
 		}
 		if f.interactions == nil {
 			f.interactions = map[string]proto.Interaction{}
@@ -274,6 +277,20 @@ func (h *Hub) takeFleetInteractionsFrom(owner string, list []proto.Interaction) 
 		o, ok := f.interactions[ix.ID]
 		return ok && o.Manager != owner && o.Manager != ""
 	})
+	// A malformed snapshot cannot make two entries with one display ID race for
+	// which content is shown. The map below has always used the last entry; keep
+	// that same entry's position and content in the ordered snapshot too.
+	last := make(map[string]int, len(list))
+	for i, ix := range list {
+		last[ix.ID] = i
+	}
+	deduped := make([]proto.Interaction, 0, len(list))
+	for i, ix := range list {
+		if last[ix.ID] == i {
+			deduped = append(deduped, ix)
+		}
+	}
+	list = deduped
 	now := make(map[string]proto.Interaction, len(list))
 	for i := range list {
 		list[i].Manager = owner
@@ -292,8 +309,9 @@ func (h *Hub) takeFleetInteractionsFrom(owner string, list []proto.Interaction) 
 			continue
 		}
 		if origin, ok := now[previous.MirrorOf]; ok && origin.MirrorOf == "" {
-			now[id] = previous
-			list = append(list, previous)
+			refreshed := refreshedDisplayMirror(origin, previous)
+			now[id] = refreshed
+			list = append(list, refreshed)
 		}
 	}
 	for id, mirror := range now {
@@ -303,6 +321,16 @@ func (h *Hub) takeFleetInteractionsFrom(owner string, list []proto.Interaction) 
 		origin, ok := now[mirror.MirrorOf]
 		if !ok || !validDisplayMirror(origin, mirror) {
 			delete(now, id)
+			continue
+		}
+		// Snapshots get the same authoritative-only display content as live
+		// events; identity validation alone must not admit forged text or deadlines.
+		refreshed := refreshedDisplayMirror(origin, mirror)
+		now[id] = refreshed
+		for i := range list {
+			if list[i].ID == id {
+				list[i] = refreshed
+			}
 		}
 	}
 	list = slices.DeleteFunc(list, func(ix proto.Interaction) bool {

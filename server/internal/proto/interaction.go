@@ -89,7 +89,10 @@ type Interaction struct {
 	ID      string `json:"id"`
 	// MirrorOf identifies the authoritative interaction for a display-only copy in another assistant conversation.
 	// The hub normalizes its actions to that interaction; it is never a second pending operation or aggregate request.
-	MirrorOf     string     `json:"mirror_of,omitempty"`
+	MirrorOf string `json:"mirror_of,omitempty"`
+	// MirrorMain is manager-owned intent on the authoritative card: it has a main-conversation display copy.
+	// It lets reconnects preserve that copy after the preference changes. Nodes cannot declare either mirror field.
+	MirrorMain   bool       `json:"mirror_main,omitempty"`
 	MachineID    string     `json:"machine_id"`
 	SessionID    string     `json:"session_id"`
 	SessionTitle string     `json:"session_title,omitempty"`

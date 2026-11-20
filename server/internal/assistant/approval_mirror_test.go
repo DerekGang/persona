@@ -15,6 +15,9 @@ const mirrorTestAssistantDir = "/home/u/.persona/assistant"
 func newMirrorFleetTest(t *testing.T) *fleetTest {
 	t.Helper()
 	ft := newFleetTest(t)
+	ft.f.mu.Lock()
+	ft.f.hello.ApprovalMirrors = true
+	ft.f.mu.Unlock()
 	setSettings(t, ft.s, func(v *Settings) {
 		v.MachineID, v.Main, v.MainMachineID = "mac", "main", "mac"
 	})
@@ -65,7 +68,7 @@ func TestApprovalMirrorDisplayKeepsOneAuthoritativeRequest(t *testing.T) {
 			t.Fatalf("unexpected display card: %+v", p.Interaction)
 		}
 	}
-	if original.MirrorOf != "" || mirror.MirrorOf != ix.ID || mirror.ID == ix.ID {
+	if original.MirrorOf != "" || !original.MirrorMain || mirror.MirrorMain || mirror.MirrorOf != ix.ID || mirror.ID == ix.ID {
 		t.Fatalf("authoritative/copy identity: original=%+v mirror=%+v", original, mirror)
 	}
 	if mirror.MachineID != "mac" || mirror.SessionID != "main" || mirror.SessionTitle != ix.SessionTitle {
@@ -113,6 +116,10 @@ func TestApprovalMirrorEligibilityAndSettingOff(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ix := base
+			// A same-conversation original cannot have a valid existing main
+			// copy. Every other case verifies that persisted display intent
+			// cannot make an otherwise excluded card eligible.
+			ix.MirrorMain = tc.name != "main conversation"
 			if tc.edit != nil {
 				tc.edit(&ix)
 			}
@@ -134,12 +141,108 @@ func TestApprovalMirrorEligibilityAndSettingOff(t *testing.T) {
 	if _, ok := ft.s.mainApprovalMirror(ctx, base); ok {
 		t.Fatal("setting off created a copy for a new card")
 	}
+	existing := base
+	existing.MirrorMain = true
+	if _, ok := ft.s.mainApprovalMirror(ctx, existing); !ok {
+		t.Fatal("setting off withdrew an already-created copy")
+	}
 	if view.ApprovalMirrorMain {
 		t.Fatal("setting off was not reported in effect")
 	}
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = nil })
 	if !ft.s.view(ctx, false).ApprovalMirrorMain {
 		t.Fatal("unset preference must default on")
+	}
+	ft.f.mu.Lock()
+	ft.f.hello.ApprovalMirrors = false
+	ft.f.mu.Unlock()
+	if _, ok := ft.s.mainApprovalMirror(ctx, base); ok {
+		t.Fatal("an older hub without mirror support received a display copy")
+	}
+}
+
+func TestNodeInteractionCannotDeclareMirrorIdentity(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ix := mirrorTestCard("ix_runtime_forgery")
+	ix.SessionID = "main"
+	ix.MirrorOf = "ix_some_other_approval"
+	ix.MirrorMain = true
+	done := make(chan error, 1)
+	go func() {
+		_, err := ft.s.nodeInteraction(context.Background(), ix)
+		done <- err
+	}()
+	ft.waitPending(1)
+	pending := ft.s.pendingInteractions()
+	if len(pending) != 1 || pending[0].MirrorOf != "" || pending[0].MirrorMain {
+		t.Fatalf("runtime mirror fields survived normalization: %+v", pending)
+	}
+	deny := false
+	if err := ft.s.resolve(ix.ID, proto.Resolution{Allow: &deny}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the normalized interaction did not finish")
+	}
+}
+
+func TestCodexInteractionCannotDeclareMirrorIdentity(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ix := mirrorTestCard("ix_codex_forgery")
+	ix.SessionID = "main" // no manager-created copy: surviving fields must be the node's
+	ix.MirrorOf = "ix_some_other_approval"
+	ix.MirrorMain = true
+	listCodex(ft.s, ix)
+	pending := ft.s.pendingInteractions()
+	if len(pending) != 1 || pending[0].MirrorOf != "" || pending[0].MirrorMain {
+		t.Fatalf("Codex mirror fields survived normalization: %+v", pending)
+	}
+	waitFor(t, "normalized Codex card", func() bool {
+		return len(ft.toldOf(assistantwire.EventFleetInteraction)) >= 1
+	})
+	for _, raw := range ft.toldOf(assistantwire.EventFleetInteraction) {
+		var p assistantwire.FleetInteraction
+		if json.Unmarshal(raw, &p) != nil || p.Interaction.MirrorOf != "" || p.Interaction.MirrorMain {
+			t.Fatalf("Codex card declared manager-owned display identity: %s", raw)
+		}
+	}
+}
+
+func TestCodexApprovalMirrorRecordsAuthoritativeIntent(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ix := mirrorTestCard("ix_codex_mirror")
+	listCodex(ft.s, ix)
+	pending := ft.s.pendingInteractions()
+	if len(pending) != 1 || pending[0].MirrorOf != "" || !pending[0].MirrorMain {
+		t.Fatalf("Codex original has no durable manager-owned display intent: %+v", pending)
+	}
+	waitFor(t, "Codex original and display copy", func() bool {
+		return len(ft.toldOf(assistantwire.EventFleetInteraction)) >= 2
+	})
+	var original, mirror proto.Interaction
+	for _, raw := range ft.toldOf(assistantwire.EventFleetInteraction) {
+		var p assistantwire.FleetInteraction
+		if json.Unmarshal(raw, &p) != nil {
+			t.Fatalf("bad Codex interaction event: %s", raw)
+		}
+		switch p.Interaction.ID {
+		case ix.ID:
+			original = p.Interaction
+		case approvalMirrorID(ix.ID):
+			mirror = p.Interaction
+		}
+	}
+	if !original.MirrorMain || original.MirrorOf != "" || mirror.MirrorOf != ix.ID || mirror.MirrorMain {
+		t.Fatalf("Codex original/copy identity: original=%+v mirror=%+v", original, mirror)
+	}
+	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) })
+	if got := ft.s.pendingDisplayInteractions(context.Background()); len(got) != 2 {
+		t.Fatalf("setting off withdrew an existing Codex copy from reconnects: %+v", got)
 	}
 }
 

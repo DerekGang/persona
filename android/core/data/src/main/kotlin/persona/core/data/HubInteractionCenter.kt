@@ -69,7 +69,7 @@ class HubInteractionCenter(
                         // A card that changed (its prompt moved on) is no arrival; only one not showing yet is.
                         val arrived = mutablePending.value.none { it.id == event.interaction.id }
                         ended.remove(event.interaction.id); change(event.interaction.id, event.interaction)
-                        if (arrived) mutableArrivals.tryEmit(event.interaction)
+                        if (arrived && !event.interaction.isDisplayMirror) mutableArrivals.tryEmit(event.interaction)
                     }
                     is InteractionResolvedEvent -> {
                         // The assistant's answer to a question whose card this device had: it stays in its chat.

@@ -2778,6 +2778,10 @@ nonisolated struct Interaction: Codable, Identifiable, Hashable, Sendable {
     /// The manager that reported it (docs/protocol/protocol.md "Per-manager routing"). Once it is no longer pending
     /// the hub routes by the manager a request names, so Change Answer names this one.
     var manager: String?
+    /// The authoritative interaction whose display-only copy this is. Conversation views keep both cards; aggregate
+    /// pages, counts and arrival feedback count only the authoritative one.
+    var mirrorOf: String? = nil
+    var isDisplayMirror: Bool { mirrorOf?.isEmpty == false }
     /// An `elicitation` card's form or link, and who asks: the MCP server, where it is configured, and the subagent that
     /// called it, each only when the source gave it.
     var elicitation: ElicitationRequest?
@@ -2826,6 +2830,7 @@ nonisolated struct Interaction: Codable, Identifiable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, kind, questions, plan, summary, format, screen, cwd, dialog, secret, fields, agent, reason, delegating, delegate, manager
+        case mirrorOf = "mirror_of"
         case suggestion, canCancel = "can_cancel"
         case planThen = "plan_then"
         case machineID = "machine_id", sessionID = "session_id", sessionTitle = "session_title", taskTitle = "task_title",
