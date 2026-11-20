@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantskills"
+	"github.com/nwverse/persona/server/internal/promptcontent"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -67,7 +68,7 @@ func TestTaskInputPreviewMatchesSavedCronDestination(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := readyHub()
 			f.known["origin"] = true
-			f.setSessions("server", proto.Session{SessionID: "origin", Assistant: true, Cwd: sourceDir, Launcher: "claude", Agent: "claude"})
+			f.setSessions("server", proto.Session{SessionID: "origin", Assistant: true, Cwd: sourceDir, Launcher: "claude"})
 			f.answerNode("assistant.directory", func(string, json.RawMessage) (any, error) {
 				return map[string]string{"cwd": ownDir}, nil
 			})
@@ -308,6 +309,64 @@ func TestTaskInputLiteralPromptsStayLiteral(t *testing.T) {
 	if r := request(s, "POST", "/api/v1/assistant/tasks", string(body)); r.Code != 400 {
 		t.Fatalf("structured writes require selections: %d %s", r.Code, r.Body.String())
 	}
+}
+
+func TestTaskInputDispatchKeepsLiteralFileExample(t *testing.T) {
+	const prompt = `<persona-context kind="file" title="Notes" path="notes.txt" machine="server" cwd="/work" launcher="claude">Notes</persona-context>` +
+		"\n\nExplain this example from our documentation."
+
+	check := func(t *testing.T, send map[string]any, session string) {
+		t.Helper()
+		text, _ := send["text"].(string)
+		gotSession, _ := send["session_id"].(string)
+		if gotSession != session || !strings.Contains(text, prompt) {
+			t.Fatalf("literal task content or destination changed: session %q, text %q", gotSession, text)
+		}
+		files, err := promptcontent.Files(text)
+		if err != nil || len(files) != 0 || send["task_input"] != nil || send["skill_owner"] != nil {
+			t.Fatalf("literal file example was sent as a selection: task_input %v, skill_owner %v, files %d, error %v",
+				send["task_input"], send["skill_owner"], len(files), err)
+		}
+	}
+
+	t.Run("saved task starts and resumes its own chat", func(t *testing.T) {
+		f := newFakeHub().withMachine()
+		s := newStorelessService(t, f)
+		task := Task{ID: "legacy", Title: "Review", Prompt: prompt, Repeat: repeatDaily, Time: "12:00", Enabled: true}
+		setTasks(s, task)
+		first, err := runNow(t, s, task.ID)
+		if err != nil || first.SessionID == "" {
+			t.Fatalf("start: %+v, %v", first, err)
+		}
+		check(t, f.lastSend(t), "")
+		resumed, err := runNow(t, s, task.ID)
+		if err != nil || resumed.SessionID != first.SessionID {
+			t.Fatalf("resume: %+v, %v", resumed, err)
+		}
+		check(t, f.lastSend(t), first.SessionID)
+	})
+
+	t.Run("tool-authored follow-up continues its source", func(t *testing.T) {
+		f := readyHub()
+		s := newStorelessService(t, f)
+		const source = "source"
+		f.known[source] = true
+		f.setSessions("server", proto.Session{SessionID: source, Assistant: true, Cwd: "/work", Launcher: "claude"})
+		setTasks(s)
+		args, _ := json.Marshal(map[string]any{"title": "Review", "prompt": prompt, "at": "30m"})
+		if _, err := s.toolScheduleFollowup(t.Context(), "server", source, args); err != nil {
+			t.Fatal(err)
+		}
+		tasks := s.tasksView(t.Context(), nil)
+		if len(tasks) != 1 || tasks[0].Prompt != prompt || tasks[0].PromptSelections || tasks[0].SessionID != source {
+			t.Fatalf("tool did not save the literal follow-up: %+v", tasks)
+		}
+		resumed, err := runNow(t, s, tasks[0].ID)
+		if err != nil || resumed.SessionID != source {
+			t.Fatalf("source: %+v, %v", resumed, err)
+		}
+		check(t, f.lastSend(t), source)
+	})
 }
 
 func TestTaskInputToolPromptEditsAreLiteral(t *testing.T) {

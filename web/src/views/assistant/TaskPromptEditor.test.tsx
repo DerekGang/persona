@@ -71,6 +71,54 @@ it("ignores an abandoned execution context and requests only the new task direct
   expect(files).toEqual(["/machines/current/fs?path=%2Fcurrent&cwd=%2Fcurrent&task_input=1"]);
 });
 
+it.each([undefined, ""])("offers files and skills for an authorized legacy Claude session with agent %s", async (agent) => {
+  const task = { ...blankTask(), id: "legacy-review", session_id: "legacy-chat" };
+  api.mockImplementation(async (path, options) => {
+    if (path === contextPath) {
+      expect(options.json).toMatchObject({ id: task.id, session_id: task.session_id });
+      // The catalog may report the default explicitly even if the preview omitted it.
+      return { execution: { ...execution, agent: options.json.catalog ? "claude" : agent }, task_input: true, catalog };
+    }
+    if (path === "/machines/current/fs?path=%2Fcurrent&cwd=%2Fcurrent&task_input=1") {
+      return { path: "/current", entries: [{ name: "notes.txt", dir: false }], truncated: false };
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  let serialized = "";
+  function Form() {
+    const [draft, setDraft] = useState(task);
+    serialized = draft.prompt;
+    return <TaskPromptEditor draft={draft} saved={task} disabled={false}
+      onChange={(prompt, prompt_selections) => setDraft({ ...draft, prompt, prompt_selections })} />;
+  }
+
+  act(() => root.render(<Form />));
+  await settle();
+  const plus = host.querySelector<HTMLButtonElement>("[data-composer-plus]")!;
+  expect(plus.disabled).toBe(false);
+  act(() => plus.click());
+  await settle();
+  const notes = option("notes.txt") as HTMLElement | undefined;
+  expect(notes).toBeDefined();
+  act(() => notes?.click());
+  expect(splitSkillDraft(serialized, true).skills[0]).toMatchObject({ kind: "file", attrs: { path: "notes.txt", machine: "current" } });
+  type("/Index");
+  await settle();
+  expect(option("Index receipts")).toBeDefined();
+  act(() => field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+  expect(splitSkillDraft(serialized, true).skills.map((ref) => ref.kind)).toEqual(["file", "skill"]);
+});
+
+it("keeps the pickers closed for a known unsupported agent even with task input acknowledged", async () => {
+  api.mockResolvedValue({ execution: { ...execution, agent: "external" }, task_input: true });
+  render({ ...draft, prompt: "/Index" });
+  await settle();
+  expect(host.querySelector<HTMLButtonElement>("[data-composer-plus]")?.disabled).toBe(true);
+  expect(option("Index receipts")).toBeUndefined();
+  expect(api.mock.calls.filter(([path]) => path === contextPath)).toHaveLength(1);
+});
+
 it("selects a task-scoped slash skill with the keyboard and preserves prose and identity while editing", async () => {
   api.mockImplementation(async (path: string, options) => {
     if (path === contextPath) return { execution, task_input: true, catalog: options.json.catalog ? catalog : undefined };

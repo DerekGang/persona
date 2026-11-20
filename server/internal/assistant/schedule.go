@@ -2028,7 +2028,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			params := taskSourceParams(t, taskPrompt(t, due, now, loc, manual, kb, false), sourceCwd)
 			err := s.sendModel(ctx, t.MachineID, t.SessionID, params, s.lang(ctx))
 			if err == nil {
-				if err := s.validateTaskSelections(ctx, t.MachineID, t.SessionID, params); err != nil {
+				if err := s.validateTaskSelections(ctx, t.MachineID, t.SessionID, params, t.PromptSelections); err != nil {
 					return s.failTaskRun(ctx, t, run, err, false)
 				}
 			}
@@ -2110,7 +2110,7 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 			preparationFailed := err != nil // no task text has been sent while building the model parameters
 			if err == nil {
 				s.noteRound(m.ID, t.RunSessionID, t.ID, t.runGrantBasis, time.Now())
-				if err = s.resumeOwn(ctx, m.ID, t.RunSessionID, params); err != nil {
+				if err = s.resumeOwn(ctx, m.ID, t.RunSessionID, params, t.PromptSelections); err != nil {
 					s.endRound(m.ID, t.RunSessionID, t.ID)
 				}
 			}
@@ -2167,11 +2167,11 @@ func (s *Service) runTask(t Task, due, now time.Time, manual, retried bool) (pro
 // be told a profile, whose conversations are all in that one. Only Claude Code has profiles: the node refuses a
 // config_dir for Codex or a runtime's conversation every time, so theirs are resumed as before, also one the node lists
 // with no agent: it says so before starting anything, and the run goes on in it without the profile (#6884).
-func (s *Service) resumeOwn(ctx context.Context, machine, sid string, params map[string]any) error {
+func (s *Service) resumeOwn(ctx context.Context, machine, sid string, params map[string]any, promptSelections bool) error {
 	if c, ok := s.session(ctx, machine, sid); ok && signedOut(c) && (c.Agent == "" || c.Agent == "claude") {
 		params["config_dir"] = meetingProfile
 	}
-	if err := s.validateTaskSelections(ctx, machine, sid, params); err != nil {
+	if err := s.validateTaskSelections(ctx, machine, sid, params, promptSelections); err != nil {
 		return err
 	}
 	err := s.call(ctx, machine, DeviceAssistantSend, params, nil)

@@ -118,9 +118,12 @@ func (s *Service) validateSkillSelections(ctx context.Context, machine, sid stri
 }
 
 // A scheduled selection requires a node that understands the complete scheduled prompt contract.
-func (s *Service) validateTaskSelections(ctx context.Context, machine, sid string, params map[string]any) error {
+func (s *Service) validateTaskSelections(ctx context.Context, machine, sid string, params map[string]any, promptSelections bool) error {
 	if err := s.validateSkillSelections(ctx, machine, sid, params); err != nil {
 		return err
+	}
+	if !promptSelections {
+		return nil
 	}
 	text, _ := params["text"].(string)
 	files, err := promptcontent.Files(text)

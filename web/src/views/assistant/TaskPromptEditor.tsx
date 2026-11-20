@@ -14,7 +14,9 @@ import { t } from "../../i18n";
 interface InputContext { execution: TaskExecution; task_input?: boolean; input_error?: string; catalog?: SkillCatalog; skill_error?: string }
 const commands = AGENT_COMMANDS.filter((command) => !command.agent && command.word !== WORKFLOWS_COMMAND && command.word !== PERMISSIONS_COMMAND);
 const fileScope = (ex: TaskExecution) => ({ machine: ex.machine_id, cwd: ex.cwd ?? "", launcher: ex.launcher, runtime: ex.runtime ?? "" });
-const scopeOf = (ex: TaskExecution) => JSON.stringify([fileScope(ex), ex.agent, ex.model, ex.effort, ex.fingerprint]);
+// Older Claude sessions omit the agent in the session protocol.
+const agentOf = (ex: TaskExecution) => ex.agent || "claude";
+const scopeOf = (ex: TaskExecution) => JSON.stringify([fileScope(ex), agentOf(ex), ex.model, ex.effort, ex.fingerprint]);
 
 export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: Task; saved: Task | null; disabled: boolean; onChange: (value: string, hasSelections: boolean) => void }) {
   const id = useId();
@@ -37,7 +39,7 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
   const { text, skills: refs } = useMemo(() => draft.prompt_selections ? splitSkillDraft(draft.prompt, true) : { text: draft.prompt, skills: [] }, [draft.prompt, draft.prompt_selections]);
   const invalidFile = ex && refs.some((ref) => ref.kind === "file" && Object.entries(fileScope(ex)).some(([field, value]) => (ref.attrs?.[field] ?? "") !== value));
   const inputError = current?.error || current?.context?.input_error;
-  const supported = current?.context?.task_input === true && (ex?.agent === "claude" || ex?.agent === "codex");
+  const supported = ex && current?.context?.task_input === true && ["claude", "codex"].includes(agentOf(ex));
   const mention = useMemo<MentionSource | undefined>(() => ex && supported ? {
     cwd: ex.cwd, files: () => [], sessions: false,
     referenceFiles: fileScope(ex),
