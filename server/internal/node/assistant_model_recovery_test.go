@@ -910,3 +910,48 @@ func TestClearAssistantRecoveryAcceptsLauncherDefault(t *testing.T) {
 		t.Fatalf("the default answer did not preserve its sticky hold: %+v", f)
 	}
 }
+
+// Role flags on a fresh execution protect it before the first session state write.
+func TestProtectedExecutionBeforeSessionState(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	for _, execution := range []modelExecution{
+		{Model: "primary-model", IsMain: true},
+		{Model: "primary-model", FollowsSetting: true},
+	} {
+		n, sent := recoveryTestNode(t, id, false, false)
+		p := &assistantProc{id: id, agent: "claude", launcher: "claude", model: execution}
+		n.procs[id] = p
+		if n.recoverAssistantResult(p, true, "API Error: Request rejected (429) · upstream account quota usage limit has been reached; an account becomes available again at 23:59 UTC (in 32m)", proto.TurnErrorTransient, assistantRecordKind) || len(sent) != 0 {
+			t.Fatal("an unpersisted protected role entered quota fallback")
+		}
+	}
+}
+
+func TestQueuedProtectedRecoveryCannotSwitch(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	n, sent := recoveryTestNode(t, id, false, true)
+	execution := modelExecution{Model: "primary-model"}
+	p := &assistantProc{id: id, agent: "claude", launcher: "claude", model: execution}
+	n.procs[id] = p
+	r := n.newAssistantRecovery(id, "claude", execution, execution.Model, execution.Model, "")
+	n.runAssistantRecovery(p, r, "claude", "", execution, execution.Model, false)
+	if p.model.Model != execution.Model || len(sent) != 0 || n.recoveries[id] != nil {
+		t.Fatal("a queued legacy recovery switched the protected model")
+	}
+}
+
+func TestProtectedClaudeQuotaClassificationRetainsResetWait(t *testing.T) {
+	const id = "11111111-2222-3333-4444-555555555555"
+	for _, protected := range []bool{false, true} {
+		n, _ := recoveryTestNode(t, id, protected, false)
+		writeRefusalTranscript(t, n, id, `{"type":"assistant","uuid":"quota","timestamp":"2026-11-20T12:00:00Z","isApiErrorMessage":true,"apiErrorStatus":429,"message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"API Error: Request rejected (429) · upstream account quota usage limit has been reached; an account becomes available again at 13:00 UTC (in 60m)"}]}}`)
+		kinds := n.claudeResultKinds(id)
+		want := proto.TurnErrorTransient
+		if protected {
+			want = proto.TurnErrorUsageLimit
+		}
+		if len(kinds) != 2 || kinds[0] != want || kinds[1] != assistantRecordKind {
+			t.Fatalf("protected=%v: classification %v, want %s", protected, kinds, want)
+		}
+	}
+}
