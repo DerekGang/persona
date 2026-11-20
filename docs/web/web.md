@@ -1473,6 +1473,38 @@ or writes them: the main chat's fixed payload stays as it was.
   `views/chat/MessageActions.save-prompt.test.tsx`; end to end against the mock hub (`MOCK_SAVED_PROMPTS=1`), wide and phone,
   light and dark: `node web/e2e/saved-prompts.mjs <web URL> --hub <mock hub URL> [--shots <dir>]`.
 
+### Starred messages (#7524)
+
+Use **Star** from a text message's menu in an Assistant or Agent chat. The menu opens with its More
+button, a right click, or a long press. A small star marks the saved message. **Unstar** is available in
+the same menu and on the **Starred** page. Removing a star offers **Undo** in the notification. It saves
+the same snapshot again with a new star ID, even if the original message has gone away.
+
+**Pages › Starred** shows the current assistant's saves, newest first. Its count is the number of saved
+messages for that assistant. Search matches words in the saved text, conversation title, and speaker.
+**Copy** copies the saved text. **Open original** opens the conversation at the saved message with the
+existing message-link behavior. Workers and side chats open in their panels at the message. A link into a
+compact child card or an earlier engine opens the original transcript so the message can be shown. When the
+runtime supplies only a line position, it checks a fingerprint of the
+original transcript record before opening and reads it again at the final jump, even when the visible page
+has not detected a same-size rewrite. If a rewrite reuses that line, the replacement can be starred separately. The old snapshot stays available for Copy and Unstar and shows that its original is
+unavailable. Older snapshots without a fingerprint for a line position also stay readable. Star is offered for
+positional messages only when their node supplies the fingerprint.
+
+The manager keeps up to 300 text snapshots, at most 4,000 Unicode characters each, with a count of text
+left out. New saves retain the visible message text, title, author, and original time when available.
+If a user message was shortened for the chat page, Star fetches the full text blocks and applies the same
+user-message formatting before deciding which characters to save and how many were left out.
+Edits and deletion of the original do not change the snapshot. The browser asks for identifiers alone
+to mark the chats and show the sidebar count. It reads snapshot text while the Starred page is open,
+refreshing on reconnect, after a write, and on notifications from the selected assistant. An older hub
+or assistant hides Star from the menus and explains the missing capability if someone opens `/starred`
+directly. The protocol is in `docs/protocol/protocol.md` ("REST (App → hub)").
+
+To verify the web flow, run the mock hub with `MOCK_STARRED=1` and follow the commands in
+`web/e2e/starred-messages.mjs`. It drives two isolated browser contexts and verifies cross-device changes,
+search, copy, Undo, exact links, and a snapshot whose original is absent.
+
 ### Exporting a conversation (#7375)
 
 **Export Conversation…** in every chat's ⋯ (Agent chats and Persona conversations) saves the whole conversation as one
@@ -2264,6 +2296,7 @@ with the sample time to the right of the title. **With no data the whole block i
 refreshed once a minute, with no requests while the page is in the background. The pace and countdown algorithms, and how Claude's usage is hooked up, are in [usage-windows.md](../server/usage-windows.md).
 Accounts come from files read on the computers and from the account-pool gateways the hub queries (#2595): in the popover, the line under each account's title gives the plan and the source ("MacBook · Relay": the computers that read it by name, then the gateways; with only one source it names that one).
 Single-model windows put the model name next to the length (not used for sorting); when a gateway can't be read it says "these are its last numbers". The sidebar bar's tooltip also gives the source. Gateways are configured under "Usage sources" in the admin interface (`docs/operations/admin.md`).
+A prepaid account with no rate-limit window (the official DeepSeek launcher, #11825) is a row of its own: the collapsed strip shows its name and the provider's amount and currency ("CNY 12.34"), without taking a bar from the two fullest window accounts, and the popover lists it beside them. A genuine zero is shown as `CNY 0.00`; an unreadable balance shows `—` in the strip, and the popover says "Balance unavailable" and why, so it never becomes a zero; a failure after a successful read keeps the last amount and says so.
 Code: `lib/usage-windows.ts` (pure functions, with unit tests), `views/UsageBars.tsx`; the mock hub has `MOCK_USAGE=none` to simulate no data and `MOCK_USAGE=gateways` to simulate a mix of computer and gateway accounts.
 
 ## Model pill and model panel (#5032)
