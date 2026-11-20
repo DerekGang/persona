@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verification-only harness for #12095; this branch is never merged."""
 import argparse
+from collections import defaultdict, deque
 import json
 from pathlib import Path
 import re
@@ -35,23 +36,41 @@ def main():
     process = subprocess.Popen(command, cwd=ROOT / "server", stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True)
     passed = set()
+    skipped = set()
+    failed = []
+    output = defaultdict(lambda: deque(maxlen=10))
     for line in process.stdout:
-        print(line, end="", flush=True)
         try:
             event = json.loads(line)
         except ValueError:
+            print(line, end="", flush=True)
             continue
         package = event.get("Package", "").rsplit("/", 1)[-1]
         test = event.get("Test", "")
+        if event.get("Action") == "output":
+            message = event.get("Output", "")
+            print(message, end="", flush=True)
+            output[(package, test)].append(message)
         if event.get("Action") == "pass" and (package, test) in wanted:
             passed.add((package, test))
+        if event.get("Action") == "skip" and (package, test.split("/", 1)[0]) in wanted:
+            skipped.add((package, test))
+        if event.get("Action") == "fail":
+            failed.append((package, test))
     code = process.wait()
     if code:
+        for package, test in failed:
+            print("--- FAIL: " + package + " " + (test or "package"), flush=True)
+            for message in output[(package, test)]:
+                print(message, end="", flush=True)
         return code
     missing = wanted - passed
-    if missing:
+    if missing or skipped:
         print("Missing actual passing regression functions: " + repr(sorted(missing)), file=sys.stderr)
+        print("Skipped required regression cases: " + repr(sorted(skipped)), file=sys.stderr)
         return 2
+    for package, test in sorted(passed):
+        print("VERIFIED_PASS=" + package + "/" + test, flush=True)
     print("VERIFIED_REGRESSION_FUNCTIONS=" + str(len(passed)), flush=True)
     return 0
 
