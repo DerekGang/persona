@@ -56,6 +56,7 @@ var RouteScopes = map[string]string{
 	"GET /api/v1/assistant/dispatch-guard":                       ScopeDispatchGuard,
 	"PUT /api/v1/assistant/dispatch-guard":                       ScopeDispatchGuard,
 	"GET /api/v1/assistant/worker-presets":                       ScopeAssistantStartDefaults,
+	"GET /api/v1/assistant/dispatch/candidates":                  ScopeDispatchDefaults,
 	"GET /api/v1/assistant/start-defaults":                       ScopeAssistantStartDefaults,
 	"PUT /api/v1/assistant/start-defaults":                       ScopeAssistantStartDefaults,
 	"GET /api/v1/sessions/archived":                              ScopeAgentsRead,

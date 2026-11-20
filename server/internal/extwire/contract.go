@@ -29,6 +29,9 @@ const (
 	// writing the defaults task Agents start with (GET /api/v1/assistant/worker-presets, GET/PUT
 	// /api/v1/assistant/start-defaults).
 	ScopeAssistantStartDefaults = "assistant.start_defaults"
+	// ScopeDispatchDefaults: reading only the dispatch candidates a computer can start with
+	// (GET /api/v1/assistant/dispatch/candidates). Granted by name only.
+	ScopeDispatchDefaults = "dispatch.defaults"
 	// ScopeDispatchGuard: reading and writing the explicit-target dispatch guard and narrowing the affected
 	// conversations' tool lists (GET/PUT /api/v1/assistant/dispatch-guard). Granted by name only.
 	ScopeDispatchGuard = "dispatch.guard"

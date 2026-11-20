@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -16,33 +17,51 @@ import (
 // carries credentials.
 func (s *Service) startPresetRoutes() {
 	s.handle("GET /api/v1/assistant/worker-presets", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		machine := r.URL.Query().Get("machine")
-		m, ok := s.machineByName(ctx, machine)
-		if !ok {
+		_, rows, err := s.workerPresetRows(r.Context(), r.URL.Query().Get("machine"))
+		if errors.Is(err, errUnknownMachine) {
 			apierr.Write(w, http.StatusNotFound, errUnknownMachine)
 			return
 		}
-		machine = m.ID // the rest of the manager addresses machines by id, not name or ssh alias
-		launchers, err := s.pickerLaunchers(ctx, machine)
 		if err != nil {
 			apierr.Write(w, http.StatusBadGateway, err)
 			return
 		}
-		_, tiers := s.pickerTiers(ctx, machine, launchers)
-		out := make([]workerPreset, 0, len(tiers))
-		for _, t := range tiers {
-			_, unavailable := s.launcherUnusable(ctx, machine, t.Launcher)
-			out = append(out, workerPreset{
-				Name: t.Name, Launcher: t.Launcher, Model: t.Model, Effort: t.Effort, Speed: t.Speed,
-				Description: t.Description, Unavailable: unavailable,
-			})
-		}
-		raw, _ := json.Marshal(map[string]any{"presets": out})
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write(raw)
+		writePresetRows(w, "presets", rows)
 	})
+	s.dispatchCandidatesRoutes()
+}
+
+func writePresetRows(w http.ResponseWriter, key string, rows any) {
+	raw, _ := json.Marshal(map[string]any{key: rows})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(raw)
+}
+
+// workerPresetRows runs the single worker-presets inventory and stored-health pipeline shared by the preset and
+// dispatch-candidate read routes.
+func (s *Service) workerPresetRows(ctx context.Context, machineQuery string) (string, []workerPreset, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	m, ok := s.machineByName(ctx, machineQuery)
+	if !ok {
+		return "", nil, errUnknownMachine
+	}
+	machine := m.ID // the rest of the manager addresses machines by id, not name or ssh alias
+	launchers, err := s.pickerLaunchers(ctx, machine)
+	if err != nil {
+		return machine, nil, err
+	}
+	_, tiers := s.pickerTiers(ctx, machine, launchers)
+	out := make([]workerPreset, 0, len(tiers))
+	for _, t := range tiers {
+		_, unavailable := s.launcherUnusable(ctx, machine, t.Launcher)
+		out = append(out, workerPreset{
+			Name: t.Name, Launcher: t.Launcher, Model: t.Model, Effort: t.Effort, Speed: t.Speed,
+			Description: t.Description, Unavailable: unavailable,
+		})
+	}
+	return machine, out, nil
 }
 
 // workerPreset is one row of GET /api/v1/assistant/worker-presets.

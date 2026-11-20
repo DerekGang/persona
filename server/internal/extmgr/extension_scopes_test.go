@@ -124,6 +124,7 @@ func TestExtensionScopedToken(t *testing.T) {
 		{"POST /api/v1/sessions/{mid}/{sid}/messages", "/api/v1/sessions/m/s/messages", "agents.control"},
 		{"GET /api/v1/assistant/dispatch-guard", "/api/v1/assistant/dispatch-guard", "dispatch.guard"},
 		{"PUT /api/v1/assistant/dispatch-guard", "/api/v1/assistant/dispatch-guard", "dispatch.guard"},
+		{"GET /api/v1/assistant/dispatch/candidates", "/api/v1/assistant/dispatch/candidates", "dispatch.defaults"},
 		{"GET /api/v1/ws", "/api/v1/ws", ""},
 		{"POST /api/v1/auth/tokens", "/api/v1/auth/tokens", ""},
 	} {
@@ -191,6 +192,7 @@ func TestHubScopesConsent(t *testing.T) {
 	full := extension.Permissions{HubAPI: true}
 	both := extension.Permissions{HubAPI: true, Hub: []string{"kb.read"}}
 	mode := extension.Permissions{Hub: []string{extension.ScopeAgentsPermissionMode}}
+	defaults := extension.Permissions{Hub: []string{extension.ScopeDispatchDefaults}}
 	refresh := extension.Permissions{Hub: []string{extension.ScopeMarketRefreshOwn}}
 	for _, c := range []struct {
 		name      string
@@ -208,6 +210,9 @@ func TestHubScopesConsent(t *testing.T) {
 		{"the full token does not cover the permission mode", full, mode, false},
 		{"the full token does not cover own-market refresh", full, refresh, false},
 		{"every scope does not cover own-market refresh", extension.Permissions{Hub: extension.EveryScope()}, refresh, false},
+		{"the full token does not cover dispatch defaults", full, defaults, false},
+		{"every scope does not cover dispatch defaults", extension.Permissions{Hub: extension.EveryScope()}, defaults, false},
+		{"dispatch defaults covers itself", defaults, defaults, true},
 		{"the full token does not cover the permission mode among others", full,
 			extension.Permissions{Hub: []string{"kb.read", extension.ScopeAgentsPermissionMode}}, false},
 		{"the permission mode covers itself", mode, mode, true},
@@ -238,6 +243,11 @@ func TestScopeOpens(t *testing.T) {
 		{[]string{extension.ScopeCallPrefix + "other"}, "/api/v1/extensions/{id}/", "/api/v1/extensions/third/x", false, extension.ScopeCallPrefix + "third"},
 		{[]string{extension.ScopeCallPrefix + "other"}, "/api/v1/extensions/{id}/", "/api/v1/extensions/other/-/config", false, ""},
 		{[]string{extension.ScopeKBRead}, "POST /api/v1/extensions/-/install", "/api/v1/extensions/-/install", false, ""},
+		{[]string{extension.ScopeDispatchDefaults}, "GET /api/v1/assistant/dispatch/candidates", "/api/v1/assistant/dispatch/candidates", true, extension.ScopeDispatchDefaults},
+		{nil, "GET /api/v1/assistant/dispatch/candidates", "/api/v1/assistant/dispatch/candidates", false, extension.ScopeDispatchDefaults},
+		{[]string{extension.ScopeAssistantStartDefaults}, "GET /api/v1/assistant/dispatch/candidates", "/api/v1/assistant/dispatch/candidates", false, extension.ScopeDispatchDefaults},
+		{[]string{extension.ScopeDispatchDefaults}, "GET /api/v1/assistant/worker-presets", "/api/v1/assistant/worker-presets", false, extension.ScopeAssistantStartDefaults},
+		{extension.EveryScope(), "GET /api/v1/assistant/dispatch/candidates", "/api/v1/assistant/dispatch/candidates", false, extension.ScopeDispatchDefaults},
 		{[]string{extension.ScopeMarketRefreshOwn}, "POST /api/v1/extensions/-/self/market/refresh", selfMarketRefreshPath, true, extension.ScopeMarketRefreshOwn},
 		{nil, "POST /api/v1/extensions/-/self/market/refresh", selfMarketRefreshPath, false, extension.ScopeMarketRefreshOwn},
 		{[]string{extension.ScopeMarketRefreshOwn}, "POST /api/v1/extensions/-/markets/{mid}/refresh", "/api/v1/extensions/-/markets/another/refresh", false, ""},

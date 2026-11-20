@@ -2098,6 +2098,7 @@ Clients report their errors and crashes only while `features` has `error_reports
 | GET | `/api/v1/assistant/dispatch-policy` | The assistant's dispatch policy: `{"dispatch_policy":{"rules":[{"conversation_class","deny":["task_plan"|"agent_start"|"start_conversation"|"send_to_main"|"send_to_leader"],"message"?}],"expires_at"?}}`. A conversation class is `main`, `leader`, `background_supervisor`, `scheduled` (a scheduled task's own conversation) or `other`; with no policy in force the answer is `{"dispatch_policy":{"rules":[]}}`. Full credentials, or an extension token granted `assistant.dispatch_policy`. See "Dispatch policy" below |
 | PUT | `/api/v1/assistant/dispatch-policy` | Replace the dispatch policy with `{"dispatch_policy":{…}}`; empty `rules` clears it (`{"rules":[]}`). A full-credential write may omit `expires_at`; an extension write must name an `expires_at` no more than one hour ahead (a past or later one is 400), so a stopped or uninstalled extension leaves nothing in force. An unknown class or action, a repeated class, an empty `deny` or an over-long `message` is 400; read-only devices are 403. The same field may be written with `PUT /api/v1/assistant` (full credentials, expiry optional). Full credentials, or an extension token granted `assistant.dispatch_policy`; see "Dispatch policy" below |
 | GET / PUT | `/api/v1/assistant/dispatch-guard` | The explicit-target dispatch guard: `{"dispatch_guard":{"enabled","expires_at"?,"targets":[{"machine_id","session_id","deny"}]}}`, where `deny` may contain only `task_plan`, `agent_start`, `conversation_new` and `conversation_send`. Empty `targets` clears it; `enabled:false` or an expired policy is inert. Full credentials, or an extension token granted `dispatch.guard`. An extension-written enabled policy must expire within one hour; read-only devices and unscoped extensions are 403. See "Explicit dispatch guard" below |
+| GET | `/api/v1/assistant/dispatch/candidates?machine=<id>` | The dispatch candidates a computer can start with: `{"candidates":[{"name","launcher","model"?,"effort"?,"speed"?,"description"?,"unavailable"?}]}`. This is the same filtered inventory and stored-health availability as `worker-presets`, with a `candidates` envelope. `unavailable` reflects the latest health verdict; absent health evidence does not certify a successful start. Full credentials, or an extension token explicitly granted `dispatch.defaults`; legacy every-scope tokens do not include it. Read-only and credential-free; see "Dispatch candidates" below |
 | GET | `/api/v1/assistant/worker-presets?machine=<id>` | The Agent presets (the active model profile's tiers) a task can start with on that computer: `{"presets":[{"name","launcher","model"?,"effort"?,"speed"?,"description"?,"unavailable"?}]}`, only those whose launcher the machine has; `unavailable` says its latest health check fails right now (for example a usage limit), and an absent check leaves it false. Full credentials, or an extension token granted `assistant.start_defaults`; read-only, it carries no credentials. Unknown machine 404 |
 | GET | `/api/v1/assistant/start-defaults` | The start-defaults policy: `{"start_defaults":{"rules":[{"when":{"supervisor"?,"role"?,"readonly"?},"then":{"presets"?,"effort"?,"ultracode"?,"goal"?,"plan_first"?}}],"expires_at"?,"by"?}}`; with no policy in force `{"start_defaults":{"rules":[]}}`. Full credentials, or an extension token granted `assistant.start_defaults`. See "Start defaults" below |
 | PUT | `/api/v1/assistant/start-defaults` | Replace it with `{"start_defaults":{…}}`; empty `rules` clears it. A full-credential write may omit `expires_at`; an extension write must name one no more than one hour ahead (a past or later one is 400). An unknown field, class, role, effort or goal source, a rule whose `then` names nothing, more than 16 rules or presets, a preset name over 64 characters or a weight outside 0–1000 is 400; read-only devices are 403. `by` is set by the manager (the extension's id, or `owner`), never taken from the body. See "Start defaults" below |
@@ -2261,6 +2262,21 @@ How a device adds a pending computer: see "Computer pairing codes" under "Tempor
 - Each rename is written to `machine_audit` (action `rename`, detail `{from, to, via}`; `via`: `admin` / `device` / `link` / `system`).
 - A computer that pairs while its name is still its id is named once after its system (`system_name` in the pairing request, `POST /api/v1/auth/tokens`, via `system`).
 - Clients show a rename entry only when hello's `features` has `machine_rename`.
+
+### Dispatch candidates
+
+`GET /api/v1/assistant/dispatch/candidates?machine=<id|name|ssh-alias>` exposes the same filtered worker-presets
+inventory under a `candidates` envelope, including the same name ordering and stored-health `unavailable` values. The
+response DTO is an explicit allowlist of `name`, `launcher`, optional `model`, `effort`, `speed`, `description` and
+`unavailable`; raw launcher configuration, credentials, health errors and diagnostics are not serialized. An empty
+inventory is `{"candidates":[]}`. Unknown or omitted machines are 404 with `unknown machine`; an inventory failure is
+502 with the fixed public error `launcher inventory unavailable`, not the internal error text.
+
+The `dispatch.defaults` scope is granted by name only and opens only this GET. It does not open `worker-presets` or
+start-defaults reads or writes, and `assistant.start_defaults` does not open this route. No profile, task, Agent,
+admission, selection or health-repair state is written. The shared worker-presets inventory read may perform its
+existing bounded launcher / own-service discovery and update in-memory caches on a cache miss or stale cache, including
+CLI auth-status checks and their own local authentication state; this route adds no second discovery or health probe.
 
 ### Start defaults
 

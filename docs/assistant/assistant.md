@@ -2259,6 +2259,22 @@ machine and session exactly; ordinary Agent start parameters are untouched.
 - **Boundary**: layer / preview and push-layer integration remain follow-up work. This slice adds no preview, client
   UI, push integration or production deployment.
 
+## Dispatch candidates
+
+`GET /api/v1/assistant/dispatch/candidates?machine=<id|name|ssh-alias>` (`internal/assistant/dispatch_candidates.go`)
+returns the same filtered inventory and stored-health availability as `GET /api/v1/assistant/worker-presets`, under a
+`candidates` envelope. Both handlers use one worker-preset helper; this is not a second candidate-selection or preview
+implementation. The explicit response DTO carries only `name`, `launcher`, optional `model`, `effort`, `speed`,
+`description` and `unavailable`, never launcher configuration, credentials or health diagnostics. An inventory failure
+returns the fixed public 502 error `launcher inventory unavailable`; unknown or omitted machines remain 404.
+
+The `dispatch.defaults` scope is granted by name only and opens only this GET. It does not imply
+`assistant.start_defaults`, and that scope does not imply `dispatch.defaults`. The route performs no policy, task,
+Agent, admission, selection or health-repair write. Its shared inventory read has the same bounded cache-miss /
+stale-cache launcher and own-service discovery behavior as `worker-presets`, including CLI auth-status checks and their
+own local authentication state; no additional discovery or health probe is added. Wire details:
+`docs/protocol/protocol.md` ("Dispatch candidates").
+
 ## Start defaults
 
 What a task Agent starts with beyond what its caller named can come from an optional start-defaults policy

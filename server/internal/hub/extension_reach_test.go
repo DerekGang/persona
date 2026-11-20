@@ -377,6 +377,7 @@ func TestEveryExtensionRouteIsBounded(t *testing.T) {
 		"GET /api/v1/assistant/dispatch-guard":             "manager",
 		"PUT /api/v1/assistant/dispatch-guard":             "manager",
 		"GET /api/v1/assistant/worker-presets":             "manager",
+		"GET /api/v1/assistant/dispatch/candidates":        "manager",
 		"GET /api/v1/assistant/start-defaults":             "manager",
 		"PUT /api/v1/assistant/start-defaults":             "manager",
 		"GET /api/v1/todos":                                "manager", "GET /api/v1/todos/{id}/decisions": "manager",
