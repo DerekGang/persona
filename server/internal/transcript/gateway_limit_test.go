@@ -38,3 +38,18 @@ func TestGatewayUsageLimitReset(t *testing.T) {
 		}
 	}
 }
+
+func TestUserInterruptClearsGatewayRecovery(t *testing.T) {
+	for _, text := range []string{gatewayQuota + "18:02 UTC (in 12h7m)", "Request rejected (429) · upstream account capacity is temporarily unavailable"} {
+		var m Meta
+		ParseLine(1, []byte(prompt("u1", "go")), &m)
+		ParseLine(2, []byte(apiErrorLine(t, "e1", text, map[string]any{"error": "rate_limit"})), &m)
+		if m.TurnErrorKind == "" {
+			t.Fatal("gateway failure not classified")
+		}
+		ParseLine(3, []byte(prompt("u2", "[Request interrupted by user]")), &m)
+		if m.TurnError != "" || m.TurnErrorKind != "" || !m.TurnErrorResetsAt.IsZero() || m.TurnErrorResumes {
+			t.Fatal("user interrupt retained gateway recovery metadata")
+		}
+	}
+}
