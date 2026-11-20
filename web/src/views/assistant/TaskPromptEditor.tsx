@@ -11,7 +11,7 @@ import { PERMISSIONS_COMMAND } from "../../lib/permissions-command";
 import type { MentionSource } from "../chat/ComposerPanel";
 import { t } from "../../i18n";
 
-interface InputContext { execution: TaskExecution; catalog?: SkillCatalog; skill_error?: string }
+interface InputContext { execution: TaskExecution; task_input?: boolean; input_error?: string; catalog?: SkillCatalog; skill_error?: string }
 const commands = AGENT_COMMANDS.filter((command) => !command.agent && command.word !== WORKFLOWS_COMMAND && command.word !== PERMISSIONS_COMMAND);
 const fileScope = (ex: TaskExecution) => ({ machine: ex.machine_id, cwd: ex.cwd ?? "", launcher: ex.launcher, runtime: ex.runtime ?? "" });
 const scopeOf = (ex: TaskExecution) => JSON.stringify([fileScope(ex), ex.agent, ex.model, ex.effort, ex.fingerprint]);
@@ -36,13 +36,18 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
   const ex = current?.context?.execution;
   const { text, skills: refs } = useMemo(() => draft.prompt_selections ? splitSkillDraft(draft.prompt, true) : { text: draft.prompt, skills: [] }, [draft.prompt, draft.prompt_selections]);
   const invalidFile = ex && refs.some((ref) => ref.kind === "file" && Object.entries(fileScope(ex)).some(([field, value]) => (ref.attrs?.[field] ?? "") !== value));
-  const supported = ex?.agent === "claude" || ex?.agent === "codex";
+  const inputError = current?.error || current?.context?.input_error;
+  const supported = current?.context?.task_input === true && (ex?.agent === "claude" || ex?.agent === "codex");
   const mention = useMemo<MentionSource | undefined>(() => ex && supported ? {
     cwd: ex.cwd, files: () => [], sessions: false,
     referenceFiles: fileScope(ex),
     allowsFileQuery: (query) => !/^(?:[~/]|[A-Za-z]:)/.test(query) && !query.includes("\\") && !query.split("/").includes(".."),
     skills: { manager, launcher: ex.launcher, environment: JSON.stringify([key, scopeOf(ex)]), catalog: async (signal) => {
       const reply = await api<InputContext>("/assistant/tasks/input-context", { method: "POST", json: { ...JSON.parse(request), catalog: true }, signal, headers: { [MANAGER_HEADER]: manager } });
+      if (reply.task_input !== true) {
+        if (!signal.aborted) setState((previous) => previous.key === key ? { key, context: reply } : previous);
+        throw new Error(reply.input_error || t("assistant-taskeditor.input_unsupported"));
+      }
       if (scopeOf(reply.execution) !== scopeOf(ex) || !reply.catalog) throw new Error(reply.skill_error || t("chat-composer.skills_changed"));
       return reply.catalog;
     } },
@@ -64,8 +69,8 @@ export function TaskPromptEditor({ draft, saved, disabled, onChange }: { draft: 
         />
       </fieldset>
       <p className="mt-1 text-[11.5px] leading-relaxed text-ink-3">{t("assistant-taskeditor.input_hint")}</p>
-      <p role={current?.error || invalidFile ? "alert" : "status"} className="mt-1 text-[11.5px] text-ink-3">
-        {current?.error || (invalidFile ? t("assistant-taskeditor.input_changed") : ex && !supported ? t("assistant-taskeditor.input_unsupported") : !current ? t("assistant-taskeditor.input_loading") : "")}
+      <p role={inputError || invalidFile ? "alert" : "status"} className="mt-1 text-[11.5px] text-ink-3">
+        {inputError || (invalidFile ? t("assistant-taskeditor.input_changed") : ex && !supported ? t("assistant-taskeditor.input_unsupported") : !current ? t("assistant-taskeditor.input_loading") : "")}
       </p>
     </div>
   );

@@ -1239,7 +1239,9 @@ The editor uses Assistant's composer and keyboard menus. Selections appear as re
 the text and its leading context tags together and marks the task as containing selections. Reopening the task restores both. Plain text uses the existing
 task format, including when an older hub supplies the editor.
 
-The task's effective computer, launcher and working directory determine the available references. A changed
+The task's effective computer, launcher and working directory determine the available references. When the
+selected computer needs an update for file and skill selections, the editor shows a message. Text and reusable
+prompts still work there. A changed
 execution environment can require choosing a reference again. At save time the selected node checks the
 references. At run time the headless send checks them again. File references identify files in the working
 directory, and skill references identify entries in the active catalog. A scheduled run and **Run now** use

@@ -199,6 +199,12 @@ func (s *Service) validateTaskInput(ctx context.Context, t Task, record *modelRe
 	if err != nil {
 		return err
 	}
+	return s.checkTaskContent(ctx, ex, prefix)
+}
+
+// The node must acknowledge the task-input RPC, even when no skill inventory is requested.
+// An empty prefix probes support without reading any file or running an assistant turn.
+func (s *Service) checkTaskContent(ctx context.Context, ex taskInputTarget, prefix string) error {
 	var ack struct {
 		Valid bool `json:"valid"`
 	}
@@ -206,7 +212,7 @@ func (s *Service) validateTaskInput(ctx context.Context, t Task, record *modelRe
 		return err
 	}
 	if !ack.Valid {
-		return i18n.Err("assistant-schedule.input_context_unavailable")
+		return i18n.Err("hub-machine.node_no_task_input")
 	}
 	return nil
 }
@@ -228,7 +234,13 @@ func (s *Service) taskInputRoutes() {
 			apierr.Call(w, err)
 			return
 		}
-		result := map[string]any{"execution": ex.TaskExecution}
+		result := map[string]any{"execution": ex.TaskExecution, "task_input": false}
+		if err := s.checkTaskContent(r.Context(), ex, ""); err != nil {
+			result["input_error"] = i18n.Localize(err, s.requestLang(r))
+			apierr.WriteJSON(w, result)
+			return
+		}
+		result["task_input"] = true
 		var catalog bool
 		_ = json.Unmarshal(raw["catalog"], &catalog)
 		if catalog {

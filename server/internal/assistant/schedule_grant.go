@@ -54,6 +54,10 @@ type StartGrant struct {
 func (t Task) grantBasis(binding ...ModelBinding) string {
 	parts := []string{strings.TrimSpace(t.Prompt), t.MachineID, t.SessionID, t.Space,
 		strconv.FormatBool(t.Facts), strconv.FormatBool(t.Report)}
+	// An owner can turn a literal example into a selected reference without changing its bytes.
+	if t.PromptSelections {
+		parts = append(parts, "prompt_selections")
+	}
 	// Keep existing grants valid when there are no execution overrides, but bind a grant to an explicit target.
 	if t.ExecutionMachineID != "" || t.Cwd != "" {
 		parts = append(parts, t.ExecutionMachineID, t.Cwd)

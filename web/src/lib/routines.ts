@@ -4,6 +4,7 @@
 // Pure functions of their arguments (`now` passed in), so they are tested without a DOM.
 import { formatDate, t } from "../i18n";
 import { launcherTitle, type Named } from "./provider-names";
+import { splitSkillDraft } from "./skill-mentions";
 
 export type Repeat = "once" | "daily" | "interval" | "cron";
 
@@ -254,10 +255,12 @@ export function untilLabel(d: Date, now: Date): string {
   return t("lib-routines.in_days", { count: Math.max(daysBetween(now, d), 1) });
 }
 
-/** Its title, or the first line of the prompt (a follow-up Persona scheduled without one). */
-export function taskTitle(task: Pick<Task, "title" | "prompt">): string {
+/** Its title, or the first line of the visible prompt for an untitled follow-up. */
+export function taskTitle(task: Pick<Task, "title" | "prompt" | "prompt_selections">): string {
   if (task.title?.trim()) return task.title.trim();
-  const first = (task.prompt ?? "").split("\n").find((l) => l.trim()) ?? "";
+  const prompt = task.prompt ?? "";
+  const text = task.prompt_selections ? splitSkillDraft(prompt, true).text : prompt;
+  const first = text.split("\n").find((l) => l.trim()) ?? "";
   return first.trim() || t("lib-routines.scheduled_follow_up");
 }
 

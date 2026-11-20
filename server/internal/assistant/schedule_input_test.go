@@ -22,6 +22,7 @@ func TestTaskInputContextUsesDraftExecutionWithoutSaving(t *testing.T) {
 		}
 		return map[string]any{"cwd": "/work/project"}, nil
 	})
+	f.answerNode("assistant.content", func(string, json.RawMessage) (any, error) { return map[string]bool{"valid": true}, nil })
 	var catalog map[string]any
 	f.answerNode("skills.list", func(machine string, raw json.RawMessage) (any, error) {
 		if machine != "remote" {
@@ -33,7 +34,7 @@ func TestTaskInputContextUsesDraftExecutionWithoutSaving(t *testing.T) {
 	s := newTestService(t, f)
 	setTasks(s)
 	r := request(s, "POST", "/api/v1/assistant/tasks/input-context", `{"launcher":"codex","model":"test-model","execution_machine_id":"remote","cwd":"/work/project","catalog":true}`)
-	if r.Code != 200 || !strings.Contains(r.Body.String(), `"machine_id":"remote"`) || catalog["cwd"] != "/work/project" || catalog["launcher"] != "codex" {
+	if r.Code != 200 || !strings.Contains(r.Body.String(), `"task_input":true`) || !strings.Contains(r.Body.String(), `"machine_id":"remote"`) || catalog["cwd"] != "/work/project" || catalog["launcher"] != "codex" {
 		t.Fatalf("context: %d %s %+v", r.Code, r.Body.String(), catalog)
 	}
 	if len(s.tasksView(context.Background(), nil)) != 0 {
@@ -65,6 +66,9 @@ func TestTaskInputSaveReopenAndBothRunPaths(t *testing.T) {
 	f.answerNode("assistant.content", func(machine string, raw json.RawMessage) (any, error) {
 		var p map[string]any
 		_ = json.Unmarshal(raw, &p)
+		if p["text"] == "" {
+			return map[string]bool{"valid": true}, nil
+		}
 		content++
 		if machine != "remote" || p["cwd"] != "/work/project" || p["launcher"] != "claude" || p["skill_owner"] != s.skillOwner() || p["config_dir"] != meetingProfile || strings.Contains(p["text"].(string), "Literal reference") {
 			t.Fatalf("save context: %s %v", machine, p)
@@ -155,6 +159,15 @@ func TestTaskInputDoesNotGrantUnattendedStarts(t *testing.T) {
 			if task.grantEligible() {
 				t.Fatal("mutable reference admitted a clean-round start grant")
 			}
+			plain := task
+			plain.PromptSelections = false
+			plain.StartGrant = &StartGrant{Basis: plain.grantBasis(), Kinds: []string{"edit"}}
+			task.StartGrant = plain.StartGrant
+			updated := []Task{task}
+			dropEditedTaskGrants([]Task{plain}, updated)
+			if updated[0].StartGrant != nil {
+				t.Fatal("authorizing a reference retained its former literal prompt grant")
+			}
 		})
 	}
 }
@@ -237,5 +250,32 @@ func TestTaskInputSelfFollowupKeepsOwnerSelections(t *testing.T) {
 	updated, _ := taskByID(s, task.ID)
 	if updated.PromptSelections {
 		t.Fatal("model-authored replacement retained selection authority")
+	}
+}
+
+func TestTaskInputDiscoveryNeedsTargetAcknowledgement(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newTestService(t, f)
+	setTasks(s)
+	f.answerNode("assistant.content", func(string, json.RawMessage) (any, error) { return map[string]bool{}, nil })
+	f.answerNode("skills.list", func(string, json.RawMessage) (any, error) {
+		t.Fatal("discovery exposed a catalog without scheduled-input support")
+		return nil, nil
+	})
+	for _, catalog := range []bool{false, true} {
+		payload, _ := json.Marshal(map[string]any{"catalog": catalog, "cwd": "/work/project"})
+		w := request(s, "POST", "/api/v1/assistant/tasks/input-context", string(payload))
+		var reply struct {
+			Execution  TaskExecution
+			TaskInput  *bool  `json:"task_input"`
+			InputError string `json:"input_error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &reply); w.Code != 200 || err != nil || reply.TaskInput == nil || *reply.TaskInput || !strings.Contains(reply.InputError, "Persona") || reply.Execution.MachineID != "server" {
+			t.Fatalf("discovery did not explain the unavailable picker: %d %s", w.Code, w.Body.String())
+		}
+	}
+	w := request(s, "POST", "/api/v1/assistant/tasks", `{"title":"Ordinary","prompt":"Check notes","repeat":"interval","every_minutes":30}`)
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
 	}
 }

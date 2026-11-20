@@ -6,6 +6,7 @@ import { TaskPromptEditor } from "./TaskPromptEditor";
 import { blankTask, type Task } from "../../lib/routines";
 import { loadPages } from "../../lib/lazy-page";
 import { splitSkillDraft } from "../../lib/skill-mentions";
+import { t } from "../../i18n";
 
 const api = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/api", async (original) => ({ ...(await original<typeof import("../../lib/api")>()), api }));
@@ -48,7 +49,7 @@ it("ignores an abandoned execution context and requests only the new task direct
   let resolveOld!: (value: unknown) => void;
   api.mockImplementation(async (path: string, options) => {
     if (path === contextPath && options.json.cwd === "/old") return new Promise((resolve) => { resolveOld = resolve; });
-    if (path === contextPath) return { execution, catalog };
+    if (path === contextPath) return { execution, catalog, task_input: true };
     if (path.includes("/fs?")) return { path: "/current", entries: [{ name: "current.txt", dir: false }], truncated: false };
     return {};
   });
@@ -59,7 +60,7 @@ it("ignores an abandoned execution context and requests only the new task direct
   const plus = () => host.querySelector<HTMLButtonElement>("[data-composer-plus]")!;
   await settle();
   expect(plus().disabled).toBe(false);
-  await act(async () => resolveOld({ execution: { ...execution, machine_id: "old", cwd: "/old" } }));
+  await act(async () => resolveOld({ execution: { ...execution, machine_id: "old", cwd: "/old" }, task_input: true }));
   act(() => plus().click());
   await settle();
   expect(option("current.txt")).toBeDefined();
@@ -69,7 +70,7 @@ it("ignores an abandoned execution context and requests only the new task direct
 
 it("selects a task-scoped slash skill with the keyboard and preserves prose and identity while editing", async () => {
   api.mockImplementation(async (path: string, options) => {
-    if (path === contextPath) return { execution, catalog: options.json.catalog ? catalog : undefined };
+    if (path === contextPath) return { execution, task_input: true, catalog: options.json.catalog ? catalog : undefined };
     return {};
   });
   let raw = "";
@@ -108,4 +109,43 @@ it("retains a saved prompt when the execution computer is unavailable", async ()
   expect(host.querySelector("[role=alert]")?.textContent).toContain("Computer unavailable");
   expect(host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.disabled).toBe(true);
   expect(changed).not.toHaveBeenCalled();
+});
+
+it.each([false, undefined])("keeps text and quick prompts usable when the selected computer reports task input %s", async (taskInput) => {
+  const inputError = "Update this computer to select files and skills.";
+  api.mockImplementation(async (path) => path === contextPath ? { execution, task_input: taskInput, input_error: inputError } : {});
+  function Form() {
+    const [task, setTask] = useState(draft);
+    return <TaskPromptEditor draft={task} saved={null} disabled={false}
+      onChange={(prompt, prompt_selections) => setTask({ ...task, prompt, prompt_selections })} />;
+  }
+  act(() => root.render(<Form />));
+  await settle();
+  expect(host.querySelector("[role=alert]")?.textContent).toBe(inputError);
+  expect(host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.disabled).toBe(true);
+  type("plain @");
+  await settle();
+  expect(field().value).toBe("plain @");
+  expect(host.querySelector("[role=listbox]")).toBeNull();
+  const command = t("chat-composer.cmd_report_word");
+  type(command);
+  await settle();
+  expect(option(command.slice(1))).toBeDefined();
+  act(() => field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+  expect(field().value).toBe(t("chat-composer.cmd_report_text"));
+  expect(api.mock.calls.filter(([path]) => path === contextPath)).toHaveLength(1);
+  expect(api.mock.calls.some(([path]) => String(path).includes("/fs?"))).toBe(false);
+});
+
+it("retires the picker if the computer loses support while opening its catalog", async () => {
+  const inputError = "This computer no longer supports task selections.";
+  api.mockImplementation(async (path, options) => {
+    if (path !== contextPath) return {};
+    return options.json.catalog ? { execution, task_input: false, input_error: inputError } : { execution, task_input: true };
+  });
+  render({ ...draft, prompt: "/Index" });
+  await settle();
+  expect(host.querySelector("[role=alert]")?.textContent).toBe(inputError);
+  expect(host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.disabled).toBe(true);
+  expect(field().value).toBe("/Index");
 });

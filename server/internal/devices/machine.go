@@ -592,7 +592,7 @@ func (m *Machine) callOnce(ctx context.Context, method string, params any, out a
 			requires = send.TaskInput
 		}
 		if requires {
-			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_task_execution")}
+			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_task_input")}
 		}
 	}
 	if method == "assistant.directory" && !nodeHas(info, nodeproto.TaskExecution) {

@@ -14,7 +14,8 @@
     },
     reads: [],
     writes: [],
-    refuse: false
+    refuse: false,
+    taskInput: true
   };
   const executionFor = task => ({
     machine_id: task.execution_machine_id || 'box',
@@ -124,10 +125,9 @@
         ...(patch.id === fixture.task.id ? fixture.task : patch.id === fixture.created?.id ? fixture.created : {}),
         ...patch
       };
-      body = {
-        execution: executionFor(task)
-      };
-      if (patch.catalog) body.catalog = {
+      body = { execution: executionFor(task), task_input: fixture.taskInput };
+      if (!fixture.taskInput) body.input_error = 'Update Persona on this computer to select files and skills.';
+      if (patch.catalog && fixture.taskInput) body.catalog = {
         catalog_version: 1,
         complete: true,
         skills: [{

@@ -82,6 +82,15 @@ describe("words", () => {
     expect(taskTitle({ title: "  周报 ", prompt: "x" })).toBe("周报");
   });
 
+  it("titles an untitled follow-up from the text after its selected references", () => {
+    const skill = '<persona-context kind="skill" ref="review">\nproject\n</persona-context>';
+    const file = '<persona-context kind="file" path="report.md">\nreport.md\n</persona-context>';
+    const selected = { title: "", prompt_selections: true };
+    expect(taskTitle({ ...selected, prompt: `${skill}\n${file}\n\n\n 核对周报 \n第二行` })).toBe("核对周报");
+    expect(taskTitle({ ...selected, prompt: file })).toBe("定时跟进");
+    expect(taskTitle({ title: "", prompt: `${skill}\n\n原文` })).toBe(skill.split("\n")[0]);
+  });
+
   it("says the next and the last run", () => {
     expect(nextText(task({ enabled: false, next_run: iso(at(3, 9)) }), now)).toBe("已关闭");
     expect(nextText(task({ next_run: iso(at(3, 9)) }), now)).toBe("下次 明天 09:00 · 23 小时后");

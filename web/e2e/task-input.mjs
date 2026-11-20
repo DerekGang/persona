@@ -264,8 +264,27 @@ try {
     await page.screenshot({
       path: join(shots, `task-input-${width}-${theme}-large.png`)
     });
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--text-scale', '1');
+      window.__taskInputFixture.taskInput = false;
+    });
+    await page.getByRole('button', { name: 'New', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Blank', exact: true }).click();
+    await dialog.getByText('Update Persona on this computer to select files and skills.').waitFor();
+    assert(await dialog.locator('[data-composer-plus]').isDisabled());
+    await dialog.getByRole('textbox', { name: 'Title', exact: true }).fill('Legacy computer');
+    await input.fill('/Review');
+    await dialog.getByRole('option', { name: 'Review Example', exact: true }).click();
+    assert.equal(await input.inputValue(), 'Review the selected files.');
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    const plain = await page.evaluate(() => window.__taskInputFixture.created);
+    assert.equal(plain.prompt, 'Review the selected files.');
+    assert.equal(plain.prompt_selections, false);
     assert.deepEqual(errors, []);
-    console.log(`PASS ${width} ${theme}: inherited summary before prompt, Cron visible, execution, @file, @skill, /prompt, save, reopen, changed directory, refused save, 2x text`);
+    console.log(`PASS ${width} ${theme}: inherited summary before prompt, Cron visible, execution, @file, @skill, /prompt, save, reopen, changed directory, refused save, 2x text, plain prompt on an older computer`);
     await context.close();
   }
 } finally {
