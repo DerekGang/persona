@@ -109,6 +109,11 @@ func (n *Node) launchers(ctx context.Context, refresh ...bool) ([]proto.Launcher
 		return list, nil
 	}
 	launcherCache.Unlock()
+	// Only the discovery that already started outlives its RPC caller. A canceled caller that merely queued for the
+	// shell lock must not start another detached shell after the active discovery fails without publishing a list.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Not cut short when the caller gives up (the hub waits a few seconds per machine): a slow rc file still finishes
 	// and the next ask within the minute gets the list from the cache.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
@@ -119,10 +124,18 @@ func (n *Node) launchers(ctx context.Context, refresh ...bool) ([]proto.Launcher
 	cmd := loginShell(ctx, launcherScript)
 	killGroupOnCancel(cmd)
 	out, err := cmd.Output()
-	if err != nil && len(out) == 0 {
-		return nil, fmt.Errorf("list launchers: %w", err)
+	text := string(out)
+	if !strings.Contains(text, launcherBegin) {
+		// Empty or unrelated stdout is not an empty catalog: the rc file may have exited before discovery started.
+		// Keep the previous cache so a transient shell failure cannot erase every custom launcher.
+		if err != nil {
+			return nil, fmt.Errorf("list launchers: %w", err)
+		}
+		return nil, fmt.Errorf("list launchers: discovery begin marker missing")
 	}
-	list, codex, settings, scripts := mergeLaunchers(string(out))
+	// Once discovery began, partial framed output remains useful when the 20-second cap cuts off the shell. Without
+	// that begin marker there is no evidence that any of the output came from launcherScript.
+	list, codex, settings, scripts := mergeLaunchers(text)
 	launcherCache.Lock()
 	launcherCache.at, launcherCache.list, launcherCache.codex, launcherCache.settings = time.Now(), list, codex, settings
 	launcherCache.scripts = scripts

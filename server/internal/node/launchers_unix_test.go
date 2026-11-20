@@ -4,6 +4,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,5 +227,171 @@ func TestLaunchersQueuedRefreshUsesDiscoveryCompletedWhileWaiting(t *testing.T) 
 		case <-time.After(5 * time.Second):
 			t.Fatalf("discovery %d did not finish", i+1)
 		}
+	}
+}
+
+func TestLaunchersRejectUnframedDiscovery(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("no zsh")
+	}
+	for _, exit := range []string{"0", "7"} {
+		t.Run("exit-"+exit, func(t *testing.T) {
+			home := t.TempDir()
+			bin := filepath.Join(home, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(zsh, filepath.Join(bin, "zsh")); err != nil {
+				t.Fatal(err)
+			}
+			// Exiting from the rc file prevents launcherScript from printing even its begin marker.
+			if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte("print -r -- unframed\nexit "+exit+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("ZDOTDIR", home)
+			t.Setenv("SHELL", zsh)
+			t.Setenv("PATH", bin)
+			launcherCache.Lock()
+			at, list, generation := launcherCache.at, launcherCache.list, launcherCache.generation
+			codex, settings, scripts := launcherCache.codex, launcherCache.settings, launcherCache.scripts
+			launcherCache.at = time.Now()
+			launcherCache.list = []proto.Launcher{{Name: "custom-a"}}
+			observed := launcherCache.generation
+			launcherCache.Unlock()
+			t.Cleanup(func() {
+				launcherCache.Lock()
+				launcherCache.at, launcherCache.list, launcherCache.generation = at, list, generation
+				launcherCache.codex, launcherCache.settings, launcherCache.scripts = codex, settings, scripts
+				launcherCache.Unlock()
+			})
+
+			got, err := (&Node{}).launchers(context.Background(), true)
+			if err == nil || got != nil {
+				t.Fatalf("unframed discovery was published: %v, %v", got, err)
+			}
+			launcherCache.Lock()
+			cached, currentGeneration := launcherCache.list, launcherCache.generation
+			launcherCache.Unlock()
+			if len(cached) != 1 || cached[0].Name != "custom-a" || currentGeneration != observed {
+				t.Fatalf("failed discovery replaced the cache: %v, generation %d -> %d", cached, observed, currentGeneration)
+			}
+		})
+	}
+}
+
+func TestLaunchersCanceledQueuedRefreshDoesNotStartAnotherShell(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("no zsh")
+	}
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, program := range map[string]string{"zsh": zsh, "sleep": sleep} {
+		if err := os.Symlink(program, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started, release := filepath.Join(home, "discovery-started"), filepath.Join(home, "discovery-release")
+	starts := filepath.Join(home, "discovery-starts")
+	rc := "print -r -- started > \"$HOME/discovery-started\"\nprint -r -- start >> \"$HOME/discovery-starts\"\n" +
+		"while [[ ! -f \"$HOME/discovery-release\" ]]; do sleep 0.02; done\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte(rc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
+	t.Setenv("SHELL", zsh)
+	t.Setenv("PATH", bin)
+	launcherCache.Lock()
+	at, list, generation := launcherCache.at, launcherCache.list, launcherCache.generation
+	codex, settings, scripts := launcherCache.codex, launcherCache.settings, launcherCache.scripts
+	launcherCache.at, launcherCache.list = time.Time{}, nil
+	launcherCache.Unlock()
+	t.Cleanup(func() {
+		launcherCache.Lock()
+		launcherCache.at, launcherCache.list, launcherCache.generation = at, list, generation
+		launcherCache.codex, launcherCache.settings, launcherCache.scripts = codex, settings, scripts
+		launcherCache.Unlock()
+		_ = os.WriteFile(release, []byte("release\n"), 0o600)
+	})
+
+	n := &Node{}
+	firstDone := make(chan error, 1)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	go func() {
+		_, err := n.launchers(firstCtx, true)
+		firstDone <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first discovery did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancelFirst() // this discovery still finishes, but fails without publishing a generation
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := n.launchers(secondCtx, true)
+		secondDone <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // let the second caller queue behind the first shell
+	cancelSecond()
+	if err := os.WriteFile(release, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-firstDone; err == nil {
+		t.Fatal("the failed first discovery unexpectedly succeeded")
+	}
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled queued refresh started another discovery: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled queued refresh did not return")
+	}
+	out, err := os.ReadFile(starts)
+	if err != nil || string(out) != "start\n" {
+		t.Fatalf("shell starts = %q, %v; want only the first discovery", out, err)
+	}
+}
+
+func TestLaunchersListKeepsShellDiscoveryErrorWithRuntime(t *testing.T) {
+	n, _ := runtimeNode(t)
+	dialRuntime(t, n, dshHello())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "bash")
+	t.Setenv("PATH", home) // neither zsh nor bash can be found, so shell discovery fails immediately
+	launcherCache.Lock()
+	at, list, generation := launcherCache.at, launcherCache.list, launcherCache.generation
+	codex, settings, scripts := launcherCache.codex, launcherCache.settings, launcherCache.scripts
+	launcherCache.at, launcherCache.list = time.Time{}, nil
+	launcherCache.Unlock()
+	t.Cleanup(func() {
+		launcherCache.Lock()
+		launcherCache.at, launcherCache.list, launcherCache.generation = at, list, generation
+		launcherCache.codex, launcherCache.settings, launcherCache.scripts = codex, settings, scripts
+		launcherCache.Unlock()
+	})
+	if _, err := nodeCall(t, n, "launchers.list", map[string]any{"refresh": true}); err == nil {
+		t.Fatal("a runtime overlay hid the shell discovery error")
 	}
 }

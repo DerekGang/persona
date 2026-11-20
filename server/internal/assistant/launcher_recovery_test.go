@@ -313,3 +313,19 @@ func TestMissingShellCodexUsesLastSeenAgentKindForFallback(t *testing.T) {
 		t.Fatalf("missing shell Codex was treated as Claude: params %v, note %q, err %v", params, note, err)
 	}
 }
+
+func TestMissingLauncherWithUnknownKindDoesNotUseFallback(t *testing.T) {
+	fastLauncherRecovery(t)
+	s, f := kindFixture(t)
+	s.models.zshrcMu.Lock()
+	s.models.zshrc = nil // no successful discovery has established the disappeared launcher's agent
+	s.models.zshrcSync = nil
+	s.models.zshrcMu.Unlock()
+	setLauncherRecovery(f, 1, map[string][]string{"wrap": {"claude", "cx"}})
+	f.launcherList = []proto.Launcher{{Name: "custom-b"}, {Name: "cx", Agent: "codex"}}
+	params := map[string]any{"launcher": "wrap", "model": "claude-opus-5-5"}
+	note, err := s.finishMainChatModel(context.Background(), "server", "assistant", params, false)
+	if err == nil || note != "" || params["launcher"] != "wrap" || params["model"] != "claude-opus-5-5" {
+		t.Fatalf("unknown original kind selected a fallback: params %v, note %q, err %v", params, note, err)
+	}
+}

@@ -233,6 +233,9 @@ func withLauncherNote(ctx context.Context) (context.Context, *string) {
 // candidate must currently run Assistant on the machine, have the same agent kind, and have no failed health check.
 // In particular, plain claude is not implicitly preferred or eligible. "" when no approved substitute fits.
 func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind string, launchers []ConfiguredLauncher, names []string) string {
+	if kind == "" {
+		return "" // a disappeared launcher's kind is unknown: no substitute can be proven to be the same agent
+	}
 	for _, n := range names {
 		if n == name || proto.IsExternalLauncher(n) {
 			continue
@@ -253,9 +256,8 @@ func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind stri
 }
 
 // mainChatLauncherKind keeps the agent identity of a launcher that has just disappeared from discovery. The last
-// successful per-machine snapshot is evidence; without it, preserve the historical Claude default for launchers that
-// never declared an agent. In particular, a missing shell Codex alias must not become Claude merely because its current
-// catalog entry is gone.
+// successful per-machine snapshot is evidence, including an empty agent (the snapshot's Claude default). With no such
+// evidence it returns "": a missing custom Codex alias must not become Claude merely because its catalog entry is gone.
 func (s *Service) mainChatLauncherKind(ctx context.Context, machine, name string) string {
 	if agent := s.launcherAgent(withUnhidden(ctx, name), machine, name); agent != "" {
 		return agentKind(agent)
@@ -266,15 +268,16 @@ func (s *Service) mainChatLauncherKind(ctx context.Context, machine, name string
 			continue
 		}
 		for _, l := range m.Launchers {
-			if l.Name == name && l.Agent != "" {
+			if l.Name == name {
 				return agentKind(l.Agent)
 			}
 		}
 	}
-	return agentKind("")
+	return ""
 }
 
-// agentKind is the agent a launcher starts: claude when it names none (or is gone: it ran the main chat's kind).
+// agentKind is the agent a launcher starts: claude when it names none. A gone launcher needs mainChatLauncherKind's
+// positive evidence before this default applies.
 func agentKind(agent string) string { return cmp.Or(agent, "claude") }
 
 // mainChatRefusal says that launcher can't run the assistant on machine, for the user's language, and names instead

@@ -1285,13 +1285,14 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 		bl := n.runtimes.launchers()
 		if len(bl) > 0 {
 			// Explicit shell launchers keep their names; a discovered CLI fallback yields to its connected runtime.
-			ls, err = n.runtimes.withShell(bl, ls), nil
+			// Overlays never erase a shell-discovery error: a partial catalog is not proof that an alias disappeared.
+			ls = n.runtimes.withShell(bl, ls)
 		}
 		if withDesktop, added := n.withDesktopLauncher(ls); added { // Claude's desktop app (claudedesktop_new.go)
-			ls, err = withDesktop, nil
+			ls = withDesktop
 		}
 		if withApp, added := n.withCodexAppLauncher(ls); added { // the Codex App (codexapp_new.go)
-			ls, err = withApp, nil
+			ls = withApp
 		}
 		shell, rcFile := launcherShell()
 		out := map[string]any{"launchers": typedLaunchers(ls), "shell": shell, "rc_file": rcFile}
