@@ -1018,7 +1018,7 @@ Android's `JMenu` takes a choice list in groups: an action can open a group with
   soft style ignored it, so a Delete drew in the accent (blue, purple in Clay, teal in Island) like any other button.
   The red label reads at 3:1 on every fill as the danger tint does (`ButtonContrastUITests` checks both).
 - `SystemPasteButton` (`apple/Persona/DesignSystem/ClipboardButtons.swift`) wraps the system `PasteButton` for anything that sends what is on the phone's clipboard: a capsule in the accent with the system's own icon and word. Why not `.themedButton`: only the system Paste button reads the clipboard without iOS asking "Allow Paste?" first (the tap is the permission), and the system draws it, so it can be tinted and shaped but not restyled. Place it beside a themed button that does the same thing by reading the clipboard, with one line saying it sends without the prompt (the computer page's Clipboard section, #3064).
-- Web buttons are 32 px tall (hit area expanded on touch). Android: Large 48, Medium 40, Small 32 dp drawn, each taking taps across 48 dp: Compose extends a smaller control's touch target to 48 dp unless a clipping parent cuts it off, so a frame around small controls clips with `clipDrawing`, not `clip` (DS-06; `TouchTargetTest` checks buttons, chips, switches and segments in every style).
+- Web buttons are 32 px tall (hit area expanded on touch). The web's touch target is `touch-hit` (an invisible 44 px square centred on the control); a ✕ in a tile's corner (an attachment's remove) uses `touch-hit-corner` instead (#11442), whose area grows out of the corner and only `--hit-in-x` / `--hit-in-y` (6 px by default) into the tile, so the tile's middle keeps its own tap. Android: Large 48, Medium 40, Small 32 dp drawn, each taking taps across 48 dp: Compose extends a smaller control's touch target to 48 dp unless a clipping parent cuts it off, so a frame around small controls clips with `clipDrawing`, not `clip` (DS-06; `TouchTargetTest` checks buttons, chips, switches and segments in every style).
 - A group of actions has at most one solid primary button. A recommended choice has an outline and a "Recommended" tag, not a second solid button. Red is for failure and destructive actions only.
 
 ### 3.7.1 Switches (web)
@@ -1252,6 +1252,7 @@ chat (#5033), where the panel only offers models and says plainly which one the 
   launcher's own model rows may keep the description alone. A sign-in, key or model-availability error that offers a
   repair names the affected launcher in its title, and the repair opens that launcher's provider settings. This is a
   content rule, not a new badge, token or visual style.
+  Preset descriptions and a truncated model's full-ID line retain the launcher name too.
   Launcher summaries retain each provider's full name as their accessible name and tooltip; the former provider rail
   and its shortened captions are replaced by the shared column (#10249).
 - Model families (`web/src/lib/model-families.ts`, `docs/web/web.md` "Model pill and model panel"): inside a provider
@@ -1356,7 +1357,7 @@ machine path.
 | Chat loading and waiting | iOS `ChatSkeleton` (five rounded bars of `Theme.Size.markS`, the first at the trailing edge, breathing between `Fill.well` and `Fill.chip`) while a chat's first page loads, its load error as a danger line at the chat's newest end, and `TypingIndicator` ("Claude is getting ready…", three pulsing dots) under your message until its turn's work line comes; Android `ChatSkeleton` and the error line on Glass, `TypingLine` in every style (#4339 C9) |
 | The day over a message | iOS `DayLine` (`Theme.Font.caption`, tertiary, centered): over the first line of each day in Persona's conversation, never in an Agent's chat, and over a first message the transcript does not have yet (the first-message page, a conversation with an empty transcript), so the day does not appear above it later (#1911); Android `DayLine`: the transcript's in every style, those pending ones on Glass (#4339 C18) |
 
-Toasts: error, success or info; one slot, so a new toast replaces the old. Duration 2.5 s, 4 s for errors, 5 s with an action (`apple/Persona/DesignSystem/Toasts.swift:57`). Drawn in a pass-through window and announced to VoiceOver. About 255 call sites. Loading and error shapes are inconsistent across screens (DS-15, DS-16). Web toasts are dark capsules at the bottom (2.8 / 5.2 / 6 s). Android draws the same toast (`JToastHost`, one per window: the root's, and the image viewer's) and keeps system toasts for places where no Persona screen shows (DS-25).
+Toasts: error, success or info; one slot, so a new toast replaces the old. Duration 2.5 s, 4 s for errors, 5 s with an action (`apple/Persona/DesignSystem/Toasts.swift:57`). Drawn in a pass-through window and announced to VoiceOver. About 255 call sites. Loading and error shapes are inconsistent across screens (DS-15, DS-16). Web toasts are dark capsules at the bottom (2.8 / 5.2 / 6 s). On a narrow web screen (#11442) they sit in the part the soft keyboard leaves visible and rise clear of the chat's dock or the open sheet's footer (`--toast-lift`, `web/src/ui/toast-lift.tsx`), so a toast never covers a control; only a mouse pointer holds one, so a tapped toast still runs out, and an action's touch target meets the close button's instead of being covered by it. Android draws the same toast (`JToastHost`, one per window: the root's, and the image viewer's) and keeps system toasts for places where no Persona screen shows (DS-25).
 
 **Error notices** (web, #5157, #5313; cindy's `ErrorNotice`, `ErrorBanner` and `ErrorMessageCard`, which the owner asked this part of the chat to follow, 2026-11-12): a model error in the chat, and the subscription usage limit that stands in for one (with the same red mark: cindy shows a usage limit as an error banner), is `ErrorNotice`: a `rounded-xl` card, 1 px `--line` border, `bg-surface`, 12 px padding; a 16 px `alertCircle` mark in `--red`, 2 px down; what happened in 13 / 20 `--ink` (it wraps); what helps in 12 / 20 `--ink-2`; then a wrapping row (8 px above and between) of the caller's buttons, 28 px tall (`Button size="sm"`: a height in `className` does not win over the button's own 32 px) with a 44 px touch target (`touch-hit`), followed by **Error details** / **Hide details** (a quiet button with a 12 px chevron, `aria-expanded`) when there is something to unfold; the details 8 px under it, the raw text in a `bg-inset` well with `rounded-control`, 8 px padding, 12 / 20 mono `--ink-2`, every character kept (`pre-wrap`, `break-all`) and scrolling past 160 px. No red fill and no red ring: red is only the state's mark, per 5.3 and "Color hierarchy and quiet surfaces" in `docs/web/web.md`. The status code and how many times in a row moved from the head into the details, so the head says only what happened and what helps. The card is drawn with 12 px padding, cindy's live banner's, also for an older error: cindy's in-stream record uses 8 px, but here one card shape serves both.
 
@@ -3431,6 +3432,39 @@ extension names its source under the address and, when that source is off or gon
 pill and one `data-repository-note` line on what still works on this page (it stays saved and its details can be
 edited). A source whose extension was renamed is still the saved repository's: the hub keeps the id it was saved
 with, so the page matches it to the listed source with the same contribution that claims its host.
+
+## Scheduled task execution options
+
+The web task editor serves people scheduling specialist work as an optional **Execution options** group, closed by
+default and placed before the prompt. Its title and configuration share one compact line, with ellipsis and a full
+text tooltip when narrow. Its disclosure always shows the effective launcher name, agent backend,
+model and thinking effort; repeated launcher/backend names are shown once. It reuses `Field`, native selects,
+`ModelPicker`, semantic surface/text tokens and the existing dialog. Every untouched control explicitly follows
+Assistant, with known inherited values shown. Selecting another launcher uses that agent's defaults for model and
+effort. Empty choices retain dynamic inheritance rather than pinning a copied value. Task list rows use the same
+formatter and resolved `execution` context, including inherited model and effort; older responses without that
+context keep their legacy display and need no new fields. The selected computer is shown
+inside the group. Launcher and model discovery use that computer's chat-compatible capabilities; the model catalog
+is only requested when the group opens. A working directory
+is an existing path on that computer, explained under the field. Switching execution context may start a new chat;
+the hint says earlier chats are retained. Failed saves retain the draft, and saving/running disables the controls.
+If Run now saves successfully but running fails, the open form accepts the saved execution pins and revision.
+Fields edited while saving keep their newer input; untouched execution fields take the canonical saved values.
+A later unrelated save stays sparse, and explicitly clearing a choice still restores inheritance.
+Continuing the original chat requires empty task execution choices, including the computer and directory. The shared
+form validation explains this and disables Save and Run now; clearing saved choices restores inheritance without
+requiring that computer to be online. Toggling the original chat back on revalidates the current choices.
+Launcher discovery failure or a missing saved launcher keeps the saved choice visible as unavailable, while the
+Assistant inheritance option remains selectable. Selecting it explicitly clears launcher, model and effort together;
+discovery alone never changes saved choices. Computer-scoped defaults come from that computer's launcher response.
+A saved model alias uses its folded catalog row's capabilities and default thinking effort without rewriting the saved ID.
+Defaults, model and launcher catalogs are keyed to the current assistant and their exact execution context; stale
+responses cannot replace the current catalog. Discovery reads and the task save target the same assistant. Task
+inheritance is requested explicitly, leaving ordinary Assistant picker defaults unchanged.
+While model discovery is pending, the picker is disabled. A failed read leaves the saved selection visible and the
+launcher inheritance recovery control usable, with no rows from the previous context.
+Run history has a separate disclosure for its execution configuration, outside the button opening the conversation.
+This is a secondary form extension; primary screens, themes and chat input remain unchanged.
 
 ## Optional repository associations
 
