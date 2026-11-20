@@ -273,10 +273,10 @@ func (s *Service) ownedTaskRepositoryLinkInputs(ctx context.Context, todo Todo, 
 	proven := map[string]bool{}
 	markNativePR := func(raw string) {
 		if raw != "" && linkShape(repository.LinkInput{URL: raw}) == nil {
-			proven[raw] = true
+			proven[canonicalReplyPR(raw)] = true
 		}
 		for _, address := range taskRepositoryArtifactLinks([]proto.WorkArtifact{{Kind: "pr", Ref: raw}}, false) {
-			proven[address] = true
+			proven[canonicalReplyPR(address)] = true
 		}
 	}
 	pushed := map[string]string{}
@@ -348,7 +348,9 @@ func (s *Service) ownedTaskRepositoryLinkInputs(ctx context.Context, todo Todo, 
 			}
 		}
 	}
-	if slices.ContainsFunc(urls, func(url string) bool { return !proven[url] }) {
+	if slices.ContainsFunc(urls, func(raw string) bool {
+		return !proven[canonicalReplyPR(raw)] && githubPROwnershipCandidate(raw)
+	}) {
 		if sess, ok := s.session(ctx, machine, session); ok && sess.Cwd != "" {
 			cwd := sess.Cwd
 			if pushCwd != "" {
@@ -381,7 +383,7 @@ func (s *Service) ownedTaskRepositoryLinkInputs(ctx context.Context, todo Todo, 
 	var owned []string
 	var inputs []repository.LinkInput
 	for _, in := range links {
-		if proven[in.URL] {
+		if proven[canonicalReplyPR(in.URL)] {
 			owned = append(owned, in.URL)
 			inputs = append(inputs, in)
 		}

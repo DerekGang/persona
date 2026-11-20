@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -193,6 +194,88 @@ func TestAcceptedReviewPRLinkOverridesFalseRecord(t *testing.T) {
 				if strings.HasSuffix(path, "/pulls/4") {
 					t.Fatal("the false recorded PR overrode the explicit review link")
 				}
+			}
+		})
+	}
+}
+
+func TestAcceptedMRWithoutAutomaticOwnershipKeepsGitHubGate(t *testing.T) {
+	const mr = "https://code.example.com/team/app/merge_requests/7"
+	const githubPR = "https://github.com/o/r/pull/5"
+	for _, tc := range []struct {
+		name, artifact, saved, wantError string
+	}{
+		{name: "unverified non-GitHub MR", artifact: mr},
+		{name: "unverified GitHub PR", artifact: githubPR, wantError: "delivery PR ownership could not be verified"},
+		{name: "non-GitHub MR cannot replace saved GitHub PR", artifact: mr, saved: githubPR, wantError: "the PR is not merged"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := repositorystore.New(todoTestDB(t))
+			s, f, todo := newSupervisedServiceOn(t, st)
+			deliveryOn(t, s)
+			s.deploy.forge = &fakeForge{}
+			s.deploy.hubBuild = func(context.Context) (string, string, error) { return "dev", "", nil }
+			s.deploy.listPaths = []string{}
+			a := todo.Agents[0]
+			f.setSessions(a.MachineID, proto.Session{SessionID: a.SessionID, Cwd: "/code/app", Status: proto.StatusDone})
+			f.answerNode("git.pr", func(string, json.RawMessage) (any, error) { return nil, errors.New("gh is not signed in") })
+			if tc.saved != "" {
+				s.setTaskStage(t.Context(), todo.ID, "review", tc.saved)
+			}
+			_, originalLinks := savedArtifactURLs(t, st, todo.ID)
+			artifactReportProof(f, todo, "<closeout status=\"done\" merged=\"yes\" deployed=\"no\">\nartifact: pr "+tc.artifact+"\n</closeout>")
+			_, err := acceptReview(s, todo.ID, nil)
+			got := todoNow(s, todo.ID)
+			if tc.wantError == "" {
+				if err != nil || got.DoneAt == nil || got.Supervision.State != reviewAccepted {
+					t.Fatalf("manual acceptance of unsupported MR failed: done=%v, err=%v", got.DoneAt, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) || got.DoneAt != nil {
+				t.Fatalf("expected open task and %q, got done=%v, err=%v", tc.wantError, got.DoneAt, err)
+			}
+			if got.PRURL != tc.saved {
+				t.Fatalf("unverified artifact replaced saved PR: got %q, want %q", got.PRURL, tc.saved)
+			}
+			if _, links := savedArtifactURLs(t, st, todo.ID); !slices.Equal(links, originalLinks) {
+				t.Fatalf("unverified artifact changed links: got %v, want %v", links, originalLinks)
+			}
+			f.mu.Lock()
+			lookup := false
+			for _, call := range f.calls {
+				lookup = lookup || call.Method == "git.pr"
+			}
+			f.mu.Unlock()
+			if lookup != (tc.artifact == githubPR) {
+				t.Fatalf("git.pr lookup=%v for %s", lookup, tc.artifact)
+			}
+		})
+	}
+}
+
+func TestAcceptedRecoversCanonicalVerifiedPR(t *testing.T) {
+	const rawGitHub = "https://github.com/Example/Project/pull/7"
+	const rawGitLab = "https://gitlab.com/Example/Project/merge_requests/7"
+	const canonicalGitLab = "https://gitlab.com/example/project/-/merge_requests/7"
+	for _, tc := range []struct{ name, raw, proof, canonical string }{
+		{"GitHub canonicalized on save", rawGitHub, rawGitHub, artifactPR},
+		{"GitHub URL differs from native proof spelling", rawGitHub, artifactPR, artifactPR},
+		{"GitLab legacy URL differs from native proof spelling", rawGitLab, canonicalGitLab, canonicalGitLab},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := repositorystore.New(todoTestDB(t))
+			s, f, todo := newSupervisedServiceOn(t, st)
+			deliveryOn(t, s)
+			s.deploy.forge = &fakeForge{merged: true}
+			s.deploy.hubBuild = func(context.Context) (string, string, error) { return "dev", "", nil }
+			s.deploy.listPaths = []string{}
+			artifactReportProof(f, todo, "<closeout status=\"done\" merged=\"yes\" deployed=\"no\">\nartifact: pr "+tc.raw+"\n</closeout>", tc.proof)
+			_, err := acceptReview(s, todo.ID, nil)
+			got := todoNow(s, todo.ID)
+			if err != nil || got.DoneAt == nil || got.PRURL != tc.canonical {
+				t.Fatalf("verified alias was not accepted: PR=%q, done=%v, err=%v", got.PRURL, got.DoneAt, err)
+			}
+			if _, links := savedArtifactURLs(t, st, todo.ID); !slices.Equal(links, []string{tc.canonical}) {
+				t.Fatalf("verified canonical link was not saved: %v", links)
 			}
 		})
 	}

@@ -3,7 +3,6 @@ package assistant
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -88,16 +87,26 @@ func closeoutPRRef(text string) string {
 	return ref
 }
 
+func canonicalReplyPR(raw string) string {
+	if _, link, err := repository.ParseTaskLink(raw); err == nil && link.Kind == "pull_request" {
+		return link.CanonicalURL
+	}
+	return raw
+}
+
 func sameReplyPR(a, b string) bool {
-	if a == b {
+	return a == b || canonicalReplyPR(a) == canonicalReplyPR(b)
+}
+
+// The checkout lookup uses gh. Other providers can supply native evidence without that lookup.
+func githubPROwnershipCandidate(raw string) bool {
+	host, _ := repository.RemoteHost(raw)
+	switch host {
+	case "github.com", "www.github.com", "api.github.com", "ssh.github.com":
 		return true
 	}
-	if a == "" || b == "" {
-		return false
-	}
-	_, left, leftErr := repository.ParseTaskLink(a)
-	_, right, rightErr := repository.ParseTaskLink(b)
-	return leftErr == nil && rightErr == nil && left.Kind == "pull_request" && left.CanonicalURL == right.CanonicalURL
+	identity, link, err := repository.ParseTaskLink(raw)
+	return err == nil && identity.Provider == repository.GitHub && link.Kind == "pull_request"
 }
 
 // replyNamesOtherPR prevents an unqualified status word from being applied to the task's PR when the reply
@@ -372,7 +381,7 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 					return "", false, fmt.Errorf("the reported delivery PR could not be confirmed: %w", err)
 				}
 			}
-		} else if m := ciPRURL.FindStringSubmatch(pr); pr != current && m != nil {
+		} else if m := ciPRURL.FindStringSubmatch(pr); m != nil && !sameReplyPR(pr, current) {
 			number, err := strconv.Atoi(m[2])
 			if err != nil {
 				return "", false, err
@@ -385,21 +394,28 @@ func (s *Service) reportedTaskPR(ctx context.Context, t Todo, current string) (p
 				continue // do not cycle between several misreported issue URLs
 			}
 		}
-		if pr != "" {
-			if pr != current {
-				owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr}, text, replyAt)
-				if err != nil {
-					return "", false, fmt.Errorf("task %s: delivery PR ownership could not be verified: %w", t.ID, err)
-				}
-				if !slices.Contains(owned, pr) {
-					return "", false, fmt.Errorf("task %s: the reported PR has no verified ownership or belongs to another open to-do", t.ID)
-				}
-			}
-			if recovered != "" && recovered != pr {
-				return "", false, fmt.Errorf("task %s: its active agents report different delivery PR artifacts; clarify before accepting", t.ID)
-			}
-			recovered = pr
+		if pr == "" {
+			continue
 		}
+		if sameReplyPR(pr, current) {
+			pr = current
+		} else {
+			owned, err := s.importOwnedTaskRepositoryLinks(ctx, t, a.MachineID, a.SessionID, []string{pr}, text, replyAt)
+			if err != nil {
+				return "", false, fmt.Errorf("task %s: delivery PR ownership could not be verified: %w", t.ID, err)
+			}
+			if len(owned) == 0 && !githubPROwnershipCandidate(pr) {
+				continue // no automatic evidence; any recorded GitHub delivery still goes through its gate
+			}
+			if len(owned) != 1 {
+				return "", false, fmt.Errorf("task %s: the reported PR has no verified ownership or belongs to another open to-do", t.ID)
+			}
+			pr = owned[0] // the importer verified this one candidate and returns its stored canonical URL
+		}
+		if recovered != "" && !sameReplyPR(recovered, pr) {
+			return "", false, fmt.Errorf("task %s: its active agents report different delivery PR artifacts; clarify before accepting", t.ID)
+		}
+		recovered = pr
 	}
 	return recovered, active > 0 && noPR, nil
 }

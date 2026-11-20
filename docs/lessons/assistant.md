@@ -845,6 +845,10 @@ stage PRs too; otherwise feedback routing and deterministic duplicate admission
 inherit the false association (`todo_repository_ownership_test.go`).
 Native CLI evidence must exclude help, web and dry-run modes, including Boolean
 `=true` flags, bundled short options and arguments whose shell expansion is unknown.
+The node's `gh` lookup covers GitHub PRs. A manual review can proceed when another host
+supplies no verified artifact. Any already recorded GitHub PR still goes through the delivery
+gate. Reuse the stored canonical URL after a verified import. Apply GitLab's legacy MR
+alias only on its known host so unclaimed review URLs keep their own meaning.
 
 ## Manual compaction is not a main-only policy (#10064)
 
