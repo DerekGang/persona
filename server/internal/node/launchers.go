@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log"
 	"maps"
 	"path/filepath"
 	"sort"
@@ -106,7 +107,7 @@ func (n *Node) launchers(ctx context.Context) ([]proto.Launcher, error) {
 		defer cancel()
 		out, err := scanLaunchers(ctx)
 		if err != nil {
-			return nil, err
+			return lastLaunchers(err)
 		}
 		list, codex, settings, scripts := mergeLaunchers(string(out))
 		launcherCache.Lock()
@@ -122,10 +123,20 @@ func (n *Node) launchers(ctx context.Context) ([]proto.Launcher, error) {
 }
 
 func scanLaunchers(ctx context.Context) ([]byte, error) {
+	// Bound both the shell and descendants that hold its output pipe open (#10952).
+	began := time.Now()
 	out, err := launcherShellOutput(ctx, launcherScript)
+	if !strings.Contains(string(out), launcherBegin) {
+		// The shell ended before the script ran (the 20 s cap on a slow rc file, an rc file that exits): what it printed
+		// is the rc files' own, and says nothing of the launchers. Parsed, it was plain claude alone, which replaced the
+		// last list for a minute: every other launcher unknown, and the hub moved their conversations to claude (#11580).
+		return nil, fmt.Errorf("list launchers: the login shell ended before listing them after %v: %v",
+			time.Since(began).Round(time.Millisecond), err)
+	}
 	// Retain useful partial output. The shell can print an rc banner or the start of the frame before the timeout.
 	if err != nil && strings.Trim(launcherOutput(string(out)), "\x02\x1d\r\n\t ") == "" {
 		return nil, fmt.Errorf("list launchers: %w", err)
+	}
 	}
 	return out, nil
 }
@@ -135,6 +146,19 @@ func launcherShellOutput(ctx context.Context, script string) ([]byte, error) {
 	// A shell's children can hold stdout open after it dies. Bound the group and the pipe wait (#10952).
 	killGroupOnCancel(cmd)
 	return cmd.Output()
+}
+
+// lastLaunchers answers a failed read of the login shell (launchers): the last list, kept for another minute so the
+// next try is not on every ask while a slow shell stays slow; the error only when there has been no list yet.
+func lastLaunchers(failed error) ([]proto.Launcher, error) {
+	launcherCache.Lock()
+	defer launcherCache.Unlock()
+	if launcherCache.list == nil {
+		return nil, failed
+	}
+	log.Printf("node: %v; keeping the last %d launchers", failed, len(launcherCache.list))
+	launcherCache.at = time.Now()
+	return launcherCache.list, nil
 }
 
 // mergeLaunchers is launcherScript's output as the launcher list: the helper's, then the aliases it does not name,
