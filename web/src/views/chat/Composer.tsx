@@ -645,7 +645,7 @@ export const Composer = memo(function Composer({
     } else if (r.kind === "workspace") {
       const w = workspaceContext(r.workspace, (id) => machineWithHub(id, getState().machines));
       ref = { ...newContext("workspace", w.title, w.url, w.text), attrs: w.attrs };
-    } else if (!r.dir && mention?.referenceFiles) {
+    } else if (r.kind === "file" && !r.dir && mention?.referenceFiles) {
       const path = r.insert.slice(1, -1);
       ref = { id: `file:${path}`, kind: "file", title: r.name, url: "", text: path, attrs: { path, ...mention.referenceFiles } };
     }

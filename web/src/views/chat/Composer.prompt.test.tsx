@@ -3,13 +3,48 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeAll, expect, it, vi } from "vitest";
 import { Composer } from "./Composer";
+import type { MentionRow, PanelPick } from "./ComposerPanel";
 import { getContexts, type ContextRef } from "../../lib/links";
 import { loadPages } from "../../lib/lazy-page";
 import { t } from "../../i18n";
 
+vi.mock("./ComposerPanel", () => ({
+  ComposerPanel: ({ onPick }: { onPick: (pick: PanelPick) => void }) => (
+    <button onClick={() => onPick({
+      kind: "row",
+      // Model an unsupported row arriving through the lazy picker.
+      row: { kind: "resource", id: "resource:notes.txt", name: "Notes", dir: false, insert: "@notes.txt " } as unknown as MentionRow,
+    })}>Pick resource</button>
+  ),
+}));
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 beforeAll(() => loadPages());
+
+it("ignores rows outside the task file picker types even when they carry file-like text", async () => {
+  const onChange = vi.fn();
+  const scope = { machine: "box", cwd: "/work", launcher: "claude", runtime: "" };
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(
+      <Composer draftKey="task-resource" machineId={scope.machine} placeholder=""
+        mention={{ cwd: scope.cwd, files: () => [], referenceFiles: scope }}
+        editor={{ text: "Read it", refs: [], label: "Task prompt", onChange }} />,
+    ));
+    act(() => host.querySelector<HTMLButtonElement>("[data-composer-plus]")!.click());
+    const resource = [...host.querySelectorAll("button")].find((button) => button.textContent === "Pick resource");
+    expect(resource).toBeDefined();
+    act(() => resource!.click());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(host.querySelector("textarea")?.value).toBe("Read it");
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});
 
 it("edits and removes a task reference without chat sends, history or stored chat drafts", async () => {
   const sent = vi.fn(async () => true);

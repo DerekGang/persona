@@ -145,7 +145,10 @@ it.each([undefined, ""])("offers files and skills for an authorized legacy Claud
       return { execution: { ...execution, agent: options.json.catalog ? "claude" : agent }, task_input: true, catalog };
     }
     if (path === "/machines/current/fs?path=%2Fcurrent&cwd=%2Fcurrent&task_input=1") {
-      return { path: "/current", entries: [{ name: "notes.txt", dir: false }], truncated: false };
+      return { path: "/current", entries: [{ name: "docs", dir: true }], truncated: false };
+    }
+    if (path === "/machines/current/fs?path=%2Fcurrent%2Fdocs&cwd=%2Fcurrent&task_input=1") {
+      return { path: "/current/docs", entries: [{ name: "notes.txt", dir: false }], truncated: false };
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -164,10 +167,15 @@ it.each([undefined, ""])("offers files and skills for an authorized legacy Claud
   expect(plus.disabled).toBe(false);
   act(() => plus.click());
   await settle();
+  const folder = option("docs/") as HTMLElement | undefined;
+  expect(folder).toBeDefined();
+  act(() => folder?.click());
+  expect(splitSkillDraft(serialized, true).skills).toEqual([]);
+  await settle();
   const notes = option("notes.txt") as HTMLElement | undefined;
   expect(notes).toBeDefined();
   act(() => notes?.click());
-  expect(splitSkillDraft(serialized, true).skills[0]).toMatchObject({ kind: "file", attrs: { path: "notes.txt", machine: "current" } });
+  expect(splitSkillDraft(serialized, true).skills[0]).toMatchObject({ kind: "file", attrs: { path: "docs/notes.txt", machine: "current" } });
   type("/Index");
   await settle();
   expect(option("Index receipts")).toBeDefined();
