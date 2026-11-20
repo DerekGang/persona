@@ -74,6 +74,7 @@ type Settings struct {
 	IdleAutoCompact        *bool `json:"idle_auto_compact,omitempty"`
 	IdleAutoCompactMinutes *int  `json:"idle_auto_compact_minutes,omitempty"`
 	IdleAutoCompactTokens  *int  `json:"idle_auto_compact_tokens,omitempty"`
+	IdleReleaseMinutes     *int  `json:"idle_release_minutes,omitempty"` // #12008, idle_compact_settings.go
 	// StartRequestedTasks: a task_plan task the user asked for in so many words starts without the card's "Start"
 	// (#2559). nil is on (the default).
 	StartRequestedTasks     *bool  `json:"start_requested_tasks,omitempty"`
@@ -97,6 +98,7 @@ type Settings struct {
 	// too, by last activity with the others (#8324; since #6228 they are only in All chats). Display only, one value
 	// for every device. nil is off (the default).
 	RecentTaskChats *bool `json:"recent_task_chats,omitempty"`
+	WorkGuide       *bool `json:"work_guide,omitempty"`
 	// MeetingAttendanceDefault: the role a meeting recording pre-selects on the phone (off, listener, participant;
 	// docs/assistant/meeting-minutes.md "Attending a meeting"); nil is off.
 	MeetingAttendanceDefault *string `json:"meeting_attendance_default,omitempty"`
@@ -109,9 +111,11 @@ type Settings struct {
 	// (transcribers.TranscriptionInstall): set with it on every PUT, never by the apps, never shown. Nil for the
 	// built-in contribution (or a choice stored before pins were kept).
 	MeetingTranscriptionInstall *string `json:"meeting_transcription_install,omitempty"`
-	// DoneNeedsDelivery: a finished task closes only once its work is live and checked; stopped at a PR, merged or
-	// off by default it stays open with where it is held, and its agent is told so with its prompt (#3306,
-	// delivery.go). nil is off (the default).
+	// DeliveryGate: three-tier closeout gate for PR/Issue tasks (off, merged, live; delivery.go). nil falls back to
+	// DoneNeedsDelivery (true -> live, explicit false -> off) and otherwise defaults to merged.
+	DeliveryGate *string `json:"delivery_gate,omitempty"`
+	// DoneNeedsDelivery: legacy boolean toggle for live delivery gating (true -> live, false -> off; #3306,
+	// delivery.go). Kept for backward compatibility alongside DeliveryGate.
 	DoneNeedsDelivery *bool `json:"done_needs_delivery,omitempty"`
 	// AgentTasks: every agent Persona starts is on a quiet, supervised todo (#3617, agent_tasks.go). nil is off (the
 	// default).
@@ -268,6 +272,8 @@ func (s *Service) updateSettings(ctx context.Context, fn func(*Settings) error) 
 	return v, nil
 }
 
+func (v Settings) workGuideOn() bool { return v.WorkGuide != nil && *v.WorkGuide }
+
 // settings are the settings in effect, what the rest of the package reads (the main conversation, the machine, the time
 // zone; isMain and mainTasksQuiet for short): the machine one the hub has (else the hub's default), the launcher the
 // assistant's own (else hub.json's, else claude; Model configuration › Main chat goes over it: launcherNow). A read that fails once
@@ -294,6 +300,9 @@ func (s *Service) effective(ctx context.Context, v Settings) Settings {
 	}
 	if v.Launcher == "" {
 		v.Launcher = "claude"
+	}
+	if def.SupervisionBatchMinutes != nil {
+		v.SupervisionBatchMinutes = def.SupervisionBatchMinutes
 	}
 	return v
 }
@@ -549,6 +558,7 @@ func (s *Service) leadSessions(ctx context.Context, v Settings) []SessionRef {
 func (s *Service) settingsChanged(ctx context.Context) {
 	s.transcriptionSettingsChanged(ctx) // only another contribution chosen drops the readiness answer
 	s.ProfileChanged(ctx)
+	s.revalidateFailedStartDeferrals(ctx)
 	s.publish(ctx)
 }
 
@@ -584,13 +594,15 @@ type assistantView struct {
 	IdleAutoCompact        bool               `json:"idle_auto_compact"`
 	IdleAutoCompactMinutes int                `json:"idle_auto_compact_minutes"`
 	IdleAutoCompactTokens  int                `json:"idle_auto_compact_tokens"`
+	IdleReleaseMinutes     int                `json:"idle_release_minutes"`
 	// StartRequestedTasks is in effect, like MainTasksQuiet.
 	StartRequestedTasks     bool   `json:"start_requested_tasks"`
 	TaskWorkspacePreference string `json:"task_workspace_preference"`
 	ReadonlyMode            string `json:"readonly_mode"`
-	// RecordingDays and DoneNeedsDelivery are in effect, like MainTasksQuiet.
-	RecordingDays     int  `json:"recording_days"`
-	DoneNeedsDelivery bool `json:"done_needs_delivery"`
+	// RecordingDays, DeliveryGate and DoneNeedsDelivery are in effect, like MainTasksQuiet.
+	RecordingDays     int    `json:"recording_days"`
+	DeliveryGate      string `json:"delivery_gate"`
+	DoneNeedsDelivery bool   `json:"done_needs_delivery"`
 	// MinutesDays is in effect: 0 means forever (the default); otherwise never fewer than RecordingDays.
 	MinutesDays int `json:"minutes_days"`
 	// KBTopics is in effect, like MainTasksQuiet.
@@ -599,6 +611,7 @@ type assistantView struct {
 	MainBackgroundFolded bool `json:"main_background_folded"`
 	// RecentTaskChats is in effect, like DoneNeedsDelivery.
 	RecentTaskChats bool `json:"recent_task_chats"`
+	WorkGuide       bool `json:"work_guide"`
 	// MeetingAttendanceDefault is in effect (off until changed).
 	MeetingAttendanceDefault      string   `json:"meeting_attendance_default"`
 	MeetingTranscriptionDefault   string   `json:"meeting_transcription_default"`
@@ -650,14 +663,16 @@ func (s *Service) view(ctx context.Context, withArchived bool, space ...string) 
 	out := assistantView{WorkspaceNamingVersion: workspacenaming.Version, EffectiveWorkspaceRules: effectiveRules, Settings: v, Manager: s.managerIdentity(), PermissionDefaults: s.permissionDefaults(), Conversations: []proto.Session{}, NotesEffective: s.notes(ctx), MainTasksQuiet: quietOn(v.MainTasksQuiet),
 		StartRequestedTasks: quietOn(v.StartRequestedTasks), RecordingDays: recordingDaysOf(v), MinutesDays: kb.MinutesDaysFor(minutesDaysSetting(v), recordingDaysOf(v)),
 		IdleAutoCompact: s.idleAutoCompact(ctx), IdleAutoCompactMinutes: s.idleAutoCompactMinutes(ctx), IdleAutoCompactTokens: s.idleAutoCompactTokens(ctx),
-		MeetingAttendanceDefault: meetingAttendanceOf(v), KBTopics: quietOn(v.KBTopics),
+		IdleReleaseMinutes: s.idleReleaseMinutes(ctx), MeetingAttendanceDefault: meetingAttendanceOf(v), KBTopics: quietOn(v.KBTopics),
 		MeetingTranscriptionDefault: meetingTranscriptionDefaultOf(v), MeetingGlossary: meetingGlossaryOf(v),
 		MeetingTranscriptionExtension: meetingTranscriptionExtensionOf(v), MeetingTranscriptionReady: s.transcriptionReadyNow(),
 		TaskWorkspacePreference: s.taskWorkspacePreference(ctx),
 		ReadonlyMode:            readonlyModeOf(v),
 		MainBackgroundFolded:    quietOn(v.MainBackgroundFolded),
+		WorkGuide:               v.workGuideOn(),
 		RecentTaskChats:         v.RecentTaskChats != nil && *v.RecentTaskChats,
-		DoneNeedsDelivery:       v.DoneNeedsDelivery != nil && *v.DoneNeedsDelivery, IdleCloseHours: int(s.idleCloseAfter(ctx) / time.Hour),
+		DeliveryGate:            deliveryGateOf(v),
+		DoneNeedsDelivery:       deliveryGateOf(v) == deliveryGateLive, IdleCloseHours: int(s.idleCloseAfter(ctx) / time.Hour),
 		ArchiveClosedDays:            int(s.archiveClosedAfter(ctx) / (24 * time.Hour)),
 		ReviewSamplePercent:          s.reviewSamplePercent(ctx),
 		InterjectBackground:          v.InterjectBackground != nil && *v.InterjectBackground,

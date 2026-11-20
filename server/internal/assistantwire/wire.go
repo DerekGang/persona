@@ -91,6 +91,9 @@ type Placement struct {
 	MemoryDreaming bool `json:"memory_dreaming,omitempty"`
 	// CompleteAgentlessTodos lets a supervising conversation complete its own agentless memo without another card.
 	CompleteAgentlessTodos bool `json:"complete_agentless_todos,omitempty"`
+	// SupervisionBatchMinutes is manager.json's administrator-pinned routine supervision interval. Nil leaves the
+	// assistant's saved setting in effect; an explicit zero pins immediate delivery through the legacy cadence.
+	SupervisionBatchMinutes *int `json:"supervision_batch_minutes,omitempty"`
 }
 
 // DeviceCall is device.call's params. Device is a machine id, or DeviceAll for DeviceDevicesList.
@@ -239,9 +242,10 @@ const (
 // binding an older hub stored with the main chat's "runtime" ("cli" or "agentsdk") reads without it, as the CLI every
 // assistant conversation runs on; the key is gone from the next write.
 type ModelBinding struct {
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Effort   string `json:"effort,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
 	// ConfigDir is the main chat's only: the Claude profile its new conversations start in (#4633). None is Persona's
 	// own profile (the default); "legacy" is this computer's existing Claude Code setup. Kept across a provider change;
 	// an existing conversation keeps the profile it was started in.
