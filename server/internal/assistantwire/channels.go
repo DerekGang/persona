@@ -208,9 +208,11 @@ type FeishuAction struct {
 	Action string          `json:"action,omitempty"`
 }
 
-// FeishuMenu is MethodFeishuMenu's params: the event key of the menu entry the owner pressed.
+// FeishuMenu is MethodFeishuMenu's params: the event key of the menu entry the owner pressed, and the event's id (the
+// same for a press Feishu delivers again, so it is answered once).
 type FeishuMenu struct {
-	Key string `json:"key"`
+	Key     string `json:"key"`
+	EventID string `json:"event_id,omitempty"`
 }
 
 // ClarificationProof is the bound question returned when a one-time proof is
