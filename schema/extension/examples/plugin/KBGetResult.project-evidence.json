@@ -1,0 +1,22 @@
+{
+  "detail": {
+    "kind": "projects", "id": "example-build", "path": "projects/example-build", "meta": {},
+    "project_knowledge": {
+      "policy": "managed", "position": 2, "needs_review": true,
+      "fields": {
+        "summary": {
+          "status": "needs_review", "cutoff": 1, "uncovered": 1, "locked": true,
+          "maintainer": "user", "source_refs": ["projects/example-build/summary"]
+        },
+        "one_line": {
+          "status": "current", "cutoff": 2, "writer": "pipeline", "maintainer": "pipeline",
+          "source_refs": ["chats/example-review"]
+        }
+      },
+      "sources": [
+        {"ref": "chats/example-review", "state": "merged", "state_at": "2026-11-04T09:03:00Z"},
+        {"ref": "projects/example-build/summary"}
+      ]
+    }
+  }
+}

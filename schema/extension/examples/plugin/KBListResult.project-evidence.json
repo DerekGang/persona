@@ -1,0 +1,14 @@
+{
+  "items": [{
+    "kind": "projects", "id": "example-index", "name": "Example index",
+    "updated": "2026-11-04T09:00:00Z", "relevance": 40,
+    "project_knowledge": {
+      "policy": "reference_only", "position": 0, "needs_review": false,
+      "fields": {
+        "summary": {"status": "unknown", "maintainer": "external"},
+        "one_line": {"status": "current", "cutoff": 0, "maintainer": "external"}
+      }
+    }
+  }],
+  "tags": [], "total": 1
+}

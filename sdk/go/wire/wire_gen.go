@@ -4700,6 +4700,8 @@ type KBEntry struct {
 	// A recording's imported meeting: the id of the meetings item it overlaps, as the meetings list has it (#8872);
 	// absent on other kinds, before a match and from an older hub.
 	MeetingID string `json:"meeting_id,omitempty"`
+	// A project's per-field evidence, without the detail's resolved sources. Older hubs omit it.
+	ProjectKnowledge *KBProjectKnowledge `json:"project_knowledge,omitempty"`
 }
 
 // KBRecentParams: kb.recent (kb.read): what came in from every source in [since, until), newest first, across kinds:
@@ -4760,6 +4762,46 @@ type KBDetail struct {
 	// A person's profiles by writer ("user", "ext:<id>"), as written; summary shows them too
 	// (docs/assistant/knowledge.md "Person profiles").
 	Profiles map[string]KBProfileRecord `json:"profiles,omitempty"`
+	// A project's per-field evidence and canonical sources. Older hubs omit it.
+	ProjectKnowledge *KBProjectKnowledge `json:"project_knowledge,omitempty"`
+}
+
+type KBProjectKnowledge struct {
+	// The owner's project storage policy. Extensions can read it.
+	Policy string `json:"policy"`
+	// The latest evidence position within this project.
+	Position int `json:"position"`
+	// At least one project field has uncovered updates.
+	NeedsReview bool `json:"needs_review"`
+	// Per-field coverage, keyed by summary or one_line.
+	Fields map[string]KBProjectField `json:"fields"`
+	// Canonical source pointers resolved for the detail.
+	Sources []KBProjectSource `json:"sources,omitempty"`
+}
+
+type KBProjectField struct {
+	Status string `json:"status"`
+	// The last evidence position this value covers. Absent when unknown.
+	Cutoff *int `json:"cutoff,omitempty"`
+	// Later updates observed for this field.
+	Uncovered int `json:"uncovered,omitempty"`
+	// Who last wrote the value, when recorded.
+	Writer string `json:"writer,omitempty"`
+	// Who maintains the field now, when known.
+	Maintainer string `json:"maintainer,omitempty"`
+	// Whether the field is locked against automatic updates.
+	Locked bool `json:"locked,omitempty"`
+	// The source pointers recorded for this field's value.
+	SourceRefs []string `json:"source_refs,omitempty"`
+}
+
+type KBProjectSource struct {
+	// The canonical source identity.
+	Ref string `json:"ref"`
+	// The state its source reported, such as merged. Deployment and acceptance need their own evidence.
+	State string `json:"state,omitempty"`
+	// When the source reported the state, if known.
+	StateAt time.Time `json:"state_at,omitzero"`
 }
 
 type KBProfileRecord struct {
@@ -6782,6 +6824,9 @@ var newDef = map[string]func() any{
 	"KBGetParams":                   func() any { return new(KBGetParams) },
 	"KBGetResult":                   func() any { return new(KBGetResult) },
 	"KBDetail":                      func() any { return new(KBDetail) },
+	"KBProjectKnowledge":            func() any { return new(KBProjectKnowledge) },
+	"KBProjectField":                func() any { return new(KBProjectField) },
+	"KBProjectSource":               func() any { return new(KBProjectSource) },
 	"KBProfileRecord":               func() any { return new(KBProfileRecord) },
 	"KBPersonProfile":               func() any { return new(KBPersonProfile) },
 	"KBProfileItem":                 func() any { return new(KBProfileItem) },

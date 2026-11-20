@@ -5018,6 +5018,8 @@ export interface KBEntry {
    * absent on other kinds, before a match and from an older hub.
    */
   meeting_id?: string;
+  /** A project's per-field evidence, without the detail's resolved sources. Older hubs omit it. */
+  project_knowledge?: KBProjectKnowledge;
 }
 
 /**
@@ -5088,6 +5090,46 @@ export interface KBDetail {
    * (docs/assistant/knowledge.md "Person profiles").
    */
   profiles?: Record<string, KBProfileRecord>;
+  /** A project's per-field evidence and canonical sources. Older hubs omit it. */
+  project_knowledge?: KBProjectKnowledge;
+}
+
+export interface KBProjectKnowledge {
+  /** The owner's project storage policy. Extensions can read it. */
+  policy: string;
+  /** The latest evidence position within this project. */
+  position: number;
+  /** At least one project field has uncovered updates. */
+  needs_review: boolean;
+  /** Per-field coverage, keyed by summary or one_line. */
+  fields: Record<string, KBProjectField>;
+  /** Canonical source pointers resolved for the detail. */
+  sources?: KBProjectSource[];
+}
+
+export interface KBProjectField {
+  status: string;
+  /** The last evidence position this value covers. Absent when unknown. */
+  cutoff?: number;
+  /** Later updates observed for this field. */
+  uncovered?: number;
+  /** Who last wrote the value, when recorded. */
+  writer?: string;
+  /** Who maintains the field now, when known. */
+  maintainer?: string;
+  /** Whether the field is locked against automatic updates. */
+  locked?: boolean;
+  /** The source pointers recorded for this field's value. */
+  source_refs?: string[];
+}
+
+export interface KBProjectSource {
+  /** The canonical source identity. */
+  ref: string;
+  /** The state its source reported, such as merged. Deployment and acceptance need their own evidence. */
+  state?: string;
+  /** When the source reported the state, if known. */
+  state_at?: string;
 }
 
 export interface KBProfileRecord {

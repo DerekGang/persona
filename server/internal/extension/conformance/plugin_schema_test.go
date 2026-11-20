@@ -523,6 +523,11 @@ func (s schemas) compare(t *testing.T, at string, node map[string]any, g reflect
 		}
 		fields := map[string]goField{}
 		jsonFields(g, fields)
+		if at == "KBUpdateParams" {
+			// The manager shares its decoder with owner writes. ApplyExtension refuses these fields.
+			delete(fields, "storage_policy")
+			delete(fields, "source_refs")
+		}
 		required := map[string]bool{}
 		for _, r := range asSlice(node["required"]) {
 			required[r.(string)] = true

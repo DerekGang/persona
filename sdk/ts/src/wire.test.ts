@@ -1,8 +1,28 @@
 import { expect, test } from "bun:test";
-import { connect, type Contributes, type Manifest } from "./index.ts";
+import { connect, Hub, type Contributes, type KBGetResult, type KBListResult, type Manifest } from "./index.ts";
 import { testFixtures } from "./test-fixtures.ts";
 
 const fixture = new URL("Manifest.custom-contributions.json", testFixtures);
+
+test("kb.read returns the project's field evidence from the public SDK", async () => {
+  const field = { status: "needs_review", cutoff: 0, uncovered: 1, locked: true };
+  const project = { policy: "managed", position: 1, needs_review: true, fields: { summary: field } };
+  const row = { kind: "projects", id: "example", name: "Example", relevance: 40, updated: "2026-11-04T09:03:00Z" };
+  let result: unknown = { items: [{ ...row, project_knowledge: project }], tags: [], total: 1 };
+  const hub = new Hub(line => hub.answer({ id: JSON.parse(line).id, result }));
+  const list = await hub.call<KBListResult>("kb.list", { kind: "projects" });
+  const evidence = list.items[0].project_knowledge;
+  expect(evidence?.fields.summary.cutoff).toBe(0);
+  expect(evidence?.fields.summary.writer).toBeUndefined();
+  expect(evidence?.sources).toBeUndefined();
+  const detail = { kind: "projects", id: "example", path: "projects/example", meta: {} };
+  const sources = [{ ref: "chats/example-review", state: "merged", state_at: "2026-11-04T09:03:00Z" }];
+  result = { detail: { ...detail, project_knowledge: { ...project, sources } } };
+  const get = () => hub.call<KBGetResult>("kb.get", { kind: "projects", id: "example" });
+  expect((await get()).detail.project_knowledge?.sources?.[0]?.state).toBe("merged");
+  result = { detail };
+  expect((await get()).detail.project_knowledge).toBeUndefined();
+});
 
 test("generated contributions keep typed UI and arbitrary JSON keys", async () => {
   const raw = await Bun.file(fixture).json();
