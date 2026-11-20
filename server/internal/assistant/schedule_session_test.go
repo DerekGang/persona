@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantskills"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/transcript"
@@ -463,19 +464,37 @@ func TestTaskTurnEndingInAPIErrorFailsAndRetriesOnce(t *testing.T) {
 // A run whose turn ends with no output at all (the model service answered 200 with nothing: no reply, no tool call,
 // no error) is failed, pushed and retried once, not left "ok" behind a push that says "done" (#3752).
 func TestTaskSilentTurnFailsAndRetriesOnce(t *testing.T) {
+	t.Run("plain prompt", func(t *testing.T) { testTaskSilentTurnFailsAndRetriesOnce(t, false) })
+	t.Run("selected prompt", func(t *testing.T) { testTaskSilentTurnFailsAndRetriesOnce(t, true) })
+}
+
+func testTaskSilentTurnFailsAndRetriesOnce(t *testing.T, selected bool) {
+	t.Helper()
 	n := newFakeHub().withMachine()
 	h := newStorelessService(t, n)
 	h.runRetry = 50 * time.Millisecond
 	h.turnPoll = 200 * time.Millisecond
-	n.items = []proto.Item{{ID: "u1", Role: "user", Kind: proto.KindText, Text: "⏰ 早报（定时任务）\n\n给我今天的早报"},
-		{ID: "a1", Role: "assistant", Kind: proto.KindText, Text: ""}}
-	setTasks(h, Task{ID: "p", Title: "早报", Prompt: "给我今天的早报", Repeat: repeatInterval, EveryMinutes: 30, At: time.Now().Add(-time.Minute), Enabled: true, MachineID: "server", CreatedBy: "assistant"})
+	prompt := "给我今天的早报"
+	if selected {
+		prompt = `<persona-context kind="skill" ref="review">Review</persona-context>` + "\n\n" + prompt
+		n.answerNode("skills.list", func(string, json.RawMessage) (any, error) {
+			return assistantskills.Catalog{Version: 1, Complete: true, Skills: []assistantskills.Entry{{ID: "review", Name: "Review"}}}, nil
+		})
+	}
+	setTasks(h, Task{ID: "p", Title: "早报", Prompt: prompt, PromptSelections: selected, Repeat: repeatInterval, EveryMinutes: 30,
+		At: time.Now().Add(-time.Minute), Enabled: true, MachineID: "server", CreatedBy: "assistant"})
 
 	n.setSessions("server", proto.Session{SessionID: "s1", Status: proto.StatusWorking, State: proto.StateWorking, Assistant: true,
 		Cwd: "/home/me/.persona/assistant"})
 	if _, err := runNow(t, h, "p"); err != nil {
 		t.Fatal(err)
 	}
+	sent, _ := n.lastSend(t)["text"].(string)
+	if !strings.Contains(sent, "给我今天的早报") {
+		t.Fatalf("the task prompt was not sent: %q", sent)
+	}
+	n.setItems(proto.Item{ID: "u1", Role: "user", Kind: proto.KindText, Text: sent},
+		proto.Item{ID: "a1", Role: "assistant", Kind: proto.KindText})
 	// The turn ends after the first poll saw it working (started after the run went, so the watcher's polls line up).
 	go func() {
 		time.Sleep(3 * h.turnPoll / 2)
@@ -623,6 +642,22 @@ func TestSilentRun(t *testing.T) {
 		if got := silentRun(c.items, task, c.ran); got != c.want {
 			t.Errorf("%s: silentRun = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestSilentRunWithSelectedPrompt(t *testing.T) {
+	const reference = `<persona-context kind="skill" ref="review">Review</persona-context>`
+	task := Task{Prompt: reference + "\n\nReview notes", PromptSelections: true}
+	at := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+	prompt := taskPrompt(task, at, at, time.UTC, false, false, false)
+	user := proto.Item{ID: "u1", Role: "user", Kind: proto.KindText, Text: prompt}
+	empty := proto.Item{ID: "a1", Role: "assistant", Kind: proto.KindText}
+	if !silentRun([]proto.Item{user, empty}, task, true) {
+		t.Fatal("the completed selected prompt with no response was not recognized")
+	}
+	empty.Text = "The example looks good."
+	if silentRun([]proto.Item{user, empty}, task, true) {
+		t.Fatal("a selected prompt with a response was marked silent")
 	}
 }
 

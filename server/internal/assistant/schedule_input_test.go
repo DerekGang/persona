@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -421,6 +423,143 @@ func TestTaskInputOwnerMetadataKeepsSelections(t *testing.T) {
 				t.Fatalf("metadata edit lost the owner's selections: %d %s", r.Code, r.Body.String())
 			}
 		})
+	}
+}
+
+func TestTaskInputOwnerCanPauseWithUnavailableReferences(t *testing.T) {
+	const prompt = `<persona-context kind="skill" ref="review">Review</persona-context>` + "\n\nReview notes"
+	const path = "/api/v1/assistant/tasks/job"
+	for _, unavailable := range []string{"offline", "stale"} {
+		t.Run(unavailable, func(t *testing.T) {
+			f := newFakeHub().withMachine()
+			s := newTestService(t, f)
+			if unavailable == "offline" {
+				f.devices = []Device{{ID: "server", Online: false}}
+			}
+			f.answerNode("assistant.directory", func(string, json.RawMessage) (any, error) {
+				return map[string]string{"cwd": "/work"}, nil
+			})
+			checks := 0
+			f.answerNode("assistant.content", func(string, json.RawMessage) (any, error) {
+				checks++
+				return nil, errors.New("the selected skill was removed")
+			})
+			task := Task{ID: "job", Title: "Review", Prompt: prompt, PromptSelections: true, Enabled: true,
+				Repeat: repeatDaily, Time: "12:00", Weekdays: []int{1, 3}, ExecutionMachineID: "server"}
+			for _, edit := range []struct {
+				name, path string
+				body       any
+				enabled    bool
+			}{
+				{"Web toggle", path, map[string]any{"title": task.Title, "structured_prompt": prompt, "repeat": task.Repeat, "cron": "",
+					"session_id": "", "time": task.Time, "weekdays": task.Weekdays, "enabled": false, "every_minutes": 0, "permission_mode": ""}, false},
+				{"legacy task client", path, map[string]any{"title": task.Title, "prompt": prompt, "repeat": task.Repeat,
+					"time": task.Time, "weekdays": task.Weekdays, "execution_machine_id": task.ExecutionMachineID, "enabled": false}, false},
+				{"legacy routines client", "/api/v1/assistant/routines", map[string]any{"routines": []Task{{
+					ID: task.ID, Title: task.Title, Prompt: prompt, Time: task.Time, Weekdays: task.Weekdays, Enabled: false,
+				}}}, false},
+				{"sparse pause", path, map[string]any{"enabled": false}, false},
+				{"sparse rename", path, map[string]any{"title": "Renamed"}, true},
+			} {
+				t.Run(edit.name, func(t *testing.T) {
+					setTasks(s, task)
+					before := checks
+					body, _ := json.Marshal(edit.body)
+					r := request(s, "PUT", edit.path, string(body))
+					kept, _ := taskByID(s, task.ID)
+					if r.Code != 200 || kept.Enabled != edit.enabled || kept.DisabledAt.IsZero() != edit.enabled ||
+						kept.Prompt != prompt || !kept.PromptSelections || kept.Repeat != task.Repeat || kept.Time != task.Time ||
+						!slices.Equal(kept.Weekdays, task.Weekdays) || kept.ExecutionMachineID != task.ExecutionMachineID || checks != before || f.sent() != 0 {
+						t.Fatalf("edit: %d %s; stored %+v; validation calls %d", r.Code, r.Body, kept, checks-before)
+					}
+					if edit.name == "sparse rename" && kept.Title != "Renamed" {
+						t.Fatal("rename was not saved")
+					}
+				})
+			}
+
+			for _, edit := range []struct {
+				name string
+				body map[string]any
+			}{
+				{"enable", map[string]any{"enabled": true}},
+				{"cadence", map[string]any{"enabled": false, "time": "13:00"}},
+				{"new reference", map[string]any{"enabled": false, "structured_prompt": strings.ReplaceAll(prompt, "review", "other")}},
+				{"execution context", map[string]any{"enabled": false, "cwd": "/work/new"}},
+				{"delivery", map[string]any{"enabled": false, "inbox": "every"}},
+			} {
+				t.Run(edit.name, func(t *testing.T) {
+					old := task
+					if edit.name == "enable" {
+						old.Enabled = false
+					}
+					setTasks(s, old)
+					before := checks
+					body, _ := json.Marshal(edit.body)
+					r := request(s, "PUT", path, string(body))
+					kept, _ := taskByID(s, task.ID)
+					if r.Code == 200 || !reflect.DeepEqual(kept, old) || f.sent() != 0 {
+						t.Fatalf("changed run settings with unavailable references: %d %s; stored %+v", r.Code, r.Body, kept)
+					}
+					if unavailable == "stale" && checks != before+1 {
+						t.Fatalf("the stale reference was not validated: %d %s", r.Code, r.Body)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestTaskInputPauseKeepsSourceConversation(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newTestService(t, f)
+	f.devices = []Device{{ID: "server", Online: false}}
+	setSettings(t, s, func(settings *Settings) { settings.Main = "source" })
+	task := Task{ID: "job", Title: "Review", Prompt: `<persona-context kind="skill" ref="review">Review</persona-context>` + "\n\nReview notes",
+		PromptSelections: true, Enabled: true, Repeat: repeatDaily, Time: "12:00", MachineID: "server", SessionID: "source"}
+	setTasks(s, task)
+	if !s.mayBeMain(t.Context(), task.SessionID) {
+		t.Fatal("the fixture must be unable to exclude the source from main chat")
+	}
+	r := request(s, "PUT", "/api/v1/assistant/tasks/job", `{"enabled":false}`)
+	kept, _ := taskByID(s, task.ID)
+	if r.Code != 200 || kept.Enabled || kept.SessionID != task.SessionID || !kept.PromptSelections {
+		t.Fatalf("pause changed the selected task's source: %d %s; stored %+v", r.Code, r.Body, kept)
+	}
+}
+
+func TestTaskInputOwnerEnableValidatesSavedSelections(t *testing.T) {
+	f := newFakeHub().withMachine()
+	s := newTestService(t, f)
+	const prefix = `<persona-context kind="skill" ref="review">Review</persona-context>`
+	task := Task{ID: "job", Title: "Review", Prompt: prefix + "\n\nReview notes", PromptSelections: true, Repeat: repeatDaily, Time: "12:00"}
+	setTasks(s, task)
+	f.answerNode("assistant.directory", func(string, json.RawMessage) (any, error) {
+		return map[string]string{"cwd": "/work"}, nil
+	})
+	checks := 0
+	f.answerNode("assistant.content", func(_ string, raw json.RawMessage) (any, error) {
+		checks++
+		var params map[string]any
+		if err := json.Unmarshal(raw, &params); err != nil || params["text"] != prefix {
+			t.Fatalf("unexpected validation request: %s (%v)", raw, err)
+		}
+		return map[string]bool{"valid": true}, nil
+	})
+
+	legacy := task
+	legacy.Enabled = true
+	body, _ := json.Marshal(map[string]any{"routines": []Task{legacy}})
+	r := request(s, "PUT", "/api/v1/assistant/routines", string(body))
+	kept, _ := taskByID(s, task.ID)
+	if r.Code != 400 || kept.Enabled || checks != 0 {
+		t.Fatalf("legacy bulk edit changed the approved schedule: %d %s; stored %+v", r.Code, r.Body, kept)
+	}
+
+	r = request(s, "PUT", "/api/v1/assistant/tasks/job", `{"enabled":true}`)
+	kept, _ = taskByID(s, task.ID)
+	if r.Code != 200 || !kept.Enabled || !kept.PromptSelections || kept.Prompt != task.Prompt || checks != 1 || f.sent() != 0 {
+		t.Fatalf("enable: %d %s; stored %+v; validation calls %d", r.Code, r.Body, kept, checks)
 	}
 }
 

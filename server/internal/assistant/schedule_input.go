@@ -22,8 +22,10 @@ func readStructuredTaskPrompt(raw map[string]json.RawMessage) error {
 	if !rich {
 		return nil
 	}
-	if _, plain := raw["prompt"]; plain {
-		return errors.New("specify only one task prompt")
+	for field := range raw {
+		if strings.EqualFold(field, "prompt") {
+			return errors.New("specify only one task prompt")
+		}
 	}
 	var prompt string
 	if err := json.Unmarshal(content, &prompt); err != nil {
@@ -255,6 +257,13 @@ func (s *Service) taskInputRoutes() {
 		}
 		apierr.WriteJSON(w, result)
 	})
+}
+
+func (t Task) promptParts() (prefix, body string) {
+	if !t.PromptSelections {
+		return "", t.Prompt
+	}
+	return taskPromptBody(t.Prompt)
 }
 
 // Keep the original envelope before the schedule header, so the shared selection parsers see it.

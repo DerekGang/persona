@@ -22,6 +22,7 @@ const failedText = /读不到运行记录：.*run history unavailable/;
 
 let runsReply: () => Response | Promise<Response>;
 let tasksReply: () => Response;
+let taskUpdate: ((init?: RequestInit) => Response) | undefined;
 let providers: unknown[];
 let catalogReplies: Record<string, () => Response | Promise<Response>>;
 // the hub is unreachable: every request, a change or a read, answers 502
@@ -35,14 +36,16 @@ beforeEach(() => {
   down = false;
   runsReply = failure;
   tasksReply = () => json({ tasks: [task] });
+  taskUpdate = undefined;
   providers = [];
   catalogReplies = {};
   forgetProviderNames();
-  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     calls.push(path);
     if (down) return Promise.resolve(json({ error: "hub unreachable" }, 502));
     if (path === "/api/v1/assistant/tasks") return Promise.resolve(tasksReply());
+    if (path === `/api/v1/assistant/tasks/${task.id}` && taskUpdate) return Promise.resolve(taskUpdate(init));
     if (path === "/api/v1/assistant/runs") return Promise.resolve(runsReply());
     if (path === "/api/v1/model-config") return Promise.resolve(json({ providers }));
     const machine = /^\/api\/v1\/machines\/([^/]+)\/launchers/.exec(path)?.[1];
@@ -162,6 +165,30 @@ describe("routine run history loading", () => {
     expect(history().textContent).not.toMatch(failedText);
     expect(retry()).toBeUndefined();
   });
+});
+
+it("pauses a routine without changing its saved selections or execution settings", async () => {
+  const prompt = '<persona-context kind="skill" ref="review">Review</persona-context>\n\nReview notes';
+  const selected: Task = { ...task, prompt, prompt_selections: true, execution_machine_id: "box", cwd: "/work" };
+  tasksReply = () => json({ tasks: [selected] });
+  runsReply = () => json({ runs: [] });
+  let update: RequestInit | undefined;
+  taskUpdate = (init) => {
+    update = init;
+    return json({ task: { ...selected, enabled: false } });
+  };
+
+  await render();
+  const toggle = host.querySelector<HTMLButtonElement>('[role="switch"]')!;
+  await act(async () => toggle.click());
+  await flush();
+
+  expect(update?.method).toBe("PUT");
+  expect(JSON.parse(String(update?.body))).toEqual({
+    title: task.title, structured_prompt: prompt, repeat: "daily", cron: "", session_id: "",
+    time: task.time, weekdays: [], enabled: false, every_minutes: 0, permission_mode: "",
+  });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
 });
 
 describe("a change the hub refuses while the list cannot be read again", () => {

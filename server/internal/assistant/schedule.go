@@ -2559,7 +2559,8 @@ func silentRun(items []proto.Item, t Task, ran bool) bool {
 	if !silentTurn(items) {
 		return false
 	}
-	if ask, _ := turnExchange(items); !runAsk(ask, t.Prompt) {
+	_, body := t.promptParts()
+	if ask, _ := turnExchange(items); !runAsk(ask, body) {
 		return false
 	}
 	if ran {
@@ -2790,10 +2791,7 @@ func (s *Service) forgetConversation(ctx context.Context, id string) (Task, bool
 // task's own conversation, which has had all that (and the knowledge-base hint) already; it is told the earlier
 // runs are above instead. The task's prompt is always there: it may have been edited, or compacted away.
 func taskPrompt(t Task, due, now time.Time, loc *time.Location, manual, kb, continued bool) string {
-	prefix, body := "", t.Prompt
-	if t.PromptSelections {
-		prefix, body = taskPromptBody(t.Prompt)
-	}
+	prefix, body := t.promptParts()
 	r := prompts.TaskRun{Label: t.label(), TodoID: t.TodoID, Once: t.Repeat == repeatOnce, Interval: t.Repeat == repeatInterval, Due: due.In(loc),
 		Prompt: body, KBHint: kb && t.calendar(), KnowledgeDir: t.kbDir, Continued: continued, PushAsked: t.pushesOnlyAsked(), InboxWorthy: t.inboxWorthy(), InboxEvery: t.inboxEvery(), Facts: t.factsText, State: taskStatePrompt(t)}
 	if r.Interval {
@@ -2919,6 +2917,28 @@ func keepLegacyCronRule(saved Task, draft *Task, hasCron bool) {
 		draft.Repeat, draft.Cron, draft.At = saved.Repeat, saved.Cron, saved.At
 		draft.Time, draft.Weekdays, draft.EveryMinutes = "", nil, 0
 	}
+}
+
+// decodeTaskEdit fills sparse requests from the editable fields of the saved task.
+func decodeTaskEdit(raw map[string]json.RawMessage, old Task) (Task, error) {
+	fields := map[string]any{
+		"title": old.Title, "prompt": old.Prompt, "repeat": old.Repeat, "enabled": old.Enabled,
+		"at": old.At, "time": old.Time, "weekdays": old.Weekdays, "every_minutes": old.EveryMinutes,
+		"cron": old.Cron, "permission_mode": old.PermissionMode, "session_id": old.SessionID,
+	}
+	for name := range raw {
+		delete(fields, strings.ToLower(name))
+	}
+	for name, value := range raw {
+		fields[name] = value
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return Task{}, err
+	}
+	var in Task
+	err = json.Unmarshal(encoded, &in)
+	return in, err
 }
 
 // editTask applies what the app changed (the hub's own fields and where runs go are kept; SessionID can only be
@@ -3095,20 +3115,10 @@ func (s *Service) scheduleRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
-		var in Task
-		encoded, _ := json.Marshal(raw)
-		if err := json.Unmarshal(encoded, &in); err != nil {
-			apierr.Write(w, 400, err)
+		in, err := decodeTaskEdit(raw, old)
+		if err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
 			return
-		}
-		if in.Prompt == "" {
-			in.Prompt = old.Prompt
-			for field := range raw {
-				if strings.EqualFold(field, "prompt") {
-					in.Prompt = "" // an explicit empty prompt is still invalid
-					break
-				}
-			}
 		}
 		_, hasCron := raw["cron"]
 		keepLegacyCronRule(old, &in, hasCron)
@@ -3151,20 +3161,26 @@ func (s *Service) scheduleRoutes() {
 		}
 		applyUntil(&t, end, hasUntil, clearUntil)
 		dropStaleUntil(&t, hasUntil, now)
-		isolateScheduledConversation(&t, mayBeMain)
 		if err := checkTask(&t, now); err != nil {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
 		rearm(old, &t, now)
+		// A metadata edit keeps the approved source even when the hub
+		// cannot currently tell whether that conversation is the main chat.
+		if !t.PromptSelections || taskInputEditNeedsValidation(old, t) {
+			isolateScheduledConversation(&t, mayBeMain)
+		}
 		edit, err := s.prepareTaskExecutionEdit(r.Context(), old, &t, raw)
 		if err != nil {
 			writeTaskExecutionError(w, err)
 			return
 		}
-		if err := s.validateTaskInput(r.Context(), t, edit.record); err != nil {
-			apierr.Call(w, err)
-			return
+		if t.PromptSelections && (edit.record != nil || taskInputEditNeedsValidation(old, t)) {
+			if err := s.validateTaskInput(r.Context(), t, edit.record); err != nil {
+				apierr.Call(w, err)
+				return
+			}
 		}
 		if err := s.commitTaskExecutionEdit(r.Context(), &old, t, edit); err != nil {
 			writeTaskExecutionCommitError(w, err)
@@ -3252,6 +3268,13 @@ func (s *Service) scheduleRoutes() {
 				rearm(prev, &t, now)
 			} else {
 				rearm(Task{}, &t, now)
+			}
+			// The legacy batch editor can preserve selections for metadata and
+			// pauses. Changes to an approved run go through the task endpoint.
+			if t.PromptSelections && taskInputEditNeedsValidation(prev, t) {
+				sc.mu.Unlock()
+				apierr.Write(w, http.StatusBadRequest, errTaskSelectionsOwner)
+				return
 			}
 			out = append(out, t)
 		}
