@@ -42,8 +42,9 @@ func (d *DB) PendingProjectReviewOwners(ctx context.Context) ([]ProjectReviewOwn
 	return out, rows.Err()
 }
 
-func (d *DB) AckProjectReviewOwner(ctx context.Context, id string) error {
-	_, err := d.pool.Exec(ctx, `DELETE FROM project_review_owner_relay WHERE message_id=$1`, id)
+func (d *DB) AckProjectReviewOwner(ctx context.Context, p ProjectReviewOwnerRelay) error {
+	_, err := d.pool.Exec(ctx, `DELETE FROM project_review_owner_relay WHERE machine=$1 AND session=$2 AND message_id=$3`,
+		p.Machine, p.Session, p.MessageID)
 	return err
 }
 

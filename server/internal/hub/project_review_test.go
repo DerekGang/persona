@@ -205,6 +205,29 @@ func TestProjectReviewRelayFailureKeepsSendReceipt(t *testing.T) {
 	}
 }
 
+// appInputsDownStore fails to save the manager's App-input switch, as a database blip during a hello would.
+type appInputsDownStore struct{ *db.DB }
+
+func (appInputsDownStore) SetProjectReviewAppInputs(context.Context, string, bool) error {
+	return fmt.Errorf("database unavailable")
+}
+
+// The App-input switch is optional: failing to save it does not cost the manager its connection.
+func TestProjectReviewAppInputsWriteFailureKeepsManager(t *testing.T) {
+	h, server, store := newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"box","session_id":"review"},"app_inputs":true,"projects":["project-one"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h.store = appInputsDownStore{store}
+	dialAssistantWithStore(t, h, server.URL, false, manager, func(o *assistant.BusOptions) { o.ConfigFile, o.Outbox = config, manager })
+	if !h.managerCan(assistantwire.AssistantID, assistantwire.CapabilityProjectReview) {
+		t.Fatal("the manager was taken without its capabilities")
+	}
+}
+
 func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
 	ctx := context.Background()
 	h, server, hubDB := newBusHub(t)

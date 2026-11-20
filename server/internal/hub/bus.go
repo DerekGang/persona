@@ -405,8 +405,10 @@ func (h *Hub) managerHello(ctx context.Context, c *busConn, params json.RawMessa
 		return nil, err
 	}
 	if p.ProjectReviewAppInputs != nil {
+		// An optional feature: its write failing must not hang up the manager (refuse says "wrong identity", which a
+		// client may take as final). The switch saved by an earlier hello stays in place, and the next hello writes again.
 		if err := h.setProjectReviewAppInputs(ctx, c.ident.ID, *p.ProjectReviewAppInputs); err != nil {
-			return c.refuse(h, err)
+			h.logf("bus: [%s] project review App inputs not saved: %v", c.ident.ID, err)
 		}
 	}
 	if c.ident.Role == bus.RoleManager && !slices.Contains(p.Capabilities, assistantwire.CapabilityConfigOwn) {

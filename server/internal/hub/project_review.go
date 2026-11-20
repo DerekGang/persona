@@ -17,7 +17,7 @@ type projectReviewOwnerStore interface {
 	RecordProjectReviewOwnerInput(context.Context, db.ProjectReviewOwnerRelay) error
 	SettleProjectReviewOwner(context.Context, db.ProjectReviewOwnerRelay) error
 	PendingProjectReviewOwners(context.Context) ([]db.ProjectReviewOwnerRelay, error)
-	AckProjectReviewOwner(context.Context, string) error
+	AckProjectReviewOwner(context.Context, db.ProjectReviewOwnerRelay) error
 }
 
 // viaMarked: the app's "via" says it sent the message through Siri, Shortcuts, an App Intent or the share sheet. Such
@@ -109,7 +109,7 @@ func (h *Hub) deliverProjectReviewOwners(ctx context.Context) error {
 				continue
 			}
 		}
-		if err := store.AckProjectReviewOwner(ctx, row.MessageID); err != nil {
+		if err := store.AckProjectReviewOwner(ctx, row); err != nil {
 			return err
 		}
 	}

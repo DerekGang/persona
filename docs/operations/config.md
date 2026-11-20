@@ -564,7 +564,8 @@ later assignments and replacements.
 
 App input uses Persona's authenticated full-device paths for starts and messages. It covers the
 first prompt of a new assistant conversation or Agent, and accepted messages with a stable client
-ID, including in the main chat. A manager that enabled App input can receive pending hub relays
+ID, including in the main chat. Any non-empty client ID counts; one that is not a plain reference
+(letters, digits and `_.:/@-`, up to 256 characters) is named in the event by its hash. A manager that enabled App input can receive pending hub relays
 after reconnecting. The optional Feishu input uses the built-in bot and requires the paired owner
 in an approved chat. It produces an unscoped review notification. Generic extensions, terminal
 input, guest and health conversations, meeting turns, and scheduled or internal sends are outside

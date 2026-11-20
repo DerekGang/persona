@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -33,6 +35,17 @@ type projectReviewBinding struct {
 }
 
 var projectReviewRef = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.:/@-]{0,255}$`)
+
+// projectReviewOwnerRef names an App message in the review event. The send API takes any non-empty client_msg_id;
+// one that is not a plain reference is named by its hash, so it is still reviewed once and its text never reaches
+// the review prompt as it is.
+func projectReviewOwnerRef(id string) string {
+	if projectReviewRef.MatchString(id) {
+		return id
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "app-message:" + hex.EncodeToString(sum[:16])
+}
 
 func (c projectReviewConfig) validate() error {
 	if !c.Enabled {
@@ -102,7 +115,7 @@ func (p *projectReview) record(ctx context.Context, b projectReviewBinding, kind
 
 func (s *Service) projectReviewOwnerInput(ctx context.Context, in assistantwire.ProjectReviewOwnerInput) error {
 	p := s.projectReview
-	if p == nil || !p.AppInputs || in.SessionRef == p.Target || !projectReviewRef.MatchString(in.MessageID) {
+	if p == nil || !p.AppInputs || in.SessionRef == p.Target || in.MessageID == "" {
 		return nil
 	}
 	_, guest, err := s.guestOf(ctx, in.MachineID, in.SessionID)
@@ -132,7 +145,7 @@ func (s *Service) projectReviewOwnerInput(ctx context.Context, in assistantwire.
 			}
 		}
 	}
-	return p.record(ctx, b, "owner_input", in.MessageID, "", time.Time{})
+	return p.record(ctx, b, "owner_input", projectReviewOwnerRef(in.MessageID), "", time.Time{})
 }
 
 func (s *Service) projectReviewTurn(ctx context.Context, task Todo, row proto.Session, end turnClose, state string) {

@@ -35,7 +35,10 @@ func (d *DB) RecordProjectReview(ctx context.Context, id, target, binding string
 					return err
 				}
 			case "working", "working_after_reconnect":
-				if older || same || phase == "working_after_reconnect" && blocked == "stalled" {
+				// Postgres compares at as it stores it (microseconds), so a replayed row is the same, not newer.
+				// A newer row is work, also when it is the first after a reconnect and the episode is a stall:
+				// the stall is keyed by the same progress time.
+				if older || same {
 					return nil
 				}
 				phase = "working"

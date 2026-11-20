@@ -373,14 +373,21 @@ func TestProjectReviewOwnerInputAssignmentEpoch(t *testing.T) {
 		{"before-link", linked.Add(-time.Second), false},
 		{"first-agent:another-session", linked.Add(-time.Second), false},
 		{"no-time", time.Time{}, false},
+		// The send API takes any non-empty client_msg_id: these are reviewed under a hash of the id.
+		{"draft #3 + more", linked, true},
+		{strings.Repeat("x", 300), linked, true},
 	}
 	for _, c := range cases {
 		if err := s.projectReviewOwnerInput(ctx, assistantwire.ProjectReviewOwnerInput{SessionRef: reviewSource, MessageID: c.id, At: c.at}); err != nil {
 			t.Fatal(err)
 		}
 		next, ok, err := store.NextProjectReview(ctx, string(target))
-		if err != nil || !ok || !strings.Contains(string(next.Event), c.id) {
+		ref := projectReviewOwnerRef(c.id)
+		if err != nil || !ok || !strings.Contains(string(next.Event), `"reference": "`+ref+`"`) {
 			t.Fatalf("%s: not queued: %s %v %v", c.id, next.Event, ok, err)
+		}
+		if ref != c.id && (!strings.HasPrefix(ref, "app-message:") || strings.Contains(string(next.Event), c.id)) {
+			t.Errorf("%.40s: the raw id reached the event: %s", c.id, next.Event)
 		}
 		if got := strings.Contains(string(next.Event), alpha.ID); got != c.scoped {
 			t.Errorf("%s: scoped=%v, want %v: %s", c.id, got, c.scoped, next.Event)
