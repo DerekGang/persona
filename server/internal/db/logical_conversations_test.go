@@ -219,11 +219,17 @@ func TestLogicalConversationOverflowAndInteractionFence(t *testing.T) {
 	if err := d.PutConversationInteraction(ctx, "approval", "m", "s", "m", "s", 1); err != nil {
 		t.Fatal(err)
 	}
+	if err := d.InsertInteraction(ctx, proto.Interaction{ID: "approval", MachineID: "m", SessionID: "s", Kind: proto.IxPermission, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	op := ConversationSwitch{OperationID: "op", ExpectedEpoch: 1, SourceSegment: "one", Request: json.RawMessage(`{}`)}
 	if err := d.BeginConversationSwitch(ctx, "m", "s", op); !errors.Is(err, ErrConversationSwitchBusy) {
 		t.Fatalf("pending approval passed switch: %v", err)
 	}
 	if err := d.FinishConversationInteraction(ctx, "approval"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishInteraction(ctx, "approval", "cancelled", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.BeginConversationSwitch(ctx, "m", "s", op); err != nil {
@@ -280,15 +286,21 @@ func TestLogicalInteractionReservationSurvivesRestartWithoutBlockingForever(t *t
 	if err := d.AdoptConversation(ctx, "m", "s", "one", "claude", "h"); err != nil {
 		t.Fatal(err)
 	}
-	ix := proto.Interaction{ID: "reserved-card", MachineID: "physical", SessionID: "private", Kind: "permission", CreatedAt: time.Now()}
+	ix := proto.Interaction{ID: "reserved-card", MachineID: "physical", SessionID: "private", Kind: "permission", CreatedAt: time.Now(), Summary: "raw title", NoExpiry: true}
 	if err := d.WithConversationEpoch(ctx, "m", "s", 1, func(*LogicalConversation) error {
 		return d.ReserveConversationInteraction(ctx, ix, "m", "s", "m", "s", 1)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := d.InteractionRecord(ctx, ix.ID)
-	if err != nil || stored == nil || stored.Interaction.MachineID != "m" || stored.Interaction.SessionID != "s" {
-		t.Fatalf("atomic public card: %+v %v", stored, err)
+	if err != nil || stored != nil {
+		t.Fatalf("reservation persisted unvalidated content: %+v %v", stored, err)
+	}
+	// The ordinary sanitized publication is durable; releasing only its request
+	// reservation must not clear the actual pending approval.
+	ix.MachineID, ix.SessionID, ix.Summary, ix.NoExpiry = "m", "s", "sanitized card", false
+	if err = d.InsertInteraction(ctx, ix); err != nil {
+		t.Fatal(err)
 	}
 	op := ConversationSwitch{OperationID: "switch", ExpectedEpoch: 1, SourceSegment: "one", Request: json.RawMessage(`{}`)}
 	if err = d.BeginConversationSwitch(ctx, "m", "s", op); !errors.Is(err, ErrConversationSwitchBusy) {
@@ -312,5 +324,27 @@ func TestLogicalInteractionReservationSurvivesRestartWithoutBlockingForever(t *t
 	}
 	if err = restarted.BeginConversationSwitch(ctx, "m", "s", op); err != nil {
 		t.Fatalf("cancelled restart card blocked switch: %v", err)
+	}
+}
+
+func TestLogicalUnpublishedApprovalDoesNotRemainPending(t *testing.T) {
+	d, _ := historyDB(t)
+	ctx := t.Context()
+	if err := d.AdoptConversation(ctx, "m", "s", "one", "claude", "h"); err != nil {
+		t.Fatal(err)
+	}
+	ix := proto.Interaction{ID: "unpublished", MachineID: "m", SessionID: "s", Kind: proto.IxPermission, CreatedAt: time.Now(), Summary: "untrusted", OwnerProposal: true, NoExpiry: true}
+	if err := d.ReserveConversationInteraction(ctx, ix, "m", "s", "m", "s", 1); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := d.InteractionRecord(ctx, ix.ID)
+	if err != nil || stored != nil {
+		t.Fatalf("raw node capabilities persisted: %+v %v", stored, err)
+	}
+	if err = d.FinishConversationInteraction(ctx, ix.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = d.BeginConversationSwitch(ctx, "m", "s", ConversationSwitch{OperationID: "switch", ExpectedEpoch: 1, SourceSegment: "one", Request: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("unpublished reservation blocked switching: %v", err)
 	}
 }

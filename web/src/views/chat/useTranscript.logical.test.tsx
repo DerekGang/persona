@@ -44,7 +44,7 @@ beforeEach(async () => {
   await act(async () => {});
 });
 afterEach(() => { act(() => root.unmount()); vi.useRealTimers(); });
-const push = (event: ItemsEvent) => act(() => listener!.items!(event));
+const push = (event: Omit<ItemsEvent, "machine_id" | "session_id">) => act(() => listener!.items!({ machine_id: "public-machine", session_id: "logical-conversation", ...event }));
 
 it("keeps first IDs and continuous integer coverage across a later engine, then reloads a real rewrite", async () => {
   expect(transcript.items.map(item => item.id)).toEqual(["line1#0"]);

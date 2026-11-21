@@ -97,6 +97,9 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 		defer lease.Store(false)
 		verified := logicalAuthenticated{rootMachine, rootSession, machine, session, current.Epoch, lease}
 		if method == "interaction.create" {
+			if reservedCard(ix) {
+				return errReservedCard
+			}
 			if current.Switch != nil && current.Switch.Phase != "active" {
 				return logicalRefusal(ctx, "busy")
 			}
@@ -143,6 +146,23 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 	})
 	if err == nil && waits && invoke != nil {
 		err = invoke()
+		if err == nil && method == "interaction.create" {
+			// Automatic grants need the same final authority check as UI answers.
+			// A switch may have started while the request prepared its card.
+			err = st.WithConversationEpoch(ctx, rootMachine, rootSession, c.Epoch, func(current *db.LogicalConversation) error {
+				active, ok := current.Active()
+				if !ok || active.MachineID != machine || active.SessionID != session {
+					return logicalRefusal(ctx, "retired")
+				}
+				if current.Switch != nil && current.Switch.Phase != "active" {
+					return logicalRefusal(ctx, "busy")
+				}
+				return nil
+			})
+			if err != nil {
+				out = nil
+			}
+		}
 	}
 	if method == "interaction.create" {
 		if routes, ok := s.store().(logicalInteractionStore); ok {
@@ -188,4 +208,43 @@ func (s *Service) NodeAnswer(ctx context.Context, machine, method string, params
 
 func (s *Service) NodeRequest(ctx context.Context, machine, method string, params json.RawMessage) (any, bool, error) {
 	return s.logicalNodeRequest(ctx, machine, method, params, s.nodeRequest)
+}
+
+// Publication occurs after the ordinary card pipeline has validated and cleaned
+// node input, expiry, Always policy and privacy. A route-only reservation is not
+// an approval: if a switch wins before publication, no actionable card appears.
+func (s *Service) logicalPublishInteraction(ctx context.Context, ix proto.Interaction) (bool, error) {
+	routes, ok := s.store().(logicalInteractionStore)
+	if !ok {
+		return false, nil
+	}
+	route, err := routes.ConversationInteraction(ctx, ix.ID)
+	if err != nil || route == nil {
+		return false, err
+	}
+	st := s.store().(logicalConversationStore)
+	cards, ok := s.store().(interface {
+		InteractionOutcome(context.Context, string) (string, *proto.Resolution, error)
+		InsertInteraction(context.Context, proto.Interaction) error
+	})
+	if !ok {
+		return false, logicalRefusal(ctx, "unavailable")
+	}
+	fresh := false
+	err = st.WithConversationEpoch(ctx, route.MachineID, route.SessionID, route.Epoch, func(c *db.LogicalConversation) error {
+		a, ok := c.Active()
+		if !ok || a.MachineID != route.PhysicalMachine || a.SessionID != route.PhysicalSession || ix.MachineID != route.MachineID || ix.SessionID != route.SessionID {
+			return logicalRefusal(ctx, "retired")
+		}
+		if c.Switch != nil && c.Switch.Phase != "active" {
+			return logicalRefusal(ctx, "busy")
+		}
+		status, _, err := cards.InteractionOutcome(ctx, ix.ID)
+		if err != nil {
+			return err
+		}
+		fresh = status == ""
+		return cards.InsertInteraction(ctx, ix)
+	})
+	return fresh, err
 }

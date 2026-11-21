@@ -330,8 +330,12 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 	if !ownerActionProposal(ix) {
 		ix.NoExpiry = false
 	}
+	freshLogical, err := s.logicalPublishInteraction(ctx, ix)
+	if err != nil {
+		return proto.Resolution{}, err
+	}
 	again := false
-	if ix.Resumable {
+	if ix.Resumable && !freshLogical {
 		restartPrepared := false
 		s.fleet.mu.Lock()
 		if p := s.fleet.interactions[ix.ID]; p != nil && p.local == nil {

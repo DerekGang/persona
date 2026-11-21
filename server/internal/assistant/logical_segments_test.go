@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
@@ -497,6 +498,7 @@ func TestLogicalRootTransportSurvivesItsPhysicalMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := devicewire.States{Machines: []devicewire.State{{Machine: proto.Machine{ID: "server"}, Connected: true}}}
+	s.logicalChanged() // direct DB writes above stand in for a completed manager activation
 	projected := s.logicalProjectStates(raw)
 	if len(projected.Machines) != 2 || projected.Machines[1].Machine.ID != "removed-source" || projected.Machines[1].TransportFor != "server" || !projected.Machines[1].Connected {
 		t.Fatalf("root transport: %+v", projected)
@@ -644,5 +646,37 @@ func TestLogicalPhysicalDeliveryRequiresPositiveRefusalEvidence(t *testing.T) {
 		if got := logicalNotTaken(tc.err); got != tc.refused {
 			t.Fatalf("%v: refused=%v want=%v", tc.err, got, tc.refused)
 		}
+	}
+}
+
+func TestLogicalApprovalPublicationIsSanitizedAndEpochFenced(t *testing.T) {
+	s, _, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	// A reservation before a pending switch is inert. No raw card is published.
+	ix := proto.Interaction{ID: "late-source-card", MachineID: "server", SessionID: "side-chat", Kind: proto.IxPermission}
+	if err := d.ReserveConversationInteraction(ctx, ix, "server", "side-chat", "server", "side-chat", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.logicalPublishInteraction(ctx, ix); err == nil {
+		t.Fatal("source card appeared after switch began")
+	}
+	if row, err := d.InteractionRecord(ctx, ix.ID); err != nil || row != nil {
+		t.Fatalf("rejected publication persisted: %+v %v", row, err)
+	}
+	activatePair(t, d)
+	ix.ID, ix.Summary, ix.CreatedAt = "active-resumable-card", "sanitized summary", time.Now()
+	ix.Resumable = true
+	if err := d.ReserveConversationInteraction(ctx, ix, "server", "side-chat", "server", "target-chat", 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, wantFresh := range []bool{true, false} {
+		fresh, err := s.logicalPublishInteraction(ctx, ix)
+		if err != nil || fresh != wantFresh {
+			t.Fatalf("fresh publication=%v want=%v err=%v", fresh, wantFresh, err)
+		}
+	}
+	stored, err := d.InteractionRecord(ctx, ix.ID)
+	if err != nil || stored == nil || stored.Interaction.Summary != "sanitized summary" {
+		t.Fatalf("published card: %+v %v", stored, err)
 	}
 }
