@@ -1,4 +1,4 @@
-Send the user's request to an Agent. Busy Agents may queue it. To keep context, use resume and resume_why after idle, task completion or restart stops. For user or unknown stops, use the owner's Resume. Supervise via task unless the Agent already has your open task. An almost full Agent compacts first. Use agent_start for unrelated work and ask_user if unsure. A new branch starts on first send. Only /exit or /quit stops the Agent and keeps its tab. The owner controls closing another conversation's Agent.
+Send the user's request. Busy Agents may queue it. Use resume and resume_why to keep context after a recorded non-user stop, including quota/capacity errors. For user, exit or unknown stops, use the owner's Resume. Supervise via task unless the Agent has your open task. Almost full Agents compact first. Use agent_start for unrelated work, ask_user if unsure. An unused branch starts on first send. Only /exit or /quit stops an Agent and keeps its tab. Only the owner can close another chat's Agent.
 
 For dialog_open, retry with dismiss_notice only when Enter alone closes the notice. For permissions and pickers, tell the user or use interaction_answer.
 
