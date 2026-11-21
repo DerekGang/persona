@@ -125,6 +125,10 @@ func TestMain(m *testing.M) {
 		serveQuotaExtensionForTest()
 		return
 	}
+	if os.Getenv("PERSONA_TEST_PLUGIN") == "usage" {
+		serveUsageExtensionForTest()
+		return
+	}
 	if os.Getenv("PERSONA_TEST_PLUGIN") == "messaging" {
 		serveMessagingExtensionForTest()
 		return

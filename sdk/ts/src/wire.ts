@@ -322,6 +322,7 @@ export interface Contributes {
   browser?: NamedItem[];
   iphone?: NamedItem[];
   quota?: QuotaItem[];
+  usage?: UsageItem[];
   providers?: ProviderItem[];
   api?: APIItem[];
   assistant?: AssistantItem[];
@@ -700,6 +701,12 @@ export interface NamedItem {
 }
 
 export interface QuotaItem {
+  id: string;
+  name: string;
+  hosts?: string[];
+}
+
+export interface UsageItem {
   id: string;
   name: string;
   hosts?: string[];
