@@ -394,6 +394,7 @@ export function TaskEditor({
               <SectionTitle>{t("assistant-taskeditor.section_push")}</SectionTitle>
               <Segmented<Push>
                 label={t("assistant-taskeditor.section_push")}
+                wrap
                 value={draft.push ?? ""}
                 onChange={(p) => edit((d) => withPush(d, p))}
                 options={[
@@ -412,6 +413,7 @@ export function TaskEditor({
               <SectionTitle>{t("assistant-taskeditor.section_inbox")}</SectionTitle>
               <Segmented<InboxMode>
                 label={t("assistant-taskeditor.section_inbox")}
+                wrap
                 value={draft.inbox ?? ""}
                 onChange={(inbox) => set({ inbox })}
                 options={[
