@@ -124,7 +124,10 @@ Truthfulness: time updates on every push (`AgentTime` lands with `show()` and is
 - The list's derived data is an immutable `AgentListProjection` (#1231): filters and counts, pins, the Repository/Project tree,
   repository headers, quiet flags and those sections' row entries, built once per published key (`AgentListProjectionCache.Key`:
   the feed's structural `revision`, every hub group's link identity, address and token, and small settings such as grouping,
-  filter, search, pins, mutes and the held row). An unchanged retained page reads the published value without touching the
+  filter, search, pins, mutes, the held row and the rows held after they were read during the visit, `heldSeen`, #12514).
+  The rows the list shows as Unread or Just finished come out of the projection (`needsSeen`) into
+  `AppModel.seenThisVisit`, which writes only when a row is added or moves, so a page drawn again with the same rows
+  derives nothing new. An unchanged retained page reads the published value without touching the
   inventory. The first value, settings changes, critical landings, appended pages and credential changes are derived at once
   on the main actor. Ordinary structural revisions, including what a released hold lands, are derived off the main actor from
   a value snapshot by one serial worker. One derivation runs at a time and only the newest request waits behind it, so a

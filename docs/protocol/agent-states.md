@@ -248,6 +248,15 @@ List order (the same for all three groupings): Needs you → Unread → Awaiting
   or still isn't recorded after 10 minutes.
 - Rule: herdr `done` and `seen_at` earlier than the session's last update time (the transcript's modification time, i.e. when the turn ended) → `unread`, otherwise `idle`.
   So if it does another turn after you looked, it becomes Unread again.
+- Where a seen row is listed (#12514, iPhone and iPad): the state is Seen at once, but the Agents list keeps every row it
+  showed as Unread or Just finished during the visit in that place once seen, whether it was opened or marked there or
+  seen elsewhere (another device, herdr, the Codex app), drawn as Seen and left out of the section's count, until the
+  list is refreshed: pull to refresh, the section's **Clear Seen**, a quick filter chosen, another computer or hub, a
+  new launch. **Mark All as Seen** lets its rows go at once. This is the device's own display; the hub, the counts, the
+  badge and the Live Activity only know the state. Settings › Appearance & Display › Agents List Layout › Seen Agents
+  has the behavior before it, **Leave When the Chat Closes**: only the open row keeps its place (`AppModel.heldInList`,
+  #2213), and leaving its chat moves it to Seen. The web (#12585), Android (#12584) and HarmonyOS (#12583) keep that
+  behavior until then (`docs/design/DESIGN_SYSTEM.md` 3.4, "Rows read during a visit").
 
 ### Ordering
 

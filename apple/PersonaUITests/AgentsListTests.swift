@@ -612,4 +612,99 @@ final class AgentsListTests: XCTestCase {
         header("已看").tap()
         wait("已看 folds again") { self.header("已看").label.contains("已折叠") }
     }
+
+    // MARK: Rows read during a visit (#12514)
+
+    /// The titles of the first `n` agent rows under a section's header, top to bottom.
+    private func rowTitles(under section: String, _ n: Int) -> [String] {
+        let top = header(section).frame.maxY
+        return app.buttons.matching(identifier: "agents.row").allElementsBoundByIndex
+            .filter { $0.exists && $0.frame.minY > top }
+            .sorted { $0.frame.minY < $1.frame.minY }
+            .prefix(n).map { $0.staticTexts.firstMatch.label }
+    }
+
+    private func readAndGoBack(_ title: String) {
+        app.buttons.matching(NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "agents.row", title)).firstMatch.tap()
+        let back = see(app.buttons["返回"].firstMatch, "the chat of \(title)")
+        sleep(1) // the push has to finish first
+        back.tap()
+    }
+
+    /// A long pull from the list's top (the first pull can only bring the search field down).
+    private func pullToRefresh(until done: () -> Bool) {
+        let list = app.collectionViews.firstMatch
+        for _ in 0..<3 where !done() {
+            list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+                .press(forDuration: 0.05, thenDragTo: list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+            sleep(2)
+        }
+    }
+
+    /// By Status on one computer (MacBook: 1 needs you, 6 unread): the list as `testReadRowsStayInUnreadUntilRefreshed`
+    /// and the setting's test start it.
+    private func launchByStatusOnTheMacBook() {
+        app = XCUIApplication()
+        let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
+        app.launchArguments = ["-pairURL", pair, "-app.tab", "chats", "-dev.openChat", "", "-tab", "dev", "-openAgentsFresh", "YES",
+                               "-dev.grouping", "state", "-dev.machineFilter", "macbook"]
+        app.launchPinned()
+        see(filter("all"), "the quick filters", timeout: 15)
+        reach(header("完成未看"), "完成未看's header")
+    }
+
+    /// By Status: rows read from Unread one after another stay in Unread, drawn as Seen, and leave its count, so the
+    /// next one is still right below; the section's Clear Seen lets them go, and so does a pull to refresh. A notice says
+    /// so once, with the way to the setting.
+    @MainActor func testReadRowsStayInUnreadUntilRefreshed() throws {
+        launchByStatusOnTheMacBook()
+        let first = rowTitles(under: "完成未看", 3)
+        XCTAssertEqual(first.count, 3, "three unread rows to read")
+        XCTAssertTrue(header("完成未看").label.contains("6 个"), header("完成未看").label)
+        shot("agents-state-before-reading")
+
+        readAndGoBack(first[0])
+        readAndGoBack(first[1])
+        wait("the hub hears of both (\(seen()))") { seen().count == 2 }
+        XCTAssertEqual(rowTitles(under: "完成未看", 3), first, "the read rows keep their places, the next one below them")
+        wait("完成未看 counts what is still unread (\(header("完成未看").label))") { self.header("完成未看").label.contains("4 个") }
+        let clear = see(app.buttons["agents.clearSeen"], "完成未看's Clear Seen")
+        XCTAssertEqual(clear.label, "清理已看（2）")
+        see(app.descendants(matching: .any)["agents.seenNotice"].firstMatch, "the notice that read rows stay")
+        shot("agents-state-read-rows-held")
+
+        clear.tap()
+        gone(app.buttons["agents.clearSeen"], "Clear Seen leaves with the rows it let go")
+        wait("the read rows left 完成未看") { self.rowTitles(under: "完成未看", 1) == [first[2]] }
+        XCTAssertTrue(header("完成未看").label.contains("4 个"), header("完成未看").label)
+
+        // A pull to refresh lets go of a read row too.
+        readAndGoBack(first[2])
+        see(app.buttons["agents.clearSeen"], "Clear Seen for the third")
+        XCTAssertEqual(rowTitles(under: "完成未看", 1), [first[2]], "the third keeps its place")
+        pullToRefresh { !app.buttons["agents.clearSeen"].exists }
+        gone(app.buttons["agents.clearSeen"], "a pull to refresh lets the read row go")
+        XCTAssertTrue(header("完成未看").label.contains("3 个"), header("完成未看").label)
+        XCTAssertNotEqual(rowTitles(under: "完成未看", 1), [first[2]], "the third left 完成未看")
+    }
+
+    /// The setting (Settings › Appearance › Agents List Layout): the notice opens it, Stay Until Refresh is chosen, and
+    /// Leave When the Chat Closes is the behavior before #12514, one tap away.
+    @MainActor func testTheNoticeOpensTheSeenRowsSetting() throws {
+        launchByStatusOnTheMacBook()
+        let first = rowTitles(under: "完成未看", 1)
+        XCTAssertEqual(first.count, 1)
+        readAndGoBack(first[0])
+        see(app.buttons["agents.seenNotice.settings"].firstMatch, "the notice's way to the setting").tap()
+        // An inline picker's option is a button on some systems and a text on others (ColorSchemeIconTests).
+        func option(_ id: String) -> XCUIElement {
+            let button = app.buttons[id].firstMatch
+            return button.waitForExistence(timeout: 10) ? button : app.staticTexts[id].firstMatch
+        }
+        let stay = see(option("layout-seen-stay"), "Stay Until Refresh")
+        XCTAssertTrue(stay.label.contains("留到刷新"), stay.label)
+        if stay.elementType == .button { XCTAssertTrue(stay.isSelected, "the default is chosen") }
+        XCTAssertTrue(see(option("layout-seen-leave"), "Leave When the Chat Closes").label.contains("离开就移走"))
+        shot("agents-seen-rows-setting")
+    }
 }
