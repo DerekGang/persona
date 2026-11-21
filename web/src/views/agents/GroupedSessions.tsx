@@ -1,6 +1,6 @@
 // The paged list by group: one folding section for each computer, project, space or account (the sidebar's to-do and
 // state too, #6662), with how many sessions it holds and how many of them need the user on its heading. The first few
-// sections start open on their newest sessions (by to-do every to-do's, "Not on a to-do" folded; by state Just finished
+// sections start open on their sessions (by to-do every to-do's, "Not on a to-do" folded; by state Just finished
 // too, #9751);
 // a section reads its own sessions while it is open, a page at a time, and stops when it is folded, so the groups of a
 // long list cost nothing until someone looks into one.
@@ -14,7 +14,7 @@ import { SectionList } from "../../lib/section-list";
 import { holdsPlace, JUST_FINISHED_KEY, type GroupDimension, type SessionGroup, type SessionPlace } from "../../lib/session-groups";
 import { onShownHint } from "../../lib/shown-hints";
 import { useFolded } from "../../lib/use-folded";
-import { nestUnderParents } from "../../lib/side-sessions";
+import { nestUnderParents, type StableRowOrder } from "../../lib/side-sessions";
 import { Button } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { SESSION_LIST_METRICS, SESSION_LIST_STYLE } from "../../ui/list-metrics";
@@ -31,6 +31,8 @@ export interface GroupedSource<T> {
   roots: boolean;
   /** The list's own parentOf (#5935): a section draws a side session under its parent as the flat list does. */
   parentOf?: (row: T) => string | undefined;
+  /** Stable structural placement, separate from the transport's cursor order (#11801). */
+  rowOrder?: StableRowOrder<T>;
 }
 
 export interface GroupedSessionsProps<T> {
@@ -93,7 +95,7 @@ function GroupSection<T>({ group, first, startsOpen, dimension, kind, scope, sou
   group: SessionGroup; first: boolean; startsOpen: boolean; dimension: GroupDimension; kind: string; scope: ListFilters; source: GroupedSource<T>;
   renderRow: (row: T, within: GroupDimension, group: SessionGroup, machines: readonly string[]) => ReactNode; name: string; machineName: (id: string) => string; holds: boolean; foldScope?: string;
 }) {
-  // The busiest few start open, the rest folded: an open section keeps a list of its own up to date. "Expand all"
+  // The first few start open, the rest folded: an open section keeps a list of its own up to date. "Expand all"
   // leaves them alone for the same reason (it would start one read per group), except in the sidebar, whose title row
   // folds and opens them as the complete list's groups (`foldScope`, #6662): someone asked. What is folded is kept.
   const [folded, toggle] = useFolded(`sessions-by:${kind}:${dimension}:${group.key}`, !startsOpen, { holds, all: Boolean(foldScope), scope: foldScope });
@@ -155,17 +157,19 @@ function GroupPlaces({ group, machineName, several }: { group: SessionGroup; mac
   );
 }
 
-/** An open section's sessions: the list's own rows, the newest first. A few at first, then a page at a time. */
+/** An open section's sessions: the list's own rows in presentation order. A few at first, then a page at a time. */
 function GroupRows<T>({ group, dimension, scope, selected, source, renderRow, machineIds, readMachineCounts, onMachines }: {
   group: SessionGroup; dimension: GroupDimension; scope: ListFilters; selected: string; source: GroupedSource<T>;
   renderRow: (row: T, within: GroupDimension, group: SessionGroup, machines: readonly string[]) => ReactNode;
   machineIds: readonly string[]; readMachineCounts: boolean; onMachines: (ids: readonly string[]) => void;
 }) {
-  const { path, identity, compare, removeIdentity, event, summary, roots, parentOf } = source;
-  // A legacy project also reads its own counts to learn its machine set; other sections need rows only (#9176).
+  const { path, identity, compare, removeIdentity, event, summary, roots, parentOf, rowOrder } = source;
+  // A legacy project also reads its own counts to learn its machine set; other sections need rows only. A runtime
+  // section passes over the hints that name none of its rows (#9176): with several open, each read for every update.
   const follows = event === "sessions_list";
-  const list = useMemo(() => new (follows ? SectionList : SessionList)<T>(path, identity, compare, undefined, removeIdentity, { summary, roots, counts: readMachineCounts }),
-    [path, identity, compare, removeIdentity, summary, roots, follows, readMachineCounts]);
+  const list = useMemo(() => new (follows ? SectionList : SessionList)<T>(path, identity, compare, undefined, removeIdentity, {
+    summary, roots, counts: readMachineCounts, presentation: rowOrder ? { ...rowOrder, parentOf } : undefined,
+  }), [path, identity, compare, removeIdentity, summary, roots, follows, readMachineCounts, rowOrder, parentOf]);
   // the groups are built again with every read: the list follows what they select, not which object says it
   const filters = useMemo(() => ({ ...scope, ...group.filters }), [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const page = useSyncExternalStore(list.subscribe, list.getSnapshot, list.getSnapshot);
@@ -190,12 +194,15 @@ function GroupRows<T>({ group, dimension, scope, selected, source, renderRow, ma
     headingRead.current = heading;
     if (list.getSnapshot().loaded) list.invalidate();
   }, [list, heading]);
-  // the newest few first, so several open sections fit a screen; "Load more" shows what is read, then reads on
   const [limit, setLimit] = useState<number>(SESSION_LIST_METRICS.groupPreview);
-  const shown = page.rows.length > limit ? page.rows.slice(0, limit) : page.rows;
+  const preview = page.rows.length > limit ? page.rows.slice(0, limit) : page.rows;
   // a session started from another one shown here comes under it, a level in (#5935), as in the flat list
-  const nesting = useMemo(() => parentOf ? nestUnderParents(shown, identity, parentOf) : null, [shown, identity, parentOf]);
-  const rows = nesting?.rows ?? shown;
+  const sourceRows = rowOrder ? page.rows : preview;
+  const nesting = useMemo(() => parentOf ? nestUnderParents(sourceRows, identity, parentOf) : null, [sourceRows, identity, parentOf]);
+  // The stable list retains displaced rows and sorts every admitted page by current structural placement.
+  // Other lists keep the transport's newest-first order (#11801).
+  const arranged = nesting?.rows ?? sourceRows;
+  const rows = arranged.length > limit ? arranged.slice(0, limit) : arranged;
   const more = () => {
     if (page.rows.length <= limit) void list.more().catch(() => {});
     setLimit(limit + PAGE_SIZE);
