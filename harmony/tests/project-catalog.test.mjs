@@ -34,6 +34,39 @@ function session(id, extra = {}) {
 }
 const machine = row('machine', { id: 'mac', name: 'Studio', online: true });
 
+test('repository scroll anchors keep the same worktree when the summary scrolls with the list', () => {
+  const source = readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets', import.meta.url), 'utf8');
+  const methods = source.slice(source.indexOf('  private route()'), source.indexOf('  private search('));
+  const Outline = new Function('ScrollAlign', 'return ' + stripTypeScriptTypes('class Outline {' + methods + '}'))({ START: 'start' });
+  const positions = new Map();
+  const moves = [];
+  const view = Object.assign(new Outline(), {
+    page: 'project', target: 'weather', lines: [{ key: 'main' }, { key: 'release' }],
+    catalog: { browser: { anchor: key => positions.get(key), remember: (key, value) => positions.set(key, value) } },
+    scroller: { scrollToIndex: index => moves.push(index) },
+  });
+  view.restorePosition();
+  view.rememberPosition(0);
+  assert.equal(positions.get('project/weather'), '');
+  view.rememberPosition(1);
+  assert.equal(positions.get('project/weather'), 'main');
+  view.rememberPosition(2);
+  assert.equal(positions.get('project/weather'), 'release');
+  view.page = 'projects';
+  view.target = '';
+  view.restorePosition();
+  view.rememberPosition(1);
+  assert.equal(positions.get('projects/'), 'release');
+  view.page = 'project';
+  view.target = 'weather';
+  view.restorePosition();
+  assert.deepEqual(moves, [2]);
+  view.page = 'projects';
+  view.target = '';
+  view.restorePosition();
+  assert.deepEqual(moves, [2, 1]);
+});
+
 test('a mounted worktree card opens the newest scoped row and rejects cards removed or shown under another checkout',()=>{
   const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
   const method=source.slice(source.indexOf('  private openSpaceCard('),source.indexOf('  @Builder spaceCard('));

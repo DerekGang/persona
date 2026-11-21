@@ -84,6 +84,6 @@ test('magnified Inbox filters can grow and row icons keep their layout slots', (
   assert.doesNotMatch(filters, /\.height\(34\)/);
   assert.match(filters, /\.scrollable\(ScrollDirection.Horizontal\)/);
   assert.doesNotMatch(list, /SymbolGlyph\([^\n]*?\)\.fontSize\(\d+\)/);
-  assert.match(list, /FlexDirection.Column : FlexDirection.Row/);
+  assert.match(list, /Flex\(\{ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween/);
   assert.match(list, /\.constraintSize\(\{ minHeight: 38 \}\)/);
 });

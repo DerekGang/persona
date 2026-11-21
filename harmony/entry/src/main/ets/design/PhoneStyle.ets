@@ -35,11 +35,19 @@ export struct PhoneSectionTitle {
   @Require @Param text: string;
   @Param trailing: string = '';
   build() {
-    Flex({ direction: nativeEnvironment.fontScale >= 1.5 ? FlexDirection.Column : FlexDirection.Row,
-      justifyContent: FlexAlign.SpaceBetween, alignItems: nativeEnvironment.fontScale >= 1.5 ? ItemAlign.Start : ItemAlign.Center }) {
-      Text(this.text).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).flexShrink(1)
-      if (this.trailing) Text(this.trailing).fontSize(13).fontColor(Colors.secondary)
-    }.width('100%').padding({ left: 6, right: 6, top: 14, bottom: 7 })
+    Column() {
+      if (nativeEnvironment.fontScale >= 1.5) {
+        Column({ space: Tokens.fine }) {
+          Text(this.text).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+          if (this.trailing) Text(this.trailing).fontSize(13).fontColor(Colors.secondary)
+        }.width('100%').alignItems(HorizontalAlign.Start)
+      } else {
+        Row({ space: Tokens.gap }) {
+          Text(this.text).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
+          if (this.trailing) Text(this.trailing).fontSize(13).fontColor(Colors.secondary)
+        }.width('100%')
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({ left: 6, right: 6, top: 14, bottom: 7 })
   }
 }
 

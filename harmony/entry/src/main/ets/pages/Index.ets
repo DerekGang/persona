@@ -506,7 +506,7 @@ struct Index {
           this.sessionMode(tr('files'),Symbols.folder,0)
         }.width('100%').padding({left:12,right:12,top:1,bottom:5})
       }
-      if (this.phoneLargeTitle()) Text(this.phonePageName()).fontSize(PhoneStyle.title).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+      if (this.phoneLargeTitle()) Text(this.phonePageName()).fontSize(PhoneStyle.title).maxFontScale(Tokens.chromeFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
         .width('100%').maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:4,bottom:8}).id('shell.page_title')
     }.width('100%').backgroundColor(this.phonePeer() && this.model.section === 0 ? Colors.canvas : Colors.grouped)
   }

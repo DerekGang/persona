@@ -94,13 +94,20 @@ export struct ProjectsPage {
     return result;
   }
   private route(): string { return this.page + '/' + this.target; }
+  private get outlineOffset(): number { return this.page === 'project' ? 1 : 0; }
   private restorePosition(): void {
     if (!this.lines.length || this.restoredRoute === this.route()) return;
     const route = this.route(), key = this.catalog.browser.anchor(route);
     this.restoredRoute = route;
     if (!key) return;
     const index = this.lines.findIndex((l:ProjectLine) => l.key === key);
-    if (index > 0) this.scroller.scrollToIndex(index,false,ScrollAlign.START);
+    if (index >= 0) this.scroller.scrollToIndex(index + this.outlineOffset, false, ScrollAlign.START);
+  }
+  private rememberPosition(start: number): void {
+    if (start < 0 || this.restoredRoute !== this.route()) return;
+    const index = start - this.outlineOffset;
+    if (index < 0) this.catalog.browser.remember(this.route(), '');
+    else if (index < this.lines.length) this.catalog.browser.remember(this.route(), this.lines[index].key);
   }
   private search(text:string):void {
     this.catalog.browser.query = text; this.catalog.browser.remember(this.route(),'');
@@ -478,8 +485,10 @@ export struct ProjectsPage {
   @Builder repositoryList() {
     Column() {
       if (this.page === 'projects') this.searchAndFilter()
-      else if (this.project()) PhoneSectionTitle({text:this.project()!.machine,trailing:this.count(this.project()!.trees.length,'project_worktrees')})
       List({scroller:this.scroller}) {
+        if (this.page === 'project' && this.project()) ListItem() {
+          PhoneSectionTitle({ text: this.project()!.machine, trailing: this.count(this.project()!.trees.length, 'project_worktrees') })
+        }.id('projects.repository_summary')
         Repeat(this.lines).each((entry:RepeatItem<ProjectLine>) => {
           ListItem() {
             Column() {
@@ -499,10 +508,7 @@ export struct ProjectsPage {
         }
       }.layoutWeight(1).width('100%').scrollBar(BarState.Auto).maintainVisibleContentPosition(true)
         .onAreaChange(() => this.restorePosition())
-        .onScrollIndex((start:number) => {
-          if (this.restoredRoute === this.route() && start >= 0 && start < this.lines.length)
-            this.catalog.browser.remember(this.route(),this.lines[start].key);
-        }).id(this.page === 'projects' ? 'projects.list' : 'projects.worktrees')
+        .onScrollIndex((start: number) => this.rememberPosition(start)).id(this.page === 'projects' ? 'projects.list' : 'projects.worktrees')
     }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page})
   }
   @Builder detailHeader(tree: ProjectWorktree) {

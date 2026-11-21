@@ -559,9 +559,8 @@ export struct InboxWorkspacePage {
               Stack() { SymbolGlyph(binding.value.kind === 'session' ? Symbols.agent : this.workspace.sourceName(Wire.text(binding.value.data(),'source')) === 'mail' ? Symbols.inbox : Wire.text(binding.value.data(),'source') === 'lark' ? Symbols.persona : Symbols.apps).fontSize('17vp').fontColor([Colors.link]) }
                 .width(33).height(33).flexShrink(0).borderRadius(9).backgroundColor(Colors.control).id('inbox.row.icon.' + binding.key)
               Column({ space: 4 }) {
-                Flex({ direction: this.environment.fontScale >= 1.5 ? FlexDirection.Column : FlexDirection.Row,
-                  justifyContent: FlexAlign.SpaceBetween, alignItems: this.environment.fontScale >= 1.5 ? ItemAlign.Start : ItemAlign.Center,
-                  space: { main: LengthMetrics.vp(Tokens.fine) } }) {
+                Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center,
+                  space: { main: LengthMetrics.vp(Tokens.fine), cross: LengthMetrics.vp(Tokens.fine) } }) {
                   Text(binding.value.kind === 'session' ? tr('agent') : this.rowSource(binding.value)).fontSize(12).fontWeight(FontWeight.Medium)
                     .fontColor(Colors.secondary).flexShrink(1).id('inbox.row.source.' + binding.key)
                   Text(tr(binding.value.kind === 'session' ? 'needs_you' : inboxTierLabel(inboxTier(binding.value.data())))).fontSize(12)
