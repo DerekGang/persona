@@ -14,6 +14,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/feishubot"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 func readBudgetWorld(t *testing.T) *botWorld {
@@ -310,5 +311,145 @@ func TestReadReplyBudgetLegacyAndExpiredReservations(t *testing.T) {
 	}
 	if got := w.api.total(); got != before {
 		t.Fatal("expired retry reached transport")
+	}
+}
+
+// A failed write can have committed before its response was lost. In either case the new reservation must not
+// authorize HTTP until a successful write (or reconstruction from the committed reservation) confirms it.
+type readBudgetFailStore struct {
+	Store
+	mu        sync.Mutex
+	failures  int
+	committed bool
+}
+
+func (s *readBudgetFailStore) PutSetting(ctx context.Context, key string, value any) error {
+	s.mu.Lock()
+	fail := key == botSettingsKey && s.failures > 0
+	if fail {
+		s.failures--
+	}
+	committed := s.committed
+	s.mu.Unlock()
+	if !fail {
+		return s.Store.PutSetting(ctx, key, value)
+	}
+	if committed {
+		if err := s.Store.PutSetting(ctx, key, value); err != nil {
+			return err
+		}
+		return context.DeadlineExceeded
+	}
+	return errors.New("synthetic persistence failure")
+}
+
+func TestReadReplyBudgetPersistenceFailure(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("committed-%v", committed), func(t *testing.T) {
+			w := readBudgetWorld(t)
+			st := &readBudgetFailStore{Store: w.h.store, failures: 2, committed: committed}
+			w.h.store = st
+			before := w.api.total()
+			for range 2 {
+				err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("persisted-card"))
+				if err == nil {
+					t.Fatal("failed reservation write allowed sending")
+				}
+				var re *rpc.Error
+				if !errors.As(err, &re) || re.Code != assistantwire.CodeFeishuReplyBudgetUnavailable {
+					t.Fatalf("failure did not return retryable budget code: %v", err)
+				}
+				if got := w.api.total(); got != before {
+					t.Fatalf("failed write sent HTTP: %d -> %d", before, got)
+				}
+				if got := readBudgetUsed(w); got != 0 {
+					t.Fatalf("failed write left %d in-memory slots", got)
+				}
+				if got := len(w.settings().aiSource("om_budget", time.Now()).ReadCards); got != 0 {
+					t.Fatalf("failed write left %d in-memory keys", got)
+				}
+			}
+			var saved FeishuBotSettings
+			if ok, err := st.Setting(context.Background(), botSettingsKey, &saved); err != nil || !ok {
+				t.Fatalf("read persisted source: %v %v", ok, err)
+			}
+			want := 0
+			if committed {
+				want = 1
+			}
+			if got := saved.aiSource("om_budget", time.Now()).Replies; got != want {
+				t.Fatalf("persisted slots %d, want %d", got, want)
+			}
+			if err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("persisted-card")); err != nil {
+				t.Fatalf("recovery: %v", err)
+			}
+			if readBudgetUsed(w) != 1 {
+				t.Fatal("recovery did not reserve exactly one slot")
+			}
+			if ok, err := st.Setting(context.Background(), botSettingsKey, &saved); err != nil || !ok {
+				t.Fatalf("read successful reservation: %v %v", ok, err)
+			}
+			rebuilt := newTestManager(t)
+			rebuilt.store = st
+			rebuilt.bots.set, rebuilt.bots.api = saved, w.h.bots.api
+			w.h = rebuilt
+			if err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("persisted-card")); err != nil {
+				t.Fatalf("retry after reconstruction: %v", err)
+			}
+			if readBudgetUsed(w) != 1 {
+				t.Fatal("reconstructed retry consumed another slot")
+			}
+		})
+	}
+}
+
+func TestReadReplyBudgetUnkeyedPersistenceKeepsLegacySemantics(t *testing.T) {
+	w := readBudgetWorld(t)
+	w.h.store = &readBudgetFailStore{Store: w.h.store, failures: 1}
+	before := w.api.total()
+	if err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("")); err != nil {
+		t.Fatal(err)
+	}
+	if readBudgetUsed(w) != 1 || w.api.total() == before {
+		t.Fatal("unkeyed attempt changed its historical accounting or sending behavior")
+	}
+}
+
+func TestReadReplyBudgetRestartAfterAmbiguousSave(t *testing.T) {
+	w := readBudgetWorld(t)
+	st := &readBudgetFailStore{Store: w.h.store, failures: 1, committed: true}
+	w.h.store = st
+	before := w.api.total()
+	if err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("committed-card")); err == nil {
+		t.Fatal("ambiguous save allowed sending")
+	}
+	if w.api.total() != before {
+		t.Fatal("ambiguous save sent HTTP")
+	}
+	var saved FeishuBotSettings
+	if ok, err := st.Setting(context.Background(), botSettingsKey, &saved); err != nil || !ok {
+		t.Fatalf("persisted reservation: %v %v", ok, err)
+	}
+	rebuilt := newTestManager(t)
+	rebuilt.store = st
+	rebuilt.bots.set, rebuilt.bots.api = saved, w.h.bots.api
+	w.h = rebuilt
+	if err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("committed-card")); err != nil {
+		t.Fatalf("restart retry: %v", err)
+	}
+	if readBudgetUsed(w) != 1 {
+		t.Fatal("committed reservation was charged twice")
+	}
+}
+
+func TestReadReplyBudgetNoStoreRefusesNewKey(t *testing.T) {
+	w := readBudgetWorld(t)
+	w.h.store = nil
+	before := w.api.total()
+	if err := w.sendErr(assistantwire.FeishuPost, readBudgetCard("no-store")); err == nil {
+		t.Fatal("new key allowed without persistent storage")
+	}
+	if w.api.total() != before || readBudgetUsed(w) != 0 {
+		t.Fatal("missing store sent HTTP or retained an unsaved slot")
 	}
 }
