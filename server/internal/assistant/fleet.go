@@ -182,6 +182,21 @@ func (g guardedStore) InsertInteraction(ctx context.Context, ix proto.Interactio
 	return g.st.InsertInteraction(ctx, ix)
 }
 
+// resolvedInteractionInserter is the atomic history write used by reversible-setting auto-approval. A store without
+// it fails closed: the setting is not changed without its queryable decision record.
+type resolvedInteractionInserter interface {
+	InsertResolvedInteraction(ctx context.Context, ix proto.Interaction, res *proto.Resolution) error
+}
+
+func (g guardedStore) InsertResolvedInteraction(ctx context.Context, ix proto.Interaction, res *proto.Resolution) (err error) {
+	defer guard(&err)
+	st, ok := g.st.(resolvedInteractionInserter)
+	if !ok {
+		return errNoTable
+	}
+	return st.InsertResolvedInteraction(ctx, ix, res)
+}
+
 func (g guardedStore) FinishInteraction(ctx context.Context, id, status string, res *proto.Resolution) (err error) {
 	defer guard(&err)
 	return g.st.FinishInteraction(ctx, id, status, res)

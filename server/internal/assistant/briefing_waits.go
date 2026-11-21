@@ -93,6 +93,8 @@ func (s *Service) setBriefingWaits(ctx context.Context, raw json.RawMessage) (*o
 	words := func(w BriefingWaits) string {
 		return fmt.Sprintf("stalled=%dm, silent=%dm, orphan=%dm, cards=%dm, max_rows=%d", w.StalledMinutes, w.SilentMinutes, w.OrphanMinutes, w.CardMinutes, w.MaxRows)
 	}
+	beforeRaw := reversibleSettingJSON(s.settings(ctx).BriefingWaits)
+	applied := "assistant.briefing_waits updated; the next briefing's deterministic wait lists use it."
 	return &ownChange{cardText: func(l i18n.Lang) string {
 		return i18n.T(l, "assistant-settings_tool.change_briefing_waits", i18n.Args{"before": words(before), "after": words(after)})
 	}, apply: func(ctx context.Context) (string, error) {
@@ -100,7 +102,15 @@ func (s *Service) setBriefingWaits(ctx context.Context, raw json.RawMessage) (*o
 			return "", err
 		}
 		s.settingsChanged(ctx)
-		return "assistant.briefing_waits updated; the next briefing's deterministic wait lists use it.", nil
+		return applied, nil
+	}, reversible: &reversibleSetting{
+		before: beforeRaw,
+		after:  reversibleSettingJSON(next),
+		current: func(v Settings) json.RawMessage {
+			return reversibleSettingJSON(v.BriefingWaits)
+		},
+		assign:  func(v *Settings) { v.BriefingWaits = next },
+		applied: applied,
 	}}, nil
 }
 

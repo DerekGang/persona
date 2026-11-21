@@ -20,7 +20,7 @@ const oldHubJSON = `{
   "machines": [{"id": "server", "kind": "local"}],
   "assistant": {"owner": "Example", "notes": "- Code is in ~/code", "machine": "server", "launcher": "claude",
     "external": false, "persona_view": true, "memory_dreaming": true, "complete_agentless_todos": true,
-    "supervision_batch_minutes": 45},
+    "auto_approve_reversible_settings": true, "supervision_batch_minutes": 45},
   "agents": {"triage": {"max_retries": 2}},
   "kb": {"enabled": false, "text_days": 30},
   "ai": {"base_url": "https://gateway.example.com", "model": "m"},
@@ -104,7 +104,7 @@ func TestMoveTakesTheManagerSectionsOnce(t *testing.T) {
 		}
 	}
 	// assistant is split: the manager's keys moved, the rest (external, the retired persona_view) did not.
-	if compact(t, mine["assistant"]) != `{"complete_agentless_todos":true,"launcher":"claude","machine":"server","memory_dreaming":true,"notes":"- Code is in ~/code","owner":"Example","supervision_batch_minutes":45}` {
+	if compact(t, mine["assistant"]) != `{"auto_approve_reversible_settings":true,"complete_agentless_todos":true,"launcher":"claude","machine":"server","memory_dreaming":true,"notes":"- Code is in ~/code","owner":"Example","supervision_batch_minutes":45}` {
 		t.Errorf("manager.json's assistant %s", mine["assistant"])
 	}
 	if b, _ := os.ReadFile(hubPath); string(b) != oldHubJSON {

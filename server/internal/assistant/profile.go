@@ -167,7 +167,8 @@ type Settings struct {
 	// task_plan is supervised by it instead of the main conversation. Empty (the default): only the main one supervises.
 	Leaders []string `json:"leaders,omitempty"`
 	// BriefingWaits tunes only the deterministic wait rows in morning/evening facts. Nil uses the supervision
-	// thresholds documented by briefingWaitsOf; changes go through persona_settings' ordinary owner approval.
+	// thresholds documented by briefingWaitsOf. Changes normally require owner approval; the administrator's exact
+	// reversible-setting switch uses the audited automatic path for this key instead.
 	BriefingWaits *BriefingWaits `json:"briefing_waits,omitempty"`
 	// InterjectBackground: a message the user sends while a Claude conversation is still answering moves what runs in
 	// the foreground (Bash commands, subagents) to the background, so the message is taken up at once instead of after
@@ -260,6 +261,12 @@ func (s *Service) savedSettings(ctx context.Context) (Settings, bool) {
 
 // updateSettings changes the saved settings with fn (which may refuse) and saves them.
 func (s *Service) updateSettings(ctx context.Context, fn func(*Settings) error) (Settings, error) {
+	return s.updateSettingsChecked(ctx, fn, nil)
+}
+
+// updateSettingsChecked also checks the freshly read saved state while holding the settings write lock. The automatic
+// reversible-setting path uses it to reject a concurrent edit instead of rebasing its recorded before-image.
+func (s *Service) updateSettingsChecked(ctx context.Context, fn func(*Settings) error, check func(Settings) error) (Settings, error) {
 	b := &s.prefs
 	b.change.Lock()
 	defer b.change.Unlock()
@@ -269,6 +276,11 @@ func (s *Service) updateSettings(ctx context.Context, fn func(*Settings) error) 
 	v, ok := s.savedSettings(ctx)
 	if !ok {
 		return Settings{}, errors.New("the assistant's settings could not be read")
+	}
+	if check != nil {
+		if err := check(v); err != nil {
+			return Settings{}, err
+		}
 	}
 	if err := fn(&v); err != nil {
 		return Settings{}, err

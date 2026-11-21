@@ -20,13 +20,14 @@ import (
 // sends them).
 type ownConfig struct {
 	Assistant *struct {
-		Owner                   *string `json:"owner"`
-		Notes                   *string `json:"notes"`
-		Machine                 *string `json:"machine"`
-		Launcher                *string `json:"launcher"`
-		MemoryDreaming          bool    `json:"memory_dreaming"`
-		CompleteAgentlessTodos  bool    `json:"complete_agentless_todos"`
-		SupervisionBatchMinutes *int    `json:"supervision_batch_minutes"`
+		Owner                         *string `json:"owner"`
+		Notes                         *string `json:"notes"`
+		Machine                       *string `json:"machine"`
+		Launcher                      *string `json:"launcher"`
+		MemoryDreaming                bool    `json:"memory_dreaming"`
+		CompleteAgentlessTodos        bool    `json:"complete_agentless_todos"`
+		AutoApproveReversibleSettings bool    `json:"auto_approve_reversible_settings"`
+		SupervisionBatchMinutes       *int    `json:"supervision_batch_minutes"`
 	} `json:"assistant"`
 	Agents *assistantwire.AgentsConfig `json:"agents"`
 	KB     *struct {
@@ -93,6 +94,7 @@ func (c ownConfig) over(h Hello) Hello {
 	if a := c.Assistant; a != nil {
 		h.Assistant.MemoryDreaming = a.MemoryDreaming
 		h.Assistant.CompleteAgentlessTodos = a.CompleteAgentlessTodos
+		h.Assistant.AutoApproveReversibleSettings = a.AutoApproveReversibleSettings
 		if a.SupervisionBatchMinutes != nil {
 			h.Assistant.SupervisionBatchMinutes = a.SupervisionBatchMinutes
 		}

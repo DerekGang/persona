@@ -1080,6 +1080,29 @@ func TestMarkInteractionResumableKeepsTheCardAcrossARestart(t *testing.T) {
 	}
 }
 
+func TestInsertResolvedInteraction(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	allow := true
+	ix := proto.Interaction{ID: "resolved-direct", MachineID: "server", SessionID: "s", Kind: proto.IxPermission,
+		ToolName: "persona_settings", CreatedAt: time.Now().UTC()}
+	res := &proto.Resolution{Allow: &allow, AnsweredBy: proto.AnsweredByAssistant, Reason: "exactly reversible"}
+	if err := d.InsertResolvedInteraction(ctx, ix, res); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := d.Interactions(ctx, "server", "s", 10)
+	if err != nil || len(recs) != 1 || recs[0].Status != "resolved" || recs[0].ResolvedAt == nil || recs[0].Resolution == nil ||
+		recs[0].Resolution.AnsweredBy != proto.AnsweredByAssistant {
+		t.Fatalf("resolved history = %+v, %v", recs, err)
+	}
+	var pending int
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM interactions WHERE id = $1 AND status = 'pending'`, ix.ID).Scan(&pending); err != nil || pending != 0 {
+		t.Fatalf("pending rows = %d, %v", pending, err)
+	}
+	if err := d.InsertResolvedInteraction(ctx, ix, res); err == nil {
+		t.Fatal("duplicate resolved interaction was silently accepted")
+	}
+}
+
 func TestInteractions(t *testing.T) {
 	d, ctx := open(t), context.Background()
 	ix := proto.Interaction{ID: "ix1", MachineID: "server", SessionID: "s", Kind: proto.IxQuestion, CreatedAt: time.Now()}

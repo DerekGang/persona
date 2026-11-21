@@ -26,6 +26,26 @@ func (d *DB) InsertInteraction(ctx context.Context, ix proto.Interaction) error 
 	return err
 }
 
+// InsertResolvedInteraction writes an already-resolved decision in one statement, without ever creating a pending
+// card. Unlike InsertInteraction's idempotent card publication, a duplicate id is an error: an audit record must not
+// silently disappear. The decision and its resolved timestamp become queryable together.
+func (d *DB) InsertResolvedInteraction(ctx context.Context, ix proto.Interaction, res *proto.Resolution) error {
+	payload, err := json.Marshal(ix)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+	resolvedAt := time.Now().UTC()
+	_, err = d.pool.Exec(ctx, `INSERT INTO interactions
+		(id, machine_id, session_id, kind, payload, created_at, status, resolution, resolved_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'resolved', $7, $8)`,
+		ix.ID, ix.MachineID, ix.SessionID, ix.Kind, payload, ix.CreatedAt, raw, resolvedAt)
+	return err
+}
+
 // MarkInteractionResumable records that pending interaction id outlives a restart from now on (its payload's
 // resumable, which ExpireStaleInteractions reads): an ask_user question that let go of its turn and is now waited on by
 // no call (assistant/ask_release.go, #7392). false when id is not pending.

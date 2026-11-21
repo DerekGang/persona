@@ -325,6 +325,10 @@ type fleetMem struct {
 	seen   map[[2]string]time.Time
 	// insertGate, when set before the cards come, holds each interaction write until it is closed (a slow database).
 	insertGate chan struct{}
+	// resolvedInsert* controls the one-statement reversible-setting decision history write in failure and race tests.
+	resolvedInsertErr     error
+	resolvedInsertGate    chan struct{}
+	resolvedInsertStarted chan struct{}
 }
 
 func newFleetMem() *fleetMem {
@@ -346,6 +350,35 @@ func (m *fleetMem) InsertInteraction(ctx context.Context, ix proto.Interaction) 
 		m.status[ix.ID] = "pending"
 		m.recs = append(m.recs, db.InteractionRecord{Interaction: ix, Status: "pending"})
 	}
+	return nil
+}
+
+func (m *fleetMem) InsertResolvedInteraction(ctx context.Context, ix proto.Interaction, res *proto.Resolution) error {
+	m.fmu.Lock()
+	started, gate, insertErr := m.resolvedInsertStarted, m.resolvedInsertGate, m.resolvedInsertErr
+	m.resolvedInsertStarted = nil
+	m.fmu.Unlock()
+	if started != nil {
+		close(started)
+	}
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if insertErr != nil {
+		return insertErr
+	}
+	m.fmu.Lock()
+	defer m.fmu.Unlock()
+	if _, exists := m.status[ix.ID]; exists {
+		return errors.New("duplicate interaction id")
+	}
+	now := time.Now().UTC()
+	m.status[ix.ID], m.res[ix.ID] = "resolved", res
+	m.recs = append(m.recs, db.InteractionRecord{Interaction: ix, Status: "resolved", Resolution: res, ResolvedAt: &now})
 	return nil
 }
 
