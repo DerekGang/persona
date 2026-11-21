@@ -383,6 +383,18 @@ fi
   if [ "$LANE" = ios18 ]; then
     about_visual ios-visual-regular AboutVersionRegularVisualTests "$REGULAR_SIM"
   else
+    # Exercise the real test host on the fresh iPad before the regular batch.
+    # Keep its strict probe separate from both iPhone readiness and regular results.
+    ci_run 'Verify hosted regular iPad test readiness' 900 bash -c '
+      set -euo pipefail
+      checker="$1"; bundle="$2"; log="$3"; shift 3
+      {
+        "$@" -only-testing:PersonaTests/TypeScaleTests -resultBundlePath "$bundle" test-without-building
+        python3 "$checker" "$bundle" TypeScaleTests
+      } 2>&1 | tee "$log"
+    ' -- "$CI_ROOT/scripts/ci/apple_result.py" "$OUTPUT/ios-regular-readiness.xcresult" \
+      "$OUTPUT/regular-readiness.log" "${IOS_COMMON[@]}" \
+      -destination "platform=iOS Simulator,id=$REGULAR_SIM" -destination-timeout 120
     mkdir -p "$OUTPUT/regular-shots"
     TEST_RUNNER_PERSONA_SHOTS="$OUTPUT/regular-shots" \
       ci_run 'iOS regular-width About visual test on real iPad' 600 "${IOS_COMMON[@]}" \

@@ -364,7 +364,7 @@ class AppleFailureDiagnosticsTests(unittest.TestCase):
             output, destination = root / 'output', root / 'artifacts'
             output.mkdir()
             for name in ('simulator.log', 'simulator-boot.log', 'simulator-readiness.log', 'runtimes-iOS-before.json',
-                         'regular-simulator.log', 'regular-simulator-boot.log', 'native-ssh-trace.log'):
+                         'regular-simulator.log', 'regular-simulator-boot.log', 'regular-readiness.log', 'native-ssh-trace.log'):
                 (output / name).write_text('diagnostic fixture')
             (output / 'config.json').write_text('configuration must stay in output')
             (output / 'private.key').write_text('key fixture must stay in output')
@@ -387,7 +387,7 @@ class AppleFailureDiagnosticsTests(unittest.TestCase):
             self.assertEqual((destination / 'disk-space.txt').read_text(), 'disk space diagnostic')
             self.assertEqual({path.name for path in destination.iterdir()}, {
                 'simulator.log', 'simulator-boot.log', 'simulator-readiness.log', 'runtimes-iOS-before.json',
-                'regular-simulator.log', 'regular-simulator-boot.log', 'native-ssh-trace.log',
+                'regular-simulator.log', 'regular-simulator-boot.log', 'regular-readiness.log', 'native-ssh-trace.log',
                 'ios-unit.xcresult', 'simctl-list.json', 'simctl-list.stderr.txt', 'simctl-list.status.txt',
                 'disk-space.txt', 'disk-space.stderr.txt', 'disk-space.status.txt',
                 'simulator-launch.status.txt',
