@@ -50,6 +50,9 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 		}
 	}
 	if event == "sessions.changed" {
+		if s.devs == nil {
+			return s.nodeEvent(machine, event, raw)
+		}
 		s.logicalChanged()
 		rows, _, err := s.logicalIndex()
 		if err != nil {
