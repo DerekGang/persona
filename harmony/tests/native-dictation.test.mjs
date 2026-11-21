@@ -15,6 +15,15 @@ registerHooks({
   },
   load(url, ctx, next) {
     if (url.startsWith('dictation:')) return {format:'module',source:stubs.get(url.slice(10)),shortCircuit:true};
+    if (url.endsWith('/PhoneDictationControl.ets')) {
+      // Run the actual control handlers with an inert host context. Rendering uses the SDK and is covered by HVD.
+      const component=readFileSync(new URL(url),'utf8').split('  @Builder panel()')[0]
+        .replace(/^import .+;$/gm,'').replace(/@Monitor\([^)]*\)\s*/g,'')
+        .replace(/@(ComponentV2|Require|Param|Event|Local)\s*/g,'').replace('export struct','export class')+'\n}';
+      const native=new URL('../platform/NativeDictation.ets',url).href;
+      const imports='import {NativeDictation} from '+JSON.stringify(native)+'; const i18n={getSystemLanguage:()=>"zh-CN"};\n';
+      return {format:'module',shortCircuit:true,source:imports+stripTypeScriptTypes(component)};
+    }
     if (url.endsWith('/NativeDictation.ets')) return {format:'module',shortCircuit:true,
       source:stripTypeScriptTypes(readFileSync(new URL(url), 'utf8'))};
     return next(url, ctx);
@@ -28,6 +37,7 @@ globalThis.__phoneAudio = {
   SourceType:{SOURCE_TYPE_MIC:0}, createAudioCapturer: options => createInput(options)
 };
 const {NativeDictation} = await import('../entry/src/main/ets/platform/NativeDictation.ets');
+const {PhoneDictationControl}=await import('../entry/src/main/ets/components/PhoneDictationControl.ets');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function setup() {
@@ -47,7 +57,7 @@ function setup() {
     listening:()=>events.push(['listening']), preview:text=>events.push(['preview',text]),
     completed:text=>events.push(['complete',text]), failed:key=>events.push(['error',key]),
     cancelled:()=>events.push(['cancel'])
-  });
+  },'test-owner');
   return {run, engine, input, frames, events};
 }
 
@@ -105,4 +115,49 @@ test('the time limit ends capture once even when a late PCM callback arrives', a
   assert.equal(engine.finishCount,1);
   assert.equal(frames.length,2998);
   run.cancel();
+});
+
+function reviewHarness() {
+  const native=setup(), control=new PhoneDictationControl();
+  const state={owner:'A',drafts:{A:'existing',B:'another'},insertions:0};
+  control.getUIContext=()=>({getHostContext:()=>({})});
+  control.owner='A';control.language='zh-CN';
+  control.allowed=owner=>state.owner===owner;
+  control.insert=(text,owner)=>{
+    if (state.owner!==owner) return false;
+    state.drafts[owner]+=' '+text;state.insertions++;return true;
+  };
+  const finish=()=>{native.engine.listener.onResult(native.engine.session,{result:'今天',isFinal:true});
+    native.engine.listener.onComplete(native.engine.session);};
+  return {native,control,state,finish};
+}
+test('a confirmed dictation is inserted exactly once and appends to the latest typed draft',async()=>{
+  const {control,state,finish}=reviewHarness();
+  control.start();await tick();state.drafts.A+=' edited';finish();
+  assert.equal(control.phase,'complete');
+  control.accept();control.accept();
+  assert.equal(state.drafts.A,'existing edited 今天');assert.equal(state.insertions,1);
+  assert.equal(control.shown,false);assert.equal(control.transcript,'');
+});
+test('pending accept is rejected when either the rendered owner or the actual conversation moves',async()=>{
+  for (const switchProp of [false,true]) {
+    const {control,state,finish}=reviewHarness();
+    control.start();await tick();finish();state.owner='B';
+    if (switchProp) control.owner='B';
+    control.accept();
+    assert.deepEqual(state.drafts,{A:'existing',B:'another'});assert.equal(state.insertions,0);
+  }
+});
+test('denial, cancel during recording, and closing an already completed review preserve the original draft',async()=>{
+  for (const action of ['denied','cancel','complete-close']) {
+    const {control,state,native,finish}=reviewHarness();
+    if (action==='denied') globalThis.__phonePermission=async()=>{throw new Error('knowledge_recording_microphone_denied')};
+    control.start();await tick();
+    if (action==='denied') assert.equal(control.phase,'error');
+    if (action==='complete-close') finish();
+    control.close();
+    if (action==='cancel') native.engine.listener.onComplete(native.engine.session);
+    control.accept();
+    assert.equal(state.drafts.A,'existing');assert.equal(state.insertions,0);
+  }
 });

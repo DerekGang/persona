@@ -489,19 +489,25 @@ export struct KnowledgeWorkspacePage {
         PhoneSectionTitle({text:tr('phone_kb_confirmed')})
         Column({space:6}) {
           if (this.facts.open) {
+            if (this.facts.conflict) {
+              Text(tr('phone_facts_changed')).fontSize(14).fontColor(Colors.needs).width('100%')
+              Text(this.facts.baseline || tr('empty')).fontSize(15).fontColor(Colors.ink).width('100%').copyOption(CopyOptions.LocalDevice).id('knowledge.facts.latest')
+            }
             TextArea({text:this.facts.text,placeholder:tr('phone_kb_confirmed')}).width('100%').height(100)
               .onChange((v:string) => this.facts.edit(v)).id('knowledge.facts.text')
             Row() {
               Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.facts.close())
               Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL})
-                .enabled(!this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) &&
+                .enabled(this.workspace.supportsExpectedPinned && !this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) &&
                   this.facts.text.trim()!==Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned').trim())
                 .onClick(() => this.facts.save(this.workspace)).id('knowledge.facts.save')
             }
           } else {
             if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
               .fontSize(16).fontColor(Colors.ink).width('100%')
-            Button({type:ButtonType.Normal}) {
+            if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
+              .fontSize(14).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
+            if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
               Row({space:8}) {
                 SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize(17).fontColor([Colors.link])
                 Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(16).fontColor(Colors.link)
@@ -520,7 +526,7 @@ export struct KnowledgeWorkspacePage {
           Text(Wire.text(this.workspace.detail,'path')).fontFamily('monospace').fontSize(13).fontColor(Colors.secondary).width('100%')
             .padding(14).backgroundColor(Colors.surface).borderRadius(14).copyOption(CopyOptions.LocalDevice).id('knowledge.recording.directory')
         }
-        if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(14).fontColor(Colors.danger).width('100%')
+        if (this.workspace.error && !(this.facts.open && this.facts.conflict && this.workspace.error==='phone_facts_changed')) Text(tr(this.workspace.error)).fontSize(14).fontColor(Colors.danger).width('100%')
         Button({type:ButtonType.Normal}) {
           Row() {
             Text(tr('knowledge_minutes')+' · '+tr('knowledge_transcript')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)

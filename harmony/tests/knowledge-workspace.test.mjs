@@ -18,7 +18,7 @@ registerHooks({
   }
 });
 
-const { KnowledgeWorkspace } = await import('../entry/src/main/ets/models/KnowledgeWorkspace.ets');
+const { KnowledgeWorkspace, RecordingFactsDraft } = await import('../entry/src/main/ets/models/KnowledgeWorkspace.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
 
 function clone(value) { return structuredClone(value); }
@@ -628,18 +628,19 @@ test('confirmed recording facts modify only the owner’s pinned text and keep a
   const env=await opened({request(call) {
     if (!call.path.endsWith('phone%2Fmeeting')) return;
     if (call.method === 'PUT') {
-      assert.deepEqual(Object.keys(call.body), ['pinned']);
+      assert.deepEqual(Object.keys(call.body).sort(), ['expected_pinned','pinned']);
+      assert.equal(call.body.expected_pinned,pinned);
       pinned=call.body.pinned;
       return {ok:true};
     }
-    return {detail:{id:row.id,kind:'recordings',meta:{pinned,importance:'P2'},summary:'meeting'}};
+    return {supports_expected_pinned:true,detail:{id:row.id,kind:'recordings',meta:{pinned,importance:'P2'},summary:'meeting'}};
   }},row);
   env.workspace.beginEdit();env.workspace.setEditTags('my draft');
-  assert.ok(await env.workspace.saveFacts('  agenda verified  '));
+  assert.ok(await env.workspace.saveFacts('  agenda verified  ',''));
   assert.equal(env.workspace.detail.meta.pinned,'agenda verified');
   assert.equal(env.workspace.editOpen,true);
   assert.equal(env.workspace.editTags,'my draft');
-  assert.ok(await env.workspace.saveFacts(''));
+  assert.ok(await env.workspace.saveFacts('','agenda verified'));
   assert.equal(env.workspace.detail.meta.pinned,'');
   const writes=calls(env,'PUT','/api/v1/kb/recordings/');
   assert.equal(writes.length,2);assert.ok(writes.every(call=>call.manager==='owner' && !!call.op));
@@ -654,4 +655,68 @@ test('opening a recording from a knowledge search keeps the Hub matches in the d
   const extract=(current,next)=>page.slice(page.indexOf('@Builder '+current+'('),page.indexOf('@Builder '+next+'('));
   assert.match(extract('recordingDetail','detailContent'),/this\.entryEvidence\(\)/);
   assert.match(extract('entryEvidence','recordingDetail'),/knowledge\.match\./);
+});
+
+test('a recording fact acknowledgement leaves newer typing and a reopened editor intact', async () => {
+  for (const action of ['type','reopen','unchanged','reject']) {
+    const entered=deferred(), gate=deferred(), row=entry('recordings','voice-1','owner');
+    let stored='';
+    const env=await opened({request:async(call)=>{
+      if (!call.path.endsWith('/voice-1')) return;
+      if (call.method==='PUT') {
+        const sent=call.body.pinned;entered.resolve();await gate.promise;
+        if (action==='reject') throw failure(409,'request_updated');
+        stored=sent;return {ok:true};
+      }
+      return {supports_expected_pinned:true,detail:{id:row.id,kind:'recordings',meta:{pinned:stored},summary:'recording'}};
+    }},row);
+    const draft=new RecordingFactsDraft();draft.begin('');draft.edit('original edit');
+    const pending=draft.save(env.workspace);await entered.promise;
+    if (action==='type') draft.edit('typed while saving');
+    if (action==='reopen') {draft.close();draft.begin('new editor');}
+    gate.resolve();await pending;
+    assert.equal(draft.open,action!=='unchanged');
+    assert.equal(draft.text,{type:'typed while saving',reopen:'new editor',unchanged:'',reject:'original edit'}[action]);
+    assert.equal(stored,action==='reject'?'':'original edit');
+  }
+});
+
+test('recording corrections preserve both device drafts across a conflict and require a second explicit save',async()=>{
+  let stored='prior';
+  const request=async call=>{
+    if (!call.path.endsWith('/meeting-1')) return;
+    if (call.method==='PUT') {
+      if (call.body.expected_pinned!==stored) throw failure(409,'conflict');
+      stored=call.body.pinned;return {ok:true};
+    }
+    return {supports_expected_pinned:true,detail:{id:'meeting-1',kind:'recordings',meta:{pinned:stored}}};
+  };
+  const row=entry('recordings','meeting-1','owner');
+  const [one,two]=await Promise.all([opened({request},row),opened({request},row)]);
+  const a=new RecordingFactsDraft(),b=new RecordingFactsDraft();
+  a.begin('prior');a.edit('device one');b.begin('prior');b.edit('device two');
+  await Promise.all([a.save(one.workspace),b.save(two.workspace)]);
+  const pending=a.open?a:b, workspace=a.open?one.workspace:two.workspace, winner=stored;
+  assert.notEqual(a.open,b.open);assert.equal(pending.conflict,true);assert.equal(pending.baseline,winner);
+  assert.notEqual(pending.text,winner);assert.equal(workspace.error,'phone_facts_changed');
+  const retained=pending.text;await pending.save(workspace);assert.equal(stored,retained);assert.equal(pending.open,false);
+  const legacy=await opened({},row);
+  assert.equal(legacy.workspace.supportsExpectedPinned,false);
+  assert.equal(await legacy.workspace.saveFacts('overwrite',''),false);
+  assert.equal(calls(legacy,'PUT','/api/v1/kb/').length,0);
+});
+test('a recording switched while its mutation journal is staged fails owner admission before dispatch',async()=>{
+  const row=entry('recordings','meeting-1','owner');
+  const options={request(call) {if(call.path.endsWith('/meeting-1')) return {supports_expected_pinned:true,detail:{kind:'recordings',id:'meeting-1',meta:{}}}}};
+  const env=await opened(options,row),repo=env.owner.repo,original=repo.call.bind(repo),entered=deferred(),release=deferred();
+  let sent=false;
+  repo.call=async function(path,method,body,op,admit) {
+    if(method!=='PUT') return original(path,method,body,op,admit);
+    entered.resolve();await release.promise;
+    if(!admit()) throw failure(0,'request_updated');
+    sent=true;return {};
+  };
+  const saving=env.workspace.saveFacts('draft','');
+  await entered.promise;env.workspace.hide();release.resolve();
+  assert.equal(await saving,false);assert.equal(sent,false);
 });

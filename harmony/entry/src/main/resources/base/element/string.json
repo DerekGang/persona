@@ -5911,6 +5911,18 @@
     {
       "name": "flow_other_model",
       "value": "Other model…"
+    },
+    {
+      "name": "phone_conditional_read_only",
+      "value": "This Hub supports viewing only. Update it to edit here."
+    },
+    {
+      "name": "phone_rules_changed",
+      "value": "Another device changed the folder rules. Review the latest rules and apply your change again."
+    },
+    {
+      "name": "phone_facts_changed",
+      "value": "Another device changed the confirmed facts. Your draft is still here. Review the latest text before saving again."
     }
   ]
 }

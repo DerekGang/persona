@@ -24,7 +24,7 @@ export struct PhoneAgentSettingsPage {
   @Computed get options():Record<string,Object>[] { return Wire.rows(this.form.data,'settings'); }
   @Computed get rules():Record<string,Object>[] { return Wire.rows(this.form.data,'rules'); }
   @Computed get follow():string[] { return Object.keys(FOLLOW_FIELDS).filter((key:string) => typeof this.form.data[key] === 'boolean'); }
-  private canEdit():boolean { return this.model.connected && !this.form.saving && !this.form.loading && !this.form.error; }
+  private canEdit():boolean { return this.model.connected && !this.form.saving && !this.form.loading && !this.form.error && (this.page!=='phone_agent_folders' || Wire.bool(this.form.data,'supports_expected_rules')); }
   private save(key:string,value:Object):void { this.form.setOption(key,value).catch(() => undefined); }
 
   @Builder separator() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:15}) }
@@ -111,6 +111,9 @@ export struct PhoneAgentSettingsPage {
       Column({space:12}) {
         if (this.page!=='phone_agent_followup') this.machineSelector()
         if (this.form.loading || this.form.saving) LoadingProgress().height(23).width(23)
+        if (this.page==='phone_agent_folders' && !this.form.loading && Array.isArray(this.form.data['rules']) && !Wire.bool(this.form.data,'supports_expected_rules'))
+          Text(tr('phone_conditional_read_only')).fontSize(14).fontColor(Colors.secondary).width('100%').id('settings.agent.folder.read_only')
+        if (this.form.notice) Text(tr(this.form.notice)).fontSize(14).fontColor(Colors.needs).width('100%').id('settings.agent.folder.notice')
         if (this.form.error) Row({space:8}) {
           Text(tr(this.form.error)).layoutWeight(1).fontColor(Colors.secondary)
           Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.form.read()).id('settings.agent.retry')

@@ -48,13 +48,27 @@ test('machine choices and preference writes use the selected owner and typed ser
   assert.deepEqual(env.calls[1].body,{key:'approval',value:'allow'});
   assert.equal(env.calls[1].op,'','the durable mutation store must issue a fresh id for each user operation');
 });
-test('a newer folder rule read supersedes the local draft without replacing another client’s rules',async()=>{
-  const rule={pattern:'~/weather',action:'hide',enabled:true};let reads=0;
-  const env=harness(async()=>({rules:++reads===1?[rule]:[rule,{pattern:'*/archive',action:'block',enabled:true}]}));
-  const settings=new PhoneAgentSettings();await settings.open(env.model,'phone_agent_folders');
-  await settings.changeFolder(rule.pattern,{...rule,enabled:false});
-  assert.equal(settings.error,'request_updated');assert.equal(settings.data.rules.length,2);
-  assert.ok(env.calls.every(c=>c.verb==='GET'));
+test('two devices changing folder rules receive a conflict or keep both; older Hubs are read only',async()=>{
+  const rule=pattern=>({pattern,action:'hide',enabled:true});
+  let rules=[];
+  const request=async(_path,verb,body,admit)=>{
+    if (verb==='PUT') {
+      assert.ok(admit());
+      if (JSON.stringify(body.expected_rules)!==JSON.stringify(rules)) throw Object.assign(new Error('conflict'),{status:409});
+      rules=structuredClone(body.rules);
+    }
+    return {supports_expected_rules:true,rules:structuredClone(rules)};
+  };
+  const x=harness(request),y=harness(request),a=new PhoneAgentSettings(),b=new PhoneAgentSettings();
+  await Promise.all([a.open(x.model,'phone_agent_folders'),b.open(y.model,'phone_agent_folders')]);
+  await Promise.all([a.changeFolder('~/one',rule('~/one'),true),b.changeFolder('~/two',rule('~/two'),true)]);
+  assert.equal(rules.length,1);
+  const loser=a.notice?a:b;assert.equal(loser.notice,'phone_rules_changed');assert.deepEqual(loser.data.rules,rules);
+  const missing=rules[0].pattern==='~/one'?'~/two':'~/one';await loser.changeFolder(missing,rule(missing),true);
+  assert.deepEqual(rules.map(r=>r.pattern).sort(),['~/one','~/two']);assert.equal(loser.notice,'');
+  const legacy=harness(async()=>({rules:[rule('~/old')]})),old=new PhoneAgentSettings();await old.open(legacy.model,'phone_agent_folders');
+  await old.changeFolder('~/old',undefined);
+  assert.ok(legacy.calls.every(c=>c.verb==='GET'));
   assert.equal(cleanAgentFolder(' ~/weather/// '),'~/weather');
   for(const bad of ['relative','/','*','~/']) assert.equal(cleanAgentFolder(bad),'');
 });

@@ -41,6 +41,7 @@ export class PhoneAgentSettings {
   @Trace loading:boolean = false;
   @Trace saving:boolean = false;
   @Trace error:string = '';
+  @Trace notice:string = '';
   private model?:ClientModel;
   private scope:string = '';
   private generation:number = -1;
@@ -60,7 +61,7 @@ export class PhoneAgentSettings {
   }
 
   close():void {
-    this.serial++; this.model = undefined; this.scope = ''; this.data = {}; this.error = '';
+    this.serial++; this.model = undefined; this.scope = ''; this.data = {}; this.error = ''; this.notice='';
     this.loading = false; this.saving = false;
   }
 
@@ -94,7 +95,7 @@ export class PhoneAgentSettings {
   }
 
   async changeFolder(pattern:string, replacement:Record<string,Object> | undefined, adding:boolean = false):Promise<void> {
-    if (this.page !== 'phone_agent_folders' || !pattern || !Array.isArray(this.data['rules'])) return;
+    if (this.page !== 'phone_agent_folders' || !Wire.bool(this.data,'supports_expected_rules') || !pattern || !Array.isArray(this.data['rules'])) return;
     const before = Wire.rows(this.data,'rules');
     const index = before.findIndex((r:Record<string,Object>) => Wire.text(r,'pattern') === pattern);
     if (adding ? index >= 0 || !replacement : index < 0) return;
@@ -104,26 +105,27 @@ export class PhoneAgentSettings {
     if (adding && replacement) next.push(replacement);
     else if (replacement) next.splice(index,1,replacement);
     else next.splice(index,1);
-    await this.write(Wire.payload(['rules'],[next]),JSON.stringify(before));
+    await this.write(Wire.payload(['rules','expected_rules'],[next,before]));
   }
 
-  private async write(body:Record<string,Object>, rulesBefore:string = ''):Promise<void> {
+  private async write(body:Record<string,Object>):Promise<void> {
     const model = this.model, path = agentPreferencePath(this.page,this.machine);
     if (!model || !model.connected || !path || this.loading || this.saving || this.error || !this.current(this.serial)) return;
     const serial = ++this.serial;
-    this.saving = true;
+    this.saving = true; this.notice='';
     try {
-      if (rulesBefore) {
-        const fresh = await model.repo().call(path);
-        if (!this.current(serial)) return;
-        if (JSON.stringify(Wire.rows(fresh,'rules')) !== rulesBefore) {
-          this.data = fresh; this.error='request_updated'; return;
-        }
-      }
       const updated = await model.repo().call(path,'PUT',body,'',() => this.current(serial));
       if (!this.current(serial)) return;
       this.data = updated;
-    } catch (_) { if (this.current(serial)) this.error='failed'; }
+    } catch (failure) {
+      if (!this.current(serial)) return;
+      if (this.page==='phone_agent_folders' && Wire.number(failure as Object as Record<string,Object>,'status')===409) {
+        try {
+          const latest=await model.repo().call(path);
+          if (this.current(serial)) { this.data=latest; this.notice='phone_rules_changed'; }
+        } catch (_) { if (this.current(serial)) this.error='failed'; }
+      } else this.error='failed';
+    }
     finally { if (this.current(serial)) this.saving=false; }
   }
 }

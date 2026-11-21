@@ -5911,6 +5911,18 @@
     {
       "name": "flow_other_model",
       "value": "其他模型…"
+    },
+    {
+      "name": "phone_conditional_read_only",
+      "value": "当前 Hub 仅支持查看。更新 Hub 后即可编辑。"
+    },
+    {
+      "name": "phone_rules_changed",
+      "value": "其他设备已更新目录规则。请查看最新规则，再应用你的修改。"
+    },
+    {
+      "name": "phone_facts_changed",
+      "value": "其他设备已更新确认事实。你的草稿已保留，请对照最新内容后再保存。"
     }
   ]
 }

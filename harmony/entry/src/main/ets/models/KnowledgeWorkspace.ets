@@ -61,6 +61,7 @@ export class KnowledgeWorkspace {
   @Trace selected: ResourceRow = new ResourceRow();
   @Trace detail: Record<string, Object> = {};
   @Trace matches: Record<string, Object>[] = [];
+  @Trace supportsExpectedPinned:boolean = false;
   @Trace agents: ResourceRow[] = [];
   @Trace momentText: string = '';
   @Trace loading: boolean = false;
@@ -105,7 +106,7 @@ export class KnowledgeWorkspace {
     this.loading = true; this.busy = false; this.error = ''; this.writeState = ''; this.editOpen = false; this.editorDirty = false; this.editorRevision++;
     this.detailEditorBaseline = this.editorRevision;
     this.detailInitialized = false;
-    this.detail = {}; this.matches = []; this.agents = []; this.momentText = ''; this.momentTarget = ''; this.results = []; this.entries = [];
+    this.detail = {}; this.supportsExpectedPinned=false; this.matches = []; this.agents = []; this.momentText = ''; this.momentTarget = ''; this.results = []; this.entries = [];
     this.agentDraft = ''; this.agentLauncher = ''; this.directoryTargets = []; this.targetMachines = []; this.selectedDirectory = 0;
     this.recordingPage = !row && initialKind === 'recordings';
     this.listRows = seed.slice();
@@ -146,7 +147,7 @@ export class KnowledgeWorkspace {
   }
 
   hide(): void {
-    this.revision++; this.readRevision++; this.client = undefined; this.editorClient = undefined; this.listRows = []; this.detail = {}; this.matches = []; this.agents = [];
+    this.revision++; this.readRevision++; this.client = undefined; this.editorClient = undefined; this.listRows = []; this.detail = {}; this.supportsExpectedPinned=false; this.matches = []; this.agents = [];
     this.detailInitialized = false;
     if (this.searchTimer !== -1) clearTimeout(this.searchTimer);
     this.searchTimer = -1;
@@ -227,9 +228,9 @@ export class KnowledgeWorkspace {
     return this.updateEntry(body,true);
   }
 
-  async saveFacts(value:string):Promise<boolean> {
-    if (!this.selected.id || !this.client || this.busy || ['pending','unknown'].includes(this.writeState)) return false;
-    return this.updateEntry(objectPayload(['pinned'],[value.trim()]),false);
+  async saveFacts(value:string, expected:string):Promise<boolean> {
+    if (!this.supportsExpectedPinned || this.selected.path!=='recordings' || !this.selected.id || !this.client || this.busy || ['pending','unknown'].includes(this.writeState)) return false;
+    return this.updateEntry(objectPayload(['pinned','expected_pinned'],[value.trim(),expected]),false);
   }
 
   private async updateEntry(body:Record<string,Object>, metadata:boolean):Promise<boolean> {
@@ -243,7 +244,8 @@ export class KnowledgeWorkspace {
       owner = await this.capture(client, ownerName, targetKey);
       if (!this.current(owner, revision) || this.selected.key() !== targetKey) return false;
       if (owner.client.operationBlocked(path)) { this.writeState = 'pending'; this.error = 'pending_action'; return false; }
-      await owner.repository.call(path, 'PUT', body, shortOperation());
+      const admitted=owner;
+      await owner.repository.call(path, 'PUT', body, shortOperation(), () => this.current(admitted,revision) && this.selected.key()===targetKey);
       if (!this.current(owner, revision) || this.selected.key() !== targetKey) return false;
       this.writeState = 'done';
       // An acknowledged save stays acknowledged if reading its new value back fails.
@@ -253,6 +255,12 @@ export class KnowledgeWorkspace {
     } catch (failure) {
       if (!owner || !this.current(owner, revision) || this.selected.key() !== targetKey) {
         if (!owner && this.revision === revision && this.client === client) { this.writeState = 'failed'; this.error = this.errorCode(failure as Error); }
+        return false;
+      }
+      if (!metadata && Wire.number(failure as Object as Record<string,Object>,'status')===409) {
+        this.writeState='failed';
+        await this.reloadDetail(owner,revision,row);
+        if (this.current(owner,revision) && this.selected.key()===targetKey && !this.error) this.error='phone_facts_changed';
         return false;
       }
       this.writeState = this.unknownWrite(failure as Error);
@@ -478,6 +486,7 @@ export class KnowledgeWorkspace {
     const detail = Wire.object(result, 'detail');
     if (Wire.text(detail, 'id') !== row.id || Wire.text(detail, 'kind') !== row.path) throw new Error('request_updated');
     this.detail = detail;
+    this.supportsExpectedPinned=row.path==='recordings' && Wire.bool(result,'supports_expected_pinned');
     this.matches = Wire.rows(result, 'matches');
     this.agents = Wire.rows(result, 'agents').map((data: Record<string, Object>) => {
       const agent = ResourceRow.from(data, 'session'); agent.manager = owner.manager; return agent;
@@ -622,16 +631,27 @@ export class KnowledgeWorkspace {
 export class RecordingFactsDraft {
   @Trace open: boolean = false;
   @Trace text: string = '';
+  @Trace conflict: boolean = false;
+  @Trace baseline: string = '';
+  private lease: number = 0;
   private revision: number = 0;
 
-  begin(value: string): void { this.revision++; this.text = value; this.open = true; }
-  edit(value: string): void { this.revision++; this.text = value; }
-  close(): void { this.revision++; this.open = false; this.text = ''; }
+  begin(value: string): void {
+    this.lease++; this.revision++; this.conflict=false; this.baseline=value; this.text=value; this.open=true;
+  }
+  edit(value: string): void { this.revision++; this.text=value; }
+  close(): void { this.lease++; this.revision++; this.conflict=false; this.open=false; this.text=''; this.baseline=''; }
 
   async save(workspace: KnowledgeWorkspace): Promise<void> {
-    if (!this.open || workspace.busy) return;
-    const revision = this.revision, target = workspace.selected.key(), kind = workspace.selected.path;
-    if (await workspace.saveFacts(this.text) && this.revision === revision &&
-      workspace.selected.key() === target && workspace.selected.path === kind) this.close();
+    if (!this.open || workspace.busy || !workspace.supportsExpectedPinned) return;
+    const lease=this.lease, revision=this.revision, target=workspace.selected.key(), kind=workspace.selected.path, sent=this.text.trim();
+    const saved=await workspace.saveFacts(sent,this.baseline);
+    if (lease!==this.lease || workspace.selected.key()!==target || workspace.selected.path!==kind) return;
+    if (saved) {
+      this.baseline=sent; this.conflict=false;
+      if (this.revision===revision) this.close();
+    } else if (workspace.error==='phone_facts_changed') {
+      this.baseline=Wire.text(Wire.object(workspace.detail,'meta'),'pinned'); this.conflict=true;
+    }
   }
 }

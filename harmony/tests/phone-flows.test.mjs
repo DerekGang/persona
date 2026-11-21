@@ -275,3 +275,31 @@ test('Reduce Motion switches a compact drawer directly and retires an older comp
   assert.equal(drawer.drawerMounted, false);
   assert.equal(drawer.drawerFraction, 0);
 });
+
+test('only a workspace opened over the same owned session inherits its phone header and sibling tabs', () => {
+  const start = formSource.indexOf('get phoneToolParent()');
+  const end = formSource.indexOf('private phonePageName()', start);
+  assert.ok(start >= 0 && end > start);
+  const Shell = new Function('return ' + stripTypeScriptTypes(
+    'class PhoneShell {\n' + formSource.slice(start, end) + '\n}'))();
+  const shell = new Shell();
+  const row = (machine, manager, id) => {
+    const value = new ResourceRow();
+    value.kind = 'session'; value.group = 'hub'; value.machine = machine; value.manager = manager; value.id = id;
+    return value;
+  };
+  const a = row('desktop','personal','same');
+  const b = row('laptop','personal','same');
+  const otherManager = row('desktop','shared','same');
+  const routes = new Map([['chat',a],['opened-from-chat',a],['different-computer',b],['different-manager',otherManager]]);
+  Object.assign(shell,{phoneTop:'tools',phonePath:['project','session','tools'],phoneParam:'opened-from-chat',
+    stack:{getParamByIndex:index => index === 1 ? 'chat' : undefined},routeRow:param => routes.get(param)});
+  assert.equal(shell.phoneToolParent,'chat');
+  for (const param of ['different-computer','different-manager']) {
+    shell.phoneParam = param;
+    assert.equal(shell.phoneToolParent,'');
+  }
+  shell.phoneParam = 'opened-from-chat';
+  shell.phonePath = ['project','tools'];
+  assert.equal(shell.phoneToolParent,'');
+});

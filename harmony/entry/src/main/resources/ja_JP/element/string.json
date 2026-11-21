@@ -5911,6 +5911,18 @@
     {
       "name": "flow_other_model",
       "value": "その他のモデル…"
+    },
+    {
+      "name": "phone_conditional_read_only",
+      "value": "この Hub では表示のみ可能です。編集するには Hub を更新してください。"
+    },
+    {
+      "name": "phone_rules_changed",
+      "value": "別のデバイスでルールが更新されました。最新の内容を確認して変更を適用してください。"
+    },
+    {
+      "name": "phone_facts_changed",
+      "value": "別のデバイスで確認済みの事実が更新されました。下書きは保持されています。最新の内容を確認して保存してください。"
     }
   ]
 }

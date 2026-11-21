@@ -88,6 +88,17 @@ test('effect delivery waits for a queued callback, not a synchronous effect arra
   assert.deepEqual(effects, [fetchEffect()]);
 });
 
+test('a consumed callback stays with its step when the fixture JSON uses a different property order', async () => {
+  patch();
+  const effects = [fetchEffect()];
+  const step = await drainCore(1, 'fixture', [], effects, [{after_seq: 9, kind: 'fetch_after'}], 'sorted fixture');
+  assert.deepEqual(step.effects, [fetchEffect()]);
+  assert.deepEqual(effects, []);
+  await awaitDeliveredEffects(effects, [], 'next step', 25);
+  await assert.rejects(awaitDeliveredEffects([fetchEffect()], [{after_seq: 9, extra: 1, kind: 'fetch_after'}], 'extra field', 25),
+    /extra/);
+});
+
 test('zero-effect steps yield to the event loop and reject stale callbacks', async () => {
   const effects = [];
   let delivered = false;
