@@ -352,6 +352,7 @@ export struct Conversation {
   // Re-entering the conversation may sample a newly available native capability.
   private useNativeHover: boolean = nativeEnvironment.nativeHoverAvailable;
   @Local controlsHeight: number = 80;
+  private controlsScroller: Scroller = new Scroller();
   @Local measuredDecision: string = '';
   @Local fieldFocused: boolean = false;
   @Local draftEditorOpen: boolean = false;
@@ -396,7 +397,12 @@ export struct Conversation {
     return this.fieldFocused || this.model.draft.length > 0 || this.attachments.attachments.length > 0 ||
       !!this.model.sourceContext || this.environment.fontScale >= 1.5 || available < Tokens.minimumInput;
   }
-  private verticalActions(): boolean { return this.environment.fontScale >= 1.5 || this.composerWidth < Tokens.composerNarrowActions; }
+  private verticalActions(): boolean {
+    // The tools are icon buttons with vp touch targets. Only wrap when their actual slots cannot fit.
+    if (this.composerWidth < Tokens.composerNarrowActions) return true;
+    const middle = this.composerColumns() - this.leftColumns() - this.sendColumns();
+    return this.expandedComposer() && middle * this.composerWidth / this.composerColumns() < 44;
+  }
   // Native ordering keeps the same editor mounted. Compact slots use pixel precision, not twelfths of the row.
   private composerColumns(): number { return this.expandedComposer() ? 12 : Math.max(1, Math.round(this.getUIContext().vp2px(this.composerWidth))); }
   private sendColumns(): number { const width = this.trailingActionWidth() + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
@@ -405,10 +411,29 @@ export struct Conversation {
   @Monitor('active', 'model.selected', 'model.sessions', 'model.connected', 'model.draft', 'model.decision', 'attachments.attachments', 'model.interruptPendingKey')
   primaryStopChanged(): void { this.onPrimaryStop(this.active && this.primaryStop()); }
   private maxControlsHeight(): number {
-    if (!this.model.decision) return this.availableHeight * 0.8;
+    // The shell already resizes this view to the top of the IME.
     if (this.environment.keyboardHeightPx > 0) return this.availableHeight;
+    if (!this.model.decision) return this.availableHeight * 0.8;
     const half = this.availableHeight * Tokens.decisionFraction;
     return this.model.decision.kind === 'question' ? Math.max(half, this.availableHeight - 72) : half;
+  }
+  private inlineEditorMaxHeight(): number {
+    if (!this.expandedComposer()) return Tokens.touch;
+    const line = Tokens.lineHeight * Math.max(1, this.environment.fontScale);
+    const padding = 2 * Tokens.inset;
+    const actions = Tokens.touch * (this.verticalActions() ? 2 : 1);
+    // Include the outer spacing and both borders before the first native measurement.
+    // After layout this also reserves the measured quote, attachment strip and Persona task dock.
+    const chrome = Math.max(actions + Tokens.gap + Tokens.footer + 8,
+      this.editorHeight > 0 ? this.controlsHeight - this.editorHeight : 0);
+    const room = Math.max(Tokens.touch, this.maxControlsHeight() - chrome);
+    const lines = Math.max(1, Math.min(6, Math.floor((room - padding) / line)));
+    return Math.min(room, padding + lines * line);
+  }
+  private revealOverflowingActions(): void {
+    // A long attachment error or a short split window can be taller than even a one-line editor.
+    if (this.active && this.fieldFocused && !this.draftEditorOpen && this.environment.keyboardHeightPx > 0 &&
+      this.controlsHeight > this.maxControlsHeight() + 1) this.controlsScroller.scrollEdge(Edge.Bottom);
   }
   private decisionToolsHeight(): number {
     return this.showContextMenu ? Tokens.touch + Tokens.gap : 0;
@@ -1076,7 +1101,7 @@ export struct Conversation {
 
   @Builder hideKeyboard(page: boolean) {
     Button({type:ButtonType.Circle}) {
-      SymbolGlyph($r('sys.symbol.keyboard')).fontSize(19).fontColor([Colors.secondary])
+      SymbolGlyph($r('sys.symbol.keyboard')).fontSize('19vp').fontColor([Colors.secondary])
     }.width(44).height(44).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_chat_hide_keyboard'))
       .bindTips(tr('phone_chat_hide_keyboard')).id(page ? 'chat.editor.keyboard' : 'chat.keyboard')
       .onClick(() => { if (page) this.pageField.stopEditing(); else this.inlineField.stopEditing(); })
@@ -1085,22 +1110,24 @@ export struct Conversation {
     Column({space:8}) {
       Row({space:8}) {
         Button({type:ButtonType.Circle}) {
-          SymbolGlyph($r('sys.symbol.arrow_down_right_and_arrow_up_left')).fontSize(19).fontColor([Colors.ink])
+          SymbolGlyph($r('sys.symbol.arrow_down_right_and_arrow_up_left')).fontSize('19vp').fontColor([Colors.ink])
         }.width(44).height(44).padding(0).backgroundColor(Colors.control).accessibilityText(tr('phone_chat_close_editor'))
           .onClick(() => { this.finishPageInput(); this.draftEditorOpen=false; }).id('chat.editor.collapse')
         Blank().layoutWeight(1)
         if (this.draftEditorFocused || this.environment.keyboardHeightPx > 0) this.hideKeyboard(true)
-      }.width('100%')
-      if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).fontColor(Colors.secondary)
-        .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
-      TextArea({text:this.model.draft,placeholder:tr('message'),controller:this.pageField})
-        .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(Tokens.body).fontColor(Colors.ink)
-        .lineHeight(String(Tokens.lineHeight)+'fp').backgroundColor(Color.Transparent).caretColor(Colors.link)
-        .padding({left:8,right:8,top:5,bottom:5}).enabled(!this.sending && !this.model.draftLoading)
-        .onFocus(() => this.draftEditorFocused=true).onBlur(() => this.draftEditorFocused=false)
-        .onTextSelectionChange((start:number,end:number) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.rememberSelection(start,end); })
-        .onChange((text:string) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.model.updateDraft(text); })
-        .id('chat.editor.input')
+      }.width('100%').height(44)
+      Column({space:8}) {
+        if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).fontColor(Colors.secondary)
+          .maxLines(this.environment.keyboardHeightPx > 0 ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
+        TextArea({text:this.model.draft,placeholder:tr('message'),controller:this.pageField})
+          .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(Tokens.body).fontColor(Colors.ink)
+          .lineHeight(String(Tokens.lineHeight)+'fp').backgroundColor(Color.Transparent).caretColor(Colors.link)
+          .padding({left:8,right:8,top:5,bottom:5}).enabled(!this.sending && !this.model.draftLoading)
+          .onFocus(() => this.draftEditorFocused=true).onBlur(() => this.draftEditorFocused=false)
+          .onTextSelectionChange((start:number,end:number) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.rememberSelection(start,end); })
+          .onChange((text:string) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.model.updateDraft(text); })
+          .id('chat.editor.input')
+      }.layoutWeight(1).width('100%').clip(true)
       Row() {
         Blank().layoutWeight(1)
         Button({type:ButtonType.Circle}) {
@@ -1112,7 +1139,7 @@ export struct Conversation {
             if (this.primaryStop()) { this.model.stop(() => this.draftEditorCurrent()); return; }
             this.refocusInline=false; this.pageField.stopEditing(); this.draftEditorOpen=false; this.sendDraft();
           })
-      }.width('100%')
+      }.width('100%').height(44)
     }.width('100%').height('100%').padding({left:Tokens.page,right:Tokens.page,top:Tokens.inset,bottom:Tokens.page})
       .backgroundColor(Colors.surface).id('chat.editor')
   }
@@ -1131,14 +1158,14 @@ export struct Conversation {
             .fontSize(Tokens.body).placeholderFont({ size: Tokens.body }).fontColor(Colors.ink).placeholderColor(Colors.secondary)
             .lineHeight(String(Tokens.lineHeight) + 'fp').caretColor(Colors.action).backgroundColor(Color.Transparent)
             .padding({ left: this.expandedComposer() ? Tokens.page : Tokens.gap, right: this.offersDraftEditor() ? Tokens.touch : this.expandedComposer() ? Tokens.page : Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
-            .constraintSize({ minHeight: Tokens.touch, maxHeight: 6 * Tokens.lineHeight * Math.max(1, this.environment.fontScale) + Tokens.section })
+            .constraintSize({ minHeight: Tokens.touch, maxHeight: this.inlineEditorMaxHeight() })
             .height(this.expandedComposer() ? undefined : Tokens.touch)
             .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
             .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
             .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
             if (this.offersDraftEditor()) {
               Button({type:ButtonType.Circle}) {
-                SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize(17).fontColor([Colors.ink])
+                SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('17vp').fontColor([Colors.ink])
               }.width(40).height(40).padding(0).backgroundColor(Color.Transparent)
                 .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('phone_chat_expand_editor')).bindTips(tr('phone_chat_expand_editor'))
                 .onClick(() => this.expandDraftEditor()).id('chat.expand')
@@ -1150,7 +1177,7 @@ export struct Conversation {
         }.id(this.editorAnchorId)
           .onAreaChange((_old: Area, area: Area) => { this.editorLeft = Number(area.globalPosition.x); this.editorTop = Number(area.globalPosition.y); this.editorWidth = Number(area.width); this.editorHeight = Number(area.height); })
           .bindPopup(this.chooser.shown && this.chooser.session?.preserveInput === true, this.chooserPopupOptions())
-        if (!this.model.demo || this.showContextMenu) GridCol({ span: this.verticalActions() ? this.composerColumns() : this.leftColumns(), order: this.expandedComposer() ? this.verticalActions() ? 2 : 1 : 0 }) {
+        if (!this.model.demo || this.showContextMenu || this.verticalActions() && (this.fieldFocused || this.environment.keyboardHeightPx > 0)) GridCol({ span: this.verticalActions() ? this.composerColumns() : this.leftColumns(), order: this.expandedComposer() ? this.verticalActions() ? 2 : 1 : 0 }) {
           Row({ space: Tokens.gap }) {
             if (!this.model.demo) Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(Tokens.symbolFont).fontColor([Colors.ink]) }
               .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('attach'))
@@ -1186,7 +1213,7 @@ export struct Conversation {
             if (IconActions.busy(this.primaryActionKey())) LoadingProgress().width(Tokens.symbol).height(Tokens.symbol).color(Colors.onAction)
             else SymbolGlyph(this.primaryActionKey() === 'stop' ? Symbols.stop : IconActions.symbol(this.primaryActionKey())).fontSize(Tokens.symbolFont).fontColor([Colors.onAction])
           }.accessibilityText(tr(this.primaryActionKey())).attributeModifier(ButtonStyles.primary).padding(0).width(this.environment.fontScale >= 1.5 ? 44 : 34).height(this.environment.fontScale >= 1.5 ? 44 : 34)
-            .responseRegion({x:-5,y:-5,width:44,height:44})
+            .responseRegion({x:this.environment.fontScale >= 1.5 ? 0 : -5,y:this.environment.fontScale >= 1.5 ? 0 : -5,width:44,height:44})
             .enabled(this.primaryEnabled())
             .onClick(() => { if (!this.sendCurrent()) return; if (this.primaryStop()) this.model.stop(() => this.sendCurrent()); else this.sendDraft(); }).id('chat.send')
           }.width('100%').height(Tokens.touch).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End).padding({right:3})
@@ -1225,7 +1252,7 @@ export struct Conversation {
   }
   @Builder interactionContent() {
     if (this.model.decision) this.blockingContent()
-    else Scroll() {
+    else Scroll(this.controlsScroller) {
       Column({ space: Tokens.gap }) {
       if (this.showContextMenu && (this.model.decision || !this.model.canCompose())) Button({ type: ButtonType.Circle }) { Image(Symbols.more).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink) }
         .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick(() => this.openFallbackActions())
@@ -1240,9 +1267,12 @@ export struct Conversation {
       }
       }.width('100%').constraintSize({ maxWidth: Tokens.readingMax }).padding({ left: Tokens.page, right: Tokens.page, bottom: Tokens.footer, top: Tokens.gap }).onAreaChange((_before: Area, area: Area): void => {
         const height = Number(area.height);
-        if (Number.isFinite(height) && height > 0 && Math.abs(height - this.controlsHeight) > 1) this.controlsHeight = height;
+        if (Number.isFinite(height) && height > 0 && Math.abs(height - this.controlsHeight) > 1) {
+          this.controlsHeight = height;
+          this.revealOverflowingActions();
+        }
       })
-    }.width('100%').height('100%')
+    }.width('100%').height('100%').onAreaChange(() => this.revealOverflowingActions())
   }
 
   build() {
