@@ -62,6 +62,7 @@ type Options struct {
 
 // Service is the assistant. It implements Handler.
 type Service struct {
+	logical logicalDeviceState
 	history conversationHistoryBook
 	// agentDirs keeps each computer's hidden Agent folders (hidden_agent_dirs.go); nil: none.
 	agentDirs AgentDirs
@@ -348,6 +349,9 @@ func New(o Options) *Service {
 	if s.store == nil {
 		s.store = func() Store { return nil }
 	}
+	if _, ok := s.store().(logicalConversationStore); ok && s.devs != nil {
+		s.devs = &logicalDevices{Devices: s.devs, s: s}
+	}
 	if s.logf == nil {
 		s.logf = func(string, ...any) {}
 	}
@@ -499,6 +503,12 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 		if err != nil {
 			return err
 		}
+		if result, handled, err := s.logicalCall(ctx, device, method, raw); handled {
+			if err != nil || out == nil {
+				return err
+			}
+			return json.Unmarshal(result, out)
+		}
 		if result, handled, err := s.historyCall(ctx, device, method, raw); handled {
 			if err != nil || out == nil {
 				return err
@@ -644,7 +654,10 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 		return beforeNodeWrite(method, err)
 	}
 	p := DeviceCall{Device: device, Method: nodeMethod(method, params), Params: raw}
-	res, ok, err := s.localFleetDeviceCall(ctx, p) // what the hub answered before the nodes' events were the manager's
+	res, ok, err := s.logicalCall(ctx, device, p.Method, p.Params)
+	if !ok {
+		res, ok, err = s.localFleetDeviceCall(ctx, p)
+	} // what the hub answered before the nodes' events were the manager's
 	if !ok {
 		res, err = s.hub.DeviceCall(ctx, p)
 	}

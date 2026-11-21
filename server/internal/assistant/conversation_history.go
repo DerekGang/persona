@@ -68,7 +68,7 @@ func (s *Service) historySource(ctx context.Context, machine, method string, par
 
 func (s *Service) historySession(ctx context.Context, machine, sid string) (proto.Session, bool) {
 	if s.devs != nil {
-		if c, ok := s.nodeSession(machine, sid); ok {
+		if c, ok := s.physicalDevices().Session(machine, sid); ok {
 			if m, exists := s.fleetMachine(machine); exists {
 				c.Assistant = m.isAssistant(c)
 			}
@@ -656,6 +656,19 @@ func (s *Service) historySweep(ctx context.Context, st conversationHistoryStore)
 			continue
 		}
 		list, err := s.sessions(ctx, machine.ID)
+		if physical := s.physicalDevices(); physical != nil {
+			var known bool
+			list, known = physical.Sessions(machine.ID)
+			if !known {
+				continue
+			}
+			if m, ok := s.fleetMachine(machine.ID); ok {
+				for i := range list {
+					list[i].Assistant = m.isAssistant(list[i])
+				}
+			}
+			err = nil
+		}
 		if err != nil {
 			continue
 		}
@@ -736,6 +749,12 @@ func (s *Service) historySync(ctx context.Context, st conversationHistoryStore, 
 		}
 		if err := s.historyRemember(ctx, st, machine, c.SessionID, h, p, page, revision); err != nil {
 			return err
+		}
+		if logical, ok := s.store().(logicalConversationStore); ok {
+			if err := logical.ObserveConversationSource(ctx, machine, c.SessionID, page.History); err != nil {
+				return err
+			}
+			s.logicalChanged()
 		}
 		advanced := intValue(page.ToSeq)
 		for _, it := range page.Items {

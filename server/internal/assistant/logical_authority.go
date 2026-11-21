@@ -1,0 +1,166 @@
+package assistant
+
+import (
+	"context"
+	"encoding/json"
+	"sync/atomic"
+
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/proto"
+)
+
+type logicalAuthenticatedKey struct{}
+type logicalAuthenticated struct {
+	Machine, Session, PhysicalMachine, PhysicalSession string
+	Epoch                                              int64
+	Lease                                              *atomic.Bool
+}
+
+func (s *Service) Tool(ctx context.Context, call ToolCall) proto.ToolResult {
+	if caller, ok := ctx.Value(logicalAuthenticatedKey{}).(logicalAuthenticated); ok && caller.Machine == call.MachineID && caller.Session == call.SessionID {
+		if caller.Lease != nil && caller.Lease.Load() {
+			return s.tool(ctx, call)
+		}
+		call.MachineID, call.SessionID = caller.PhysicalMachine, caller.PhysicalSession
+	}
+	machine, session, c, err := s.logicalCaller(ctx, call.MachineID, call.SessionID)
+	if err != nil {
+		return proto.TextResult(err.Error(), true)
+	}
+	if c == nil {
+		return s.tool(ctx, call)
+	}
+	st := s.store().(logicalConversationStore)
+	var result proto.ToolResult
+	err = st.WithConversationEpoch(ctx, machine, session, c.Epoch, func(current *db.LogicalConversation) error {
+		active, ok := current.Active()
+		if !ok || active.MachineID != call.MachineID || active.SessionID != call.SessionID {
+			return logicalRefusal(ctx, "retired")
+		}
+		lease := &atomic.Bool{}
+		lease.Store(true)
+		defer lease.Store(false)
+		verified := logicalAuthenticated{machine, session, call.MachineID, call.SessionID, current.Epoch, lease}
+		call.MachineID, call.SessionID = machine, session
+		result = s.tool(context.WithValue(ctx, logicalAuthenticatedKey{}, verified), call)
+		return nil
+	})
+	if err != nil {
+		return proto.TextResult(err.Error(), true)
+	}
+	return result
+}
+
+type logicalNodeHandler func(context.Context, string, string, json.RawMessage) (any, bool, error)
+
+type logicalInteractionStore interface {
+	PutConversationInteraction(context.Context, string, string, string, string, string, int64) error
+	ConversationInteraction(context.Context, string) (*db.ConversationInteractionRoute, error)
+}
+
+func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string, raw json.RawMessage, next logicalNodeHandler) (any, bool, error) {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return next(ctx, machine, method, raw)
+	}
+	var session string
+	_ = json.Unmarshal(envelope["session_id"], &session)
+	var ix proto.Interaction
+	if method == "interaction.create" {
+		_ = json.Unmarshal(envelope["interaction"], &ix)
+		session = ix.SessionID
+	}
+	if session == "" {
+		return next(ctx, machine, method, raw)
+	}
+	rootMachine, rootSession, c, err := s.logicalCaller(ctx, machine, session)
+	if err != nil {
+		return nil, true, err
+	}
+	if c == nil {
+		return next(ctx, machine, method, raw)
+	}
+	var out any
+	var handled bool
+	waits := method == "interaction.create" || method == "mcp.tools"
+	var invoke func() error
+	st := s.store().(logicalConversationStore)
+	err = st.WithConversationEpoch(ctx, rootMachine, rootSession, c.Epoch, func(current *db.LogicalConversation) error {
+		active, ok := current.Active()
+		if !ok || active.MachineID != machine || active.SessionID != session {
+			return logicalRefusal(ctx, "retired")
+		}
+		lease := &atomic.Bool{}
+		lease.Store(true)
+		defer lease.Store(false)
+		verified := logicalAuthenticated{rootMachine, rootSession, machine, session, current.Epoch, lease}
+		if method == "interaction.create" {
+			if current.Switch != nil && current.Switch.Phase != "active" {
+				return logicalRefusal(ctx, "busy")
+			}
+			// Keep the authenticated physical destination apart from public identity.
+			if routes, ok := s.store().(logicalInteractionStore); ok {
+				if err := routes.PutConversationInteraction(ctx, ix.ID, rootMachine, rootSession, machine, session, current.Epoch); err != nil {
+					return err
+				}
+			}
+			ix.MachineID, ix.SessionID = rootMachine, rootSession
+			envelope["interaction"], _ = json.Marshal(ix)
+		} else {
+			envelope["session_id"], _ = json.Marshal(rootSession)
+		}
+		projected, e := json.Marshal(envelope)
+		if e != nil {
+			return e
+		}
+		invoke = func() error {
+			var err error
+			out, handled, err = next(context.WithValue(ctx, logicalAuthenticatedKey{}, verified), rootMachine, method, projected)
+			return err
+		}
+		if waits {
+			return nil
+		}
+		return invoke()
+	})
+	if err == nil && waits && invoke != nil {
+		err = invoke()
+	}
+	return out, handled || err != nil, err
+}
+
+func (s *Service) logicalInteractionAnswer(ctx context.Context, id string, r proto.Resolution, next func() error) error {
+	if r.Dismiss || r.Cancel {
+		return next()
+	}
+	routes, ok := s.store().(logicalInteractionStore)
+	if !ok {
+		return next()
+	}
+	route, err := routes.ConversationInteraction(ctx, id)
+	if err != nil {
+		return err
+	}
+	if route == nil {
+		return next()
+	}
+	st := s.store().(logicalConversationStore)
+	return st.WithConversationEpoch(ctx, route.MachineID, route.SessionID, route.Epoch, func(c *db.LogicalConversation) error {
+		a, ok := c.Active()
+		if !ok || a.MachineID != route.PhysicalMachine || a.SessionID != route.PhysicalSession {
+			return logicalRefusal(ctx, "retired")
+		}
+		if c.Switch != nil && c.Switch.Phase != "active" {
+			return logicalRefusal(ctx, "busy")
+		}
+		return next()
+	})
+}
+
+func (s *Service) NodeAnswer(ctx context.Context, machine, method string, params json.RawMessage) (any, bool, error) {
+	return s.logicalNodeRequest(ctx, machine, method, params, s.nodeAnswer)
+}
+
+func (s *Service) NodeRequest(ctx context.Context, machine, method string, params json.RawMessage) (any, bool, error) {
+	return s.logicalNodeRequest(ctx, machine, method, params, s.nodeRequest)
+}

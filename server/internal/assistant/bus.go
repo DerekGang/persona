@@ -203,6 +203,9 @@ func (b *BusHub) Run(ctx context.Context, svc *Service) error {
 
 // Serve is Run without svc's own work: the connection alone. It lets svc's knowledge base go for good when it ends.
 func (b *BusHub) Serve(ctx context.Context, svc *Service) error {
+	if svc.devs != nil {
+		b.opts.Devices = svc.devs
+	}
 	b.mu.Lock()
 	b.svc, b.ctx = svc, ctx
 	b.mu.Unlock()
@@ -721,6 +724,9 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 				if err := s.conversationParamsAvailable(ctx, d.Canonical(p.MachineID), p.Params); err != nil {
 					return nil, err
 				}
+			}
+			if out, handled, err := s.logicalCall(ctx, d.Canonical(p.MachineID), p.Method, p.Params); handled {
+				return out, err
 			}
 			if out, handled, err := s.historyCall(ctx, d.Canonical(p.MachineID), p.Method, p.Params); handled {
 				return out, err
