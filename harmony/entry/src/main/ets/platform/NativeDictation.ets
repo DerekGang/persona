@@ -28,9 +28,20 @@ export class NativeDictation {
   private ending: boolean = false;
   private finalText: string = '';
   private pendingText: string = '';
+  private confirmedText: string = '';
+  private owner: string;
   private read: (data: ArrayBuffer) => void = (data: ArrayBuffer): void => this.feed(data);
 
-  constructor(listener: DictationListener) { this.listener = listener; }
+  constructor(listener: DictationListener, owner: string) {
+    this.listener = listener;
+    this.owner = owner;
+  }
+
+  takeConfirmed(owner: string): string {
+    const text = this.confirmedText;
+    this.confirmedText = '';
+    return owner === this.owner ? text : '';
+  }
 
   static cancelActive(): void { NativeDictation.current?.cancel(); }
 
@@ -64,6 +75,7 @@ export class NativeDictation {
         onComplete: (id: string): void => {
           if (id !== this.session || !this.active()) return;
           const text = this.finalText + this.pendingText;
+          this.confirmedText = text;
           this.release();
           if (text) this.listener.completed(text);
           else this.listener.failed('phone_dictation_empty');
@@ -130,6 +142,7 @@ export class NativeDictation {
   }
 
   cancel(): void {
+    this.confirmedText = '';
     if (!this.active()) return;
     this.release(true);
     this.listener.cancelled();

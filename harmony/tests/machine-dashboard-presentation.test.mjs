@@ -177,3 +177,17 @@ test('a mounted plot and its value read the accepted sample again after a poll o
   view.detailSample=undefined;
   assert.deepEqual(readPoints(),[]); assert.equal(readCPU(),-1);
 });
+
+test('the monitor keeps its six-hour clock grid aligned as a new CPU sample arrives', async () => {
+  const {dashboardTimeTicks} = await import('../entry/src/main/ets/models/MachineDashboard.ets');
+  const end = new Date(2026, 10, 21, 20, 37).getTime() / 1000;
+  const ticks = dashboardTimeTicks(end, 21600);
+  assert.equal(ticks.length, 6);
+  assert.deepEqual(ticks.map(t => new Date(t*1000).getHours()), [15,16,17,18,19,20]);
+  assert.ok(ticks.every(t => new Date(t*1000).getMinutes() === 0));
+  assert.deepEqual(dashboardTimeTicks(end+15,21600),ticks);
+  assert.deepEqual(dashboardTimeTicks(end,0),[]);
+  for (const seconds of [3600,21600,86400]) {
+    assert.ok(dashboardTimeTicks(end,seconds).every(t => t>=end-seconds && t<=end));
+  }
+});

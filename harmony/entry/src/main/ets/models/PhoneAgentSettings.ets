@@ -29,8 +29,8 @@ export function validAgentSetting(setting:Record<string,Object>,value:Object):bo
 }
 
 export function cleanAgentFolder(input:string):string {
-  const path = input.trim();
-  return path.length > 1 ? path.replace(/\/+$/, '') || '/' : path;
+  const path=input.trim().replace(/\/+$/,'');
+  return path.length>1 && (path.startsWith('/') || path.startsWith('~/') || path.startsWith('*')) ? path : '';
 }
 
 @ObservedV2
@@ -120,7 +120,7 @@ export class PhoneAgentSettings {
           this.data = fresh; this.error='request_updated'; return;
         }
       }
-      const updated = await model.repo().call(path,'PUT',body,'save',() => this.current(serial));
+      const updated = await model.repo().call(path,'PUT',body,'',() => this.current(serial));
       if (!this.current(serial)) return;
       this.data = updated;
     } catch (_) { if (this.current(serial)) this.error='failed'; }

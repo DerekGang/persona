@@ -556,7 +556,7 @@ export struct ProjectsPage {
                   Text(String(this.tabRows.get(key)?.count || 0)).fontSize(12).fontColor(Colors.secondary)
                   SymbolGlyph(this.tabOpen(key) ? Symbols.down : Symbols.expand).fontSize(11).fontColor([Colors.secondary])
                 }
-              }.padding({left:10,right:10}).constraintSize({minHeight:34}).backgroundColor(Colors.surface)
+              }.padding({left:10,right:10}).constraintSize({minHeight:44}).backgroundColor(Colors.surface)
                 .accessibilityText(this.tabDescription(key)).onClick(() => this.toggleTab(key)).id('projects.tab')
             },(key:string) => key)
           }.padding({top:4,bottom:6})

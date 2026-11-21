@@ -748,7 +748,7 @@ export class AgentWorkspace {
     try {
       const projection = this.adapter.project(this.makeListInput());
       groups = projection.groups;
-      this.filterCounts = projection.counts;
+      this.filterCounts = projection.filter_counts || {};
     } catch (_) {
       // Preserve both rows and action authority from the same successful snapshot.
       this.error = 'failed';
@@ -810,7 +810,7 @@ export class AgentWorkspace {
         return current;
       }),
       coreSettings: { 'sort': 'state', 'folded': this.folded, 'expanded_idle': this.expandedIdle, 'expanded_quiet': this.expandedQuiet,
-        'compact': false, 'history': this.history, 'now': new Date().toISOString(), 'held': this.heldSession },
+        'compact': false, 'history': this.history, 'include_filter_counts': true, 'now': new Date().toISOString(), 'held': this.heldSession },
       preferencesFor: (row: AgentListRow): AgentListPreferences => this.preferencesFor(row.source as ResourceRow),
       machineIdentity: (row: AgentListRow): string => this.machineIdentity(row.source as ResourceRow),
       machineName: (row: AgentListRow): string => {

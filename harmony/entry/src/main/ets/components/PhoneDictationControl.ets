@@ -10,38 +10,41 @@ export struct PhoneDictationControl {
   @Require @Param owner: string;
   @Param active: boolean = true;
   @Param language: string = 'default';
-  @Event allowed: () => boolean = () => false;
-  @Event insert: (text: string) => boolean = () => false;
+  @Event allowed: (owner: string) => boolean = (_owner: string) => false;
+  @Event insert: (text: string, owner: string) => boolean = (_text: string, _owner: string) => false;
   @Event keyboard: () => void = () => {};
   @Local shown: boolean = false;
   @Local phase: string = '';
   @Local transcript: string = '';
   @Local message: string = '';
   private run: NativeDictation | undefined;
-  private pendingKeyboard: boolean = false;
+  private keyboardOwner: string = '';
 
   private close(): void {
     const run = this.run;
     this.run = undefined;
-    run?.cancel();
     this.shown = false;
+    this.phase = '';
+    this.transcript = '';
+    this.message = '';
+    run?.cancel();
   }
 
   @Monitor('owner', 'active') ownerChanged(): void {
-    this.pendingKeyboard = false;
+    this.keyboardOwner = '';
     this.close();
   }
 
   aboutToDisappear(): void {
-    this.pendingKeyboard = false;
+    this.keyboardOwner = '';
     this.close();
   }
 
   private start(): void {
-    if (!this.active || !this.allowed()) return;
+    if (this.shown || !this.active || !this.allowed(this.owner)) return;
     this.transcript = '';
     this.message = '';
-    this.pendingKeyboard = false;
+    this.keyboardOwner = '';
     this.shown = true;
     const language = this.language === 'default' ? i18n.getSystemLanguage() : this.language;
     const context = this.getUIContext().getHostContext();
@@ -53,7 +56,7 @@ export struct PhoneDictationControl {
     const owner = this.owner;
     this.phase = 'preparing';
     let run: NativeDictation;
-    const valid = (): boolean => this.shown && this.active && this.owner === owner && this.run === run && this.allowed();
+    const valid = (): boolean => this.shown && this.active && this.owner === owner && this.run === run && this.allowed(owner);
     const listener: DictationListener = {
       listening: (): void => { if (valid()) this.phase = 'listening'; },
       preview: (text: string): void => { if (valid()) this.transcript = text; },
@@ -65,14 +68,19 @@ export struct PhoneDictationControl {
       },
       cancelled: (): void => { if (this.run === run) this.close(); }
     };
-    run = new NativeDictation(listener);
+    run = new NativeDictation(listener, owner);
     this.run = run;
     run.start(context);
   }
 
   private accept(): void {
-    if (this.phase !== 'complete' || !this.active || !this.allowed()) { this.close(); return; }
-    if (this.insert(this.transcript)) this.close();
+    if (!this.shown || this.phase !== 'complete' || !this.run) return;
+    const owner = this.owner;
+    if (!this.active || !this.allowed(owner)) { this.close(); return; }
+    const text = this.run.takeConfirmed(owner);
+    if (!text) { this.close(); return; }
+    this.phase = 'inserting';
+    if (this.insert(text, owner)) this.close();
     else { this.phase = 'error'; this.message = 'phone_dictation_too_long'; }
   }
 
@@ -94,7 +102,7 @@ export struct PhoneDictationControl {
         if (this.phase === 'complete') Button(tr('phone_dictation_insert')).id('chat.dictation.insert')
           .onClick(() => this.accept())
         if (this.phase === 'error') Button(tr('phone_dictation_keyboard')).id('chat.dictation.keyboard')
-          .onClick(() => { this.pendingKeyboard = true; this.close(); })
+          .onClick(() => { this.keyboardOwner = this.owner; this.close(); })
         Button(tr('cancel')).attributeModifier(ButtonStyles.quiet).id('chat.dictation.cancel').onClick(() => this.close())
       }.width('100%').padding(Tokens.page)
     }.width('100%')
@@ -108,8 +116,8 @@ export struct PhoneDictationControl {
       .bindSheet($$this.shown, this.panel(), {title: {title: tr('phone_chat_dictation')}, height: SheetSize.MEDIUM,
         detents: [SheetSize.MEDIUM, SheetSize.LARGE], showClose: true,
         onDisappear: () => {
-          const focus = this.pendingKeyboard && this.active && this.allowed();
-          this.pendingKeyboard = false; this.close();
+          const focus = !!this.keyboardOwner && this.active && this.owner === this.keyboardOwner && this.allowed(this.keyboardOwner);
+          this.keyboardOwner = ''; this.close();
           if (focus) this.keyboard();
         }})
   }

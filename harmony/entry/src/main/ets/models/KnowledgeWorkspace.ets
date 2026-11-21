@@ -616,3 +616,22 @@ export class KnowledgeWorkspace {
       Wire.bool(data, 'resultUnknown') ? 'result_unknown' : 'knowledge_request_failed';
   }
 }
+
+/** The open recording editor owns edits made while a previous fact save is waiting for the Hub. */
+@ObservedV2
+export class RecordingFactsDraft {
+  @Trace open: boolean = false;
+  @Trace text: string = '';
+  private revision: number = 0;
+
+  begin(value: string): void { this.revision++; this.text = value; this.open = true; }
+  edit(value: string): void { this.revision++; this.text = value; }
+  close(): void { this.revision++; this.open = false; this.text = ''; }
+
+  async save(workspace: KnowledgeWorkspace): Promise<void> {
+    if (!this.open || workspace.busy) return;
+    const revision = this.revision, target = workspace.selected.key(), kind = workspace.selected.path;
+    if (await workspace.saveFacts(this.text) && this.revision === revision &&
+      workspace.selected.key() === target && workspace.selected.path === kind) this.close();
+  }
+}

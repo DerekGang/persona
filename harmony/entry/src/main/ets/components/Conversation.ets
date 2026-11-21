@@ -686,6 +686,7 @@ export struct Conversation {
       !this.attachments.busy && !this.model.draftLoading && (this.model.draft.trim().length > 0 || this.attachments.attachments.length > 0) &&
       this.model.operationState !== 'pending' && this.model.operationState !== 'unknown');
   }
+  private dictationOwner(): string { return JSON.stringify([this.model.connectionGeneration(), this.model.scope(), this.model.target()]); }
   private sendCurrent(): boolean { return this.mounted && this.active && this.admission(); }
   private async sendDraft(): Promise<void> {
     if (!this.sendCurrent() || this.sending || this.attachments.busy || !this.model.canSend()) return;
@@ -1170,12 +1171,12 @@ export struct Conversation {
         }
         GridCol({ span: this.verticalActions() ? this.composerColumns() : this.sendColumns(), order: this.expandedComposer() ? this.verticalActions() ? 1 : 4 : 2 }) {
           Row() {
-          PhoneDictationControl({owner: JSON.stringify([this.model.connectionGeneration(), this.model.scope(), this.model.target()]),
+          PhoneDictationControl({owner: this.dictationOwner(),
             active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
-            allowed: () => this.sendCurrent() && this.model.canCompose() && !this.model.decision,
+            allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.model.canCompose() && !this.model.decision,
             keyboard: () => this.getUIContext().getFocusController().requestFocus('chat.input'),
-            insert: (text: string): boolean => {
-              if (!this.sendCurrent() || !this.model.canCompose() || this.model.draftLoading || this.sending) return false;
+            insert: (text: string, owner: string): boolean => {
+              if (owner !== this.dictationOwner() || !this.sendCurrent() || !this.model.canCompose() || this.model.decision || this.model.draftLoading || this.sending) return false;
               const draft = this.model.draft, separator = /[a-zA-Z0-9]$/.test(draft) ? ' ' : '';
               if (draft.length + separator.length + text.length > Tokens.maxMessage) return false;
               this.model.updateDraft(draft + separator + text);

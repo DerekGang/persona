@@ -621,3 +621,37 @@ test('a late meetings response cannot replace a different active category', asyn
   gate.resolve({items:[{kind:'meetings',id:'late',name:'old'}],tags:['old']});await opening;
   assert.equal(w.kind,'topics');assert.deepEqual(w.entries.map(r=>r.id),['storage']);assert.deepEqual(w.tags,['notes']);
 });
+
+test('confirmed recording facts modify only the owner’s pinned text and keep a separate metadata draft', async () => {
+  let pinned = '';
+  const row=entry('recordings','phone/meeting','owner');
+  const env=await opened({request(call) {
+    if (!call.path.endsWith('phone%2Fmeeting')) return;
+    if (call.method === 'PUT') {
+      assert.deepEqual(Object.keys(call.body), ['pinned']);
+      pinned=call.body.pinned;
+      return {ok:true};
+    }
+    return {detail:{id:row.id,kind:'recordings',meta:{pinned,importance:'P2'},summary:'meeting'}};
+  }},row);
+  env.workspace.beginEdit();env.workspace.setEditTags('my draft');
+  assert.ok(await env.workspace.saveFacts('  agenda verified  '));
+  assert.equal(env.workspace.detail.meta.pinned,'agenda verified');
+  assert.equal(env.workspace.editOpen,true);
+  assert.equal(env.workspace.editTags,'my draft');
+  assert.ok(await env.workspace.saveFacts(''));
+  assert.equal(env.workspace.detail.meta.pinned,'');
+  const writes=calls(env,'PUT','/api/v1/kb/recordings/');
+  assert.equal(writes.length,2);assert.ok(writes.every(call=>call.manager==='owner' && !!call.op));
+});
+
+test('opening a recording from a knowledge search keeps the Hub matches in the displayed detail', async () => {
+  const row=entry('recordings','meeting-1','owner',{opened_from_query:'agenda'});
+  const env=await opened({},row);
+  assert.ok(calls(env,'GET','/api/v1/kb/recordings/meeting-1?q=agenda').length);
+  assert.match(env.workspace.matches[0].line,/agenda/);
+  const page=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeWorkspacePage.ets',import.meta.url),'utf8');
+  const extract=(current,next)=>page.slice(page.indexOf('@Builder '+current+'('),page.indexOf('@Builder '+next+'('));
+  assert.match(extract('recordingDetail','detailContent'),/this\.entryEvidence\(\)/);
+  assert.match(extract('entryEvidence','recordingDetail'),/knowledge\.match\./);
+});

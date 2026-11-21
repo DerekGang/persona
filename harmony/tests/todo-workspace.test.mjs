@@ -765,3 +765,18 @@ test('date and priority sort use the earliest date and highest priority of the v
     assert.deepEqual(rows.map(r=>r.members.length),[2,1]);
   }
 });
+
+test('the due warning counts hidden owner actions once per manager and respects the active search', () => {
+  const due = new TodoWorkspace();
+  const now = new Date(2026,10,21,12).getTime();
+  const item = (id, manager, dates = {}) => new TodoWorkspaceItem(todo(id,{manager,title:'Widget '+manager,
+    view:{section:'needs_you',phase:'open',rank:1},...dates}),manager);
+  due.items = [
+    item('same','home'), item('same','home'), item('same','office'),
+    item('today','home',{due_date:'2026-11-21'}), item('later','office',{view:{section:'working',phase:'open',rank:1}})
+  ];
+  due.dueFilter='today';
+  assert.equal(due.hiddenWaiting(now,1),2);
+  due.search='Widget home';assert.equal(due.hiddenWaiting(now,1),1);
+  due.dueFilter='all';assert.equal(due.hiddenWaiting(now,1),0);
+});
