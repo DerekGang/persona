@@ -100,7 +100,7 @@ export struct PhoneAgentSettingsPage {
           .onClick(() => {
             const pattern=cleanAgentFolder(this.draft);
             this.form.changeFolder(pattern,Wire.payload(['pattern','action','enabled'],[pattern,this.folderAction,true]),true)
-              .then(() => { if (this.rules.some((r:Record<string,Object>) => Wire.text(r,'pattern')===pattern)) this.draft=''; });
+              .then((saved:boolean) => { if (saved && cleanAgentFolder(this.draft)===pattern) this.draft=''; });
           }).id('settings.agent.folder.add')
       }.width('100%').padding({left:15,right:12,top:4,bottom:6})
     }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)

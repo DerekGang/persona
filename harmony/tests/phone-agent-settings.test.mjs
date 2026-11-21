@@ -61,7 +61,8 @@ test('two devices changing folder rules receive a conflict or keep both; older H
   };
   const x=harness(request),y=harness(request),a=new PhoneAgentSettings(),b=new PhoneAgentSettings();
   await Promise.all([a.open(x.model,'phone_agent_folders'),b.open(y.model,'phone_agent_folders')]);
-  await Promise.all([a.changeFolder('~/one',rule('~/one'),true),b.changeFolder('~/two',rule('~/two'),true)]);
+  const acknowledgements=await Promise.all([a.changeFolder('~/one',rule('~/one'),true),b.changeFolder('~/two',rule('~/two'),true)]);
+  assert.deepEqual(acknowledgements.sort(),[false,true]);
   assert.equal(rules.length,1);
   const loser=a.notice?a:b;assert.equal(loser.notice,'phone_rules_changed');assert.deepEqual(loser.data.rules,rules);
   const missing=rules[0].pattern==='~/one'?'~/two':'~/one';await loser.changeFolder(missing,rule(missing),true);
@@ -84,4 +85,16 @@ test('a late machine read and an admitted save cannot cross an owner change',asy
   await settings.setOption('made_up',true);const pending=settings.setOption('agent_tasks',false);
   await ready;env.state.generation++;settings.close();release();await pending;
   assert.deepEqual(settings.data,{});assert.equal(settings.error,'');
+});
+
+test('a conflicting addition with the same folder name is never acknowledged as a saved local draft',async()=>{
+  const remote={pattern:'~/weather',enabled:true,action:'block'};
+  let reads=0;
+  const env=harness(async(_path,verb)=>{
+    if (verb==='PUT') throw Object.assign(new Error('conflict'),{status:409});
+    return {supports_expected_rules:true,rules:++reads===1?[]:[remote]};
+  });
+  const page=new PhoneAgentSettings();await page.open(env.model,'phone_agent_folders');
+  assert.equal(await page.changeFolder('~/weather',{...remote,action:'hide'},true),false);
+  assert.deepEqual(page.data.rules,[remote]);assert.equal(page.notice,'phone_rules_changed');
 });

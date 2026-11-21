@@ -94,37 +94,39 @@ export class PhoneAgentSettings {
     await this.write(Wire.payload(['key','value'],[key,value]));
   }
 
-  async changeFolder(pattern:string, replacement:Record<string,Object> | undefined, adding:boolean = false):Promise<void> {
-    if (this.page !== 'phone_agent_folders' || !Wire.bool(this.data,'supports_expected_rules') || !pattern || !Array.isArray(this.data['rules'])) return;
+  async changeFolder(pattern:string, replacement:Record<string,Object> | undefined, adding:boolean = false):Promise<boolean> {
+    if (this.page !== 'phone_agent_folders' || !Wire.bool(this.data,'supports_expected_rules') || !pattern || !Array.isArray(this.data['rules'])) return false;
     const before = Wire.rows(this.data,'rules');
     const index = before.findIndex((r:Record<string,Object>) => Wire.text(r,'pattern') === pattern);
-    if (adding ? index >= 0 || !replacement : index < 0) return;
+    if (adding ? index >= 0 || !replacement : index < 0) return false;
     if (replacement && (Wire.text(replacement,'pattern') !== pattern || !['block','hide'].includes(Wire.text(replacement,'action')) ||
-      typeof replacement['enabled'] !== 'boolean')) return;
+      typeof replacement['enabled'] !== 'boolean')) return false;
     const next = before.slice();
     if (adding && replacement) next.push(replacement);
     else if (replacement) next.splice(index,1,replacement);
     else next.splice(index,1);
-    await this.write(Wire.payload(['rules','expected_rules'],[next,before]));
+    return await this.write(Wire.payload(['rules','expected_rules'],[next,before]));
   }
 
-  private async write(body:Record<string,Object>):Promise<void> {
+  private async write(body:Record<string,Object>):Promise<boolean> {
     const model = this.model, path = agentPreferencePath(this.page,this.machine);
-    if (!model || !model.connected || !path || this.loading || this.saving || this.error || !this.current(this.serial)) return;
+    if (!model || !model.connected || !path || this.loading || this.saving || this.error || !this.current(this.serial)) return false;
     const serial = ++this.serial;
     this.saving = true; this.notice='';
     try {
       const updated = await model.repo().call(path,'PUT',body,'',() => this.current(serial));
-      if (!this.current(serial)) return;
+      if (!this.current(serial)) return false;
       this.data = updated;
+      return true;
     } catch (failure) {
-      if (!this.current(serial)) return;
+      if (!this.current(serial)) return false;
       if (this.page==='phone_agent_folders' && Wire.number(failure as Object as Record<string,Object>,'status')===409) {
         try {
           const latest=await model.repo().call(path);
           if (this.current(serial)) { this.data=latest; this.notice='phone_rules_changed'; }
         } catch (_) { if (this.current(serial)) this.error='failed'; }
       } else this.error='failed';
+      return false;
     }
     finally { if (this.current(serial)) this.saving=false; }
   }
