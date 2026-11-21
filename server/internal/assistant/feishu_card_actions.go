@@ -225,6 +225,7 @@ func (s *Service) answerFromCard(ctx context.Context, a *feishubot.CardAction, a
 		ok     bool
 		err    error
 		status string
+		ended  bool
 	}
 	if a.Str("clarify") == "1" {
 		question := a.Form("question")
@@ -355,11 +356,26 @@ func (s *Service) answerFromCard(ctx context.Context, a *feishubot.CardAction, a
 	how := resolutionText(l, ix, r)
 	// Screen and Codex cards act on the terminal and can take a few seconds; Feishu waits 3 s for this answer.
 	done := make(chan outcome, 1)
+	falseDeadline := make(chan struct{})
 	go func() {
 		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		res, err := s.resolveInteractionResult(rctx, channel.Feishu, id, r, action)
-		done <- outcome{ok: res.OK, err: err, status: res.Status}
+		o := outcome{ok: res.OK, err: err, status: res.Status}
+		if err == nil && !res.OK {
+			// The new false-result recheck can itself wait on history or storage.
+			// Keep it in the background and leave time for the callback's RPC reply.
+			if !finalStatus(res.Status) {
+				if deadline, ok := ctx.Deadline(); ok {
+					timer := time.AfterFunc(max(0, time.Until(deadline)-100*time.Millisecond), func() { close(falseDeadline) })
+					defer timer.Stop()
+				}
+			}
+			cctx, ccancel := context.WithTimeout(rctx, 15*time.Second)
+			o.ended = over(cctx, res.Status)
+			ccancel()
+		}
+		done <- o
 	}()
 	select {
 	case o := <-done:
@@ -371,7 +387,7 @@ func (s *Service) answerFromCard(ctx context.Context, a *feishubot.CardAction, a
 			}
 			return res
 		case !o.ok:
-			if !over(ctx, o.status) {
+			if !o.ended {
 				return toast("warning", i18n.T(l, "assistant-feishu_cards.press_retry"))
 			}
 			// Its ended event may have found no card after the optimistic removal above.
@@ -379,46 +395,50 @@ func (s *Service) answerFromCard(ctx context.Context, a *feishubot.CardAction, a
 				Card: s.answeredCard(ctx, ix, endedText(l, o.status, "assistant-feishu_cards.handled")).Raw()}
 		}
 		return &feishubot.CardResponse{Toast: &feishubot.Toast{Type: "success", Content: how}, Card: s.answeredCard(ctx, ix, how).Raw()}
+	case <-falseDeadline:
 	case <-time.After(cardAnswerWait):
-		msg := a.Context.MessageID
-		go func() {
-			o := <-done
-			if o.err != nil {
-				s.logf("bots: answer %s: %v", id, o.err)
-			}
-			if o.err == nil && o.ok {
-				if msg != "" {
-					cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-					defer cancel()
-					s.botCardDone(cctx, msg, ix, how)
-				}
-				return
-			}
-			// Not answered: the card waits again (botRestoreCard leaves out one that ended meanwhile), and the chat is
-			// told what became of the press — its toast said "Working on it…" long ago, and nothing else would say
-			// that the press failed or lost to another surface (#4123).
-			rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			ended := over(rctx, o.status)
-			cancel()
-			if msg == "" {
-				return
-			}
-			// The restore may have used up rctx: the note gets a budget of its own.
-			nctx, ncancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer ncancel()
-			if ended {
-				// The optimistic removal left no card for its ended event to close.
-				s.botCardDone(nctx, msg, ix, endedText(l, o.status, "assistant-feishu_cards.handled"))
-			}
-			switch {
-			case o.err != nil:
-				s.botNote(nctx, msg, i18n.T(l, "assistant-feishu_cards.press_not_sent", i18n.Args{"error": clip(oneLine(o.err.Error()), 200)}))
-			case !ended:
-				s.botNote(nctx, msg, i18n.T(l, "assistant-feishu_cards.press_retry"))
-			}
-		}()
-		return toast("info", i18n.T(l, "assistant-feishu_cards.working_on_it"))
 	}
+	msg := a.Context.MessageID
+	go func() {
+		o := <-done
+		if o.err != nil {
+			s.logf("bots: answer %s: %v", id, o.err)
+		}
+		if o.err == nil && o.ok {
+			if msg != "" {
+				cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				s.botCardDone(cctx, msg, ix, how)
+			}
+			return
+		}
+		// Not answered: the card waits again (botRestoreCard leaves out one that ended meanwhile), and the chat is
+		// told what became of the press — its toast said "Working on it…" long ago, and nothing else would say
+		// that the press failed or lost to another surface (#4123).
+		rctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ended := o.ended
+		if o.err != nil {
+			ended = over(rctx, o.status)
+		}
+		cancel()
+		if msg == "" {
+			return
+		}
+		// The restore may have used up rctx: the note gets a budget of its own.
+		nctx, ncancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer ncancel()
+		if ended {
+			// The optimistic removal left no card for its ended event to close.
+			s.botCardDone(nctx, msg, ix, endedText(l, o.status, "assistant-feishu_cards.handled"))
+		}
+		switch {
+		case o.err != nil:
+			s.botNote(nctx, msg, i18n.T(l, "assistant-feishu_cards.press_not_sent", i18n.Args{"error": clip(oneLine(o.err.Error()), 200)}))
+		case !ended:
+			s.botNote(nctx, msg, i18n.T(l, "assistant-feishu_cards.press_retry"))
+		}
+	}()
+	return toast("info", i18n.T(l, "assistant-feishu_cards.working_on_it"))
 }
 
 // botRestoreCard puts back the card of interaction id, closed optimistically for an answer that did not go through,
