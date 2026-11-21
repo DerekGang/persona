@@ -545,13 +545,27 @@ export struct ProjectsPage {
           .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
       }
       ListItem() { PhoneSectionTitle({ text: tr('agents'), trailing: this.count(this.detailTree?.sessions.length || 0, 'project_sessions') }) }
+      if (this.tabRows.size) ListItem() {
+        Scroll() {
+          Row({space:6}) {
+            ForEach(Array.from(this.tabRows.keys()),(key:string) => {
+              Button({type:ButtonType.Capsule}) {
+                Row({space:5}) {
+                  Circle().width(6).height(6).fill(this.tabTint(key))
+                  Text(this.tabRows.get(key)?.tabTitle || '').fontSize(13).fontColor(Colors.ink)
+                  Text(String(this.tabRows.get(key)?.count || 0)).fontSize(12).fontColor(Colors.secondary)
+                  SymbolGlyph(this.tabOpen(key) ? Symbols.down : Symbols.expand).fontSize(11).fontColor([Colors.secondary])
+                }
+              }.padding({left:10,right:10}).constraintSize({minHeight:34}).backgroundColor(Colors.surface)
+                .accessibilityText(this.tabDescription(key)).onClick(() => this.toggleTab(key)).id('projects.tab')
+            },(key:string) => key)
+          }.padding({top:4,bottom:6})
+        }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+      }
       ListItem() {
         GridRow({columns:nativeEnvironment.fontScale >= 1.5 ? 1 : 2,gutter:{x:10,y:10}}) {
-          ForEach(this.detailSessions,(line:ProjectLine) => {
-            if (line.kind === 'tab') GridCol({span:nativeEnvironment.fontScale >= 1.5 ? 1 : 2}) {
-              Column() { this.tabLine(line.key) }.width('100%').backgroundColor(Colors.surface).borderRadius(12)
-            }
-            else GridCol({span:1}) { this.spaceCard(line.agent!,line.paneName,line.starter,this.target) }
+          ForEach(this.detailSessions.filter((line:ProjectLine) => line.kind === 'session'),(line:ProjectLine) => {
+            GridCol({span:1}) { this.spaceCard(line.agent!,line.paneName,line.starter,this.target) }
           },(line:ProjectLine) => JSON.stringify([line.key,line.open,line.agent?.row.raw,line.agent?.state,line.paneName,line.starter]))
           if (this.detailTree?.canStart) GridCol({span:1}) {
             Column({space:8}) {
