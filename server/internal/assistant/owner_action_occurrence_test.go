@@ -373,6 +373,42 @@ func TestOwnerActionReconciliationContinuesPastInitialRetryBudget(t *testing.T) 
 	}
 }
 
+func TestOwnerActionShutdownWakesPersistentWaiter(t *testing.T) {
+	s, _, _, book := ownerReplyTestService(t)
+	batch := createOwnerTestBatch(t, book, `{"body":"persistent shutdown"}`)
+	ix := ownerReplyBatchIX(batch)
+	putOwnerReplyPending(s, ix)
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.running.Store(&runCtx)
+	allow := true
+	p, err := s.claimOwnerProposal(ix, proto.Resolution{Allow: &allow}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		r   proto.Resolution
+		err error
+	}
+	waited := make(chan outcome, 1)
+	go func() {
+		r, err := s.await(context.Background(), p)
+		waited <- outcome{r: r, err: err}
+	}()
+	// Give the waiter a chance to block in the initial resolved/done select;
+	// the early persistenceErr check also makes the reverse scheduling safe.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	s.failOwnerProposalClaim(p, runCtx.Err())
+	select {
+	case got := <-waited:
+		if !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("persistent shutdown returned resolution %+v and error %v", got.r, got.err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("persistent proposal waiter stayed blocked after service shutdown")
+	}
+}
+
 func TestOwnerActionResolutionUsesTheFirstDurableAnswer(t *testing.T) {
 	s, _, _, book := ownerReplyTestService(t)
 	batch := createOwnerTestBatch(t, book, `{"body":"first durable answer"}`)

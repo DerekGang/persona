@@ -290,6 +290,7 @@ func (s *Service) claimOwnerProposal(ix proto.Interaction, r proto.Resolution, e
 	if r.AnsweredBy != "" {
 		p.answeredWith = r.Answers
 	}
+	signalPersistenceWakeLocked(p)
 	return p, nil
 }
 
@@ -311,6 +312,7 @@ func (s *Service) releaseOwnerProposalClaim(p *pending, decisionErr error, retry
 	attempt.err = decisionErr
 	p.persisting = nil
 	close(attempt.done)
+	signalPersistenceWakeLocked(p)
 }
 
 // failOwnerProposalClaim wakes local waiters on service shutdown without
@@ -329,6 +331,7 @@ func (s *Service) failOwnerProposalClaim(p *pending, claimErr error) {
 	attempt.err = claimErr
 	p.persisting = nil
 	close(attempt.done)
+	signalPersistenceWakeLocked(p)
 }
 
 func (s *Service) completeOwnerProposalClaim(p *pending, r proto.Resolution) {

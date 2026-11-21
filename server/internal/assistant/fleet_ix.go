@@ -35,10 +35,11 @@ type pending struct {
 	// Clarification releases only its original caller; the card and this operation stay pending.
 	prepared *preparedApproval
 	// resolved broadcasts a claimed answer to every overlapping resumable waiter.
-	resolved       chan struct{}
-	resolution     *proto.Resolution
-	persisting     *questionPersistence
-	persistenceErr error
+	resolved        chan struct{}
+	resolution      *proto.Resolution
+	persisting      *questionPersistence
+	persistenceWake chan struct{}
+	persistenceErr  error
 	// local is set for interactions the manager resolves itself (screen dialogs, Codex cards): it acts on the answer,
 	// and an error goes back to whoever answered (prompt_changed: nothing was pressed).
 	local func(context.Context, proto.Resolution) error
@@ -621,10 +622,19 @@ func (s *Service) awaitOnce(ctx context.Context, p *pending) (proto.Resolution, 
 		return s.awaitPrepared(ctx, p)
 	}
 	s.fleet.mu.Lock()
+	if ownerActionProposal(p.ix) && p.persistenceErr != nil {
+		err := p.persistenceErr
+		s.fleet.mu.Unlock()
+		return proto.Resolution{}, err
+	}
 	if p.resolved == nil {
 		p.resolved = make(chan struct{})
 	}
 	resolved := p.resolved
+	var persistenceWake <-chan struct{}
+	if ownerActionProposal(p.ix) {
+		persistenceWake = persistenceWakeLocked(p)
+	}
 	s.fleet.mu.Unlock()
 	id := p.ix.ID
 	var timer *time.Timer
@@ -644,6 +654,8 @@ func (s *Service) awaitOnce(ctx context.Context, p *pending) (proto.Resolution, 
 		return r, nil
 	case <-timeout:
 		status = "expired"
+	case <-persistenceWake:
+		return proto.Resolution{}, errAwaitRetry
 	case <-ctx.Done():
 	}
 	// Decide under the same lock as resolve: an answer already claimed must be
