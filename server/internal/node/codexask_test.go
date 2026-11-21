@@ -304,6 +304,30 @@ func TestCodexAnswerApproval(t *testing.T) {
 	})
 }
 
+func TestCodexAnswerRejectsAnEarlierOccurrence(t *testing.T) {
+	n, f, _ := codexNode(t, proto.StatusBlocked)
+	approval := screenFixture(t, "codex-0.163.0-exec-approval-120.txt")
+	f.setScreen(cxPane, approval)
+	first := onlyCard(t, n)
+	f.setScreen(cxPane, cxEmpty)
+	if cards := n.codexCardsNow(context.Background(), cxID); len(cards) != 0 {
+		t.Fatalf("empty-screen transition left cards: %+v", cards)
+	}
+	f.setScreen(cxPane, approval)
+	replacement := onlyCard(t, n)
+	if replacement.ix.ID != first.ix.ID || !replacement.ix.CreatedAt.After(first.ix.CreatedAt) {
+		t.Fatalf("fixture did not create a later same-ID occurrence: first=%+v replacement=%+v", first.ix, replacement.ix)
+	}
+	allow := true
+	_, err := request(t, n, "codex.answer", map[string]any{
+		"session_id": cxID, "id": first.ix.ID, "created_at": first.ix.CreatedAt,
+		"resolution": proto.Resolution{Allow: &allow},
+	})
+	if refusalCode(err) != screen.PromptChanged || len(f.trace("pane.send_keys", "pane.send_text")) != 0 {
+		t.Fatalf("earlier occurrence answered its replacement: err=%v actions=%v", err, f.trace("pane.send_keys", "pane.send_text"))
+	}
+}
+
 // cxOverlay is request_user_input's second question, the cursor on option sel, its notes field open with notes.
 func cxOverlay(sel int, notes *string) string {
 	rows := []string{"Small              one line", "Large              two lines", "None of the above  Optionally, add details in notes (tab)"}

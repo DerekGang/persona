@@ -260,6 +260,7 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 		MessageID     string            `json:"message_id"`
 		Action        string            `json:"action"`
 		Channel       string            `json:"channel"`
+		CreatedAt     *time.Time        `json:"created_at"`
 	}
 	if err := json.Unmarshal(p.Params, &a); err != nil {
 		return nil, true, err
@@ -283,14 +284,14 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 			out = map[string]any{"ok": false, "status": s.interactionOutcome(ctx, a.InteractionID)}
 		}
 	case InteractionsResolve:
-		r, err := s.channelResolve(ctx, a.Channel, a.InteractionID, a.Resolution, a.Action)
+		r, err := s.channelResolveAt(ctx, a.Channel, a.InteractionID, a.Resolution, a.Action, a.CreatedAt)
 		if err != nil {
 			return nil, true, err
 		}
 		out = r
 	case assistantwire.InteractionsClarify:
-		r, err := s.channelClarify(ctx, a.Channel, a.InteractionID, a.Text, a.ClientMsgID, a.Action,
-			&clarificationOrigin{Channel: a.Channel, ChatID: a.ChatID, MessageID: a.MessageID})
+		r, err := s.channelClarifyAt(ctx, a.Channel, a.InteractionID, a.Text, a.ClientMsgID, a.Action,
+			&clarificationOrigin{Channel: a.Channel, ChatID: a.ChatID, MessageID: a.MessageID}, a.CreatedAt)
 		if err != nil {
 			return nil, true, err
 		}
@@ -307,10 +308,17 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 // card the channel takes typed), once — the hub takes it (interactions.owner_action, with the card's kind from the
 // queue) before the card is answered. It is the user's own answer (no AnsweredBy).
 func (s *Service) channelResolve(ctx context.Context, ch, id string, r proto.Resolution, action string) (any, error) {
+	return s.channelResolveAt(ctx, ch, id, r, action, nil)
+}
+
+func (s *Service) channelResolveAt(ctx context.Context, ch, id string, r proto.Resolution, action string, expected *time.Time) (any, error) {
 	id = strings.TrimSpace(id)
 	ix, ok := s.pendingIx(id)
 	if !ok {
 		return map[string]any{"ok": false, "status": s.interactionOutcome(ctx, id)}, nil
+	}
+	if expected != nil && !ix.CreatedAt.Equal(*expected) {
+		return map[string]any{"ok": false, "status": "stale"}, nil
 	}
 	if len(ix.Fields) > 0 {
 		// What the card asks for (a password) is typed in the app, never in a channel: there it can only be declined.
@@ -323,12 +331,21 @@ func (s *Service) channelResolve(ctx context.Context, ch, id string, r proto.Res
 	if !editedAnswerAllowed(ix, r) {
 		return nil, errInvalidEditedAnswer
 	}
-	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsOwnerAction, map[string]any{"interaction_id": id,
-		"action": action, "channel": ch, "kind": ix.Kind}, nil); err != nil {
+	params := map[string]any{"interaction_id": id, "action": action, "channel": ch, "kind": ix.Kind}
+	if expected != nil {
+		params["created_at"] = expected.Format(time.RFC3339Nano)
+	}
+	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsOwnerAction, params, nil); err != nil {
 		return nil, err
 	}
 	r.AnsweredBy, r.Remembered = "", false
-	if err := s.resolve(id, r); err != nil {
+	var err error
+	if expected == nil {
+		err = s.resolve(id, r)
+	} else {
+		err = s.resolveAnswerAt(ctx, id, r, true, nil, nil, &interactionExpectation{occurrence: &ix})
+	}
+	if err != nil {
 		if errors.Is(err, errNotPending) {
 			return map[string]any{"ok": false, "status": s.endedStatus(ctx, id, err)}, nil
 		}
@@ -341,6 +358,10 @@ func (s *Service) channelResolve(ctx context.Context, ch, id string, r proto.Res
 // takes the separate non-final path. Blank and over-limit input is rejected
 // before that action is consumed. Field values never enter this envelope.
 func (s *Service) channelClarify(ctx context.Context, ch, id, text, clientMsgID, action string, origin *clarificationOrigin) (any, error) {
+	return s.channelClarifyAt(ctx, ch, id, text, clientMsgID, action, origin, nil)
+}
+
+func (s *Service) channelClarifyAt(ctx context.Context, ch, id, text, clientMsgID, action string, origin *clarificationOrigin, expected *time.Time) (any, error) {
 	if err := validateClarifyQuestion(text); err != nil {
 		return nil, err
 	}
@@ -352,21 +373,33 @@ func (s *Service) channelClarify(ctx context.Context, ch, id, text, clientMsgID,
 	if !ok {
 		return map[string]any{"ok": false, "status": s.interactionOutcome(ctx, id)}, nil
 	}
+	if expected != nil && !ix.CreatedAt.Equal(*expected) {
+		return map[string]any{"ok": false, "status": "stale"}, nil
+	}
 	if ch != channel.Feishu || !ix.CanClarify || ix.Private {
 		return nil, errClarifyUnavailable
 	}
 	var proof struct {
 		Token string `json:"clarification_proof"`
 	}
-	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsOwnerAction, map[string]any{"interaction_id": id,
-		"action": action, "channel": ch, "kind": ix.Kind, "clarify": true, "text": text, "client_msg_id": clientMsgID,
-		"machine_id": ix.MachineID, "session_id": ix.SessionID}, &proof); err != nil {
+	params := map[string]any{"interaction_id": id, "action": action, "channel": ch, "kind": ix.Kind,
+		"clarify": true, "text": text, "client_msg_id": clientMsgID, "machine_id": ix.MachineID, "session_id": ix.SessionID}
+	if expected != nil {
+		params["created_at"] = expected.Format(time.RFC3339Nano)
+	}
+	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsOwnerAction, params, &proof); err != nil {
 		return nil, err
 	}
 	if proof.Token != "" {
 		ctx = assistantwire.WithClarificationProof(ctx, proof.Token)
 	}
-	if err := s.clarify(ctx, id, text, clientMsgID, origin); err != nil {
+	var err error
+	if expected == nil {
+		err = s.clarify(ctx, id, text, clientMsgID, origin)
+	} else {
+		err = s.clarifyAt(ctx, id, text, clientMsgID, origin, expected)
+	}
+	if err != nil {
 		if errors.Is(err, errClarifyUnavailable) {
 			return map[string]any{"ok": false, "status": s.interactionOutcome(ctx, id)}, nil
 		}

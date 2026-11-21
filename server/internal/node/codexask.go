@@ -103,6 +103,13 @@ func (c *codexCards) approvalOccurrenceCard(session string, a codexAgent, title 
 	return ix
 }
 
+func (c *codexCards) approvalOccurrenceMatches(session, id string, at time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	occurrence, ok := c.created[id]
+	return ok && occurrence.session == session && occurrence.at.Equal(at)
+}
+
 // watchCodexCards lists the open Codex questions and approvals to the hub whenever they change.
 func (n *Node) watchCodexCards(ctx context.Context) {
 	t := time.NewTicker(time.Second)
@@ -546,22 +553,55 @@ func (n *Node) codexApprovalOn(ctx context.Context, pane string) (d *screen.Code
 // codexAnswer answers a card from the phone: only into the question or approval it was made from, as it is on screen
 // and in the rollout now. A refusal (rpc error with a code) typed nothing.
 func (n *Node) codexAnswer(ctx context.Context, session, id string, r proto.Resolution) error {
+	return n.codexAnswerAt(ctx, session, id, time.Time{}, r)
+}
+
+// codexAnswerAt additionally pins a newer manager's answer to the occurrence it
+// saw. A zero timestamp is the legacy ID-only contract for older peers.
+func (n *Node) codexAnswerAt(ctx context.Context, session, id string, createdAt time.Time, r proto.Resolution) error {
 	if strings.HasPrefix(id, outsideAskPrefix) {
+		if !createdAt.IsZero() {
+			found := false
+			for _, ix := range n.outsideAskCards() {
+				if ix.ID == id && ix.CreatedAt.Equal(createdAt) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return refusal(screen.PromptChanged, "Codex 已经不在等这个回答了（可能在电脑上答过了，或者这一轮被中断了），这次什么都没输入。", nil)
+			}
+		}
 		return n.outsideAnswer(ctx, session, id, r) // a Claude session's question outside Persona's terminals
 	}
 	if r.Cancel {
 		return fmt.Errorf("question cancellation is unavailable for terminal-only questions")
 	}
+	defer n.typing.lock(session)()
+	var card *codexCard
+	if !createdAt.IsZero() {
+		for _, c := range n.codexCardsNow(ctx, session) {
+			if c.ix.ID == id {
+				if c.ix.CreatedAt.Equal(createdAt) {
+					card = &c
+				}
+				break
+			}
+		}
+		if card == nil {
+			return refusal(screen.PromptChanged, "Codex 已经不在等这个回答了（可能在电脑上答过了，或者这一轮被中断了），这次什么都没输入。", nil)
+		}
+	}
 	if r.Dismiss {
 		n.cx.dismiss(session, id)
 		return nil
 	}
-	defer n.typing.lock(session)()
-	var card *codexCard
-	for _, c := range n.codexCardsNow(ctx, session) {
-		if c.ix.ID == id {
-			card = &c
-			break
+	if card == nil {
+		for _, c := range n.codexCardsNow(ctx, session) {
+			if c.ix.ID == id {
+				card = &c
+				break
+			}
 		}
 	}
 	if card == nil {
@@ -891,6 +931,9 @@ func (n *Node) codexApprove(ctx context.Context, card *codexCard, r proto.Resolu
 	if opt == nil {
 		return fmt.Errorf("这个审批没有对应的选项")
 	}
+	if !n.cx.approvalOccurrenceMatches(card.ix.SessionID, card.ix.ID, card.ix.CreatedAt) {
+		return refusal(screen.PromptChanged, "电脑上的审批已经变了（可能在电脑上答过了），这次什么都没按。", nil)
+	}
 	s, err := n.codexScreen(ctx, card.pane)
 	if err == nil && s.View == screen.CodexTranscript {
 		_ = n.sendKeys(ctx, card.pane, "q")
@@ -901,6 +944,9 @@ func (n *Node) codexApprove(ctx context.Context, card *codexCard, r proto.Resolu
 		return err
 	}
 	if s.Approval == nil || s.Approval.Rev != d.Rev {
+		return refusal(screen.PromptChanged, "电脑上的审批已经变了（可能在电脑上答过了），这次什么都没按。", nil)
+	}
+	if !n.cx.approvalOccurrenceMatches(card.ix.SessionID, card.ix.ID, card.ix.CreatedAt) {
 		return refusal(screen.PromptChanged, "电脑上的审批已经变了（可能在电脑上答过了），这次什么都没按。", nil)
 	}
 	if err := n.sendKeys(ctx, card.pane, opt.Key); err != nil {

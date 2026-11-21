@@ -155,8 +155,18 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	if a.UserCheck && verdict != reviewAccepted {
 		return "", fmt.Errorf("user_check applies to accepted only")
 	}
-	if verdict == reviewAccepted { // done_needs_delivery: its PR is live first (supervise_review_delivery.go)
-		if err := s.acceptedDeliveryError(ctx, t, strings.TrimSpace(a.Link), a.Outcome); err != nil {
+	deliveryNote := ""
+	if verdict == reviewAccepted { // delivery_gate: owner wait & criteria first, then PR/issue/deploy gate (supervise_review_delivery.go)
+		if t.DoneAt == nil && t.Supervision != nil && t.Supervision.Waits != nil {
+			w := *t.Supervision.Waits
+			return "", ownerWaitError(t.ID, &w)
+		}
+		if a.Outcome != outcomeCannot && t.Supervision != nil {
+			if err := completeReviewCriteriaError(t.Supervision.DoneWhen, a.Checks); err != nil {
+				return "", err
+			}
+		}
+		if deliveryNote, err = s.acceptedDeliveryError(ctx, t, strings.TrimSpace(a.Link), a.Outcome); err != nil {
 			return "", err
 		}
 	}
@@ -295,7 +305,7 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	b := &s.supervise
 	b.mu.Lock()
 	b.init()
-	for _, k := range []string{sigReview, sigIdle, sigUnjudged, sigNeedsYou, sigStalled, sigNoProgress, sigOrphaned, sigOverdue, sigRecheck, sigUndecidable, sigOwnerCannot, sigParkedDue} {
+	for _, k := range []string{sigReview, sigIdle, sigUnjudged, sigNeedsYou, sigStalled, sigNoProgress, sigOrphaned, sigOverdue, sigEstimateDue, sigRecheck, sigUndecidable, sigOwnerCannot, sigParkedDue} {
 		delete(b.pending, t.ID+"|"+k) // reviewed: what waited is answered
 	}
 	if verdict == reviewAccepted || verdict == reviewCancelled {
@@ -372,7 +382,7 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 		authorized := isMain || background || t.Supervision != nil && t.Supervision.Supervisor == self ||
 			t.Supervision == nil && t.Origin == self
 		cleanup := s.finishTaskTerminal(ctx, t, acceptedHere && authorized && a.Outcome != outcomeCannot && !a.UserCheck)
-		against := terminalCleanupWords(cleanup) + result.words()
+		against := terminalCleanupWords(cleanup) + result.words() + deliveryNote
 		if gaps := result.unsettled(); len(gaps) > 0 {
 			against += " You accepted it with criteria of its brief not shown met: if one no longer applies, say so with task_scope before accepting next time."
 		}
@@ -612,6 +622,7 @@ func (s *Service) reviewDoneTodo(ctx context.Context, id, reason string, accepte
 	if ok && before.DoneAt == nil {
 		if accepted && row.DoneAt != nil {
 			s.goRecordTaskOutcome(before, *row.DoneAt)
+			s.learnAcceptedEstimate(ctx, id)
 		}
 		if t, now := s.todoNow(id); ok && now {
 			// A side conversation's task the main conversation supervised: the planning conversation hears it ended (#4669).

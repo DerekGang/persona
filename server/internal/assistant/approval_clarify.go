@@ -153,7 +153,7 @@ func (s *Service) awaitPrepared(ctx context.Context, p *pending) (proto.Resoluti
 		s.fleet.mu.Lock()
 		r := p.prepared.result
 		s.fleet.mu.Unlock()
-		s.finishInteraction(p.ix.ID)
+		s.finishPending(p)
 		return r, nil
 	}
 	// Prefer an already published terminal result over a clarification release

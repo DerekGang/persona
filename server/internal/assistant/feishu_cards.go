@@ -239,10 +239,18 @@ func (s *Service) interactionPlace(ctx context.Context, ix proto.Interaction) (r
 }
 
 // interactionRuns are the runs that decide where ix's card goes: the latest asked in the owner's DM and the latest
-// asked in a topic, of the conversation it belongs to (either may be nil).
+// asked in a topic, of the conversation it belongs to (either may be nil). While a /read of the conversation goes on,
+// the card may be that run's, and a /read's group gets its answer and nothing else: the card goes to the owner's DM,
+// so no topic is returned either (another topic's run of the same conversation would take the /read's question into
+// its group, and a line in that topic would point at a card it has nothing to do with).
 func (s *Service) interactionRuns(ix proto.Interaction) (private, topic *channel.Run) {
+	read := false
 	for _, r := range s.channelRuns(channel.Feishu) {
 		if r.MachineID != ix.MachineID || r.SessionID != ix.SessionID {
+			continue
+		}
+		if readRun(s.runExts(&r, readChatKey)) {
+			read = true
 			continue
 		}
 		if runTo(s.runExts(&r, "chat", "thread")).ChatID == "" {
@@ -252,6 +260,9 @@ func (s *Service) interactionRuns(ix proto.Interaction) (private, topic *channel
 		} else if topic == nil || !r.Started.Before(topic.Started) {
 			topic = &r
 		}
+	}
+	if read {
+		topic = nil
 	}
 	return private, topic
 }
@@ -306,6 +317,12 @@ func (s *Service) feishuInteractionEnded(ix proto.Interaction, how string, inCha
 	b.mu.Lock()
 	s.loadBotLocked(context.Background()) // a card posted before a restart is in the chat's state
 	c, ok := b.cards[ix.ID]
+	if ok && differentBotCardOccurrence(c.Ix, ix) {
+		// The terminal event belongs to an earlier same-ID occurrence. Its old
+		// message must not remove or close the replacement's ledger entry.
+		b.mu.Unlock()
+		return
+	}
 	s.keepBotCardLocked(ix.ID, nil)
 	if ok && typedAnswerable(c) && !inChat {
 		b.noteEndedLocked(c)
@@ -496,6 +513,9 @@ func (s *Service) interactionCard(ctx context.Context, ix proto.Interaction) *fe
 	where := feishubot.EscapeMarkdown(place)
 	val := func(extra map[string]any) map[string]any {
 		v := map[string]any{"a": "ix", "id": ix.ID}
+		if !ix.CreatedAt.IsZero() {
+			v["created_at"] = ix.CreatedAt.Format(time.RFC3339Nano)
+		}
 		for k, x := range extra {
 			v[k] = x
 		}

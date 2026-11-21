@@ -73,6 +73,56 @@ func detachedFingerprintInput(ix proto.Interaction, input json.RawMessage) (stri
 	return string(b), err
 }
 
+// canonicalStoredDetachedFingerprint upgrades PR1's raw-JSON envelope without
+// trusting malformed, trailing or unknown data. The destination, tool and call
+// kind remain exact; only the input value is canonicalized.
+func canonicalStoredDetachedFingerprint(raw string) (string, error) {
+	var envelope struct {
+		Machine string          `json:"machine"`
+		Session string          `json:"session"`
+		Cwd     string          `json:"cwd"`
+		Kind    string          `json:"kind"`
+		Tool    string          `json:"tool"`
+		Input   json.RawMessage `json:"input"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+	if err := dec.Decode(&envelope); err != nil {
+		return "", err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple fingerprint values")
+		}
+		return "", err
+	}
+	input, err := canonicalDetachedInput(envelope.Input)
+	if err != nil {
+		return "", err
+	}
+	return detachedFingerprintInput(proto.Interaction{MachineID: envelope.Machine, SessionID: envelope.Session,
+		ExecutionCwd: envelope.Cwd, Kind: envelope.Kind, ToolName: envelope.Tool}, input)
+}
+
+func detachedFingerprintMatches(stored, canonical string) bool {
+	if stored == canonical {
+		return true
+	}
+	upgraded, err := canonicalStoredDetachedFingerprint(stored)
+	return err == nil && upgraded == canonical
+}
+
+func detachedStoredFingerprintDigest(fingerprint string) (string, bool) {
+	canonical, err := canonicalStoredDetachedFingerprint(fingerprint)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:]), true
+}
+
 func canonicalDetachedInput(raw json.RawMessage) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		// A journal tombstone intentionally omits the executable call. Treat its
@@ -152,10 +202,6 @@ func (s *Service) putDetachedGrant(ctx context.Context, ix proto.Interaction, r 
 	if err != nil {
 		return err
 	}
-	legacyFingerprint, err := legacyDetachedFingerprint(ix)
-	if err != nil {
-		return err
-	}
 	b := &s.detached
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -163,7 +209,7 @@ func (s *Service) putDetachedGrant(ctx context.Context, ix proto.Interaction, r 
 		return err
 	}
 	if old, ok := b.grants[ix.ID]; ok {
-		if (old.Fingerprint == fingerprint || old.Fingerprint == legacyFingerprint) && old.EditedText == r.EditedText {
+		if detachedFingerprintMatches(old.Fingerprint, fingerprint) && old.EditedText == r.EditedText {
 			return nil
 		}
 		return errors.New("the approval already has a different continuation grant")
@@ -202,10 +248,6 @@ func (s *Service) consumeDetachedGrant(ctx context.Context, ix proto.Interaction
 	if err != nil {
 		return proto.Resolution{}, false, err
 	}
-	legacyFingerprint, err := legacyDetachedFingerprint(ix)
-	if err != nil {
-		return proto.Resolution{}, false, err
-	}
 	b := &s.detached
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -226,12 +268,12 @@ func (s *Service) consumeDetachedGrant(ctx context.Context, ix proto.Interaction
 	now := time.Now().UTC()
 	for _, id := range ids {
 		grant := b.grants[id]
-		if (grant.Fingerprint != fingerprint && grant.Fingerprint != legacyFingerprint) || !grant.ExpiresAt.After(now) {
+		if !detachedFingerprintMatches(grant.Fingerprint, fingerprint) || !grant.ExpiresAt.After(now) {
 			continue
 		}
 		// A normal retry has a fresh interaction ID. Check the candidate grant's
 		// own journal, not the new request's ID, before allowing its exact call.
-		entry, journaled, err := s.approvalJournalGrantRecord(ctx, id, grant.Fingerprint)
+		entry, journaled, err := s.approvalJournalGrantRecord(ctx, id, grant)
 		if err != nil {
 			return proto.Resolution{}, false, fmt.Errorf("check detached approval journal: %w", err)
 		}
@@ -338,14 +380,23 @@ func (s *Service) detachedOriginalReplay(ctx context.Context, ix proto.Interacti
 // unusable. It re-reads the durable book on every attempt so a previous failed
 // delete is really retried, not hidden by the in-memory cache. A newer occurrence
 // may reuse the interaction ID with a different call fingerprint; an older
-// journal must not revoke that newer grant. Legacy journals without a fingerprint
-// retain the conservative ID-wide revocation.
+// journal must not revoke that newer grant. Legacy denied/expired/cancelled or
+// covered entries cannot have created a grant after their last update, while a
+// failed or unfinished entry still fails closed across the whole ID.
 func detachedGrantMatchesJournal(grant detachedGrant, entry approvalJournalEntry) bool {
 	if entry.Fingerprint == "" {
-		return true
+		if !grant.CreatedAt.After(entry.UpdatedAt) {
+			return true
+		}
+		switch entry.Status {
+		case "denied", "expired", "cancelled", "covered":
+			return false
+		default:
+			return true
+		}
 	}
-	digest := sha256.Sum256([]byte(grant.Fingerprint))
-	return hex.EncodeToString(digest[:]) == entry.Fingerprint
+	digest, ok := detachedStoredFingerprintDigest(grant.Fingerprint)
+	return ok && digest == entry.Fingerprint
 }
 
 func (s *Service) revokeDetachedGrant(ctx context.Context, entry approvalJournalEntry) error {
@@ -402,13 +453,25 @@ func (s *Service) revokeDetachedGrant(ctx context.Context, entry approvalJournal
 // detachedContinuationPendingLocked reports whether the exact retry is still
 // available. s.detached.mu is held across the result handoff too, so a matching
 // call either consumes first (and the message becomes a no-retry notice) or the
-// continuation reaches the conversation first.
-func (s *Service) detachedContinuationPendingLocked(ctx context.Context, id string) (bool, error) {
+// continuation reaches the conversation first. New relays carry the journal's
+// canonical digest; legacy relays use their result timestamp as a conservative
+// cutoff instead of accepting any grant that later reused the ID.
+func (s *Service) detachedContinuationPendingLocked(ctx context.Context, id, digest string, cutoff time.Time) (bool, error) {
 	if err := s.loadDetachedGrantsLocked(ctx); err != nil {
 		return false, err
 	}
 	grant, ok := s.detached.grants[id]
-	return ok && grant.ExpiresAt.After(time.Now()), nil
+	if !ok || !grant.ExpiresAt.After(time.Now()) {
+		return false, nil
+	}
+	if digest != "" {
+		candidate, ok := detachedStoredFingerprintDigest(grant.Fingerprint)
+		return ok && candidate == digest, nil
+	}
+	if cutoff.IsZero() {
+		return false, nil
+	}
+	return !grant.CreatedAt.After(cutoff), nil
 }
 
 // waitDetachedCard uses the prepared-approval coordinator for its first-answer-

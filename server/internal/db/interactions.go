@@ -18,10 +18,20 @@ import (
 
 // ---- interactions ----
 
+// interactionOccurrenceTimeSQL preserves the full RFC3339Nano occurrence time
+// retained in the payload. PostgreSQL's created_at column has only microseconds,
+// which is not enough to distinguish two occurrences under a reused ID. The
+// epoch-second and padded-fraction tuple also avoids nanosecond integer overflow.
+func interactionOccurrenceTimeSQL(value string) string {
+	return `(EXTRACT(EPOCH FROM DATE_TRUNC('second', (` + value + `)::timestamptz)), COALESCE(RPAD(SUBSTRING(` + value + ` FROM '\.([0-9]+)'), 9, '0'), '000000000'))`
+}
+
 // InsertInteraction records a pending occurrence. Replaying the same timestamp
-// is idempotent; a later timestamp is a genuinely reused runtime ID, so its new
-// pending payload and occurrence replace the older terminal row. An older replay
-// cannot overwrite the latest occurrence.
+// is idempotent, except that a non-resumable occurrence cancelled by startup
+// cleanup (cancelled with no owner resolution) can be listed as pending again.
+// A later timestamp is a genuinely reused runtime ID, so its new pending payload
+// and occurrence replace the older terminal row. An older replay cannot overwrite
+// the latest occurrence, and an owner-resolved occurrence never reopens.
 func (d *DB) InsertInteraction(ctx context.Context, ix proto.Interaction) error {
 	payload, err := json.Marshal(ix)
 	if err != nil {
@@ -42,7 +52,15 @@ func (d *DB) InsertInteraction(ctx context.Context, ix proto.Interaction) error 
 			auto_authorized_at = NULL,
 			authorization_id = '',
 			todo_id = ''
-		WHERE EXCLUDED.created_at > interactions.created_at`,
+		WHERE (`+interactionOccurrenceTimeSQL("EXCLUDED.payload->>'created_at'")+` > `+
+		interactionOccurrenceTimeSQL("interactions.payload->>'created_at'")+`) OR (
+			`+interactionOccurrenceTimeSQL("EXCLUDED.payload->>'created_at'")+` = `+
+		interactionOccurrenceTimeSQL("interactions.payload->>'created_at'")+`
+			AND interactions.status = 'cancelled' AND interactions.resolution IS NULL
+			AND NOT COALESCE((EXCLUDED.payload->>'resumable')::boolean, false)
+			AND interactions.machine_id = EXCLUDED.machine_id
+			AND interactions.session_id = EXCLUDED.session_id
+		)`,
 		ix.ID, ix.MachineID, ix.SessionID, ix.Kind, payload, ix.CreatedAt)
 	return err
 }
@@ -97,8 +115,11 @@ func (d *DB) FinishInteractionOccurrence(ctx context.Context, ix proto.Interacti
 		AND COALESCE((payload->>'detachable')::boolean, false) = $7
 		AND (NOT $7 OR (kind = $8 AND COALESCE(payload->>'tool_name', '') = $9
 			AND COALESCE(payload->>'execution_cwd', '') = $10
-			AND COALESCE(payload->'tool_input', 'null'::jsonb) = COALESCE($11::jsonb, 'null'::jsonb)))`,
-		ix.ID, status, raw, ix.MachineID, ix.SessionID, ix.CreatedAt, ix.Detachable, ix.Kind, ix.ToolName, ix.ExecutionCwd, input)
+			AND COALESCE(payload->'tool_input', 'null'::jsonb) = COALESCE($11::jsonb, 'null'::jsonb)))
+		AND `+interactionOccurrenceTimeSQL("interactions.payload->>'created_at'")+` = `+
+		interactionOccurrenceTimeSQL("$12::text"),
+		ix.ID, status, raw, ix.MachineID, ix.SessionID, ix.CreatedAt, ix.Detachable, ix.Kind, ix.ToolName, ix.ExecutionCwd, input,
+		ix.CreatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return false, false, err
 	}
@@ -384,6 +405,24 @@ const (
 		RETURNING payload`
 )
 
+// ResumableInteractions returns the pending, unexpired cards that may be
+// restored after a manager restart. Unlike ExpireStaleInteractions it never
+// writes, so a delayed retry cannot cancel a current-process card.
+func (d *DB) ResumableInteractions(ctx context.Context) ([]proto.Interaction, error) {
+	rows, err := d.pool.Query(ctx, resumablePendingSQL)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (proto.Interaction, error) {
+		var payload []byte
+		var ix proto.Interaction
+		if err := r.Scan(&payload); err != nil {
+			return ix, err
+		}
+		return ix, json.Unmarshal(payload, &ix)
+	})
+}
+
 // ExpireStaleInteractions marks interactions left pending by a previous hub process cancelled, and returns the
 // resumable ones not yet expired instead: their hooks reconnect and claim them again. The manager's cards about a
 // turn (session_work's interaction_id) and loop cards in the manager's settings stay pending too. The manager restores
@@ -391,7 +430,19 @@ const (
 // payloads it marked: the apps may still show them (#4568), and their occurrence
 // timestamps prevent a delayed withdrawal from ending a reused interaction ID.
 func (d *DB) ExpireStaleInteractions(ctx context.Context) (kept []proto.Interaction, cancelled []proto.Interaction, err error) {
-	rows, err := d.pool.Query(ctx, resumablePendingSQL)
+	return d.expireStaleInteractions(ctx, nil)
+}
+
+func (d *DB) expireStaleInteractions(ctx context.Context, beforeCancel func()) (kept []proto.Interaction, cancelled []proto.Interaction, err error) {
+	// One repeatable-read snapshot covers both statements. A current-process card
+	// inserted after the resumable lookup is invisible to the cancellation lookup
+	// too, instead of being cancelled merely because it missed the first query.
+	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, resumablePendingSQL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -410,7 +461,10 @@ func (d *DB) ExpireStaleInteractions(ctx context.Context) (kept []proto.Interact
 	for i, ix := range kept {
 		ids[i] = ix.ID
 	}
-	rows, err = d.pool.Query(ctx, cancelPendingSQL, ids)
+	if beforeCancel != nil {
+		beforeCancel()
+	}
+	rows, err = tx.Query(ctx, cancelPendingSQL, ids)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -422,7 +476,13 @@ func (d *DB) ExpireStaleInteractions(ctx context.Context) (kept []proto.Interact
 		}
 		return ix, json.Unmarshal(payload, &ix)
 	})
-	return kept, cancelled, err
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, err
+	}
+	return kept, cancelled, nil
 }
 
 // InteractionOutcome returns an interaction's status and resolution; an empty status when there is no such row.

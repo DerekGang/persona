@@ -2,8 +2,6 @@ package assistant
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -74,17 +72,18 @@ func (s *Service) approvalJournalRecord(ctx context.Context, ix proto.Interactio
 	return approvalJournalEntry{}, false, nil
 }
 
-func (s *Service) approvalJournalGrantRecord(ctx context.Context, id, fingerprint string) (approvalJournalEntry, bool, error) {
+func (s *Service) approvalJournalGrantRecord(ctx context.Context, id string, grant detachedGrant) (approvalJournalEntry, bool, error) {
 	b := &s.approvals
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !s.loadApprovalJournalLocked(ctx) {
 		return approvalJournalEntry{}, false, errors.New("the clarification journal is unavailable")
 	}
-	digest := sha256.Sum256([]byte(fingerprint))
+	digest, _ := detachedStoredFingerprintDigest(grant.Fingerprint)
 	for i := len(b.list) - 1; i >= 0; i-- {
 		a := b.list[i]
-		if a.ID == id && (a.Fingerprint == hex.EncodeToString(digest[:]) || a.Fingerprint == "") {
+		if a.ID == id && (a.Fingerprint != "" && digest != "" && a.Fingerprint == digest ||
+			a.Fingerprint == "" && detachedGrantMatchesJournal(grant, a)) {
 			return a, true, nil
 		}
 	}
@@ -407,7 +406,7 @@ func (s *Service) deliverApprovalResult(a approvalJournalEntry) error {
 		// the model to execute that same call again (especially under Always).
 		s.detached.mu.Lock()
 		defer s.detached.mu.Unlock()
-		pending, err := s.detachedContinuationPendingLocked(ctx, a.ID)
+		pending, err := s.detachedContinuationPendingLocked(ctx, a.ID, a.Fingerprint, a.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("check detached continuation before delivery: %w", err)
 		}
@@ -432,9 +431,12 @@ func (s *Service) deliverApprovalResult(a approvalJournalEntry) error {
 		return errors.New("the originating conversation is not currently listed")
 	}
 	msg := relayMsg{From: approvalResultFrom + a.ID, FromTitle: "Approval result", Tool: askAnswerTool,
-		Text: a.Result, At: a.UpdatedAt, Private: a.Private, Continuation: a.Continuation}
+		Text: a.Result, At: a.UpdatedAt, Private: a.Private, Continuation: a.Continuation, ContinuationDigest: a.Fingerprint}
 	if msg.At.IsZero() {
 		msg.At = time.Now().UTC()
+	}
+	if msg.Continuation && msg.OnceID == "" {
+		msg.OnceID = relayMsgID(a.SessionID, msg)
 	}
 	working := false
 	if c, ok := s.session(ctx, a.MachineID, a.SessionID); ok {
@@ -461,26 +463,29 @@ func consumedContinuationText(id string) string {
 // tryQueuedApprovalRelay rechecks a detached continuation at the last possible
 // boundary. Grant consumption stays excluded through the actual send, including
 // when an Always rule would let the requested retry execute without a prompt.
-func (s *Service) tryQueuedApprovalRelay(ctx context.Context, machine, to string, original relayMsg) (relayMsg, time.Duration, error) {
+func (s *Service) tryQueuedApprovalRelay(ctx context.Context, machine, to string, original *relayMsg) (relayMsg, time.Duration, error) {
 	if !original.Continuation {
-		return s.tryQueuedRelay(ctx, machine, to, &original)
+		return s.tryQueuedRelay(ctx, machine, to, original)
 	}
-	msg := original
+	msg := *original
 	s.detached.mu.Lock()
 	defer s.detached.mu.Unlock()
 	id := strings.TrimPrefix(msg.From, approvalResultFrom)
-	pending, err := s.detachedContinuationPendingLocked(ctx, id)
+	pending, err := s.detachedContinuationPendingLocked(ctx, id, msg.ContinuationDigest, msg.At)
 	if err != nil {
 		return msg, time.Minute, fmt.Errorf("recheck queued detached continuation: %w", err)
 	}
 	if !pending {
 		msg.Text = consumedContinuationText(id)
 	}
-	return s.tryQueuedRelay(ctx, machine, to, &msg)
+	return s.tryQueuedRelayText(ctx, machine, to, original, msg)
 }
 
 // queueApprovalResult deduplicates by the stable once_id before persisting.
 func (s *Service) queueApprovalResult(machine, to string, msg relayMsg) error {
+	if msg.Continuation && msg.OnceID == "" {
+		msg.OnceID = relayMsgID(to, msg)
+	}
 	b := &s.relays
 	b.mu.Lock()
 	if !s.relayLocked(context.Background()) {

@@ -26,11 +26,12 @@ import (
 // fleetDevs is the manager's device layer for the fleet's tests: machines with the sessions their nodes list, and a
 // node whose calls a test answers.
 type fleetDevs struct {
-	mu       sync.Mutex
-	machines map[string]*fleetNode
-	order    []string
-	usage    assistantwire.UsageSummary
-	capacity proto.CapacitySnapshot // what CapacitySnapshot answers (capacity_test.go)
+	mu           sync.Mutex
+	machines     map[string]*fleetNode
+	order        []string
+	usage        assistantwire.UsageSummary
+	capacity     proto.CapacitySnapshot // what CapacitySnapshot answers (capacity_test.go)
+	gatewayRetry func(source, provider string, now time.Time) time.Time
 	// attention is every Persona Link summary handed over (SetAttention), in order.
 	attention []link.Attention
 	// linkDesktop: the manager has a Persona Link desktop; confirmed: the cards its app confirmed it handed to
@@ -260,6 +261,13 @@ func (d *fleetDevs) CapacitySnapshot(context.Context) proto.CapacitySnapshot {
 	return d.capacity
 }
 
+func (d *fleetDevs) GatewayRetryAt(source, provider string, now time.Time) time.Time {
+	if d.gatewayRetry != nil {
+		return d.gatewayRetry(source, provider, now)
+	}
+	return time.Time{}
+}
+
 func (d *fleetDevs) SetAttention(a link.Attention) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -338,7 +346,9 @@ func (m *fleetMem) InsertInteraction(ctx context.Context, ix proto.Interaction) 
 		if m.recs[i].Interaction.ID != ix.ID {
 			continue
 		}
-		if ix.CreatedAt.After(m.recs[i].Interaction.CreatedAt) {
+		same := sameDurableApprovalOccurrence(ix, m.recs[i].Interaction)
+		startupRelist := same && !ix.Resumable && m.recs[i].Status == "cancelled" && m.recs[i].Resolution == nil
+		if ix.CreatedAt.After(m.recs[i].Interaction.CreatedAt) || startupRelist {
 			m.recs[i] = db.InteractionRecord{Interaction: ix, Status: "pending"}
 			m.status[ix.ID], m.res[ix.ID] = "pending", nil
 		}

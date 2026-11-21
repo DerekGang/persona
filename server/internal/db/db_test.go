@@ -1171,6 +1171,26 @@ func TestLoopInteractionRestart(t *testing.T) {
 	}
 }
 
+func TestExpireStaleInteractionsCannotCancelAnInsertAfterSnapshot(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	current := proto.Interaction{ID: "ix_current_process_during_expiry", MachineID: "m1", SessionID: "s1",
+		Kind: proto.IxPermission, Resumable: true, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	var insertErr error
+	_, _, err := d.expireStaleInteractions(ctx, func() {
+		insertErr = d.InsertInteraction(ctx, current)
+	})
+	if insertErr != nil {
+		t.Fatal(insertErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := d.InteractionOutcome(ctx, current.ID)
+	if err != nil || status != "pending" {
+		t.Fatalf("startup expiry cancelled a card inserted after its snapshot: status %q, %v", status, err)
+	}
+}
+
 // The startup lookup of pending interactions can use the partial index instead of scanning every past interaction.
 func TestPendingInteractionsIndexed(t *testing.T) {
 	d, ctx := open(t), context.Background()
@@ -1202,6 +1222,36 @@ func TestPendingInteractionsIndexed(t *testing.T) {
 		if plan := strings.Join(lines, "\n"); !strings.Contains(plan, "interactions_pending") {
 			t.Fatalf("%s\nplan:\n%s", q, plan)
 		}
+	}
+}
+
+func TestInsertInteractionRestoresOnlyStartupCancelledOccurrence(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	ix := proto.Interaction{ID: "ix_startup_cancelled_relist", MachineID: "m1", SessionID: "s1",
+		Kind: proto.IxPermission, CreatedAt: time.Unix(1100, 0).UTC()}
+	if err := d.InsertInteraction(ctx, ix); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishInteraction(ctx, ix.ID, "cancelled", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.InsertInteraction(ctx, ix); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := d.InteractionOutcome(ctx, ix.ID)
+	if err != nil || status != "pending" {
+		t.Fatalf("same-occurrence startup relist = status %q, %v; want pending", status, err)
+	}
+	deny := false
+	if err := d.FinishInteraction(ctx, ix.ID, "resolved", &proto.Resolution{Allow: &deny}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.InsertInteraction(ctx, ix); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err = d.InteractionOutcome(ctx, ix.ID)
+	if err != nil || status != "resolved" {
+		t.Fatalf("an owner-resolved occurrence reopened: status %q, %v", status, err)
 	}
 }
 
@@ -1332,6 +1382,50 @@ func TestFinishInteractionOccurrenceMatchesDetachableCallBytes(t *testing.T) {
 	if err != nil || !matched || !terminal {
 		t.Fatalf("exact detachable call = matched %v terminal %v, %v", matched, terminal, err)
 	}
+}
+
+func TestInteractionOccurrencesKeepSubMicrosecondIdentity(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	base := time.Unix(1350, 0).UTC()
+	firstAt := base.Add(100 * time.Nanosecond)
+	laterAt := base.Add(200 * time.Nanosecond)
+
+	t.Run("later insert replaces a terminal row in the same database microsecond", func(t *testing.T) {
+		first := proto.Interaction{ID: "ix_submicro_insert", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission, CreatedAt: firstAt}
+		if err := d.InsertInteraction(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.FinishInteraction(ctx, first.ID, "resolved", nil); err != nil {
+			t.Fatal(err)
+		}
+		later := first
+		later.CreatedAt = laterAt
+		later.MirrorMain = true
+		if err := d.InsertInteraction(ctx, later); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := d.InteractionRecord(ctx, later.ID)
+		if err != nil || rec == nil || rec.Status != "pending" || !rec.Interaction.CreatedAt.Equal(laterAt) || !rec.Interaction.MirrorMain {
+			t.Fatalf("same-microsecond later occurrence = %+v, %v; want the pending occurrence at %s", rec, err, laterAt)
+		}
+	})
+
+	t.Run("delayed finish cannot end a newer row in the same database microsecond", func(t *testing.T) {
+		first := proto.Interaction{ID: "ix_submicro_finish", MachineID: "m1", SessionID: "s1", Kind: proto.IxPermission, CreatedAt: firstAt}
+		later := first
+		later.CreatedAt = laterAt
+		if err := d.InsertInteraction(ctx, later); err != nil {
+			t.Fatal(err)
+		}
+		matched, terminal, err := d.FinishInteractionOccurrence(ctx, first, "dismissed", nil)
+		if err != nil || matched || terminal {
+			t.Fatalf("old finish against same-microsecond newer occurrence = matched %v terminal %v, %v", matched, terminal, err)
+		}
+		rec, err := d.InteractionRecord(ctx, later.ID)
+		if err != nil || rec == nil || rec.Status != "pending" || !rec.Interaction.CreatedAt.Equal(laterAt) {
+			t.Fatalf("old finish changed the same-microsecond newer occurrence: %+v, %v", rec, err)
+		}
+	})
 }
 
 func TestInteractionLaterOccurrenceReplacesTerminalRow(t *testing.T) {

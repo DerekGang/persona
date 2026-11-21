@@ -13,6 +13,7 @@ import (
 	"time"
 
 	approvalops "github.com/nwverse/persona/server/internal/approval"
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -88,6 +89,18 @@ func (s *restoreReadFailStore) InteractionRecord(ctx context.Context, id string)
 		return nil, errors.New("synthetic restored interaction read failure")
 	}
 	return s.restoreMem.InteractionRecord(ctx, id)
+}
+
+type expireReadFailStore struct {
+	*restoreMem
+	fail atomic.Bool
+}
+
+func (s *expireReadFailStore) ExpireStaleInteractions(ctx context.Context) ([]proto.Interaction, []proto.Interaction, error) {
+	if s.fail.Load() {
+		return nil, nil, errors.New("synthetic startup expiration read failure")
+	}
+	return s.restoreMem.ExpireStaleInteractions(ctx)
 }
 
 type restoreInterleaveStore struct {
@@ -646,11 +659,14 @@ func TestDetachedTerminalJournalClosesRestoredCard(t *testing.T) {
 	ix := detachedTestCard("ix_detached_terminal_before_history")
 	result := approvalResultText(ix.ID, "approved", "Retry the same tool now through its original approval hook.")
 	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
-		Status: "approved", Result: result, Continuation: true, UpdatedAt: time.Now().UTC()}
-	if err := ft.st.PutSetting(context.Background(), approvalJournalKey, []approvalJournalEntry{entry}); err != nil {
+		Status: "approved", Result: result, Continuation: true}
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+	// Production persists the grant before the terminal journal. Keep this
+	// legacy journal occurrence-free while preserving that write ordering.
+	entry.UpdatedAt = time.Now().UTC()
+	if err := ft.st.PutSetting(context.Background(), approvalJournalKey, []approvalJournalEntry{entry}); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a crash after the terminal journal write but before the pending
@@ -1014,6 +1030,30 @@ func TestOlderDenialDoesNotRevokeANewerOccurrenceGrant(t *testing.T) {
 	}
 }
 
+func TestLegacyDenialDoesNotRevokeANewerGrant(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	first := detachedTestCard("ix_legacy_denial_new_grant")
+	legacy := approvalJournalEntry{ID: first.ID, MachineID: first.MachineID, SessionID: first.SessionID,
+		Status: "denied", Result: "Nothing was executed.", UpdatedAt: time.Now().Add(-time.Hour).UTC()}
+	putApprovalJournal(t, ft, legacy)
+	newer := first
+	newer.CreatedAt = first.CreatedAt.Add(time.Second)
+	newer.ToolInput = json.RawMessage(`{"command":"printf newer legacy"}`)
+	if err := ft.s.putDetachedGrant(context.Background(), newer, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.revokeDetachedGrant(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	retry := newer
+	retry.ID = "ix_legacy_denial_new_grant_retry"
+	got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("fingerprintless older denial suppressed or revoked the newer grant: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
 func TestRestoreRetriesATransientOccurrenceRead(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ft := newFleetTest(t)
@@ -1033,6 +1073,61 @@ func TestRestoreRetriesATransientOccurrenceRead(t *testing.T) {
 		if len(got) != 1 || got[0].ID != ix.ID || !got[0].CreatedAt.Equal(ix.CreatedAt) {
 			t.Fatalf("transient read permanently dropped the resumable card: %+v", got)
 		}
+		var published []proto.Interaction
+		for _, raw := range ft.toldOf(assistantwire.EventFleetInteraction) {
+			var event assistantwire.FleetInteraction
+			if json.Unmarshal(raw, &event) == nil {
+				published = append(published, event.Interaction)
+			}
+		}
+		if len(published) != 1 || published[0].ID != ix.ID || !published[0].CreatedAt.Equal(ix.CreatedAt) {
+			t.Fatalf("retry restored an invisible card; hub events = %+v", published)
+		}
+	})
+}
+
+func TestRestoreRetriesTheInitialExpirationReadWithoutCancellingLiveCards(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ft := newFleetTest(t)
+		preparedTestConversation(ft)
+		ix := detachedTestCard("ix_restore_initial_read")
+		ft.s.record(ix)
+		st := &expireReadFailStore{restoreMem: &restoreMem{fleetMem: ft.st}}
+		st.fail.Store(true)
+		restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+		restarted.restoreInteractions(context.Background())
+		if got := restarted.pendingInteractions(); len(got) != 0 {
+			t.Fatalf("failed startup read installed a card: %+v", got)
+		}
+		live := resumable("ix_live_during_initial_restore_retry")
+		live.Resumable = false
+		live.CreatedAt = time.Now().UTC()
+		liveCtx, cancelLive := context.WithCancel(context.Background())
+		defer cancelLive()
+		liveDone := make(chan struct{})
+		go func() {
+			_, _ = restarted.waitInteraction(liveCtx, live)
+			close(liveDone)
+		}()
+		waitFor(t, "the current-process card to register", func() bool { return len(restarted.pendingInteractions()) == 1 })
+		st.fail.Store(false)
+		elapse(time.Minute)
+		got := restarted.pendingInteractions()
+		if len(got) != 2 {
+			t.Fatalf("startup retry restored %d cards, want the recovered and live cards: %+v", len(got), got)
+		}
+		seen := map[string]bool{}
+		for _, pending := range got {
+			seen[pending.ID] = true
+		}
+		if !seen[ix.ID] || !seen[live.ID] {
+			t.Fatalf("startup retry lost a card: %+v", got)
+		}
+		if status, _, err := st.InteractionOutcome(context.Background(), live.ID); err != nil || status != "pending" {
+			t.Fatalf("startup retry cancelled a current-process card in history: status %q, %v", status, err)
+		}
+		cancelLive()
+		<-liveDone
 	})
 }
 
@@ -1089,6 +1184,41 @@ func TestPreCanonicalDetachedGrantRemainsConsumable(t *testing.T) {
 	got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
 	if err != nil || !ok || got.Allow == nil || !*got.Allow {
 		t.Fatalf("PR1 grant did not survive canonicalization: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestPreCanonicalDetachedGrantAcceptsReorderedRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		checkPut bool
+	}{{"consume reordered input", false}, {"idempotent put with reordered input", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := newFleetTest(t)
+			preparedTestConversation(ft)
+			ix := detachedTestCard("ix_pr1_raw_grant_reordered")
+			ix.ToolInput = json.RawMessage(`{"x":1,"command":"pwd"}`)
+			legacy, err := legacyDetachedFingerprint(ix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ft.st.PutSetting(context.Background(), detachedGrantSetting, map[string]detachedGrant{ix.ID: {
+				Fingerprint: legacy, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC(),
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			retry := ix
+			retry.ToolInput = json.RawMessage(`{"command":"pwd","x":1}`)
+			if tc.checkPut {
+				if err := ft.s.putDetachedGrant(context.Background(), retry, proto.Resolution{}); err != nil {
+					t.Fatalf("reordered input was not idempotent with the stored PR1 grant: %v", err)
+				}
+			}
+			retry.ID = "ix_pr1_raw_grant_reordered_retry"
+			got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
+			if err != nil || !ok || got.Allow == nil || !*got.Allow {
+				t.Fatalf("PR1 grant did not accept equivalent reordered input: %+v ok=%v err=%v", got, ok, err)
+			}
+		})
 	}
 }
 
@@ -1320,6 +1450,173 @@ func TestQueuedConsumedContinuationDoesNotAskForAnotherRetry(t *testing.T) {
 	if !strings.Contains(result, "Do not retry") || strings.Contains(result, "Retry the same tool now") {
 		t.Fatalf("queued consumed continuation instructed a duplicate retry: %q", result)
 	}
+	waitFor(t, "the delivered continuation to leave the durable queue", func() bool { return ft.s.queuedFor("s1") == 0 })
+}
+
+func TestContinuationRelayIdentitySurvivesTextRewrite(t *testing.T) {
+	at := time.Now().UTC()
+	msg := relayMsg{From: approvalResultFrom + "ix_continuation_identity", Tool: askAnswerTool,
+		Text: "Retry the same tool now", At: at, Continuation: true}
+	rewritten := msg
+	rewritten.Text = consumedContinuationText("ix_continuation_identity")
+	if relayMsgID("s1", msg) != relayMsgID("s1", rewritten) {
+		t.Fatal("a continuation text rewrite changed its durable delivery identity")
+	}
+
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	working := proto.Session{MachineID: "mac", SessionID: "s1", Assistant: true, Agent: "claude", Status: proto.StatusWorking, State: proto.StateWorking}
+	ft.f.setSessions("mac", working)
+	ft.d.setSessions("mac", []proto.Session{working})
+	if err := ft.s.queueApprovalResult("mac", "s1", msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.queueApprovalResult("mac", "s1", rewritten); err != nil {
+		t.Fatal(err)
+	}
+	if got := ft.s.queuedFor("s1"); got != 1 {
+		t.Fatalf("the original and rewritten continuation queued %d deliveries, want one", got)
+	}
+}
+
+func TestQueuedLegacyContinuationKeepsItsSentIdentity(t *testing.T) {
+	ft := newFleetTest(t)
+	at := time.Date(2026, 11, 21, 2, 3, 4, 5, time.UTC)
+	msg := relayMsg{From: approvalResultFrom + "ix_legacy_continuation", Tool: askAnswerTool,
+		Text: "Retry the same tool now", At: at, Continuation: true}
+	want := legacyRelayMsgID("s1", msg)
+	if err := ft.s.store().PutSetting(t.Context(), relayKey, relayState{Queue: map[string][]relayMsg{"s1": {msg}}}); err != nil {
+		t.Fatal(err)
+	}
+	ft.s.relays.mu.Lock()
+	ft.s.relays.loaded = false
+	loaded := ft.s.relayLocked(t.Context())
+	queued := ft.s.relays.st.Queue["s1"]
+	ft.s.relays.mu.Unlock()
+	if !loaded || len(queued) != 1 {
+		t.Fatalf("legacy continuation did not load: %v, %+v", loaded, queued)
+	}
+	if got := relayMsgID("s1", queued[0]); got != want {
+		t.Fatalf("upgrade changed the already-sent continuation ID: got %q want %q", got, want)
+	}
+	rewritten := queued[0]
+	rewritten.Text = consumedContinuationText("ix_legacy_continuation")
+	if got := relayMsgID("s1", rewritten); got != want {
+		t.Fatalf("rewriting the upgraded continuation changed its ID: got %q want %q", got, want)
+	}
+}
+
+func TestLegacyDifferentGrantDoesNotKeepConsumedContinuationRetry(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_legacy_replaced_continuation_grant")
+	allow := true
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	retry := ix
+	retry.ID = "ix_legacy_replaced_continuation_grant_retry"
+	got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("legacy first grant was not consumed: %+v ok=%v err=%v", got, ok, err)
+	}
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+		Status: "approved", UpdatedAt: time.Now().UTC(),
+		Result: approvalResultText(ix.ID, "approved", detachedContinuationText(ix, proto.Resolution{Allow: &allow})), Continuation: true}
+	replacement := ix
+	replacement.CreatedAt = ix.CreatedAt.Add(time.Second)
+	replacement.ToolInput = json.RawMessage(`{"command":"printf legacy replacement"}`)
+	if err := ft.s.putDetachedGrant(context.Background(), replacement, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.deliverApprovalResult(entry); err != nil {
+		t.Fatal(err)
+	}
+	result := waitFakeApprovalResult(t, ft.f, ix.ID)
+	if !strings.Contains(result, "Do not retry") || strings.Contains(result, "Retry the same tool now") {
+		t.Fatalf("a different grant kept the legacy retry instruction alive: %q", result)
+	}
+}
+
+func TestDifferentGrantDoesNotKeepConsumedContinuationRetry(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_replaced_continuation_grant")
+	allow := true
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	retry := ix
+	retry.ID = "ix_replaced_continuation_grant_retry"
+	got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("first grant was not consumed: %+v ok=%v err=%v", got, ok, err)
+	}
+	replacement := ix
+	replacement.CreatedAt = ix.CreatedAt.Add(time.Second)
+	replacement.ToolInput = json.RawMessage(`{"command":"printf replacement"}`)
+	if err := ft.s.putDetachedGrant(context.Background(), replacement, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	createdAt, fingerprint, err := approvalJournalOccurrence(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+		CreatedAt: createdAt, Fingerprint: fingerprint, Status: "approved", UpdatedAt: time.Now().UTC(),
+		Result: approvalResultText(ix.ID, "approved", detachedContinuationText(ix, proto.Resolution{Allow: &allow})), Continuation: true}
+	if err := ft.s.deliverApprovalResult(entry); err != nil {
+		t.Fatal(err)
+	}
+	result := waitFakeApprovalResult(t, ft.f, ix.ID)
+	if !strings.Contains(result, "Do not retry") || strings.Contains(result, "Retry the same tool now") {
+		t.Fatalf("a different grant kept the old retry instruction alive: %q", result)
+	}
+}
+
+func TestQueuedDifferentGrantDoesNotKeepConsumedContinuationRetry(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_queued_replaced_continuation_grant")
+	allow := true
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	working := proto.Session{MachineID: "mac", SessionID: "s1", Assistant: true, Agent: "claude", Status: proto.StatusWorking, State: proto.StateWorking}
+	ft.f.setSessions("mac", working)
+	ft.d.setSessions("mac", []proto.Session{working})
+	createdAt, fingerprint, err := approvalJournalOccurrence(ix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := approvalJournalEntry{ID: ix.ID, MachineID: ix.MachineID, SessionID: ix.SessionID,
+		CreatedAt: createdAt, Fingerprint: fingerprint, Status: "approved", UpdatedAt: time.Now().UTC(),
+		Result: approvalResultText(ix.ID, "approved", detachedContinuationText(ix, proto.Resolution{Allow: &allow})), Continuation: true}
+	if err := ft.s.deliverApprovalResult(entry); err != nil {
+		t.Fatal(err)
+	}
+	retry := ix
+	retry.ID = "ix_queued_replaced_continuation_grant_retry"
+	got, ok, err := ft.s.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("queued first grant was not consumed: %+v ok=%v err=%v", got, ok, err)
+	}
+	replacement := ix
+	replacement.CreatedAt = ix.CreatedAt.Add(time.Second)
+	replacement.ToolInput = json.RawMessage(`{"command":"printf queued replacement"}`)
+	if err := ft.s.putDetachedGrant(context.Background(), replacement, proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	idle := working
+	idle.Status, idle.State = proto.StatusIdle, proto.StateIdle
+	ft.f.setSessions("mac", idle)
+	ft.d.setSessions("mac", []proto.Session{idle})
+	ft.s.drainRelays("mac", []proto.Session{idle})
+	result := waitFakeApprovalResult(t, ft.f, ix.ID)
+	if !strings.Contains(result, "Do not retry") || strings.Contains(result, "Retry the same tool now") {
+		t.Fatalf("queued different grant kept the old retry instruction alive: %q", result)
+	}
+	waitFor(t, "the replaced continuation to leave the durable queue", func() bool { return ft.s.queuedFor("s1") == 0 })
 }
 
 func TestFailedRelayWriteKeepsContinuationForRestart(t *testing.T) {

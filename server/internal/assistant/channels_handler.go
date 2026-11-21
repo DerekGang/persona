@@ -57,6 +57,12 @@ func (s *Service) ChannelNoted(_ context.Context, p ChannelNoted) {
 func (s *Service) InteractionAnnounced(_ context.Context, p InteractionAnnounced) {
 	c := &s.chans
 	c.mu.Lock()
+	if endedAt, ok := c.endedOccurrence[p.Interaction.ID]; ok && !p.Interaction.CreatedAt.Equal(endedAt) {
+		// A new occurrence must be deliverable and answerable even while the old
+		// occurrence's terminal event is still inside the in-flight guard window.
+		delete(c.ended, p.Interaction.ID)
+		delete(c.endedOccurrence, p.Interaction.ID)
+	}
 	if c.announced == nil {
 		c.announced = map[string]bool{}
 	}
@@ -91,12 +97,17 @@ func (s *Service) InteractionEnded(_ context.Context, p InteractionEnded) {
 	for id, at := range c.ended {
 		if now.Sub(at) > 10*time.Minute {
 			delete(c.ended, id)
+			delete(c.endedOccurrence, id)
 		}
 	}
 	if c.ended == nil {
 		c.ended = map[string]time.Time{}
 	}
+	if c.endedOccurrence == nil {
+		c.endedOccurrence = map[string]time.Time{}
+	}
 	c.ended[p.Interaction.ID] = now
+	c.endedOccurrence[p.Interaction.ID] = p.Interaction.CreatedAt
 	c.mu.Unlock()
 	l := s.botLang(context.Background())
 	how := i18n.T(l, "assistant-channels.ended")

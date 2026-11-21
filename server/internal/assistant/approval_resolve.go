@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	approvalops "github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/i18n"
@@ -20,7 +19,7 @@ func (s *Service) resolvePreparedAnswer(ctx context.Context, p *pending, r proto
 	return s.resolvePreparedAnswerAt(ctx, p, r, remember, authorization, nil)
 }
 
-func (s *Service) resolvePreparedAnswerAt(ctx context.Context, p *pending, r proto.Resolution, remember bool, authorization *standingResolution, expected *time.Time) error {
+func (s *Service) resolvePreparedAnswerAt(ctx context.Context, p *pending, r proto.Resolution, remember bool, authorization *standingResolution, expected *interactionExpectation) error {
 	if authorization != nil || r.Remembered {
 		// Other prepared operations still require a fresh owner decision. A
 		// detachable command is the narrow exception: before release its original
@@ -42,7 +41,7 @@ func (s *Service) resolvePreparedAnswerAt(ctx context.Context, p *pending, r pro
 	r = honest(p.ix, r)
 
 	s.fleet.mu.Lock()
-	if expected != nil && !p.ix.CreatedAt.Equal(*expected) {
+	if !expected.matches(p.ix) {
 		s.fleet.mu.Unlock()
 		return fmt.Errorf("interaction %s is %w", p.ix.ID, errNotPending)
 	}
@@ -287,6 +286,6 @@ func (s *Service) finishPrepared(p *pending, status string) error {
 	case p.done <- r:
 	default:
 	}
-	s.finishInteraction(p.ix.ID)
+	s.finishPending(p)
 	return historyErr
 }

@@ -193,6 +193,37 @@ func TestEarlierOccurrenceResolutionKeepsLaterOriginalAndMirror(t *testing.T) {
 	}
 }
 
+func TestEarlierOccurrenceUpdateCannotReplaceLaterCards(t *testing.T) {
+	h := newTestHub(t)
+	first := proto.Interaction{ID: "ix_update_reused", SessionID: "side", Kind: proto.IxPermission,
+		MirrorMain: true, Summary: "first", CreatedAt: time.Unix(1000, 0).UTC(), ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	firstMirror := first
+	firstMirror.ID, firstMirror.MirrorOf, firstMirror.MirrorMain, firstMirror.SessionID = proto.ApprovalMirrorID(first.ID, first.CreatedAt), first.ID, false, "main"
+	second := first
+	second.CreatedAt = first.CreatedAt.Add(time.Second)
+	second.Summary = "replacement"
+	secondMirror := second
+	secondMirror.ID, secondMirror.MirrorOf, secondMirror.MirrorMain, secondMirror.SessionID = proto.ApprovalMirrorID(second.ID, second.CreatedAt), second.ID, false, "main"
+	reportInteraction(t, h, second)
+	reportInteraction(t, h, secondMirror)
+	reportInteraction(t, h, first)
+	reportInteraction(t, h, firstMirror)
+	pending := h.pendingInteractions()
+	if len(pending) != 2 {
+		t.Fatalf("earlier occurrence updates replaced the later cards: %+v", pending)
+	}
+	ids := map[string]proto.Interaction{}
+	for _, ix := range pending {
+		ids[ix.ID] = ix
+	}
+	if got := ids[second.ID]; got.Summary != "replacement" || !got.CreatedAt.Equal(second.CreatedAt) {
+		t.Fatalf("delayed original update restored the earlier occurrence: %+v", got)
+	}
+	if got := ids[secondMirror.ID]; got.Summary != "replacement" || !got.CreatedAt.Equal(second.CreatedAt) {
+		t.Fatalf("delayed mirror update invalidated the replacement copy: %+v", got)
+	}
+}
+
 func TestDisplayMirrorSnapshotRejectsPrivateAndOrphanedCopies(t *testing.T) {
 	h := newTestHub(t)
 	origin := proto.Interaction{ID: "ix_private", SessionID: "side", Kind: proto.IxPermission, MirrorMain: true, Private: true}
