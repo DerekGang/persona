@@ -31,6 +31,7 @@ export function validWorktreeBranch(input: string): boolean {
 
 const OP_UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const NODE_CREATE_TIMEOUT = 150000;
+const NODE_RENAME_TIMEOUT = 30000;
 const RECEIPT_RETENTION = 30 * 24 * 60 * 60 * 1000;
 const submittingRoutes = new Set<string>();
 function checkoutComparable(path: string): string {
@@ -74,6 +75,11 @@ export class WorktreeActions {
   @Trace retrySupported: boolean = false;
   @Trace legacy: boolean = false;
   @Trace releaseReady: boolean = false;
+  @Trace renameCurrent: string = '';
+  @Trace renameOriginal: string = '';
+  private renameSnapshot: string = '';
+  private renameReviewedRecord: MutationRecord | undefined;
+  private reviewedRenameBase: string = '';
   private base: string = '';
   private pathEdited: boolean = false;
   private token: string = '';
@@ -101,6 +107,7 @@ export class WorktreeActions {
     this.view = undefined; this.requestId = ''; this.requestPath = ''; this.requestBody = ''; this.requestTime = 0;
     this.retrySupported = false; this.originalReceiptRoute = false; this.legacy = false; this.legacyId = ''; this.releaseReady = false;
     this.releaseTarget = ''; this.target = '';
+    this.renameCurrent = ''; this.renameOriginal = ''; this.renameSnapshot = ''; this.renameReviewedRecord = undefined; this.reviewedRenameBase = '';
   }
   private current(revision: number): boolean {
     return revision === this.revision && !!this.root && !!this.owner && this.root.owns(this.rootEpoch, this.rootScope) &&
@@ -141,8 +148,10 @@ export class WorktreeActions {
     } catch (_) { return false; }
   }
   private snapshot(): string {
-    return JSON.stringify(Wire.payload(['target','action','path','id','payload','at','receipts'],
-      [this.target, this.action, this.requestPath, this.requestId, this.requestBody, this.requestTime, this.originalReceiptRoute]));
+    const saved = Wire.payload(['target','action','path','id','payload','at','receipts'],
+      [this.target, this.action, this.requestPath, this.requestId, this.requestBody, this.requestTime, this.originalReceiptRoute]);
+    if (this.action === 'rename') saved['originalName'] = this.title;
+    return JSON.stringify(saved);
   }
   private restoreRequest(saved: Record<string, Object>, path: string): boolean {
     const id = Wire.text(saved, 'id'), payload = Wire.text(saved, 'payload'), body = Wire.parse(payload);
@@ -207,9 +216,10 @@ export class WorktreeActions {
       this.target = this.formTarget();
       this.view = owner.captureView('worktree-request:' + this.target);
       const route = this.endpoint(action === 'clean' ? 'delete' : action);
-      const saved = Wire.parse(await this.view.read());
+      const snapshot = await this.view.read(), saved = Wire.parse(snapshot);
       this.requireCurrent(revision);
       if (this.restoreRequest(saved, route)) {
+        if (action === 'rename') { this.renameSnapshot = snapshot; this.renameOriginal = Wire.text(saved,'originalName'); }
         const verified = action === 'create' && this.originalReceiptRoute && await this.verifyCreateVersion();
         if (this.current(revision)) { this.retrySupported = verified; this.ready = true; }
         return;
@@ -248,7 +258,7 @@ export class WorktreeActions {
   setPath(value: string): void { if (this.busy || this.unknown && !this.legacy) return; const suggested = checkoutPath(this.base, this.branch); this.releaseReady = false; this.pathEdited = !!value && value !== suggested; this.path = value || suggested; }
   get canSubmit(): boolean {
     if (!this.ready || this.busy || this.loading || this.unknown) return false;
-    if (this.action === 'rename') return !!this.name.trim() && this.name.trim().length <= 120;
+    if (this.action === 'rename') return !!this.name.trim() && this.name.trim().length <= 120 && this.name.trim() !== this.reviewedRenameBase.trim();
     if (this.action === 'create') return this.supportsAutomatic && this.automatic ||
       validWorktreeBranch(this.branch) && !!this.path.trim();
     return this.action === 'clean' && !!this.token && (!this.dirty || this.force);
@@ -289,18 +299,30 @@ export class WorktreeActions {
       if (action === 'create') {
         if (this.automatic && this.supportsAutomatic) body['auto_name'] = true;
         else { body['branch'] = this.branch.trim(); body['path'] = this.path.trim(); }
-      } else if (action === 'rename') body['name'] = this.name.trim();
+      } else if (action === 'rename') {
+        if (this.reviewedRenameBase) {
+          const live = await this.liveRenameName(rev);
+          this.requireCurrent(rev);
+          if (live !== this.reviewedRenameBase) {
+            this.title = live; this.name = live; this.reviewedRenameBase = live;
+            this.error = 'tree_rename_check_again'; return undefined;
+          }
+        }
+        body['name'] = this.name.trim();
+      }
       else { body['preview_token'] = this.token; body['force'] = this.force; body['delete_branch'] = !this.folder && this.deleteBranch; }
       this.requestId = util.generateRandomUUID();
       this.requestPath = path; this.requestBody = JSON.stringify(body); this.requestTime = Date.now();
       snapshot = this.snapshot();
+      if (action === 'rename') { this.renameSnapshot = snapshot; this.renameOriginal = this.title; }
       await view.write(snapshot);
       if (!admit()) throw new Error('request_updated');
       const result = await owner.repo().call(path, 'POST', body, this.requestId, admit, false,
         (value: Record<string,Object>): boolean => operationAcknowledged(action,sourceId,body,value));
       if (!this.current(rev)) return undefined;
       const change = this.change(result); this.ready = false;
-      await view.write('').catch(() => undefined);
+      if (action === 'rename') await view.clearIfUnchanged(snapshot).catch(() => undefined);
+      else await view.write('').catch(() => undefined);
       return this.current(rev) ? change : undefined;
     } catch (error) {
       if (rejectedBeforeDispatch && !(error instanceof HttpFailure && error.resultUnknown)) {
@@ -316,6 +338,8 @@ export class WorktreeActions {
       if (this.unknown) {
         this.retrySupported = action === 'create' && this.originalReceiptRoute && !!this.exactRecord(this.requestId);
         this.error = error instanceof HttpFailure && error.resultPending ? 'pending' : 'result_unknown';
+      } else if (action === 'rename') {
+        if (snapshot) await view.clearIfUnchanged(snapshot).catch(() => undefined);
       } else if (view.valid()) await view.write('').catch(() => undefined);
       if (action === 'clean' && !this.unknown) this.ready = false;
       return undefined;
@@ -341,7 +365,8 @@ export class WorktreeActions {
     const change = this.legacy ? undefined : this.change(result), view = this.view!;
     await this.finishRecord(this.legacy ? this.legacyId : this.requestId, 'done');
     if (!this.current(rev)) return undefined;
-    if (!this.legacy) await view.write('').catch(() => undefined);
+    if (this.action === 'rename') await view.clearIfUnchanged(this.renameSnapshot).catch(() => undefined);
+    else if (!this.legacy) await view.write('').catch(() => undefined);
     if (!this.current(rev)) return undefined;
     this.unknown = false; this.ready = false; this.retrySupported = false; this.releaseReady = false; this.error = change ? '' : 'done';
     return change;
@@ -384,13 +409,70 @@ export class WorktreeActions {
       Wire.text(row,'source_id') === tree.sourceId && checkoutComparable(Wire.text(row,'cwd')) === checkoutComparable(tree.cwd) &&
       Wire.bool(row,'online') && (!Wire.has(row,'available') || Wire.bool(row,'available'));
   }
-  private async workspaces(rev: number): Promise<Record<string,Object>[]> {
+  private async workspaces(rev: number, requireComplete: boolean = false): Promise<Record<string,Object>[]> {
     const owner = this.owner!;
     const result = await this.read(rev, () => owner.repo().call('/api/v1/workspaces'));
     if (!this.current(rev)) throw new Error('request_updated');
+    if (requireComplete && (Wire.bool(result,'has_more',Wire.has(result,'has_more')) || Wire.bool(result,'partial',Wire.has(result,'partial')) ||
+      !!Wire.text(result,'next_cursor') || Wire.has(result,'errors') && !Array.isArray(result['errors']))) throw new Error('result_unknown');
     if (!Array.isArray(result['workspaces']) || Wire.rows(result,'errors').some((err: Record<string,Object>) =>
       !Wire.text(err,'machine_id') || Wire.text(err,'machine_id') === this.tree!.machine)) throw new Error('result_unknown');
     return Wire.rows(result,'workspaces');
+  }
+  private async liveRenameName(rev: number): Promise<string> {
+    const tree = this.tree!, rows = await this.workspaces(rev,true);
+    this.requireCurrent(rev);
+    if (!tree.group || !tree.machine || !tree.source || !tree.sourceId || !tree.cwd.trim()) throw new Error('result_unknown');
+    const matches = rows.filter((row: Record<string,Object>) => Wire.text(row,'machine_id') === tree.machine &&
+      Wire.text(row,'source') === tree.source && Wire.text(row,'source_id') === tree.sourceId);
+    if (matches.length !== 1 || !this.sameSource(matches[0]) ||
+      Wire.has(matches[0],'manager_id') && Wire.text(matches[0],'manager_id') !== tree.manager) throw new Error('result_unknown');
+    const name = Wire.text(matches[0],'title');
+    if (!name.trim()) throw new Error('result_unknown');
+    return name;
+  }
+  private canKeepRename(record: MutationRecord | undefined): boolean {
+    if (!record || record.id !== this.requestId || record.method !== 'POST' || record.path !== this.endpoint('rename') ||
+      record.confirmedPending !== false || record.requiresReceipt !== false || !['unknown','checked'].includes(record.state)) return false;
+    const created = Date.parse(record.createdAt);
+    return Number.isFinite(created) && created > 0 && this.requestTime > 0 &&
+      Date.now() - Math.max(created,this.requestTime) >= NODE_RENAME_TIMEOUT;
+  }
+  private async recoverRename(rev: number, confirm: boolean): Promise<WorktreeChange | undefined> {
+    const previous = this.renameCurrent, reviewed = this.renameReviewedRecord;
+    const snapshot = this.renameSnapshot, view = this.view!, id = this.requestId;
+    this.renameCurrent = ''; this.renameReviewedRecord = undefined;
+    this.error = 'result_unknown';
+    const current = await this.liveRenameName(rev);
+    this.requireCurrent(rev);
+    const owner = this.owner!, journal = owner.repo().mutations, record = journal?.record(id);
+    const saved = await view.read();
+    this.requireCurrent(rev);
+    // A successful journal check survives an interrupted UI update or a failed snapshot removal.
+    const alreadyCleared = saved === '' && record?.state === 'checked' && this.canKeepRename(record);
+    if (!snapshot || saved !== snapshot && !alreadyCleared) return undefined;
+    if (confirm && (previous !== current || reviewed !== record)) { this.error = 'tree_rename_check_again'; return undefined; }
+    const wanted = Wire.text(Wire.parse(this.requestBody),'name');
+    if (current === wanted) return this.completed(rev,Wire.payload(['ok'],[true]));
+    if (!journal || !this.canKeepRename(record) ||
+      journal.blocked().some((item: MutationRecord) => item !== record && item.method === 'POST' && item.path === this.requestPath)) return undefined;
+    if (!confirm) { this.renameCurrent = current; this.renameReviewedRecord = record; this.error = 'tree_rename_keep_explanation'; return undefined; }
+    // A negative readback cannot prove non-delivery. The explicit choice only marks this
+    // local record checked; a late reply or another person's title must never cause a POST.
+    await journal.acknowledge(id, () => this.current(rev) && journal.record(id) === record && this.canKeepRename(record));
+    if (!this.current(rev) || journal.record(id) !== record || record?.state !== 'checked') return undefined;
+    owner.unresolvedWrites = journal.blocked();
+    await view.clearIfUnchanged(snapshot);
+    const remaining = await view.read();
+    if (!this.current(rev)) return undefined;
+    if (remaining) { this.error = remaining === snapshot ? 'storage_unavailable' : 'request_updated'; return undefined; }
+    if (journal.blocked().some((item: MutationRecord) => item.method === 'POST' && item.path === this.requestPath)) {
+      this.error = 'pending_action'; return undefined;
+    }
+    this.title = current; this.name = current; this.reviewedRenameBase = current;
+    this.renameOriginal = ''; this.renameSnapshot = ''; this.requestBody = ''; this.requestId = '';
+    this.unknown = false; this.ready = true; this.error = '';
+    return undefined;
   }
   private async checkMissingLegacy(rev: number, confirm: boolean): Promise<void> {
     const record = this.exactRecord(this.legacyId), at = record ? Date.parse(record.createdAt) : 0;
@@ -467,15 +549,10 @@ export class WorktreeActions {
     submittingRoutes.add(lane); this.busy = true;
     try {
       if (this.action === 'create') return await this.recoverCreate(rev,replay);
-      if (this.action === 'rename') {
-        const rows = await this.workspaces(rev), name = Wire.text(Wire.parse(this.requestBody),'name');
-        const match = rows.some((row: Record<string,Object>) => this.sameSource(row) && Wire.text(row,'title') === name);
-        if (match && this.current(rev)) return await this.completed(rev, Wire.payload(['ok'],[true]));
-      } else {
-        const body = this.body(); body['preview_token'] = this.token; body['reconcile'] = true;
-        const result = await this.query('delete', body);
-        if (this.current(rev) && this.removed(result)) return await this.completed(rev, result);
-      }
+      if (this.action === 'rename') return await this.recoverRename(rev,replay);
+      const body = this.body(); body['preview_token'] = this.token; body['reconcile'] = true;
+      const result = await this.query('delete', body);
+      if (this.current(rev) && this.removed(result)) return await this.completed(rev, result);
       if (this.current(rev)) this.error = 'result_unknown';
       return undefined;
     } catch (error) {

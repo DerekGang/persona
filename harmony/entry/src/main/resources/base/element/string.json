@@ -4821,6 +4821,30 @@
       "value": "New Worktree"
     },
     {
+      "name": "tree_rename_current_name",
+      "value": "Name on the host"
+    },
+    {
+      "name": "tree_rename_requested_name",
+      "value": "Requested name"
+    },
+    {
+      "name": "tree_rename_original_name",
+      "value": "Name shown before renaming"
+    },
+    {
+      "name": "tree_rename_keep_current",
+      "value": "Keep current name and clear this request"
+    },
+    {
+      "name": "tree_rename_keep_explanation",
+      "value": "Keeping the current name clears this request on this device. You can then enter a new name."
+    },
+    {
+      "name": "tree_rename_check_again",
+      "value": "The name or workspace changed. Check the current name again."
+    },
+    {
       "name": "tree_rename",
       "value": "Rename Worktree"
     },

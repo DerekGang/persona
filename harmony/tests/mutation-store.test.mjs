@@ -69,6 +69,41 @@ test('manual confirmation releases only an unknown operation',async()=>{
   await queue.finish(record,'unknown');await queue.acknowledge(record.id);assert.equal(queue.blocked().length,0);
 });
 
+test('manual release rechecks admission in the queue and preserves a pending or replaced owner',async()=>{
+  const store=new MemoryStore(), journal=new MutationStore(store,'rename-owner');
+  const record=await journal.begin('/worktree/rename','POST','payload');
+  await journal.finish(record,'unknown');
+  let current=true;
+  const stale=journal.acknowledge(record.id,()=>current);
+  current=false; await stale;
+  assert.equal(journal.record(record.id).state,'unknown');
+  record.confirmedPending=true;
+  await journal.acknowledge(record.id,()=>true);
+  assert.equal(record.state,'unknown');
+  record.confirmedPending=false;
+  await Promise.all([journal.finish(record,'pending'),journal.acknowledge(record.id,()=>true)]);
+  assert.equal(record.state,'pending');
+  await journal.finish(record,'unknown');
+  await journal.acknowledge(record.id,()=>true);
+  const reopened=new MutationStore(store,'rename-owner'); await reopened.load();
+  assert.equal(reopened.record(record.id).state,'checked'); assert.equal(reopened.blocked().length,0);
+});
+
+test('a long-blocked manual rename remains recoverably checked across terminal history pruning',async()=>{
+  const local=new MemoryStore(), journal=new MutationStore(local,'old-worktree');
+  const old=await journal.begin('/worktree/rename','POST','name');
+  await journal.finish(old,'unknown');
+  for(let i=0;i<100;i++) {
+    const recent=await journal.begin('/independent/'+i,'POST','data');
+    await journal.finish(recent,'done');
+  }
+  local.failNext=true;
+  await assert.rejects(journal.acknowledge(old.id,()=>true)); assert.equal(old.state,'unknown');
+  await journal.acknowledge(old.id,()=>true);
+  const restored=new MutationStore(local,'old-worktree'); await restored.load();
+  assert.equal(restored.record(old.id).state,'checked');
+});
+
 test('history cleanup failure does not turn a confirmed result into an unindexed unknown',async()=>{
  const local=new MemoryStore(),queue=new MutationStore(local,'test');
  const old=await queue.begin('/old/messages','POST','old');await queue.finish(old,'unknown');

@@ -4821,6 +4821,30 @@
       "value": "ワークツリーを作成"
     },
     {
+      "name": "tree_rename_current_name",
+      "value": "ホスト上の現在の名前"
+    },
+    {
+      "name": "tree_rename_requested_name",
+      "value": "リクエストした名前"
+    },
+    {
+      "name": "tree_rename_original_name",
+      "value": "変更前に表示されていた名前"
+    },
+    {
+      "name": "tree_rename_keep_current",
+      "value": "現在の名前を保持してリクエストを解除"
+    },
+    {
+      "name": "tree_rename_keep_explanation",
+      "value": "現在の名前を保持すると、この端末のリクエストを解除します。その後、新しい名前を入力できます。"
+    },
+    {
+      "name": "tree_rename_check_again",
+      "value": "名前またはワークスペースが変更されました。現在の名前をもう一度確認してください。"
+    },
+    {
       "name": "tree_rename",
       "value": "ワークツリー名を変更"
     },

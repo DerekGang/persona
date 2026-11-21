@@ -4821,6 +4821,30 @@
       "value": "新建工作树"
     },
     {
+      "name": "tree_rename_current_name",
+      "value": "主机当前名称"
+    },
+    {
+      "name": "tree_rename_requested_name",
+      "value": "此前请求名称"
+    },
+    {
+      "name": "tree_rename_original_name",
+      "value": "提交前显示的名称"
+    },
+    {
+      "name": "tree_rename_keep_current",
+      "value": "保留当前名称并解除这次改名"
+    },
+    {
+      "name": "tree_rename_keep_explanation",
+      "value": "保留主机当前名称会解除本机这条改名记录。之后可以重新输入名称。"
+    },
+    {
+      "name": "tree_rename_check_again",
+      "value": "名称或工作区已更新，请重新核对当前名称。"
+    },
+    {
       "name": "tree_rename",
       "value": "重命名工作树"
     },

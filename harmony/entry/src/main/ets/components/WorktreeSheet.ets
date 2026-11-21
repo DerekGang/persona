@@ -119,7 +119,21 @@ export struct WorktreeSheet {
               }.width('100%').borderRadius(PhoneStyle.cardRadius).backgroundColor(Colors.surface).clip(true)
             } else if (this.form.action === 'rename') {
               Column() {
-                this.field(tr('tree_display_name'), 'tree.form.name', tr('tree_display_name'), (v: string) => this.form.name = v)
+                if (this.form.unknown && this.form.renameCurrent) {
+                  Column() {
+                    this.valueRow(tr('machines'),this.form.machine)
+                    this.rule()
+                    this.codeValue(tr('directory'),this.form.path)
+                    this.rule()
+                    this.valueRow(tr('tree_rename_current_name'),this.form.renameCurrent)
+                    this.rule()
+                    this.valueRow(tr('tree_rename_requested_name'),this.form.name)
+                    if (this.form.renameOriginal && this.form.renameOriginal !== this.form.renameCurrent) {
+                      this.rule()
+                      this.valueRow(tr('tree_rename_original_name'),this.form.renameOriginal)
+                    }
+                  }.width('100%').id('tree.form.rename.review')
+                } else this.field(tr('tree_display_name'), 'tree.form.name', tr('tree_display_name'), (v: string) => this.form.name = v)
               }.margin({top:14}).width('100%').borderRadius(PhoneStyle.cardRadius).backgroundColor(Colors.surface).clip(true)
             } else {
               PhoneSectionTitle({ text: tr('tree_cleanup_preview') })
@@ -146,13 +160,20 @@ export struct WorktreeSheet {
             }
           }
           if (this.form.error) {
-            Text(tr(this.form.error)).fontSize(15).fontColor(Colors.danger).padding(12).id('tree.form.error')
+            Text(tr(this.form.error)).fontSize(15).fontColor(this.form.renameCurrent ? Colors.secondary : Colors.danger).padding(12).id('tree.form.error')
             if (!this.form.ready && !this.form.unknown) Button(tr('retry'), { buttonStyle: ButtonStyleMode.TEXTUAL }).onClick(() => this.onRetry()).id('tree.form.retry')
             if (this.form.unknown && (this.form.requestCheckAvailable || this.form.busy)) {
               Button(tr(this.form.action === 'clean' ? 'tree_check_result' : 'tree_check_worktree_result'), { buttonStyle: ButtonStyleMode.TEXTUAL })
                 .enabled(this.form.canCheck).onClick(() => this.onReconcile(false)).id('tree.form.reconcile')
               if (this.form.canRetrySame) Button(tr('tree_retry_same_request'), { buttonStyle: ButtonStyleMode.TEXTUAL })
                 .onClick(() => this.onReconcile(true)).id('tree.form.retry_same')
+              if (this.form.action === 'rename' && this.form.renameCurrent) {
+                Button({type:ButtonType.Normal,buttonStyle:ButtonStyleMode.TEXTUAL}) {
+                  Text(tr('tree_rename_keep_current')).fontSize(16).fontColor(Colors.link).textAlign(TextAlign.Center).wordBreak(WordBreak.BREAK_WORD)
+                }.width('100%').constraintSize({minHeight:48}).padding({left:12,right:12,top:8,bottom:8})
+                  .accessibilityText(tr('tree_rename_keep_current')).enabled(this.form.canCheck)
+                  .onClick(() => this.onReconcile(true)).id('tree.form.rename.keep')
+              }
               if (this.form.legacy && this.form.releaseReady) Button(tr('tree_confirm_not_created'), { buttonStyle: ButtonStyleMode.TEXTUAL })
                 .enabled(!this.form.busy).onClick(() => this.onReconcile(true)).id('tree.form.confirm_absent')
             }

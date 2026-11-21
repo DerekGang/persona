@@ -33,7 +33,11 @@ function fixture() {
     workspaces:[{machine_id:'Studio/1',source:'herdr',source_id:'child',cwd:'/qa/child',title:'Child',branch:'main',online:true,available:true}],
     operation:'missing', receiptBody:undefined, replayError:undefined };
   const repo = {
-    mutations: { blocked: () => blocked.filter(r=>r.state==='pending'||r.state==='unknown'), finish: async (record, state) => {
+    mutations: { blocked: () => blocked.filter(r=>r.state==='pending'||r.state==='unknown'), record: id => blocked.find(r=>r.id===id),
+      acknowledge: async (id,admit) => {
+        const record=blocked.find(r=>r.id===id);
+        if (record?.state==='unknown' && !record.requiresReceipt && !record.confirmedPending && (!admit || admit())) await repo.mutations.finish(record,'checked');
+      }, finish: async (record, state) => {
       record.state=state;finished.push([record.id,state]);} },
     transport: { async request(path, method, json, id) {
       const body = JSON.parse(json);
@@ -288,6 +292,118 @@ test('uncertain rename checks the same live host source, cwd and title without r
     const original=row[key];row[key]=wrong;await f.form.reconcile(true);row[key]=original;assert.equal(f.form.unknown,true);
   }
   const result=await f.form.reconcile();assert.equal(result.action,'rename');assert.equal(f.writes.length,1);assert.equal(f.replayed.length,0);
+});
+
+async function lostRename({legacy=false,age=65000}={}) {
+  const f=fixture();
+  f.behavior.unknown=true;
+  await f.form.open(f.root,f.tree,'rename'); f.form.name='Requested'; await f.form.submit();
+  const [record]=f.blocked, [key]=f.views.keys(), data=JSON.parse(f.views.get(key));
+  data.at=Date.now()-age; record.createdAt=new Date(data.at).toISOString();
+  record.requiresReceipt=false; record.confirmedPending=false;
+  if (legacy) delete data.originalName;
+  const snapshot=JSON.stringify(data); f.views.set(key,snapshot);
+  f.form.close(); await f.form.open(f.root,f.tree,'rename');
+  return {...f,record,key,snapshot,row:f.behavior.workspaces[0]};
+}
+
+test('keeping a verified name settles one rename locally and a separate save gets a new UUID',async()=>{
+  for (const legacy of [false,true]) {
+    const f=await lostRename({legacy});
+    assert.equal(f.form.renameOriginal,legacy?'':'Child');
+    const unrelated={...f.record,id:'00000000-0000-4000-8000-000000000003',path:'/api/v1/machines/Other/worktree/rename'};
+    f.blocked.push(unrelated);
+    await f.form.reconcile(true); assert.equal(f.record.state,'unknown'); assert.equal(f.form.renameCurrent,'');
+    await f.form.reconcile(); assert.equal(f.form.renameCurrent,'Child'); assert.equal(f.form.name,'Requested');
+    assert.equal(f.form.canSubmit,false); assert.equal(f.reads.filter(p=>p.endsWith('/workspaces')).length,2);
+    await f.form.reconcile(true);
+    assert.equal(f.record.state,'checked'); assert.equal(unrelated.state,'unknown');
+    assert.equal(f.views.has(f.key),false); assert.equal(f.form.unknown,false);
+    assert.equal(f.form.name,'Child'); assert.equal(f.form.canSubmit,false);
+    await f.form.submit(); assert.equal(f.writes.length,1); assert.equal(f.replayed.length,0);
+    f.behavior.unknown=false; f.form.name='New decision';
+    await f.form.submit(); assert.equal(f.writes.length,2);
+    assert.equal(f.writes[1].body.name,'New decision'); assert.notEqual(f.writes[1].id,f.record.id);
+  }
+});
+
+test('a third-party name is displayed and preserved; changes during review or before a later save require a new decision',async()=>{
+  const f=await lostRename();
+  await f.form.reconcile(); f.row.title=' Changed by someone else ';
+  await f.form.reconcile(true); assert.equal(f.form.renameCurrent,''); assert.equal(f.record.state,'unknown');
+  await f.form.reconcile(); assert.equal(f.form.renameCurrent,f.row.title);
+  assert.equal(f.form.renameOriginal,'Child'); assert.equal(f.form.name,'Requested');
+  await f.form.reconcile(true); assert.equal(f.form.name,f.row.title); assert.equal(f.form.unknown,false); assert.equal(f.form.canSubmit,false);
+  f.form.name='A new request'; f.row.title='Changed again'; f.behavior.unknown=false;
+  await f.form.submit(); assert.equal(f.writes.length,1); assert.equal(f.form.name,'Changed again'); assert.equal(f.form.canSubmit,false);
+  f.form.name='My final choice'; await f.form.submit(); assert.equal(f.writes.length,2);
+});
+
+test('a rename release requires the exact aged, non-pending local UUID and one complete live owner-qualified workspace',async()=>{
+  const conditions=[
+    f=>{f.record.createdAt=new Date().toISOString();}, f=>{f.record.createdAt='invalid';},
+    f=>{f.record.requiresReceipt=true;}, f=>{f.record.confirmedPending=true;}, f=>{f.record.state='pending';},
+    f=>{f.record.id='00000000-0000-4000-8000-000000000004';}, f=>{f.record.path+='/different';},
+    f=>{f.record.method='GET';}, f=>{f.row.machine_id='other';}, f=>{f.row.source_id='wrong';},
+    f=>{f.blocked.push({...f.record,id:'00000000-0000-4000-8000-000000000006'});},
+    f=>{f.row.source='orca';}, f=>{f.row.cwd='/other';}, f=>{f.row.manager_id='foreign';},
+    f=>{f.row.online=false;}, f=>{f.row.available=false;},
+    f=>{f.behavior.workspaces.push({...f.row});}, f=>{f.behavior.errors=[{machine_id:f.row.machine_id}];},
+    f=>{const repo=f.owner.repo(), original=repo.call;repo.call=(path,...rest)=>path==='/api/v1/workspaces'
+      ? Promise.resolve({workspaces:[f.row],has_more:true}):original.call(repo,path,...rest);},
+    f=>{f.views.set(f.key,JSON.stringify({...JSON.parse(f.snapshot),id:'replacement'}));}
+  ];
+  for (const invalidate of conditions) {
+    const f=await lostRename(); invalidate(f); const state=f.record.state;
+    await f.form.reconcile(); await f.form.reconcile(true);
+    assert.equal(f.form.renameCurrent,''); assert.equal(f.form.unknown,true);
+    assert.equal(f.record.state,state); assert.equal(f.writes.length,1); assert.equal(f.replayed.length,0);
+  }
+});
+
+test('replacing the reviewed journal record between readbacks requires checking it again',async()=>{
+  const f=await lostRename(); await f.form.reconcile();
+  f.blocked[0]={...f.record};
+  await f.form.reconcile(true);
+  assert.equal(f.form.renameCurrent,''); assert.equal(f.blocked[0].state,'unknown');
+  assert.equal(f.form.unknown,true); assert.equal(f.writes.length,1);
+});
+
+test('journal and snapshot failures can resume; cleanup never erases a replacement request',async()=>{
+  for (const fault of ['journal','snapshot','replacement','after-clear']) {
+    const f=await lostRename(), journal=f.owner.repo().mutations, view=f.form.view;
+    const acknowledge=journal.acknowledge,clear=view.clearIfUnchanged;
+    const replacement=JSON.stringify({...JSON.parse(f.snapshot),id:'00000000-0000-4000-8000-000000000005'});
+    await f.form.reconcile();
+    if (fault==='journal') journal.acknowledge=async()=>{throw Error('storage_unavailable');};
+    else if (fault==='after-clear') view.clearIfUnchanged=async value=>{
+      await clear(value);
+      const read=view.read; view.read=async()=>{view.read=read;throw Error('storage_unavailable');};
+    };
+    else view.clearIfUnchanged=async value=>{
+      if(fault==='snapshot') throw Error('storage_unavailable');
+      f.views.set(f.key,replacement); await clear(value);
+    };
+    await f.form.reconcile(true);
+    assert.equal(f.form.unknown,true); assert.equal(f.writes.length,1);
+    assert.equal(f.record.state,fault==='journal'?'unknown':'checked');
+    assert.equal(f.views.get(f.key),fault==='replacement'?replacement:fault==='after-clear'?undefined:f.snapshot);
+    journal.acknowledge=acknowledge;
+    view.clearIfUnchanged=clear;
+    if (fault!=='after-clear') { f.form.close(); await f.form.open(f.root,f.tree,'rename'); }
+    await f.form.reconcile(); await f.form.reconcile(true);
+    assert.equal(f.form.unknown,fault==='replacement'); assert.equal(f.writes.length,1);
+  }
+});
+
+test('retiring an owner during the second read cannot settle its rename or mutate a new form',async()=>{
+  const f=await lostRename(); await f.form.reconcile();
+  const gate=Promise.withResolvers(), entered=Promise.withResolvers(), repo=f.owner.repo();
+  repo.call=async()=>{entered.resolve();return gate.promise;};
+  const pending=f.form.reconcile(true);
+  await entered.promise; f.owner.epoch++; f.form.close();
+  gate.resolve({workspaces:[f.row]}); await pending;
+  assert.equal(f.record.state,'unknown'); assert.equal(f.views.get(f.key),f.snapshot); assert.equal(f.writes.length,1);
 });
 
 test('an in-flight retry cannot update or unlock a replacement connection',async()=>{
