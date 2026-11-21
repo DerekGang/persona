@@ -313,6 +313,24 @@ func (s *Service) releaseOwnerProposalClaim(p *pending, decisionErr error, retry
 	close(attempt.done)
 }
 
+// failOwnerProposalClaim wakes local waiters on service shutdown without
+// exposing the provisional answer or allowing expiry to rewrite an uncertain
+// durable outcome. The claimed card remains for restart reconciliation.
+func (s *Service) failOwnerProposalClaim(p *pending, claimErr error) {
+	s.fleet.mu.Lock()
+	defer s.fleet.mu.Unlock()
+	attempt := p.persisting
+	if attempt == nil {
+		return
+	}
+	p.resolution = nil
+	p.answeredBy, p.answeredReason, p.answeredWith = "", "", nil
+	p.persistenceErr = claimErr
+	attempt.err = claimErr
+	p.persisting = nil
+	close(attempt.done)
+}
+
 func (s *Service) completeOwnerProposalClaim(p *pending, r proto.Resolution) {
 	s.fleet.mu.Lock()
 	p.resolution = &r
@@ -364,37 +382,51 @@ func (s *Service) decideOwnerProposal(ctx context.Context, book *ownerActionBook
 func (s *Service) reconcileOwnerProposalClaim(ix proto.Interaction, p *pending, proof ownerReplyProof, allow bool) {
 	unlockAdmission := s.lockInteractionAdmission(ix.ID)
 	defer unlockAdmission()
-	book, err := s.ownerActions()
-	if err != nil {
-		s.logf("owner-action reconciliation remains claimed: %v", err)
-		return
-	}
-	for attempt := 0; attempt < 8; attempt++ {
+	runCtx := s.runCtx()
+	defer func() {
+		if runCtx.Err() != nil {
+			s.failOwnerProposalClaim(p, runCtx.Err())
+		}
+	}()
+	for {
 		s.fleet.mu.Lock()
 		current := s.fleet.interactions[ix.ID] == p && p.claimed
 		s.fleet.mu.Unlock()
 		if !current {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
-		r, settled, err := s.decideOwnerProposal(ctx, book, ix, proof, allow)
-		cancel()
+		book, reconcileErr := s.ownerActions()
+		var r proto.Resolution
+		settled := false
+		if reconcileErr == nil {
+			ctx, cancel := context.WithTimeout(runCtx, historyTimeout)
+			r, settled, reconcileErr = s.decideOwnerProposal(ctx, book, ix, proof, allow)
+			cancel()
+		}
 		if settled {
 			s.completeOwnerProposalClaim(p, r)
-			if err := s.syncOwnerActionBatch(context.Background(), ix.ApprovalBatchID); err != nil {
+			if err := s.syncOwnerActionBatch(runCtx, ix.ApprovalBatchID); err != nil && runCtx.Err() == nil {
 				s.logf("project reconciled owner-action decision: %v", err)
 			}
 			return
 		}
-		if ownerProposalDefinitiveError(err) {
-			s.releaseOwnerProposalClaim(p, err, true)
+		if ownerProposalDefinitiveError(reconcileErr) {
+			s.releaseOwnerProposalClaim(p, reconcileErr, true)
 			return
 		}
-		if attempt < 7 {
-			time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-runCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		case <-timer.C:
 		}
 	}
-	s.logf("owner-action reconciliation for %s remains pending and claimed after repeated storage failures", ix.ID)
 }
 
 // resolveOwnerProposalAt binds the durable decision to the exact live

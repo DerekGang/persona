@@ -340,6 +340,39 @@ func TestOwnerActionAmbiguousCommitErrorReconcilesGrant(t *testing.T) {
 	}
 }
 
+func TestOwnerActionReconciliationContinuesPastInitialRetryBudget(t *testing.T) {
+	s, _, st, book := ownerReplyTestService(t)
+	batch := createOwnerTestBatch(t, book, `{"body":"recovery after retry budget"}`)
+	ix := ownerReplyBatchIX(batch)
+	ix.NoExpiry = false
+	ix.ExpiresAt = time.Now().Add(60 * time.Millisecond)
+	putOwnerReplyPending(s, ix)
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[ix.ID]
+	s.fleet.mu.Unlock()
+	waited := make(chan proto.Resolution, 1)
+	go func() {
+		r, _ := s.await(context.Background(), p)
+		waited <- r
+	}()
+	// Two immediate attempts plus eight background attempts used to exhaust the
+	// retry budget. Recovery must still deliver the decision on a later attempt.
+	st.casFailuresRemaining = 11
+	allow := true
+	if err := s.resolveOwnerProposalAt(context.Background(), ix, proto.Resolution{Allow: &allow},
+		ownerActionCardProof(ix, "extended-reconciliation-test"), nil); err == nil {
+		t.Fatal("the injected storage outage was not surfaced to the caller")
+	}
+	select {
+	case r := <-waited:
+		if r.Allow == nil || !*r.Allow || r.Dismiss {
+			t.Fatalf("recovered decision produced the wrong answer: %+v", r)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("proposal stayed claimed after the database recovered beyond the old retry budget")
+	}
+}
+
 func TestOwnerActionResolutionUsesTheFirstDurableAnswer(t *testing.T) {
 	s, _, _, book := ownerReplyTestService(t)
 	batch := createOwnerTestBatch(t, book, `{"body":"first durable answer"}`)
