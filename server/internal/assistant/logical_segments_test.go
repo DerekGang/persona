@@ -751,3 +751,41 @@ func TestLogicalPublicationLeavesOrdinaryCardLifetimeUnchanged(t *testing.T) {
 		t.Fatalf("ordinary card cancellation changed: %v %v", called, err)
 	}
 }
+
+func TestLogicalProviderScopeUsesTheActualExecutionMachine(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "target-only", Agent: "codex", BaseURL: "https://provider.example/v1"}, Share: shareSelected, ScopeMachines: []string{"server"}})
+	if err := d.AdoptConversation(ctx, "former-machine", "stable-chat", "scoped-source", "claude", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.BeginConversationSwitch(ctx, "former-machine", "stable-chat", db.ConversationSwitch{OperationID: "switch", ExpectedEpoch: 1, SourceSegment: "scoped-source", Request: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PrepareConversationSegment(ctx, "former-machine", "stable-chat", "switch", conversationlog.Segment{ID: "scoped-target", MachineID: "server", SessionID: "physical-scoped", Engine: "codex", Launcher: "target-only"}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ActivateConversationSegment(ctx, "former-machine", "stable-chat", "switch", 1); err != nil {
+		t.Fatal(err)
+	}
+	// The provider is unavailable on the public root's former machine, but it is
+	// valid on the target. Internal sends must not validate against that old root.
+	if err := s.call(ctx, "former-machine", DeviceSessionSend, map[string]any{"session_id": "stable-chat", "launcher": "target-only", "text": "continue", "client_msg_id": "scope-message"}, nil); err != nil {
+		t.Fatalf("checked scope on retired machine: %v", err)
+	}
+	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "target-only", Agent: "codex", BaseURL: "https://provider.example/v1"}, Share: shareNone})
+	f.answerNode("assistant.segment.check", func(string, json.RawMessage) (any, error) {
+		t.Fatal("out-of-scope target reached node")
+		return nil, nil
+	})
+	f.answerNode(DeviceAssistantSend, func(string, json.RawMessage) (any, error) {
+		t.Fatal("revoked provider reached runtime")
+		return nil, nil
+	})
+	if _, err := s.logicalTarget(ctx, "server", "target-only"); codeOf(err) != proto.CodeLauncherOutOfScope {
+		t.Fatalf("target scope: %v", err)
+	}
+	if _, err := s.logicalPhysical(ctx, "server", DeviceAssistantSend, map[string]any{"session_id": "physical-scoped", "launcher": "target-only", "text": "must not send"}); codeOf(err) != proto.CodeLauncherOutOfScope {
+		t.Fatalf("release scope: %v", err)
+	}
+}

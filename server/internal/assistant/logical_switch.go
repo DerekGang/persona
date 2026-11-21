@@ -53,6 +53,9 @@ func knownSegmentTarget(target segmentTarget) bool {
 }
 func (s *Service) logicalTarget(ctx context.Context, machine, launcher string) (segmentTarget, error) {
 	var target segmentTarget
+	if err := s.launcherScopeErr(ctx, machine, launcher); err != nil {
+		return target, err
+	}
 	raw, err := s.logicalPhysical(ctx, machine, "assistant.segment.check", map[string]any{"launcher": launcher})
 	if err != nil {
 		return target, err

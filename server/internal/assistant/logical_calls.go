@@ -33,6 +33,16 @@ func (s *Service) logicalPhysical(ctx context.Context, machine, method string, p
 	if err != nil {
 		return nil, err
 	}
+	if startScopeMethods[method] || method == DeviceSessionSendOnce || method == "assistant.segment.prepare" || method == "session.modes" || method == "session.switch" {
+		var execution struct {
+			Launcher string `json:"launcher"`
+		}
+		if json.Unmarshal(raw, &execution) == nil && execution.Launcher != "" {
+			if err := s.launcherScopeErr(ctx, machine, execution.Launcher); err != nil {
+				return nil, err
+			}
+		}
+	}
 	ctx = context.WithValue(ctx, logicalSourceKey{}, true)
 	if d := s.physicalDevices(); d != nil {
 		if original, ok := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); ok {

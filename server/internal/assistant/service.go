@@ -622,7 +622,11 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 	if p, ok := params.(map[string]any); ok && startScopeMethods[method] {
 		// A Persona-managed provider out of this computer's scope does not run there (models_launchers_scope.go).
 		if name, _ := p["launcher"].(string); name != "" {
-			if err := s.launcherScopeErr(ctx, device, name); err != nil {
+			scopeMachine := device
+			if id, _ := p["session_id"].(string); id != "" {
+				scopeMachine = s.logicalExecutionMachine(ctx, device, id)
+			}
+			if err := s.launcherScopeErr(ctx, scopeMachine, name); err != nil {
 				if method == DeviceAssistantSend {
 					s.recordManagerSend(device, p, nil, err) // a failed start or resume all the same (north_star.go)
 				}
