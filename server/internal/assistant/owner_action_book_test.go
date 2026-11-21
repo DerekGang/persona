@@ -15,12 +15,13 @@ import (
 // independent books exercise cross-manager arbitration rather than a book lock.
 type ownerActionTestStore struct {
 	noPlans
-	mu         sync.Mutex
-	values     map[string][]byte
-	casErr     error
-	casCall    atomic.Int32
-	casEntered chan struct{}
-	casRelease chan struct{}
+	mu                sync.Mutex
+	values            map[string][]byte
+	casErr            error
+	casAfterCommitErr error
+	casCall           atomic.Int32
+	casEntered        chan struct{}
+	casRelease        chan struct{}
 }
 
 func (st *ownerActionTestStore) Setting(_ context.Context, key string, out any) (bool, error) {
@@ -79,6 +80,9 @@ func (st *ownerActionTestStore) CompareSetting(_ context.Context, key string, re
 		st.values = map[string][]byte{}
 	}
 	st.values[key] = raw
+	if st.casAfterCommitErr != nil {
+		return false, st.casAfterCommitErr
+	}
 	return true, nil
 }
 

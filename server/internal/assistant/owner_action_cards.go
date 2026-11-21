@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -313,6 +314,11 @@ func (s *Service) releaseOwnerProposalClaim(p *pending, decisionErr error, retry
 }
 
 func (s *Service) completeOwnerProposalClaim(p *pending, r proto.Resolution) {
+	s.fleet.mu.Lock()
+	p.resolution = &r
+	p.answeredBy, p.answeredReason = r.AnsweredBy, r.Reason
+	p.answeredWith = r.Answers
+	s.fleet.mu.Unlock()
 	status := endStatus(r)
 	told := redacted(p.ix, r)
 	if err := s.recordEndOccurrenceStrict(p.ix, status, &told); err != nil {
@@ -327,6 +333,68 @@ func (s *Service) completeOwnerProposalClaim(p *pending, r proto.Resolution) {
 	default:
 	}
 	s.finishPending(p)
+}
+
+func ownerProposalDefinitiveError(err error) bool {
+	return errors.Is(err, errOwnerActionProof) || errors.Is(err, errOwnerActionConflict)
+}
+
+// decideOwnerProposal reads the effective target state after every decision,
+// including success. Another manager's first decision may have won, and a
+// storage error does not prove that its write was not applied.
+func (s *Service) decideOwnerProposal(ctx context.Context, book *ownerActionBook, ix proto.Interaction, proof ownerReplyProof, allow bool) (proto.Resolution, bool, error) {
+	_, decisionErr := book.decide(ctx, proof, allow)
+	effective, settled, outcomeErr := book.proposalOutcome(ctx, ix.ApprovalBatchID, ix.ApprovalItemID)
+	if outcomeErr == nil && settled {
+		r := proto.Resolution{Allow: &effective, Reason: "exact owner-action decision " + ix.ApprovalBatchID}
+		return honest(ix, r), true, nil
+	}
+	if decisionErr != nil {
+		return proto.Resolution{}, false, decisionErr
+	}
+	if outcomeErr != nil {
+		return proto.Resolution{}, false, outcomeErr
+	}
+	return proto.Resolution{}, false, errors.New("owner-action decision left its target pending")
+}
+
+// reconcileOwnerProposalClaim keeps an uncertain storage outcome fail-closed.
+// Only a definitive rejection with a still-pending durable target releases the
+// claim for normal expiry/cancellation arbitration.
+func (s *Service) reconcileOwnerProposalClaim(ix proto.Interaction, p *pending, proof ownerReplyProof, allow bool) {
+	unlockAdmission := s.lockInteractionAdmission(ix.ID)
+	defer unlockAdmission()
+	book, err := s.ownerActions()
+	if err != nil {
+		s.logf("owner-action reconciliation remains claimed: %v", err)
+		return
+	}
+	for attempt := 0; attempt < 8; attempt++ {
+		s.fleet.mu.Lock()
+		current := s.fleet.interactions[ix.ID] == p && p.claimed
+		s.fleet.mu.Unlock()
+		if !current {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), historyTimeout)
+		r, settled, err := s.decideOwnerProposal(ctx, book, ix, proof, allow)
+		cancel()
+		if settled {
+			s.completeOwnerProposalClaim(p, r)
+			if err := s.syncOwnerActionBatch(context.Background(), ix.ApprovalBatchID); err != nil {
+				s.logf("project reconciled owner-action decision: %v", err)
+			}
+			return
+		}
+		if ownerProposalDefinitiveError(err) {
+			s.releaseOwnerProposalClaim(p, err, true)
+			return
+		}
+		if attempt < 7 {
+			time.Sleep(time.Duration(attempt+1) * 50 * time.Millisecond)
+		}
+	}
+	s.logf("owner-action reconciliation for %s remains pending and claimed after repeated storage failures", ix.ID)
 }
 
 // resolveOwnerProposalAt binds the durable decision to the exact live
@@ -357,14 +425,26 @@ func (s *Service) resolveOwnerProposalAt(ctx context.Context, ix proto.Interacti
 	if err != nil {
 		return err
 	}
-	if _, err := book.decide(ctx, proof, *r.Allow); err != nil {
-		s.releaseOwnerProposalClaim(p, err, true)
-		return err
+	effective, settled, decisionErr := s.decideOwnerProposal(ctx, book, ix, proof, *r.Allow)
+	if !settled && !ownerProposalDefinitiveError(decisionErr) {
+		// One immediate idempotent retry normally resolves a transient store
+		// error without making the owner wait for background reconciliation.
+		retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), historyTimeout)
+		effective, settled, decisionErr = s.decideOwnerProposal(retryCtx, book, ix, proof, *r.Allow)
+		cancel()
 	}
-	s.completeOwnerProposalClaim(p, r)
-	admissionHeld = false
-	unlockAdmission()
-	return s.syncOwnerActionBatch(context.WithoutCancel(ctx), ix.ApprovalBatchID)
+	if settled {
+		s.completeOwnerProposalClaim(p, effective)
+		admissionHeld = false
+		unlockAdmission()
+		return s.syncOwnerActionBatch(context.WithoutCancel(ctx), ix.ApprovalBatchID)
+	}
+	if ownerProposalDefinitiveError(decisionErr) {
+		s.releaseOwnerProposalClaim(p, decisionErr, true)
+		return decisionErr
+	}
+	go s.reconcileOwnerProposalClaim(ix, p, proof, *r.Allow)
+	return decisionErr
 }
 
 // syncOwnerActionBatch projects durable item decisions onto the original

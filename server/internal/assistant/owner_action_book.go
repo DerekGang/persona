@@ -398,6 +398,43 @@ func (book *ownerActionBook) decide(ctx context.Context, proof ownerReplyProof, 
 	return result, errOwnerActionConflict
 }
 
+func (book *ownerActionBook) proposalOutcome(ctx context.Context, batchID, itemID string) (allow, settled bool, err error) {
+	doc, err := book.read(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, batch := range doc.Batches {
+		if batch.ID != batchID {
+			continue
+		}
+		if itemID != "" {
+			for _, item := range batch.Items {
+				if item.ID != itemID {
+					continue
+				}
+				switch item.State {
+				case ownerActionPending:
+					return false, false, nil
+				case ownerActionGranted, ownerActionConsumed:
+					return true, true, nil
+				case ownerActionDenied, ownerActionCancelled:
+					return false, true, nil
+				default:
+					return false, false, fmt.Errorf("owner-action item %s has unknown state %q", item.ID, item.State)
+				}
+			}
+			return false, false, errOwnerActionProof
+		}
+		var result ownerActionDecisionResult
+		ownerActionFillResult(batch, &result)
+		if !result.Complete {
+			return false, false, nil
+		}
+		return result.Allow, true, nil
+	}
+	return false, false, errOwnerActionProof
+}
+
 func ownerActionFillResult(batch ownerActionBatch, result *ownerActionDecisionResult) {
 	result.BatchID = batch.ID
 	result.Complete = true

@@ -307,6 +307,71 @@ func TestOwnerActionRejectedDecisionReleasesClaimForWaiter(t *testing.T) {
 	}
 }
 
+func TestOwnerActionAmbiguousCommitErrorReconcilesGrant(t *testing.T) {
+	s, _, st, book := ownerReplyTestService(t)
+	batch := createOwnerTestBatch(t, book, `{"body":"commit outcome unknown"}`)
+	ix := ownerReplyBatchIX(batch)
+	ix.NoExpiry = false
+	ix.ExpiresAt = time.Now().Add(80 * time.Millisecond)
+	putOwnerReplyPending(s, ix)
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[ix.ID]
+	s.fleet.mu.Unlock()
+	waited := make(chan proto.Resolution, 1)
+	go func() {
+		r, _ := s.await(context.Background(), p)
+		waited <- r
+	}()
+	st.casAfterCommitErr = errors.New("connection lost after the durable write")
+	allow := true
+	resolveErr := s.resolveOwnerProposalAt(context.Background(), ix, proto.Resolution{Allow: &allow},
+		ownerActionCardProof(ix, "ambiguous-commit-test"), nil)
+	var r proto.Resolution
+	select {
+	case r = <-waited:
+	case <-time.After(time.Second):
+		t.Fatal("uncertain durable decision left the original waiter blocked")
+	}
+	if r.Allow == nil || !*r.Allow || r.Dismiss {
+		t.Fatalf("a committed grant was rolled back to expiry after an ambiguous storage error: %+v (resolve error %v)", r, resolveErr)
+	}
+	if resolveErr != nil {
+		t.Fatalf("the reconciled durable decision was still reported as failed: %v", resolveErr)
+	}
+}
+
+func TestOwnerActionResolutionUsesTheFirstDurableAnswer(t *testing.T) {
+	s, _, _, book := ownerReplyTestService(t)
+	batch := createOwnerTestBatch(t, book, `{"body":"first durable answer"}`)
+	ix := ownerReplyBatchIX(batch)
+	putOwnerReplyPending(s, ix)
+	denyProof := ownerActionCardProof(ix, "first-denial")
+	if _, err := book.decide(context.Background(), denyProof, false); err != nil {
+		t.Fatal(err)
+	}
+	s.fleet.mu.Lock()
+	p := s.fleet.interactions[ix.ID]
+	s.fleet.mu.Unlock()
+	waited := make(chan proto.Resolution, 1)
+	go func() {
+		r, _ := s.await(context.Background(), p)
+		waited <- r
+	}()
+	allow := true
+	allowProof := ownerActionCardProof(ix, "later-allow")
+	if err := s.resolveOwnerProposalAt(context.Background(), ix, proto.Resolution{Allow: &allow}, allowProof, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-waited:
+		if r.Allow == nil || *r.Allow || r.Dismiss {
+			t.Fatalf("later Allow replaced the first durable Deny: %+v", r)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first durable answer did not reach the original waiter")
+	}
+}
+
 func TestOwnerActionSyncDoesNotResolveReplacement(t *testing.T) {
 	s, _, _, book := ownerReplyTestService(t)
 	batch := createOwnerTestBatch(t, book, `{"body":"projection"}`)
