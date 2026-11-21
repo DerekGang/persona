@@ -267,16 +267,9 @@ if [ "$LANE" != packages ] && [ "$LANE" != ios-build ]; then
   # It is neither skipped nor replaced with an overridden trait: a separate
   # real-iPad test-without-building lane below runs the unchanged pixel test.
   if [ "$LANE" = ios-focused ]; then
-  # Explicit diagnostic suites after the same build/readiness gates as ios.
-  # The ordinary lane below is unchanged and keeps every selection/assertion.
-  IOS_UNIT_SELECTION=(-only-testing:PersonaTests/PageSearchableTests
-    -only-testing:PersonaTests/StarredMessagesTests
-    -only-testing:PersonaTests/LauncherModelChoiceTests
-    -only-testing:PersonaTests/OmpNewAgentTests
-    -only-testing:PersonaTests/PaseoPermissionModesTests
-    -only-testing:PersonaTests/PaseoProvidersTests
-    -only-testing:PersonaTests/AboutVersionCompactVisualTests)
-else
+    # Diagnostic only: execute every existing MainPagesStackTests case without changing its assertions or budgets.
+    IOS_UNIT_SELECTION=(-only-testing:PersonaTests/MainPagesStackTests)
+  else
   IOS_UNIT_SELECTION=("${IOS_EXCLUSIONS[@]}" -only-testing:PersonaTests
     -skip-testing:PersonaTests/AboutVersionRegularVisualTests
     -skip-testing:PersonaTests/AssistantHTMLCardTests -skip-testing:PersonaTests/AssistantHTMLSecurityTests)
@@ -345,7 +338,7 @@ fi
   test_batch ios-unit 'iOS offline unit and design/token tests' "$UNIT_SECONDS" "${IOS_TESTS[@]}" "${IOS_UNIT_SELECTION[@]}" \
     -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building
   if [ "$LANE" = ios-focused ]; then
-    result ios-unit "$SIM" PageSearchableTests StarredMessagesTests LauncherModelChoiceTests OmpNewAgentTests PaseoPermissionModesTests PaseoProvidersTests AboutVersionCompactVisualTests
+    result ios-unit "$SIM" MainPagesStackTests
   else
     result ios-unit "$SIM" TypeScaleTests IconVocabularyTests TokenRatchetTests StyleSpecTests
   fi
