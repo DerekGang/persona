@@ -386,9 +386,12 @@ class OutboxMessageSender(
             else OutboxState.entries.first { it.delivery == delivery.state }
         val from = if (starting) setOf(OutboxState.Refused) else awaitingReceipt
         // Refused again: nothing was delivered under that id either, so a later retry takes another.
-        val next = when (state) {
-            OutboxState.Refused -> newOperationId()
-            OutboxState.Sending -> opId
+        val next = when {
+            // Bind the live composer POST to its own operation id. Its completion must be distinguishable from
+            // a late reply to an older attempt while the visible client id stays the same.
+            starting -> opId
+            state == OutboxState.Refused -> newOperationId()
+            state == OutboxState.Sending -> opId
             else -> null
         }
         check(if (next != null) store.transition(id, from, state, delivery.refusal?.code, next)
