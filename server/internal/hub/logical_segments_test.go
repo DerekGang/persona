@@ -12,6 +12,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistant"
 	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -154,3 +155,26 @@ func newManagedMachineForSegmentTest(h *Hub, cfg MachineConfig) *Machine {
 	return m
 }
 func stringifySegmentEvent(value any) string { data, _ := json.Marshal(value); return string(data) }
+
+func TestLogicalTransportAliasesReleaseOwnershipWithTheSnapshot(t *testing.T) {
+	h := newPerManagerHub(t, false)
+	states := []devicewire.State{
+		{Machine: proto.Machine{ID: "mb"}, Connected: true},
+		{Machine: proto.Machine{ID: "retained-root"}, TransportFor: "mb", Derived: true, Connected: true},
+		{Machine: proto.Machine{ID: "ma"}, TransportFor: "mb", Derived: true, Connected: true},
+	}
+	h.applyDeviceStatesFrom(perManagerOther, devicewire.States{Machines: states})
+	if h.machineOwner("retained-root") != perManagerOther || h.localMachine("retained-root") == nil {
+		t.Fatal("logical root lost its owning transport")
+	}
+	if h.machineOwner("ma") != devicesOwner {
+		t.Fatal("alias took another manager's configured machine")
+	}
+	h.applyDeviceStatesFrom(perManagerOther, devicewire.States{Machines: states[:1]})
+	h.devices.mu.Lock()
+	retained := h.devices.transportOwners["retained-root"]
+	h.devices.mu.Unlock()
+	if retained != "" || h.localMachine("retained-root") != nil {
+		t.Fatal("deleted logical root retained transport ownership")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -270,5 +271,46 @@ func TestLogicalConversationDeletionCascadesAndKeepsOnlyClosureIdentity(t *testi
 	closures, err := d.ConversationClosures(ctx)
 	if err != nil || len(closures) != 2 {
 		t.Fatalf("offline closures: %+v %v", closures, err)
+	}
+}
+
+func TestLogicalInteractionReservationSurvivesRestartWithoutBlockingForever(t *testing.T) {
+	d, url := historyDB(t)
+	ctx := t.Context()
+	if err := d.AdoptConversation(ctx, "m", "s", "one", "claude", "h"); err != nil {
+		t.Fatal(err)
+	}
+	ix := proto.Interaction{ID: "reserved-card", MachineID: "physical", SessionID: "private", Kind: "permission", CreatedAt: time.Now()}
+	if err := d.WithConversationEpoch(ctx, "m", "s", 1, func(*LogicalConversation) error {
+		return d.ReserveConversationInteraction(ctx, ix, "m", "s", "m", "s", 1)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := d.InteractionRecord(ctx, ix.ID)
+	if err != nil || stored == nil || stored.Interaction.MachineID != "m" || stored.Interaction.SessionID != "s" {
+		t.Fatalf("atomic public card: %+v %v", stored, err)
+	}
+	op := ConversationSwitch{OperationID: "switch", ExpectedEpoch: 1, SourceSegment: "one", Request: json.RawMessage(`{}`)}
+	if err = d.BeginConversationSwitch(ctx, "m", "s", op); !errors.Is(err, ErrConversationSwitchBusy) {
+		t.Fatalf("pending card allowed activation: %v", err)
+	}
+	// Releasing a request's reservation does not settle its durable card. Another
+	// manager must still see the real pending approval before switching.
+	if err = d.FinishConversationInteraction(ctx, ix.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = d.BeginConversationSwitch(ctx, "m", "s", op); !errors.Is(err, ErrConversationSwitchBusy) {
+		t.Fatalf("live durable card ignored: %v", err)
+	}
+	restarted, err := Open(ctx, url, ManagerSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if _, _, err = restarted.ExpireStaleInteractions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = restarted.BeginConversationSwitch(ctx, "m", "s", op); err != nil {
+		t.Fatalf("cancelled restart card blocked switch: %v", err)
 	}
 }

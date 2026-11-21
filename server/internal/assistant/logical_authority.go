@@ -55,7 +55,7 @@ func (s *Service) Tool(ctx context.Context, call ToolCall) proto.ToolResult {
 type logicalNodeHandler func(context.Context, string, string, json.RawMessage) (any, bool, error)
 
 type logicalInteractionStore interface {
-	PutConversationInteraction(context.Context, string, string, string, string, string, int64) error
+	ReserveConversationInteraction(context.Context, proto.Interaction, string, string, string, string, int64) error
 	ConversationInteraction(context.Context, string) (*db.ConversationInteractionRoute, error)
 	FinishConversationInteraction(context.Context, string) error
 }
@@ -102,7 +102,7 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 			}
 			// Keep the authenticated physical destination apart from public identity.
 			if routes, ok := s.store().(logicalInteractionStore); ok {
-				if err := routes.PutConversationInteraction(ctx, ix.ID, rootMachine, rootSession, machine, session, current.Epoch); err != nil {
+				if err := routes.ReserveConversationInteraction(ctx, ix, rootMachine, rootSession, machine, session, current.Epoch); err != nil {
 					return err
 				}
 			}

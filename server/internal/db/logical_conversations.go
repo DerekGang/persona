@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nwverse/persona/server/internal/conversationlog"
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 var (
@@ -236,7 +237,7 @@ func (d *DB) BeginConversationSwitch(ctx context.Context, machine, session strin
 			return ErrConversationSwitchBusy
 		}
 		var pending bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_interaction_routes WHERE logical_machine=$1 AND logical_session=$2 AND pending)`, machine, session).Scan(&pending); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_interaction_routes r LEFT JOIN interactions i ON i.id=r.interaction_id WHERE r.logical_machine=$1 AND r.logical_session=$2 AND ((r.pending AND i.id IS NULL) OR i.status='pending'))`, machine, session).Scan(&pending); err != nil {
 			return err
 		}
 		if pending {
@@ -714,4 +715,31 @@ func (d *DB) SetConversationSegmentModes(ctx context.Context, machine, session s
 		return ErrConversationEpoch
 	}
 	return err
+}
+
+// Persist the card with its physical route in one transaction. A restart between
+// reservation and UI publication can then cancel/restore the ordinary durable
+// interaction; it cannot leave an unexplainable permanent switch reservation.
+func (d *DB) ReserveConversationInteraction(ctx context.Context, ix proto.Interaction, machine, session, physicalMachine, physicalSession string, epoch int64) error {
+	ix.MachineID, ix.SessionID = machine, session
+	payload, err := json.Marshal(ix)
+	if err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO conversation_interaction_routes(interaction_id,logical_machine,logical_session,machine_id,session_id,epoch) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, ix.ID, machine, session, physicalMachine, physicalSession, epoch)
+		if err != nil {
+			return err
+		}
+		var rootMachine, rootSession, oldMachine, oldSession string
+		var oldEpoch int64
+		if err = tx.QueryRow(ctx, `SELECT logical_machine,logical_session,machine_id,session_id,epoch FROM conversation_interaction_routes WHERE interaction_id=$1`, ix.ID).Scan(&rootMachine, &rootSession, &oldMachine, &oldSession, &oldEpoch); err != nil {
+			return err
+		}
+		if rootMachine != machine || rootSession != session || oldMachine != physicalMachine || oldSession != physicalSession || oldEpoch != epoch {
+			return ErrConversationEpoch
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO interactions(id,machine_id,session_id,kind,payload,created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`, ix.ID, machine, session, ix.Kind, payload, ix.CreatedAt)
+		return err
+	})
 }

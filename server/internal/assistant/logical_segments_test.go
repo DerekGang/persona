@@ -504,3 +504,96 @@ func TestLogicalRootTransportSurvivesItsPhysicalMachine(t *testing.T) {
 		t.Fatal("shared physical snapshot mutated")
 	}
 }
+
+func TestLogicalForwardRollbackRestoresALaterSourceSegment(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	activatePair(t, d)
+	if err := d.ResolveConversationSwitch(ctx, "server", "side-chat", "operation", "accepted", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Start the next switch from segment two, rather than from the original root.
+	p, _ := json.Marshal(logicalSwitchRequest{OperationID: "second-switch", ExpectedEpoch: 2, MachineID: "server", Launcher: "pi"})
+	if err := d.BeginConversationSwitch(ctx, "server", "side-chat", db.ConversationSwitch{OperationID: "second-switch", ExpectedEpoch: 2, SourceSegment: "two", Request: p}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PutConversationHandoff(ctx, "server", "side-chat", "second-switch", json.RawMessage(`{"summary":"second summary"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PrepareConversationSegment(ctx, "server", "side-chat", "second-switch", conversationlog.Segment{ID: "three", MachineID: "server", SessionID: "third-chat", Engine: "pi", Launcher: "pi"}, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ActivateConversationSegment(ctx, "server", "side-chat", "second-switch", 2); err != nil {
+		t.Fatal(err)
+	}
+	sourceRetired := true
+	f.answerNode("assistant.segment.restore", func(_ string, raw json.RawMessage) (any, error) {
+		if strings.Contains(string(raw), `"session_id":"target-chat"`) {
+			sourceRetired = false
+		}
+		return map[string]bool{"ok": true}, nil
+	})
+	delivered := 0
+	f.answerNode(DeviceAssistantSend, func(_ string, raw json.RawMessage) (any, error) {
+		var params map[string]any
+		_ = json.Unmarshal(raw, &params)
+		if params["session_id"] == "third-chat" {
+			return nil, &rpc.Error{Code: "assistant_supervision_runtime", Message: "fake refusal", Data: json.RawMessage(`{"delivered":"none"}`)}
+		}
+		if params["session_id"] != "target-chat" || sourceRetired || params["launcher"] != "codex" {
+			t.Fatalf("unrestored rollback: %s", raw)
+		}
+		delivered++
+		return map[string]bool{"ok": true}, nil
+	})
+	_, _, err := s.logicalCall(ctx, "server", DeviceAssistantSend, json.RawMessage(`{"session_id":"side-chat","text":"continue","client_msg_id":"recovered-input"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := d.LogicalConversation(ctx, "server", "side-chat")
+	if err = s.drainLogicalInput(ctx, d, c); err == nil {
+		t.Fatal("expected target refusal")
+	}
+	c, _ = d.LogicalConversation(ctx, "server", "side-chat")
+	a, _ := c.Active()
+	if a.ID != "two" || c.Epoch != 4 || sourceRetired {
+		t.Fatalf("later-source rollback: %+v retired=%v", c, sourceRetired)
+	}
+	if err = s.drainLogicalInput(ctx, d, c); err != nil || delivered != 1 {
+		t.Fatalf("restored delivery: %d %v", delivered, err)
+	}
+}
+
+func TestLogicalInteractionEndEventsAreFencedByPhysicalEpoch(t *testing.T) {
+	s, _, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	if err := d.PutConversationInteraction(ctx, "retired-card", "server", "side-chat", "server", "side-chat", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishConversationInteraction(ctx, "retired-card"); err != nil {
+		t.Fatal(err)
+	}
+	activatePair(t, d)
+	old := proto.Interaction{ID: "retired-card", MachineID: "server", SessionID: "side-chat", Kind: proto.IxPermission}
+	active := proto.Interaction{ID: "active-card", MachineID: "server", SessionID: "side-chat", Kind: proto.IxPermission}
+	if err := d.ReserveConversationInteraction(ctx, active, "server", "side-chat", "server", "target-chat", 2); err != nil {
+		t.Fatal(err)
+	}
+	s.fleet.mu.Lock()
+	s.ixMapLocked()[old.ID] = &pending{ix: old, done: make(chan proto.Resolution, 1)}
+	s.ixMapLocked()[active.ID] = &pending{ix: active, done: make(chan proto.Resolution, 1)}
+	s.fleet.mu.Unlock()
+	s.NodeEvent("server", "interaction.cancel", json.RawMessage(`{"id":"retired-card"}`))
+	s.NodeEvent("other-node", "interaction.cancel", json.RawMessage(`{"id":"active-card"}`))
+	s.NodeEvent("server", "interaction.cancel", json.RawMessage(`{"id":"active-card","session_id":"side-chat"}`))
+	if len(s.pendingInteractions()) != 2 {
+		t.Fatal("stale or wrong-source event settled a card")
+	}
+	s.NodeEvent("server", "interaction.cancel", json.RawMessage(`{"id":"active-card","session_id":"target-chat"}`))
+	s.fleet.mu.Lock()
+	oldPending, activePending := s.fleet.interactions[old.ID] != nil, s.fleet.interactions[active.ID] != nil
+	s.fleet.mu.Unlock()
+	if !oldPending || activePending {
+		t.Fatal("active physical cancellation was not isolated")
+	}
+}

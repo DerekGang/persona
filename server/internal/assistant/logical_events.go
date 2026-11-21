@@ -18,6 +18,37 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 	if !ok {
 		return s.nodeEvent(machine, event, raw)
 	}
+	if event == "interaction.cancel" || event == "interaction.dismiss" {
+		var p struct {
+			ID        string `json:"id"`
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal(raw, &p) != nil {
+			return false
+		}
+		if routes, ok := s.store().(logicalInteractionStore); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			route, err := routes.ConversationInteraction(ctx, p.ID)
+			if err != nil {
+				return false
+			}
+			if route != nil {
+				if machine != route.PhysicalMachine || p.SessionID != "" && p.SessionID != route.PhysicalSession {
+					return false
+				}
+				_ = st.WithConversationEpoch(ctx, route.MachineID, route.SessionID, route.Epoch, func(c *db.LogicalConversation) error {
+					a, ok := c.Active()
+					if !ok || a.MachineID != route.PhysicalMachine || a.SessionID != route.PhysicalSession {
+						return db.ErrConversationEpoch
+					}
+					s.nodeEvent(route.MachineID, event, raw)
+					return nil
+				})
+				return false
+			}
+		}
+	}
 	if event == "sessions.changed" {
 		s.logicalChanged()
 		rows, _, err := s.logicalIndex()
