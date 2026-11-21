@@ -378,7 +378,7 @@ struct Index {
   @Computed get phoneToolParent(): string {
     const parent = this.phonePath.length - 2;
     if (this.phoneTop !== 'tools' || parent < 0 || this.phonePath[parent] !== 'session') return '';
-    const value = this.stack.getParamByIndex(parent);
+    const value: Object = this.stack.getParamByIndex(parent) as Object;
     if (typeof value !== 'string') return '';
     return this.routeRow(value).key() === this.routeRow(this.phoneParam).key() ? value : '';
   }
