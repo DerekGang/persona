@@ -1,4 +1,4 @@
-Verify handed-out work. accepted closes it (by default delivery_gate=merged keeps open PR/linked-issue tasks open until merged/closed; park verified open PRs instead of accepting early). If opted in at Start, accepted done cleans up the idle tab (report closed/skipped/pending; never close it yourself). rework allows 2 rounds before a complete owner decision. Replace stopped Agents via agent_start. External waits use parked+evidence; owner-only decisions use needs_user with why_owner, reason, recommend, 2–4 options, cost_of_waiting.
+accepted closes work after the delivery gate (default delivery_gate=merged: park verified open PRs; linked issues must close). user_check keeps the task and Agent open until owner Pass and routes feedback to that Agent. If opted in at Start, accepted done cleans up the idle tab unless user_check. Report closed/skipped/pending; never close the tab yourself. rework allows two rounds before a full owner decision. Replace stopped Agents via agent_start. Use parked with evidence for external waits and needs_user for owner decisions.
 
 accepted (outcome=done) with done_when needs every criterion once in checks (met=true + nonblank evidence); user_check cannot bypass. outcome=cannot, cancelled and no-criteria tasks are unchanged. Other verdicts may omit checks without losing progress. Report each criterion met/not_met/dropped, then also_done. Judge the scoped brief, not a handover or Agent claims.
 
@@ -34,7 +34,7 @@ A non-main conversation reviewing another supervisor's task may only accept/canc
     },
     "note": {
       "type": "string",
-      "description": "{{if eq .Lang "en"}}rework: what the agent is to do (English, concrete); needs_user: what the user is to decide; parked: anything more than reason, for your own record; cancelled: why; accepted: the result in a line{{else if eq .Lang "ja"}}rework は Agent が行う具体的な作業を日本語で記述します。needs_user はユーザーが決めること、parked は reason 以外に記録する補足、cancelled は理由、accepted は結果を一行で記述します{{else}}rework: what the agent is to do (Chinese, concrete); needs_user: what the user is to decide; parked: anything more than reason, for your own record; cancelled: why; accepted: the result in a line{{end}}"
+      "description": "{{if eq .Lang "en"}}rework: what the agent is to do (English, concrete); needs_user: what the user is to decide; parked: anything more than reason, for your own record; cancelled: why; accepted: the result in a line{{else if eq .Lang `ja`}}rework は Agent が行う具体的な作業を日本語で記述します。needs_user はユーザーが決めること、parked は reason 以外に記録する補足、cancelled は理由、accepted は結果を一行で記述します{{else}}rework: what the agent is to do (Chinese, concrete); needs_user: what the user is to decide; parked: anything more than reason, for your own record; cancelled: why; accepted: the result in a line{{end}}"
     },
     "outcome": {
       "type": "string",

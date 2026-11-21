@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -426,6 +425,9 @@ func (s *Service) sweepDeploys(now time.Time) {
 	// never use up this pass's time before the hub's commit, sweepPRs and the watches have run. They run even when the
 	// hub's health cannot be read (they do not need it).
 	defer s.sweepPRStatusesBounded(now)
+	// Post-closure subscriptions ride the same minute pass, so a closed to-do's open PR keeps being watched without a
+	// second timer (#12371).
+	defer s.sweepPRFollowupsBounded(now)
 	hub, err := s.runningHubCommit(ctx)
 	if err != nil {
 		s.logf("deploys: the hub's health: %v", err)
@@ -584,7 +586,11 @@ func (g githubForge) get(ctx context.Context, path string, out any) error {
 	}
 	token := ""
 	if g.base == "https://api.github.com" {
-		if _, err := exec.LookPath("gh"); err == nil {
+		cli, err := hasGitHubCLI(ctx)
+		if err != nil {
+			return fmt.Errorf("GitHub CLI identification interrupted: %w", err)
+		}
+		if cli {
 			return githubCLIGet(ctx, path, out)
 		}
 		token = strings.TrimSpace(os.Getenv("GH_TOKEN"))

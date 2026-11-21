@@ -62,11 +62,15 @@ func (h *Hub) routes() http.Handler {
 	h.deviceRoutesRelayed(api) // the manager's own: reconnect, engine, herdr, deploy, claude-dirs (devices_routes.go)
 	h.sharingRoutes(api)
 	h.fileRoutes(api)
+	h.machineFileRoutes(api)
 	h.gitRoutes(api)
 	h.agentSettingsRoutes(api)
 	h.sessionRoutes(api)
 	h.paneRoutes(api)
 	h.nodeDoctorRoutes(api)
+	h.machineProcRoutes(api)
+	h.machineServicesRoutes(api)
+	h.machineNetworkRoutes(api)
 	h.nodeUpdateRelayRoutes(api)
 	api.HandleFunc("GET /api/v1/interactions", func(w http.ResponseWriter, r *http.Request) {
 		ixs := visibleInteractions(h.pendingInteractions(), h.requestHasElicitation(r))
@@ -81,6 +85,7 @@ func (h *Hub) routes() http.Handler {
 	api.HandleFunc("GET /api/v1/ops/{id}", h.getClientOp)
 	h.fleetRoutesRelayed(api) // resolve, history, seen: the manager's (fleet_link.go)
 	h.phoneWriteRoutes(api)
+	h.phonePrimaryRoutes(api)
 	h.deviceRoutes(api)
 	h.pushRoutes(api)
 	h.webPushRoutes(api)
@@ -599,6 +604,7 @@ func (h *Hub) sessionItems(w http.ResponseWriter, r *http.Request, m *Machine) {
 		MoreAfter  bool         `json:"more_after,omitempty"`
 		More       bool         `json:"more,omitempty"` // a fold's lines go on after these
 		StrictRead bool         `json:"strict_read,omitempty"`
+		Partial    bool         `json:"partial,omitempty"`
 		itemSpan
 	}
 	if err := m.call(ctx, "session.items", params, &res); err != nil {
@@ -898,7 +904,9 @@ func (h *Hub) startSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if restrictedAgentData(r) {
-		if p.ResumeSessionID != "" && !h.publicSessionForControl(m, p.ResumeSessionID) {
+		// A scoped token resumes only a chat its computer lists, shown and outside the health space. An extension's
+		// resume is decided last (extensionResume): one its computer no longer lists goes to the computer's check (#10941).
+		if pr.Role == roleScoped && p.ResumeSessionID != "" && !h.publicSessionForControl(m, p.ResumeSessionID) {
 			writeErr(w, http.StatusNotFound, errDeleteUnknown)
 			return
 		}
@@ -1014,8 +1022,27 @@ func (h *Hub) startSession(w http.ResponseWriter, r *http.Request) {
 		}
 		setWorkLauncherConfig(m, p.Launcher, params)
 	}
+	// An extension's token resumes a conversation its computer lists outside the health space, or one it does not
+	// list that the computer checks (extensionResume, #10941). Decided last, once every check that holds for any id
+	// has passed: a request one of them refuses is answered the same whichever conversation it names.
+	checkedResume := false
+	if pr.Role == roleExtension && p.ResumeSessionID != "" {
+		var ok bool
+		if checkedResume, ok = h.extensionResume(w, m, p.ResumeSessionID); !ok {
+			return
+		}
+	}
+	if checkedResume {
+		params["resume_outside_health"] = true // nodeproto.ResumeOutsideHealth: set after the manager's fill, never the caller's
+	}
 	if err := m.call(ctx, method, params, &res); err != nil {
 		h.startEnded(m.cfg.ID, p.ResumeSessionID, params, err)
+		if re := (*rpc.Error)(nil); checkedResume && errors.As(err, &re) && re.Code == proto.CodeResumeUnknown {
+			// The answer the hub gives a conversation it lists in the space or does not know: the extension is not
+			// told which it was.
+			writeErr(w, http.StatusNotFound, errDeleteUnknown)
+			return
+		}
 		callErr(w, apierr.OnMachine(err, m.name())) // a launcher the new tab cannot run "on <name>'s MacBook"
 		return
 	}
@@ -1096,7 +1123,10 @@ func (h *Hub) startEnded(mid, resume string, params map[string]any, err error) {
 		if errors.As(err, &re) {
 			// Work picker refusals happen before the launcher runs. Counting
 			// them as failures could hide a working launcher from the picker.
-			if strings.HasPrefix(re.Code, "work_") {
+			// So does a resume of a conversation the computer has nothing of,
+			// which a manager from before that refusal counts against the
+			// launcher (#10941).
+			if strings.HasPrefix(re.Code, "work_") || re.Code == proto.CodeResumeUnknown {
 				return
 			}
 			r.Code, r.Data = re.Code, re.Data
@@ -1363,26 +1393,22 @@ func (h *Hub) itemsToSubscribers(machineID, sessionID string, items []proto.Item
 	}
 }
 
+// phoneClient is the connected phone that takes tool (none given: any): only connected providers of it are eligible.
+// The primary device the owner chose goes first while it is connected and offers the tool (phone_primary.go); then
+// real devices before simulators, then the one active last.
 func (h *Hub) phoneClient(tool ...string) *client {
+	name := ""
+	if len(tool) > 0 {
+		name = tool[0]
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// Only connected providers of the requested tool are eligible; prefer real devices, then recent activity.
-	var best *client
-	for c := range h.clients {
-		select {
-		case <-c.done:
-			continue
-		default:
-		}
-		if !c.phone || (len(tool) > 0 && !c.phoneToolNames[tool[0]]) {
-			continue
-		}
-		if best == nil || (best.sim && !c.sim) || (best.sim == c.sim &&
-			(c.activeAt.After(best.activeAt) || (c.activeAt.Equal(best.activeAt) && c.since.After(best.since)))) {
-			best = c
+	if primary, offers := h.primaryPhoneLocked(name); offers {
+		if c := h.phoneClientLocked(name, primary); c != nil {
+			return c
 		}
 	}
-	return best
+	return h.phoneClientLocked(name, "")
 }
 
 func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
@@ -1743,6 +1769,7 @@ func (h *Hub) sendBacklog(ctx context.Context, c *client, m *Machine, sid string
 			Items     []proto.Item `json:"items"`
 			HasMore   bool         `json:"has_more"`
 			MoreAfter bool         `json:"more_after"`
+			Partial   bool         `json:"partial,omitempty"`
 			itemSpan
 		}
 		if err := m.call(ctx, "session.items", params, &res); err != nil {
@@ -1758,6 +1785,9 @@ func (h *Hub) sendBacklog(ctx context.Context, c *client, m *Machine, sid string
 			res.Items = proto.WithoutImageData(res.Items)
 		}
 		out := res.itemSpan.into(map[string]any{"type": "items", "machine_id": m.cfg.ID, "session_id": sid, "items": res.Items, "backlog": true})
+		if res.Partial {
+			out["partial"] = true
+		}
 		if since == 0 {
 			// Only a page counted back from the end knows whether older items exist. A catch-up after since_seq does
 			// not: sending false there told the app the history was complete, and scrolling up stopped at its oldest.
