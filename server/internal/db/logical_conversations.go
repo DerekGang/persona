@@ -589,6 +589,42 @@ func (d *DB) RequeueConversationInput(ctx context.Context, machine, session, id 
 	})
 }
 
+// ResolveConversationDelivery commits the physical input receipt and its first-
+// turn switch outcome together. No second manager can release the next queued
+// input on a rejected target between these two state transitions.
+func (d *DB) ResolveConversationDelivery(ctx context.Context, machine, session, id string, epoch int64, operation, outcome string) error {
+	if outcome != "accepted" && outcome != "rejected" && outcome != "in_doubt" {
+		return errors.New("invalid input outcome")
+	}
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
+		var current int64
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&current); err != nil {
+			return err
+		}
+		if current != epoch {
+			return ErrConversationEpoch
+		}
+		tag, err := tx.Exec(ctx, `UPDATE conversation_inputs SET state=$4 WHERE logical_machine=$1 AND logical_session=$2 AND client_msg_id=$3 AND epoch=$5 AND state IN ('sending','in_doubt')`, machine, session, id, outcome, epoch)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			var state string
+			var inputEpoch int64
+			if err := tx.QueryRow(ctx, `SELECT state,epoch FROM conversation_inputs WHERE logical_machine=$1 AND logical_session=$2 AND client_msg_id=$3`, machine, session, id).Scan(&state, &inputEpoch); err != nil {
+				return err
+			}
+			if state != outcome || inputEpoch != epoch {
+				return ErrConversationEpoch
+			}
+		}
+		if operation != "" {
+			return resolveConversationSwitchTx(ctx, tx, machine, session, operation, outcome, "")
+		}
+		return nil
+	})
+}
+
 func (d *DB) ResolveConversationInput(ctx context.Context, machine, session, id, state string) error {
 	if state != "accepted" && state != "rejected" && state != "in_doubt" {
 		return errors.New("invalid input outcome")

@@ -508,11 +508,19 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 		if err != nil || json.Unmarshal(raw, &receipt) != nil || !receipt.Accepted {
 			return nil
 		}
-		if err = st.ResolveConversationInput(ctx, c.MachineID, c.SessionID, unresolved.ClientMsgID, "accepted"); err != nil {
+		operation := ""
+		if c.Switch != nil {
+			operation = c.Switch.OperationID
+		}
+		if err = st.ResolveConversationDelivery(ctx, c.MachineID, c.SessionID, unresolved.ClientMsgID, c.Epoch, operation, "accepted"); err != nil {
 			return err
 		}
 		if c.Switch != nil {
-			return st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, c.Switch.OperationID, "accepted", "")
+			next, err := st.LogicalConversation(ctx, c.MachineID, c.SessionID)
+			if err != nil {
+				return err
+			}
+			s.logicalRebind(ctx, next)
 		}
 		return nil
 	}
@@ -600,13 +608,14 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 			outcome = "rejected"
 		}
 	}
-	if err = st.ResolveConversationInput(ctx, c.MachineID, c.SessionID, input.ClientMsgID, outcome); err != nil {
+	operation := ""
+	if c.Switch != nil {
+		operation = c.Switch.OperationID
+	}
+	if err = st.ResolveConversationDelivery(ctx, c.MachineID, c.SessionID, input.ClientMsgID, c.Epoch, operation, outcome); err != nil {
 		return err
 	}
 	if c.Switch != nil {
-		if err = st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, c.Switch.OperationID, outcome, ""); err != nil {
-			return err
-		}
 		next, err := st.LogicalConversation(ctx, c.MachineID, c.SessionID)
 		if err != nil {
 			return err

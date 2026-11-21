@@ -412,3 +412,56 @@ func TestLogicalConversationPreDispatchCleanupIsEpochFenced(t *testing.T) {
 		t.Fatalf("local recovery lost queue identity: %+v %v", row, err)
 	}
 }
+
+func TestLogicalDeliveryFailureCannotReleaseNextInputBeforeRollback(t *testing.T) {
+	d, _ := historyDB(t)
+	op := prepareLogicalSwitch(t, d)
+	ctx := t.Context()
+	for _, id := range []string{"first", "second"} {
+		if err := d.EnqueueConversationInput(ctx, "root-machine", "root-chat", id, 1, json.RawMessage(`{"text":"continue"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.ActivateConversationSegment(ctx, "root-machine", "root-chat", op.OperationID, 1); err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 2)
+	if err != nil || first == nil {
+		t.Fatalf("claim: %+v %v", first, err)
+	}
+	// Make the switch write fail after the input write. Both must roll back;
+	// otherwise another manager could send the second input to the wrong engine.
+	if _, err := d.pool.Exec(ctx, `CREATE FUNCTION reject_test_switch_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fake switch write failure'; END; $$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.pool.Exec(ctx, `CREATE TRIGGER reject_test_switch_outcome BEFORE UPDATE ON conversation_switches FOR EACH ROW WHEN (NEW.phase='rejected') EXECUTE FUNCTION reject_test_switch_outcome()`); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ResolveConversationDelivery(ctx, "root-machine", "root-chat", first.ClientMsgID, 2, op.OperationID, "rejected"); err == nil {
+		t.Fatal("fake switch failure was hidden")
+	}
+	pending, err := d.ConversationUnresolvedInput(ctx, "root-machine", "root-chat")
+	if err != nil || pending == nil || pending.ClientMsgID != first.ClientMsgID || pending.State != "sending" {
+		t.Fatalf("input receipt committed without rollback: %+v %v", pending, err)
+	}
+	if row, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 2); err != nil || row != nil {
+		t.Fatalf("second input escaped before rollback: %+v %v", row, err)
+	}
+	if _, err := d.pool.Exec(ctx, `DROP TRIGGER reject_test_switch_outcome ON conversation_switches`); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ResolveConversationDelivery(ctx, "root-machine", "root-chat", first.ClientMsgID, 2, op.OperationID, "rejected"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := d.LogicalConversation(ctx, "root-machine", "root-chat")
+	if err != nil || c.Epoch != 3 || c.Switch != nil {
+		t.Fatalf("forward rollback: %+v %v", c, err)
+	}
+	row, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 3)
+	if err != nil || row == nil || row.ClientMsgID != first.ClientMsgID {
+		t.Fatalf("first unsent message lost its queue position: %+v %v", row, err)
+	}
+	if err := d.ResolveConversationDelivery(ctx, "root-machine", "root-chat", first.ClientMsgID, 2, "", "accepted"); !errors.Is(err, ErrConversationEpoch) {
+		t.Fatalf("stale receipt changed recovered input: %v", err)
+	}
+}
