@@ -78,13 +78,17 @@ type ProjectReviewDelivery struct {
 	ReviewOnly   bool
 	// Downgraded: reserved with a scoped prompt, later resent as triage. The scoped text may have landed first.
 	Downgraded bool
+	// Sends: native sends started, each under its own client message ID. SendConfirmed: the hub took the latest.
+	Sends         int
+	SendConfirmed bool
 }
 
 // NextProjectReview returns the head, even if it is waiting for its next attempt.
 func (d *DB) NextProjectReview(ctx context.Context, target string) (ProjectReviewDelivery, bool, error) {
 	var e ProjectReviewDelivery
-	err := d.pool.QueryRow(ctx, `SELECT id,event,retry_at,attempts,history_after,coalesce(review_only,false),scope_downgraded FROM project_review_deliveries
-		WHERE target=$1 AND settled_at IS NULL ORDER BY seq LIMIT 1`, target).Scan(&e.ID, &e.Event, &e.RetryAt, &e.Attempts, &e.HistoryAfter, &e.ReviewOnly, &e.Downgraded)
+	err := d.pool.QueryRow(ctx, `SELECT id,event,retry_at,attempts,history_after,coalesce(review_only,false),scope_downgraded,sends,send_confirmed
+		FROM project_review_deliveries WHERE target=$1 AND settled_at IS NULL ORDER BY seq LIMIT 1`, target).Scan(&e.ID, &e.Event,
+		&e.RetryAt, &e.Attempts, &e.HistoryAfter, &e.ReviewOnly, &e.Downgraded, &e.Sends, &e.SendConfirmed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return e, false, nil
 	}
@@ -114,5 +118,29 @@ func (d *DB) ReserveProjectReviewHistory(ctx context.Context, id string, after i
 func (d *DB) DowngradeProjectReview(ctx context.Context, id string) error {
 	_, err := d.pool.Exec(ctx, `UPDATE project_review_deliveries SET review_only=true,scope_downgraded=true
 		WHERE id=$1 AND history_after IS NOT NULL AND review_only IS NOT TRUE AND settled_at IS NULL`, id)
+	return err
+}
+
+// BeginProjectReviewSend counts a native send before it starts and returns its number, which names its client
+// message ID. The hub has not confirmed it yet.
+func (d *DB) BeginProjectReviewSend(ctx context.Context, id string) (int, error) {
+	var n int
+	err := d.pool.QueryRow(ctx, `UPDATE project_review_deliveries SET sends=sends+1,send_confirmed=false
+		WHERE id=$1 AND settled_at IS NULL RETURNING sends`, id).Scan(&n)
+	return n, err
+}
+
+// ConfirmProjectReviewSend records that the hub took send n, unless another send started since.
+func (d *DB) ConfirmProjectReviewSend(ctx context.Context, id string, n int) error {
+	_, err := d.pool.Exec(ctx, `UPDATE project_review_deliveries SET send_confirmed=true
+		WHERE id=$1 AND sends=$2 AND settled_at IS NULL`, id, n)
+	return err
+}
+
+// AdvanceProjectReviewHistory moves the transcript position past a review turn that closed without a receipt, so
+// the next send's echo and receipt are looked for after it.
+func (d *DB) AdvanceProjectReviewHistory(ctx context.Context, id string, after int) error {
+	_, err := d.pool.Exec(ctx, `UPDATE project_review_deliveries SET history_after=$2,send_confirmed=false
+		WHERE id=$1 AND history_after IS NOT NULL AND history_after < $2 AND settled_at IS NULL`, id, after)
 	return err
 }

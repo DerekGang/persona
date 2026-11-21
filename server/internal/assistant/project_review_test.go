@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
@@ -128,25 +131,40 @@ func TestProjectReviewManagerRestart(t *testing.T) {
 			now = retry.RetryAt.Add(time.Second)
 		}
 		advance(now)
-		if len(f.sentOnce) != i+1 {
-			t.Fatalf("send count=%d, want %d", len(f.sentOnce), i+1)
+		sends := len(f.sentOnce)
+		if sends != 2*i+1 {
+			t.Fatalf("send count=%d, want %d", sends, 2*i+1)
 		}
-		sent := f.sentOnce[i]
-		if sent["session_id"] != "review" || sent["client_msg_id"] != e.ID || !strings.Contains(sent["text"].(string), "alpha") {
+		// The first event's first send went uncertain: the hub refuses that ID again, so the retry has its own.
+		first := e.ID
+		if i == 0 {
+			first = e.ID + ":2"
+		}
+		sent := f.sentOnce[sends-1]
+		if sent["session_id"] != "review" || sent["client_msg_id"] != first || !strings.Contains(sent["text"].(string), "alpha") {
 			t.Fatalf("invalid delivery: %+v", sent)
 		}
 		seq := len(f.items) + 1
-		f.items = append(f.items, proto.Item{Seq: seq, Role: "user", Kind: proto.KindText, ClientMsgID: e.ID},
+		f.items = append(f.items, proto.Item{Seq: seq, Role: "user", Kind: proto.KindText, ClientMsgID: first},
 			proto.Item{Seq: seq + 1, Role: "assistant", Kind: proto.KindText, Text: "wrong receipt", Model: reviewTestModel},
 			proto.Item{Seq: seq + 2, Kind: "turn_duration", ID: "review-finished"})
 		f.itemsPage = 2
 		retry, _, _ := store.NextProjectReview(ctx, string(target))
 		advance(retry.RetryAt.Add(time.Second))
-		if head, ok, _ := store.NextProjectReview(ctx, string(target)); !ok || head.ID != e.ID {
+		head, ok, _ := store.NextProjectReview(ctx, string(target))
+		if !ok || head.ID != e.ID {
 			t.Fatal("transport success or arbitrary output settled delivery")
 		}
-		f.items[seq].Text = "PROJECT_REVIEW_RECEIPT " + e.ID + " no_change"
-		f.items = append(f.items, proto.Item{Seq: seq + 3, Role: "user", Kind: proto.KindText, ClientMsgID: "later"},
+		// The turn closed without a receipt: the event is sent again after it, under a new ID.
+		again := f.sentOnce[len(f.sentOnce)-1]["client_msg_id"]
+		if len(f.sentOnce) != sends+1 || again == first || head.HistoryAfter == nil || *head.HistoryAfter != seq+2 {
+			t.Fatalf("closed turn without a receipt was not sent again after it: sends=%d id=%v after=%v", len(f.sentOnce), again, head.HistoryAfter)
+		}
+		seq = len(f.items) + 1
+		f.items = append(f.items, proto.Item{Seq: seq, Role: "user", Kind: proto.KindText, ClientMsgID: again.(string)},
+			proto.Item{Seq: seq + 1, Role: "assistant", Kind: proto.KindText, Text: "PROJECT_REVIEW_RECEIPT " + e.ID + " no_change", Model: reviewTestModel},
+			proto.Item{Seq: seq + 2, Kind: "turn_duration", ID: "review-finished-again"},
+			proto.Item{Seq: seq + 3, Role: "user", Kind: proto.KindText, ClientMsgID: "later"},
 			proto.Item{Seq: seq + 4, Role: "assistant", Kind: proto.KindText, Text: "another turn", Model: "other-model"})
 		// The sender and receipt reader are different Service instances sharing only the durable database and node.
 		s = newServiceOn(t, f, store)
@@ -538,4 +556,193 @@ func TestProjectReviewSettleFailureBacksOff(t *testing.T) {
 	if _, ok, err := store.NextProjectReview(ctx, string(target)); err != nil || ok {
 		t.Fatalf("self-source event not settled: %v %v", ok, err)
 	}
+}
+
+// reviewOnceGuard answers session.send_once like the hub's once-only guard (hub sendOnce and sendOutcome): a send
+// whose outcome the hub never learned leaves its client message ID unknown, and that ID is refused from then on
+// without reaching the node; a delivered ID is a no-op.
+type reviewOnceGuard struct {
+	state map[string]string
+	sent  []string // IDs the node took
+	calls int
+	lose  int // the next sends time out after the node may have had them
+}
+
+func (g *reviewOnceGuard) answer(_ string, params json.RawMessage) (any, error) {
+	var a struct {
+		ID string `json:"client_msg_id"`
+	}
+	_ = json.Unmarshal(params, &a)
+	g.calls++
+	switch g.state[a.ID] {
+	case "delivered":
+		return map[string]any{}, nil
+	case "unknown":
+		return nil, errors.New("hub-assistant_channels.send_in_doubt")
+	}
+	if g.lose > 0 {
+		g.lose--
+		g.state[a.ID] = "unknown"
+		return nil, context.DeadlineExceeded
+	}
+	g.state[a.ID] = "delivered"
+	g.sent = append(g.sent, a.ID)
+	return map[string]any{}, nil
+}
+
+func reviewGuarded(t *testing.T) (*Service, *fakeHub, *db.DB, *reviewOnceGuard) {
+	t.Helper()
+	store := todoTestDB(t)
+	s, f := reviewTestService(t, store)
+	f.sessions["box"] = []proto.Session{{SessionID: reviewTarget.SessionID, Status: proto.StatusIdle, Agent: "codex", Model: reviewTestModel}}
+	g := &reviewOnceGuard{state: map[string]string{}}
+	f.answerNode(DeviceSessionSendOnce, g.answer)
+	return s, f, store, g
+}
+
+// reviewQueue records an unscoped event and returns the target's head (the oldest unsettled event).
+func reviewQueue(t *testing.T, s *Service, store *db.DB, key string) db.ProjectReviewDelivery {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.projectReview.record(ctx, projectReviewBinding{SessionRef: reviewSource}, "owner_input", key, "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	return reviewHead(t, store)
+}
+
+func reviewHead(t *testing.T, store *db.DB) db.ProjectReviewDelivery {
+	t.Helper()
+	target, _ := json.Marshal(reviewTarget)
+	e, _, err := store.NextProjectReview(context.Background(), string(target))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// reviewStepHead runs one step at the head's retry time.
+func reviewStepHead(t *testing.T, s *Service, store *db.DB) {
+	t.Helper()
+	if _, err := s.projectReviewStep(context.Background(), reviewHead(t, store).RetryAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func reviewOutcome(t *testing.T, store *db.DB, id string) (outcome string, settled bool) {
+	t.Helper()
+	if err := store.Transaction(context.Background(), func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT outcome, settled_at IS NOT NULL FROM project_review_deliveries WHERE id=$1`,
+			id).Scan(&outcome, &settled)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return outcome, settled
+}
+
+// reviewTurn appends a review turn started by client message ID id that ends with reply (a receipt or not).
+func reviewTurn(f *fakeHub, id, reply string) {
+	seq := len(f.items) + 1
+	f.items = append(f.items, proto.Item{Seq: seq, Role: "user", Kind: proto.KindText, ClientMsgID: id},
+		proto.Item{Seq: seq + 1, Role: "assistant", Kind: proto.KindText, Text: reply, Model: reviewTestModel},
+		proto.Item{Seq: seq + 2, Kind: "turn_duration", ID: fmt.Sprintf("turn-%d", seq)})
+}
+
+// A send that timed out leaves its ID unknown at the hub, which then refuses that ID without asking the node. The
+// retry must use a new one, or the head of the queue never goes out and every later event waits behind it. A send
+// the hub took is awaited, not sent again.
+func TestProjectReviewUncertainSendGetsANewID(t *testing.T) {
+	s, f, store, g := reviewGuarded(t)
+	e := reviewQueue(t, s, store, "owner-uncertain")
+	g.lose = 1
+	reviewStepHead(t, s, store)
+	if len(g.sent) != 0 || g.state[e.ID] != "unknown" {
+		t.Fatalf("fixture: want an uncertain first send, got %+v", g)
+	}
+	reviewStepHead(t, s, store)
+	if want := []string{e.ID + ":2"}; !slices.Equal(g.sent, want) {
+		t.Fatalf("retry after an uncertain send: node took %v, want %v (head %+v)", g.sent, want, reviewHead(t, store))
+	}
+	calls := g.calls
+	reviewStepHead(t, s, store) // the echo is not in the transcript yet
+	if g.calls != calls {
+		t.Fatalf("a send the hub confirmed was sent again before its echo: %d calls, want %d", g.calls, calls)
+	}
+	// The first send may still land after all, in the same turn as the second: the turn's receipt counts for both.
+	f.items = append(f.items, proto.Item{Seq: 1, Role: "user", Kind: proto.KindText, ClientMsgID: e.ID},
+		proto.Item{Seq: 2, Role: "user", Kind: proto.KindText, ClientMsgID: e.ID + ":2"},
+		proto.Item{Seq: 3, Role: "assistant", Kind: proto.KindText, Text: "PROJECT_REVIEW_RECEIPT " + e.ID + " triage_only", Model: reviewTestModel},
+		proto.Item{Seq: 4, Kind: "turn_duration", ID: "both-landed"})
+	reviewStepHead(t, s, store)
+	if outcome, settled := reviewOutcome(t, store, e.ID); !settled || outcome != "review_receipt_triage_only" {
+		t.Fatalf("receipt of the late first send: outcome=%q settled=%v", outcome, settled)
+	}
+	if g.calls != calls {
+		t.Fatalf("sent again although the receipt was there: %d calls, want %d", g.calls, calls)
+	}
+}
+
+// A review turn that closes without a valid receipt (stopped, an unrelated message, a reply without the receipt
+// line) is not waited on forever: the event is sent again after that turn, under a new ID, a bounded number of times.
+// A turn still running is waited on. Either kind of failure settles the event after projectReviewMaxSends sends, so
+// the next event goes out.
+func TestProjectReviewSendsAreBounded(t *testing.T) {
+	t.Run("closed turns without a receipt", func(t *testing.T) {
+		s, f, store, g := reviewGuarded(t)
+		e := reviewQueue(t, s, store, "owner-closed")
+		reviewStepHead(t, s, store)
+		seq := len(f.items) + 1
+		f.items = append(f.items, proto.Item{Seq: seq, Role: "user", Kind: proto.KindText, ClientMsgID: e.ID},
+			proto.Item{Seq: seq + 1, Role: "assistant", Kind: proto.KindText, Text: "working on it", Model: reviewTestModel})
+		reviewStepHead(t, s, store)
+		if len(g.sent) != 1 {
+			t.Fatalf("a running review turn was sent again: %v", g.sent)
+		}
+		f.items = append(f.items, proto.Item{Seq: seq + 2, Kind: proto.KindNotice, Text: userStoppedNotice})
+		reviewStepHead(t, s, store)
+		if len(g.sent) != 2 || g.sent[1] != e.ID+":2" {
+			t.Fatalf("a stopped review turn was not sent again under a new ID: %v", g.sent)
+		}
+		if head := reviewHead(t, store); head.ID != e.ID || head.HistoryAfter == nil || *head.HistoryAfter != seq+2 {
+			t.Fatalf("the next receipt is not looked for after the closed turn: %+v", head)
+		}
+		for n := 2; n < projectReviewMaxSends; n++ {
+			reviewTurn(f, projectReviewSendID(e.ID, n), "no receipt line")
+			reviewStepHead(t, s, store)
+		}
+		if len(g.sent) != projectReviewMaxSends {
+			t.Fatalf("sends=%d, want %d: %v", len(g.sent), projectReviewMaxSends, g.sent)
+		}
+		reviewQueue(t, s, store, "owner-after-closed")
+		reviewTurn(f, projectReviewSendID(e.ID, projectReviewMaxSends), "PROJECT_REVIEW_RECEIPT someone-else triage_only")
+		reviewStepHead(t, s, store)
+		if outcome, settled := reviewOutcome(t, store, e.ID); !settled || outcome != "review_receipt_missing" {
+			t.Fatalf("after %d closed turns: outcome=%q settled=%v", projectReviewMaxSends, outcome, settled)
+		}
+		next := reviewHead(t, store)
+		reviewStepHead(t, s, store)
+		if next.ID == e.ID || g.sent[len(g.sent)-1] != next.ID {
+			t.Fatalf("the next event did not go out: %v", g.sent)
+		}
+	})
+	t.Run("uncertain sends", func(t *testing.T) {
+		s, _, store, g := reviewGuarded(t)
+		e := reviewQueue(t, s, store, "owner-lost")
+		g.lose = projectReviewMaxSends
+		for range projectReviewMaxSends {
+			reviewStepHead(t, s, store)
+		}
+		reviewQueue(t, s, store, "owner-after-lost")
+		if head := reviewHead(t, store); head.ID != e.ID || head.Sends != projectReviewMaxSends {
+			t.Fatalf("fixture: %+v", head)
+		}
+		reviewStepHead(t, s, store)
+		if outcome, settled := reviewOutcome(t, store, e.ID); !settled || outcome != "send_unconfirmed" {
+			t.Fatalf("after %d uncertain sends: outcome=%q settled=%v", projectReviewMaxSends, outcome, settled)
+		}
+		next := reviewHead(t, store)
+		reviewStepHead(t, s, store)
+		if next.ID == e.ID || len(g.sent) != 1 || g.sent[0] != next.ID {
+			t.Fatalf("the next event did not go out: %v", g.sent)
+		}
+	})
 }

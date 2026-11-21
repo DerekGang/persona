@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -256,7 +257,7 @@ func (s *Service) projectReviewLoop(ctx context.Context) {
 		return
 	}
 	for {
-		bound, cancel := context.WithTimeout(ctx, 25*time.Second)
+		bound, cancel := context.WithTimeout(ctx, projectReviewStepWait)
 		wait, err := s.projectReviewStep(bound, time.Now())
 		cancel()
 		if err != nil && ctx.Err() == nil {
@@ -275,6 +276,34 @@ func (s *Service) projectReviewLoop(ctx context.Context) {
 }
 
 const projectReviewIdle = 10 * time.Second
+
+// projectReviewStepWait bounds one step. It outlasts the hub's wait for a node to take a message to an idle session
+// (90 s, hub sendWait): a shorter deadline turns a slow send into an uncertain one.
+const projectReviewStepWait = 2 * time.Minute
+
+// projectReviewMaxSends bounds the native sends of one delivery. A send whose outcome stays uncertain, or whose
+// review turn closes without a valid receipt, is sent again under a new client message ID; after this many the
+// delivery is settled with that outcome, so one event cannot hold the target's queue forever.
+const projectReviewMaxSends = 5
+
+// projectReviewSendID names send n of delivery id. The hub sends a client message ID at most once and refuses one
+// whose outcome it never learned, so every send needs its own. The first keeps the delivery's ID.
+func projectReviewSendID(id string, n int) string {
+	if n <= 1 {
+		return id
+	}
+	return fmt.Sprintf("%s:%d", id, n)
+}
+
+// projectReviewOurs says whether a transcript item's client message ID is one of delivery e's sends.
+func projectReviewOurs(e db.ProjectReviewDelivery, clientID string) bool {
+	for n := 1; n <= max(e.Sends, 1); n++ {
+		if clientID == projectReviewSendID(e.ID, n) {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Duration, error) {
 	p := s.projectReview
@@ -322,15 +351,26 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 	// Reconcile against the original turn, even when the target has since started
 	// a different turn or changed models. Its newest status is unrelated.
 	if delivery.HistoryAfter != nil {
-		seen, outcome, err := s.projectReviewReceipt(ctx, p.Target, p.Model, delivery)
+		r, err := s.projectReviewReceipt(ctx, p.Target, p.Model, delivery)
 		if err != nil {
 			return retry("target_history_unavailable")
 		}
-		if outcome != "" {
-			return settle("review_receipt_" + outcome)
-		}
-		if seen {
+		switch {
+		case r.outcome != "":
+			return settle("review_receipt_" + r.outcome)
+		case r.seen && !r.closed: // the review turn is still running
 			return retry("review_receipt_unconfirmed")
+		case r.seen: // it closed without a valid receipt: send again after it, under a new ID
+			if delivery.Sends >= projectReviewMaxSends {
+				return settle("review_receipt_missing")
+			}
+			if err := p.db.AdvanceProjectReviewHistory(ctx, delivery.ID, r.closedAt); err != nil {
+				return projectReviewIdle, err
+			}
+		case delivery.SendConfirmed: // the hub took the latest send; its echo is on the way
+			return retry("waiting_for_review_receipt")
+		case delivery.Sends >= projectReviewMaxSends:
+			return settle("send_unconfirmed")
 		}
 	}
 	if sess.Model != p.Model || (sess.Status != proto.StatusIdle && sess.Status != proto.StatusDone) || sess.PendingInteractions > 0 {
@@ -366,13 +406,20 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 		delivery.Event, _ = json.Marshal(event)
 	}
 	text := prompts.RenderProjectReview(delivery.ID, delivery.Event, reviewOnly)
+	n, err := p.db.BeginProjectReviewSend(ctx, delivery.ID)
+	if err != nil {
+		return projectReviewIdle, err
+	}
 	s.workTold(p.Target.MachineID, p.Target.SessionID)
 	err = s.call(ctx, p.Target.MachineID, DeviceSessionSendOnce, map[string]any{
-		"session_id": p.Target.SessionID, "client_msg_id": delivery.ID, "text": text,
+		"session_id": p.Target.SessionID, "client_msg_id": projectReviewSendID(delivery.ID, n), "text": text,
 		"message_source": &proto.MessageSource{Kind: "project_review"},
 	}, nil)
 	if err != nil {
 		return retry("send_unconfirmed")
+	}
+	if err := p.db.ConfirmProjectReviewSend(ctx, delivery.ID, n); err != nil {
+		return projectReviewIdle, err
 	}
 	return retry("waiting_for_review_receipt")
 }
@@ -382,17 +429,27 @@ type projectReviewPage struct {
 	MoreAfter bool         `json:"more_after"`
 }
 
+// projectReviewScan is what the transcript after a delivery's saved position shows. seen: the echo of one of its
+// sends. closed: the turn that echo started has ended; closedAt is the seq of the item that ended it. outcome: the
+// valid receipt that turn ended with.
+type projectReviewScan struct {
+	seen, closed bool
+	closedAt     int
+	outcome      string
+}
+
 // Look for the exact native echo and the explicit receipt in the turn that it started.
 // Pages can split the turn; keep the parser state until that turn closes.
-func (s *Service) projectReviewReceipt(ctx context.Context, target SessionRef, model string, e db.ProjectReviewDelivery) (seen bool, outcome string, err error) {
+func (s *Service) projectReviewReceipt(ctx context.Context, target SessionRef, model string, e db.ProjectReviewDelivery) (projectReviewScan, error) {
 	after := *e.HistoryAfter
+	var r projectReviewScan
 	var reply proto.Item
 	for {
 		var page projectReviewPage
 		if err := s.call(ctx, target.MachineID, DeviceSessionItems, map[string]any{
 			"session_id": target.SessionID, "after_seq": after, "lazy_images": true,
 		}, &page); err != nil {
-			return seen, "", err
+			return r, err
 		}
 		start := after
 		for _, item := range page.Items {
@@ -400,35 +457,43 @@ func (s *Service) projectReviewReceipt(ctx context.Context, target SessionRef, m
 				continue
 			}
 			after = item.Seq
-			if !seen {
-				seen = item.Role == "user" && !item.Queued && item.ClientMsgID == e.ID
+			ours := item.Role == "user" && !item.Queued && projectReviewOurs(e, item.ClientMsgID)
+			if !r.seen {
+				r.seen = ours
 				continue
 			}
+			closed := func() (projectReviewScan, error) {
+				r.closed, r.closedAt = true, item.Seq
+				return r, nil
+			}
 			switch {
-			case item.Role == "user" && !item.Queued && item.ClientMsgID != e.ID,
+			case ours: // a later send of this delivery landed in the same turn: its reply is the one that counts
+				reply = proto.Item{}
+			case item.Role == "user" && !item.Queued,
 				item.Wake, item.Kind == proto.KindNotice && item.Text == userStoppedNotice:
-				return true, "", nil
+				return closed()
 			case item.Kind == "turn_duration":
 				if reply.Model != model {
-					return true, "", nil
+					return closed()
 				}
 				if reply.FullSize > 0 {
 					if err := s.call(ctx, target.MachineID, "session.item", map[string]any{
 						"session_id": target.SessionID, "item_id": reply.ID,
 					}, &reply); err != nil {
-						return true, "", err
+						return r, err
 					}
 				}
-				return true, projectReviewOutcome(reply.Text, e.ID, e.ReviewOnly, !e.ReviewOnly || e.Downgraded), nil
+				r.outcome = projectReviewOutcome(reply.Text, e.ID, e.ReviewOnly, !e.ReviewOnly || e.Downgraded)
+				return closed()
 			case item.Role == "assistant" && item.Kind == proto.KindText && !item.Narration:
 				reply = item
 			}
 		}
 		if !page.MoreAfter {
-			return seen, "", nil
+			return r, nil
 		}
 		if after == start {
-			return seen, "", errors.New("project review transcript page did not advance")
+			return r, errors.New("project review transcript page did not advance")
 		}
 	}
 }
