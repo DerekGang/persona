@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync/atomic"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -56,6 +57,7 @@ type logicalNodeHandler func(context.Context, string, string, json.RawMessage) (
 type logicalInteractionStore interface {
 	PutConversationInteraction(context.Context, string, string, string, string, string, int64) error
 	ConversationInteraction(context.Context, string) (*db.ConversationInteractionRoute, error)
+	FinishConversationInteraction(context.Context, string) error
 }
 
 func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string, raw json.RawMessage, next logicalNodeHandler) (any, bool, error) {
@@ -107,6 +109,18 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 			ix.MachineID, ix.SessionID = rootMachine, rootSession
 			envelope["interaction"], _ = json.Marshal(ix)
 		} else {
+			// Verify permission against the authenticated physical call before
+			// translating its session identity for logical tool dispatch.
+			if method == "mcp.call" {
+				var permission proto.SourcePermission
+				_ = json.Unmarshal(envelope["source_permission"], &permission)
+				var name string
+				_ = json.Unmarshal(envelope["name"], &name)
+				if permission.Matches(session, name, envelope["args"]) {
+					permission.Session = rootSession
+					envelope["source_permission"], _ = json.Marshal(permission)
+				}
+			}
 			envelope["session_id"], _ = json.Marshal(rootSession)
 		}
 		projected, e := json.Marshal(envelope)
@@ -125,6 +139,13 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 	})
 	if err == nil && waits && invoke != nil {
 		err = invoke()
+	}
+	if method == "interaction.create" {
+		if routes, ok := s.store().(logicalInteractionStore); ok {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancel()
+			_ = routes.FinishConversationInteraction(cleanup, ix.ID)
+		}
 	}
 	return out, handled || err != nil, err
 }

@@ -970,6 +970,11 @@ func hasSecretField(ix proto.Interaction) bool {
 }
 
 func (s *Service) finishInteraction(id string) {
+	if routes, ok := s.store().(logicalInteractionStore); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = routes.FinishConversationInteraction(ctx, id)
+		cancel()
+	}
 	s.fleet.mu.Lock()
 	p, ok := s.fleet.interactions[id]
 	delete(s.fleet.interactions, id)

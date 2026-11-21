@@ -54,9 +54,11 @@ type nodeStateStore interface {
 
 // Options are what Devices needs from the manager it runs in.
 type Options struct {
-	Hub   Host
-	Store Store // nil: nothing is kept (tests)
-	Logf  func(format string, args ...any)
+	// ProjectState lets the owning manager retain transport identities independently of computers.
+	ProjectState func(devicewire.States) devicewire.States
+	Hub          Host
+	Store        Store // nil: nothing is kept (tests)
+	Logf         func(format string, args ...any)
 	// ManagerID is the manager these devices are ("" and "assistant": the built-in one): its health space on a computer
 	// is named after it (identity.HealthDirName, healthreports.go).
 	ManagerID string
@@ -538,6 +540,9 @@ func (d *Devices) report(all bool) {
 	d.reportMu.Lock()
 	defer d.reportMu.Unlock()
 	st := d.states()
+	if d.opts.ProjectState != nil {
+		st = d.opts.ProjectState(st)
+	}
 	b, err := json.Marshal(st)
 	if err != nil {
 		return
@@ -1210,3 +1215,6 @@ var errHandoffRefused = &rpc.Error{Code: devicewire.CodeHandoffRefused, Message:
 func refusesHandoff(method string, params json.RawMessage) bool {
 	return method == proto.MethodSecretStage || devicewire.IsSessionStart(method) && startHasSecretTicket(params)
 }
+
+// ReportState republishes manager-owned transport aliases after a routing change.
+func (d *Devices) ReportState() { d.report(true) }

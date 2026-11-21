@@ -31,6 +31,7 @@ type stateFile struct {
 }
 
 type sessionState struct {
+	SegmentOperation        string          `json:"segment_operation,omitempty"`
 	TaskInstructions        string          `json:"task_instructions,omitempty"`
 	TaskInstructionFile     string          `json:"task_instruction_file,omitempty"`
 	TaskInstructionChannel  string          `json:"task_instruction_channel,omitempty"`

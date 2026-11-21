@@ -65,14 +65,14 @@ func readLogicalConversation(ctx context.Context, q conversationQuerier, machine
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.Query(ctx, `SELECT id,ordinal,machine_id,session_id,engine,source_history,source_revision,seq_offset,frozen_end,state,close_pending
+	rows, err := q.Query(ctx, `SELECT id,ordinal,machine_id,session_id,engine,launcher,model,effort,permission_mode,source_history,source_revision,seq_offset,frozen_end,state,close_pending
 	 FROM conversation_segments WHERE logical_machine=$1 AND logical_session=$2 ORDER BY ordinal`, c.MachineID, c.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var s conversationlog.Segment
-		if err = rows.Scan(&s.ID, &s.Ordinal, &s.MachineID, &s.SessionID, &s.Engine, &s.SourceHistory, &s.SourceRevision, &s.Offset, &s.FrozenEnd, &s.State, &s.ClosePending); err != nil {
+		if err = rows.Scan(&s.ID, &s.Ordinal, &s.MachineID, &s.SessionID, &s.Engine, &s.Launcher, &s.Model, &s.Effort, &s.PermissionMode, &s.SourceHistory, &s.SourceRevision, &s.Offset, &s.FrozenEnd, &s.State, &s.ClosePending); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -98,7 +98,13 @@ func readLogicalConversation(ctx context.Context, q conversationQuerier, machine
 }
 
 func (d *DB) LogicalConversation(ctx context.Context, machine, session string) (*LogicalConversation, error) {
-	return readLogicalConversation(ctx, d.pool, machine, session)
+	var out *LogicalConversation
+	err := pgx.BeginTxFunc(ctx, d.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		var err error
+		out, err = readLogicalConversation(ctx, tx, machine, session)
+		return err
+	})
+	return out, err
 }
 
 func (d *DB) LogicalConversations(ctx context.Context) ([]LogicalConversation, error) {
@@ -137,7 +143,7 @@ func (d *DB) AdoptConversation(ctx context.Context, machine, session, segment, e
 	if machine == "" || session == "" || segment == "" || engine == "" || history == "" {
 		return errors.New("incomplete conversation identity")
 	}
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		if err := conversationAvailableTx(ctx, tx, machine, session); err != nil {
 			return err
 		}
@@ -146,7 +152,7 @@ func (d *DB) AdoptConversation(ctx context.Context, machine, session, segment, e
 			return err
 		}
 		var deleted bool
-		if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE`, machine, session).Scan(&deleted); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE NOWAIT`, machine, session).Scan(&deleted); err != nil {
 			return err
 		}
 		if deleted {
@@ -161,7 +167,7 @@ func (d *DB) AdoptConversation(ctx context.Context, machine, session, segment, e
 // The shared database lock fences activation/deletion across overlapping managers,
 // including the actual bounded send or tool action, not just a cached lookup.
 func (d *DB) WithConversationEpoch(ctx context.Context, machine, session string, epoch int64, fn func(*LogicalConversation) error) error {
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var current int64
 		var deleted bool
 		err := tx.QueryRow(ctx, `SELECT epoch,deleted_at IS NOT NULL FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR SHARE`, machine, session).Scan(&current, &deleted)
@@ -192,7 +198,7 @@ func (d *DB) BeginConversationSwitch(ctx context.Context, machine, session strin
 	if op.OperationID == "" || len(op.OperationID) > 128 || !json.Valid(op.Request) || len(op.Request) > 65536 {
 		return errors.New("invalid switch operation")
 	}
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var epoch int64
 		var deleted bool
 		if err := tx.QueryRow(ctx, `SELECT epoch,deleted_at IS NOT NULL FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE NOWAIT`, machine, session).Scan(&epoch, &deleted); err != nil {
@@ -223,6 +229,13 @@ func (d *DB) BeginConversationSwitch(ctx context.Context, machine, session strin
 		if unfinished {
 			return ErrConversationSwitchBusy
 		}
+		var pending bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_interaction_routes WHERE logical_machine=$1 AND logical_session=$2 AND pending)`, machine, session).Scan(&pending); err != nil {
+			return err
+		}
+		if pending {
+			return ErrConversationSwitchBusy
+		}
 		var active string
 		if err = tx.QueryRow(ctx, `SELECT id FROM conversation_segments WHERE logical_machine=$1 AND logical_session=$2 AND state='active'`, machine, session).Scan(&active); err != nil {
 			return err
@@ -239,9 +252,9 @@ func (d *DB) PrepareConversationSegment(ctx context.Context, machine, session, o
 	if _, err := target.Seq(0); err != nil {
 		return err
 	}
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var epoch int64
-		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE`, machine, session).Scan(&epoch); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&epoch); err != nil {
 			return err
 		}
 		var source, phase string
@@ -249,7 +262,7 @@ func (d *DB) PrepareConversationSegment(ctx context.Context, machine, session, o
 		if err := tx.QueryRow(ctx, `SELECT source_segment,phase,expected_epoch FROM conversation_switches WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3`, machine, session, operation).Scan(&source, &phase, &expected); err != nil {
 			return err
 		}
-		if expected != epoch || phase != "preparing" {
+		if expected != epoch || (phase != "preparing" && phase != "in_doubt") {
 			return ErrConversationEpoch
 		}
 		var offset, ordinal int
@@ -266,8 +279,8 @@ func (d *DB) PrepareConversationSegment(ctx context.Context, machine, session, o
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO conversation_segments(id,logical_machine,logical_session,ordinal,machine_id,session_id,engine,source_history,seq_offset,state)
-		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'prepared')`, target.ID, machine, session, ordinal+1, target.MachineID, target.SessionID, target.Engine, target.SourceHistory, offset+frozen)
+		_, err = tx.Exec(ctx, `INSERT INTO conversation_segments(id,logical_machine,logical_session,ordinal,machine_id,session_id,engine,source_history,seq_offset,state,launcher,model,effort,permission_mode)
+		 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'prepared',$10,$11,$12,$13)`, target.ID, machine, session, ordinal+1, target.MachineID, target.SessionID, target.Engine, target.SourceHistory, offset+frozen, target.Launcher, target.Model, target.Effort, target.PermissionMode)
 		if err != nil {
 			return err
 		}
@@ -277,9 +290,9 @@ func (d *DB) PrepareConversationSegment(ctx context.Context, machine, session, o
 }
 
 func (d *DB) ActivateConversationSegment(ctx context.Context, machine, session, operation string, expected int64) error {
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var epoch int64
-		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE`, machine, session).Scan(&epoch); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&epoch); err != nil {
 			return err
 		}
 		if epoch != expected {
@@ -321,9 +334,9 @@ func (d *DB) ResolveConversationSwitch(ctx context.Context, machine, session, op
 	if outcome != "accepted" && outcome != "rejected" && outcome != "in_doubt" {
 		return errors.New("invalid switch outcome")
 	}
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var epoch int64
-		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE`, machine, session).Scan(&epoch); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&epoch); err != nil {
 			return err
 		}
 		var source, target, phase string
@@ -385,17 +398,22 @@ func (d *DB) ObserveConversationSource(ctx context.Context, machine, session, hi
 	if history == "" {
 		return errors.New("missing source generation")
 	}
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		c, err := readLogicalConversation(ctx, tx, machine, session)
 		if err != nil || c == nil {
 			return err
 		}
+		for _, seg := range c.Segments {
+			if seg.MachineID == machine && seg.SessionID == session && seg.SourceHistory == history {
+				return nil
+			}
+		}
 		var epoch int64
-		if err = tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE`, c.MachineID, c.SessionID).Scan(&epoch); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE NOWAIT`, c.MachineID, c.SessionID).Scan(&epoch); err != nil {
 			return err
 		}
 		var id, old, state string
-		if err = tx.QueryRow(ctx, `SELECT id,source_history,state FROM conversation_segments WHERE machine_id=$1 AND session_id=$2 FOR UPDATE`, machine, session).Scan(&id, &old, &state); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id,source_history,state FROM conversation_segments WHERE machine_id=$1 AND session_id=$2 FOR UPDATE NOWAIT`, machine, session).Scan(&id, &old, &state); err != nil {
 			return err
 		}
 		if old == history {
@@ -417,13 +435,13 @@ func (d *DB) ConversationSegmentClosed(ctx context.Context, id string) error {
 }
 
 func (d *DB) ObserveConversationRevision(ctx context.Context, machine, session string, revision int64) error {
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		c, err := readLogicalConversation(ctx, tx, machine, session)
 		if err != nil || c == nil {
 			return err
 		}
 		var epoch int64
-		if err = tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE`, c.MachineID, c.SessionID).Scan(&epoch); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 FOR UPDATE NOWAIT`, c.MachineID, c.SessionID).Scan(&epoch); err != nil {
 			return err
 		}
 		var old int64
@@ -457,7 +475,7 @@ func (d *DB) EnqueueConversationInput(ctx context.Context, machine, session, id 
 	if id == "" || len(id) > 512 || len(payload) > 1048576 || !json.Valid(payload) {
 		return errors.New("invalid conversation input")
 	}
-	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var current int64
 		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR SHARE`, machine, session).Scan(&current); err != nil {
 			return err
@@ -484,9 +502,9 @@ func (d *DB) EnqueueConversationInput(ctx context.Context, machine, session, id 
 // reconciled: process restarts cannot blindly repeat an ambiguous model turn.
 func (d *DB) ClaimConversationInput(ctx context.Context, machine, session string, epoch int64) (*ConversationInput, error) {
 	var out *ConversationInput
-	err := pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+	err := conversationTransaction(ctx, d, func(tx pgx.Tx) error {
 		var current int64
-		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE`, machine, session).Scan(&current); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&current); err != nil {
 			return err
 		}
 		if current != epoch {
@@ -502,7 +520,7 @@ func (d *DB) ClaimConversationInput(ctx context.Context, machine, session string
 		}
 		var row ConversationInput
 		var raw []byte
-		err = tx.QueryRow(ctx, `SELECT client_msg_id,position,epoch,payload,state FROM conversation_inputs WHERE logical_machine=$1 AND logical_session=$2 AND state IN ('queued','sending','in_doubt') ORDER BY position LIMIT 1 FOR UPDATE`, machine, session).
+		err = tx.QueryRow(ctx, `SELECT client_msg_id,position,epoch,payload,state FROM conversation_inputs WHERE logical_machine=$1 AND logical_session=$2 AND state IN ('queued','sending','in_doubt') ORDER BY position LIMIT 1 FOR UPDATE NOWAIT`, machine, session).
 			Scan(&row.ClientMsgID, &row.Position, &row.Epoch, &raw, &row.State)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -562,4 +580,87 @@ func (d *DB) ConversationInteraction(ctx context.Context, id string) (*Conversat
 		return nil, nil
 	}
 	return r, err
+}
+
+func (d *DB) PutConversationHandoff(ctx context.Context, machine, session, operation string, raw json.RawMessage) error {
+	if !json.Valid(raw) || len(raw) > 262144 {
+		return errors.New("invalid conversation handoff")
+	}
+	_, err := d.pool.Exec(ctx, `UPDATE conversation_switches SET handoff=coalesce(handoff,$4),updated_at=now() WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3 AND phase='preparing'`, machine, session, operation, []byte(raw))
+	return err
+}
+
+func (d *DB) ConversationPreparation(ctx context.Context, machine, session, operation string) (json.RawMessage, bool, error) {
+	var raw []byte
+	var claimed bool
+	err := d.pool.QueryRow(ctx, `SELECT handoff,start_claimed FROM conversation_switches WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3`, machine, session, operation).Scan(&raw, &claimed)
+	return json.RawMessage(raw), claimed, err
+}
+func (d *DB) ClaimConversationPreparation(ctx context.Context, machine, session, operation string) (bool, error) {
+	tag, err := d.pool.Exec(ctx, `UPDATE conversation_switches SET start_claimed=true,updated_at=now() WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3 AND phase='preparing' AND handoff IS NOT NULL AND NOT start_claimed`, machine, session, operation)
+	return tag.RowsAffected() == 1, err
+}
+func (d *DB) ConversationUnresolvedInput(ctx context.Context, machine, session string) (*ConversationInput, error) {
+	var row ConversationInput
+	var raw []byte
+	err := d.pool.QueryRow(ctx, `SELECT client_msg_id,position,epoch,payload,state FROM conversation_inputs WHERE logical_machine=$1 AND logical_session=$2 AND state IN ('sending','in_doubt') ORDER BY position LIMIT 1`, machine, session).Scan(&row.ClientMsgID, &row.Position, &row.Epoch, &raw, &row.State)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	row.Payload = json.RawMessage(raw)
+	return &row, err
+}
+func (d *DB) ConversationClosures(ctx context.Context) ([][2]string, error) {
+	rows, err := d.pool.Query(ctx, `SELECT machine_id,session_id FROM conversation_segment_closures ORDER BY machine_id,session_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var k [2]string
+		if err := rows.Scan(&k[0], &k[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+func (d *DB) ConversationClosureDone(ctx context.Context, machine, session string) error {
+	_, err := d.pool.Exec(ctx, `DELETE FROM conversation_segment_closures WHERE machine_id=$1 AND session_id=$2`, machine, session)
+	return err
+}
+
+func (d *DB) ConversationInputPending(ctx context.Context, machine, session string) (bool, error) {
+	var pending bool
+	err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_inputs WHERE logical_machine=$1 AND logical_session=$2 AND state IN ('queued','sending','in_doubt'))`, machine, session).Scan(&pending)
+	return pending, err
+}
+
+func (d *DB) FinishConversationInteraction(ctx context.Context, id string) error {
+	_, err := d.pool.Exec(ctx, `UPDATE conversation_interaction_routes SET pending=false WHERE interaction_id=$1`, id)
+	return err
+}
+
+func conversationTransaction(ctx context.Context, d *DB, fn func(pgx.Tx) error) error {
+	err := pgx.BeginFunc(ctx, d.pool, fn)
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) && pe.Code == "55P03" {
+		return ErrConversationSwitchBusy
+	}
+	return err
+}
+
+func (d *DB) SetConversationPick(ctx context.Context, machine, session string, epoch int64, launcher, model, effort string) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
+		var current int64
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&current); err != nil {
+			return err
+		}
+		if epoch != current {
+			return ErrConversationEpoch
+		}
+		_, err := tx.Exec(ctx, `UPDATE conversation_segments SET launcher=$3,model=$4,effort=$5 WHERE logical_machine=$1 AND logical_session=$2 AND state='active'`, machine, session, launcher, model, effort)
+		return err
+	})
 }

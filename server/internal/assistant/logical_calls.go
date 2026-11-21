@@ -9,6 +9,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -21,6 +22,8 @@ func logicalRefusal(ctx context.Context, code string) error {
 	return &rpc.Error{Code: wire, Message: i18n.T(i18n.From(ctx), "assistant-conversation_segments."+code), Data: json.RawMessage(`{"delivered":"none"}`)}
 }
 
+type logicalTransportKey struct{}
+
 // This is the single raw source boundary. Its callers have already resolved and
 // fenced public identity; it never re-applies a physical session's model or role.
 func (s *Service) logicalPhysical(ctx context.Context, machine, method string, params any) (json.RawMessage, error) {
@@ -30,6 +33,17 @@ func (s *Service) logicalPhysical(ctx context.Context, machine, method string, p
 	}
 	ctx = context.WithValue(ctx, logicalSourceKey{}, true)
 	if d := s.physicalDevices(); d != nil {
+		if original, ok := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); ok {
+			original.MachineID, original.Method, original.Params = machine, method, raw
+			request, _ := json.Marshal(original)
+			out, handled, err := d.Request(ctx, devicewire.MethodCall, request)
+			if handled {
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(out)
+			}
+		}
 		return d.CallNode(ctx, machine, method, raw)
 	}
 	return s.hub.DeviceCall(ctx, DeviceCall{Device: machine, Method: method, Params: raw})
@@ -99,15 +113,24 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 				return err
 			}
 			// Queues are used throughout a switch, including its first target turn.
-			if current.Switch != nil {
+			pending := false
+			if queue, ok := s.store().(logicalSwitchStore); ok {
+				var err error
+				pending, err = queue.ConversationInputPending(ctx, machine, id)
+				if err != nil {
+					return err
+				}
+			}
+			if current.Switch != nil || pending {
 				client, _ := p["client_msg_id"].(string)
 				if client == "" {
 					return logicalRefusal(ctx, "message_id_required")
 				}
-				body, e := json.Marshal(struct {
-					Method string         `json:"method"`
-					Params map[string]any `json:"params"`
-				}{method, p})
+				queued := logicalInput{Method: method, Params: p}
+				if original, ok := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); ok {
+					queued.Transport = &original
+				}
+				body, e := json.Marshal(queued)
 				if e != nil {
 					return e
 				}
@@ -200,4 +223,55 @@ func logicalNotTaken(err error) bool {
 		return strings.Contains(string(re.Data), `"delivered":"none"`)
 	}
 	return false
+}
+
+// A switched conversation has an explicit execution choice. Global new-chat
+// defaults cannot silently select its retired engine on the next internal send.
+func (s *Service) logicalSendModel(ctx context.Context, machine, session string, p map[string]any) (bool, error) {
+	st, ok := s.store().(logicalConversationStore)
+	if !ok {
+		return false, nil
+	}
+	c, err := st.LogicalConversation(ctx, machine, session)
+	if err != nil {
+		return true, err
+	}
+	if c == nil || c.Epoch == 1 {
+		return false, nil
+	}
+	a, ok := c.Active()
+	if !ok || c.Deleted {
+		return true, logicalRefusal(ctx, "unavailable")
+	}
+	if a.Ordinal == 1 {
+		return false, nil
+	}
+	launcher, _ := p["launcher"].(string)
+	if launcher != "" {
+		engine := logicalEngine(s.launcherAgent(ctx, a.MachineID, launcher))
+		if engine == "" {
+			return true, logicalRefusal(ctx, "unknown_engine")
+		}
+		if engine != a.Engine {
+			return true, &launcherOtherKind{conversationAgent: a.Engine, launcher: launcher, launcherAgent: engine}
+		}
+	} else {
+		launcher = a.Launcher
+		p["launcher"] = launcher
+	}
+	if launcher == "" {
+		return true, logicalRefusal(ctx, "unknown_engine")
+	}
+	if model, _ := p["model"].(string); model == "" {
+		p["model"] = a.Model
+	} else if err := checkModelID(model); err != nil {
+		return true, err
+	}
+	if effort, _ := p["effort"].(string); effort == "" {
+		p["effort"] = a.Effort
+	}
+	if mode, _ := p["permission_mode"].(string); mode == "" {
+		p["permission_mode"] = a.PermissionMode
+	}
+	return true, nil
 }

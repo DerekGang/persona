@@ -1,0 +1,552 @@
+package assistant
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/apierr"
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/conversationlog"
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/devicewire"
+	"github.com/nwverse/persona/server/internal/prompts"
+	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
+)
+
+const conversationSegmentsKey = "assistant.segments"
+
+type logicalSwitchRequest struct {
+	OperationID    string `json:"operation_id"`
+	ExpectedEpoch  int64  `json:"expected_epoch"`
+	MachineID      string `json:"machine_id"`
+	Launcher       string `json:"launcher"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
+}
+type logicalInput struct {
+	Method    string               `json:"method"`
+	Params    map[string]any       `json:"params"`
+	Transport *devicewire.NodeCall `json:"transport,omitempty"`
+}
+type segmentTarget struct {
+	Engine            string `json:"engine"`
+	SupervisionPolicy bool   `json:"supervision_policy"`
+	Prepare           bool   `json:"prepare"`
+}
+
+// Explicit identities cover the engines Persona ships. A future/unknown adapter
+// must implement the contract before being used as a switch target.
+func logicalEngine(engine string) string {
+	switch engine {
+	case "claude", "codex", "agy", "pi", "opencode", "omp", "dsh", "grok", "gemini", "qwen", "kimi", "droid", "cursor", "traex":
+		return engine
+	}
+	return ""
+}
+func (s *Service) segmentsEnabled(ctx context.Context) bool {
+	if s.store() == nil {
+		return false
+	}
+	var v struct {
+		Enabled *bool `json:"enabled"`
+	}
+	_, err := s.store().Setting(ctx, conversationSegmentsKey, &v)
+	return err == nil && (v.Enabled == nil || *v.Enabled)
+}
+func (s *Service) logicalSwitchRoutes() {
+	s.handle("GET /api/v1/assistant/segments", func(w http.ResponseWriter, r *http.Request) {
+		apierr.WriteJSON(w, map[string]any{"enabled": s.segmentsEnabled(r.Context()), "feature": "assistant_segments", "routing": true})
+	})
+	s.handle("PUT /api/v1/assistant/segments", func(w http.ResponseWriter, r *http.Request) {
+		if !fullRole(r) {
+			apierr.Write(w, 403, errors.New("full access required"))
+			return
+		}
+		var p struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&p); err != nil {
+			apierr.Write(w, 400, err)
+			return
+		}
+		if err := s.store().PutSetting(r.Context(), conversationSegmentsKey, p); err != nil {
+			apierr.Call(w, err)
+			return
+		}
+		apierr.WriteJSON(w, p)
+	})
+	s.handle("POST /api/v1/assistant/conversations/{id}/switch", func(w http.ResponseWriter, r *http.Request) {
+		if !fullRole(r) {
+			apierr.Write(w, 403, errors.New("full access required"))
+			return
+		}
+		var p struct {
+			logicalSwitchRequest
+			SourceMachine string `json:"source_machine_id"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&p); err != nil {
+			apierr.Write(w, 400, err)
+			return
+		}
+		op, err := s.beginLogicalSwitch(r.Context(), p.SourceMachine, r.PathValue("id"), p.logicalSwitchRequest)
+		if err != nil {
+			apierr.Call(w, err)
+			return
+		}
+		apierr.WriteJSON(w, op)
+	})
+	s.handle("GET /api/v1/assistant/conversations/{id}/switch/{operation}", func(w http.ResponseWriter, r *http.Request) {
+		if !fullRole(r) {
+			apierr.Write(w, 403, errors.New("full access required"))
+			return
+		}
+		st, ok := s.store().(logicalSwitchStore)
+		if !ok {
+			apierr.Call(w, logicalRefusal(r.Context(), "unavailable"))
+			return
+		}
+		op, err := st.ConversationSwitch(r.Context(), r.URL.Query().Get("machine_id"), r.PathValue("id"), r.PathValue("operation"))
+		if err != nil {
+			apierr.Call(w, err)
+			return
+		}
+		if op == nil {
+			http.NotFound(w, r)
+			return
+		}
+		apierr.WriteJSON(w, map[string]any{"operation_id": op.OperationID, "phase": op.Phase, "expected_epoch": op.ExpectedEpoch, "error": op.Error})
+	})
+}
+
+func (s *Service) beginLogicalSwitch(ctx context.Context, machine, id string, p logicalSwitchRequest) (any, error) {
+	st, ok := s.store().(logicalSwitchStore)
+	if !ok {
+		return nil, logicalRefusal(ctx, "unavailable")
+	}
+	if !s.segmentsEnabled(ctx) {
+		return nil, logicalRefusal(ctx, "disabled")
+	}
+	if machine == "" || id == "" || p.MachineID == "" || p.Launcher == "" || p.OperationID == "" || len(p.OperationID) > 128 || p.ExpectedEpoch < 1 {
+		return nil, logicalRefusal(ctx, "unavailable")
+	}
+	request, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	// Replay is checked before current status: accepted operations remain idempotent.
+	old, err := st.ConversationSwitch(ctx, machine, id, p.OperationID)
+	if err != nil {
+		return nil, err
+	}
+	if old != nil {
+		if string(old.Request) != string(request) {
+			return nil, db.ErrConversationEpoch
+		}
+		return map[string]any{"operation_id": old.OperationID, "phase": old.Phase}, nil
+	}
+	c, err := st.LogicalConversation(ctx, machine, id)
+	if err != nil {
+		return nil, err
+	}
+	row, known := s.session(ctx, machine, id)
+	if !known || !row.Assistant || row.PaneID != "" || s.isWorkMachine(p.MachineID) {
+		return nil, logicalRefusal(ctx, "unavailable")
+	}
+	if row.Starting || row.Status == proto.StatusWorking || row.Status == proto.StatusBlocked || row.PendingInteractions > 0 || backgroundRunning(row) || len(row.Queued) > 0 || (row.Compaction != nil && row.Compaction.State == proto.CompactionRunning) {
+		return nil, logicalRefusal(ctx, "busy")
+	}
+	for _, ix := range s.pendingInteractions() {
+		if ix.SessionID == id && ix.MachineID == machine {
+			return nil, logicalRefusal(ctx, "busy")
+		}
+	}
+	var target segmentTarget
+	raw, err := s.logicalPhysical(ctx, p.MachineID, "assistant.segment.check", map[string]any{"launcher": p.Launcher})
+	if err != nil {
+		return nil, err
+	}
+	if json.Unmarshal(raw, &target) != nil || !target.Prepare || logicalEngine(target.Engine) == "" {
+		return nil, logicalRefusal(ctx, "unknown_engine")
+	}
+	policy, err := s.supervisionInstructions(ctx, machine, id)
+	if err != nil {
+		return nil, err
+	}
+	cfg := s.settings(ctx)
+	role := policy != "" || slices.Contains(cfg.Leaders, id) || id == cfg.BackgroundSupervisor || id == cfg.Main && cfg.MainSupervisesOwnTasks != nil && *cfg.MainSupervisesOwnTasks
+	if role && !target.SupervisionPolicy {
+		return nil, logicalRefusal(ctx, "unsupported_policy")
+	}
+	if c == nil {
+		if p.ExpectedEpoch != 1 || logicalEngine(row.Agent) == "" {
+			return nil, logicalRefusal(ctx, "unknown_engine")
+		}
+		var page historyPage
+		if err = s.physicalHistoryCall(ctx, machine, DeviceSessionItems, map[string]any{"session_id": id, "limit": 1, "lazy_images": true}, &page); err != nil {
+			return nil, err
+		}
+		if page.History == "" {
+			return nil, logicalRefusal(ctx, "missing_generation")
+		}
+		if err = st.AdoptConversation(ctx, machine, id, randomHex(16), row.Agent, page.History); err != nil {
+			return nil, err
+		}
+		c, err = st.LogicalConversation(ctx, machine, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if c == nil || c.Deleted || c.MachineID != machine || c.SessionID != id {
+		return nil, logicalRefusal(ctx, "private_segment")
+	}
+	a, ok := c.Active()
+	if !ok {
+		return nil, logicalRefusal(ctx, "unavailable")
+	}
+	if err = st.BeginConversationSwitch(ctx, machine, id, db.ConversationSwitch{OperationID: p.OperationID, ExpectedEpoch: p.ExpectedEpoch, SourceSegment: a.ID, Request: request}); err != nil {
+		if errors.Is(err, db.ErrConversationSwitchBusy) {
+			return nil, logicalRefusal(ctx, "busy")
+		}
+		return nil, err
+	}
+	s.logicalChanged()
+	s.historyWake()
+	return map[string]any{"operation_id": p.OperationID, "phase": "preparing", "epoch": c.Epoch}, nil
+}
+
+// The loop is independent of the switch-enable setting: disabling new switches
+// must not strand existing routing, queued messages or deferred closures.
+func (s *Service) logicalSweep(ctx context.Context) {
+	st, ok := s.store().(logicalSwitchStore)
+	if !ok {
+		return
+	}
+	rows, err := st.LogicalConversations(ctx)
+	if err != nil {
+		return
+	}
+	for _, c := range rows {
+		key := [2]string{c.MachineID, c.SessionID}
+		s.logical.mu.Lock()
+		if s.logical.running == nil {
+			s.logical.running = map[[2]string]bool{}
+		}
+		busy := s.logical.running[key]
+		if !busy {
+			s.logical.running[key] = true
+		}
+		s.logical.mu.Unlock()
+		if busy {
+			continue
+		}
+		go func(c db.LogicalConversation) {
+			defer func() { s.logical.mu.Lock(); delete(s.logical.running, key); s.logical.mu.Unlock() }()
+			run, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			if err := s.advanceLogicalConversation(run, st, &c); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, db.ErrConversationEpoch) {
+				s.logf("assistant: segment operation awaits reconciliation: %v", err)
+			}
+		}(c)
+	}
+	closures, err := st.ConversationClosures(ctx)
+	if err != nil {
+		return
+	}
+	for _, key := range closures {
+		closeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_, err = s.logicalPhysical(closeCtx, key[0], "session.close", map[string]any{"session_id": key[1]})
+		cancel()
+		if err == nil {
+			_ = st.ConversationClosureDone(ctx, key[0], key[1])
+		}
+	}
+}
+
+func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwitchStore, c *db.LogicalConversation) error {
+	for _, seg := range c.Segments {
+		if seg.ClosePending {
+			closeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			_, err := s.logicalPhysical(closeCtx, seg.MachineID, "session.close", map[string]any{"session_id": seg.SessionID})
+			cancel()
+			if err == nil {
+				_ = st.ConversationSegmentClosed(ctx, seg.ID)
+			}
+		}
+	}
+	op := c.Switch
+	if op != nil && (op.Phase == "preparing" || op.Phase == "in_doubt" && c.Epoch == op.ExpectedEpoch) {
+		var p logicalSwitchRequest
+		if err := json.Unmarshal(op.Request, &p); err != nil {
+			return err
+		}
+		handoff, claimed, err := st.ConversationPreparation(ctx, c.MachineID, c.SessionID, op.OperationID)
+		if err != nil {
+			return err
+		}
+		if len(handoff) == 0 {
+			h, err := s.logicalSwitchHandoff(ctx, st, c)
+			if err != nil {
+				return err
+			}
+			handoff, err = json.Marshal(h)
+			if err != nil {
+				return err
+			}
+			if err = st.PutConversationHandoff(ctx, c.MachineID, c.SessionID, op.OperationID, handoff); err != nil {
+				return err
+			}
+		}
+		method := "assistant.segment.receipt"
+		if !claimed {
+			var won bool
+			won, err = st.ClaimConversationPreparation(ctx, c.MachineID, c.SessionID, op.OperationID)
+			if err != nil {
+				return err
+			}
+			if won {
+				method = "assistant.segment.prepare"
+			}
+		}
+		params := map[string]any{"operation_id": op.OperationID, "launcher": p.Launcher, "model": p.Model, "effort": p.Effort, "permission_mode": p.PermissionMode, "is_main": c.SessionID == s.settings(ctx).Main}
+		if method == "assistant.segment.prepare" {
+			row, _ := s.session(ctx, c.MachineID, c.SessionID)
+			cwd, err := s.prepareSpace(ctx, p.MachineID, row.Space)
+			if err != nil {
+				_ = st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, op.OperationID, "rejected", "preparation unavailable")
+				return err
+			}
+			params["cwd"] = cwd
+		}
+		raw, err := s.logicalPhysical(ctx, p.MachineID, method, params)
+		if err != nil {
+			if logicalNotTaken(err) {
+				return st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, op.OperationID, "rejected", "preparation refused")
+			}
+			_ = st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, op.OperationID, "in_doubt", "preparation receipt pending")
+			return err
+		}
+		var reply struct {
+			SessionID string `json:"session_id"`
+			Prepared  bool   `json:"prepared"`
+		}
+		if json.Unmarshal(raw, &reply) != nil || !reply.Prepared || reply.SessionID == "" {
+			return nil
+		}
+		source, ok := c.Active()
+		if !ok {
+			return logicalRefusal(ctx, "unavailable")
+		}
+		var target segmentTarget
+		check, err := s.logicalPhysical(ctx, p.MachineID, "assistant.segment.check", map[string]any{"launcher": p.Launcher})
+		if err != nil {
+			return err
+		}
+		if json.Unmarshal(check, &target) != nil || logicalEngine(target.Engine) == "" {
+			return logicalRefusal(ctx, "unknown_engine")
+		}
+		// Pull a proven physical tail after preparation; never infer it from item count.
+		var tail historyPage
+		if err = s.physicalHistoryCall(ctx, source.MachineID, DeviceSessionItems, map[string]any{"session_id": source.SessionID, "limit": 1, "lazy_images": true}, &tail); err != nil {
+			return err
+		}
+		if tail.ToSeq == nil || tail.MoreAfter {
+			return logicalRefusal(ctx, "missing_generation")
+		}
+		if err = st.PrepareConversationSegment(ctx, c.MachineID, c.SessionID, op.OperationID, conversationlog.Segment{ID: randomHex(16), MachineID: p.MachineID, SessionID: reply.SessionID, Engine: target.Engine, Launcher: p.Launcher, Model: p.Model, Effort: p.Effort, PermissionMode: p.PermissionMode}, *tail.ToSeq); err != nil {
+			return err
+		}
+		c, err = st.LogicalConversation(ctx, c.MachineID, c.SessionID)
+		if err != nil {
+			return err
+		}
+		op = c.Switch
+	}
+	if op != nil && op.Phase == "prepared" {
+		// Card creation/approval is fenced by this durable unfinished operation.
+		for _, ix := range s.pendingInteractions() {
+			if ix.MachineID == c.MachineID && ix.SessionID == c.SessionID {
+				return logicalRefusal(ctx, "busy")
+			}
+		}
+		if err := st.ActivateConversationSegment(ctx, c.MachineID, c.SessionID, op.OperationID, c.Epoch); err != nil {
+			return err
+		}
+		var err error
+		c, err = st.LogicalConversation(ctx, c.MachineID, c.SessionID)
+		if err != nil {
+			return err
+		}
+		s.logicalRebind(ctx, c)
+	}
+	if c == nil {
+		return nil
+	}
+	return s.drainLogicalInput(ctx, st, c)
+}
+
+func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, c *db.LogicalConversation) error {
+	a, ok := c.Active()
+	if !ok {
+		return nil
+	}
+	unresolved, err := st.ConversationUnresolvedInput(ctx, c.MachineID, c.SessionID)
+	if err != nil {
+		return err
+	}
+	if unresolved != nil {
+		// A positive receipt proves delivery. An absent receipt never proves refusal.
+		raw, err := s.logicalPhysical(ctx, a.MachineID, "assistant.segment.input", map[string]any{"session_id": a.SessionID, "client_msg_id": unresolved.ClientMsgID})
+		var receipt struct {
+			Accepted bool `json:"accepted"`
+		}
+		if err != nil || json.Unmarshal(raw, &receipt) != nil || !receipt.Accepted {
+			return nil
+		}
+		if err = st.ResolveConversationInput(ctx, c.MachineID, c.SessionID, unresolved.ClientMsgID, "accepted"); err != nil {
+			return err
+		}
+		if c.Switch != nil {
+			return st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, c.Switch.OperationID, "accepted", "")
+		}
+		return nil
+	}
+	input, err := st.ClaimConversationInput(ctx, c.MachineID, c.SessionID, c.Epoch)
+	if err != nil || input == nil {
+		return err
+	}
+	var queued logicalInput
+	if err = json.Unmarshal(input.Payload, &queued); err != nil {
+		return err
+	}
+	if queued.Transport != nil {
+		ctx = context.WithValue(ctx, logicalTransportKey{}, *queued.Transport)
+	}
+	if err = s.putSupervisionInstructions(ctx, c.MachineID, c.SessionID, queued.Params); err != nil {
+		return err
+	}
+	if c.Switch != nil {
+		raw, _, err := st.ConversationPreparation(ctx, c.MachineID, c.SessionID, c.Switch.OperationID)
+		if err != nil {
+			return err
+		}
+		var h mainHandoff
+		if err = json.Unmarshal(raw, &h); err != nil {
+			return err
+		}
+		text, _ := queued.Params["text"].(string)
+		queued.Params["text"] = renderLogicalHandoff(string(s.lang(ctx)), h, text)
+	}
+	var sendErr error
+	err = st.WithConversationEpoch(ctx, c.MachineID, c.SessionID, c.Epoch, func(current *db.LogicalConversation) error {
+		active, ok := current.Active()
+		if !ok || active.ID != a.ID {
+			return db.ErrConversationEpoch
+		}
+		_, sendErr = s.logicalPhysical(ctx, a.MachineID, queued.Method, cloneLogicalParams(queued.Params, a))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	outcome := "accepted"
+	if sendErr != nil {
+		outcome = "in_doubt"
+		if logicalNotTaken(sendErr) {
+			outcome = "rejected"
+		}
+	}
+	if err = st.ResolveConversationInput(ctx, c.MachineID, c.SessionID, input.ClientMsgID, outcome); err != nil {
+		return err
+	}
+	if c.Switch != nil {
+		if err = st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, c.Switch.OperationID, outcome, ""); err != nil {
+			return err
+		}
+		next, err := st.LogicalConversation(ctx, c.MachineID, c.SessionID)
+		if err != nil {
+			return err
+		}
+		s.logicalRebind(ctx, next)
+	}
+	s.historyWake()
+	return sendErr
+}
+
+func renderLogicalHandoff(language string, h mainHandoff, text string) string {
+	turns := make([]prompts.HandoffTurn, 0, len(h.Recent))
+	for _, t := range h.Recent {
+		turns = append(turns, prompts.HandoffTurn{Role: t.Role, Text: t.Text})
+	}
+	return prompts.RenderSegmentHandoff(prompts.SegmentHandoff{Language: language, Summary: h.Summary, Recent: turns, Text: text, Partial: h.Partial})
+}
+
+func (s *Service) logicalSwitchHandoff(ctx context.Context, st logicalSwitchStore, c *db.LogicalConversation) (mainHandoff, error) {
+	raw, err := s.logicalHistoryCall(ctx, st, c, DeviceAssistantHandoff, json.RawMessage(`{}`))
+	if err != nil {
+		return mainHandoff{}, err
+	}
+	var h mainHandoff
+	if err = json.Unmarshal(raw, &h); err != nil {
+		return h, err
+	}
+	if strings.TrimSpace(h.Summary) != "" {
+		return h, nil
+	}
+	// The source engine's own compaction result is always preferred. The logical
+	// handoff already reads persisted summaries; ask its active source once too.
+	if a, ok := c.Active(); ok {
+		var source mainHandoff
+		if err = s.physicalHistoryCall(ctx, a.MachineID, DeviceAssistantHandoff, map[string]any{"session_id": a.SessionID}, &source); err == nil && strings.TrimSpace(source.Summary) != "" {
+			h.Summary = source.Summary
+			return h, nil
+		}
+	}
+	if len(h.Recent) == 0 {
+		return h, nil
+	}
+	input, _ := json.Marshal(h.Recent)
+	call, err := checkModelCall(assistantwire.ModelCompleteParams{System: prompts.RenderSegmentSummary(answerLanguage(s.hello(ctx).Locale)), Messages: []assistantwire.ModelMessage{{Role: "user", Content: string(input)}}, MaxTokens: 2048})
+	if err != nil {
+		return h, err
+	}
+	for {
+		out, err := s.runModelCall(ctx, "kb", "conversation handoff", "conversation handoff", call)
+		if err == nil {
+			result, ok := out.(assistantwire.ModelCompleteResult)
+			if !ok {
+				return h, errors.New("invalid summary result")
+			}
+			h.Summary = result.Text
+			return h, nil
+		}
+		var re *rpc.Error
+		if !errors.As(err, &re) || re.Code != assistantwire.CodeModelPaused {
+			return h, err
+		}
+		var pause assistantwire.ModelPause
+		_ = json.Unmarshal(re.Data, &pause)
+		until, _ := time.Parse(time.RFC3339, pause.Until)
+		wait := time.Until(until)
+		if wait < time.Second {
+			wait = time.Second
+		}
+		// Wait in bounded intervals so cancellation is immediate and no model is
+		// polled while its provider is paused.
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return h, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}

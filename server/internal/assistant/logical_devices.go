@@ -32,6 +32,17 @@ type logicalConversationStore interface {
 	ResolveConversationInput(context.Context, string, string, string, string) error
 }
 
+type logicalSwitchStore interface {
+	logicalConversationStore
+	PutConversationHandoff(context.Context, string, string, string, json.RawMessage) error
+	ConversationPreparation(context.Context, string, string, string) (json.RawMessage, bool, error)
+	ClaimConversationPreparation(context.Context, string, string, string) (bool, error)
+	ConversationUnresolvedInput(context.Context, string, string) (*db.ConversationInput, error)
+	ConversationInputPending(context.Context, string, string) (bool, error)
+	ConversationClosures(context.Context) ([][2]string, error)
+	ConversationClosureDone(context.Context, string, string) error
+}
+
 type logicalSourceKey struct{}
 
 type logicalDeviceState struct {
@@ -39,6 +50,7 @@ type logicalDeviceState struct {
 	at      time.Time
 	rows    []db.LogicalConversation
 	index   map[[2]string]*db.LogicalConversation
+	running map[[2]string]bool
 	watches map[[2]string]json.RawMessage
 }
 
@@ -285,7 +297,7 @@ func (d *logicalDevices) Request(ctx context.Context, method string, raw json.Ra
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return nil, true, err
 		}
-		if out, handled, err := d.s.logicalCall(ctx, p.MachineID, p.Method, p.Params); handled {
+		if out, handled, err := d.s.logicalCall(context.WithValue(ctx, logicalTransportKey{}, p), p.MachineID, p.Method, p.Params); handled {
 			return out, true, err
 		}
 	}
@@ -312,4 +324,45 @@ func (d *logicalDevices) Follow(ctx context.Context, machine, session string, on
 		return errors.New("conversation has no active segment")
 	}
 	return d.Devices.Follow(ctx, a.MachineID, a.SessionID, on)
+}
+
+// The manager retains the root bus destination even if its original computer
+// disappeared. It advertises no physical session mapping to the transport hub.
+func (s *Service) logicalProjectStates(st devicewire.States) devicewire.States {
+	rows, _, err := s.logicalIndex()
+	if err != nil {
+		return st
+	}
+	index := map[string]int{}
+	for i, state := range st.Machines {
+		index[state.Machine.ID] = i
+	}
+	// Work on copies: the devices' snapshots may be concurrently read elsewhere.
+	st.Machines = append([]devicewire.State(nil), st.Machines...)
+	for _, c := range rows {
+		a, ok := c.Active()
+		if !ok {
+			continue
+		}
+		target, known := index[a.MachineID]
+		if !known {
+			continue
+		}
+		if source, exists := index[c.MachineID]; exists {
+			if !st.Machines[source].Connected && st.Machines[target].Connected {
+				st.Machines[source].Connected = true
+				st.Machines[source].ConnectedAt = st.Machines[target].ConnectedAt
+				st.Machines[source].Machine.Online = true
+			}
+			continue
+		}
+		state := st.Machines[target]
+		state.Machine.ID = c.MachineID
+		state.TransportFor = a.MachineID
+		state.Config = nil
+		state.Derived = true
+		st.Machines = append(st.Machines, state)
+		index[c.MachineID] = len(st.Machines) - 1
+	}
+	return st
 }

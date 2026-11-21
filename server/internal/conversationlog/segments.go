@@ -15,6 +15,10 @@ var ErrSequenceOverflow = errors.New("conversation sequence exceeds the supporte
 // Segment is a physical source's immutable position in a logical conversation.
 // FrozenEnd counts source lines, including lines without normalized items.
 type Segment struct {
+	Launcher       string `json:"launcher,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
 	ID             string `json:"id"`
 	Ordinal        int    `json:"ordinal"`
 	MachineID      string `json:"machine_id"`

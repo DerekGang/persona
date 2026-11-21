@@ -18,6 +18,10 @@ CREATE TABLE conversation_segments (
     machine_id text NOT NULL,
     session_id text NOT NULL,
     engine text NOT NULL CHECK (engine <> ''),
+    launcher text NOT NULL DEFAULT '',
+    model text NOT NULL DEFAULT '',
+    effort text NOT NULL DEFAULT '',
+    permission_mode text NOT NULL DEFAULT '',
     source_history text NOT NULL,
     source_revision bigint NOT NULL DEFAULT 0,
     seq_offset integer NOT NULL CHECK (seq_offset BETWEEN 0 AND 2147483646),
@@ -63,10 +67,23 @@ CREATE INDEX conversation_inputs_queue ON conversation_inputs (logical_machine, 
 
 CREATE TABLE conversation_interaction_routes (
     interaction_id text PRIMARY KEY,
+    pending boolean NOT NULL DEFAULT true,
     logical_machine text NOT NULL,
     logical_session text NOT NULL,
     machine_id text NOT NULL,
     session_id text NOT NULL,
     epoch bigint NOT NULL,
     FOREIGN KEY (logical_machine, logical_session) REFERENCES logical_conversations ON DELETE CASCADE
+);
+
+-- Preparation and its context survive manager restarts. A claimed start is never
+-- repeated without a positive node receipt, even when its result was lost.
+ALTER TABLE conversation_switches ADD COLUMN handoff bytea CHECK (octet_length(handoff) <= 262144);
+ALTER TABLE conversation_switches ADD COLUMN start_claimed boolean NOT NULL DEFAULT false;
+
+-- Minimal closure intents outlive deletion of transcript content and mappings.
+CREATE TABLE conversation_segment_closures (
+ machine_id text NOT NULL,
+ session_id text NOT NULL,
+ PRIMARY KEY(machine_id, session_id)
 );

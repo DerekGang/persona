@@ -629,6 +629,7 @@ func (s *Service) historyLoop(ctx context.Context) {
 	wake := s.history.wake
 	s.history.mu.Unlock()
 	for {
+		s.logicalSweep(ctx)
 		if st := s.historyDB(ctx); st != nil {
 			s.historySweep(ctx, st)
 		}

@@ -725,7 +725,7 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 					return nil, err
 				}
 			}
-			if out, handled, err := s.logicalCall(ctx, d.Canonical(p.MachineID), p.Method, p.Params); handled {
+			if out, handled, err := s.logicalCall(context.WithValue(ctx, logicalTransportKey{}, p), d.Canonical(p.MachineID), p.Method, p.Params); handled {
 				return out, err
 			}
 			if out, handled, err := s.historyCall(ctx, d.Canonical(p.MachineID), p.Method, p.Params); handled {

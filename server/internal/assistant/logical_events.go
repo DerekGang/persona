@@ -164,6 +164,9 @@ func (s *Service) logicalEmit(machine, event string, value any) {
 // A zero-width bridge preserves the shared integer boundary for an idle target.
 func (s *Service) logicalRebind(ctx context.Context, c *db.LogicalConversation) {
 	s.logicalChanged()
+	if publisher, ok := s.physicalDevices().(interface{ ReportState() }); ok {
+		publisher.ReportState()
+	}
 	a, ok := c.Active()
 	if !ok {
 		return

@@ -111,6 +111,12 @@ func (s *Service) modelPickOf(ctx context.Context, machine, sid string) (modelPi
 
 // readModelPick distinguishes an absent selection from an unreadable one at delivery boundaries.
 func (s *Service) readModelPick(ctx context.Context, machine, sid string) (modelPick, bool, error) {
+	if c, err := s.logicalPickConversation(ctx, machine, sid); err != nil {
+		return modelPick{}, false, err
+	} else if c != nil {
+		a, _ := c.Active()
+		return modelPick{MachineID: c.MachineID, Launcher: a.Launcher, Model: a.Model, Effort: a.Effort}, true, nil
+	}
 	b := &s.modelPicks
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -135,6 +141,9 @@ func (s *Service) setModelPick(ctx context.Context, sid string, p *modelPick) er
 // updateModelPick changes conversation sid's pick to what change makes of it (its pick, and whether it had one): the
 // next pick (nil: none) and whether anything changed. A change is saved, then the apps are told.
 func (s *Service) updateModelPick(ctx context.Context, sid string, change func(p modelPick, had bool) (*modelPick, bool)) error {
+	if handled, err := s.logicalUpdatePick(ctx, sid, change); handled {
+		return err
+	}
 	st := s.store()
 	if st == nil {
 		return i18n.Err("assistant-models.err_no_database")
@@ -336,6 +345,7 @@ func (s *Service) pickModel(ctx context.Context, sid, machine string, in proto.M
 	if !s.keepsPickOn(ctx, sid, machine) {
 		return modelPick{}, refusePick(http.StatusBadRequest, i18n.Err("assistant-model_pick.err_not_assistant"))
 	}
+	launcherMachine := s.logicalExecutionMachine(ctx, machine, sid)
 	external := proto.IsExternalLauncher(in.Launcher)
 	if external {
 		pick, err := s.resolveExternalPick(ctx, sid, modelPick{MachineID: machine, Launcher: in.Launcher, Model: in.Model})
@@ -343,7 +353,7 @@ func (s *Service) pickModel(ctx context.Context, sid, machine string, in proto.M
 			return modelPick{}, refusePick(http.StatusBadRequest, err)
 		}
 		in.Model = pick.Model
-	} else if err := s.modelPickRefusal(ctx, machine, in.Launcher, lang, false); err != nil {
+	} else if err := s.modelPickRefusal(ctx, launcherMachine, in.Launcher, lang, false); err != nil {
 		return modelPick{}, err
 	}
 	var other *launcherOtherKind
@@ -354,7 +364,7 @@ func (s *Service) pickModel(ctx context.Context, sid, machine string, in proto.M
 		return modelPick{}, refusePick(http.StatusBadRequest, err)
 	}
 	if in.Model != "" && !external {
-		if err := s.pickedModelRefusal(ctx, machine, in.Launcher, in.Model); err != nil {
+		if err := s.pickedModelRefusal(ctx, launcherMachine, in.Launcher, in.Model); err != nil {
 			return modelPick{}, refusePick(http.StatusBadRequest, err)
 		}
 	}
