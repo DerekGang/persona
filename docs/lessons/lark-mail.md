@@ -15,7 +15,9 @@ as prose after an inner short run. These top-level fence boundaries follow the
 also distinguishes fenced and indented code.
 Keep blockquote and list container context when finding fences, and reject backticks in a backtick fence's info
 string. Use the existing parser's source boundaries without re-rendering Markdown; retain that line map across the
-list adapter's indentation changes so a list item's code stays protected.
+list adapter's indentation changes so a list item's code stays protected. Preserve the existing protection for
+complete inline runs of three or more backticks too: shorter delimiters inside one must not expose its tags to prose
+escaping, while surrounding prose and unmatched runs keep their normal handling.
 
 ## Lark system events are not new conversation requests
 

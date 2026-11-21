@@ -48,3 +48,25 @@ func TestCardMarkdownFenceContainerCompatibility(t *testing.T) {
 		})
 	}
 }
+
+func TestCardMarkdownLongInlineCodeCompatibility(t *testing.T) {
+	for _, marker := range []string{"```", "````"} {
+		in := marker + "a `<sample>` b" + marker + " followed by <sample>."
+		want := marker + "a `<sample>` b" + marker + " followed by &#60;sample>."
+		if got := CardMarkdown(in); got != want {
+			t.Fatalf("long code span:\n got %q\nwant %q", got, want)
+		}
+	}
+}
+
+func TestCardMarkdownSingleAndUnmatchedTicks(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"`<sample>` followed by <sample>.", "`<sample>` followed by &#60;sample>."},
+		{"`<sample> followed by <sample>.", "`&#60;sample> followed by &#60;sample>."},
+		{"Prose ```a `<sample>` b followed by <sample>.", "Prose ```a `&#60;sample>` b followed by &#60;sample>."},
+	} {
+		if got := CardMarkdown(tc.in); got != tc.want {
+			t.Fatalf("single/unmatched ticks:\n got %q\nwant %q", got, tc.want)
+		}
+	}
+}

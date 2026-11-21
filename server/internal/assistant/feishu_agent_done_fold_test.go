@@ -80,6 +80,10 @@ func TestAgentDoneCardFoldsOutsideCode(t *testing.T) {
 		lead := "```" + strings.Repeat("word", 80) + "```"
 		assertAgentDoneFold(t, lead+"\n\nOutside <sample>.", lead, "Outside &#60;sample>.")
 	})
+	t.Run("shorter ticks inside inline code", func(t *testing.T) {
+		lead := "```" + strings.Repeat("word ", 65) + "`<sample>` body```"
+		assertAgentDoneFold(t, lead+"\n\nOutside <sample>.", lead, "Outside &#60;sample>.")
+	})
 	t.Run("backtick in info is not a fence", func(t *testing.T) {
 		lead := "```go`invalid\n" + strings.Repeat("Text ", 70)
 		assertAgentDoneFold(t, lead+"\n\nOutside <sample>.", strings.TrimSpace(lead), "Outside &#60;sample>.")

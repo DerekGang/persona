@@ -505,6 +505,46 @@ func listIndent(s string) string {
 }
 
 func cardProse(s string) string {
+	// The former fence matcher also protected complete inline runs of three or
+	// more backticks. Match their whole delimiter before applying the existing
+	// single-backtick handling, so an inner shorter run cannot expose code tags.
+	var b strings.Builder
+	last, at := 0, 0
+	for at < len(s) {
+		if s[at] != '`' {
+			at++
+			continue
+		}
+		start := at
+		for at < len(s) && s[at] == '`' {
+			at++
+		}
+		n := at - start
+		if n < 3 {
+			continue
+		}
+		for end := at; end < len(s) && s[end] != '\n'; {
+			if s[end] != '`' {
+				end++
+				continue
+			}
+			close := end
+			for end < len(s) && s[end] == '`' {
+				end++
+			}
+			if end-close == n {
+				b.WriteString(cardProseSingle(s[last:start]))
+				b.WriteString(s[start:end])
+				last, at = end, end
+				break
+			}
+		}
+	}
+	b.WriteString(cardProseSingle(s[last:]))
+	return b.String()
+}
+
+func cardProseSingle(s string) string {
 	var b strings.Builder
 	last := 0
 	for _, loc := range inlineRe.FindAllStringIndex(s, -1) {
