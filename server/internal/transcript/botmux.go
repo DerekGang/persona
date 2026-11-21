@@ -239,13 +239,17 @@ func BotmuxSend(command string) *proto.Botmux {
 		return nil
 	}
 	words, heredoc, rest, ok := shellWords(strings.TrimSpace(command))
+	words = skipShellAssignments(words)
 	for ok && len(words) > 0 && words[0] == "cd" && rest != "" { // `cd <dir> && botmux send --files <relative path>`
 		words, heredoc, rest, ok = shellWords(strings.TrimSpace(rest))
+		words = skipShellAssignments(words)
 	}
 	if !ok || len(words) < 2 || (words[0] != "botmux" && path.Base(words[0]) != "botmux") || words[1] != "send" {
 		return nil
 	}
-	if strings.Contains(rest, "botmux") && strings.Contains(rest, "send") {
+	// Another real `botmux send` anywhere in the script (not one in a quoted word, a comment or a here-document's
+	// body) means this one's words are not the whole reply.
+	if calls, ok := botmuxSendCalls(command); !ok || len(calls) != 1 {
 		return nil
 	}
 	b := &proto.Botmux{Kind: proto.BotmuxReply}
@@ -349,7 +353,12 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 			if !delimQuoted && hasUnquotedHeredocExpansion(body) {
 				return nil, "", "", false
 			}
-			return words, body, s[i:i+nl] + tail, true
+			// the rest of the command's own line, then what follows the delimiter line on a line of its own
+			rest = s[i : i+nl]
+			if tail != "" {
+				rest += "\n" + tail
+			}
+			return words, body, rest, true
 		case c == ' ' || c == '\t':
 			flush()
 			i++
@@ -715,6 +724,97 @@ func botmuxToolResultSucceeded(res *proto.Item) bool {
 		}
 	}
 	return !botmuxResultReportsFailure(res.Text)
+}
+
+// skipShellAssignments drops the NAME=value words before a command's name (`LANG=C botmux send hi`): they set its
+// environment, not its words.
+func skipShellAssignments(words []string) []string {
+	for len(words) > 0 {
+		name, _, found := strings.Cut(words[0], "=")
+		if !found || !shellName(name) {
+			break
+		}
+		words = words[1:]
+	}
+	return words
+}
+
+// botmuxOpaqueWord stands for the part of a word only running the shell could tell (an expansion, a substitution).
+const botmuxOpaqueWord = "\x00"
+
+// botmuxSendCalls is every `botmux send` invocation in command, each as its words: the simple commands anywhere in the
+// script (and-or chains, pipelines, blocks, if and loop bodies, substitutions) whose program is botmux and whose first
+// argument is send. Quoted words, comments and here-document bodies are never commands; redirects and NAME=value
+// prefixes are not words. BotmuxSend and countBotmuxSendInvocations both read commands through it, so a command the
+// structured overlay counts is one the decoder sees the same way. ok is false when command does not parse.
+func botmuxSendCalls(command string) (calls [][]string, ok bool) {
+	script, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil {
+		return nil, false
+	}
+	syntax.Walk(script, func(node syntax.Node) bool {
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall || len(call.Args) < 2 {
+			return true
+		}
+		words := make([]string, len(call.Args))
+		for i, w := range call.Args {
+			words[i] = botmuxWordText(w)
+		}
+		if path.Base(words[0]) == "botmux" && words[1] == "send" {
+			calls = append(calls, words)
+		}
+		return true
+	})
+	return calls, true
+}
+
+// botmuxWordText is a parsed word with its quotes removed; parts the shell computes read as botmuxOpaqueWord.
+func botmuxWordText(w *syntax.Word) string {
+	var b strings.Builder
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			b.WriteString(shellUnescape(p.Value, ""))
+		case *syntax.SglQuoted:
+			if p.Dollar {
+				b.WriteString(botmuxOpaqueWord)
+			} else {
+				b.WriteString(p.Value)
+			}
+		case *syntax.DblQuoted:
+			for _, q := range p.Parts {
+				if lit, isLit := q.(*syntax.Lit); isLit {
+					b.WriteString(shellUnescape(lit.Value, "\"\\$`\n"))
+				} else {
+					b.WriteString(botmuxOpaqueWord)
+				}
+			}
+		default:
+			b.WriteString(botmuxOpaqueWord)
+		}
+	}
+	return b.String()
+}
+
+// shellUnescape removes the backslashes sh removes: before any character outside quotes (only "" for escapable), or
+// before one of escapable inside double quotes. A backslash-newline joins lines.
+func shellUnescape(s, escapable string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && (escapable == "" || strings.IndexByte(escapable, s[i+1]) >= 0) {
+			i++
+			if s[i] != '\n' {
+				b.WriteByte(s[i])
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func botmuxSendStatusPreserved(command string) bool {

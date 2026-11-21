@@ -620,18 +620,18 @@ func TestBotmuxSendCountIgnoresInlineComments(t *testing.T) {
 	}
 }
 
-func TestBotmuxSplitShellSegmentsComments(t *testing.T) {
+func TestBotmuxSendCallsComments(t *testing.T) {
 	for _, test := range []struct {
 		cmd  string
-		want []string
+		want [][]string
 	}{
-		{"botmux send --card-file a.json # not --dry-run", []string{"botmux send --card-file a.json"}},
-		{"# setup; botmux send --dry-run\nbotmux send x", []string{"botmux send x"}},
-		{"botmux send done#1 '#q' \"#d\" \\#e", []string{"botmux send done#1 '#q' \"#d\" \\#e"}},
-		{"botmux send <<'EOF' # heading next\n# Heading; --dry-run\nEOF\necho ok # done", []string{"botmux send <<'EOF'", "echo ok"}},
+		{"botmux send --card-file a.json # not --dry-run", [][]string{{"botmux", "send", "--card-file", "a.json"}}},
+		{"# setup; botmux send --dry-run\nbotmux send x", [][]string{{"botmux", "send", "x"}}},
+		{"botmux send done#1 '#q' \"#d\" \\#e", [][]string{{"botmux", "send", "done#1", "#q", "#d", "#e"}}},
+		{"botmux send <<'EOF' # heading next\n# Heading; --dry-run\nEOF\necho ok # done", [][]string{{"botmux", "send"}}},
 	} {
-		if got := splitShellSegments(test.cmd); !reflect.DeepEqual(got, test.want) {
-			t.Errorf("splitShellSegments(%q) = %q, want %q", test.cmd, got, test.want)
+		if got, ok := botmuxSendCalls(test.cmd); !ok || !reflect.DeepEqual(got, test.want) {
+			t.Errorf("botmuxSendCalls(%q) = %q, %t, want %q", test.cmd, got, ok, test.want)
 		}
 	}
 	if n := countBotmuxSendInvocations("botmux send --card-file a.json '# --dry-run'"); n != 1 {
@@ -639,5 +639,119 @@ func TestBotmuxSplitShellSegmentsComments(t *testing.T) {
 	}
 	if n := countBotmuxSendInvocations("botmux send --card-file a.json \\# --dry-run"); n != 0 {
 		t.Fatalf("an escaped # does not start a comment: count = %d", n)
+	}
+}
+
+func botmuxSendItems(command, result string) []proto.Item {
+	input, _ := json.Marshal(map[string]string{"command": command})
+	return []proto.Item{
+		{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: "<user_message>\nrun\n</user_message>"},
+		{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: input},
+		{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: result},
+	}
+}
+
+func TestBotmuxSendTrailingShellIsStructural(t *testing.T) {
+	for _, test := range []struct {
+		name, command, want string
+	}{
+		{"quoted text in a trailing command", "botmux send 'done' && logger 'botmux send finished'", "done"},
+		{"double-quoted text in a trailing command", `botmux send 'done' && echo "botmux send ok"`, "done"},
+		{"comment", "botmux send 'done' # botmux send later", "done"},
+		{"comment line", "botmux send 'done' &&\n# then botmux send nothing else\necho sent", "done"},
+		{"here-document body of a trailing command", "botmux send 'done' && cat <<'EOF'\nbotmux send x\nEOF", "done"},
+		{"second send", "botmux send 'one' && botmux send 'two'", ""},
+		{"second send by path", "botmux send 'one'; /usr/local/bin/botmux send two", ""},
+		{"second send with a prefix", "botmux send 'one' && LANG=C botmux send two", ""},
+		{"second send in a substitution", "botmux send 'one' && echo $(botmux send two)", ""},
+		{"second send in a block", "botmux send 'one' && if true; then botmux send two; fi", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := BotmuxSend(test.command)
+			if test.want == "" && got != nil || test.want != "" && (got == nil || got.Text != test.want) {
+				t.Fatalf("BotmuxSend(%q) = %+v, want %q", test.command, got, test.want)
+			}
+			if test.want == "" {
+				return
+			}
+			if got := DecorateBotmux(botmuxSendItems(test.command, "ok"))[1].Botmux; got == nil || got.Text != test.want {
+				t.Fatalf("delivered reply left undecorated: %+v", got)
+			}
+		})
+	}
+}
+
+func TestBotmuxSendHeredocKeepsCommandBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name, command, want string
+	}{
+		{"second send after the delimiter", "botmux send <<'EOF'\nhi\nEOF\nbotmux send 'two'", ""},
+		{"second send after a chained command", "botmux send <<'EOF' && true\nhi\nEOF\nbotmux send 'two'", ""},
+		{"second send on the command's line", "botmux send <<'EOF' && botmux send 'two'\nhi\nEOF", ""},
+		{"chained command on the command's line", "botmux send <<'EOF' && logger done\nhi\nEOF", "hi"},
+		{"chained command after the delimiter", "botmux send <<'EOF' &&\nhi\nEOF\necho sent", "hi"},
+		{"comment after the delimiter", "botmux send <<'EOF'\nhi\nEOF\n# botmux send later", "hi"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := BotmuxSend(test.command)
+			if test.want == "" && got != nil || test.want != "" && (got == nil || got.Text != test.want) {
+				t.Fatalf("BotmuxSend(%q) = %+v, want %q", test.command, got, test.want)
+			}
+			if test.want == "" {
+				return
+			}
+			if got := DecorateBotmux(botmuxSendItems(test.command, "ok"))[1].Botmux; got == nil || got.Text != test.want {
+				t.Fatalf("delivered reply left undecorated: %+v", got)
+			}
+		})
+	}
+	// the delimiter line ends a line: what follows it starts a command of its own
+	if _, _, rest, ok := shellWords("botmux send <<'EOF' && true\nhi\nEOF\nbotmux send 'two'"); !ok || rest != "&& true\nbotmux send 'two'" {
+		t.Fatalf("rest = %q, %t", rest, ok)
+	}
+}
+
+func TestBotmuxSendCountMatchesDecoder(t *testing.T) {
+	for _, test := range []struct {
+		name, command string
+		count         int
+		decoded       string // BotmuxSend's text, "" when it cannot read the reply
+		overlay       string // the reply shown once the receipt matches a structured record
+	}{
+		{"cd then content file", "cd /tmp && botmux send --content-file reply.md", 1, "", "Full reply from the file"},
+		{"cd then content file, status kept", "cd /tmp && botmux send --content-file reply.md && echo sent", 1, "", "Full reply from the file"},
+		{"cd then text", "cd /tmp && botmux send 'hi'", 1, "hi", "Full reply from the file"},
+		{"environment prefix", "LANG=C botmux send 'hi'", 1, "hi", "Full reply from the file"},
+		{"cd then environment prefix", "cd /tmp && LANG=C botmux send 'hi'", 1, "hi", "Full reply from the file"},
+		{"status masked", "botmux send 'hi' || true", 1, "", "Full reply from the file"},
+		{"in a block", "if true; then botmux send --card-file a.json; fi", 1, "", "Full reply from the file"},
+		{"in a subshell", "(cd /tmp && botmux send --content-file reply.md)", 1, "", "Full reply from the file"},
+		{"quoted send is a word", "echo 'botmux send hi'", 0, "", ""},
+		{"commented send", "true # botmux send hi", 0, "", ""},
+		{"dry run", "cd /tmp && botmux send --dry-run 'hi'", 0, "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if n := countBotmuxSendInvocations(test.command); n != test.count {
+				t.Fatalf("countBotmuxSendInvocations(%q) = %d, want %d", test.command, n, test.count)
+			}
+			got := BotmuxSend(test.command)
+			if test.decoded == "" && got != nil && botmuxSendStatusPreserved(test.command) || test.decoded != "" && (got == nil || got.Text != test.decoded) {
+				t.Fatalf("BotmuxSend(%q) = %+v, want %q", test.command, got, test.decoded)
+			}
+			if got != nil && test.count != 1 {
+				t.Fatalf("decoded a send the counter does not count: %+v", got)
+			}
+			items := botmuxSendItems(test.command, `{"success":true,"messageId":"om_reply"}`)
+			turns := []BotmuxTurn{{
+				TurnID:  "turn1",
+				Seq:     1,
+				Replies: []BotmuxTurnReply{{MessageID: "om_reply", ResponseKind: "final", Text: "Full reply from the file"}},
+				Anchor:  &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(items[0].Text)},
+			}}
+			reply := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")[1].Botmux
+			if test.overlay == "" && reply != nil || test.overlay != "" && (reply == nil || reply.Text != test.overlay || !reply.Final) {
+				t.Fatalf("overlay = %+v, want %q", reply, test.overlay)
+			}
+		})
 	}
 }

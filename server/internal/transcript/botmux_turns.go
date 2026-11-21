@@ -421,24 +421,21 @@ func botmuxFromReplies(replies []BotmuxTurnReply, existing *proto.Botmux) *proto
 	}
 }
 
-// countBotmuxSendInvocations counts syntactically valid `botmux send` invocations in cmd
-// (excluding --help, -h, --dry-run, unknown flags, and invalid flag syntax), including forms whose
-// body is not on the command line (--content-file, --card-file, --card-json, heredocs, pipes).
-// Heredoc bodies are skipped so lines inside a message are not miscounted as separate commands.
+// countBotmuxSendInvocations counts the `botmux send` invocations in cmd BotMux would carry out (not --help, -h,
+// --dry-run, an unknown flag or a flag missing its value), including forms whose body is not on the command line
+// (--content-file, --card-file, --card-json, heredocs, pipes). It reads cmd through botmuxSendCalls like BotmuxSend
+// does, so leading `cd … &&` and NAME=value prefixes, chains, blocks and comments are taken apart the same way, and a
+// quoted word, a comment or a here-document's body is never counted as a command.
 func countBotmuxSendInvocations(cmd string) int {
 	if !strings.Contains(cmd, "botmux") || !strings.Contains(cmd, "send") {
 		return 0
 	}
+	calls, ok := botmuxSendCalls(cmd)
+	if !ok {
+		return 0
+	}
 	count := 0
-	for _, seg := range splitShellSegments(cmd) {
-		words := splitShellWordsSimple(seg)
-		// Skip leading KEY=VAL environment assignments.
-		for len(words) > 0 && isEnvAssign(words[0]) {
-			words = words[1:]
-		}
-		if len(words) < 2 || path.Base(words[0]) != "botmux" || words[1] != "send" {
-			continue
-		}
+	for _, words := range calls {
 		if isValidBotmuxSendArgs(words[2:]) {
 			count++
 		}
@@ -447,22 +444,8 @@ func countBotmuxSendInvocations(cmd string) int {
 }
 
 func isValidBotmuxSendArgs(words []string) bool {
-	// Strip shell redirections (e.g. 2>&1, >/dev/null, <<'EOF') before checking flags.
-	cleaned := make([]string, 0, len(words))
 	for i := 0; i < len(words); i++ {
 		w := words[i]
-		if w == ">" || w == ">>" || w == "1>" || w == "2>" || w == "&>" || w == "<<" || w == "<<-" {
-			i++ // skip redirection target / delimiter
-			continue
-		}
-		if strings.HasPrefix(w, ">") || strings.HasPrefix(w, "1>") || strings.HasPrefix(w, "2>") ||
-			strings.HasPrefix(w, "&>") || strings.HasPrefix(w, "<<") {
-			continue
-		}
-		cleaned = append(cleaned, w)
-	}
-	for i := 0; i < len(cleaned); i++ {
-		w := cleaned[i]
 		if w == "-h" || w == "--" {
 			return false
 		}
@@ -478,209 +461,16 @@ func isValidBotmuxSendArgs(words []string) bool {
 		case sendFlagOptional:
 		case sendFlagValue, sendFlagFileValue:
 			if !eq {
-				if i+1 >= len(cleaned) || cleaned[i+1] == "-h" || strings.HasPrefix(cleaned[i+1], "--") {
+				if i+1 >= len(words) || words[i+1] == "-h" || strings.HasPrefix(words[i+1], "--") {
 					return false
 				}
 				i++
-				value = cleaned[i]
+				value = words[i]
 			}
 			if value == "" {
 				return false
 			}
 		default: // sendFlagGiveUp (--help, --dry-run) or unknown flag
-			return false
-		}
-	}
-	return true
-}
-
-// splitShellSegments splits a shell command on unquoted ;, &&, ||, |, and newlines,
-// skipping heredoc bodies so lines inside a heredoc are not treated as separate commands, and
-// comments (an unquoted # that begins a word, to the end of its line) so their words are not arguments.
-func splitShellSegments(s string) []string {
-	var out []string
-	var cur strings.Builder
-	var quote byte
-	var pendingDelim string
-	var pendingStrip bool
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if quote != 0 {
-			if c == '\\' && quote == '"' && i+1 < len(s) {
-				cur.WriteByte(c)
-				i++
-				cur.WriteByte(s[i])
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-			cur.WriteByte(c)
-			continue
-		}
-		switch c {
-		case '\'', '"':
-			quote = c
-			cur.WriteByte(c)
-		case '\\':
-			cur.WriteByte(c)
-			if i+1 < len(s) {
-				i++
-				cur.WriteByte(s[i])
-			}
-		case '<':
-			if pendingDelim == "" && strings.HasPrefix(s[i:], "<<") && !strings.HasPrefix(s[i:], "<<<") {
-				cur.WriteString("<<")
-				i += 2
-				strip := false
-				if i < len(s) && s[i] == '-' {
-					strip = true
-					cur.WriteByte('-')
-					i++
-				}
-				for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-					cur.WriteByte(s[i])
-					i++
-				}
-				j := i
-				for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\n' && s[j] != ';' && s[j] != '|' && s[j] != '&' {
-					j++
-				}
-				if d, _, ok := parseHeredocDelim(s[i:j]); ok {
-					pendingDelim = d
-					pendingStrip = strip
-				}
-				cur.WriteString(s[i:j])
-				i = j - 1
-				continue
-			}
-			cur.WriteByte(c)
-		case '\n':
-			if seg := strings.TrimSpace(cur.String()); seg != "" {
-				out = append(out, seg)
-			}
-			cur.Reset()
-			if pendingDelim != "" {
-				// Skip heredoc body lines until the matching delimiter line.
-				rest := s[i+1:]
-				pos := 0
-				for pos < len(rest) {
-					nl := strings.IndexByte(rest[pos:], '\n')
-					var line string
-					var nextPos int
-					if nl < 0 {
-						line = rest[pos:]
-						nextPos = len(rest)
-					} else {
-						line = rest[pos : pos+nl]
-						nextPos = pos + nl + 1
-					}
-					checkLine := line
-					if pendingStrip {
-						checkLine = strings.TrimLeft(checkLine, "\t")
-					}
-					pos = nextPos
-					if checkLine == pendingDelim {
-						break
-					}
-				}
-				i += pos
-				pendingDelim = ""
-				pendingStrip = false
-			}
-		case '#':
-			if t := cur.String(); t != "" && t[len(t)-1] != ' ' && t[len(t)-1] != '\t' {
-				cur.WriteByte(c) // inside a word (done#1): literal
-				continue
-			}
-			nl := strings.IndexByte(s[i:], '\n')
-			if nl < 0 {
-				i = len(s)
-			} else {
-				i += nl - 1 // the newline still ends the segment and starts a pending here-document's body
-			}
-		case ';':
-			if seg := strings.TrimSpace(cur.String()); seg != "" {
-				out = append(out, seg)
-			}
-			cur.Reset()
-		case '&', '|':
-			if c == '&' && ((i > 0 && s[i-1] == '>') || (i+1 < len(s) && s[i+1] == '>')) {
-				cur.WriteByte(c)
-				continue
-			}
-			if i+1 < len(s) && s[i+1] == c {
-				i++
-			}
-			if seg := strings.TrimSpace(cur.String()); seg != "" {
-				out = append(out, seg)
-			}
-			cur.Reset()
-		default:
-			cur.WriteByte(c)
-		}
-	}
-	if seg := strings.TrimSpace(cur.String()); seg != "" {
-		out = append(out, seg)
-	}
-	return out
-}
-
-func splitShellWordsSimple(s string) []string {
-	var words []string
-	var cur strings.Builder
-	var quote byte
-	inWord := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if quote != 0 {
-			if c == '\\' && quote == '"' && i+1 < len(s) {
-				i++
-				cur.WriteByte(s[i])
-				continue
-			}
-			if c == quote {
-				quote = 0
-				continue
-			}
-			cur.WriteByte(c)
-			continue
-		}
-		switch c {
-		case '\'', '"':
-			quote = c
-			inWord = true
-		case '\\':
-			inWord = true
-			if i+1 < len(s) {
-				i++
-				cur.WriteByte(s[i])
-			}
-		case ' ', '\t', '\r':
-			if inWord {
-				words = append(words, cur.String())
-				cur.Reset()
-				inWord = false
-			}
-		default:
-			inWord = true
-			cur.WriteByte(c)
-		}
-	}
-	if inWord {
-		words = append(words, cur.String())
-	}
-	return words
-}
-
-func isEnvAssign(w string) bool {
-	eq := strings.IndexByte(w, '=')
-	if eq <= 0 {
-		return false
-	}
-	for i := 0; i < eq; i++ {
-		c := w[i]
-		if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (i > 0 && c >= '0' && c <= '9')) {
 			return false
 		}
 	}
