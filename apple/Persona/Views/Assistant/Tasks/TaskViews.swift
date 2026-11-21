@@ -229,27 +229,35 @@ struct PlanCard: View {
                     .foregroundStyle(Theme.danger)
                     .lineLimit(2)
             }
-            if plan.state == .started {
-                ForEach(plan.tasks.indices, id: \.self) { i in
-                    let task = plan.tasks[i]
-                    let confirmed = task.workflowKind == .codexMultiAgentV2 && task.workflowActive == true
-                    if task.error == nil, let line = task.workflowNote ?? (confirmed ? AgentWorkflowKind.codexMultiAgentV2.onWords : nil) {
-                        Label {
-                            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                                if plan.tasks.count > 1 { Text(task.title).font(Theme.Font.captionStrong) }
-                                Text(verbatim: line)
-                            }
-                        } icon: {
-                            ThemedIcon(Theme.Icon.workflow)
+            PlanWorkflowReceipts(plan: plan)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PlanWorkflowReceipts: View {
+    var plan: TaskPlan
+
+    var body: some View {
+        if plan.state == .started {
+            ForEach(plan.tasks.indices, id: \.self) { i in
+                let task = plan.tasks[i]
+                let confirmed = task.workflowKind == .codexMultiAgentV2 && task.workflowActive == true
+                if task.error == nil, let line = task.workflowNote ?? (confirmed ? AgentWorkflowKind.codexMultiAgentV2.onWords : nil) {
+                    Label {
+                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                            if plan.tasks.count > 1 { Text(task.title).font(Theme.Font.captionStrong) }
+                            Text(verbatim: line)
                         }
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(task.workflowNote == nil ? Color.secondary : Theme.cautionText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        ThemedIcon(Theme.Icon.workflow)
                     }
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(task.workflowNote == nil ? Color.secondary : Theme.cautionText)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -494,12 +502,22 @@ struct FeedLine: View {
 
     var body: some View {
         switch item.kind {
-        case .plan, .task:
+        case .plan:
+            if let id = item.ref, let plan = store.plans[id] ?? item.plan {
+                if let tasks = DispatchedTasks.entries(for: plan, conversation: item.conversation,
+                                                      titleOf: { store.todos[$0]?.title }) {
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        DispatchHandoffCards(tasks: tasks)
+                        PlanWorkflowReceipts(plan: plan)
+                    }
+                } else {
+                    PlanCard(plan: plan)
+                }
+            }
+        case .task:
             if let tasks = DispatchedTasks.entries(for: item, plans: store.plans,
                                                   titleOf: { store.todos[$0]?.title }, fallback: String(localized: "Tasks")) {
                 DispatchHandoffCards(tasks: tasks)
-            } else if let id = item.ref, let plan = store.plans[id] ?? item.plan {
-                PlanCard(plan: plan)
             }
         case .today:
             if let body = item.today { TodayCard(item: item, body: body) }

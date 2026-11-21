@@ -429,9 +429,9 @@ ordinary launch arguments. The process-local flag requires no change to `~/.code
 
 An unsupported executable, remote runtime, desktop App session, or resume is refused before launching with the flag.
 For a new assistant-dispatched Agent, Persona retries without the option once and reports the reason in its receipt.
-Running and historical Agent rows show the confirmed option when the node has evidence of the start. The plan editor
-distinguishes a request from its start receipt. This option is independent of Codex reasoning effort and Claude Code's
-live workflow control.
+The Agent list shows the option for the live process that Persona started. The plan editor distinguishes a request
+from its start receipt, which records whether the launch used the option. Codex reasoning effort and Claude Code's
+live workflow control have their own settings.
 
 ### Starting without a first message
 

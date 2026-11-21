@@ -89,9 +89,16 @@ func TestCodexMultiAgentManagedOptions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a stub Unix executable")
 	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("requires bash for a startup-free shell")
+	}
 	n, _, cwd, _ := codexStartHerdr(t, 0)
 	bin := filepath.Join(t.TempDir(), "bin")
 	exe := writeExecutable(t, filepath.Join(bin, "codex"), stubMultiAgentCodex)
+	// The production lookup reads the user's shell startup files, which may change PATH.
+	writeExecutable(t, filepath.Join(bin, "bash"), "#!/bin/sh\nexec "+shellQuote(bash)+" --noprofile --norc \"$@\"\n")
+	t.Setenv("SHELL", "bash")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	n.managed.byID = map[string]proto.ManagedLauncher{
 		"work": {Name: "work", Agent: "codex", Args: []string{"-m", "gpt-test", "--", "launcher tail"}},

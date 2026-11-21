@@ -21,7 +21,7 @@ def register(d):
     sessions = {ACTIVE_SESSION, LEGACY_SESSION}
 
     def reset():
-        base = {"machine": MACHINE, "cwd": "/demo/workflows", "permission": "default", "ultracode": False}
+        base = {"machine": MACHINE, "cwd": "/demo/workflows", "permission": "default", "role": "worker", "ultracode": False}
         with lock:
             hub.SESSIONS[:] = [row for row in hub.SESSIONS if row["session_id"] not in sessions]
             for session in sessions:
@@ -68,6 +68,7 @@ def register(d):
                     if session_id == ACTIVE_SESSION:
                         task["workflow_active"] = row["codex_multi_agent_v2"] = True
                     else:
+                        task["ultracode"] = False
                         task["workflow_note"] = SKIPPED
                 hub.SESSIONS.append(row)
                 hub.ITEMS[session_id] = [hub.it("assistant", "text", 0, text="Review in progress")]
