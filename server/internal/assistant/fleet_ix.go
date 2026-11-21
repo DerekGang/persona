@@ -437,34 +437,72 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 	if !ownerActionProposal(ix) {
 		ix.NoExpiry = false
 	}
+	freshLogical, err := s.logicalPublishInteraction(ctx, ix)
+	if err != nil {
+		return proto.Resolution{}, err
+	}
 	again := false
-	restartPrepared := false
-	s.fleet.mu.Lock()
-	if p := s.fleet.interactions[ix.ID]; p != nil {
-		if p.local != nil {
-			s.fleet.mu.Unlock()
-			return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
-		}
-		// Detachable original replays use exact call identity; ordinary
-		// resumable cards use their creation timestamp. Legacy zero-time
-		// non-resumable duplicates retain ID-only joining. A persistent owner
-		// proposal may rejoin only the same durable batch/item after restart
-		// normalization changed its timestamp; decisions remain occurrence-bound.
-		sameOwnerOperation := persistentOwnerProposal(ix) && persistentOwnerProposal(p.ix) &&
-			ix.MachineID == p.ix.MachineID && ix.SessionID == p.ix.SessionID &&
-			ix.ApprovalBatchID == p.ix.ApprovalBatchID && ix.ApprovalItemID == p.ix.ApprovalItemID
-		if (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix) && !sameOwnerOperation {
-			s.fleet.mu.Unlock()
-			return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
-		}
-		if p.prepared == nil && recovered != nil {
-			// A restored process has no executable operation. Close a journaled
-			// occurrence before its replay can attach an ordinary waiter and
-			// before an owner answer can turn recovery into an execution Allow.
+	if !freshLogical {
+		restartPrepared := false
+		s.fleet.mu.Lock()
+		if p := s.fleet.interactions[ix.ID]; p != nil && p.local == nil {
+			if ix.Resumable && p.prepared != nil {
+				// The reconnecting hook is now the caller whose lifetime governs the
+				// initial wait. The disconnected context must not expire a card its
+				// resumable request has already reclaimed.
+				p.prepared.caller = ctx
+			}
+			if ix.Resumable && p.graceEnded {
+				// The grace period ended and the card is being ended outside the lock (the history, the apps): the
+				// hook hands over, as one back just after would (#5043's kind of gap).
+				s.fleet.mu.Unlock()
+				return proto.Resolution{Dismiss: true}, nil
+			}
+			if p.orphaned != nil {
+				p.orphaned.Stop() // fired but not decided yet: it finds p.orphaned nil and leaves the card to the hook
+				p.orphaned = nil
+			}
+			if a := p.prepared; ix.Resumable && a != nil && !a.clarified && !a.terminal {
+				// The initial timer may have fired while the card was orphaned and
+				// deliberately done nothing. Reclaiming starts a fresh initial wait.
+				if a.decisionTimer != nil {
+					a.decisionTimer.Stop()
+				}
+				restartPrepared = true
+			}
+			// Detachable original replays use exact call identity; ordinary
+			// resumable cards use their creation timestamp. Legacy zero-time
+			// non-resumable duplicates retain ID-only joining. A persistent owner
+			// proposal may rejoin only the same durable batch/item after restart
+			// normalization changed its timestamp; decisions remain occurrence-bound.
+			sameOwnerOperation := persistentOwnerProposal(ix) && persistentOwnerProposal(p.ix) &&
+				ix.MachineID == p.ix.MachineID && ix.SessionID == p.ix.SessionID &&
+				ix.ApprovalBatchID == p.ix.ApprovalBatchID && ix.ApprovalItemID == p.ix.ApprovalItemID
+			if (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix) && !sameOwnerOperation {
+				s.fleet.mu.Unlock()
+				return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
+			}
+			if p.prepared == nil && recovered != nil {
+				// A restored process has no executable operation. Close a journaled
+				// occurrence before its replay can attach an ordinary waiter and
+				// before an owner answer can turn recovery into an execution Allow.
+				s.fleet.mu.Unlock()
+				releaseAdmission()
+				if err := s.finishRecoveredApproval(*recovered); err != nil {
+					return proto.Resolution{}, err
+				}
+				if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
+					_ = s.resolve(ix.ID, proto.Resolution{Dismiss: true})
+				}
+				notifyReady(nil)
+				// Resumable node cards reconnect through reporter-less interaction.create requests; MCP elicitation cards
+				// are not resumable, so this branch never has a wait reporter to restore.
+				return s.await(ctx, p)
+			}
 			s.fleet.mu.Unlock()
 			releaseAdmission()
-			if err := s.finishRecoveredApproval(*recovered); err != nil {
-				return proto.Resolution{}, err
+			if restartPrepared {
+				s.startPreparedTimer(p)
 			}
 			if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
 				_ = s.resolve(ix.ID, proto.Resolution{Dismiss: true})
@@ -474,44 +512,8 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 			// are not resumable, so this branch never has a wait reporter to restore.
 			return s.await(ctx, p)
 		}
-		if ix.Resumable && p.prepared != nil {
-			// The reconnecting hook is now the caller whose lifetime governs the
-			// initial wait. The disconnected context must not expire a card its
-			// resumable request has already reclaimed.
-			p.prepared.caller = ctx
-		}
-		if p.graceEnded {
-			// The grace period ended and the card is being ended outside the lock (the history, the apps): the
-			// hook hands over, as one back just after would (#5043's kind of gap).
-			s.fleet.mu.Unlock()
-			return proto.Resolution{Dismiss: true}, nil
-		}
-		if p.orphaned != nil {
-			p.orphaned.Stop() // fired but not decided yet: it finds p.orphaned nil and leaves the card to the hook
-			p.orphaned = nil
-		}
-		if a := p.prepared; ix.Resumable && a != nil && !a.clarified && !a.terminal {
-			// The initial timer may have fired while the card was orphaned and
-			// deliberately done nothing. Reclaiming starts a fresh initial wait.
-			if a.decisionTimer != nil {
-				a.decisionTimer.Stop()
-			}
-			restartPrepared = true
-		}
 		s.fleet.mu.Unlock()
-		releaseAdmission()
-		if restartPrepared {
-			s.startPreparedTimer(p)
-		}
-		if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
-			_ = s.resolve(ix.ID, proto.Resolution{Dismiss: true})
-		}
-		notifyReady(nil)
-		// Resumable node cards reconnect through reporter-less interaction.create requests; MCP elicitation cards
-		// are not resumable, so this branch never has a wait reporter to restore.
-		return s.await(ctx, p)
 	}
-	s.fleet.mu.Unlock()
 	if ix.Resumable {
 		if err := s.checkRecordedInteractionOccurrence(ctx, ix); err != nil {
 			return proto.Resolution{}, err
@@ -989,6 +991,13 @@ func (s *Service) resolveAnswer(ctx context.Context, id string, r proto.Resoluti
 
 func (s *Service) resolveAnswerAt(ctx context.Context, id string, r proto.Resolution, remember bool, authorization *standingResolution,
 	approver *assistantwire.HandoffApprover, expected *interactionExpectation) error {
+	return s.logicalInteractionAnswer(ctx, id, r, func() error {
+		return s.resolveActiveAnswer(ctx, id, r, remember, authorization, approver, expected)
+	})
+}
+
+func (s *Service) resolveActiveAnswer(ctx context.Context, id string, r proto.Resolution, remember bool, authorization *standingResolution,
+	approver *assistantwire.HandoffApprover, expected *interactionExpectation) error {
 	r.ModeActor = nil // provenance is never taken from an answer body
 	s.fleet.mu.Lock()
 	prepared := s.fleet.interactions[id]
@@ -1273,6 +1282,11 @@ func (s *Service) finishPending(expected *pending) {
 // finishInteraction is for lifecycle callers that genuinely have only an ID.
 // Occurrence-holding waiters and finalizers use finishPending instead.
 func (s *Service) finishInteraction(id string) {
+	if routes, ok := s.store().(logicalInteractionStore); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = routes.FinishConversationInteraction(ctx, id)
+		cancel()
+	}
 	s.fleet.mu.Lock()
 	p, ok := s.fleet.interactions[id]
 	delete(s.fleet.interactions, id)
