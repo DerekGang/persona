@@ -447,8 +447,13 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 		}
 		// Detachable original replays use exact call identity; ordinary
 		// resumable cards use their creation timestamp. Legacy zero-time
-		// non-resumable duplicates retain ID-only joining.
-		if (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix) {
+		// non-resumable duplicates retain ID-only joining. A persistent owner
+		// proposal may rejoin only the same durable batch/item after restart
+		// normalization changed its timestamp; decisions remain occurrence-bound.
+		sameOwnerOperation := persistentOwnerProposal(ix) && persistentOwnerProposal(p.ix) &&
+			ix.MachineID == p.ix.MachineID && ix.SessionID == p.ix.SessionID &&
+			ix.ApprovalBatchID == p.ix.ApprovalBatchID && ix.ApprovalItemID == p.ix.ApprovalItemID
+		if (ix.Detachable || !ix.CreatedAt.IsZero()) && !sameApprovalOccurrence(ix, p.ix) && !sameOwnerOperation {
 			s.fleet.mu.Unlock()
 			return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
 		}

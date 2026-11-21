@@ -733,6 +733,11 @@ func recoveredApprovalOutcome(a approvalJournalEntry) (historyStatus, journalSta
 			journalStatus = "cancelled"
 			text = "The assistant restarted, so the retained operation was cancelled without executing. Ask for a fresh approval if the change is still wanted."
 		}
+	} else {
+		// finishPrepared adds the standard result prefix when it refreshes the
+		// journal. A terminal recovered entry already contains that prefix; strip
+		// exactly this occurrence's own prefix so delivery reproduces it once.
+		text = strings.TrimPrefix(text, approvalResultText(a.ID, journalStatus, ""))
 	}
 	switch journalStatus {
 	case "approved", "resolved", "denied", "covered":

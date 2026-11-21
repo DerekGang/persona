@@ -83,6 +83,17 @@ func (s *Service) registerOwnerAction(ctx context.Context, ix proto.Interaction)
 	case err := <-ready:
 		return err
 	case <-ctx.Done():
+		// Announcement precedes the readiness notification. If cancellation
+		// races that notification, an already pending matching occurrence is
+		// registered and the persistent proposal must report its pending result.
+		if current, pending := s.pendingIx(ix.ID); pending && sameApprovalOccurrence(ix, current) {
+			return nil
+		}
+		select {
+		case err := <-ready:
+			return err
+		default:
+		}
 		return ctx.Err()
 	}
 }

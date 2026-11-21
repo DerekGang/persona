@@ -67,16 +67,17 @@ type codexCard struct {
 }
 
 type codexCards struct {
-	mu        sync.Mutex
-	tails     map[string]*codexTail              // session id → its rollout
-	sent      string                             // card ids and occurrence times last listed to the hub
-	held      map[string]time.Time               // card id → answered from the phone: not listed again until then
-	heldIn    map[string]string                  // card id → the session of a held card
-	dismissed map[string]dismissedCard           // card id → handed back to the computer from the phone
-	approvals map[string]bool                    // session id → last screen scan saw a Codex approval dialog
-	created   map[string]codexApprovalOccurrence // approval card id → its first-seen occurrence while open
-	pagerAt   map[string]time.Time               // pane → when its transcript pager was last closed to show a dialog
-	joins     map[string]codexJoinState          // session id → joining it on its app-server (codex_daemon.go)
+	mu              sync.Mutex
+	tails           map[string]*codexTail              // session id → its rollout
+	sent            string                             // sorted card ids last listed to the hub
+	sentOccurrences string                             // sorted card ids plus occurrence times used for change detection
+	held            map[string]time.Time               // card id → answered from the phone: not listed again until then
+	heldIn          map[string]string                  // card id → the session of a held card
+	dismissed       map[string]dismissedCard           // card id → handed back to the computer from the phone
+	approvals       map[string]bool                    // session id → last screen scan saw a Codex approval dialog
+	created         map[string]codexApprovalOccurrence // approval card id → its first-seen occurrence while open
+	pagerAt         map[string]time.Time               // pane → when its transcript pager was last closed to show a dialog
+	joins           map[string]codexJoinState          // session id → joining it on its app-server (codex_daemon.go)
 }
 
 type codexApprovalOccurrence struct {
@@ -136,6 +137,7 @@ func (n *Node) syncCodexCards(ctx context.Context) {
 	now := time.Now()
 	n.cx.mu.Lock()
 	var list []proto.Interaction
+	var ids []string
 	var occurrences []string
 	for _, ix := range cards {
 		if n.sessionBlocked(ix.SessionID, ix.Cwd) {
@@ -150,12 +152,15 @@ func (n *Node) syncCodexCards(ctx context.Context) {
 			continue
 		}
 		list = append(list, ix)
+		ids = append(ids, ix.ID)
 		occurrences = append(occurrences, ix.ID+"\x00"+ix.CreatedAt.UTC().Format(time.RFC3339Nano))
 	}
+	sort.Strings(ids)
 	sort.Strings(occurrences)
 	key := strings.Join(occurrences, ",")
-	changed := key != n.cx.sent
-	n.cx.sent = key
+	changed := key != n.cx.sentOccurrences
+	n.cx.sent = strings.Join(ids, ",")
+	n.cx.sentOccurrences = key
 	n.cx.mu.Unlock()
 	if changed && n.peer != nil {
 		if list == nil {
