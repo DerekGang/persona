@@ -287,6 +287,20 @@ export struct KnowledgeWorkspacePage {
         .onAreaChange(() => this.centerKind()).onDisAppear(() => { this.kindListMounted=false; }).id('knowledge.kinds')
     }
   }
+  @Builder tagFilter() {
+    if (this.workspace.tags.length || this.workspace.tag) {
+      Button({ type: ButtonType.Normal, buttonStyle: ButtonStyleMode.TEXTUAL }) {
+        Row({space:5}) {
+          Text(this.workspace.tag ? '#' + this.workspace.tag : tr('knowledge_all_tags'))
+            .fontSize(14).fontColor(Colors.link).flexShrink(1).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+            .id('knowledge.filters.label')
+          SymbolGlyph(Symbols.down).fontSize('12vp').fontColor([Colors.link])
+        }
+      }.constraintSize({minHeight:Math.max(34,Math.ceil(21*nativeEnvironment.fontScale)+10),maxWidth:'100%'})
+        .padding({left:8,right:8,top:5,bottom:5}).backgroundColor(Color.Transparent)
+        .accessibilityText(tr('knowledge_filter_tag')).bindMenu(this.knowledgeFilters).id('knowledge.filters')
+    }
+  }
   @Builder rootList() {
     Column({space:6}) {
       this.searchField(false)
@@ -295,13 +309,14 @@ export struct KnowledgeWorkspacePage {
         Row() {
           Text(tr('all')).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
           Text(String(this.workspace.entries.length)).fontSize(13).fontColor(Colors.secondary).margin({left:5}).layoutWeight(1)
-          if (this.workspace.tags.length || this.workspace.tag) Button((this.workspace.tag ? '#' + this.workspace.tag : tr('knowledge_all_tags')) + ' ˅',
-            {buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(14).fontColor(Colors.link).height(34)
-            .accessibilityText(tr('knowledge_filter_tag')).bindMenu(this.knowledgeFilters).id('knowledge.filters')
+          if (nativeEnvironment.fontScale<1.5) this.tagFilter()
           Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.refresh).fontSize('15vp').fontColor([Colors.secondary]) }
             .width(32).height(32).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('refresh'))
             .onClick(() => this.workspace.refresh()).id('knowledge.refresh')
         }.width('100%').padding({left:4,right:2})
+        if (nativeEnvironment.fontScale>=1.5 && (this.workspace.tags.length || this.workspace.tag)) {
+          Row() { this.tagFilter() }.width('100%').justifyContent(FlexAlign.Start)
+        }
       }
       List() {
         this.listStatus()
@@ -355,9 +370,12 @@ export struct KnowledgeWorkspacePage {
         Button({type:ButtonType.Capsule}) {
           Row({space:8}) {
             SymbolGlyph($r('sys.symbol.mic_fill')).fontSize('18vp').fontColor([Color.White])
-            Text(tr(this.recording.captureState === 'recording' ? 'knowledge_recording_active' : 'phone_record_start')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Color.White)
-          }
-        }.width('100%').height(45).backgroundColor(Colors.danger).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
+            Text(tr(this.recording.captureState === 'recording' ? 'knowledge_recording_active' : 'phone_record_start'))
+              .fontSize(16).fontWeight(FontWeight.Medium).fontColor(Color.White).textAlign(TextAlign.Center)
+              .layoutWeight(nativeEnvironment.fontScale>=1.5 ? 1 : 0).id('recordings.capture.label')
+          }.width('100%').justifyContent(FlexAlign.Center)
+        }.width('100%').constraintSize({minHeight:Math.max(45,Math.ceil(22*nativeEnvironment.fontScale)+12)})
+          .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(Colors.danger).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
           .onClick(() => this.openRecording('', !this.recording.canStop())).id('recordings.capture')
       }.width('100%').padding({top:4,bottom:4}).id('knowledge.recording.open')
     }.width('100%').height('100%').padding({left:16,right:16,top:6,bottom:8}).backgroundColor(Colors.grouped).id('recordings.home')
@@ -482,9 +500,11 @@ export struct KnowledgeWorkspacePage {
         Button({type:ButtonType.Capsule}) {
           Row({space:7}) {
             SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize('18vp').fontColor([Colors.onAction])
-            Text(tr('knowledge_ask_persona')).fontSize(17).fontColor(Colors.onAction)
-          }
-        }.width('100%').constraintSize({minHeight:46}).backgroundColor(Colors.action).onClick(() => this.askPersona()).id('knowledge.ask')
+            Text(tr('knowledge_ask_persona')).fontSize(17).fontColor(Colors.onAction).textAlign(TextAlign.Center)
+              .layoutWeight(nativeEnvironment.fontScale>=1.5 ? 1 : 0).id('knowledge.ask.label')
+          }.width('100%').justifyContent(FlexAlign.Center)
+        }.width('100%').constraintSize({minHeight:Math.max(46,Math.ceil(23*nativeEnvironment.fontScale)+12)})
+          .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(Colors.action).onClick(() => this.askPersona()).id('knowledge.ask')
         this.entryEvidence()
         PhoneSectionTitle({text:tr('phone_kb_confirmed')})
         Column({space:6}) {

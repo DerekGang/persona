@@ -579,6 +579,20 @@ test('Knowledge detail immutable leaves key by full content while minutes select
   assert.equal(page.split('JSON.stringify([index, line])').length - 1, 2, 'search snippets and timeline lines keep full-line identity');
 });
 
+test('knowledge and recording actions reserve space for an enlarged label', () => {
+  const source = readFileSync(new URL('../entry/src/main/ets/components/KnowledgeWorkspacePage.ets', import.meta.url), 'utf8');
+  for (const id of ['knowledge.filters', 'recordings.capture', 'knowledge.ask']) {
+    const end = source.indexOf(`.id('${id}')`);
+    const start = source.lastIndexOf('Button({', end);
+    assert.ok(end > start && start >= 0, `missing native button ${id}`);
+    const button = source.slice(start, end);
+    assert.ok(button.includes(`.id('${id}.label')`), `missing measurable label for ${id}`);
+    assert.match(button, /constraintSize\(\{minHeight:[^}\n]*fontScale/, `font-scaled minimum height for ${id}`);
+    assert.doesNotMatch(button, /\.height\(\s*\d+\s*\)/, `fixed height clips the label in ${id}`);
+    assert.match(button, /\.flexShrink\(1\)|\.layoutWeight\(/, `label must fit beside its icon in ${id}`);
+  }
+});
+
 test('All Meetings combines imported and recorded entries by meeting id, merges tags, and preserves the original source', async () => {
   const e=fixture({request({path}) {
     if(path==='/api/v1/kb/meetings') return {items:[
