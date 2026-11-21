@@ -19,14 +19,14 @@ export function ContextChipList({ refs, onRemove }: { refs: ContextRef[]; onRemo
       {refs.map((ref) => (
         <span key={ref.id} className="flex min-w-0 items-center gap-1 rounded-full bg-accent-tint px-2 text-sm text-accent-ink">
           <span className="truncate">{ref.title || ref.text}</span>
-          <button type="button" aria-label={t("link-contextchips.remove_label")} onClick={() => onRemove(ref.id)}>×</button>
+          <button type="button" className="size-11 shrink-0" aria-label={t("link-contextchips.remove_label")} onClick={() => onRemove(ref.id)}>×</button>
         </span>
       ))}
     </div>
   );
   return (
     <OverlayBoundary open onClose={() => {}} fallback={fallback}>
-      <Suspense fallback={null}><ChipList refs={refs} onRemove={onRemove} /></Suspense>
+      <Suspense fallback={fallback}><ChipList refs={refs} onRemove={onRemove} /></Suspense>
     </OverlayBoundary>
   );
 }
