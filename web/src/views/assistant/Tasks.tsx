@@ -258,6 +258,15 @@ function PlanTaskFailed({ task }: { task: PlanTask }) {
   return <span className="text-red">{t("assistant-tasks.plan_task_failed", { title: task.title, error })}</span>;
 }
 
+function PlanWorkflowReceipt({ task }: { task: PlanTask }) {
+  if (task.workflow_note) return <div className="break-words text-label text-orange">{task.title} · {task.workflow_note}</div>;
+  if (task.workflow_active !== true) return null;
+  return <div className="flex min-w-0 items-center gap-1.5 text-label text-ink-2">
+    <Icon name="layers" size={12} className="shrink-0 text-ai" />
+    <span className="min-w-0 break-words">{task.title} · {t("ultracode.codex_multi_agent")}</span>
+  </div>;
+}
+
 /** Why each task's computer can't start with ultracode (#12; a known Claude Code too old), "" where it can; undefined
  *  where the hub has no ultracode, and the card shows none. Nothing is read for a plan no longer open. */
 function usePlanUltracodeBlocked(plan: TaskPlan): (string | null)[] | undefined {
@@ -311,13 +320,7 @@ export function PlanCard({ plan }: { plan: TaskPlan }) {
           <PlanTaskFailed key={task.title} task={task} />
         ))}
         {plan.tasks.map((task, i) => <Fragment key={i}>
-          {plan.state === "started" && (task.workflow_note
-            ? <div className="text-label text-orange">{task.title} · {task.workflow_note}</div>
-            : task.workflow_active === true && <div className="flex items-center gap-1.5 text-label">
-              <Icon name="layers" size={12} className="shrink-0 text-ai" />
-              <span>{task.title} · {t("ultracode.codex_multi_agent")}</span>
-            </div>
-          )}
+          {plan.state === "started" && <PlanWorkflowReceipt task={task} />}
           <TaskWorkspaceLine task={task} />
         </Fragment>)}
       </div>
@@ -788,7 +791,14 @@ function PlanHandoffs({ plan, since }: { plan: TaskPlan; since?: string }) {
       return taskHandoffs(id ? s.todos.find((x) => x.id === id) : undefined, { key: `${plan.id}/${i}`, title: task.title, error: task.error, todoId: id, superseded }, task.continues ? "continuation" : "created", plans, s.todosLoaded, since);
     }),
   );
-  return <HandoffCards handoffs={handoffs} />;
+  const cards = <HandoffCards handoffs={handoffs} />;
+  if (!plan.tasks.some((task) => task.workflow_note || task.workflow_active === true)) return cards;
+  return <div className="flex w-full min-w-0 flex-col gap-2">
+    {cards}
+    <div className="flex flex-col gap-1">
+      {plan.tasks.map((task, i) => <PlanWorkflowReceipt key={i} task={task} />)}
+    </div>
+  </div>;
 }
 
 /** The to-do plan task i ran on: its todo_id, or, once a later plan continued that to-do and cleared it (#11854), the

@@ -24,7 +24,8 @@ func TestCodexWorkflowPlanReceipt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f := newTaskService(t)
-			f.zshrc["box"] = []proto.Launcher{{Name: "cx", Agent: "codex", Source: "zshrc"}}
+			f.mu.Lock()
+			f.zshrc = map[string][]proto.Launcher{"box": {{Name: "cx", Agent: "codex", Source: "zshrc"}}}
 			if tc.old {
 				f.refuseUltra = &rpc.Error{Code: "ultracode_unsupported", Message: oldCLI}
 			}
@@ -33,6 +34,7 @@ func TestCodexWorkflowPlanReceipt(t *testing.T) {
 				sess.CodexMultiAgentV2 = a["ultracode"] == true
 				return nil
 			}
+			f.mu.Unlock()
 			ctx := context.Background()
 			args := json.RawMessage(`{"tasks":[{"title":"Document a module","role":"worker","prompt":"Explain the public interfaces","machine":"box","cwd":"/code/app","launcher":"cx","ultracode":true,"workflow_kind":"claude_ultracode","workflow_active":true,"workflow_note":"forged"}]}`)
 			if _, err := s.toolTaskPlan(ctx, "conv1", args); err != nil {
