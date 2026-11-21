@@ -79,12 +79,16 @@ func (s *Service) setBriefingWaits(ctx context.Context, raw json.RawMessage) (*o
 			return nil, err
 		}
 	}
-	before := briefingWaitsOf(s.settings(ctx))
+	saved := s.settings(ctx)
+	before := briefingWaitsOf(saved)
 	after := defaultBriefingWaits()
 	if next != nil {
 		after = *next
 	}
-	if reflect.DeepEqual(before, after) {
+	beforeRaw := reversibleSettingJSON(saved.BriefingWaits)
+	// Preserve the old effective-value no-op unless the administrator switch is restoring raw unset state. In that
+	// case an explicitly stored default must still be cleared even though the effective thresholds do not change.
+	if reflect.DeepEqual(before, after) && (next != nil || !s.hello(ctx).Assistant.AutoApproveReversibleSettings || saved.BriefingWaits == nil) {
 		return &ownChange{summary: "assistant.briefing_waits is unchanged"}, nil
 	}
 	if s.store() == nil {
@@ -93,7 +97,6 @@ func (s *Service) setBriefingWaits(ctx context.Context, raw json.RawMessage) (*o
 	words := func(w BriefingWaits) string {
 		return fmt.Sprintf("stalled=%dm, silent=%dm, orphan=%dm, cards=%dm, max_rows=%d", w.StalledMinutes, w.SilentMinutes, w.OrphanMinutes, w.CardMinutes, w.MaxRows)
 	}
-	beforeRaw := reversibleSettingJSON(s.settings(ctx).BriefingWaits)
 	applied := "assistant.briefing_waits updated; the next briefing's deterministic wait lists use it."
 	return &ownChange{cardText: func(l i18n.Lang) string {
 		return i18n.T(l, "assistant-settings_tool.change_briefing_waits", i18n.Args{"before": words(before), "after": words(after)})

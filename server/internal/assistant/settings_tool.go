@@ -757,14 +757,16 @@ func (s *Service) setReversibleBoolSetting(ctx context.Context, v json.RawMessag
 	if next != nil {
 		after = *next
 	}
-	if after == before {
+	saved := s.settings(ctx)
+	beforeRaw := reversibleSettingJSON(*field(&saved))
+	// Keep the legacy effective-value no-op for explicit Booleans. Switch-on null must also clear an explicitly
+	// stored default: the effective value stays the same, but exact restoration back to unset changes the raw state.
+	if after == before && (next != nil || bytes.Equal(beforeRaw, reversibleSettingJSON(next))) {
 		return &ownChange{summary: unchanged}, nil
 	}
 	if s.store() == nil {
 		return nil, errors.New("no database on this hub")
 	}
-	saved := s.settings(ctx)
-	beforeRaw := reversibleSettingJSON(*field(&saved))
 	word := map[bool]string{true: "assistant-settings_tool.on", false: "assistant-settings_tool.off"}
 	return &ownChange{
 		cardText: func(l i18n.Lang) string { return card(l, i18n.T(l, word[before]), i18n.T(l, word[after])) },

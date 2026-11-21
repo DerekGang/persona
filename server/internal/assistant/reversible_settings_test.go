@@ -171,6 +171,24 @@ func TestReversibleBooleanNullStillRejectedWhenSwitchOff(t *testing.T) {
 	}
 }
 
+func TestBriefingWaitsExplicitDefaultNullNoopWhenSwitchOff(t *testing.T) {
+	s, st := newReversibleSettingService(t, false)
+	initial := Settings{BriefingWaits: ptr(defaultBriefingWaits())}
+	if err := st.PutSetting(context.Background(), settingsKey, initial); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	r := callReversibleSetting(ctx, s, "assistant.briefing_waits", `null`)
+	if r.IsError || !strings.Contains(reversibleResultText(r), "unchanged") {
+		t.Fatalf("switch-off explicit-default null result = %+v %q", r, reversibleResultText(r))
+	}
+	requireReversibleRaw(t, st, reversibleSettingCases[2], `{"stalled_minutes":20,"silent_minutes":120,"orphan_minutes":10,"card_minutes":3,"max_rows":15}`)
+	if pending := s.pendingQuestions(); len(pending) != 0 {
+		t.Fatalf("switch-off effective-value no-op left a card: %+v", pending)
+	}
+}
+
 func TestReversibleSettingsAutoApproveRestoreAndAudit(t *testing.T) {
 	for _, tc := range reversibleSettingCases {
 		t.Run(tc.key, func(t *testing.T) {
@@ -263,6 +281,41 @@ func TestReversibleSettingsRestoreExplicitBeforeImages(t *testing.T) {
 			requireReversibleRaw(t, st, tc.reversibleSettingCase, tc.value)
 			requireAutomaticReversibleSet(t, s, tc.key, tc.undo)
 			requireReversibleRaw(t, st, tc.reversibleSettingCase, tc.undo)
+		})
+	}
+}
+
+func TestReversibleNullClearsExplicitDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		reversibleSettingCase
+		initial  Settings
+		explicit string
+	}{
+		{reversibleSettingCase: reversibleSettingCases[0], initial: Settings{MainBackgroundFolded: ptr(true)}, explicit: `true`},
+		{reversibleSettingCase: reversibleSettingCases[1], initial: Settings{RecentTaskChats: ptr(false)}, explicit: `false`},
+		{reversibleSettingCase: reversibleSettingCases[2], initial: Settings{BriefingWaits: ptr(defaultBriefingWaits())}, explicit: `{"stalled_minutes":20,"silent_minutes":120,"orphan_minutes":10,"card_minutes":3,"max_rows":15}`},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			s, st := newReversibleSettingService(t, true)
+			if err := st.PutSetting(context.Background(), settingsKey, tc.initial); err != nil {
+				t.Fatal(err)
+			}
+			requireAutomaticReversibleSet(t, s, tc.key, `null`)
+			requireReversibleRaw(t, st, tc.reversibleSettingCase, `null`)
+			recs := reversibleRecords(st)
+			if len(recs) != 1 {
+				t.Fatalf("history records = %d, want one", len(recs))
+			}
+			var audit struct {
+				Before json.RawMessage `json:"before"`
+				After  json.RawMessage `json:"after"`
+			}
+			if err := json.Unmarshal(recs[0].Interaction.ToolInput, &audit); err != nil {
+				t.Fatal(err)
+			}
+			if !reversibleJSONEqual(audit.Before, json.RawMessage(tc.explicit)) || !reversibleJSONEqual(audit.After, json.RawMessage(`null`)) {
+				t.Fatalf("explicit-default to unset audit = %+v", audit)
+			}
 		})
 	}
 }
