@@ -76,6 +76,10 @@ FAKE_XCODE = textwrap.dedent('''\
         device["isAvailable"] = os.environ.get("POST_PROBE_AVAILABLE", "1") == "1"
         (root / "state.json").write_text(json.dumps(state))
     else:
+        tests = [] if os.environ.get("FULL_RESULT_EMPTY") == "1" else [{"nodeType": "Test Case",
+            "nodeIdentifier": "PersonaTests/" + suite + "/usesTextTokens()",
+            "result": os.environ.get("FULL_RESULT", "Passed")} for suite in os.environ.get("FULL_RESULT_SUITE", "TypeScaleTests").split(",")]
+        (root / "full-tests.json").write_text(json.dumps({"testNodes": tests}))
         (root / "full-suite-started").write_text("yes")
         sys.exit(int(os.environ.get("FULL_STATUS", "0")))
     ''')
@@ -94,8 +98,15 @@ FAKE_XCRUN_WRAPPER = textwrap.dedent('''\
                 sys.exit(143)
             signal.signal(signal.SIGTERM, stop)
             signal.pause()
-        bundle = Path(args[args.index("--path") + 1])
-        print((bundle / "tests.json").read_text())
+        if args[1:3] == ["test-results", "tests"] or args[2:4] == ["test-results", "tests"]:
+            bundle = Path(args[args.index("--path") + 1])
+            if bundle.name == "ios-unit.xcresult":
+                print((root / "full-tests.json").read_text())
+            else:
+                print((bundle / "tests.json").read_text())
+        else:
+            bundle = Path(args[args.index("--path") + 1])
+            print((bundle / "tests.json").read_text())
     elif args[:2] == ["simctl", "privacy"]:
         assert args[2:] == [os.environ["OWNED_UDID"], "grant", "reminders", "org.example.persona.ci"], args
         (root / "privacy-attempted").write_text("yes")
@@ -188,7 +199,10 @@ class AppleReadinessTests(unittest.TestCase):
             owned_udid = REGULAR_UDID
         else:
             start = source.index('  IOS_COMMON=(')
-            block = source[start:source.index('  result ios-unit', start)]
+            block = source[start:source.index('  result ios-unit "$SIM" TypeScaleTests IconVocabularyTests', start)]
+            ordinary_result = source.index('  result ios-unit "$SIM" TypeScaleTests IconVocabularyTests', start)
+            result_end = source.index('\n  fi', ordinary_result) + 3
+            block += source[ordinary_result:result_end] + '\n  fi\n'
             block += source[source.index("  # The same compiled fixture and compatible runtime as #11289"):
                             source.index('  ci_run \'Verify token baseline', start)]
             owned_udid = NEW
@@ -210,6 +224,7 @@ IOS_COMMON=(xcodebuild)
                    REGULAR_SIM_NAME="owned regular About fixture",
                    FAKE=str(self.root), TEST_STEP_TIMEOUT="10")
         env.update(options)
+        env.setdefault("FULL_RESULT_SUITE", "TypeScaleTests,IconVocabularyTests,TokenRatchetTests,StyleSpecTests")
         result = subprocess.run(["bash", "-c", shell], cwd=ROOT, env=env,
                                 capture_output=True, text=True, timeout=25)
         calls = self.root / "xcode-calls.jsonl"
@@ -256,7 +271,7 @@ IOS_COMMON=(xcodebuild)
             "Build iOS offline unit tests|1800", "No CallKit in the simulator build|300",
             "Create stock iOS 26.0 test simulator|100",
             "Verify hosted iOS test readiness|900", "Grant Reminders access to the owned test app|300",
-            "iOS offline unit and design/token tests|1800",
+            "iOS offline unit and design/token tests|1800", "Inspect test results (ios-unit)|120",
             "Create stock regular-width About test simulator|100",
             "iOS regular-width About visual test on real iPad|600",
             "Inspect test results (ios-about-regular)|120",

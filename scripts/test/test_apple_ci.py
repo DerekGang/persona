@@ -117,6 +117,7 @@ class AppleCIPreparationTests(unittest.TestCase):
             self.assertIn(f'-only-testing:PersonaTests/{suite}', script)
             self.assertIn(suite, script[script.index('result ios-unit "$SIM" PageSearchableTests'):])
         self.assertIn('result ios-unit "$SIM" TypeScaleTests IconVocabularyTests TokenRatchetTests StyleSpecTests', script)
+        self.assertNotIn('result ios-unit "$SIM" TypeScaleTests\n  if [ "$LANE" = ios-focused ]; then', script)
         self.assertIn('if [ "$LANE" != ios-focused ]; then', script)
         self.assertIn('result ios-about-regular "$REGULAR_SIM" AboutVersionRegularVisualTests', script)
         self.assertIn('TEST_RUNNER_PERSONA_SHOTS="$OUTPUT/shots"', script)

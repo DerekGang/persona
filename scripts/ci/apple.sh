@@ -344,7 +344,6 @@ fi
   fi
   test_batch ios-unit 'iOS offline unit and design/token tests' "$UNIT_SECONDS" "${IOS_TESTS[@]}" "${IOS_UNIT_SELECTION[@]}" \
     -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building
-  result ios-unit "$SIM" TypeScaleTests
   if [ "$LANE" = ios-focused ]; then
     result ios-unit "$SIM" PageSearchableTests StarredMessagesTests LauncherModelChoiceTests OmpNewAgentTests PaseoPermissionModesTests PaseoProvidersTests AboutVersionCompactVisualTests
   else
