@@ -228,6 +228,7 @@ class AppleReadinessTests(unittest.TestCase):
         settings = source.index('  if [ "$LANE" = ios18 ]; then',
                                 source.index('if [ "$LANE" != packages ] && [ "$LANE" != ios-build ]; then'))
         helpers += source[settings:source.index('  IOS_COMMON=(', settings)]
+        helpers += source[source.index('  IOS_COMMON=(', settings):source.index('  # Explicit fixture-only exclusions', settings)]
         if regression_only:
             start = source.index('  IOS_COMMON=(')
             end = source.index('\n  fi', source.index('if [ "$LANE" = ios-regressions ]; then',
@@ -255,9 +256,7 @@ ci_run() {
 }
 XCODE=(xcodebuild)
 TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=)
-''' + helpers + '''
-IOS_COMMON=(xcodebuild)
-''' + block
+''' + helpers + block
         env = dict(os.environ, PATH=str(self.fixture.bin) + os.pathsep + os.environ["PATH"],
                    LANE="ios-regressions" if regression_only else "ios", CI_ROOT=str(ROOT), SOURCE=str(ROOT), OUTPUT=str(self.output),
                    PERSONA_CONFIG=str(self.output / "config.json"), SIM_NAME="owned readiness fixture",
@@ -288,6 +287,7 @@ IOS_COMMON=(xcodebuild)
         for call in calls[1:]:
             self.assertFalse(any(arg.startswith(("ARCHS=", "ONLY_ACTIVE_ARCH=")) for arg in call))
         for call in calls:
+            self.assertEqual(call[call.index("-scheme") + 1], "PersonaOfflineUnitTests")
             self.assertIn("CODE_SIGNING_ALLOWED=YES", call)
             self.assertEqual(call[call.index("-derivedDataPath") + 1], str(self.output / "ios-tests"))
         context = json.loads((self.output / "simulator-readiness-context.json").read_text())
@@ -348,6 +348,8 @@ IOS_COMMON=(xcodebuild)
         self.assertEqual(selectors(calls[0]), expected)
         self.assertEqual(selectors(calls[1]), ["-only-testing:PersonaTests/TypeScaleTests"])
         self.assertEqual(selectors(calls[2]), expected)
+        for call in calls:
+            self.assertEqual(call[call.index("-scheme") + 1], "PersonaOfflineUnitTests")
         self.assertIn("ios-unit.xcresult: 2 test cases, zero failed/skipped", result.stdout)
         self.assertEqual((self.root / "calls").read_text().count("simctl create"), 1)
         self.assertFalse((self.root / "regular-probe-started").exists())
@@ -436,6 +438,8 @@ cleanup_device "$REGULAR_SIM" "$REGULAR_SIM_NAME" "$REGULAR_SIM_STARTED"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(calls), 2)
         probe, call = calls
+        for args in (probe, call):
+            self.assertEqual(args[args.index("-scheme") + 1], "PersonaOfflineUnitTests")
         self.assertEqual([a for a in probe if a.startswith(("-only-testing:", "-skip-testing:"))],
                          ["-only-testing:PersonaTests/TypeScaleTests"])
         self.assertEqual(probe[probe.index("-destination") + 1], "platform=iOS Simulator,id=" + REGULAR_UDID)
