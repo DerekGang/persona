@@ -100,12 +100,19 @@ func TestLogicalConversationFirstTurnRejectionRestoresSourceAtNewEpoch(t *testin
 	if err := d.ActivateConversationSegment(ctx, "root-machine", "root-chat", op.OperationID, 1); err != nil {
 		t.Fatal(err)
 	}
+	before, err := d.LogicalConversation(ctx, "root-machine", "root-chat")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := d.ResolveConversationSwitch(ctx, "root-machine", "root-chat", op.OperationID, "rejected", "fake policy refusal"); err != nil {
 		t.Fatal(err)
 	}
 	c, err := d.LogicalConversation(ctx, "root-machine", "root-chat")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if c.History == before.History || c.ProjectionVersion != before.ProjectionVersion+1 {
+		t.Fatalf("rollback retained the abandoned target projection: before=%+v after=%+v", before, c)
 	}
 	a, ok := c.Active()
 	if !ok || a.ID != "first" || a.FrozenEnd != nil || c.Epoch != 3 || c.Segments[1].State != "abandoned" || !c.Segments[1].ClosePending {

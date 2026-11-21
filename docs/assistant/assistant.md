@@ -2713,7 +2713,8 @@ message ID. Source compaction summaries take priority; the fallback uses the man
 through provider pauses. Bounded or incomplete history is marked partial.
 
 The source stays recoverable until the target accepts its first turn. A definite refusal restores the source at a
-new epoch and releases the unsent queue there; an ambiguous start/send requires a positive receipt and is never blindly
+new epoch, invalidates the abandoned target's history projection and releases the unsent queue there; an ambiguous
+start/send requires a positive receipt and is never blindly
 repeated. Retired callers lose manager tool authority immediately. Physical approval/timer work must settle before
 activation; the node's retirement latch prevents recovery and idle-compaction work on that segment. Closure is retried
 when offline nodes reconnect. Deleting a conversation cascades through segment history and queue content, retaining

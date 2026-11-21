@@ -390,7 +390,10 @@ func resolveConversationSwitchTx(ctx context.Context, tx pgx.Tx, machine, sessio
 			if epoch != expected+1 {
 				return ErrConversationEpoch
 			}
-			if _, err := tx.Exec(ctx, `UPDATE logical_conversations SET epoch=epoch+1,revision=revision+1 WHERE machine_id=$1 AND session_id=$2 AND epoch=$3`, machine, session, epoch); err != nil {
+			// The abandoned target may already have published an empty span or
+			// runtime metadata. A restored source can reuse those physical lines;
+			// invalidate that projection before clients reconcile its backlog.
+			if _, err := tx.Exec(ctx, `UPDATE logical_conversations SET epoch=epoch+1,revision=revision+1,projection_version=projection_version+1,history='logical:'||md5(history||$4||(epoch+1)::text) WHERE machine_id=$1 AND session_id=$2 AND epoch=$3`, machine, session, epoch, operation); err != nil {
 				return err
 			}
 		}
