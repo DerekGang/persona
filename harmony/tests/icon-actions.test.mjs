@@ -73,3 +73,17 @@ test('magnified project and Agent views keep symbols inside their slots and give
  assert.match(launch, /this\.machineChoice\(m\)[\s\S]{0,160}scrollable\(ScrollDirection\.Horizontal\)/);
  assert.match(launch, /Text\(tr\('new_agent'\)\)\.fontSize\(18\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
 });
+
+test('magnified Inbox filters can grow and row icons keep their layout slots', () => {
+  const source = fs.readFileSync(w + '/components/InboxWorkspacePage.ets', 'utf8');
+  const filters = source.slice(source.indexOf('@Builder choiceBar()'), source.indexOf('private groupOpen('));
+  const list = source.slice(source.indexOf('@Builder sectionHeading('), source.indexOf('@Builder header()'));
+
+  assert.match(filters, /Text\(tr\(inboxTierLabel\(choice.key\)\)\)\.fontSize\(14\)\.maxFontScale\(Tokens.navigationTextMaxScale\)/);
+  assert.match(filters, /minHeight: this.environment.fontScale >= 1.5 \? Tokens.touch : 34/);
+  assert.doesNotMatch(filters, /\.height\(34\)/);
+  assert.match(filters, /\.scrollable\(ScrollDirection.Horizontal\)/);
+  assert.doesNotMatch(list, /SymbolGlyph\([^\n]*?\)\.fontSize\(\d+\)/);
+  assert.match(list, /FlexDirection.Column : FlexDirection.Row/);
+  assert.match(list, /\.constraintSize\(\{ minHeight: 38 \}\)/);
+});

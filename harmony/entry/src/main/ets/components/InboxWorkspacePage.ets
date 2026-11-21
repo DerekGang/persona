@@ -508,12 +508,15 @@ export struct InboxWorkspacePage {
         ForEach(this.choices,(choice:InboxQuickFilter) => {
           Button({type:ButtonType.Capsule}) {
             Row({space:5}) {
-              Text(tr(inboxTierLabel(choice.key))).fontSize(14).fontWeight(this.workspace.statusFilter === choice.key ? FontWeight.Bold : FontWeight.Medium)
-                .fontColor(this.workspace.statusFilter === choice.key ? Colors.onAction : Colors.ink)
-              if (choice.count && ['action','working','fyi'].includes(choice.key)) Text(String(choice.count)).fontSize(12).fontWeight(FontWeight.Bold)
+              Text(tr(inboxTierLabel(choice.key))).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale).maxLines(1)
+                .fontWeight(this.workspace.statusFilter === choice.key ? FontWeight.Bold : FontWeight.Medium)
+                .fontColor(this.workspace.statusFilter === choice.key ? Colors.onAction : Colors.ink).id('inbox.choice.label.' + choice.key)
+              if (choice.count && ['action','working','fyi'].includes(choice.key)) Text(String(choice.count)).fontSize(12)
+                .maxFontScale(Tokens.navigationTextMaxScale).maxLines(1).fontWeight(FontWeight.Bold)
                 .fontColor(this.workspace.statusFilter === choice.key ? Colors.onAction : choice.key === 'action' ? Colors.needs : Colors.secondary)
             }
-          }.height(34).padding({left:10,right:10}).backgroundColor(this.workspace.statusFilter === choice.key ? Colors.action : Colors.surface)
+          }.constraintSize({ minHeight: this.environment.fontScale >= 1.5 ? Tokens.touch : 34 })
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 }).backgroundColor(this.workspace.statusFilter === choice.key ? Colors.action : Colors.surface)
             .accessibilityText([tr(inboxTierLabel(choice.key)),choice.count ? String(choice.count) : ''].filter((v:string) => !!v).join(' · '))
             .accessibilitySelected(this.workspace.statusFilter === choice.key).onClick(() => this.pickChoice(choice.key)).id('inbox.choice.'+choice.key)
         },(choice:InboxQuickFilter) => choice.key + '/' + String(choice.count))
@@ -527,8 +530,8 @@ export struct InboxWorkspacePage {
     if (this.workspace.statusFilter === 'all') Row({space:6}) {
       Text(tr(inboxTierLabel(section.key))).fontSize(15).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       Text(String(section.rows.length)).fontSize(13).fontColor(section.key === 'action' ? Colors.needs : Colors.secondary).layoutWeight(1)
-      if (['done','noise'].includes(section.key)) SymbolGlyph(this.groupOpen(section.key) ? Symbols.down : Symbols.expand).fontSize(13).fontColor([Colors.secondary])
-    }.height(38).width('100%').padding({left:3,right:5}).accessibilityGroup(true).onClick(() => {
+      if (['done','noise'].includes(section.key)) SymbolGlyph(this.groupOpen(section.key) ? Symbols.down : Symbols.expand).fontSize('13vp').fontColor([Colors.secondary])
+    }.constraintSize({ minHeight: 38 }).width('100%').padding({ left: 3, right: 5, top: 4, bottom: 4 }).accessibilityGroup(true).onClick(() => {
       if (['done','noise'].includes(section.key)) this.expandedTiers=this.expandedTiers.includes(section.key) ?
         this.expandedTiers.filter((s:string) => s !== section.key) : this.expandedTiers.concat([section.key]);
     }).id('inbox.section.'+section.key)
@@ -553,17 +556,22 @@ export struct InboxWorkspacePage {
         ForEach(section.rows, (binding: BoundRow<ResourceRow>) => {
           ListItem() {
             Row({ space: 10 }) {
-              Stack() { SymbolGlyph(binding.value.kind === 'session' ? Symbols.agent : this.workspace.sourceName(Wire.text(binding.value.data(),'source')) === 'mail' ? Symbols.inbox : Wire.text(binding.value.data(),'source') === 'lark' ? Symbols.persona : Symbols.apps).fontSize(17).fontColor([Colors.link]) }
-                .width(33).height(33).borderRadius(9).backgroundColor(Colors.control)
+              Stack() { SymbolGlyph(binding.value.kind === 'session' ? Symbols.agent : this.workspace.sourceName(Wire.text(binding.value.data(),'source')) === 'mail' ? Symbols.inbox : Wire.text(binding.value.data(),'source') === 'lark' ? Symbols.persona : Symbols.apps).fontSize('17vp').fontColor([Colors.link]) }
+                .width(33).height(33).flexShrink(0).borderRadius(9).backgroundColor(Colors.control).id('inbox.row.icon.' + binding.key)
               Column({ space: 4 }) {
-                Row({ space: 6 }) {
-                  Text(binding.value.kind === 'session' ? tr('agent') : this.rowSource(binding.value)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
-                  Text(tr(binding.value.kind === 'session' ? 'needs_you' : inboxTierLabel(inboxTier(binding.value.data())))).fontSize(12).fontColor(Colors.secondary)
+                Flex({ direction: this.environment.fontScale >= 1.5 ? FlexDirection.Column : FlexDirection.Row,
+                  justifyContent: FlexAlign.SpaceBetween, alignItems: this.environment.fontScale >= 1.5 ? ItemAlign.Start : ItemAlign.Center,
+                  space: { main: LengthMetrics.vp(Tokens.fine) } }) {
+                  Text(binding.value.kind === 'session' ? tr('agent') : this.rowSource(binding.value)).fontSize(12).fontWeight(FontWeight.Medium)
+                    .fontColor(Colors.secondary).flexShrink(1).id('inbox.row.source.' + binding.key)
+                  Text(tr(binding.value.kind === 'session' ? 'needs_you' : inboxTierLabel(inboxTier(binding.value.data())))).fontSize(12)
+                    .fontColor(Colors.secondary).flexShrink(1)
                 }.width('100%')
-                Text(binding.value.title || tr('inbox')).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+                Text(binding.value.title || tr('inbox')).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+                  .maxLines(this.environment.fontScale >= 1.5 ? 4 : 2).textOverflow({ overflow: TextOverflow.Ellipsis })
                 if (binding.value.detail) Text(binding.value.detail).fontSize(14).fontColor(Colors.secondary).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
               }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-              SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+              SymbolGlyph(Symbols.expand).fontSize('12vp').width(16).flexShrink(0).fontColor([Colors.secondary])
             }.width('100%').alignItems(VerticalAlign.Top).padding(14).backgroundColor(Colors.surface).borderRadius(14)
           }.onClick(() => this.openRow(binding.value)).accessibilityGroup(true).id('inbox.' + inboxLineKey(binding.value))
         }, (binding: BoundRow<ResourceRow>) => binding.key)
