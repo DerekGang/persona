@@ -445,9 +445,9 @@ describe("an older hub and the new-conversation page", () => {
     await show(chat({ launcher: "runtime", agent: "claude", model: undefined, effort: "high" }));
     await open();
     const mainProviders = panel.props!.providers;
-    expect(mainProviders.filter((p) => !p.unavailable).map((p) => p.id)).toEqual(sharedLaunchers.assistant);
+    expect(mainProviders.filter((p) => !p.unavailable).map((p) => p.id)).toEqual(["runtime", "team-api"]);
     expect(newNames).toEqual(sharedLaunchers.assistant);
-    expect(mainProviders.map((p) => p.id)).not.toContain("codex-gw");
+    expect(mainProviders.find((p) => p.id === "codex-gw")?.unavailable).toBe(t("chat-modelpanel.other_engine", { from: agentName("claude"), to: agentName("codex") }));
 
     // An older node's display placeholder means the launcher's default, never a model ID or English row label.
     expect(newModels.some(([id, name]) => id === "默认" || name === "默认")).toBe(false);

@@ -172,7 +172,7 @@ func (s *Service) beginLogicalSwitch(ctx context.Context, machine, id string, p 
 		}
 		return map[string]any{"operation_id": old.OperationID, "phase": old.Phase}, nil
 	}
-	c, err := st.LogicalConversation(ctx, machine, id)
+	c, err := s.physicalLogicalConversation(ctx, st, machine, id)
 	if err != nil {
 		return nil, err
 	}

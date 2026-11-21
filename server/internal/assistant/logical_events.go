@@ -34,12 +34,12 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 				return false
 			}
 			if route != nil {
-				if machine != route.PhysicalMachine || p.SessionID != "" && p.SessionID != route.PhysicalSession {
+				if !s.physicalSameMachine(machine, route.PhysicalMachine) || p.SessionID != "" && p.SessionID != route.PhysicalSession {
 					return false
 				}
 				_ = st.WithConversationEpoch(ctx, route.MachineID, route.SessionID, route.Epoch, func(c *db.LogicalConversation) error {
 					a, ok := c.Active()
-					if !ok || a.MachineID != route.PhysicalMachine || a.SessionID != route.PhysicalSession {
+					if !ok || !s.physicalSameMachine(a.MachineID, route.PhysicalMachine) || a.SessionID != route.PhysicalSession {
 						return db.ErrConversationEpoch
 					}
 					s.nodeEvent(route.MachineID, event, raw)
@@ -61,7 +61,7 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 		roots := map[string]bool{machine: true}
 		for _, c := range rows {
 			for _, seg := range c.Segments {
-				if seg.MachineID == machine {
+				if s.physicalSameMachine(seg.MachineID, machine) {
 					roots[c.MachineID] = true
 				}
 			}
@@ -87,20 +87,20 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 			defer cancel()
 			byMachine := map[string]map[string]int64{}
 			for sid, rev := range p.Revs {
-				c, err := st.LogicalConversation(ctx, machine, sid)
+				c, err := s.physicalLogicalConversation(ctx, st, machine, sid)
 				if err != nil {
 					continue
 				}
 				root, id, value := machine, sid, rev
 				if c != nil {
 					a, found := c.Active()
-					if !found || a.MachineID != machine || a.SessionID != sid {
+					if !found || !s.physicalSameMachine(a.MachineID, machine) || a.SessionID != sid {
 						continue
 					}
-					if st.ObserveConversationRevision(ctx, machine, sid, rev) != nil {
+					if st.ObserveConversationRevision(ctx, a.MachineID, a.SessionID, rev) != nil {
 						continue
 					}
-					c, err = st.LogicalConversation(ctx, machine, sid)
+					c, err = s.physicalLogicalConversation(ctx, st, machine, sid)
 					if err != nil || c == nil {
 						continue
 					}
@@ -129,7 +129,7 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	c, err := st.LogicalConversation(ctx, machine, sid)
+	c, err := s.physicalLogicalConversation(ctx, st, machine, sid)
 	if err != nil {
 		return false
 	}
@@ -137,7 +137,7 @@ func (s *Service) NodeEvent(machine, event string, raw json.RawMessage) bool {
 		return s.nodeEvent(machine, event, raw)
 	}
 	a, found := c.Active()
-	if c.Deleted || !found || a.MachineID != machine || a.SessionID != sid {
+	if c.Deleted || !found || !s.physicalSameMachine(a.MachineID, machine) || a.SessionID != sid {
 		return false
 	}
 	if event == "session.items" {

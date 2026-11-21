@@ -1118,6 +1118,25 @@ func (d *Devices) Canonical(id string) string {
 	return id
 }
 
+// PhysicalAliases returns the configured identities currently naming the same
+// computer. It reads the fleet directly, before projected transport identities.
+func (d *Devices) PhysicalAliases(id string) []string {
+	m := d.machineByID(id)
+	if m == nil {
+		return []string{id}
+	}
+	out := []string{id, m.cfg.ID}
+	d.fleet.mu.Lock()
+	for from, to := range d.fleet.absorbed {
+		if to == m {
+			out = append(out, from.cfg.ID)
+		}
+	}
+	d.fleet.mu.Unlock()
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // ConnectedAt is when the machine's node's current connection began (zero: none).
 func (d *Devices) ConnectedAt(id string) time.Time {
 	m := d.machineByID(id)

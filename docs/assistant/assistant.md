@@ -2700,6 +2700,11 @@ Postgres. Integer transcript cursors compose those ranges; only later segments n
 references, live events, subscriptions, reconnect backlog, inventory and the derived search index use that same
 logical projection. Retired tails remain physical history and never shift later offsets.
 
+When configured device entries for one computer are absorbed into another entry, authenticated callbacks resolve
+through the current physical fleet aliases. Durable segment/history keys and the public conversation identity stay
+unchanged. Conflicting roots fail closed; absorbed aliases cannot reveal private segments or bypass deletion markers.
+Provider scopes still compare physical computers, independently of retained public transport identities.
+
 The explicit `assistant_segments` operation is separate from ordinary model picks. It prepares an empty execution
 session, freezes the source, and activates the target through a database epoch comparison. Pending approvals or active
 work make a switch retryably busy. Permission mode carries over; unknown engines and unsupported supervision policy

@@ -81,7 +81,7 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 	if id == "" {
 		return nil, false, nil
 	}
-	c, err := st.LogicalConversation(ctx, machine, id)
+	c, err := s.physicalLogicalConversation(ctx, st, machine, id)
 	if err != nil {
 		return nil, true, err
 	}
@@ -302,12 +302,12 @@ func (s *Service) logicalCaller(ctx context.Context, machine, session string) (s
 	if !ok {
 		return machine, session, nil, nil
 	}
-	c, err := st.LogicalConversation(ctx, machine, session)
+	c, err := s.physicalLogicalConversation(ctx, st, machine, session)
 	if err != nil || c == nil {
 		return machine, session, c, err
 	}
 	a, ok := c.Active()
-	if c.Deleted || !ok || a.MachineID != machine || a.SessionID != session {
+	if c.Deleted || !ok || !s.physicalSameMachine(a.MachineID, machine) || a.SessionID != session {
 		return "", "", c, logicalRefusal(ctx, "retired")
 	}
 	return c.MachineID, c.SessionID, c, nil

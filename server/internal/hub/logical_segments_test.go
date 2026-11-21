@@ -110,7 +110,7 @@ func TestLogicalSegmentWebSocketSubscriptionLiveAndReconnect(t *testing.T) {
 	if err := database.ActivateConversationSegment(ctx, "root", "chat", "forced-same-engine", 1); err != nil {
 		t.Fatal(err)
 	}
-	mgr := dialAssistantWithStore(t, h, srv.URL, false, database, func(o *assistant.BusOptions) { o.Devices = raw })
+	mgr := dialAssistantWithStore(t, h, srv.URL, false, database, func(o *assistant.BusOptions) { o.Devices = raw; o.Logf = func(string, ...any) {} })
 	dial := func() *websocket.Conn {
 		conn, _, err := websocket.Dial(ctx, strings.Replace(srv.URL, "http", "ws", 1)+"/api/v1/ws?token="+h.cfg.Token, nil)
 		if err != nil {
@@ -119,18 +119,23 @@ func TestLogicalSegmentWebSocketSubscriptionLiveAndReconnect(t *testing.T) {
 		t.Cleanup(func() { _ = conn.CloseNow() })
 		return conn
 	}
-	read := func(conn *websocket.Conn, predicate func(map[string]any) bool) map[string]any {
+	read := func(stage string, conn *websocket.Conn, predicate func(map[string]any) bool) map[string]any {
 		t.Helper()
 		wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		for {
 			_, data, err := conn.Read(wait)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%s: %v", stage, err)
 			}
 			var event map[string]any
-			if json.Unmarshal(data, &event) == nil && predicate(event) {
-				return event
+			if json.Unmarshal(data, &event) == nil {
+				if event["type"] == "error" {
+					t.Fatalf("%s: hub refused subscription: %s", stage, data)
+				}
+				if predicate(event) {
+					return event
+				}
 			}
 		}
 	}
@@ -138,14 +143,14 @@ func TestLogicalSegmentWebSocketSubscriptionLiveAndReconnect(t *testing.T) {
 	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"subscribe","machine_id":"root","session_id":"chat","since_seq":1,"history":"source-history"}`)); err != nil {
 		t.Fatal(err)
 	}
-	page := read(conn, func(p map[string]any) bool {
+	page := read("initial backlog", conn, func(p map[string]any) bool {
 		return p["type"] == "items" && strings.Contains(stringifySegmentEvent(p), "segment:second:line1#0")
 	})
 	if page["machine_id"] != "root" || page["session_id"] != "chat" || page["from_seq"] != float64(1) || page["to_seq"] != float64(2) {
 		t.Fatalf("logical backlog: %+v", page)
 	}
 	mgr.svc.NodeEvent("target", "session.items", json.RawMessage(`{"session_id":"physical-target","history":"target-history","from_seq":1,"to_seq":2,"items":[{"id":"line2#0","seq":2,"kind":"text","role":"assistant","text":"live-after-switch"}]}`))
-	live := read(conn, func(p map[string]any) bool {
+	live := read("live target update", conn, func(p map[string]any) bool {
 		return p["type"] == "items" && strings.Contains(stringifySegmentEvent(p), "live-after-switch")
 	})
 	if live["machine_id"] != "root" || live["session_id"] != "chat" || live["from_seq"] != float64(2) || live["to_seq"] != float64(3) {
@@ -156,7 +161,7 @@ func TestLogicalSegmentWebSocketSubscriptionLiveAndReconnect(t *testing.T) {
 	if err := reconnect.Write(ctx, websocket.MessageText, []byte(`{"type":"subscribe","machine_id":"root","session_id":"chat","since_seq":1,"history":"source-history"}`)); err != nil {
 		t.Fatal(err)
 	}
-	read(reconnect, func(p map[string]any) bool {
+	read("reconnect backlog", reconnect, func(p map[string]any) bool {
 		return p["type"] == "items" && strings.Contains(stringifySegmentEvent(p), "segment:second:line1#0")
 	})
 }

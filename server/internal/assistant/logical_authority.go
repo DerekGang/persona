@@ -35,7 +35,7 @@ func (s *Service) Tool(ctx context.Context, call ToolCall) proto.ToolResult {
 	var result proto.ToolResult
 	err = st.WithConversationEpoch(ctx, machine, session, c.Epoch, func(current *db.LogicalConversation) error {
 		active, ok := current.Active()
-		if !ok || active.MachineID != call.MachineID || active.SessionID != call.SessionID {
+		if !ok || !s.physicalSameMachine(active.MachineID, call.MachineID) || active.SessionID != call.SessionID {
 			return logicalRefusal(ctx, "retired")
 		}
 		lease := &atomic.Bool{}
@@ -89,7 +89,7 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 	st := s.store().(logicalConversationStore)
 	err = st.WithConversationEpoch(ctx, rootMachine, rootSession, c.Epoch, func(current *db.LogicalConversation) error {
 		active, ok := current.Active()
-		if !ok || active.MachineID != machine || active.SessionID != session {
+		if !ok || !s.physicalSameMachine(active.MachineID, machine) || active.SessionID != session {
 			return logicalRefusal(ctx, "retired")
 		}
 		lease := &atomic.Bool{}
@@ -151,7 +151,7 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 			// A switch may have started while the request prepared its card.
 			err = st.WithConversationEpoch(ctx, rootMachine, rootSession, c.Epoch, func(current *db.LogicalConversation) error {
 				active, ok := current.Active()
-				if !ok || active.MachineID != machine || active.SessionID != session {
+				if !ok || !s.physicalSameMachine(active.MachineID, machine) || active.SessionID != session {
 					return logicalRefusal(ctx, "retired")
 				}
 				if current.Switch != nil && current.Switch.Phase != "active" {
@@ -191,7 +191,7 @@ func (s *Service) logicalInteractionAnswer(ctx context.Context, id string, r pro
 	st := s.store().(logicalConversationStore)
 	return st.WithConversationEpoch(ctx, route.MachineID, route.SessionID, route.Epoch, func(c *db.LogicalConversation) error {
 		a, ok := c.Active()
-		if !ok || a.MachineID != route.PhysicalMachine || a.SessionID != route.PhysicalSession {
+		if !ok || !s.physicalSameMachine(a.MachineID, route.PhysicalMachine) || a.SessionID != route.PhysicalSession {
 			return logicalRefusal(ctx, "retired")
 		}
 		if c.Switch != nil && c.Switch.Phase != "active" {
@@ -227,7 +227,7 @@ func (s *Service) logicalPublishInteraction(ctx context.Context, ix proto.Intera
 	if err != nil || route == nil {
 		return false, err
 	}
-	if caller.PhysicalMachine != route.PhysicalMachine || caller.PhysicalSession != route.PhysicalSession || caller.Epoch != route.Epoch {
+	if !s.physicalSameMachine(caller.PhysicalMachine, route.PhysicalMachine) || caller.PhysicalSession != route.PhysicalSession || caller.Epoch != route.Epoch {
 		return false, logicalRefusal(ctx, "retired")
 	}
 	st := s.store().(logicalConversationStore)
@@ -241,7 +241,7 @@ func (s *Service) logicalPublishInteraction(ctx context.Context, ix proto.Intera
 	fresh := false
 	err = st.WithConversationEpoch(ctx, route.MachineID, route.SessionID, route.Epoch, func(c *db.LogicalConversation) error {
 		a, ok := c.Active()
-		if !ok || a.MachineID != route.PhysicalMachine || a.SessionID != route.PhysicalSession || ix.MachineID != route.MachineID || ix.SessionID != route.SessionID {
+		if !ok || !s.physicalSameMachine(a.MachineID, route.PhysicalMachine) || a.SessionID != route.PhysicalSession || ix.MachineID != route.MachineID || ix.SessionID != route.SessionID {
 			return logicalRefusal(ctx, "retired")
 		}
 		if c.Switch != nil && c.Switch.Phase != "active" {

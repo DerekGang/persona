@@ -611,6 +611,14 @@ func (s *Service) historySignal(machine, event string, raw json.RawMessage) {
 	default:
 		return
 	}
+	expanded := make([]searchKey, 0, len(keys))
+	for _, k := range keys {
+		for _, alias := range s.physicalAliases(k.machine) {
+			expanded = append(expanded, searchKey{alias, k.session})
+		}
+	}
+	keys = expanded
+
 	s.history.mu.Lock()
 	if s.history.changes == nil {
 		s.history.changes = map[searchKey]uint64{}
@@ -690,18 +698,35 @@ func (s *Service) historySweep(ctx context.Context, st conversationHistoryStore)
 			if !c.Assistant || c.PaneID != "" || c.IsDeleted() {
 				continue
 			}
-			if ctx.Value(logicalHistoryOnlyKey{}) != nil {
-				logical, ok := s.store().(logicalConversationStore)
-				if !ok {
-					continue
+			source := machine.ID
+			root, lookupErr := func() (*db.LogicalConversation, error) {
+				if logical, ok := s.store().(logicalConversationStore); ok {
+					return s.physicalLogicalConversation(ctx, logical, source, c.SessionID)
 				}
-				root, err := logical.LogicalConversation(ctx, machine.ID, c.SessionID)
-				if err != nil || root == nil || root.Deleted {
+				return nil, nil
+			}()
+			if lookupErr != nil {
+				continue
+			}
+			if ctx.Value(logicalHistoryOnlyKey{}) != nil && root == nil {
+				continue
+			}
+			if root != nil {
+				// Retired sources remain readable for frozen history, but their tails do
+				// not revise the logical generation. Keep their original durable keys.
+				matches := 0
+				for _, seg := range root.Segments {
+					if seg.SessionID == c.SessionID && s.physicalSameMachine(seg.MachineID, source) {
+						source = seg.MachineID
+						matches++
+					}
+				}
+				if matches != 1 {
 					continue
 				}
 			}
-			if err := s.historySync(ctx, st, machine.ID, c); err != nil && !errors.Is(err, db.ErrConversationHistoryChanged) && ctx.Err() == nil {
-				k := searchKey{machine.ID, c.SessionID}
+			if err := s.historySync(ctx, st, source, c); err != nil && !errors.Is(err, db.ErrConversationHistoryChanged) && ctx.Err() == nil {
+				k := searchKey{source, c.SessionID}
 				s.history.mu.Lock()
 				if s.history.retry == nil {
 					s.history.retry = map[searchKey]historyRetry{}

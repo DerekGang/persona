@@ -170,6 +170,7 @@ func (d *logicalDevices) List() []devices.Summary {
 
 func (d *logicalDevices) Summary(machine string) (devices.Summary, bool) {
 	if m, ok := d.Devices.Summary(machine); ok {
+		m.ID = d.Canonical(machine)
 		if !m.Online {
 			if _, live := d.liveTarget(machine); live {
 				m.Online = true
@@ -239,7 +240,11 @@ func (d *logicalDevices) Session(machine, session string) (proto.Session, bool) 
 	if err != nil {
 		return proto.Session{}, false
 	}
-	if c := index[[2]string{machine, session}]; c != nil {
+	c, err := d.s.physicalLogicalIndex(index, machine, session)
+	if err != nil {
+		return proto.Session{}, false
+	}
+	if c != nil {
 		if machine != c.MachineID || session != c.SessionID {
 			return proto.Session{}, false
 		}
@@ -267,7 +272,8 @@ func (d *logicalDevices) Sessions(machine string) ([]proto.Session, bool) {
 	physical, known := d.Devices.Sessions(machine)
 	out := make([]proto.Session, 0, len(physical))
 	for _, row := range physical {
-		if index[[2]string{machine, row.SessionID}] == nil {
+		c, err := d.s.physicalLogicalIndex(index, machine, row.SessionID)
+		if err == nil && c == nil {
 			out = append(out, row)
 		}
 	}
@@ -332,7 +338,7 @@ func (d *logicalDevices) Follow(ctx context.Context, machine, session string, on
 	if !ok {
 		return d.Devices.Follow(ctx, machine, session, on)
 	}
-	c, err := st.LogicalConversation(ctx, machine, session)
+	c, err := d.s.physicalLogicalConversation(ctx, st, machine, session)
 	if err != nil {
 		return err
 	}
@@ -372,6 +378,11 @@ func (s *Service) logicalProjectStates(st devicewire.States) devicewire.States {
 		}
 		target, known := index[a.MachineID]
 		if !known {
+			if physical := s.physicalDevices(); physical != nil {
+				target, known = index[physical.Canonical(a.MachineID)]
+			}
+		}
+		if !known {
 			continue
 		}
 		if source, exists := index[c.MachineID]; exists {
@@ -384,7 +395,7 @@ func (s *Service) logicalProjectStates(st devicewire.States) devicewire.States {
 		}
 		state := st.Machines[target]
 		state.Machine.ID = c.MachineID
-		state.TransportFor = a.MachineID
+		state.TransportFor = st.Machines[target].Machine.ID
 		state.Config = nil
 		state.Derived = true
 		st.Machines = append(st.Machines, state)
