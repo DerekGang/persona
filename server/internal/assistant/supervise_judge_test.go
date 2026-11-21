@@ -47,7 +47,7 @@ func TestSupervisedDoneAfterTheUsersOwnCheck(t *testing.T) {
 	waitFor(t, "the message", func() bool { return len(f.notices()) == 1 })
 
 	n := entryLine(f.notices()[0])
-	if !strings.Contains(n, "hub 判断做完了，等你验收（已合并并部署）") || strings.Contains(n, "没做完") || strings.Contains(n, "没判断出来") {
+	if !strings.Contains(n, "待逐项复核，不代表完成（已合并并部署）") || strings.Contains(n, "没做完") || strings.Contains(n, "没判断出来") {
 		t.Fatalf("message:\n%s", n)
 	}
 	if v := todoNow(s, todo.ID).Supervision; v.State != reviewPending {
@@ -63,8 +63,8 @@ func TestSupervisedDoneAfterTheUsersOwnCheck(t *testing.T) {
 	}
 }
 
-// A judgment that fails is asked once more; failing again (or unsure), the supervisor hears the hub could not tell,
-// never that the agent stopped short.
+// A transient judgment failure is asked again inline. A valid unsure verdict still tells the supervisor the hub could
+// not tell, never that the agent stopped short.
 func TestSupervisedUnjudgedIsNotStoppedShort(t *testing.T) {
 	fastJudgeRetry(t)
 	s, f, todo := newSupervisedService(t)
@@ -75,21 +75,21 @@ func TestSupervisedUnjudgedIsNotStoppedShort(t *testing.T) {
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	agentTurn(s, f, proto.StatusDone, fullReport, 0)
 	waitFor(t, "the review message", func() bool { return len(f.notices()) == 1 })
-	if n := f.notices()[0]; !strings.Contains(n, "hub 判断做完了，等你验收") {
+	if n := f.notices()[0]; !strings.Contains(n, "待逐项复核，不代表完成") {
 		t.Fatalf("after one failure:\n%s", n)
 	}
 	if v := todoNow(s, todo.ID).Supervision; v.State != reviewPending {
 		t.Fatalf("not waiting for review: %+v", v)
 	}
 
-	// More work, and the judge keeps failing.
-	f.judge = ""
+	// More work, and this time the judge returns a valid unsure verdict.
+	f.judge = `{"verdict":"unsure","reason":"证据不足"}`
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	agentTurn(s, f, proto.StatusDone, "又改了一处", 0)
 	waitFor(t, "the second message", func() bool { return len(f.notices()) == 2 })
 	n := entryLine(f.notices()[1])
-	if !strings.Contains(n, "Agent 停下了，hub 没判断出来是不是做完了（不是说没做完）（判定模型出错）") || strings.Contains(n, "停下了，但没做完") {
-		t.Fatalf("after failures:\n%s", n)
+	if !strings.Contains(n, "Agent 停下了，hub 没判断出来是不是做完了（不是说没做完）（看不出做没做完：证据不足）") || strings.Contains(n, "停下了，但没做完") {
+		t.Fatalf("after an unsure judgment:\n%s", n)
 	}
 }
 
@@ -177,7 +177,7 @@ func TestAcceptedTaskFollowUpIsNotStoppedShort(t *testing.T) {
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	agentTurn(s, f, proto.StatusDone, "README 也改好了", 0)
 	waitFor(t, "the review again", func() bool { return len(f.notices()) == 2 })
-	if n := f.notices()[1]; !strings.Contains(n, "hub 判断做完了，等你验收（README 也改好了）") {
+	if n := f.notices()[1]; !strings.Contains(n, "待逐项复核，不代表完成（README 也改好了）") {
 		t.Fatalf("message:\n%s", n)
 	}
 }

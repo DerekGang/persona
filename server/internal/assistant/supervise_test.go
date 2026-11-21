@@ -49,8 +49,8 @@ func TestDigestWait(t *testing.T) {
 		{"first", time.Time{}, []superviseSignal{review}, superviseGather, true},
 		{"gathered", time.Time{}, []superviseSignal{{Kind: sigReview, At: now.Add(-time.Minute)}}, 0, true},
 		{"review after a message", now.Add(-time.Minute), []superviseSignal{review}, superviseEvery - time.Minute, true},
-		{"urgent after a message", now.Add(-time.Minute), []superviseSignal{needs}, superviseUrgentEvery - time.Minute, true},
-		{"the soonest of them", now.Add(-time.Minute), []superviseSignal{review, needs}, superviseUrgentEvery - time.Minute, true},
+		{"decision after a message", now.Add(-time.Minute), []superviseSignal{needs}, superviseGather, true},
+		{"the soonest of them", now.Add(-time.Minute), []superviseSignal{review, needs}, superviseGather, true},
 		{"long after", now.Add(-time.Hour), []superviseSignal{review}, superviseGather, true},
 	} {
 		got, ok := digestWait(now, c.last, c.pending, (&Service{}).superviseTimings())
@@ -74,8 +74,8 @@ func TestSuperviseTimingsOnService(t *testing.T) {
 	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
 	short := &Service{superviseTimes: shortSuperviseTimings}
 	got, ok := digestWait(now, now, []superviseSignal{{Kind: sigNeedsYou, At: now}}, short.superviseTimings())
-	if !ok || got != shortSuperviseTimings.urgent {
-		t.Fatalf("digestWait with short timings = %v, %v; want %v, true", got, ok, shortSuperviseTimings.urgent)
+	if !ok || got != shortSuperviseTimings.gather {
+		t.Fatalf("digestWait with short timings = %v, %v; want %v, true", got, ok, shortSuperviseTimings.gather)
 	}
 }
 
@@ -233,7 +233,7 @@ func TestSupervisedTaskRound(t *testing.T) {
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	agentTurn(s, f, proto.StatusDone, "按 A 做完了，PR https://github.com/o/r/pull/901 已合并", 0)
 	waitFor(t, "the review message", func() bool { return len(f.notices()) == 2 })
-	if n := f.notices()[1]; !strings.Contains(n, "hub 判断做完了，等你验收（PR 已合并）") || !strings.Contains(n, "pull/901") {
+	if n := f.notices()[1]; !strings.Contains(n, "待逐项复核，不代表完成（PR 已合并）") || !strings.Contains(n, "pull/901") {
 		t.Fatalf("message:\n%s", n)
 	}
 	if now := todoNow(s, todo.ID); now.DoneAt != nil || now.Supervision.State != reviewPending {
