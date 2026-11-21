@@ -26,6 +26,12 @@
 - Bind anything that waits to act on "the agent" to the process it was decided for: pid plus start mark (`hookTurns.process`, else `sessions/<pid>.json` via `liveClaudes`), checked with `processAlive` at every look and again right before acting. Drop it once that process is gone or the hooks report another one; refuse it where the process cannot be told.
 - Keep the wait short. "Once this turn ends" is not "whenever this conversation next runs".
 
+## Approval occurrences must survive every asynchronous handoff (#11310)
+
+- A runtime interaction ID is not an occurrence. Carry its creation time (and the exact-call fingerprint for detached commands) through live announcements, delayed terminal events (including the public `interaction_resolved.created_at`), reconnect catch-up, text asks, Feishu posting placeholders and persisted ledgers, callbacks, and finalization. A stale A event must neither close nor suppress same-ID B; zero-time legacy records keep their ID-only behavior. Clients compare the original RFC3339 text or an exact instant, not a millisecond `Date`.
+- Restart-generated delivery text is not execution truth. If a live owner claim wins, its honest outcome replaces the unfinalized recovery result. Recovery must not write a competing terminal status while that claim runs; reload the journal after finalization before revoking a grant or delivering a result, and reconcile an already-durable terminal record rather than retrying a conflicting cancellation forever. An interrupted apply is different: its execution-uncertain `failed` outcome must not become a confident `cancelled` / "not started" when the restored owner claim reaches the journal's terminal-result guard.
+- A fresh retry interaction is not the original approval. Keep `ApprovalID` when retiring an edited command's original grant and when reporting the edited execution. Generate fallback delivery IDs from the durable operation identity: random per-attempt clarification IDs defeat receipt retry, while a pre-upgrade continuation's legacy queue identity must still deduplicate its journal redelivery after text rewriting.
+
 ## Project MCP enums only in agy's tool declarations (#9944)
 
 agy can turn a valid boolean enum such as `task_review`'s `evidence.ready: enum [true]` into an empty Gemini string

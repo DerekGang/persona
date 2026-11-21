@@ -131,18 +131,39 @@ func finalStatus(status string) bool {
 
 // postInteractionCard posts ix's card once, unless it ended meanwhile.
 func (s *Service) postInteractionCard(ctx context.Context, ix proto.Interaction) {
-	if s.interactionEnded(ix.ID) { // ended while this looked at the bot: not asked (s.chans before s.fbot, never in it)
+	if s.interactionEndedFor(ix) { // ended while this looked at the bot: not asked (s.chans before s.fbot, never in it)
 		return
+	}
+	if s.postCardHook != nil {
+		s.postCardHook(ix)
 	}
 	b := &s.fbot
 	b.mu.Lock()
 	s.loadBotLocked(ctx)
-	if _, ok := b.cards[ix.ID]; ok {
-		b.mu.Unlock()
-		return
+	var replaced *botCard
+	if current, ok := b.cards[ix.ID]; ok {
+		if !current.Ix.CreatedAt.IsZero() && !ix.CreatedAt.IsZero() && ix.CreatedAt.Before(current.Ix.CreatedAt) {
+			b.mu.Unlock()
+			return // a newer post won while this older occurrence was in flight
+		}
+		if !differentBotCardOccurrence(current.Ix, ix) {
+			b.mu.Unlock()
+			return
+		}
+		old := current
+		replaced = &old
 	}
-	s.keepBotCardLocked(ix.ID, &botCard{}) // claimed: a second announce of the same card does not post twice
+	// The in-flight claim carries the occurrence too. An old terminal event or
+	// callback can no longer delete a replacement's placeholder by ID alone.
+	s.keepBotCardLocked(ix.ID, &botCard{Ix: ix})
 	b.mu.Unlock()
+	if replaced != nil && replaced.MessageID != "" {
+		go func(old botCard) {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			s.botCardDone(closeCtx, old.MessageID, old.Ix, i18n.T(s.botLang(closeCtx), "assistant-feishu_cards.handled"))
+		}(*replaced)
+	}
 	reply, to, topic := s.interactionPlace(ctx, ix)
 	ctx = feishuSendAs(ctx, string(ix.Kind), ix.MachineID, ix.SessionID)
 	fallback := ""
@@ -160,12 +181,10 @@ func (s *Service) postInteractionCard(ctx context.Context, ix proto.Interaction)
 		}
 	}
 	card := s.interactionCard(ctx, ix)
-	if s.interactionEnded(ix.ID) {
+	if s.interactionEndedFor(ix) {
 		// Answered while its card was being made (a program that answers cards at once): nobody needs to look at it,
-		// so nothing is posted and the claim goes (#5430). One that ends during the post is closed after it, below.
-		b.mu.Lock()
-		s.keepBotCardLocked(ix.ID, nil)
-		b.mu.Unlock()
+		// so nothing is posted and only this occurrence's claim goes (#5430). One that ends during the post is closed after it, below.
+		s.takeBotCardOccurrence(ix.ID, ix)
 		return
 	}
 	// A card for a topic is a reply to its run's message and belongs under it: if that message is gone it would be a
@@ -183,16 +202,19 @@ func (s *Service) postInteractionCard(ctx context.Context, ix proto.Interaction)
 		reply, to = "", feishuTarget{}
 		mid, err = s.botPostTo(ctx, to, "", card, fallback, "")
 	}
-	ended := s.interactionEnded(ix.ID)
-	b.mu.Lock()
+	ended := s.interactionEndedFor(ix)
 	if err != nil {
 		s.logf("bots: card for %s: %v", ix.ID, err)
-		s.keepBotCardLocked(ix.ID, nil)
-		b.mu.Unlock()
+		s.takeBotCardOccurrence(ix.ID, ix)
 		return
 	}
-	if _, still := b.cards[ix.ID]; !still || ended { // answered while it was being posted
-		s.keepBotCardLocked(ix.ID, nil)
+	b.mu.Lock()
+	current, still := b.cards[ix.ID]
+	same := still && !differentBotCardOccurrence(current.Ix, ix)
+	if !same || ended { // answered or replaced while this occurrence was being posted
+		if same {
+			s.keepBotCardLocked(ix.ID, nil)
+		}
 		b.mu.Unlock()
 		s.botCardDone(ctx, mid, ix, i18n.T(s.botLang(ctx), "assistant-feishu_cards.handled"))
 		return

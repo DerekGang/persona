@@ -3,12 +3,14 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	approvalops "github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/channel"
 	"github.com/nwverse/persona/server/internal/feishubot"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -69,6 +71,280 @@ func TestChannelAnnouncementClearsOnlyDifferentOccurrenceEnd(t *testing.T) {
 	ft.s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: first})
 	if !ft.s.interactionEnded(first.ID) {
 		t.Fatal("a duplicate announcement erased the same occurrence's in-flight terminal guard")
+	}
+}
+
+func TestEarlierOccurrenceEndKeepsReplacementAnnouncement(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	first := proto.Interaction{ID: "ix_channel_replacement_in_flight", MachineID: "mac", SessionID: "s1",
+		Kind: proto.IxPermission, CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	ft.s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: replacement})
+	ft.s.chans.mu.Lock()
+	ft.s.chans.stLoaded = true
+	ft.s.chans.st.Asks = []*channel.Ask{channel.NewAsk("ch", replacement, time.Now())}
+	ft.s.chans.mu.Unlock()
+	ft.s.InteractionEnded(context.Background(), InteractionEnded{Interaction: first})
+	ft.s.chans.mu.Lock()
+	announced := ft.s.chans.announced[replacement.ID]
+	asks := len(ft.s.chans.st.Asks)
+	ft.s.chans.mu.Unlock()
+	if !announced {
+		t.Fatal("the earlier occurrence's delayed terminal event removed the replacement's announcement")
+	}
+	if asks != 1 {
+		t.Fatal("the earlier occurrence's delayed terminal event closed the replacement's text ask")
+	}
+}
+
+func TestFeishuReplacementPostsAfterEarlierOccurrenceEnds(t *testing.T) {
+	e := newThreadEnv(t, nil)
+	first := proto.Interaction{ID: "ix_feishu_delayed_old_end", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	e.s.chans.mu.Lock()
+	e.s.chans.announced = map[string]bool{replacement.ID: true}
+	e.s.chans.mu.Unlock()
+	e.s.InteractionEnded(context.Background(), InteractionEnded{Interaction: first})
+	e.s.postInteractionCard(context.Background(), replacement)
+	posted := false
+	for _, p := range e.f.appParams(AppFeishu, FeishuPost) {
+		card, _ := p["card"].(string)
+		if strings.Contains(card, replacement.CreatedAt.Format(time.RFC3339Nano)) {
+			posted = true
+		}
+	}
+	if !posted {
+		t.Fatal("the earlier occurrence's terminal marker suppressed the replacement's Feishu card")
+	}
+}
+
+func TestFeishuReplacementReplacesEarlierLedger(t *testing.T) {
+	e := newThreadEnv(t, nil)
+	first := proto.Interaction{ID: "ix_feishu_old_ledger", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	e.s.fbot.mu.Lock()
+	e.s.loadBotLocked(context.Background())
+	e.s.keepBotCardLocked(first.ID, &botCard{MessageID: "om_first", Ix: first})
+	e.s.fbot.mu.Unlock()
+	e.s.postInteractionCard(context.Background(), replacement)
+	posted := false
+	for _, p := range e.f.appParams(AppFeishu, FeishuPost) {
+		card, _ := p["card"].(string)
+		if strings.Contains(card, replacement.CreatedAt.Format(time.RFC3339Nano)) {
+			posted = true
+		}
+	}
+	if !posted {
+		t.Fatal("the earlier occurrence's ledger entry suppressed the replacement's Feishu card")
+	}
+	e.s.fbot.mu.Lock()
+	got := e.s.fbot.cards[first.ID]
+	e.s.fbot.mu.Unlock()
+	if got.MessageID == "" || !got.Ix.CreatedAt.Equal(replacement.CreatedAt) {
+		t.Fatalf("the replacement did not replace the old ledger occurrence: %+v", got)
+	}
+}
+
+func TestChannelsCatchUpAnnouncesReplacementOccurrence(t *testing.T) {
+	st := &memStore{}
+	f, posts := feishuHub("ou_a", time.Unix(100, 0))
+	f.settings = &Settings{MachineID: "server", Main: "m1"}
+	s := newServiceOn(t, f, st)
+	first := proto.Interaction{ID: "ix_channel_catchup_replacement", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: first})
+	waitUntil(t, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, p := range *posts {
+			card, _ := p["card"].(string)
+			if strings.Contains(card, first.CreatedAt.Format(time.RFC3339Nano)) {
+				return true
+			}
+		}
+		return false
+	})
+	s.chans.mu.Lock()
+	s.chans.connected = true
+	s.chans.mu.Unlock()
+	f.hubCards = []proto.Interaction{replacement}
+	s.channelsCatchUp(context.Background())
+	waitUntil(t, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, p := range *posts {
+			card, _ := p["card"].(string)
+			if strings.Contains(card, replacement.CreatedAt.Format(time.RFC3339Nano)) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestCatchUpCannotDowngradeNewerAnnouncement(t *testing.T) {
+	f, posts := feishuHub("ou_a", time.Unix(100, 0))
+	f.settings = &Settings{MachineID: "server", Main: "m1"}
+	s := newServiceOn(t, f, &memStore{})
+	first := proto.Interaction{ID: "ix_channel_stale_catchup", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: replacement})
+	waitUntil(t, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, p := range *posts {
+			card, _ := p["card"].(string)
+			if strings.Contains(card, replacement.CreatedAt.Format(time.RFC3339Nano)) {
+				return true
+			}
+		}
+		return false
+	})
+	s.chans.mu.Lock()
+	s.chans.connected = true
+	s.chans.mu.Unlock()
+	f.hubCards = []proto.Interaction{first} // a delayed reconnect snapshot
+	s.channelsCatchUp(context.Background())
+	s.chans.mu.Lock()
+	announcedAt := s.chans.announcedOccurrence[first.ID]
+	s.chans.mu.Unlock()
+	if !announcedAt.Equal(replacement.CreatedAt) {
+		t.Fatalf("stale catch-up downgraded the live announcement: got %s want %s", announcedAt, replacement.CreatedAt)
+	}
+}
+
+func TestOlderInFlightPostCannotReplaceNewerLedger(t *testing.T) {
+	e := newThreadEnv(t, nil)
+	first := proto.Interaction{ID: "ix_feishu_in_flight_order", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	entered, release := make(chan struct{}), make(chan struct{})
+	e.s.postCardHook = func(ix proto.Interaction) {
+		if ix.ID == first.ID && ix.CreatedAt.Equal(first.CreatedAt) {
+			close(entered)
+			<-release
+		}
+	}
+	t.Cleanup(func() { e.s.postCardHook = nil })
+	done := make(chan struct{})
+	go func() {
+		e.s.postInteractionCard(context.Background(), first)
+		close(done)
+	}()
+	<-entered
+	e.s.chans.mu.Lock()
+	e.s.chans.announced = map[string]bool{replacement.ID: true}
+	e.s.chans.announcedOccurrence = map[string]time.Time{replacement.ID: replacement.CreatedAt}
+	e.s.chans.mu.Unlock()
+	e.s.postInteractionCard(context.Background(), replacement)
+	e.s.fbot.mu.Lock()
+	mid := e.s.fbot.cards[replacement.ID].MessageID
+	e.s.fbot.mu.Unlock()
+	close(release)
+	<-done
+	e.s.fbot.mu.Lock()
+	current := e.s.fbot.cards[replacement.ID]
+	e.s.fbot.mu.Unlock()
+	if mid == "" || current.MessageID != mid || !current.Ix.CreatedAt.Equal(replacement.CreatedAt) {
+		t.Fatalf("the older in-flight post displaced the replacement: before=%q after=%+v", mid, current)
+	}
+	for _, p := range e.f.appParams(AppFeishu, FeishuUpdateCard) {
+		if p["message_id"] == mid {
+			t.Fatalf("the older in-flight post closed the replacement message %s", mid)
+		}
+	}
+}
+
+func TestEarlierAnnouncementCannotReplaceCurrentOccurrence(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	first := proto.Interaction{ID: "ix_channel_stale_announcement", MachineID: "mac", SessionID: "s1",
+		Kind: proto.IxPermission, CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	ft.s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: replacement})
+	ft.s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: first})
+	ft.s.chans.mu.Lock()
+	announcedAt := ft.s.chans.announcedOccurrence[first.ID]
+	ft.s.chans.mu.Unlock()
+	if !announcedAt.Equal(replacement.CreatedAt) {
+		t.Fatalf("the older announcement replaced the current occurrence: got %s want %s", announcedAt, replacement.CreatedAt)
+	}
+	if ft.s.interactionEndedFor(replacement) {
+		t.Fatal("the older announcement made the current Feishu post look superseded")
+	}
+}
+
+func TestEarlierTerminalCannotDowngradeCurrentEndMarker(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	first := proto.Interaction{ID: "ix_channel_terminal_regression", MachineID: "mac", SessionID: "s1",
+		Kind: proto.IxPermission, CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	ft.s.InteractionAnnounced(context.Background(), InteractionAnnounced{Interaction: replacement})
+	ft.s.InteractionEnded(context.Background(), InteractionEnded{Interaction: replacement})
+	ft.s.InteractionEnded(context.Background(), InteractionEnded{Interaction: first})
+	ft.s.chans.mu.Lock()
+	endedAt := ft.s.chans.endedOccurrence[first.ID]
+	ft.s.chans.mu.Unlock()
+	if !endedAt.Equal(replacement.CreatedAt) {
+		t.Fatalf("the older terminal event downgraded the end marker: got %s want %s", endedAt, replacement.CreatedAt)
+	}
+	if !ft.s.interactionEndedFor(replacement) {
+		t.Fatal("the current occurrence lost its in-flight terminal guard")
+	}
+}
+
+func TestCatchUpClosesEarlierBotCardWithPendingReplacement(t *testing.T) {
+	e := newThreadEnv(t, nil)
+	first := proto.Interaction{ID: "ix_catchup_bot_occurrence", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	e.f.withQueue(replacement)
+	e.s.fbot.mu.Lock()
+	e.s.loadBotLocked(context.Background())
+	e.s.keepBotCardLocked(first.ID, &botCard{MessageID: "om_first", Ix: first})
+	e.s.fbot.mu.Unlock()
+	e.s.closeEndedBotCards(context.Background(), map[string]proto.Interaction{first.ID: replacement}, false)
+	waitFor(t, "the earlier Feishu card to close with a pending replacement", func() bool {
+		for _, p := range e.f.appParams(AppFeishu, FeishuUpdateCard) {
+			if p["message_id"] == "om_first" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestCatchUpRemovesEarlierTextAskWithPendingReplacement(t *testing.T) {
+	f, _ := feishuHub("ou_a", time.Unix(100, 0))
+	f.settings = &Settings{MachineID: "server", Main: "m1"}
+	s := newServiceOn(t, f, &memStore{})
+	first := proto.Interaction{ID: "ix_catchup_text_occurrence", Kind: proto.IxPermission, MachineID: "server", SessionID: "m1",
+		ToolName: "Bash", CreatedAt: time.Now().UTC()}
+	replacement := first
+	replacement.CreatedAt = first.CreatedAt.Add(time.Second)
+	s.chans.mu.Lock()
+	s.chans.stLoaded = true
+	s.chans.st.Asks = []*channel.Ask{channel.NewAsk("ch", first, time.Now())}
+	s.chans.mu.Unlock()
+	f.hubCards = []proto.Interaction{replacement}
+	s.channelsCatchUp(context.Background())
+	s.chans.mu.Lock()
+	asks := len(s.chans.st.Asks)
+	s.chans.mu.Unlock()
+	if asks != 0 {
+		t.Fatal("the pending same-ID replacement kept the earlier text ask alive")
 	}
 }
 

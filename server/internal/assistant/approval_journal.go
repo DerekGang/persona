@@ -14,7 +14,13 @@ import (
 
 const approvalJournalKey = "assistant.approval_clarifications"
 
-var errApprovalConversationGone = errors.New("the originating conversation no longer exists")
+var (
+	errApprovalConversationGone = errors.New("the originating conversation no longer exists")
+	// errApprovalExecutionUncertain distinguishes a durable interrupted/unknown
+	// apply from an operation that is known not to have started. A restored owner
+	// claim must never turn the former into a confident cancellation or run it again.
+	errApprovalExecutionUncertain = errors.New("the earlier approval execution outcome is uncertain")
+)
 
 // approvalJournalEntry contains delivery state only. In particular it has no
 // executable callback, tool arguments, Resolution.Values or approval fields.
@@ -158,6 +164,9 @@ func (s *Service) approvalJournalApplying(ctx context.Context, ix proto.Interact
 	}
 	b.list[i].live = true
 	if b.list[i].Result != "" {
+		if b.list[i].Status == "failed" {
+			return fmt.Errorf("%w: %s", errApprovalExecutionUncertain, b.list[i].Result)
+		}
 		return errors.New("the approval already has a terminal result")
 	}
 	b.list[i].Status = "applying"
@@ -218,7 +227,10 @@ func (s *Service) approvalJournalFinished(ctx context.Context, ix proto.Interact
 		// Upgrade a legacy or recovered entry before its terminal delivery.
 		b.list[i].Private = true
 	}
-	if b.list[i].Result == "" {
+	if !b.list[i].Finalized {
+		// The one live claim's honest execution result supersedes an unfinished
+		// journal's restart-generated cancellation. Without this, recovery could
+		// keep and deliver "cancelled" after the owner's operation already ran.
 		if b.list[i].CreatedAt.IsZero() {
 			b.list[i].CreatedAt = createdAt
 		}
@@ -253,6 +265,20 @@ func sameApprovalJournalOccurrence(a, b approvalJournalEntry) bool {
 	return a.CreatedAt.Equal(b.CreatedAt)
 }
 
+func (s *Service) currentApprovalJournalEntry(ctx context.Context, entry approvalJournalEntry) (approvalJournalEntry, bool, error) {
+	b := &s.approvals
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !s.loadApprovalJournalLocked(ctx) {
+		return approvalJournalEntry{}, false, errors.New("the clarification journal is unavailable")
+	}
+	i := slices.IndexFunc(b.list, func(a approvalJournalEntry) bool { return sameApprovalJournalOccurrence(a, entry) })
+	if i < 0 {
+		return approvalJournalEntry{}, false, nil
+	}
+	return b.list[i], true, nil
+}
+
 func (s *Service) approvalJournalFinalized(ctx context.Context, entry approvalJournalEntry) error {
 	b := &s.approvals
 	b.mu.Lock()
@@ -270,6 +296,51 @@ func (s *Service) approvalJournalFinalized(ctx context.Context, entry approvalJo
 		return fmt.Errorf("persist finalized approval occurrence: %w", err)
 	}
 	return nil
+}
+
+func recoveredTerminalJournalStatus(ix proto.Interaction, status string, resolution *proto.Resolution) string {
+	if status != "resolved" {
+		return status
+	}
+	if resolution != nil {
+		switch {
+		case ix.Detachable && resolution.UserAllowed() && resolution.Remembered:
+			return "covered"
+		case ix.Detachable && resolution.UserAllowed():
+			return "approved"
+		case resolution.UserDenied():
+			return "denied"
+		}
+	}
+	return "resolved"
+}
+
+// adoptRecoveredTerminal reconciles a stale restart-delivery entry with the
+// terminal outcome already durable for the same occurrence. The caller holds
+// fleet.mu and has no matching live claimed card, so a live finalizer cannot be
+// between its history and journal writes. In particular an owner Allow keeps
+// its continuation grant instead of being revoked as a restart cancellation.
+func (s *Service) adoptRecoveredTerminal(ctx context.Context, entry approvalJournalEntry, ix proto.Interaction, status string, resolution *proto.Resolution) (approvalJournalEntry, error) {
+	journalStatus := recoveredTerminalJournalStatus(ix, status, resolution)
+	text := "The terminal outcome already recorded for this exact approval was preserved; restart recovery did not replace it."
+	b := &s.approvals
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !s.loadApprovalJournalLocked(ctx) {
+		return approvalJournalEntry{}, errors.New("the clarification journal is unavailable")
+	}
+	i := slices.IndexFunc(b.list, func(a approvalJournalEntry) bool { return sameApprovalJournalOccurrence(a, entry) })
+	if i < 0 {
+		return approvalJournalEntry{}, errors.New("the recovered approval journal entry disappeared")
+	}
+	b.list[i].Status = journalStatus
+	b.list[i].Result = approvalResultText(ix.ID, journalStatus, text)
+	b.list[i].Continuation = ix.Detachable && journalStatus == "approved"
+	b.list[i].UpdatedAt = time.Now().UTC()
+	if err := s.saveApprovalJournalLocked(ctx); err != nil {
+		return approvalJournalEntry{}, fmt.Errorf("adopt the durable approval outcome: %w", err)
+	}
+	return b.list[i], nil
 }
 
 // deliverApprovalResults hands each result to the exact conversation or its
@@ -330,7 +401,13 @@ func (s *Service) deliverApprovalResults() {
 					s.logf("finalize approval result %s before delivery: %v", a.ID, err)
 					continue
 				}
-				a.Finalized = true
+				current, found, err := s.currentApprovalJournalEntry(context.Background(), a)
+				if err != nil || !found {
+					failed = true
+					s.logf("reload finalized approval result %s before delivery: found=%v err=%v", a.ID, found, err)
+					continue
+				}
+				a = current
 			}
 			err := s.deliverApprovalResult(a)
 			gone := errors.Is(err, errApprovalConversationGone)
@@ -494,7 +571,7 @@ func (s *Service) queueApprovalResult(machine, to string, msg relayMsg) error {
 	}
 	id := relayMsgID(to, msg)
 	for _, old := range b.st.Queue[to] {
-		if relayMsgID(to, old) == id {
+		if relayMsgID(to, old) == id || sameLegacyContinuationRelay(old, msg) {
 			b.mu.Unlock()
 			return nil
 		}
@@ -599,18 +676,25 @@ func (s *Service) finalizeRecoveredApprovals(ctx context.Context, seq uint64, re
 	b.mu.Unlock()
 	failed := false
 	for _, a := range recovered {
-		if a.Status != "approved" {
-			// A continuation grant is valid only with its completed approved result.
-			// Do not hold approvals.mu while taking detached.mu: consumption takes
-			// those locks in the opposite order before permitting execution.
-			if err := s.revokeDetachedGrant(ctx, a); err != nil {
-				failed = true
-				s.logf("revoke interrupted approval %s: %v", a.ID, err)
-			}
-		}
 		if err := s.finishRecoveredApproval(a); err != nil {
 			failed = true
 			s.logf("finish recovered approval %s: %v", a.ID, err)
+			continue
+		}
+		current, found, err := s.currentApprovalJournalEntry(ctx, a)
+		if err != nil {
+			failed = true
+			s.logf("reload recovered approval %s: %v", a.ID, err)
+			continue
+		}
+		if found && current.Status != "approved" {
+			// A continuation grant is valid only with its completed approved result.
+			// Reload after finalization: a live owner Allow may have replaced the
+			// restart-generated cancellation and must keep its one-time grant.
+			if err := s.revokeDetachedGrant(ctx, current); err != nil {
+				failed = true
+				s.logf("revoke interrupted approval %s: %v", current.ID, err)
+			}
 		}
 	}
 	b.mu.Lock()
@@ -694,7 +778,18 @@ func approvalJournalMatches(entry approvalJournalEntry, ix proto.Interaction) bo
 // live occurrence is never claimed. With no matching live card, the fleet mutex
 // stays held through the strict database write so restoreInteractions cannot
 // validate a pending snapshot and then reinstall it after recovery closes it.
+// A live owner claim wins over restart-generated delivery text; recovery then
+// retries after that claim's honest outcome is durable instead of writing a
+// competing cancellation or blocking the complete delivery batch forever.
 func (s *Service) finishRecoveredApproval(entry approvalJournalEntry) error {
+	current, found, err := s.currentApprovalJournalEntry(context.Background(), entry)
+	if err != nil || !found {
+		return err
+	}
+	if current.Finalized {
+		return nil
+	}
+	entry = current
 	id := entry.ID
 	historyStatus, journalStatus, text := recoveredApprovalOutcome(entry)
 	r := proto.Resolution{Dismiss: true, Reason: "assistant_restarted"}
@@ -722,6 +817,21 @@ func (s *Service) finishRecoveredApproval(entry approvalJournalEntry) error {
 				// tombstone deliberately has no tool arguments and must not be
 				// mistaken for a different fingerprint.
 				candidate = rec.Interaction
+				if rec.Status != "pending" {
+					matches := rec.Status == historyStatus
+					if rec.Status == "resolved" {
+						matches = recoveredTerminalJournalStatus(rec.Interaction, rec.Status, rec.Resolution) == journalStatus
+					}
+					if !matches {
+						entry, err = s.adoptRecoveredTerminal(context.Background(), entry, rec.Interaction, rec.Status, rec.Resolution)
+						if err != nil {
+							s.fleet.mu.Unlock()
+							return err
+						}
+					}
+					s.fleet.mu.Unlock()
+					return s.approvalJournalFinalized(context.Background(), entry)
+				}
 			}
 		}
 		err := s.recordEndOccurrenceStrict(candidate, historyStatus, &r)
@@ -733,23 +843,29 @@ func (s *Service) finishRecoveredApproval(entry approvalJournalEntry) error {
 	}
 	s.fleet.mu.Unlock()
 	s.fleet.mu.Lock()
-	if s.fleet.interactions[id] == p && !p.claimed {
-		if p.prepared != nil {
-			s.fleet.mu.Unlock()
-			s.endPrepared(p, historyStatus, text)
-		} else {
-			a := &preparedApproval{terminal: true, clarified: true, result: r,
-				outcome: approvalops.Outcome{Text: text}, reportStatus: journalStatus}
-			p.prepared, p.claimed, p.resolution = a, true, &r
-			p.expired = historyStatus == "expired"
-			if p.resolved == nil {
-				p.resolved = make(chan struct{})
-			}
-			s.fleet.mu.Unlock()
-			_ = s.finishPrepared(p, historyStatus)
+	if s.fleet.interactions[id] != p {
+		s.fleet.mu.Unlock()
+		return fmt.Errorf("interaction %s changed occurrence during recovery", id)
+	}
+	if p.claimed {
+		s.fleet.mu.Unlock()
+		return fmt.Errorf("interaction %s has an owner claim still finalizing", id)
+	}
+	if p.prepared != nil {
+		s.fleet.mu.Unlock()
+		if !s.endPrepared(p, historyStatus, text) {
+			return fmt.Errorf("interaction %s has an owner claim still finalizing", id)
 		}
 	} else {
+		a := &preparedApproval{terminal: true, clarified: true, result: r,
+			outcome: approvalops.Outcome{Text: text}, reportStatus: journalStatus}
+		p.prepared, p.claimed, p.resolution = a, true, &r
+		p.expired = historyStatus == "expired"
+		if p.resolved == nil {
+			p.resolved = make(chan struct{})
+		}
 		s.fleet.mu.Unlock()
+		_ = s.finishPrepared(p, historyStatus)
 	}
 	if err := s.recordEndOccurrenceStrict(p.ix, historyStatus, &r); err != nil {
 		return err

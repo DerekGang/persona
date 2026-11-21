@@ -547,11 +547,15 @@ func eachChannel(parent context.Context, ids []string, send func(ctx context.Con
 	wg.Wait()
 }
 
+func sameChannelAskOccurrence(a *channel.Ask, ix proto.Interaction) bool {
+	return a.ID == ix.ID && (a.CreatedAt.IsZero() || ix.CreatedAt.IsZero() || a.CreatedAt.Equal(ix.CreatedAt))
+}
+
 func (s *Service) askInChannel(ctx context.Context, id string, ix proto.Interaction) {
 	c := &s.chans
 	c.mu.Lock()
 	s.loadChannelStateLocked(ctx)
-	known := slices.ContainsFunc(c.st.Asks, func(a *channel.Ask) bool { return a.Channel == id && a.ID == ix.ID })
+	known := slices.ContainsFunc(c.st.Asks, func(a *channel.Ask) bool { return a.Channel == id && sameChannelAskOccurrence(a, ix) })
 	generation := c.generation[id]
 	now := c.clock()
 	c.mu.Unlock()
@@ -573,7 +577,7 @@ func (s *Service) askInChannel(ctx context.Context, id string, ix proto.Interact
 		return
 	}
 	c.mu.Lock()
-	if _, ended := c.ended[ix.ID]; !ended && c.generation[id] == generation && !slices.ContainsFunc(c.st.Asks, func(x *channel.Ask) bool { return x.Channel == id && x.ID == a.ID }) {
+	if !s.interactionEndedForLocked(ix) && c.generation[id] == generation && !slices.ContainsFunc(c.st.Asks, func(x *channel.Ask) bool { return x.Channel == id && sameChannelAskOccurrence(x, ix) }) {
 		c.st.Asks = append(c.st.Asks, a)
 		s.saveChannelStateLocked()
 	}
@@ -595,7 +599,7 @@ func (s *Service) channelInteractionEnded(ix proto.Interaction, inChat bool) {
 	}
 	n := len(c.st.Asks)
 	c.st.Asks = slices.DeleteFunc(c.st.Asks, func(a *channel.Ask) bool {
-		if a.ID != ix.ID {
+		if !sameChannelAskOccurrence(a, ix) {
 			return false
 		}
 		if !inChat {

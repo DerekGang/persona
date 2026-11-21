@@ -516,6 +516,39 @@ func TestCodexCardsOfJoinedThreads(t *testing.T) {
 	}
 }
 
+func TestCodexSyncListsSameIDReplacementWithoutAnEmptySync(t *testing.T) {
+	n, f, _ := codexNode(t, proto.StatusBlocked)
+	hub := newScriptHub(t, answerWith(proto.Resolution{}), notifyOK)
+	n.peer = hub.n.peer
+	approval := screenFixture(t, "codex-0.163.0-exec-approval-120.txt")
+	f.setScreen(cxPane, approval)
+	first := onlyCard(t, n).ix
+	n.syncCodexCards(context.Background())
+	waitFor(t, "the first Codex interaction list", func() bool {
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		return len(hub.codexLists) == 1
+	})
+	// A targeted answer scan observed A gone, but no empty full sync ran before B
+	// appeared. Only A's occurrence cache is cleared; its ID remains in cx.sent.
+	n.cx.mu.Lock()
+	delete(n.cx.created, first.ID)
+	n.cx.mu.Unlock()
+	f.setScreen(cxPane, approval)
+	n.syncCodexCards(context.Background())
+	waitFor(t, "the same-ID replacement Codex interaction list", func() bool {
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		return len(hub.codexLists) == 2
+	})
+	hub.mu.Lock()
+	got := append([]proto.Interaction(nil), hub.codexLists[1]...)
+	hub.mu.Unlock()
+	if len(got) != 1 || got[0].ID != first.ID || !got[0].CreatedAt.After(first.CreatedAt) {
+		t.Fatalf("replacement list = %+v, want the same ID with a later occurrence than %s", got, first.CreatedAt)
+	}
+}
+
 // A card handed back to the computer stays off the phone while Codex asks it, and the same approval asked again
 // later is a new card (#3766: the hand-back used to keep it off the phone until the node restarted).
 func TestCodexDismissedApprovalComesBack(t *testing.T) {

@@ -45,6 +45,15 @@ func legacyRelayMsgID(to string, msg relayMsg) string {
 	return relayMsgIDText(to, msg, msg.Text)
 }
 
+// sameLegacyContinuationRelay recognizes the journal occurrence of a queued
+// pre-upgrade continuation even after its retry text becomes a no-retry notice.
+// Its pinned OnceID deliberately remains the old text hash, so comparing only
+// the newly computed ID would append the same journal result again.
+func sameLegacyContinuationRelay(a, b relayMsg) bool {
+	return a.Continuation && b.Continuation && a.ContinuationDigest == "" && b.ContinuationDigest == "" &&
+		a.From == b.From && a.Tool == b.Tool && a.State == b.State && a.At.Equal(b.At)
+}
+
 func relayMsgIDText(to string, msg relayMsg, text string) string {
 	h := sha256.New()
 	for _, part := range []string{to, msg.From, msg.Tool, msg.State, msg.At.UTC().Format(time.RFC3339Nano), text} {

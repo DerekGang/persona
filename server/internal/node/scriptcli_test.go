@@ -25,11 +25,12 @@ type scriptHub struct {
 	n    *Node
 	sock string
 
-	mu        sync.Mutex
-	created   []proto.Interaction
-	notified  []map[string]any
-	cancelled []string
-	larkSent  []proto.LarkSent // what the node's gate proxy told of (lark.sent)
+	mu         sync.Mutex
+	created    []proto.Interaction
+	notified   []map[string]any
+	cancelled  []string
+	codexLists [][]proto.Interaction
+	larkSent   []proto.LarkSent // what the node's gate proxy told of (lark.sent)
 }
 
 func newScriptHub(t *testing.T, create func(ctx context.Context, ix proto.Interaction) (any, error), notify func() (any, error)) *scriptHub {
@@ -71,6 +72,15 @@ func newScriptHub(t *testing.T, create func(ctx context.Context, ix proto.Intera
 		return nil, nil
 	}
 	hub.OnEvent = func(method string, params json.RawMessage) {
+		if method == "codex.interactions" {
+			var p struct {
+				Interactions []proto.Interaction `json:"interactions"`
+			}
+			_ = json.Unmarshal(params, &p)
+			h.mu.Lock()
+			h.codexLists = append(h.codexLists, p.Interactions)
+			h.mu.Unlock()
+		}
 		var p struct {
 			ID string `json:"id"`
 		}

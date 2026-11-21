@@ -104,7 +104,14 @@ func (s *Service) resolvePreparedAnswerAt(ctx context.Context, p *pending, r pro
 		}
 		if clarified {
 			if err := s.approvalJournalApplying(ctx, p.ix); err != nil {
-				applyErr = fmt.Errorf("%w: the approval journal could not record execution: %v", approvalops.ErrNotApplied, err)
+				if errors.Is(err, errApprovalExecutionUncertain) {
+					// The earlier apply may already have executed. Preserve its honest
+					// failure and keep applyErr non-nil so no grant or standing rule is
+					// created; the ordinary ErrNotApplied cancellation must not rewrite it.
+					applyErr = err
+				} else {
+					applyErr = fmt.Errorf("%w: the approval journal could not record execution: %v", approvalops.ErrNotApplied, err)
+				}
 			}
 		}
 		if applyErr == nil {
@@ -173,19 +180,20 @@ func (s *Service) endPreparedByID(id, status, text string) bool {
 
 // endPrepared is expiry/cancellation outside resolve. It loses to a final claim
 // already made, and reports the terminal result only if the card had clarified.
-func (s *Service) endPrepared(p *pending, status, text string) {
-	s.endPreparedIf(p, status, text, nil)
+// The result reports whether this call actually won and finished the card.
+func (s *Service) endPrepared(p *pending, status, text string) bool {
+	return s.endPreparedIf(p, status, text, nil)
 }
 
 // endPreparedIf arbitrates with an in-flight question and rechecks guard after
 // that attempt finishes. A stale decision/pause timer therefore cannot end a
 // card whose state changed while its callback was waiting.
-func (s *Service) endPreparedIf(p *pending, status, text string, guard func(*preparedApproval) bool) {
+func (s *Service) endPreparedIf(p *pending, status, text string, guard func(*preparedApproval) bool) bool {
 	for {
 		s.fleet.mu.Lock()
 		if p.prepared == nil || p.prepared.terminal || p.claimed || s.fleet.interactions[p.ix.ID] != p {
 			s.fleet.mu.Unlock()
-			return
+			return false
 		}
 		if attempt := p.prepared.attempt; attempt != nil {
 			s.fleet.mu.Unlock()
@@ -195,7 +203,7 @@ func (s *Service) endPreparedIf(p *pending, status, text string, guard func(*pre
 		a := p.prepared
 		if guard != nil && !guard(a) {
 			s.fleet.mu.Unlock()
-			return
+			return false
 		}
 		if text == "" {
 			if status == "expired" {
@@ -222,7 +230,7 @@ func (s *Service) endPreparedIf(p *pending, status, text string, guard func(*pre
 		}
 		s.fleet.mu.Unlock()
 		s.finishPrepared(p, status)
-		return
+		return true
 	}
 }
 

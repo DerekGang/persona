@@ -883,7 +883,7 @@ func (n *Node) askOnce(ctx context.Context, ix proto.Interaction) (proto.Resolut
 		return res, false, nil
 	}
 	if ix.EditableText != "" && res.EditedText != "" {
-		n.editedAnswers.Store(ix.ID, res.EditedText)
+		n.editedAnswers.Store(ix.ID, larkEditedAnswer{text: res.EditedText, approvalID: res.ApprovalID})
 	}
 	return res, true, nil
 }

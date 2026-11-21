@@ -180,6 +180,73 @@ struct QuestionSendingTests {
         #expect(model.pendingInteractions.isEmpty && model.answerProgress(ix.uid) == nil)
     }
 
+    @Test func aLateQuestionAnswerResponseKeepsASameIDReplacement() async {
+        let hub = FakeHub()
+        var first = card()
+        first.createdAt = Date(timeIntervalSince1970: 1_000)
+        var replacement = first
+        replacement.createdAt = first.createdAt!.addingTimeInterval(1)
+        replacement.summary = "replacement"
+        let model = model(hub, first)
+        hub.on("POST", path) { _ in
+            model.handle(.interaction(replacement), group: "")
+            return Data(#"{"ok":true}"#.utf8)
+        }
+        await model.resolve(first, answer)
+        #expect(model.interactions[first.uid]?.createdAt == replacement.createdAt)
+        model.replaceInteractions("", [replacement])
+        #expect(model.interactions[first.uid]?.createdAt == replacement.createdAt)
+    }
+
+    @Test func aReplacementArrivingDuringAPermissionAnswerStaysPending() async {
+        let hub = FakeHub()
+        var first = card(kind: .permission)
+        first.createdAt = Date(timeIntervalSince1970: 1_000)
+        var replacement = first
+        replacement.createdAt = first.createdAt!.addingTimeInterval(1)
+        replacement.summary = "replacement"
+        let model = model(hub, first)
+        hub.on("POST", path) { _ in
+            model.handle(.interaction(replacement), group: "")
+            return Data(#"{"ok":true}"#.utf8)
+        }
+        await model.resolve(first, Resolution(allow: true))
+        #expect(model.interactions[first.uid]?.createdAt == replacement.createdAt)
+        model.replaceInteractions("", [replacement])
+        #expect(model.interactions[first.uid]?.createdAt == replacement.createdAt)
+    }
+
+    @Test func aNanosecondReplacementSurvivesAnEarlierResolvedEvent() throws {
+        let first = try JSON.decoder.decode(Interaction.self, from: Data(#"{"id":"ix_1","machine_id":"m","session_id":"","kind":"permission","created_at":"2026-11-21T01:02:03.000000001Z"}"#.utf8))
+        let replacement = try JSON.decoder.decode(Interaction.self, from: Data(#"{"id":"ix_1","machine_id":"m","session_id":"","kind":"permission","created_at":"2026-11-21T01:02:03.000000002Z","summary":"replacement"}"#.utf8))
+        let hub = FakeHub()
+        let model = model(hub, first)
+        model.handle(.interaction(replacement), group: "")
+        let resolved = try #require(ServerEvent.decode(Data(#"{"type":"interaction_resolved","id":"ix_1","created_at":"2026-11-21T01:02:03.000000001Z"}"#.utf8)))
+        model.handle(resolved, group: "")
+        #expect(model.interactions[first.uid]?.createdAtWire == "2026-11-21T01:02:03.000000002Z")
+        model.replaceInteractions("", [replacement])
+        #expect(model.interactions[first.uid]?.createdAtWire == replacement.createdAtWire)
+    }
+
+    @Test func anEarlierResolvedEventDoesNotBlockANewerPermissionRetry() async throws {
+        let first = try JSON.decoder.decode(Interaction.self, from: Data(#"{"id":"ix_1","machine_id":"m","session_id":"","kind":"permission","created_at":"2026-11-21T01:02:03.000000001Z"}"#.utf8))
+        let replacement = try JSON.decoder.decode(Interaction.self, from: Data(#"{"id":"ix_1","machine_id":"m","session_id":"","kind":"permission","created_at":"2026-11-21T01:02:03.000000002Z","summary":"replacement"}"#.utf8))
+        let resolved = try #require(ServerEvent.decode(Data(#"{"type":"interaction_resolved","id":"ix_1","created_at":"2026-11-21T01:02:03.000000001Z"}"#.utf8)))
+        let hub = FakeHub()
+        let model = model(hub, replacement)
+        hub.on("POST", path) { _ in
+            // The permission card is optimistically hidden while B is in flight.
+            // A's delayed withdrawal must not poison B's put-back state.
+            model.handle(resolved, group: "")
+            throw APIError(status: 400, message: "try again")
+        }
+        await model.resolve(replacement, Resolution(allow: true))
+        #expect(model.interactions[first.uid]?.createdAtWire == replacement.createdAtWire)
+        model.replaceInteractions("", [replacement])
+        #expect(model.interactions[first.uid]?.createdAtWire == replacement.createdAtWire)
+    }
+
     @Test func otherCardsStillGoAtOnce() async {
         let hub = FakeHub()
         let ix = card(kind: .permission)

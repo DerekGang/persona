@@ -950,6 +950,63 @@ func TestRecoveryAcceptsLiveTerminalHistoryBeforeDelivery(t *testing.T) {
 	}
 }
 
+func TestRecoveryKeepsAnOwnerResolutionNewerThanItsStaleJournal(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_recovery_owner_already_resolved")
+	if err := ft.s.approvalJournalStarted(context.Background(), ix); err != nil {
+		t.Fatal(err)
+	}
+	if err := ft.s.putDetachedGrant(context.Background(), ix, proto.Resolution{}); err != nil {
+		t.Fatal(err)
+	}
+	ft.s.record(ix)
+	allow := true
+	if err := ft.st.FinishInteraction(context.Background(), ix.ID, "resolved", &proto.Resolution{Allow: &allow}); err != nil {
+		t.Fatal(err)
+	}
+	st := &restoreMem{fleetMem: ft.st}
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return st }, Logf: testLogf(t), Devices: ft.d})
+	restarted.recoverApprovalJournals(context.Background())
+	restarted.approvals.mu.Lock()
+	recovering, done := restarted.approvals.recovering, restarted.approvals.recoveryDone
+	restarted.approvals.mu.Unlock()
+	if recovering || !done {
+		t.Fatalf("the owner's terminal outcome left recovery stuck: recovering=%v done=%v", recovering, done)
+	}
+	if status, _, _ := st.InteractionOutcome(context.Background(), ix.ID); status != "resolved" {
+		t.Fatalf("recovery replaced the owner's outcome with %q", status)
+	}
+	if result := waitFakeApprovalResult(t, ft.f, ix.ID); !strings.Contains(result, "approved") || strings.Contains(result, "cancelled") {
+		t.Fatalf("recovery delivered its stale journal instead of the owner outcome: %q", result)
+	}
+	retry := ix
+	retry.ID = "ix_recovery_owner_already_resolved_retry"
+	got, ok, err := restarted.consumeDetachedGrant(context.Background(), retry)
+	if err != nil || !ok || got.Allow == nil || !*got.Allow {
+		t.Fatalf("the recorded owner Allow did not preserve its one-time continuation: %+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestRecoveryDoesNotFinalizeOverAnOwnerClaimInFlight(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	ix := detachedTestCard("ix_recovery_owner_claim_in_flight")
+	entry := putTerminalOccurrenceJournal(t, ft, ix, "cancelled", "The assistant restarted.")
+	ft.s.record(ix)
+	restarted := newRestartedService(t, Options{Hub: ft.f, Store: func() Store { return &restoreMem{fleetMem: ft.st} }, Logf: testLogf(t), Devices: ft.d})
+	allow := true
+	restarted.fleet.mu.Lock()
+	restarted.fleet.interactions = map[string]*pending{ix.ID: {ix: ix, claimed: true, resolution: &proto.Resolution{Allow: &allow}}}
+	restarted.fleet.mu.Unlock()
+	if err := restarted.finishRecoveredApproval(entry); err == nil {
+		t.Fatal("recovery finalized its stale cancellation while the owner claim was still executing")
+	}
+	if status, _, _ := ft.st.InteractionOutcome(context.Background(), ix.ID); status != "pending" {
+		t.Fatalf("recovery wrote %q over the in-flight owner claim", status)
+	}
+}
+
 func TestUnfinishedLegacyJournalKeepsItsOccurrenceCutoff(t *testing.T) {
 	ft := newFleetTest(t)
 	preparedTestConversation(ft)
@@ -1503,6 +1560,35 @@ func TestQueuedLegacyContinuationKeepsItsSentIdentity(t *testing.T) {
 	rewritten.Text = consumedContinuationText("ix_legacy_continuation")
 	if got := relayMsgID("s1", rewritten); got != want {
 		t.Fatalf("rewriting the upgraded continuation changed its ID: got %q want %q", got, want)
+	}
+}
+
+func TestLegacyQueuedContinuationDeduplicatesJournalRedelivery(t *testing.T) {
+	ft := newFleetTest(t)
+	preparedTestConversation(ft)
+	at := time.Date(2026, 11, 21, 2, 3, 4, 5, time.UTC)
+	msg := relayMsg{From: approvalResultFrom + "ix_legacy_redelivered_continuation", Tool: askAnswerTool,
+		Text: "Retry the same tool now", At: at, Continuation: true}
+	if err := ft.s.store().PutSetting(t.Context(), relayKey, relayState{Queue: map[string][]relayMsg{"s1": {msg}}}); err != nil {
+		t.Fatal(err)
+	}
+	ft.s.relays.mu.Lock()
+	ft.s.relays.loaded = false
+	loaded := ft.s.relayLocked(t.Context())
+	ft.s.relays.mu.Unlock()
+	if !loaded {
+		t.Fatal("the legacy continuation queue did not load")
+	}
+	working := proto.Session{MachineID: "mac", SessionID: "s1", Assistant: true, Agent: "claude", Status: proto.StatusWorking, State: proto.StateWorking}
+	ft.f.setSessions("mac", working)
+	ft.d.setSessions("mac", []proto.Session{working})
+	entry := approvalJournalEntry{ID: "ix_legacy_redelivered_continuation", MachineID: "mac", SessionID: "s1",
+		Status: "approved", Result: msg.Text, Continuation: true, UpdatedAt: at}
+	if err := ft.s.deliverApprovalResult(entry); err != nil {
+		t.Fatal(err)
+	}
+	if got := ft.s.queuedFor("s1"); got != 1 {
+		t.Fatalf("journal redelivery duplicated its pre-upgrade continuation: queue depth %d, want 1", got)
 	}
 }
 

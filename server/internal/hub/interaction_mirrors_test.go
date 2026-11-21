@@ -100,6 +100,29 @@ func TestDisplayMirrorUpdatesAndResolvesTogether(t *testing.T) {
 	}
 }
 
+func TestResolutionEventCarriesOccurrence(t *testing.T) {
+	h := newTestHub(t)
+	c := &client{out: make(chan []byte, 2), urlFeatures: map[string]bool{featureApprovalMirrors: true}}
+	addTestClient(h, c)
+	ix := proto.Interaction{ID: "ix_resolution_occurrence", SessionID: "side", Kind: proto.IxPermission,
+		CreatedAt: time.Date(2026, 11, 21, 1, 2, 3, 456789123, time.UTC)}
+	reportInteraction(t, h, ix)
+	_ = wireReceive(t, c)
+	reportResolvedAt(t, h, ix.ID, ix.CreatedAt)
+	var event struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(wireReceive(t, c), &event); err != nil {
+		t.Fatal(err)
+	}
+	at, err := time.Parse(time.RFC3339Nano, event.CreatedAt)
+	if event.Type != "interaction_resolved" || event.ID != ix.ID || err != nil || !at.Equal(ix.CreatedAt) {
+		t.Fatalf("resolution lost its occurrence: %+v, %v", event, err)
+	}
+}
+
 func TestDisplayMirrorFromEarlierOccurrenceCannotResolveLaterCard(t *testing.T) {
 	h := newTestHub(t)
 	first := proto.Interaction{ID: "ix_reused_mirror", SessionID: "side", Kind: proto.IxPermission,

@@ -292,6 +292,56 @@ func TestApprovalMirrorRoutesOnlyWriteTools(t *testing.T) {
 	}
 }
 
+func TestApprovalMirrorToolNamespacesNormalizeAndRoute(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ctx := context.Background()
+	type testCase struct {
+		name        string
+		tool        string
+		normalized  string
+		allowed     bool
+		markedWrite bool
+	}
+	namespaces := []struct{ name, prefix string }{
+		{name: "bare"},
+		{name: "Persona", prefix: "mcp__persona__"},
+		{name: "plugin Persona", prefix: "mcp__plugin_persona__"},
+		{name: "legacy Jarvis", prefix: "mcp__jarvis__"},
+	}
+	tests := make([]testCase, 0, len(namespaces)*3+4)
+	for _, ns := range namespaces {
+		tests = append(tests,
+			testCase{name: ns.name + " mail_send", tool: ns.prefix + "mail_send", normalized: "mail_send", allowed: true},
+			testCase{name: ns.name + " Read", tool: ns.prefix + "Read", normalized: "Read", markedWrite: true},
+			testCase{name: ns.name + " lark_messages", tool: ns.prefix + "lark_messages", normalized: "lark_messages", markedWrite: true},
+		)
+	}
+	for _, tool := range []string{
+		"mcp__persona_extra__mail_send",
+		"mcp__plugin_persona_extra__mail_send",
+		"mcp__jarvis_extra__mail_send",
+		"mcp__other__mcp__persona__mail_send",
+	} {
+		tests = append(tests, testCase{name: "lookalike " + tool, tool: tool, normalized: tool})
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := approvalMirrorToolName(tc.tool); got != tc.normalized {
+				t.Errorf("approvalMirrorToolName(%q) = %q, want %q", tc.tool, got, tc.normalized)
+			}
+			ix := mirrorTestCard("ix_namespace")
+			ix.ToolName = tc.tool
+			// Writes carry no write metadata: only normalized membership in the default
+			// write list can admit them. Reads are deliberately mislabeled as writes.
+			ix.WriteOperation = tc.markedWrite
+			ix.AlwaysKeys = nil
+			if got := ft.s.nonMainAssistantPermission(ctx, ix); got != tc.allowed {
+				t.Errorf("default routing for %q = %v, want %v (normalized name %q)", tc.tool, got, tc.allowed, tc.normalized)
+			}
+		})
+	}
+}
+
 func TestApprovalMirrorToolAllowlistIsConfigurable(t *testing.T) {
 	ft := newMirrorFleetTest(t)
 	ctx := context.Background()

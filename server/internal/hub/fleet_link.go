@@ -51,6 +51,18 @@ type fleetCache struct {
 	clientsSend sync.Mutex
 }
 
+// interactionResolvedEvent carries occurrence identity whenever the hub knows it.
+// Older clients ignore the additive field; a zero-time legacy withdrawal remains
+// ID-only. Clients use it to ignore an earlier resolution arriving after a same-ID
+// replacement instead of guessing that every ID-only event names the latest card.
+func interactionResolvedEvent(ix proto.Interaction) map[string]any {
+	event := map[string]any{"type": "interaction_resolved", "id": ix.ID}
+	if !ix.CreatedAt.IsZero() {
+		event["created_at"] = ix.CreatedAt
+	}
+	return event
+}
+
 func init() {
 	handleBusEvent(assistantwire.EventFleetSessions, func(h *Hub, c *busConn, params json.RawMessage) {
 		rest, rows, scanned := proto.ScanSessionList(params)
@@ -131,7 +143,7 @@ func init() {
 		}
 		f.interactions[p.Interaction.ID] = p.Interaction
 		updated := []proto.Interaction{p.Interaction}
-		var resolved []string
+		var resolved []proto.Interaction
 		if p.Interaction.MirrorOf == "" {
 			for id, mirror := range f.interactions {
 				if mirror.MirrorOf != p.Interaction.ID || mirror.Manager != p.Interaction.Manager {
@@ -140,7 +152,7 @@ func init() {
 				mirror = refreshedDisplayMirror(p.Interaction, mirror)
 				if !validDisplayMirror(p.Interaction, mirror) {
 					delete(f.interactions, id)
-					resolved = append(resolved, id)
+					resolved = append(resolved, mirror)
 					continue
 				}
 				f.interactions[id] = mirror
@@ -151,9 +163,9 @@ func init() {
 		for _, ix := range updated {
 			h.broadcast(map[string]any{"type": "interaction", "interaction": ix})
 		}
-		for _, id := range resolved {
-			h.push.withdraw(id)
-			h.broadcast(map[string]any{"type": "interaction_resolved", "id": id})
+		for _, ix := range resolved {
+			h.push.withdraw(ix.ID)
+			h.broadcast(interactionResolvedEvent(ix))
 		}
 		if !h.cardAllowed(c.managerID(), p.Interaction) { // its machine moved meanwhile (dropCard)
 			h.dropCard(c.managerID(), p.Interaction.ID)
@@ -176,18 +188,22 @@ func init() {
 			return // a delayed resolution for an earlier occurrence
 		}
 		delete(f.interactions, p.ID)
-		ids := []string{p.ID}
+		resolved := proto.Interaction{ID: p.ID, CreatedAt: p.CreatedAt}
+		if exists {
+			resolved = current
+		}
+		ids := []proto.Interaction{resolved}
 		for id, ix := range f.interactions {
 			if ix.MirrorOf == p.ID && ix.Manager == c.managerID() &&
 				(p.CreatedAt.IsZero() || ix.CreatedAt.Equal(p.CreatedAt)) {
 				delete(f.interactions, id)
-				ids = append(ids, id)
+				ids = append(ids, ix)
 			}
 		}
 		f.mu.Unlock()
-		for _, id := range ids {
-			h.push.withdraw(id) // a suspended app hears it by push (#4349)
-			event := map[string]any{"type": "interaction_resolved", "id": id}
+		for _, ix := range ids {
+			h.push.withdraw(ix.ID) // a suspended app hears it by push (#4349)
+			event := interactionResolvedEvent(ix)
 			if p.AnsweredBy != "" {
 				event["answered_by"] = p.AnsweredBy // the app marks a question the assistant answered (docs/assistant/assistant.md)
 				if p.Reason != "" {
@@ -372,10 +388,10 @@ func (h *Hub) takeFleetInteractionsFrom(owner string, list []proto.Interaction) 
 			}
 		}
 	}()
-	for id := range old {
+	for id, ix := range old {
 		if _, ok := now[id]; !ok {
 			h.push.withdraw(id)
-			h.broadcast(map[string]any{"type": "interaction_resolved", "id": id})
+			h.broadcast(interactionResolvedEvent(ix))
 		}
 	}
 	for _, ix := range list {
@@ -394,21 +410,22 @@ func (h *Hub) dropCard(owner, id string) {
 	f.mu.Lock()
 	ix, ok := f.interactions[id]
 	other := ok && cmp.Or(ix.Manager, assistantwire.AssistantID) != owner
-	ids := []string{id}
+	ids := []proto.Interaction{{ID: id}}
 	if ok && !other {
+		ids[0] = ix
 		delete(f.interactions, id)
 		for copyID, mirror := range f.interactions {
 			if mirror.MirrorOf == id && mirror.Manager == ix.Manager {
 				delete(f.interactions, copyID)
-				ids = append(ids, copyID)
+				ids = append(ids, mirror)
 			}
 		}
 	}
 	f.mu.Unlock()
 	if !other {
 		for _, gone := range ids {
-			h.push.withdraw(gone)
-			h.broadcast(map[string]any{"type": "interaction_resolved", "id": gone})
+			h.push.withdraw(gone.ID)
+			h.broadcast(interactionResolvedEvent(gone))
 		}
 	}
 }

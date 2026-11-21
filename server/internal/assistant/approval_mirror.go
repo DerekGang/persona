@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -35,7 +36,13 @@ var defaultApprovalMirrorReadTools = map[string]bool{
 }
 
 func approvalMirrorToolName(name string) string {
-	return strings.TrimPrefix(strings.TrimSpace(name), "mcp__persona__")
+	name = compat.CanonicalMCPToolName(strings.TrimSpace(name))
+	rest, ok := strings.CutPrefix(name, "mcp__")
+	i := strings.LastIndex(rest, "__")
+	if !ok || i <= 0 || !compat.IsMCPServer(strings.TrimPrefix(rest[:i], "plugin_")) || rest[i+2:] == "" {
+		return name
+	}
+	return rest[i+2:]
 }
 
 func cleanApprovalMirrorTools(names []string) []string {
