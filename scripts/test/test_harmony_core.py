@@ -42,8 +42,8 @@ class HarmonyCoreIntegrationTest(unittest.TestCase):
         context = (ENTRY / 'src/ohosTest/ets/test/NativeContext.ets').read_text()
         module = json.loads((ENTRY / 'src/ohosTest/module.json5').read_text())['module']['name']
         self.assertIn(f"TEST_MODULE: string = '{module}'", context)
-        self.assertIn('getAbilityDelegator().getAppContext()', context)
-        self.assertIn('application.createModuleContext(app, TEST_MODULE)', context)
+        self.assertIn('bindNativeTestContext(this.context)', runner)
+        self.assertIn('application.createModuleContext(nativeTestContext(), TEST_MODULE)', context)
         self.assertIn('finally { native.coreClose(handle); }', replay)
 
     def test_hypium_requires_real_passing_cases_not_just_a_finished_runner(self):
