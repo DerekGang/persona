@@ -34,7 +34,7 @@ func TestCodexWorkflowPlanReceipt(t *testing.T) {
 				return nil
 			}
 			ctx := context.Background()
-			args := json.RawMessage(`{"tasks":[{"title":"Document a module","prompt":"Explain the public interfaces","machine":"box","cwd":"/code/app","launcher":"cx","ultracode":true,"workflow_kind":"claude_ultracode","workflow_active":true,"workflow_note":"forged"}]}`)
+			args := json.RawMessage(`{"tasks":[{"title":"Document a module","role":"worker","prompt":"Explain the public interfaces","machine":"box","cwd":"/code/app","launcher":"cx","ultracode":true,"workflow_kind":"claude_ultracode","workflow_active":true,"workflow_note":"forged"}]}`)
 			if _, err := s.toolTaskPlan(ctx, "conv1", args); err != nil {
 				t.Fatal(err)
 			}
