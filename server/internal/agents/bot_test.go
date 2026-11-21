@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -299,5 +301,38 @@ func TestBotOperationIDHasOrcaShape(t *testing.T) {
 	op, _ := calls[0].params["operation_id"].(string)
 	if len(op) != 46 || op[13] != '-' {
 		t.Fatalf("operation ID %q", op)
+	}
+}
+
+func TestBotOperationBookIsBoundedAndKeepsNewest(t *testing.T) {
+	defer func(was int) { botOperationsMax = was }(botOperationsMax)
+	botOperationsMax = 3
+	caller := &fakeBotCaller{pages: map[string]BotPage{testBotRegistration.SessionID: testBotPage()}}
+	kv := &memKV{m: map[string][]byte{}}
+	src := newTestBot(t, kv, caller)
+	ids := make([]string, 5)
+	for i := range ids {
+		ids[i] = NewClientID()
+		if _, err := src.Send(context.Background(), BotSessionKey, ids[i], fmt.Sprintf("message %d", i)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond) // distinct CreatedAt
+	}
+	var saved map[string]botOperation
+	if ok, err := kv.Setting(context.Background(), botOperationsKey, &saved); !ok || err != nil {
+		t.Fatalf("book not persisted: %v %v", ok, err)
+	}
+	if len(saved) != 3 {
+		t.Fatalf("book kept %d rows, want 3", len(saved))
+	}
+	for _, id := range ids[2:] {
+		if _, ok := saved[id]; !ok {
+			t.Fatalf("newest operation %s was pruned", id)
+		}
+	}
+	// A kept row still refuses a changed payload after a restart (a fresh book on the same store).
+	restarted := newTestBot(t, kv, caller)
+	if _, err := restarted.Send(context.Background(), BotSessionKey, ids[4], "changed"); err == nil {
+		t.Fatal("kept operation accepted a changed payload")
 	}
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -247,6 +249,10 @@ type botOperationBook struct {
 
 const botOperationsKey = "agents.bot.operations"
 
+// botOperationsMax bounds the book, which is rewritten whole on every new send. It is four times outboxMax, so a
+// clientId still outlives its outbox row; only a retry after that many newer sends gets a fresh operation ID.
+var botOperationsMax = 4 * outboxMax
+
 // prepare persists the exact binding, payload hash and Orca operation ID before any write. It contains no message text or transcript.
 func (b *botOperationBook) prepare(ctx context.Context, reg BotRegistration, clientID, text string) (string, error) {
 	b.mu.Lock()
@@ -275,12 +281,32 @@ func (b *botOperationBook) prepare(ctx context.Context, reg BotRegistration, cli
 	now := time.Now().UTC()
 	op := botOperation{ClientID: clientID, EndpointID: reg.ID, MachineID: reg.MachineID, SessionID: reg.SessionID,
 		TextSHA256: fingerprint, OperationID: orcart.OperationID(now, reg.MachineID+"/"+reg.SessionID+"/"+clientID), CreatedAt: now}
-	b.rows[clientID] = op
+	next := make(map[string]botOperation, len(b.rows)+1)
+	maps.Copy(next, b.rows)
+	next[clientID] = op
+	pruneBotOperations(next, botOperationsMax)
 	if b.kv != nil {
-		if err := b.kv.PutSetting(ctx, botOperationsKey, b.rows); err != nil {
-			delete(b.rows, clientID)
+		if err := b.kv.PutSetting(ctx, botOperationsKey, next); err != nil {
 			return "", fail(http.StatusBadGateway, "agents: could not persist bot send operation")
 		}
 	}
+	b.rows = next
 	return op.OperationID, nil
+}
+
+// pruneBotOperations drops the oldest rows beyond max (ties by client ID, so the result is deterministic).
+func pruneBotOperations(rows map[string]botOperation, max int) {
+	if len(rows) <= max {
+		return
+	}
+	list := slices.Collect(maps.Values(rows))
+	slices.SortFunc(list, func(a, b botOperation) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ClientID, b.ClientID)
+	})
+	for _, old := range list[max:] {
+		delete(rows, old.ClientID)
+	}
 }
