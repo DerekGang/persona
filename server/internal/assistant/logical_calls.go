@@ -83,7 +83,20 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 		return nil, true, logicalRefusal(ctx, "private_segment")
 	}
 	if method == DeviceSessionItems || method == "session.item" || method == "session.image" || method == DeviceAssistantHandoff {
-		out, err := s.logicalHistoryCall(ctx, st, c, method, raw)
+		var out json.RawMessage
+		for attempt := 0; attempt < 3; attempt++ {
+			out, err = s.logicalHistoryCall(ctx, st, c, method, raw)
+			if !errors.Is(err, db.ErrConversationHistoryChanged) {
+				break
+			}
+			c, err = st.LogicalConversation(ctx, machine, id)
+			if err != nil {
+				break
+			}
+			if c == nil || c.Deleted {
+				return nil, true, db.ErrConversationDeleted
+			}
+		}
 		return out, true, err
 	}
 	active, ok := c.Active()
@@ -124,7 +137,18 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 			if current.Switch != nil || pending {
 				client, _ := p["client_msg_id"].(string)
 				if client == "" {
-					return logicalRefusal(ctx, "message_id_required")
+					client, _ = p["once_id"].(string)
+					if client != "" {
+						client = "segment-once:" + client
+						p["client_msg_id"] = client
+					}
+				}
+				if client == "" {
+					if _, external := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); external {
+						return logicalRefusal(ctx, "message_id_required")
+					}
+					client = "segment-input:" + randomHex(16)
+					p["client_msg_id"] = client
 				}
 				queued := logicalInput{Method: method, Params: p}
 				if original, ok := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); ok {
@@ -142,6 +166,11 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 				return e
 			}
 		}
+		if logicalSendMethod(method) && active.Ordinal == 1 && current.Epoch > 1 {
+			if _, err := s.logicalPhysical(ctx, active.MachineID, "assistant.segment.restore", map[string]any{"session_id": active.SessionID}); err != nil {
+				return err
+			}
+		}
 		physical := cloneLogicalParams(p, active)
 		if method == "session.watch" {
 			for _, key := range []string{"since_seq", "after_seq"} {
@@ -155,6 +184,9 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 		out, e = s.logicalPhysical(ctx, active.MachineID, method, physical)
 		return e
 	})
+	if errors.Is(err, db.ErrConversationEpoch) || errors.Is(err, db.ErrConversationSwitchBusy) {
+		return nil, true, logicalRefusal(ctx, "busy")
+	}
 	if err != nil {
 		return nil, true, err
 	}

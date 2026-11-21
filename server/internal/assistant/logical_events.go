@@ -171,6 +171,9 @@ func (s *Service) logicalRebind(ctx context.Context, c *db.LogicalConversation) 
 	if !ok {
 		return
 	}
+	if a.Ordinal == 1 && c.Epoch > 1 {
+		_, _ = s.logicalPhysical(ctx, a.MachineID, "assistant.segment.restore", map[string]any{"session_id": a.SessionID})
+	}
 	s.logical.mu.Lock()
 	watch := append(json.RawMessage(nil), s.logical.watches[[2]string{c.MachineID, c.SessionID}]...)
 	s.logical.mu.Unlock()
@@ -186,7 +189,9 @@ func (s *Service) logicalRebind(ctx context.Context, c *db.LogicalConversation) 
 		_ = s.physicalDevices().Follow(ctx, a.MachineID, a.SessionID, true)
 	}
 	s.logicalEmit(c.MachineID, "session.items", map[string]any{"session_id": c.SessionID, "items": []proto.Item{}, "history": c.History, "from_seq": a.Offset, "to_seq": a.Offset})
-	if list, known := s.devs.Sessions(c.MachineID); known {
-		s.setSessions(c.MachineID, list)
+	if s.devs != nil {
+		if list, known := s.devs.Sessions(c.MachineID); known {
+			s.setSessions(c.MachineID, list)
+		}
 	}
 }

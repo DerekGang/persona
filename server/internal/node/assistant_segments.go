@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/proto"
 	"strings"
 	"sync"
 )
@@ -30,6 +33,39 @@ func (n *Node) assistantSegment(ctx context.Context, method string, raw json.Raw
 	if json.Unmarshal(raw, &p) != nil {
 		return nil, errors.New("invalid segment parameters")
 	}
+	if method == "assistant.segment.retire" || method == "assistant.segment.restore" {
+		id, _ := p["session_id"].(string)
+		unlock, ok := n.typing.tryLock(id)
+		if !ok {
+			return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+		}
+		defer unlock()
+		life, ok := n.assistantLife.tryLock(id)
+		if !ok {
+			return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+		}
+		defer life()
+		retired := method == "assistant.segment.retire"
+		if retired {
+			n.mu.Lock()
+			process := n.procs[id]
+			n.mu.Unlock()
+			if process != nil {
+				process.mu.Lock()
+				busy := process.busy || process.compacting || len(process.tasks) > 0
+				process.mu.Unlock()
+				if busy {
+					return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+				}
+			}
+			if h, _, _ := n.runtimes.belongs(id); h != nil && n.runtimeStatus(h, id) == proto.StatusWorking {
+				return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+			}
+			n.cancelAssistantRecovery(id)
+		}
+		n.state.update(id, func(st *sessionState) bool { st.SegmentRetired = retired; return true })
+		return map[string]bool{"ok": true}, nil
+	}
 	if method == "assistant.segment.input" {
 		id, _ := p["session_id"].(string)
 		client, _ := p["client_msg_id"].(string)
@@ -47,9 +83,22 @@ func (n *Node) assistantSegment(ctx context.Context, method string, raw json.Raw
 	operation, _ := p["operation_id"].(string)
 	launcher, _ := p["launcher"].(string)
 	if method == "assistant.segment.check" {
-		agent, err := n.assistantAgent(ctx, launcher)
-		if err != nil {
-			return nil, err
+		agent := ""
+		switch {
+		case launcher == "claude" || launcher == "codex":
+			agent = launcher
+		default:
+			if provider, known := n.managedLauncher(launcher); known {
+				agent = provider.AgentType()
+			} else if !proto.IsExternalLauncher(launcher) {
+				agent = n.launcherProbeCached(ctx, launcher).Agent
+			} else {
+				var err error
+				agent, err = n.assistantAgent(ctx, launcher)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 		policy := agent == "claude" || agent == "codex"
 		if h := n.assistantRuntime(launcher); h != nil {
@@ -58,8 +107,17 @@ func (n *Node) assistantSegment(ctx context.Context, method string, raw json.Raw
 			if agent == "" {
 				agent = h.hello.Runtime
 			}
+			for _, l := range h.hello.Launchers {
+				if l.Name == launcher && l.Agent != "" {
+					agent = l.Agent
+					break
+				}
+			}
 			h.mu.Unlock()
 			policy = h.supervisionPolicy()
+		}
+		if agent == "" {
+			return nil, refusal("unknown_engine", i18n.T(i18n.From(ctx), "assistant-conversation_segments.unknown_engine"), nil)
 		}
 		return map[string]any{"engine": agent, "supervision_policy": policy, "prepare": true}, nil
 	}

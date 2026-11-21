@@ -770,7 +770,7 @@ func (n *Node) handle(ctx context.Context, method string, params json.RawMessage
 func (n *Node) handleMethod(ctx context.Context, method string, params json.RawMessage) (result any, resultErr error) {
 	if strings.HasPrefix(method, "assistant.segment.") {
 		switch method {
-		case "assistant.segment.check", "assistant.segment.prepare", "assistant.segment.receipt", "assistant.segment.input":
+		case "assistant.segment.check", "assistant.segment.prepare", "assistant.segment.receipt", "assistant.segment.input", "assistant.segment.retire", "assistant.segment.restore":
 			return n.assistantSegment(ctx, method, params)
 		}
 	}

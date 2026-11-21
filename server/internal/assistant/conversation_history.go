@@ -755,6 +755,9 @@ func (s *Service) historySync(ctx context.Context, st conversationHistoryStore, 
 			if err := logical.ObserveConversationSource(ctx, machine, c.SessionID, page.History); err != nil {
 				return err
 			}
+			if err := logical.ObserveConversationRevision(ctx, machine, c.SessionID, c.Rev); err != nil {
+				return err
+			}
 			s.logicalChanged()
 		}
 		advanced := intValue(page.ToSeq)

@@ -257,7 +257,7 @@ func (s *Service) logicalHistoryPage(ctx context.Context, st logicalConversation
 			end = max(end, seg.Offset+*seg.FrozenEnd)
 		}
 		page.Partial = page.Partial || source.Partial
-		moreSource = moreSource || source.MoreAfter
+		moreSource = moreSource || source.MoreAfter || source.More
 		if len(page.Items) >= limit && p.Turns <= 0 {
 			moreSource = moreSource || forward && index+1 < len(segs)
 			break

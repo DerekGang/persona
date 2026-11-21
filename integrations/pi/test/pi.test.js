@@ -23,6 +23,7 @@ function sessionManager(id, cwd, entries = [], name = '') {
       for (let e = byId.get(sm.leaf); e; e = byId.get(e.parentId)) out.unshift(e)
       return out
     },
+    appendCustomEntry(customType, data) { sm.append({ type: 'custom', id: `c${sm.entries.length}`, parentId: sm.leaf, customType, data }) },
     append(e) {
       sm.entries = [...sm.entries, e]
       sm.leaf = e.id

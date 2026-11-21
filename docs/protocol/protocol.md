@@ -6048,3 +6048,27 @@ With tab naming enabled, automatic naming calls the node's
 `session.rename_tab_if_current` with `session_id`, `tab_id`,
 `expected_tab_name` and `tab_name`. The node checks the live slot and its current
 host label before changing it and replies with `{ok: true}` on success.
+
+### Logical assistant conversation segments
+
+Feature `assistant_segments` advertises an explicit manager-owned operation. A full-access client sends
+`POST /api/v1/assistant/conversations/{id}/switch` with `{source_machine_id, operation_id, expected_epoch,
+machine_id, launcher, model?, effort?, permission_mode?}`. The target machine/launcher is explicit, including when
+forcing another segment on the same engine. The response acknowledges durable `preparing`; it does not mean a model
+turn ran. Reusing an operation ID requires the same request. Query
+`GET /api/v1/assistant/conversations/{id}/switch/{operation}?machine_id=<public machine>` for
+`{operation_id, phase, expected_epoch, error}`. Phases are `preparing`, `prepared`, `active`, `accepted`, `rejected`
+and `in_doubt`. An unfinished operation serializes changes to that conversation. Ordinary model picks never initiate
+this operation; older clients retain the existing cross-engine refusal.
+
+`GET/PUT /api/v1/assistant/segments` reads/writes `{enabled}` (default true). Disabling new switches never disables
+routing of existing segments. Queued inputs retain their original `client_msg_id`; a sending/in-doubt input fences
+later input until reconciled. Definitive first-turn refusal restores the source at a higher epoch. The source is
+closed only after first-turn acceptance. Full/image requests and scoped subscriptions always use public identity.
+
+Logical seq values remain signed-int32-safe integers. Each later segment starts at the previous segment's offset plus
+its frozen physical end. First-segment item IDs and history remain unchanged; later item IDs have a segment namespace.
+Frozen-range backfill and retired-tail appends do not rewrite logical history. A real source-generation rewrite does.
+Live spans, empty boundary bridges, history pages and reconnect backlog follow the same projection. The manager may
+report `devices.state` machine `transport_for` to retain a bus identity after a source computer is removed; the hub
+validates manager ownership and forwards only, without resolving segments.

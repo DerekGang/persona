@@ -87,3 +87,14 @@ CREATE TABLE conversation_segment_closures (
  session_id text NOT NULL,
  PRIMARY KEY(machine_id, session_id)
 );
+
+-- A start may finish just before deletion or a manager restart. Keep only its
+-- physical identity until it is adopted into a segment or closed; no prompt.
+CREATE TABLE conversation_prepared_candidates (
+ machine_id text NOT NULL,
+ session_id text NOT NULL,
+ logical_machine text NOT NULL,
+ logical_session text NOT NULL,
+ operation_id text NOT NULL,
+ PRIMARY KEY(machine_id,session_id)
+);

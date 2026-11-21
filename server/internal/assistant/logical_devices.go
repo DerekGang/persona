@@ -33,6 +33,9 @@ type logicalConversationStore interface {
 }
 
 type logicalSwitchStore interface {
+	RecordConversationPreparedCandidate(context.Context, db.ConversationPreparedCandidate) error
+	ConversationPreparedCandidates(context.Context) ([]db.ConversationPreparedCandidate, error)
+	ConversationPreparedCandidateDone(context.Context, string, string) error
 	logicalConversationStore
 	PutConversationHandoff(context.Context, string, string, string, json.RawMessage) error
 	ConversationPreparation(context.Context, string, string, string) (json.RawMessage, bool, error)

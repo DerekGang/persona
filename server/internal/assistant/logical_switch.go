@@ -17,6 +17,7 @@ import (
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
+	"github.com/nwverse/persona/server/internal/transcript"
 )
 
 const conversationSegmentsKey = "assistant.segments"
@@ -234,7 +235,50 @@ func (s *Service) logicalSweep(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	candidates, err := st.ConversationPreparedCandidates(ctx)
+	if err != nil {
+		return
+	}
+	for _, candidate := range candidates {
+		c, err := st.LogicalConversation(ctx, candidate.LogicalMachine, candidate.LogicalSession)
+		if err != nil {
+			continue
+		}
+		adopted := false
+		if c != nil {
+			for _, seg := range c.Segments {
+				if seg.MachineID == candidate.MachineID && seg.SessionID == candidate.SessionID {
+					adopted = true
+					break
+				}
+			}
+		}
+		if adopted {
+			_ = st.ConversationPreparedCandidateDone(ctx, candidate.MachineID, candidate.SessionID)
+			continue
+		}
+		if c != nil && c.Switch != nil && c.Switch.OperationID == candidate.OperationID {
+			continue
+		}
+		closeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_, err = s.logicalPhysical(closeCtx, candidate.MachineID, "session.close", map[string]any{"session_id": candidate.SessionID})
+		cancel()
+		if err == nil {
+			_ = st.ConversationPreparedCandidateDone(ctx, candidate.MachineID, candidate.SessionID)
+		}
+	}
 	for _, c := range rows {
+		pending, err := st.ConversationInputPending(ctx, c.MachineID, c.SessionID)
+		if err != nil {
+			continue
+		}
+		closing := false
+		for _, seg := range c.Segments {
+			closing = closing || seg.ClosePending
+		}
+		if c.Switch == nil && !pending && !closing {
+			continue
+		}
 		key := [2]string{c.MachineID, c.SessionID}
 		s.logical.mu.Lock()
 		if s.logical.running == nil {
@@ -288,6 +332,13 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 		if err := json.Unmarshal(op.Request, &p); err != nil {
 			return err
 		}
+		if p.PermissionMode == "" {
+			source, _ := s.session(ctx, c.MachineID, c.SessionID)
+			p.PermissionMode = source.PermissionMode
+			if p.PermissionMode == "" {
+				p.PermissionMode = "default"
+			}
+		}
 		handoff, claimed, err := st.ConversationPreparation(ctx, c.MachineID, c.SessionID, op.OperationID)
 		if err != nil {
 			return err
@@ -326,7 +377,25 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 			}
 			params["cwd"] = cwd
 		}
-		raw, err := s.logicalPhysical(ctx, p.MachineID, method, params)
+		var raw json.RawMessage
+		err = st.WithConversationEpoch(ctx, c.MachineID, c.SessionID, c.Epoch, func(current *db.LogicalConversation) error {
+			if current.Switch == nil || current.Switch.OperationID != op.OperationID {
+				return db.ErrConversationEpoch
+			}
+			var err error
+			raw, err = s.logicalPhysical(ctx, p.MachineID, method, params)
+			if err != nil {
+				return err
+			}
+			var receipt struct {
+				SessionID string `json:"session_id"`
+				Prepared  bool   `json:"prepared"`
+			}
+			if json.Unmarshal(raw, &receipt) == nil && receipt.Prepared && receipt.SessionID != "" {
+				return st.RecordConversationPreparedCandidate(ctx, db.ConversationPreparedCandidate{MachineID: p.MachineID, SessionID: receipt.SessionID, LogicalMachine: c.MachineID, LogicalSession: c.SessionID, OperationID: op.OperationID})
+			}
+			return nil
+		})
 		if err != nil {
 			if logicalNotTaken(err) {
 				return st.ResolveConversationSwitch(ctx, c.MachineID, c.SessionID, op.OperationID, "rejected", "preparation refused")
@@ -375,6 +444,12 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 		for _, ix := range s.pendingInteractions() {
 			if ix.MachineID == c.MachineID && ix.SessionID == c.SessionID {
 				return logicalRefusal(ctx, "busy")
+			}
+		}
+		if source, ok := c.Active(); ok {
+			_, err := s.logicalPhysical(ctx, source.MachineID, "assistant.segment.retire", map[string]any{"session_id": source.SessionID})
+			if err != nil && !errors.Is(err, apierr.ErrOffline) {
+				return err
 			}
 		}
 		if err := st.ActivateConversationSegment(ctx, c.MachineID, c.SessionID, op.OperationID, c.Epoch); err != nil {
@@ -451,6 +526,11 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 		if !ok || active.ID != a.ID {
 			return db.ErrConversationEpoch
 		}
+		if a.Ordinal == 1 && current.Epoch > 1 {
+			if _, err := s.logicalPhysical(ctx, a.MachineID, "assistant.segment.restore", map[string]any{"session_id": a.SessionID}); err != nil {
+				return err
+			}
+		}
 		_, sendErr = s.logicalPhysical(ctx, a.MachineID, queued.Method, cloneLogicalParams(queued.Params, a))
 		return nil
 	})
@@ -498,8 +578,19 @@ func (s *Service) logicalSwitchHandoff(ctx context.Context, st logicalSwitchStor
 	if err = json.Unmarshal(raw, &h); err != nil {
 		return h, err
 	}
-	if strings.TrimSpace(h.Summary) != "" {
-		return h, nil
+	previousSummary := h.Summary
+	h.Summary = ""
+	if a, ok := c.Active(); ok {
+		if history, ok := s.store().(conversationHistoryStore); ok {
+			source, err := history.ConversationHistory(ctx, a.MachineID, a.SessionID)
+			if err != nil {
+				return h, err
+			}
+			if source != nil && source.SummaryKnown && strings.TrimSpace(source.Summary) != "" {
+				h.Summary = source.Summary
+				return h, nil
+			}
+		}
 	}
 	// The source engine's own compaction result is always preferred. The logical
 	// handoff already reads persisted summaries; ask its active source once too.
@@ -513,24 +604,66 @@ func (s *Service) logicalSwitchHandoff(ctx context.Context, st logicalSwitchStor
 	if len(h.Recent) == 0 {
 		return h, nil
 	}
-	input, _ := json.Marshal(h.Recent)
+	page, err := s.logicalHistoryPage(ctx, st, c, historyParams{Limit: 500, LazyImages: true})
+	if err != nil {
+		return h, err
+	}
+	summaryTurns := []prompts.HandoffTurn{}
+	size := 0
+	for i := len(page.Items) - 1; i >= 0; i-- {
+		item := page.Items[i]
+		if item.Kind != proto.KindText || (item.Role != "user" && item.Role != "assistant") {
+			continue
+		}
+		if item.Stored != nil && !item.Stored.Complete {
+			h.Partial = true
+			continue
+		}
+		text := strings.TrimSpace(transcript.StripInjected(item.Text))
+		if text == "" {
+			continue
+		}
+		if size+len(text) > 120000 {
+			h.Partial = true
+			break
+		}
+		size += len(text)
+		summaryTurns = append(summaryTurns, prompts.HandoffTurn{Role: item.Role, Text: text})
+	}
+	slices.Reverse(summaryTurns)
+	h.Partial = h.Partial || page.Partial || (page.HasMore != nil && *page.HasMore)
+	input, _ := json.Marshal(map[string]any{"previous_summary": previousSummary, "history": summaryTurns})
 	call, err := checkModelCall(assistantwire.ModelCompleteParams{System: prompts.RenderSegmentSummary(answerLanguage(s.hello(ctx).Locale)), Messages: []assistantwire.ModelMessage{{Role: "user", Content: string(input)}}, MaxTokens: 2048})
 	if err != nil {
 		return h, err
 	}
-	for {
+	result, err := waitLogicalSummary(ctx, func() (assistantwire.ModelCompleteResult, error) {
 		out, err := s.runModelCall(ctx, "kb", "conversation handoff", "conversation handoff", call)
+		if err != nil {
+			return assistantwire.ModelCompleteResult{}, err
+		}
+		value, ok := out.(assistantwire.ModelCompleteResult)
+		if !ok {
+			return value, errors.New("invalid summary result")
+		}
+		return value, nil
+	})
+	if err != nil {
+		return h, err
+	}
+	h.Summary = result.Text
+	return h, nil
+}
+
+func waitLogicalSummary(ctx context.Context, run func() (assistantwire.ModelCompleteResult, error)) (assistantwire.ModelCompleteResult, error) {
+	for {
+		out, err := run()
 		if err == nil {
-			result, ok := out.(assistantwire.ModelCompleteResult)
-			if !ok {
-				return h, errors.New("invalid summary result")
-			}
-			h.Summary = result.Text
-			return h, nil
+			return out, nil
 		}
 		var re *rpc.Error
 		if !errors.As(err, &re) || re.Code != assistantwire.CodeModelPaused {
-			return h, err
+			return out, err
 		}
 		var pause assistantwire.ModelPause
 		_ = json.Unmarshal(re.Data, &pause)
@@ -539,13 +672,11 @@ func (s *Service) logicalSwitchHandoff(ctx context.Context, st logicalSwitchStor
 		if wait < time.Second {
 			wait = time.Second
 		}
-		// Wait in bounded intervals so cancellation is immediate and no model is
-		// polled while its provider is paused.
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return h, ctx.Err()
+			return out, ctx.Err()
 		case <-timer.C:
 		}
 	}

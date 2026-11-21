@@ -369,6 +369,12 @@ func (d *DB) ResolveConversationSwitch(ctx context.Context, machine, session, op
 				return err
 			}
 			if activated {
+				// A definite first-turn refusal delivered no input. Restore its
+				// original queue position for the recovered source, never retry
+				// an ambiguous delivery on either engine.
+				if _, err := tx.Exec(ctx, `UPDATE conversation_inputs SET state='queued' WHERE logical_machine=$1 AND logical_session=$2 AND epoch=$3 AND state='rejected'`, machine, session, expected+1); err != nil {
+					return err
+				}
 				if epoch != expected+1 {
 					return ErrConversationEpoch
 				}
@@ -663,4 +669,31 @@ func (d *DB) SetConversationPick(ctx context.Context, machine, session string, e
 		_, err := tx.Exec(ctx, `UPDATE conversation_segments SET launcher=$3,model=$4,effort=$5 WHERE logical_machine=$1 AND logical_session=$2 AND state='active'`, machine, session, launcher, model, effort)
 		return err
 	})
+}
+
+type ConversationPreparedCandidate struct{ MachineID, SessionID, LogicalMachine, LogicalSession, OperationID string }
+
+func (d *DB) RecordConversationPreparedCandidate(ctx context.Context, c ConversationPreparedCandidate) error {
+	_, err := d.pool.Exec(ctx, `INSERT INTO conversation_prepared_candidates(machine_id,session_id,logical_machine,logical_session,operation_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, c.MachineID, c.SessionID, c.LogicalMachine, c.LogicalSession, c.OperationID)
+	return err
+}
+func (d *DB) ConversationPreparedCandidates(ctx context.Context) ([]ConversationPreparedCandidate, error) {
+	rows, err := d.pool.Query(ctx, `SELECT machine_id,session_id,logical_machine,logical_session,operation_id FROM conversation_prepared_candidates`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ConversationPreparedCandidate
+	for rows.Next() {
+		var c ConversationPreparedCandidate
+		if err = rows.Scan(&c.MachineID, &c.SessionID, &c.LogicalMachine, &c.LogicalSession, &c.OperationID); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+func (d *DB) ConversationPreparedCandidateDone(ctx context.Context, machine, session string) error {
+	_, err := d.pool.Exec(ctx, `DELETE FROM conversation_prepared_candidates WHERE machine_id=$1 AND session_id=$2`, machine, session)
+	return err
 }

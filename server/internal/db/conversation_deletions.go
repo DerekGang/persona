@@ -43,7 +43,7 @@ func (d *DB) PutConversationDeletion(ctx context.Context, machine, session strin
 				if _, err = tx.Exec(ctx, `INSERT INTO conversation_segment_closures(machine_id,session_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, seg.MachineID, seg.SessionID); err != nil {
 					return err
 				}
-				if _, err = tx.Exec(ctx, `UPDATE settings SET value=value || jsonb_build_object($2::text,$3::jsonb) WHERE key=$1`, ConversationDeletionsKey, conversationDeletionKey(seg.MachineID, seg.SessionID), row); err != nil {
+				if _, err = tx.Exec(ctx, `UPDATE settings SET value=value || jsonb_build_object($2::text,$3::jsonb || jsonb_build_object('machine_id',$4::text,'session_id',$5::text,'hidden_segment',$6::boolean)) WHERE key=$1`, ConversationDeletionsKey, conversationDeletionKey(seg.MachineID, seg.SessionID), row, seg.MachineID, seg.SessionID, seg.Ordinal > 1); err != nil {
 					return err
 				}
 				if err = dropSearchConversationTx(ctx, tx, seg.MachineID, seg.SessionID); err != nil {

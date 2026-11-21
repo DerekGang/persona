@@ -30,6 +30,7 @@ type durableConversationDeletions interface {
 // A tombstone keeps reference identity, never the deleted conversation's words.
 // The computer's transcript, task origins and previously derived records remain.
 type deletedConversation struct {
+	Hidden  bool      `json:"hidden_segment,omitempty"`
 	Machine string    `json:"machine_id"`
 	ID      string    `json:"session_id"`
 	Space   string    `json:"space,omitempty"`
@@ -126,6 +127,14 @@ func (s *Service) deletionRows(ctx context.Context, machine string, list []proto
 	if len(b.rows) == 0 {
 		return list
 	}
+	kept := list[:0]
+	for _, session := range list {
+		if row, deleted := b.rows[runtimeListID(machine, session.SessionID)]; deleted && row.Hidden {
+			continue
+		}
+		kept = append(kept, session)
+	}
+	list = kept
 	seen := map[string]bool{}
 	for i := range list {
 		if row, ok := b.rows[runtimeListID(machine, list[i].SessionID)]; ok {
@@ -136,7 +145,7 @@ func (s *Service) deletionRows(ctx context.Context, machine string, list []proto
 	if complete {
 		var missing []deletedConversation
 		for _, row := range b.rows {
-			if row.Machine == machine && !seen[row.ID] {
+			if row.Machine == machine && !seen[row.ID] && !row.Hidden {
 				missing = append(missing, row)
 			}
 		}
