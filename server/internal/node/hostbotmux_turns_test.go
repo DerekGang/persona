@@ -981,6 +981,26 @@ func TestBotmuxSessionTurnsBackoffAndRecency(t *testing.T) {
 	})
 }
 
+func TestBotmuxColdDashboardReadFallsBackWithinBudget(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "botmux")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 2 &\nwait\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	n, _, _ := herdrNode(t)
+	n.hosts = host.NewRegistry(newBotmuxHost(bin, t.Logf))
+	n.agents[sidA] = host.Agent{PaneID: "botmux:" + sidA, AgentStatus: proto.StatusIdle}
+	items := []proto.Item{{ID: "u1", Role: "user", Kind: proto.KindText, Text: "<user_message>\nwrapper fallback\n</user_message>"}}
+
+	start := time.Now()
+	got := n.applyBotmuxTurns(context.Background(), sidA, nil, items, false)
+	if elapsed := time.Since(start); elapsed < botmuxTurnsReadTimeout || elapsed >= botmuxTurnsReadTimeout+500*time.Millisecond {
+		t.Fatalf("cold dashboard read took %v, want about %v", elapsed, botmuxTurnsReadTimeout)
+	}
+	if got[0].Botmux == nil || got[0].Botmux.Text != "wrapper fallback" {
+		t.Fatalf("cold dashboard read lost wrapper fallback: %+v", got[0])
+	}
+}
+
 func TestBotmuxFoldExpandAndAfterSeqPreserveStructuredReplies(t *testing.T) {
 	ctx := context.Background()
 	fs := newFakeBotmuxTurnsServer(t)
@@ -1027,8 +1047,38 @@ func TestBotmuxFoldExpandAndAfterSeqPreserveStructuredReplies(t *testing.T) {
 		`{"type":"assistant","uuid":"a2","timestamp":"2026-11-19T01:00:03Z","message":{"role":"assistant","id":"m2","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"botmux send --card-file /tmp/card.json"}}]}}`,
 		`{"type":"user","uuid":"r2","timestamp":"2026-11-19T01:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"{\"success\":true,\"messageId\":\"om_r1\"}"}]}}`,
 	}
-	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(strings.Join(lines[:4], "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+
+	after := func(seq int) map[string]any {
+		t.Helper()
+		response, err := n.handle(ctx, "session.items", bmxMustJSON(map[string]any{"session_id": sidA, "after_seq": seq}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.(map[string]any)
+	}
+	first := after(3)
+	firstItems := first["items"].([]proto.Item)
+	if len(firstItems) != 1 || firstItems[0].ToolUseID != "tu2" || firstItems[0].Botmux != nil || first["to_seq"] != 4 {
+		t.Fatalf("expected a pending send at seq 4: %+v", first)
+	}
+	file, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString(lines[4] + "\n")
+	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
+		t.Fatalf("append receipt: write %v, close %v", writeErr, closeErr)
+	}
+	second := after(4)
+	secondItems := second["items"].([]proto.Item)
+	folded := transcript.FoldWork(secondItems)
+	if len(secondItems) != 4 || secondItems[0].Seq != 2 || secondItems[3].Seq != 5 ||
+		len(folded) != 1 || folded[0].Fold == nil || len(folded[0].Fold.Botmux) != 1 ||
+		folded[0].Fold.Botmux[0].Text != "Structured card body" || second["from_seq"] != 4 || second["to_seq"] != 5 {
+		t.Fatalf("receipt must resend the completed run and preserve the cursor: %+v", second)
 	}
 
 	// 1) Expand the fold (from_seq=2, through_seq=5): user item (seq 1) is NOT in the returned range.
@@ -1051,7 +1101,8 @@ func TestBotmuxFoldExpandAndAfterSeqPreserveStructuredReplies(t *testing.T) {
 			foundRange = it.Botmux
 		}
 	}
-	if foundRange == nil || foundRange.Text != "Structured card body" || !foundRange.Final {
+	if len(rangePage.Items) != 4 || rangePage.Items[0].Seq != 2 || rangePage.Items[3].Seq != 5 ||
+		foundRange == nil || foundRange.Text != "Structured card body" || !foundRange.Final {
 		t.Fatalf("fold expand lost structured --card-file reply: %+v", foundRange)
 	}
 

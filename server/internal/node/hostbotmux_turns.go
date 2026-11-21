@@ -550,19 +550,19 @@ func (n *Node) botmuxSessionID(sessionID string) (id string, live bool) {
 
 // applyBotmuxTurns decorates BotMux wrapper items and overlays structured BotMux turn records for a BotMux session.
 // Non-BotMux sessions return items untouched with no decoration and no network calls.
-func (n *Node) applyBotmuxTurns(ctx context.Context, sessionID string, f *transcript.File, items []proto.Item) []proto.Item {
+func (n *Node) applyBotmuxTurns(ctx context.Context, sessionID string, f *transcript.File, items []proto.Item, afterSeq bool) []proto.Item {
 	ctx, cancel := context.WithTimeout(ctx, botmuxTurnsReadTimeout)
 	defer cancel()
-	return n.applyBotmux(ctx, sessionID, f, items, false)
+	return n.applyBotmux(ctx, sessionID, f, items, false, afterSeq)
 }
 
 // applyBotmuxTurnsCached is the non-blocking variant for live pushItems: it uses only cached structured turns
 // and triggers a bounded asynchronous refresh without holding up the session push lock.
 func (n *Node) applyBotmuxTurnsCached(sessionID string, f *transcript.File, items []proto.Item) []proto.Item {
-	return n.applyBotmux(context.Background(), sessionID, f, items, true)
+	return n.applyBotmux(context.Background(), sessionID, f, items, true, true)
 }
 
-func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.File, items []proto.Item, cacheOnly bool) []proto.Item {
+func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.File, items []proto.Item, cacheOnly, replacePrefix bool) []proto.Item {
 	if len(items) == 0 {
 		return items
 	}
@@ -592,7 +592,7 @@ func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.
 		combined = append(combined, items...)
 		combined = append(combined, suffix...)
 		combined = decorateBotmuxTurns(combined, turns, transcriptID)
-		if cacheOnly && len(prefix) > 0 && slices.ContainsFunc(items, func(item proto.Item) bool {
+		if replacePrefix && len(prefix) > 0 && slices.ContainsFunc(items, func(item proto.Item) bool {
 			return item.Kind == proto.KindToolResult
 		}) {
 			before := decorateBotmuxTurns(prefix, turns, transcriptID)
@@ -603,7 +603,10 @@ func (n *Node) applyBotmux(ctx context.Context, sessionID string, f *transcript.
 					break
 				}
 			}
-			return append(f.WithImages(changed), combined[len(prefix):]...)
+			if cacheOnly {
+				changed = f.WithImages(changed)
+			}
+			return append(changed, combined[len(prefix):len(prefix)+len(items)]...)
 		}
 		return combined[len(prefix) : len(prefix)+len(items)]
 	}

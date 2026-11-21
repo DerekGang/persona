@@ -65,7 +65,7 @@ export const BotmuxReplies = memo(function BotmuxReplies({ steps, mid }: { steps
       {replies.map(({ id, reply }) => (
         <div key={id} className="flex min-w-0 flex-col gap-1" data-botmux-reply>
           <BotmuxTags b={reply} />
-          <Markdown text={reply.text} mid={mid} />
+          <Markdown text={reply.text} mid={mid} lineBreaks />
         </div>
       ))}
     </div>

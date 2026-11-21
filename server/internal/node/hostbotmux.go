@@ -186,7 +186,9 @@ func (n *Node) botmuxPending() bool {
 func newBotmuxHost(bin string, logf func(format string, args ...any)) *botmuxHost {
 	return &botmuxHost{
 		run: func(ctx context.Context, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, bin, args...).Output()
+			cmd := exec.CommandContext(ctx, bin, args...)
+			killGroupOnCancel(cmd)
+			return cmd.Output()
 		},
 		// A redirect is the dashboard's login page: the token is stale (Prompt asks for the current one).
 		client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -804,6 +806,9 @@ func (h *botmuxHost) dashboard(ctx context.Context, fresh bool) (string, string,
 		base, token = dashboardLink(out)
 	}
 	if base == "" {
+		if err := ctx.Err(); err != nil {
+			return "", "", fmt.Errorf("botmux dashboard current: %w", err)
+		}
 		if out, err = h.run(ctx, "dashboard", "current"); err != nil {
 			return "", "", fmt.Errorf("botmux dashboard current: %w", err)
 		}

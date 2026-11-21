@@ -8,18 +8,18 @@ describe("botmux mode", () => {
   it("decodes by default", () => {
     expect(readBotmuxMode()).toBe("decode");
   });
-  it("keeps a legacy hidden preference", () => {
+  it("uses decoded format for an old hidden preference", () => {
     localStorage.setItem("persona.agentHideBotmux", "1");
-    expect(readBotmuxMode()).toBe("hide");
+    localStorage.setItem(BOTMUX_MODE_KEY, "hide");
+    expect(readBotmuxMode()).toBe("decode");
   });
   it("persists the mode without removing visibility migration input", () => {
     localStorage.setItem("persona.agentHideBotmux", "1");
     setBotmuxMode("all");
     expect(getBotmuxMode()).toBe("all");
     expect(localStorage.getItem(BOTMUX_MODE_KEY)).toBe("all");
-    setBotmuxMode("hide");
-    expect(readBotmuxMode()).toBe("hide");
-    expect(localStorage.getItem(BOTMUX_MODE_KEY)).toBe("hide");
+    setBotmuxMode("decode");
+    expect(localStorage.getItem(BOTMUX_MODE_KEY)).toBe("decode");
     expect(localStorage.getItem("persona.agentHideBotmux")).toBe("1");
   });
   it("falls back when the localStorage getter throws", () => {

@@ -1,8 +1,7 @@
-// How the web shows botmux sessions (docs/protocol/protocol.md "BotMux messages"), switched by the sidebar's botmux chip
-// (#10764): "decode" shows Lark messages and replies, "all" shows raw transcripts, and "hide" hides BotMux sessions.
+// Transcript format for visible BotMux sessions, switched by the sidebar's botmux chip (#10764).
 import { useSyncExternalStore } from "react";
 
-export type BotmuxMode = "decode" | "all" | "hide";
+export type BotmuxMode = "decode" | "all";
 
 export const BOTMUX_MODE_KEY = "persona.agentBotmuxMode";
 export const LEGACY_BOTMUX_HIDDEN_KEY = "persona.agentHideBotmux";
@@ -12,8 +11,7 @@ export function readBotmuxMode(store?: Storage): BotmuxMode {
   try {
     const storage = store ?? globalThis.localStorage;
     const mode = storage?.getItem(BOTMUX_MODE_KEY);
-    if (mode === "all" || mode === "hide" || mode === "decode") return mode;
-    return storage?.getItem(LEGACY_BOTMUX_HIDDEN_KEY) === "1" ? "hide" : "decode";
+    return mode === "all" ? "all" : "decode";
   } catch {
     return "decode";
   }

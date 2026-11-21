@@ -2,7 +2,7 @@
 // and to-do attribution stay unchanged. The old local key is migration input only.
 import { useSyncExternalStore } from "react";
 import { api, credentialOwner, onCredentialChange } from "./api";
-import { LEGACY_BOTMUX_HIDDEN_KEY, useBotmuxMode } from "./botmux-mode";
+import { BOTMUX_MODE_KEY, LEGACY_BOTMUX_HIDDEN_KEY } from "./botmux-mode";
 
 const PATH = "/agents/display-settings";
 export interface AgentsDisplay { show_botmux: boolean; configured: boolean; use_herdr_tab_name?: boolean }
@@ -20,8 +20,19 @@ function checked(value: AgentsDisplay): AgentsDisplay {
     (value.use_herdr_tab_name !== undefined && typeof value.use_herdr_tab_name !== "boolean")) throw new Error("Invalid Agents display settings");
   return value;
 }
-function legacyHidden() { try { return localStorage.getItem(LEGACY_BOTMUX_HIDDEN_KEY) === "1"; } catch { return false; } }
-function forgetLegacy() { try { localStorage.removeItem(LEGACY_BOTMUX_HIDDEN_KEY); } catch { /* a later read may retry */ } }
+function legacyHidden() {
+  try {
+    return localStorage.getItem(LEGACY_BOTMUX_HIDDEN_KEY) === "1" || localStorage.getItem(BOTMUX_MODE_KEY) === "hide";
+  } catch {
+    return false;
+  }
+}
+function forgetLegacy() {
+  try {
+    localStorage.removeItem(LEGACY_BOTMUX_HIDDEN_KEY);
+    if (localStorage.getItem(BOTMUX_MODE_KEY) === "hide") localStorage.removeItem(BOTMUX_MODE_KEY);
+  } catch { /* a later read may retry */ }
+}
 
 /** Called on hello and each Agents list refresh. Stale reads cannot undo a save or a new credential. */
 export function refreshAgentsDisplay(): Promise<void> {
@@ -86,9 +97,7 @@ const herdrTabName = () => state.value?.use_herdr_tab_name === true;
 
 export function useBotmuxHidden(): boolean {
   // An unavailable preference might hide these sessions. Keep the last acknowledged choice.
-  const mode = useBotmuxMode();
-  const hidden = useSyncExternalStore(subscribe, botmuxHidden, botmuxHidden);
-  return hidden || mode === "hide";
+  return useSyncExternalStore(subscribe, botmuxHidden, botmuxHidden);
 }
 
 export function useHerdrTabName(): boolean {

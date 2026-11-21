@@ -119,7 +119,8 @@ func ApplyBotmuxTurns(items []proto.Item, turns []BotmuxTurn, transcriptSessionI
 		}
 		if id := strings.TrimSpace(a.CLIEntryID); id != "" {
 			byEntry[id] = i
-		} else if h := strings.ToLower(strings.TrimSpace(a.InputSha256)); h != "" {
+		}
+		if h := strings.ToLower(strings.TrimSpace(a.InputSha256)); h != "" {
 			byHash[h] = append(byHash[h], i)
 		}
 	}

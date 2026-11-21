@@ -264,6 +264,29 @@ func TestBotmuxDecorateAndFoldSkipRunningAndErroredSends(t *testing.T) {
 	}
 }
 
+func TestBotmuxDecorateSendReceipt(t *testing.T) {
+	for _, test := range []struct {
+		receipt string
+		want    bool
+	}{
+		{`{"success":false,"error":"rate_limited"}`, false},
+		{`{"ok":true,"success":false}`, false},
+		{`{"ok":false,"success":true}`, false},
+		{"output\n" + `{"success":false}`, false},
+		{`{"success":true,"messageId":"reply"}`, true},
+	} {
+		t.Run(test.receipt, func(t *testing.T) {
+			items := []proto.Item{
+				{Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "send", ToolInput: json.RawMessage(`{"command":"botmux send hello"}`)},
+				{Kind: proto.KindToolResult, ToolUseID: "send", Text: test.receipt},
+			}
+			if got := DecorateBotmux(items)[0].Botmux; (got != nil) != test.want {
+				t.Fatalf("decoration = %+v, want reply: %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBotmuxDecorateSendOutcome(t *testing.T) {
 	for _, status := range []string{
 		"", proto.OutcomeOK, proto.OutcomeBackground, proto.OutcomeTimedOut,
@@ -494,6 +517,27 @@ func TestBotmuxSendShellParametersAndANSIQuotes(t *testing.T) {
 	}
 }
 
+func TestBotmuxSendShellGlobs(t *testing.T) {
+	for _, pattern := range []string{"*", "pre?", "file[ab]", `[a"b"]`} {
+		if got := BotmuxSend("botmux send " + pattern); got != nil {
+			t.Errorf("unquoted %s guessed a reply: %+v", pattern, got)
+		}
+		if got := BotmuxSend("botmux send '" + pattern + "'"); got == nil || got.Text != pattern {
+			t.Errorf("quoted %s lost its literal value: %+v", pattern, got)
+		}
+	}
+	for _, test := range []struct{ arg, want string }{
+		{`"*?"`, "*?"},
+		{`\*\?\[ab]`, "*?[ab]"},
+		{`array[`, "array["},
+		{`[ end]`, "[ end]"},
+	} {
+		if got := BotmuxSend("botmux send " + test.arg); got == nil || got.Text != test.want {
+			t.Errorf("arg %s decoded as %+v, want %q", test.arg, got, test.want)
+		}
+	}
+}
+
 func TestBotmuxInputHashRequiresCompatibleAnchor(t *testing.T) {
 	item := proto.Item{ID: "entry#0", Role: "user", Kind: proto.KindText, Text: "ok"}
 	makeTurn := func(session, entry, text string) BotmuxTurn {
@@ -508,15 +552,19 @@ func TestBotmuxInputHashRequiresCompatibleAnchor(t *testing.T) {
 		want  string
 	}{
 		{"another session", []BotmuxTurn{makeTurn("session-two", "", "wrong")}, ""},
-		{"another entry", []BotmuxTurn{makeTurn("session-one", "earlier", "wrong")}, ""},
+		{"another entry falls back to hash", []BotmuxTurn{makeTurn("session-one", "earlier", "matched")}, "matched"},
 		{"session match", []BotmuxTurn{makeTurn("session-two", "", "wrong"), makeTurn("session-one", "", "matched")}, "matched"},
 		{"entry prefix", []BotmuxTurn{makeTurn("session-one", "earlier", "wrong"), makeTurn("session-one", "entry", "matched")}, "matched"},
 		{"ambiguous hash", []BotmuxTurn{makeTurn("session-one", "", "first"), makeTurn("session-one", "", "second")}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := ApplyBotmuxTurns([]proto.Item{item}, test.turns, "session-one")[0].Botmux
+			items := ApplyBotmuxTurns([]proto.Item{item, {ID: "earlier", Role: "user", Kind: proto.KindText, Text: item.Text}}, test.turns, "session-one")
+			got := items[0].Botmux
 			if test.want == "" && got != nil || test.want != "" && (got == nil || got.Text != test.want) {
 				t.Fatalf("matched %+v, want %q", got, test.want)
+			}
+			if test.name == "another entry falls back to hash" && items[1].Botmux != nil {
+				t.Fatalf("matched the same turn twice: %+v", items[1].Botmux)
 			}
 		})
 	}

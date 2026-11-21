@@ -19,10 +19,10 @@ const items: Item[] = [
 ];
 
 // the botmux pieces load on demand (React.lazy): render, then let them come in
-async function render(): Promise<string> {
+async function render(transcript = items): Promise<string> {
   const host = document.createElement("div");
   const root = createRoot(host);
-  await act(async () => root.render(<SegmentView seg={segments(items)[0]} live={false} mid="m" sid="s" expandFold={async () => {}} />));
+  await act(async () => root.render(<SegmentView seg={segments(transcript)[0]} live={false} mid="m" sid="s" expandFold={async () => {}} />));
   await act(async () => { await import("./BotmuxMessages"); await new Promise((r) => setTimeout(r, 0)); });
   const html = host.innerHTML;
   act(() => root.unmount());
@@ -89,6 +89,15 @@ describe("botmux sessions in the chat", () => {
     } finally {
       act(() => root.unmount());
     }
+  });
+
+  it("preserves a single newline in a decoded reply", async () => {
+    const html = await render([items[0], { ...items[1], botmux: { kind: "reply", text: "line one\nline two" } }, items[2]]);
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const lineBreak = host.querySelector("[data-botmux-reply] br");
+    expect(lineBreak?.previousSibling?.textContent).toBe("line one");
+    expect(lineBreak?.nextSibling?.textContent?.trim()).toBe("line two");
   });
 
   it("as they are: the transcript's words, no tags, no reply block", async () => {

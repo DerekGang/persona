@@ -308,12 +308,14 @@ func BotmuxSend(command string) *proto.Botmux {
 func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 	var cur strings.Builder
 	inWord, delim, strip, delimQuoted := false, "", false, false
+	bracketStart := -1
 	flush := func() {
 		if inWord {
 			words = append(words, cur.String())
 			cur.Reset()
 			inWord = false
 		}
+		bracketStart = -1
 	}
 	i := 0
 	for i < len(s) {
@@ -410,6 +412,8 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 				inWord = true
 			}
 			i += 2
+		case c == '*' || c == '?' || c == ']' && bracketStart >= 0 && cur.Len() > bracketStart:
+			return nil, "", "", false
 		case c == '<' && strings.HasPrefix(s[i:], "<<") && delim == "":
 			flush()
 			i += 2
@@ -465,6 +469,9 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 			return nil, "", "", false
 		default:
 			cur.WriteByte(c)
+			if c == '[' && bracketStart < 0 {
+				bracketStart = cur.Len()
+			}
 			inWord = true
 			i++
 		}
@@ -598,10 +605,10 @@ func hasUnquotedHeredocExpansion(body string) bool {
 	return false
 }
 
-// botmuxResultReportsFailure reports whether a tool_result's text carries a BotMux JSON error payload ({"ok":false}).
+// botmuxResultReportsFailure reports whether a tool_result's text carries a failed BotMux JSON receipt.
 func botmuxResultReportsFailure(text string) bool {
 	s := strings.TrimSpace(text)
-	if s == "" || !strings.Contains(s, `"ok"`) {
+	if !strings.Contains(s, `"ok"`) && !strings.Contains(s, `"success"`) {
 		return false
 	}
 	check := func(raw string) bool {
@@ -610,9 +617,11 @@ func botmuxResultReportsFailure(text string) bool {
 			return false
 		}
 		var body struct {
-			OK *bool `json:"ok"`
+			OK      *bool `json:"ok"`
+			Success *bool `json:"success"`
 		}
-		return json.Unmarshal([]byte(raw), &body) == nil && body.OK != nil && !*body.OK
+		return json.Unmarshal([]byte(raw), &body) == nil &&
+			(body.OK != nil && !*body.OK || body.Success != nil && !*body.Success)
 	}
 	if check(s) {
 		return true

@@ -1,4 +1,4 @@
-import { useBotmuxHidden } from "../lib/agents-display";
+import { useAgentsDisplay, useBotmuxHidden } from "../lib/agents-display";
 import { useBotmuxMode } from "../lib/botmux-mode";
 import { SectionAdd } from "./SectionAdd";
 import { AgentsAdd } from "./agents/AgentsAdd";
@@ -1204,8 +1204,10 @@ const GroupingBar = memo(function GroupingBar({ groupings, selection, onChoose }
 /** Quick filters describe the visible inventory; an empty Lark filter is never offered. */
 const FilterBar = memo(function FilterBar({ selection, counts, onChoose }: { selection: AgentFilter; counts: FilterCounts; onChoose: (f: AgentFilter) => void }) {
   const keys = shownFilters(selection, counts);
-  const botmuxMode = useBotmuxMode();
-  const showBotmuxChip = counts.feishu > 0 || botmuxMode === "hide";
+  const format = useBotmuxMode();
+  const { value, saving } = useAgentsDisplay();
+  const botmuxMode = value?.show_botmux !== true ? "hide" : format;
+  const showBotmuxChip = counts.feishu > 0 || value?.show_botmux === false;
   if (keys.length < 2 && !showBotmuxChip) return null;
   return (
     <div className="mt-1.5 flex flex-wrap gap-0.5 px-1">
@@ -1234,7 +1236,7 @@ const FilterBar = memo(function FilterBar({ selection, counts, onChoose }: { sel
         );
       })}
       </div>}
-      {showBotmuxChip && <Suspense fallback={null}><BotmuxModeChip mode={botmuxMode} /></Suspense>}
+      {showBotmuxChip && <Suspense fallback={null}><BotmuxModeChip mode={botmuxMode} disabled={!value || saving} /></Suspense>}
     </div>
   );
 });

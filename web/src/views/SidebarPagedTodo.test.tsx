@@ -159,12 +159,14 @@ describe("the sidebar's paged Agents by to-do", () => {
     await act(async () => botmuxMode()?.click());
     await flush();
     expect(botmuxMode()?.dataset.botmuxMode).toBe("hide");
+    expect(showBotmux).toBe(false);
     expect(chips().some((button) => button.textContent!.startsWith("飞书群"))).toBe(false);
     expect(reads().length).toBeGreaterThan(0);
     expect(reads().every((query) => query.get("exclude_pane_source") === "feishu")).toBe(true);
     await act(async () => botmuxMode()?.click());
     await flush();
     expect(botmuxMode()?.dataset.botmuxMode).toBe("decode");
+    expect(showBotmux).toBe(true);
     expect(chips().map((button) => button.getAttribute("aria-label"))).toContain("飞书群 1");
     await act(async () => botmuxMode()?.click());
     fetch.mockClear();
@@ -174,14 +176,20 @@ describe("the sidebar's paged Agents by to-do", () => {
     expect(reads().length).toBeGreaterThan(0);
     expect(reads().every((q) => q.get("exclude_pane_source") === "feishu")).toBe(true);
     expect(chips().some((b) => b.textContent!.startsWith("飞书群"))).toBe(false);
-    expect(botmuxMode()).toBeNull();
+    expect(botmuxMode()?.dataset.botmuxMode).toBe("hide");
     expect(chips().find((b) => b.getAttribute("aria-checked") === "true")!.textContent).toBe("全部");
     // Another browser switched it back; the next refresh restores the rows/filter.
     showBotmux = true;
     await act(async () => refreshAgentsDisplay()); await flush();
     expect(chips().map((b) => b.getAttribute("aria-label"))).toContain("飞书群 1");
     expect(botmuxMode()?.dataset.botmuxMode).toBe("all");
-
+    showBotmux = false;
+    await act(async () => refreshAgentsDisplay()); await flush();
+    expect(botmuxMode()?.dataset.botmuxMode).toBe("hide");
+    await act(async () => botmuxMode()?.click()); await flush();
+    expect(showBotmux).toBe(true);
+    expect(botmuxMode()?.dataset.botmuxMode).toBe("decode");
+    expect(chips().map((button) => button.getAttribute("aria-label"))).toContain("飞书群 1");
   });
 
   it("uses the same setting for complete lists without changing inventory or the old filter", async () => {
