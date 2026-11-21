@@ -1207,6 +1207,12 @@ data class Interaction(
     val suggestion: RuleSuggestion? = null,
     /** A prepared approval whose current deadline is authoritative while the hub keeps it pending; absent on older hubs. */
     @SerialName("can_clarify") val canClarify: Boolean = false,
+    /** A server-owned exact proposal; its complete original payload, not an Always rule, is the approval authority. */
+    @SerialName("approval_batch_id") val approvalBatchId: String? = null,
+    @SerialName("approval_item_id") val approvalItemId: String? = null,
+    @SerialName("owner_proposal") val ownerProposal: Boolean? = null,
+    @SerialName("no_expiry") val noExpiry: Boolean? = null,
+    @SerialName("owner_approval_phrases") val ownerApprovalPhrases: List<String>? = null,
     /** The assistant is still deciding whether it can answer this question; nothing was pushed yet. */
     @SerialName("delegating") val delegating: Boolean = false,
     /** What the assistant filled in when it handed the question to the user. */
@@ -1217,6 +1223,12 @@ data class Interaction(
     val sessionKey: SessionKey get() = SessionKey(machineId, sessionId)
     /** Aggregate surfaces count the authoritative request; conversation views still show both cards. */
     val isDisplayMirror: Boolean get() = !mirrorOf.isNullOrEmpty()
+    /** The one exact reply this card advertises. Anything else stays an ordinary card action. */
+    val ownerApprovalPhrase: String?
+        get() = ownerApprovalPhrases?.firstOrNull()?.takeIf {
+            kind == "permission" && ownerProposal == true && !approvalBatchId.isNullOrBlank() &&
+                machineId.isNotBlank() && sessionId.isNotBlank() && it.isNotBlank()
+        }
     /** Only questions are delegated; a direct answer while this is true still wins. */
     val isDelegating: Boolean get() = kind == "question" && delegating
     /** A supported following mode; absent, plan and unknown values keep the legacy approval choices (#3784). */
@@ -1252,6 +1264,29 @@ data class Interaction(
      */
     val isSecretRun: Boolean get() = kind == "permission" && toolName == "secret_run"
 
+    /** The manager's one-run secret hand-off (#3962). Only its full card may approve it. */
+    val isSecretHandoff: Boolean get() = kind == "permission" && toolName == "secret_handoff"
+
+    /** The allowlisted, provider-described items and run context; never a reference or a secret value. */
+    val secretHandoff: SecretHandoffRequest?
+        get() {
+            if (!isSecretHandoff) return null
+            val input = toolInput as? JsonObject
+            fun text(key: String, source: JsonObject? = input) =
+                (source?.get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim().orEmpty()
+            // Never hide a malformed variable and leave the remaining secrets approvable: the owner must see every
+            // variable covered by this approval, so any unreadable entry invalidates the whole card.
+            val rawVariables = input?.get("variables") as? JsonArray ?: return null
+            val variables = rawVariables.map { entry ->
+                val variable = entry as? JsonObject ?: return null
+                val name = text("name", variable)
+                if (name.isEmpty()) return null
+                SecretHandoffVariable(name, text("provider_name", variable).ifEmpty { text("provider", variable) },
+                    text("title", variable))
+            }
+            return SecretHandoffRequest(variables, text("agent"), text("machine_name"), text("cwd"), text("prompt"))
+        }
+
     /** A password card's computer, purpose and commands (the commands exactly as sent); null for any other card. */
     val secretRun: SecretRunRequest?
         get() {
@@ -1272,8 +1307,9 @@ data class Interaction(
                 ?: if (fromOtherAgent) CoreText.of(Key.AskQuestion) else CoreText.of(Key.HeadlineQuestion, "Claude")
             "elicitation" -> CoreText.of(Key.HeadlineElicitation)
             "plan" -> CoreText.of(Key.FleetPlanWaiting)
-            // A password card names the computer it runs on; its commands are in the card.
-            "permission" -> secretRun?.let { CoreText.of(Key.HeadlineSecretRun, it.machine) } ?: run {
+            // A hand-off's unknown input is never a headline; a password card names its computer.
+            "permission" -> if (isSecretHandoff) CoreText.of(Key.HeadlineSecretHandoff) else
+                secretRun?.let { CoreText.of(Key.HeadlineSecretRun, it.machine) } ?: run {
                 // The manager's title is for people; the raw toolName still decides the card's type and icon.
                 val tool: Any = toolTitle?.takeIf(String::isNotBlank) ?: toolDisplayName(toolName) ?: CoreText.of(Key.ToolGeneric)
                 val detail = summary?.takeIf { it.isNotBlank() }
@@ -1289,6 +1325,18 @@ data class Interaction(
             else -> CoreText.of(Key.HeadlineNeedsYou)
         }
 }
+
+/** One variable a hand-off offers, and the provider-described item its value comes from. */
+data class SecretHandoffVariable(val name: String, val provider: String, val title: String)
+
+/** The complete, non-secret context the owner approves for one Agent run. */
+data class SecretHandoffRequest(
+    val variables: List<SecretHandoffVariable>,
+    val agent: String,
+    val machine: String,
+    val cwd: String,
+    val prompt: String,
+)
 
 /** What a password card ([Interaction.isSecretRun], #1137) would run: the computer's name, why, and the commands. */
 data class SecretRunRequest(val machine: String, val purpose: String, val commands: List<String>) {
@@ -1323,6 +1371,8 @@ data class Resolution(
     @SerialName("reason") val reason: String? = null,
     val action: String? = null,
     val content: kotlinx.serialization.json.JsonObject? = null,
+    /** Runtime-only exact proposal reply; deliberately never serialized into an ordinary card resolution. */
+    @kotlinx.serialization.Transient val ownerApprovalPhrase: String? = null,
 )
 
 /** A row of GET /api/v1/interactions/history (iOS `InteractionRecord`): a session's card, how it ended, its answer and when. */

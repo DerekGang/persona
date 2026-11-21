@@ -117,9 +117,10 @@ func approvalMirrorID(ix proto.Interaction) string {
 
 // assistantApprovalMirrorEligible is the boundary that persisted display intent
 // may never bypass: even an existing copy belongs only to an eligible Assistant
-// permission, never to an Agent, health, private or nested card.
+// permission, never to an Agent, health, private, nested or server-owned exact
+// proposal card. Exact replies must target the authoritative owner-action book.
 func (s *Service) assistantApprovalMirrorEligible(ctx context.Context, ix proto.Interaction) bool {
-	return ix.Kind == proto.IxPermission && !ix.Private && ix.SessionID != "" && ix.MirrorOf == "" &&
+	return ix.Kind == proto.IxPermission && !ix.Private && !ix.OwnerProposal && ix.SessionID != "" && ix.MirrorOf == "" &&
 		!s.ixInHealth(ctx, ix) && s.ixInAssistant(ctx, ix)
 }
 

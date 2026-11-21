@@ -119,6 +119,7 @@ func TestApprovalMirrorEligibilityAndSettingOff(t *testing.T) {
 		{name: "health", edit: func(ix *proto.Interaction) { ix.SessionID, ix.Cwd = "health", "/home/u/.persona/health" }},
 		{name: "ordinary agent", edit: func(ix *proto.Interaction) { ix.SessionID, ix.Cwd = "agent", "/work/example" }},
 		{name: "not a permission", edit: func(ix *proto.Interaction) { ix.Kind = proto.IxQuestion }},
+		{name: "owner proposal", edit: func(ix *proto.Interaction) { ix.OwnerProposal = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ix := base
