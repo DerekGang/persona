@@ -589,6 +589,9 @@ func TestContinuationUsesAuthorizedScope(t *testing.T) {
 	}
 	waitFor(t, "original start", func() bool { return len(onlyTodo(s).Agents) == 1 })
 	todo := onlyTodo(s)
+	// The continuation needs an authoritative stopped row, rather than a missing
+	// row that could belong to a disconnected runtime.
+	f.setSessions("box", proto.Session{SessionID: todo.Agents[0].SessionID, Status: proto.StatusOffline})
 	f.mu.Lock()
 	fresh, _ := f.starts[0]["prompt"].(string)
 	f.mu.Unlock()
