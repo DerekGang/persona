@@ -31,7 +31,7 @@ registerHooks({
       return {format: 'module', shortCircuit: true, source: 'export const util = {TextDecoder: {create() { return new TextDecoder(); }}};'};
     }
     if (url === 'fake-native-context:') {
-      return {format: 'module', shortCircuit: true, source: 'export function nativeTestContext() { throw new Error("no host resource context"); }'};
+      return {format: 'module', shortCircuit: true, source: 'export async function nativeTestModuleContext() { throw new Error("no host resource context"); }'};
     }
     if (url === 'fake-persona-core:') {
       return {format: 'module', shortCircuit: true, source: `
