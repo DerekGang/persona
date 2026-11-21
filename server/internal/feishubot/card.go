@@ -425,7 +425,6 @@ func (c *Card) Raw() *CardPayload { return &CardPayload{Type: "raw", Data: c} }
 // --- Markdown ---
 
 var (
-	fenceRe  = lazyre.New("(?s)```.*?(?:```|$)|~~~.*?(?:~~~|$)")
 	inlineRe = lazyre.New("`[^`\n]+`")
 	// A list item's line: its indentation, its marker ("- ", "* ", "+ ", "1. ", "1) ") and what follows it.
 	listItemRe = lazyre.New(`^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+\S`)
@@ -438,11 +437,15 @@ var (
 func CardMarkdown(s string) string {
 	s = listIndent(PersonaCards(s))
 	var b strings.Builder
-	last := 0
-	for _, loc := range fenceRe.FindAllStringIndex(s, -1) {
-		b.WriteString(cardProse(s[last:loc[0]]))
-		b.WriteString(s[loc[0]:loc[1]])
-		last = loc[1]
+	var fence CodeFence
+	last, at := 0, 0
+	for _, line := range strings.SplitAfter(s, "\n") {
+		if fence.Line(line) {
+			b.WriteString(cardProse(s[last:at]))
+			b.WriteString(line)
+			last = at + len(line)
+		}
+		at += len(line)
 	}
 	b.WriteString(cardProse(s[last:]))
 	return b.String()
@@ -460,17 +463,10 @@ func CardMarkdown(s string) string {
 func listIndent(s string) string {
 	lines := strings.Split(s, "\n")
 	var levels []int // the indent width of each open nesting level, outermost first
-	fence := ""
+	var fence CodeFence
 	for i, line := range lines {
 		t := strings.TrimSpace(line)
-		if fence != "" { // inside code: as written
-			if strings.HasPrefix(t, fence) && strings.Trim(t, fence[:1]) == "" {
-				fence = ""
-			}
-			continue
-		}
-		if f := fenceMarker(t); f != "" {
-			fence = f
+		if fence.Line(line) { // code, including an indented closing lookalike: as written
 			continue
 		}
 		m := listItemRe.FindStringSubmatchIndex(line)

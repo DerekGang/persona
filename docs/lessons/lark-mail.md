@@ -7,6 +7,12 @@ Pitfalls, odd behavior and the trade-offs made at the time (originally in `CLAUD
 Keep the complete opening Markdown fence when choosing a preview boundary (#12498). A closing line must use the same
 character, have at least as many fence characters, and contain only trailing whitespace. A shorter run or trailing text
 is still code; test the actual card's preview and folded detail, including both backticks and tildes.
+Read raw indentation: a four-space or tab-indented closing lookalike inside a block is still code. Share fence
+tracking with the card's escaping and list adapter, or a correctly folded block can still have its contents rewritten
+as prose after an inner short run. These top-level fence boundaries follow the
+[CommonMark rule](https://spec.commonmark.org/0.31.2/#fenced-code-blocks); the
+[card Markdown reference](https://open.feishu.cn/document/feishu-cards/feishu-card-cardkit/components/markdown)
+also distinguishes fenced and indented code.
 
 ## Lark system events are not new conversation requests
 

@@ -21,7 +21,12 @@ func TestAgentDoneCardFoldsOutsideCode(t *testing.T) {
 		{"different fence character", "````md", "~~~~", "````"},
 		{"longer closing fence", "````md", "```", "``````"},
 		{"closing whitespace", "````md", "```", "  ```` \t"},
+		{"four space closer", "```html", "    ```", "```"},
+		{"tab closer", "```html", "\t```", "```"},
 		{"ordinary backticks", "```go", "", "```"},
+		{"one space fence", " ```go", "", " ```"},
+		{"two space fence", "  ```go", "", "  ```"},
+		{"three space fence", "   ```go", "", "   ```"},
 		{"ordinary tildes", "~~~go", "", "~~~"},
 		{"short tildes", "~~~~md", "~~~", "~~~~"},
 		{"tildes with trailing text", "~~~~md", "~~~~ still code", "~~~~"},
@@ -36,7 +41,7 @@ func TestAgentDoneCardFoldsOutsideCode(t *testing.T) {
 				lead += tc.lookalike + "\n"
 			}
 			// The preview limit has passed. This blank line is still code.
-			lead += "\nStill inside the code block.\n" + tc.close
+			lead += "\n<sample>Still inside the code block.</sample>\n" + tc.close
 			tail := "Further result details."
 			body := lead + "\n\n" + tail
 			if tc.close == "" {
@@ -57,6 +62,12 @@ func TestAgentDoneCardFoldsOutsideCode(t *testing.T) {
 		body := "A short result.\n\nFurther details."
 		assertAgentDoneFold(t, body, body, "")
 	})
+	for _, indent := range []string{"    ", "\t"} {
+		t.Run("indented text is not an opener "+indent, func(t *testing.T) {
+			lead := strings.Repeat("Result paragraph. ", 20) + "\n" + indent + "```example"
+			assertAgentDoneFold(t, lead+"\n\nFurther details.", strings.TrimSpace(lead), "Further details.")
+		})
+	}
 }
 
 func assertAgentDoneFold(t *testing.T, body, wantLead, wantRest string) {
