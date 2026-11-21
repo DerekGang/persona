@@ -586,11 +586,12 @@ and model before sending and advances when the matching transcript has a success
 that model. It saves the transcript position before sending. Each send has its own client message
 ID: the hub refuses to send an ID again once it lost track of that ID's outcome, so a send that
 timed out or lost its connection is retried under a new ID. A send the hub confirmed is awaited, not
-repeated. A later turn does not overwrite the original receipt. The queue requires the receipt's
+repeated, unless its echo is still missing from the transcript ten minutes after the confirmation
+while the target is idle; then it is sent again under a new ID. A later turn does not overwrite the original receipt. The queue requires the receipt's
 exact event ID and the originating turn's end marker. A review turn that closes without a valid
 receipt (stopped, interrupted by another message, or a reply without the receipt line) is sent
-again after that turn. After five sends the event is settled as `send_unconfirmed` or
-`review_receipt_missing`, so one event cannot hold the queue; the row keeps the outcome and its
+again after that turn. After five sends the event is settled as `send_unconfirmed`,
+`send_echo_missing` or `review_receipt_missing`, so one event cannot hold the queue; the row keeps the outcome and its
 `sends` count for inspection. A `facts_recorded` receipt is the Agent's statement of
 the outcome. Delivery does not verify a ledger write or change task acceptance. Keep the dedicated
 session available by its original ID.

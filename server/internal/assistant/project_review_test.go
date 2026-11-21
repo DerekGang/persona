@@ -683,8 +683,9 @@ func TestProjectReviewUncertainSendGetsANewID(t *testing.T) {
 
 // A review turn that closes without a valid receipt (stopped, an unrelated message, a reply without the receipt
 // line) is not waited on forever: the event is sent again after that turn, under a new ID, a bounded number of times.
-// A turn still running is waited on. Either kind of failure settles the event after projectReviewMaxSends sends, so
-// the next event goes out.
+// A turn still running is waited on. A confirmed send whose echo is still missing projectReviewEchoWait later, with the
+// target idle, is sent again too. Each kind of failure settles the event after projectReviewMaxSends sends, so the
+// next event goes out.
 func TestProjectReviewSendsAreBounded(t *testing.T) {
 	t.Run("closed turns without a receipt", func(t *testing.T) {
 		s, f, store, g := reviewGuarded(t)
@@ -717,6 +718,59 @@ func TestProjectReviewSendsAreBounded(t *testing.T) {
 		reviewStepHead(t, s, store)
 		if outcome, settled := reviewOutcome(t, store, e.ID); !settled || outcome != "review_receipt_missing" {
 			t.Fatalf("after %d closed turns: outcome=%q settled=%v", projectReviewMaxSends, outcome, settled)
+		}
+		next := reviewHead(t, store)
+		reviewStepHead(t, s, store)
+		if next.ID == e.ID || g.sent[len(g.sent)-1] != next.ID {
+			t.Fatalf("the next event did not go out: %v", g.sent)
+		}
+	})
+	t.Run("confirmed sends that never echo", func(t *testing.T) {
+		s, f, store, g := reviewGuarded(t)
+		e := reviewQueue(t, s, store, "owner-dropped")
+		reviewStepHead(t, s, store)
+		if head := reviewHead(t, store); len(g.sent) != 1 || !head.SendConfirmed || head.SendConfirmedAt.IsZero() {
+			t.Fatalf("fixture: want one confirmed send, got %v (head %+v)", g.sent, head)
+		}
+		// stepAfterWait runs one step once it is due and the confirmed send's echo has been missing for
+		// projectReviewEchoWait.
+		stepAfterWait := func() {
+			t.Helper()
+			head := reviewHead(t, store)
+			at := head.SendConfirmedAt.Add(projectReviewEchoWait)
+			if head.RetryAt.After(at) {
+				at = head.RetryAt
+			}
+			if _, err := s.projectReviewStep(context.Background(), at.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reviewStepHead(t, s, store)
+		if len(g.sent) != 1 {
+			t.Fatalf("a confirmed send was repeated before its echo had time to show up: %v", g.sent)
+		}
+		f.sessions["box"][0].Status = proto.StatusWorking // the echo may be queued behind the running turn
+		stepAfterWait()
+		if len(g.sent) != 1 {
+			t.Fatalf("a confirmed send was repeated while the target was busy: %v", g.sent)
+		}
+		f.sessions["box"][0].Status = proto.StatusIdle
+		for n := 2; n <= projectReviewMaxSends; n++ {
+			stepAfterWait()
+			if len(g.sent) != n || g.sent[n-1] != projectReviewSendID(e.ID, n) {
+				t.Fatalf("a confirmed send whose echo never came was not sent again under a new ID: %v", g.sent)
+			}
+		}
+		reviewQueue(t, s, store, "owner-after-dropped")
+		f.sessions["box"][0].Status = proto.StatusWorking
+		stepAfterWait()
+		if _, settled := reviewOutcome(t, store, e.ID); settled {
+			t.Fatal("the last confirmed send was given up while the target was busy and its echo could still be queued")
+		}
+		f.sessions["box"][0].Status = proto.StatusIdle
+		stepAfterWait()
+		if outcome, settled := reviewOutcome(t, store, e.ID); !settled || outcome != "send_echo_missing" {
+			t.Fatalf("after %d confirmed sends without an echo: outcome=%q settled=%v", projectReviewMaxSends, outcome, settled)
 		}
 		next := reviewHead(t, store)
 		reviewStepHead(t, s, store)

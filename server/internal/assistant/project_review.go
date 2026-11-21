@@ -285,9 +285,16 @@ const projectReviewIdle = 10 * time.Second
 const projectReviewStepWait = 2 * time.Minute
 
 // projectReviewMaxSends bounds the native sends of one delivery. A send whose outcome stays uncertain, or whose
-// review turn closes without a valid receipt, is sent again under a new client message ID; after this many the
-// delivery is settled with that outcome, so one event cannot hold the target's queue forever.
+// review turn closes without a valid receipt, or whose confirmed send never echoes (projectReviewEchoWait), is sent
+// again under a new client message ID; after this many the delivery is settled with that outcome, so one event
+// cannot hold the target's queue forever.
 const projectReviewMaxSends = 5
+
+// projectReviewEchoWait bounds the wait for the echo of a send the hub confirmed. The echo normally shows up within
+// seconds; one still missing this long after the confirmation while the target sits idle was lost (the node dropped
+// it after taking it, or the transcript was rewritten below the saved position), so the event is sent again, within
+// projectReviewMaxSends, instead of holding the target's queue forever.
+const projectReviewEchoWait = 10 * time.Minute
 
 // projectReviewSendID names send n of delivery id. The hub sends a client message ID at most once and refuses one
 // whose outcome it never learned, so every send needs its own. The first keeps the delivery's ID.
@@ -351,6 +358,7 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 	if !found || sess.Agent != "codex" || sess.Archived {
 		return retry("target_not_ready")
 	}
+	ready := sess.Model == p.Model && (sess.Status == proto.StatusIdle || sess.Status == proto.StatusDone) && sess.PendingInteractions == 0
 	// Reconcile against the original turn, even when the target has since started
 	// a different turn or changed models. Its newest status is unrelated.
 	if delivery.HistoryAfter != nil {
@@ -370,13 +378,17 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 			if err := p.db.AdvanceProjectReviewHistory(ctx, delivery.ID, r.closedAt); err != nil {
 				return projectReviewIdle, err
 			}
-		case delivery.SendConfirmed: // the hub took the latest send; its echo is on the way
-			return retry("waiting_for_review_receipt")
+		case delivery.SendConfirmed && (!ready || now.Sub(delivery.SendConfirmedAt) < projectReviewEchoWait):
+			return retry("waiting_for_review_receipt") // the hub took the latest send; its echo is on the way
+		case delivery.Sends >= projectReviewMaxSends && delivery.SendConfirmed:
+			return settle("send_echo_missing")
 		case delivery.Sends >= projectReviewMaxSends:
 			return settle("send_unconfirmed")
 		}
+		// Otherwise send again under a new ID: the last send was uncertain, its turn closed without a receipt, or the
+		// hub confirmed it long ago and its echo never came while the target sat idle.
 	}
-	if sess.Model != p.Model || (sess.Status != proto.StatusIdle && sess.Status != proto.StatusDone) || sess.PendingInteractions > 0 {
+	if !ready {
 		return retry("target_not_ready")
 	}
 	reviewOnly := !writeAllowed || delivery.ReviewOnly
@@ -421,7 +433,7 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 	if err != nil {
 		return retry("send_unconfirmed")
 	}
-	if err := p.db.ConfirmProjectReviewSend(ctx, delivery.ID, n); err != nil {
+	if err := p.db.ConfirmProjectReviewSend(ctx, delivery.ID, n, now); err != nil {
 		return projectReviewIdle, err
 	}
 	return retry("waiting_for_review_receipt")
