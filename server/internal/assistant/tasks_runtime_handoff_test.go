@@ -87,7 +87,7 @@ func TestContinuationRuntimeCrossMachineHandoff(t *testing.T) {
 }
 
 func TestContinuationCloseRefusalsPreserveOwnership(t *testing.T) {
-	for _, name := range []string{"runtime_away", "no_close", "legacy_row", "old_node", "unconfirmed", "unknown", "assistant", "missing"} {
+	for _, name := range []string{"runtime_away", "runtime_terminal", "no_close", "legacy_row", "old_node", "unconfirmed", "unknown", "assistant", "missing"} {
 		t.Run(name, func(t *testing.T) {
 			e := newThreadEnv(t, nil)
 			closeable := name != "no_close" && name != "runtime_away"
@@ -101,6 +101,9 @@ func TestContinuationCloseRefusalsPreserveOwnership(t *testing.T) {
 			}
 			if name == "legacy_row" {
 				row.Capabilities = nil
+			}
+			if name == "runtime_terminal" {
+				row.Capabilities.Terminal = true
 			}
 			e.sessions("box", row)
 			if name == "missing" {
@@ -132,7 +135,7 @@ func TestContinuationCloseRefusalsPreserveOwnership(t *testing.T) {
 			if len(e.f.started()) != 0 || !todoNow(e.s, "todo_x").Agents[0].active() {
 				t.Fatal("unconfirmed handoff changed ownership")
 			}
-			if (name == "assistant" || !closeable || name == "legacy_row" || name == "missing") && closes.Load() != 0 {
+			if (name == "assistant" || name == "runtime_terminal" || !closeable || name == "legacy_row" || name == "missing") && closes.Load() != 0 {
 				t.Fatal("closed a session without authority or support")
 			}
 			if name == "runtime_away" {
@@ -150,6 +153,13 @@ func TestContinuationTerminalStopReceipts(t *testing.T) {
 			e := newThreadEnv(t, nil)
 			putTodo(e.s, Todo{ID: "todo_x", Title: "Synthetic handoff", Origin: "m1",
 				Agents: []TodoAgent{{MachineID: "box", SessionID: "agent01"}}})
+			closeable := true
+			e.sessions("box", proto.Session{SessionID: "agent01", Status: proto.StatusWorking,
+				Capabilities: &proto.SessionCapabilities{Terminal: true, Close: &closeable}})
+			e.f.answerNode("session.close", func(string, json.RawMessage) (any, error) {
+				t.Error("a task handoff must keep a terminal agent's shell")
+				return nil, errors.New("terminal close was not authorized")
+			})
 			e.f.answerNode(deviceSessionStop, func(string, json.RawMessage) (any, error) {
 				if name == "unconfirmed" {
 					return map[string]any{}, nil

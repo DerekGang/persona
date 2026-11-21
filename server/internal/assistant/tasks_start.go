@@ -534,7 +534,11 @@ func (s *Service) stopContinuedTaskAgents(ctx context.Context, todo Todo) ([]Tod
 			// Runtimes own their processes; session.stop is deliberately refused
 			// before runtime dispatch on the node. Use their declared close contract.
 			method := deviceSessionStop
-			if row.Capabilities != nil && row.Capabilities.Close != nil && *row.Capabilities.Close {
+			if row.SourceKind == proto.SourceRuntime {
+				if row.Capabilities == nil || row.Capabilities.Terminal || row.Capabilities.Close == nil || !*row.Capabilities.Close {
+					release()
+					return nil, fmt.Errorf("continues: runtime agent %s/%s does not support a confirmed close without closing a terminal", a.MachineID, a.SessionID)
+				}
 				method = "session.close"
 			}
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
