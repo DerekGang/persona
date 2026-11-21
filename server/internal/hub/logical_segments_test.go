@@ -47,6 +47,19 @@ func (d *segmentTestDevices) Session(machine, id string) (proto.Session, bool) {
 	}
 	return proto.Session{}, false
 }
+func (d *segmentTestDevices) Request(ctx context.Context, method string, raw json.RawMessage) (any, bool, error) {
+	if method != devicewire.MethodCall {
+		return d.mirrorDevices.Request(ctx, method, raw)
+	}
+	var p devicewire.NodeCall
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, true, err
+	}
+	// This is the raw physical transport. The embedded mirror routes through
+	// the hub and would recursively re-enter the logical manager in this test.
+	out, err := d.CallNode(ctx, p.MachineID, p.Method, p.Params)
+	return out, true, err
+}
 func (d *segmentTestDevices) CallNode(_ context.Context, machine, method string, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
 		Session string `json:"session_id"`
@@ -152,6 +165,7 @@ func newManagedMachineForSegmentTest(h *Hub, cfg MachineConfig) *Machine {
 	m.owner = devicesOwner
 	m.peer = &busNode{h: h, id: cfg.ID, done: make(chan struct{})}
 	m.online = true
+	m.info = proto.NodeInfo{Home: "/home/example"}
 	return m
 }
 func stringifySegmentEvent(value any) string { data, _ := json.Marshal(value); return string(data) }
