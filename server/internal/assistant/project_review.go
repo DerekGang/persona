@@ -78,7 +78,10 @@ type projectReviewEvent struct {
 	LinkedAt  time.Time  `json:"linked_at,omitzero"`
 }
 
-// taskBinding uses the authoritative project and active agent assignment.
+// taskBinding uses the authoritative project and active agent assignment. A non-zero at is a time on the
+// hub's own clock (an owner input as the hub queued it) and must not predate the assignment. Node times (turn
+// ends, session rows) pass zero: the fleet reports them for the agent as it is assigned now, a first turn can end
+// before the hub writes the link, and a node clock can run behind the hub's.
 func (p *projectReview) taskBinding(ref SessionRef, task Todo, at time.Time) (projectReviewBinding, bool) {
 	if p == nil || !p.Enabled || ref == p.Target || task.Cancelled() || task.Origin == "" ||
 		!projectReviewRef.MatchString(task.ID) ||
@@ -150,7 +153,8 @@ func (s *Service) projectReviewOwnerInput(ctx context.Context, in assistantwire.
 
 func (s *Service) projectReviewTurn(ctx context.Context, task Todo, row proto.Session, end turnClose, state string) {
 	p := s.projectReview
-	b, ok := p.taskBinding(SessionRef{MachineID: row.MachineID, SessionID: row.SessionID}, task, end.At)
+	// The task ledger already decided that this turn is the task's (task_turns.go); end.At is the node's clock.
+	b, ok := p.taskBinding(SessionRef{MachineID: row.MachineID, SessionID: row.SessionID}, task, time.Time{})
 	// A turn without its own id ends at an item; Codex names an aborted turn's item by position (line12#0).
 	if !ok || end.At.IsZero() || !projectReviewRef.MatchString(end.Key) && !proto.PositionalItemID(end.Key) ||
 		(state != turnDone && state != turnInterrupted) {
@@ -206,7 +210,8 @@ func (s *Service) projectReviewSession(ctx context.Context, row proto.Session, p
 		return
 	}
 	task, _ := s.taskOf(ctx, row.MachineID, row.SessionID)
-	b, ok := p.taskBinding(SessionRef{MachineID: row.MachineID, SessionID: row.SessionID}, task, at)
+	// at (the node's clock) only names the episode: a row blocked since before the link never advances it.
+	b, ok := p.taskBinding(SessionRef{MachineID: row.MachineID, SessionID: row.SessionID}, task, time.Time{})
 	if !ok {
 		return
 	}
@@ -230,7 +235,7 @@ func (s *Service) projectReviewStall(ctx context.Context, g superviseSignal, row
 	for _, row := range rows {
 		if row.MachineID == g.Machine && row.SessionID == g.Session {
 			at := projectReviewProgress(row)
-			b, authorized := p.taskBinding(SessionRef{MachineID: g.Machine, SessionID: g.Session}, task, at)
+			b, authorized := p.taskBinding(SessionRef{MachineID: g.Machine, SessionID: g.Session}, task, time.Time{})
 			kind := "stalled"
 			if g.Kind == sigNeedsYou {
 				kind = "waiting_for_owner"
@@ -281,12 +286,19 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 	if wait := delivery.RetryAt.Sub(now); wait > 0 {
 		return wait, nil
 	}
+	// The next delivery is looked at right away only after this one settled; a failed write waits like any error.
+	settle := func(outcome string) (time.Duration, error) {
+		if err := p.db.SettleProjectReview(ctx, delivery.ID, outcome); err != nil {
+			return projectReviewIdle, err
+		}
+		return 0, nil
+	}
 	var event projectReviewEvent
 	if err := json.Unmarshal(delivery.Event, &event); err != nil {
 		return projectReviewIdle, err
 	}
 	if event.Source == p.Target {
-		return 0, p.db.SettleProjectReview(ctx, delivery.ID, "self_source")
+		return settle("self_source")
 	}
 	writeAllowed := false
 	if event.Project != "" && event.Todo != "" && (event.Kind != "owner_input" || p.AppInputs) {
@@ -315,7 +327,7 @@ func (s *Service) projectReviewStep(ctx context.Context, now time.Time) (time.Du
 			return retry("target_history_unavailable")
 		}
 		if outcome != "" {
-			return 0, p.db.SettleProjectReview(ctx, delivery.ID, "review_receipt_"+outcome)
+			return settle("review_receipt_" + outcome)
 		}
 		if seen {
 			return retry("review_receipt_unconfirmed")

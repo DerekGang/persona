@@ -70,6 +70,15 @@ func TestProjectReviewAuthenticatedAppIngress(t *testing.T) {
 	// Siri, Shortcuts and the share sheet: delivered, but never the owner's own input (a mark of any kind counts).
 	post("shared", token, sendPath, `"via":"share",`)
 	post("intent-object", token, sendPath, `"via":{"kind":"intent"},`)
+	// An answer-only device (the watch) is never a trusted human submission: the answer-only path rebuilds the
+	// request without its via mark, and neither form of it is owner input.
+	const answerToken = "isolated-project-review-answer-token"
+	if err := store.CreateDeviceToken(ctx, db.DeviceToken{ID: "review-watch", Name: "Test watch", Role: roleAnswer}, hashToken(answerToken)); err != nil {
+		t.Fatal(err)
+	}
+	h.byID["box"].setSessions([]proto.Session{{MachineID: "box", SessionID: "s1", Status: proto.StatusIdle}}) // answer-only sends need a listed session
+	post("answer-only", answerToken, sendPath)
+	post("answer-only-shared", answerToken, sendPath, `"via":"share",`)
 
 	pending, err := store.PendingProjectReviewOwners(ctx)
 	if err != nil || len(pending) != 2 {

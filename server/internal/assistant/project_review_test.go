@@ -472,3 +472,70 @@ func TestProjectReviewDowngradeAfterReservation(t *testing.T) {
 		t.Fatalf("triage receipt did not settle the downgraded delivery: %+v %v %v", head, ok, err)
 	}
 }
+
+// Turn ends and session rows carry the node's clock. A first turn can end, or a row become blocked, before the hub
+// writes the link, and a node clock can run behind the hub's: neither may lose the event.
+func TestProjectReviewNodeTimesBeforeTheLink(t *testing.T) {
+	ctx := context.Background()
+	store := todoTestDB(t)
+	s, _ := reviewTestService(t, store)
+	target, _ := json.Marshal(reviewTarget)
+	alpha := reviewNewTask(t, s, "alpha", "todo_node_clock", reviewSource)
+	early := alpha.Agents[0].LinkedAt.Add(-30 * time.Second)
+	row := proto.Session{MachineID: reviewSource.MachineID, SessionID: reviewSource.SessionID, UpdatedAt: early}
+	s.projectReviewTurn(ctx, alpha, row, turnClose{Key: "fast-first-turn", At: early}, turnDone)
+	row.Status = proto.StatusBlocked
+	s.projectReviewSession(ctx, row, proto.StatusWorking)
+	// Its own task: a blocking episode that is already open absorbs another blocking event.
+	quiet := SessionRef{MachineID: "box", SessionID: "quiet"}
+	still := reviewNewTask(t, s, "alpha", "todo_node_clock_stall", quiet)
+	idle := proto.Session{MachineID: quiet.MachineID, SessionID: quiet.SessionID, UpdatedAt: still.Agents[0].LinkedAt.Add(-time.Minute),
+		Status: proto.StatusWorking}
+	stall := superviseSignal{Todo: still.ID, Kind: sigStalled, Key: "stalled-since-early", Machine: quiet.MachineID, Session: quiet.SessionID}
+	s.projectReviewStall(ctx, stall, []proto.Session{idle})
+	for _, want := range [][2]string{{alpha.ID, "fast-first-turn"}, {alpha.ID, "waiting_for_owner"}, {still.ID, "stalled-since-early"}} {
+		next, ok, err := store.NextProjectReview(ctx, string(target))
+		if err != nil || !ok || !strings.Contains(string(next.Event), `"`+want[0]+`"`) || !strings.Contains(string(next.Event), want[1]) {
+			t.Fatalf("%s: not queued for %s: %s %v %v", want[1], want[0], next.Event, ok, err)
+		}
+		if err := store.SettleProjectReview(ctx, next.ID, "test_drained"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.releaseStoppedAgents(ctx, alpha.ID, alpha.Agents); err != nil {
+		t.Fatal(err)
+	}
+	alpha, _ = s.todoNow(alpha.ID)
+	s.projectReviewTurn(ctx, alpha, row, turnClose{Key: "after-release", At: reviewTestTime}, turnDone)
+	if next, ok, err := store.NextProjectReview(ctx, string(target)); err != nil || ok {
+		t.Fatalf("a released agent's turn was queued: %s %v %v", next.Event, ok, err)
+	}
+}
+
+// A failed settlement waits like any other error: a zero wait would re-read the same delivery in a tight loop for
+// as long as the database refuses the write.
+func TestProjectReviewSettleFailureBacksOff(t *testing.T) {
+	ctx := context.Background()
+	store := todoTestDB(t)
+	s, _ := reviewTestService(t, store)
+	target, _ := json.Marshal(reviewTarget)
+	if err := s.projectReview.record(ctx, projectReviewBinding{SessionRef: reviewTarget}, "owner_input", "own-words", "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	next, ok, err := store.NextProjectReview(ctx, string(target))
+	if err != nil || !ok {
+		t.Fatalf("fixture: nothing queued: %v %v", ok, err)
+	}
+	restore := rejectExpiredAnswerWrite(t, store, "project_review_deliveries", "NEW.settled_at IS NOT NULL")
+	wait, err := s.projectReviewStep(ctx, next.RetryAt.Add(time.Second))
+	if err == nil || wait <= 0 {
+		t.Fatalf("failed settlement: wait=%v err=%v, want a backoff and the error", wait, err)
+	}
+	restore()
+	if wait, err := s.projectReviewStep(ctx, next.RetryAt.Add(time.Second)); err != nil || wait != 0 {
+		t.Fatalf("settled self-source: wait=%v err=%v", wait, err)
+	}
+	if _, ok, err := store.NextProjectReview(ctx, string(target)); err != nil || ok {
+		t.Fatalf("self-source event not settled: %v %v", ok, err)
+	}
+}
