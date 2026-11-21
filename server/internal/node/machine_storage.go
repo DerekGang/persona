@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,7 @@ const (
 	storageMaxWalkEntries    = 40_000
 	storageDockerCmdTimeout  = 5 * time.Second
 	storageGitCmdTimeout     = 5 * time.Second
+	storageProcCmdTimeout    = 5 * time.Second
 	storageStaleWorktreeAge  = 7 * 24 * time.Hour
 	storageMaxCategoryItems  = 12
 	storageMaxWorktreeScans  = 48
@@ -42,17 +44,24 @@ const (
 
 var errStorageOutsideRoot = errors.New("path is outside allowed root")
 
+type storageProcSnapshot struct {
+	names map[string]bool
+	known bool
+	err   error
+}
+
 type storageDeps struct {
-	goos         string
-	home         string
-	dataDir      string
-	getenv       func(string) string
-	now          func() time.Time
-	mounts       func() ([]proto.MountStat, bool)
-	available    func(string) (int64, bool)
-	runCmd       func(ctx context.Context, name string, args ...string) ([]byte, error)
-	lookPath     func(string) (string, error)
-	runningProcs func() map[string]bool
+	goos           string
+	home           string
+	dataDir        string
+	getenv         func(string) string
+	now            func() time.Time
+	mounts         func() ([]proto.MountStat, bool)
+	available      func(string) (int64, bool)
+	runCmd         func(ctx context.Context, name string, args ...string) ([]byte, error)
+	lookPath       func(string) (string, error)
+	runningProcs   func(ctx context.Context) (map[string]bool, error)
+	activeLogFiles func(ctx context.Context, dirs []string) map[string]bool
 }
 
 func (n *Node) defaultStorageDeps() storageDeps {
@@ -64,19 +73,26 @@ func (n *Node) defaultStorageDeps() storageDeps {
 	if dir == "" && home != "" {
 		dir = filepath.Join(home, ".persona")
 	}
+	runCmd := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	}
+	goos := runtime.GOOS
 	return storageDeps{
-		goos:      runtime.GOOS,
+		goos:      goos,
 		home:      home,
 		dataDir:   dir,
 		getenv:    os.Getenv,
 		now:       time.Now,
 		mounts:    sysmon.StorageMounts,
 		available: sysmon.AvailableBytes,
-		runCmd: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		runCmd:    runCmd,
+		lookPath:  exec.LookPath,
+		runningProcs: func(ctx context.Context) (map[string]bool, error) {
+			return readRunningProcNamesForOS(ctx, goos, runCmd)
 		},
-		lookPath:     exec.LookPath,
-		runningProcs: readRunningProcNames,
+		activeLogFiles: func(ctx context.Context, dirs []string) map[string]bool {
+			return n.collectActiveStorageLogFiles(ctx, goos, dirs)
+		},
 	}
 }
 
@@ -144,7 +160,7 @@ func collectMachineStorageHotspots(ctx context.Context, deps storageDeps, params
 	scanCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	running := deps.runningProcs()
+	procs := readStorageProcs(scanCtx, deps)
 	partial := false
 
 	categories := make([]proto.StorageHotspotCategory, 0, 9)
@@ -163,9 +179,9 @@ func collectMachineStorageHotspots(ctx context.Context, deps storageDeps, params
 	partial = partial || ucPartial
 	categories = append(categories, ucCat)
 
-	// 4. Toolchain caches (Go build, Go mod, npm, pip)
+	// 4. Toolchain caches (Go build, Go mod, npm, pip) and Persona logs/backups
 	for _, spec := range storageDirTargets(deps) {
-		cat, p := scanDirTargetHotspot(scanCtx, deps, spec, maxDepth, running)
+		cat, p := scanDirTargetHotspot(scanCtx, deps, spec, maxDepth, procs)
 		partial = partial || p
 		categories = append(categories, cat)
 	}
@@ -184,12 +200,13 @@ func collectMachineStorageHotspots(ctx context.Context, deps storageDeps, params
 }
 
 type storageDirTarget struct {
-	categoryID string
-	targetID   string
-	roots      []string // allowed parent roots for guard check
-	paths      []string // one or more target directories
-	users      []string // toolchain executables that mark the cache in_use
-	action     string
+	categoryID      string
+	targetID        string
+	roots           []string // allowed parent roots for guard check
+	paths           []string // one or more target directories
+	users           []string // toolchain executables that mark the cache in_use
+	action          string
+	rotatedLogsOnly bool // preserve active/current & open log files; only reclaim rotated/archived logs
 }
 
 func storageDirTargets(deps storageDeps) []storageDirTarget {
@@ -274,11 +291,12 @@ func storageDirTargets(deps storageDeps) []storageDirTarget {
 			action:     "empty_dir_contents",
 		},
 		{
-			categoryID: proto.StorageCategoryPersonaLogs,
-			targetID:   proto.StorageTargetPersonaLogs,
-			roots:      personaRoots,
-			paths:      logPaths,
-			action:     "empty_dir_contents",
+			categoryID:      proto.StorageCategoryPersonaLogs,
+			targetID:        proto.StorageTargetPersonaLogs,
+			roots:           personaRoots,
+			paths:           logPaths,
+			action:          "remove_rotated_logs",
+			rotatedLogsOnly: true,
 		},
 		{
 			categoryID: proto.StorageCategoryPersonaBackups,
@@ -379,54 +397,86 @@ func scanUserCacheHotspot(ctx context.Context, deps storageDeps, maxDepth int) (
 	return cat, partial
 }
 
-func scanDirTargetHotspot(ctx context.Context, deps storageDeps, spec storageDirTarget, maxDepth int, running map[string]bool) (proto.StorageHotspotCategory, bool) {
+func scanDirTargetHotspot(ctx context.Context, deps storageDeps, spec storageDirTarget, maxDepth int, procs storageProcSnapshot) (proto.StorageHotspotCategory, bool) {
+	inUse, procsUnknown := storageToolchainInUse(spec.users, procs)
 	cat := proto.StorageHotspotCategory{
 		ID:              spec.categoryID,
 		Status:          proto.StorageStatusEmpty,
 		Cleanable:       true,
 		CleanupTargetID: spec.targetID,
-		InUse:           storageToolchainInUse(spec.users, running),
+		InUse:           inUse,
+	}
+	if procsUnknown {
+		cat.Note = "process_list_unavailable"
 	}
 	if len(spec.paths) > 0 {
 		cat.Path = storageTilde(deps.home, spec.paths[0])
 	}
-	var total int64
-	var items []proto.StorageHotspotItem
-	partial := false
-	budget := storageMaxWalkEntries
-	anyFound := false
+	var guarded []string
+	var guardedOrig []string
 	for _, p := range spec.paths {
 		realDir, err := guardStorageDirAnyRoot(spec.roots, p)
 		if err != nil {
 			continue
 		}
-		anyFound = true
-		sz, count, done := boundedDirSize(ctx, realDir, maxDepth, &budget)
+		guarded = append(guarded, realDir)
+		guardedOrig = append(guardedOrig, p)
+	}
+	var activeLogs map[string]bool
+	if spec.rotatedLogsOnly && len(guarded) > 0 && deps.activeLogFiles != nil {
+		activeLogs = deps.activeLogFiles(ctx, guarded)
+	}
+	var total int64
+	var reclaimable int64
+	var protectedCount int
+	var items []proto.StorageHotspotItem
+	partial := false
+	budget := storageMaxWalkEntries
+	for i, realDir := range guarded {
+		p := guardedOrig[i]
+		var sz, rec int64
+		var count int
+		var done bool
+		if spec.rotatedLogsOnly {
+			var prot int
+			sz, rec, count, _, prot, done = collectRotatedLogFiles(ctx, realDir, maxDepth, &budget, activeLogs)
+			protectedCount += prot
+		} else {
+			sz, count, done = boundedDirSize(ctx, realDir, maxDepth, &budget)
+			rec = sz
+		}
 		if !done {
 			partial = true
 		}
 		total += sz
+		reclaimable += rec
 		cat.ItemCount += count
 		if sz > 0 {
 			items = append(items, proto.StorageHotspotItem{
-				Label: filepath.Base(p),
-				Path:  storageTilde(deps.home, p),
-				Bytes: sz,
+				Label:            filepath.Base(p),
+				Path:             storageTilde(deps.home, p),
+				Bytes:            sz,
+				ReclaimableBytes: rec,
 			})
 		}
 	}
 	cat.Bytes = total
-	cat.ReclaimableBytes = total
+	cat.ReclaimableBytes = reclaimable
 	if len(items) > 1 {
 		cat.Items = items
 	}
 	if partial {
 		cat.Status = proto.StorageStatusPartial
-	} else if anyFound && total > 0 {
+	} else if len(guarded) > 0 && total > 0 {
 		cat.Status = proto.StorageStatusOK
 	} else {
 		cat.Status = proto.StorageStatusEmpty
 		cat.Cleanable = false
+	}
+	if spec.rotatedLogsOnly && total > 0 && reclaimable == 0 && protectedCount > 0 {
+		cat.Cleanable = false
+		cat.InUse = true
+		cat.Note = "active_logs_preserved"
 	}
 	return cat, partial
 }
@@ -773,7 +823,7 @@ func runMachineStorageCleanup(ctx context.Context, deps storageDeps, params prot
 	for _, spec := range storageDirTargets(deps) {
 		dirTargets[spec.targetID] = spec
 	}
-	running := deps.runningProcs()
+	procs := readStorageProcs(ctx, deps)
 
 	var before int64
 	if !params.DryRun && deps.home != "" {
@@ -806,7 +856,7 @@ func runMachineStorageCleanup(ctx context.Context, deps storageDeps, params prot
 			if !ok {
 				item = proto.StorageCleanupItem{TargetID: id, Status: proto.StorageCleanupMissing}
 			} else {
-				item = cleanupDirTarget(ctx, deps, spec, running, params.DryRun)
+				item = cleanupDirTarget(ctx, deps, spec, procs, params.DryRun)
 			}
 		}
 		if item.Status == proto.StorageCleanupPreview || item.Status == proto.StorageCleanupCleaned {
@@ -834,7 +884,7 @@ func runMachineStorageCleanup(ctx context.Context, deps storageDeps, params prot
 	return out, nil
 }
 
-func cleanupDirTarget(ctx context.Context, deps storageDeps, spec storageDirTarget, running map[string]bool, dryRun bool) proto.StorageCleanupItem {
+func cleanupDirTarget(ctx context.Context, deps storageDeps, spec storageDirTarget, procs storageProcSnapshot, dryRun bool) proto.StorageCleanupItem {
 	item := proto.StorageCleanupItem{
 		TargetID: spec.targetID,
 		Action:   spec.action,
@@ -860,6 +910,9 @@ func cleanupDirTarget(ctx context.Context, deps storageDeps, spec storageDirTarg
 	if len(guarded) == 0 {
 		return item
 	}
+	if spec.rotatedLogsOnly {
+		return cleanupRotatedLogDirs(ctx, deps, guarded, item, dryRun)
+	}
 	sizeCtx, cancel := context.WithTimeout(ctx, storageDefaultTimeout)
 	var totalBytes int64
 	budget := storageMaxWalkEntries
@@ -876,8 +929,11 @@ func cleanupDirTarget(ctx context.Context, deps storageDeps, spec storageDirTarg
 		return item
 	}
 	item.Bytes = totalBytes
-	if storageToolchainInUse(spec.users, running) {
+	if inUse, procsUnknown := storageToolchainInUse(spec.users, procs); inUse {
 		item.Status = proto.StorageCleanupInUse
+		if procsUnknown {
+			item.Error = "process list unavailable"
+		}
 		return item
 	}
 	if dryRun {
@@ -890,6 +946,61 @@ func cleanupDirTarget(ctx context.Context, deps storageDeps, spec storageDirTarg
 			item.Error = sanitizeStorageErr(deps.home, err)
 			return item
 		}
+	}
+	item.Status = proto.StorageCleanupCleaned
+	return item
+}
+
+func cleanupRotatedLogDirs(ctx context.Context, deps storageDeps, guarded []string, item proto.StorageCleanupItem, dryRun bool) proto.StorageCleanupItem {
+	var activeLogs map[string]bool
+	if deps.activeLogFiles != nil {
+		activeLogs = deps.activeLogFiles(ctx, guarded)
+	}
+	sizeCtx, cancel := context.WithTimeout(ctx, storageDefaultTimeout)
+	var totalBytes, reclaimableBytes int64
+	var filesToRemove []string
+	protectedCount := 0
+	budget := storageMaxWalkEntries
+	for _, d := range guarded {
+		sz, rec, _, cleanable, prot, _ := collectRotatedLogFiles(sizeCtx, d, storageMaxDepthLimit, &budget, activeLogs)
+		totalBytes += sz
+		reclaimableBytes += rec
+		filesToRemove = append(filesToRemove, cleanable...)
+		protectedCount += prot
+	}
+	cancel()
+	if len(filesToRemove) == 0 {
+		if protectedCount > 0 || totalBytes > 0 {
+			item.Status = proto.StorageCleanupInUse
+			item.Error = "only active log files present"
+		}
+		return item
+	}
+	item.Bytes = reclaimableBytes
+	if dryRun {
+		item.Status = proto.StorageCleanupPreview
+		return item
+	}
+	var firstErr error
+	failed := 0
+	for _, p := range filesToRemove {
+		if err := ctx.Err(); err != nil {
+			item.Status = proto.StorageCleanupFailed
+			item.Error = sanitizeStorageErr(deps.home, err)
+			return item
+		}
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			firstErr = cmp.Or(firstErr, err)
+			failed++
+		}
+	}
+	if failed > 0 {
+		if failed > 1 {
+			firstErr = fmt.Errorf("%w (and %d more)", firstErr, failed-1)
+		}
+		item.Status = proto.StorageCleanupFailed
+		item.Error = sanitizeStorageErr(deps.home, firstErr)
+		return item
 	}
 	item.Status = proto.StorageCleanupCleaned
 	return item
@@ -1186,29 +1297,85 @@ func makeStorageDirWritable(root string) {
 	})
 }
 
-func storageToolchainInUse(users []string, running map[string]bool) bool {
-	if len(users) == 0 || len(running) == 0 {
-		return false
+func readStorageProcs(ctx context.Context, deps storageDeps) storageProcSnapshot {
+	if deps.runningProcs == nil {
+		return storageProcSnapshot{err: errors.New("process enumeration unavailable")}
 	}
-	for proc := range running {
+	names, err := deps.runningProcs(ctx)
+	if err != nil || names == nil {
+		return storageProcSnapshot{err: cmp.Or(err, errors.New("process enumeration unavailable"))}
+	}
+	return storageProcSnapshot{names: names, known: true}
+}
+
+// storageToolchainInUse reports whether any toolchain executable in users is running.
+// When users is non-empty and process enumeration is unavailable (procs.known == false),
+// it fails closed (inUse=true, unknown=true) so destructive cleanup never proceeds blindly.
+func storageToolchainInUse(users []string, procs storageProcSnapshot) (inUse bool, unknown bool) {
+	if len(users) == 0 {
+		return false, false
+	}
+	if !procs.known {
+		return true, true
+	}
+	for proc := range procs.names {
+		lp := strings.ToLower(proc)
 		for _, u := range users {
-			rest, ok := strings.CutPrefix(proc, u)
+			rest, ok := strings.CutPrefix(lp, strings.ToLower(u))
 			if ok && strings.Trim(rest, "0123456789.") == "" {
-				return true
+				return true, false
 			}
 		}
 	}
-	return false
+	return false, false
 }
 
-// readRunningProcNames reads /proc/<pid>/comm on Linux (lightweight, no argv/env). Returns empty map on other OSes.
-func readRunningProcNames() map[string]bool {
-	if runtime.GOOS != "linux" {
-		return nil
+// readRunningProcNamesForOS enumerates running executable names on Linux (/proc),
+// macOS (/bin/ps -axo comm=), and Windows (tasklist /FO CSV /NH). It returns an error
+// whenever process enumeration is unavailable or unsupported so callers fail closed.
+func readRunningProcNamesForOS(ctx context.Context, goos string, runCmd func(context.Context, string, ...string) ([]byte, error)) (map[string]bool, error) {
+	switch goos {
+	case "linux":
+		return readLinuxProcNames("/proc")
+	case "darwin":
+		if runCmd == nil {
+			return nil, errors.New("ps command runner unavailable")
+		}
+		cmdCtx, cancel := context.WithTimeout(ctx, storageProcCmdTimeout)
+		defer cancel()
+		out, err := runCmd(cmdCtx, "/bin/ps", "-axo", "comm=")
+		if err != nil {
+			return nil, fmt.Errorf("ps: %w", err)
+		}
+		names := parsePSCommLines(out)
+		if len(names) == 0 {
+			return nil, errors.New("ps returned no processes")
+		}
+		return names, nil
+	case "windows":
+		if runCmd == nil {
+			return nil, errors.New("tasklist command runner unavailable")
+		}
+		cmdCtx, cancel := context.WithTimeout(ctx, storageProcCmdTimeout)
+		defer cancel()
+		out, err := runCmd(cmdCtx, "tasklist", "/FO", "CSV", "/NH")
+		if err != nil {
+			return nil, fmt.Errorf("tasklist: %w", err)
+		}
+		names := parseTasklistCSV(out)
+		if len(names) == 0 {
+			return nil, errors.New("tasklist returned no processes")
+		}
+		return names, nil
+	default:
+		return nil, fmt.Errorf("process enumeration unsupported on %s", goos)
 	}
-	entries, err := os.ReadDir("/proc")
+}
+
+func readLinuxProcNames(procRoot string) (map[string]bool, error) {
+	entries, err := os.ReadDir(procRoot)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read %s: %w", procRoot, err)
 	}
 	out := map[string]bool{}
 	for _, e := range entries {
@@ -1219,11 +1386,213 @@ func readRunningProcNames() map[string]bool {
 		if len(name) == 0 || name[0] < '0' || name[0] > '9' {
 			continue
 		}
-		if b, err := os.ReadFile(filepath.Join("/proc", name, "comm")); err == nil {
-			if comm := strings.TrimSpace(string(b)); comm != "" {
+		if b, err := os.ReadFile(filepath.Join(procRoot, name, "comm")); err == nil {
+			if comm := strings.ToLower(strings.TrimSpace(string(b))); comm != "" {
 				out[comm] = true
 			}
 		}
 	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no readable processes in %s", procRoot)
+	}
+	return out, nil
+}
+
+// parsePSCommLines parses `ps -axo comm=` output (macOS/BSD), normalizing paths to lowercase base executable names.
+func parsePSCommLines(raw []byte) map[string]bool {
+	out := map[string]bool{}
+	sc := bufio.NewScanner(bytes.NewReader(raw))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		line = strings.TrimPrefix(line, "-")
+		base := filepath.Base(line)
+		base = strings.TrimPrefix(base, "-")
+		if name := strings.ToLower(strings.TrimSpace(base)); name != "" && name != "." && name != "/" {
+			out[name] = true
+		}
+	}
 	return out
+}
+
+// parseTasklistCSV parses `tasklist /FO CSV /NH` output on Windows, stripping `.exe` suffixes.
+func parseTasklistCSV(raw []byte) map[string]bool {
+	out := map[string]bool{}
+	r := csv.NewReader(bytes.NewReader(raw))
+	r.FieldsPerRecord = -1
+	for {
+		rec, err := r.Read()
+		if err != nil {
+			break
+		}
+		if len(rec) == 0 {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(rec[0]))
+		name = strings.TrimSuffix(name, ".exe")
+		if name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// isRotatedStorageLogName reports whether a file under Persona's logs directory is a rotated or archived log.
+// Active/current logs (e.g., node.log, hub.log, link.log, node-attach.log) return false and are never deleted.
+func isRotatedStorageLogName(name string) bool {
+	if name == "" || strings.HasPrefix(name, ".") {
+		return false
+	}
+	lower := strings.ToLower(name)
+	if idx := strings.Index(lower, ".log."); idx > 0 && idx+len(".log.") < len(lower) {
+		return true
+	}
+	if idx := strings.Index(lower, ".log-"); idx > 0 && idx+len(".log-") < len(lower) {
+		return true
+	}
+	for _, ext := range []string{".gz", ".zst", ".bz2", ".xz", ".zip", ".old", ".bak"} {
+		if strings.HasSuffix(lower, ext) && len(lower) > len(ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// collectRotatedLogFiles walks realDir (never following symlinks) and partitions files into
+// reclaimable rotated/closed logs vs protected active/current or open log files.
+func collectRotatedLogFiles(ctx context.Context, realDir string, maxDepth int, budget *int, activePaths map[string]bool) (totalBytes, reclaimableBytes int64, totalCount int, cleanable []string, protectedCount int, complete bool) {
+	info, err := os.Lstat(realDir)
+	if err != nil || info.Mode()&fs.ModeSymlink != 0 || !info.IsDir() {
+		return 0, 0, 0, nil, 0, true
+	}
+	type frame struct {
+		path  string
+		depth int
+	}
+	stack := []frame{{path: realDir, depth: 0}}
+	complete = true
+	for len(stack) > 0 {
+		if ctx.Err() != nil {
+			return totalBytes, reclaimableBytes, totalCount, cleanable, protectedCount, false
+		}
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		dirEntries, err := os.ReadDir(cur.path)
+		if err != nil {
+			continue
+		}
+		for _, e := range dirEntries {
+			if ctx.Err() != nil {
+				return totalBytes, reclaimableBytes, totalCount, cleanable, protectedCount, false
+			}
+			if *budget <= 0 {
+				return totalBytes, reclaimableBytes, totalCount, cleanable, protectedCount, false
+			}
+			*budget--
+			if e.Type()&fs.ModeSymlink != 0 {
+				continue
+			}
+			fi, err := e.Info()
+			if err != nil {
+				continue
+			}
+			child := filepath.Join(cur.path, e.Name())
+			totalCount++
+			if fi.IsDir() {
+				if cur.depth < maxDepth {
+					stack = append(stack, frame{path: child, depth: cur.depth + 1})
+				} else {
+					complete = false
+				}
+				continue
+			}
+			totalBytes += fi.Size()
+			if activePaths[child] || !isRotatedStorageLogName(e.Name()) {
+				protectedCount++
+				continue
+			}
+			reclaimableBytes += fi.Size()
+			cleanable = append(cleanable, child)
+		}
+	}
+	return totalBytes, reclaimableBytes, totalCount, cleanable, protectedCount, complete
+}
+
+// collectActiveStorageLogFiles resolves log files currently held open by this node's logger,
+// stdout/stderr redirects, or readable local process file descriptors under dirs.
+func (n *Node) collectActiveStorageLogFiles(ctx context.Context, goos string, dirs []string) map[string]bool {
+	active := map[string]bool{}
+	addPath := func(p string) {
+		p = strings.TrimSuffix(strings.TrimSpace(p), " (deleted)")
+		if p == "" || !filepath.IsAbs(p) {
+			return
+		}
+		resolved := filepath.Clean(p)
+		if realPath, err := filepath.EvalSymlinks(resolved); err == nil {
+			resolved = realPath
+		}
+		for _, d := range dirs {
+			if _, ok := storageInsideRoot(d, resolved); ok {
+				active[resolved] = true
+				return
+			}
+		}
+	}
+	type namedWriter interface {
+		Name() string
+	}
+	if n != nil && n.logger != nil {
+		if nw, ok := n.logger.Writer().(namedWriter); ok {
+			addPath(nw.Name())
+		}
+	}
+	for _, f := range []*os.File{os.Stdout, os.Stderr} {
+		if f != nil {
+			addPath(f.Name())
+		}
+	}
+	if goos == "linux" {
+		collectLinuxOpenFilesUnder(ctx, "/proc", dirs, addPath)
+	}
+	return active
+}
+
+func collectLinuxOpenFilesUnder(ctx context.Context, procRoot string, dirs []string, addPath func(string)) {
+	if len(dirs) == 0 {
+		return
+	}
+	scanFDDir := func(fdDir string) {
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			return
+		}
+		for _, fd := range fds {
+			if ctx.Err() != nil {
+				return
+			}
+			if target, err := os.Readlink(filepath.Join(fdDir, fd.Name())); err == nil {
+				addPath(target)
+			}
+		}
+	}
+	scanFDDir(filepath.Join(procRoot, "self", "fd"))
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if ctx.Err() != nil {
+			return
+		}
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if len(name) == 0 || name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		scanFDDir(filepath.Join(procRoot, name, "fd"))
+	}
 }
