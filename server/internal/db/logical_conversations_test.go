@@ -348,3 +348,25 @@ func TestLogicalUnpublishedApprovalDoesNotRemainPending(t *testing.T) {
 		t.Fatalf("unpublished reservation blocked switching: %v", err)
 	}
 }
+
+func TestLogicalRoutesDoNotChangeHubOnlyStores(t *testing.T) {
+	d, url := historyDB(t)
+	ctx := t.Context()
+	if err := d.AdoptConversation(ctx, "m", "s", "one", "claude", "h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PutConversationInteraction(ctx, "card", "m", "s", "m", "s", 1); err != nil {
+		t.Fatal(err)
+	}
+	hub, err := Open(ctx, url, HubSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hub.Close()
+	if route, err := hub.ConversationInteraction(ctx, "card"); err != nil || route != nil {
+		t.Fatalf("hub store consulted manager routes: %+v %v", route, err)
+	}
+	if err := hub.FinishConversationInteraction(ctx, "card"); err != nil {
+		t.Fatal(err)
+	}
+}

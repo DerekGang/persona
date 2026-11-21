@@ -669,7 +669,7 @@ func TestLogicalPhysicalDeliveryRequiresPositiveRefusalEvidence(t *testing.T) {
 
 func TestLogicalApprovalPublicationIsSanitizedAndEpochFenced(t *testing.T) {
 	s, _, d, _ := logicalPair(t, "codex")
-	ctx := t.Context()
+	ctx := context.WithValue(t.Context(), logicalAuthenticatedKey{}, logicalAuthenticated{Machine: "server", Session: "side-chat", PhysicalMachine: "server", PhysicalSession: "side-chat", Epoch: 1})
 	// A reservation before a pending switch is inert. No raw card is published.
 	ix := proto.Interaction{ID: "late-source-card", MachineID: "server", SessionID: "side-chat", Kind: proto.IxPermission}
 	if err := d.ReserveConversationInteraction(ctx, ix, "server", "side-chat", "server", "side-chat", 1); err != nil {
@@ -682,6 +682,7 @@ func TestLogicalApprovalPublicationIsSanitizedAndEpochFenced(t *testing.T) {
 		t.Fatalf("rejected publication persisted: %+v %v", row, err)
 	}
 	activatePair(t, d)
+	ctx = context.WithValue(t.Context(), logicalAuthenticatedKey{}, logicalAuthenticated{Machine: "server", Session: "side-chat", PhysicalMachine: "server", PhysicalSession: "target-chat", Epoch: 2})
 	ix.ID, ix.Summary, ix.CreatedAt = "active-resumable-card", "sanitized summary", time.Now()
 	ix.Resumable = true
 	if err := d.ReserveConversationInteraction(ctx, ix, "server", "side-chat", "server", "target-chat", 2); err != nil {
@@ -735,5 +736,18 @@ func TestLogicalRetiredCardControlsNeverReachTheActiveSegment(t *testing.T) {
 		if err == nil || called {
 			t.Fatalf("retired control escaped its epoch: %+v %v", resolution, err)
 		}
+	}
+}
+
+func TestLogicalPublicationLeavesOrdinaryCardLifetimeUnchanged(t *testing.T) {
+	s, _, _, _ := logicalPair(t, "codex")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if fresh, err := s.logicalPublishInteraction(ctx, proto.Interaction{ID: "owner-card", MachineID: "server", SessionID: "side-chat"}); err != nil || fresh {
+		t.Fatalf("ordinary card inherited runtime cancellation: %v %v", fresh, err)
+	}
+	called := false
+	if err := s.logicalInteractionAnswer(ctx, "ordinary-owner-card", proto.Resolution{Dismiss: true}, func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("ordinary card cancellation changed: %v %v", called, err)
 	}
 }

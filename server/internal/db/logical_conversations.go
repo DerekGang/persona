@@ -586,6 +586,9 @@ func (d *DB) PutConversationInteraction(ctx context.Context, id, machine, sessio
 }
 
 func (d *DB) ConversationInteraction(ctx context.Context, id string) (*ConversationInteractionRoute, error) {
+	if d.sets&ManagerSet == 0 {
+		return nil, nil
+	}
 	r := &ConversationInteractionRoute{}
 	err := d.pool.QueryRow(ctx, `SELECT logical_machine,logical_session,machine_id,session_id,epoch FROM conversation_interaction_routes WHERE interaction_id=$1`, id).
 		Scan(&r.MachineID, &r.SessionID, &r.PhysicalMachine, &r.PhysicalSession, &r.Epoch)
@@ -651,6 +654,9 @@ func (d *DB) ConversationInputPending(ctx context.Context, machine, session stri
 }
 
 func (d *DB) FinishConversationInteraction(ctx context.Context, id string) error {
+	if d.sets&ManagerSet == 0 {
+		return nil
+	}
 	_, err := d.pool.Exec(ctx, `UPDATE conversation_interaction_routes SET pending=false WHERE interaction_id=$1`, id)
 	return err
 }

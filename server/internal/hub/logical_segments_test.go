@@ -21,6 +21,7 @@ type segmentTestDevices struct {
 	rows map[string][]proto.Session
 }
 
+func (d *segmentTestDevices) Has(machine string) bool { _, ok := d.rows[machine]; return ok }
 func (d *segmentTestDevices) Sessions(machine string) ([]proto.Session, bool) {
 	rows, ok := d.rows[machine]
 	return slices.Clone(rows), ok

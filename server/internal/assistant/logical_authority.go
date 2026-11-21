@@ -179,7 +179,9 @@ func (s *Service) logicalInteractionAnswer(ctx context.Context, id string, r pro
 	if !ok {
 		return next()
 	}
-	route, err := routes.ConversationInteraction(ctx, id)
+	lookup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	route, err := routes.ConversationInteraction(lookup, id)
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -211,6 +213,12 @@ func (s *Service) NodeRequest(ctx context.Context, machine, method string, param
 // node input, expiry, Always policy and privacy. A route-only reservation is not
 // an approval: if a switch wins before publication, no actionable card appears.
 func (s *Service) logicalPublishInteraction(ctx context.Context, ix proto.Interaction) (bool, error) {
+	caller, authenticated := ctx.Value(logicalAuthenticatedKey{}).(logicalAuthenticated)
+	if !authenticated || caller.Machine != ix.MachineID || caller.Session != ix.SessionID {
+		// Ordinary and manager-owned cards keep their existing lifetime,
+		// including owner proposals whose caller has already disconnected.
+		return false, nil
+	}
 	routes, ok := s.store().(logicalInteractionStore)
 	if !ok {
 		return false, nil
@@ -218,6 +226,9 @@ func (s *Service) logicalPublishInteraction(ctx context.Context, ix proto.Intera
 	route, err := routes.ConversationInteraction(ctx, ix.ID)
 	if err != nil || route == nil {
 		return false, err
+	}
+	if caller.PhysicalMachine != route.PhysicalMachine || caller.PhysicalSession != route.PhysicalSession || caller.Epoch != route.Epoch {
+		return false, logicalRefusal(ctx, "retired")
 	}
 	st := s.store().(logicalConversationStore)
 	cards, ok := s.store().(interface {
