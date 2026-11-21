@@ -21,7 +21,13 @@ import (
 var (
 	ErrInvalidBundleID = errors.New("invalid recovery bundle id")
 	ErrBundleNotFound  = errors.New("recovery bundle not found")
+	ErrBusy            = errors.New("another recovery check is running")
 )
+
+// checkSlot admits one whole-bundle check per process. The hub builds a Service per request, and a verification
+// extracts the full bundle into temporary space and restores two temporary databases on the live PostgreSQL server,
+// so concurrent requests (another tab, a retry after a reload, another device) are refused rather than stacked.
+var checkSlot = make(chan struct{}, 1)
 
 const maxBundles = 50
 
@@ -69,6 +75,7 @@ type Service struct {
 	support       func(backup.Options) backup.Support
 	createSupport func(backup.Options) backup.Support
 	now           func() time.Time
+	slot          chan struct{}
 }
 
 func NewService(home string) *Service {
@@ -76,7 +83,17 @@ func NewService(home string) *Service {
 	return &Service{
 		home: home, inspect: backup.InspectBundle, verify: operator.Verify,
 		support: backup.VerificationSupport, createSupport: backup.CreationSupport,
-		now: time.Now,
+		now: time.Now, slot: checkSlot,
+	}
+}
+
+// acquire takes the check slot without waiting; release must be called when ok.
+func (s *Service) acquire() (release func(), ok bool) {
+	select {
+	case s.slot <- struct{}{}:
+		return func() { <-s.slot }, true
+	default:
+		return nil, false
 	}
 }
 
@@ -106,6 +123,11 @@ func (s *Service) Inspect(ctx context.Context, id string) (Check, error) {
 	if err != nil {
 		return Check{}, err
 	}
+	release, ok := s.acquire()
+	if !ok {
+		return Check{}, ErrBusy
+	}
+	defer release()
 	check := Check{Kind: "offline_integrity", CheckedAt: s.now().UTC(), Bundle: entry.Bundle}
 	report, err := s.inspect(ctx, entry.path)
 	if err != nil {
@@ -132,6 +154,11 @@ func (s *Service) Verify(ctx context.Context, id string) (Check, error) {
 	if err != nil {
 		return Check{}, err
 	}
+	release, ok := s.acquire()
+	if !ok {
+		return Check{}, ErrBusy
+	}
+	defer release()
 	check := Check{Kind: "database_restore", CheckedAt: s.now().UTC(), Bundle: entry.Bundle}
 	if support := s.support(s.options("")); support.State != "supported" {
 		check.State, check.Reason = "unsupported", support.Reason

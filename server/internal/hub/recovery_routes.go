@@ -80,7 +80,9 @@ func (h *Hub) auditRecovery(r *http.Request, action string, check recoveryops.Ch
 	if result == "" {
 		result = "failed"
 	}
-	if err != nil {
+	if errors.Is(err, recoveryops.ErrBusy) {
+		result = "busy"
+	} else if err != nil {
 		result = "failed"
 	}
 	h.logf("recovery: action=%s device=%s result=%s", action, recoveryActor(principalOf(r.Context())), result)
@@ -97,6 +99,8 @@ func writeRecoveryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, recoveryops.ErrInvalidBundleID):
 		writeErr(w, http.StatusBadRequest, i18n.Err("hub-recovery.err_bundle_id"))
+	case errors.Is(err, recoveryops.ErrBusy):
+		writeErr(w, http.StatusConflict, i18n.Err("hub-recovery.err_busy"))
 	case errors.Is(err, recoveryops.ErrBundleNotFound):
 		writeErr(w, http.StatusNotFound, i18n.Err("hub-recovery.err_bundle_not_found"))
 	default:

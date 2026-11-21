@@ -619,6 +619,9 @@ database URL, key, fingerprint, or raw operational error.
   Docker Compose deployment are unsupported states. Raw errors stay out of the API; the terminal command supplies the
   redacted diagnostic. There is no authoritative per-install restore/drill history source, so the page says that
   history is unavailable instead of inventing success from an inspection.
+- **One check at a time.** A verification extracts the whole bundle into temporary space and restores two temporary
+  databases on the live PostgreSQL server, so the hub runs one inspection or verification at a time across all requests
+  and credentials. Another one is refused with `409` until the running check finishes; nothing is queued.
 - **No unsafe create, restore, or export.** There is no server-managed full-install quiescence that can stop both the
   hub and built-in manager while their Web request is running. Creation therefore remains the guided terminal workflow
   above with both writers stopped and `--writes-quiesced`; no create endpoint exists. Restore and service-starting

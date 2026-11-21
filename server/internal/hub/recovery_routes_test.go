@@ -106,4 +106,11 @@ func TestRecoveryRoutesReturnSafeFailures(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body["error"] == "postgres://synthetic:secret@example.test/private?password=secret" {
 		t.Fatalf("unsafe error body: %s", w.Body.String())
 	}
+
+	service.err = recoveryops.ErrBusy
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/hub/recovery/bundles/"+strings.Repeat("a", 64)+"/verify", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("a concurrent check must be refused, not stacked: %d %s", w.Code, w.Body.String())
+	}
 }

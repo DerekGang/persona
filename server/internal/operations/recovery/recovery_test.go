@@ -241,3 +241,47 @@ func writeSyntheticBundle(t *testing.T, name string, alternate bool) {
 		t.Fatal(err)
 	}
 }
+
+func TestOnlyOneBundleCheckRunsAtATime(t *testing.T) {
+	home := t.TempDir()
+	writeSyntheticBundle(t, filepath.Join(home, "backups", "alpha.tar"), false)
+	// The hub builds a Service per request, so the slot must hold across instances.
+	first, second := NewService(home), NewService(home)
+	entered, release := make(chan struct{}), make(chan struct{})
+	first.support = func(backup.Options) backup.Support { return backup.Support{State: "supported"} }
+	first.verify = func(_ context.Context, opts backup.Options) (backup.Result, error) {
+		close(entered)
+		<-release
+		return backup.Result{Bundle: opts.Bundle, Verified: true}, nil
+	}
+	second.support = first.support
+	secondCalls := 0
+	second.verify = func(_ context.Context, opts backup.Options) (backup.Result, error) {
+		secondCalls++
+		return backup.Result{Bundle: opts.Bundle, Verified: true}, nil
+	}
+	overview, err := first.Overview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := overview.Bundles[0].ID
+	done := make(chan error, 1)
+	go func() {
+		_, err := first.Verify(context.Background(), id)
+		done <- err
+	}()
+	<-entered
+	if _, err := second.Verify(context.Background(), id); !errors.Is(err, ErrBusy) || secondCalls != 0 {
+		t.Fatalf("a second verification ran beside the first: err=%v calls=%d", err, secondCalls)
+	}
+	if _, err := second.Inspect(context.Background(), id); !errors.Is(err, ErrBusy) {
+		t.Fatalf("an inspection ran beside a verification: %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if check, err := second.Verify(context.Background(), id); err != nil || check.State != "passed" || secondCalls != 1 {
+		t.Fatalf("the slot was not released: err=%v check=%+v calls=%d", err, check, secondCalls)
+	}
+}
