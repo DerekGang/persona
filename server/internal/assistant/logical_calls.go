@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/db"
@@ -306,7 +307,7 @@ func logicalNotTaken(err error) bool {
 	// This boundary has already called the physical node. An untyped error
 	// cannot be classified as a local validation refusal: the reply may be lost.
 	_, coded := relayErrCode(err)
-	if (coded || errors.Is(err, rpc.ErrNotSent) || errors.Is(err, rpc.ErrNotWritten)) && sendNotTaken(err) {
+	if (coded || errors.Is(err, apierr.ErrOffline) || errors.Is(err, rpc.ErrNotSent) || errors.Is(err, rpc.ErrNotWritten)) && sendNotTaken(err) {
 		return true
 	}
 	var re *rpc.Error

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/db"
@@ -566,6 +567,7 @@ func TestLogicalForwardRollbackRestoresALaterSourceSegment(t *testing.T) {
 
 func TestLogicalInteractionEndEventsAreFencedByPhysicalEpoch(t *testing.T) {
 	s, _, d, _ := logicalPair(t, "codex")
+	s.devs = &fakeDevices{} // enable the manager-owned card lifecycle
 	ctx := t.Context()
 	if err := d.PutConversationInteraction(ctx, "retired-card", "server", "side-chat", "server", "side-chat", 1); err != nil {
 		t.Fatal(err)
@@ -595,5 +597,52 @@ func TestLogicalInteractionEndEventsAreFencedByPhysicalEpoch(t *testing.T) {
 	s.fleet.mu.Unlock()
 	if !oldPending || activePending {
 		t.Fatal("active physical cancellation was not isolated")
+	}
+}
+
+func TestLogicalToolPermissionIsVerifiedBeforeRemapping(t *testing.T) {
+	s, _, d, _ := logicalPair(t, "codex")
+	activatePair(t, d)
+	args := json.RawMessage(`{"detail":"fake report"}`)
+	for _, session := range []string{"target-chat", "side-chat", "another-session"} {
+		t.Run(session, func(t *testing.T) {
+			proof := testSourcePermission(session, "report_to_supervisor", args, "bypass")
+			raw, _ := json.Marshal(map[string]any{"session_id": "target-chat", "name": "report_to_supervisor", "args": args, "source_permission": proof})
+			_, handled, err := s.logicalNodeRequest(t.Context(), "server", "mcp.call", raw, func(_ context.Context, machine, method string, raw json.RawMessage) (any, bool, error) {
+				var p struct {
+					Session string                 `json:"session_id"`
+					Proof   proto.SourcePermission `json:"source_permission"`
+				}
+				_ = json.Unmarshal(raw, &p)
+				if machine != "server" || p.Session != "side-chat" {
+					t.Fatalf("logical tool route: %s", raw)
+				}
+				if p.Proof.Matches("side-chat", "report_to_supervisor", args) != (session == "target-chat") {
+					t.Fatalf("unbound proof acquired logical authority: %s", raw)
+				}
+				return nil, true, nil
+			})
+			if err != nil || !handled {
+				t.Fatalf("tool: %v %v", handled, err)
+			}
+		})
+	}
+}
+
+func TestLogicalPhysicalDeliveryRequiresPositiveRefusalEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		refused bool
+	}{
+		{errors.New("connection lost after physical dispatch"), false},
+		{context.DeadlineExceeded, false},
+		{rpc.ErrClosed, false},
+		{apierr.ErrOffline, true},
+		{rpc.ErrNotSent, true},
+		{&rpc.Error{Code: "assistant_supervision_runtime", Message: "policy refused", Data: json.RawMessage(`{"delivered":"none"}`)}, true},
+	} {
+		if got := logicalNotTaken(tc.err); got != tc.refused {
+			t.Fatalf("%v: refused=%v want=%v", tc.err, got, tc.refused)
+		}
 	}
 }

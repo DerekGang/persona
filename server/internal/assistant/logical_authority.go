@@ -119,6 +119,10 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 				if permission.Matches(session, name, envelope["args"]) {
 					permission.Session = rootSession
 					envelope["source_permission"], _ = json.Marshal(permission)
+				} else {
+					// A proof already naming the public root was never bound to
+					// this physical caller; it must not become valid after remap.
+					delete(envelope, "source_permission")
 				}
 			}
 			envelope["session_id"], _ = json.Marshal(rootSession)
