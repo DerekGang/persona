@@ -84,7 +84,7 @@ export function todoChipState(o: { toStart: boolean; status: string; done: boole
   // that Agent's (its status column says so) and a review chip beside it would contradict it.
   if (review === "pending_review" && !agentBusy) return t("assistant-tasks.review_pending");
   if (review === "rework" && !agentBusy) return t("assistant-tasks.review_rework", { round: o.todo?.supervision?.round ?? 1 });
-  if (o.stage === "merge" && o.pr) return t("assistant-tasks.todo_waiting_merge");
+  if (o.stage === "merge" && o.pr && !agentBusy) return t("assistant-tasks.todo_waiting_merge");
   return undefined;
 }
 

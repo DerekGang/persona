@@ -45,6 +45,7 @@ describe("the to-do's own state is a chip of its own (#6492)", () => {
     expect(todoChipState({ toStart: false, status: "follow_up", done: false, todo: { done_at: null, supervision: parked } })).toBe(t("assistant-tasks.review_parked"));
     expect(todoChipState({ toStart: false, status: "unread", done: false, todo: { done_at: null, supervision: parked } })).toBeUndefined();
     expect(todoChipState({ toStart: false, status: "unread", done: false, stage: "merge", pr: "https://example.com/pr/1", todo: { done_at: null, supervision: parked } })).toBeUndefined();
+    expect(todoChipState({ toStart: false, status: "working", done: false, stage: "merge", pr: "https://example.com/pr/1", todo: { done_at: null } })).toBeUndefined();
     expect(todoChipState({ toStart: false, status: "follow_up", done: false, stage: "merge", pr: "https://example.com/pr/1", todo: { done_at: null } })).toBe(t("assistant-tasks.todo_waiting_merge"));
     expect(todoChipState({ toStart: false, status: "follow_up", done: false, stage: "merge", todo: { done_at: null } })).toBeUndefined();
     expect(todoChipState({ toStart: true, status: "not_started", done: false })).toBe(t("assistant-tasks.plan_waiting"));
