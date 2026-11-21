@@ -74,3 +74,26 @@ func TestProjectReviewOwnerRelayKeyedBySource(t *testing.T) {
 		t.Fatalf("after acking %s: pending = %+v, %v", pending[0].Machine, left, err)
 	}
 }
+
+// The relay reads a batch of the managers connected now: another manager's rows are not read, and the batch is bounded.
+func TestProjectReviewOwnerRelayReadsManagersBatch(t *testing.T) {
+	d, ctx := open(t), t.Context()
+	for _, manager := range []string{"here", "away"} {
+		if err := d.SetProjectReviewAppInputs(ctx, manager, true); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"m1", "m2", "m3"} {
+			if err := d.RecordProjectReviewOwnerInput(ctx, ProjectReviewOwnerRelay{MessageID: id, Manager: manager,
+				Machine: "box", Session: manager}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	batch, err := d.PendingProjectReviewOwnersOf(ctx, []string{"here"}, 2)
+	if err != nil || len(batch) != 2 || batch[0].Manager != "here" || batch[1].Manager != "here" || batch[0].MessageID != "m1" {
+		t.Fatalf("batch = %+v, %v; want here's first two", batch, err)
+	}
+	if none, err := d.PendingProjectReviewOwnersOf(ctx, nil, 200); err != nil || len(none) != 0 {
+		t.Fatalf("no managers read %+v, %v", none, err)
+	}
+}

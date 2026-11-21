@@ -404,12 +404,17 @@ func (h *Hub) managerHello(ctx context.Context, c *busConn, params json.RawMessa
 		Deploy: clip(p.Deploy, 40), Version: clip(p.Version, 80), Capabilities: capabilityList(p.Capabilities)}); err != nil {
 		return nil, err
 	}
-	if p.ProjectReviewAppInputs != nil {
-		// An optional feature: its write failing must not hang up the manager (refuse says "wrong identity", which a
-		// client may take as final). The switch saved by an earlier hello stays in place, and the next hello writes again.
-		if err := h.setProjectReviewAppInputs(ctx, c.ident.ID, *p.ProjectReviewAppInputs); err != nil {
-			h.logf("bus: [%s] project review App inputs not saved: %v", c.ident.ID, err)
-		}
+	// A hello without the switch or the capability (a manager from before project review, or one rolled back to such a
+	// version) turns App inputs off: what was queued for it is dropped, and nothing more is queued that it could never
+	// take. An optional feature: its write failing must not hang up the manager (refuse says "wrong identity", which a
+	// client may take as final). The switch saved by an earlier hello stays in place, and the next hello writes again.
+	appInputs := p.ProjectReviewAppInputs != nil && *p.ProjectReviewAppInputs &&
+		slices.Contains(p.Capabilities, assistantwire.CapabilityProjectReview)
+	if err := h.setProjectReviewAppInputs(ctx, c.ident.ID, appInputs); err != nil {
+		h.logf("bus: [%s] project review App inputs not saved: %v", c.ident.ID, err)
+	}
+	if slices.Contains(p.Capabilities, assistantwire.CapabilityProjectReview) {
+		h.pokeProjectReviewOwners() // its rows, kept while it was away
 	}
 	if c.ident.Role == bus.RoleManager && !slices.Contains(p.Capabilities, assistantwire.CapabilityConfigOwn) {
 		h.bus.mu.Lock()

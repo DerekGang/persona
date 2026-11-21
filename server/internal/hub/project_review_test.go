@@ -470,6 +470,11 @@ func TestProjectReviewFirstInputBeforeListing(t *testing.T) {
 		{"plain Agent", trusted, proto.Session{SessionID: "plain", Cwd: "/code"}, false, true},
 		{"space", trusted, proto.Session{SessionID: "space", Cwd: "/code", Space: "health"}, false, false},
 		{"meeting", trusted, proto.Session{SessionID: "meeting", Cwd: "/code", Origin: "meeting"}, false, false},
+		// Before the computer lists a start with the metadata that says so, where it runs decides.
+		{"health folder", trusted, proto.Session{SessionID: "health-cwd", Cwd: "/home/u/.persona/health/reports"}, false, false},
+		{"meeting room", trusted, proto.Session{SessionID: "room", Cwd: "/home/u/.persona/guest-meeting/m1"}, false, false},
+		{"guest", trusted, proto.Session{SessionID: "guest", Cwd: "/home/u/.jarvis/guest"}, false, false},
+		{"a project folder named guest", trusted, proto.Session{SessionID: "guest-project", Cwd: "/code/guest"}, false, true},
 		{"untrusted", r, proto.Session{SessionID: "untrusted", Cwd: "/code"}, false, false},
 		{"share sheet", trusted, proto.Session{SessionID: "shared", Cwd: "/code"}, true, false},
 	}
@@ -559,4 +564,145 @@ func TestProjectReviewFirstInputAfterTodoLink(t *testing.T) {
 	if !queued || !linked {
 		t.Fatalf("first input queued %v, with the to-do linked %v (%v)", queued, linked, seen)
 	}
+}
+
+// appPost sends text to path as the App would; extra is more JSON fields, each with its trailing comma.
+func appPost(t *testing.T, server *httptest.Server, id, auth, path string, extra ...string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, server.URL+path,
+		strings.NewReader(`{"text":"private words","human":true,"submission":{"kind":"human_input"},`+strings.Join(extra, "")+`"client_msg_id":"`+id+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+auth)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("app send %s: %s", id, res.Status)
+	}
+}
+
+// reviewManager connects the default manager with project review and App inputs on; deviceToken is a full device's.
+func reviewManager(t *testing.T) (h *Hub, server *httptest.Server, store *db.DB, start func() *testAssistant, deviceToken string) {
+	h, server, store = newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"box","session_id":"review"},"app_inputs":true,"projects":["project-one"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start = func() *testAssistant {
+		return dialAssistantWithStore(t, h, server.URL, false, manager, func(o *assistant.BusOptions) { o.ConfigFile, o.Outbox = config, manager })
+	}
+	deviceToken = "review-manager-device-token-" + t.Name() // the test process shares one database
+	if err := store.CreateDeviceToken(context.Background(), db.DeviceToken{ID: "review-manager-" + t.Name(), Name: "Test app", Role: roleFull},
+		hashToken(deviceToken)); err != nil {
+		t.Fatal(err)
+	}
+	pipeNode(t, h, "box", func(context.Context) error { return nil })
+	return h, server, store, start, deviceToken
+}
+
+// pendingOwnerInputs counts the queued rows of the messages this test sent (appPost with a t.Name() prefix): the
+// test process shares one database.
+func pendingOwnerInputs(t *testing.T, store *db.DB) int {
+	t.Helper()
+	pending, err := store.PendingProjectReviewOwners(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, p := range pending {
+		if strings.HasPrefix(p.MessageID, t.Name()+"/") {
+			n++
+		}
+	}
+	return n
+}
+
+// A manager rolled back to a version from before project review says hello with neither the switch nor the
+// capability: what was queued for it is dropped and nothing more is queued, instead of rows it can never take
+// piling up for good.
+func TestProjectReviewRolledBackManagerDropsItsQueue(t *testing.T) {
+	h, server, store, start, token := reviewManager(t)
+	a := start()
+	a.stop()
+	<-a.done
+	appPost(t, server, t.Name()+"/queued-while-away", token, sendPath)
+	if n := pendingOwnerInputs(t, store); n != 1 {
+		t.Fatalf("queued while the manager was away: %d, want 1", n)
+	}
+	old := dialRawBus(t, server, busToken(t, h, assistantwire.AssistantID, "assistant"))
+	if err := old.call("manager.hello", map[string]any{"id": assistantwire.AssistantID,
+		"capabilities": []string{assistantwire.CapabilityConfigOwn}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := pendingOwnerInputs(t, store); n != 0 {
+		t.Fatalf("a manager that cannot take them kept %d queued", n)
+	}
+	appPost(t, server, t.Name()+"/after-rollback", token, sendPath)
+	if n := pendingOwnerInputs(t, store); n != 0 {
+		t.Fatalf("queued %d for a manager that cannot take them", n)
+	}
+}
+
+// relayReadsStore counts the relay's reads.
+type relayReadsStore struct {
+	*db.DB
+	reads *atomic.Int32
+}
+
+func (s relayReadsStore) PendingProjectReviewOwnersOf(ctx context.Context, managers []string, limit int) ([]db.ProjectReviewOwnerRelay, error) {
+	s.reads.Add(1)
+	return s.DB.PendingProjectReviewOwnersOf(ctx, managers, limit)
+}
+
+func poked(h *Hub) bool {
+	select {
+	case <-h.projectReview.wakeup():
+		return true
+	default:
+		return false
+	}
+}
+
+// The relay reads its table only when there may be something to deliver: with no manager connected that takes the
+// rows it reads nothing (project review is off by default), and a queued row or such a manager's hello wakes it,
+// rather than a read every few seconds.
+func TestProjectReviewRelayReadsOnlyWhenWoken(t *testing.T) {
+	h, server, store, start, token := reviewManager(t)
+	var reads atomic.Int32
+	h.store = relayReadsStore{store, &reads}
+	if retry, err := h.relayProjectReviewOwners(t.Context()); err != nil || retry != 0 || reads.Load() != 0 {
+		t.Fatalf("with no manager to take them: retry %v err %v, %d reads", retry, err, reads.Load())
+	}
+	poked(h)
+	a := start()
+	if !poked(h) {
+		t.Fatal("the manager's hello did not wake the relay")
+	}
+	appPost(t, server, t.Name()+"/owner-input", token, sendPath)
+	if !poked(h) {
+		t.Fatal("a queued row did not wake the relay")
+	}
+	if retry, err := h.relayProjectReviewOwners(t.Context()); err != nil || retry != 0 || reads.Load() != 1 {
+		t.Fatalf("delivering: retry %v err %v, %d reads", retry, err, reads.Load())
+	}
+	if n := pendingOwnerInputs(t, store); n != 0 {
+		t.Fatalf("%d left after delivery", n)
+	}
+
+	// End to end: a row queued while the manager is away is delivered once it is back, by its hello.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go h.projectReviewOwnerLoop(ctx)
+	a.stop()
+	<-a.done
+	appPost(t, server, t.Name()+"/while-away", token, sendPath)
+	start()
+	eventually(t, 5*time.Second, "the row queued while away delivered", func() bool { return pendingOwnerInputs(t, store) == 0 })
 }

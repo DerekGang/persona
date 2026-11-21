@@ -24,9 +24,21 @@ func (d *DB) SettleProjectReviewOwner(ctx context.Context, p ProjectReviewOwnerR
 	return err
 }
 
+// PendingProjectReviewOwners lists every queued notice, in delivery order.
 func (d *DB) PendingProjectReviewOwners(ctx context.Context) ([]ProjectReviewOwnerRelay, error) {
-	rows, err := d.pool.Query(ctx, `SELECT message_id,manager,machine,session,queued_at,unscoped FROM project_review_owner_relay
+	return d.pendingProjectReviewOwners(ctx, `SELECT message_id,manager,machine,session,queued_at,unscoped FROM project_review_owner_relay
 		ORDER BY manager,queued_at,message_id`)
+}
+
+// PendingProjectReviewOwnersOf lists up to limit queued notices of managers, in delivery order (the relay's index):
+// the relay reads only what the managers connected now can take, a batch at a time.
+func (d *DB) PendingProjectReviewOwnersOf(ctx context.Context, managers []string, limit int) ([]ProjectReviewOwnerRelay, error) {
+	return d.pendingProjectReviewOwners(ctx, `SELECT message_id,manager,machine,session,queued_at,unscoped FROM project_review_owner_relay
+		WHERE manager = ANY($1) ORDER BY manager,queued_at,message_id LIMIT $2`, managers, limit)
+}
+
+func (d *DB) pendingProjectReviewOwners(ctx context.Context, query string, args ...any) ([]ProjectReviewOwnerRelay, error) {
+	rows, err := d.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

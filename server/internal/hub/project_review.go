@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/devicewire"
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -16,7 +21,7 @@ type projectReviewOwnerStore interface {
 	SetProjectReviewAppInputs(context.Context, string, bool) error
 	RecordProjectReviewOwnerInput(context.Context, db.ProjectReviewOwnerRelay) error
 	SettleProjectReviewOwner(context.Context, db.ProjectReviewOwnerRelay) error
-	PendingProjectReviewOwners(context.Context) ([]db.ProjectReviewOwnerRelay, error)
+	PendingProjectReviewOwnersOf(context.Context, []string, int) ([]db.ProjectReviewOwnerRelay, error)
 	AckProjectReviewOwner(context.Context, db.ProjectReviewOwnerRelay) error
 }
 
@@ -42,7 +47,7 @@ func (h *Hub) projectReviewAppSource(r *http.Request, machine, session, id strin
 			row, ok = *started, true
 		}
 		if ok {
-			if row.Space != "" || assistantSpace(row.Cwd) != "" || row.Origin == "meeting" {
+			if row.Space != "" || row.Origin == "meeting" || projectReviewExcludedCwd(row.Cwd) || m.isGuestCwd(row.Cwd) {
 				return db.ProjectReviewOwnerRelay{}, false
 			}
 			unscoped = unscoped || row.Assistant || m.isAssistant(row)
@@ -50,6 +55,28 @@ func (h *Hub) projectReviewAppSource(r *http.Request, machine, session, id strin
 	}
 	return db.ProjectReviewOwnerRelay{MessageID: id, Manager: h.sessionOwner(machine, session), Machine: machine, Session: session,
 		Unscoped: unscoped}, true
+}
+
+// projectReviewExcludedCwd: a conversation working in cwd is never project review input, whatever its row says: the
+// health space (or a folder in it) and a meeting room's. A start is classified by where it runs before its computer
+// lists it with the metadata that would say so.
+func projectReviewExcludedCwd(cwd string) bool {
+	return identity.InHealthSpace(cwd) || isMeetingRoomCwd(cwd)
+}
+
+// isGuestCwd: cwd is where m's guest conversations run (<state dir>/guest, assistant/guest.go guestDir): other
+// people's words, never the owner's project input.
+func (m *Machine) isGuestCwd(cwd string) bool {
+	clean := path.Clean(cwd)
+	if cwd == "" || path.Base(clean) != "guest" {
+		return false
+	}
+	if compat.IsStateDir(path.Base(path.Dir(clean))) {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.info.DataDir != "" && clean == path.Join(m.info.DataDir, "guest")
 }
 
 func (h *Hub) settleProjectReviewOwner(ctx context.Context, r *http.Request, machine, session, id, outcome string, indirect bool) (bool, error) {
@@ -62,34 +89,100 @@ func (h *Hub) settleProjectReviewOwner(ctx context.Context, r *http.Request, mac
 		return false, nil
 	}
 	p.SendOutcome = outcome
-	return true, store.SettleProjectReviewOwner(ctx, p)
+	if err := store.SettleProjectReviewOwner(ctx, p); err != nil {
+		return true, err
+	}
+	h.pokeProjectReviewOwners()
+	return true, nil
 }
 
-// The timer only retries persisted transport. All sources are native ingress
-// or lifecycle observations. It never scans conversations for owner input.
+// projectReviewRelay wakes the relay loop when there may be something for it to deliver.
+type projectReviewRelay struct {
+	once sync.Once
+	wake chan struct{}
+}
+
+func (r *projectReviewRelay) wakeup() chan struct{} {
+	r.once.Do(func() { r.wake = make(chan struct{}, 1) })
+	return r.wake
+}
+
+// poke has the relay read its table again: a row was queued, or a manager that takes them said hello.
+func (h *Hub) pokeProjectReviewOwners() {
+	select {
+	case h.projectReview.wakeup() <- struct{}{}:
+	default: // a read is already due
+	}
+}
+
+const (
+	// projectReviewRelayBatch bounds one read of the relay; a full batch is followed by the next at once.
+	projectReviewRelayBatch = 200
+	// projectReviewRelayRetry is how soon a manager whose call failed gets its rows again.
+	projectReviewRelayRetry = 3 * time.Second
+)
+
+// The loop only retries persisted transport. All sources are native ingress or lifecycle observations. It never scans
+// conversations for owner input. It reads the relay when there may be something to deliver (at start for what a
+// restart left, when a row is queued, when a manager that takes them says hello) and polls only while a call to a
+// connected manager is failing: with project review off, as it is by default, it costs no database work. Rows of a
+// manager that is away stay queued, unread, until it is back (its hello pokes the loop).
 func (h *Hub) projectReviewOwnerLoop(ctx context.Context) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(0) // what a restart left
+	defer timer.Stop()
+	wake := h.projectReview.wakeup()
 	for {
-		if err := h.deliverProjectReviewOwners(ctx); err != nil && ctx.Err() == nil {
-			h.logf("project review: owner input relay: %v", err)
-		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
+		case <-wake:
+		}
+		timer.Stop()
+		retry, err := h.relayProjectReviewOwners(ctx)
+		if err != nil && ctx.Err() == nil {
+			h.logf("project review: owner input relay: %v", err)
+			retry = projectReviewRelayRetry
+		}
+		if retry > 0 {
+			timer.Reset(retry)
 		}
 	}
 }
 
+// managersThatCan lists the connected managers that said they have capability.
+func (h *Hub) managersThatCan(capability string) []string {
+	h.bus.mu.Lock()
+	defer h.bus.mu.Unlock()
+	var ids []string
+	for id, c := range h.bus.current {
+		if c != nil && slices.Contains(c.presence.Capabilities, capability) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
 func (h *Hub) deliverProjectReviewOwners(ctx context.Context) error {
+	_, err := h.relayProjectReviewOwners(ctx)
+	return err
+}
+
+// relayProjectReviewOwners delivers one batch of the rows of the connected managers that take them; retry is how soon
+// to read again (0: not until a poke).
+func (h *Hub) relayProjectReviewOwners(ctx context.Context) (retry time.Duration, err error) {
 	store, ok := h.store.(projectReviewOwnerStore)
 	if !ok {
-		return nil
+		return 0, nil
 	}
-	list, err := store.PendingProjectReviewOwners(ctx)
+	managers := h.managersThatCan(assistantwire.CapabilityProjectReview)
+	if len(managers) == 0 {
+		return 0, nil // nothing read: a manager's hello pokes the loop
+	}
+	list, err := store.PendingProjectReviewOwnersOf(ctx, managers, projectReviewRelayBatch)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	failed := make(map[string]bool)
 	for _, row := range list {
@@ -110,10 +203,16 @@ func (h *Hub) deliverProjectReviewOwners(ctx context.Context) error {
 			}
 		}
 		if err := store.AckProjectReviewOwner(ctx, row); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	switch {
+	case len(failed) > 0:
+		return projectReviewRelayRetry, nil
+	case len(list) == projectReviewRelayBatch:
+		h.pokeProjectReviewOwners() // the next batch, at once
+	}
+	return 0, nil
 }
 
 func (h *Hub) setProjectReviewAppInputs(ctx context.Context, manager string, enabled bool) error {
@@ -134,6 +233,8 @@ func (h *Hub) recordAcceptedProjectReviewInput(ctx context.Context, r *http.Requ
 		defer cancel()
 		if err := store.RecordProjectReviewOwnerInput(bound, p); err != nil {
 			h.logf("project review: record accepted app input: %v", err)
+			return
 		}
+		h.pokeProjectReviewOwners()
 	}
 }

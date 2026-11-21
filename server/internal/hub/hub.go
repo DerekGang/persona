@@ -21,6 +21,8 @@ import (
 )
 
 type Hub struct {
+	// projectReview: wakes the owner-input relay (project_review.go).
+	projectReview projectReviewRelay
 	passwordLogin passwordLoginState
 	browserLogin  browserLoginState
 	// errs: the hub's own error reports on their way to the managers (error_reports.go).
