@@ -37,8 +37,6 @@ class HttpChatComposerService internal constructor(
     private val onRetryDelivery: suspend (String, ComposerDelivery, String, MessageTransportResult?) -> Unit = { _, _, _, _ -> },
     private val onPairingExpired: () -> Unit = {},
     private val onHeld: suspend (SessionKey, HeldAgentMessage) -> Unit = { _, _ -> },
-    /** The outbox's processing lock: an automatic drain cannot race a manual retry. */
-    private val sending: Mutex = Mutex(),
 ) : ChatComposerService, MessageTransport by transport {
     constructor(
         hubScope: HubScope, transport: MessageTransport, connection: OkHttpHubConnection, token: String,
@@ -46,7 +44,6 @@ class HttpChatComposerService internal constructor(
         onPairingExpired: () -> Unit,
         isCurrent: () -> Boolean = { true },
         onHeld: suspend (SessionKey, HeldAgentMessage) -> Unit = { _, _ -> },
-        sending: Mutex = Mutex(),
     ) :
         this(hubScope, transport, { path, body, headers ->
             if (!isCurrent()) throw CancellationException("Pairing changed")
@@ -67,10 +64,11 @@ class HttpChatComposerService internal constructor(
                         throw HubFailure(HubError.Transport, "Route changed before receipt")
                     }
                 }
-        }, { connection.serverFeatures.value }, onRetryDelivery, onPairingExpired, onHeld, sending)
+        }, { connection.serverFeatures.value }, onRetryDelivery, onPairingExpired, onHeld)
 
     override val deliveries = MutableStateFlow<Map<String, ComposerDelivery>>(emptyMap())
     private val refused = mutableMapOf<String, MessageRequest>()
+    private val sending = Mutex()
 
     override suspend fun send(request: MessageRequest): MessageTransportResult = sending.withLock {
         sendLocked(request)
