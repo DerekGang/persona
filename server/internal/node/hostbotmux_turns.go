@@ -31,6 +31,14 @@ const (
 	botmuxTurnsUnknownBackoff   = 15 * time.Second
 	botmuxTurnsBGTimeout        = 2 * time.Second
 	botmuxTurnsReadTimeout      = 200 * time.Millisecond
+	// The structured turns kept in memory: sessions not read for botmuxTurnsCacheIdle are dropped (a later read fetches
+	// from the start again), at most botmuxTurnsCacheSessions sessions (least recently used first) and the newest
+	// botmuxTurnsCacheTurns turns of each (older items keep the wrapper decoding). An invalidated entry keeps no turns
+	// and is dropped after botmuxTurnsInvalidGrace, long enough for a watch to repush what it decorated.
+	botmuxTurnsCacheIdle     = 30 * time.Minute
+	botmuxTurnsCacheSessions = 64
+	botmuxTurnsCacheTurns    = 500
+	botmuxTurnsInvalidGrace  = time.Minute
 )
 
 var errBotmuxTurnsTooLarge = fmt.Errorf("botmux: turns response exceeds %d bytes", botmuxTurnsMaxBytes)
@@ -74,9 +82,62 @@ type botmuxSessionTurnsCache struct {
 	stamp     string
 	cursor    string
 	fetchedAt time.Time
+	usedAt    time.Time // last read or written (botmuxTurnsCacheIdle, LRU)
 	invalid   bool
+	invalidAt time.Time
 	turns     []transcript.BotmuxTurn
 	byID      map[string]int
+	// released: turns held before invalidation, kept only until a refresh compares against them
+	// (refreshSessionTurnsAsync) or botmuxTurnsInvalidGrace passes.
+	released []transcript.BotmuxTurn
+}
+
+// invalidateLocked drops the entry's turns, keeping them aside for one repush comparison.
+func (c *botmuxSessionTurnsCache) invalidateLocked(now time.Time) {
+	if c.invalid {
+		return
+	}
+	c.invalid, c.invalidAt = true, now
+	c.released, c.turns, c.byID = c.turns, nil, nil
+}
+
+// pruneTurnsCacheLocked enforces the cache bounds: idle and long-invalid entries go, then the least recently used
+// beyond botmuxTurnsCacheSessions. keep (the session being read or written) is never evicted for room.
+func (h *botmuxHost) pruneTurnsCacheLocked(now time.Time, keep string) {
+	for id, c := range h.turnsCache {
+		if id == keep || h.turnsRefreshing[id] {
+			continue
+		}
+		if now.Sub(c.usedAt) >= botmuxTurnsCacheIdle || c.invalid && now.Sub(c.invalidAt) >= botmuxTurnsInvalidGrace {
+			delete(h.turnsCache, id)
+		}
+	}
+	for len(h.turnsCache) > botmuxTurnsCacheSessions {
+		oldest := ""
+		for id, c := range h.turnsCache {
+			if id != keep && (oldest == "" || c.usedAt.Before(h.turnsCache[oldest].usedAt)) {
+				oldest = id
+			}
+		}
+		if oldest == "" {
+			return
+		}
+		delete(h.turnsCache, oldest)
+	}
+}
+
+// trimTurnsLocked keeps the newest botmuxTurnsCacheTurns turns (they arrive in seq order); older transcript items fall
+// back to the wrapper decoding.
+func (c *botmuxSessionTurnsCache) trimTurnsLocked() {
+	drop := len(c.turns) - botmuxTurnsCacheTurns
+	if drop <= 0 {
+		return
+	}
+	c.turns = slices.Clone(c.turns[drop:])
+	clear(c.byID)
+	for i, turn := range c.turns {
+		c.byID[turn.TurnID] = i
+	}
 }
 
 func (h *botmuxHost) externalTriggerNotice() bool {
@@ -134,7 +195,7 @@ func (h *botmuxHost) setCapsLocked(next botmuxCaps) (noticeChanged bool) {
 	if !next.turnsAPI {
 		for _, cached := range h.turnsCache {
 			if next.matches(cached.base, cached.token, cached.stamp) {
-				cached.invalid = true
+				cached.invalidateLocked(next.at)
 			}
 		}
 	}
@@ -145,6 +206,9 @@ func (h *botmuxHost) setCapsLocked(next botmuxCaps) (noticeChanged bool) {
 func (h *botmuxHost) noteOwnerActorUnechoed(base, token, stamp string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if base != h.base || token != h.token {
+		return // the dashboard moved since the send: what that instance did says nothing about the current one
+	}
 	now := time.Now()
 	h.ownerUnechoed = botmuxOwnerUnechoed{
 		base:  base,
@@ -264,10 +328,17 @@ func (h *botmuxHost) cachedSessionTurns(sessionID string) []transcript.BotmuxTur
 }
 
 func (h *botmuxHost) cachedSessionTurnsLocked(sessionID, stamp string) []transcript.BotmuxTurn {
+	now := time.Now()
+	h.pruneTurnsCacheLocked(now, sessionID)
 	sc := h.turnsCache[sessionID]
+	if sc != nil && now.Sub(sc.usedAt) >= botmuxTurnsCacheIdle {
+		delete(h.turnsCache, sessionID) // idle too long: a later read starts from the first turn again
+		return nil
+	}
 	if !h.usableTurnsLocked(sc, stamp) || len(sc.turns) == 0 {
 		return nil
 	}
+	sc.usedAt = now
 	return slices.Clone(sc.turns)
 }
 
@@ -306,6 +377,8 @@ func (h *botmuxHost) refreshSessionTurnsAsync(parent context.Context, sessionID 
 	if cached != nil {
 		if len(cached.turns) > 0 {
 			previous = slices.Clone(cached.turns)
+		} else if len(cached.released) > 0 {
+			previous = cached.released
 		}
 		if stale {
 			delete(h.turnsCache, sessionID)
@@ -364,12 +437,16 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 		return nil, false
 	}
 	cursor := "0"
+	if c := h.turnsCache[sessionID]; c != nil && now.Sub(c.usedAt) >= botmuxTurnsCacheIdle {
+		delete(h.turnsCache, sessionID) // idle too long: fetch from the first turn again, not from its old cursor
+	}
 	if c := h.turnsCache[sessionID]; base == h.base && token == h.token && h.usableTurnsLocked(c, stamp) {
 		if !c.fetchedAt.IsZero() && now.Sub(c.fetchedAt) < botmuxTurnsFetchMinInterval {
 			var cached []transcript.BotmuxTurn
 			if len(c.turns) > 0 {
 				cached = slices.Clone(c.turns)
 			}
+			c.usedAt = now
 			h.mu.Unlock()
 			return cached, false
 		}
@@ -474,10 +551,13 @@ func (h *botmuxHost) sessionTurns(ctx context.Context, sessionID string) ([]tran
 				sc.turns = append(sc.turns, turn)
 			}
 		}
+		sc.trimTurnsLocked()
 		if len(res.Turns) > 0 && res.Next != "" {
 			sc.cursor = res.Next
 		}
 		sc.fetchedAt = time.Now()
+		sc.usedAt = sc.fetchedAt
+		h.pruneTurnsCacheLocked(sc.usedAt, sessionID)
 		h.mu.Unlock()
 
 		if len(res.Turns) < botmuxTurnsPageSize || res.Next == "" || res.Next == cursor {

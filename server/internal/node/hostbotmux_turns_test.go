@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,6 +36,7 @@ type fakeBotmuxTurnsServer struct {
 	turnsGets    int
 	turnsSince   []string
 	triggers     []map[string]any
+	onTurnsGet   func() // runs while a turns GET is answered (a concurrent dashboard refresh)
 	srv          *httptest.Server
 }
 
@@ -50,6 +52,9 @@ func newFakeBotmuxTurnsServer(t *testing.T) *fakeBotmuxTurnsServer {
 		}
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/turns") {
 			fs.turnsGets++
+			if fs.onTurnsGet != nil {
+				fs.onTurnsGet()
+			}
 			fs.turnsSince = append(fs.turnsSince, r.URL.Query().Get("since"))
 			w.Header().Set("Content-Type", "application/json")
 			if fs.turnsStatus != http.StatusOK {
@@ -476,6 +481,168 @@ func TestBotmuxOwnerActorUnechoedDoesNotResend(t *testing.T) {
 	}
 	if !h.externalTriggerNotice() {
 		t.Fatal("unechoed actor must mark ownerActor unavailable for future sends")
+	}
+}
+
+// A refresh between the capability probe and the POST must not carry actor=owner to an instance that never
+// advertised ownerActor, nor record the old instance's unechoed answer against the new one.
+func TestBotmuxPromptUsesProbedDashboardIdentity(t *testing.T) {
+	for _, echo := range []bool{true, false} {
+		t.Run(fmt.Sprintf("echo=%v", echo), func(t *testing.T) {
+			ctx := context.Background()
+			probed := newFakeBotmuxTurnsServer(t)
+			probed.caps = []string{transcript.BotmuxCapOwnerActor}
+			probed.echoActor = echo
+			moved := newFakeBotmuxTurnsServer(t)
+			moved.token = "tok-moved"
+			h := probed.makeHost("")
+			probed.onTurnsGet = func() {
+				h.mu.Lock()
+				h.base, h.token = moved.srv.URL, moved.token
+				h.mu.Unlock()
+			}
+
+			if err := h.Prompt(ctx, host.PaneRef{Kind: host.Botmux, ID: sidA}, "hello"); err != nil {
+				t.Fatalf("prompt: %v", err)
+			}
+			probed.mu.Lock()
+			triggers := slices.Clone(probed.triggers)
+			probed.mu.Unlock()
+			moved.mu.Lock()
+			movedTriggers := len(moved.triggers)
+			moved.mu.Unlock()
+			if movedTriggers != 0 {
+				t.Fatalf("the refreshed dashboard got %d triggers it never advertised ownerActor for", movedTriggers)
+			}
+			if len(triggers) != 1 || triggers[0]["actor"] != "owner" {
+				t.Fatalf("probed dashboard triggers = %+v, want one with actor=owner", triggers)
+			}
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			if !h.ownerUnechoed.at.IsZero() {
+				t.Fatalf("unechoed result recorded after the dashboard moved: %+v", h.ownerUnechoed)
+			}
+		})
+	}
+}
+
+func TestBotmuxTurnsCacheIdleEvictionResetsCursor(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.turns = []transcript.BotmuxTurn{{TurnID: "turn-1", Seq: 1}, {TurnID: "turn-2", Seq: 2}}
+	h := fs.makeHost("")
+	if got, _ := h.sessionTurns(ctx, sidA); len(got) != 2 {
+		t.Fatalf("turns = %+v", got)
+	}
+	h.mu.Lock()
+	h.turnsCache[sidA].usedAt = time.Now().Add(-botmuxTurnsCacheIdle - time.Second)
+	h.turnsCache[sidA].fetchedAt = time.Time{}
+	h.mu.Unlock()
+	if got, _ := h.sessionTurns(ctx, sidA); len(got) != 2 {
+		t.Fatalf("turns after idle eviction = %+v", got)
+	}
+	fs.mu.Lock()
+	since := slices.Clone(fs.turnsSince)
+	fs.mu.Unlock()
+	if want := []string{"0", "0"}; !reflect.DeepEqual(since, want) {
+		t.Fatalf("since = %v, want %v (an evicted session starts from the first turn)", since, want)
+	}
+
+	h.mu.Lock()
+	h.turnsCache[sidA].usedAt = time.Now().Add(-botmuxTurnsCacheIdle - time.Second)
+	h.mu.Unlock()
+	if got := h.cachedSessionTurns(sidA); got != nil {
+		t.Fatalf("idle cached turns returned: %+v", got)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.turnsCache[sidA]; ok {
+		t.Fatal("idle entry kept after a cached read")
+	}
+}
+
+func TestBotmuxTurnsCacheSessionLimit(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.turns = []transcript.BotmuxTurn{{TurnID: "turn-1", Seq: 1}}
+	h := fs.makeHost("")
+	h.sessionTurns(ctx, sidA) // the dashboard and caps for the entries below
+	now := time.Now()
+	h.mu.Lock()
+	delete(h.turnsCache, sidA)
+	for i := range botmuxTurnsCacheSessions {
+		h.turnsCache[fmt.Sprintf("other-%02d", i)] = &botmuxSessionTurnsCache{
+			base: h.base, token: h.token, byID: map[string]int{},
+			usedAt: now.Add(-time.Duration(botmuxTurnsCacheSessions-i) * time.Second), // other-00 oldest
+			turns:  []transcript.BotmuxTurn{{TurnID: "t", Seq: 1}},
+		}
+	}
+	h.mu.Unlock()
+	if got, _ := h.sessionTurns(ctx, sidA); len(got) != 1 {
+		t.Fatalf("turns = %+v", got)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.turnsCache) != botmuxTurnsCacheSessions {
+		t.Fatalf("cached sessions = %d, want %d", len(h.turnsCache), botmuxTurnsCacheSessions)
+	}
+	if _, ok := h.turnsCache["other-00"]; ok {
+		t.Fatal("least recently used session kept")
+	}
+	if _, ok := h.turnsCache[sidA]; !ok {
+		t.Fatal("the session just read was evicted")
+	}
+}
+
+func TestBotmuxTurnsCacheKeepsNewestTurns(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	for seq := int64(1); seq <= botmuxTurnsCacheTurns+5; seq++ {
+		fs.turns = append(fs.turns, transcript.BotmuxTurn{TurnID: fmt.Sprintf("turn-%d", seq), Seq: seq})
+	}
+	h := fs.makeHost("")
+	got, _ := h.sessionTurns(ctx, sidA)
+	if len(got) != botmuxTurnsCacheTurns || got[0].TurnID != "turn-6" || got[len(got)-1].TurnID != fmt.Sprintf("turn-%d", botmuxTurnsCacheTurns+5) {
+		t.Fatalf("kept %d turns from %s", len(got), got[0].TurnID)
+	}
+	h.mu.Lock()
+	sc := h.turnsCache[sidA]
+	if len(sc.byID) != botmuxTurnsCacheTurns || sc.byID["turn-6"] != 0 || sc.cursor != fmt.Sprint(botmuxTurnsCacheTurns+5) {
+		t.Fatalf("byID %d, turn-6 at %d, cursor %q", len(sc.byID), sc.byID["turn-6"], sc.cursor)
+	}
+	sc.fetchedAt = time.Time{}
+	h.mu.Unlock()
+
+	// An update to a kept turn replaces it in place; the pruned ones stay pruned (their items keep the wrapper).
+	fs.mu.Lock()
+	fs.turns[len(fs.turns)-1].Replies = []transcript.BotmuxTurnReply{{Text: "edited"}}
+	fs.mu.Unlock()
+	got, _ = h.sessionTurns(ctx, sidA)
+	if len(got) != botmuxTurnsCacheTurns || len(got[len(got)-1].Replies) != 1 {
+		t.Fatalf("after update: %d turns, last %+v", len(got), got[len(got)-1])
+	}
+}
+
+func TestBotmuxTurnsCacheReleasesInvalidEntries(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeBotmuxTurnsServer(t)
+	fs.turns = []transcript.BotmuxTurn{{TurnID: "turn-1", Seq: 1}}
+	h := fs.makeHost("")
+	h.sessionTurns(ctx, sidA)
+	h.mu.Lock()
+	h.setCapsLocked(botmuxCaps{known: true, base: h.base, token: h.token, stamp: h.caps.stamp, at: time.Now()})
+	sc := h.turnsCache[sidA]
+	if !sc.invalid || sc.turns != nil || sc.byID != nil || len(sc.released) != 1 {
+		t.Fatalf("invalidated entry still holds its turns: %+v", sc)
+	}
+	sc.invalidAt = time.Now().Add(-botmuxTurnsInvalidGrace - time.Second)
+	h.mu.Unlock()
+
+	h.cachedSessionTurns("other") // any cache access prunes
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.turnsCache[sidA]; ok {
+		t.Fatal("invalid entry retained past its grace period")
 	}
 }
 

@@ -289,6 +289,28 @@
       }
     },
     {
+      "name": "media_only",
+      "command": "botmux send --image shot.png",
+      "want": {
+        "kind": "reply",
+        "attachments": 1
+      }
+    },
+    {
+      "name": "media_only_final_files",
+      "command": "botmux send --response-kind final --files report.md --files evidence.zip 2>&1",
+      "want": {
+        "kind": "reply",
+        "final": true,
+        "attachments": 2
+      }
+    },
+    {
+      "name": "media_only_stdin",
+      "command": "botmux send --image shot.png -",
+      "want": null
+    },
+    {
       "name": "send_keys",
       "command": "botmux send-keys -t example Enter",
       "want": null
@@ -412,6 +434,65 @@
       "want": {
         "kind": "reply",
         "text": "-5 degrees outside"
+      }
+    },
+    {
+      "name": "brace_list",
+      "command": "botmux send {a,b}",
+      "want": null
+    },
+    {
+      "name": "brace_prefixed",
+      "command": "botmux send pre{a,b}",
+      "want": null
+    },
+    {
+      "name": "brace_sequence",
+      "command": "botmux send {1..3}",
+      "want": null
+    },
+    {
+      "name": "brace_quoted",
+      "command": "botmux send '{a,b}' \"pre{1..3}\" \\{x,y}",
+      "want": {
+        "kind": "reply",
+        "text": "{a,b} pre{1..3} {x,y}"
+      }
+    },
+    {
+      "name": "brace_literal",
+      "command": "botmux send {} {a} '{'a,b}",
+      "want": {
+        "kind": "reply",
+        "text": "{} {a} {a,b}"
+      }
+    },
+    {
+      "name": "tilde_argument",
+      "command": "botmux send ~/x",
+      "want": null
+    },
+    {
+      "name": "tilde_file_value",
+      "command": "botmux send --files ~/report.md done",
+      "want": null
+    },
+    {
+      "name": "tilde_assignment",
+      "command": "botmux send a=~/x",
+      "want": null
+    },
+    {
+      "name": "tilde_assignment_colon",
+      "command": "botmux send P=a:~/b",
+      "want": null
+    },
+    {
+      "name": "tilde_literal",
+      "command": "botmux send '~/x' \"~/y\" x~ a:~ 1a=~",
+      "want": {
+        "kind": "reply",
+        "text": "~/x ~/y x~ a:~ 1a=~"
       }
     }
   ],

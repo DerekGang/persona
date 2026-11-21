@@ -720,7 +720,15 @@ func (h *botmuxHost) Prompt(ctx context.Context, pane host.PaneRef, text string)
 			req["options"] = map[string]any{"dryRun": true}
 		}
 		body, _ := json.Marshal(req)
-		status, msg, echoedActor, err := h.trigger(ctx, body, false)
+		// Post to the dashboard the probe answered for: a concurrent refresh may have moved h.base/h.token since, and
+		// actor=owner must only reach the instance that advertised ownerActor.
+		base, token := caps.base, caps.token
+		if !caps.known {
+			if base, token, err = h.dashboard(ctx, false); err != nil {
+				return host.Mark(err, host.ErrNotDelivered)
+			}
+		}
+		status, msg, echoedActor, err := h.trigger(ctx, base, token, body)
 		stale := err != nil || status == http.StatusUnauthorized || status == http.StatusForbidden ||
 			(status >= 300 && status < 400)
 		switch {
@@ -747,13 +755,9 @@ func (h *botmuxHost) Prompt(ctx context.Context, pane host.PaneRef, text string)
 	}
 }
 
-// trigger posts body to the dashboard's /api/trigger; fresh asks botmux for the dashboard again. err: nothing was
-// delivered (no dashboard, no connection). echoedActor is the response's echoed `actor` field ("owner" when ownerActor took effect).
-func (h *botmuxHost) trigger(ctx context.Context, body []byte, fresh bool) (int, string, string, error) {
-	base, token, err := h.dashboard(ctx, fresh)
-	if err != nil {
-		return 0, "", "", err
-	}
+// trigger posts body to /api/trigger of the dashboard at base with token. err: nothing was delivered (no
+// connection). echoedActor is the response's echoed `actor` field ("owner" when ownerActor took effect).
+func (h *botmuxHost) trigger(ctx context.Context, base, token string, body []byte) (int, string, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/trigger", bytes.NewReader(body))
 	if err != nil {
 		return 0, "", "", err

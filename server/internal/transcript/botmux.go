@@ -288,23 +288,24 @@ func BotmuxSend(command string) *proto.Botmux {
 			return nil
 		}
 	}
-	if len(text) == 1 && text[0] == "-" { // a lone `-` reads the words from stdin
+	stdin := len(text) == 1 && text[0] == "-" // a lone `-` reads the words from stdin
+	if stdin {
 		text = nil
 	}
 	b.Text = strings.TrimSpace(strings.Join(text, " "))
 	if b.Text == "" {
 		b.Text = strings.TrimSpace(heredoc)
 	}
-	if b.Text == "" {
+	if b.Text == "" && (stdin || b.Attachments == 0) { // nothing sent, or words from a stdin this cannot read
 		return nil
 	}
-	return b
+	return b // a reply with only attachments (`botmux send --image shot.png`) has no text
 }
 
 // shellWords splits the first simple command of s the way sh would: quotes, backslashes, $'…', output redirects and one
 // here-document (its body in heredoc). What follows it (after ;, &&, ||, | or a new line, the here-document's body
 // first) does not change its words. Rest retains the trailing shell text. ok is false when the words depend on running something (a substitution, a subshell,
-// an input redirect) or a quote or here-document is not closed.
+// an input redirect), on an expansion (a glob, braces, a tilde in an argument) or a quote or here-document is not closed.
 func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 	var cur strings.Builder
 	inWord, delim, strip, delimQuoted := false, "", false, false
@@ -414,6 +415,11 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 			i += 2
 		case c == '*' || c == '?' || c == ']' && bracketStart >= 0 && cur.Len() > bracketStart:
 			return nil, "", "", false
+		case c == '{' && braceExpansion(s[i:]):
+			return nil, "", "", false // {a,b} and {1..3} become several words
+		case c == '~' && len(words) > 0 && tildePrefix(cur.String(), inWord):
+			// the home directory in an argument; in the command's name it only finds the program (~/.botmux/bin/botmux)
+			return nil, "", "", false
 		case c == '<' && strings.HasPrefix(s[i:], "<<") && delim == "":
 			flush()
 			i += 2
@@ -481,6 +487,69 @@ func shellWords(s string) (words []string, heredoc, rest string, ok bool) {
 		return nil, "", "", false // a here-document with no body
 	}
 	return words, "", "", true
+}
+
+// braceExpansion reports whether the unquoted { that s starts with opens a brace expansion: a , or .. of its own
+// before its unquoted } in the same word. {}, {a} and quoted or escaped braces stay literal.
+func braceExpansion(s string) bool {
+	depth, sep := 0, false
+	for j := 0; j < len(s); j++ {
+		switch c := s[j]; {
+		case c == '\\':
+			j++
+		case c == '\'':
+			end := strings.IndexByte(s[j+1:], '\'')
+			if end < 0 {
+				return false
+			}
+			j += end + 1
+		case c == '"':
+			k := j + 1
+			for ; k < len(s) && s[k] != '"'; k++ {
+				if s[k] == '\\' {
+					k++
+				}
+			}
+			if k >= len(s) {
+				return false
+			}
+			j = k
+		case strings.IndexByte(" \t\n;|&<>()", c) >= 0:
+			return false // the word ends first
+		case c == '{':
+			depth++
+		case c == '}':
+			if depth--; depth == 0 {
+				return sep
+			}
+		case depth == 1 && (c == ',' || c == '.' && j+1 < len(s) && s[j+1] == '.'):
+			sep = true
+		}
+	}
+	return false
+}
+
+// tildePrefix reports whether an unquoted ~ after word (inWord: something, maybe quoted, came before it) starts a
+// tilde prefix sh expands: at the start of a word, or right after the first = or a later : of an assignment (a=~/x,
+// PATH=a:~/b); --file=~/x and a:~ stay literal.
+func tildePrefix(word string, inWord bool) bool {
+	if !inWord {
+		return true
+	}
+	eq := strings.IndexByte(word, '=')
+	if eq <= 0 || !shellName(word[:eq]) {
+		return false
+	}
+	return eq == len(word)-1 || word[len(word)-1] == ':'
+}
+
+func shellName(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !isNameByte(s[i]) || i == 0 && s[i] >= '0' && s[i] <= '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // heredocBody is a here-document's lines up to its delimiter; ok is false when the delimiter never comes (a clipped

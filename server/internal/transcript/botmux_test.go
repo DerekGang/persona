@@ -569,3 +569,75 @@ func TestBotmuxInputHashRequiresCompatibleAnchor(t *testing.T) {
 		})
 	}
 }
+
+func TestBotmuxDecorateMediaOnlySend(t *testing.T) {
+	items := []proto.Item{
+		{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: "<user_message>\nscreenshot?\n</user_message>"},
+		{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: json.RawMessage(`{"command":"botmux send --image shot.png"}`)},
+		{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: `{"success":true,"messageId":"om_image"}`},
+		{ID: "a2", Seq: 4, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t2", ToolInput: json.RawMessage(`{"command":"botmux send --no-mention"}`)},
+		{ID: "r2", Seq: 5, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t2", Text: "ok"},
+	}
+	got := DecorateBotmux(items)
+	if want := (&proto.Botmux{Kind: proto.BotmuxReply, Attachments: 1}); !reflect.DeepEqual(got[1].Botmux, want) {
+		t.Fatalf("media-only send = %+v, want %+v", got[1].Botmux, want)
+	}
+	if got[3].Botmux != nil {
+		t.Fatalf("a send with neither text nor attachments was decorated: %+v", got[3].Botmux)
+	}
+	folded := FoldWork(got[1:])
+	if len(folded) != 1 || folded[0].Fold == nil || len(folded[0].Fold.Botmux) != 1 || folded[0].Fold.Botmux[0].Attachments != 1 {
+		t.Fatalf("fold lost the media-only reply: %+v", folded)
+	}
+}
+
+func TestBotmuxSendCountIgnoresInlineComments(t *testing.T) {
+	userText := "<user_message>\nrun\n</user_message>"
+	anchor := &BotmuxTurnAnchor{CLIID: "claude-code", InputSha256: sha256Hex(userText)}
+	for _, comment := range []string{"# not --dry-run", "# --help", "# --unknown", "#--dry-run; botmux send --card-file /tmp/x.json"} {
+		t.Run(comment, func(t *testing.T) {
+			cmd := "botmux send --card-file /tmp/reply.json " + comment
+			if n := countBotmuxSendInvocations(cmd); n != 1 {
+				t.Fatalf("countBotmuxSendInvocations(%q) = %d, want 1", cmd, n)
+			}
+			input, _ := json.Marshal(map[string]string{"command": cmd})
+			items := []proto.Item{
+				{ID: "u1", Seq: 1, Role: "user", Kind: proto.KindText, Text: userText},
+				{ID: "a1", Seq: 2, Role: "assistant", Kind: proto.KindToolUse, ToolName: "Bash", ToolUseID: "t1", ToolInput: input},
+				{ID: "r1", Seq: 3, Role: "user", Kind: proto.KindToolResult, ToolUseID: "t1", Text: `{"success":true,"messageId":"om_card"}`},
+			}
+			turns := []BotmuxTurn{{
+				TurnID:  "turn1",
+				Seq:     1,
+				Replies: []BotmuxTurnReply{{MessageID: "om_card", ResponseKind: "final", Text: "Card reply"}},
+				Anchor:  anchor,
+			}}
+			got := ApplyBotmuxTurns(DecorateBotmux(items), turns, "session-one")
+			if got[1].Botmux == nil || got[1].Botmux.Text != "Card reply" || !got[1].Botmux.Final {
+				t.Fatalf("structured card reply = %+v", got[1].Botmux)
+			}
+		})
+	}
+}
+
+func TestBotmuxSplitShellSegmentsComments(t *testing.T) {
+	for _, test := range []struct {
+		cmd  string
+		want []string
+	}{
+		{"botmux send --card-file a.json # not --dry-run", []string{"botmux send --card-file a.json"}},
+		{"# setup; botmux send --dry-run\nbotmux send x", []string{"botmux send x"}},
+		{"botmux send done#1 '#q' \"#d\" \\#e", []string{"botmux send done#1 '#q' \"#d\" \\#e"}},
+		{"botmux send <<'EOF' # heading next\n# Heading; --dry-run\nEOF\necho ok # done", []string{"botmux send <<'EOF'", "echo ok"}},
+	} {
+		if got := splitShellSegments(test.cmd); !reflect.DeepEqual(got, test.want) {
+			t.Errorf("splitShellSegments(%q) = %q, want %q", test.cmd, got, test.want)
+		}
+	}
+	if n := countBotmuxSendInvocations("botmux send --card-file a.json '# --dry-run'"); n != 1 {
+		t.Fatalf("a quoted # is a word: count = %d", n)
+	}
+	if n := countBotmuxSendInvocations("botmux send --card-file a.json \\# --dry-run"); n != 0 {
+		t.Fatalf("an escaped # does not start a comment: count = %d", n)
+	}
+}

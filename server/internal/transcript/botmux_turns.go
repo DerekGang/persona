@@ -495,7 +495,8 @@ func isValidBotmuxSendArgs(words []string) bool {
 }
 
 // splitShellSegments splits a shell command on unquoted ;, &&, ||, |, and newlines,
-// skipping heredoc bodies so lines inside a heredoc are not treated as separate commands.
+// skipping heredoc bodies so lines inside a heredoc are not treated as separate commands, and
+// comments (an unquoted # that begins a word, to the end of its line) so their words are not arguments.
 func splitShellSegments(s string) []string {
 	var out []string
 	var cur strings.Builder
@@ -586,6 +587,17 @@ func splitShellSegments(s string) []string {
 				i += pos
 				pendingDelim = ""
 				pendingStrip = false
+			}
+		case '#':
+			if t := cur.String(); t != "" && t[len(t)-1] != ' ' && t[len(t)-1] != '\t' {
+				cur.WriteByte(c) // inside a word (done#1): literal
+				continue
+			}
+			nl := strings.IndexByte(s[i:], '\n')
+			if nl < 0 {
+				i = len(s)
+			} else {
+				i += nl - 1 // the newline still ends the segment and starts a pending here-document's body
 			}
 		case ';':
 			if seg := strings.TrimSpace(cur.String()); seg != "" {
