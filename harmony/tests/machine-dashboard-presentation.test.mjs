@@ -191,3 +191,46 @@ test('the monitor keeps its six-hour clock grid aligned as a new CPU sample arri
     assert.ok(dashboardTimeTicks(end,seconds).every(t => t>=end-seconds && t<=end));
   }
 });
+
+test('monitor clock labels fit their measured plot at normal and 3.2× type, including both limits on crowded axes', async () => {
+  const {dashboardLabelTicks,dashboardTickLeft,dashboardTimeTicks} = await import('../entry/src/main/ets/models/MachineDashboard.ets');
+  const end = new Date(2026,10,21,20,37).getTime()/1000;
+  for (const seconds of [3600,21600,86400]) {
+    const regular = dashboardLabelTicks(end,seconds,300,25);
+    assert.deepEqual(regular,dashboardTimeTicks(end,seconds));
+    for (const [width,labelWidth] of [[260,32],[213,80],[166,80]]) {
+      const times = dashboardLabelTicks(end,seconds,width,labelWidth);
+      const left = times.map(t => dashboardTickLeft(t,end,seconds,width,labelWidth));
+      assert.ok(left.every((x,i) => x>=0 && x+labelWidth<=width && (!i || x-left[i-1]>=labelWidth+6)));
+      if (labelWidth===80) assert.deepEqual(times,[end-seconds,end]);
+    }
+    // Below this size both clocks move into a wrapping native row, so neither is clipped.
+    assert.deepEqual(dashboardLabelTicks(end,seconds,150,80),[]);
+  }
+  const axis=directorySource.slice(directorySource.indexOf('struct MachineTimeAxis'), directorySource.indexOf('export struct MachineDirectory'));
+  assert.match(axis,/this\.labelWidth = Math\.ceil\(Number\(area\.width\)\)/);
+  assert.match(axis,/this\.axisWidth = Number\(area\.width\)/);
+  assert.match(axis,/wrap:FlexWrap\.Wrap[\s\S]*?clockLabel\(this\.end-this\.seconds\)[\s\S]*?clockLabel\(this\.end\)/);
+  assert.doesNotMatch(axis,/\.height\(\d+\)/);
+});
+
+test('the full localized range remains readable at large type and each segment fetches the corresponding interval', async () => {
+  const control=directorySource.slice(directorySource.indexOf('ForEach(RANGE_LABELS'),directorySource.indexOf('if (this.detailSample)',directorySource.indexOf('ForEach(RANGE_LABELS')));
+  assert.match(control,/Text\(tr\(key\)\)\.fontSize\(14\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
+  assert.match(control,/constraintSize\(\{minHeight:44\}\)/);
+  assert.match(control,/accessibilityText\(tr\(key\)\)\.accessibilitySelected\(this\.range === i\)/);
+  assert.match(control,/onClick\(\(\) => this\.chooseRange\(i\)\)/);
+  assert.doesNotMatch(control,/\.height\(|\.maxLines\(1\)/);
+  const source=directorySource.match(/  private chooseRange\([\s\S]*?\n  \}/)[0];
+  const Picker=new Function('Directory','RANGES','return '+stripTypeScriptTypes('class Picker extends Directory {'+source+'}'))(Directory,['1h','6h','24h']);
+  const screen=new Picker(), calls=[], machine=ResourceRow.from({id:'MacBook'},'machine');
+  const owner={connected:true,scope:()=> 'hub',connectionGeneration:()=>1,owns:()=>true,repo:()=>({call:async url=>{
+    calls.push(url); return {metrics:{machine_id:machine.id}};
+  }})};
+  let refreshed;
+  Object.assign(screen,{revision:1,active:true,range:0,selected:machine,model:{...owner,directoryOwnerFor:()=>owner},
+    sync:()=>{refreshed=screen.load(++screen.revision,false)}});
+  await screen.load(1,false);
+  for(const range of [1,2,0]) { screen.chooseRange(range); await refreshed; assert.equal(screen.shownRange,range); }
+  assert.deepEqual(calls.map(url=>url.split('?range=')[1]),['1h','6h','24h','1h']);
+});

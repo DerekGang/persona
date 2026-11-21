@@ -438,6 +438,17 @@ struct Index {
     } else if (this.peer() === 1) this.openSheet('newagent');
     else this.newConversation();
   }
+  @Builder phoneHeader() {
+    if (this.phoneTop === 'session' || this.phoneToolParent) {
+      // A tool push retains the session header outside Navigation. Renew only its
+      // native resource scope when appearance changes, leaving both destinations mounted.
+      ForEach([this.environment.dark], (dark:boolean) => {
+        WithTheme({ theme:nativeLookTheme(this.look,this.model.style,dark), colorMode:dark ? ThemeColorMode.DARK : ThemeColorMode.LIGHT }) {
+          this.compactPlaces()
+        }
+      }, (dark:boolean) => String(dark))
+    } else this.compactPlaces()
+  }
   @Builder compactPlaces() {
     Column() {
       Row({space: 6}) {
@@ -1915,7 +1926,7 @@ struct Index {
         }.justifyContent(FlexAlign.Center).width('100%').height('100%').padding({left:32,right:32}).backgroundColor(Colors.grouped)
           .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       } else {
-        if (!this.wide()) this.compactPlaces()
+        if (!this.wide()) this.phoneHeader()
         Navigation(this.stack) { this.primaryContent() }.title({ builder: this.peerTitle, height: this.headerHeight() }, { systemMaterial: this.titleMaterial }).titleMode(NavigationTitleMode.Mini)
           .hideBackButton(true).hideTitleBar(this.rail() || !this.wide()).menus([])
           .backgroundColor(Colors.canvas)

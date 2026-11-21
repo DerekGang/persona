@@ -3,11 +3,12 @@ import { Colors } from '../design/Colors';
 import { PhoneStyle } from '../design/PhoneStyle';
 import { Symbols } from '../design/Symbols';
 import { tr } from '../design/Strings';
+import { Tokens } from '../design/Tokens';
 import { ClientModel } from '../models/ClientModel';
 import { HubProfile, ResourceRow, Wire } from '../models/Wire';
 import { DashboardPoint, MachineAgent, MachineAlert, MachineReading, machineAgents, machineAlerts, machineBytes,
   machineConcern, machineKey, machineOnline, machinePending, machinePercent, machineTokens, machineTokenTotal,
-  dashboardTimeTicks, machineTrace, osFamily, percentOf } from '../models/MachineDashboard';
+  dashboardLabelTicks, dashboardTickLeft, machineTrace, osFamily, percentOf } from '../models/MachineDashboard';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { MachineChart } from './MachineChart';
 
@@ -106,6 +107,35 @@ function ageLabel(stamp:number, now:number):string {
 function clockLabel(time:number):string {
   const date = new Date(time*1000);
   return String(date.getHours()).padStart(2,'0')+':'+String(date.getMinutes()).padStart(2,'0');
+}
+
+@ComponentV2
+struct MachineTimeAxis {
+  @Require @Param end:number;
+  @Require @Param seconds:number;
+  @Local private axisWidth:number = 0;
+  @Local private labelWidth:number = 0;
+
+  @Computed get ticks():number[] { return dashboardLabelTicks(this.end,this.seconds,this.axisWidth,this.labelWidth); }
+  build() {
+    Stack({alignContent:Alignment.TopStart}) {
+      // This native label reserves a full line and measures the actual scaled, tabular clock face.
+      Text('00:00').fontSize(10).fontFeature('tnum 1').visibility(Visibility.Hidden)
+        .onAreaChange((_:Area,area:Area) => { this.labelWidth = Math.ceil(Number(area.width)); })
+      if (this.ticks.length) {
+        ForEach(this.ticks,(time:number) => {
+          Text(clockLabel(time)).fontSize(10).fontFeature('tnum 1').fontColor(Colors.secondary)
+            .position({x:dashboardTickLeft(time,this.end,this.seconds,this.axisWidth,this.labelWidth),y:0})
+        },(time:number) => String(time))
+      } else {
+        Flex({wrap:FlexWrap.Wrap,justifyContent:FlexAlign.SpaceBetween}) {
+          Text(clockLabel(this.end-this.seconds)).fontSize(10).fontFeature('tnum 1').fontColor(Colors.secondary)
+          Text(clockLabel(this.end)).fontSize(10).fontFeature('tnum 1').fontColor(Colors.secondary)
+        }.width('100%')
+      }
+    }.width('100%').accessibilityLevel('no-hide-descendants')
+      .onAreaChange((_:Area,area:Area) => { this.axisWidth = Number(area.width); })
+  }
 }
 
 @ComponentV2
@@ -592,13 +622,7 @@ export struct MachineDirectory {
           tint:this.tint(key),alternateTint:key === 'network' ? this.tint('upload') : '',
           ceiling:this.series(key).ceiling,chartHeight:115,selectedTime:this.inspected,interactive:true,
           dark:nativeEnvironment.dark,pick:(time:number) => this.inspected=time}).id('machines.chart.'+key)
-        Stack({alignContent:Alignment.TopStart}) {
-          ForEach(dashboardTimeTicks(this.chartEnd,RANGE_SECONDS[this.shownRange]),(time:number) => {
-            Text(clockLabel(time)).fontSize(10).fontColor(Colors.secondary).maxLines(1)
-              .position({x:String(Math.min(94,Math.max(5,(1-(this.chartEnd-time)/RANGE_SECONDS[this.shownRange])*100)))+'%',y:0})
-              .translate({x:'-50%'})
-          },(time:number) => String(time))
-        }.width('100%').height(17).accessibilityLevel('no-hide-descendants')
+        MachineTimeAxis({end:this.chartEnd,seconds:RANGE_SECONDS[this.shownRange]})
       }.layoutWeight(1)
       Column() {
         Text(this.present(key,this.series(key).ceiling)).fontSize(11).fontColor(Colors.secondary)
@@ -626,9 +650,11 @@ export struct MachineDirectory {
       if (this.liveTiles.length) this.liveGrid()
       Row({space:2}) {
         ForEach(RANGE_LABELS,(key:string,i:number) => {
-          Button(tr(key),{type:ButtonType.Normal}).layoutWeight(1).height(Math.max(38,Math.ceil(21*nativeEnvironment.fontScale)+9)).padding(0).fontSize(14).borderRadius(8)
-            .fontColor(this.range === i ? Colors.ink : Colors.secondary).backgroundColor(this.range === i ? Colors.surface : Color.Transparent)
-            .fontWeight(this.range === i ? FontWeight.Bold : FontWeight.Normal).accessibilitySelected(this.range === i)
+          Button({type:ButtonType.Normal}) {
+            Text(tr(key)).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale).textAlign(TextAlign.Center)
+              .fontWeight(this.range === i ? FontWeight.Bold : FontWeight.Normal).fontColor(this.range === i ? Colors.ink : Colors.secondary)
+          }.layoutWeight(1).constraintSize({minHeight:44}).padding({left:3,right:3,top:5,bottom:5}).borderRadius(8)
+            .backgroundColor(this.range === i ? Colors.surface : Color.Transparent).accessibilityText(tr(key)).accessibilitySelected(this.range === i)
             .onClick(() => this.chooseRange(i)).id('machines.range.'+RANGES[i])
         },(key:string) => key)
       }.width('100%').padding(3).backgroundColor(Colors.control).borderRadius(10)

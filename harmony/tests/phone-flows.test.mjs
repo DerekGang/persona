@@ -303,3 +303,13 @@ test('only a workspace opened over the same owned session inherits its phone hea
   shell.phonePath = ['project','tools'];
   assert.equal(shell.phoneToolParent,'');
 });
+
+test('a foreground appearance change recreates just the retained session header and sibling controls', () => {
+  const header = formSource.slice(formSource.indexOf('  @Builder phoneHeader()'), formSource.indexOf('  @Builder compactPlaces()'));
+  assert.match(header,/this\.phoneTop === 'session' \|\| this\.phoneToolParent/);
+  assert.match(header,/ForEach\(\[this\.environment\.dark\],\s*\(dark:boolean\) => \{\s*WithTheme\(\{[^}]*colorMode:dark \? ThemeColorMode\.DARK : ThemeColorMode\.LIGHT[^}]*\}\) \{\s*this\.compactPlaces\(\)\s*\}\s*\},\s*\(dark:boolean\) => String\(dark\)\)/);
+  // The Navigation owns Files/search/Git, the selected session, and its mounted conversation draft.
+  assert.match(formSource,/if \(!this\.wide\(\)\) this\.phoneHeader\(\)\s*Navigation\(this\.stack\)/);
+  const chrome = formSource.slice(formSource.indexOf('  @Builder compactPlaces()'), formSource.indexOf('  private parentIndexes()'));
+  assert.match(chrome,/SessionSpaceTabs\(\{space:this\.phoneSessionSpace/);
+});

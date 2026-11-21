@@ -179,3 +179,23 @@ export function dashboardTimeTicks(end:number, seconds:number): number[] {
   }
   return ticks;
 }
+
+export function dashboardTickLeft(time:number, end:number, seconds:number, width:number, labelWidth:number):number {
+  const center = (time - (end-seconds)) * width / seconds;
+  return Math.max(0,Math.min(width-labelWidth,center-labelWidth/2));
+}
+
+/** Keep the full clock grid when possible. On a crowded axis label both limits of the window. */
+export function dashboardLabelTicks(end:number, seconds:number, width:number, labelWidth:number):number[] {
+  const ticks = dashboardTimeTicks(end,seconds);
+  if (!ticks.length || labelWidth <= 0 || width < 2*labelWidth+6) return [];
+  const left = (time:number):number => dashboardTickLeft(time,end,seconds,width,labelWidth);
+  const spacing = labelWidth+6;
+  if (ticks.every((time:number,i:number) => i === 0 || left(time)-left(ticks[i-1]) >= spacing)) return ticks;
+  const selected:number[] = [end-seconds];
+  for (const time of ticks) {
+    if (left(time)-left(selected[selected.length-1]) >= spacing && left(end)-left(time) >= spacing) selected.push(time);
+  }
+  selected.push(end);
+  return selected;
+}
