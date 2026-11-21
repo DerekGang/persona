@@ -3,7 +3,7 @@
 // #8237), the "Today" card, message cards about
 // a task, quick results, the dock above the composer, the tasks' questions, the route chip, and a task's detail in the
 // side panel.
-import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { taskMeter, type TaskCardMetadata } from "../../lib/task-cards";
 import { agentRowKey, agentRowLabel, agentRowMark, agentRowTone, todoChipLabel, todoChipState } from "../../lib/task-row-status";
 import { assistantEntries, needsYouBySupervisor, type NeedsYouItem } from "../../lib/assistant-entries";
@@ -260,15 +260,17 @@ function PlanTaskFailed({ task }: { task: PlanTask }) {
 
 /** Why each task's computer can't start with ultracode (#12; a known Claude Code too old), "" where it can; undefined
  *  where the hub has no ultracode, and the card shows none. Nothing is read for a plan no longer open. */
-function usePlanUltracodeBlocked(plan: TaskPlan): string[] | undefined {
+function usePlanUltracodeBlocked(plan: TaskPlan): (string | null)[] | undefined {
   const open = plan.state === "open";
   const offered = useStore((s) => open && hubHas(s.features, ULTRACODE_FEATURE));
-  const rows = useStoreRows((s) => (open ? plan.tasks.map((task) => ({ why: machineStartBlocked(s, task.machine) })) : []));
+  const rows = useStoreRows((s) => (open ? plan.tasks.map((task) => ({
+    why: task.workflow_kind === "unsupported" ? null : machineStartBlocked(s, task.machine, task.workflow_kind),
+  })) : []));
   return offered ? rows.map((r) => r.why) : undefined;
 }
 
 /** A computer can't start with ultracode now (what Start sends checks it as it goes). */
-const ultracodeBlockedNow = (machine: string) => Boolean(machineStartBlocked(getState(), machine));
+const ultracodeBlockedNow = (machine: string, workflow: PlanTask["workflow_kind"]) => Boolean(machineStartBlocked(getState(), machine, workflow));
 
 /** What "Start these directly" remembers, said on the card (#8095): each task that changes files, by its computer and
  *  folder; the remembered kind then covers that folder's subfolders too. "" when every task only reads: those start
@@ -308,7 +310,16 @@ export function PlanCard({ plan }: { plan: TaskPlan }) {
         {failed.map((task) => (
           <PlanTaskFailed key={task.title} task={task} />
         ))}
-        {plan.tasks.map((task, i) => <TaskWorkspaceLine key={i} task={task} />)}
+        {plan.tasks.map((task, i) => <Fragment key={i}>
+          {plan.state === "started" && (task.workflow_note
+            ? <div className="text-label text-orange">{task.title} · {task.workflow_note}</div>
+            : task.workflow_active === true && <div className="flex items-center gap-1.5 text-label">
+              <Icon name="layers" size={12} className="shrink-0 text-ai" />
+              <span>{task.title} · {t("ultracode.codex_multi_agent")}</span>
+            </div>
+          )}
+          <TaskWorkspaceLine task={task} />
+        </Fragment>)}
       </div>
     );
   }
@@ -334,12 +345,13 @@ export function PlanCard({ plan }: { plan: TaskPlan }) {
         <Icon name="list" size={13} />
         {plan.tasks.length > 1 ? t("assistant-tasks.plan_split", { count: plan.tasks.length }) : t("assistant-tasks.plan_single")}
       </div>
-      {editedPlan.tasks.map((t, i) => (
-        <div key={i} className="flex min-w-0 flex-col gap-2">
-          <PlanTaskRow n={i + 1} task={t} numbered={plan.tasks.length > 1} ultra={blocked && { on: ultracode[i], blocked: blocked[i] }} busy={busy} onUltra={(on) => setUltraChoice((c) => ({ ...c, [i]: on }))} />
+      {editedPlan.tasks.map((t, i) => {
+        const reason = blocked?.[i];
+        return <div key={i} className="flex min-w-0 flex-col gap-2">
+          <PlanTaskRow n={i + 1} task={t} numbered={plan.tasks.length > 1} ultra={reason == null ? undefined : { on: ultracode[i], blocked: reason }} busy={busy} onUltra={(on) => setUltraChoice((c) => ({ ...c, [i]: on }))} />
           <TaskWorkspaceEditor plan={editedPlan} index={i} disabled={busy} onChange={(workspace) => setWorkspaceChoice((c) => ({ ...c, [i]: workspace }))} />
-        </div>
-      ))}
+        </div>;
+      })}
       {scope && <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-2">
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="accent-[var(--accent)]" />
         {scope}
@@ -412,7 +424,8 @@ function PlanTaskRow({ n, task, numbered, ultra, busy, onUltra }: { n: number; t
         <span className={cx("inline-flex h-6 items-center rounded-full px-2 text-label", task.readonly ? "bg-accent-tint text-accent" : "bg-field text-ink-2")}>
           {task.readonly ? t("assistant-tasks.readonly") : PERMISSION[task.permission || "default"] ?? task.permission}
         </span>
-        {ultra && <UltracodeChip on={ultra.on} blocked={ultra.blocked} disabled={busy} onChange={onUltra} />}
+        {ultra && <UltracodeChip on={ultra.on} blocked={ultra.blocked} disabled={busy}
+          label={task.workflow_kind === "codex_multi_agent_v2" ? t("ultracode.codex_multi_agent") : undefined} onChange={onUltra} />}
       </div>
       {/* it is asked for where it can't run: say it starts without */}
       {ultra?.blocked && ultra.on && <div className="text-label text-orange">{t("ultracode.plan_blocked", { reason: ultra.blocked })}</div>}

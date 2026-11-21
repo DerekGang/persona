@@ -172,7 +172,6 @@ struct PlanCard: View {
 
     private var openCard: some View {
         @Bindable var picked = picked
-        let offered = Ultracode.planOffered
         let ultracode = Ultracode.choices(plan, card: picked.ultra)
         return VStack(alignment: .leading, spacing: Theme.Space.m) {
             Label(plan.tasks.count > 1 ? String(localized: "Split into \(plan.tasks.count) tasks, started like this") : String(localized: "Start like this"), systemImage: Theme.Icon.taskPlan)
@@ -181,7 +180,7 @@ struct PlanCard: View {
             ForEach(Array(plan.tasks.enumerated()), id: \.offset) { n, task in
                 if n > 0 { Divider() }
                 PlanTaskRow(number: n + 1, task: task, numbered: plan.tasks.count > 1,
-                            ultra: offered ? .init(on: ultracode[n], blocked: Ultracode.blocked(machine: task.machine)) : nil,
+                            ultra: Ultracode.planWorkflow(task).map { .init(kind: $0, on: ultracode[n], blocked: Ultracode.blocked(task)) },
                             onUltra: { picked.ultra[n] = $0 })
             }
             .disabled(store.busyPlans.contains(plan.id))
@@ -202,8 +201,7 @@ struct PlanCard: View {
         .sheet(isPresented: $picked.editing) {
             PlanEditSheet(plan: plan, ultracode: Ultracode.choices(plan, card: picked.ultra)) { edits in
                 picked.editing = false
-                let blocked = Ultracode.blockedMachines(edits)
-                let sent = Ultracode.editsToSend(plan, edits: edits, blocked: { blocked.contains($0) })
+                let sent = Ultracode.editsToSend(plan, edits: edits, blocked: { Ultracode.blocked($0) != nil })
                 Task { await store.start(plan, edits: sent, remember: picked.remember, scheduleGrant: picked.grantsSchedule(plan)) }
             }
         }
@@ -230,6 +228,25 @@ struct PlanCard: View {
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.danger)
                     .lineLimit(2)
+            }
+            if plan.state == .started {
+                ForEach(plan.tasks.indices, id: \.self) { i in
+                    let task = plan.tasks[i]
+                    let confirmed = task.workflowKind == .codexMultiAgentV2 && task.workflowActive == true
+                    if task.error == nil, let line = task.workflowNote ?? (confirmed ? AgentWorkflowKind.codexMultiAgentV2.onWords : nil) {
+                        Label {
+                            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                                if plan.tasks.count > 1 { Text(task.title).font(Theme.Font.captionStrong) }
+                                Text(verbatim: line)
+                            }
+                        } icon: {
+                            ThemedIcon(Theme.Icon.workflow)
+                        }
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(task.workflowNote == nil ? Color.secondary : Theme.cautionText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -304,8 +321,8 @@ struct PlanActions: View {
 
     private var start: some View {
         Button {
-            let blocked = Ultracode.blockedMachines(plan.tasks)
-            let edits = Ultracode.cardEdits(plan, choices: Ultracode.choices(plan, card: choices.ultra), blocked: { blocked.contains($0) })
+            let edits = Ultracode.cardEdits(plan, choices: Ultracode.choices(plan, card: choices.ultra),
+                                            blocked: { Ultracode.blocked($0) != nil })
             Task { await store.start(plan, edits: edits, remember: choices.remember, scheduleGrant: choices.grantsSchedule(plan)) }
         } label: {
             Text(plan.tasks.count > 1 ? String(localized: "Start \(plan.tasks.count) Tasks") : String(localized: "Start"))
@@ -330,7 +347,7 @@ struct PlanActions: View {
 
 /// One task of an open plan: its title, where it would run (each a chip), and why there.
 struct PlanTaskRow: View {
-    struct Ultra { var on: Bool; var blocked: String? }
+    struct Ultra { var kind: AgentWorkflowKind; var on: Bool; var blocked: String? }
 
     var number: Int
     var task: PlanTask
@@ -361,7 +378,7 @@ struct PlanTaskRow: View {
                     Chip(text: Self.permissionLabel(p))
                 }
                 if let ultra {
-                    UltracodeChip(on: ultra.on, blocked: ultra.blocked, change: onUltra)
+                    UltracodeChip(kind: ultra.kind, on: ultra.on, blocked: ultra.blocked, change: onUltra)
                 }
             }
             // Asked for on a computer that can't: it starts without.
@@ -437,9 +454,10 @@ struct PlanEditSheet: View {
                         Picker("Permissions", selection: Binding(get: { tasks[i].permission ?? "default" }, set: { tasks[i].permission = $0 })) {
                             ForEach(PlanTaskRow.permissions, id: \.self) { Text(PlanTaskRow.permissionLabel($0)).tag($0) }
                         }
-                        if Ultracode.planOffered {
-                            PlanUltracodeRow(on: Binding(get: { tasks[i].ultracode == true }, set: { tasks[i].ultracode = $0 }),
-                                             blocked: Ultracode.blocked(machine: tasks[i].machine))
+                        if let kind = Ultracode.planWorkflow(tasks[i]) {
+                            PlanUltracodeRow(kind: kind,
+                                             on: Binding(get: { tasks[i].ultracode == true }, set: { tasks[i].ultracode = $0 }),
+                                             blocked: Ultracode.blocked(tasks[i]))
                         }
                     }
                     Section("Message for the Agent") {
