@@ -342,7 +342,8 @@ func (s *Service) channelResolveAt(ctx context.Context, ch, id string, r proto.R
 	}
 	r.AnsweredBy, r.Remembered = "", false
 	if ownerActionProposal(ix) {
-		if err := s.resolveOwnerProposal(ctx, ix, r, ownerActionCardProof(ix, ch)); err != nil {
+		expectation := &interactionExpectation{occurrence: &ix}
+		if err := s.resolveOwnerProposalAt(ctx, ix, r, ownerActionCardProof(ix, ch), expectation); err != nil {
 			if errors.Is(err, errNotPending) {
 				return map[string]any{"ok": false, "status": s.endedStatus(ctx, id, err)}, nil
 			}

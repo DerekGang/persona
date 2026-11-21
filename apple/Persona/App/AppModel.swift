@@ -2787,6 +2787,14 @@ final class AppModel {
         return current > previous
     }
 
+    private func sameOccurrence(_ lhs: InteractionOccurrence, _ rhs: InteractionOccurrence) -> Bool {
+        if lhs.wire == rhs.wire { return lhs.date == rhs.date }
+        if let a = lhs.wire, let b = rhs.wire, JSON.compareOccurrenceTimes(a, b) == .orderedSame { return true }
+        // A locally constructed card may have a Date but no original wire text.
+        if (lhs.wire == nil || rhs.wire == nil), let a = lhs.date, let b = rhs.date { return a == b }
+        return false
+    }
+
     private func endedInteraction(_ ix: Interaction) -> Bool {
         if endedInteractionIDs.contains(ix.uid) { return true }
         guard let ended = endedInteractionOccurrences[ix.uid] else { return false }
@@ -2800,7 +2808,14 @@ final class AppModel {
     private func markEndedOccurrence(_ uid: String, _ current: InteractionOccurrence) {
         guard !endedInteractionIDs.contains(uid) else { return }
         guard current.date != nil else { endedInteractionIDs.insert(uid); return }
-        if let previous = endedInteractionOccurrences[uid], !laterOccurrence(current, than: previous) { return }
+        if let previous = endedInteractionOccurrences[uid] {
+            if laterOccurrence(previous, than: current) { return }
+            if !sameOccurrence(previous, current), !laterOccurrence(current, than: previous) {
+                // Mixed legacy/dated identities cannot be ordered. Only the
+                // currently displayed occurrence may supersede that marker.
+                guard let live = interactions[uid], sameOccurrence(occurrence(live), current) else { return }
+            }
+        }
         if endedInteractionOccurrences[uid] == nil, endedInteractionOccurrences.count >= Self.endedInteractionOccurrenceLimit,
            let first = endedInteractionOccurrences.keys.first {
             endedInteractionOccurrences.removeValue(forKey: first)
@@ -2809,13 +2824,38 @@ final class AppModel {
     }
 
     private func hasLaterOccurrence(_ ix: Interaction) -> Bool {
-        guard let current = interactions[ix.uid] else { return false }
-        return laterOccurrence(occurrence(current), than: occurrence(ix))
+        hasLaterOccurrence(ix.uid, than: occurrence(ix))
+    }
+
+    private func hasLaterOccurrence(_ uid: String, than candidate: InteractionOccurrence) -> Bool {
+        var ownsCurrent = false
+        if let current = interactions[uid] {
+            let live = occurrence(current)
+            if laterOccurrence(live, than: candidate) { return true }
+            ownsCurrent = sameOccurrence(live, candidate)
+            if !ownsCurrent, !laterOccurrence(candidate, than: live) { return true }
+        }
+        if let ended = endedInteractionOccurrences[uid] {
+            if laterOccurrence(ended, than: candidate) { return true }
+            if !sameOccurrence(ended, candidate), !laterOccurrence(candidate, than: ended), !ownsCurrent { return true }
+        }
+        return false
     }
 
     func forgetEndedInteraction(_ ix: Interaction) {
-        endedInteractionIDs.remove(ix.uid)
-        endedInteractionOccurrences.removeValue(forKey: ix.uid)
+        if let ended = endedInteractionOccurrences[ix.uid] {
+            // A failed old request may clear its own optimistic end, never the
+            // terminal marker a successful same-ID replacement left behind.
+            let current = occurrence(ix)
+            if laterOccurrence(ended, than: current) { return }
+            let ownsCurrent = interactions[ix.uid].map { sameOccurrence(occurrence($0), current) } ?? false
+            if !sameOccurrence(ended, current), !laterOccurrence(current, than: ended), !ownsCurrent { return }
+            endedInteractionOccurrences.removeValue(forKey: ix.uid)
+            return
+        }
+        // ID-only markers are the optimistic kind made for cards with no
+        // creation time. A dated card cannot clear an ambiguous legacy end.
+        if occurrence(ix).date == nil { endedInteractionIDs.remove(ix.uid) }
     }
 
     func retainEndedInteractions(_ keep: (String) -> Bool) {
@@ -3373,7 +3413,7 @@ final class AppModel {
             let uid = group.isEmpty ? id : group + "|" + id
             endedInteractionIDs.insert(uid)
             answering.hubEnded(uid)
-            if answerAttempts.progress(uid) != .sending { answerAttempts.finish(uid) }
+            if answerAttempts.progress(uid) != .sending { answerAttempts.finishEvent(uid) }
             if let assistant, let ix = interactions[uid] { keepDelegated(ix, assistant) }
             interactions[uid] = nil
             summariesChanged()
@@ -3395,14 +3435,10 @@ final class AppModel {
     private func interactionResolvedOccurrence(_ id: String, assistant: AssistantAnswer?, createdAt: String, group: String) {
         let uid = group.isEmpty ? id : group + "|" + id
         let ended = InteractionOccurrence(wire: createdAt, date: JSON.parseDate(createdAt))
-        if let current = interactions[uid], laterOccurrence(occurrence(current), than: ended) { return }
-        // A permission answer hides its card optimistically, so the newer live
-        // occurrence may exist only in the ended marker while its request is in
-        // flight. An older withdrawal must not poison that answer's put-back state.
-        if let current = endedInteractionOccurrences[uid], laterOccurrence(current, than: ended) { return }
+        if hasLaterOccurrence(uid, than: ended) { return }
         markEndedOccurrence(uid, ended)
-        answering.hubEnded(uid)
-        if answerAttempts.progress(uid) != .sending { answerAttempts.finish(uid) }
+        answering.hubEnded(uid, occurrence: createdAt)
+        if answerAttempts.progress(uid) != .sending { answerAttempts.finishEvent(uid, occurrence: createdAt) }
         if let assistant, let ix = interactions[uid] { keepDelegated(ix, assistant) }
         interactions[uid] = nil
         summariesChanged()
@@ -3543,24 +3579,27 @@ final class AppModel {
         }
         // No network: the card stays as it is (taking it away and bringing it back a moment later read as "done").
         guard connection.networkUp else { notDone(); return }
+        // A stale tap must not optimistically withdraw a replacement already on screen.
+        guard !hasLaterOccurrence(ix) else { return }
         // A question's card stays where it is, greyed and marked "Sending…", until the hub has the answer: its picks and
         // text stay for a retry (#6279). Every other card goes at once and comes back if its answer fails.
         let keepsCard = ix.kind == .question || r.ownerApprovalPhrase != nil
-        guard let op = answerAttempts.begin(ix.uid, r) else { return } // its answer is on the way: a second tap sends nothing
+        let attemptOccurrence = ix.createdAtWire
+        guard let op = answerAttempts.begin(ix.uid, r, occurrence: attemptOccurrence) else { return } // its answer is on the way: a second tap sends nothing
         if !keepsCard {
-            interactions[ix.uid] = nil
             markEndedInteraction(ix)
+            interactions[ix.uid] = nil
         }
-        answering.begin(ix.uid)
-        defer { answering.finish(ix.uid) }
+        answering.begin(ix.uid, occurrence: attemptOccurrence)
+        defer { answering.finish(ix.uid, occurrence: attemptOccurrence) }
         // One op id for this answer: a retry through a hub restart (the request died with the old process, a proxy
         // answered 502) goes with it again, and the hub presses the keys once. The card waits meanwhile, for up to a
         // minute (OpRetry.limit), then shows the error (a question's) or comes back with it.
-        func over() {
-            answerAttempts.finish(ix.uid)
+        func over() -> Bool {
+            guard answerAttempts.finish(ix.uid, op: op), !hasLaterOccurrence(ix) else { return false }
             markEndedInteraction(ix)
-            guard !hasLaterOccurrence(ix) else { return }
             interactions[ix.uid] = nil
+            return true
         }
         do {
             if let phrase = r.ownerApprovalPhrase {
@@ -3568,11 +3607,16 @@ final class AppModel {
                     try await api.replyOwnerApproval(ix, phrase: phrase, opID: op)
                     return true
                 }
-                over()
+                guard over() else { return }
                 Haptics.success()
                 return
             }
             let res = try await OpRetry.untilDelivered { try await api.resolve(ix.id, r, opID: op, handoffCard: handoff) }
+            guard answerAttempts.owns(ix.uid, op: op) else { return }
+            guard !hasLaterOccurrence(ix) else {
+                answerAttempts.finish(ix.uid, op: op)
+                return
+            }
             if res.already == true, let existing = res.resolution, existing.answeredBy == AssistantAnswer.assistant, ix.kind == .question {
                 // The assistant answered first: its answer shows in the chat, where the user may change it.
                 keepDelegated(ix, AssistantAnswer(answers: existing.answers ?? [:], reason: existing.reason ?? ""))
@@ -3582,42 +3626,50 @@ final class AppModel {
                 let text = (lines.first?.answer.isEmpty == false) ? String(localized: "Already answered: \(lines.first!.answer)") : String(localized: "Already answered")
                 toast = Toast(text, style: .success)
             }
-            over()
+            guard over() else { return }
             if r.cancel == true, res.already != true || res.resolution?.cancel == true, let closed = Answered.answerLines(ix, r).first {
                 // Match Android's receipt for closing a question without an answer; keep another answer's "already" receipt.
                 toast = Toast(closed.answer, style: .success)
             }
             Haptics.success()
         } catch let e as APIError where e.code == "prompt_changed" {
+            guard answerAttempts.owns(ix.uid, op: op) else { return }
+            guard !hasLaterOccurrence(ix) else {
+                answerAttempts.finish(ix.uid, op: op)
+                return
+            }
             // Nothing pressed: the terminal's dialog changed. The hub has ended a screen card and sends one for what is
             // there now; a Codex card it keeps open goes back.
-            answerAttempts.finish(ix.uid)
-            putBack(ix)
+            answerAttempts.finish(ix.uid, op: op)
+            putBack(ix, occurrence: attemptOccurrence)
             Haptics.attention()
             toast = Toast(String(localized: "The dialog in the terminal changed, so no keys were pressed. Check the new one and answer again."), style: .error)
         } catch let e as APIError where e.status == 410 {
+            guard answerAttempts.owns(ix.uid, op: op) else { return }
             let reason = Answered.endedText(e.fields["status"])
-            over()
+            guard over() else { return }
             toast = Toast(reason, style: .error)
         } catch {
+            guard answerAttempts.owns(ix.uid, op: op) else { return }
             if hasLaterOccurrence(ix) {
                 // The old answer's failure belongs to an occurrence that is no longer shown.
-                answerAttempts.finish(ix.uid)
-            } else if keepsCard, answering.putsBack(ix.uid), interactions[ix.uid] != nil, !error.isOffline, !error.isQuiet {
+                answerAttempts.finish(ix.uid, op: op)
+            } else if keepsCard, answering.putsBack(ix.uid, occurrence: attemptOccurrence), interactions[ix.uid] != nil, !error.isOffline, !error.isQuiet {
                 // The card shows the error and Retry itself.
-                answerAttempts.fail(ix.uid, error.localizedDescription)
+                answerAttempts.fail(ix.uid, error.localizedDescription, occurrence: attemptOccurrence)
                 Haptics.error()
             } else {
-                answerAttempts.finish(ix.uid)
-                putBack(ix)
+                answerAttempts.finish(ix.uid, op: op)
+                putBack(ix, occurrence: attemptOccurrence)
                 show(error)
             }
         }
     }
 
     /// A card whose answer failed, back among the pending ones, unless the hub has ended it meanwhile (#3922).
-    private func putBack(_ ix: Interaction) {
-        guard answering.putsBack(ix.uid), !hasLaterOccurrence(ix) else { return }
+    private func putBack(_ ix: Interaction, occurrence attemptOccurrence: String? = nil) {
+        guard answering.putsBack(ix.uid, occurrence: attemptOccurrence), !hasLaterOccurrence(ix) else { return }
+        if endedInteractionIDs.contains(ix.uid), occurrence(ix).date != nil { return }
         forgetEndedInteraction(ix)
         interactions[ix.uid] = ix
     }

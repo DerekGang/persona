@@ -71,6 +71,21 @@ func ownerActionDisplay(item ownerActionItem) (string, error) {
 	return out.String(), nil
 }
 
+// registerOwnerAction waits only for registration, not for the proposal's
+// decision. Both a joined pending card and an early failure release the caller;
+// cancelling the tool context also releases it without abandoning the durable
+// proposal's background timeout cleanup.
+func (s *Service) registerOwnerAction(ctx context.Context, ix proto.Interaction) error {
+	ready := make(chan error, 1)
+	go func() { _, _ = s.waitInteractionReady(context.Background(), ix, nil, ready) }()
+	select {
+	case err := <-ready:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (s *Service) toolOwnerActionPrepare(ctx context.Context, machine, self string, args json.RawMessage) (string, error) {
 	cfg := s.settings(ctx)
 	persistent := persistentOwnerActionCardsOn(cfg)
@@ -150,9 +165,12 @@ func (s *Service) toolOwnerActionPrepare(ctx context.Context, machine, self stri
 		ix.AlwaysHonored = &notKept
 		// Item proposals have no process-local Apply closure. Their waiter only
 		// owns timeout cleanup; approval and execution live in the durable book.
-		ready := make(chan struct{})
-		go func() { _, _ = s.waitInteractionReady(context.Background(), ix, nil, ready) }()
-		<-ready
+		if err := s.registerOwnerAction(ctx, ix); err != nil {
+			if !persistent {
+				_ = book.cancelPending(context.Background(), batch.ID)
+			}
+			return "", err
+		}
 	}
 	batchIX := proto.Interaction{
 		ID:                   ownerActionInteractionID(batch.ID, ""),
@@ -180,9 +198,9 @@ func (s *Service) toolOwnerActionPrepare(ctx context.Context, machine, self stri
 	// Register the batch and every item before projecting decisions. A second
 	// resumable waiter below is the original tool caller; the background waiter
 	// retains timeout cleanup if that caller goes away.
-	ready := make(chan struct{})
-	go func() { _, _ = s.waitInteractionReady(context.Background(), batchIX, nil, ready) }()
-	<-ready
+	if err := s.registerOwnerAction(ctx, batchIX); err != nil {
+		return "", err
+	}
 	// Close the registration race in either direction: an item decision may
 	// complete before the batch card exists, or a batch decision before an item
 	// card exists. Durable state is authoritative in both cases.
@@ -246,6 +264,75 @@ func ownerActionCardProof(ix proto.Interaction, source string) ownerReplyProof {
 }
 
 func (s *Service) resolveOwnerProposal(ctx context.Context, ix proto.Interaction, r proto.Resolution, proof ownerReplyProof) error {
+	return s.resolveOwnerProposalAt(ctx, ix, r, proof, nil)
+}
+
+// claimOwnerProposal arbitrates the live card against timeout before the
+// durable decision can commit. The persisting marker makes a timeout wait for
+// the decision rather than recording a competing expiry.
+func (s *Service) claimOwnerProposal(ix proto.Interaction, r proto.Resolution, expected *interactionExpectation) (*pending, error) {
+	s.fleet.mu.Lock()
+	defer s.fleet.mu.Unlock()
+	p := s.fleet.interactions[ix.ID]
+	occurrence := &interactionExpectation{occurrence: &ix}
+	if p == nil || !ownerActionProposal(p.ix) || !occurrence.matches(p.ix) || !expected.matches(p.ix) || p.claimed || p.persisting != nil {
+		return nil, errNotPending
+	}
+	p.claimed = true
+	p.resolution = &r
+	p.persisting = &questionPersistence{done: make(chan struct{})}
+	p.persistenceErr = nil
+	if p.resolved == nil {
+		p.resolved = make(chan struct{})
+	}
+	p.answeredBy, p.answeredReason = r.AnsweredBy, r.Reason
+	if r.AnsweredBy != "" {
+		p.answeredWith = r.Answers
+	}
+	return p, nil
+}
+
+// releaseOwnerProposalClaim wakes timeout and duplicate answers after the
+// durable decision. A rejected decision restores the unclaimed pending state;
+// awaitOnce turns retry into a fresh arbitration instead of a false answer.
+func (s *Service) releaseOwnerProposalClaim(p *pending, decisionErr error, retry bool) {
+	s.fleet.mu.Lock()
+	defer s.fleet.mu.Unlock()
+	attempt := p.persisting
+	if attempt == nil {
+		return
+	}
+	if retry {
+		p.claimed, p.resolution = false, nil
+		p.answeredBy, p.answeredReason, p.answeredWith = "", "", nil
+		attempt.retry = true
+	}
+	attempt.err = decisionErr
+	p.persisting = nil
+	close(attempt.done)
+}
+
+func (s *Service) completeOwnerProposalClaim(p *pending, r proto.Resolution) {
+	status := endStatus(r)
+	told := redacted(p.ix, r)
+	if err := s.recordEndOccurrenceStrict(p.ix, status, &told); err != nil {
+		s.logf("record owner-action proposal outcome: %v", err)
+	}
+	s.channelsEnded(p.ix, &told)
+	go s.InteractionResolved(context.Background(), InteractionResolved{Interaction: p.ix, Resolution: told, Status: status})
+	s.releaseOwnerProposalClaim(p, nil, false)
+	close(p.resolved)
+	select {
+	case p.done <- r:
+	default:
+	}
+	s.finishPending(p)
+}
+
+// resolveOwnerProposalAt binds the durable decision to the exact live
+// occurrence. Admission excludes a replacement while the captured card is
+// claimed and the book decides; projection then uses its own occurrence fence.
+func (s *Service) resolveOwnerProposalAt(ctx context.Context, ix proto.Interaction, r proto.Resolution, proof ownerReplyProof, expected *interactionExpectation) error {
 	if !ownerActionProposal(ix) || r.Allow == nil || r.Always || r.EditedText != "" || len(r.Values) > 0 {
 		return errOwnerActionProof
 	}
@@ -254,10 +341,30 @@ func (s *Service) resolveOwnerProposal(ctx context.Context, ix proto.Interaction
 	if err != nil {
 		return err
 	}
-	if _, err := book.decide(ctx, proof, *r.Allow); err != nil {
+	unlockAdmission := s.lockInteractionAdmission(ix.ID)
+	admissionHeld := true
+	defer func() {
+		if admissionHeld {
+			unlockAdmission()
+		}
+	}()
+	r.ModeActor = nil // provenance is never taken from an answer body
+	r = honest(ix, r)
+	if r.Reason == "" {
+		r.Reason = "exact owner-action decision " + ix.ApprovalBatchID
+	}
+	p, err := s.claimOwnerProposal(ix, r, expected)
+	if err != nil {
 		return err
 	}
-	return s.syncOwnerActionBatch(ctx, ix.ApprovalBatchID)
+	if _, err := book.decide(ctx, proof, *r.Allow); err != nil {
+		s.releaseOwnerProposalClaim(p, err, true)
+		return err
+	}
+	s.completeOwnerProposalClaim(p, r)
+	admissionHeld = false
+	unlockAdmission()
+	return s.syncOwnerActionBatch(context.WithoutCancel(ctx), ix.ApprovalBatchID)
 }
 
 // syncOwnerActionBatch projects durable item decisions onto the original
@@ -277,27 +384,36 @@ func (s *Service) syncOwnerActionBatch(ctx context.Context, batchID string) erro
 	}
 	result := ownerActionDecisionResult{}
 	ownerActionFillResult(batch, &result)
+	proposal := func(itemID, tool string) proto.Interaction {
+		return proto.Interaction{ID: ownerActionInteractionID(batch.ID, itemID), MachineID: batch.MachineID, SessionID: batch.SessionID,
+			Kind: proto.IxPermission, ToolName: tool, CreatedAt: batch.CreatedAt, ApprovalBatchID: batch.ID, ApprovalItemID: itemID,
+			OwnerProposal: true, Resumable: true, NoExpiry: batch.Persistent}
+	}
+	project := func(ix proto.Interaction, r proto.Resolution) error {
+		expectation := &interactionExpectation{occurrence: &ix}
+		current, pending := s.pendingIx(ix.ID)
+		if !pending || !ownerActionProposal(current) || !expectation.matches(current) {
+			return nil // a replacement is not the durable proposal's card
+		}
+		if err := s.resolveAnswerAt(ctx, ix.ID, r, true, nil, nil, expectation); err != nil && !errors.Is(err, errNotPending) {
+			return err
+		}
+		return nil
+	}
 	for _, item := range batch.Items {
 		if item.State == ownerActionPending {
 			continue
 		}
 		allow := item.State == ownerActionGranted || item.State == ownerActionConsumed
 		r := proto.Resolution{Allow: &allow, Reason: "exact owner-action decision " + batch.ID}
-		id := ownerActionInteractionID(batch.ID, item.ID)
-		if _, pending := s.pendingIx(id); !pending {
-			continue
-		}
-		if err := s.resolveAnswer(ctx, id, r, true, nil, nil); err != nil && !errors.Is(err, errNotPending) {
+		if err := project(proposal(item.ID, item.Tool), r); err != nil {
 			return err
 		}
 	}
 	if result.Complete {
 		r := proto.Resolution{Allow: &result.Allow, Reason: "exact owner-action decision " + batch.ID}
-		id := ownerActionInteractionID(batch.ID, "")
-		if _, pending := s.pendingIx(id); pending {
-			if err := s.resolveAnswer(ctx, id, r, true, nil, nil); err != nil && !errors.Is(err, errNotPending) {
-				return err
-			}
+		if err := project(proposal("", ownerActionBatchTool), r); err != nil {
+			return err
 		}
 	}
 	return nil

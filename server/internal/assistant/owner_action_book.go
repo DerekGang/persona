@@ -425,25 +425,37 @@ func (book *ownerActionBook) batch(ctx context.Context, id string) (ownerActionB
 	return ownerActionBatch{}, false, nil
 }
 
+type ownerActionTargetOrigin struct {
+	MachineID string
+	SessionID string
+	CreatedAt time.Time
+	Terminal  bool
+}
+
 // targetOrigin resolves a deterministic batch/item interaction ID back to its
-// durable origin. It lets an idempotent app retry finish after the original
-// pending card has already closed, without guessing from message text.
-func (book *ownerActionBook) targetOrigin(ctx context.Context, interactionID string) (string, string, bool, error) {
+// durable origin and decision state. An existing but still-pending proposal is
+// not an idempotent terminal reply: its card may be temporarily unrestored.
+func (book *ownerActionBook) targetOrigin(ctx context.Context, interactionID string) (ownerActionTargetOrigin, bool, error) {
 	doc, err := book.read(ctx)
 	if err != nil {
-		return "", "", false, err
+		return ownerActionTargetOrigin{}, false, err
 	}
 	for _, batch := range doc.Batches {
+		origin := ownerActionTargetOrigin{MachineID: batch.MachineID, SessionID: batch.SessionID, CreatedAt: batch.CreatedAt}
 		if ownerActionInteractionID(batch.ID, "") == interactionID {
-			return batch.MachineID, batch.SessionID, true, nil
+			var result ownerActionDecisionResult
+			ownerActionFillResult(batch, &result)
+			origin.Terminal = result.Complete
+			return origin, true, nil
 		}
 		for _, item := range batch.Items {
 			if ownerActionInteractionID(batch.ID, item.ID) == interactionID {
-				return batch.MachineID, batch.SessionID, true, nil
+				origin.Terminal = item.State != ownerActionPending
+				return origin, true, nil
 			}
 		}
 	}
-	return "", "", false, nil
+	return ownerActionTargetOrigin{}, false, nil
 }
 
 // cancelNonpersistentPending reconciles proposals whose original caller and

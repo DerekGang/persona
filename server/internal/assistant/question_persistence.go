@@ -10,8 +10,9 @@ import (
 )
 
 type questionPersistence struct {
-	done chan struct{}
-	err  error
+	done  chan struct{}
+	err   error
+	retry bool // a rejected owner decision released its claim; await must arbitrate again
 }
 
 func durableQuestion(ix proto.Interaction) bool {

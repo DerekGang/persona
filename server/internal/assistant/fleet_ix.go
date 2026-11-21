@@ -375,9 +375,27 @@ func (s *Service) waitInteractionPrepared(ctx context.Context, ix proto.Interact
 }
 
 // waitInteractionReady is waitInteractionPrepared with an optional registration
-// notification for server-owned proposal groups. The notification is closed
-// after the pending entry and its announcement exist, before this waiter blocks.
-func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction, prepared *preparedApproval, ready chan<- struct{}) (proto.Resolution, error) {
+// notification for server-owned proposal groups. It reports success only after
+// the pending entry and its announcement exist, before this waiter blocks.
+func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction, prepared *preparedApproval, ready chan<- error) (result proto.Resolution, resultErr error) {
+	readySent := false
+	notifyReady := func(err error) {
+		if ready != nil && !readySent {
+			ready <- err
+			readySent = true
+		}
+	}
+	// Every early return reports its registration error. Successful joins and
+	// new registrations report nil before the waiter blocks on an answer. A nil
+	// early return (an already-ended or unreachable interaction) is not a
+	// successful registration and must not start the proposal's tool waiter.
+	defer func() {
+		if resultErr == nil {
+			notifyReady(errNotPending)
+			return
+		}
+		notifyReady(resultErr)
+	}()
 	unlockAdmission := s.lockInteractionAdmission(ix.ID)
 	admissionHeld := true
 	releaseAdmission := func() {
@@ -445,9 +463,7 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 			if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
 				_ = s.resolve(ix.ID, proto.Resolution{Dismiss: true})
 			}
-			if ready != nil {
-				close(ready)
-			}
+			notifyReady(nil)
 			// Resumable node cards reconnect through reporter-less interaction.create requests; MCP elicitation cards
 			// are not resumable, so this branch never has a wait reporter to restore.
 			return s.await(ctx, p)
@@ -484,6 +500,7 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 		if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
 			_ = s.resolve(ix.ID, proto.Resolution{Dismiss: true})
 		}
+		notifyReady(nil)
 		// Resumable node cards reconnect through reporter-less interaction.create requests; MCP elicitation cards
 		// are not resumable, so this branch never has a wait reporter to restore.
 		return s.await(ctx, p)
@@ -579,17 +596,27 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 	if prepared != nil {
 		s.startPreparedTimer(p)
 	}
-	if ready != nil {
-		close(ready)
-	}
+	notifyReady(nil)
 	resume := pushMCPInteraction(ctx, ix)
 	defer resume()
 	return s.await(ctx, p)
 }
 
+var errAwaitRetry = errors.New("interaction answer claim was released")
+
 // await blocks on a registered interaction. When ctx ends — the node's connection is gone — a resumable
-// interaction stays pending for its hook to claim again.
+// interaction stays pending for its hook to claim again. A rejected owner
+// decision releases only its temporary claim; the waiter then arbitrates again.
 func (s *Service) await(ctx context.Context, p *pending) (proto.Resolution, error) {
+	for {
+		r, err := s.awaitOnce(ctx, p)
+		if !errors.Is(err, errAwaitRetry) {
+			return r, err
+		}
+	}
+}
+
+func (s *Service) awaitOnce(ctx context.Context, p *pending) (proto.Resolution, error) {
 	if p.prepared != nil {
 		return s.awaitPrepared(ctx, p)
 	}
@@ -626,6 +653,9 @@ func (s *Service) await(ctx context.Context, p *pending) (proto.Resolution, erro
 		attempt := p.persisting
 		s.fleet.mu.Unlock()
 		<-attempt.done
+		if attempt.retry {
+			return proto.Resolution{}, errAwaitRetry
+		}
 		if attempt.err != nil {
 			return proto.Resolution{}, attempt.err
 		}
@@ -918,17 +948,17 @@ func (s *Service) resolveApprovedAt(ctx context.Context, id string, r proto.Reso
 		ownerSession = prepared.ix.SessionID
 	}
 	s.fleet.mu.Unlock()
+	var expectation *interactionExpectation
+	if expected != nil {
+		expectation = &interactionExpectation{createdAt: expected}
+	}
 	if prepared != nil && ownerActionProposal(prepared.ix) {
-		return s.resolveOwnerProposal(ctx, prepared.ix, r, ownerActionCardProof(prepared.ix, "app"))
+		return s.resolveOwnerProposalAt(ctx, prepared.ix, r, ownerActionCardProof(prepared.ix, "app"), expectation)
 	}
 	if ownerSession != "" {
 		// The web route resolves prepared cards directly instead of through Action;
 		// preserve the same owner-activity notification as every other answer path.
 		s.ownerHeard(ownerSession)
-	}
-	var expectation *interactionExpectation
-	if expected != nil {
-		expectation = &interactionExpectation{createdAt: expected}
 	}
 	return s.resolveAnswerAt(ctx, id, r, true, nil, approver, expectation)
 }
@@ -1001,6 +1031,9 @@ func (s *Service) resolveAnswerAt(ctx context.Context, id string, r proto.Resolu
 		attempt := p.persisting
 		s.fleet.mu.Unlock()
 		<-attempt.done
+		if attempt.retry {
+			return errOwnerActionConflict
+		}
 		if attempt.err != nil {
 			return attempt.err
 		}

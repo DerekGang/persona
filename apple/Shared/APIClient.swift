@@ -1188,9 +1188,10 @@ nonisolated struct APIClient: Sendable {
         var via: MessageVia?
         var waitForEffort: Bool?
         var approvalReplyTo: String?
+        var approvalReplyCreatedAt: String?
         enum CodingKeys: String, CodingKey {
             case text, images, launcher, model, via, clientMsgID = "client_msg_id", clearDraft = "clear_draft", todoID = "todo_id"
-            case waitForEffort = "wait_for_effort", approvalReplyTo = "approval_reply_to"
+            case waitForEffort = "wait_for_effort", approvalReplyTo = "approval_reply_to", approvalReplyCreatedAt = "approval_reply_created_at"
         }
     }
     /// launcher / model switch what a headless (assistant) conversation runs on from this message on. clientMsgID
@@ -1241,7 +1242,7 @@ nonisolated struct APIClient: Sendable {
         }
         let eventID = opID.uuidString.lowercased()
         let data = try await post(sp(ix.sessionKey) + "/messages",
-                                  body: SendBody(text: phrase, clientMsgID: eventID, approvalReplyTo: ix.id),
+                                  body: SendBody(text: phrase, clientMsgID: eventID, approvalReplyTo: ix.id, approvalReplyCreatedAt: ix.createdAtWire),
                                   timeout: 100, opID: opID)
         let reply = try JSON.decoder.decode(SendReply.self, from: data)
         guard reply.approvalReply == true, reply.interactionID == ix.id else {
