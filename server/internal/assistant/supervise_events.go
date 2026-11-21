@@ -234,7 +234,7 @@ func resumes(v *Supervision) bool {
 func (s *Service) supervisedWorking(ctx context.Context, t Todo) {
 	s.autoReviewWorking(ctx, t)
 	v0 := t.Supervision
-	if st := v0.state(t); st != reviewPending && st != reviewParked && (v0 == nil || v0.Waits == nil) && !resumes(v0) {
+	if st := v0.state(t); st != reviewPending && st != reviewParked && st != reviewTimedOut && st != reviewClosing && (v0 == nil || v0.Waits == nil) && !resumes(v0) {
 		return
 	}
 	if _, _, err := s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
@@ -247,11 +247,11 @@ func (s *Service) supervisedWorking(ctx context.Context, t Todo) {
 			now := time.Now().UTC()
 			v.ResumedAt, changed = &now, true
 		}
-		if v.State != reviewPending && v.State != reviewParked && v.Waits == nil {
+		if v.State != reviewPending && v.State != reviewParked && v.State != reviewTimedOut && v.State != reviewClosing && v.Waits == nil {
 			return changed
 		}
 		v.Waits = nil // its agent goes on: the owner's answer reached it, or the work changed (#1277)
-		if v.State != reviewPending && v.State != reviewParked {
+		if v.State != reviewPending && v.State != reviewParked && v.State != reviewTimedOut && v.State != reviewClosing {
 			return true
 		}
 		v.State = ""
@@ -265,6 +265,7 @@ func (s *Service) supervisedWorking(ctx context.Context, t Todo) {
 	b := &s.supervise
 	b.mu.Lock()
 	delete(b.pending, t.ID+"|"+sigReview)
+	delete(b.pending, t.ID+"|"+sigTimedOut)
 	delete(b.pending, t.ID+"|"+sigParkedDue)
 	delete(b.pending, t.ID+"|"+sigEstimateDue)
 	b.mu.Unlock()
