@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -160,5 +161,33 @@ func TestLogicalAbsorptionFailsClosedOnConflictingRootsAndDeletion(t *testing.T)
 	rows := s.deletionRows(ctx, "connected", []proto.Session{{SessionID: "deleted-chat", Assistant: true}, {SessionID: "hidden-segment", Assistant: true}}, true)
 	if len(rows) != 1 || !rows[0].IsDeleted() || rows[0].MachineID != "connected" {
 		t.Fatalf("deletion projection after absorption: %+v", rows)
+	}
+}
+
+func TestLogicalTransportProjectionDoesNotInventPhysicalReachability(t *testing.T) {
+	s, _, st, _ := historyFixture(t)
+	ctx := t.Context()
+	for _, p := range []struct{ root, source, target, session string }{{"a-public", "a-source", "connected", "first-target"}, {"z-public", "z-source", "a-public", "second-target"}} {
+		if err := st.AdoptConversation(ctx, p.root, p.source, p.source, "claude", "history"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.BeginConversationSwitch(ctx, p.root, p.source, db.ConversationSwitch{OperationID: "switch", ExpectedEpoch: 1, SourceSegment: p.source, Request: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PrepareConversationSegment(ctx, p.root, p.source, "switch", conversationlog.Segment{ID: p.session, MachineID: p.target, SessionID: p.session, Engine: "codex"}, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.ActivateConversationSegment(ctx, p.root, p.source, "switch", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	states := s.logicalProjectStates(devicewire.States{Machines: []devicewire.State{{Machine: proto.Machine{ID: "connected"}, Connected: true}, {Machine: proto.Machine{ID: "a-public"}, Connected: false}}})
+	for _, state := range states.Machines {
+		if state.Machine.ID == "a-public" && !state.Connected {
+			t.Fatal("retained public root did not reach its own connected target")
+		}
+		if state.Machine.ID == "z-public" && state.Connected {
+			t.Fatal("another logical root's projected connection impersonated an offline physical target")
+		}
 	}
 }

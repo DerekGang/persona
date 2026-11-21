@@ -367,8 +367,10 @@ func (s *Service) logicalProjectStates(st devicewire.States) devicewire.States {
 		return st
 	}
 	index := map[string]int{}
+	physicalStates := map[string]devicewire.State{}
 	for i, state := range st.Machines {
 		index[state.Machine.ID] = i
+		physicalStates[state.Machine.ID] = state
 	}
 	// Work on copies: the devices' snapshots may be concurrently read elsewhere.
 	st.Machines = append([]devicewire.State(nil), st.Machines...)
@@ -377,26 +379,26 @@ func (s *Service) logicalProjectStates(st devicewire.States) devicewire.States {
 		if !ok {
 			continue
 		}
-		target, known := index[a.MachineID]
+		target, known := physicalStates[a.MachineID]
 		if !known {
 			if physical := s.physicalDevices(); physical != nil {
-				target, known = index[physical.Canonical(a.MachineID)]
+				target, known = physicalStates[physical.Canonical(a.MachineID)]
 			}
 		}
 		if !known {
 			continue
 		}
 		if source, exists := index[c.MachineID]; exists {
-			if !st.Machines[source].Connected && st.Machines[target].Connected {
+			if !st.Machines[source].Connected && target.Connected {
 				st.Machines[source].Connected = true
-				st.Machines[source].ConnectedAt = st.Machines[target].ConnectedAt
+				st.Machines[source].ConnectedAt = target.ConnectedAt
 				st.Machines[source].Machine.Online = true
 			}
 			continue
 		}
-		state := st.Machines[target]
+		state := target
 		state.Machine.ID = c.MachineID
-		state.TransportFor = st.Machines[target].Machine.ID
+		state.TransportFor = target.Machine.ID
 		state.Config = nil
 		state.Derived = true
 		st.Machines = append(st.Machines, state)
