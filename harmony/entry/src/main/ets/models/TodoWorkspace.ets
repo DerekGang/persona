@@ -1107,6 +1107,16 @@ export class TodoWorkspace {
     return sections;
   }
 
+  hiddenWaiting(now:number, firstWeekday:number): number {
+    if (this.dueFilter === 'all') return 0;
+    const hidden = new Set<string>();
+    this.items.forEach((item: TodoWorkspaceItem) => {
+      if (this.searchMatches(item,this.search) && !todoMatchesDue(item,this.dueFilter,now,firstWeekday) &&
+        this.hubSection(item,now) === 'needs_you') hidden.add(JSON.stringify([item.manager,item.id]));
+    });
+    return hidden.size;
+  }
+
   sections(now:number=Date.now(),firstWeekday:number=1): TodoWorkspaceSection[] {
     let visible = this.items.filter((item: TodoWorkspaceItem) => this.searchMatches(item,this.search) && todoMatchesDue(item,this.dueFilter,now,firstWeekday));
     if (this.effectiveGroup() === 'hub') return this.hubSections(visible, now);

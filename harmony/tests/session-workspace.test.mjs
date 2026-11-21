@@ -390,3 +390,26 @@ test('folder changes replace names, symlink targets and modification times as on
   assert.deepEqual(findWorkspaceFiles(indexWorkspaceFiles(['literal\\backslash.txt'],false),'literal').map(h=>h.relative),['literal\\backslash.txt']);
   workspace.hide();
 });
+
+test('commit file navigation selects the matching immutable patch, including missing, deleted and renamed paths', async () => {
+  const {commitFilePatch} = await import('../entry/src/main/ets/models/WorkspaceBrowser.ets');
+  const added = 'diff --git a/first file b/first file\n--- /dev/null\n+++ b/first file\n@@ -0,0 +1 @@\n+first';
+  const deleted = 'diff --git a/deleted b/deleted\n--- a/deleted\n+++ /dev/null\n@@ -1 +0,0 @@\n-old';
+  const renamed = 'diff --git a/old b/renamed b/prefix\nsimilarity index 100%\nrename from old\nrename to renamed b/prefix';
+  const encoded = String.raw`diff --git "a/\303\251" "b/\303\251"
+--- "a/\303\251"
++++ "b/\303\251"
+@@ -1 +1 @@
+-old
++nouveau`;
+  const patch = [added,deleted,renamed,encoded].join('\n');
+  assert.equal(commitFilePatch(patch,'first file'),added);
+  assert.equal(commitFilePatch(patch,'deleted'),deleted);
+  assert.equal(commitFilePatch(patch,'renamed b/prefix'),renamed);
+  assert.equal(commitFilePatch(patch,'é'),encoded);
+  assert.equal(commitFilePatch(patch,'prefix'),'');
+  assert.equal(commitFilePatch(patch,'missing'),'');
+  assert.equal(patchLines(added, true)[0].kind,'hunk');
+  assert.equal(patchLines('Binary files differ', true)[0].text,'Binary files differ');
+  assert.equal(patchLines(added)[0].kind,'meta');
+});

@@ -221,10 +221,21 @@ export class KnowledgeWorkspace {
   async saveEdit(): Promise<boolean> {
     const row = this.selected, client = this.client;
     if (!row.id || !client || !this.canSaveEdit()) return false;
-    const editorRevision = this.editorRevision, revision = this.revision, targetKey = row.key(), ownerName = row.manager || this.owner;
     const relevance = Number(this.editRelevance), project = row.path === 'projects';
     const body = objectPayload(['importance', 'relevance', 'tags'], [this.editImportance, relevance, cleanTags(this.editTags)]);
     if (project) { body['status'] = this.editStatus; body['project_kind'] = this.editProjectKind; }
+    return this.updateEntry(body,true);
+  }
+
+  async saveFacts(value:string):Promise<boolean> {
+    if (!this.selected.id || !this.client || this.busy || ['pending','unknown'].includes(this.writeState)) return false;
+    return this.updateEntry(objectPayload(['pinned'],[value.trim()]),false);
+  }
+
+  private async updateEntry(body:Record<string,Object>, metadata:boolean):Promise<boolean> {
+    const row=this.selected, client=this.client;
+    if (!client || !row.id) return false;
+    const editorRevision=this.editorRevision, revision=this.revision, targetKey=row.key(), ownerName=row.manager || this.owner;
     const path = '/api/v1/kb/' + segment(row.path) + '/' + segment(row.id);
     this.busy = true; this.error = ''; this.writeState = 'sending';
     let owner: KnowledgeOwner | undefined;
@@ -237,7 +248,7 @@ export class KnowledgeWorkspace {
       this.writeState = 'done';
       // An acknowledged save stays acknowledged if reading its new value back fails.
       await this.reloadDetail(owner, revision, row);
-      if (this.current(owner, revision) && editorRevision === this.editorRevision) { this.editOpen = false; this.editorDirty = false; this.clearEditorLater(owner, row); }
+      if (metadata && this.current(owner, revision) && editorRevision === this.editorRevision) { this.editOpen = false; this.editorDirty = false; this.clearEditorLater(owner, row); }
       return true;
     } catch (failure) {
       if (!owner || !this.current(owner, revision) || this.selected.key() !== targetKey) {

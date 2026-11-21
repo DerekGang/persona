@@ -13,8 +13,8 @@ import { nativeEnvironment, NativeEnvironment } from '../platform/NativeEnvironm
 import { nativeSheetInset } from '../platform/NativeInsets';
 import { DeviceLook, deviceLook } from '../models/DeviceLook';
 
-const QUICK_FILTERS: string[] = ['all', 'needsYou', 'working', 'unread', 'backgroundWaiting'];
-const QUICK_LABELS: string[] = ['all', 'needs_you', 'working', 'unread', 'agent_group_background'];
+const QUICK_FILTERS: string[] = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting'];
+const QUICK_LABELS: string[] = ['all', 'needs_you', 'agent_group_unread', 'working', 'agent_group_background'];
 const GROUPINGS: string[] = ['state', 'machine', 'space'];
 const GROUP_LABELS: Record<string, string> = {'state': 'agent_group_state', 'machine': 'agent_filter_machine', 'space': 'agent_group_space'};
 const STATE_LABELS: Record<string, string> = {'pinned': 'agent_group_pinned', 'state/needs': 'needs_you',
@@ -554,19 +554,28 @@ export struct AgentListPage {
         Scroll() {
           Row({ space: 3 }) {
             ForEach(QUICK_FILTERS, (key: string, index: number) => {
-              Button(tr(QUICK_LABELS[index]), { type: ButtonType.Capsule }).fontSize(14)
-                .fontWeight(this.workspace.quickFilter === key ? FontWeight.Bold : FontWeight.Normal)
-                .fontColor(this.workspace.quickFilter === key ? Colors.ink : Colors.secondary)
+              Button({ type: ButtonType.Capsule }) {
+                Row({space:4}) {
+                  if (key !== 'all') Circle().width(5).height(5)
+                    .fill(key === 'needsYou' ? Colors.needs : key === 'unread' ? Colors.unread : key === 'working' ? Colors.working : Colors.secondary)
+                  Text(tr(QUICK_LABELS[index])).fontSize(14)
+                    .fontWeight(this.workspace.quickFilter === key ? FontWeight.Bold : FontWeight.Normal)
+                    .fontColor(this.workspace.quickFilter === key ? Colors.link : Colors.ink).maxLines(1)
+                  if (Wire.number(this.workspace.filterCounts,key)>0) Text(String(Wire.number(this.workspace.filterCounts,key)))
+                    .fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+                }
+              }
                 .height(Math.max(32, 23 * this.environment.fontScale)).padding({ left: 11, right: 11 })
-                .backgroundColor(this.workspace.quickFilter === key ? Colors.surface : Color.Transparent)
+                .backgroundColor(this.workspace.quickFilter === key ? Colors.selection : Colors.control)
                 .accessibilityText(tr(QUICK_LABELS[index]))
+                .accessibilityDescription(Wire.number(this.workspace.filterCounts,key)>0 ? String(Wire.number(this.workspace.filterCounts,key)) : '')
                 .accessibilitySelected(this.workspace.quickFilter === key)
                 .responseRegion({ x: 0, y: -6, width: '100%', height: Math.max(44, 23 * this.environment.fontScale + 12) })
                 .onClick(() => { if (this.workspace.quickFilter !== key) this.workspace.setQuickFilter(key); }).id('agents.quick.' + key)
             }, (key: string) => key)
-          }.padding(3)
+          }.padding({left:1,right:1})
         }.layoutWeight(1).constraintSize({ minHeight: 44 }).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
-          .backgroundColor(Colors.control).borderRadius(21).id('agents.quick')
+          .id('agents.quick')
         if (this.compactRoot && !this.searchVisible()) {
           Button({type:ButtonType.Circle}) {
             SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize(Tokens.symbolFont).fontColor([Colors.link])

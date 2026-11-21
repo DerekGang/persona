@@ -44,10 +44,11 @@ test('every quick filter keeps its complete localized accessible label and appli
  const filters=source.slice(source.indexOf('  @Builder filters()'),source.indexOf('  @Builder renameForm()'));
  const keys=source.match(/const QUICK_FILTERS: string\[\] = \[([^\]]+)\]/)[1].match(/'([^']+)'/g);
  const labels=source.match(/const QUICK_LABELS: string\[\] = \[([^\]]+)\]/)[1].match(/'([^']+)'/g);
- assert.deepEqual(keys,["'all'","'needsYou'","'working'","'unread'","'backgroundWaiting'"]);
- assert.equal(labels.length, keys.length);
- assert.match(filters,/ForEach\(QUICK_FILTERS,[\s\S]*Button\(tr\(QUICK_LABELS\[index\]\)/);
+ assert.deepEqual(keys,["'all'","'needsYou'","'unread'","'working'","'backgroundWaiting'"]);
+ assert.deepEqual(labels,["'all'","'needs_you'","'agent_group_unread'","'working'","'agent_group_background'"]);
+ assert.match(filters,/ForEach\(QUICK_FILTERS,[\s\S]*Button\(\{ type: ButtonType.Capsule \}\)[\s\S]*Text\(tr\(QUICK_LABELS\[index\]\)/);
  assert.match(filters,/accessibilityText\(tr\(QUICK_LABELS\[index\]\)\)/);
+ assert.match(filters,/accessibilityDescription\(Wire.number\(this.workspace.filterCounts,key\)/);
  assert.match(filters,/accessibilitySelected\(this\.workspace\.quickFilter === key\)/);
  assert.match(filters,/responseRegion\([\s\S]*Math\.max\(44, [^)]*this\.environment\.fontScale/);
  assert.match(filters,/onClick\([\s\S]*this\.workspace\.setQuickFilter\(key\)[\s\S]*\.id\('agents\.quick\.' \+ key\)/);

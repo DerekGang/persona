@@ -27,6 +27,20 @@ function utf8Length(value: string): number {
   return bytes;
 }
 
+export async function requestRecordingMicrophone(context: Object): Promise<void> {
+  const host = context as common.UIAbilityContext;
+  const access = abilityAccessCtrl.createAtManager();
+  let status = access.getSelfPermissionStatus(MICROPHONE as Permissions);
+  if (status === abilityAccessCtrl.PermissionStatus.NOT_DETERMINED) {
+    await access.requestPermissionsFromUser(host, [MICROPHONE] as Permissions[]);
+    status = access.getSelfPermissionStatus(MICROPHONE as Permissions);
+  }
+  if (status === abilityAccessCtrl.PermissionStatus.DENIED || status === abilityAccessCtrl.PermissionStatus.RESTRICTED) {
+    throw new Error('knowledge_recording_microphone_denied');
+  }
+  if (status !== abilityAccessCtrl.PermissionStatus.GRANTED) throw new Error('knowledge_recording_microphone_denied');
+}
+
 export interface NativeRecordingStop {
   path: string;
   bytes: number;
@@ -69,19 +83,7 @@ export class NativeRecording {
     try { fileIo.statSync(this.directory); } catch (_) { fileIo.mkdirSync(this.directory, true); }
   }
 
-  async ensureMicrophonePermission(context: Object): Promise<void> {
-    const host = context as common.UIAbilityContext;
-    const access = abilityAccessCtrl.createAtManager();
-    let status = access.getSelfPermissionStatus(MICROPHONE as Permissions);
-    if (status === abilityAccessCtrl.PermissionStatus.NOT_DETERMINED) {
-      await access.requestPermissionsFromUser(host, [MICROPHONE] as Permissions[]);
-      status = access.getSelfPermissionStatus(MICROPHONE as Permissions);
-    }
-    if (status === abilityAccessCtrl.PermissionStatus.DENIED || status === abilityAccessCtrl.PermissionStatus.RESTRICTED) {
-      throw new Error('knowledge_recording_microphone_denied');
-    }
-    if (status !== abilityAccessCtrl.PermissionStatus.GRANTED) throw new Error('knowledge_recording_microphone_denied');
-  }
+  async ensureMicrophonePermission(context: Object): Promise<void> { await requestRecordingMicrophone(context); }
 
   async start(context: Object, id: string, onLimit: (reason: string) => void): Promise<string> {
     if (this.capturer || this.fileDescriptor >= 0 || !this.directory) throw new Error('recording_busy');

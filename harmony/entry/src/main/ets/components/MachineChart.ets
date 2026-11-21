@@ -1,4 +1,4 @@
-import { DashboardPoint } from '../models/MachineDashboard';
+import { DashboardPoint, dashboardTimeTicks } from '../models/MachineDashboard';
 
 @ComponentV2
 export struct MachineChart {
@@ -30,8 +30,8 @@ export struct MachineChart {
     const ctx = this.ctx, width = this.plotWidth-1, height = this.chartHeight-1;
     ctx.strokeStyle = this.dark ? '#2C2C2A' : '#E1E0D9'; ctx.lineWidth = 0.6;
     ctx.beginPath();
-    for (let i = 0; i <= 3; i++) {
-      const x = 1 + (width-1)*i/3;
+    for (const time of dashboardTimeTicks(this.end,this.seconds)) {
+      const x = this.x(time);
       ctx.moveTo(x,1); ctx.lineTo(x,height);
     }
     for (let i = 0; i <= 2; i++) {

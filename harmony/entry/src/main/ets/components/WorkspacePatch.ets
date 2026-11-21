@@ -4,8 +4,9 @@ import { PatchLine, patchLines } from '../models/WorkspaceBrowser';
 @ComponentV2
 export struct WorkspacePatch {
   @Require @Param patch:string;
+  @Param fileOnly:boolean = false;
   @Local available:number = 320;
-  @Computed get lines():PatchLine[] { return patchLines(this.patch); }
+  @Computed get lines():PatchLine[] { return patchLines(this.patch, this.fileOnly); }
   @Computed get contentWidth():number {
     const columns=this.lines.reduce((n:number,line:PatchLine) => Math.max(n,line.text.length),0);
     return Math.max(this.available,Math.min(12000,columns*8.2+84));

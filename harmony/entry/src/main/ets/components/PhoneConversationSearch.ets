@@ -10,6 +10,7 @@ export struct PhoneConversationSearch {
   @Require @Param model: ClientModel;
   @Param initialAgents: boolean = false;
   @Param inline: boolean = false;
+  @Param showScopes: boolean = true;
   @Event onCancel: () => void = () => {};
   @Event onOpen: (row: ResourceRow,hit:string) => void = () => {};
   @Local query: string = '';
@@ -23,6 +24,10 @@ export struct PhoneConversationSearch {
   @Computed get rows(): PhoneChatMatch[] {
     const rows = this.agents ? this.model.directorySessions : this.model.conversations;
     return mergeChatMatches(localChatMatches(rows,this.query,this.agents),this.agents ? [] : this.search.matches);
+  }
+  private main(hit:PhoneChatMatch):boolean {
+    return !this.agents && !!this.model.mainId && hit.row.id===this.model.mainId &&
+      (!this.model.mainMachineId || hit.row.machine===this.model.mainMachineId);
   }
   @Builder fieldBar() {
     Row({space:8}) {
@@ -50,21 +55,26 @@ export struct PhoneConversationSearch {
       else Row() {
         Text(tr('flow_all_chats')).fontSize(29).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       }.width('100%').padding({left:16,right:16,top:12,bottom:8})
-      Row() { this.scopeButton(false,'persona'); this.scopeButton(true,'agents') }
+      if (this.showScopes) Row() { this.scopeButton(false,'persona'); this.scopeButton(true,'agents') }
         .height(35).padding(2).margin({left:12,right:12,top:3,bottom:5}).width('92%').backgroundColor(Colors.control).borderRadius(18)
       List() {
+        if (this.rows.length && this.query.trim()) ListItem() {
+          Text(tr(this.agents ? 'project_agent_count' : 'phone_search_conversation_count').replace('{count}',String(this.rows.length)))
+            .fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:15,right:12,top:7,bottom:5})
+        }
         if (this.search.busy) ListItem() { LoadingProgress().width(23).height(23).margin(10) }
         if (!this.rows.length && !this.search.busy) ListItem() { Text(tr(this.query ? 'no_results' : 'empty')).fontSize(15).fontColor(Colors.secondary).padding(16) }
         ForEach(this.rows,(hit:PhoneChatMatch) => {
           ListItem() {
             Row({space:10}) {
-              SymbolGlyph(this.agents ? Symbols.agent : Symbols.persona).fontSize(19).fontColor([Colors.secondary])
+              SymbolGlyph(this.agents ? Symbols.agent : this.main(hit) ? $r('sys.symbol.house') : Symbols.persona).fontSize(19).fontColor([Colors.secondary])
               Column({space:3}) {
-                Text(hit.row.title || tr('persona')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
-                if (hit.subtitle) Text(hit.subtitle).fontSize(13).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+                Text(this.main(hit) ? tr('main_chat') : hit.row.title || tr('persona')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+                if (hit.subtitle) Text(hit.subtitle).fontSize(14).fontColor(Colors.secondary).maxLines(this.inline ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
               }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-              SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+              if (!this.inline) SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
             }.width('100%').constraintSize({minHeight:48}).padding({left:13,right:12,top:8,bottom:8})
+              .backgroundColor(this.inline ? Colors.subtle : Colors.surface).borderRadius(this.inline ? 12 : 0)
           }.onClick(() => this.onOpen(hit.row,hit.hitId)).accessibilityGroup(true).id('phone_search.result')
         },(hit:PhoneChatMatch) => JSON.stringify([hit.row.key(),hit.row.title,hit.subtitle]))
         if (this.search.partial || this.search.failed) ListItem() {

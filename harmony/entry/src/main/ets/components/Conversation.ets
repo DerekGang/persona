@@ -1,3 +1,4 @@
+import { PhoneDictationControl } from './PhoneDictationControl';
 import { ConversationRecap } from './ConversationRecap';
 import { AssistantWelcome } from './AssistantWelcome';
 import { IconActions } from '../design/IconActions';
@@ -353,6 +354,16 @@ export struct Conversation {
   @Local controlsHeight: number = 80;
   @Local measuredDecision: string = '';
   @Local fieldFocused: boolean = false;
+  @Local draftEditorOpen: boolean = false;
+  @Local draftEditorFocused: boolean = false;
+  private inlineField: TextAreaController = new TextAreaController();
+  private pageField: TextAreaController = new TextAreaController();
+  private draftEditorOwner: string = '';
+  private selectionStart: number = 0;
+  private selectionEnd: number = 0;
+  private parkedStart: number = 0;
+  private parkedEnd: number = 0;
+  private refocusInline: boolean = false;
   @Local composerWidth: number = 360;
   @Local questions: QuestionWorkspace = new QuestionWorkspace();
   @Local questionInset: number = 0;
@@ -375,16 +386,20 @@ export struct Conversation {
   private attachmentNodeId: string = 'chat.attachment.' + util.generateRandomUUID();
   private attachmentLayoutReady: boolean = false;
   private leftActionWidth(): number { const count = (this.model.demo ? 0 : 1) + (this.showContextMenu ? 1 : 0); return count * Tokens.touch + Math.max(0, count - 1) * Tokens.gap; }
+  private hasComposerAction(): boolean {
+    return this.primaryStop() || this.sending || !!this.model.draft.trim() || this.attachments.attachments.length > 0 || !!this.model.sourceContext;
+  }
+  private trailingActionWidth(): number { return Tokens.touch * (this.hasComposerAction() ? 2 : 1); }
   private expandedComposer(): boolean {
     const leading = this.leftActionWidth();
-    const available = this.composerWidth - leading - Tokens.touch - (leading ? 2 : 1) * Tokens.gap;
+    const available = this.composerWidth - leading - this.trailingActionWidth() - (leading ? 2 : 1) * Tokens.gap;
     return this.fieldFocused || this.model.draft.length > 0 || this.attachments.attachments.length > 0 ||
       !!this.model.sourceContext || this.environment.fontScale >= 1.5 || available < Tokens.minimumInput;
   }
   private verticalActions(): boolean { return this.environment.fontScale >= 1.5 || this.composerWidth < Tokens.composerNarrowActions; }
   // Native ordering keeps the same editor mounted. Compact slots use pixel precision, not twelfths of the row.
   private composerColumns(): number { return this.expandedComposer() ? 12 : Math.max(1, Math.round(this.getUIContext().vp2px(this.composerWidth))); }
-  private sendColumns(): number { const width = Tokens.touch + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
+  private sendColumns(): number { const width = this.trailingActionWidth() + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
   private leftColumns(): number { const width = this.leftActionWidth(); return Math.ceil((width + (width && !this.expandedComposer() ? Tokens.gap : 0)) * this.composerColumns() / this.composerWidth); }
   private primaryStop(): boolean { return !this.model.decision && this.model.canCompose() && this.model.canStop() && !this.model.draft.trim() && !this.attachments.attachments.length; }
   @Monitor('active', 'model.selected', 'model.sessions', 'model.connected', 'model.draft', 'model.decision', 'attachments.attachments', 'model.interruptPendingKey')
@@ -616,6 +631,60 @@ export struct Conversation {
     if (this.primaryStop()) return 'stop';
     if (this.model.stopPending() || this.sending || this.model.operationState === 'pending') return 'pending';
     return this.model.operationState === 'unknown' ? 'result_unknown' : 'send';
+  }
+  private offersDraftEditor(): boolean {
+    return this.fieldFocused || (this.model.draft.length > 0 && (this.model.draft.includes('\n') ||
+      this.editorHeight >= 5.5 * Tokens.lineHeight * Math.max(1, this.environment.fontScale) + Tokens.section));
+  }
+  private draftEditorCurrent(): boolean {
+    return !!this.draftEditorOwner && this.sendCurrent() && this.composerAvailable() &&
+      this.draftEditorOwner === this.composerOwnerKey();
+  }
+  private rememberSelection(start: number, end: number): void {
+    if (start >= 0 && end >= start) { this.selectionStart = start; this.selectionEnd = end; }
+  }
+  private parkSelection(): void { this.parkedStart = this.selectionStart; this.parkedEnd = this.selectionEnd; }
+  private restoreSelection(field: TextAreaController): void {
+    const length = this.model.draft.length;
+    field.setTextSelection(Math.min(this.parkedStart, length), Math.min(this.parkedEnd, length));
+  }
+  private finishPageInput(): void { this.parkSelection(); this.pageField.stopEditing(); }
+  private expandDraftEditor(): void {
+    if (!this.sendCurrent() || !this.composerAvailable() || this.sending || this.model.draftLoading) return;
+    this.draftEditorOwner = this.composerOwnerKey();
+    this.refocusInline = this.fieldFocused;
+    this.parkSelection();
+    this.inlineField.stopEditing();
+    this.draftEditorOpen = true;
+  }
+  private focusDraftPage(): void {
+    const owner = this.draftEditorOwner;
+    this.getUIContext().postFrameCallback(new ConversationFrame(() => {
+      if (this.draftEditorOpen && this.draftEditorOwner === owner && this.draftEditorCurrent()) {
+        this.getUIContext().getFocusController().requestFocus('chat.editor.input');
+        this.restoreSelection(this.pageField);
+      }
+    }));
+  }
+  private draftPageGone(): void {
+    const owner = this.draftEditorOwner;
+    const focus = this.refocusInline && this.draftEditorCurrent();
+    this.draftEditorFocused = false; this.refocusInline = false; this.draftEditorOwner = '';
+    if (focus) this.getUIContext().postFrameCallback(new ConversationFrame(() => {
+      if (!this.draftEditorOpen && this.sendCurrent() && this.composerAvailable() && owner === this.composerOwnerKey()) {
+        this.getUIContext().getFocusController().requestFocus('chat.input');
+        this.restoreSelection(this.inlineField);
+      }
+    }));
+  }
+  @Monitor('active', 'model.selected', 'model.profile', 'model.connected', 'model.decision')
+  draftEditorContextChanged(): void {
+    if (this.draftEditorOpen && !this.draftEditorCurrent()) { this.refocusInline = false; this.draftEditorOpen = false; }
+  }
+  private primaryEnabled(): boolean {
+    return this.sendCurrent() && (this.primaryStop() || this.model.canSend() && !this.model.stopPending() && !this.sending &&
+      !this.attachments.busy && !this.model.draftLoading && (this.model.draft.trim().length > 0 || this.attachments.attachments.length > 0) &&
+      this.model.operationState !== 'pending' && this.model.operationState !== 'unknown');
   }
   private sendCurrent(): boolean { return this.mounted && this.active && this.admission(); }
   private async sendDraft(): Promise<void> {
@@ -1004,6 +1073,48 @@ export struct Conversation {
       .onAreaChange(() => this.measureQuestion())
   }
 
+  @Builder hideKeyboard(page: boolean) {
+    Button({type:ButtonType.Circle}) {
+      SymbolGlyph($r('sys.symbol.keyboard')).fontSize(19).fontColor([Colors.secondary])
+    }.width(44).height(44).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_chat_hide_keyboard'))
+      .bindTips(tr('phone_chat_hide_keyboard')).id(page ? 'chat.editor.keyboard' : 'chat.keyboard')
+      .onClick(() => { if (page) this.pageField.stopEditing(); else this.inlineField.stopEditing(); })
+  }
+  @Builder draftPage() {
+    Column({space:8}) {
+      Row({space:8}) {
+        Button({type:ButtonType.Circle}) {
+          SymbolGlyph($r('sys.symbol.arrow_down_right_and_arrow_up_left')).fontSize(19).fontColor([Colors.ink])
+        }.width(44).height(44).padding(0).backgroundColor(Colors.control).accessibilityText(tr('phone_chat_close_editor'))
+          .onClick(() => { this.finishPageInput(); this.draftEditorOpen=false; }).id('chat.editor.collapse')
+        Blank().layoutWeight(1)
+        if (this.draftEditorFocused || this.environment.keyboardHeightPx > 0) this.hideKeyboard(true)
+      }.width('100%')
+      if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).fontColor(Colors.secondary)
+        .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
+      TextArea({text:this.model.draft,placeholder:tr('message'),controller:this.pageField})
+        .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(Tokens.body).fontColor(Colors.ink)
+        .lineHeight(String(Tokens.lineHeight)+'fp').backgroundColor(Color.Transparent).caretColor(Colors.link)
+        .padding({left:8,right:8,top:5,bottom:5}).enabled(!this.sending && !this.model.draftLoading)
+        .onFocus(() => this.draftEditorFocused=true).onBlur(() => this.draftEditorFocused=false)
+        .onTextSelectionChange((start:number,end:number) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.rememberSelection(start,end); })
+        .onChange((text:string) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.model.updateDraft(text); })
+        .id('chat.editor.input')
+      Row() {
+        Blank().layoutWeight(1)
+        Button({type:ButtonType.Circle}) {
+          SymbolGlyph(this.primaryStop() ? Symbols.stop : IconActions.symbol('send')).fontSize(Tokens.symbolFont).fontColor([Colors.onAction])
+        }.width(44).height(44).backgroundColor(Colors.action).accessibilityText(tr(this.primaryActionKey()))
+          .enabled(this.draftEditorCurrent() && this.primaryEnabled()).id('chat.editor.send')
+          .onClick(() => {
+            if (!this.draftEditorCurrent() || !this.primaryEnabled()) return;
+            if (this.primaryStop()) { this.model.stop(() => this.draftEditorCurrent()); return; }
+            this.refocusInline=false; this.pageField.stopEditing(); this.draftEditorOpen=false; this.sendDraft();
+          })
+      }.width('100%')
+    }.width('100%').height('100%').padding({left:Tokens.page,right:Tokens.page,top:Tokens.inset,bottom:Tokens.page})
+      .backgroundColor(Colors.surface).id('chat.editor')
+  }
   @Builder composer() {
     Column({ space: Tokens.gap }) {
       AttachmentStrip({ attachments: this.attachments.attachments, errorKey: this.attachments.errorKey, actionsEnabled: !this.sending && !this.attachments.busy,
@@ -1014,14 +1125,27 @@ export struct Conversation {
       }.width('100%')
       GridRow({ columns: this.composerColumns(), gutter: { x: 0, y: 0 } }) {
         GridCol({ span: this.expandedComposer() ? this.composerColumns() : this.composerColumns() - this.leftColumns() - this.sendColumns(), order: this.expandedComposer() ? 0 : 1 }) {
-          TextArea({ text: this.model.draft, placeholder: this.model.agentInputNotice() === 'agent_computer_holds' ? this.agentNotice() : tr('message') }).maxLength(Tokens.maxMessage).width('100%')
+          Stack({alignContent:Alignment.TopEnd}) {
+          TextArea({ text: this.model.draft, controller:this.inlineField, placeholder: this.model.agentInputNotice() === 'agent_computer_holds' ? this.agentNotice() : tr('message') }).maxLength(Tokens.maxMessage).width('100%')
             .fontSize(Tokens.body).placeholderFont({ size: Tokens.body }).fontColor(Colors.ink).placeholderColor(Colors.secondary)
             .lineHeight(String(Tokens.lineHeight) + 'fp').caretColor(Colors.action).backgroundColor(Color.Transparent)
-            .padding({ left: this.expandedComposer() ? Tokens.page : Tokens.gap, right: this.expandedComposer() ? Tokens.page : Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
+            .padding({ left: this.expandedComposer() ? Tokens.page : Tokens.gap, right: this.offersDraftEditor() ? Tokens.touch : this.expandedComposer() ? Tokens.page : Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
             .constraintSize({ minHeight: Tokens.touch, maxHeight: 6 * Tokens.lineHeight * Math.max(1, this.environment.fontScale) + Tokens.section })
             .height(this.expandedComposer() ? undefined : Tokens.touch)
             .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
-            .onChange((value: string) => this.model.updateDraft(value)).id('chat.input')
+            .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
+            .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
+            if (this.offersDraftEditor()) {
+              Button({type:ButtonType.Circle}) {
+                SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize(17).fontColor([Colors.ink])
+              }.width(40).height(40).padding(0).backgroundColor(Color.Transparent)
+                .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('phone_chat_expand_editor')).bindTips(tr('phone_chat_expand_editor'))
+                .onClick(() => this.expandDraftEditor()).id('chat.expand')
+            }
+          }.width('100%').bindSheet($$this.draftEditorOpen,this.draftPage(),
+            {height:SheetSize.LARGE,showClose:false,keyboardAvoidMode:SheetKeyboardAvoidMode.RESIZE_ONLY,
+              onAppear:() => this.focusDraftPage(),onWillDismiss:(action:DismissSheetAction) => { this.finishPageInput(); action.dismiss(); },
+              onDisappear:() => this.draftPageGone()})
         }.id(this.editorAnchorId)
           .onAreaChange((_old: Area, area: Area) => { this.editorLeft = Number(area.globalPosition.x); this.editorTop = Number(area.globalPosition.y); this.editorWidth = Number(area.width); this.editorHeight = Number(area.height); })
           .bindPopup(this.chooser.shown && this.chooser.session?.preserveInput === true, this.chooserPopupOptions())
@@ -1035,23 +1159,34 @@ export struct Conversation {
               .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick((event: ClickEvent) => this.openComposerActions(event))
               .parallelGesture(LongPressGesture().onAction(() => this.requestComposerActions(false)))
               .bindContextMenu(this.nativeChooser('actions'), this.attachmentNativeMenu, this.actionContextMenuOptions()).id('chat.more')
+            if (this.verticalActions() && (this.fieldFocused || this.environment.keyboardHeightPx > 0)) this.hideKeyboard(false)
           }.width('100%').constraintSize({ minHeight: Tokens.touch }).alignItems(VerticalAlign.Center)
         }
         if (this.expandedComposer() && !this.verticalActions()) GridCol({ span: this.composerColumns() - this.leftColumns() - this.sendColumns(), order: 3 }) {
           Row() {
+            if (this.fieldFocused || this.environment.keyboardHeightPx > 0) this.hideKeyboard(false)
             Blank().layoutWeight(1)
-
           }.width('100%').constraintSize({ minHeight: Tokens.touch })
         }
         GridCol({ span: this.verticalActions() ? this.composerColumns() : this.sendColumns(), order: this.expandedComposer() ? this.verticalActions() ? 1 : 4 : 2 }) {
           Row() {
-          Button({ type: ButtonType.Circle }) {
+          PhoneDictationControl({owner: JSON.stringify([this.model.connectionGeneration(), this.model.scope(), this.model.target()]),
+            active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
+            allowed: () => this.sendCurrent() && this.model.canCompose() && !this.model.decision,
+            keyboard: () => this.getUIContext().getFocusController().requestFocus('chat.input'),
+            insert: (text: string): boolean => {
+              if (!this.sendCurrent() || !this.model.canCompose() || this.model.draftLoading || this.sending) return false;
+              const draft = this.model.draft, separator = /[a-zA-Z0-9]$/.test(draft) ? ' ' : '';
+              if (draft.length + separator.length + text.length > Tokens.maxMessage) return false;
+              this.model.updateDraft(draft + separator + text);
+              return true;
+            }})
+          if (this.hasComposerAction()) Button({ type: ButtonType.Circle }) {
             if (IconActions.busy(this.primaryActionKey())) LoadingProgress().width(Tokens.symbol).height(Tokens.symbol).color(Colors.onAction)
             else SymbolGlyph(this.primaryActionKey() === 'stop' ? Symbols.stop : IconActions.symbol(this.primaryActionKey())).fontSize(Tokens.symbolFont).fontColor([Colors.onAction])
           }.accessibilityText(tr(this.primaryActionKey())).attributeModifier(ButtonStyles.primary).padding(0).width(this.environment.fontScale >= 1.5 ? 44 : 34).height(this.environment.fontScale >= 1.5 ? 44 : 34)
             .responseRegion({x:-5,y:-5,width:44,height:44})
-            .enabled(this.sendCurrent() && (this.primaryStop() || this.model.canSend() && !this.model.stopPending() && !this.sending && !this.attachments.busy && !this.model.draftLoading &&
-              (this.model.draft.trim().length > 0 || this.attachments.attachments.length > 0) && this.model.operationState !== 'pending' && this.model.operationState !== 'unknown'))
+            .enabled(this.primaryEnabled())
             .onClick(() => { if (!this.sendCurrent()) return; if (this.primaryStop()) this.model.stop(() => this.sendCurrent()); else this.sendDraft(); }).id('chat.send')
           }.width('100%').height(Tokens.touch).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End).padding({right:3})
         }

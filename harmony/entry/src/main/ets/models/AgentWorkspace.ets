@@ -93,6 +93,7 @@ class AgentPreferences {
 export class AgentWorkspace {
   @Trace groups: AgentWorkspaceGroup[] = [];
   @Trace quickFilter: string = 'all';
+  @Trace filterCounts:Record<string,Object> = {};
   @Trace groupingMode: string = 'state';
   @Trace machineFilter: string = '';
   @Trace currentHubOnly: boolean = false;
@@ -180,7 +181,7 @@ export class AgentWorkspace {
     this.viewScope = JSON.stringify([this.scope, this.owner]);
     this.openingView = true; this.loading = true; this.busy = false; this.error = '';
     this.externalSelection = undefined; this.groups = []; this.sourceRows = []; this.latestSourceRows = []; this.historyRows = []; this.historyLoaded = false; this.frozenGroups = undefined;
-    this.quickFilter = 'all'; this.groupingMode = 'state'; this.machineFilter = ''; this.search = ''; this.history = false; this.selectedKey = '';
+    this.quickFilter = 'all'; this.filterCounts = {}; this.groupingMode = 'state'; this.machineFilter = ''; this.search = ''; this.history = false; this.selectedKey = '';
     this.readingDetail = false; this.freezeSuppressed = false;
     this.preferences.clear(); this.pinsSpaces = []; this.pinsSessions = []; this.mutesSpaces = []; this.mutesSessions = []; this.mutesAllowed = [];
     try {
@@ -219,6 +220,7 @@ export class AgentWorkspace {
   }
 
   hide(): void {
+    this.filterCounts = {};
     this.revision++; this.openingView = false; this.client = undefined; this.groups = []; this.sourceRows = []; this.latestSourceRows = []; this.historyRows = []; this.historyLoaded = false;
     this.frozenGroups = undefined; this.readingDetail = false;
     if (this.persistTimer !== -1) clearTimeout(this.persistTimer);
@@ -744,7 +746,9 @@ export class AgentWorkspace {
   private rebuild(): void {
     let groups: CoreAgentListGroup[];
     try {
-      groups = this.adapter.project(this.makeListInput()).groups;
+      const projection = this.adapter.project(this.makeListInput());
+      groups = projection.groups;
+      this.filterCounts = projection.counts;
     } catch (_) {
       // Preserve both rows and action authority from the same successful snapshot.
       this.error = 'failed';

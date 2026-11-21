@@ -19,10 +19,10 @@ function method(name) {
   return source.slice(start, i);
 }
 const Composer = new Function('Tokens', 'return ' + stripTypeScriptTypes('class Composer {' +
-  ['leftActionWidth', 'expandedComposer', 'composerColumns', 'sendColumns', 'leftColumns'].map(method).join('\n') + '}'))(Tokens);
+  ['hasComposerAction', 'trailingActionWidth', 'leftActionWidth', 'expandedComposer', 'composerColumns', 'sendColumns', 'leftColumns'].map(method).join('\n') + '}'))(Tokens);
 function fixture(density = 3, width = 372) {
   return Object.assign(new Composer(), {
-    composerWidth: width, fieldFocused: false, model: { demo: false, draft: '' },
+    composerWidth: width, fieldFocused: false, primaryStop: () => false, sending: false, model: { demo: false, draft: '' },
     attachments: { attachments: [] }, environment: { fontScale: 1 }, showContextMenu: true,
     getUIContext: () => ({ vp2px: value => value * density })
   });
@@ -79,4 +79,20 @@ test('a blurred empty composer returns to one line, with enough space for the ke
     assert.equal(narrow.expandedComposer(), true);
     assert.equal(narrow.composerColumns(), 12);
   }
+});
+
+test('a draft can expand above the keyboard, while a short unfocused draft keeps its quiet shape', () => {
+  const Editor = new Function('Tokens','return '+stripTypeScriptTypes('class Editor {'+
+    ['offersDraftEditor','rememberSelection','parkSelection','restoreSelection','draftEditorCurrent'].map(method).join('\n')+'}'))(Tokens);
+  const v = Object.assign(new Editor(), {fieldFocused:false, model:{draft:'Review PR 42'}, editorHeight:48,
+    environment:{fontScale:1}, draftEditorOwner:'hubA/review', sendCurrent:()=>true,composerAvailable:()=>true,
+    composerOwnerKey:()=>'hubA/review'});
+  assert.equal(v.offersDraftEditor(),false);v.fieldFocused=true;assert.equal(v.offersDraftEditor(),true);
+  v.fieldFocused=false;v.model.draft='a\nb';assert.equal(v.offersDraftEditor(),true);
+  v.model.draft='wrapped';v.editorHeight=167;assert.equal(v.offersDraftEditor(),true);
+  v.rememberSelection(1,6);v.parkSelection();v.rememberSelection(0,0);
+  v.model.draft='abc';let restored;
+  v.restoreSelection({setTextSelection:(...range)=>{restored=range;}});
+  assert.deepEqual(restored,[1,3]);assert.equal(v.draftEditorCurrent(),true);
+  v.composerOwnerKey=()=>'hubB/review';assert.equal(v.draftEditorCurrent(),false);
 });

@@ -14,6 +14,7 @@ import { ProjectsPage } from '../components/ProjectsPage';
 import { IconActions } from '../design/IconActions';
 import { ThemeScope } from '../design/ThemeScope';
 import { util } from '@kit.ArkTS';
+import { PhoneAgentSettingsPage } from '../components/PhoneAgentSettingsPage';
 import { AdminWorkspacePage } from '../components/AdminWorkspacePage';
 import { ExtensionPage } from '../components/ExtensionPage';
 import { ExtensionNavigationPage } from '../components/ExtensionNavigationPage';
@@ -328,6 +329,11 @@ struct Index {
   }
   private settlePhoneDrawer(open:boolean): void {
     const revision = ++this.drawerAnimation;
+    if (this.environment.reduceMotion) {
+      this.drawerFraction = open ? 1 : 0;
+      this.drawerMounted = open;
+      return;
+    }
     if (open) this.drawerMounted = true;
     this.getUIContext().animateTo({duration:230,curve:Curve.EaseOut,onFinish:() => {
       if (revision === this.drawerAnimation && !this.spacesShown) this.drawerMounted = false;
@@ -351,6 +357,7 @@ struct Index {
     return this.wide() || this.spacesShown && this.gestureKind !== 'close' && Date.now() >= this.drawerTapBlockedUntil;
   }
   private movePhonePan(dx:number): void {
+    if (this.environment.reduceMotion) return;
     if (this.gestureKind === 'open' || this.gestureKind === 'close')
       this.drawerFraction = Math.max(0,Math.min(1,this.drawerFrom + dx / this.drawerWidth()));
   }
@@ -368,13 +375,22 @@ struct Index {
       else this.settlePhoneDrawer(open);
     } else if (done && this.phonePeer()) this.browsePeer(kind === 'agents' ? 1 : 0);
   }
+  @Computed get phoneToolParent(): string {
+    const parent = this.phonePath.length - 2;
+    if (this.phoneTop !== 'tools' || parent < 0 || this.phonePath[parent] !== 'session') return '';
+    const value = this.stack.getParamByIndex(parent);
+    if (typeof value !== 'string') return '';
+    return this.routeRow(value).key() === this.routeRow(this.phoneParam).key() ? value : '';
+  }
   private phonePageName():string {
+    if (this.phoneToolParent) return this.chatTitle(this.phoneToolParent);
     if (this.phoneTop) return this.destinationTitleText(this.phoneTop,this.phoneParam);
     return tr(this.model.section === 4 ? 'projects' : this.model.section === 1 ? 'agents' : 'persona');
   }
   @Computed get phoneSessionSpace():SessionSpace {
-    if (this.phoneTop !== 'session' || this.activeChild !== this.childKey('session',this.phoneParam) ||
-      !this.targetReady('session',this.phoneParam) || !this.detailModel.connected) return new SessionSpace();
+    const name = this.phoneTop;
+    if ((name !== 'session' && !this.phoneToolParent) || this.activeChild !== this.childKey(name,this.phoneParam) ||
+      !this.targetReady(name,this.phoneParam) || !this.detailModel.connected) return new SessionSpace();
     const owner = this.detailModel;
     return sessionSpace(owner.selected,owner.sessions,this.projectCatalog.projects,owner.profile.id,owner.profile.manager);
   }
@@ -384,17 +400,20 @@ struct Index {
     const tab = space.tabs.find((item:SessionSpaceTab) => item.id === id);
     if (!tab) return;
     const top = this.stack.size()-1;
-    if (this.stack.getAllPathName()[top] !== 'session' || this.stack.getParamByIndex(top) !== this.phoneParam) return;
-    const old = this.routeRow(this.phoneParam), target = this.routeTarget(tab.row,Wire.bool(old.data(),'navigation_root'));
+    const parent = this.phoneToolParent, name = parent ? 'tools' : 'session';
+    if (this.stack.getAllPathName()[top] !== name || this.stack.getParamByIndex(top) !== this.phoneParam) return;
+    const old = this.routeRow(parent || this.phoneParam), target = this.routeTarget(tab.row,Wire.bool(old.data(),'navigation_root'));
     target.group = this.detailModel.profile.id; target.manager = this.detailModel.profile.manager;
     if (this.model.section === 4) this.projectCatalog.browser.selectedSession = target.key();
     this.pendingSearchTarget = ''; this.pendingSearchHit = ''; this.chatReady = false; this.detailRoute = ''; this.tool = 0;
+    if (parent) this.stack.pop(false);
     this.stack.replacePath({name:'session',param:JSON.stringify(target)},false);
     this.savePath();
   }
   private phoneLargeTitle():boolean {
     if (!this.phoneTop) return this.mergedPhone() && (this.model.section === 1 || this.model.section === 4);
-    return ['project','resources','recordings','applications','knowledge_meetings'].includes(this.phoneTop) ||
+    return ['project','applications'].includes(this.phoneTop) ||
+      this.phoneTop === 'resources' && this.phoneParam === 'health' ||
       this.phoneTop === 'settings' && this.phonePath.length === 1 && ['machines','schedules'].includes(this.settingsKind(this.phoneParam));
   }
   private returnToPhoneSettings(): boolean {
@@ -444,7 +463,7 @@ struct Index {
             this.placeButton('agents', 1, 'shell.agents', () => this.browsePeer(1))
           }.padding(3).borderRadius(18).backgroundColor(Colors.control)
           Blank().layoutWeight(1)
-        } else if (this.phoneTop === 'session' && this.phoneSessionSpace.title) {
+        } else if ((this.phoneTop === 'session' || this.phoneToolParent) && this.phoneSessionSpace.title) {
           Column({space:2}) {
             Text(this.phonePageName()).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
               .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
@@ -464,10 +483,10 @@ struct Index {
           this.destinationMenus(this.shownName, this.shownParam)
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(36)
       }.width('100%').height(46).padding({left:12,right:12}).alignItems(VerticalAlign.Center)
-      if (this.phoneTop === 'session' && this.activeChild && this.targetReady(this.phoneTop,this.phoneParam) && this.detailModel.selected.machine) {
+      if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild && this.targetReady(this.phoneTop,this.phoneParam) && this.detailModel.selected.machine) {
         if (this.phoneSessionSpace.tabs.length) SessionSpaceTabs({space:this.phoneSessionSpace,
           onPick:(key:string,from:string,id:string) => this.switchSessionTab(key,from,id)})
-        Row({space:3}) {
+        if (this.phoneTop === 'session') Row({space:3}) {
           this.sessionMode(tr('chat'),Symbols.persona,-1)
           this.sessionMode(tr('terminal'),Symbols.device,2)
           this.sessionMode(tr('git'),Symbols.apps,1)
@@ -738,10 +757,10 @@ struct Index {
       .finally(() => { const remaining = (this.creatingConversations.get(ownerKey) || 1) - 1; if (remaining) this.creatingConversations.set(ownerKey, remaining); else this.creatingConversations.delete(ownerKey); });
   }
   private openResources(kind: string): void { this.resourceKind = kind; this.model.listResources(kind); this.stack.pushPath({ name: 'resources', param: kind }); this.savePath(); }
-  private openSettings(page: string, contextual: boolean = false): void { if (page === 'appearance') this.ensureAgentWorkspace(); this.settingsPage = page; this.stack.pushPath({ name: 'settings', param: NavigationContext.settings(page, contextual ? this.detailModel.selected : undefined) }); this.savePath(); }
+  private openSettings(page: string, contextual: boolean = false): void { if (page === 'appearance' || page === 'phone_agent_layout') this.ensureAgentWorkspace(); this.settingsPage = page; this.stack.pushPath({ name: 'settings', param: NavigationContext.settings(page, contextual ? this.detailModel.selected : undefined) }); this.savePath(); }
   private settingsFamily(page: string): string { return ['extension_detail', 'extension_catalog'].includes(page) ? 'extensions' : page === 'connector_detail' ? 'connectors' : page === 'channel_detail' ? 'channels' : page; }
-  private isAdminPage(page: string): boolean { return ['assistant', 'memory', 'managers', 'launchers', 'engine', 'hub_update', 'node_update'].includes(page); }
-  private settingsLabel(page: string): string { return page === 'phone_agent_options' ? 'agent' : page === 'phone_language_options' ? 'settings_language_options_title' : page === 'ssh' ? 'ssh_settings' : page === 'assistant' ? 'admin_identity' : page === 'memory' ? 'admin_memory' : page === 'managers' ? 'admin_managers' : page === 'launchers' ? 'admin_launchers' : page === 'engine' ? 'admin_machine_engine' : page === 'hub_update' ? 'admin_hub_update' : page === 'node_update' ? 'admin_node_update' : page; }
+  private isAdminPage(page: string): boolean { return ['assistant', 'memory', 'managers', 'phone_new_assistant', 'launchers', 'engine', 'hub_update', 'node_update'].includes(page); }
+  private settingsLabel(page: string): string { return page === 'phone_new_assistant' ? 'admin_new_manager' : page === 'phone_agent_options' ? 'agent' : page === 'phone_language_options' ? 'settings_language_options_title' : page === 'ssh' ? 'ssh_settings' : page === 'assistant' ? 'admin_identity' : page === 'memory' ? 'admin_memory' : page === 'managers' ? 'admin_managers' : page === 'launchers' ? 'admin_launchers' : page === 'engine' ? 'admin_machine_engine' : page === 'hub_update' ? 'admin_hub_update' : page === 'node_update' ? 'admin_node_update' : page; }
   private adminMenus(name: string, param: Object): NavigationMenuItem[] { return [{ value: tr('refresh'), symbolIcon: new SymbolGlyphModifier($r('sys.symbol.arrow_clockwise')), action: () => { if (this.activeChild === this.childKey(name, param)) this.adminRefreshRevision++; } }]; }
   private settingsTitle(param: Object): string { const descriptor = NavigationContext.from('settings', param as string); return descriptor.scoped && ['extension_detail', 'connector_detail', 'channel_detail', 'extension_catalog'].includes(descriptor.page) ? descriptor.row.title : tr(this.settingsLabel(descriptor.page)); }
   private openSettingsDetail(page: string, row: ResourceRow): void { this.stack.pushPath({ name: 'settings', param: NavigationContext.settings(page, row) }); this.savePath(); }
@@ -933,6 +952,10 @@ struct Index {
           .selected(row.id === this.model.profile.manager).selectIcon(true).enabled(!row.isInstallingManager())
           .onClick(() => { if (this.drawerAcceptsTap()) this.model.selectListedManager(row.id, scope); }).id('spaces.assistant.' + row.id)
       }, (row: ResourceRow) => row.key())
+      MenuItem({ content: tr('admin_new_manager') }).onClick(() => {
+        if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
+        this.spacesShown = false; this.openSettings('phone_new_assistant');
+      }).id('spaces.new_assistant')
       MenuItem({ content: tr('phone_manage_assistants') }).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('managers');
@@ -996,7 +1019,7 @@ struct Index {
         }.width('100%').constraintSize({minHeight:56}).padding({left:16,right:12,top:6,bottom:4})
       }
       if (!this.wide() && this.drawerSearching) {
-        PhoneConversationSearch({model:this.model,inline:true,
+        PhoneConversationSearch({model:this.model,inline:true,showScopes:this.mergedPhone() || this.model.section === 1 || this.model.section === 4,
           onCancel:() => this.drawerSearching = false,onOpen:(row:ResourceRow,hit:string) => this.openPickedChat(row,hit)}).layoutWeight(1)
       } else {
       List() {
@@ -1756,7 +1779,8 @@ struct Index {
     if (name === 'machine_settings') return tr('phone_machine_detail');
     if (name === 'settings' && this.settingsKind(param) === 'machines') return tr('phone_machines');
     if (name === 'recordings') return tr('knowledge_kind_meetings');
-    if (name === 'knowledge_meetings') return tr('phone_all_meetings');
+    if (name === 'knowledge_meetings') return tr('knowledge');
+    if (name === 'knowledge' && this.routeRow(param).path === 'recordings') return tr('knowledge_kind_recordings');
     if (name === 'projects') return tr('projects');
     if (name === 'project') return this.projectCatalog.projects.find((row: PersonaProject) => row.key === param)?.title || tr('projects');
     if (name === 'project_tree') return this.projectCatalog.tree(param as string)?.title || tr('project_worktree');
@@ -1836,15 +1860,17 @@ struct Index {
         else this.targetLoading(name, param)
       } else if (name === 'settings' && ['phone_agent_options','phone_language_options'].includes(this.settingsKind(param))) {
         PhoneSettingsOptions({model:this.model,page:this.settingsKind(param),label:(k:string):string => this.settingsLabel(k),onOpen:(k:string) => this.openSettings(k)})
+      } else if (name === 'settings' && ['phone_agent_folders', 'phone_claude_config', 'phone_codex_config', 'phone_agy_config', 'phone_agent_followup'].includes(this.settingsKind(param))) {
+        PhoneAgentSettingsPage({model:this.settingsModel(param), page:this.settingsKind(param)})
       } else if (name === 'settings' && this.isAdminPage(this.settingsKind(param))) {
-        if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) AdminWorkspacePage({ model: this.settingsModel(param), page: this.settingsKind(param), row: NavigationContext.from(name, param as string).scoped ? NavigationContext.from(name, param as string).row : undefined, active: this.activeChild === this.childKey(name, param), refreshRevision: this.adminRefreshRevision,
+        if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) AdminWorkspacePage({ model: this.settingsModel(param), page: this.settingsKind(param) === 'phone_new_assistant' ? 'managers' : this.settingsKind(param), createManagerOnly:this.settingsKind(param) === 'phone_new_assistant', row: NavigationContext.from(name, param as string).scoped ? NavigationContext.from(name, param as string).row : undefined, active: this.activeChild === this.childKey(name, param), refreshRevision: this.adminRefreshRevision,
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onOpenMachine: (row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openSettingsDetail('machines', row); } })
         else this.targetLoading(name, param)
       } else if (name === 'settings' && this.settingsKind(param) === 'ssh') {
         SshSettingsPage({ tunnel: this.settingsModel(param).ssh, active: this.activeChild === this.childKey(name, param),
           onSaved: (): void => { const owner = this.settingsModel(param); if (this.activeChild === this.childKey(name, param)) owner.selectProfile(owner.profile, true); } })
       } else if (name === 'settings') {
-        if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) SettingsPage({ model: this.settingsKind(param) === 'appearance' ? this.model : this.settingsModel(param), agentWorkspace: this.agentWorkspace, onChat: (row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openLinkedResource(row); }, active: this.activeChild === this.childKey(name, param), page: this.settingsKind(param), onDetail: (page: string, row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openSettingsDetail(page, row); }, onExtension: (extensionId: string, uiId: string, title: string) => { if (this.activeChild === this.childKey(name, param)) this.openExtension(this.settingsModel(param), extensionId, uiId, title); }, onBack: () => { if (this.activeChild === this.childKey(name, param)) { this.stack.pop(); this.savePath(); } }, onComputer: (row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openComputer(row); }, onOpen: (page: string) => this.openSettings(page, NavigationContext.from(name, param as string).scoped) })
+        if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) SettingsPage({ model: ['appearance', 'phone_agent_layout'].includes(this.settingsKind(param)) ? this.model : this.settingsModel(param), agentLayoutOnly:this.settingsKind(param) === 'phone_agent_layout', agentWorkspace: this.agentWorkspace, onChat: (row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openLinkedResource(row); }, active: this.activeChild === this.childKey(name, param), page: this.settingsKind(param) === 'phone_agent_layout' ? 'appearance' : this.settingsKind(param), onDetail: (page: string, row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openSettingsDetail(page, row); }, onExtension: (extensionId: string, uiId: string, title: string) => { if (this.activeChild === this.childKey(name, param)) this.openExtension(this.settingsModel(param), extensionId, uiId, title); }, onBack: () => { if (this.activeChild === this.childKey(name, param)) { this.stack.pop(); this.savePath(); } }, onComputer: (row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openComputer(row); }, onOpen: (page: string) => this.openSettings(page, NavigationContext.from(name, param as string).scoped) })
         else this.targetLoading(name, param)
       }
     }.title({ builder: () => this.destinationTitle(name, param), height: this.headerHeight() }, { systemMaterial: this.titleMaterial })

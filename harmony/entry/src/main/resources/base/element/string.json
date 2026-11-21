@@ -5743,6 +5743,174 @@
     {
       "name": "session_space_agents",
       "value": "{count} agents in this workspace"
+    },
+    {
+      "name": "phone_chat_expand_editor",
+      "value": "Expand editor"
+    },
+    {
+      "name": "phone_chat_close_editor",
+      "value": "Collapse editor"
+    },
+    {
+      "name": "phone_chat_hide_keyboard",
+      "value": "Hide keyboard"
+    },
+    {
+      "name": "phone_chat_dictation",
+      "value": "Dictate"
+    },
+    {
+      "name": "phone_dictation_preparing",
+      "value": "Starting on-device dictation…"
+    },
+    {
+      "name": "phone_dictation_listening",
+      "value": "Listening…"
+    },
+    {
+      "name": "phone_dictation_finishing",
+      "value": "Finishing transcription…"
+    },
+    {
+      "name": "phone_dictation_review",
+      "value": "Review the text before adding it to your draft."
+    },
+    {
+      "name": "phone_dictation_insert",
+      "value": "Add to draft"
+    },
+    {
+      "name": "phone_dictation_empty",
+      "value": "No speech was recognized."
+    },
+    {
+      "name": "phone_dictation_unavailable",
+      "value": "On-device dictation is unavailable. You can use your keyboard microphone."
+    },
+    {
+      "name": "phone_dictation_keyboard_language",
+      "value": "Use your keyboard microphone to dictate in this language."
+    },
+    {
+      "name": "phone_dictation_keyboard",
+      "value": "Open keyboard"
+    },
+    {
+      "name": "phone_dictation_too_long",
+      "value": "Your draft has reached its text limit. Copy the transcription or shorten the draft."
+    },
+    {
+      "name": "phone_agent_folders",
+      "value": "Agent Folders"
+    },
+    {
+      "name": "phone_claude_config",
+      "value": "Claude Code Settings"
+    },
+    {
+      "name": "phone_codex_config",
+      "value": "Codex Settings"
+    },
+    {
+      "name": "phone_agy_config",
+      "value": "Antigravity Settings"
+    },
+    {
+      "name": "phone_agent_followup",
+      "value": "Agent Follow-up"
+    },
+    {
+      "name": "phone_agent_layout",
+      "value": "Agents List Layout"
+    },
+    {
+      "name": "phone_agent_tools_note",
+      "value": "Agent tools and automation for this assistant’s computers."
+    },
+    {
+      "name": "phone_folder_pattern",
+      "value": "Folder path or pattern"
+    },
+    {
+      "name": "phone_folder_hide",
+      "value": "Hide"
+    },
+    {
+      "name": "phone_folder_block",
+      "value": "Block collection"
+    },
+    {
+      "name": "phone_follow_start_requested",
+      "value": "Start requested tasks"
+    },
+    {
+      "name": "phone_follow_agent_tasks",
+      "value": "Follow Agent tasks"
+    },
+    {
+      "name": "phone_follow_naming",
+      "value": "Name Agent sessions automatically"
+    },
+    {
+      "name": "phone_follow_supervise",
+      "value": "Supervise tasks from the main chat"
+    },
+    {
+      "name": "phone_follow_close_ended",
+      "value": "Close ended terminals"
+    },
+    {
+      "name": "phone_dictation",
+      "value": "Dictation"
+    },
+    {
+      "name": "phone_system_input",
+      "value": "System input method"
+    },
+    {
+      "name": "phone_dictation_os_note",
+      "value": "The active system keyboard manages voice input and its languages."
+    },
+    {
+      "name": "phone_language_system_note",
+      "value": "Follow System uses the device’s language. You can also choose a language for Persona here."
+    },
+    {
+      "name": "phone_search_conversation_count",
+      "value": "{count} conversations"
+    },
+    {
+      "name": "phone_todo_waiting_hidden",
+      "value": "{count} more items need you outside “{filter}”."
+    },
+    {
+      "name": "phone_kb_confirmed",
+      "value": "Confirmed facts"
+    },
+    {
+      "name": "phone_kb_add_fact",
+      "value": "Add a confirmed fact"
+    },
+    {
+      "name": "phone_kb_fact_note",
+      "value": "Persona keeps your corrections when this entry is updated."
+    },
+    {
+      "name": "phone_kb_profile",
+      "value": "Profile"
+    },
+    {
+      "name": "flow_recent_folders",
+      "value": "Recent folders"
+    },
+    {
+      "name": "flow_use_named_folder",
+      "value": "Use “{name}”"
+    },
+    {
+      "name": "flow_other_model",
+      "value": "Other model…"
     }
   ]
 }

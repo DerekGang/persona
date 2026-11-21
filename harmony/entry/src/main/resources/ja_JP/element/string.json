@@ -5743,6 +5743,174 @@
     {
       "name": "session_space_agents",
       "value": "このワークスペースのエージェント {count} 件"
+    },
+    {
+      "name": "phone_chat_expand_editor",
+      "value": "エディタを拡大"
+    },
+    {
+      "name": "phone_chat_close_editor",
+      "value": "エディタを閉じる"
+    },
+    {
+      "name": "phone_chat_hide_keyboard",
+      "value": "キーボードを閉じる"
+    },
+    {
+      "name": "phone_chat_dictation",
+      "value": "音声入力"
+    },
+    {
+      "name": "phone_dictation_preparing",
+      "value": "端末の音声入力を準備中…"
+    },
+    {
+      "name": "phone_dictation_listening",
+      "value": "聞き取り中…"
+    },
+    {
+      "name": "phone_dictation_finishing",
+      "value": "文字起こしを完了しています…"
+    },
+    {
+      "name": "phone_dictation_review",
+      "value": "テキストを確認して下書きに追加してください。"
+    },
+    {
+      "name": "phone_dictation_insert",
+      "value": "下書きに追加"
+    },
+    {
+      "name": "phone_dictation_empty",
+      "value": "音声を認識できませんでした。"
+    },
+    {
+      "name": "phone_dictation_unavailable",
+      "value": "端末の音声入力を利用できません。キーボードのマイクを使用できます。"
+    },
+    {
+      "name": "phone_dictation_keyboard_language",
+      "value": "この言語はキーボードのマイクで音声入力できます。"
+    },
+    {
+      "name": "phone_dictation_keyboard",
+      "value": "キーボードを開く"
+    },
+    {
+      "name": "phone_dictation_too_long",
+      "value": "下書きの文字数が上限に達しました。文字起こしをコピーするか、下書きを短くしてください。"
+    },
+    {
+      "name": "phone_agent_folders",
+      "value": "エージェントのフォルダ"
+    },
+    {
+      "name": "phone_claude_config",
+      "value": "Claude Code 設定"
+    },
+    {
+      "name": "phone_codex_config",
+      "value": "Codex 設定"
+    },
+    {
+      "name": "phone_agy_config",
+      "value": "Antigravity 設定"
+    },
+    {
+      "name": "phone_agent_followup",
+      "value": "エージェントのフォローアップ"
+    },
+    {
+      "name": "phone_agent_layout",
+      "value": "Agents リストのレイアウト"
+    },
+    {
+      "name": "phone_agent_tools_note",
+      "value": "このアシスタントのコンピュータで使うエージェントツールと自動化。"
+    },
+    {
+      "name": "phone_folder_pattern",
+      "value": "フォルダのパスまたはパターン"
+    },
+    {
+      "name": "phone_folder_hide",
+      "value": "非表示"
+    },
+    {
+      "name": "phone_folder_block",
+      "value": "収集を停止"
+    },
+    {
+      "name": "phone_follow_start_requested",
+      "value": "依頼されたタスクを開始"
+    },
+    {
+      "name": "phone_follow_agent_tasks",
+      "value": "エージェントのタスクをフォロー"
+    },
+    {
+      "name": "phone_follow_naming",
+      "value": "エージェントのセッションを自動命名"
+    },
+    {
+      "name": "phone_follow_supervise",
+      "value": "メインチャットでタスクを管理"
+    },
+    {
+      "name": "phone_follow_close_ended",
+      "value": "終了したターミナルを閉じる"
+    },
+    {
+      "name": "phone_dictation",
+      "value": "音声入力"
+    },
+    {
+      "name": "phone_system_input",
+      "value": "システム入力方式"
+    },
+    {
+      "name": "phone_dictation_os_note",
+      "value": "音声入力とその言語は現在のシステムキーボードで管理します。"
+    },
+    {
+      "name": "phone_language_system_note",
+      "value": "システムに従うと端末の言語が使われます。Persona の表示言語を個別に選ぶこともできます。"
+    },
+    {
+      "name": "phone_search_conversation_count",
+      "value": "{count} 件の会話"
+    },
+    {
+      "name": "phone_todo_waiting_hidden",
+      "value": "「{filter}」の対象外に対応が必要な項目が {count} 件あります。"
+    },
+    {
+      "name": "phone_kb_confirmed",
+      "value": "確認済みの情報"
+    },
+    {
+      "name": "phone_kb_add_fact",
+      "value": "確認済みの情報を追加"
+    },
+    {
+      "name": "phone_kb_fact_note",
+      "value": "Persona がこの項目を更新しても修正内容は保持されます。"
+    },
+    {
+      "name": "phone_kb_profile",
+      "value": "プロフィール"
+    },
+    {
+      "name": "flow_recent_folders",
+      "value": "最近使ったフォルダ"
+    },
+    {
+      "name": "flow_use_named_folder",
+      "value": "「{name}」を使用"
+    },
+    {
+      "name": "flow_other_model",
+      "value": "その他のモデル…"
     }
   ]
 }

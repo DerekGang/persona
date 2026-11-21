@@ -34,6 +34,18 @@ function session(id, extra = {}) {
 }
 const machine = row('machine', { id: 'mac', name: 'Studio', online: true });
 
+test('a mounted worktree card opens the newest scoped row and rejects cards removed or shown under another checkout',()=>{
+  const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const method=source.slice(source.indexOf('  private openSpaceCard('),source.indexOf('  @Builder spaceCard('));
+  const Page=new Function('return '+stripTypeScriptTypes('class Page {'+method+'}'))();
+  const live=session('same'),foreign=session('same');foreign.group='elsewhere';
+  const current={row:live};let agents=[current];const opened=[];
+  const page=Object.assign(new Page(),{page:'project_tree',target:'checkout',catalog:{tree:key=>key==='checkout'?{agents}:undefined},chooseAgent:agent=>opened.push(agent)});
+  page.openSpaceCard('checkout',foreign.key());page.openSpaceCard('another',live.key());assert.deepEqual(opened,[]);
+  page.openSpaceCard('checkout',live.key());assert.deepEqual(opened,[current]);
+  agents=[];page.openSpaceCard('checkout',live.key());assert.deepEqual(opened,[current]);
+});
+
 function sibling(id,slot,extra={},group='home',manager='work') {
   return row('session',{session_id:id,title:id,machine_id:'mac',cwd:'/repo',status:'idle',state:'idle',space_id:'w1',
     space_kind:'herdr',space_name:'weather',slot_id:'tab'+slot,slot_index:slot,slot_name:String(slot),...extra},group,manager);

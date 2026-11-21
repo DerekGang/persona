@@ -9,6 +9,7 @@ import { ResourceRow } from '../models/Wire';
 import { ProjectLine, ProjectHost, projectOutline, projectHosts, worktreeSessionLines } from '../models/ProjectOutline';
 import { WorktreeActions, WorktreeChange } from '../models/WorktreeActions';
 import { WorktreeSheet } from './WorktreeSheet';
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 
 @ComponentV2
 export struct ProjectsPage {
@@ -501,6 +502,32 @@ export struct ProjectsPage {
         }.alignItems(HorizontalAlign.Start).width('100%').padding(15).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
     }
   }
+  private openSpaceCard(treeKey:string,sessionKey:string):void {
+    if (this.page !== 'project_tree' || this.target !== treeKey) return;
+    const live = this.catalog.tree(treeKey)?.agents.find((a:ProjectAgent) => a.row.key() === sessionKey);
+    if (live) this.chooseAgent(live);
+  }
+  @Builder spaceCard(agent:ProjectAgent,paneName:string,starter:boolean,treeKey:string) {
+    Column({space:7}) {
+      Row({space:6}) {
+        Text([agent.tabTitle || agent.tab || agent.runtime,paneName].filter((s:string) => !!s).join(' · ') || '—')
+          .fontSize(12).fontWeight(FontWeight.Medium).fontColor(agent.active ? this.tint(agent) : Colors.secondary)
+          .padding({left:7,right:7,top:3,bottom:3}).backgroundColor(Colors.subtle).borderRadius(12)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
+        Blank().layoutWeight(1)
+        Circle().width(8).height(8).fill(this.tint(agent))
+      }.width('100%')
+      Text(agent.row.title || tr('agent_untitled')).fontSize(16).fontWeight(FontWeight.Medium)
+        .fontColor(Colors.ink).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+      Text(tr(agent.stateLabel)+(starter ? ' · '+tr('session_space_starter') : ''))
+        .fontSize(13).fontWeight(FontWeight.Medium).fontColor(agent.active ? this.tint(agent) : Colors.secondary)
+      if (agent.preview) Text(agent.preview).fontSize(13).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
+      if (agent.model) Text(agent.model).fontSize(12).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+    }.width('100%').constraintSize({minHeight:146}).padding(12).alignItems(HorizontalAlign.Start)
+      .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+      .border({width:agent.state === 'needs_you' ? 1 : 0,color:Colors.needs,radius:PhoneStyle.cardRadius})
+      .accessibilityGroup(true).onClick(() => this.openSpaceCard(treeKey,agent.row.key())).id('projects.session')
+  }
   @Builder sessions() {
     // Only the header and its menu are replaced when cached permissions become live.
     // The enclosing List and its session identities survive every catalog refresh.
@@ -518,21 +545,25 @@ export struct ProjectsPage {
           .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
       }
       ListItem() { PhoneSectionTitle({ text: tr('agents'), trailing: this.count(this.detailTree?.sessions.length || 0, 'project_sessions') }) }
-      ListItemGroup() {
-        if (this.detailTree?.canStart) ListItem() {
-          this.detailRow(tr('new_agent'), '', Symbols.plus, Colors.link, 'projects.start', () => this.startFromTree(this.target))
-        }
-        Repeat(this.detailSessions).each((entry: RepeatItem<ProjectLine>) => {
-          ListItem() {
-            if (entry.item.kind === 'tab') this.tabLine(entry.item.key)
-            else Row() {
-              this.agentCell(entry.item.agent!,this.target,'projects.session',entry.item.paneName,entry.item.starter)
-            }.padding({left:this.treeInset(entry.item.level)}).width('100%')
+      ListItem() {
+        GridRow({columns:nativeEnvironment.fontScale >= 1.5 ? 1 : 2,gutter:{x:10,y:10}}) {
+          ForEach(this.detailSessions,(line:ProjectLine) => {
+            if (line.kind === 'tab') GridCol({span:nativeEnvironment.fontScale >= 1.5 ? 1 : 2}) {
+              Column() { this.tabLine(line.key) }.width('100%').backgroundColor(Colors.surface).borderRadius(12)
+            }
+            else GridCol({span:1}) { this.spaceCard(line.agent!,line.paneName,line.starter,this.target) }
+          },(line:ProjectLine) => JSON.stringify([line.key,line.open,line.agent?.row.raw,line.agent?.state,line.paneName,line.starter]))
+          if (this.detailTree?.canStart) GridCol({span:1}) {
+            Column({space:8}) {
+              SymbolGlyph(Symbols.plus).fontSize(22).fontColor([Colors.link])
+              Text(tr('new_agent')).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.link)
+            }.width('100%').constraintSize({minHeight:146}).justifyContent(FlexAlign.Center)
+              .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              .accessibilityGroup(true).onClick(() => this.startFromTree(this.target)).id('projects.start')
           }
-        }).key((line:ProjectLine) => line.key)
-        if (!this.detailTree?.sessions.length) ListItem() { this.message(tr('project_no_sessions')) }
-      }.divider({strokeWidth:0.5,color:Colors.divider,startMargin:56})
-        .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
+        }.width('100%').id('projects.session_grid')
+      }
+      if (!this.detailTree?.sessions.length) ListItem() { this.message(tr('project_no_sessions')) }
     }.width('100%').layoutWeight(1).maintainVisibleContentPosition(true)
       .padding({ left: PhoneStyle.page, right: PhoneStyle.page, top: 5 }).id('projects.sessions')
   }

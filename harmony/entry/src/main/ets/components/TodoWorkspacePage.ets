@@ -547,11 +547,21 @@ export struct TodoWorkspacePage {
     }.width(Tokens.popupWidth)
   }
 
+  @Computed get hiddenWaitingCount(): number { return this.workspace.hiddenWaiting(this.clock,this.weekStart); }
+
   @Builder listContent() {
     Column() {
       Row({ space: Tokens.gap }) {
-        Search({ value: this.workspace.search, placeholder: tr('todo_search') })
-          .onChange((value: string) => this.workspace.setSearch(value)).layoutWeight(1).id('todos.search')
+        Button({type:ButtonType.Capsule}) {
+          Row({space:5}) {
+            Text(this.groupOptions()[Math.max(0,this.groupIndex())].value).fontSize(14).fontColor(Colors.ink)
+            SymbolGlyph(Symbols.down).fontSize(10).fontColor([Colors.secondary])
+          }
+        }.padding({left:12,right:12}).height(38).backgroundColor(Colors.surface).bindMenu(this.listFilters).id('todos.group')
+        if (this.workspace.dueFilter !== 'all') Button(this.dueFilterLabel(this.workspace.dueFilter) + ' ×', {type:ButtonType.Capsule})
+          .fontColor(Colors.onAction).backgroundColor(Colors.action).fontSize(14).height(38).padding({left:12,right:12})
+          .onClick(() => this.workspace.setDueFilter('all')).id('todos.due.clear')
+        Blank()
         Badge({ count: (!this.hubMode() && this.workspace.statusFilter !== 'all' ? 1 : 0) + (this.workspace.effectiveGroup() !== 'status' ? 1 : 0) + (this.workspace.dueFilter !== 'all' ? 1 : 0) + (this.workspace.order !== 'recent' ? 1 : 0),
           style: { color: Colors.onAction, badgeColor: Colors.action, borderWidth: 0, borderColor: Color.Transparent, badgeSize: Tokens.body, fontSize: Tokens.caption } }) {
         Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.filter).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }
@@ -560,12 +570,19 @@ export struct TodoWorkspacePage {
         }
         Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('add')).onClick(() => this.workspace.startCreate()).id('todos.add')
       }.padding({ left: Tokens.inset, right: Tokens.inset, top: Tokens.inset, bottom: Tokens.gap })
+      Search({value:this.workspace.search,placeholder:tr('todo_search')}).width('100%')
+        .padding({left:Tokens.page,right:Tokens.page}).onChange((value:string) => this.workspace.setSearch(value)).id('todos.search')
+      if (this.hiddenWaitingCount) Row({space:8}) {
+        SymbolGlyph(Symbols.inbox).fontSize(16).fontColor([Colors.needs])
+        Text(tr('phone_todo_waiting_hidden').replace('{count}',String(this.hiddenWaitingCount))
+          .replace('{filter}',this.dueFilterLabel(this.workspace.dueFilter))).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
+        Button(tr('project_show_all'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link)
+          .padding({left:6,right:6}).onClick(() => this.workspace.setDueFilter('all')).id('todos.due.show_all')
+      }.width('100%').padding({left:13,right:10,top:6,bottom:6}).constraintSize({minHeight:44})
+        .backgroundColor(Colors.surface).borderRadius(12).margin({top:6}).id('todos.due.hidden')
       if (this.hubMode() && !this.workspace.hubCalm() && !this.workspace.search.trim()) this.hubChoiceBar()
       if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta)
         .fontColor($r('app.color.persona_danger')).padding(Tokens.inset).width('100%')
-      if (this.workspace.dueFilter !== 'all') Button(this.dueFilterLabel(this.workspace.dueFilter) + ' ×',{buttonStyle:ButtonStyleMode.TEXTUAL})
-        .fontColor(Colors.link).fontSize(14).height(34).alignSelf(ItemAlign.Start).margin({left:16})
-        .onClick(() => this.workspace.setDueFilter('all')).id('todos.due.clear')
       List({space:3}) {
         if (this.workspace.loading && !this.workspace.items.length) ListItem() { LoadingProgress().height(Tokens.touch).width(Tokens.touch).padding(Tokens.page) }
         ForEach(this.sectionBindings, (section: BoundTodoSection) => {

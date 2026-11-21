@@ -1,0 +1,140 @@
+import { Colors } from '../design/Colors';
+import { PhoneSectionTitle, PhoneStyle } from '../design/PhoneStyle';
+import { tr } from '../design/Strings';
+import { ClientModel } from '../models/ClientModel';
+import { PhoneAgentSettings, agentSettingValue, cleanAgentFolder, FOLLOW_FIELDS } from '../models/PhoneAgentSettings';
+import { ResourceRow, Wire } from '../models/Wire';
+
+@ComponentV2
+export struct PhoneAgentSettingsPage {
+  @Require @Param model:ClientModel;
+  @Require @Param page:string;
+  @Local form:PhoneAgentSettings = new PhoneAgentSettings();
+  @Local editing:string = '';
+  @Local draft:string = '';
+  @Local folderAction:string = 'block';
+
+  aboutToAppear():void { this.open(); }
+  aboutToDisappear():void { this.form.close(); }
+  @Monitor('page','model.profile','model.connected') reset():void { this.open(); }
+  private open(machine:string=''):void {
+    this.editing='';this.draft='';this.folderAction='block';this.form.open(this.model,this.page,machine).catch(() => undefined);
+  }
+  @Computed get machines():ResourceRow[] { return this.form.machines(this.model); }
+  @Computed get options():Record<string,Object>[] { return Wire.rows(this.form.data,'settings'); }
+  @Computed get rules():Record<string,Object>[] { return Wire.rows(this.form.data,'rules'); }
+  @Computed get follow():string[] { return Object.keys(FOLLOW_FIELDS).filter((key:string) => typeof this.form.data[key] === 'boolean'); }
+  private canEdit():boolean { return this.model.connected && !this.form.saving && !this.form.loading && !this.form.error; }
+  private save(key:string,value:Object):void { this.form.setOption(key,value).catch(() => undefined); }
+
+  @Builder separator() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:15}) }
+  @Builder machineSelector() {
+    Row({space:10}) {
+      Text(tr('machines')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+      Select(this.machines.map((r:ResourceRow) => ({value:r.title || r.id} as SelectOption)))
+        .value(this.machines.find((r:ResourceRow) => r.id===this.form.machine)?.title || this.form.machine)
+        .enabled(!this.form.saving && this.machines.length>0)
+        .onSelect((index:number) => { if(this.machines[index]) this.open(this.machines[index].id); }).id('settings.agent.machine')
+    }.width('100%').padding({left:15,right:12,top:5,bottom:5}).constraintSize({minHeight:48})
+      .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+  }
+
+  @Builder option(row:Record<string,Object>) {
+    Column({space:5}) {
+      Row({space:8}) {
+        Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+        if (Wire.text(row,'type')==='bool') Toggle({type:ToggleType.Switch,isOn:agentSettingValue(row)===true})
+          .selectedColor(Colors.action).enabled(this.canEdit())
+          .onChange((v:boolean) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
+        else if (Wire.text(row,'type')==='enum') Select(Wire.strings(row,'options').map((v:string) => ({value:v} as SelectOption)))
+          .value(String(agentSettingValue(row)??'')).enabled(this.canEdit())
+          .onSelect((_index:number,v:string) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
+        else if (Wire.text(row,'type')==='string' && this.editing!==Wire.text(row,'key'))
+          Button(String(agentSettingValue(row)??'') || tr('edit'),{buttonStyle:ButtonStyleMode.TEXTUAL})
+            .fontColor(Colors.link).enabled(this.canEdit()).onClick(() => { this.editing=Wire.text(row,'key');this.draft=String(agentSettingValue(row)??''); })
+            .id('settings.agent.option.'+Wire.text(row,'key'))
+      }.width('100%')
+      if (this.editing===Wire.text(row,'key')) Row({space:6}) {
+        TextInput({text:this.draft}).layoutWeight(1).onChange((s:string) => this.draft=s).enabled(this.canEdit())
+        Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).enabled(this.canEdit()).onClick(() => {
+          this.save(Wire.text(row,'key'),this.draft);this.editing='';
+        })
+      }.width('100%')
+      if (Wire.text(row,'detail')) Text(Wire.text(row,'detail')).fontSize(13).fontColor(Colors.secondary).width('100%')
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({left:15,right:12,top:8,bottom:8})
+  }
+
+  private folderChange(rule:Record<string,Object>,enabled:boolean,action:string):void {
+    const next=Wire.parse(JSON.stringify(rule));next['enabled']=enabled;next['action']=action;
+    this.form.changeFolder(Wire.text(rule,'pattern'),next).catch(() => undefined);
+  }
+  @Builder actionPicker(value:string,action:(s:string)=>void) {
+    Select([{value:tr('phone_folder_block')},{value:tr('phone_folder_hide')}]).value(tr(value==='block'?'phone_folder_block':'phone_folder_hide'))
+      .enabled(this.canEdit()).onSelect((i:number) => action(i===0?'block':'hide'))
+  }
+  @Builder folderRules() {
+    Column() {
+      ForEach(this.rules,(rule:Record<string,Object>) => {
+        Column() {
+          Row({space:8}) {
+            Text(Wire.text(rule,'pattern')).fontFamily('monospace').fontSize(15).layoutWeight(1).fontColor(Colors.ink)
+            Toggle({type:ToggleType.Switch,isOn:Wire.bool(rule,'enabled')}).selectedColor(Colors.action).enabled(this.canEdit())
+              .onChange((v:boolean) => this.folderChange(rule,v,Wire.text(rule,'action','hide')))
+          }.width('100%')
+          Row() {
+            this.actionPicker(Wire.text(rule,'action','hide'),(s:string) => this.folderChange(rule,Wire.bool(rule,'enabled'),s))
+            Blank()
+            Button(tr('delete'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.danger).enabled(this.canEdit())
+              .onClick(() => this.form.changeFolder(Wire.text(rule,'pattern'),undefined))
+          }.width('100%')
+        }.padding({left:15,right:12,top:7,bottom:7}).width('100%')
+        this.separator()
+      },(r:Record<string,Object>) => JSON.stringify(r))
+      TextInput({text:this.draft,placeholder:tr('phone_folder_pattern')}).fontFamily('monospace').onChange((s:string) => this.draft=s)
+        .enabled(this.canEdit()).id('settings.agent.folder.pattern')
+      Row() {
+        this.actionPicker(this.folderAction,(s:string) => this.folderAction=s)
+        Blank()
+        Button(tr('add'),{buttonStyle:ButtonStyleMode.TEXTUAL}).enabled(this.canEdit() && !!cleanAgentFolder(this.draft) &&
+          !this.rules.some((r:Record<string,Object>) => Wire.text(r,'pattern')===cleanAgentFolder(this.draft)))
+          .onClick(() => {
+            const pattern=cleanAgentFolder(this.draft);
+            this.form.changeFolder(pattern,Wire.payload(['pattern','action','enabled'],[pattern,this.folderAction,true]),true)
+              .then(() => { if (this.rules.some((r:Record<string,Object>) => Wire.text(r,'pattern')===pattern)) this.draft=''; });
+          }).id('settings.agent.folder.add')
+      }.width('100%').padding({left:15,right:12,top:4,bottom:6})
+    }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
+  }
+
+  build() {
+    Scroll() {
+      Column({space:12}) {
+        if (this.page!=='phone_agent_followup') this.machineSelector()
+        if (this.form.loading || this.form.saving) LoadingProgress().height(23).width(23)
+        if (this.form.error) Row({space:8}) {
+          Text(tr(this.form.error)).layoutWeight(1).fontColor(Colors.secondary)
+          Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.form.read()).id('settings.agent.retry')
+        }.width('100%')
+        if (this.page==='phone_agent_folders' && Array.isArray(this.form.data['rules'])) this.folderRules()
+        else if (this.page==='phone_agent_followup') Column() {
+          ForEach(this.follow,(key:string,index:number) => {
+            Row({space:8}) {
+              Text(tr(FOLLOW_FIELDS[key])).layoutWeight(1).fontSize(16).fontColor(Colors.ink)
+              Toggle({type:ToggleType.Switch,isOn:Wire.bool(this.form.data,key)}).enabled(this.canEdit()).selectedColor(Colors.action)
+                .onChange((v:boolean) => this.save(key,v)).id('settings.agent.option.'+key)
+            }.width('100%').constraintSize({minHeight:48}).padding({left:15,right:12,top:5,bottom:5})
+            if (index<this.follow.length-1) this.separator()
+          },(key:string) => JSON.stringify([key,this.form.data[key]]))
+        }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+        else if (this.options.length) Column() {
+          ForEach(this.options,(row:Record<string,Object>,index:number) => {
+            this.option(row)
+            if(index<this.options.length-1) this.separator()
+          },(row:Record<string,Object>) => JSON.stringify(row))
+        }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+        if (this.canEdit() && !this.options.length && !this.follow.length && this.page!=='phone_agent_folders')
+          Text(tr('empty')).fontColor(Colors.secondary).width('100%')
+      }.width('100%').alignItems(HorizontalAlign.Start).padding(PhoneStyle.page)
+    }.width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped).id('settings.agent.configuration')
+  }
+}

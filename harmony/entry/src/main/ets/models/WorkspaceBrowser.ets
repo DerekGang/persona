@@ -94,7 +94,7 @@ export class PatchLine {
   }
 }
 /** Number actual hunk lines. Metadata (including --- and +++ file headers) never consumes a line number. */
-export function patchLines(text:string):PatchLine[] {
+export function patchLines(text:string, fileOnly:boolean = false):PatchLine[] {
   if (!text) return [];
   let oldNo = 0, newNo = 0, inHunk = false;
   const lines:PatchLine[] = [];
@@ -110,5 +110,52 @@ export function patchLines(text:string):PatchLine[] {
       lines.push(new PatchLine('meta','','',line));
     }
   }
+  if (fileOnly) {
+    const first = lines.findIndex((line: PatchLine) => line.kind === 'hunk');
+    if (first > 0) return lines.slice(first);
+  }
   return lines;
+}
+
+/** Git quotes control characters and, with core.quotePath, UTF-8 bytes in path headers. */
+function gitPatchPath(value: string): string {
+  const path = value.split('\t')[0];
+  if (!path.startsWith('"') || !path.endsWith('"')) return path;
+  try {
+    let bytes = '';
+    const parts = path.slice(1, -1).match(/\\[0-7]{3}|\\.|[^\\]+/g) || [];
+    for (const part of parts) {
+      if (/^\\[0-7]{3}$/.test(part)) bytes += '%' + parseInt(part.slice(1), 8).toString(16).padStart(2, '0');
+      else if (part.startsWith('\\')) {
+        const escaped = part[1];
+        bytes += encodeURIComponent(escaped === 't' ? '\t' : escaped === 'n' ? '\n' : escaped === 'r' ? '\r' : escaped);
+      } else bytes += encodeURIComponent(part);
+    }
+    return decodeURIComponent(bytes);
+  } catch (_) { return path; }
+}
+
+/** Select only the requested file from the commit's immutable patch, including additions, deletions and renames. */
+export function commitFilePatch(diff: string, path: string): string {
+  if (!path || !diff) return '';
+  const sections = diff.split(/\n(?=diff --(?:git |cc |combined ))/);
+  for (const section of sections) {
+    const lines = section.split('\n');
+    const header = lines[0];
+    if (!header.startsWith('diff --')) continue;
+    let source = '', destination = '';
+    for (const line of lines.slice(1)) {
+      if (line.startsWith('@@') || line.startsWith('GIT binary patch')) break;
+      if (line.startsWith('--- ')) source = gitPatchPath(line.slice(4));
+      else if (line.startsWith('+++ ')) destination = gitPatchPath(line.slice(4));
+      else if (line.startsWith('rename to ') || line.startsWith('copy to ')) destination = 'b/' + gitPatchPath(line.slice(line.indexOf(' to ') + 4));
+    }
+    if (destination === 'b/' + path || ((destination === '/dev/null' || !destination) && source === 'a/' + path)) return section;
+    if (!source && !destination) {
+      if (header === 'diff --git a/' + path + ' b/' + path || header === 'diff --cc ' + path || header === 'diff --combined ' + path) return section;
+      const quoted = /^diff --git ("(?:\\.|[^"\\])*") ("(?:\\.|[^"\\])*")$/.exec(header);
+      if (quoted && gitPatchPath(quoted[2]) === 'b/' + path) return section;
+    }
+  }
+  return '';
 }

@@ -15,7 +15,8 @@ import { common } from '@kit.AbilityKit';
 import { KnowledgeRecording } from '../models/KnowledgeRecording';
 import { NativeRecording } from '../platform/NativeRecording';
 import { KnowledgeRecordingView } from './KnowledgeRecordingView';
-import { UIUtils } from '@kit.ArkUI';
+import { LengthMetrics, UIUtils } from '@kit.ArkUI';
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import type { Binding } from '@kit.ArkUI';
 
 const KB_KINDS: string[] = ['projects', 'topics', 'chats', 'people', 'docs', 'meetings', 'events'];
@@ -23,6 +24,11 @@ const KB_KINDS: string[] = ['projects', 'topics', 'chats', 'people', 'docs', 'me
 @ComponentV2
 export struct KnowledgeWorkspacePage {
   @Local dispatchExpanded: boolean = false;
+  @Local factsOpen: boolean = false;
+  @Local factsDraft: string = '';
+  @Local recordingTools: boolean = false;
+  private kindScroller: Scroller = new Scroller();
+  private kindListMounted: boolean = false;
   @Require @Param model: ClientModel;
   @Param row: ResourceRow | undefined = undefined;
   @Param list: ResourceRow[] = [];
@@ -61,9 +67,13 @@ export struct KnowledgeWorkspacePage {
     this.workspace.hide(); this.recording.dispose().catch(() => undefined);
   }
 
-  @Monitor('row') rowChanged(): void { this.syncRowBindings(); this.openWorkspace(); }
+  @Monitor('row') rowChanged(): void { this.factsOpen=false; this.factsDraft=''; this.recordingTools=false; this.syncRowBindings(); this.openWorkspace(); }
+  @Monitor('workspace.kind') centerKind(): void {
+    const index=KB_KINDS.indexOf(this.workspace.kind);
+    if (index>=0 && this.kindListMounted) this.kindScroller.scrollToIndex(index,false,ScrollAlign.CENTER);
+  }
   @Monitor('model.profile') profileChanged(): void {
-    this.recordingOpen = false; this.localMeetings = false; this.localOwner = ''; this.localOpening = undefined;
+    this.factsOpen=false; this.factsDraft=''; this.recordingTools=false; this.recordingOpen = false; this.localMeetings = false; this.localOwner = ''; this.localOpening = undefined;
     this.recording.stopForBackground().catch(() => undefined); this.syncRowBindings(); this.openWorkspace();
     if (this.initialKind === 'recordings' && !this.row) this.loadRecordings().catch(() => undefined);
   }
@@ -156,6 +166,13 @@ export struct KnowledgeWorkspacePage {
     const date = new Date(raw);
     return Number.isFinite(date.getTime()) ? date.toLocaleDateString() + ' ' + String(date.getHours()).padStart(2,'0') + ':' + String(date.getMinutes()).padStart(2,'0') : '';
   }
+  private rowRank(row:ResourceRow):string {
+    if (row.path!=='meetings' && row.path!=='recordings') return '';
+    const data=row.data(), meta=Wire.object(data,'meta');
+    const priority=Wire.text(data,'importance') || Wire.text(meta,'importance');
+    const relevance=Wire.number(data,'relevance',Wire.number(meta,'relevance'));
+    return [priority,relevance>0 ? tr('knowledge_relevance')+' '+String(relevance) : ''].filter((value:string) => !!value).join(' · ');
+  }
   private rowSubtitle(row: ResourceRow): string {
     const data = row.data(), meta = Wire.object(data,'meta');
     const value = row.detail || Wire.text(data,'one_line') || '';
@@ -204,11 +221,12 @@ export struct KnowledgeWorkspacePage {
         .width(32).height(32).borderRadius(8).backgroundColor(Colors.control)
       Column({space:3}) {
         Text(row.title || row.id).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+        if (this.rowRank(row)) Text(this.rowRank(row)).fontSize(12).fontColor(Colors.link)
         if (this.rowSubtitle(row)) Text(this.rowSubtitle(row)).fontSize(13).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
     }.width('100%').padding({left:13,right:12,top:9,bottom:9}).constraintSize({minHeight:49})
-      .backgroundColor(Colors.surface).borderRadius(12).accessibilityGroup(true)
+      .backgroundColor(Colors.surface).accessibilityGroup(true)
       .onClick(() => this.workspace.openEntry(row).then((next:ResourceRow) => this.onOpenResource(next)).catch(() => undefined))
       .id('knowledge.entry.' + row.path + '.' + row.id)
   }
@@ -245,20 +263,30 @@ export struct KnowledgeWorkspacePage {
     if (!this.workspace.loading && !this.workspace.error && (this.initialKind !== 'recordings' || !this.visibleLocal().length) && (this.workspace.query.trim() ? !this.workspace.results.length : !this.workspace.entries.length))
       ListItem() { Text(tr(this.workspace.query.trim() ? 'knowledge_no_results' : this.workspace.kind === 'recordings' ? 'phone_read_only_recording' : 'knowledge_empty')).fontSize(15).fontColor(Colors.secondary).padding(10) }
   }
-  @Builder kindBar() {
-    Scroll() {
+  @Builder kindChip(kind:string) {
+    Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
-        ForEach(KB_KINDS, (kind:string) => {
-          Button({type:ButtonType.Capsule}) {
-            Row({space:5}) {
-              SymbolGlyph(this.kindIcon(kind)).fontSize(14).fontColor([kind === this.workspace.kind ? Colors.link : Colors.secondary])
-              Text(this.kindLabel(kind)).fontSize(14).fontWeight(kind === this.workspace.kind ? FontWeight.Bold : FontWeight.Normal).fontColor(kind === this.workspace.kind ? Colors.ink : Colors.secondary)
-            }
-          }.height(33).padding({left:10,right:10}).backgroundColor(kind === this.workspace.kind ? Colors.surface : Color.Transparent)
-            .accessibilitySelected(kind === this.workspace.kind).onClick(() => this.workspace.setKind(kind)).id('knowledge.kind.' + kind)
-        }, (kind:string) => kind)
-      }.padding(3)
-    }.width('100%').scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).backgroundColor(Colors.control).borderRadius(21).id('knowledge.kinds')
+        if (nativeEnvironment.fontScale>1.3) SymbolGlyph(this.kindIcon(kind)).fontSize(14)
+          .fontColor([kind===this.workspace.kind ? Colors.onAction : Colors.ink])
+        Text(this.kindLabel(kind)).fontSize(15).fontWeight(FontWeight.Medium)
+          .fontColor(kind===this.workspace.kind ? Colors.onAction : Colors.ink)
+      }
+    }.constraintSize({minHeight:34}).padding({left:10,right:10,top:4,bottom:4})
+      .backgroundColor(kind===this.workspace.kind ? Colors.action : Colors.control)
+      .accessibilitySelected(kind===this.workspace.kind).onClick(() => this.workspace.setKind(kind)).id('knowledge.kind.'+kind)
+  }
+  @Builder kindBar() {
+    if (nativeEnvironment.fontScale>1.3) {
+      Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(5)}}) {
+        ForEach(KB_KINDS,(kind:string) => { this.kindChip(kind) },(kind:string) => kind)
+      }.width('100%').padding({top:6,bottom:6}).id('knowledge.kinds')
+    } else {
+      List({space:6,scroller:this.kindScroller}) {
+        ForEach(KB_KINDS,(kind:string) => { ListItem() { this.kindChip(kind) } },(kind:string) => kind)
+      }.width('100%').height(48).listDirection(Axis.Horizontal).scrollBar(BarState.Off).alignListItem(ListItemAlign.Center)
+        .onAppear(() => { this.kindListMounted=true; })
+        .onAreaChange(() => this.centerKind()).onDisAppear(() => { this.kindListMounted=false; }).id('knowledge.kinds')
+    }
   }
   @Builder rootList() {
     Column({space:6}) {
@@ -266,7 +294,7 @@ export struct KnowledgeWorkspacePage {
       if (!this.workspace.query.trim()) {
         this.kindBar()
         Row() {
-          Text(this.kindLabel(this.workspace.kind)).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+          Text(tr('all')).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
           Text(String(this.workspace.entries.length)).fontSize(13).fontColor(Colors.secondary).margin({left:5}).layoutWeight(1)
           if (this.workspace.tags.length || this.workspace.tag) Button((this.workspace.tag ? '#' + this.workspace.tag : tr('knowledge_all_tags')) + ' ˅',
             {buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(14).fontColor(Colors.link).height(34)
@@ -276,7 +304,13 @@ export struct KnowledgeWorkspacePage {
             .onClick(() => this.workspace.refresh()).id('knowledge.refresh')
         }.width('100%').padding({left:4,right:2})
       }
-      List({space:4}) { this.listStatus(); this.sectionEntries() }.layoutWeight(1).width('100%')
+      List() {
+        this.listStatus()
+        if (this.entryRowBindings.length || this.resultRowBindings.length) ListItemGroup() {
+          this.sectionEntries()
+        }.divider({strokeWidth:0.5,color:Colors.divider,startMargin:56}).backgroundColor(Colors.surface).borderRadius(14).clip(true)
+          .id('knowledge.entries')
+      }.layoutWeight(1).width('100%')
     }.width('100%').height('100%').padding({left:16,right:16,top:6,bottom:8}).backgroundColor(Colors.grouped)
   }
   @Builder recordingHome() {
@@ -409,6 +443,81 @@ export struct KnowledgeWorkspacePage {
           .onClick(() => this.workspace.saveEdit()).id('knowledge.edit.save')
       }.width('100%').justifyContent(FlexAlign.End)
     }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.inset)
+  }
+
+  private closeFacts():void { this.factsOpen=false; this.factsDraft=''; }
+  private openFacts():void { this.factsDraft=Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'); this.factsOpen=true; }
+
+  @Builder recordingDetail() {
+    Scroll() {
+      Column({space:8}) {
+        Row({space:10}) {
+          Stack() { SymbolGlyph(this.kindIcon('recordings')).fontSize(20).fontColor([Colors.secondary]) }
+            .width(36).height(36).backgroundColor(Colors.control).borderRadius(10)
+          Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
+        }.width('100%')
+        if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(16).fontColor(Colors.ink).width('100%')
+        Button({type:ButtonType.Capsule}) {
+          Row({space:7}) {
+            SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize(18).fontColor([Colors.onAction])
+            Text(tr('knowledge_ask_persona')).fontSize(17).fontColor(Colors.onAction)
+          }
+        }.width('100%').constraintSize({minHeight:46}).backgroundColor(Colors.action).onClick(() => this.askPersona()).id('knowledge.ask')
+        PhoneSectionTitle({text:tr('phone_kb_confirmed')})
+        Column({space:6}) {
+          if (this.factsOpen) {
+            TextArea({text:this.factsDraft,placeholder:tr('phone_kb_confirmed')}).width('100%').height(100)
+              .onChange((v:string) => this.factsDraft=v).id('knowledge.facts.text')
+            Row() {
+              Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.closeFacts())
+              Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL})
+                .enabled(!this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) &&
+                  this.factsDraft.trim()!==Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned').trim())
+                .onClick(() => this.workspace.saveFacts(this.factsDraft).then((ok:boolean) => { if (ok) this.closeFacts(); })).id('knowledge.facts.save')
+            }
+          } else {
+            if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
+              .fontSize(16).fontColor(Colors.ink).width('100%')
+            Button({type:ButtonType.Normal}) {
+              Row({space:8}) {
+                SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize(17).fontColor([Colors.link])
+                Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(16).fontColor(Colors.link)
+              }.width('100%')
+            }.width('100%').constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
+          }
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:14,right:14,top:4,bottom:4}).backgroundColor(Colors.surface).borderRadius(14)
+        Text(tr('phone_kb_fact_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:6,right:6})
+        if (Wire.text(this.workspace.detail,'summary')) {
+          PhoneSectionTitle({text:tr('phone_kb_profile')})
+          Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),onLink:(url:string) => this.openSafeLink(url)}) }
+            .width('100%').alignItems(HorizontalAlign.Start).padding(14).backgroundColor(Colors.surface).borderRadius(14).id('knowledge.summary')
+        }
+        if (Wire.text(this.workspace.detail,'path')) {
+          PhoneSectionTitle({text:tr('directory')})
+          Text(Wire.text(this.workspace.detail,'path')).fontFamily('monospace').fontSize(13).fontColor(Colors.secondary).width('100%')
+            .padding(14).backgroundColor(Colors.surface).borderRadius(14).copyOption(CopyOptions.LocalDevice).id('knowledge.recording.directory')
+        }
+        if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(14).fontColor(Colors.danger).width('100%')
+        Button({type:ButtonType.Normal}) {
+          Row() {
+            Text(tr('knowledge_minutes')+' · '+tr('knowledge_transcript')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+            SymbolGlyph(this.recordingTools ? Symbols.down : Symbols.expand).fontSize(14).fontColor([Colors.secondary])
+          }.width('100%')
+        }.width('100%').constraintSize({minHeight:44}).padding(12).backgroundColor(Colors.surface).borderRadius(12)
+          .accessibilityDescription(tr(this.recordingTools ? 'control_expanded' : 'control_collapsed')).onClick(() => this.recordingTools=!this.recordingTools).id('knowledge.recording.tools')
+        if (this.recordingTools) {
+          this.recordingSection(UIUtils.makeBinding(():Record<string,Object> => this.workspace.detail))
+          this.relatedEntries(UIUtils.makeBinding(():Record<string,Object> => this.workspace.detail))
+          if (this.importedMeeting()) Button(this.importedMeeting()!.title,{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => {
+            const item=this.importedMeeting(); if (item) this.onOpenResource(item);
+          }).id('knowledge.recording.imported')
+          Button(tr('knowledge_edit_metadata'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.beginEdit()).id('knowledge.edit.open')
+          if (this.workspace.editOpen) this.editForm()
+          Button(tr('knowledge_forget_recording'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.danger)
+            .enabled(this.workspace.canDeleteRecording()).onClick(() => this.confirmDeleteRecording()).id('knowledge.recording.delete')
+        }
+      }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:20,bottom:24})
+    }.width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped).id('knowledge.recording.detail')
   }
 
   @Builder detailContent() {
@@ -558,7 +667,7 @@ export struct KnowledgeWorkspacePage {
           .fontSize(Tokens.meta).width('100%').id('knowledge.transcript.' + String(index)),
           (line: Record<string, Object>, index: number) => JSON.stringify([index, JSON.stringify(line)]))
       } else if (Wire.text(detail.value, 'recent')) Text(Wire.text(detail.value, 'recent')).fontSize(Tokens.meta).width('100%')
-    }.width('100%').alignItems(HorizontalAlign.Start).id('knowledge.recording.detail')
+    }.width('100%').alignItems(HorizontalAlign.Start).id('knowledge.recording.transcript')
   }
 
   private importedMeeting(): ResourceRow | undefined {
@@ -576,7 +685,8 @@ export struct KnowledgeWorkspacePage {
   private async loadMoment(id: string): Promise<void> { this.momentText = await this.workspace.openMoment(id).catch(() => ''); }
 
   build() {
-    if (this.row && this.workspace.selected.id) this.detailContent();
+    if (this.row && this.workspace.selected.id && this.workspace.selected.path==='recordings') this.recordingDetail();
+    else if (this.row && this.workspace.selected.id) this.detailContent();
     else this.listContent();
   }
 }

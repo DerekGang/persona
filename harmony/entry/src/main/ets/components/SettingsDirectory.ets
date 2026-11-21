@@ -1,3 +1,4 @@
+import { inputMethod } from '@kit.IMEKit';
 import { i18n } from '@kit.LocalizationKit';
 import { PhoneStyle, PhoneSectionTitle, PhoneSettingsRow } from '../design/PhoneStyle';
 import { Colors } from '../design/Colors';
@@ -7,11 +8,12 @@ import { ClientModel } from '../models/ClientModel';
 import { ResourceRow, Wire } from '../models/Wire';
 import { machineOnline } from '../models/MachineDashboard';
 
-const AGENT_OPTIONS:string[] = ['launchers','engine','triage','schedules'];
+const AGENT_OPTIONS:string[] = ['phone_agent_folders','phone_claude_config','phone_codex_config','phone_agy_config','triage'];
+const SEARCH_ROUTES:string[] = ['phone_agent_followup','phone_agent_layout','launchers','engine','schedules'];
 const ASSISTANT_OPTIONS:string[] = ['models','assistant','channels','connectors','extensions','memory','phone_agent_options','machines'];
 const DEVICE_OPTIONS:string[] = ['appearance','phone_language_options','notifications','translation','phone','privacy'];
 const HUB_OPTIONS:string[] = ['managers','ssh','hub_update','node_update','ledger','diagnostics'];
-const LANGUAGES:string[] = ['default','en-US','zh-CN','ja-JP'];
+const LANGUAGES:string[] = ['default','zh-CN','en-US','ja-JP'];
 
 function languageName(tag:string):string {
   const locale = tag.toLowerCase();
@@ -33,8 +35,14 @@ function settingIcon(id:string):Resource {
     case 'connectors': return $r('sys.symbol.link');
     case 'extensions': return Symbols.apps;
     case 'memory': return $r('sys.symbol.book');
+    case 'phone_agent_folders':
+    case 'phone_claude_config':
+    case 'phone_codex_config':
+    case 'phone_agy_config':
     case 'phone_agent_options':
     case 'triage': return $r('sys.symbol.slider_horizontal_2');
+    case 'phone_agent_followup': return Symbols.inbox;
+    case 'phone_agent_layout': return Symbols.spaces;
     case 'launchers': return $r('sys.symbol.play_fill');
     case 'engine': return $r('sys.symbol.computer');
     case 'machines': return $r('sys.symbol.desktop');
@@ -59,6 +67,7 @@ function settingLabel(id:string, label:(page:string)=>string):string {
   if (id === 'phone_agent_options') return tr('settings_agent_options_title');
   if (id === 'phone_language_options') return tr('settings_language_options_title');
   if (id === 'machines') return tr('phone_machines');
+  if (AGENT_OPTIONS.includes(id) && id!=='triage' || id==='phone_agent_followup' || id==='phone_agent_layout') return tr(id);
   return tr(label(id));
 }
 
@@ -104,9 +113,12 @@ export struct SettingsDirectory {
     const query = this.query.trim().toLowerCase();
     if (!query) return [];
     const words = query.split(/\s+/);
-    return ASSISTANT_OPTIONS.concat(AGENT_OPTIONS,DEVICE_OPTIONS,HUB_OPTIONS).filter((id:string) => {
-      const search = [settingLabel(id,this.label), id, this.subtitle(id), ALIASES[id] ? tr(ALIASES[id]) : ''].join(' ').toLowerCase();
-      return words.every((word:string) => search.includes(word));
+    const direct = ASSISTANT_OPTIONS.concat(SEARCH_ROUTES,DEVICE_OPTIONS,HUB_OPTIONS);
+    const agentDestinations = AGENT_OPTIONS.filter((id:string) => id!=='phone_agent_folders');
+    return direct.concat(agentDestinations).filter((id:string) => {
+      const aliases = ALIASES[id] ? tr(ALIASES[id]) : '';
+      const terms = [settingLabel(id,this.label), this.subtitle(id), aliases].join(' ').toLocaleLowerCase();
+      return words.every((word:string) => terms.includes(word));
     });
   }
   private openEntry(id:string):void {
@@ -200,6 +212,7 @@ export struct PhoneSettingsOptions {
           },(id:string) => id)
         }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
         }
+        ListItem() { Text(tr('phone_agent_tools_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
       } else {
         ListItem() {
         Column() {
@@ -215,6 +228,19 @@ export struct PhoneSettingsOptions {
           },(lang:string) => lang)
         }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
         }
+        ListItem() { Text(tr('phone_language_system_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:20}) }
+        ListItem() {
+          Row({space:8}) {
+            Text(tr('phone_dictation')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+            Text(tr('phone_system_input')).fontSize(15).fontColor(Colors.link)
+            SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+          }.constraintSize({minHeight:48}).width('100%').padding({left:15,right:15,top:7,bottom:7})
+            .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
+            .onClick(() => inputMethod.getSetting().showOptionalInputMethods().catch(() => {
+              if (this.mounted) this.getUIContext().getPromptAction().showToast({message:tr('failed')});
+            })).id('settings.dictation.system')
+        }
+        ListItem() { Text(tr('phone_dictation_os_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
       }
     }.width('100%').height('100%').padding({left:16,right:16,top:12,bottom:24}).backgroundColor(Colors.grouped)
   }

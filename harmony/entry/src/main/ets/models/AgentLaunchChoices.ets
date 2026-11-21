@@ -6,8 +6,9 @@ export class LaunchChoice {
   title: string;
   detail: string;
   disabled: boolean;
-  constructor(id: string, title: string, detail: string = '', disabled: boolean = false) {
-    this.id = id; this.title = title; this.detail = detail; this.disabled = disabled;
+  description: string;
+  constructor(id: string, title: string, detail: string = '', disabled: boolean = false, description: string = '') {
+    this.id = id; this.title = title; this.detail = detail; this.disabled = disabled; this.description = description;
   }
 }
 export class RecentAgentSetup {
@@ -84,8 +85,11 @@ export class AgentLaunchChoices {
       this.locked = Wire.text(value,'locked');
       this.acceptsTypedModel = !this.locked && ['claude','codex','pi','cursor','agy'].includes(Wire.text(value,'agent'));
       this.modelData = Wire.rows(value,'models').filter((v:Record<string,Object>) => !!Wire.text(v,'id'));
-      this.models = this.modelData.map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'id'),Wire.text(v,'name') || Wire.text(v,'id'),
-        Wire.text(v,'name') && Wire.text(v,'name') !== Wire.text(v,'id') ? Wire.text(v,'id') : ''));
+      // The host default is already represented by the first, empty-ID choice in the phone form.
+      // Choosing the default keeps that semantic even after a launcher changes its default model.
+      this.models = this.modelData.filter((v:Record<string,Object>) => !Wire.bool(v,'default') && !Wire.bool(v,'is_default'))
+        .map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'id'),Wire.text(v,'name') || Wire.text(v,'id'),
+          launcher+' · '+Wire.text(v,'id'),false,Wire.text(v,'description')));
       this.updateEfforts('');
     } catch (_) { if (valid()) this.error = 'flow_models_offline'; }
     finally { if (valid()) this.loading = false; }
@@ -93,6 +97,10 @@ export class AgentLaunchChoices {
   selectedModelId(id:string): string {
     const selected = this.modelData.find((m:Record<string,Object>) => Wire.text(m,'id') === id);
     return selected && (Wire.bool(selected,'is_default') || Wire.bool(selected,'default')) ? '' : id;
+  }
+  defaultModelName():string {
+    const model = this.modelData.find((m:Record<string,Object>) => Wire.bool(m,'is_default') || Wire.bool(m,'default'));
+    return model ? Wire.text(model,'name') || Wire.text(model,'id') : '';
   }
   updateEfforts(id:string): void {
     const model = id ? this.modelData.find((m:Record<string,Object>) => Wire.text(m,'id') === id) :

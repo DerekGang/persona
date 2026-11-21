@@ -5743,6 +5743,174 @@
     {
       "name": "session_space_agents",
       "value": "此工作区有 {count} 个 Agent"
+    },
+    {
+      "name": "phone_chat_expand_editor",
+      "value": "展开编辑框"
+    },
+    {
+      "name": "phone_chat_close_editor",
+      "value": "收起编辑框"
+    },
+    {
+      "name": "phone_chat_hide_keyboard",
+      "value": "收起键盘"
+    },
+    {
+      "name": "phone_chat_dictation",
+      "value": "听写"
+    },
+    {
+      "name": "phone_dictation_preparing",
+      "value": "正在启动设备端听写…"
+    },
+    {
+      "name": "phone_dictation_listening",
+      "value": "正在听写…"
+    },
+    {
+      "name": "phone_dictation_finishing",
+      "value": "正在整理听写文字…"
+    },
+    {
+      "name": "phone_dictation_review",
+      "value": "请核对文字，再加入草稿。"
+    },
+    {
+      "name": "phone_dictation_insert",
+      "value": "加入草稿"
+    },
+    {
+      "name": "phone_dictation_empty",
+      "value": "没有识别到语音。"
+    },
+    {
+      "name": "phone_dictation_unavailable",
+      "value": "设备端听写暂不可用，可以使用键盘上的麦克风。"
+    },
+    {
+      "name": "phone_dictation_keyboard_language",
+      "value": "请使用键盘上的麦克风听写当前语言。"
+    },
+    {
+      "name": "phone_dictation_keyboard",
+      "value": "打开键盘"
+    },
+    {
+      "name": "phone_dictation_too_long",
+      "value": "草稿已达字数上限。可以复制听写文字或缩短草稿。"
+    },
+    {
+      "name": "phone_agent_folders",
+      "value": "Agent 文件夹"
+    },
+    {
+      "name": "phone_claude_config",
+      "value": "Claude Code 设置"
+    },
+    {
+      "name": "phone_codex_config",
+      "value": "Codex 设置"
+    },
+    {
+      "name": "phone_agy_config",
+      "value": "Antigravity 设置"
+    },
+    {
+      "name": "phone_agent_followup",
+      "value": "Agent 跟进"
+    },
+    {
+      "name": "phone_agent_layout",
+      "value": "Agents 列表布局"
+    },
+    {
+      "name": "phone_agent_tools_note",
+      "value": "此助手电脑上的 Agent 工具与自动化。"
+    },
+    {
+      "name": "phone_folder_pattern",
+      "value": "文件夹路径或匹配规则"
+    },
+    {
+      "name": "phone_folder_hide",
+      "value": "隐藏"
+    },
+    {
+      "name": "phone_folder_block",
+      "value": "停止采集"
+    },
+    {
+      "name": "phone_follow_start_requested",
+      "value": "启动请求的任务"
+    },
+    {
+      "name": "phone_follow_agent_tasks",
+      "value": "跟进 Agent 任务"
+    },
+    {
+      "name": "phone_follow_naming",
+      "value": "自动命名 Agent 会话"
+    },
+    {
+      "name": "phone_follow_supervise",
+      "value": "主对话跟进自己的任务"
+    },
+    {
+      "name": "phone_follow_close_ended",
+      "value": "关闭已结束的终端"
+    },
+    {
+      "name": "phone_dictation",
+      "value": "听写"
+    },
+    {
+      "name": "phone_system_input",
+      "value": "系统输入法"
+    },
+    {
+      "name": "phone_dictation_os_note",
+      "value": "语音听写及其语言由当前系统输入法管理。"
+    },
+    {
+      "name": "phone_language_system_note",
+      "value": "跟随系统时使用设备语言，也可以在这里单独选择 Persona 的界面语言。"
+    },
+    {
+      "name": "phone_search_conversation_count",
+      "value": "{count} 个对话"
+    },
+    {
+      "name": "phone_todo_waiting_hidden",
+      "value": "另有 {count} 项需要你，不在「{filter}」里。"
+    },
+    {
+      "name": "phone_kb_confirmed",
+      "value": "确认的事实"
+    },
+    {
+      "name": "phone_kb_add_fact",
+      "value": "添加确认的事实"
+    },
+    {
+      "name": "phone_kb_fact_note",
+      "value": "Persona 更新这个条目时，会保留你的更正。"
+    },
+    {
+      "name": "phone_kb_profile",
+      "value": "档案"
+    },
+    {
+      "name": "flow_recent_folders",
+      "value": "最近使用的目录"
+    },
+    {
+      "name": "flow_use_named_folder",
+      "value": "使用「{name}」"
+    },
+    {
+      "name": "flow_other_model",
+      "value": "其他模型…"
     }
   ]
 }

@@ -7,7 +7,7 @@ import { ClientModel } from '../models/ClientModel';
 import { HubProfile, ResourceRow, Wire } from '../models/Wire';
 import { DashboardPoint, MachineAgent, MachineAlert, MachineReading, machineAgents, machineAlerts, machineBytes,
   machineConcern, machineKey, machineOnline, machinePending, machinePercent, machineTokens, machineTokenTotal,
-  machineTrace, osFamily, percentOf } from '../models/MachineDashboard';
+  dashboardTimeTicks, machineTrace, osFamily, percentOf } from '../models/MachineDashboard';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { MachineChart } from './MachineChart';
 
@@ -592,12 +592,13 @@ export struct MachineDirectory {
           tint:this.tint(key),alternateTint:key === 'network' ? this.tint('upload') : '',
           ceiling:this.series(key).ceiling,chartHeight:115,selectedTime:this.inspected,interactive:true,
           dark:nativeEnvironment.dark,pick:(time:number) => this.inspected=time}).id('machines.chart.'+key)
-        Row() {
-          ForEach([0,1,2,3],(tick:number) => {
-            Text(clockLabel(this.chartEnd-(3-tick)*RANGE_SECONDS[this.shownRange]/3)).fontSize(11).fontColor(Colors.secondary)
-              .maxLines(1).textAlign(tick === 0 ? TextAlign.Start : tick === 3 ? TextAlign.End : TextAlign.Center)
-          },(tick:number) => String(tick))
-        }.width('100%').justifyContent(FlexAlign.SpaceBetween).accessibilityLevel('no-hide-descendants')
+        Stack({alignContent:Alignment.TopStart}) {
+          ForEach(dashboardTimeTicks(this.chartEnd,RANGE_SECONDS[this.shownRange]),(time:number) => {
+            Text(clockLabel(time)).fontSize(10).fontColor(Colors.secondary).maxLines(1)
+              .position({x:String(Math.min(94,Math.max(5,(1-(this.chartEnd-time)/RANGE_SECONDS[this.shownRange])*100)))+'%',y:0})
+              .translate({x:'-50%'})
+          },(time:number) => String(time))
+        }.width('100%').height(17).accessibilityLevel('no-hide-descendants')
       }.layoutWeight(1)
       Column() {
         Text(this.present(key,this.series(key).ceiling)).fontSize(11).fontColor(Colors.secondary)

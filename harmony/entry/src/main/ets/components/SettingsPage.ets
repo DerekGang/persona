@@ -27,6 +27,7 @@ export struct SettingsPage {
   @Param active: boolean = true;
   @Param agentWorkspace: AgentWorkspace = new AgentWorkspace();
   @Local machineOwner: ClientModel | undefined;
+  @Param agentLayoutOnly: boolean = false;
   @Param initialMachine: ResourceRow | undefined = undefined;
   @Local machineDirectoryKey: string = '';
   private loadedMachineRoute: string = '';
@@ -1201,52 +1202,55 @@ export struct SettingsPage {
     const owner = this.model, scope = owner.scope(), generation = owner.connectionGeneration();
     return (): void => { if (this.appearanceCurrent(owner, revision, scope, generation)) this.loadLook(); };
   }
+  @Builder appearanceGeneral() {
+    ForEach([this.appearanceRevision], (revision: number) => {
+      DeviceLookPicker({ model: this.look, active: this.appearanceCurrent(this.model, revision, this.model.scope(), this.model.connectionGeneration()),
+        onAvatarSelected: this.appearanceAvatarAction(revision, false),
+        onAccentSelected: this.appearanceAvatarAction(revision, true),
+        onRefresh: this.appearanceRefreshAction(revision) })
+    }, (revision: number) => String(revision))
+    ListItem() {
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
+        Text(tr('language')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })
+        Select([{ value: tr('system') }, { value: 'English' }, { value: '简体中文' }, { value: '日本語' }]).attributeModifier(SelectStyles.inline)
+          .selected(['default', 'en-US', 'zh-CN', 'ja-JP'].indexOf(this.model.language))
+          .value(this.model.language === 'default' ? tr('system') : this.model.language === 'en-US' ? 'English' : this.model.language === 'zh-CN' ? '简体中文' : '日本語')
+          .flexShrink(0).constraintSize({ minHeight: Tokens.touch, maxWidth: '100%' }).enabled(!this.model.languageChanging && this.appearanceCurrent(this.model, this.appearanceRevision, this.model.scope(), this.model.connectionGeneration()))
+          .onSelect(this.appearanceSelector('language', this.appearanceRevision)).id('appearance.language')
+      }.constraintSize({ minHeight: Tokens.touch }).padding({ left: Tokens.page, right: Tokens.page, top: Tokens.fine, bottom: Tokens.fine }).width('100%')
+    }
+    ListItem() {
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
+        Text(tr('color_mode')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })
+        Select([{ value: tr('system') }, { value: tr('light') }, { value: tr('dark') }]).attributeModifier(SelectStyles.inline).selected(this.model.appearance)
+          .value(tr(['system', 'light', 'dark'][this.model.appearance] || 'system'))
+          .flexShrink(0).constraintSize({ minHeight: Tokens.touch, maxWidth: '100%' }).enabled(this.appearanceCurrent(this.model, this.appearanceRevision, this.model.scope(), this.model.connectionGeneration()))
+          .onSelect(this.appearanceSelector('color', this.appearanceRevision)).id('appearance.color-mode')
+      }.constraintSize({ minHeight: Tokens.touch }).padding({ left: Tokens.page, right: Tokens.page, top: Tokens.fine, bottom: Tokens.fine }).width('100%')
+    }
+    ListItem() {
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
+        Text(tr('style')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })
+        Select([{ value: tr('app_style_system') }, { value: tr('app_style_glass') }, { value: tr('app_style_brief') }, { value: tr('app_style_board') }]).attributeModifier(SelectStyles.inline)
+          .selected(['system', 'glass', 'brief', 'board'].indexOf(this.model.style) < 0 ? 0 : ['system', 'glass', 'brief', 'board'].indexOf(this.model.style))
+          .value(tr(['system', 'glass', 'brief', 'board'].includes(this.model.style) ? 'app_style_' + this.model.style : 'app_style_system'))
+          .flexShrink(0).constraintSize({ minHeight: Tokens.touch, maxWidth: '100%' }).enabled(this.appearanceCurrent(this.model, this.appearanceRevision, this.model.scope(), this.model.connectionGeneration()))
+          .onSelect(this.appearanceSelector('style', this.appearanceRevision)).id('appearance.style')
+      }.constraintSize({ minHeight: Tokens.touch }).padding({ left: Tokens.page, right: Tokens.page, top: Tokens.fine, bottom: Tokens.fine }).width('100%')
+    }
+    ListItem() {
+      Row({space:12}) {
+        Text(tr('flow_navigation')).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1)
+        Select([{value:tr('flow_separate')},{value:tr('flow_merged')}]).attributeModifier(SelectStyles.inline)
+          .selected(this.look.phoneNavigation === 'merged' ? 1 : 0).value(tr(this.look.phoneNavigation === 'merged' ? 'flow_merged' : 'flow_separate'))
+          .enabled(this.look.ready && this.appearanceCurrent(this.model,this.appearanceRevision,this.model.scope(),this.model.connectionGeneration()))
+          .onSelect(this.appearanceSelector('phoneNavigation',this.appearanceRevision)).id('appearance.phone-navigation')
+      }.width('100%').constraintSize({minHeight:Tokens.touch}).padding({left:Tokens.page,right:Tokens.page})
+    }
+  }
   @Builder appearancePage() {
     List() {
-      ForEach([this.appearanceRevision], (revision: number) => {
-        DeviceLookPicker({ model: this.look, active: this.appearanceCurrent(this.model, revision, this.model.scope(), this.model.connectionGeneration()),
-          onAvatarSelected: this.appearanceAvatarAction(revision, false),
-          onAccentSelected: this.appearanceAvatarAction(revision, true),
-          onRefresh: this.appearanceRefreshAction(revision) })
-      }, (revision: number) => String(revision))
-      ListItem() {
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
-          Text(tr('language')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })
-          Select([{ value: tr('system') }, { value: 'English' }, { value: '简体中文' }, { value: '日本語' }]).attributeModifier(SelectStyles.inline)
-            .selected(['default', 'en-US', 'zh-CN', 'ja-JP'].indexOf(this.model.language))
-            .value(this.model.language === 'default' ? tr('system') : this.model.language === 'en-US' ? 'English' : this.model.language === 'zh-CN' ? '简体中文' : '日本語')
-            .flexShrink(0).constraintSize({ minHeight: Tokens.touch, maxWidth: '100%' }).enabled(!this.model.languageChanging && this.appearanceCurrent(this.model, this.appearanceRevision, this.model.scope(), this.model.connectionGeneration()))
-            .onSelect(this.appearanceSelector('language', this.appearanceRevision)).id('appearance.language')
-        }.constraintSize({ minHeight: Tokens.touch }).padding({ left: Tokens.page, right: Tokens.page, top: Tokens.fine, bottom: Tokens.fine }).width('100%')
-      }
-      ListItem() {
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
-          Text(tr('color_mode')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })
-          Select([{ value: tr('system') }, { value: tr('light') }, { value: tr('dark') }]).attributeModifier(SelectStyles.inline).selected(this.model.appearance)
-            .value(tr(['system', 'light', 'dark'][this.model.appearance] || 'system'))
-            .flexShrink(0).constraintSize({ minHeight: Tokens.touch, maxWidth: '100%' }).enabled(this.appearanceCurrent(this.model, this.appearanceRevision, this.model.scope(), this.model.connectionGeneration()))
-            .onSelect(this.appearanceSelector('color', this.appearanceRevision)).id('appearance.color-mode')
-        }.constraintSize({ minHeight: Tokens.touch }).padding({ left: Tokens.page, right: Tokens.page, top: Tokens.fine, bottom: Tokens.fine }).width('100%')
-      }
-      ListItem() {
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
-          Text(tr('style')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })
-          Select([{ value: tr('app_style_system') }, { value: tr('app_style_glass') }, { value: tr('app_style_brief') }, { value: tr('app_style_board') }]).attributeModifier(SelectStyles.inline)
-            .selected(['system', 'glass', 'brief', 'board'].indexOf(this.model.style) < 0 ? 0 : ['system', 'glass', 'brief', 'board'].indexOf(this.model.style))
-            .value(tr(['system', 'glass', 'brief', 'board'].includes(this.model.style) ? 'app_style_' + this.model.style : 'app_style_system'))
-            .flexShrink(0).constraintSize({ minHeight: Tokens.touch, maxWidth: '100%' }).enabled(this.appearanceCurrent(this.model, this.appearanceRevision, this.model.scope(), this.model.connectionGeneration()))
-            .onSelect(this.appearanceSelector('style', this.appearanceRevision)).id('appearance.style')
-        }.constraintSize({ minHeight: Tokens.touch }).padding({ left: Tokens.page, right: Tokens.page, top: Tokens.fine, bottom: Tokens.fine }).width('100%')
-      }
-      ListItem() {
-        Row({space:12}) {
-          Text(tr('flow_navigation')).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1)
-          Select([{value:tr('flow_separate')},{value:tr('flow_merged')}]).attributeModifier(SelectStyles.inline)
-            .selected(this.look.phoneNavigation === 'merged' ? 1 : 0).value(tr(this.look.phoneNavigation === 'merged' ? 'flow_merged' : 'flow_separate'))
-            .enabled(this.look.ready && this.appearanceCurrent(this.model,this.appearanceRevision,this.model.scope(),this.model.connectionGeneration()))
-            .onSelect(this.appearanceSelector('phoneNavigation',this.appearanceRevision)).id('appearance.phone-navigation')
-        }.width('100%').constraintSize({minHeight:Tokens.touch}).padding({left:Tokens.page,right:Tokens.page})
-      }
+      if (!this.agentLayoutOnly) this.appearanceGeneral()
       ListItem() {
         Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
           Text(tr('agent_density')).fontSize(Tokens.body).fontColor(Colors.ink).flexShrink(0).constraintSize({ maxWidth: '100%' })

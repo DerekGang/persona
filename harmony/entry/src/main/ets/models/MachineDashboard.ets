@@ -163,3 +163,19 @@ export function machineTrace(reading: MachineReading, field: string, range: numb
   }
   return points;
 }
+
+
+// Time grid shared by the Canvas and its axis labels. Keep wall-clock marks stable as a poll advances the window.
+export function dashboardTimeTicks(end:number, seconds:number): number[] {
+  if (!Number.isFinite(end) || !Number.isFinite(seconds) || seconds <= 0) return [];
+  const minutes = seconds <= 3600 ? 15 : seconds <= 21600 ? 60 : 240;
+  const first = new Date((end-seconds)*1000);
+  first.setSeconds(0,0);
+  if (minutes < 60) first.setMinutes(Math.floor(first.getMinutes()/minutes)*minutes);
+  else first.setHours(Math.floor(first.getHours()/(minutes/60))*(minutes/60),0);
+  const ticks:number[] = [];
+  for (let time=first.getTime()/1000; time<=end; time+=minutes*60) {
+    if (time>=end-seconds) ticks.push(time);
+  }
+  return ticks;
+}

@@ -69,6 +69,18 @@ test('recent setups deduplicate exact workspace/launcher/model choices and never
   assert.deepEqual(loadAgentSetups('{"entries":[{"machine":"m","cwd":"/a","prompt":"private"},{"machine":""}]}').map(x=>[x.machine,x.cwd,x.prompt]),[['m','/a',undefined]]);
 });
 
+test('the model picker preserves the host default as one choice and shows the launcher identity and description',async()=>{
+  const choices=new AgentLaunchChoices(),owner=makeOwner(async()=>({agent:'codex',models:[
+    {id:'first',name:'First',default:true,efforts:['low']},
+    {id:'case/second',name:'Second',description:'Use this for reviews',efforts:['high']}
+  ]}));
+  await choices.loadModels(owner,'mac','coding');
+  assert.equal(choices.defaultModelName(),'First');assert.equal(choices.selectedModelId('first'),'');
+  assert.deepEqual(choices.models.map(m=>[m.id,m.title,m.detail,m.description]),[
+    ['case/second','Second','coding · case/second','Use this for reviews']]);
+  choices.updateEfforts('case/second');assert.deepEqual(choices.effortNames,['high']);
+});
+
 // Run the real phone form methods under Node, as navigation-context does for the native navigator.
 // Only persistence and post-selection presentation are outside this fixture's boundary.
 const formSource = readFileSync(new URL('../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
@@ -234,4 +246,32 @@ test('closing the compact drawer with a row under the finger keeps the current p
   assert.equal(drawer.drawerAcceptsTap(), false);
   drawer.drawerTapBlockedUntil = Date.now() - 1;
   assert.equal(drawer.drawerAcceptsTap(), true);
+});
+
+test('Reduce Motion switches a compact drawer directly and retires an older completion', () => {
+  const methods = ['settlePhoneDrawer', 'movePhonePan'].map(name => formMethods.get(name));
+  const Drawer = new Function('Curve', 'return ' + stripTypeScriptTypes(
+    'class NativeDrawer {\n' + methods.join('\n') + '\n}'))({EaseOut: 'ease-out'});
+  const drawer = new Drawer();
+  let completion;
+  Object.assign(drawer, {
+    drawerAnimation: 0, drawerMounted: true, spacesShown: false, drawerFraction: 1,
+    environment: {reduceMotion: false}, gestureKind: 'open', drawerWidth: () => 300, drawerFrom: 0,
+    getUIContext: () => ({animateTo(options, update) { completion = options.onFinish; update(); }})
+  });
+  drawer.settlePhoneDrawer(false);
+  assert.equal(typeof completion, 'function');
+  drawer.environment.reduceMotion = true;
+  drawer.getUIContext = () => { throw new Error('unexpected native animation'); };
+  drawer.movePhonePan(120);
+  assert.equal(drawer.drawerFraction, 0);
+  drawer.spacesShown = true;
+  drawer.settlePhoneDrawer(true);
+  completion();
+  assert.equal(drawer.drawerMounted, true);
+  assert.equal(drawer.drawerFraction, 1);
+  drawer.spacesShown = false;
+  drawer.settlePhoneDrawer(false);
+  assert.equal(drawer.drawerMounted, false);
+  assert.equal(drawer.drawerFraction, 0);
 });
