@@ -46,7 +46,11 @@ type logicalSwitchStore interface {
 	ConversationClosureDone(context.Context, string, string) error
 }
 
+type logicalModesStore interface {
+	SetConversationSegmentModes(context.Context, string, string, int64, string, *string, *string, *string) error
+}
 type logicalSourceKey struct{}
+type logicalHistoryOnlyKey struct{}
 
 type logicalDeviceState struct {
 	mu      sync.Mutex
@@ -321,6 +325,9 @@ func (d *logicalDevices) Follow(ctx context.Context, machine, session string, on
 	}
 	if c.Deleted {
 		return db.ErrConversationDeleted
+	}
+	if c.MachineID != machine || c.SessionID != session {
+		return logicalRefusal(ctx, "private_segment")
 	}
 	a, ok := c.Active()
 	if !ok {

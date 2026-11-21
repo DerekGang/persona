@@ -318,7 +318,7 @@ func TestMainChatPickerShellTimeoutWithoutChoicesStaysRetryable(t *testing.T) {
 }
 
 // Every client replays these candidates: an assistant-purpose read adds the eligible Messages API provider and keeps
-// the declared runtime, but not managed Codex. New Agent keeps its generic launcher answer (Direct APIs are not Agents).
+// the declared runtime and managed Codex. New Agent keeps its generic launcher answer (Direct APIs are not Agents).
 func TestMainChatPickerReplaysSharedLauncherFixture(t *testing.T) {
 	var fixture struct {
 		Version int `json:"version"`
@@ -648,9 +648,9 @@ func TestMainChatOnAMissingRuntimeIsIncompatible(t *testing.T) {
 }
 
 // A Persona-managed provider in the computer's scope takes the place of the computer's own launcher by its name, in the
-// picker and in mainChatFit, so the status goes by the provider too: a managed Codex provider cx, which can't run the
-// main chat, stays "Provider missing or incompatible" while the computer's ~/.zshrc has a Claude alias cx that could.
-func TestMainChatOnAManagedProviderOverItsOwnLauncherIsIncompatible(t *testing.T) {
+// picker and in mainChatFit. Managed Codex is a supported native assistant path;
+// its shadowed shell alias cannot change the effective provider or model.
+func TestMainChatOnAManagedCodexProviderOverItsOwnLauncher(t *testing.T) {
 	s, f, _ := modelService(t)
 	ctx := context.Background()
 	f.mu.Lock()
@@ -661,13 +661,13 @@ func TestMainChatOnAManagedProviderOverItsOwnLauncherIsIncompatible(t *testing.T
 		t.Fatalf("on the computer's own Claude alias: %+v; want status %q, or this proves nothing", p, modelUnverified)
 	}
 	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "cx", Agent: "codex", BaseURL: "https://gw.example/v1", Model: "gpt"}})
-	if names := pickerNames(t, s, "assistant"); slices.Contains(names, "cx") {
-		t.Fatalf("the main chat's picker offers cx over the managed Codex provider: %v", names)
+	if names := pickerNames(t, s, "assistant"); !slices.Contains(names, "cx") {
+		t.Fatalf("the main chat's picker omitted the managed Codex provider: %v", names)
 	}
-	if fit, _ := s.mainChatFit(ctx, "server", "cx"); fit != mainChatRefused {
-		t.Fatalf("mainChatFit on the managed Codex provider: %v; want refused", fit)
+	if fit, _ := s.mainChatFit(ctx, "server", "cx"); fit != mainChatFits {
+		t.Fatalf("mainChatFit on the managed Codex provider: %v; want fits", fit)
 	}
-	want := mc(s.requestCtxLang(ctx), "status_provider_incompatible")
+	want := modelUnverified
 	for _, id := range []string{"assistant", "schedule", purposeSupervise} {
 		if p := purposeOf(t, s, id); p.Effective.Provider != "launcher.cx" || p.Status != want {
 			t.Fatalf("%s on the managed Codex provider cx: %+v; want status %q", id, p, want)

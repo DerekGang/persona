@@ -16,12 +16,19 @@ import (
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
-func logicalPair(t *testing.T, engine string) (*Service, *fakeHub, *db.DB, *db.LogicalConversation) {
+func logicalPair(t *testing.T, engine string, source ...string) (*Service, *fakeHub, *db.DB, *db.LogicalConversation) {
 	t.Helper()
 	s, f, d, _ := historyFixture(t)
+	src := "claude"
+	if len(source) > 0 {
+		src = source[0]
+	}
 	ctx := t.Context()
-	f.setSessions("server", proto.Session{SessionID: "side-chat", Assistant: true, Agent: "claude", Rev: 100}, proto.Session{SessionID: "target-chat", Assistant: true, Agent: engine, Rev: 100})
-	if err := d.AdoptConversation(ctx, "server", "side-chat", "one", "claude", "h1"); err != nil {
+	for _, method := range []string{"assistant.segment.restore", "assistant.segment.retire"} {
+		f.answerNode(method, func(string, json.RawMessage) (any, error) { return map[string]bool{"ok": true}, nil })
+	}
+	f.setSessions("server", proto.Session{SessionID: "side-chat", Assistant: true, Agent: src, Rev: 100}, proto.Session{SessionID: "target-chat", Assistant: true, Agent: engine, Rev: 100})
+	if err := d.AdoptConversation(ctx, "server", "side-chat", "one", src, "h1"); err != nil {
 		t.Fatal(err)
 	}
 	p, _ := json.Marshal(logicalSwitchRequest{OperationID: "operation", ExpectedEpoch: 1, MachineID: "server", Launcher: engine, Model: "target-model", Effort: "medium"})
@@ -76,6 +83,13 @@ func TestLogicalHistoryProjectsDatabaseAcrossSegmentsAndFrozenTail(t *testing.T)
 		if it.Text == "retired append" {
 			t.Fatal("retired tail leaked")
 		}
+	}
+	if err = d.PutSetting(ctx, conversationHistoryKey, map[string]bool{"enabled": false}); err != nil {
+		t.Fatal(err)
+	}
+	page, err = s.logicalHistoryPage(ctx, d, c, historyParams{After: &after, LazyImages: true})
+	if err != nil || len(page.Items) != 4 {
+		t.Fatalf("phase-1 rollback disabled logical reads: %+v %v", page, err)
 	}
 	raw, err := s.logicalFullItem(ctx, c, "session.image", historyParams{ItemID: "segment:two:line4#0"})
 	if err != nil || !strings.Contains(string(raw), "eA==") {
@@ -268,5 +282,225 @@ func TestLogicalSummaryWaitsOnPausedFakeModel(t *testing.T) {
 	})
 	if err != nil || calls != 1 || out.Text != "fake summary" {
 		t.Fatalf("summary: %+v %v", out, err)
+	}
+}
+
+func TestLogicalRuntimeEngineTransitionsPreserveRoleAndMessageIdentity(t *testing.T) {
+	engines := []string{"claude", "codex", "agy", "pi", "opencode"}
+	for i, source := range engines {
+		target := engines[(i+1)%len(engines)]
+		t.Run(source+"-to-"+target, func(t *testing.T) {
+			s, f, d, _ := logicalPair(t, target, source)
+			ctx := t.Context()
+			setSettings(t, s, func(cfg *Settings) { cfg.Leaders = []string{"side-chat"} })
+			c := activatePair(t, d)
+			delivered := 0
+			f.answerNode(DeviceAssistantSend, func(_ string, raw json.RawMessage) (any, error) {
+				delivered++
+				var p map[string]any
+				_ = json.Unmarshal(raw, &p)
+				if p["session_id"] != "target-chat" || p["client_msg_id"] != "preserved" || p["supervision_instructions"] == "" {
+					t.Fatalf("contract input: %s", raw)
+				}
+				return map[string]string{"session_id": "target-chat"}, nil
+			})
+			queued, _ := json.Marshal(logicalInput{Method: DeviceAssistantSend, Params: map[string]any{"text": "continue", "client_msg_id": "preserved"}})
+			if err := d.EnqueueConversationInput(ctx, c.MachineID, c.SessionID, "preserved", c.Epoch, queued); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.drainLogicalInput(ctx, d, c); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := d.LogicalConversation(ctx, "server", "target-chat")
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, _ := restored.Active()
+			if delivered != 1 || active.Engine != target || restored.SessionID != "side-chat" || s.settings(ctx).Leaders[0] != "side-chat" {
+				t.Fatalf("logical role changed: %+v", restored)
+			}
+		})
+	}
+}
+
+func TestLogicalOperationReceiptIsScopedToConversation(t *testing.T) {
+	first := &db.LogicalConversation{MachineID: "m", SessionID: "first"}
+	second := &db.LogicalConversation{MachineID: "m", SessionID: "second"}
+	if logicalNodeOperation(first, "same-id") == logicalNodeOperation(second, "same-id") {
+		t.Fatal("two conversations shared a physical start receipt")
+	}
+	if logicalNodeOperation(first, "same-id") != logicalNodeOperation(first, "same-id") {
+		t.Fatal("receipt changed after restart")
+	}
+}
+
+func TestLogicalQueuedInputsKeepTheTargetConfigAfterFirstAcceptance(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	c := activatePair(t, d)
+	for _, id := range []string{"first", "second"} {
+		payload, _ := json.Marshal(logicalInput{Method: DeviceAssistantSend, Params: map[string]any{"text": "continue", "client_msg_id": id, "launcher": "old-claude", "model": "old-model", "effort": "high", "config_dir": "/fake/source/config", "runtime": "old-runtime"}})
+		if err := d.EnqueueConversationInput(ctx, c.MachineID, c.SessionID, id, c.Epoch, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var received []string
+	f.answerNode(DeviceAssistantSend, func(_ string, raw json.RawMessage) (any, error) {
+		var p map[string]any
+		_ = json.Unmarshal(raw, &p)
+		if p["launcher"] != "codex" || p["model"] != "target-model" || p["effort"] != "medium" || p["config_dir"] != nil || p["runtime"] != nil {
+			t.Fatalf("retired execution config leaked: %s", raw)
+		}
+		received = append(received, p["client_msg_id"].(string))
+		return map[string]bool{"ok": true}, nil
+	})
+	for range 2 {
+		if err := s.drainLogicalInput(ctx, d, c); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		c, err = d.LogicalConversation(ctx, "server", "side-chat")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Switch != nil {
+			t.Fatal("acceptance did not settle switch")
+		}
+	}
+	if fmt.Sprint(received) != "[first second]" {
+		t.Fatalf("delivery order: %v", received)
+	}
+}
+
+func TestLogicalModesPersistOnlyAfterPhysicalAcknowledgement(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	activatePair(t, d)
+	fail := true
+	f.answerNode("session.modes", func(_ string, raw json.RawMessage) (any, error) {
+		if !strings.Contains(string(raw), `"session_id":"target-chat"`) {
+			t.Fatalf("physical route: %s", raw)
+		}
+		if fail {
+			return nil, errors.New("fake mode refusal")
+		}
+		return map[string]bool{"ok": true}, nil
+	})
+	for _, refused := range []bool{true, false} {
+		fail = refused
+		_, handled, err := s.logicalCall(ctx, "server", "session.modes", json.RawMessage(`{"session_id":"side-chat","model":"new-model","effort":"high","permission_mode":"default"}`))
+		if !handled || (err != nil) != refused {
+			t.Fatalf("modes result: %v %v", handled, err)
+		}
+		c, _ := d.LogicalConversation(ctx, "server", "side-chat")
+		a, _ := c.Active()
+		if refused && a.Model != "target-model" || !refused && (a.Model != "new-model" || a.Effort != "high" || a.PermissionMode != "default") {
+			t.Fatalf("persisted modes: %+v", a)
+		}
+	}
+}
+
+func TestLogicalPreparationRecoversTheDurablePositiveReceipt(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	if err := d.ResolveConversationSwitch(ctx, "server", "side-chat", "operation", "rejected", ""); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(logicalSwitchRequest{OperationID: "recover", ExpectedEpoch: 1, MachineID: "server", Launcher: "codex"})
+	if err := d.BeginConversationSwitch(ctx, "server", "side-chat", db.ConversationSwitch{OperationID: "recover", ExpectedEpoch: 1, SourceSegment: "one", Request: request}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PutConversationHandoff(ctx, "server", "side-chat", "recover", json.RawMessage(`{"summary":"saved summary"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if won, err := d.ClaimConversationPreparation(ctx, "server", "side-chat", "recover"); err != nil || !won {
+		t.Fatalf("claim: %v %v", won, err)
+	}
+	if err := d.RecordConversationPreparedCandidate(ctx, db.ConversationPreparedCandidate{MachineID: "server", SessionID: "recovered-target", LogicalMachine: "server", LogicalSession: "side-chat", OperationID: "recover"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"assistant.segment.prepare", "assistant.segment.receipt"} {
+		f.answerNode(method, func(string, json.RawMessage) (any, error) {
+			t.Fatal("persisted positive receipt was ignored")
+			return nil, errors.New("node receipt cache lost")
+		})
+	}
+	f.answerNode("assistant.segment.check", func(string, json.RawMessage) (any, error) {
+		return segmentTarget{Registered: true, Engine: "codex", Prepare: true, SupervisionPolicy: true}, nil
+	})
+	// Recreate the manager's projection book; no in-memory start receipt survives.
+	s.logical = logicalDeviceState{}
+	c, _ := d.LogicalConversation(ctx, "server", "side-chat")
+	if err := s.advanceLogicalConversation(ctx, d, c); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = d.LogicalConversation(ctx, "server", "side-chat")
+	a, _ := c.Active()
+	if a.SessionID != "recovered-target" || c.Epoch != 2 {
+		t.Fatalf("recovery: %+v", c)
+	}
+}
+
+func TestLogicalExecutionReferencesNeverSelectRetiredItems(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	activatePair(t, d)
+	calls := 0
+	f.answerNode("session.fork", func(_ string, raw json.RawMessage) (any, error) {
+		calls++
+		var p map[string]any
+		_ = json.Unmarshal(raw, &p)
+		if p["session_id"] != "target-chat" || p["at_item_id"] != "line1#0" {
+			t.Fatalf("source control reference: %s", raw)
+		}
+		return map[string]string{"session_id": "new-branch"}, nil
+	})
+	for _, ref := range []string{"line1#0", "segment:retired:line1#0", "segment:two:line1#0"} {
+		raw, _ := json.Marshal(map[string]any{"session_id": "side-chat", "at_item_id": ref})
+		reply, handled, err := s.logicalCall(t.Context(), "server", "session.fork", raw)
+		if err == nil && !strings.Contains(string(reply), "new-branch") {
+			t.Fatalf("fork identity was rewritten: %s", reply)
+		}
+		if !handled || (err == nil) != (ref == "segment:two:line1#0") {
+			t.Fatalf("reference %q: %v %v", ref, handled, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("physical calls: %d", calls)
+	}
+}
+
+func TestLogicalSendOnceStaysOnPublicHubLedger(t *testing.T) {
+	s, _, d, _ := logicalPair(t, "codex")
+	activatePair(t, d)
+	for _, method := range []string{DeviceSessionSendOnce, assistantwire.DeviceAssistantAnswerAgain} {
+		_, handled, err := s.logicalCall(t.Context(), "server", method, json.RawMessage(`{"session_id":"side-chat","client_msg_id":"public-ledger"}`))
+		if handled || err != nil {
+			t.Fatalf("%s bypassed hub ledger: %v %v", method, handled, err)
+		}
+	}
+}
+
+func TestLogicalRootTransportSurvivesItsPhysicalMachine(t *testing.T) {
+	s, _, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	if err := d.AdoptConversation(ctx, "removed-source", "retained-chat", "retained-first", "claude", "retained-history"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.BeginConversationSwitch(ctx, "removed-source", "retained-chat", db.ConversationSwitch{OperationID: "switch", ExpectedEpoch: 1, SourceSegment: "retained-first", Request: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PrepareConversationSegment(ctx, "removed-source", "retained-chat", "switch", conversationlog.Segment{ID: "retained-second", MachineID: "server", SessionID: "active-retained", Engine: "codex"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ActivateConversationSegment(ctx, "removed-source", "retained-chat", "switch", 1); err != nil {
+		t.Fatal(err)
+	}
+	raw := devicewire.States{Machines: []devicewire.State{{Machine: proto.Machine{ID: "server"}, Connected: true}}}
+	projected := s.logicalProjectStates(raw)
+	if len(projected.Machines) != 2 || projected.Machines[1].Machine.ID != "removed-source" || projected.Machines[1].TransportFor != "server" || !projected.Machines[1].Connected {
+		t.Fatalf("root transport: %+v", projected)
+	}
+	if len(raw.Machines) != 1 || raw.Machines[0].Machine.ID != "server" {
+		t.Fatal("shared physical snapshot mutated")
 	}
 }

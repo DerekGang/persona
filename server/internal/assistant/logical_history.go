@@ -114,6 +114,26 @@ func (s *Service) logicalFullItem(ctx context.Context, c *db.LogicalConversation
 			}
 		}
 	}
+	st, ok := s.store().(logicalConversationStore)
+	if !ok {
+		return nil, logicalRefusal(ctx, "unavailable")
+	}
+	check := func() error {
+		var tail historyPage
+		if err := s.physicalHistoryCall(ctx, seg.MachineID, DeviceSessionItems, map[string]any{"session_id": seg.SessionID, "limit": 1, "lazy_images": true, "strict_read": p.Strict}, &tail); err != nil {
+			return err
+		}
+		if tail.History == "" {
+			return logicalRefusal(ctx, "missing_generation")
+		}
+		if err := st.ObserveConversationSource(ctx, seg.MachineID, seg.SessionID, tail.History); err != nil {
+			return err
+		}
+		return s.checkLogicalRead(ctx, st, c)
+	}
+	if err := check(); err != nil {
+		return nil, err
+	}
 	params := map[string]any{"session_id": seg.SessionID, "item_id": source, "strict_read": p.Strict}
 	// Fetch the item first even for images: prove it is inside the frozen public
 	// range before fetching or returning its bytes through a scoped logical link.
@@ -133,7 +153,13 @@ func (s *Service) logicalFullItem(ctx context.Context, c *db.LogicalConversation
 		if err := s.physicalHistoryCall(ctx, seg.MachineID, method, params, &image); err != nil {
 			return nil, err
 		}
+		if err := check(); err != nil {
+			return nil, err
+		}
 		return json.Marshal(image)
+	}
+	if err := check(); err != nil {
+		return nil, err
 	}
 	return json.Marshal(projected)
 }
@@ -353,18 +379,25 @@ func (s *Service) logicalHistoryPage(ctx context.Context, st logicalConversation
 	if p.LazyImages {
 		page.Items = proto.WithoutImageData(page.Items)
 	}
-	latest, err := st.LogicalConversation(ctx, c.MachineID, c.SessionID)
-	if err != nil {
+	if err := s.checkLogicalRead(ctx, st, c); err != nil {
 		return page, err
 	}
+	return page, nil
+}
+
+func (s *Service) checkLogicalRead(ctx context.Context, st logicalConversationStore, c *db.LogicalConversation) error {
+	latest, err := st.LogicalConversation(ctx, c.MachineID, c.SessionID)
+	if err != nil {
+		return err
+	}
 	if latest == nil || latest.Deleted {
-		return page, db.ErrConversationDeleted
+		return db.ErrConversationDeleted
 	}
 	if latest.Epoch != c.Epoch || latest.History != c.History {
 		s.logicalChanged()
-		return page, db.ErrConversationHistoryChanged
+		return db.ErrConversationHistoryChanged
 	}
-	return page, nil
+	return nil
 }
 
 func (s *Service) logicalUserInputs(ctx context.Context, st logicalConversationStore, c *db.LogicalConversation, p historyParams) (json.RawMessage, error) {

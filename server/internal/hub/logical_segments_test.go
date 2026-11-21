@@ -80,8 +80,8 @@ func TestLogicalSegmentWebSocketSubscriptionLiveAndReconnect(t *testing.T) {
 		registerMachine(h, m)
 	}
 	raw := &segmentTestDevices{mirrorDevices: newMirrorDevices(h), rows: map[string][]proto.Session{
-		"root":   {{SessionID: "chat", Assistant: true, Agent: "claude", Status: proto.StatusIdle, Rev: 1}},
-		"target": {{SessionID: "physical-target", Assistant: true, Agent: "claude", Status: proto.StatusIdle, Rev: 1}},
+		"root":   {{SessionID: "chat", Cwd: "/home/example/.persona/assistant", Assistant: true, Agent: "claude", Status: proto.StatusIdle, Rev: 1}},
+		"target": {{SessionID: "physical-target", Cwd: "/home/example/.persona/assistant", Assistant: true, Agent: "claude", Status: proto.StatusIdle, Rev: 1}},
 	}}
 	if err := database.AdoptConversation(ctx, "root", "chat", "first", "claude", "source-history"); err != nil {
 		t.Fatal(err)

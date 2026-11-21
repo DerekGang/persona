@@ -11,6 +11,7 @@ import (
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
@@ -82,11 +83,23 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 	if c.MachineID != machine || c.SessionID != id {
 		return nil, true, logicalRefusal(ctx, "private_segment")
 	}
+	// The hub owns the public send-once ledger and clarification proofs. Keep
+	// those checks on the logical root; its normalized session.send (or guarded
+	// answer-again) comes back through this boundary before physical dispatch.
+	if method == DeviceSessionSendOnce || method == assistantwire.DeviceAssistantAnswerAgain && p["once_id"] == nil {
+		if _, external := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); !external {
+			return nil, false, nil
+		}
+		return nil, true, logicalRefusal(ctx, "message_id_required")
+	}
 	if method == DeviceSessionItems || method == "session.item" || method == "session.image" || method == DeviceAssistantHandoff {
 		var out json.RawMessage
 		for attempt := 0; attempt < 3; attempt++ {
 			out, err = s.logicalHistoryCall(ctx, st, c, method, raw)
 			if !errors.Is(err, db.ErrConversationHistoryChanged) {
+				break
+			}
+			if attempt == 2 {
 				break
 			}
 			c, err = st.LogicalConversation(ctx, machine, id)
@@ -120,6 +133,14 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 		active, ok = current.Active()
 		if !ok {
 			return logicalRefusal(ctx, "unavailable")
+		}
+		if method == assistantwire.DeviceAssistantAnswerAgain {
+			if current.Switch != nil {
+				return logicalRefusal(ctx, "busy")
+			}
+			if err := s.putSupervisionInstructions(ctx, machine, id, p); err != nil {
+				return err
+			}
 		}
 		if logicalSendMethod(method) {
 			if err := s.putSupervisionInstructions(ctx, machine, id, p); err != nil {
@@ -166,12 +187,30 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 				return e
 			}
 		}
-		if logicalSendMethod(method) && active.Ordinal == 1 && current.Epoch > 1 {
+		if logicalSendMethod(method) && current.Epoch > 1 {
 			if _, err := s.logicalPhysical(ctx, active.MachineID, "assistant.segment.restore", map[string]any{"session_id": active.SessionID}); err != nil {
 				return err
 			}
 		}
+		if launcher, _ := p["launcher"].(string); launcher != "" && launcher != active.Launcher && (logicalSendMethod(method) || method == "session.modes" || method == "session.switch") {
+			target, err := s.logicalTarget(ctx, active.MachineID, launcher)
+			if err != nil {
+				return err
+			}
+			if target.Engine != active.Engine {
+				return &launcherOtherKind{conversationAgent: active.Engine, launcher: launcher, launcherAgent: target.Engine}
+			}
+		}
 		physical := cloneLogicalParams(p, active)
+		for _, key := range []string{"at_item_id", "answer_again_after"} {
+			if ref, _ := physical[key].(string); ref != "" {
+				source, err := activeLogicalItemID(active, ref)
+				if err != nil {
+					return logicalRefusal(ctx, "private_segment")
+				}
+				physical[key] = source
+			}
+		}
 		if method == "session.watch" {
 			for _, key := range []string{"since_seq", "after_seq"} {
 				if n, ok := physical[key].(float64); ok {
@@ -182,6 +221,19 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 		}
 		var e error
 		out, e = s.logicalPhysical(ctx, active.MachineID, method, physical)
+		if e == nil && method == "session.modes" {
+			if modes, ok := s.store().(logicalModesStore); ok {
+				value := func(key string) *string {
+					if v, ok := p[key].(string); ok {
+						copy := v
+						return &copy
+					}
+					return nil
+				}
+				e = modes.SetConversationSegmentModes(ctx, machine, id, current.Epoch, active.ID, value("model"), value("effort"), value("permission_mode"))
+				s.logicalChanged()
+			}
+		}
 		return e
 	})
 	if errors.Is(err, db.ErrConversationEpoch) || errors.Is(err, db.ErrConversationSwitchBusy) {
@@ -189,6 +241,10 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 	}
 	if err != nil {
 		return nil, true, err
+	}
+	if method == "session.fork" {
+		// The response identifies the newly created branch, not its source.
+		return out, true, nil
 	}
 	// Control replies may contain the physical session row. Only the public root
 	// is returned to the application; source references stay inside the manager.
@@ -247,7 +303,10 @@ func logicalNotTaken(err error) bool {
 	if err == nil {
 		return false
 	}
-	if sendNotTaken(err) {
+	// This boundary has already called the physical node. An untyped error
+	// cannot be classified as a local validation refusal: the reply may be lost.
+	_, coded := relayErrCode(err)
+	if (coded || errors.Is(err, rpc.ErrNotSent) || errors.Is(err, rpc.ErrNotWritten)) && sendNotTaken(err) {
 		return true
 	}
 	var re *rpc.Error
@@ -280,10 +339,11 @@ func (s *Service) logicalSendModel(ctx context.Context, machine, session string,
 	}
 	launcher, _ := p["launcher"].(string)
 	if launcher != "" {
-		engine := logicalEngine(s.launcherAgent(ctx, a.MachineID, launcher))
-		if engine == "" {
-			return true, logicalRefusal(ctx, "unknown_engine")
+		target, err := s.logicalTarget(ctx, a.MachineID, launcher)
+		if err != nil {
+			return true, err
 		}
+		engine := target.Engine
 		if engine != a.Engine {
 			return true, &launcherOtherKind{conversationAgent: a.Engine, launcher: launcher, launcherAgent: engine}
 		}
@@ -306,4 +366,19 @@ func (s *Service) logicalSendModel(ctx context.Context, machine, session string,
 		p["permission_mode"] = a.PermissionMode
 	}
 	return true, nil
+}
+
+// Execution controls may only refer to the active physical source. A retired
+// reference must never select an unrelated same-ID item in the new engine.
+func activeLogicalItemID(active conversationlog.Segment, ref string) (string, error) {
+	if id, source, ok := proto.ParseSegmentItemID(ref); ok {
+		if active.Ordinal > 1 && active.ID == id {
+			return source, nil
+		}
+		return "", db.ErrConversationEpoch
+	}
+	if active.Ordinal == 1 {
+		return ref, nil
+	}
+	return "", db.ErrConversationEpoch
 }

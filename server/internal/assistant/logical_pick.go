@@ -65,10 +65,11 @@ func (s *Service) logicalUpdatePick(ctx context.Context, session string, change 
 		if next.MachineID != c.MachineID {
 			return true, db.ErrConversationEpoch
 		}
-		engine := logicalEngine(s.launcherAgent(ctx, a.MachineID, next.Launcher))
-		if engine == "" {
-			return true, logicalRefusal(ctx, "unknown_engine")
+		target, err := s.logicalTarget(ctx, a.MachineID, next.Launcher)
+		if err != nil {
+			return true, err
 		}
+		engine := target.Engine
 		if engine != a.Engine {
 			return true, &launcherOtherKind{conversationAgent: a.Engine, launcher: next.Launcher, launcherAgent: engine}
 		}

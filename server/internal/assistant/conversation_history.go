@@ -51,6 +51,10 @@ func (s *Service) historyDB(ctx context.Context) conversationHistoryStore {
 	if st == nil {
 		return nil
 	}
+	if ctx.Value(logicalSourceKey{}) != nil {
+		durable, _ := st.(conversationHistoryStore)
+		return durable
+	}
 	var setting struct {
 		Enabled *bool `json:"enabled"`
 	}
@@ -632,6 +636,12 @@ func (s *Service) historyLoop(ctx context.Context) {
 		s.logicalSweep(ctx)
 		if st := s.historyDB(ctx); st != nil {
 			s.historySweep(ctx, st)
+		} else if st, ok := s.store().(conversationHistoryStore); ok {
+			rows, _, err := s.logicalIndex()
+			if err == nil && len(rows) > 0 {
+				syncCtx := context.WithValue(context.WithValue(ctx, logicalSourceKey{}, true), logicalHistoryOnlyKey{}, true)
+				s.historySweep(syncCtx, st)
+			}
 		}
 		timer := time.NewTimer(5 * time.Second)
 		select {
@@ -679,6 +689,16 @@ func (s *Service) historySweep(ctx context.Context, st conversationHistoryStore)
 			}
 			if !c.Assistant || c.PaneID != "" || c.IsDeleted() {
 				continue
+			}
+			if ctx.Value(logicalHistoryOnlyKey{}) != nil {
+				logical, ok := s.store().(logicalConversationStore)
+				if !ok {
+					continue
+				}
+				root, err := logical.LogicalConversation(ctx, machine.ID, c.SessionID)
+				if err != nil || root == nil || root.Deleted {
+					continue
+				}
 			}
 			if err := s.historySync(ctx, st, machine.ID, c); err != nil && !errors.Is(err, db.ErrConversationHistoryChanged) && ctx.Err() == nil {
 				k := searchKey{machine.ID, c.SessionID}

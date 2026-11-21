@@ -98,6 +98,9 @@ func readLogicalConversation(ctx context.Context, q conversationQuerier, machine
 }
 
 func (d *DB) LogicalConversation(ctx context.Context, machine, session string) (*LogicalConversation, error) {
+	if d.sets&ManagerSet == 0 {
+		return nil, nil
+	}
 	var out *LogicalConversation
 	err := pgx.BeginTxFunc(ctx, d.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		var err error
@@ -108,6 +111,9 @@ func (d *DB) LogicalConversation(ctx context.Context, machine, session string) (
 }
 
 func (d *DB) LogicalConversations(ctx context.Context) ([]LogicalConversation, error) {
+	if d.sets&ManagerSet == 0 {
+		return nil, nil
+	}
 	rows, err := d.pool.Query(ctx, `SELECT machine_id,session_id FROM logical_conversations WHERE deleted_at IS NULL ORDER BY machine_id,session_id`)
 	if err != nil {
 		return nil, err
@@ -695,5 +701,17 @@ func (d *DB) ConversationPreparedCandidates(ctx context.Context) ([]Conversation
 }
 func (d *DB) ConversationPreparedCandidateDone(ctx context.Context, machine, session string) error {
 	_, err := d.pool.Exec(ctx, `DELETE FROM conversation_prepared_candidates WHERE machine_id=$1 AND session_id=$2`, machine, session)
+	return err
+}
+
+// The caller holds WithConversationEpoch's shared lock through the physical
+// acknowledgement and this write. Updating the segment never upgrades that root
+// lock or changes execution authority; activation/deletion remain fenced.
+func (d *DB) SetConversationSegmentModes(ctx context.Context, machine, session string, epoch int64, id string, model, effort, mode *string) error {
+	tag, err := d.pool.Exec(ctx, `UPDATE conversation_segments s SET model=coalesce($5,model),effort=coalesce($6,effort),permission_mode=coalesce($7,permission_mode)
+ WHERE s.id=$4 AND s.logical_machine=$1 AND s.logical_session=$2 AND s.state='active' AND EXISTS(SELECT 1 FROM logical_conversations c WHERE c.machine_id=$1 AND c.session_id=$2 AND c.epoch=$3 AND c.deleted_at IS NULL)`, machine, session, epoch, id, model, effort, mode)
+	if err == nil && tag.RowsAffected() != 1 {
+		return ErrConversationEpoch
+	}
 	return err
 }

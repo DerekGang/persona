@@ -92,11 +92,24 @@ func (s *Service) modelPicksLocked(ctx context.Context) bool {
 func (s *Service) modelPicksSet() (map[string]modelPick, bool) {
 	b := &s.modelPicks
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if !s.modelPicksLocked(context.Background()) {
+		b.mu.Unlock()
 		return nil, false
 	}
-	return maps.Clone(b.m), true
+	out := maps.Clone(b.m)
+	b.mu.Unlock()
+	if s.store != nil {
+		rows, _, err := s.logicalIndex()
+		if err != nil {
+			return out, false
+		}
+		for _, c := range rows {
+			if a, ok := c.Active(); ok && a.Ordinal > 1 {
+				out[c.SessionID] = modelPick{MachineID: c.MachineID, Launcher: a.Launcher, Model: a.Model, Effort: a.Effort}
+			}
+		}
+	}
+	return out, true
 }
 
 // modelPickOf is conversation sid's pick on machine; false when it has none (or one kept for another computer), or when

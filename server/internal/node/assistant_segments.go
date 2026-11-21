@@ -101,7 +101,9 @@ func (n *Node) assistantSegment(ctx context.Context, method string, raw json.Raw
 			}
 		}
 		policy := agent == "claude" || agent == "codex"
+		registered := policy
 		if h := n.assistantRuntime(launcher); h != nil {
+			registered = true
 			h.mu.Lock()
 			agent = h.hello.Agent
 			if agent == "" {
@@ -116,10 +118,10 @@ func (n *Node) assistantSegment(ctx context.Context, method string, raw json.Raw
 			h.mu.Unlock()
 			policy = h.supervisionPolicy()
 		}
-		if agent == "" {
+		if agent == "" || !registered {
 			return nil, refusal("unknown_engine", i18n.T(i18n.From(ctx), "assistant-conversation_segments.unknown_engine"), nil)
 		}
-		return map[string]any{"engine": agent, "supervision_policy": policy, "prepare": true}, nil
+		return map[string]any{"engine": agent, "registered": registered, "supervision_policy": policy, "prepare": true}, nil
 	}
 	if operation == "" || len(operation) > 128 {
 		return nil, errors.New("invalid segment operation")

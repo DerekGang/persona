@@ -259,6 +259,16 @@ func (h *Hub) applyDeviceStatesFrom(owner string, st devicewire.States) {
 		h.devices.mu.Unlock()
 	}
 
+	// Reports are complete snapshots. Dropped logical roots must release their
+	// transport ownership, so a later manager cannot inherit a stale alias.
+	h.devices.mu.Lock()
+	for id, aliasOwner := range h.devices.transportOwners {
+		if aliasOwner == owner && !validAliases[id] {
+			delete(h.devices.transportOwners, id)
+		}
+	}
+	h.devices.mu.Unlock()
+
 	now := time.Now()
 	type change struct {
 		m              *Machine

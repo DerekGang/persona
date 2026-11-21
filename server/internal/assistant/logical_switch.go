@@ -16,6 +16,7 @@ import (
 	"github.com/nwverse/persona/server/internal/conversationlog"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/devicewire"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -39,19 +40,27 @@ type logicalInput struct {
 	Transport *devicewire.NodeCall `json:"transport,omitempty"`
 }
 type segmentTarget struct {
+	Registered        bool   `json:"registered"`
 	Engine            string `json:"engine"`
 	SupervisionPolicy bool   `json:"supervision_policy"`
 	Prepare           bool   `json:"prepare"`
 }
 
-// Explicit identities cover the engines Persona ships. A future/unknown adapter
-// must implement the contract before being used as a switch target.
-func logicalEngine(engine string) string {
-	switch engine {
-	case "claude", "codex", "agy", "pi", "opencode", "omp", "dsh", "grok", "gemini", "qwen", "kimi", "droid", "cursor", "traex":
-		return engine
+// The node resolves a registered native/runtime execution path. An empty or
+// unrecognized path cannot be made valid by guessing from a launcher name.
+func knownSegmentTarget(target segmentTarget) bool {
+	return target.Registered && target.Prepare && strings.TrimSpace(target.Engine) != "" && len(target.Engine) <= 128
+}
+func (s *Service) logicalTarget(ctx context.Context, machine, launcher string) (segmentTarget, error) {
+	var target segmentTarget
+	raw, err := s.logicalPhysical(ctx, machine, "assistant.segment.check", map[string]any{"launcher": launcher})
+	if err != nil {
+		return target, err
 	}
-	return ""
+	if json.Unmarshal(raw, &target) != nil || !knownSegmentTarget(target) {
+		return target, logicalRefusal(ctx, "unknown_engine")
+	}
+	return target, nil
 }
 func (s *Service) segmentsEnabled(ctx context.Context) bool {
 	if s.store() == nil {
@@ -69,7 +78,7 @@ func (s *Service) logicalSwitchRoutes() {
 	})
 	s.handle("PUT /api/v1/assistant/segments", func(w http.ResponseWriter, r *http.Request) {
 		if !fullRole(r) {
-			apierr.Write(w, 403, errors.New("full access required"))
+			apierr.Write(w, 403, i18n.Err("assistant-model_pick.err_role"))
 			return
 		}
 		var p struct {
@@ -77,6 +86,10 @@ func (s *Service) logicalSwitchRoutes() {
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&p); err != nil {
 			apierr.Write(w, 400, err)
+			return
+		}
+		if s.store() == nil {
+			apierr.Call(w, logicalRefusal(r.Context(), "unavailable"))
 			return
 		}
 		if err := s.store().PutSetting(r.Context(), conversationSegmentsKey, p); err != nil {
@@ -87,7 +100,7 @@ func (s *Service) logicalSwitchRoutes() {
 	})
 	s.handle("POST /api/v1/assistant/conversations/{id}/switch", func(w http.ResponseWriter, r *http.Request) {
 		if !fullRole(r) {
-			apierr.Write(w, 403, errors.New("full access required"))
+			apierr.Write(w, 403, i18n.Err("assistant-model_pick.err_role"))
 			return
 		}
 		var p struct {
@@ -109,7 +122,7 @@ func (s *Service) logicalSwitchRoutes() {
 	})
 	s.handle("GET /api/v1/assistant/conversations/{id}/switch/{operation}", func(w http.ResponseWriter, r *http.Request) {
 		if !fullRole(r) {
-			apierr.Write(w, 403, errors.New("full access required"))
+			apierr.Write(w, 403, i18n.Err("assistant-model_pick.err_role"))
 			return
 		}
 		st, ok := s.store().(logicalSwitchStore)
@@ -172,13 +185,9 @@ func (s *Service) beginLogicalSwitch(ctx context.Context, machine, id string, p 
 			return nil, logicalRefusal(ctx, "busy")
 		}
 	}
-	var target segmentTarget
-	raw, err := s.logicalPhysical(ctx, p.MachineID, "assistant.segment.check", map[string]any{"launcher": p.Launcher})
+	target, err := s.logicalTarget(ctx, p.MachineID, p.Launcher)
 	if err != nil {
 		return nil, err
-	}
-	if json.Unmarshal(raw, &target) != nil || !target.Prepare || logicalEngine(target.Engine) == "" {
-		return nil, logicalRefusal(ctx, "unknown_engine")
 	}
 	policy, err := s.supervisionInstructions(ctx, machine, id)
 	if err != nil {
@@ -190,7 +199,7 @@ func (s *Service) beginLogicalSwitch(ctx context.Context, machine, id string, p 
 		return nil, logicalRefusal(ctx, "unsupported_policy")
 	}
 	if c == nil {
-		if p.ExpectedEpoch != 1 || logicalEngine(row.Agent) == "" {
+		if p.ExpectedEpoch != 1 || strings.TrimSpace(row.Agent) == "" {
 			return nil, logicalRefusal(ctx, "unknown_engine")
 		}
 		var page historyPage
@@ -384,7 +393,19 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 			if current.Switch == nil || current.Switch.OperationID != op.OperationID {
 				return db.ErrConversationEpoch
 			}
-			var err error
+			// A manager may have persisted the positive start receipt and crashed
+			// before mapping it. That durable receipt also survives loss of the
+			// node's in-memory receipt cache; never start a replacement candidate.
+			candidates, err := st.ConversationPreparedCandidates(ctx)
+			if err != nil {
+				return err
+			}
+			for _, candidate := range candidates {
+				if candidate.LogicalMachine == c.MachineID && candidate.LogicalSession == c.SessionID && candidate.OperationID == op.OperationID && candidate.MachineID == p.MachineID {
+					raw, err = json.Marshal(map[string]any{"session_id": candidate.SessionID, "prepared": true})
+					return err
+				}
+			}
 			raw, err = s.logicalPhysical(ctx, p.MachineID, method, params)
 			if err != nil {
 				return err
@@ -416,13 +437,9 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 		if !ok {
 			return logicalRefusal(ctx, "unavailable")
 		}
-		var target segmentTarget
-		check, err := s.logicalPhysical(ctx, p.MachineID, "assistant.segment.check", map[string]any{"launcher": p.Launcher})
+		target, err := s.logicalTarget(ctx, p.MachineID, p.Launcher)
 		if err != nil {
 			return err
-		}
-		if json.Unmarshal(check, &target) != nil || logicalEngine(target.Engine) == "" {
-			return logicalRefusal(ctx, "unknown_engine")
 		}
 		// Pull a proven physical tail after preparation; never infer it from item count.
 		var tail historyPage
@@ -510,6 +527,15 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 	if err = s.putSupervisionInstructions(ctx, c.MachineID, c.SessionID, queued.Params); err != nil {
 		return err
 	}
+	if a.Ordinal > 1 {
+		// Execution choices were resolved against the source when this input was
+		// queued. Only its content/provenance travels; the activated target owns
+		// launcher/model/permission and process-specific configuration.
+		for _, key := range []string{"launcher", "model", "effort", "permission_mode", "config_dir", "model_fingerprint", "runtime", "external"} {
+			delete(queued.Params, key)
+		}
+		queued.Params["launcher"], queued.Params["model"], queued.Params["effort"], queued.Params["permission_mode"] = a.Launcher, a.Model, a.Effort, a.PermissionMode
+	}
 	if c.Switch != nil {
 		raw, _, err := st.ConversationPreparation(ctx, c.MachineID, c.SessionID, c.Switch.OperationID)
 		if err != nil {
@@ -528,7 +554,7 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 		if !ok || active.ID != a.ID {
 			return db.ErrConversationEpoch
 		}
-		if a.Ordinal == 1 && current.Epoch > 1 {
+		if current.Epoch > 1 {
 			if _, err := s.logicalPhysical(ctx, a.MachineID, "assistant.segment.restore", map[string]any{"session_id": a.SessionID}); err != nil {
 				return err
 			}
