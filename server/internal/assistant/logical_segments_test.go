@@ -506,6 +506,21 @@ func TestLogicalRootTransportSurvivesItsPhysicalMachine(t *testing.T) {
 	if len(raw.Machines) != 1 || raw.Machines[0].Machine.ID != "server" {
 		t.Fatal("shared physical snapshot mutated")
 	}
+	physical := newFleetDevs()
+	physical.add("server", "Target")
+	physical.add("removed-source", "Source").away = true
+	logical := &logicalDevices{Devices: physical, s: s}
+	if summary, ok := logical.Summary("removed-source"); !ok || !summary.Online || summary.Name != "Source" {
+		t.Fatalf("retained offline source hid active transport: %+v", summary)
+	}
+	for _, summary := range logical.List() {
+		if summary.ID == "removed-source" && !summary.Online {
+			t.Fatal("conversation inventory remained offline")
+		}
+	}
+	if shown, ok := logical.Shown("removed-source"); !ok || !shown.Listed {
+		t.Fatalf("active target's list was hidden: %+v", shown)
+	}
 }
 
 func TestLogicalForwardRollbackRestoresALaterSourceSegment(t *testing.T) {

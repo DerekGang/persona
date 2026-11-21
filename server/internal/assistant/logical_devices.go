@@ -145,8 +145,13 @@ func (d *logicalDevices) List() []devices.Summary {
 		return out
 	}
 	seen := map[string]bool{}
-	for _, m := range out {
-		seen[m.ID] = true
+	for i := range out {
+		seen[out[i].ID] = true
+		if !out[i].Online {
+			if _, ok := d.liveTarget(out[i].ID); ok {
+				out[i].Online = true
+			}
+		}
 	}
 	for _, c := range rows {
 		if seen[c.MachineID] {
@@ -165,6 +170,11 @@ func (d *logicalDevices) List() []devices.Summary {
 
 func (d *logicalDevices) Summary(machine string) (devices.Summary, bool) {
 	if m, ok := d.Devices.Summary(machine); ok {
+		if !m.Online {
+			if _, live := d.liveTarget(machine); live {
+				m.Online = true
+			}
+		}
 		return m, true
 	}
 	rows, _, err := d.s.logicalIndex()
@@ -184,6 +194,9 @@ func (d *logicalDevices) Summary(machine string) (devices.Summary, bool) {
 }
 
 func (d *logicalDevices) Shown(machine string) (devices.Shown, bool) {
+	if target, ok := d.liveTarget(machine); ok {
+		return d.Devices.Shown(target)
+	}
 	if shown, ok := d.Devices.Shown(machine); ok {
 		return shown, true
 	}
@@ -202,6 +215,9 @@ func (d *logicalDevices) Shown(machine string) (devices.Shown, bool) {
 }
 
 func (d *logicalDevices) ConnectedAt(machine string) time.Time {
+	if target, ok := d.liveTarget(machine); ok {
+		return d.Devices.ConnectedAt(target)
+	}
 	if d.Devices.Has(machine) {
 		return d.Devices.ConnectedAt(machine)
 	}
@@ -375,4 +391,28 @@ func (s *Service) logicalProjectStates(st devicewire.States) devicewire.States {
 		index[c.MachineID] = len(st.Machines) - 1
 	}
 	return st
+}
+
+// A retained but disconnected source must not make the public conversation look
+// unreachable while its active segment has a live transport on another machine.
+// Physical resource/accounting fields remain the source machine's own fields.
+func (d *logicalDevices) liveTarget(machine string) (string, bool) {
+	if source, ok := d.Devices.Summary(machine); ok && source.Online {
+		return "", false
+	}
+	rows, _, err := d.s.logicalIndex()
+	if err != nil {
+		return "", false
+	}
+	for _, c := range rows {
+		if c.MachineID != machine {
+			continue
+		}
+		if a, ok := c.Active(); ok && a.MachineID != machine {
+			if target, found := d.Devices.Summary(a.MachineID); found && target.Online {
+				return a.MachineID, true
+			}
+		}
+	}
+	return "", false
 }
