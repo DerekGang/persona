@@ -201,14 +201,17 @@ func (f *File) TurnWindow(firstSeq, lastSeq int) (prefix, suffix []proto.Item) {
 			f.ensureTurns(firstSeq, 1, maxContextItems)
 			startIdx = sort.Search(len(f.items), func(k int) bool { return f.items[k].Seq >= firstSeq })
 		}
-		for p := startIdx - 1; p >= max(0, startIdx-maxContextItems); p-- {
+		// ensureTurns may parse back far more than maxContextItems (a whole page budget), so the prefix is cut here:
+		// the enclosing user item if it is close enough, else only the newest maxContextItems items before firstSeq.
+		lo := max(0, startIdx-maxContextItems)
+		for p := startIdx - 1; p >= lo; p-- {
 			if isBotmuxUserItem(f.items[p]) {
-				prefix = append([]proto.Item(nil), f.items[p:startIdx]...)
+				lo = p
 				break
 			}
 		}
-		if prefix == nil {
-			prefix = append([]proto.Item(nil), f.items[max(0, startIdx-maxContextItems):startIdx]...)
+		if lo < startIdx {
+			prefix = append([]proto.Item(nil), f.items[lo:startIdx]...)
 		}
 	}
 	endIdx := sort.Search(len(f.items), func(k int) bool { return f.items[k].Seq > lastSeq })
