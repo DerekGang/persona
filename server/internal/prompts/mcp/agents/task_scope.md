@@ -1,4 +1,4 @@
-Change what a task you supervise does or what done means (its todo id). The original brief stays intact: log what changed and why, apply done_when and expect_minutes, restart the clock, and show the owner the change in their next digest. Only this log changes done_when after dispatch; agent_supervise and agent_send(task) on your task use it too. Give the whole new done_when list: omitted criteria are recorded as dropped and named in the completion report. Adding an owner-only step not already in scope (deploy, merge, release, external send/comment, delete, spend, production change) requires the owner's message to have started this turn; otherwise ask_user or task_review needs_user, then retry after their answer. Only the supervisor may call it. It does not notify the Agent: use agent_send. For an overdue but still valid task, explain why and give new expect_minutes.
+Change a task you supervise or its acceptance criteria after dispatch. Keep the original brief. Log what changed and why, apply done_when and expect_minutes, and show the owner in the next digest. Restart overdue; restart estimate_due only with a new estimate. Only this log changes criteria (including via agent_supervise or agent_send). Give the full done_when list. Omitted criteria are recorded as dropped and shown at completion. Adding deploy, merge, release, external sends/comments, deletion, spending or production changes outside the existing scope requires the owner's message to have started this turn. Otherwise ask_user or task_review needs_user, then retry after approval. Only the supervisor can edit. Tell the Agent with agent_send. For a revised estimate or overdue clock, explain and set expect_minutes.{{template "shared/mcp_language" .}}
 
 ```json
 {
@@ -15,11 +15,11 @@ Change what a task you supervise does or what done means (its todo id). The orig
     },
     "change": {
       "type": "string",
-      "description": "what changes, in one sentence the owner can read (Chinese), e.g. 「不再要求灰度验证，改为只在测试环境验证」"
+      "description": "{{if eq .Lang "en"}}what changes, in one sentence the owner can read (English), e.g. require verification in the test environment only, instead of a staged production rollout{{else if eq .Lang "ja"}}変更内容をユーザーが読める日本語の一文で記述します。例：段階的な本番検証を求めず、テスト環境でのみ検証する{{else}}what changes, in one sentence the owner can read (Chinese), e.g. 「不再要求灰度验证，改为只在测试环境验证」{{end}}"
     },
     "why": {
       "type": "string",
-      "description": "why, in one sentence (Chinese)"
+      "description": "{{if eq .Lang "en"}}why, in one sentence (English){{else if eq .Lang "ja"}}理由を日本語の一文で記述します{{else}}why, in one sentence (Chinese){{end}}"
     },
     "done_when": {
       "type": "array",
