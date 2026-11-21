@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { util } from '@kit.ArkTS';
 import native from 'libpersona_core_ohos.so';
-import { nativeTestContext } from './NativeContext';
+import { nativeTestModuleContext } from './NativeContext';
 import type { Action, ChatEvent, ChatPatch, ChatSnapshot, Effect, Request, WireBatch } from '../generated/Wire';
 import { decodeChatPatch, decodeEffect, encodeAction } from '../generated/Wire';
 
@@ -156,7 +156,7 @@ export async function drainCore(handle: number, chat: string, list: string[], ef
 export default function nativeCoreTests(): void {
   describe('NativePersonaCore', (): void => {
     it('replays_every_shared_fixture_through_the_real_napi_binding', 0, async (): Promise<void> => {
-      const manager = nativeTestContext().resourceManager;
+      const manager = (await nativeTestModuleContext()).resourceManager;
       const files = JSON.parse(util.TextDecoder.create('utf-8').decodeToString(
         await manager.getRawFileContent('core-fixtures/continuity.json'))) as FixtureFile[];
       let cases = 0, steps = 0;
