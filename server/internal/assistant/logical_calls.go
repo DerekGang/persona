@@ -135,6 +135,9 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 		if !ok {
 			return logicalRefusal(ctx, "unavailable")
 		}
+		if current.Switch != nil && (method == "session.modes" || method == "session.switch" || method == "session.resume" || method == DeviceAssistantWarm) {
+			return logicalRefusal(ctx, "busy")
+		}
 		if method == assistantwire.DeviceAssistantAnswerAgain {
 			if current.Switch != nil {
 				return logicalRefusal(ctx, "busy")

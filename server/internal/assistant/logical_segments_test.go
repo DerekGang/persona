@@ -378,6 +378,9 @@ func TestLogicalModesPersistOnlyAfterPhysicalAcknowledgement(t *testing.T) {
 	s, f, d, _ := logicalPair(t, "codex")
 	ctx := t.Context()
 	activatePair(t, d)
+	if err := d.ResolveConversationSwitch(ctx, "server", "side-chat", "operation", "accepted", ""); err != nil {
+		t.Fatal(err)
+	}
 	fail := true
 	f.answerNode("session.modes", func(_ string, raw json.RawMessage) (any, error) {
 		if !strings.Contains(string(raw), `"session_id":"target-chat"`) {
@@ -693,5 +696,44 @@ func TestLogicalApprovalPublicationIsSanitizedAndEpochFenced(t *testing.T) {
 	stored, err := d.InteractionRecord(ctx, ix.ID)
 	if err != nil || stored == nil || stored.Interaction.Summary != "sanitized summary" {
 		t.Fatalf("published card: %+v %v", stored, err)
+	}
+}
+
+func TestLogicalSwitchSerializesExecutionConfiguration(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	for _, method := range []string{"session.modes", "session.switch", "session.resume", DeviceAssistantWarm} {
+		f.answerNode(method, func(string, json.RawMessage) (any, error) {
+			t.Fatal("execution changed during switch")
+			return nil, nil
+		})
+	}
+	for phase := range 2 {
+		for _, method := range []string{"session.modes", "session.switch", "session.resume", DeviceAssistantWarm} {
+			_, handled, err := s.logicalCall(t.Context(), "server", method, json.RawMessage(`{"session_id":"side-chat","model":"changed"}`))
+			var refused *rpc.Error
+			if !handled || !errors.As(err, &refused) || refused.Code != assistantwire.CodeConversationBusy {
+				t.Fatalf("%s during switch: %v %v", method, handled, err)
+			}
+		}
+		if phase == 0 {
+			activatePair(t, d)
+		}
+	}
+}
+
+func TestLogicalRetiredCardControlsNeverReachTheActiveSegment(t *testing.T) {
+	s, _, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	if err := d.PutConversationInteraction(ctx, "old-card", "server", "side-chat", "server", "side-chat", 1); err != nil {
+		t.Fatal(err)
+	}
+	activatePair(t, d)
+	allow := true
+	for _, resolution := range []proto.Resolution{{Allow: &allow}, {Dismiss: true}, {Cancel: true}} {
+		called := false
+		err := s.logicalInteractionAnswer(ctx, "old-card", resolution, func() error { called = true; return nil })
+		if err == nil || called {
+			t.Fatalf("retired control escaped its epoch: %+v %v", resolution, err)
+		}
 	}
 }

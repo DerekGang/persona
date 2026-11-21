@@ -175,9 +175,6 @@ func (s *Service) logicalNodeRequest(ctx context.Context, machine, method string
 }
 
 func (s *Service) logicalInteractionAnswer(ctx context.Context, id string, r proto.Resolution, next func() error) error {
-	if r.Dismiss || r.Cancel {
-		return next()
-	}
 	routes, ok := s.store().(logicalInteractionStore)
 	if !ok {
 		return next()
