@@ -13,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/connector"
 	"github.com/nwverse/persona/server/internal/i18n"
 	adapter "github.com/nwverse/persona/server/internal/larkcli"
+	"github.com/nwverse/persona/server/internal/larkperson"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -78,6 +79,15 @@ func New(cfg adapter.Config) *Connector {
 // runner. The runner still executes the real configured subprocess.
 func NewWithRunner(r *adapter.Runner) *Connector {
 	return &Connector{runner: r, docs: newDocumentInbox(), profile: r.Profile(), inboxPoll: inboxPollDefault, inboxPageLimit: inboxPageLimit}
+}
+
+// PersonTransport exposes only the narrow lark_person runner contract. It does not expose generic Run/RunAs,
+// owner sends, channel actions, credentials, message bodies, or connector configuration.
+func (c *Connector) PersonTransport() larkperson.Transport {
+	if c == nil || c.runner == nil {
+		return nil
+	}
+	return larkperson.NewRunnerTransport(c.runner)
 }
 
 func (c *Connector) ID() string   { return ID }
