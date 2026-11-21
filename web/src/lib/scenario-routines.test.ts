@@ -40,7 +40,7 @@ describe("scenario routine templates", () => {
     { key: "inbox-triage" as const, source: "inbox", repeat: "interval", every_minutes: 60 },
     { key: "pr-review" as const, source: "conversation", repeat: "interval", every_minutes: 120 },
   ])("instantiates $key as a disabled read-only draft through the existing task primitive", ({ key, source, ...schedule }) => {
-    const input = key === "pr-review" ? withScenarioSource(draft(key), "conversation", catalogs) : draft(key);
+    const input = key === "pr-review" ? withScenarioSource(draft(key), "conversation") : draft(key);
     expect(input.source).toBe(source);
     expect(scenarioProblem(input, catalogs)).toBeNull();
     const task = instantiateScenario(input, catalogs);
@@ -81,7 +81,7 @@ describe("scenario routine templates", () => {
   });
 
   it("builds inbox triage with only the mail source's declared read-only tools", () => {
-    const input = withScenarioSource(draft("inbox-triage"), "mail", catalogs);
+    const input = withScenarioSource(draft("inbox-triage"), "mail");
     input.scope = "Unread messages from the billing mailbox";
     input.every_minutes = 30;
     const task = instantiateScenario(input, catalogs)!;
@@ -93,7 +93,7 @@ describe("scenario routine templates", () => {
   });
 
   it("builds PR review and follow-up for one validated repository without enabling writes", () => {
-    const input = withScenarioSource(draft("pr-review"), "github", catalogs);
+    const input = withScenarioSource(draft("pr-review"), "github");
     expect(input.scope).toBe("");
     expect(scenarioProblem(input, catalogs)).toBe(t("assistant-scenario-templates.error_repository"));
     input.scope = "example/project";
@@ -116,13 +116,13 @@ describe("scenario routine templates", () => {
     { key: "inbox-triage" as const, source: "mail" as const },
     { key: "pr-review" as const, source: "github" as const },
   ])("explains and blocks $key when $source lacks read-only capabilities", ({ key, source }) => {
-    const input = withScenarioSource(draft(key), source, []);
+    const input = withScenarioSource(draft(key), source);
     const option = scenarioSources(key, []).find((item) => item.key === source)!;
     expect(option.available).toBe(false);
     expect(option.note).toBe(t("assistant-scenario-templates.source_unavailable", { source: option.label, fallback: scenarioSources(key, []).find((item) => item.key === option.fallback)?.label ?? "" }));
     expect(scenarioProblem(input, [])).toBe(option.note);
     expect(instantiateScenario(input, [])).toBeNull();
-    const fallback = withScenarioSource(input, option.fallback!, []);
+    const fallback = withScenarioSource(input, option.fallback!);
     expect(scenarioProblem(fallback, [])).toBeNull();
     expect(instantiateScenario(fallback, [])?.prompt).toContain(t("assistant-scenario-templates.read_only_safety"));
   });
@@ -134,7 +134,7 @@ describe("scenario routine templates", () => {
     const partial = catalog("github", ["search"]);
     const disconnected = { ...github, status: "not_signed_in" };
     for (const candidate of [unsafe, partial, disconnected]) {
-      const input = withScenarioSource(draft("pr-review"), "github", [candidate]);
+      const input = withScenarioSource(draft("pr-review"), "github");
       input.scope = "example/project";
       expect(scenarioProblem(input, [candidate])).toContain("GitHub");
       expect(instantiateScenario(input, [candidate])).toBeNull();

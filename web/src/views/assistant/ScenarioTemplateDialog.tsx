@@ -64,7 +64,7 @@ export function ScenarioTemplateDialog({ template, onClose, onReview }: {
   };
   const chooseSource = (source: ScenarioSourceKey) => {
     setEdited(true);
-    setDraft((current) => withScenarioSource(current, source, catalogs));
+    setDraft((current) => withScenarioSource(current, source));
   };
   const review = () => {
     const task = instantiateScenario(draft, catalogs);

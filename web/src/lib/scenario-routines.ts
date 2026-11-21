@@ -65,20 +65,8 @@ export interface ScenarioSource {
   note?: string;
 }
 
-const SOURCE_LABELS: Record<ScenarioSourceKey, string> = {
-  persona: "",
-  inbox: "",
-  conversation: "",
-  github: "GitHub",
-  mail: "",
-};
-
 function sourceLabel(key: ScenarioSourceKey): string {
-  if (key === "persona") return t("assistant-scenario-templates.source_persona");
-  if (key === "inbox") return t("assistant-scenario-templates.source_inbox");
-  if (key === "conversation") return t("assistant-scenario-templates.source_conversation");
-  if (key === "mail") return t("assistant-scenario-templates.source_mail");
-  return SOURCE_LABELS[key];
+  return key === "github" ? "GitHub" : t(`assistant-scenario-templates.source_${key}`);
 }
 
 const SOURCES: Record<ScenarioKey, readonly ScenarioSourceKey[]> = {
@@ -171,7 +159,7 @@ export function defaultScenarioDraft(key: ScenarioKey, catalogs: readonly Scenar
 }
 
 /** Changes source and resets only its scope; schedule choices remain the user's. */
-export function withScenarioSource(draft: ScenarioDraft, source: ScenarioSourceKey, _catalogs: readonly ScenarioCatalog[] | null): ScenarioDraft {
+export function withScenarioSource(draft: ScenarioDraft, source: ScenarioSourceKey): ScenarioDraft {
   return { ...draft, source, scope: defaultScope(draft.key, source) };
 }
 
