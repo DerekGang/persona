@@ -491,3 +491,72 @@ func TestProjectReviewFirstInputBeforeListing(t *testing.T) {
 		}
 	}
 }
+
+// linkOrderStore notes, as the hub queues each first Agent input, whether the agent is already linked to its to-do.
+type linkOrderStore struct {
+	*db.DB
+	linked func(session string) bool
+	seen   map[string]bool
+}
+
+func (s linkOrderStore) RecordProjectReviewOwnerInput(ctx context.Context, p db.ProjectReviewOwnerRelay) error {
+	before, again := s.seen[p.MessageID]
+	s.seen[p.MessageID] = s.linked(p.Session) && (!again || before) // one write before the link is enough
+	return s.DB.RecordProjectReviewOwnerInput(ctx, p)
+}
+
+// A start that names a to-do queues its first input only once the manager has linked the agent: the relay ticks every
+// 3 s, and an input it delivers before the link would find no task (assistant/project_review.go).
+func TestProjectReviewFirstInputAfterTodoLink(t *testing.T) {
+	ctx := context.Background()
+	h, server, hubDB := newBusHub(t)
+	manager, _ := managerDBOf(t, h)
+	config := filepath.Join(t.TempDir(), "manager.json")
+	if err := os.WriteFile(config, []byte(`{"project_review":{"enabled":true,"app_inputs":true,"model":"gpt-6.2-sol",
+		"target":{"machine_id":"server","session_id":"review"},"projects":["alpha"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dialAssistantWithStore(t, h, server.URL, false, manager, func(o *assistant.BusOptions) { o.ConfigFile, o.Outbox = config, manager })
+	startReceiptNode(t, h, func(context.Context, json.RawMessage) (any, error) {
+		return map[string]any{"session": proto.Session{SessionID: "linked-agent", Agent: "codex"}}, nil
+	})
+	todo := plainTodo(t, h, "Linked work")
+	seen := map[string]bool{}
+	h.store = linkOrderStore{DB: hubDB, seen: seen, linked: func(session string) bool {
+		rows, err := manager.ListAllTodoAgents(ctx)
+		if err != nil {
+			t.Error(err)
+		}
+		for _, r := range rows {
+			if r.TodoID == todo.ID && r.SessionID == session && r.ReleasedAt == nil {
+				return true
+			}
+		}
+		return false
+	}}
+	const token = "first-input-after-link-device-token"
+	if err := hubDB.CreateDeviceToken(ctx, db.DeviceToken{ID: "first-input-after-link-device", Name: "Test app", Role: roleFull}, hashToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/sessions", strings.NewReader(
+		`{"machine_id":"machine","agent_type":"codex","launcher":"codex","cwd":"/code","tab_name":"Task","prompt":"start private work","todo_id":"`+todo.ID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Persona-Op-Id", "10000000-0100-4000-8000-000000000009")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), todo.ID) {
+		t.Fatalf("start with a to-do: %d %s", resp.StatusCode, body)
+	}
+	linked, queued := seen["first-agent:linked-agent"]
+	if !queued || !linked {
+		t.Fatalf("first input queued %v, with the to-do linked %v (%v)", queued, linked, seen)
+	}
+}

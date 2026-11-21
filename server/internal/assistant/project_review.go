@@ -134,8 +134,11 @@ func (s *Service) projectReviewOwnerInput(ctx context.Context, in assistantwire.
 	// In particular the main conversation may discuss multiple projects.
 	// in.At is the hub's clock when it queued the input. The task is authorized again at delivery
 	// (projectReviewStep), so a later task update does not take the input out of scope.
-	// The hub queues a new Agent's first prompt before the to-do link: that session did not exist
-	// before this start, so its first input belongs to the task it is linked to.
+	// A new Agent's first prompt: that session did not exist before this start, so the input belongs to the
+	// task it is linked to whatever the hub's queue clock and the link time say. A start that names a to-do queues it
+	// only after the link (hub startSession). One that names none has no task when it is delivered (an app start gets
+	// its quiet task when a turn ends, agent_tasks.go), so like any input from a session without a task it is a
+	// review signal only.
 	at := in.At
 	if in.MessageID == "first-agent:"+in.SessionID {
 		at = time.Time{}
