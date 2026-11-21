@@ -105,7 +105,7 @@ func TestLogicalAbsorptionPreservesAuthorityAndLiveProjection(t *testing.T) {
 }
 
 func TestLogicalAbsorptionKeepsDurableHistorySourceKeys(t *testing.T) {
-	s, _, st, raw := absorbedPair(t)
+	s, hub, st, raw := absorbedPair(t)
 	rt := &historyRuntime{history: "h2", items: []proto.Item{{ID: "line1#0", Seq: 1, Role: "assistant", Kind: proto.KindText, Text: "persisted after reconnect"}}}
 	raw.machines["connected"].call = func(method string, params json.RawMessage) (any, error) {
 		switch method {
@@ -120,6 +120,13 @@ func TestLogicalAbsorptionKeepsDurableHistorySourceKeys(t *testing.T) {
 			return map[string]any{"summary": "source summary"}, nil
 		}
 		return map[string]any{}, nil
+	}
+	// Production BusHub.DeviceCall uses the configured physical devices. This
+	// fixture's Hub is separate; wire it to the same fake physical transport.
+	for _, method := range []string{DeviceSessionItems, DeviceAssistantHandoff} {
+		hub.answerNode(method, func(machine string, params json.RawMessage) (any, error) {
+			return raw.CallNode(t.Context(), machine, method, params)
+		})
 	}
 	s.NodeEvent("connected", "session.items", json.RawMessage(`{"session_id":"target-chat","items":[]}`))
 	if !s.historyDirty(searchKey{"server", "target-chat"}) {
