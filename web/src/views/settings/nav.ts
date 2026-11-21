@@ -12,7 +12,7 @@ export const AGENT_KINDS = ["claude", "codex", "agy", "omp", "grok"] as const;
 export type AgentTab = (typeof AGENT_KINDS)[number];
 export type SettingsSection = "providers" | "model-config" | "translation" | AgentTab;
 // The tab whose page opens one of its items, and the query parameter that names it.
-const SUB: Partial<Record<Tab, string>> = { models: "purpose", channels: "channel", extensions: "extension", connectors: "connector" };
+const SUB: Partial<Record<Tab, string>> = { models: "purpose", channels: "channel", extensions: "extension", connectors: "connector", hub: "page" };
 /** A host-owned secondary page, not a connector ID. */
 export const SENT_SUB = "-sent";
 
@@ -81,7 +81,8 @@ export function settingsAt(search: string, hash = ""): { tab: Tab | null; sub: s
   if (!TABS.includes(t)) return { tab: null, sub: null, section: null };
   const param = SUB[t];
   // ?tab=plugins&plugin=<id>: a link from before #1845
-  const sub = old === "sent" ? SENT_SUB : param ? (q.get(param) ?? (t === "extensions" ? q.get("plugin") : null)) : null;
+  const requested = old === "sent" ? SENT_SUB : param ? (q.get(param) ?? (t === "extensions" ? q.get("plugin") : null)) : null;
+  const sub = t === "hub" && requested !== "recovery" ? null : requested;
   if (t === "extensions" && sub === "-channels") return { tab: "channels", sub: null, section: null };
   if (t === "extensions" && sub?.startsWith("-channels/")) return { tab: "channels", sub: sub.slice("-channels/".length), section: null };
   const section = legacy?.section ?? sectionOfHash(hash, t);
@@ -92,7 +93,8 @@ export function settingsAt(search: string, hash = ""): { tab: Tab | null; sub: s
  *  phone /settings is the list, so it is named. */
 export function settingsHref(tab: Tab, id: string | null, phone: boolean, manager?: string | null, section?: SettingsSection | null): string {
   const param = SUB[tab];
-  const query = `/settings?tab=${tab}${id && param ? `&${param}=${encodeURIComponent(id)}` : ""}${manager ? `&manager=${encodeURIComponent(manager)}` : ""}`;
+  const item = tab === "hub" && id !== "recovery" ? null : id;
+  const query = `/settings?tab=${tab}${item && param ? `&${param}=${encodeURIComponent(item)}` : ""}${manager ? `&manager=${encodeURIComponent(manager)}` : ""}`;
   return `${tab === "general" && !phone ? "/settings" : query}${section ? `#settings-${section}` : ""}`;
 }
 
@@ -158,5 +160,5 @@ export function categoryState(state: unknown): Record<string, unknown> | null {
 /** Whether a category's item is a page one level below the category's page. A model purpose opens in a dialog, which
  *  Back closes only where it is a sheet (ui/atoms Dialog), so it stays on the category's entry. */
 export function itemIsPage(tab: Tab): boolean {
-  return tab === "channels" || tab === "connectors" || tab === "extensions";
+  return tab === "channels" || tab === "connectors" || tab === "extensions" || tab === "hub";
 }

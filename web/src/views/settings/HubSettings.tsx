@@ -17,9 +17,10 @@ import { Button, copyText, cx, Dialog, IconButton, Loading, Spinner, toast } fro
 import { Icon } from "../../ui/icons";
 import { Group, Pill, Row, Switch, SettingsHint, settingsInputClass } from "./SettingsParts";
 import { ExtensionDownloadMirrors } from "./ExtensionDownloadMirrors";
+import { RecoveryEntry } from "./RecoverySettings";
 
-export function HubSettings() {
-  return <><HubUpdates /><ExtensionDownloadMirrors /></>;
+export function HubSettings({ onOpenRecovery }: { onOpenRecovery?: () => void }) {
+  return <><HubUpdates /><RecoveryEntry onOpen={onOpenRecovery} /><ExtensionDownloadMirrors /></>;
 }
 
 function HubUpdates() {
