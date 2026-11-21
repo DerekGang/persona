@@ -111,6 +111,12 @@ func TestLogicalSegmentWebSocketSubscriptionLiveAndReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr := dialAssistantWithStore(t, h, srv.URL, false, database, func(o *assistant.BusOptions) { o.Devices = raw; o.Logf = func(string, ...any) {} })
+	// A real Devices.BusUp reports this snapshot before calls are released. This
+	// raw fake has no connection lifecycle, so explicitly complete that handshake.
+	h.applyDeviceStatesFrom(devicesOwner, devicewire.States{Machines: []devicewire.State{
+		{Machine: proto.Machine{ID: "root", Online: true}, Info: proto.NodeInfo{Home: "/home/example"}, Connected: true},
+		{Machine: proto.Machine{ID: "target", Online: true}, Info: proto.NodeInfo{Home: "/home/example"}, Connected: true},
+	}})
 	dial := func() *websocket.Conn {
 		conn, _, err := websocket.Dial(ctx, strings.Replace(srv.URL, "http", "ws", 1)+"/api/v1/ws?token="+h.cfg.Token, nil)
 		if err != nil {

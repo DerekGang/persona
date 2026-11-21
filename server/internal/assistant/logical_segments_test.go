@@ -20,7 +20,7 @@ import (
 
 func logicalPair(t *testing.T, engine string, source ...string) (*Service, *fakeHub, *db.DB, *db.LogicalConversation) {
 	t.Helper()
-	s, f, d, _ := historyFixture(t)
+	s, f, d, _ := historyFixture(t, func(string, ...any) {})
 	src := "claude"
 	if len(source) > 0 {
 		src = source[0]

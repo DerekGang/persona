@@ -45,8 +45,9 @@ func absorbedPair(t *testing.T) (*Service, *fakeHub, *db.DB, *logicalAbsorbedDev
 	activatePair(t, st)
 	raw := &logicalAbsorbedDevices{&aliasDevs{fleetDevs: newFleetDevs(), alias: map[string]string{"server": "connected"}}}
 	raw.add("connected", "Computer")
-	raw.setSessions("connected", []proto.Session{{SessionID: "side-chat", Assistant: true, Agent: "claude", Rev: 100}, {SessionID: "target-chat", Assistant: true, Agent: "codex", Rev: 100}})
+	raw.setSessions("connected", []proto.Session{{SessionID: "side-chat", Cwd: "/home/u/.persona/assistant", Assistant: true, Agent: "claude", Rev: 100}, {SessionID: "target-chat", Cwd: "/home/u/.persona/assistant", Assistant: true, Agent: "codex", Rev: 100}})
 	s.devs = &logicalDevices{Devices: raw, s: s}
+	s.logicalChanged() // direct test DB activation precedes the installed physical fleet
 	return s, f, st, raw
 }
 
@@ -146,6 +147,7 @@ func TestLogicalAbsorptionFailsClosedOnConflictingRootsAndDeletion(t *testing.T)
 	if _, _, _, err := s.logicalCaller(ctx, "connected", "target-chat"); !errors.Is(err, db.ErrConversationEpoch) {
 		t.Fatalf("conflicting roots granted authority: %v", err)
 	}
+	s.logicalChanged()
 	if _, ok := s.devs.Session("connected", "target-chat"); ok {
 		t.Fatal("conflicting physical session became public")
 	}
@@ -181,6 +183,7 @@ func TestLogicalTransportProjectionDoesNotInventPhysicalReachability(t *testing.
 			t.Fatal(err)
 		}
 	}
+	s.logicalChanged()
 	states := s.logicalProjectStates(devicewire.States{Machines: []devicewire.State{{Machine: proto.Machine{ID: "connected"}, Connected: true}, {Machine: proto.Machine{ID: "a-public"}, Connected: false}}})
 	for _, state := range states.Machines {
 		if state.Machine.ID == "a-public" && !state.Connected {
