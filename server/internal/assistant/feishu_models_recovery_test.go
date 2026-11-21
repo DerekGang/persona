@@ -88,8 +88,11 @@ func TestFeishuModelsExternalConnectionRefusals(t *testing.T) {
 		{"missing target", func(_ *Service, _ *fakeHub, l *proto.Launcher) { l.External.ID = "another-target" }},
 		{"unsupported context", func(_ *Service, _ *fakeHub, l *proto.Launcher) { l.External.Capabilities.Contexts = []string{"coding"} }},
 		{"unsupported engine", func(_ *Service, _ *fakeHub, l *proto.Launcher) { l.External.Engine = "another-engine" }},
-		{"outside main scope", func(_ *Service, f *fakeHub, _ *proto.Launcher) {
-			f.setSessions("server", proto.Session{SessionID: "main", Assistant: true, Launcher: "gw", PaneID: "coding-pane"})
+		{"outside main scope", func(s *Service, _ *fakeHub, _ *proto.Launcher) {
+			d := newFleetDevs()
+			d.add("server", "Computer")
+			d.setSessions("server", []proto.Session{{SessionID: "main", Assistant: true, PaneID: "coding-pane"}})
+			s.devs = d
 		}},
 		{"incompatible conversation", func(_ *Service, f *fakeHub, _ *proto.Launcher) {
 			f.setSessions("server", proto.Session{SessionID: "main", Assistant: true, Launcher: "cx", Agent: "codex"})
