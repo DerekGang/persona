@@ -1,4 +1,4 @@
-Send what the user asked for to an Agent. A busy Agent may queue it. A stopped Agent needs resume and resume_why if this work needs its context. Only a recorded idle, task completion or restart stop permits that. For user and unknown stops use the user's Resume. It must be supervised (give task unless on an open task of yours). A nearly full Agent is compacted first. For unrelated work use agent_start. Unsure: ask_user. A branch that never ran starts on its first message. Only /exit or /quit stops a running Agent and keeps the tab. The owner's controls close another conversation's Agent.
+Send the user's request to an Agent. Busy Agents may queue it. To keep context, use resume and resume_why after idle, task completion or restart stops. For user or unknown stops, use the owner's Resume. Supervise via task unless the Agent already has your open task. An almost full Agent compacts first. Use agent_start for unrelated work and ask_user if unsure. A new branch starts on first send. Only /exit or /quit stops the Agent and keeps its tab. The owner controls closing another conversation's Agent.
 
 For dialog_open, retry with dismiss_notice only when Enter alone closes the notice. For permissions and pickers, tell the user or use interaction_answer.
 
@@ -6,7 +6,7 @@ From the main conversation, give task to supervise new work, including done_when
 
 Use `handoff` for your stopped to-do. On node acknowledgement it waits for the receiving Agent's result.
 
-`wait_seconds` observes up to 50 seconds after dispatch, appending `Inline observation` JSON: `completed`(this input's `reply`), `question`(pending `interaction_id`), `timeout`/`cancelled`/`unavailable`/`interrupted`/`failed`, with known input/session ids. Observation never answers questions, accepts tasks, resends or cancels work; normal supervision/`task_review` applies. Older nodes may time out rather than return an unrelated reply.{{template "shared/mcp_language" .}}
+`wait_seconds` observes this dispatch for up to 50s. `Inline observation` JSON carries `completed` (this input's `reply`), `question` (`interaction_id`), `timeout`/`cancelled`/`unavailable`/`interrupted`/`failed`, and known input/session ids. It never answers, accepts, resends or cancels. Use task_review as usual. Older nodes may time out to avoid unrelated replies.{{template "shared/mcp_language" .}}
 
 ```json
 {
