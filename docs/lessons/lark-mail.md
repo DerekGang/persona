@@ -2,6 +2,12 @@
 
 Pitfalls, odd behavior and the trade-offs made at the time (originally in `CLAUDE.md`; index in `docs/lessons/README.md`). Put new lessons in the matching section; if none fits, start a new one.
 
+## Folding completion cards
+
+Keep the complete opening Markdown fence when choosing a preview boundary (#12498). A closing line must use the same
+character, have at least as many fence characters, and contain only trailing whitespace. A shorter run or trailing text
+is still code; test the actual card's preview and folded detail, including both backticks and tildes.
+
 ## Lark system events are not new conversation requests
 
 A new message ID and timestamp do not establish new human activity (#9789). Consume system events and unidentified senders without creating or updating Inbox things, including the direct-chat sweep and history promotion path. Keep real attachments and independently authored bot notifications. When fetching conversation history for triage, retain timestamps and distinguish the incoming batch from background: an empty system event otherwise disappears from flattened context and makes an old request look current. An already collected follow-up remains background; promoting an unindexed follow-up must not rewind Last when another group of the same chat is processed in the same round.

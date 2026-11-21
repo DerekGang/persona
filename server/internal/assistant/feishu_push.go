@@ -368,11 +368,12 @@ func leadAndRest(md string, n int) (lead, rest string) {
 	for i, line := range lines {
 		t := strings.TrimSpace(line)
 		if fence != "" {
-			if strings.HasPrefix(t, fence) {
+			if strings.HasPrefix(t, fence) && strings.Trim(t, fence[:1]) == "" {
 				fence = ""
 			}
 		} else if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
-			fence = t[:3]
+			// As in RenderAnswer, keep the whole run: shorter runs and trailing text are still code.
+			fence = t[:len(t)-len(strings.TrimLeft(t, t[:1]))]
 		} else if t == "" && runes >= n && i < len(lines)-1 {
 			if r := strings.TrimSpace(strings.Join(lines[i+1:], "\n")); r != "" {
 				return strings.TrimSpace(strings.Join(lines[:i], "\n")), r
