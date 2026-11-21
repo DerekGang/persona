@@ -342,57 +342,61 @@ func (d *DB) ResolveConversationSwitch(ctx context.Context, machine, session, op
 		return errors.New("invalid switch outcome")
 	}
 	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
-		var epoch int64
-		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&epoch); err != nil {
-			return err
-		}
-		var source, target, phase string
-		var expected int64
-		if err := tx.QueryRow(ctx, `SELECT source_segment,coalesce(target_segment,''),phase,expected_epoch FROM conversation_switches WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3`, machine, session, operation).Scan(&source, &target, &phase, &expected); err != nil {
-			return err
-		}
-		if phase == outcome {
-			return nil
-		}
-		if phase == "accepted" || phase == "rejected" {
+		return resolveConversationSwitchTx(ctx, tx, machine, session, operation, outcome, reason)
+	})
+}
+
+func resolveConversationSwitchTx(ctx context.Context, tx pgx.Tx, machine, session, operation, outcome, reason string) error {
+	var epoch int64
+	if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&epoch); err != nil {
+		return err
+	}
+	var source, target, phase string
+	var expected int64
+	if err := tx.QueryRow(ctx, `SELECT source_segment,coalesce(target_segment,''),phase,expected_epoch FROM conversation_switches WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3`, machine, session, operation).Scan(&source, &target, &phase, &expected); err != nil {
+		return err
+	}
+	if phase == outcome {
+		return nil
+	}
+	if phase == "accepted" || phase == "rejected" {
+		return ErrConversationEpoch
+	}
+	activated := phase == "active" || epoch == expected+1
+	if outcome == "accepted" {
+		if !activated || epoch != expected+1 {
 			return ErrConversationEpoch
 		}
-		activated := phase == "active" || epoch == expected+1
-		if outcome == "accepted" {
-			if !activated || epoch != expected+1 {
+		if _, err := tx.Exec(ctx, `UPDATE conversation_segments SET close_pending=true WHERE id=$1 AND state='retired'`, source); err != nil {
+			return err
+		}
+	}
+	if outcome == "rejected" {
+		if target != "" {
+			if _, err := tx.Exec(ctx, `UPDATE conversation_segments SET state='abandoned',frozen_end=0,close_pending=true WHERE id=$1`, target); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE conversation_segments SET state='active',frozen_end=NULL,close_pending=false WHERE id=$1`, source); err != nil {
+			return err
+		}
+		if activated {
+			// A definite first-turn refusal delivered no input. Restore its
+			// original queue position for the recovered source, never retry
+			// an ambiguous delivery on either engine.
+			if _, err := tx.Exec(ctx, `UPDATE conversation_inputs SET state='queued' WHERE logical_machine=$1 AND logical_session=$2 AND epoch=$3 AND state='rejected'`, machine, session, expected+1); err != nil {
+				return err
+			}
+			if epoch != expected+1 {
 				return ErrConversationEpoch
 			}
-			if _, err := tx.Exec(ctx, `UPDATE conversation_segments SET close_pending=true WHERE id=$1 AND state='retired'`, source); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE logical_conversations SET epoch=epoch+1,revision=revision+1 WHERE machine_id=$1 AND session_id=$2 AND epoch=$3`, machine, session, epoch); err != nil {
 				return err
 			}
 		}
-		if outcome == "rejected" {
-			if target != "" {
-				if _, err := tx.Exec(ctx, `UPDATE conversation_segments SET state='abandoned',frozen_end=0,close_pending=true WHERE id=$1`, target); err != nil {
-					return err
-				}
-			}
-			if _, err := tx.Exec(ctx, `UPDATE conversation_segments SET state='active',frozen_end=NULL,close_pending=false WHERE id=$1`, source); err != nil {
-				return err
-			}
-			if activated {
-				// A definite first-turn refusal delivered no input. Restore its
-				// original queue position for the recovered source, never retry
-				// an ambiguous delivery on either engine.
-				if _, err := tx.Exec(ctx, `UPDATE conversation_inputs SET state='queued' WHERE logical_machine=$1 AND logical_session=$2 AND epoch=$3 AND state='rejected'`, machine, session, expected+1); err != nil {
-					return err
-				}
-				if epoch != expected+1 {
-					return ErrConversationEpoch
-				}
-				if _, err := tx.Exec(ctx, `UPDATE logical_conversations SET epoch=epoch+1,revision=revision+1 WHERE machine_id=$1 AND session_id=$2 AND epoch=$3`, machine, session, epoch); err != nil {
-					return err
-				}
-			}
-		}
-		_, err := tx.Exec(ctx, `UPDATE conversation_switches SET phase=$4,error=$5,updated_at=now() WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3`, machine, session, operation, outcome, reason)
-		return err
-	})
+	}
+	_, err := tx.Exec(ctx, `UPDATE conversation_switches SET phase=$4,error=$5,updated_at=now() WHERE logical_machine=$1 AND logical_session=$2 AND operation_id=$3`, machine, session, operation, outcome, reason)
+	return err
 }
 
 func (d *DB) ConversationSwitch(ctx context.Context, machine, session, operation string) (*ConversationSwitch, error) {
@@ -554,6 +558,32 @@ func (d *DB) ClaimConversationInput(ctx context.Context, machine, session string
 		return nil
 	})
 	return out, err
+}
+
+// RequeueConversationInput is only for a live manager that proves it never
+// attempted the input RPC. A sending row left by a crash remains ambiguous and
+// must use a positive runtime receipt instead. The epoch fences stale cleanup.
+func (d *DB) RequeueConversationInput(ctx context.Context, machine, session, id string, epoch int64, operation string) error {
+	return conversationTransaction(ctx, d, func(tx pgx.Tx) error {
+		var current int64
+		if err := tx.QueryRow(ctx, `SELECT epoch FROM logical_conversations WHERE machine_id=$1 AND session_id=$2 AND deleted_at IS NULL FOR UPDATE NOWAIT`, machine, session).Scan(&current); err != nil {
+			return err
+		}
+		if current != epoch {
+			return ErrConversationEpoch
+		}
+		tag, err := tx.Exec(ctx, `UPDATE conversation_inputs SET state='queued' WHERE logical_machine=$1 AND logical_session=$2 AND client_msg_id=$3 AND epoch=$4 AND state='sending'`, machine, session, id, epoch)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrConversationEpoch
+		}
+		if operation != "" {
+			return resolveConversationSwitchTx(ctx, tx, machine, session, operation, "rejected", "input refused before dispatch")
+		}
+		return nil
+	})
 }
 
 func (d *DB) ResolveConversationInput(ctx context.Context, machine, session, id, state string) error {

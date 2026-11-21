@@ -187,6 +187,10 @@ func (s *Service) logicalCall(ctx context.Context, machine, method string, raw j
 				}
 				queued := logicalInput{Method: method, Params: p}
 				if original, ok := ctx.Value(logicalTransportKey{}).(devicewire.NodeCall); ok {
+					// Keep authenticated provenance, not another copy of the message
+					// or a transport fallback that could address the retired source.
+					original.Params, original.Fallback = nil, nil
+					original.Request = ""
 					queued.Transport = &original
 				}
 				body, e := json.Marshal(queued)

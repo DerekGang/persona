@@ -490,7 +490,7 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 	return s.drainLogicalInput(ctx, st, c)
 }
 
-func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, c *db.LogicalConversation) error {
+func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, c *db.LogicalConversation) (retErr error) {
 	a, ok := c.Active()
 	if !ok {
 		return nil
@@ -520,6 +520,30 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 	if err != nil || input == nil {
 		return err
 	}
+	// Until the input call is attempted, local validation/restore failures prove
+	// no message was sent. Do not strand that input as an ambiguous crash claim.
+	dispatched := false
+	defer func() {
+		if retErr == nil || dispatched {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		operation := ""
+		if c.Switch != nil {
+			operation = c.Switch.OperationID
+		}
+		if err := st.RequeueConversationInput(cleanup, c.MachineID, c.SessionID, input.ClientMsgID, c.Epoch, operation); err != nil {
+			retErr = errors.Join(retErr, err)
+			return
+		}
+		if c.Switch != nil {
+			if next, err := st.LogicalConversation(cleanup, c.MachineID, c.SessionID); err == nil {
+				s.logicalRebind(cleanup, next)
+			}
+		}
+		s.historyWake()
+	}()
 	var queued logicalInput
 	if err = json.Unmarshal(input.Payload, &queued); err != nil {
 		return err
@@ -562,6 +586,7 @@ func (s *Service) drainLogicalInput(ctx context.Context, st logicalSwitchStore, 
 				return err
 			}
 		}
+		dispatched = true
 		_, sendErr = s.logicalPhysical(ctx, a.MachineID, queued.Method, cloneLogicalParams(queued.Params, a))
 		return nil
 	})

@@ -789,3 +789,64 @@ func TestLogicalProviderScopeUsesTheActualExecutionMachine(t *testing.T) {
 		t.Fatalf("release scope: %v", err)
 	}
 }
+
+func TestLogicalPreDispatchRestoreFailureRecoversSourceAndUnsentQueue(t *testing.T) {
+	s, f, st, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	c := activatePair(t, st)
+	payload, _ := json.Marshal(logicalInput{Method: DeviceAssistantSend, Params: map[string]any{"text": "continue", "client_msg_id": "unsent"}})
+	if err := st.EnqueueConversationInput(ctx, c.MachineID, c.SessionID, "unsent", c.Epoch, payload); err != nil {
+		t.Fatal(err)
+	}
+	f.answerNode("assistant.segment.restore", func(_ string, raw json.RawMessage) (any, error) {
+		if strings.Contains(string(raw), "target-chat") {
+			return nil, errors.New("fake restore failed before input")
+		}
+		return map[string]any{"ok": true}, nil
+	})
+	sends := 0
+	f.answerNode(DeviceAssistantSend, func(_ string, raw json.RawMessage) (any, error) {
+		sends++
+		if !strings.Contains(string(raw), `"session_id":"side-chat"`) || !strings.Contains(string(raw), `"client_msg_id":"unsent"`) {
+			t.Fatalf("unsent input lost original identity: %s", raw)
+		}
+		return map[string]any{"ok": true}, nil
+	})
+	if err := s.drainLogicalInput(ctx, st, c); err == nil {
+		t.Fatal("restore failure was hidden")
+	}
+	c, err := st.LogicalConversation(ctx, "server", "side-chat")
+	if err != nil || c.Epoch != 3 || c.Switch != nil {
+		t.Fatalf("pre-dispatch recovery: %+v %v", c, err)
+	}
+	if active, ok := c.Active(); !ok || active.ID != "one" || sends != 0 {
+		t.Fatalf("source not recovered before input: %+v sends=%d", active, sends)
+	}
+	if err := s.drainLogicalInput(ctx, st, c); err != nil || sends != 1 {
+		t.Fatalf("unsent input was stranded: sends=%d %v", sends, err)
+	}
+}
+
+func TestLogicalQueuePersistsOnePayloadAndAuthenticatedProvenance(t *testing.T) {
+	s, _, st, _ := logicalPair(t, "codex")
+	request := devicewire.NodeCall{MachineID: "server", Method: DeviceSessionSend, Params: json.RawMessage(`{"text":"duplicate body"}`), Request: "ephemeral-request", Caller: &devicewire.Caller{Kind: "device", CredentialID: "test-device"}, Submission: &devicewire.Submission{ID: "submission", Kind: "owner", OriginalText: "continue"}, Fallback: &devicewire.NodeCall{MachineID: "retired", Method: DeviceSessionSend}}
+	ctx := context.WithValue(t.Context(), logicalTransportKey{}, request)
+	if _, handled, err := s.logicalCall(ctx, "server", DeviceSessionSend, json.RawMessage(`{"session_id":"side-chat","client_msg_id":"original","text":"continue"}`)); err != nil || !handled {
+		t.Fatalf("queue: %v %v", handled, err)
+	}
+	activatePair(t, st)
+	row, err := st.ClaimConversationInput(t.Context(), "server", "side-chat", 2)
+	if err != nil || row == nil {
+		t.Fatalf("claim: %+v %v", row, err)
+	}
+	var queued logicalInput
+	if err := json.Unmarshal(row.Payload, &queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued.Transport == nil || len(queued.Transport.Params) != 0 || queued.Transport.Fallback != nil || queued.Transport.Request != "" {
+		t.Fatalf("durable queue kept transient transport or duplicate body: %s", row.Payload)
+	}
+	if queued.Params["text"] != "continue" || queued.Transport.Caller.CredentialID != "test-device" || queued.Transport.Submission.ID != "submission" {
+		t.Fatalf("content/provenance changed: %s", row.Payload)
+	}
+}

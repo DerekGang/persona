@@ -33,6 +33,7 @@ type logicalConversationStore interface {
 }
 
 type logicalSwitchStore interface {
+	RequeueConversationInput(context.Context, string, string, string, int64, string) error
 	RecordConversationPreparedCandidate(context.Context, db.ConversationPreparedCandidate) error
 	ConversationPreparedCandidates(context.Context) ([]db.ConversationPreparedCandidate, error)
 	ConversationPreparedCandidateDone(context.Context, string, string) error

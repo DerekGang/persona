@@ -370,3 +370,38 @@ func TestLogicalRoutesDoNotChangeHubOnlyStores(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLogicalConversationPreDispatchCleanupIsEpochFenced(t *testing.T) {
+	d, _ := historyDB(t)
+	op := prepareLogicalSwitch(t, d)
+	ctx := t.Context()
+	if err := d.EnqueueConversationInput(ctx, "root-machine", "root-chat", "not-dispatched", 1, json.RawMessage(`{"text":"continue"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ActivateConversationSegment(ctx, "root-machine", "root-chat", op.OperationID, 1); err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 2)
+	if err != nil || first == nil {
+		t.Fatalf("claim: %+v %v", first, err)
+	}
+	if err := d.RequeueConversationInput(ctx, "root-machine", "root-chat", first.ClientMsgID, 1, ""); !errors.Is(err, ErrConversationEpoch) {
+		t.Fatalf("stale cleanup: %v", err)
+	}
+	if row, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 2); err != nil || row != nil {
+		t.Fatalf("stale cleanup repeated input: %+v %v", row, err)
+	}
+	// A failed rollback must not expose a requeued head between transactions.
+	if err := d.RequeueConversationInput(ctx, "root-machine", "root-chat", first.ClientMsgID, 2, "missing-operation"); err == nil {
+		t.Fatal("unknown rollback committed cleanup")
+	}
+	if row, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 2); err != nil || row != nil {
+		t.Fatalf("failed rollback exposed unsent head: %+v %v", row, err)
+	}
+	if err := d.RequeueConversationInput(ctx, "root-machine", "root-chat", first.ClientMsgID, 2, ""); err != nil {
+		t.Fatal(err)
+	}
+	if row, err := d.ClaimConversationInput(ctx, "root-machine", "root-chat", 2); err != nil || row == nil || row.ClientMsgID != first.ClientMsgID || row.Position != first.Position {
+		t.Fatalf("local recovery lost queue identity: %+v %v", row, err)
+	}
+}
