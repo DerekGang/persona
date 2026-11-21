@@ -286,7 +286,7 @@ internal object Mochi {
     val discDark = listOf(Color(0xFF332A26), Color(0xFF1D1816))
     val bodyColors = listOf(Color.White, Color(0xFFE9E3DE))
     val sleepBody = listOf(Color(0xFFD9D4D0), Color(0xFFBDB6B1))
-    val sleepBodyDark = listOf(Color(0xFFE2DDD9), Color(0xFFC8C1BC))
+    val sleepBodyDark = listOf(Tokens.Mochi.DarkOffline.bodyTop, Tokens.Mochi.DarkOffline.bodyBottom)
     const val SLEEP_SHADOW_DARK = 0.3f
     val sleepInk = Color(0xFF6E6763)
     val sleepCheek = Color(0xFFA59D98)
