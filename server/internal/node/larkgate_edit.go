@@ -70,7 +70,7 @@ func (n *Node) editableLarkCall(cfg proto.AssistantLark, command, cwd string) (l
 	if !larkLoneGateCall(command, cfg.Gates) {
 		return larkCall{}, larkBodySpan{}, "", false
 	}
-	v := classifyLark(command, cfg.Gates, cwd, n.larkCLIRisk(cfg))
+	v := classifyLarkWith(command, cfg.Gates, cwd, n.larkCLIRisk(cfg), n.larkLoginPATH)
 	if v.deny != "" || v.other || v.unparsed || v.unknown || v.unsure || len(v.calls) != 1 {
 		return larkCall{}, larkBodySpan{}, "", false
 	}
@@ -161,7 +161,7 @@ func (n *Node) applyLarkEdit(ctx context.Context, cfg proto.AssistantLark, sessi
 		return "", fmt.Errorf("the edited command could not be rebuilt")
 	}
 	command = updated
-	v := classifyLark(command, cfg.Gates, cwd, n.larkCLIRisk(cfg))
+	v := classifyLarkWith(command, cfg.Gates, cwd, n.larkCLIRisk(cfg), n.larkLoginPATH)
 	if v.deny != "" || v.other || v.unparsed || v.unknown || v.unsure || len(v.calls) != 1 {
 		return "", fmt.Errorf("the edited command is no longer one standalone gated call")
 	}
