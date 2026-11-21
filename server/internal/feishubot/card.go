@@ -435,12 +435,13 @@ var (
 // (<https://…>, <mailto:…>) becomes a card link first; and a list is nested the way cards nest it (listIndent). The
 // assistant's persona-card charts are written as numbers first (PersonaCards).
 func CardMarkdown(s string) string {
-	s = listIndent(PersonaCards(s))
+	s = PersonaCards(s)
+	fence := NewCodeFence(s)
+	s = listIndent(s)
 	var b strings.Builder
-	var fence CodeFence
 	last, at := 0, 0
 	for _, line := range strings.SplitAfter(s, "\n") {
-		if fence.Line(line) {
+		if fence.Next() {
 			b.WriteString(cardProse(s[last:at]))
 			b.WriteString(line)
 			last = at + len(line)
@@ -463,13 +464,17 @@ func CardMarkdown(s string) string {
 func listIndent(s string) string {
 	lines := strings.Split(s, "\n")
 	var levels []int // the indent width of each open nesting level, outermost first
-	var fence CodeFence
+	fence := NewCodeFence(s)
 	for i, line := range lines {
 		t := strings.TrimSpace(line)
-		if fence.Line(line) { // code, including an indented closing lookalike: as written
+		inCode := fence.Next()
+		if inCode && !fence.opening { // code, including an indented closing lookalike: as written
 			continue
 		}
 		m := listItemRe.FindStringSubmatchIndex(line)
+		if inCode && m == nil {
+			continue
+		}
 		if m == nil {
 			if t != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
 				levels = levels[:0] // a paragraph at the left margin ends the list

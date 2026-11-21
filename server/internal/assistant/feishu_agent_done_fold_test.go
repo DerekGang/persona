@@ -68,6 +68,22 @@ func TestAgentDoneCardFoldsOutsideCode(t *testing.T) {
 			assertAgentDoneFold(t, lead+"\n\nFurther details.", strings.TrimSpace(lead), "Further details.")
 		})
 	}
+	t.Run("blockquote code", func(t *testing.T) {
+		lead := "> ```html\n" + strings.Repeat("> sample line\n", 24) + "> <sample>literal</sample>\n> ```"
+		assertAgentDoneFold(t, lead+"\n\nFurther details.", lead, "Further details.")
+	})
+	t.Run("list code", func(t *testing.T) {
+		lead := "- top\n    ```html\n" + strings.Repeat("    sample line\n", 22) + "    <sample>literal</sample>\n    ```"
+		assertAgentDoneFold(t, lead+"\n\nFurther details.", lead, "Further details.")
+	})
+	t.Run("inline triple backticks", func(t *testing.T) {
+		lead := "```" + strings.Repeat("word", 80) + "```"
+		assertAgentDoneFold(t, lead+"\n\nOutside <sample>.", lead, "Outside &#60;sample>.")
+	})
+	t.Run("backtick in info is not a fence", func(t *testing.T) {
+		lead := "```go`invalid\n" + strings.Repeat("Text ", 70)
+		assertAgentDoneFold(t, lead+"\n\nOutside <sample>.", strings.TrimSpace(lead), "Outside &#60;sample>.")
+	})
 }
 
 func assertAgentDoneFold(t *testing.T, body, wantLead, wantRest string) {

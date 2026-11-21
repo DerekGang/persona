@@ -31,3 +31,20 @@ func TestCardMarkdownIndentedFenceTextIsNotAnOpener(t *testing.T) {
 		}
 	}
 }
+
+func TestCardMarkdownFenceContainerCompatibility(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"blockquote", "> ```html\n> <sample>quoted</sample>\n> ```\n\nOutside <sample>.", "> ```html\n> <sample>quoted</sample>\n> ```\n\nOutside &#60;sample>."},
+		{"list", "- top\n    ```html\n    <sample>nested</sample>\n    ```\n\nOutside <sample>.", "- top\n    ```html\n    <sample>nested</sample>\n    ```\n\nOutside &#60;sample>."},
+		{"nested list", "- top\n  - child\n      ```html\n      <sample>nested</sample>\n      ```\n\nOutside <sample>.", "- top\n    - child\n      ```html\n      <sample>nested</sample>\n      ```\n\nOutside &#60;sample>."},
+		{"list item opener", "- ```html\n  <sample>nested</sample>\n  ```\n\nOutside <sample>.", "- ```html\n  <sample>nested</sample>\n  ```\n\nOutside &#60;sample>."},
+		{"nested list item opener", "- top\n  - ```html\n    <sample>nested</sample>\n    ```\n\nOutside <sample>.", "- top\n    - ```html\n    <sample>nested</sample>\n    ```\n\nOutside &#60;sample>."},
+		{"inline triple backticks", "```<sample>inline</sample>```\n\nOutside <sample>.", "```<sample>inline</sample>```\n\nOutside &#60;sample>."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CardMarkdown(tc.in); got != tc.want {
+				t.Fatalf("CardMarkdown compatibility:\n got %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}

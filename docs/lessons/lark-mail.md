@@ -13,6 +13,9 @@ as prose after an inner short run. These top-level fence boundaries follow the
 [CommonMark rule](https://spec.commonmark.org/0.31.2/#fenced-code-blocks); the
 [card Markdown reference](https://open.feishu.cn/document/feishu-cards/feishu-card-cardkit/components/markdown)
 also distinguishes fenced and indented code.
+Keep blockquote and list container context when finding fences, and reject backticks in a backtick fence's info
+string. Use the existing parser's source boundaries without re-rendering Markdown; retain that line map across the
+list adapter's indentation changes so a list item's code stays protected.
 
 ## Lark system events are not new conversation requests
 
