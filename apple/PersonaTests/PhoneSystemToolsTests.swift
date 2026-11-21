@@ -1,4 +1,5 @@
 #if os(iOS) && canImport(AlarmKit)
+import ActivityKit
 import AlarmKit
 #endif
 import Foundation
@@ -314,39 +315,93 @@ struct PhoneSystemToolsTests {
     }
 
     #if os(iOS) && canImport(AlarmKit)
-    /// An app-requested ActivityKit activity takes at most 4 KB of attributes. AlarmKit ignores the unselected timer
-    /// state while encoding, so the old `only` trim could not make the sample smaller. The sample's own widget draws
-    /// Pause / Resume / Stop from ContentState and needs no duplicate AlarmKit presentation buttons (#12248).
+    /// The delivered fields of ActivityContent: the wrapper itself is not Codable, so the test carries both unchanged
+    /// values through one Codable transport rather than silently reducing the assertion to ContentState alone.
+    @available(iOS 26.0, *)
+    private struct TimerActivityTransport: Codable {
+        var state: AlarmPresentationState
+        var staleDate: Date?
+
+        init(_ content: ActivityContent<AlarmPresentationState>) {
+            state = content.state
+            staleDate = content.staleDate
+        }
+
+        var content: ActivityContent<AlarmPresentationState> {
+            .init(state: state, staleDate: staleDate)
+        }
+    }
+
+    /// An app-requested ActivityKit activity takes at most 4 KB of attributes. AlarmPresentation encodes both timer
+    /// states, so each sample keeps only its own Pause or Resume marker. The widget supplies the words and colours.
     @Test func theTimerSampleFitsInsideActivityKitsLimit() throws {
         guard #available(iOS 26.0, *) else { return }
         let encoder = JSONEncoder()
-        let running = AlarmsTool.sampleAttributes(label: "Focus")
-        let paused = AlarmsTool.sampleAttributes(label: "Focus")
-        #expect(try encoder.encode(running).count < 4096)
-        #expect(try encoder.encode(paused).count < 4096)
-        #expect(running.presentation.countdown == nil && running.presentation.paused == nil)
-        #expect(paused.presentation.countdown == nil && paused.presentation.paused == nil)
-        #expect(running.metadata?.label == "Focus")
-        #expect(try JSONDecoder().decode(AlarmAttributes<PersonaAlarmData>.self, from: encoder.encode(running)).metadata?.label == "Focus")
+        let decoder = JSONDecoder()
+        let runningAttributes = AlarmsTool.sampleAttributes(label: "Focus", paused: false)
+        let pausedAttributes = AlarmsTool.sampleAttributes(label: "Focus", paused: true)
+        for sample in [runningAttributes, pausedAttributes] {
+            let data = try encoder.encode(sample)
+            #expect(data.count < 4096, "sample attributes bytes: \(data.count)")
+            let decoded = try decoder.decode(AlarmAttributes<PersonaAlarmData>.self, from: data)
+            #expect(decoded.metadata?.label == "Focus")
+            #expect(decoded.presentation.countdown != nil || decoded.presentation.paused != nil)
+            let encoded = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let archived = try #require(encoded["tintColor"] as? String)
+            let original = try #require(JSONSerialization.jsonObject(with: encoder.encode(sample)) as? [String: Any])["tintColor"] as? String
+            #expect(archived == original)
+            let colorData = try #require(Data(base64Encoded: archived))
+            let decodedColor = try NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: colorData)
+            #expect(decodedColor != nil)
+        }
+        #expect(runningAttributes.presentation.countdown?.pauseButton != nil)
+        #expect(runningAttributes.presentation.paused == nil)
+        #expect(pausedAttributes.presentation.paused?.resumeButton != nil)
+        #expect(pausedAttributes.presentation.countdown == nil)
 
-        // These are the exact countdown / pause values requested with the sample; no AlarmKit updates are replaced.
+        // These are the exact ActivityContent values requested with the sample, including the wrapper's staleDate.
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let runningState = AlarmsTool.sampleContent(paused: false, now: now).state
-        let pausedState = AlarmsTool.sampleContent(paused: true, now: now).state
-        #expect(try encoder.encode(runningState).count < 4096)
-        #expect(try encoder.encode(pausedState).count < 4096)
-        guard case .countdown(let countdown) = runningState.mode else {
+        let running = AlarmsTool.sampleContent(paused: false, now: now)
+        let paused = AlarmsTool.sampleContent(paused: true, now: now)
+        let runningTransport = TimerActivityTransport(running)
+        let pausedTransport = TimerActivityTransport(paused)
+        let runningData = try encoder.encode(runningTransport)
+        let pausedData = try encoder.encode(pausedTransport)
+        #expect(runningData.count < 4096, "running ActivityContent bytes: \(runningData.count)")
+        #expect(pausedData.count < 4096, "paused ActivityContent bytes: \(pausedData.count)")
+        let runningContent = try decoder.decode(TimerActivityTransport.self, from: runningData).content
+        let pausedContent = try decoder.decode(TimerActivityTransport.self, from: pausedData).content
+        #expect(runningContent.staleDate == nil && pausedContent.staleDate == nil)
+        #expect(runningContent.state.alarmID == running.state.alarmID)
+        #expect(pausedContent.state.alarmID == paused.state.alarmID)
+        #expect(runningContent.state.alarmID != pausedContent.state.alarmID)
+
+        // AlarmButtons's gates: running Pause and both Stop and paused Resume stay available.
+        if case .countdown = runningContent.state.mode {
+            #expect(runningAttributes.presentation.countdown?.pauseButton != nil)
+        } else {
+            Issue.record("running must expose Pause")
+        }
+        if case .paused = pausedContent.state.mode {
+            #expect(pausedAttributes.presentation.paused?.resumeButton != nil)
+        } else {
+            Issue.record("paused must expose Resume")
+        }
+        // Stop is unconditional in AlarmButtons, with each sample's existing tint.
+        #expect(runningAttributes.tintColor == AlarmsTool.attributes(label: "Focus", timer: true).tintColor)
+        #expect(pausedAttributes.tintColor == AlarmsTool.attributes(label: "Focus", timer: true).tintColor)
+
+        guard case .countdown(let countdown) = runningContent.state.mode else {
             Issue.record("the running sample must count down")
             return
         }
         #expect(countdown.startDate == now && countdown.fireDate == now.addingTimeInterval(1500))
         #expect(countdown.totalCountdownDuration == 1500 && countdown.previouslyElapsedDuration == 0)
-        guard case .paused(let pause) = pausedState.mode else {
+        guard case .paused(let pause) = pausedContent.state.mode else {
             Issue.record("the paused sample must keep the time left")
             return
         }
         #expect(pause.totalCountdownDuration == 1500 && pause.previouslyElapsedDuration == 301)
-        #expect(runningState.alarmID != pausedState.alarmID)
 
         // Real timers keep both states and the complete AlarmKit presentation, unlike the custom widget's sample.
         let timer = AlarmsTool.attributes(label: "Focus", timer: true).presentation

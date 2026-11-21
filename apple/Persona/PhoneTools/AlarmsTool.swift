@@ -352,9 +352,9 @@ extension AlarmsTool {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         let content = sampleContent(paused: paused, now: Date())
-        // AlarmKit encodes only the current presentation state, so removing the other one saves nothing (#12248).
-        // The custom widget below draws its own buttons and title; it needs neither system's timer presentation.
-        let sample = sampleAttributes(label: "Focus")
+        // Both presentation states are encoded, so the sample carries only the state it draws (#12248).
+        // The custom widget supplies the button's words and colours; only the presentation's action marker is required.
+        let sample = sampleAttributes(label: "Focus", paused: paused)
         if let activity = try? Activity.request(attributes: sample, content: content) {
             sampleActivityID = activity.id
         }
@@ -370,13 +370,26 @@ extension AlarmsTool {
     }
     #endif
 
-    /// A sample needs only what `AlarmLiveActivity` reads: the alert's title as the metadata fallback, the label and
-    /// the resolved accent. The extension creates Pause / Resume / Stop from ContentState itself; AlarmKit's duplicate
-    /// presentation titles and button colours cost LocalizedStringResource and UIColor bytes without being drawn.
+    /// A sample needs only what `AlarmLiveActivity` reads: the alert's title as the metadata fallback, the label, the
+    /// resolved accent, and the current state's action marker. Both timer presentations are encoded, so the sample
+    /// retains just the Pause or Resume it draws; the extension supplies all three buttons' own words and colours.
     /// Real timers use the unchanged `attributes(label:timer:)` below, with both states for AlarmKit to choose.
-    static func sampleAttributes(label: String) -> AlarmAttributes<PersonaAlarmData> {
+    static func sampleAttributes(label: String, paused: Bool) -> AlarmAttributes<PersonaAlarmData> {
         let real = attributes(label: label, timer: true)
-        return AlarmAttributes(presentation: .init(alert: real.presentation.alert), metadata: real.metadata, tintColor: real.tintColor)
+        let presentation: AlarmPresentation
+        if paused, let existing = real.presentation.paused {
+            let marker = AlarmButton(text: existing.resumeButton.text, textColor: real.tintColor,
+                                     systemImageName: existing.resumeButton.systemImageName)
+            presentation = .init(alert: real.presentation.alert, paused: .init(title: existing.title, resumeButton: marker))
+        } else {
+            let countdown = real.presentation.countdown.map {
+                AlarmPresentation.Countdown(title: $0.title, pauseButton: $0.pauseButton.map { button in
+                    AlarmButton(text: button.text, textColor: real.tintColor, systemImageName: button.systemImageName)
+                })
+            }
+            presentation = .init(alert: real.presentation.alert, countdown: countdown)
+        }
+        return AlarmAttributes(presentation: presentation, metadata: real.metadata, tintColor: real.tintColor)
     }
 
     /// An id Persona's own alarms have; anything else is refused (the Clock app's alarms are out of reach).
@@ -393,7 +406,7 @@ extension AlarmsTool {
     /// AlarmKit attributes with `Theme.accent` resolved once: a dynamic `Theme.accent` encodes to ~5.7 KB each (~23 KB
     /// across the buttons and tint). Each string also carries its bundle and a sandbox token, and each colour an archived
     /// UIColor. AlarmKit's daemon starts real timers and may exceed 4 KB (docs/apple/live-activity.md "Alarms and timers
-    /// (AlarmKit)"). `AlarmPresentation` encodes only the state selected by AlarmKit, not both optionals at once.
+    /// (AlarmKit)"). Real timers keep both in memory; `AlarmPresentation` encodes both optional states when present.
     static func attributes(label: String, timer: Bool) -> AlarmAttributes<PersonaAlarmData> {
         let accent = Color(Theme.accent.resolve(in: EnvironmentValues()))
         let title = LocalizedStringResource(stringLiteral: label)
