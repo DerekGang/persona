@@ -314,18 +314,45 @@ struct PhoneSystemToolsTests {
     }
 
     #if os(iOS) && canImport(AlarmKit)
-    /// The DEBUG sample requests its activity itself, where ActivityKit takes at most 4 KB of attributes; a timer's
-    /// with both states don't fit (~5.7 KB), so it keeps the one it draws (#11058). AlarmKit gets both.
+    /// An app-requested ActivityKit activity takes at most 4 KB of attributes. AlarmKit ignores the unselected timer
+    /// state while encoding, so the old `only` trim could not make the sample smaller. The sample's own widget draws
+    /// Pause / Resume / Stop from ContentState and needs no duplicate AlarmKit presentation buttons (#12248).
     @Test func theTimerSampleFitsInsideActivityKitsLimit() throws {
         guard #available(iOS 26.0, *) else { return }
-        let running = AlarmsTool.attributes(label: "Focus", timer: true, only: .countdown)
-        let paused = AlarmsTool.attributes(label: "Focus", timer: true, only: .paused)
-        #expect(try JSONEncoder().encode(running).count < 4096)
-        #expect(try JSONEncoder().encode(paused).count < 4096)
-        #expect(running.presentation.countdown?.pauseButton != nil && running.presentation.paused == nil)
-        #expect(paused.presentation.paused != nil && paused.presentation.countdown == nil)
+        let encoder = JSONEncoder()
+        let running = AlarmsTool.sampleAttributes(label: "Focus")
+        let paused = AlarmsTool.sampleAttributes(label: "Focus")
+        #expect(try encoder.encode(running).count < 4096)
+        #expect(try encoder.encode(paused).count < 4096)
+        #expect(running.presentation.countdown == nil && running.presentation.paused == nil)
+        #expect(paused.presentation.countdown == nil && paused.presentation.paused == nil)
+        #expect(running.metadata?.label == "Focus")
+        #expect(try JSONDecoder().decode(AlarmAttributes<PersonaAlarmData>.self, from: encoder.encode(running)).metadata?.label == "Focus")
+
+        // These are the exact countdown / pause values requested with the sample; no AlarmKit updates are replaced.
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let runningState = AlarmsTool.sampleContent(paused: false, now: now).state
+        let pausedState = AlarmsTool.sampleContent(paused: true, now: now).state
+        #expect(try encoder.encode(runningState).count < 4096)
+        #expect(try encoder.encode(pausedState).count < 4096)
+        guard case .countdown(let countdown) = runningState.mode else {
+            Issue.record("the running sample must count down")
+            return
+        }
+        #expect(countdown.startDate == now && countdown.fireDate == now.addingTimeInterval(1500))
+        #expect(countdown.totalCountdownDuration == 1500 && countdown.previouslyElapsedDuration == 0)
+        guard case .paused(let pause) = pausedState.mode else {
+            Issue.record("the paused sample must keep the time left")
+            return
+        }
+        #expect(pause.totalCountdownDuration == 1500 && pause.previouslyElapsedDuration == 301)
+        #expect(runningState.alarmID != pausedState.alarmID)
+
+        // Real timers keep both states and the complete AlarmKit presentation, unlike the custom widget's sample.
         let timer = AlarmsTool.attributes(label: "Focus", timer: true).presentation
-        #expect(timer.countdown != nil && timer.paused != nil)
+        #expect(timer.countdown?.pauseButton != nil && timer.paused?.resumeButton != nil)
+        #expect(timer.countdown?.pauseButton?.systemImageName == Theme.Icon.pause)
+        #expect(timer.paused?.resumeButton.systemImageName == Theme.Icon.run)
     }
     #endif
 
