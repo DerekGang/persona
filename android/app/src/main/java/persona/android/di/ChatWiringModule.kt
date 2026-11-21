@@ -99,11 +99,11 @@ internal suspend fun createChatWiring(
     quickResults: PhoneQuickResults? = null,
 ): ChatAppBindings {
     fun current() = isCurrent()
-    val composer = data.messages.connectComposer { transport ->
+    val composer = data.messages.connectComposer { transport, sending ->
         HttpChatComposerService(data.scope, transport, connection, data.credentials.deviceToken,
             onRetryDelivery = data.messages::recordComposerDelivery,
             onPairingExpired = { if (current()) connection.revoke() }, isCurrent = ::current,
-            onHeld = { session, held -> if (current()) repositories.sessions.showHeld(session, held) })
+            onHeld = { session, held -> if (current()) repositories.sessions.showHeld(session, held) }, sending = sending)
     }
     return ChatAppBindings(data.scope, data.coroutineScope, data.drafts, group,
         repositories.chats.trackActions(HttpChatActions(connection)), repositories.chats.trackComposer(composer),

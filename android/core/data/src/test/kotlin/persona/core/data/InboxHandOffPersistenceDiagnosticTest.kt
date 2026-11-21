@@ -764,10 +764,10 @@ class InboxHandOffPersistenceDiagnosticTest {
             route.value = HubRoute(endpoint, Health(ok = true, hubId = pairing.hubId))
         }
 
-        suspend fun connect(): ChatComposerService = fixture.sender.connectComposer { transport ->
+        suspend fun connect(): ChatComposerService = fixture.sender.connectComposer { transport, sending ->
             HttpChatComposerService(pairing, transport, connection, "test-token",
                 onRetryDelivery = fixture.sender::recordComposerDelivery,
-                onPairingExpired = {})
+                onPairingExpired = {}, sending = sending)
         }
 
         fun takeRequest(): RecordedRequest = checkNotNull(server.takeRequest(1, TimeUnit.SECONDS))

@@ -46,9 +46,9 @@ class DefaultManagerEngineInboxHandoffLiveTest {
             withTimeout(180_000) {
                 withLiveInboxHandoff(config, "engine", temporary.newFolder("engine")) {
                     val item = repository.snapshot.value.records.single { it.hubItemId == field("item_id") }
-                    val composer = sender.connectComposer { transport ->
+                    val composer = sender.connectComposer { transport, sending ->
                         HttpChatComposerService(pairing, transport, connection, config.token,
-                            onRetryDelivery = sender::recordComposerDelivery, onPairingExpired = {})
+                            onRetryDelivery = sender::recordComposerDelivery, onPairingExpired = {}, sending = sending)
                     }
                     assertEquals(target, repository.handOff(InboxHandOffRequest(item.item.id, field("instruction"),
                         target.machineId, target.sessionId, client, targetTitle = "Fixture agent")))

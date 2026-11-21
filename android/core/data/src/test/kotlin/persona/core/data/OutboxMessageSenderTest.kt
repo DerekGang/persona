@@ -34,7 +34,7 @@ class OutboxMessageSenderTest {
         val original = FakeTransport(online = false)
         val sender = OutboxMessageSender(scope, store, original, backgroundScope)
         var requests = 0
-        sender.connectComposer { transport ->
+        sender.connectComposer { transport, _ ->
             object : MessageTransport by transport, ChatComposerService {
                 override val deliveries = MutableStateFlow(emptyMap<String, ComposerDelivery>())
                 override suspend fun send(request: MessageRequest): MessageTransportResult {

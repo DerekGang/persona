@@ -138,8 +138,6 @@ class OutboxMessageSender(
     private val publishedDeliveries = mutableSetOf<String>()
     /** A publication interrupted at an unknown store point is recovered by the origin, not blocked on that store again. */
     private val interruptedDeliveries = mutableSetOf<String>()
-    /** A composer owns these visible messages until its actual HTTP result or cancellation arrives. Access under [lifecycle]. */
-    private val composerAttempts = mutableSetOf<String>()
     /** Whether a session is at work (connectActivity): its turn may write a delivered message only when it ends. */
     @Volatile private var busy: (SessionKey) -> Boolean = { false }
 
@@ -353,10 +351,13 @@ class OutboxMessageSender(
         Unit
     }
 
-    /** Install one composer decorator without replacing the original transport's readiness gate. */
-    suspend fun connectComposer(factory: (MessageTransport) -> ChatComposerService): ChatComposerService = processing.withLock {
+    /** Install one composer decorator without replacing the original transport's readiness gate.
+     * The factory also receives the same processing mutex used by [drain], so a manual retry and an automatic
+     * send cannot race each other and overwrite the operation identity of the visible message.
+     */
+    suspend fun connectComposer(factory: (MessageTransport, kotlinx.coroutines.sync.Mutex) -> ChatComposerService): ChatComposerService = processing.withLock {
         check(job.isActive) { "Pairing scope is closed" }
-        val composer = factory(transport)
+        val composer = factory(transport, processing)
         require(composer is MessageTransport)
         transport = composer
         composer
@@ -377,11 +378,6 @@ class OutboxMessageSender(
         check(job.isActive) { "Pairing scope is closed" }
         val entry = store.entries.first().firstOrNull { it.clientMessageId == id } ?: error("Message state changed")
         val starting = delivery.state == DeliveryState.Sending && result == null
-        if (starting) {
-            check(composerAttempts.add(id)) { "A composer retry is already in flight" }
-        } else if (opId != null) {
-            composerAttempts.remove(id)
-        }
         if (!starting && opId != null && opId != entry.operationId) return@withLock
         if (!starting && entry.state !in awaitingReceipt) {
             // A transcript or receipt can settle the same operation before the HTTP call returns.
@@ -566,9 +562,6 @@ class OutboxMessageSender(
         for (queued in store.entries.first()) {
             var entry = queued
             if (!transport.readyToSend.value) return
-            // The composer owns its manual retry until the actual callback. An automatic catch-up/send must not
-            // start another attempt under the visible id and overwrite that result (including cancellation/Unknown).
-            if (composerAttempts.contains(entry.clientMessageId)) continue
             val allowed = if (transport.supportsClientOps) dispatchable + OutboxState.Unknown else dispatchable
             if (entry.mainTarget && entry.session == PendingMainConversation) {
                 if (entry.state !in dispatchable) continue
