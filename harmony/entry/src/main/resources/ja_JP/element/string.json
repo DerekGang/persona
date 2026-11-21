@@ -5923,6 +5923,10 @@
     {
       "name": "phone_facts_changed",
       "value": "別のデバイスで確認済みの事実が更新されました。下書きは保持されています。最新の内容を確認して保存してください。"
+    },
+    {
+      "name": "phone_new_assistant",
+      "value": "新しいアシスタント"
     }
   ]
 }

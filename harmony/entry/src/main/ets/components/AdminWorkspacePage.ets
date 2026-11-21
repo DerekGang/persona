@@ -453,7 +453,7 @@ export struct AdminWorkspacePage {
 
   @Builder private createManagerForm() {
     Column({ space: Tokens.gap }) {
-      this.title('admin_new_manager')
+      this.title(this.createManagerOnly ? 'phone_new_assistant' : 'admin_new_manager')
       TextInput({ text: this.newManagerName, placeholder: tr('admin_manager_name') })
         .onChange((value: string) => this.newManagerName = value).id('admin.manager.new_name')
       Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('admin_create_manager')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('admin_create_manager', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('admin_create_manager')).bindTips(tr('admin_create_manager'))

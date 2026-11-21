@@ -15,7 +15,7 @@ registerHooks({
     return {format:'module',source:stripTypeScriptTypes(source),shortCircuit:true};
   }
 });
-const {PhoneAgentSettings,agentPreferencePath,validAgentSetting,agentSettingValue,cleanAgentFolder}=
+const {PhoneAgentSettings,AgentSettingTextDraft,agentPreferencePath,validAgentSetting,agentSettingValue,cleanAgentFolder}=
   await import('../entry/src/main/ets/models/PhoneAgentSettings.ets');
 const {ResourceRow}=await import('../entry/src/main/ets/models/Wire.ets');
 
@@ -97,4 +97,49 @@ test('a conflicting addition with the same folder name is never acknowledged as 
   const page=new PhoneAgentSettings();await page.open(env.model,'phone_agent_folders');
   assert.equal(await page.changeFolder('~/weather',{...remote,action:'hide'},true),false);
   assert.deepEqual(page.data.rules,[remote]);assert.equal(page.notice,'phone_rules_changed');
+});
+
+test('failed machine string saves keep the entered model name across a read retry',async()=>{
+  let stored='original',failure=true;
+  const current=()=>({settings:[{key:'model',type:'string',value:stored}]});
+  const env=harness(async(_path,method,body)=>{
+    if (method==='PUT') {
+      if (failure) throw new Error('temporarily unavailable');
+      stored=body.value;
+    }
+    return current();
+  });
+  const form=new PhoneAgentSettings(),draft=new AgentSettingTextDraft();
+  await form.open(env.model,'phone_codex_config');
+  const target='work/macbook/codex';
+  draft.begin(target,'model',stored);draft.edit('user-typed-model');
+  await draft.save(form,target);assert.equal(form.error,'failed');
+  assert.ok(draft.isEditing(target,'model'));assert.equal(draft.text,'user-typed-model');assert.equal(stored,'original');
+  assert.equal(await form.setOption('model','original'),false,'an unverified value cannot dismiss an error-state editor');
+  failure=false;await form.read();assert.equal(draft.text,'user-typed-model');
+  await draft.save(form,target);assert.equal(stored,'user-typed-model');assert.equal(draft.key,'');
+});
+test('a delayed string acknowledgement cannot clear newer typing, identical retyping, or another machine',async()=>{
+  for (const edit of ['changed','same-again','another-owner']) {
+    let stored='before',entered,release;
+    const sending=new Promise(resolve=>{entered=resolve}),gate=new Promise(resolve=>{release=resolve});
+    const env=harness(async(_path,method,body)=>{
+      if (method==='PUT'){entered();await gate;stored=body.value;}
+      return {settings:[{key:'model',type:'string',value:stored}]};
+    });
+    const form=new PhoneAgentSettings(),draft=new AgentSettingTextDraft(),target='work/macbook';
+    await form.open(env.model,'phone_codex_config');
+    draft.begin(target,'model',stored);draft.edit('sent');
+    const pending=draft.save(form,target);await sending;
+    if (edit==='changed') draft.edit('next');
+    if (edit==='same-again'){draft.edit('next');draft.edit('sent');}
+    if (edit==='another-owner') draft.begin('personal/macbook','model','sent');
+    release();await pending;
+    const current=edit==='another-owner'?'personal/macbook':target;
+    assert.ok(draft.isEditing(current,'model'));assert.equal(draft.text,edit==='changed'?'next':'sent');
+    const writes=()=>env.calls.filter(c=>c.verb==='PUT').length;
+    assert.equal(writes(),1);
+    if(edit==='same-again'){await draft.save(form,target);assert.equal(draft.key,'');assert.equal(writes(),1);}
+    if(edit==='another-owner'){await draft.save(form,target);assert.ok(draft.isEditing(current,'model'));assert.equal(writes(),1);}
+  }
 });

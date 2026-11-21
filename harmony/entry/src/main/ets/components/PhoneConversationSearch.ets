@@ -1,3 +1,4 @@
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { ClientModel } from '../models/ClientModel';
 import { ResourceRow } from '../models/Wire';
 import { PhoneSearchIndex, PhoneChatMatch, localChatMatches, mergeChatMatches } from '../models/PhoneChatSearch';
@@ -32,18 +33,18 @@ export struct PhoneConversationSearch {
   @Builder fieldBar() {
     Row({space:8}) {
       Row({space:5}) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize(16).fontColor([Colors.secondary])
+        SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize('16vp').fontColor([Colors.secondary])
         TextInput({text:this.query,placeholder:tr(this.agents ? 'search_sessions' : 'flow_search_chats'),controller:this.field})
-          .height(38).padding({left:2,right:1}).layoutWeight(1).fontSize(16).fontColor(Colors.ink)
+          .height(Math.max(38,Math.ceil(24*nativeEnvironment.fontScale)+8)).padding({left:2,right:1}).layoutWeight(1).fontSize(16).fontColor(Colors.ink)
           .backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
           .onChange((v:string) => this.query = v).enterKeyType(EnterKeyType.Search).defaultFocus(true).id('phone_search.field')
       }.layoutWeight(1).alignItems(VerticalAlign.Center).padding({left:10,right:5}).backgroundColor(Colors.control).borderRadius(12)
-      Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link).padding({left:3,right:2})
+      Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).height(Math.max(38,Math.ceil(22*nativeEnvironment.fontScale)+10)).fontSize(15).fontColor(Colors.link).padding({left:3,right:2})
         .onClick(() => this.onCancel()).id('phone_search.cancel')
     }.width('100%').padding({left:12,right:12,top:6,bottom:6})
   }
   @Builder scopeButton(isAgent:boolean,label:string) {
-    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(31).fontSize(14)
+    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(Math.max(31,Math.ceil(21*nativeEnvironment.fontScale)+8)).fontSize(14)
       .fontWeight(this.agents === isAgent ? FontWeight.Bold : FontWeight.Normal)
       .fontColor(this.agents === isAgent ? Colors.ink : Colors.secondary)
       .backgroundColor(this.agents === isAgent ? Colors.surface : Color.Transparent)
@@ -56,7 +57,7 @@ export struct PhoneConversationSearch {
         Text(tr('flow_all_chats')).fontSize(29).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       }.width('100%').padding({left:16,right:16,top:12,bottom:8})
       if (this.showScopes) Row() { this.scopeButton(false,'persona'); this.scopeButton(true,'agents') }
-        .height(35).padding(2).margin({left:12,right:12,top:3,bottom:5}).width('92%').backgroundColor(Colors.control).borderRadius(18)
+        .constraintSize({minHeight:35}).padding(2).margin({left:12,right:12,top:3,bottom:5}).width('92%').backgroundColor(Colors.control).borderRadius(18)
       List() {
         if (this.rows.length && this.query.trim()) ListItem() {
           Text(tr(this.agents ? 'project_agent_count' : 'phone_search_conversation_count').replace('{count}',String(this.rows.length)))
@@ -67,12 +68,12 @@ export struct PhoneConversationSearch {
         ForEach(this.rows,(hit:PhoneChatMatch) => {
           ListItem() {
             Row({space:10}) {
-              SymbolGlyph(this.agents ? Symbols.agent : this.main(hit) ? $r('sys.symbol.house') : Symbols.persona).fontSize(19).fontColor([Colors.secondary])
+              SymbolGlyph(this.agents ? Symbols.agent : this.main(hit) ? $r('sys.symbol.house') : Symbols.persona).fontSize('19vp').fontColor([Colors.secondary])
               Column({space:3}) {
                 Text(this.main(hit) ? tr('main_chat') : hit.row.title || tr('persona')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
                 if (hit.subtitle) Text(hit.subtitle).fontSize(14).fontColor(Colors.secondary).maxLines(this.inline ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
               }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-              if (!this.inline) SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+              if (!this.inline) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.width('100%').constraintSize({minHeight:48}).padding({left:13,right:12,top:8,bottom:8})
               .backgroundColor(this.inline ? Colors.subtle : Colors.surface).borderRadius(this.inline ? 12 : 0)
           }.onClick(() => this.onOpen(hit.row,hit.hitId)).accessibilityGroup(true).id('phone_search.result')

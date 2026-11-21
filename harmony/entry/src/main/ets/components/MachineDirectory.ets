@@ -292,19 +292,19 @@ export struct MachineDirectory {
       Rect().width(36).height(36).radius(9).fill(this.osColor(c)).opacity(0.13)
       if (MARKS[c.family]) Image(MARKS[c.family]).width(21).height(21).objectFit(ImageFit.Contain)
         .renderMode(ImageRenderMode.Template).fillColor(this.osColor(c))
-      else SymbolGlyph(Symbols.device).fontSize(20).fontColor([this.osColor(c)])
+      else SymbolGlyph(Symbols.device).fontSize('20vp').fontColor([this.osColor(c)])
     }.width(36).height(36).accessibilityLevel('no')
   }
   @Builder count(label:string,n:number,tint:ResourceColor) {
     Row({space:4}) {
       Circle().width(6).height(6).fill(n ? tint : Colors.secondary).opacity(n ? 1 : 0.45)
       Text(String(n)).fontSize(14).fontWeight(FontWeight.Bold).fontColor(n ? tint : Colors.secondary)
-      Text(label).fontSize(12).fontColor(Colors.secondary).maxLines(1).minFontSize(10).maxFontSize(12)
-    }.layoutWeight(1)
+      Text(label).fontSize(12).fontColor(Colors.secondary).maxLines(1)
+    }.flexShrink(0)
   }
   @Builder tag(a:MachineAlert) {
     Row({space:4}) {
-      SymbolGlyph(a.severity === 2 ? $r('sys.symbol.exclamationmark_circle_fill') : $r('sys.symbol.exclamationmark_triangle_fill')).fontSize(12).fontColor([a.severity === 2 ? Colors.danger : Colors.working])
+      SymbolGlyph(a.severity === 2 ? $r('sys.symbol.exclamationmark_circle_fill') : $r('sys.symbol.exclamationmark_triangle_fill')).fontSize('12vp').fontColor([a.severity === 2 ? Colors.danger : Colors.working])
       Text(tr(a.key)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
     }.padding({left:7,right:7,top:3,bottom:3}).borderRadius(9)
       .backgroundColor(a.severity === 2 ? '#21FF3B30' : '#24FFAA22')
@@ -329,7 +329,7 @@ export struct MachineDirectory {
       if (c.alerts.length > 0) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(3)}}) {
         ForEach(c.alerts,(a:MachineAlert) => { this.tag(a) },(a:MachineAlert) => a.key+String(a.severity))
       }.width('100%')
-      if (c.online) Row({space:5}) {
+      if (c.online) Flex({wrap:FlexWrap.Wrap,justifyContent:FlexAlign.SpaceBetween,space:{main:LengthMetrics.vp(7),cross:LengthMetrics.vp(4)}}) {
         this.count(tr('needs_you'),c.needs,Colors.needs)
         this.count(tr('working'),c.working,Colors.working)
         this.count(tr('idle'),c.idle,Colors.secondary)
@@ -375,7 +375,7 @@ export struct MachineDirectory {
       Row({space:3}) {
         Text(this.label(key)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
         if (key === 'cpu' && this.latest(m,key) >= 75 || key === 'mem' && this.latest(m,key) >= 80)
-          SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize(10).fontColor([this.latest(m,key) >= 90 ? Colors.danger : Colors.working])
+          SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize('10vp').fontColor([this.latest(m,key) >= 90 ? Colors.danger : Colors.working])
       }
       Text((key === 'network' ? '↓ ' : '') + this.present(key,this.latest(m,key))).fontSize(15).minFontSize(10).maxFontSize(15)
         .fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
@@ -433,7 +433,7 @@ export struct MachineDirectory {
   }
   @Builder statusBadge(value:string,tint:ResourceColor,alert:boolean = false) {
     Row({space:4}) {
-      if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize(12).fontColor([tint])
+      if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize('12vp').fontColor([tint])
       else Circle().width(6).height(6).fill(tint)
       Text(value).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
     }
@@ -470,7 +470,7 @@ export struct MachineDirectory {
     Row({space:9}) {
       Stack() {
         Rect().width(34).height(34).radius(8).fill(this.agentInk(a)).opacity(0.10)
-        SymbolGlyph(Symbols.agent).fontSize(18).fontColor([this.agentInk(a)])
+        SymbolGlyph(Symbols.agent).fontSize('18vp').fontColor([this.agentInk(a)])
       }.width(34).height(34)
       Column({space:3}) {
         Text(a.row.title || tr('agent_untitled')).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
@@ -482,7 +482,7 @@ export struct MachineDirectory {
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       Column({space:6}) {
         if (Number.isFinite(a.updated)) Text(ageLabel(a.updated,this.chartEnd)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
-        SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+        SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
       }.alignItems(HorizontalAlign.End)
     }.width('100%').padding({left:13,right:13,top:10,bottom:10}).onClick(() => this.onSession(a.row)).id('machines.agent')
   }
@@ -553,7 +553,7 @@ export struct MachineDirectory {
     Column({space:3}) {
       Row({space:5}) {
         Text(tile.title).fontSize(13).fontColor(Colors.secondary)
-        if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle_fill')).fontSize(13)
+        if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle_fill')).fontSize('13vp')
           .fontColor([alert.severity === 2 ? Colors.danger : Colors.working]).accessibilityText(tr(alert.key))
       }
       Text(tile.value).fontSize(22).minFontSize(16).maxFontSize(22).maxLines(1).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
@@ -626,7 +626,7 @@ export struct MachineDirectory {
       if (this.liveTiles.length) this.liveGrid()
       Row({space:2}) {
         ForEach(RANGE_LABELS,(key:string,i:number) => {
-          Button(tr(key),{type:ButtonType.Normal}).layoutWeight(1).constraintSize({minHeight:38}).padding(0).fontSize(14).borderRadius(8)
+          Button(tr(key),{type:ButtonType.Normal}).layoutWeight(1).height(Math.max(38,Math.ceil(21*nativeEnvironment.fontScale)+9)).padding(0).fontSize(14).borderRadius(8)
             .fontColor(this.range === i ? Colors.ink : Colors.secondary).backgroundColor(this.range === i ? Colors.surface : Color.Transparent)
             .fontWeight(this.range === i ? FontWeight.Bold : FontWeight.Normal).accessibilitySelected(this.range === i)
             .onClick(() => this.chooseRange(i)).id('machines.range.'+RANGES[i])
@@ -697,7 +697,7 @@ export struct MachineDirectory {
           }
           if (!this.cards.length && !this.loading) ListItem() {
             Column({space:8}) {
-              SymbolGlyph(Symbols.device).fontSize(34).fontColor([Colors.secondary]).accessibilityLevel('no')
+              SymbolGlyph(Symbols.device).fontSize('34vp').fontColor([Colors.secondary]).accessibilityLevel('no')
               Text(tr('machine_empty_title')).fontSize(20).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
               Text(tr('machine_empty_detail')).fontSize(15).fontColor(Colors.secondary).textAlign(TextAlign.Center)
             }.width('100%').padding({left:24,right:24,top:35,bottom:16}).accessibilityGroup(true)

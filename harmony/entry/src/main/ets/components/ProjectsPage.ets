@@ -1,6 +1,8 @@
+import { LengthMetrics } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
+import { Tokens } from '../design/Tokens';
 import { PhoneIconButton, PhoneSectionTitle, PhoneStyle } from '../design/PhoneStyle';
 import { tr } from '../design/Strings';
 import { ClientModel } from '../models/ClientModel';
@@ -71,7 +73,7 @@ export struct ProjectsPage {
   private filteringText(): boolean { return this.page === 'projects' && !!this.catalog.browser.query.trim(); }
   private treeInset(level: number): number {
     // Reserve the same mark column for plain and primary worktrees. Limit deep indentation on a phone.
-    return PhoneStyle.inset + 22 * Math.min(level, 3);
+    return PhoneStyle.inset + (nativeEnvironment.fontScale >= 1.5 ? 7 : 22) * Math.min(level, 3);
   }
   @Computed get detailTree(): ProjectWorktree | undefined {
     return this.page === 'project_tree' ? this.catalog.tree(this.target) : undefined;
@@ -243,7 +245,7 @@ export struct ProjectsPage {
     }
   }
   @Builder icon(symbol: Resource, tint: ResourceColor) {
-    Stack() { SymbolGlyph(symbol).fontSize(18).fontColor([tint]) }
+    Stack() { SymbolGlyph(symbol).fontSize('18vp').fontColor([tint]) }
       .width(32).height(32).borderRadius(8).backgroundColor(Colors.control)
   }
   @Builder detailRow(title: string, detail: string, symbol: Resource, color: ResourceColor, identity: string, action: () => void) {
@@ -253,7 +255,7 @@ export struct ProjectsPage {
         Text(title).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
         if (detail) Text(detail).fontSize(13).fontColor(Colors.secondary).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      SymbolGlyph(Symbols.expand).fontSize(13).fontColor([Colors.secondary])
+      SymbolGlyph(Symbols.expand).fontSize('13vp').fontColor([Colors.secondary])
     }.width('100%').padding({ left: 14, right: 14, top: 10, bottom: 10 }).constraintSize({ minHeight: 52 })
       .accessibilityGroup(true).accessibilityText(title + (detail ? ' · ' + detail : '')).onClick(action).id(identity)
   }
@@ -270,11 +272,11 @@ export struct ProjectsPage {
   }
   @Builder searchAndFilter() {
     Row({space:8}) {
-      Search({value:this.catalog.browser.query,placeholder:tr('project_search')}).height(38).layoutWeight(1)
+      Search({value:this.catalog.browser.query,placeholder:tr('project_search')}).searchIcon({size:'16vp'}).height(Math.max(38, 21 * nativeEnvironment.fontScale + 12)).layoutWeight(1)
         .searchButton('').borderRadius(11).fontColor(Colors.ink).backgroundColor(Colors.control)
         .onChange((value:string) => this.search(value)).id('projects.search')
       if (this.hosts.length > 1 || this.catalog.browser.machine) Button({type:ButtonType.Circle}) {
-        SymbolGlyph(Symbols.filter).fontSize(17).fontColor([this.catalog.browser.machine ? Colors.onAction : Colors.ink])
+        SymbolGlyph(Symbols.filter).fontSize('17vp').fontColor([this.catalog.browser.machine ? Colors.onAction : Colors.ink])
       }.width(36).height(36).padding(0).backgroundColor(this.catalog.browser.machine ? Colors.action : Colors.surface)
         .responseRegion({ x: -4, y: -4, width: 44, height: 44 })
         .accessibilityText(tr('agent_filter_machine')).accessibilityDescription(this.hosts.find((host: ProjectHost) =>
@@ -300,8 +302,8 @@ export struct ProjectsPage {
         if (agent.runtime.toLowerCase().includes('claude')) Image($r('app.media.project_agent_claude')).width(17).height(17).objectFit(ImageFit.Contain)
         else if (agent.runtime.toLowerCase().includes('codex') || agent.runtime.toLowerCase().includes('openai'))
           Image($r('app.media.project_agent_openai')).width(17).height(17).fillColor(Colors.ink).objectFit(ImageFit.Contain)
-        else if (agent.runtime) Text(agent.runtime.slice(0,1).toUpperCase()).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        else SymbolGlyph(Symbols.agent).fontSize(17).fontColor([Colors.secondary])
+        else if (agent.runtime) Text(agent.runtime.slice(0,1).toUpperCase()).fontSize('16vp').fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        else SymbolGlyph(Symbols.agent).fontSize('17vp').fontColor([Colors.secondary])
       }.width(36).height(36).backgroundColor(Colors.subtle).borderRadius(18)
       if (agent.state && agent.state !== 'unknown') Circle().width(12).height(12).fill(this.tint(agent))
         .stroke(Colors.surface).strokeWidth(2)
@@ -315,7 +317,7 @@ export struct ProjectsPage {
   @Builder needsReply() {
     Text(tr('needs_you')).fontSize(12).fontWeight(FontWeight.Medium).fontColor(Colors.needs)
       .padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.selection).borderRadius(6)
-      .constraintSize({maxWidth:'41%'}).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+      .constraintSize({maxWidth:nativeEnvironment.fontScale >= 1.5 ? '100%' : '41%'}).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
   }
   @Builder agentCell(agent:ProjectAgent, treeKey:string, identity:string, paneName:string = '', starter:boolean = false) {
     Row({space:9}) {
@@ -323,17 +325,18 @@ export struct ProjectsPage {
       Column({space:3}) {
         Row({space:6}) {
           Text(agent.row.title || tr('agent_untitled')).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-            .layoutWeight(1).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-          if (this.age(agent)) Text(this.age(agent)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
+            .layoutWeight(1).maxLines(nativeEnvironment.fontScale >= 1.5 ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
+          if (nativeEnvironment.fontScale < 1.5 && this.age(agent)) Text(this.age(agent)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
         }.width('100%')
         if (agent.preview) Row({space:6}) {
-          Text(agent.preview).maxLines(2).fontSize(14).fontColor(Colors.secondary)
+          Text(agent.preview).maxLines(nativeEnvironment.fontScale >= 1.5 ? 4 : 2).fontSize(14).fontColor(Colors.secondary)
             .layoutWeight(1).textOverflow({overflow:TextOverflow.Ellipsis})
-          if (agent.state === 'needs_you') this.needsReply()
+          if (agent.state === 'needs_you' && nativeEnvironment.fontScale < 1.5) this.needsReply()
         }.width('100%').alignItems(VerticalAlign.Top)
-        else if (agent.state === 'needs_you') this.needsReply()
+        if (agent.state === 'needs_you' && (!agent.preview || nativeEnvironment.fontScale >= 1.5)) this.needsReply()
         if (this.agentContext(agent,paneName,starter)) Text(this.agentContext(agent,paneName,starter)).width('100%').textAlign(TextAlign.Start)
-          .fontSize(12).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          .fontSize(12).fontColor(Colors.secondary).maxLines(nativeEnvironment.fontScale >= 1.5 ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
+        if (nativeEnvironment.fontScale >= 1.5 && this.age(agent)) Text(this.age(agent)).fontSize(11).fontColor(Colors.secondary)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
     }.width('100%').alignItems(VerticalAlign.Top).constraintSize({minHeight:58}).padding({top:9,bottom:9,right:PhoneStyle.inset})
       .accessibilityGroup(true).accessibilityText([agent.row.title,agent.preview,tr(agent.stateLabel),this.agentContext(agent,paneName,starter),this.age(agent)].filter((v:string) => !!v).join(' · '))
@@ -341,49 +344,62 @@ export struct ProjectsPage {
       .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id(identity)
   }
   @Builder foldChevron(open:boolean) {
-    SymbolGlyph(open ? Symbols.down : Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+    SymbolGlyph(open ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
   }
   // A virtual row can outlive the projection object that created it. Keep only its scoped key in this builder.
   @Builder tabLine(key: string) {
     Row({ space: 6 }) {
       Stack() { Circle().width(7).height(7).fill(this.tabTint(key)) }.width(18)
-      Text(this.tabRows.get(key)?.tabTitle || '').fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        .constraintSize({ maxWidth: '40%' }).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(this.tabRows.get(key)?.tabLead?.row.title || '').fontSize(13).fontColor(Colors.secondary).layoutWeight(1)
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(tr('project_agent_count').replace('{count}', String(this.tabRows.get(key)?.count || 0)))
-        .fontSize(13).fontColor(Colors.secondary).maxLines(1)
-      SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary]).rotate({angle:this.tabOpen(key) ? 90 : 0})
+      if (nativeEnvironment.fontScale >= 1.5) {
+        Column({space:2}) {
+          Text(this.tabRows.get(key)?.tabTitle || '').fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          if (this.tabRows.get(key)?.tabLead?.row.title) Text(this.tabRows.get(key)?.tabLead?.row.title || '').fontSize(13).fontColor(Colors.secondary).maxLines(3)
+          Text(tr('project_agent_count').replace('{count}', String(this.tabRows.get(key)?.count || 0))).fontSize(13).fontColor(Colors.secondary)
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      } else {
+        Text(this.tabRows.get(key)?.tabTitle || '').fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          .constraintSize({ maxWidth: '40%' }).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.tabRows.get(key)?.tabLead?.row.title || '').fontSize(13).fontColor(Colors.secondary).layoutWeight(1)
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(tr('project_agent_count').replace('{count}', String(this.tabRows.get(key)?.count || 0)))
+          .fontSize(13).fontColor(Colors.secondary).maxLines(1)
+      }
+      SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary]).rotate({angle:this.tabOpen(key) ? 90 : 0})
         .visibility(this.filteringText() ? Visibility.None : Visibility.Visible)
     }.width('100%').constraintSize({minHeight:44}).padding({left:this.treeInset(this.tabRows.get(key)?.level || 0),right:PhoneStyle.inset})
       .accessibilityGroup(true).accessibilityText(this.tabDescription(key)).onClick(() => this.toggleTab(key)).id('projects.tab')
   }
+  @Builder countItems(key: string) {
+    ForEach(this.hostKinds(key), (kind: string) => {
+      Row({ space: 4 }) {
+        Circle().width(6).height(6).fill(this.activityTint(kind))
+        Text(String(this.hostActivity.get(key)?.get(kind) || 0)).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+      }
+    }, (kind: string) => kind)
+  }
   @Builder counts(key: string) {
-    Row({ space: 8 }) {
-      ForEach(this.hostKinds(key), (kind: string) => {
-        Row({ space: 4 }) {
-          Circle().width(6).height(6).fill(this.activityTint(kind))
-          Text(String(this.hostActivity.get(key)?.get(kind) || 0)).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-        }
-      }, (kind: string) => kind)
+    if (nativeEnvironment.fontScale >= 1.5) {
+      Flex({wrap:FlexWrap.Wrap, space:{main:LengthMetrics.vp(8),cross:LengthMetrics.vp(4)}}) { this.countItems(key) }.width('100%')
+    } else {
+      Row({space:8}) { this.countItems(key) }
     }
   }
   @Builder headerLine(line:ProjectLine) {
     Row({space:8}) {
       if (line.kind === 'host') {
-        Stack() { SymbolGlyph(Symbols.device).fontSize(17).fontColor([Colors.ink]) }.width(29).height(29).backgroundColor(Colors.surface).borderRadius(8)
+        Stack() { SymbolGlyph(Symbols.device).fontSize('17vp').fontColor([Colors.ink]) }.width(29).height(29).backgroundColor(Colors.surface).borderRadius(8)
         Column({ space: 3 }) {
           Text(line.project.machine).fontSize(20).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
             .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-          if (!this.filteringText() && this.hostKinds(line.project.hostKey).length > 3) this.counts(line.project.hostKey)
+          if (!this.filteringText() && (nativeEnvironment.fontScale >= 1.5 || this.hostKinds(line.project.hostKey).length > 3)) this.counts(line.project.hostKey)
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-        if (!this.filteringText() && this.hostKinds(line.project.hostKey).length <= 3) this.counts(line.project.hostKey)
+        if (!this.filteringText() && nativeEnvironment.fontScale < 1.5 && this.hostKinds(line.project.hostKey).length <= 3) this.counts(line.project.hostKey)
       } else {
-        SymbolGlyph(Symbols.folder).fontSize(17).fontColor([Colors.secondary]).width(18)
+        SymbolGlyph(Symbols.folder).fontSize('17vp').fontColor([Colors.secondary]).width(18)
         Text(line.project.title).fontSize(17).fontWeight(FontWeight.Bold)
-          .fontColor(Colors.ink).layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          .fontColor(Colors.ink).layoutWeight(1).maxLines(nativeEnvironment.fontScale >= 1.5 ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
       }
-      if (this.filteringText() && line.kind === 'host') SymbolGlyph(Symbols.filter).fontSize(13).fontColor([Colors.secondary])
+      if (this.filteringText() && line.kind === 'host') SymbolGlyph(Symbols.filter).fontSize('13vp').fontColor([Colors.secondary])
       else this.foldChevron(!this.filteringText() && line.open)
     }.width('100%').constraintSize({minHeight:line.kind === 'host' ? 52 : 44})
       .padding({left:line.kind === 'host' ? 2 : PhoneStyle.inset,right:PhoneStyle.inset,top:4,bottom:4})
@@ -393,23 +409,37 @@ export struct ProjectsPage {
         .filter((part: string) => !!part).join(' · '))
       .onClick(() => this.openHeader(line)).id(line.kind === 'host' ? 'projects.host' : 'projects.project')
   }
+  private treeSummary(line:ProjectLine):string {
+    return [line.tree!.main ? tr('project_primary') : '', this.treeDetail(line.tree!),
+      line.count ? tr('project_agent_count').replace('{count}',String(line.count)) : ''].filter((part:string) => !!part).join(' · ');
+  }
   @Builder treeLine(line:ProjectLine) {
     Row({space:0}) {
       Row({space:6}) {
         Stack() {
-          if (line.tree!.main) SymbolGlyph($r('sys.symbol.house')).fontSize(14).fontColor([Colors.secondary])
+          if (line.tree!.main) SymbolGlyph($r('sys.symbol.house')).fontSize('14vp').fontColor([Colors.secondary])
         }.width(18)
-        Text(line.tree!.title).fontSize(15).fontWeight(FontWeight.Medium).fontColor(line.tree!.online ? Colors.ink : Colors.secondary)
-          .constraintSize({maxWidth:this.treeDetail(line.tree!) ? '59%' : '76%'}).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-        if (line.tree!.pinnedAt > 0) SymbolGlyph($r('sys.symbol.pin')).fontSize(12).fontColor([Colors.link])
-        if (line.tree!.main) Text(tr('project_primary')).fontSize(11).fontColor(Colors.secondary)
-          .backgroundColor(Colors.control).borderRadius(5).padding({left:4,right:4,top:2,bottom:2})
-        if (this.treeDetail(line.tree!)) Text(this.treeDetail(line.tree!)).fontSize(12)
-          .fontColor(line.tree!.workspaceKind === 'git' && !line.tree!.branch ? Colors.working : Colors.secondary)
-          .layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-        else Blank().layoutWeight(1)
-        if (line.count) Text(line.count === 1 ? this.count(1,'agent') : tr('project_agent_count').replace('{count}',String(line.count)))
-          .fontSize(13).fontColor(Colors.secondary).maxLines(1)
+        if (nativeEnvironment.fontScale >= 1.5) {
+          Column({space:3}) {
+            Row({space:5}) {
+              Text(line.tree!.title).fontSize(15).fontWeight(FontWeight.Medium).fontColor(line.tree!.online ? Colors.ink : Colors.secondary).layoutWeight(1)
+              if (line.tree!.pinnedAt > 0) SymbolGlyph($r('sys.symbol.pin')).fontSize('12vp').fontColor([Colors.link])
+            }.width('100%')
+            if (this.treeSummary(line)) Text(this.treeSummary(line)).fontSize(12).fontColor(Colors.secondary).maxLines(4)
+          }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+        } else {
+          Text(line.tree!.title).fontSize(15).fontWeight(FontWeight.Medium).fontColor(line.tree!.online ? Colors.ink : Colors.secondary)
+            .constraintSize({maxWidth:this.treeDetail(line.tree!) ? '59%' : '76%'}).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          if (line.tree!.pinnedAt > 0) SymbolGlyph($r('sys.symbol.pin')).fontSize('12vp').fontColor([Colors.link])
+          if (line.tree!.main) Text(tr('project_primary')).fontSize(11).fontColor(Colors.secondary)
+            .backgroundColor(Colors.control).borderRadius(5).padding({left:4,right:4,top:2,bottom:2})
+          if (this.treeDetail(line.tree!)) Text(this.treeDetail(line.tree!)).fontSize(12)
+            .fontColor(line.tree!.workspaceKind === 'git' && !line.tree!.branch ? Colors.working : Colors.secondary)
+            .layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          else Blank().layoutWeight(1)
+          if (line.count) Text(line.count === 1 ? this.count(1,'agent') : tr('project_agent_count').replace('{count}',String(line.count)))
+            .fontSize(13).fontColor(Colors.secondary).maxLines(1)
+        }
       }.layoutWeight(1).constraintSize({minHeight:44}).accessibilityGroup(true)
         .accessibilityText([line.tree!.title,this.treeDetail(line.tree!),line.tree!.cwd,this.count(line.count,'project_sessions')].filter((v:string) => !!v).join(' · '))
         .onClick(() => { if (this.filteringText() || line.tree!.source || !line.count) this.openTree(line.tree!); else this.toggle(line); })
@@ -422,7 +452,7 @@ export struct ProjectsPage {
   }
   @Builder subsidiaryLine(line:ProjectLine) {
     Row({space:8}) {
-      SymbolGlyph(line.kind === 'children' ? Symbols.folder : line.kind === 'more' ? Symbols.agents : Symbols.check).fontSize(14).fontColor([Colors.secondary]).width(18)
+      SymbolGlyph(line.kind === 'children' ? Symbols.folder : line.kind === 'more' ? Symbols.agents : Symbols.check).fontSize('14vp').fontColor([Colors.secondary]).width(18)
       Text(line.kind === 'more' ? tr('project_show_all') + ' ' + this.count(line.count,'project_sessions') :
         line.kind === 'children' ? this.count(line.count,'project_children') : tr('agent_group_idle') + ' · ' + String(line.count))
         .fontSize(14).fontColor(line.kind === 'more' ? Colors.link : Colors.secondary).layoutWeight(1)
@@ -478,22 +508,31 @@ export struct ProjectsPage {
   @Builder detailHeader(tree: ProjectWorktree) {
     ListItem() {
         Column({ space: 10 }) {
-          Row({ space: 10 }) {
-            this.icon(Symbols.device, Colors.working)
-            Column({ space: 2 }) {
-              Text(tree.machineTitle).fontColor(Colors.ink).fontSize(17).fontWeight(FontWeight.Medium)
-                .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-              if (tree.branch) Text(tree.branch).fontFamily('monospace').fontColor(Colors.secondary).fontSize(13)
-                .wordBreak(WordBreak.BREAK_ALL)
-            }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-            this.more(tree)
-          }.width('100%')
+          if (nativeEnvironment.fontScale >= 1.5) {
+            Flex({wrap:FlexWrap.Wrap,justifyContent:FlexAlign.SpaceBetween,alignItems:ItemAlign.Center,
+              space:{main:LengthMetrics.vp(10),cross:LengthMetrics.vp(4)}}) {
+              Text(tree.machineTitle).fontColor(Colors.ink).fontSize(17).fontWeight(FontWeight.Medium).constraintSize({maxWidth:'100%'})
+              this.more(tree)
+            }.width('100%')
+            if (tree.branch) Text(tree.branch).fontFamily('monospace').fontColor(Colors.secondary).fontSize(13).wordBreak(WordBreak.BREAK_ALL)
+          } else {
+            Row({ space: 10 }) {
+              this.icon(Symbols.device, Colors.working)
+              Column({ space: 2 }) {
+                Text(tree.machineTitle).fontColor(Colors.ink).fontSize(17).fontWeight(FontWeight.Medium)
+                  .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (tree.branch) Text(tree.branch).fontFamily('monospace').fontColor(Colors.secondary).fontSize(13)
+                  .wordBreak(WordBreak.BREAK_ALL)
+              }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+              this.more(tree)
+            }.width('100%')
+          }
           if (tree.parentKey) Button({type:ButtonType.Normal}) {
             Row({space:5}) {
-              SymbolGlyph(Symbols.collapse).fontSize(12).fontColor([Colors.link])
+              SymbolGlyph(Symbols.collapse).fontSize('12vp').fontColor([Colors.link])
               Text(tree.breadcrumb).fontColor(Colors.link).fontSize(13).maxLines(2)
             }
-          }.height(40).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('project_open_parent') + ' · ' + tree.breadcrumb)
+          }.constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('project_open_parent') + ' · ' + tree.breadcrumb)
             .onClick(() => this.chooseParent(tree.key)).id('projects.parent')
           if (tree.cwd) Text(tree.cwd).fontFamily('monospace').fontColor(Colors.secondary).fontSize(13)
             .wordBreak(WordBreak.BREAK_ALL).copyOption(CopyOptions.LocalDevice)
@@ -518,11 +557,11 @@ export struct ProjectsPage {
         Circle().width(8).height(8).fill(this.tint(agent))
       }.width('100%')
       Text(agent.row.title || tr('agent_untitled')).fontSize(16).fontWeight(FontWeight.Medium)
-        .fontColor(Colors.ink).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+        .fontColor(Colors.ink).maxLines(nativeEnvironment.fontScale >= 1.5 ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
       Text(tr(agent.stateLabel)+(starter ? ' · '+tr('session_space_starter') : ''))
         .fontSize(13).fontWeight(FontWeight.Medium).fontColor(agent.active ? this.tint(agent) : Colors.secondary)
-      if (agent.preview) Text(agent.preview).fontSize(13).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
-      if (agent.model) Text(agent.model).fontSize(12).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+      if (agent.preview) Text(agent.preview).fontSize(13).fontColor(Colors.secondary).maxLines(nativeEnvironment.fontScale >= 1.5 ? 5 : 3).textOverflow({overflow:TextOverflow.Ellipsis})
+      if (agent.model) Text(agent.model).fontSize(12).fontColor(Colors.secondary).maxLines(nativeEnvironment.fontScale >= 1.5 ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
     }.width('100%').constraintSize({minHeight:146}).padding(12).alignItems(HorizontalAlign.Start)
       .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
       .border({width:agent.state === 'needs_you' ? 1 : 0,color:Colors.needs,radius:PhoneStyle.cardRadius})
@@ -552,9 +591,9 @@ export struct ProjectsPage {
               Button({type:ButtonType.Capsule}) {
                 Row({space:5}) {
                   Circle().width(6).height(6).fill(this.tabTint(key))
-                  Text(this.tabRows.get(key)?.tabTitle || '').fontSize(13).fontColor(Colors.ink)
-                  Text(String(this.tabRows.get(key)?.count || 0)).fontSize(12).fontColor(Colors.secondary)
-                  SymbolGlyph(this.tabOpen(key) ? Symbols.down : Symbols.expand).fontSize(11).fontColor([Colors.secondary])
+                  Text(this.tabRows.get(key)?.tabTitle || '').fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.ink)
+                  Text(String(this.tabRows.get(key)?.count || 0)).fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
+                  SymbolGlyph(this.tabOpen(key) ? Symbols.down : Symbols.expand).fontSize('11vp').fontColor([Colors.secondary])
                 }
               }.padding({left:10,right:10}).constraintSize({minHeight:44}).backgroundColor(Colors.surface)
                 .accessibilityText(this.tabDescription(key)).onClick(() => this.toggleTab(key)).id('projects.tab')
@@ -569,7 +608,7 @@ export struct ProjectsPage {
           },(line:ProjectLine) => JSON.stringify([line.key,line.open,line.agent?.row.raw,line.agent?.state,line.paneName,line.starter]))
           if (this.detailTree?.canStart) GridCol({span:1}) {
             Column({space:8}) {
-              SymbolGlyph(Symbols.plus).fontSize(22).fontColor([Colors.link])
+              SymbolGlyph(Symbols.plus).fontSize('22vp').fontColor([Colors.link])
               Text(tr('new_agent')).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.link)
             }.width('100%').constraintSize({minHeight:146}).justifyContent(FlexAlign.Center)
               .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)

@@ -211,19 +211,19 @@ export struct KnowledgeWorkspacePage {
 
   @Builder searchField(meetings:boolean) {
     Search({value:this.workspace.query,placeholder:tr(meetings ? 'phone_record_search' : 'knowledge_search')})
-      .height(38).textFont({size:16}).backgroundColor(Colors.control)
+      .height(Math.max(38,Math.ceil(24*nativeEnvironment.fontScale)+8)).textFont({size:16}).backgroundColor(Colors.control)
       .onChange((value:string) => this.workspace.setQuery(value)).id('knowledge.search')
   }
   @Builder libraryRow(row: ResourceRow) {
     Row({space:10}) {
-      Stack() { SymbolGlyph(this.kindIcon(row.path)).fontSize(18).fontColor([row.path === 'recordings' ? Colors.danger : Colors.link]) }
+      Stack() { SymbolGlyph(this.kindIcon(row.path)).fontSize('18vp').fontColor([row.path === 'recordings' ? Colors.danger : Colors.link]) }
         .width(32).height(32).borderRadius(8).backgroundColor(Colors.control)
       Column({space:3}) {
         Text(row.title || row.id).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
         if (this.rowRank(row)) Text(this.rowRank(row)).fontSize(12).fontColor(Colors.link)
         if (this.rowSubtitle(row)) Text(this.rowSubtitle(row)).fontSize(13).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+      SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').padding({left:13,right:12,top:9,bottom:9}).constraintSize({minHeight:49})
       .backgroundColor(Colors.surface).accessibilityGroup(true)
       .onClick(() => this.workspace.openEntry(row).then((next:ResourceRow) => this.onOpenResource(next)).catch(() => undefined))
@@ -265,7 +265,7 @@ export struct KnowledgeWorkspacePage {
   @Builder kindChip(kind:string) {
     Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
-        if (nativeEnvironment.fontScale>1.3) SymbolGlyph(this.kindIcon(kind)).fontSize(14)
+        if (nativeEnvironment.fontScale>1.3) SymbolGlyph(this.kindIcon(kind)).fontSize('14vp')
           .fontColor([kind===this.workspace.kind ? Colors.onAction : Colors.ink])
         Text(this.kindLabel(kind)).fontSize(15).fontWeight(FontWeight.Medium)
           .fontColor(kind===this.workspace.kind ? Colors.onAction : Colors.ink)
@@ -298,7 +298,7 @@ export struct KnowledgeWorkspacePage {
           if (this.workspace.tags.length || this.workspace.tag) Button((this.workspace.tag ? '#' + this.workspace.tag : tr('knowledge_all_tags')) + ' ˅',
             {buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(14).fontColor(Colors.link).height(34)
             .accessibilityText(tr('knowledge_filter_tag')).bindMenu(this.knowledgeFilters).id('knowledge.filters')
-          Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.refresh).fontSize(15).fontColor([Colors.secondary]) }
+          Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.refresh).fontSize('15vp').fontColor([Colors.secondary]) }
             .width(32).height(32).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('refresh'))
             .onClick(() => this.workspace.refresh()).id('knowledge.refresh')
         }.width('100%').padding({left:4,right:2})
@@ -319,9 +319,9 @@ export struct KnowledgeWorkspacePage {
         if (!this.workspace.query.trim()) ListItem() {
           Column({space:6}) {
             Row({space:9}) {
-              SymbolGlyph($r('sys.symbol.mic')).fontSize(19).fontColor([Colors.danger])
+              SymbolGlyph($r('sys.symbol.mic')).fontSize('19vp').fontColor([Colors.danger])
               Text(tr('knowledge_recording_open')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
-              SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+              SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.width('100%').constraintSize({minHeight:42}).onClick(() => this.openRecording()).id('recordings.options')
             Text(tr('phone_record_audio_local')).fontSize(13).fontColor(Colors.secondary).width('100%')
           }.width('100%').alignItems(HorizontalAlign.Start).padding(14).borderRadius(14).backgroundColor(Colors.surface)
@@ -330,22 +330,22 @@ export struct KnowledgeWorkspacePage {
         ForEach(this.visibleLocal(), (entry:KnowledgeRecordingEntry) => {
           ListItem() {
             Row({space:10}) {
-              SymbolGlyph($r('sys.symbol.mic')).fontSize(19).fontColor([Colors.danger])
+              SymbolGlyph($r('sys.symbol.mic')).fontSize('19vp').fontColor([Colors.danger])
               Column({space:3}) {
                 Text(entry.title || this.localDate(entry.startedAt)).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
                 Text(this.clock(entry.duration) + ' · ' + this.localDate(entry.startedAt)).fontSize(13).fontColor(Colors.secondary)
               }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-              SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+              SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.width('100%').padding(13).borderRadius(12).backgroundColor(Colors.surface)
               .onClick(() => this.openRecording(entry.id)).id('recordings.local.' + entry.id)
           }
         }, (entry:KnowledgeRecordingEntry) => JSON.stringify([entry.id,entry.title,entry.duration,entry.uploadState,entry.transcriptionState]))
         if (!this.workspace.query.trim()) ListItem() {
           Row({space:10}) {
-            SymbolGlyph(Symbols.calendar).fontSize(19).fontColor([Colors.link])
+            SymbolGlyph(Symbols.calendar).fontSize('19vp').fontColor([Colors.link])
             Text(tr('phone_all_meetings')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
-            SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
-          }.width('100%').padding({left:14,right:13}).height(48).backgroundColor(Colors.surface).borderRadius(13)
+            SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
+          }.width('100%').padding({left:14,right:13,top:6,bottom:6}).constraintSize({minHeight:48}).backgroundColor(Colors.surface).borderRadius(13)
             .onClick(() => this.onAllMeetings()).id('recordings.all')
         }
         this.listStatus()
@@ -354,7 +354,7 @@ export struct KnowledgeWorkspacePage {
       Row() {
         Button({type:ButtonType.Capsule}) {
           Row({space:8}) {
-            SymbolGlyph($r('sys.symbol.mic_fill')).fontSize(18).fontColor([Color.White])
+            SymbolGlyph($r('sys.symbol.mic_fill')).fontSize('18vp').fontColor([Color.White])
             Text(tr(this.recording.captureState === 'recording' ? 'knowledge_recording_active' : 'phone_record_start')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Color.White)
           }
         }.width('100%').height(45).backgroundColor(Colors.danger).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
@@ -474,14 +474,14 @@ export struct KnowledgeWorkspacePage {
     Scroll() {
       Column({space:8}) {
         Row({space:10}) {
-          Stack() { SymbolGlyph(this.kindIcon('recordings')).fontSize(20).fontColor([Colors.secondary]) }
+          Stack() { SymbolGlyph(this.kindIcon('recordings')).fontSize('20vp').fontColor([Colors.secondary]) }
             .width(36).height(36).backgroundColor(Colors.control).borderRadius(10)
           Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
         }.width('100%')
         if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(16).fontColor(Colors.ink).width('100%')
         Button({type:ButtonType.Capsule}) {
           Row({space:7}) {
-            SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize(18).fontColor([Colors.onAction])
+            SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize('18vp').fontColor([Colors.onAction])
             Text(tr('knowledge_ask_persona')).fontSize(17).fontColor(Colors.onAction)
           }
         }.width('100%').constraintSize({minHeight:46}).backgroundColor(Colors.action).onClick(() => this.askPersona()).id('knowledge.ask')
@@ -509,7 +509,7 @@ export struct KnowledgeWorkspacePage {
               .fontSize(14).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
             if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
               Row({space:8}) {
-                SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize(17).fontColor([Colors.link])
+                SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
                 Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(16).fontColor(Colors.link)
               }.width('100%')
             }.width('100%').constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
@@ -530,7 +530,7 @@ export struct KnowledgeWorkspacePage {
         Button({type:ButtonType.Normal}) {
           Row() {
             Text(tr('knowledge_minutes')+' · '+tr('knowledge_transcript')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-            SymbolGlyph(this.recordingTools ? Symbols.down : Symbols.expand).fontSize(14).fontColor([Colors.secondary])
+            SymbolGlyph(this.recordingTools ? Symbols.down : Symbols.expand).fontSize('14vp').fontColor([Colors.secondary])
           }.width('100%')
         }.width('100%').constraintSize({minHeight:44}).padding(12).backgroundColor(Colors.surface).borderRadius(12)
           .accessibilityDescription(tr(this.recordingTools ? 'control_expanded' : 'control_collapsed')).onClick(() => this.recordingTools=!this.recordingTools).id('knowledge.recording.tools')
@@ -582,9 +582,9 @@ export struct KnowledgeWorkspacePage {
           if (this.workspace.selected.path === 'recordings' && this.importedMeeting()) {
             Button({type:ButtonType.Normal}) {
               Row({space:8}) {
-                SymbolGlyph(Symbols.calendar).fontSize(17).fontColor([Colors.link])
+                SymbolGlyph(Symbols.calendar).fontSize('17vp').fontColor([Colors.link])
                 Text(this.importedMeeting()!.title).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-                SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+                SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
               }.width('100%').padding(12)
             }.padding(0).width('100%').backgroundColor(Colors.surface).onClick(() => {
               const row = this.importedMeeting(); if (row) this.onOpenResource(row);

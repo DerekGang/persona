@@ -2,6 +2,7 @@ import { FrameCallback } from '@kit.ArkUI';
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
 import { tr } from '../design/Strings';
+import { Tokens } from '../design/Tokens';
 import { SessionSpace, SessionSpaceTab } from '../models/SessionSpace';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 
@@ -24,7 +25,7 @@ export struct SessionSpaceTabs {
   private centerCurrent():void {
     if (!this.active) return;
     const index = this.space.tabs.findIndex((tab:SessionSpaceTab) => tab.id === this.space.current);
-    const signature = JSON.stringify([this.space.key,this.space.current,index]);
+    const signature = JSON.stringify([this.space.key,this.space.current,index,nativeEnvironment.fontScale,nativeEnvironment.windowWidthPx]);
     if (index < 0 || this.centered === signature) return;
     this.centered = signature;
     this.getUIContext().postFrameCallback(new TabLayoutFrame(() => {
@@ -46,12 +47,13 @@ export struct SessionSpaceTabs {
   @Builder chip(tab:SessionSpaceTab,spaceKey:string,from:string) {
     Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
-        Text(tab.label).fontSize(13).fontWeight(tab.id === from ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.ink(tab)).maxLines(1).constraintSize({maxWidth:126}).textOverflow({overflow:TextOverflow.Ellipsis})
-        if (tab.starter) Text(tr('session_space_starter')).fontSize(11).fontColor(Colors.secondary).maxLines(1)
-      }
-    }.padding({left:10,right:10}).constraintSize({minHeight:30}).backgroundColor(this.fill(tab))
-      .border({width:tab.id === from ? 1.3 : 0,color:this.ink(tab),radius:20})
+        Text(tab.label).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(tab.id === from ? FontWeight.Bold : FontWeight.Medium)
+          .fontColor(this.ink(tab)).maxLines(1).constraintSize({maxWidth:nativeEnvironment.fontScale >= 1.5 ? 204 : 152})
+          .textOverflow({overflow:TextOverflow.Ellipsis})
+        if (tab.starter) Text(tr('session_space_starter')).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary).maxLines(1)
+      }.padding({left:10,right:10,top:4,bottom:4}).constraintSize({minHeight:30}).backgroundColor(this.fill(tab))
+        .border({width:tab.id === from ? 1.3 : 0,color:this.ink(tab),radius:20}).borderRadius(20)
+    }.height(44).constraintSize({minWidth:44}).padding(0).backgroundColor(Color.Transparent)
       .accessibilityText(tab.label+' · '+(tab.row.title || tab.id)).accessibilitySelected(tab.id === from)
       .onClick(() => { if (tab.id !== from) this.onPick(spaceKey,from,tab.id); }).id('session.sibling.'+tab.id)
   }
@@ -70,15 +72,14 @@ export struct SessionSpaceTabs {
           ListItem() { this.chip(tab,this.space.key,this.space.current) }
         },(tab:SessionSpaceTab) => JSON.stringify([this.space.key,this.space.current,tab.id,tab.label,tab.row.title,tab.state,tab.starter]))
       }.listDirection(Axis.Horizontal).scrollBar(BarState.Off).edgeEffect(EdgeEffect.None).layoutWeight(1)
-        .height(nativeEnvironment.fontScale >= 1.5 ? 51 : 42)
+        .height(44)
         .onAreaChange(() => this.centerCurrent()).id('session.siblings')
       Button({type:ButtonType.Capsule}) {
         Row({space:4}) {
-          SymbolGlyph(Symbols.folder).fontSize(14).fontColor([Colors.secondary])
-          Text(String(this.space.tabs.length)).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        }
-      }.padding({left:10,right:10}).constraintSize({minHeight:30}).backgroundColor(Colors.control)
-        .responseRegion({x:0,y:-5,width:'100%',height:'130%'})
+          SymbolGlyph(Symbols.folder).fontSize('14vp').fontColor([Colors.secondary]).flexShrink(0)
+          Text(String(this.space.tabs.length)).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        }.padding({left:10,right:10,top:4,bottom:4}).constraintSize({minHeight:30}).backgroundColor(Colors.control).borderRadius(20)
+      }.height(44).constraintSize({minWidth:44}).padding(0).backgroundColor(Color.Transparent).flexShrink(0)
         .accessibilityText(tr('session_space_agents').replace('{count}',String(this.space.tabs.length)))
         .bindMenu(this.picker(this.space.key,this.space.current)).id('session.siblings.all')
     }.width('100%').padding({left:12,right:12})

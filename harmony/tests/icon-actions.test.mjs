@@ -55,3 +55,21 @@ test('every quick filter keeps its complete localized accessible label and appli
  assert.match(filters,/\.scrollable\(ScrollDirection\.Horizontal\)/);
  assert.ok(filters.indexOf('this.filterControl()')>filters.indexOf('.scrollable(ScrollDirection.Horizontal)'));
 });
+
+test('magnified project and Agent views keep symbols inside their slots and give titles and fields room to grow', () => {
+ const read = name => fs.readFileSync(w + '/' + name + '.ets', 'utf8');
+ const projects = read('components/ProjectsPage'), agents = read('components/AgentListPage');
+ const picker = read('components/AgentStartPicker'), phone = read('design/PhoneStyle');
+ const index = read('pages/Index');
+ const launch = index.slice(index.indexOf('  @Builder agentOptionRow('), index.indexOf('  private async loadAgentLaunchers'));
+ for (const source of [phone, projects, agents, picker, launch]) {
+   assert.doesNotMatch(source, /SymbolGlyph\([^\n]*?\)\s*\.fontSize\(\d+\)/, 'a fixed symbol must use vp independent of system text scaling');
+ }
+ assert.match(projects, /nativeEnvironment\.fontScale >= 1\.5[\s\S]{0,120}Column\(\{space:3\}\)[\s\S]{0,110}Text\(line\.tree!\.title\)/);
+ assert.match(projects, /GridRow\(\{columns:nativeEnvironment\.fontScale >= 1\.5 \? 1 : 2/);
+ assert.match(agents, /Text\(tr\(QUICK_LABELS\[index\]\)\)\.fontSize\(14\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
+ assert.match(picker, /TextInput\(\{text:this\.address[^\n]+\.height\(Math\.max\(46, 22 \* nativeEnvironment\.fontScale \+ 14\)\)/);
+ assert.match(launch, /width\(this\.environment\.fontScale >= 1\.5 \? Math\.min\(250,130 \* this\.environment\.fontScale\) : 122\)/);
+ assert.match(launch, /this\.machineChoice\(m\)[\s\S]{0,160}scrollable\(ScrollDirection\.Horizontal\)/);
+ assert.match(launch, /Text\(tr\('new_agent'\)\)\.fontSize\(18\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
+});

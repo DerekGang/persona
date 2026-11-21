@@ -1,8 +1,9 @@
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { Colors } from '../design/Colors';
 import { PhoneSectionTitle, PhoneStyle } from '../design/PhoneStyle';
 import { tr } from '../design/Strings';
 import { ClientModel } from '../models/ClientModel';
-import { PhoneAgentSettings, agentSettingValue, cleanAgentFolder, FOLLOW_FIELDS } from '../models/PhoneAgentSettings';
+import { PhoneAgentSettings, AgentSettingTextDraft, agentSettingValue, cleanAgentFolder, FOLLOW_FIELDS } from '../models/PhoneAgentSettings';
 import { ResourceRow, Wire } from '../models/Wire';
 
 @ComponentV2
@@ -10,15 +11,21 @@ export struct PhoneAgentSettingsPage {
   @Require @Param model:ClientModel;
   @Require @Param page:string;
   @Local form:PhoneAgentSettings = new PhoneAgentSettings();
-  @Local editing:string = '';
+  @Local textDraft:AgentSettingTextDraft = new AgentSettingTextDraft();
+  private ownerContext:string = '';
   @Local draft:string = '';
   @Local folderAction:string = 'block';
 
   aboutToAppear():void { this.open(); }
-  aboutToDisappear():void { this.form.close(); }
+  aboutToDisappear():void { this.textDraft.close(); this.form.close(); }
   @Monitor('page','model.profile','model.connected') reset():void { this.open(); }
+  private textTarget():string { return JSON.stringify([this.model.scope(),this.page,this.form.machine]); }
   private open(machine:string=''):void {
-    this.editing='';this.draft='';this.folderAction='block';this.form.open(this.model,this.page,machine).catch(() => undefined);
+    const current=JSON.stringify([this.model.scope(),this.page]), sameOwner=this.ownerContext===current;
+    if (!sameOwner || (machine && machine!==this.form.machine)) this.textDraft.close();
+    this.ownerContext=current; this.draft=''; this.folderAction='block';
+    if (!this.model.connected) { this.form.close(); this.form.error='offline'; return; }
+    this.form.open(this.model,this.page,machine || (sameOwner ? this.form.machine : '')).catch(() => undefined);
   }
   @Computed get machines():ResourceRow[] { return this.form.machines(this.model); }
   @Computed get options():Record<string,Object>[] { return Wire.rows(this.form.data,'settings'); }
@@ -28,37 +35,51 @@ export struct PhoneAgentSettingsPage {
   private save(key:string,value:Object):void { this.form.setOption(key,value).catch(() => undefined); }
 
   @Builder separator() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:15}) }
+  private inputHeight():number { return Math.max(40,Math.ceil(24*nativeEnvironment.fontScale)+10); }
+  @Builder machinePicker() {
+    Select(this.machines.map((r:ResourceRow) => ({value:r.title || r.id} as SelectOption)))
+      .value(this.machines.find((r:ResourceRow) => r.id===this.form.machine)?.title || this.form.machine)
+      .constraintSize({maxWidth:'100%',minHeight:this.inputHeight()}).enabled(!this.form.saving && this.machines.length>0)
+      .onSelect((index:number) => { if(this.machines[index]) this.open(this.machines[index].id); }).id('settings.agent.machine')
+  }
   @Builder machineSelector() {
-    Row({space:10}) {
+    if (nativeEnvironment.fontScale>=1.4) Column({space:5}) {
+      Text(tr('machines')).fontSize(16).fontColor(Colors.ink)
+      this.machinePicker()
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({left:15,right:12,top:8,bottom:8}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+    else Row({space:10}) {
       Text(tr('machines')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-      Select(this.machines.map((r:ResourceRow) => ({value:r.title || r.id} as SelectOption)))
-        .value(this.machines.find((r:ResourceRow) => r.id===this.form.machine)?.title || this.form.machine)
-        .enabled(!this.form.saving && this.machines.length>0)
-        .onSelect((index:number) => { if(this.machines[index]) this.open(this.machines[index].id); }).id('settings.agent.machine')
-    }.width('100%').padding({left:15,right:12,top:5,bottom:5}).constraintSize({minHeight:48})
+      this.machinePicker()
+    }.width('100%').constraintSize({minHeight:48}).padding({left:15,right:12,top:5,bottom:5})
       .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
   }
-
+  @Builder optionAction(row:Record<string,Object>) {
+    if (Wire.text(row,'type')==='bool') Toggle({type:ToggleType.Switch,isOn:agentSettingValue(row)===true})
+      .selectedColor(Colors.action).enabled(this.canEdit())
+      .onChange((v:boolean) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
+    else if (Wire.text(row,'type')==='enum') Select(Wire.strings(row,'options').map((v:string) => ({value:v} as SelectOption)))
+      .constraintSize({maxWidth:'100%',minHeight:this.inputHeight()}).value(String(agentSettingValue(row)??'')).enabled(this.canEdit())
+      .onSelect((_index:number,v:string) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
+    else if (Wire.text(row,'type')==='string' && !this.textDraft.isEditing(this.textTarget(),Wire.text(row,'key')))
+      Button(String(agentSettingValue(row)??'') || tr('edit'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({maxWidth:'100%',minHeight:this.inputHeight()})
+        .fontColor(Colors.link).enabled(this.canEdit()).onClick(() => { this.textDraft.begin(this.textTarget(),Wire.text(row,'key'),String(agentSettingValue(row)??'')); })
+        .id('settings.agent.option.'+Wire.text(row,'key'))
+  }
   @Builder option(row:Record<string,Object>) {
     Column({space:5}) {
-      Row({space:8}) {
+      if (nativeEnvironment.fontScale>=1.4 && Wire.text(row,'type')!=='bool') Column({space:5}) {
+        Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).fontColor(Colors.ink)
+        this.optionAction(row)
+      }.width('100%').alignItems(HorizontalAlign.Start)
+      else Row({space:8}) {
         Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-        if (Wire.text(row,'type')==='bool') Toggle({type:ToggleType.Switch,isOn:agentSettingValue(row)===true})
-          .selectedColor(Colors.action).enabled(this.canEdit())
-          .onChange((v:boolean) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
-        else if (Wire.text(row,'type')==='enum') Select(Wire.strings(row,'options').map((v:string) => ({value:v} as SelectOption)))
-          .value(String(agentSettingValue(row)??'')).enabled(this.canEdit())
-          .onSelect((_index:number,v:string) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
-        else if (Wire.text(row,'type')==='string' && this.editing!==Wire.text(row,'key'))
-          Button(String(agentSettingValue(row)??'') || tr('edit'),{buttonStyle:ButtonStyleMode.TEXTUAL})
-            .fontColor(Colors.link).enabled(this.canEdit()).onClick(() => { this.editing=Wire.text(row,'key');this.draft=String(agentSettingValue(row)??''); })
-            .id('settings.agent.option.'+Wire.text(row,'key'))
+        this.optionAction(row)
       }.width('100%')
-      if (this.editing===Wire.text(row,'key')) Row({space:6}) {
-        TextInput({text:this.draft}).layoutWeight(1).onChange((s:string) => this.draft=s).enabled(this.canEdit())
-        Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).enabled(this.canEdit()).onClick(() => {
-          this.save(Wire.text(row,'key'),this.draft);this.editing='';
-        })
+      if (this.textDraft.isEditing(this.textTarget(),Wire.text(row,'key'))) Row({space:6}) {
+        TextInput({text:this.textDraft.text}).height(this.inputHeight()).layoutWeight(1).onChange((value:string) => this.textDraft.edit(value))
+          .id('settings.agent.option.editor')
+        Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({minHeight:this.inputHeight()}).enabled(this.canEdit())
+          .onClick(() => this.textDraft.save(this.form,this.textTarget())).id('settings.agent.option.save')
       }.width('100%')
       if (Wire.text(row,'detail')) Text(Wire.text(row,'detail')).fontSize(13).fontColor(Colors.secondary).width('100%')
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left:15,right:12,top:8,bottom:8})
@@ -90,7 +111,7 @@ export struct PhoneAgentSettingsPage {
         }.padding({left:15,right:12,top:7,bottom:7}).width('100%')
         this.separator()
       },(r:Record<string,Object>) => JSON.stringify(r))
-      TextInput({text:this.draft,placeholder:tr('phone_folder_pattern')}).fontFamily('monospace').onChange((s:string) => this.draft=s)
+      TextInput({text:this.draft,placeholder:tr('phone_folder_pattern')}).height(this.inputHeight()).fontFamily('monospace').onChange((s:string) => this.draft=s)
         .enabled(this.canEdit()).id('settings.agent.folder.pattern')
       Row() {
         this.actionPicker(this.folderAction,(s:string) => this.folderAction=s)

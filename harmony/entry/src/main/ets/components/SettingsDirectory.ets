@@ -1,3 +1,4 @@
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { inputMethod } from '@kit.IMEKit';
 import { i18n } from '@kit.LocalizationKit';
 import { PhoneStyle, PhoneSectionTitle, PhoneSettingsRow } from '../design/PhoneStyle';
@@ -139,7 +140,7 @@ export struct SettingsDirectory {
       if (this.currentManager()) Button({type:ButtonType.Normal}) {
         Row({space:5}) {
           Text(this.account()).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-          SymbolGlyph(Symbols.down).fontSize(12).fontColor([Colors.secondary])
+          SymbolGlyph(Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
         }
       }.padding(0).constraintSize({minHeight:44}).backgroundColor(Color.Transparent).accessibilityText(tr('settings_this_assistant')+' · '+this.account())
         .bindMenu(this.managerMenu(this.model.scope())).id('settings.assistant_switch')
@@ -164,12 +165,13 @@ export struct SettingsDirectory {
     List() {
       ListItem() {
         Row({space:7}) {
-          SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize(16).fontColor([Colors.secondary])
-          TextInput({text:this.query,placeholder:tr('phone_settings_search'),controller:this.field}).fontSize(16).height(36).padding(0)
+          SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize('16vp').fontColor([Colors.secondary])
+          TextInput({text:this.query,placeholder:tr('phone_settings_search'),controller:this.field}).fontSize(16)
+            .height(Math.max(36,Math.ceil(24*nativeEnvironment.fontScale)+8)).padding(0)
             .layoutWeight(1).backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
             .enterKeyType(EnterKeyType.Search).onSubmit(() => this.field.stopEditing())
             .onChange((v:string) => { this.query = v; this.onQueryChange(v); }).id('settings.search')
-        }.height(38).padding({left:12,right:8}).width('100%').borderRadius(17).backgroundColor(Colors.control)
+        }.constraintSize({minHeight:38}).padding({left:12,right:8,top:1,bottom:1}).width('100%').borderRadius(17).backgroundColor(Colors.control)
       }
       if (this.query.trim()) {
         this.section(tr('settings_search_results'))
@@ -218,9 +220,13 @@ export struct PhoneSettingsOptions {
         Column() {
           ForEach(LANGUAGES,(lang:string,ix:number) => {
             Row({space:7}) {
-              Text(lang==='default' ? tr('system')+' · '+languageName(i18n.getSystemLanguage()) : languageName(lang))
+              if (lang==='default' && nativeEnvironment.fontScale>=1.4) Column({space:2}) {
+                Text(tr('system')).fontSize(17).fontColor(Colors.ink)
+                Text(languageName(i18n.getSystemLanguage())).fontSize(15).fontColor(Colors.secondary)
+              }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+              else Text(lang==='default' ? tr('system')+' · '+languageName(i18n.getSystemLanguage()) : languageName(lang))
                 .fontSize(17).fontColor(Colors.ink).layoutWeight(1)
-              if (this.model.language===lang) SymbolGlyph(Symbols.check).fontSize(17).fontColor([Colors.link])
+              if (this.model.language===lang) SymbolGlyph(Symbols.check).fontSize('17vp').width(21).flexShrink(0).fontColor([Colors.link])
             }.width('100%').constraintSize({minHeight:46}).padding({left:15,right:14,top:6,bottom:6})
               .enabled(!this.model.languageChanging).accessibilitySelected(this.model.language===lang).accessibilityGroup(true)
               .onClick(() => this.choose(lang)).id('settings.language.'+lang)
@@ -231,9 +237,15 @@ export struct PhoneSettingsOptions {
         ListItem() { Text(tr('phone_language_system_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:20}) }
         ListItem() {
           Row({space:8}) {
-            Text(tr('phone_dictation')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-            Text(tr('phone_system_input')).fontSize(15).fontColor(Colors.link)
-            SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+            if (nativeEnvironment.fontScale>=1.4) Column({space:2}) {
+              Text(tr('phone_dictation')).fontSize(16).fontColor(Colors.ink)
+              Text(tr('phone_system_input')).fontSize(15).fontColor(Colors.link)
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+            else {
+              Text(tr('phone_dictation')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+              Text(tr('phone_system_input')).fontSize(15).fontColor(Colors.link)
+            }
+            SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.constraintSize({minHeight:48}).width('100%').padding({left:15,right:15,top:7,bottom:7})
             .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
             .onClick(() => inputMethod.getSetting().showOptionalInputMethods().catch(() => {

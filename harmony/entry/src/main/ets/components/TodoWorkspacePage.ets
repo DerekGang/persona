@@ -1,9 +1,10 @@
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { i18n } from '@kit.LocalizationKit';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { Colors } from '../design/Colors';
 import { ButtonStyles, SelectStyles } from '../design/Controls';
-import { ComposeListItemV2, ContentItemV2 } from '@kit.ArkUI';
+import { ComposeListItemV2, ContentItemV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
 import { TodoWorkspace, TodoWorkspaceAgent, TodoWorkspaceGroup, TodoWorkspaceItem, TodoWorkspaceSection,
   TodoWorkspaceSpace, TodoWorkspaceSpaceChoice, TODO_DUE_FILTERS, TODO_LIST_ORDERS } from '../models/TodoWorkspace';
@@ -415,7 +416,7 @@ export struct TodoWorkspacePage {
   @Builder metadata(todo:TodoWorkspaceItem) {
     if (Number.isFinite(todo.due) || !!todo.priority) Row({space:6}) {
       if (Number.isFinite(todo.due)) {
-        SymbolGlyph(Symbols.calendar).fontSize(12).fontColor([!todo.isDone() && todo.dueBy < this.clock ? Colors.danger : Colors.secondary])
+        SymbolGlyph(Symbols.calendar).fontSize('12vp').fontColor([!todo.isDone() && todo.dueBy < this.clock ? Colors.danger : Colors.secondary])
         Text(this.dueTitle(todo)).fontSize(12).fontColor(!todo.isDone() && todo.dueBy < this.clock ? Colors.danger : Colors.secondary)
       }
       if (todo.priority) Text(tr(['low','medium','high'].includes(todo.priority) ? todo.priority : 'flow_todo_priority') +
@@ -429,12 +430,12 @@ export struct TodoWorkspacePage {
         Row({space:7}) {
           if (this.hubMode()) {
             Column() {
-              if (this.rowClosed(binding.value.lead)) SymbolGlyph(Symbols.check).fontSize(17).fontColor([Colors.positive])
+              if (this.rowClosed(binding.value.lead)) SymbolGlyph(Symbols.check).fontSize('17vp').fontColor([Colors.positive])
               else Circle().width(9).height(9).fill(binding.value.state === 'needs_you' ? Colors.needs :
                 binding.value.state === 'just_finished' ? Colors.positive : binding.value.state === 'working' ? Colors.link : Colors.secondary)
             }.width(38).height(44).justifyContent(FlexAlign.Center)
           } else Button({type:ButtonType.Normal}) {
-            Stack() { if (this.completionShown(binding.value.lead)) SymbolGlyph(Symbols.check).fontSize(13).fontColor([Color.White]) }
+            Stack() { if (this.completionShown(binding.value.lead)) SymbolGlyph(Symbols.check).fontSize('13vp').fontColor([Color.White]) }
               .width(21).height(21).borderRadius(11)
               .border({width:1.4,color:this.completionShown(binding.value.lead) ? Colors.positive : Colors.secondary,radius:11})
               .backgroundColor(this.completionShown(binding.value.lead) ? Colors.positive : Color.Transparent)
@@ -450,7 +451,7 @@ export struct TodoWorkspacePage {
               this.metadata(binding.value.lead)
               if (['project','thread'].includes(this.workspace.effectiveGroup())) Text(tr('todo_state_'+binding.value.state)).fontSize(12).fontColor(Colors.secondary)
             }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-            SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+            SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.layoutWeight(1).constraintSize({minHeight:44}).accessibilityGroup(true)
             .onClick(() => this.onOpenResource(this.workspace.todoResource(binding.value.lead)))
             .bindContextMenu(this.rowMenu(binding.value.lead),ResponseType.LongPress).id('todos.open.'+binding.value.lead.id)
@@ -458,14 +459,14 @@ export struct TodoWorkspacePage {
         if (binding.value.members.length > 1) {
           Divider().strokeWidth(0.5).color(Colors.divider).margin({left:54})
           Row({space:6}) {
-            SymbolGlyph(this.expandedGroups.includes(binding.value.key) ? Symbols.down : Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+            SymbolGlyph(this.expandedGroups.includes(binding.value.key) ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             Text(tr('todo_related') + ' · ' + String(binding.value.members.length-1)).fontSize(14).fontColor(Colors.link)
           }.height(42).width('100%').padding({left:57}).accessibilityGroup(true).onClick(() => this.toggleGroup(binding.value.key))
             .id('todos.related.'+binding.value.lead.id)
           if (this.expandedGroups.includes(binding.value.key)) ForEach(binding.value.related(),(todo:TodoWorkspaceItem) => {
             Row({space:8}) {
               Text(todo.title).fontSize(15).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
-              SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+              SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.constraintSize({minHeight:44}).width('100%').padding({left:57,right:14})
               .accessibilityGroup(true).onClick(() => this.onOpenResource(this.workspace.todoResource(todo))).id('todos.member.'+todo.id)
           },(todo:TodoWorkspaceItem) => JSON.stringify([todo.id,todo.title]))
@@ -552,32 +553,35 @@ export struct TodoWorkspacePage {
   @Builder listContent() {
     Column() {
       Row({ space: Tokens.gap }) {
-        Button({type:ButtonType.Capsule}) {
-          Row({space:5}) {
-            Text(this.groupOptions()[Math.max(0,this.groupIndex())].value).fontSize(14).fontColor(Colors.ink)
-            SymbolGlyph(Symbols.down).fontSize(10).fontColor([Colors.secondary])
-          }
-        }.padding({left:12,right:12}).height(38).backgroundColor(Colors.surface).bindMenu(this.listFilters).id('todos.group')
-        if (this.workspace.dueFilter !== 'all') Button(this.dueFilterLabel(this.workspace.dueFilter) + ' ×', {type:ButtonType.Capsule})
-          .fontColor(Colors.onAction).backgroundColor(Colors.action).fontSize(14).height(38).padding({left:12,right:12})
-          .onClick(() => this.workspace.setDueFilter('all')).id('todos.due.clear')
-        Blank()
+        Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(5),cross:LengthMetrics.vp(5)}}) {
+          Button({type:ButtonType.Capsule}) {
+            Row({space:5}) {
+              Text(this.groupOptions()[Math.max(0,this.groupIndex())].value).fontSize(14).fontColor(Colors.ink)
+              SymbolGlyph(Symbols.down).fontSize('10vp').fontColor([Colors.secondary])
+            }
+          }.padding({left:12,right:12}).height(Math.max(38,Math.ceil(21*nativeEnvironment.fontScale)+10)).backgroundColor(Colors.surface).bindMenu(this.listFilters).id('todos.group')
+          if (this.workspace.dueFilter !== 'all') Button(this.dueFilterLabel(this.workspace.dueFilter) + ' ×', {type:ButtonType.Capsule})
+            .fontColor(Colors.onAction).backgroundColor(Colors.action).fontSize(14).height(Math.max(38,Math.ceil(21*nativeEnvironment.fontScale)+10)).padding({left:12,right:12})
+            .onClick(() => this.workspace.setDueFilter('all')).id('todos.due.clear')
+        }.layoutWeight(1)
         Badge({ count: (!this.hubMode() && this.workspace.statusFilter !== 'all' ? 1 : 0) + (this.workspace.effectiveGroup() !== 'status' ? 1 : 0) + (this.workspace.dueFilter !== 'all' ? 1 : 0) + (this.workspace.order !== 'recent' ? 1 : 0),
-          style: { color: Colors.onAction, badgeColor: Colors.action, borderWidth: 0, borderColor: Color.Transparent, badgeSize: Tokens.body, fontSize: Tokens.caption } }) {
+          style: { color: Colors.onAction, badgeColor: Colors.action, borderWidth: 0, borderColor: Color.Transparent, badgeSize: 17, fontSize: '11vp' } }) {
         Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.filter).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }
           .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('todo_filter_status') + ' · ' + this.statusOptions()[this.statusIndex()].value + ' · ' + this.groupOptions()[Math.max(0, this.groupIndex())].value)
           .bindMenu(this.listFilters).id('todos.filters')
         }
         Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('add')).onClick(() => this.workspace.startCreate()).id('todos.add')
       }.padding({ left: Tokens.inset, right: Tokens.inset, top: Tokens.inset, bottom: Tokens.gap })
-      Search({value:this.workspace.search,placeholder:tr('todo_search')}).width('100%')
+      Search({value:this.workspace.search,placeholder:tr('todo_search')}).width('100%').height(Math.max(40,Math.ceil(24*nativeEnvironment.fontScale)+8))
         .padding({left:Tokens.page,right:Tokens.page}).onChange((value:string) => this.workspace.setSearch(value)).id('todos.search')
-      if (this.hiddenWaitingCount) Row({space:8}) {
-        SymbolGlyph(Symbols.inbox).fontSize(16).fontColor([Colors.needs])
-        Text(tr('phone_todo_waiting_hidden').replace('{count}',String(this.hiddenWaitingCount))
-          .replace('{filter}',this.dueFilterLabel(this.workspace.dueFilter))).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
+      if (this.hiddenWaitingCount) Column({space:4}) {
+        Row({space:8}) {
+          SymbolGlyph(Symbols.inbox).fontSize('16vp').fontColor([Colors.needs])
+          Text(tr('phone_todo_waiting_hidden').replace('{count}',String(this.hiddenWaitingCount))
+            .replace('{filter}',this.dueFilterLabel(this.workspace.dueFilter))).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
+        }.width('100%')
         Button(tr('project_show_all'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link)
-          .padding({left:6,right:6}).onClick(() => this.workspace.setDueFilter('all')).id('todos.due.show_all')
+          .alignSelf(ItemAlign.Start).constraintSize({minHeight:Math.max(36,Math.ceil(22*nativeEnvironment.fontScale)+8)}).padding({left:6,right:6}).onClick(() => this.workspace.setDueFilter('all')).id('todos.due.show_all')
       }.width('100%').padding({left:13,right:10,top:6,bottom:6}).constraintSize({minHeight:44})
         .backgroundColor(Colors.surface).borderRadius(12).margin({top:6}).id('todos.due.hidden')
       if (this.hubMode() && !this.workspace.hubCalm() && !this.workspace.search.trim()) this.hubChoiceBar()

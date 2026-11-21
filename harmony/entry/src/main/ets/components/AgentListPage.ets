@@ -346,10 +346,10 @@ export struct AgentListPage {
       Button({ type: ButtonType.Normal }) {
         Row({ space: 6 }) {
           Text(tr(STATE_LABELS[binding.value.id] || '') || binding.value.machineName)
-            .fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+            .fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink).flexShrink(1).maxLines(this.environment.fontScale >= 1.5 ? 4 : 2)
           Text(String(binding.value.totalRowCount)).fontSize(13).fontColor(Colors.secondary)
           Blank().layoutWeight(1)
-          SymbolGlyph(binding.value.folded ? Symbols.expand : Symbols.down).fontSize(12).fontColor([Colors.secondary])
+          SymbolGlyph(binding.value.folded ? Symbols.expand : Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
         }.width('100%').constraintSize({ minHeight: 44 })
       }.width('100%').padding({ left: 4, right: 5 }).backgroundColor(Color.Transparent)
         .accessibilityText((tr(STATE_LABELS[binding.value.id] || '') || binding.value.machineName) + ' · ' +
@@ -430,14 +430,14 @@ export struct AgentListPage {
         Row({ space: 10 }) {
           Stack({ alignContent: Alignment.BottomEnd }) {
             Stack() {
-              if (this.rail) Text((binding.bound.value.title || tr('agent_untitled')).slice(0, 2)).fontSize(13).fontColor(Colors.ink).maxLines(1)
+              if (this.rail) Text((binding.bound.value.title || tr('agent_untitled')).slice(0, 2)).fontSize('13vp').fontColor(Colors.ink).maxLines(1)
               else if (binding.presentation.brand === 'codex') {
                 Image($r('app.media.project_agent_openai')).width(21).height(21).objectFit(ImageFit.Contain).fillColor(Colors.ink)
               } else if (binding.presentation.brand === 'claude') {
                 Image($r('app.media.project_agent_claude')).width(22).height(22).objectFit(ImageFit.Contain)
               } else if (binding.presentation.provider) {
-                Text(binding.presentation.provider.slice(0, 1).toUpperCase()).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-              } else SymbolGlyph(Symbols.agent).fontSize(18).fontColor([this.rowStatusColor(binding.presentation)])
+                Text(binding.presentation.provider.slice(0, 1).toUpperCase()).fontSize('16vp').fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+              } else SymbolGlyph(Symbols.agent).fontSize('18vp').fontColor([this.rowStatusColor(binding.presentation)])
             }.width(32).height(32).backgroundColor(Colors.control).borderRadius(9)
             if (binding.presentation.status === 'needs_you' || binding.presentation.status === 'unread') {
               Circle().width(8).height(8).fill(this.rowStatusColor(binding.presentation))
@@ -447,13 +447,13 @@ export struct AgentListPage {
           if (!this.rail) Column({ space: 3 }) {
             Row({ space: 6 }) {
               Text(binding.bound.value.title || tr('agent_untitled')).fontSize(17).fontWeight(FontWeight.Bold)
-                .fontColor(Colors.ink).layoutWeight(1).maxLines(this.environment.fontScale >= 1.5 ? 2 : 1)
+                .fontColor(Colors.ink).layoutWeight(1).maxLines(this.environment.fontScale >= 1.5 ? 4 : 1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
               if (this.environment.fontScale < 1.5) Text(this.rowTime(binding.presentation)).fontSize(12).fontColor(Colors.secondary)
             }.width('100%').alignItems(VerticalAlign.Center)
             if (binding.presentation.recentContent) {
               Text(binding.presentation.recentContent).fontSize(15).fontColor(Colors.secondary).width('100%')
-                .maxLines(this.look.density === 'compact' ? 1 : 2).textOverflow({ overflow: TextOverflow.Ellipsis })
+                .maxLines(this.environment.fontScale >= 1.5 ? 4 : this.look.density === 'compact' ? 1 : 2).textOverflow({ overflow: TextOverflow.Ellipsis })
             }
             this.rowContext(this.rowPlace(binding.presentation), this.needsStatusLabel(groupId) ? this.rowStatus(binding.presentation) : '',
               this.rowStatusColor(binding.presentation))
@@ -461,7 +461,7 @@ export struct AgentListPage {
               Text(this.rowTime(binding.presentation)).fontSize(13).fontColor(Colors.secondary)
             }
           }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-          if (!this.rail) SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+          if (!this.rail) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
         }.width('100%').alignItems(VerticalAlign.Center).justifyContent(this.rail ? FlexAlign.Center : FlexAlign.Start)
           .padding({ left: this.rail ? 5 : 13, right: this.rail ? 5 : 11,
             top: this.look.density === 'compact' ? 7 : 10, bottom: this.look.density === 'compact' ? 7 : 10 })
@@ -481,7 +481,12 @@ export struct AgentListPage {
   }
 
   @Builder rowContext(place: string, status: string, color: ResourceColor) {
-    if (place || status) {
+    if ((place || status) && this.environment.fontScale >= 1.5) {
+      Column({ space: 3 }) {
+        if (status) Text(status).fontSize(12).fontWeight(FontWeight.Medium).fontColor(color)
+        if (place) Text(place).fontSize(12).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
+      }.width('100%').alignItems(HorizontalAlign.Start)
+    } else if (place || status) {
       Row({ space: 5 }) {
         if (status) Text(status).fontSize(12).fontWeight(FontWeight.Medium).fontColor(color).maxLines(1)
         if (place) Text(place).fontSize(12).fontColor(Colors.secondary).layoutWeight(1).maxLines(1)
@@ -545,7 +550,7 @@ export struct AgentListPage {
       if (this.searchVisible()) {
         if (this.compactRoot) Row({space: 6}) {
           Column() { this.searchControl() }.layoutWeight(1)
-          Button(tr('cancel'), {type:ButtonType.Normal}).fontSize(15).fontColor(Colors.link).backgroundColor(Color.Transparent)
+          Button(tr('cancel'), {type:ButtonType.Normal}).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).backgroundColor(Color.Transparent)
             .padding({left:4,right:4}).onClick(() => { this.workspace.setSearch(''); this.resetSearchReveal(); }).id('agents.search_cancel')
         }.width('100%')
         else this.searchControl()
@@ -558,19 +563,19 @@ export struct AgentListPage {
                 Row({space:4}) {
                   if (key !== 'all') Circle().width(5).height(5)
                     .fill(key === 'needsYou' ? Colors.needs : key === 'unread' ? Colors.unread : key === 'working' ? Colors.working : Colors.secondary)
-                  Text(tr(QUICK_LABELS[index])).fontSize(14)
+                  Text(tr(QUICK_LABELS[index])).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale)
                     .fontWeight(this.workspace.quickFilter === key ? FontWeight.Bold : FontWeight.Normal)
                     .fontColor(this.workspace.quickFilter === key ? Colors.link : Colors.ink).maxLines(1)
                   if (Wire.number(this.workspace.filterCounts,key)>0) Text(String(Wire.number(this.workspace.filterCounts,key)))
-                    .fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+                    .fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
                 }
               }
-                .height(Math.max(32, 23 * this.environment.fontScale)).padding({ left: 11, right: 11 })
+                .height(Math.max(32, 23 * Math.min(this.environment.fontScale, Tokens.navigationTextMaxScale))).padding({ left: 11, right: 11 })
                 .backgroundColor(this.workspace.quickFilter === key ? Colors.selection : Colors.control)
                 .accessibilityText(tr(QUICK_LABELS[index]))
                 .accessibilityDescription(Wire.number(this.workspace.filterCounts,key)>0 ? String(Wire.number(this.workspace.filterCounts,key)) : '')
                 .accessibilitySelected(this.workspace.quickFilter === key)
-                .responseRegion({ x: 0, y: -6, width: '100%', height: Math.max(44, 23 * this.environment.fontScale + 12) })
+                .responseRegion({ x: 0, y: -6, width: '100%', height: Math.max(44, 23 * Math.min(this.environment.fontScale, Tokens.navigationTextMaxScale) + 12) })
                 .onClick(() => { if (this.workspace.quickFilter !== key) this.workspace.setQuickFilter(key); }).id('agents.quick.' + key)
             }, (key: string) => key)
           }.padding({left:1,right:1})
@@ -587,10 +592,10 @@ export struct AgentListPage {
       if (this.workspace.machineFilter) {
         Button({ type: ButtonType.Capsule }) {
           Row({ space: 5 }) {
-            SymbolGlyph($r('sys.symbol.xmark')).fontSize(11).fontColor([Colors.link])
-            Text(this.machineLabel()).fontSize(13).fontColor(Colors.link).maxLines(1)
+            SymbolGlyph($r('sys.symbol.xmark')).fontSize('11vp').fontColor([Colors.link])
+            Text(this.machineLabel()).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).flexShrink(1).maxLines(2)
           }
-        }.height(30).padding({ left: 10, right: 10 }).backgroundColor(Colors.surface)
+        }.constraintSize({minHeight:44,maxWidth:'100%'}).padding({ left: 10, right: 10, top:3, bottom:3 }).backgroundColor(Colors.surface)
           .accessibilityText(this.machineLabel() + ' · ' + tr('clear')).onClick(() => this.selectMachine(0)).id('agents.machine.clear')
       }
     }.alignItems(HorizontalAlign.Start).padding({ left: Tokens.page, right: Tokens.page, top: 6, bottom: 4 }).width('100%')

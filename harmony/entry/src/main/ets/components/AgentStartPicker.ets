@@ -1,3 +1,5 @@
+import { nativeEnvironment } from '../platform/NativeEnvironment';
+import { Tokens } from '../design/Tokens';
 import { AgentLaunchChoices, LaunchChoice } from '../models/AgentLaunchChoices';
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
@@ -33,14 +35,14 @@ export struct AgentStartPicker {
   @Builder item(o:LaunchChoice,folder:boolean) {
     Row({space:11}) {
       if (this.kind !== 'model') SymbolGlyph(folder || this.kind === 'workspace' ? Symbols.folder : this.kind === 'launcher' ? Symbols.agent : Symbols.apps)
-        .fontSize(18).fontColor([folder && o.detail !== 'Git' ? Colors.secondary : Colors.link])
+        .fontSize('18vp').fontColor([folder && o.detail !== 'Git' ? Colors.secondary : Colors.link])
       Column({space:3}) {
-        Text(o.title).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+        Text(o.title).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(nativeEnvironment.fontScale >= 1.5 ? 4 : 2)
         if (o.detail || this.kind === 'model' && !o.id && this.choices.defaultModelName()) Text(o.detail || this.choices.defaultModelName())
-          .fontSize(13).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-        if (o.description) Text(o.description).fontSize(13).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
+          .fontSize(13).fontColor(Colors.secondary).maxLines(nativeEnvironment.fontScale >= 1.5 ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
+        if (o.description) Text(o.description).fontSize(13).fontColor(Colors.secondary).maxLines(nativeEnvironment.fontScale >= 1.5 ? 5 : 3).textOverflow({overflow:TextOverflow.Ellipsis})
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      if (folder || o.id === this.selected) SymbolGlyph(folder ? Symbols.expand : Symbols.check).fontSize(15).fontColor([folder ? Colors.secondary : Colors.link])
+      if (folder || o.id === this.selected) SymbolGlyph(folder ? Symbols.expand : Symbols.check).fontSize('15vp').fontColor([folder ? Colors.secondary : Colors.link])
     }.width('100%').constraintSize({minHeight:48}).padding({left:14,right:13,top:8,bottom:8})
       .backgroundColor(Colors.surface).borderRadius(folder || this.kind === 'model' ? 0 : 10)
       .enabled(!o.disabled).opacity(o.disabled ? 0.65 : 1).onClick(() => { if (folder) this.browse(o.id); else this.choose(o.id); })
@@ -48,25 +50,25 @@ export struct AgentStartPicker {
   }
   @Builder pickerSearch() {
     Search({value:this.query,placeholder:this.kind === 'model' && this.manual ? tr('search')+' · '+tr('model_id') :
-      tr(this.kind === 'workspace' ? 'flow_workspace_search' : 'search'),controller:this.searchField}).height(42)
+      tr(this.kind === 'workspace' ? 'flow_workspace_search' : 'search'),controller:this.searchField}).searchIcon({size:'16vp'}).height(Math.max(42, 22 * nativeEnvironment.fontScale + 12))
       .onChange((v:string) => this.query = v).margin({left:14,right:14,bottom:8}).id('agent.picker.search')
   }
   @Builder chooseFolder() {
     Column() {
       Row({space:6}) {
-        TextInput({text:this.address,placeholder:tr('flow_folder_search')}).layoutWeight(1).height(46).fontSize(15)
+        TextInput({text:this.address,placeholder:tr('flow_folder_search')}).layoutWeight(1).height(Math.max(46, 22 * nativeEnvironment.fontScale + 14)).fontSize(15)
           .fontFamily('monospace').backgroundColor(Color.Transparent).padding(0)
           .onChange((v:string) => this.address = v).onSubmit(() => this.browse(this.address)).id('agent.folder.address')
         if (this.address.trim() && this.address.trim() !== this.choices.path) Button(tr('open'),{buttonStyle:ButtonStyleMode.TEXTUAL})
-          .fontSize(15).onClick(() => this.browse(this.address)).id('agent.folder.go')
+          .fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).onClick(() => this.browse(this.address)).id('agent.folder.go')
       }.width('100%').padding({left:14,right:8})
       this.divider(14)
       Button({type:ButtonType.Normal}) {
         Row({space:8}) {
-          SymbolGlyph(Symbols.check).fontSize(17).fontColor([Colors.link])
+          SymbolGlyph(Symbols.check).fontSize('17vp').fontColor([Colors.link])
           Text(this.folderName() ? tr('flow_use_named_folder').replace('{name}',this.folderName()) : tr('flow_use_folder'))
-            .fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.link).maxLines(2)
-        }.width('100%').constraintSize({minHeight:49})
+            .fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.link).layoutWeight(1).textAlign(TextAlign.Start)
+        }.width('100%').constraintSize({minHeight:49}).padding({top:7,bottom:7})
       }.width('100%').padding({left:14,right:14}).backgroundColor(Color.Transparent)
         .enabled(!this.choices.loading && !!this.choices.path && !this.choices.error)
         .onClick(() => this.choose(this.choices.path)).id('agent.folder.use')
@@ -88,10 +90,10 @@ export struct AgentStartPicker {
   build() {
     Column() {
       Row({space:9}) {
-        Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.collapse).fontSize(18).fontColor([Colors.link]) }
-          .width(36).height(36).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('back')).onClick(() => this.back()).id('agent.picker.back')
+        Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.collapse).fontSize('18vp').fontColor([Colors.link]) }
+          .width(36).height(36).padding(0).backgroundColor(Colors.surface).responseRegion({x:-4,y:-4,width:44,height:44}).accessibilityText(tr('back')).onClick(() => this.back()).id('agent.picker.back')
         Text(this.kind === 'folder' && this.folderName() ? this.folderName() : this.heading).layoutWeight(1).textAlign(TextAlign.Center)
-          .fontSize(18).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          .fontSize(18).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         Blank().width(36)
       }.width('100%').padding({left:14,right:14,top:7,bottom:8})
       if (this.kind !== 'folder' && this.kind !== 'model' && (this.kind === 'workspace' || this.options.length > 5 || this.manual)) this.pickerSearch()
@@ -104,7 +106,7 @@ export struct AgentStartPicker {
         }
         if (this.kind === 'folder') {
           if (this.choices.parent && this.choices.parent !== this.choices.path) ListItem() {
-            Button(tr('session_tools_parent_folder'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).onClick(() => this.browse(this.choices.parent)).id('agent.folder.up')
+            Button(tr('session_tools_parent_folder'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).constraintSize({minHeight:44}).onClick(() => this.browse(this.choices.parent)).id('agent.folder.up')
           }
           if (this.choices.directories.length) ListItem() { this.optionGroup('folder',true) }
           if (this.choices.path && !this.choices.directories.length) ListItem() { Text(tr('flow_folder_empty')).fontSize(14).fontColor(Colors.secondary).padding(14) }
@@ -119,7 +121,7 @@ export struct AgentStartPicker {
           } else ForEach(this.filtered,(o:LaunchChoice) => { ListItem() { this.item(o,false) } },(o:LaunchChoice) => JSON.stringify([o.id,o.title,o.detail,o.disabled]))
           if (this.kind === 'model' && this.manual && !this.query.trim() && !this.choices.locked) ListItem() {
             Button(tr('flow_other_model'),{type:ButtonType.Normal}).fontSize(16).fontColor(Colors.link)
-              .width('100%').height(48).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              .width('100%').height(Math.max(48, 24 * nativeEnvironment.fontScale + 14)).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
               .onClick(() => this.getUIContext().getFocusController().requestFocus('agent.picker.search')).id('agent.model.other')
           }
           if (this.manual && this.query.trim() && !this.options.some((o:LaunchChoice) => o.id === this.query.trim()) && !this.choices.locked) ListItem() {

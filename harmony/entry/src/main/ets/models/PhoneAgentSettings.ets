@@ -84,14 +84,15 @@ export class PhoneAgentSettings {
     finally { if (this.current(serial)) this.loading=false; }
   }
 
-  async setOption(key:string,value:Object):Promise<void> {
+  async setOption(key:string,value:Object):Promise<boolean> {
+    if (!this.model?.connected || !this.current(this.serial) || this.loading || this.saving || this.error) return false;
     if (this.page === 'phone_agent_followup') {
-      if (!FOLLOW_FIELDS[key] || typeof this.data[key] !== 'boolean' || typeof value !== 'boolean' || this.data[key] === value) return;
-      await this.write(Wire.payload([key],[value])); return;
+      if (!FOLLOW_FIELDS[key] || typeof this.data[key] !== 'boolean' || typeof value !== 'boolean') return false;
+      return this.data[key] === value || await this.write(Wire.payload([key],[value]));
     }
     const option = Wire.rows(this.data,'settings').find((row:Record<string,Object>) => Wire.text(row,'key') === key);
-    if (!option || !validAgentSetting(option,value) || agentSettingValue(option) === value) return;
-    await this.write(Wire.payload(['key','value'],[key,value]));
+    if (!option || !validAgentSetting(option,value)) return false;
+    return agentSettingValue(option) === value || await this.write(Wire.payload(['key','value'],[key,value]));
   }
 
   async changeFolder(pattern:string, replacement:Record<string,Object> | undefined, adding:boolean = false):Promise<boolean> {
@@ -129,5 +130,25 @@ export class PhoneAgentSettings {
       return false;
     }
     finally { if (this.current(serial)) this.saving=false; }
+  }
+}
+
+@ObservedV2
+export class AgentSettingTextDraft {
+  @Trace key: string = '';
+  @Trace text: string = '';
+  private target: string = '';
+  private revision: number = 0;
+
+  begin(target:string,key:string,value:string):void {
+    this.revision++; this.target=target; this.key=key; this.text=value;
+  }
+  isEditing(target:string,key:string):boolean { return !!key && this.target===target && this.key===key; }
+  edit(value:string):void { this.revision++; this.text=value; }
+  close():void { this.revision++; this.target=''; this.key=''; this.text=''; }
+  async save(form:PhoneAgentSettings,target:string):Promise<void> {
+    if (!this.isEditing(target,this.key)) return;
+    const revision=this.revision;
+    if (await form.setOption(this.key,this.text) && this.revision===revision) this.close();
   }
 }
