@@ -67,7 +67,11 @@ function fixture() {
   };
   const owner = { connected: true, epoch: 3, name: 'home', profile:{hubId:'hub-id'},features:['client_ops'],connectionGeneration() { return this.epoch; },
     verifiedServerVersion(feature){return this.features.includes(feature)?behavior.helloVersion||'':'';},
-    captureView(key){const scoped=this.name+':'+key;return {valid:()=>true,read:async()=>views.get(scoped)||'',write:async value=>{views.set(scoped,value)}};},
+    captureView(key) {
+      const scoped = this.name + ':' + key;
+      return {valid: () => true, read: async () => views.get(scoped) || '', write: async value => { views.set(scoped,value); },
+        clearIfUnchanged: async expected => { if (views.get(scoped) === expected) views.delete(scoped); }};
+    },
     scope() { return this.name; }, owns(epoch, scope) { return this.name === scope && this.epoch === epoch; }, repo: () => repo };
   const root = { ...owner, name: 'root', viewFor: async () => owner };
   const tree = Object.assign(new ProjectWorktree(), { source: 'herdr', sourceId: 'child', machine: 'Studio/1', machineTitle: 'Studio',
@@ -126,7 +130,79 @@ test('a lost cleanup reply is reconciled without issuing a second mutation or le
   assert.equal(queries[1].body.reconcile, true);
   assert.deepEqual(finished, [[writes[0].id,'done']]);
   await form.open(root, tree, 'clean'); root.epoch++; assert.equal(await form.submit(), undefined);
-  assert.equal(form.error, 'request_updated'); assert.equal(writes.length, 1);
+  assert.equal(form.error, 'tree_preview_changed'); assert.equal(writes.length, 1);
+});
+
+test('offline machines, missing permission and superseded clean previews report distinct recoveries', async () => {
+  const {form,root,owner,tree,queries,writes} = fixture();
+  root.connected = false;
+  await form.open(root,tree,'clean'); assert.equal(form.error,'offline');
+  root.connected = true; tree.online = false;
+  await form.open(root,tree,'clean'); assert.equal(form.error,'offline');
+  tree.online = true; tree.startAllowed = false;
+  await form.open(root,tree,'clean'); assert.equal(form.error,'permission_denied');
+  assert.equal(queries.length,0);
+  tree.startAllowed = true;
+  await form.open(root,tree,'clean'); assert.equal(form.canSubmit,true);
+  owner.connected = false;
+  await form.submit(); assert.equal(form.error,'offline'); assert.equal(form.canSubmit,false);
+  owner.connected = true;
+  const entered = Promise.withResolvers(), reply = Promise.withResolvers();
+  owner.repo().transport.request = async () => { entered.resolve(); return reply.promise; };
+  const preparing = form.open(root,tree,'clean');
+  await entered.promise; owner.epoch++; reply.resolve('{}'); await preparing;
+  assert.equal(form.error,'tree_preview_changed'); assert.equal(form.canSubmit,false);
+  owner.repo().transport.request = async () => { throw new HttpFailure(403,'forbidden'); };
+  await form.open(root,tree,'clean'); assert.equal(form.error,'permission_denied');
+  owner.repo().transport.request = async () => { owner.connected = false; throw new HttpFailure(0,'transport_failed_closed'); };
+  await form.open(root,tree,'clean'); assert.equal(form.error,'offline');
+  assert.equal(writes.length,0);
+});
+
+test('an invalidated pre-dispatch snapshot removes only its own bytes and a new preview can proceed', async () => {
+  for (const replace of [false,true]) {
+    const {form,root,owner,tree,writes,views} = fixture();
+    const prepared = Promise.withResolvers(), resume = Promise.withResolvers();
+    const capture = owner.captureView.bind(owner);
+    owner.captureView = key => {
+      const lease = capture(key);
+      return {...lease, write: async value => {
+        await lease.write(value);
+        if (value) { prepared.resolve(value); await resume.promise; }
+      }};
+    };
+    await form.open(root,tree,'clean');
+    const submitting = form.submit();
+    const snapshot = await prepared.promise;
+    const [key] = views.keys();
+    const replacement = JSON.stringify({...JSON.parse(snapshot),id:'00000000-0000-4000-8000-000000000002'});
+    if (replace) { form.close(); views.set(key,replacement); }
+    else owner.epoch++;
+    resume.resolve(); await submitting;
+    assert.equal(writes.length,0);
+    assert.equal(views.get(key),replace ? replacement : undefined);
+    await form.open(root,tree,'clean');
+    assert.equal(form.unknown,replace);
+    assert.equal(form.canSubmit,!replace);
+  }
+});
+
+test('journal admission failure clears a proven unsent operation and preserves an uncertain receipt', async () => {
+  for (const uncertain of [false,true]) {
+    const {form,root,owner,tree,views,writes} = fixture();
+    owner.repo().call = async (_path,_method,_body,_id,admit) => {
+      owner.connected = false;
+      assert.equal(admit(),false);
+      throw new HttpFailure(0,uncertain ? 'receipt_storage_failed' : 'request_updated',uncertain);
+    };
+    await form.open(root,tree,'clean');
+    await form.submit();
+    assert.equal(writes.length,0);
+    assert.equal(views.size,uncertain ? 1 : 0);
+    owner.connected = true;
+    await form.open(root,tree,'clean');
+    assert.equal(form.unknown,uncertain);
+  }
 });
 
 test('stale preview cannot bind to a different sheet instance or act on the main checkout', async () => {

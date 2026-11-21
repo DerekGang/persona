@@ -4910,7 +4910,7 @@
     },
     {
       "name": "tree_preview_changed",
-      "value": "The workspace changed. Refresh the preview."
+      "value": "The cleanup preview is out of date. Refresh it before confirming."
     },
     {
       "name": "tree_changed_files",

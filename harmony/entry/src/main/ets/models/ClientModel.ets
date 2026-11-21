@@ -44,6 +44,7 @@ export interface ClientViewLease {
   valid: () => boolean;
   read: () => Promise<string>;
   write: (value: string) => Promise<void>;
+  clearIfUnchanged: (expected: string) => Promise<void>;
 }
 
 @ObservedV2
@@ -1475,6 +1476,9 @@ export class ClientModel {
         if (!valid()) throw new Error('request_updated');
         await local.put(path, value, epoch);
         if (!valid()) throw new Error('request_updated');
+      },
+      clearIfUnchanged: async (expected: string): Promise<void> => {
+        if (valid()) await local.remove(path, epoch, expected);
       } };
   }
   async saveView(key: string, value: string, expectedEpoch: number = this.viewRevision(key)): Promise<void> { await this.local.put(this.viewKey(key), value, expectedEpoch); }

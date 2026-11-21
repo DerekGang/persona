@@ -4910,7 +4910,7 @@
     },
     {
       "name": "tree_preview_changed",
-      "value": "工作树状态已变更，请重新预览。"
+      "value": "清理预览已失效。请重新预览后再确认。"
     },
     {
       "name": "tree_changed_files",

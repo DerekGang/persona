@@ -107,6 +107,13 @@ export class WorktreeActions {
       this.owner.connected && this.owner.owns(this.ownerEpoch, this.ownerScope) && (!this.view || this.view.valid()) &&
       (!this.target || this.target === this.formTarget());
   }
+  private staleError(online: boolean = this.root?.connected === true && this.owner?.connected === true): string {
+    if (!online) return 'offline';
+    return this.action === 'clean' ? 'tree_preview_changed' : 'request_updated';
+  }
+  private requireCurrent(revision: number): void {
+    if (!this.current(revision)) throw new Error(this.staleError());
+  }
   private formTarget(): string {
     const tree = this.tree!;
     return JSON.stringify([this.ownerScope, tree.group, tree.manager, tree.machine, tree.source, tree.sourceId, tree.cwd, this.action]);
@@ -158,18 +165,20 @@ export class WorktreeActions {
     return this.read(rev, async (): Promise<Record<string,Object>> => Wire.parse(await owner.repo().transport.request(route, 'POST', payload)));
   }
   private async read(rev: number, fetch: () => Promise<Record<string,Object>>): Promise<Record<string,Object>> {
-    if (!this.current(rev)) throw new Error('request_updated');
+    this.requireCurrent(rev);
     try { return await fetch(); }
     catch (error) {
       if (!(error instanceof HttpFailure)) throw error as Error;
-      if (error.status !== 0 || !error.code.startsWith('transport_failed_') || !this.current(rev)) throw error;
+      if (error.status !== 0 || !error.code.startsWith('transport_failed_')) throw error;
+      this.requireCurrent(rev);
       await new Promise<void>((resolve) => setTimeout(resolve, 350));
-      if (!this.current(rev)) throw new Error('request_updated');
+      this.requireCurrent(rev);
       return await fetch();
     }
   }
   private failure(err: Error): string {
     const code = err instanceof HttpFailure ? err.code : err.message;
+    if (err instanceof HttpFailure && err.status === 403) return 'permission_denied';
     if (['permission_denied','request_updated','offline','result_unknown','pending_action','node_outdated'].includes(code)) return code;
     if (code.startsWith('transport_failed_')) return 'connection_failed';
     if (code.includes('dirty')) return 'tree_changed_files';
@@ -186,18 +195,20 @@ export class WorktreeActions {
     this.force = false; this.deleteBranch = false; this.supportsAutomatic = false; this.automatic = false; this.pathEdited = false;
     this.loading = true;
     try {
-      if (!tree.permits(action) || !model.connected) throw new Error('permission_denied');
+      if (!model.connected || !tree.online) throw new Error('offline');
+      if (!tree.permits(action)) throw new Error('permission_denied');
       const target = new ResourceRow(); target.group = tree.group; target.manager = tree.manager;
       const owner = await model.viewFor(target);
-      if (this.revision !== revision || !model.owns(epoch, scope)) return;
+      if (this.revision !== revision) return;
+      if (!model.owns(epoch, scope)) throw new Error(this.staleError(model.connected));
       this.root = model; this.rootScope = scope; this.rootEpoch = epoch;
       this.owner = owner; this.ownerScope = owner.scope(); this.ownerEpoch = owner.connectionGeneration(); this.tree = tree;
-      if (!this.current(revision)) throw new Error('offline');
+      this.requireCurrent(revision);
       this.target = this.formTarget();
       this.view = owner.captureView('worktree-request:' + this.target);
       const route = this.endpoint(action === 'clean' ? 'delete' : action);
       const saved = Wire.parse(await this.view.read());
-      if (!this.current(revision)) return;
+      this.requireCurrent(revision);
       if (this.restoreRequest(saved, route)) {
         const verified = action === 'create' && this.originalReceiptRoute && await this.verifyCreateVersion();
         if (this.current(revision)) { this.retrySupported = verified; this.ready = true; }
@@ -213,7 +224,7 @@ export class WorktreeActions {
         const loadingVersion = this.verifyCreateVersion();
         const prepared = await this.query('prepare', this.body());
         const supported = await loadingVersion;
-        if (!this.current(revision)) return;
+        this.requireCurrent(revision);
         this.originalReceiptRoute = supported;
         this.base = Wire.text(prepared, 'path'); this.baseBranch = Wire.text(prepared, 'branch');
         if (!this.base || !Wire.text(prepared, 'root')) throw new Error('tree_repo_unavailable');
@@ -221,7 +232,7 @@ export class WorktreeActions {
       } else if (action === 'clean') {
         const body = this.body(); body['preview'] = true;
         const preview = await this.query('delete', body);
-        if (!this.current(revision)) return;
+        this.requireCurrent(revision);
         const path = Wire.text(preview, 'path'), dirty = Wire.number(preview, 'dirty', -1);
         if (Wire.text(preview, 'workspace_id') !== tree.sourceId || Wire.text(preview, 'kind') !== tree.source ||
           !path || dirty < 0 || !Wire.text(preview, 'preview_token') || Wire.bool(preview, 'close_only')) throw new Error('tree_preview_changed');
@@ -260,7 +271,7 @@ export class WorktreeActions {
   async submit(): Promise<WorktreeChange | undefined> {
     if (!this.canSubmit) return undefined;
     const rev = this.revision;
-    if (!this.current(rev)) { this.error = 'request_updated'; this.ready = false; return undefined; }
+    if (!this.current(rev)) { this.error = this.staleError(); this.ready = false; return undefined; }
     const owner = this.owner!, action = this.action, sourceId = this.tree!.sourceId, body = this.body(), view = this.view!;
     const path = this.endpoint(action === 'clean' ? 'delete' : action);
     const lane = JSON.stringify([this.ownerScope,path]);
@@ -269,6 +280,11 @@ export class WorktreeActions {
     if (other) { this.ready = false; this.error = 'pending_action'; return undefined; }
     submittingRoutes.add(lane);
     this.busy = true; this.error = '';
+    let snapshot = '', rejectedBeforeDispatch = false;
+    const admit = (): boolean => {
+      rejectedBeforeDispatch = !this.current(rev);
+      return !rejectedBeforeDispatch;
+    };
     try {
       if (action === 'create') {
         if (this.automatic && this.supportsAutomatic) body['auto_name'] = true;
@@ -277,15 +293,23 @@ export class WorktreeActions {
       else { body['preview_token'] = this.token; body['force'] = this.force; body['delete_branch'] = !this.folder && this.deleteBranch; }
       this.requestId = util.generateRandomUUID();
       this.requestPath = path; this.requestBody = JSON.stringify(body); this.requestTime = Date.now();
-      await view.write(this.snapshot());
-      if (!this.current(rev)) return undefined;
-      const result = await owner.repo().call(path, 'POST', body, this.requestId, () => this.current(rev), false,
+      snapshot = this.snapshot();
+      await view.write(snapshot);
+      if (!admit()) throw new Error('request_updated');
+      const result = await owner.repo().call(path, 'POST', body, this.requestId, admit, false,
         (value: Record<string,Object>): boolean => operationAcknowledged(action,sourceId,body,value));
       if (!this.current(rev)) return undefined;
       const change = this.change(result); this.ready = false;
       await view.write('').catch(() => undefined);
       return this.current(rev) ? change : undefined;
     } catch (error) {
+      if (rejectedBeforeDispatch && !(error instanceof HttpFailure && error.resultUnknown)) {
+        if (this.revision === rev) { this.error = this.staleError(); this.ready = false; }
+        // The local admission check declined this request before transport. A replacement
+        // sheet or pairing can own the same storage key by the time the write completes.
+        await view.clearIfUnchanged(snapshot).catch(() => undefined);
+        return undefined;
+      }
       if (!this.current(rev)) return undefined;
       this.error = this.failure(error as Error);
       this.unknown = error instanceof HttpFailure && error.resultUnknown;
