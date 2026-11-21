@@ -786,11 +786,91 @@ func TestOneActiveTaskPerExactTopic(t *testing.T) {
 	}
 	second := requestFixture()
 	second.ClientID = "client_two"
+	second.TaskID = "todo_two"
 	second.Payload = "Another synthetic task"
 	if _, err := svc.Deliver(context.Background(), second); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second topic task err=%v", err)
 	}
 	if transport.sendCount() != 1 {
 		t.Fatalf("calls=%d", transport.sendCount())
+	}
+}
+
+func TestTopicClaimAllowsSameTaskFollowUpFailedHolderAndRelease(t *testing.T) {
+	svc, _, transport, _ := verifiedService(t)
+	if _, err := svc.Deliver(context.Background(), requestFixture()); err != nil {
+		t.Fatal(err)
+	}
+	// The same task's follow-up in its own topic is a new operation, not a second task.
+	followUp := requestFixture()
+	followUp.ClientID, followUp.ParkInstance, followUp.Payload = "client_follow_up", "park_two", "Synthetic follow-up"
+	if got, err := svc.Deliver(context.Background(), followUp); err != nil || got.State != StateSent {
+		t.Fatalf("same-task follow-up=%+v err=%v", got, err)
+	}
+	other := requestFixture()
+	other.ClientID, other.TaskID, other.Payload = "client_other", "todo_other", "Another synthetic task"
+	if _, err := svc.Deliver(context.Background(), other); !errors.Is(err, ErrConflict) {
+		t.Fatalf("another task took an active topic: %v", err)
+	}
+	// Only the claim's own delivery releases it.
+	if err := svc.ReleaseTopic(context.Background(), "client_one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Deliver(context.Background(), other); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a superseded delivery released the topic: %v", err)
+	}
+	if err := svc.ReleaseTopic(context.Background(), "client_follow_up"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.Deliver(context.Background(), other); err != nil || got.State != StateSent {
+		t.Fatalf("released topic=%+v err=%v", got, err)
+	}
+	if transport.sendCount() != 3 {
+		t.Fatalf("sends=%d", transport.sendCount())
+	}
+}
+
+func TestKnownFailedDeliveryDoesNotHoldTheTopic(t *testing.T) {
+	svc, _, transport, _ := verifiedService(t)
+	transport.replyErr = &adapter.Error{Kind: adapter.KindMissingPermission}
+	if got, err := svc.Deliver(context.Background(), requestFixture()); err == nil || got.State != StateFailed {
+		t.Fatalf("first=%+v err=%v", got, err)
+	}
+	transport.replyErr = nil
+	other := requestFixture()
+	other.ClientID, other.TaskID, other.Payload = "client_other", "todo_other", "Another synthetic task"
+	if got, err := svc.Deliver(context.Background(), other); err != nil || got.State != StateSent {
+		t.Fatalf("a failed, undelivered task kept the topic: %+v err=%v", got, err)
+	}
+}
+
+func TestDuplicateDuringSendCannotLeaveAProvenDeliveryUnknown(t *testing.T) {
+	_, settings, transport, reader := verifiedService(t)
+	first, err := New(settings, transport, reader, func() time.Time { return testNow })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The manager builds a Service per call, so a duplicate does not share the first one's client lock.
+	duplicate, err := New(settings, transport, reader, func() time.Time { return testNow })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var duplicateErr error
+	transport.beforeReply = func() {
+		transport.beforeReply = nil
+		_, duplicateErr = duplicate.Deliver(context.Background(), requestFixture())
+	}
+	got, err := first.Deliver(context.Background(), requestFixture())
+	if !errors.Is(duplicateErr, ErrUnknown) {
+		t.Fatalf("duplicate during send: %v", duplicateErr)
+	}
+	if err != nil || got.State != StateSent || got.RequestMessageID == "" {
+		t.Fatalf("proven delivery=%+v err=%v", got, err)
+	}
+	if _, err := first.Binding(context.Background(), "client_one"); err != nil {
+		t.Fatalf("no reply binding for a proven delivery: %v", err)
+	}
+	if transport.sendCount() != 1 {
+		t.Fatalf("sends=%d", transport.sendCount())
 	}
 }

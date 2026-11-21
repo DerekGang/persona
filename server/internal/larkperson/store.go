@@ -38,6 +38,7 @@ type settingsStore struct {
 type topicClaim struct {
 	Revision   int64  `json:"revision"`
 	ClientID   string `json:"client_id"`
+	TaskID     string `json:"task_id,omitempty"`
 	EndpointID string `json:"endpoint_id"`
 	Active     bool   `json:"active"`
 }

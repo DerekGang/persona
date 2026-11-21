@@ -318,6 +318,15 @@ func (s *Service) Deliver(ctx context.Context, request DeliveryRequest) (Reserva
 		if readErr == nil && current.State == StateSent {
 			return current, nil
 		}
+		// A concurrent duplicate (another Service instance: the manager builds one per call) found this delivery
+		// "sending" and marked it unknown while it was in flight. The readback above proves it, so record it as sent
+		// rather than leaving a delivered message unknown, with no binding for its reply.
+		if readErr == nil && current.State == StateUnknown && current.RequestMessageID == "" && sameOperation(current, request, payloadHash) {
+			sent.Revision = current.Revision + 1
+			if s.store.putReservation(ctx, current.Revision, sent) == nil {
+				return sent, nil
+			}
+		}
 		return reservation, ErrUnknown
 	}
 	return sent, nil
@@ -351,34 +360,71 @@ func operationKey(request DeliveryRequest, payloadHash string) string {
 		strconv.FormatInt(request.EndpointRevision, 10), payloadHash, request.ChatID, request.ThreadID, request.ParentMessageID}, "\x00"))[:48]
 }
 
+// claimTopic keeps one active task per exact topic. The same task may take the claim over for a later delivery (a
+// follow-up after a reply), and a claim whose delivery is known not to have happened (failed) or whose reservation is
+// gone no longer blocks. Any other active claim, including one whose outcome is unknown, refuses the delivery.
 func (s *Service) claimTopic(ctx context.Context, reservation *Reservation) error {
 	claim, found, err := s.store.topic(ctx, reservation.Endpoint, reservation.Topic)
 	if err != nil {
 		return ErrStore
 	}
-	if found {
-		if claim.Active && claim.ClientID != reservation.ClientID {
-			return ErrConflict
-		}
-		if claim.ClientID == reservation.ClientID && claim.Active {
+	if found && claim.Active {
+		if claim.ClientID == reservation.ClientID {
 			return nil
 		}
-		claim.Revision++
-	} else {
-		claim.Revision = 1
+		holder, held, err := s.store.reservation(ctx, claim.ClientID)
+		if err != nil {
+			return ErrStore
+		}
+		if held && holder.TaskID != reservation.TaskID && holder.State != StateFailed {
+			return ErrConflict
+		}
 	}
-	claim.ClientID, claim.EndpointID, claim.Active = reservation.ClientID, reservation.EndpointID, true
 	previous := int64(0)
 	if found {
-		previous = claim.Revision - 1
+		previous = claim.Revision
 	}
-	if err := s.store.putTopic(ctx, previous, reservation.Endpoint, reservation.Topic, claim); err != nil {
+	next := topicClaim{Revision: previous + 1, ClientID: reservation.ClientID, TaskID: reservation.TaskID,
+		EndpointID: reservation.EndpointID, Active: true}
+	if err := s.store.putTopic(ctx, previous, reservation.Endpoint, reservation.Topic, next); err != nil {
 		if errors.Is(err, errCompareConflict) {
 			current, _, readErr := s.store.topic(ctx, reservation.Endpoint, reservation.Topic)
 			if readErr == nil && current.Active && current.ClientID == reservation.ClientID {
 				return nil
 			}
 		}
+		return storeError(err)
+	}
+	return nil
+}
+
+// ReleaseTopic ends a delivery's claim on its topic, for the integration to call when the delivery's task finishes, so
+// another task may use the topic. Only the claim's own delivery releases it; a claim already taken over is left alone.
+func (s *Service) ReleaseTopic(ctx context.Context, clientID string) error {
+	if !validOpaqueID(clientID) {
+		return ErrInvalid
+	}
+	lock := s.clientLock(clientID)
+	lock.Lock()
+	defer lock.Unlock()
+	reservation, found, err := s.store.reservation(ctx, clientID)
+	if err != nil {
+		return ErrStore
+	}
+	if !found {
+		return ErrInvalid
+	}
+	claim, found, err := s.store.topic(ctx, reservation.Endpoint, reservation.Topic)
+	if err != nil {
+		return ErrStore
+	}
+	if !found || !claim.Active || claim.ClientID != clientID {
+		return nil
+	}
+	released := claim
+	released.Revision++
+	released.Active = false
+	if err := s.store.putTopic(ctx, claim.Revision, reservation.Endpoint, reservation.Topic, released); err != nil {
 		return storeError(err)
 	}
 	return nil
