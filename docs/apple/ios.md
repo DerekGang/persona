@@ -2040,7 +2040,8 @@ built in stages behind the hub's `todo_view`; this section grows with it.
   does not refresh the watch or the widgets. A 304 applies the views and counts read with that tag again. Views and
   counts are read whether V1 is on or not (V1 coming on in a run has them); everything else is done only while it is on:
   - the `todo-view` StateCache entry beside `todo-items`: the views, counts and places, with the numbers the pages
-    showed, so the first frame draws them. It is written at most every 15 s while a run's line moves (`Throttle`) and
+    showed, so the first frame draws them, and when the hub last answered a read of the list (`readAt`, said while it
+    is out of reach). It is written at most every 15 s while a run's line moves (`Throttle`) and
     at once when the scene leaves the front; forgetting the hub removes it whether V1 is on or not, and an entry none
     of whose views is for the kept rows is not used at all;
   - the first V1 launch without it: `viewsRead` stays false until the first read ends, so the list does not file its
@@ -2108,6 +2109,50 @@ built in stages behind the hub's `todo_view`; this section grows with it.
   place's list came to rest, written only while the scene is active and only from the tree the window shows; a page
   made anew puts its list back there once, and a page a to-do popped back to keeps its own place. The grouping and the
   sort are kept on the device (`todos.v1.grouping`, `todos.v1.sort`); the bar's choice is not.
+- **The rows' writes** (`TodoListActions.swift`, `TodoOutbox`; DESIGN_SYSTEM 3.4 "To-dos list"). The tick, the trailing
+  swipe (Done, Someday; Reopen on a closed row), the long-press menu (Today, Date…, Project, Someday, Copy Link,
+  Delete…) and New To-Do; which a row offers is `TodoRowActionList`'s, so the swipe, the menu and VoiceOver's actions
+  agree. A row (`TodoListCell`) takes its cell and the list's model, never closures, so a list update that leaves it
+  alone skips it (P6); its confirmations are presented from it. A tick, Someday and a delete are held in `TodoOutbox`
+  (`apple/Persona/App/TodoOutbox.swift`) for `Theme.Motion.todoUndo` (`todoUndoAssistive` while VoiceOver or Switch
+  Control runs) and only then sent, so Undo sends nothing; a reopen, Remove from Someday and a new to-do go at once,
+  and Remove from Someday inside Someday's window takes that write back instead. Each write keeps its op id
+  (`X-Persona-Op-Id`) from the tap. The outbox is the StateCache entry `todo-outbox`, read off the main actor and
+  written in order by `TodoOutboxFile` (numbered snapshots, so a late older one never wins); it is made only once V1
+  is (`TodoStore.V1.answered` is called only while V1 is on), and forgetting a hub or unpairing drops its writes
+  (`TodoOutbox.forgetHubs`, only while the build may show V1, so a Release build before the switch-on never makes it;
+  a write a DEBUG launch with `-showTodosV1` kept for a hub forgotten without it goes only to that hub, and expires).
+  - **Sending.** The writes whose window ended go; the shown hub's every write goes at once when the app leaves the
+    foreground, under a background task that lasts until every send under way is answered. How an answer is read
+    (`TodoOutbox.outcome`): a 404 on a to-do's own route (`not_found` or `todo_not_found`; not the hub's `no_manager`)
+    is a to-do already gone, which is what a change to it comes to; nothing reached the hub (no connection made, no hub,
+    `assistant_offline`, 408, 425, 429, `delivered: "none"`) sends it again when the hub next answers a read; another
+    4xx is a refusal, dropped and said in a toast (a new to-do's with **Edit**, which reopens its sheet with what was
+    typed); anything else may have been done. A tick, Someday or a delete of unknown outcome is sent again, being the
+    same write twice, at most `TodoOutbox.tries` times, then said. A new to-do is never sent twice on its own: the hub
+    keeps no receipt for a create without images (`server/internal/hub/todo_receipts.go`), so one of unknown outcome,
+    or one the app was ended with while it was out, is "Not sure it was saved" until a read lists a to-do with its
+    title and notes made since (then the hub's row is its row), with Try Again and Remove.
+  - **Sent again.** A write the app was ended with, or one that could not reach the hub, goes once the hub answers a
+    read of the list, and only if its to-do's `updated_at` is still the one the list had at the tap (`Entry.base`):
+    one whose to-do changed meanwhile is let go, and said unless the to-do is already as it asked; one whose to-do is
+    gone is let go quietly. A change older than 12 hours, or a new to-do that never reached the hub after a week, is let
+    go.
+  - **Drawn until it shows.** The hub's answer is kept on disk as answered (never sent again) the moment it comes,
+    before the list is read again; the write stays until a read of the list begun after that answer has landed
+    (`TodoStore.readsBegun`, `hubAnswered(read:)`): until then the list draws it (the tick struck through, a new to-do
+    "Saving…", first in To do) and `TodoCountsSource` counts it (`TodoStore.V1.pending`: a deleted to-do out of every
+    number, one put in Someday counted there, a new one in To do), so the numbers and the rows never disagree. A change
+    that could not reach the hub says "Not on your hub yet" on line 2. Undo while a write is being sent draws it taken
+    back at once and sends its reverse once the hub has it; Undo on one the hub has, or may have, sends its reverse,
+    to the hub it was made on. A new to-do's own row takes the place of the one drawn for it in the same step, without
+    fading in. Today, Date… and Project are the to-do's plan, drawn at once and saved as its page saves it
+    (`reschedule`, `refile`); Today and Date… keep a timed due's time of day.
+  - **Offline.** While the titles say the hub is out of reach (`ConnectionStatus.shown`) the list keeps the last read,
+    under "Can't reach your hub · showing what was saved ‹time›", the time the hub last answered (`TodoStore.readAt`,
+    kept with the views at least once a minute); the line registers with `titleSaysLink()`, so the shell's pill stays
+    away. Tests: `TodoOutboxTests`, `TodosListWritesTests`, the UI suite's `testTickAndUndo`, `testSwipeSomeday`,
+    `testDeleteAndUndo` and `testOfflineIsSaidOnce` against `MOCK_TODO_VIEW=1`.
 - **Which page.** `TodosPlacePage` draws the V1 list while the gate is on, else today's `TodosView` (frozen), deciding
   once, when the page is made (`TodosPageChoice`): a hello that turns the gate on while To-dos is up (a manager that
   connects late), or while a to-do is pushed over it, never swaps it; the next time To-dos opens it is the V1 list. The
@@ -2431,6 +2476,14 @@ Like Telegram: network trouble shows no banner; **the page title becomes "small 
 - Placement (`ConnectionTitle` / `ConnectionLabel`): center of the navigation bar (`.principal`) in Agents (normally no title, title area empty), Inbox, and Settings › Machines;
   in the Persona tab, the name capsule below the avatar becomes the status (menu adds "Connection details"); the chat's expanded header keeps the session name but replaces the subtitle with status (like Telegram), while its collapsed small capsule is replaced entirely.
   Tap status for an explanation (`ConnectionDetails`: cause, last failure, seconds until retry, last connection, queued message count, "Retry now").
+- **Addresses in Connection Details** (#11390): under the explanation and its lines, **Addresses** lists one line per address the app tries for the
+  hub-level group, in the order tried (`HubRoute.candidates`: the center first, a hub's paired address before its added ones, then the addresses only the
+  mesh lists). Each line is the address, then what its last try came to as a `Chip` (**Answers**, **Certificate Not Trusted**, **Not Your Hub**,
+  **Couldn't Connect**, **Unknown**) and the time of the last try, bare beside it (VoiceOver says "Tried at <time>"); the address the socket is on says **In Use** (an outline `Chip`, as Settings › hub › Addresses),
+  and one not tried yet in this launch says "Not tried yet". What each word means, and where it comes from: `docs/operations/network.md` ("Client-added candidates", iOS).
+  The outcomes come only from tries the app makes anyway (no probe, timer or polling of its own) and are kept in memory (`HubAddressBoard`, `apple/Persona/App/HubAddressBoard.swift`);
+  the lines are worked out when a try ends, not in the details' `body`, which runs every second, and are drawn by their own view (`ConnectionAddresses`) with the address as their id.
+  The title keeps saying "Connecting…": nothing on the primary screens changes.
 - Offline actions:
   - **Send messages**: when unreachable, make no request; the bubble has a clock and "Sends automatically when connected" (tap the clock for "Retry now / Cancel send"); requests failing offline / on timeout also become waiting,
     with no error alert. After reconnect and "Updating…" completion, send automatically in composition order (for unopened chats, first fetch one page of latest messages; delivered ones appear in the transcript and are removed automatically).
@@ -2449,7 +2502,8 @@ Like Telegram: network trouble shows no banner; **the page title becomes "small 
     with a blue "Can't reach the hub / No network; that action did not take effect" notice (at most one per 4 seconds), not a red error.
   - Offline / unreachable-hub errors (`Error.isOffline`) are hidden in pages like timeouts (`Error.shown` is nil); background refresh and history-loading failures show nothing, as the title already explains it.
     The watch lacks this title and keeps showing errors as before.
-- Debugging: `-showConnection waiting|connecting|updating` pins a state; add `-openConnectionDetails YES` to open the explanation;
+- Debugging: `-showConnection waiting|connecting|updating` pins a state; add `-openConnectionDetails YES` to open the explanation, and
+  `-showConnectionAddresses YES` to give the hub-level group's addresses every outcome in turn, made up and kept (screenshots; real tries are not taken while it is on);
   `-simulateOffline YES` makes NWPathMonitor treat the network as unavailable (the simulator always has the Mac's network). Mock slow / offline switches are in `docs/operations/testing.md`.
 
 <a id="ssh-隧道直连不通时的后备891"></a>
@@ -2981,6 +3035,7 @@ Requested 2026-11-17 (#9508): a screenshot of a chat carries Persona's brand whe
 
 - **Where**: the Assistant chat's bar in all its forms (the shell's row, the Sidebar layout's drawer row, the iPad's bar; `AssistantTopBar`) and the Agent chat's header, open and folded (`ChromeHeader` in `ChatView`). Not the iPhone Duo's side rail or side-bar header, and not Inbox, Knowledge or Settings: those use the system's navigation bar, which cannot be moved into the layer below, and the Inbox mostly shows other people's messages.
 - **How** (`apple/Persona/DesignSystem/ScreenshotBanner.swift`): iOS leaves a secure text field's drawing view out of screenshots, screen recordings and mirroring (AirPlay and the like) and keeps it on screen: what keeps passwords out of pictures. `screenshotBanner` hosts the bar in its own `UIHostingController` inside that view, taken from a `UITextField` with `isSecureTextEntry` (public API only: the field's first subview), and draws the banner's hosting controller under it, both over an opaque backdrop that carries on to the screen's edges where the bar meets them (behind the status bar). On screen the bar covers the banner; in a capture the bar's layer is gone and the banner shows. The field stays alive: switching its `isSecureTextEntry` turns the layer off and on (`ScreenshotBanner.beginReveal()` / `endReveal()`). No such view on some future system: the bar is drawn as before and screenshots show it (`ScreenshotBanner.isAvailable`, which also hides the switch).
+- **The name**: the one the top bar says for whose page it is (`AppModel.assistantTitleName`, #12243): the named manager on a hub with several, else the current assistant (with one too, as the sidebar's head and the bar show it), else the persona's name; in the Assistant chat the bar hands its own (another assistant's conversation names its own; a side conversation's banner keeps the assistant's name, not the conversation's title). Before #12243 the banner read `assistantShownName`, which keeps the persona's name with one assistant, so a screenshot said "Persona" (cut to "Pers…" on a narrow display) where the screen said the assistant's name.
 - **The banner**: `PersonaBrandLockup` `.banner` (`PersonaBannerRow`): `PersonaAvatar` at `Theme.Size.avatarM` and the name in `Theme.Font.display` at the leading page margin, so the avatar sits where the bar's own face is; at the trailing margin GitHub's mark (`BrandMark`, `Theme.Brand.github`: Primer Octicons' `mark-github` as published, a one-color template) and `PersonaBrandLockup.repository` (`nwverse/persona`, spelled out nowhere else in the app) in `Theme.Font.title`, mark and words in the secondary color, centred on the name. The slim row has the name in `heading` and the repository in `secondaryStrong`. In the bar's row of buttons (the Assistant chat) or centred in the header (the Agent chat). It grows with the text size to the bar's cap (`Theme.Shell.topBarLargestTypeSize`). The repository is why the banner is there, so it goes last: `ViewThatFits` over the large row with it, the slim row with it (a folded header, the bar's largest text sizes, the narrowest iPad split), and the slim row with the mark alone. In a row with the repository the name asks for no more than its first two characters and the ellipsis, so a long name is cut at its tail and the repository stays whole; the mark stands alone only where not even the slim row has that much room. A picture, never a link: it takes no touches. The same component signs exported pictures (`.mark`, #9468, still with "(Persona)").
 - **On screen** the bar is unchanged at rest; what scrolls under its strip no longer shows faintly through, since the backdrop under the bar is opaque: the page's color down to where the Assistant bar's fog starts to fade (`AssistantTopBar.fogSolid`, then out over `Theme.Space.m`; `BarFog` under both carries the fade on as before), the page's color and the header's material under the Agent header (the banner over the page's color alone, so no second blur). The bar takes the touches in its strip, as a hosting view does (a pass-through also lost the bar's own buttons, measured on a prototype).
 - **Settings › Appearance & Display › Persona Banner in Screenshots** (`ui.screenshotBanner`, on by default, this device only). Off, the bar is drawn as it always was, on screen and in screenshots.
