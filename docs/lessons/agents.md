@@ -136,10 +136,19 @@ error body that could echo private text or credentials.
 ## Supervised handoffs and runtime children (#5751)
 
 Codex sidecar parent/root metadata establishes display ancestry, not a to-do link. A standalone `create_thread` can
-have no parent metadata at all. Use `task_spawn` for a separate session on the current supervised task; never work
-around missing task tools by extracting the hub token. Codex's shared daemon may carry an old pane environment, so
+have no parent metadata at all. Use `task_spawn` for a separate session on the current supervised task; keep the handoff to one bounded subtask and one layer, and never work
+around missing task tools by extracting the hub token. A spawned child must report back instead of spawning again. Codex's shared daemon may carry an old pane environment, so
 its per-turn `CODEX_THREAD_ID` must resolve unambiguously in the node's registry before a CLI handoff. Unknown
 threads must not fall back to whichever task an inherited pane happens to run.
+
+A fallback that is only right when something is absent must not fire on "unknown" (#11999). `planFromRow` keeps
+whatever decodes (a wrongly typed prompt becomes `""`), and `currentPlanAssignment` once returned the same
+`errTaskNotInPlan` for absence and for two plans binding the to-do. A check that compares against the current
+assignment reads it with `strictPlanAssignment` and handles `errTaskPlanAmbiguous` before `errTaskNotInPlan`.
+A fast path must not skip the check it short-circuits: the direct `Todo.PlanID` match used to return before any other
+started plan binding the same to-do was counted, so the strict resolver scans the history even after a direct match.
+A started session acts before session.start answers: the node sends its first prompt first and RPCs run in parallel,
+so a child linked by its workspace in that window passed the depth check. Record ancestry before the start, not after.
 
 The task handoff footer must describe the Agent that will actually run (#9846). Fit and health detours can change
 both machine and family. Source matters too: a Codex terminal has no injected Persona MCP server, while Paseo's

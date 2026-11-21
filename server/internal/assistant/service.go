@@ -93,6 +93,8 @@ type Service struct {
 	leaderStarts atomic.Int64
 	// mcpChanges wakes tool discovery when task membership or leader rights change.
 	mcpChanges mcpToolChanges
+	// spawns: task_spawn starts whose child is not linked yet, and sessions that may be such a child (task_spawn_window.go).
+	spawns spawnStarts
 	// ext is the extensions' tools in this process (extensions.go SetExtensions); nil: none (tests).
 	ext ExtensionTools
 	// startDefaultsFor answers a task start's defaults from the extension layer (start_defaults.go); nil: no defaults.

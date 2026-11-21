@@ -374,6 +374,11 @@ func (s *Service) savePlan(ctx context.Context, p *TaskPlan) error {
 var errPlanNotFound = errors.New("plan not found")
 
 func (s *Service) loadPlan(ctx context.Context, id string) (*TaskPlan, error) {
+	return s.readPlan(ctx, id, false)
+}
+
+// readPlan is loadPlan. Strict, a stored plan whose tasks do not decode is an error instead of the tasks that did.
+func (s *Service) readPlan(ctx context.Context, id string, strict bool) (*TaskPlan, error) {
 	st := s.store()
 	if st == nil {
 		s.tasks.mu.Lock()
@@ -393,7 +398,11 @@ func (s *Service) loadPlan(ctx context.Context, id string) (*TaskPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	return planFromRow(*row), nil
+	p, err := decodePlanRow(*row)
+	if err != nil && strict {
+		return nil, err
+	}
+	return p, nil
 }
 
 // conversationPlans reads persisted plans, or snapshots the storeless plans, without relying on list order.
@@ -421,10 +430,20 @@ func (s *Service) conversationPlans(ctx context.Context, conversation string) ([
 	return plans, nil
 }
 
+// planFromRow keeps whatever tasks decode. A caller that must know the stored assignment uses decodePlanRow.
 func planFromRow(row db.TaskPlanRow) *TaskPlan {
-	p := &TaskPlan{ID: row.ID, Conversation: row.Conversation, State: row.State, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
-	_ = json.Unmarshal(row.Tasks, &p.Tasks)
+	p, _ := decodePlanRow(row)
 	return p
+}
+
+// decodePlanRow is planFromRow that also reports tasks that did not decode. The plan then holds only part of what is
+// stored (a field of the wrong type is left empty), so it must not stand in for the stored assignment.
+func decodePlanRow(row db.TaskPlanRow) (*TaskPlan, error) {
+	p := &TaskPlan{ID: row.ID, Conversation: row.Conversation, State: row.State, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	if err := json.Unmarshal(row.Tasks, &p.Tasks); err != nil {
+		return p, fmt.Errorf("task plan %s does not decode: %w", row.ID, err)
+	}
+	return p, nil
 }
 
 // movePlan moves p from state from to its State with its Tasks; false when someone else moved it first.

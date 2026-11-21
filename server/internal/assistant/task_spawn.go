@@ -38,6 +38,35 @@ func (s *Service) taskSpawn(ctx context.Context, machine, session string, args j
 	if !ok {
 		return "", errors.New("task_spawn requires an active Agent on an open supervised task; ask your supervisor to assign one")
 	}
+	caller, ok := activeTodoAgent(t, machine, session)
+	if !ok {
+		return "", errors.New("task_spawn requires an active Agent on an open supervised task; ask your supervisor to assign one")
+	}
+	if caller.Source == sourceSpawned {
+		return "", errors.New("task_spawn allows one supervised handoff layer: this session is already a spawned child; finish the current bounded subtask and report to your supervisor, or ask your supervisor for help; do not retry")
+	}
+	// A child whose parent's start has not answered yet may already run, linked by its workspace (task_spawn_window.go).
+	if s.spawnAncestryUnknown(machine, session) {
+		return "", errors.New("task_spawn allows one supervised handoff layer: this session may be a child that another task_spawn on this computer is still starting, so it cannot spawn; nothing was started; finish the current bounded subtask and report to your supervisor, or ask your supervisor for help; do not retry")
+	}
+	// Todo.Notes stands in only when no started plan binds the to-do. A failed read, a stored plan that does not
+	// decode, or two plans binding it leave the current assignment unknown, so nothing starts rather than comparing
+	// against historical notes. This one strict read also supplies the assignment's permission and model below.
+	plan, index, planErr := s.strictPlanAssignment(ctx, t)
+	var parentAssignment string
+	switch {
+	case planErr == nil:
+		parentAssignment = plan.Tasks[index].Prompt
+	case errors.Is(planErr, errTaskPlanAmbiguous):
+		return "", errors.New("task_spawn cannot tell this task's current assignment: more than one plan holds it; nothing was started; ask your supervisor, do not retry")
+	case errors.Is(planErr, errTaskNotInPlan):
+		parentAssignment = t.Notes
+	default:
+		return "", errors.New("task_spawn cannot read this task's current assignment; nothing was started; ask your supervisor, do not retry")
+	}
+	if strings.TrimSpace(parentAssignment) == a.Prompt {
+		return "", errors.New("task_spawn requires a different bounded subtask: the prompt must narrow the scope, say what not to do, and name the evidence to return rather than copy the parent assignment; ask your supervisor; do not retry")
+	}
 	parent, ok := s.session(ctx, machine, session)
 	if !ok || parent.Assistant || parent.Cwd == "" || parent.Launcher == "" {
 		return "", errors.New("Persona cannot verify this Agent's directory and launcher; ask your supervisor, nothing was started")
@@ -53,10 +82,8 @@ func (s *Service) taskSpawn(ctx context.Context, machine, session string, args j
 		}
 	}
 	var assignment *PlanTask
-	if assigned {
-		if p, i, err := s.currentPlanAssignment(ctx, t); err == nil && p.Tasks[i].Machine == machine {
-			assignment = &p.Tasks[i]
-		}
+	if assigned && planErr == nil && plan.Tasks[index].Machine == machine {
+		assignment = &plan.Tasks[index]
 	}
 	if mode == "" {
 		mode = "plan"
@@ -78,6 +105,14 @@ func (s *Service) taskSpawn(ctx context.Context, machine, session string, args j
 	// A caller disconnecting must not abandon a start before its ownership is recorded.
 	startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
+	// Before the node sees the start: until the child is linked as spawned, a session newly linked on this computer
+	// may be the child and gets no task_spawn.
+	inFlight := s.beginSpawnStart(machine)
+	defer func() {
+		if inFlight != nil { // the child was not linked: whatever was linked meanwhile stays suspect
+			s.endSpawnStart(inFlight, false)
+		}
+	}()
 	mid, sid, err := s.startTaskAgent(startCtx, &child, false)
 	// This path is not wrapped by runPlanTaskStart, so release the gate's claim itself once the child is linked or the
 	// start has failed for good (by then the ledger carries the linked agent, or nothing runs).
@@ -99,6 +134,8 @@ func (s *Service) taskSpawn(ctx context.Context, machine, session string, args j
 		stopErr := s.call(stopCtx, mid, deviceSessionStop, map[string]any{"session_id": sid}, nil)
 		return "", fmt.Errorf("child %s/%s was not linked: %w; stop result: %v; tell your supervisor", mid, sid, err, stopErr)
 	}
+	s.endSpawnStart(inFlight, true)
+	inFlight = nil
 	t, ok = s.ensureSupervisor(startCtx, t.ID)
 	if !ok {
 		return "", fmt.Errorf("child %s/%s was linked, but the task closed or lost its supervisor; tell your supervisor", mid, sid)
@@ -150,14 +187,28 @@ func (s *Service) taskSpawnModel(ctx context.Context, machine string, parent pro
 	return match
 }
 
+func activeTodoAgent(t Todo, machine, session string) (TodoAgent, bool) {
+	for _, agent := range t.Agents {
+		if agent.MachineID == machine && agent.SessionID == session && agent.active() {
+			return agent, true
+		}
+	}
+	return TodoAgent{}, false
+}
+
 func (s *Service) spawnTask(ctx context.Context, machine, session string) (Todo, bool) {
 	t, ok := s.taskOf(ctx, machine, session)
 	return t, session != "" && ok && !t.Cancelled() && t.Supervision != nil && t.Supervision.Supervisor != ""
 }
 
 func (s *Service) spawnTools(ctx context.Context, machine, session string) []proto.Tool {
-	if _, ok := s.spawnTask(ctx, s.canonical(machine), session); ok {
-		return toolsNamed([]string{"task_spawn"})
+	t, ok := s.spawnTask(ctx, s.canonical(machine), session)
+	if !ok {
+		return nil
 	}
-	return nil
+	agent, ok := activeTodoAgent(t, s.canonical(machine), session)
+	if !ok || agent.Source == sourceSpawned || s.spawnAncestryUnknown(s.canonical(machine), session) {
+		return nil
+	}
+	return toolsNamed([]string{"task_spawn"})
 }
