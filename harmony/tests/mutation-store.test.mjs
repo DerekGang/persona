@@ -586,3 +586,27 @@ test('an extension without sign-in omits auth state without reporting a detail f
   assert.equal(!!page.error,status!==404&&status!==405);
  }
 });
+
+test('new Agent uses the selected host worktree and keeps a directory-only start compatible', async () => {
+  const {ResourceRow} = await import('../entry/src/main/ets/models/Wire.ets');
+  const machine = ResourceRow.from({id: 'mac', manager: 'work', online: true}, 'machine');
+  const bodies = [];
+  const transport = {request: async (path, method, payload) => {
+    assert.equal(path, '/api/v1/sessions');
+    assert.equal(method, 'POST');
+    bodies.push(JSON.parse(payload));
+    return JSON.stringify({session: {session_id: 'created', machine_id: 'mac'}});
+  }};
+  const repo = new HubRepository({managerId: 'work', hubId: 'home'}, undefined, () => {}, 'work', transport);
+  const created = await repo.createAgent('Synthetic task', machine, '/repo/feature', 'codex', 'a', '', () => true, 'wt-01', 'paseo');
+  assert.equal(created.session, 'created');
+  assert.deepEqual(bodies[0], {machine_id: 'mac', cwd: '/repo/feature', launcher: 'codex', prompt: 'Synthetic task', workspace_id: 'wt-01', host: 'paseo'});
+  await repo.createAgent('Synthetic task', machine, '/repo', '', 'b');
+  assert.equal('workspace_id' in bodies[1], false);
+  assert.equal('host' in bodies[1], false);
+  assert.equal('model' in bodies[1], false);
+  assert.equal('effort' in bodies[1], false);
+  await repo.createAgent('Synthetic task', machine, '/repo/feature', 'codex', 'c', '', () => true, 'wt-01', 'paseo', 'test-model', 'high');
+  assert.deepEqual(bodies[2], {machine_id:'mac', cwd:'/repo/feature', launcher:'codex', prompt:'Synthetic task',
+    workspace_id:'wt-01', host:'paseo', model:'test-model', effort:'high'});
+});

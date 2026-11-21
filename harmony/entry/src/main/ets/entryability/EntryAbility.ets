@@ -31,6 +31,7 @@ export default class EntryAbility extends UIAbility {
   private receiveWant(want: Want): void {
     const uri = want.uri || '';
     if (uri.length <= 16384 && isPairingLink(uri)) client.pairingLink = uri;
+    else if (!uri && want.action !== NOTIFICATION_ACTION && want.parameters?.['personaPage'] === 'projects') client.projectsRequested = true;
   }
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     nativeEnvironment.update(this.context.config);

@@ -23,7 +23,7 @@ export class Tokens {
   static readonly popupWidth: number = 280;
   static readonly headerSegment: number = 192;
   static readonly headerWideSegment: number = 176;
-  static readonly minimumInput: number = 160;
+  static readonly minimumInput: number = 136;
   static readonly hairline: number = 1;
   static readonly fine: number = 4;
   static readonly gap: number = 8;

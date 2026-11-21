@@ -578,3 +578,46 @@ test('Knowledge detail immutable leaves key by full content while minutes select
   assert.ok(page.includes("this.selectedActions.includes(Wire.text(action, 'id'))"));
   assert.equal(page.split('JSON.stringify([index, line])').length - 1, 2, 'search snippets and timeline lines keep full-line identity');
 });
+
+test('All Meetings combines imported and recorded entries by meeting id, merges tags, and preserves the original source', async () => {
+  const e=fixture({request({path}) {
+    if(path==='/api/v1/kb/meetings') return {items:[
+      {id:'cal-1',kind:'meetings',name:'Calendar review',updated:'2026-01-03T00:00:00Z',source:'calendar'},
+      {id:'standup',kind:'meetings',name:'Daily',updated:'2026-01-01T00:00:00Z'}],tags:['team','planning']};
+    if(path==='/api/v1/kb/recordings')return {items:[
+      {id:'rec-1',kind:'recordings',name:'Recorded review',meeting_id:'cal-1',updated:'2026-01-04T00:00:00Z'}],tags:['team','audio']};
+  }});
+  const w=new KnowledgeWorkspace();
+  await w.open(e.client,undefined,[],'meetings');
+  assert.deepEqual(w.entries.map(r=>[r.path,r.id]),[['recordings','rec-1'],['meetings','standup']]);
+  assert.deepEqual(w.tags,['team','planning','audio']);
+  assert.equal((await w.openEntry(w.entries[0])).data().imported_meeting.source,'calendar');
+  assert.ok(e.shared.calls.every(c=>c.manager==='work'&&c.method==='GET'));
+});
+
+test('Meetings search excludes unrelated knowledge leads and retains independent filter history', async()=>{
+  const e=fixture({request({path}) {
+    if(path.startsWith('/api/v1/kb-search?'))return {results:['projects','recordings','meetings'].map(kind=>({entry:{kind,id:kind,name:kind},count:1,hits:[{line:'hit'}]}))};
+    return {items:[],tags:[]};
+  }});
+  const w=new KnowledgeWorkspace();await w.open(e.client,undefined,[],'recordings');
+  w.setQuery('review');await w.refresh();
+  assert.deepEqual(w.results.map(hit=>hit.entry.path),['recordings','meetings']);
+  await flush();w.hide();
+  const general=new KnowledgeWorkspace();await general.open(e.client);
+  assert.equal(general.query,'');assert.equal(general.kind,'projects');
+  await w.open(e.client,undefined,[],'recordings');assert.equal(w.query,'review');w.hide();
+});
+
+test('a late meetings response cannot replace a different active category', async()=>{
+  const gate=deferred(),requested=deferred();
+  const e=fixture({request({path}) {
+    if(path==='/api/v1/kb/meetings'){ requested.resolve();return gate.promise; }
+    if(path==='/api/v1/kb/recordings')return {items:[],tags:[]};
+    if(path==='/api/v1/kb/topics')return {items:[{kind:'topics',name:'Local storage',id:'storage'}],tags:['notes']};
+  }});
+  const w=new KnowledgeWorkspace();const opening=w.open(e.client,undefined,[],'meetings');await requested.promise;
+  w.setKind('topics');await w.refresh();
+  gate.resolve({items:[{kind:'meetings',id:'late',name:'old'}],tags:['old']});await opening;
+  assert.equal(w.kind,'topics');assert.deepEqual(w.entries.map(r=>r.id),['storage']);assert.deepEqual(w.tags,['notes']);
+});

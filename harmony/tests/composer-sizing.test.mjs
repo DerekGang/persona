@@ -51,12 +51,32 @@ test('compact action gaps stay within one physical pixel at each native device d
   }
 });
 
-test('focus, a retained draft, attachments and accessibility sizes keep the existing expanded layout', () => {
-  for (const change of [v => v.fieldFocused = true, v => v.model.draft = '你',
-    v => v.attachments.attachments.push({}), v => v.environment.fontScale = 1.5,
-    v => v.composerWidth = 300]) {
-    const v = fixture(); change(v);
+test('focus, a restored draft, a quote or an attachment opens the editing card independently', () => {
+  for (const change of [
+    v => { v.fieldFocused = true; },
+    v => { v.model.draft = '你好'; },
+    v => { v.model.sourceContext = { title: '引用' }; },
+    v => { v.attachments.attachments.push({ id: 'file' }); }]) {
+    const v = fixture();
+    change(v);
     assert.equal(v.expandedComposer(), true);
     assert.equal(v.composerColumns(), 12);
+  }
+});
+
+test('a blurred empty composer returns to one line, with enough space for the keyboard and both toolbars', () => {
+  const v = fixture();
+  v.fieldFocused = true;
+  assert.equal(v.expandedComposer(), true);
+  v.fieldFocused = false;
+  assert.equal(v.expandedComposer(), false);
+
+  for (const change of [
+    v => { v.environment.fontScale = 1.5; },
+    v => { v.composerWidth = 300; }]) {
+    const narrow = fixture();
+    change(narrow);
+    assert.equal(narrow.expandedComposer(), true);
+    assert.equal(narrow.composerColumns(), 12);
   }
 });

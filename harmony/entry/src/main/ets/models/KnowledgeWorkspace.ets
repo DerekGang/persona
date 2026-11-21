@@ -2,7 +2,7 @@ import type { ClientModel } from './ClientModel';
 import { ResourceRow, Wire } from './Wire';
 import type { HubRepository } from './HubRepository';
 
-const KNOWLEDGE_KINDS: string[] = ['projects', 'chats', 'people', 'docs', 'meetings', 'events', 'recordings'];
+const KNOWLEDGE_KINDS: string[] = ['projects', 'topics', 'chats', 'people', 'docs', 'meetings', 'events', 'recordings'];
 
 class KnowledgeOwner {
   root: ClientModel;
@@ -87,6 +87,7 @@ export class KnowledgeWorkspace {
   private revision: number = 0;
   private readRevision: number = 0;
   private listRows: ResourceRow[] = [];
+  private recordingPage: boolean = false;
   private searchTimer: number = -1;
   private draftWrite: Promise<void> = Promise.resolve();
   private momentTarget: string = '';
@@ -95,7 +96,7 @@ export class KnowledgeWorkspace {
   private detailEditorBaseline: number = 0;
   private detailInitialized: boolean = false;
 
-  async open(client: ClientModel, row?: ResourceRow, seed: ResourceRow[] = []): Promise<void> {
+  async open(client: ClientModel, row?: ResourceRow, seed: ResourceRow[] = [], initialKind: string = ''): Promise<void> {
     const revision = ++this.revision, readRevision = ++this.readRevision;
     if (this.searchTimer !== -1) clearTimeout(this.searchTimer);
     this.searchTimer = -1;
@@ -106,6 +107,7 @@ export class KnowledgeWorkspace {
     this.detailInitialized = false;
     this.detail = {}; this.matches = []; this.agents = []; this.momentText = ''; this.momentTarget = ''; this.results = []; this.entries = [];
     this.agentDraft = ''; this.agentLauncher = ''; this.directoryTargets = []; this.targetMachines = []; this.selectedDirectory = 0;
+    this.recordingPage = !row && initialKind === 'recordings';
     this.listRows = seed.slice();
     if (row) {
       this.selected = this.copyRow(row);
@@ -119,11 +121,15 @@ export class KnowledgeWorkspace {
     try {
       owner = await this.capture(client, this.owner, row ? row.key() : 'list');
       if (!this.current(owner, revision) || !this.currentRead(revision, readRevision)) return;
-      const saved = Wire.parse(await owner.client.loadView('knowledge-workspace'));
+      const saved = Wire.parse(await owner.client.loadView(this.recordingPage ? 'knowledge-recordings' : 'knowledge-workspace'));
       if (!this.current(owner, revision) || !this.currentRead(revision, readRevision)) return;
       if (!row) {
-        this.kind = KNOWLEDGE_KINDS.includes(Wire.text(saved, 'kind')) ? Wire.text(saved, 'kind') : this.kind;
-        this.tag = Wire.text(saved, 'tag'); this.query = Wire.text(saved, 'query');
+        if (KNOWLEDGE_KINDS.includes(initialKind)) { this.kind = initialKind; this.tag = ''; this.query = this.recordingPage ? Wire.text(saved, 'query') : ''; }
+        else {
+          this.kind = KNOWLEDGE_KINDS.includes(Wire.text(saved, 'kind')) ? Wire.text(saved, 'kind') : this.kind;
+          if (this.kind === 'recordings') this.kind = 'meetings';
+          this.tag = Wire.text(saved, 'tag'); this.query = Wire.text(saved, 'query');
+        }
       }
       if (row) {
         await this.initializeDetail(owner, revision, row, readRevision);
@@ -391,11 +397,41 @@ export class KnowledgeWorkspace {
     if (query) {
       await this.loadSearch(owner, revision, readRevision, query); return;
     }
-    const path = '/api/v1/kb/' + segment(kind) + (tag ? '?tag=' + segment(tag) : '');
-    const result = await owner.repository.call(path);
-    if (!this.current(owner, revision) || !this.currentRead(revision, readRevision)) return;
-    const rows = Wire.rows(result, 'items').map((data: Record<string, Object>) => this.entryRow(data, owner.manager, kind));
-    this.entries = rows; this.tags = Wire.strings(result, 'tags'); this.error = '';
+    const suffix = tag ? '?tag=' + segment(tag) : '';
+    if (kind === 'meetings' || this.recordingPage) {
+      const both = await Promise.all([owner.repository.call('/api/v1/kb/meetings' + suffix),
+        owner.repository.call('/api/v1/kb/recordings' + suffix)]);
+      if (!this.current(owner, revision) || !this.currentRead(revision, readRevision)) return;
+      const imported = Wire.rows(both[0], 'items').map((item: Record<string,Object>) => this.entryRow(item,owner.manager,'meetings'));
+      const recordings = Wire.rows(both[1], 'items').map((item: Record<string,Object>) => this.entryRow(item,owner.manager,'recordings'));
+      const replaced = new Set<string>(), byMeeting = new Map<string,ResourceRow>();
+      for (const row of imported) {
+        const key = JSON.stringify([row.manager,row.id]);
+        if (!byMeeting.has(key)) byMeeting.set(key,row);
+      }
+      for (const row of recordings) {
+        const entry = row.data(), meetingId = Wire.text(entry,'meeting_id');
+        const key = JSON.stringify([row.manager,meetingId]), original = meetingId ? byMeeting.get(key) : undefined;
+        if (!original) continue;
+        replaced.add(key);
+        entry['imported_meeting'] = original.data();
+        row.raw = JSON.stringify(entry);
+      }
+      const merged = imported.filter((row:ResourceRow) => !replaced.has(JSON.stringify([row.manager,row.id]))).concat(recordings);
+      const when = new Map<ResourceRow,number>();
+      for (const row of merged) {
+        const stamp = Date.parse(Wire.text(row.data(),'updated'));
+        when.set(row,Number.isFinite(stamp) ? stamp : 0);
+      }
+      this.entries = merged.sort((a:ResourceRow,b:ResourceRow) => (when.get(b) || 0) - (when.get(a) || 0));
+      this.tags = Array.from(new Set<string>(Wire.strings(both[0],'tags').concat(Wire.strings(both[1],'tags'))));
+    } else {
+      const result = await owner.repository.call('/api/v1/kb/' + segment(kind) + suffix);
+      if (!this.current(owner, revision) || !this.currentRead(revision, readRevision)) return;
+      this.entries = Wire.rows(result,'items').map((data:Record<string,Object>) => this.entryRow(data,owner.manager,kind));
+      this.tags = Wire.strings(result,'tags');
+    }
+    this.error = '';
   }
 
   private async loadSearch(owner: KnowledgeOwner, revision: number, readRevision: number, query: string): Promise<void> {
@@ -408,7 +444,7 @@ export class KnowledgeWorkspace {
       hit.hits = Wire.rows(data, 'hits').map((item: Record<string, Object>) => Wire.text(item, 'line'));
       return hit;
     });
-    this.results = hits; this.error = '';
+    this.results = this.recordingPage ? hits.filter((hit:KnowledgeSearchHit) => ['meetings','recordings'].includes(hit.entry.path)) : hits; this.error = '';
   }
 
   private async initializeDetail(owner: KnowledgeOwner, revision: number, row: ResourceRow, readRevision: number): Promise<void> {
@@ -491,7 +527,7 @@ export class KnowledgeWorkspace {
     if (!client) return;
     const scope = this.viewScope;
     try {
-      await client.saveView('knowledge-workspace', JSON.stringify(objectPayload(['kind', 'tag', 'query'], [this.kind, this.tag, this.query])));
+      await client.saveView(this.recordingPage ? 'knowledge-recordings' : 'knowledge-workspace', JSON.stringify(objectPayload(['kind', 'tag', 'query'], [this.kind, this.tag, this.query])));
       if (this.revision !== revision || this.viewScope !== scope || this.client !== client) return;
     } catch (_) { if (this.revision === revision) this.error = 'knowledge_storage_unavailable'; }
   }
