@@ -58,8 +58,11 @@ func (n *Node) assistantSegment(ctx context.Context, method string, raw json.Raw
 					return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
 				}
 			}
-			if h, _, _ := n.runtimes.belongs(id); h != nil && n.runtimeStatus(h, id) == proto.StatusWorking {
-				return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+			if h, _, _ := n.runtimes.belongs(id); h != nil {
+				status := n.runtimeStatus(h, id)
+				if status == proto.StatusWorking || status == proto.StatusBlocked {
+					return nil, refusal(assistantwire.CodeConversationBusy, i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_busy"), nil)
+				}
 			}
 			n.cancelAssistantRecovery(id)
 		}

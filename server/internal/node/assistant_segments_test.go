@@ -3,6 +3,8 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 	"os"
 	"path/filepath"
@@ -65,5 +67,30 @@ func TestSegmentPreparationIsEmptyAndReceiptedAndRetirementIsReversible(t *testi
 	data, _ := json.Marshal(answer)
 	if !strings.Contains(string(data), `"unknown":true`) {
 		t.Fatalf("missing receipt was treated as safe to retry: %s", data)
+	}
+}
+
+func TestSegmentRetirementWaitsForRuntimeApprovalToSettle(t *testing.T) {
+	n, hub := runtimeNode(t)
+	assistantHub(hub)
+	host := dialRuntime(t, n, assistantRuntimeHello())
+	id := startedAssistant(t, n, host)
+	for _, status := range []string{proto.StatusBlocked, proto.StatusIdle} {
+		if err := host.peer.Notify("runtime.sessions", map[string]any{"sessions": []proto.Session{{SessionID: id, Status: status}}}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "runtime status", func() bool { return listed(t, n)[id].Status == status })
+		_, err := nodeCall(t, n, "assistant.segment.retire", map[string]any{"session_id": id})
+		if status == proto.StatusBlocked {
+			var refused *rpc.Error
+			if !errors.As(err, &refused) || refused.Code != assistantwire.CodeConversationBusy {
+				t.Fatalf("pending approval was retired: %v", err)
+			}
+			if st, _ := n.state.get(id); st.SegmentRetired {
+				t.Fatal("busy refusal changed authority")
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
