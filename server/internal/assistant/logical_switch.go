@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -367,7 +369,7 @@ func (s *Service) advanceLogicalConversation(ctx context.Context, st logicalSwit
 				method = "assistant.segment.prepare"
 			}
 		}
-		params := map[string]any{"operation_id": op.OperationID, "launcher": p.Launcher, "model": p.Model, "effort": p.Effort, "permission_mode": p.PermissionMode, "is_main": c.SessionID == s.settings(ctx).Main}
+		params := map[string]any{"operation_id": logicalNodeOperation(c, op.OperationID), "launcher": p.Launcher, "model": p.Model, "effort": p.Effort, "permission_mode": p.PermissionMode, "is_main": c.SessionID == s.settings(ctx).Main}
 		if method == "assistant.segment.prepare" {
 			row, _ := s.session(ctx, c.MachineID, c.SessionID)
 			cwd, err := s.prepareSpace(ctx, p.MachineID, row.Space)
@@ -680,4 +682,11 @@ func waitLogicalSummary(ctx context.Context, run func() (assistantwire.ModelComp
 		case <-timer.C:
 		}
 	}
+}
+
+// Node receipts are scoped by logical identity as well as the public operation ID.
+func logicalNodeOperation(c *db.LogicalConversation, operation string) string {
+	data, _ := json.Marshal([3]string{c.MachineID, c.SessionID, operation})
+	digest := sha256.Sum256(data)
+	return "segment-" + hex.EncodeToString(digest[:])
 }

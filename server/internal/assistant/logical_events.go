@@ -163,6 +163,10 @@ func (s *Service) logicalEmit(machine, event string, value any) {
 // Rebind subscriptions after the committed epoch, including channels' follows.
 // A zero-width bridge preserves the shared integer boundary for an idle target.
 func (s *Service) logicalRebind(ctx context.Context, c *db.LogicalConversation) {
+	if c == nil {
+		return
+	}
+	ctx = context.WithValue(ctx, logicalTransportKey{}, nil)
 	s.logicalChanged()
 	if publisher, ok := s.physicalDevices().(interface{ ReportState() }); ok {
 		publisher.ReportState()
@@ -170,6 +174,14 @@ func (s *Service) logicalRebind(ctx context.Context, c *db.LogicalConversation) 
 	a, ok := c.Active()
 	if !ok {
 		return
+	}
+	for _, retired := range c.Segments {
+		if retired.State == "retired" || retired.State == "abandoned" {
+			_, _ = s.logicalPhysical(ctx, retired.MachineID, "session.unwatch", map[string]any{"session_id": retired.SessionID})
+			if physical := s.physicalDevices(); physical != nil {
+				_ = physical.Follow(ctx, retired.MachineID, retired.SessionID, false)
+			}
+		}
 	}
 	if a.Ordinal == 1 && c.Epoch > 1 {
 		_, _ = s.logicalPhysical(ctx, a.MachineID, "assistant.segment.restore", map[string]any{"session_id": a.SessionID})
