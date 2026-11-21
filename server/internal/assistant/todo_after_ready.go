@@ -50,8 +50,9 @@ func normalizePRKey(u string) string {
 
 // todoDeliveryPRs returns the deduplicated set of bound delivery PR URLs for to-do t using local state only (no
 // network calls). Saved repository links with role "reference" are excluded even if they also appeared in t.PRURL or
-// t.PRs. ok is false on a transient store read error so callers fail closed rather than falsely satisfying a gate.
-func (s *Service) todoDeliveryPRs(ctx context.Context, t Todo) ([]string, bool) {
+// t.PRs. Any repository read error other than genuine not-found (including store_unavailable) is returned so callers
+// fail closed rather than falsely satisfying a merge prerequisite.
+func (s *Service) todoDeliveryPRs(ctx context.Context, t Todo) ([]string, error) {
 	refPRs := map[string]bool{}
 	seen := map[string]bool{}
 	var out []string
@@ -69,9 +70,9 @@ func (s *Service) todoDeliveryPRs(ctx context.Context, t Todo) ([]string, bool) 
 		set, err := s.savedTodoRepositories(ctx, t.ID)
 		if err != nil {
 			var problem repository.Problem
-			if !errors.Is(err, db.ErrTodoNotFound) && (!errors.As(err, &problem) || problem != "store_unavailable" && problem != "not_found") {
+			if !errors.Is(err, db.ErrTodoNotFound) && (!errors.As(err, &problem) || problem != "not_found") {
 				s.logf("todo_ready: read repositories for prerequisite %s: %v", t.ID, err)
-				return nil, false
+				return nil, err
 			}
 		} else {
 			for _, row := range set.Repositories {
@@ -104,7 +105,7 @@ func (s *Service) todoDeliveryPRs(ctx context.Context, t Todo) ([]string, bool) 
 		}
 		add(u)
 	}
-	return out, true
+	return out, nil
 }
 
 // todoObservedPRState finds the latest observed PR status for url on to-do t, matching exact or normalized URLs.
@@ -165,21 +166,23 @@ func todoObservedMergedPRs(t Todo, delivery []string) []string {
 //   - Under a RequireAcceptedAfter root, dep must be accepted and closed via task_review accepted.
 //   - Otherwise, dep is satisfied when it is done, or when it has at least one bound delivery PR and every bound
 //     delivery PR is observed as MERGED (merely opening or closing without merging never satisfies).
-func (s *Service) prerequisiteSatisfied(ctx context.Context, dep Todo, requireAccepted bool) (prompts.SupervisePrerequisite, bool) {
+//
+// A non-nil error indicates a transient store read failure while verifying an open prerequisite's delivery PRs.
+func (s *Service) prerequisiteSatisfied(ctx context.Context, dep Todo, requireAccepted bool) (prompts.SupervisePrerequisite, bool, error) {
 	if dep.Cancelled() || dep.StartError != "" {
-		return prompts.SupervisePrerequisite{}, false
+		return prompts.SupervisePrerequisite{}, false, nil
 	}
-	delivery, deliveryOK := s.todoDeliveryPRs(ctx, dep)
+	delivery, deliveryErr := s.todoDeliveryPRs(ctx, dep)
 	if requireAccepted {
 		if dep.DoneAt == nil || dep.DoneBy != db.DoneByReview || dep.Supervision == nil || dep.Supervision.state(dep) != reviewAccepted {
-			return prompts.SupervisePrerequisite{}, false
+			return prompts.SupervisePrerequisite{}, false, nil
 		}
 		return prompts.SupervisePrerequisite{
 			ID:        dep.ID,
 			Title:     dep.Title,
 			Reason:    "done",
 			MergedPRs: todoObservedMergedPRs(dep, delivery),
-		}, true
+		}, true, nil
 	}
 	if dep.DoneAt != nil {
 		return prompts.SupervisePrerequisite{
@@ -187,15 +190,18 @@ func (s *Service) prerequisiteSatisfied(ctx context.Context, dep Todo, requireAc
 			Title:     dep.Title,
 			Reason:    "done",
 			MergedPRs: todoObservedMergedPRs(dep, delivery),
-		}, true
+		}, true, nil
 	}
-	if !deliveryOK || len(delivery) == 0 {
-		return prompts.SupervisePrerequisite{}, false
+	if deliveryErr != nil {
+		return prompts.SupervisePrerequisite{}, false, deliveryErr
+	}
+	if len(delivery) == 0 {
+		return prompts.SupervisePrerequisite{}, false, nil
 	}
 	for _, u := range delivery {
 		f, ok := todoObservedPRState(dep, u)
 		if !ok || !strings.EqualFold(f.State, "merged") {
-			return prompts.SupervisePrerequisite{}, false
+			return prompts.SupervisePrerequisite{}, false, nil
 		}
 	}
 	return prompts.SupervisePrerequisite{
@@ -203,22 +209,22 @@ func (s *Service) prerequisiteSatisfied(ctx context.Context, dep Todo, requireAc
 		Title:     dep.Title,
 		Reason:    "pr_merged",
 		MergedPRs: delivery,
-	}, true
+	}, true, nil
 }
 
-// todoAfterReadyState checks whether candidate is an open, unstarted dependent to-do whose after prerequisites are
-// all satisfied, returning the ordered list of satisfied prerequisites with any merged PR URLs.
-func (s *Service) todoAfterReadyState(ctx context.Context, candidate Todo) ([]prompts.SupervisePrerequisite, bool) {
+// checkTodoAfterReady checks whether candidate is an open, unstarted dependent to-do whose after prerequisites are
+// all satisfied, distinguishing a transient store read failure (err != nil) from a genuinely unready/ineligible to-do.
+func (s *Service) checkTodoAfterReady(ctx context.Context, candidate Todo) ([]prompts.SupervisePrerequisite, bool, error) {
 	if candidate.DoneAt != nil || candidate.Cancelled() || candidate.StartError != "" ||
 		candidate.isConcern() || isAskTodo(candidate.ID) {
-		return nil, false
+		return nil, false, nil
 	}
 	afterIDs := cleanIDs(candidate.After)
 	if len(afterIDs) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	if todoHasActiveAgent(candidate) || s.requestStartPending(ctx, candidate) {
-		return nil, false
+		return nil, false, nil
 	}
 
 	s.todos.mu.RLock()
@@ -235,18 +241,41 @@ func (s *Service) todoAfterReadyState(ctx context.Context, candidate Todo) ([]pr
 	}
 	s.todos.mu.RUnlock()
 	if missing || len(deps) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	out := make([]prompts.SupervisePrerequisite, 0, len(deps))
 	for _, dep := range deps {
-		p, ok := s.prerequisiteSatisfied(ctx, dep, requireAccepted)
+		p, ok, err := s.prerequisiteSatisfied(ctx, dep, requireAccepted)
+		if err != nil {
+			return nil, false, err
+		}
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 		out = append(out, p)
 	}
-	return out, true
+	return out, true, nil
+}
+
+// todoAfterReadyState is checkTodoAfterReady when callers only need a boolean readiness verdict.
+func (s *Service) todoAfterReadyState(ctx context.Context, candidate Todo) ([]prompts.SupervisePrerequisite, bool) {
+	prereqs, ready, err := s.checkTodoAfterReady(ctx, candidate)
+	return prereqs, ready && err == nil
+}
+
+// clearSentTodoReady removes in-memory sent markers for sigTodoReady signals that were dropped before delivery, so a
+// later recovery or re-completion is never permanently suppressed until restart. Delivered wakes remain deduplicated
+// by assistant.todo_ready_wakes and assistant.supervision_dedup.
+func (s *Service) clearSentTodoReady(list []superviseSignal) {
+	b := &s.supervise
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, g := range list {
+		if g.Kind == sigTodoReady && b.sent[g.id()] == g.Key {
+			delete(b.sent, g.id())
+		}
+	}
 }
 
 // todoReadyKey is the canonical idempotency key for candidate's current after prerequisite set. It is independent of

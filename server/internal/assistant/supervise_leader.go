@@ -166,8 +166,8 @@ func (s *Service) digestTarget(ctx context.Context, cfg Settings, g superviseSig
 	if to == "" || to == cfg.Main || to == cfg.BackgroundSupervisor || !s.runtimeWithoutSupervisionPolicy(ctx, cfg.MachineID, to) {
 		return to
 	}
-	if g.Kind == sigFailed {
-		return cfg.Main // the background supervisor has no start remedies; keep the legacy fallback for a failed start
+	if g.Kind == sigFailed || g.Kind == sigTodoReady {
+		return cfg.Main // the background supervisor has no start remedies and never receives todo_ready wakes
 	}
 	own := s.ownSupervisor(cfg)
 	s.logf("supervise: %s runs on a runtime that cannot take supervision policy: its signal goes to %s", short(to), short(own))

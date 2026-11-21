@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,11 +18,29 @@ import (
 // todoReadyRepoStore augments memStore with in-memory todoRepositoryStore bindings for offline delivery-role tests.
 type todoReadyRepoStore struct {
 	*memStore
+	mu    sync.Mutex
 	repos map[string]repository.TaskSet
 	err   error
 }
 
+func (m *todoReadyRepoStore) setErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+func (m *todoReadyRepoStore) setRepo(id string, set repository.TaskSet) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.repos == nil {
+		m.repos = map[string]repository.TaskSet{}
+	}
+	m.repos[id] = set
+}
+
 func (m *todoReadyRepoStore) TodoRepositories(_ context.Context, id string) (repository.TaskSet, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return repository.TaskSet{}, m.err
 	}
@@ -615,6 +634,244 @@ func TestTodoAfterReadyFailedStartAndRequireAcceptedGateAndUpdatedAfterSet(t *te
 		waitFor(t, "second wake for [p1, p2]", func() bool { return len(sendsToConversation(f, "conv1")) == 2 })
 		if msg := sendsToConversation(f, "conv1")[1]; !strings.Contains(msg, dep.ID) || !strings.Contains(msg, p2.ID) {
 			t.Fatalf("second wake missing p2:\n%s", msg)
+		}
+	})
+}
+
+func TestTodoAfterReadyFallbackWithoutSupervisionPolicyGoesToMainNotBackground(t *testing.T) {
+	st := &memStore{}
+	s, f := newTodoReadyService(t, st)
+	ctx := context.Background()
+
+	s.noBackground = false
+	now := time.Now().UTC()
+	setSettings(t, s, func(v *Settings) {
+		v.Leaders = []string{"lead_no_policy"}
+		v.BackgroundSupervisor = "bg1"
+		v.BackgroundSupervisorMachineID = "server"
+		v.BackgroundSupervisorAt = &now
+	})
+	f.known["lead_no_policy"] = true
+	f.known["bg1"] = true
+	// lead_no_policy is hosted by a runtime lacking supervision_policy; digestTarget must fall back to Main, not bg1.
+	f.setSessions("server",
+		proto.Session{SessionID: "conv1", MachineID: "server", Assistant: true, Status: proto.StatusIdle},
+		proto.Session{SessionID: "bg1", MachineID: "server", Assistant: true, Status: proto.StatusIdle},
+		proto.Session{SessionID: "lead_no_policy", MachineID: "server", Assistant: true, Status: proto.StatusIdle,
+			SourceKind: proto.SourceRuntime},
+	)
+
+	root, err := s.createDirectionTodo(ctx, "lead_no_policy", "Leader project", "", db.TodoEdit{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partOf := root.ID
+	pre, err := s.createDirectionTodo(ctx, "lead_no_policy", "Prereq", "", db.TodoEdit{PartOf: &partOf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := []string{pre.ID}
+	dep, err := s.createDirectionTodo(ctx, "lead_no_policy", "Dependent", "Main fallback notes", db.TodoEdit{PartOf: &partOf, After: &after})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := s.settings(ctx)
+	sig := superviseSignal{Todo: dep.ID, Kind: sigTodoReady, Key: todoReadyKey(dep), To: "lead_no_policy"}
+	if got := s.digestTarget(ctx, cfg, sig); got != "conv1" {
+		t.Fatalf("digestTarget(todo_ready without supervision_policy) = %q, want conv1 (not bg1)", got)
+	}
+
+	if closed, err := s.reviewDoneTodo(ctx, pre.ID, "accepted", true); err != nil || !closed {
+		t.Fatalf("accept pre: closed=%v err=%v", closed, err)
+	}
+	waitFor(t, "fallback todo_ready wake to main", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+	if msg := sendsToConversation(f, "conv1")[0]; !strings.Contains(msg, dep.ID) || !strings.Contains(msg, "Main fallback notes") {
+		t.Fatalf("unexpected fallback wake:\n%s", msg)
+	}
+	if got := len(sendsToConversation(f, "bg1")); got != 0 {
+		t.Fatalf("background supervisor got %d todo_ready wakes, want 0", got)
+	}
+	if got := len(sendsToConversation(f, "lead_no_policy")); got != 0 {
+		t.Fatalf("unsupported runtime leader got %d todo_ready wakes, want 0", got)
+	}
+}
+
+func TestTodoAfterReadyRepoStoreUnavailableFailsClosedAndRetriesAfterRecovery(t *testing.T) {
+	t.Run("store_unavailable fails closed instead of falling back to stage PRs", func(t *testing.T) {
+		repoStore := &todoReadyRepoStore{
+			memStore: &memStore{},
+			repos:    map[string]repository.TaskSet{},
+			err:      repository.Problem("store_unavailable"),
+		}
+		s, f := newTodoReadyService(t, repoStore)
+		ctx := context.Background()
+
+		root := createRequestAndPiece(t, s, "conv1", "Fail-closed root", "", "", nil)
+		pre := createRequestAndPiece(t, s, "conv1", "Prereq with extra repo PR", "", root.ID, nil)
+		dep := createRequestAndPiece(t, s, "conv1", "Blocked dependent", "Notes", root.ID, []string{pre.ID})
+
+		pr1 := "https://github.com/example/app/pull/601"
+		pr2 := "https://github.com/example/app/pull/602"
+		s.setTaskStage(ctx, pre.ID, "review", pr1)
+
+		// Even though pr1 is merged on stage, store_unavailable must fail closed because repo bindings may hold unmerged pr2.
+		if err := s.applyPRStatus(ctx, todoNow(s, pre.ID), TodoPRStatus{URL: pr1, State: "merged", CheckedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f, "conv1")); got != 0 {
+			t.Fatalf("store_unavailable fell back to stage PR and emitted premature wake: %v", sendsToConversation(f, "conv1"))
+		}
+
+		// Once store recovers showing unmerged pr2 as delivery, dependent stays blocked.
+		repoStore.setRepo(pre.ID, repository.TaskSet{
+			TodoID: pre.ID,
+			Repositories: []repository.TaskRepository{{
+				RepoID: "repo_1",
+				Links: []repository.TaskLink{
+					{Kind: "pull_request", CanonicalURL: pr1, Role: repository.LinkRoleDelivery},
+					{Kind: "pull_request", CanonicalURL: pr2, Role: repository.LinkRoleDelivery},
+				},
+			}},
+		})
+		repoStore.setErr(nil)
+		s.sweepTodoAfterReady(ctx)
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f, "conv1")); got != 0 {
+			t.Fatalf("unmerged delivery PR failed to block after store recovery: %v", sendsToConversation(f, "conv1"))
+		}
+
+		// When only merged pr1 is a delivery PR, sweep emits todo_ready cleanly.
+		repoStore.setRepo(pre.ID, repository.TaskSet{
+			TodoID: pre.ID,
+			Repositories: []repository.TaskRepository{{
+				RepoID: "repo_1",
+				Links: []repository.TaskLink{
+					{Kind: "pull_request", CanonicalURL: pr1, Role: repository.LinkRoleDelivery},
+				},
+			}},
+		})
+		s.sweepTodoAfterReady(ctx)
+		waitFor(t, "wake after store recovery", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+		if msg := sendsToConversation(f, "conv1")[0]; !strings.Contains(msg, dep.ID) || !strings.Contains(msg, pr1) {
+			t.Fatalf("unexpected recovery wake:\n%s", msg)
+		}
+	})
+
+	t.Run("transient readiness error during deliverDigest does not permanently suppress wake", func(t *testing.T) {
+		repoStore := &todoReadyRepoStore{
+			memStore: &memStore{},
+			repos:    map[string]repository.TaskSet{},
+		}
+		s, f := newTodoReadyService(t, repoStore)
+		ctx := context.Background()
+
+		root := createRequestAndPiece(t, s, "conv1", "Retry root", "", "", nil)
+		pre := createRequestAndPiece(t, s, "conv1", "Prereq", "", root.ID, nil)
+		dep := createRequestAndPiece(t, s, "conv1", "Retry dependent", "Retry launch notes", root.ID, []string{pre.ID})
+
+		pr1 := "https://github.com/example/app/pull/701"
+		s.setTaskStage(ctx, pre.ID, "review", pr1)
+		repoStore.setRepo(pre.ID, repository.TaskSet{
+			TodoID: pre.ID,
+			Repositories: []repository.TaskRepository{{
+				RepoID: "repo_1",
+				Links: []repository.TaskLink{
+					{Kind: "pull_request", CanonicalURL: pr1, Role: repository.LinkRoleDelivery},
+				},
+			}},
+		})
+
+		// Pause auto-timer so we can inject a transient store outage right at sendDigest delivery time.
+		s.superviseTimes.gather = 5 * time.Second
+		if err := s.applyPRStatus(ctx, todoNow(s, pre.ID), TodoPRStatus{URL: pr1, State: "merged", CheckedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		// Make the pending signal immediately due, then inject transient store outage before sendDigest.
+		s.supervise.mu.Lock()
+		if s.supervise.timer != nil {
+			s.supervise.timer.Stop()
+			s.supervise.timer, s.supervise.timerAt = nil, time.Time{}
+		}
+		sigID := dep.ID + "|" + sigTodoReady
+		g, ok := s.supervise.pending[sigID]
+		if !ok {
+			s.supervise.mu.Unlock()
+			t.Fatalf("expected pending signal %s", sigID)
+		}
+		g.At = time.Now().Add(-10 * time.Second)
+		s.supervise.pending[sigID] = g
+		s.supervise.mu.Unlock()
+
+		s.superviseTimes.gather = shortSuperviseTimings.gather
+		s.superviseTimes.urgent = shortSuperviseTimings.urgent
+		repoStore.setErr(repository.Problem("store_unavailable"))
+		s.sendDigest(ctx)
+
+		if got := len(sendsToConversation(f, "conv1")); got != 0 {
+			t.Fatalf("outage during sendDigest unexpectedly delivered wake: %v", sendsToConversation(f, "conv1"))
+		}
+		// Signal must be restored to pending and b.sent cleared so recovery delivers without waiting for restart.
+		s.supervise.mu.Lock()
+		_, stillPending := s.supervise.pending[sigID]
+		_, stuckInSent := s.supervise.sent[sigID]
+		s.supervise.mu.Unlock()
+		if !stillPending || stuckInSent {
+			t.Fatalf("transient delivery failure poisoned signal state: pending=%v sent=%v", stillPending, stuckInSent)
+		}
+
+		// Store recovers: retry timer (or sweep) delivers the wake cleanly.
+		repoStore.setErr(nil)
+		waitFor(t, "retried todo_ready wake after recovery", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+		if msg := sendsToConversation(f, "conv1")[0]; !strings.Contains(msg, dep.ID) || !strings.Contains(msg, pr1) || !strings.Contains(msg, "Retry launch notes") {
+			t.Fatalf("unexpected retried wake:\n%s", msg)
+		}
+	})
+
+	t.Run("moot todo_ready drop clears sent cache so later re-completion still wakes", func(t *testing.T) {
+		st := &memStore{}
+		s, f := newTodoReadyService(t, st)
+		ctx := context.Background()
+
+		root := createRequestAndPiece(t, s, "conv1", "Reopen root", "", "", nil)
+		pre := createRequestAndPiece(t, s, "conv1", "Prereq", "", root.ID, nil)
+		dep := createRequestAndPiece(t, s, "conv1", "Dependent", "Reopen notes", root.ID, []string{pre.ID})
+
+		s.superviseTimes.gather = 5 * time.Second
+		done := true
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		// Reopen pre before sendDigest runs so the queued todo_ready becomes moot at delivery time.
+		open := false
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &open}); err != nil {
+			t.Fatal(err)
+		}
+		s.supervise.mu.Lock()
+		if s.supervise.timer != nil {
+			s.supervise.timer.Stop()
+			s.supervise.timer, s.supervise.timerAt = nil, time.Time{}
+		}
+		sigID := dep.ID + "|" + sigTodoReady
+		g := s.supervise.pending[sigID]
+		g.At = time.Now().Add(-10 * time.Second)
+		s.supervise.pending[sigID] = g
+		s.supervise.mu.Unlock()
+
+		s.superviseTimes.gather = shortSuperviseTimings.gather
+		s.sendDigest(ctx)
+		if got := len(sendsToConversation(f, "conv1")); got != 0 {
+			t.Fatalf("moot wake was delivered after prereq reopened: %v", sendsToConversation(f, "conv1"))
+		}
+
+		// Re-complete pre: b.sent must have been cleared on moot drop so the wake is delivered now.
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "wake after prereq re-completed", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+		if msg := sendsToConversation(f, "conv1")[0]; !strings.Contains(msg, dep.ID) || !strings.Contains(msg, "Reopen notes") {
+			t.Fatalf("unexpected wake after re-completion:\n%s", msg)
 		}
 	})
 }

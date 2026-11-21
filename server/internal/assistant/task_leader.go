@@ -457,12 +457,24 @@ func (s *Service) leaderRoute(g superviseSignal) (lead TodoAgent, handled, reach
 // so nothing is queued here. An offline resume completes in the background.
 func (s *Service) deliverToLeaderAgent(ctx context.Context, lead TodoAgent, list []superviseSignal, web string, now, prev time.Time) bool {
 	var entries []prompts.SuperviseEntry
-	var kept []superviseSignal
+	var kept, moot, retry []superviseSignal
 	for _, g := range list {
-		if e, ok := s.digestEntry(ctx, g, web); ok {
+		if e, ok, deferRetry := s.digestEntryChecked(ctx, g, web); ok {
 			entries, kept = append(entries, e), append(kept, g)
+		} else if deferRetry {
+			retry = append(retry, g)
+		} else {
+			moot = append(moot, g)
 		}
 	}
+	if len(retry) > 0 {
+		at := now
+		if len(entries) > 0 {
+			at = time.Time{}
+		}
+		s.restoreDigest(retry, at, prev)
+	}
+	s.clearSentTodoReady(moot)
 	if len(entries) == 0 {
 		return false
 	}

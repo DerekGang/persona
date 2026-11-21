@@ -323,16 +323,26 @@ func (s *Service) deliverDigest(ctx context.Context, here Settings, to string, l
 		return false
 	}
 	var entries []prompts.SuperviseEntry
-	var kept, moot []superviseSignal
+	var kept, moot, retry []superviseSignal
 	s.remedyGoesTo(to, list) // a failed start is ended by this conversation's turn, no other's (start_remedy.go)
 	for _, g := range list {
-		if e, ok := s.digestEntry(ctx, g, web); ok {
+		if e, ok, deferRetry := s.digestEntryChecked(ctx, g, web); ok {
 			entries = append(entries, e)
 			kept = append(kept, g)
+		} else if deferRetry {
+			retry = append(retry, g)
 		} else {
 			moot = append(moot, g)
 		}
 	}
+	if len(retry) > 0 {
+		at := now
+		if len(entries) > 0 {
+			at = time.Time{} // sibling signals still deliver: keep b.last as now
+		}
+		s.restoreDigest(retry, at, prev)
+	}
+	s.clearSentTodoReady(moot)
 	s.turnsTold(ctx, moot) // what no longer holds is not told after a restart either (task_turns.go)
 	s.discardFailedStartBatches(ctx, moot, now)
 	if len(entries) == 0 {
@@ -560,42 +570,71 @@ func (s *Service) replaceQueuedSupervise(to string, msg relayMsg) bool {
 	return false
 }
 
+// digestEntryChecked is digestEntry, additionally reporting retry=true when delivery-time revalidation hit a
+// transient store failure so callers restore the signal instead of treating it as permanently moot.
+func (s *Service) digestEntryChecked(ctx context.Context, g superviseSignal, web string) (prompts.SuperviseEntry, bool, bool) {
+	if g.Kind == sigTodoReady {
+		return s.todoReadyDigestEntry(ctx, g, web)
+	}
+	e, ok := s.digestEntry(ctx, g, web)
+	return e, ok, false
+}
+
+// todoReadyDigestEntry builds the supervision entry for a sigTodoReady signal, returning retry=true on transient
+// repository-store read errors so the wake stays retryable after recovery.
+func (s *Service) todoReadyDigestEntry(ctx context.Context, g superviseSignal, web string) (prompts.SuperviseEntry, bool, bool) {
+	t, ok := s.todoNow(g.Todo)
+	if !ok || t.DoneAt != nil {
+		return prompts.SuperviseEntry{}, false, false
+	}
+	prereqs, ready, err := s.checkTodoAfterReady(ctx, t)
+	if err != nil {
+		return prompts.SuperviseEntry{}, false, true
+	}
+	if !ready || todoReadyKey(t) != g.Key {
+		return prompts.SuperviseEntry{}, false, false
+	}
+	var doneWhen []string
+	if t.Supervision != nil {
+		doneWhen = t.Supervision.DoneWhen
+	}
+	return prompts.SuperviseEntry{
+		ID:       t.ID,
+		Title:    t.Title,
+		Kind:     sigTodoReady,
+		DoneWhen: doneWhen,
+		Link:     todoLink(web, t.ID),
+		Quiet:    t.Quiet,
+		TodoReady: &prompts.SuperviseTodoReady{
+			PartOf:    t.PartOf,
+			Notes:     clip(strings.TrimSpace(t.Notes), 2000),
+			Satisfied: prereqs,
+		},
+	}, true, false
+}
+
 // digestEntry is signal g as the message lists it; false when it no longer holds.
 func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string) (prompts.SuperviseEntry, bool) {
+	if g.Kind == sigTodoReady {
+		e, ok, _ := s.todoReadyDigestEntry(ctx, g, web)
+		return e, ok
+	}
 	t, ok := s.todoNow(g.Todo)
 	if !ok || t.DoneAt != nil && g.Kind != sigFailed {
 		return prompts.SuperviseEntry{}, false
 	}
 	v := t.Supervision
 	if v == nil {
-		if g.Kind != sigReport && g.Kind != sigTodoReady {
+		if g.Kind != sigReport {
 			return prompts.SuperviseEntry{}, false
 		}
-		v = &Supervision{} // a reporting conversation's report or an unstarted dependent to-do has no ledger yet
+		v = &Supervision{} // a reporting conversation's report has no ledger (agent_control.go)
 	}
 	st := v.state(t)
 	var replyAsk acceptAsk
 	var draft *TodoPRStatus
 	var estimateBrief *TaskBrief
 	switch g.Kind {
-	case sigTodoReady:
-		prereqs, ready := s.todoAfterReadyState(ctx, t)
-		if !ready || todoReadyKey(t) != g.Key {
-			return prompts.SuperviseEntry{}, false
-		}
-		return prompts.SuperviseEntry{
-			ID:       t.ID,
-			Title:    t.Title,
-			Kind:     sigTodoReady,
-			DoneWhen: v.DoneWhen,
-			Link:     todoLink(web, t.ID),
-			Quiet:    t.Quiet,
-			TodoReady: &prompts.SuperviseTodoReady{
-				PartOf:    t.PartOf,
-				Notes:     clip(strings.TrimSpace(t.Notes), 2000),
-				Satisfied: prereqs,
-			},
-		}, true
 	case sigHandoffResult:
 		h := v.handoffResult()
 		if h == nil || h.ID != g.Key {
