@@ -66,7 +66,13 @@ func TestWholeCommandCardNamesOnlyWhatTheCommandShows(t *testing.T) {
 				if !strings.Contains(card.Summary, strings.TrimSpace(strings.SplitN(tc.command, ";", 2)[0])) {
 					t.Fatalf("card does not show the command: %q", card.Summary)
 				}
-				if got := strings.HasPrefix(card.Summary, "以你的身份在"+tc.tool+"上写"); got != tc.lark {
+				writeSummary := strings.HasPrefix(card.Summary, "以你的身份在"+tc.tool+"上写")
+				if tc.name == "unknown lark-cli shortcut with a write suffix" {
+					// The existing unknown-command summary names the service action
+					// specifically; it must not be mistaken for write routing metadata.
+					writeSummary = strings.HasPrefix(card.Summary, "以你的身份在"+tc.tool+"上改群 / 会话")
+				}
+				if got := writeSummary; got != tc.lark {
 					t.Fatalf("card summary %q: says it writes on a service = %v, want %v", card.Summary, got, tc.lark)
 				}
 				if !tc.lark && (strings.Contains(card.Summary, "飞书") || strings.Contains(reason, "飞书")) {
