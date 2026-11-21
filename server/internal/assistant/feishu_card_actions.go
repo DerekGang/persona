@@ -365,7 +365,10 @@ func (s *Service) answerFromCard(ctx context.Context, a *feishubot.CardAction, a
 			restore(ctx)
 			return toast("error", clip(oneLine(o.err.Error()), 80))
 		case !o.ok:
-			return toast("info", i18n.T(l, "assistant-feishu_cards.already_handled"))
+			// Its ended event may have found no card after the optimistic removal above.
+			// Close the displayed actions through this callback, as for an accepted answer.
+			return &feishubot.CardResponse{Toast: &feishubot.Toast{Type: "info", Content: i18n.T(l, "assistant-feishu_cards.already_handled")},
+				Card: s.answeredCard(ctx, ix, i18n.T(l, "assistant-feishu_cards.handled")).Raw()}
 		}
 		return &feishubot.CardResponse{Toast: &feishubot.Toast{Type: "success", Content: how}, Card: s.answeredCard(ctx, ix, how).Raw()}
 	case <-time.After(cardAnswerWait):
