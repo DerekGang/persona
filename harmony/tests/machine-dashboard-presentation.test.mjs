@@ -55,6 +55,15 @@ test('agent totals and detail rows fold only matching parents, preserve waiting 
   assert.equal(agents.find(a=>a.row.id==='unread').counted,'unread');
 });
 
+test('machine previews use the paged Hub order within each priority and preserve legacy order for older owners',()=>{
+  const row=(id,state,at)=>ResourceRow.from({session_id:id,machine_id:'mac',state,updated_at:at},'session');
+  const rows=[row('older','needs_you','2026-01-01T00:00:00Z'),row('z','working','2026-01-02T00:00:00.001006Z'),
+    row('newer','needs_you','2026-01-03T00:00:00Z'),row('a','working','2026-01-02T08:00:00.001006+08:00'),
+    row('b','working','2026-01-02T00:00:00.001002Z'),row('unknown','working','')];
+  assert.deepEqual(machineAgents(rows,true).map(a=>a.row.id),['newer','older','a','z','b','unknown']);
+  assert.deepEqual(machineAgents(rows,false).map(a=>a.row.id),['older','newer','z','a','b','unknown']);
+});
+
 test('plots use bucket timestamps and memory percentages, retain gaps, separate upload and download and never draw missing values as zero',()=>{
   const sample=new MachineReading({system:{memory:1000},latest:{mem_total:2000}, points:[
     {t:1,mem:2000,rx:8},{t:95,cpu:0,mem:1000,rx:43,tx:17},{t:98,gap:true,mem:1500},

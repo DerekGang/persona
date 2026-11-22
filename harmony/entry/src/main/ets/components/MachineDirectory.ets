@@ -78,13 +78,13 @@ class ComputerCard {
   readonly priority: number;
   readonly tokens: number;
   readonly stamp: string;
-  constructor(row:ResourceRow, sessions:ResourceRow[], sample?:MachineReading) {
+  constructor(row:ResourceRow, sessions:ResourceRow[], sample?:MachineReading,pagedOrder:boolean=false) {
     this.row = row; this.raw = row.data(); this.sample = sample;
     this.key = machineKey(row.group,row.manager,row.id);
     this.system = sample && Object.keys(sample.system).length ? sample.system : Wire.object(this.raw,'system');
     this.online = machineOnline(row); this.pending = machinePending(this.raw);
     this.family = osFamily(this.system, Wire.text(this.raw,'os'));
-    this.agents = machineAgents(sessions); this.alerts = this.online ? machineAlerts(sample,this.system) : [];
+    this.agents = machineAgents(sessions,pagedOrder); this.alerts = this.online ? machineAlerts(sample,this.system) : [];
     this.needs = this.agents.filter((a:MachineAgent) => a.counted === 'needs_you').length;
     this.working = this.agents.filter((a:MachineAgent) => a.counted === 'working').length;
     this.idle = this.agents.length - this.needs - this.working;
@@ -264,7 +264,8 @@ export struct MachineDirectory {
     }
     return this.visibleRows.map((r:ResourceRow) => {
       const key = machineKey(r.group,r.manager,r.id);
-      return new ComputerCard(r,sessions.get(key) || [],this.selected ? this.detailSample : this.readings.get(key));
+      const owner=this.model.directoryOwnerFor(r);
+      return new ComputerCard(r,sessions.get(key) || [],this.selected ? this.detailSample : this.readings.get(key),owner?.features.includes('sessions_list')===true);
     }).sort((a:ComputerCard,b:ComputerCard) => a.priority-b.priority);
   }
   @Computed get shares(): ComputerCard[] {

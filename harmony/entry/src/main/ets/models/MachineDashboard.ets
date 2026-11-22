@@ -104,6 +104,7 @@ export class MachineAgent {
   readonly note: string;
   readonly context: string;
   readonly updated: number;
+  readonly submillisecond: number;
   readonly rank: number;
   constructor(row: ResourceRow) {
     this.row = row;
@@ -122,11 +123,14 @@ export class MachineAgent {
     this.context = [provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : provider, slot].filter((s:string) => !!s).join(' · ');
     const pane = Wire.text(data,'pane_id'), prefix = pane.split(':')[0];
     this.sourceLabel = !pane || prefix==='orca' ? '' : prefix==='botmux' ? 'inbox_source_lark' : 'terminal';
-    this.updated = Date.parse(Wire.text(data,'updated_at'));
+    const stamp=Wire.text(data,'updated_at');
+    this.updated = Date.parse(stamp);
+    const fraction=stamp.match(/:\d{2}\.(\d+)/);
+    this.submillisecond=fraction ? Number(fraction[1].slice(3,9).padEnd(6,'0')) : 0;
   }
 }
 
-export function machineAgents(input: ResourceRow[]): MachineAgent[] {
+export function machineAgents(input: ResourceRow[],pagedOrder:boolean=false): MachineAgent[] {
   const ids = new Set<string>(input.map((s:ResourceRow) => s.session || s.id));
   const out: MachineAgent[] = [];
   for (const row of input) {
@@ -142,7 +146,15 @@ export function machineAgents(input: ResourceRow[]): MachineAgent[] {
     if ((runtimeChild || codexChild) && agent.state !== 'needs_you') continue;
     out.push(agent);
   }
-  return out.sort((a:MachineAgent,b:MachineAgent) => a.rank - b.rank);
+  return out.sort((a:MachineAgent,b:MachineAgent) => {
+    if (a.rank!==b.rank || !pagedOrder) return a.rank-b.rank;
+    // The paged Hub list orders equal-status rows by update time and then session ID.
+    const at=Number.isFinite(a.updated) ? a.updated : -Infinity, bt=Number.isFinite(b.updated) ? b.updated : -Infinity;
+    if (at!==bt) return bt-at;
+    if (a.submillisecond!==b.submillisecond) return b.submillisecond-a.submillisecond;
+    const aId=a.row.session || a.row.id,bId=b.row.session || b.row.id;
+    return aId<bId ? -1 : aId>bId ? 1 : 0;
+  });
 }
 
 export function machineTrace(reading: MachineReading, field: string, range: number, now: number): DashboardPoint[] {

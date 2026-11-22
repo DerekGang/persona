@@ -1011,7 +1011,14 @@ struct Index {
   }
   @Builder destinationMenus(name: string, param: Object) {
     if (!this.mainDestination(name, param)) Row({ space: Tokens.gap }) {
-      ForEach(this.destinationMenuItems(name, param), (item: NavigationMenuItem, index: number) => {
+      if (name==='knowledge' && this.routeRow(param).path==='recordings') {
+        Button({type:ButtonType.Circle}) {
+          SymbolGlyph($r('sys.symbol.label')).fontSize(Tokens.symbolFont).fontColor([Colors.link])
+        }.attributeModifier(ButtonStyles.chrome).width(Tokens.chrome).height(Tokens.chrome).backgroundColor(Color.Transparent)
+          .accessibilityText(tr('tags')).enabled(this.targetReady(name,param)).onClick(() => {
+            if (this.activeChild===this.childKey(name,param) && this.targetReady(name,param)) this.recordingEditRevision++;
+          }).id('destination.action.0')
+      } else ForEach(this.destinationMenuItems(name, param), (item: NavigationMenuItem, index: number) => {
         Button({ type: ButtonType.Circle }) {
           if (item.symbolIcon) SymbolGlyph().attributeModifier(item.symbolIcon).fontSize(Tokens.symbolFont)
           else Image(item.icon).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink)
@@ -1268,10 +1275,10 @@ struct Index {
         Row({space:8}) {
           Button({type:ButtonType.Capsule}) {
             Row({space:6}) {
-              SymbolGlyph(Symbols.edit).fontSize('16vp').fontColor([Color.White])
-              Text(tr('new_chat')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Color.White)
+              SymbolGlyph(Symbols.edit).fontSize('16vp').fontColor([Colors.onAction])
+              Text(tr('phone_new_chat_title')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.onAction)
             }
-          }.constraintSize({minHeight:Tokens.touch}).padding({left:14,right:14}).backgroundColor(Colors.link).accessibilityText(tr('new_chat'))
+          }.constraintSize({minHeight:Tokens.touch}).padding({left:14,right:14}).backgroundColor(Colors.action).accessibilityText(tr('phone_new_chat_title'))
             .onClick(() => { if (!this.drawerAcceptsTap()) return; this.spacesShown = false; if (this.model.section !== 0) this.changeSection(0); this.newConversation(); }).id('spaces.new')
           Blank().layoutWeight(1)
           PhoneIconButton({symbol:Symbols.gear,label:tr('settings'),identity:'spaces.settings',action:() => { if (this.drawerAcceptsTap()) this.openSpace('settings'); }})
