@@ -574,6 +574,8 @@ struct Index {
         } else Blank().layoutWeight(1)
         if (this.phonePeer() || this.projectPlace() && (!this.phoneTop || this.phoneTop === 'project' || this.phoneTop === 'project_tree') || this.mergedPhone() && this.phoneAtRoot && (this.model.section === 0 || this.model.section === 1 && !this.phoneTop)) {
           PhoneIconButton({symbol: this.phonePeer() || this.model.section === 0 ? Symbols.edit : Symbols.plus, label: tr(this.model.section === 0 ? 'new_chat' : 'new_agent'), identity:'shell.new', action:() => this.startFromPlace()})
+        } else if (this.compactChatMenu(this.phoneTop) && !this.mainDestination(this.phoneTop,this.phoneParam)) {
+          this.compactSessionMore()
         } else if (this.activeChild && this.destinationMenuItems(this.shownName, this.shownParam).length) {
           this.destinationMenus(this.shownName, this.shownParam)
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
@@ -937,22 +939,30 @@ struct Index {
   private compactChatMenu(name: string): boolean {
     return !this.wide() && (name === 'session' || name === 'tools' || name === 'conversation');
   }
+  @Computed get phoneChatActionsReady(): boolean {
+    return this.compactChatMenu(this.phoneTop) && this.activeChild === this.childKey(this.phoneTop,this.phoneParam) &&
+      this.targetReady(this.phoneTop,this.phoneParam);
+  }
+  @Builder compactSessionMore() {
+    Button({type:ButtonType.Circle}) {
+      Row({space:3}) {
+        ForEach([0,1,2], (_dot:number) => {
+          Circle().width(4).height(4).fill(Colors.link)
+        }, (dot:number) => String(dot))
+      }
+    }.attributeModifier(ButtonStyles.chrome).width(PhoneStyle.bar).height(PhoneStyle.bar).backgroundColor(Colors.surface)
+      .border({width:0.5,color:Colors.divider,radius:PhoneStyle.bar/2}).accessibilityText(tr('more')).id('chat.title.more')
+      .enabled(this.phoneChatActionsReady).onClick(() => this.showChatActions(this.phoneTop,this.phoneParam))
+      .bindMenu(this.chatTitleMenuVisible && this.phoneChatActionsReady,this.chatActionsMenu,this.chatMenuOptions(this.chatMenuRevision))
+  }
   @Builder destinationMenus(name: string, param: Object) {
     if (!this.mainDestination(name, param)) Row({ space: Tokens.gap }) {
       ForEach(this.destinationMenuItems(name, param), (item: NavigationMenuItem, index: number) => {
         Button({ type: ButtonType.Circle }) {
-          if (this.compactChatMenu(name)) {
-            Row({space:3}) {
-              ForEach([0,1,2], (_dot:number) => {
-                Circle().width(4).height(4).fill(Colors.link)
-              }, (dot:number) => String(dot))
-            }
-          } else if (item.symbolIcon) SymbolGlyph().attributeModifier(item.symbolIcon).fontSize(Tokens.symbolFont)
+          if (item.symbolIcon) SymbolGlyph().attributeModifier(item.symbolIcon).fontSize(Tokens.symbolFont)
           else Image(item.icon).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink)
         }.attributeModifier(ButtonStyles.chrome)
-          .width(this.compactChatMenu(name) ? PhoneStyle.bar : Tokens.chrome).height(this.compactChatMenu(name) ? PhoneStyle.bar : Tokens.chrome)
-          .backgroundColor(this.compactChatMenu(name) ? Colors.surface : Color.Transparent)
-          .border({width:this.compactChatMenu(name) ? 0.5 : 0,color:Colors.divider,radius:PhoneStyle.bar / 2})
+          .width(Tokens.chrome).height(Tokens.chrome).backgroundColor(Color.Transparent)
           .accessibilityText(item.value as string).enabled(item.isEnabled !== false).onClick(() => item.action?.())
           .id(name === 'session' || name === 'conversation' || name === 'tools' ? 'chat.title.more' : 'destination.action.' + String(index))
           .bindMenu((name === 'session' || name === 'conversation' || name === 'tools') && this.chatTitleMenuVisible && this.activeChild === this.childKey(name, param),

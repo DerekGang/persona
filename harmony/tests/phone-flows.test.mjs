@@ -369,3 +369,26 @@ test('a foreground appearance change recreates just the retained session header 
   const chrome = formSource.slice(formSource.indexOf('  @Builder compactPlaces()'), formSource.indexOf('  private parentIndexes()'));
   assert.match(chrome,/SessionSpaceTabs\(\{space:this\.phoneSessionSpace/);
 });
+
+test('the phone More button follows the restored session when Files or Git returns to its parent', () => {
+  const header = formSource.slice(formSource.indexOf('  @Builder compactPlaces()'),formSource.indexOf('  private parentIndexes()'));
+  const button = formSource.slice(formSource.indexOf('  @Builder compactSessionMore()'),formSource.indexOf('  @Builder destinationMenus('));
+  assert.match(header,/this\.compactChatMenu\(this\.phoneTop\)[^\n]+\{\s*this\.compactSessionMore\(\)/);
+  assert.match(button,/\.enabled\(this\.phoneChatActionsReady\)\.onClick\(\(\) => this\.showChatActions\(this\.phoneTop,this\.phoneParam\)\)/);
+  assert.match(button,/\.bindMenu\(this\.chatTitleMenuVisible && this\.phoneChatActionsReady,/);
+  const expression=formSource.match(/@Computed get phoneChatActionsReady\(\): boolean \{\s*return ([\s\S]+?);\s*\}/)[1];
+  const ready=new Function('return '+expression);
+  const shell={
+    phoneTop:'tools',phoneParam:'git-A',activeChild:'tools/git-A',restored:'tools/git-A',
+    compactChatMenu:n=>['session','conversation','tools'].includes(n),
+    childKey:(name,param)=>name+'/'+param,
+    targetReady(name,param){return this.restored===this.childKey(name,param);}
+  };
+  assert.equal(ready.call(shell),true);
+  shell.phoneTop='session';shell.phoneParam='A';shell.activeChild='session/A';
+  assert.equal(ready.call(shell),false);
+  shell.restored='session/A';
+  assert.equal(ready.call(shell),true);
+  shell.phoneParam='B';assert.equal(ready.call(shell),false);
+  shell.activeChild='session/B';shell.restored='session/B';assert.equal(ready.call(shell),true);
+});

@@ -77,7 +77,7 @@ test('magnified project and Agent views keep symbols inside their slots and give
  assert.match(projects, /Text\(agent.row.title[^\n]+maxFontScale\(Tokens.interfaceScaleFor\(15\)\)/);
  assert.match(picker, /Text\(o.title\)\.fontSize\(16\)\.maxFontScale\(Tokens.interfaceScaleFor\(16\)\)/);
  assert.doesNotMatch(launch.match(/TextArea\(\{text:this.newTask[\s\S]*?id\('agent.task'\)/)[0],/maxFontScale/);
- assert.match(launch, /Text\(tr\('phone_new_chat_title'\)\)\.fontSize\(17\)\.maxFontScale\(Tokens\.chromeFontMaxScale\)/);
+ assert.match(launch, /Text\(tr\('phone_new_chat_title'\)\)\.fontSize\(17\)\.maxFontScale\(Tokens\.chromeFontMaxScale\)\.maxLines\(2\)\.fontWeight\(600\)/);
 });
 
 test('magnified Inbox filters can grow and row icons keep their layout slots', () => {
