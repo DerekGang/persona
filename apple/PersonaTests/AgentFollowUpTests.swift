@@ -9,6 +9,7 @@ import PersonaWire
 struct AgentFollowUpTests {
     private static let state = #"""
     {"machine_id":"box","launcher":"claude","cwd":"/a","conversations":[],"manager":"assistant",
+     "default_permission_mode":"default",
      "start_requested_tasks":true,"task_workspace_preference":"prefer-existing","main_supervises_own_tasks":false,
      "agent_tasks":false,"close_ended_terminals":false,"idle_close_hours":12,"archive_closed_days":3,
      "agent_auto_naming":true,"agent_auto_naming_max":1,"agent_auto_naming_interval_hours":0}
@@ -50,6 +51,7 @@ struct AgentFollowUpTests {
         #expect(s.closeEndedTerminals == false, "close-on-end is off by default (#10355)")
         #expect(s.idleCloseHours == 12 && s.archiveClosedDays == 3 && s.agentAutoNaming == true && s.agentAutoNamingMax == 1)
         #expect(s.agentAutoNamingIntervalHours == 0 && s.manager == "assistant" && page.namesShown)
+        #expect(Self.wire(s)["default_permission_mode"] as? String == "default", "the shared new-conversation default must survive decoding")
         #expect(AgentFollowUpModel.offered(s))
 
         let older = try JSON.decoder.decode(APIClient.AssistantState.self, from: Data(Self.old.utf8))

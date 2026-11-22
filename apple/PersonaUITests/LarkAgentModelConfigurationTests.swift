@@ -207,6 +207,52 @@ final class LarkAgentModelConfigurationTests: XCTestCase {
         try await exerciseTwin(scheme: "dark")
     }
 
+    /// The AI twin never displays the parent Agents' Full access as its own default. Its explicit choice saves to the
+    /// same purpose record, Plan stays unavailable, and reset writes an explicit null back to Default permissions.
+    @MainActor private func exerciseTwinPermission(scheme: String) async throws {
+        _ = try await json("/mock/lark-agent/reset", method: "POST")
+        let app = launch(scheme: scheme, entry: ["-openModelConfiguration", "YES", "-openModelPurpose", "inbox.agent"])
+        let picker = app.descendants(matching: .any)["model-config-permission"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 10), "no Inbox permission control:\n\(app.debugDescription)")
+        XCTAssertTrue(picker.label.contains("默认权限"), "an unset AI twin must not inherit Agents Full access: \(picker.label)")
+        picker.tapCenter()
+        XCTAssertFalse(app.buttons["计划模式"].exists, "Plan rejects the MCP calls the Inbox needs")
+        let full = app.buttons["完全访问"].firstMatch
+        XCTAssertTrue(full.waitForExistence(timeout: 5), app.debugDescription)
+        full.tapCenter()
+        saveAndWait(app, status: "单独配置")
+        var purpose = try await json("/api/v1/model-config/purposes/inbox.agent")["purpose"] as! [String: Any]
+        var binding = purpose["override"] as! [String: Any]
+        XCTAssertEqual(binding["permission_mode"] as? String, "bypassPermissions")
+        try shot(app, "\(scheme)-twin-permission-full-access")
+
+        let restore = app.buttons["model-config-restore"]
+        for _ in 0..<4 where !restore.isHittable { app.swipeUp() }
+        XCTAssertTrue(restore.isEnabled)
+        restore.tapCenter()
+        saveAndWait(app, status: "跟随 Agents")
+        purpose = try await json("/api/v1/model-config/purposes/inbox.agent")["purpose"] as! [String: Any]
+        binding = purpose["override"] as! [String: Any]
+        XCTAssertTrue(binding.isEmpty)
+        XCTAssertEqual((purpose["effective"] as! [String: Any])["permission_mode"] as? String, "default")
+        let audit = try await json("/mock/model-child/inbox.agent")
+        let writes = audit["writes"] as! [[String: Any]]
+        XCTAssertEqual(writes.count, 2)
+        XCTAssertEqual(writes[0]["permission_mode"] as? String, "bypassPermissions")
+        XCTAssertTrue(writes[1]["permission_mode"] is NSNull)
+        XCTAssertEqual((audit["parent"] as! [String: Any])["revision"] as? Int, 11)
+        print("INBOX_PERMISSION_UI \(scheme): explicit=\(writes[0]["permission_mode"]!) reset_is_null=\(writes[1]["permission_mode"] is NSNull) effective=\((purpose["effective"] as! [String: Any])["permission_mode"]!) parent_revision=11")
+        app.terminate()
+    }
+
+    @MainActor func testLightTwinPermissionSaveAndReset() async throws {
+        try await exerciseTwinPermission(scheme: "light")
+    }
+
+    @MainActor func testDarkTwinPermissionSaveAndReset() async throws {
+        try await exerciseTwinPermission(scheme: "dark")
+    }
+
     @MainActor func testModelCatalogOpensTheIndependentPurposeAndMessagesEffort() async throws {
         _ = try await json("/mock/lark-agent/reset", method: "POST")
         let app = launch(scheme: "light", entry: ["-openModelConfiguration", "YES"])
