@@ -106,6 +106,9 @@ func listKeySized(list []proto.Session, size int) string {
 			w.str(c.State, '/')
 			w.int(c.StartedAt.Unix(), '\n')
 		}
+		if s.ContextRestartRecommended {
+			w.b.WriteString("context-restart\n")
+		}
 		// A Codex thread's effort, which may change on the computer without a turn (codex_effort.go).
 		if len(s.Efforts) > 0 {
 			fmt.Fprintf(&w.b, "effort:%s/%v\n", s.Effort, s.Efforts)
@@ -122,6 +125,9 @@ func listKeySized(list []proto.Session, size int) string {
 			w.b.WriteString("pending-effort:")
 			w.quote(*s.PendingEffort, '/')
 			w.str(strconv.FormatBool(s.EffortChangeFailed), '\n')
+		}
+		if s.OffLauncher { // the scan of running claudes flips it with no turn of the agent (offlauncher.go)
+			w.b.WriteString("off-launcher\n")
 		}
 		w.b.WriteString("source:")
 		w.str(s.SourceKind, '/')

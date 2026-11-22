@@ -51,6 +51,7 @@ type (
 	Device              = assistantwire.Device
 	ClientApp           = assistantwire.ClientApp
 	ConfiguredLauncher  = assistantwire.ConfiguredLauncher
+	LauncherRecovery    = assistantwire.LauncherRecovery
 	HubModels           = assistantwire.HubModels
 	AppCall             = assistantwire.AppCall
 	ModelBinding        = assistantwire.ModelBinding
@@ -130,6 +131,7 @@ const (
 	CodeFeishuAPI         = assistantwire.CodeFeishuAPI
 	CodeChatDenied        = assistantwire.CodeChatDenied
 	FeishuFromElsewhere   = assistantwire.FeishuFromElsewhere
+	FeishuFromRead        = assistantwire.FeishuFromRead
 	FeishuReact           = assistantwire.FeishuReact
 	FeishuUnreact         = assistantwire.FeishuUnreact
 	FeishuMessages        = assistantwire.FeishuMessages

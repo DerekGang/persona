@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -179,7 +180,7 @@ func (l assistantLink) Hello(context.Context) (assistantwire.Hello, error) {
 	// machine's archived rows apart from its list (fleet.archived, fleet_link.go).
 	// QuietPush: this hub's push tiering switch, which the managers follow for what is not a hub push (cards they
 	// post, cards they hand up); a change sends manager.updated.
-	out := assistantwire.Hello{Locale: string(h.userLang()), SecretHandoffGate: true, ArchivedApart: true, QuietPush: h.push.lnModeOn()}
+	out := assistantwire.Hello{Locale: string(h.userLang()), SecretHandoffGate: true, ArchivedApart: true, QuietPush: h.push.pushGradingOn()}
 	if m, ok := h.mutesEvent(); ok { // the hub's mutes, before the manager pushes anything (fleet_link.go)
 		out.Mutes = m.Mutes
 	}
@@ -235,6 +236,14 @@ func (l assistantLink) deviceCallFrom(ctx context.Context, from string, p assist
 			// read), so an id in neither it nor others was removed.
 			return json.Marshal(map[string]any{"devices": list, "phone_online": h.phoneClient() != nil,
 				"complete": h.devicesUpFor(from) && !h.trustUnknown(), "others": others, "apps": h.clientAppList(ctx)})
+		case assistantwire.DeviceInteractionsList:
+			list := []proto.Interaction{}
+			for _, ix := range h.pendingInteractions() {
+				if cmp.Or(ix.Manager, assistantwire.AssistantID) == from && h.cardAllowed(from, ix) {
+					list = append(list, ix)
+				}
+			}
+			return json.Marshal(map[string]any{"interactions": list})
 		}
 	}
 	m := h.localMachine(p.Device)
@@ -248,6 +257,17 @@ func (l assistantLink) deviceCallFrom(ctx context.Context, from string, p assist
 		return out, err
 	}
 	switch p.Method {
+	case assistantwire.DeviceInteractionsList:
+		if h.machineOwner(m.cfg.ID) != from {
+			return nil, noDevice(p.Device)
+		}
+		list := []proto.Interaction{}
+		for _, ix := range h.pendingInteractions() {
+			if (ix.MachineID == "" || ix.MachineID == m.cfg.ID) && cmp.Or(ix.Manager, assistantwire.AssistantID) == from && h.cardAllowed(from, ix) {
+				list = append(list, ix)
+			}
+		}
+		return json.Marshal(map[string]any{"interactions": list})
 	case assistantwire.DeviceSessionsList:
 		list := h.decorated(m)
 		if h.machineOwner(m.cfg.ID) != from { // moved while it was read
