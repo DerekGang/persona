@@ -805,7 +805,9 @@ export struct ProjectsPage {
       }.width(42).height(42).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:21})
         .responseRegion({x:-1,y:-1,width:44,height:44}).accessibilityText(tr('back')).onClick(() => this.onBack()).id('shell.back')
       Blank().layoutWeight(1)
-      this.more(tree)
+      ForEach(this.menuEntries(tree.key), (current:ProjectWorktree) => {
+        this.more(current)
+      }, (current:ProjectWorktree):string => this.headerIdentity(current))
     }.width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:3,bottom:3})
     Text(tree.title).fontSize(PhoneStyle.title).fontWeight(FontWeight.Bold).maxFontScale(Tokens.interfaceScaleFor(34))
       .fontColor(Colors.ink).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%').textAlign(TextAlign.Start)

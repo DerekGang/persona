@@ -245,6 +245,8 @@ test('switching an agent tab replaces only the owning route and a stale tap cann
 
 test('a restored offline detail adopts live permissions without replacing session rows, and old menus recheck their scoped checkout', () => {
   const source = readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets', import.meta.url), 'utf8');
+  const phoneBar=source.slice(source.indexOf('  @Builder spaceBar('),source.indexOf('  build()',source.indexOf('  @Builder spaceBar(')));
+  assert.match(phoneBar,/ForEach\(this\.menuEntries\(tree\.key\),[\s\S]*this\.more\(current\)[\s\S]*this\.headerIdentity\(current\)/);
   const methods = ['menuTarget','menuEntries','headerIdentity','startFromTree','openEditor'].map(name => {
     const start = source.indexOf('  private ' + name + '(');
     assert.notEqual(start, -1, name);
