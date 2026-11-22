@@ -1423,7 +1423,7 @@ export struct Conversation {
               TextArea({ text: this.model.draft, controller:this.inlineField, placeholder:this.composerPlaceholder() })
                 .maxLength(Tokens.maxMessage).width('100%')
                 .fontSize(this.expandedComposer() ? String(this.readingSize.points) + 'vp' : Tokens.body)
-                .placeholderFont({size:String(this.readingSize.shellPoints) + 'vp'})
+                .placeholderFont({size:String(this.restingSize.promptPoints) + 'vp'})
                 .fontColor(Colors.ink).placeholderColor(Color.Transparent).caretColor(Colors.action).backgroundColor(Color.Transparent)
                 .lineHeight(this.expandedComposer() ? String(this.readingSize.advance) + 'vp' : String(Tokens.lineHeight) + 'fp')
                 .letterSpacing(this.expandedComposer() ? String(this.draftTracking) + 'vp' : 0).wordBreak(WordBreak.BREAK_WORD)
@@ -1435,7 +1435,7 @@ export struct Conversation {
               // The native editor keeps its accessible hint and reading size. Its visible prompt uses the shell's single line.
               if (!this.model.draft) {
                 Text(this.composerPlaceholder()).width('100%').maxLines(1)
-                  .minFontSize(String(this.readingSize.shellPoints / 2) + 'vp').maxFontSize(String(this.readingSize.shellPoints) + 'vp')
+                  .minFontSize(String(this.restingSize.promptPoints / 2) + 'vp').maxFontSize(String(this.restingSize.promptPoints) + 'vp')
                   .textOverflow({overflow:TextOverflow.Ellipsis}).fontColor(Colors.tertiary)
                   .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
               }

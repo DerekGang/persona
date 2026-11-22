@@ -345,10 +345,10 @@ test('empty chat prompts use one fitted shell line while the editable draft keep
   assert.match(field, /fontSize\(this\.expandedComposer\(\) \? String\(this\.readingSize\.points\)/);
   const prompt = field.slice(field.indexOf('if (!this.model.draft)'));
   assert.match(prompt, /Text\(this\.composerPlaceholder\(\)\).*maxLines\(1\)/);
-  assert.match(prompt, /minFontSize\(String\(this\.readingSize\.shellPoints \/ 2\)/);
-  assert.match(prompt, /maxFontSize\(String\(this\.readingSize\.shellPoints\)/);
+  assert.match(prompt, /minFontSize\(String\(this\.restingSize\.promptPoints \/ 2\)/);
+  assert.match(prompt, /maxFontSize\(String\(this\.restingSize\.promptPoints\)/);
   assert.match(prompt, /hitTestBehavior\(HitTestMode\.None\)\.accessibilityLevel\('no'\)/);
-  assert.equal(composerReadingSize(1).shellPoints, 19);
-  assert.equal(composerReadingSize(3.2).shellPoints, 28);
+  assert.equal(restingComposerSize(1).promptPoints, 56 / 3);
+  assert.equal(restingComposerSize(3.2).promptPoints, 79 / 3);
   assert.equal(composerReadingSize(3.2).points, 53);
 });

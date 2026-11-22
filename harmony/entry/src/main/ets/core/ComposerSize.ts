@@ -3,8 +3,10 @@ export class ComposerSize {
   readonly target: number;
   readonly plus: number;
   readonly microphone: number;
-  constructor(target: number, plus: number, microphone: number) {
-    this.target = target;
+  readonly promptPoints: number;
+  constructor(shellBodyMetric: number, plus: number, microphone: number) {
+    this.promptPoints = shellBodyMetric;
+    this.target = 44 * shellBodyMetric / 17;
     this.plus = plus;
     this.microphone = microphone;
   }
@@ -27,7 +29,7 @@ export function restingComposerSize(fontScale: number): ComposerSize {
   const title = a[2] + fraction * (b[2] - a[2]);
   const headline = a[3] + fraction * (b[3] - a[3]);
   // At the standard shell size, a 24vp Harmony microphone gives the 19pt iPhone headline icon's painted height.
-  return new ComposerSize(44 * metric / 17, title, headline * 24 / 19);
+  return new ComposerSize(metric, title, headline * 24 / 19);
 }
 
 // UIKit body advances change with optical size. Measure the platform's default
