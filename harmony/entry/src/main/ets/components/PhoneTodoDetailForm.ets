@@ -18,8 +18,8 @@ export struct PhoneTodoDetailForm {
   @Param status: string = '';
   @Param tone: ResourceColor = Colors.link;
 
-  private size(normal: number, largest: number): number { return PhoneStyle.formSize(normal,largest,nativeEnvironment.fontScale); }
-  private enabled(field: string): boolean {
+  private metric(normal: number, largest: number): number { return PhoneStyle.formSize(normal,largest,nativeEnvironment.fontScale); }
+  private canChange(field: string): boolean {
     return this.workspace.detailEditable() && !this.workspace.saving && !this.editor.unavailable.includes(field);
   }
   private created(): string {
@@ -44,11 +44,11 @@ export struct PhoneTodoDetailForm {
     return new Date(value).toLocaleTimeString(this.locale || undefined,{hour:'numeric',minute:'2-digit'});
   }
   private pick(field: string, time: boolean): void {
-    if (!this.enabled(field)) return;
+    if (!this.canChange(field)) return;
     const selected=this.workspace.selected;
     const current=new Date(field==='due' ? this.editor.plan.due : this.editor.plan.reminder);
     const apply=(choice:Date):void => {
-      if (!this.enabled(field) || this.workspace.selected.id!==selected.id || this.workspace.selected.manager!==selected.manager) return;
+      if (!this.canChange(field) || this.workspace.selected.id!==selected.id || this.workspace.selected.manager!==selected.manager) return;
       const p=this.editor.plan.copy(), value=new Date(field==='due' ? p.due : p.reminder);
       if (time) value.setHours(choice.getHours(),choice.getMinutes(),0,0); else value.setFullYear(choice.getFullYear(),choice.getMonth(),choice.getDate());
       if (field==='due') p.due=value.getTime(); else p.reminder=value.getTime();
@@ -79,9 +79,9 @@ export struct PhoneTodoDetailForm {
   @Builder summary() {
     Column({space:6}) {
       TextInput({text:this.editor.title,placeholder:tr('todo_detail_title')})
-        .width('100%').height(this.size(28,35.3)).padding(0).borderRadius(0).backgroundColor(Color.Transparent)
+        .width('100%').height(this.metric(28,35.3)).padding(0).borderRadius(0).backgroundColor(Color.Transparent)
         .fontSize(Tokens.interfaceFontVp(22,nativeEnvironment.fontScale)).fontWeight(600).fontColor(Colors.ink)
-        .enabled(this.enabled('title')).enterKeyType(EnterKeyType.Done).onFocus(() => this.editor.focus(this.workspace))
+        .enabled(this.canChange('title')).enterKeyType(EnterKeyType.Done).onFocus(() => this.editor.focus(this.workspace))
         .onChange((v:string) => this.editor.type(v)).onSubmit(() => this.editor.commitTitle(this.workspace))
         .onBlur(() => this.editor.commitTitle(this.workspace)).id('todo.detail.title')
       Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(4)}}) {
@@ -96,7 +96,7 @@ export struct PhoneTodoDetailForm {
       }.width('100%')
       if (this.workspace.selected.startError) Text(this.workspace.selected.startError).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger)
       if (this.workspace.selected.doneReason) Text(this.workspace.selected.doneReason).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
-    }.alignItems(HorizontalAlign.Start).width('100%').constraintSize({minHeight:this.size(94.3,109)}).padding({left:20,right:20,top:15,bottom:15})
+    }.alignItems(HorizontalAlign.Start).width('100%').constraintSize({minHeight:this.metric(94.3,109)}).padding({left:20,right:20,top:15,bottom:15})
       .backgroundColor(Colors.surface).borderRadius(13).id('todo.detail')
   }
   @Builder words(value: string) {
@@ -110,18 +110,18 @@ export struct PhoneTodoDetailForm {
     Row({space:12}) {
       if (field!=='allDay') this.mark(field==='due' ? $r('sys.symbol.calendar') : $r('sys.symbol.bell'))
       this.words(tr(label))
-      Toggle({type:ToggleType.Switch,isOn:value}).selectedColor(Colors.positive).enabled(this.enabled(field==='allDay'?'due':field))
+      Toggle({type:ToggleType.Switch,isOn:value}).selectedColor(Colors.positive).enabled(this.canChange(field==='allDay'?'due':field))
         .accessibilityText(tr(label)).onChange((checked:boolean) => this.toggle(field,checked)).id('todo.plan.'+field)
-    }.padding({left:20,right:20}).width('100%').constraintSize({minHeight:this.size(51.8,58.8)})
+    }.padding({left:20,right:20}).width('100%').constraintSize({minHeight:this.metric(51.8,58.8)})
   }
   @Builder dateButtons(field: string, value: number, timed: boolean) {
     Row({space:6}) {
       Button(this.dateLabel(value),{type:ButtonType.Normal}).fontSize(Tokens.interfaceFontVp(16,nativeEnvironment.fontScale))
-        .fontColor(Colors.ink).backgroundColor(Colors.control).borderRadius(9).padding({left:8,right:8}).height(this.size(36,43))
-        .enabled(this.enabled(field)).onClick(() => this.pick(field,false)).id(field==='due'?'todo.plan.dueDate':'todo.plan.remindAt')
+        .fontColor(Colors.ink).backgroundColor(Colors.control).borderRadius(9).padding({left:8,right:8}).height(this.metric(36,43))
+        .enabled(this.canChange(field)).onClick(() => this.pick(field,false)).id(field==='due'?'todo.plan.dueDate':'todo.plan.remindAt')
       if (timed) Button(this.clockLabel(value),{type:ButtonType.Normal}).fontSize(Tokens.interfaceFontVp(16,nativeEnvironment.fontScale))
-        .fontColor(Colors.ink).backgroundColor(Colors.control).borderRadius(9).padding({left:8,right:8}).height(this.size(36,43))
-        .enabled(this.enabled(field)).onClick(() => this.pick(field,true)).id('todo.plan.'+field+'.time')
+        .fontColor(Colors.ink).backgroundColor(Colors.control).borderRadius(9).padding({left:8,right:8}).height(this.metric(36,43))
+        .enabled(this.canChange(field)).onClick(() => this.pick(field,true)).id('todo.plan.'+field+'.time')
     }
   }
   @Builder dateRow(field: string, value: number, timed: boolean) {
@@ -133,7 +133,7 @@ export struct PhoneTodoDetailForm {
     } else {
       Row({space:6}) {
         this.words(tr(field==='due'?'todo_detail_due_value':'todo_detail_remind_at')); this.dateButtons(field,value,timed)
-      }.padding({left:20,right:20}).width('100%').constraintSize({minHeight:this.size(66.2,76)})
+      }.padding({left:20,right:20}).width('100%').constraintSize({minHeight:this.metric(66.2,76)})
     }
   }
   @Builder choices(field: string) {
@@ -160,8 +160,8 @@ export struct PhoneTodoDetailForm {
       Text(field==='project' ? this.projectName() : tr('todo_detail_'+(this.editor.plan.priority || 'normal')))
         .fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.secondary).maxLines(1).flexShrink(1)
       SymbolGlyph($r('sys.symbol.chevron_down')).fontSize('11vp').fontColor([Colors.tertiary])
-    }.width('100%').constraintSize({minHeight:this.size(51.8,58.8)}).padding({left:20,right:20})
-      .enabled(this.enabled(field)).bindMenu(this.choices(field)).id('todo.plan.'+field)
+    }.width('100%').constraintSize({minHeight:this.metric(51.8,58.8)}).padding({left:20,right:20})
+      .enabled(this.canChange(field)).bindMenu(this.choices(field)).id('todo.plan.'+field)
   }
 
   build() {
