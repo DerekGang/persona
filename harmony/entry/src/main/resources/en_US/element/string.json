@@ -7059,6 +7059,42 @@
     {
       "name": "meeting_configured_service",
       "value": "its configured speech service"
+    },
+    {
+      "name": "meeting_start_options",
+      "value": "Meeting options"
+    },
+    {
+      "name": "meeting_language_chinese",
+      "value": "Chinese"
+    },
+    {
+      "name": "meeting_language_unavailable",
+      "value": "Couldn’t check transcription languages. Try again."
+    },
+    {
+      "name": "meeting_input_label",
+      "value": "Microphone"
+    },
+    {
+      "name": "meeting_input_automatic",
+      "value": "System default"
+    },
+    {
+      "name": "meeting_bluetooth_input",
+      "value": "Bluetooth microphone"
+    },
+    {
+      "name": "meeting_phone_input",
+      "value": "Phone microphone"
+    },
+    {
+      "name": "meeting_input_changed",
+      "value": "The selected microphone is unavailable. Choose an available input and start again."
+    },
+    {
+      "name": "meeting_note_without_minutes",
+      "value": "No minutes, and Persona stays out."
     }
   ]
 }

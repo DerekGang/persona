@@ -199,3 +199,29 @@ test('a refused actual-mode handshake keeps the terminal status when transport r
  audio.effective({transcription:'hub'});audio.captured(16000);
  await waitFor(()=>audio.phase==='fallback');assert.equal(audio.problem,'audio_forbidden');assert.equal(reads,0);assert.equal(opens,1);audio.clear();
 });
+
+test('a private on-device meeting persists the real private mark with attendance off and transmits no audio or live lines',async t=>{
+ const mock=await hub(t),journal=new Map(),manifests=new Map(),writes=[];
+ const native={initialize:async()=>{},load:async()=>[],list:async()=>[],save:async e=>manifests.set(e.id,structuredClone(e)),
+  saveRoom:r=>journal.set(r.id,structuredClone(r)),loadRoom:id=>journal.get(id),ensureMicrophonePermission:async()=>{},
+  startRoomSpeech:()=>assert.fail('off does not open a live-room recognizer'),async start(c,id,limit,participant,samples){
+    assert.equal(participant,false);assert.equal(samples,undefined);return '/synthetic/'+id;},
+  stop:async()=>({path:'/synthetic/local',bytes:32000,duration:1}),stopPlayback:async()=>{},stopRoomVoice:()=>{},
+  cancelTranscription:async()=>{},clearMeetingConsent:()=>{},remove:async()=>{}};
+ const repo={transport:{async request(path,method='GET',body){const value=body?JSON.parse(body):undefined;writes.push({path,method,value});return JSON.stringify(await mock.call(path,method,value));},
+  stream(){assert.fail('a private mark does not authorize cloud streaming');}}};
+ const profile={manager:'assistant',id:'synthetic-private',hubId:'synthetic',baseUrl:'http://'+mock.addr,pin:'synthetic'};
+ const client={profile,connected:true,demo:false,features:['meeting_conversation','meeting_attendance'],
+  scope:()=>profile.id,connectionGeneration:()=>1,owns:(g,s)=>g===1 && s===profile.id,repo:()=>repo,viewFor:async()=>client};
+ const model=new KnowledgeRecording(native);t.after(()=>model.dispose());await model.open(client,'assistant',{filesDir:'/synthetic'});
+ assert.equal(await model.start('meeting','Synthetic private discussion','off',true),true);
+ await model.room.sync();const id=model.entry.id,path='/api/v1/recordings/'+id;
+ await waitFor(()=>writes.some(w=>w.path===path && w.method==='PUT'));
+ const live=await mock.call(path+'/live');assert.equal(live.private,true);assert.equal(live.attendance,'off');assert.equal(live.next,0);
+ assert.equal(await model.askRoom('Not participating'),false);assert.equal(await model.stop(),true);await model.room.sync();
+ const detail=(await mock.call('/api/v1/kb/recordings/'+id)).detail;
+ assert.equal(detail.meta.private,true);assert.equal(manifests.get(id).privateMark,true);
+ assert.equal(writes.some(w=>w.path.includes('/audio') || w.method==='POST' && w.path.endsWith('/live')),false);
+ const observations=(await mock.call('/mock/meeting_transcription')).recordings[id];assert.equal(observations?.bytes || 0,0);
+ client.features=[];assert.equal(await model.start('meeting','Legacy Hub','off',true),false);assert.equal(model.error,'phone_meeting_unavailable');
+});

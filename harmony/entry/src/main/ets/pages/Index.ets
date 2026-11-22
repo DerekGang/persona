@@ -17,6 +17,7 @@ import { ThemeScope } from '../design/ThemeScope';
 import { util } from '@kit.ArkTS';
 import { PhoneAgentSettingsPage } from '../components/PhoneAgentSettingsPage';
 import { PhoneMeetingSettings } from '../components/PhoneMeetingSettings';
+import { MeetingInputChoice, PhoneMeetingOptions } from '../models/PhoneMeetingOptions';
 import { KnowledgeLandingMenu } from '../models/KnowledgeListPresentation';
 import { PhoneKnowledgeSelection } from '../components/PhoneKnowledgeSelection';
 import { AdminWorkspacePage } from '../components/AdminWorkspacePage';
@@ -90,6 +91,7 @@ struct Index {
   @Local inboxComposeRevision:number=0;
   @Local inboxComposeAvailable:boolean=false;
   private inboxComposeScope:string='';
+  @Local meetingOptions:PhoneMeetingOptions=new PhoneMeetingOptions();
   @Local knowledgeMenu:KnowledgeLandingMenu=new KnowledgeLandingMenu();
   @Local moduleMenuShown:boolean=false;
   private moduleMenuOwner:string='';
@@ -520,6 +522,7 @@ struct Index {
     } else this.compactPlaces()
   }
   private rootModuleMenuKind():string {
+    if (this.phoneTop==='recordings' && this.meetingOptions.available) return 'recordings';
     if (this.phoneTop==='resources' && ['knowledge','inbox'].includes(this.phoneParam)) return this.phoneParam;
     return this.model.section===2 && !this.phoneTop ? 'inbox' : '';
   }
@@ -543,6 +546,25 @@ struct Index {
           },(tag:string)=>tag)
         }
         MenuItem({content:tr('ks_map')}).onClick(()=>{if(this.menuCurrent('knowledge'))this.knowledgeMenu.map();}).id('knowledge.map')
+      } else if (this.moduleMenuKind==='recordings') {
+        if (this.meetingOptions.allowsPrivate) MenuItem({content:tr('phone_meeting_private')}).contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).selected(this.meetingOptions.marked).selectIcon(true).accessibilitySelected(this.meetingOptions.marked)
+          .onClick(()=>{if(this.menuCurrent('recordings'))this.meetingOptions.togglePrivate();}).id('recordings.options.private')
+        MenuItemGroup({header:tr('language')}) {
+          if (this.meetingOptions.reading) MenuItem({content:tr('loading')}).enabled(false)
+          else if (this.meetingOptions.languageAvailable) MenuItem({content:tr('meeting_language_chinese')}).contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).selected(true).selectIcon(true).enabled(false)
+            .id('recordings.options.language.zh-CN')
+          else MenuItem({content:tr('meeting_language_unavailable')}).onClick(()=>{if(this.menuCurrent('recordings'))this.meetingOptions.prepare();})
+            .id('recordings.options.language.retry')
+        }
+        if (this.meetingOptions.inputs.length) MenuItemGroup({header:tr('meeting_input_label')}) {
+          MenuItem({content:tr('meeting_input_automatic')}).contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).selected(this.meetingOptions.selectedInput<0).selectIcon(true)
+            .onClick(()=>{if(this.menuCurrent('recordings'))this.meetingOptions.selectInput(-1);}).id('recordings.options.input.auto')
+          ForEach(this.meetingOptions.inputs,(input:MeetingInputChoice)=>{
+            MenuItem({content:input.bluetooth ? input.name || tr('meeting_bluetooth_input') : tr('meeting_phone_input')})
+              .selected(this.meetingOptions.selectedInput===input.id).selectIcon(true)
+              .onClick(()=>{if(this.menuCurrent('recordings'))this.meetingOptions.selectInput(input.id);}).id('recordings.options.input.'+input.id)
+          },(input:MeetingInputChoice)=>String(input.id))
+        }
       } else if (this.moduleMenuKind==='inbox') {
         MenuItem({content:tr('mail_compose')}).enabled(this.canComposeFromMenu())
           .onClick(()=>{if(this.menuCurrent('inbox') && this.canComposeFromMenu())this.inboxComposeRevision++;}).id('inbox.more.compose')
@@ -558,9 +580,9 @@ struct Index {
         Image(Symbols.more).width(15).height(15).fillColor(Colors.link)
       }
     }.width(44).height(44).padding(0).backgroundColor(Colors.surface)
-      .border({width:0.5,color:Colors.divider,radius:22}).accessibilityText(tr('more'))
-      .id(kind==='knowledge' ? 'knowledge.filters' : 'inbox.more')
-      .onClick(()=>{if(this.rootModuleMenuKind()===kind){this.moduleMenuKind=kind;this.moduleMenuOwner=this.menuOwner(kind);this.moduleMenuShown=true;}})
+      .border({width:0.5,color:Colors.divider,radius:22}).accessibilityText(tr(kind==='recordings' ? 'meeting_start_options' : 'more'))
+      .id(kind==='recordings' ? 'recordings.options' : kind==='knowledge' ? 'knowledge.filters' : 'inbox.more')
+      .onClick(()=>{if(this.rootModuleMenuKind()===kind){if(kind==='recordings')this.meetingOptions.prepare();this.moduleMenuKind=kind;this.moduleMenuOwner=this.menuOwner(kind);this.moduleMenuShown=true;}})
       .bindMenu(this.moduleMenuShown && this.moduleMenuKind===kind,this.rootModuleMenu,{placement:Placement.BottomRight,onDisappear:()=>this.moduleMenuShown=false})
   }
   @Builder compactPlaces() {
@@ -2200,7 +2222,7 @@ struct Index {
           onTitle: (title: string) => { if (name === 'todo' && this.activeChild === this.childKey(name, param)) this.todoTitle = title; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), onCreateAgent: (todo: ResourceRow) => this.createAgentFrom(name, param, todo) })
         else this.targetLoading(name, param)
       } else if (name === 'knowledge' || name === 'recordings' || name === 'knowledge_meetings' || name === 'resources' && param === 'knowledge') {
-        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ landingMenu:!this.wide() && name==='resources' && param==='knowledge' ? this.knowledgeMenu : undefined, initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
+        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ meetingMenu:name==='recordings' ? this.meetingOptions : undefined,landingMenu:!this.wide() && name==='resources' && param==='knowledge' ? this.knowledgeMenu : undefined, initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onChat: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'resources' && param === 'health') {

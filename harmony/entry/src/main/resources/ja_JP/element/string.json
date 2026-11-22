@@ -7059,6 +7059,42 @@
     {
       "name": "meeting_configured_service",
       "value": "ハブに設定された音声サービス"
+    },
+    {
+      "name": "meeting_start_options",
+      "value": "会議のオプション"
+    },
+    {
+      "name": "meeting_language_chinese",
+      "value": "中国語"
+    },
+    {
+      "name": "meeting_language_unavailable",
+      "value": "文字起こしの言語を確認できません。もう一度試してください。"
+    },
+    {
+      "name": "meeting_input_label",
+      "value": "マイク"
+    },
+    {
+      "name": "meeting_input_automatic",
+      "value": "システムのデフォルト"
+    },
+    {
+      "name": "meeting_bluetooth_input",
+      "value": "Bluetooth マイク"
+    },
+    {
+      "name": "meeting_phone_input",
+      "value": "端末のマイク"
+    },
+    {
+      "name": "meeting_input_changed",
+      "value": "選んだマイクを利用できません。別の入力を選び、もう一度開始してください。"
+    },
+    {
+      "name": "meeting_note_without_minutes",
+      "value": "議事録は作成されず、Persona は参加しません。"
     }
   ]
 }

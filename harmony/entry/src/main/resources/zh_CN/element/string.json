@@ -7059,6 +7059,42 @@
     {
       "name": "meeting_configured_service",
       "value": "Hub 配置的语音服务"
+    },
+    {
+      "name": "meeting_start_options",
+      "value": "会议选项"
+    },
+    {
+      "name": "meeting_language_chinese",
+      "value": "中文"
+    },
+    {
+      "name": "meeting_language_unavailable",
+      "value": "未能查询转写语言，点此重试。"
+    },
+    {
+      "name": "meeting_input_label",
+      "value": "麦克风"
+    },
+    {
+      "name": "meeting_input_automatic",
+      "value": "跟随系统"
+    },
+    {
+      "name": "meeting_bluetooth_input",
+      "value": "蓝牙麦克风"
+    },
+    {
+      "name": "meeting_phone_input",
+      "value": "手机麦克风"
+    },
+    {
+      "name": "meeting_input_changed",
+      "value": "选中的麦克风已不可用。请选择可用的输入，再重新开始。"
+    },
+    {
+      "name": "meeting_note_without_minutes",
+      "value": "不生成纪要，Persona 不参加。"
     }
   ]
 }

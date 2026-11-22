@@ -1,6 +1,7 @@
 import { meetingAudioNetwork } from './MeetingAudioNetwork';
 import type {MeetingAudioConsent} from '../models/MeetingHubAudio';
 import type { StreamNetworkRule } from './HubTransport';
+import type { MeetingInputChoice } from '../models/PhoneMeetingOptions';
 import type { MeetingJournal } from '../models/MeetingRoom';
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
@@ -43,6 +44,13 @@ export async function requestRecordingMicrophone(context: Object): Promise<void>
     throw new Error('knowledge_recording_microphone_denied');
   }
   if (status !== abilityAccessCtrl.PermissionStatus.GRANTED) throw new Error('knowledge_recording_microphone_denied');
+}
+
+class NativeMeetingInput implements MeetingInputChoice {
+  readonly id:number;readonly bluetooth:boolean;readonly name:string;
+  constructor(device:audio.AudioDeviceDescriptor) {
+    this.id=device.id;this.bluetooth=device.deviceType===audio.DeviceType.BLUETOOTH_SCO;this.name=device.name;
+  }
 }
 
 export interface NativeRecordingStop {
@@ -179,12 +187,44 @@ export class NativeRecording {
     catch (_) { return false; }
   }
 
-  private openCapturer(withEcho:boolean):Promise<audio.AudioCapturer> {
-    return audio.createAudioCapturer({
+  private selectedInput:number=-1;
+  static async meetingLanguages():Promise<string[]> {
+    const engine=await speechRecognizer.createEngine({language:'zh-CN',online:1,extraParams:{locate:'CN',recognizerMode:'long'}});
+    try { return await engine.listLanguages({sessionId:util.generateRandomUUID(),extraParams:{online:1}}); }
+    finally { engine.shutdown(); }
+  }
+  private static inputDevices():audio.AudioDeviceDescriptors {
+    try {
+      const manager=audio.getAudioManager();
+      if (typeof manager.getDeviceEnhanceManager!=='function' ||
+        typeof manager.getDeviceEnhanceManager().selectInputDeviceForAudioCapturer!=='function') return [];
+      const routes=manager.getRoutingManager();
+      const all=routes.getAvailableDevices(audio.DeviceUsage.MEDIA_INPUT_DEVICES).concat(routes.getAvailableDevices(audio.DeviceUsage.CALL_INPUT_DEVICES));
+      return all.filter((device:audio.AudioDeviceDescriptor,index:number) => (device.deviceType===audio.DeviceType.MIC ||
+        device.deviceType===audio.DeviceType.BLUETOOTH_SCO) && all.findIndex((other:audio.AudioDeviceDescriptor)=>other.id===device.id)===index);
+    } catch (_) { return []; }
+  }
+  static meetingInputs():MeetingInputChoice[] {
+    const devices=NativeRecording.inputDevices();
+    if (!devices.some((d:audio.AudioDeviceDescriptor)=>d.deviceType===audio.DeviceType.BLUETOOTH_SCO)) return [];
+    return devices.map((d:audio.AudioDeviceDescriptor)=>new NativeMeetingInput(d));
+  }
+  private async openCapturer(withEcho:boolean):Promise<audio.AudioCapturer> {
+    const chosen=this.selectedInput;
+    const target=chosen<0 ? undefined : NativeRecording.inputDevices().find((d:audio.AudioDeviceDescriptor)=>d.id===chosen);
+    if (chosen>=0 && !target) throw new Error('meeting_input_changed');
+    const capturer=await audio.createAudioCapturer({
       streamInfo:{samplingRate:SAMPLE_RATE,channels:audio.AudioChannel.CHANNEL_1,sampleFormat:audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
         encodingType:audio.AudioEncodingType.ENCODING_TYPE_RAW},
       capturerInfo:{source:withEcho ? audio.SourceType.SOURCE_TYPE_VOICE_COMMUNICATION : audio.SourceType.SOURCE_TYPE_MIC,capturerFlags:0}
     });
+    if (target) {
+      try {
+        await audio.getAudioManager().getDeviceEnhanceManager().selectInputDeviceForAudioCapturer(capturer,target);
+        if (!capturer.getCurrentInputDevices().some((d:audio.AudioDeviceDescriptor)=>d.id===chosen)) throw new Error('meeting_input_changed');
+      } catch (_) { await capturer.release();throw new Error('meeting_input_changed'); }
+    }
+    return capturer;
   }
 
   private async releaseCapturer(capturer:audio.AudioCapturer,listener?:((data:ArrayBuffer)=>void)):Promise<void> {
@@ -289,7 +329,7 @@ export class NativeRecording {
 
   async ensureMicrophonePermission(context: Object): Promise<void> { await requestRecordingMicrophone(context); }
 
-  async start(context: Object, id: string, onLimit: (reason: string) => void,participant:boolean=false,onSamples?:((samples:number)=>void)): Promise<string> {
+  async start(context: Object, id: string, onLimit: (reason: string) => void,participant:boolean=false,onSamples?:((samples:number)=>void),inputId:number=-1): Promise<string> {
     if (this.capturer || this.fileDescriptor >= 0 || !this.directory) throw new Error('recording_busy');
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('invalid_recording_id');
     const generation = ++this.generation;
@@ -299,7 +339,7 @@ export class NativeRecording {
     this.ensureCapacity();
     const path = this.audioPath(id);
     const output = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-    this.fileDescriptor = output.fd; this.activeId = id.toLowerCase(); this.activePath = path; this.activeBytes = 0;
+    this.selectedInput=inputId;this.fileDescriptor = output.fd; this.activeId = id.toLowerCase(); this.activePath = path; this.activeBytes = 0;
     try {
       this.echoActive=participant && NativeRecording.supportsEchoCancellation(); this.onCaptureFailure=onLimit;
       let capturer:audio.AudioCapturer;
@@ -389,7 +429,7 @@ export class NativeRecording {
     if (!fileIo.accessSync(path)) return undefined;
     const journal=JSON.parse(fileIo.readTextSync(path)) as MeetingJournal;
     if (journal.id!==id || journal.profileId!==profile || journal.hubId!==hub || journal.managerId!==manager ||
-      !(journal.transcription==='hub' && journal.role==='off') && !['listener','participant'].includes(journal.role) ||
+      !((journal.transcription==='hub' || journal.privateMark===true) && journal.role==='off') && !['listener','participant'].includes(journal.role) ||
       !Array.isArray(journal.lines) || !Array.isArray(journal.asks) || !Number.isSafeInteger(journal.next) || journal.next<0 ||
       journal.effectiveTranscription!=='hub' && journal.next>journal.lines.length) throw new Error('request_updated');
     return journal;

@@ -14,6 +14,7 @@ registerHooks({
     return {format:'module',shortCircuit:true,source:stripTypeScriptTypes(code)};
   }
 });
+const {PhoneMeetingOptions,meetingDefaultTitle}=await import('../entry/src/main/ets/models/PhoneMeetingOptions.ets');
 const {MeetingHubAudio,MeetingHubChoice}=await import('../entry/src/main/ets/models/MeetingHubAudio.ets');
 const source=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeWorkspacePage.ets',import.meta.url),'utf8');
 const recording=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeRecordingView.ets',import.meta.url),'utf8');
@@ -34,6 +35,7 @@ function fixture(){
   Object.assign(page,{model:owner,recordingScope:()=>state.scope,meetingKind:'meeting',meetingTitle:'Synthetic weekly',
     privateMeeting:false,selectedCalendarEvent:'',roomRole:()=>'off',pageAvailable:true,visible:true,confirmVersion:0,selectedAudioOwner:'',
     meetingNetworkReady:true,meetingSpeech:{offered:true,ready:true,mode:'hub',extensionRef:'isolated/asr',serviceName:()=>state.service,retentionDays:14},
+    options:()=>({selectedInput:-1}),defaultRecordingTitle:()=>'Synthetic draft',
     getUIContext:()=>({showAlertDialog:x=>dialogs.push(x)}),loadRecordings:async()=>true,
     recording:{canStart:()=>true,start:async(...args)=>{started.push(args);return true;}}});
   return {page,state,network,started,dialogs,owner};
@@ -106,4 +108,28 @@ test('the meeting shows one identified transcript, choosing the device or hub th
   audio.phase='final';assert.equal(view.currentLine(),'Phone sentence');assert.equal(view.currentCaption(),'');
   assert.match(recording,/!this\.hasHubTranscription\(\) && this\.model\.room\.latest/);
   assert.match(recording,/this\.model\.room\.active && this\.model\.entry\?\.roomRole!=='off'/);
+});
+
+test('the title uses the mobile date and minutes for the real locale and only its placeholder takes the compact text size',()=>{
+  const time=new Date(2026,10,22,21,9);
+  const zh=meetingDefaultTitle('meeting',time,'zh-CN','会议','笔记');
+  assert.match(zh,/会议 · 2026年11月22日 21:09/);
+  assert.match(meetingDefaultTitle('note',time,'en-US','Meeting','Note'),/Note · Nov 22, 2026 9:09 PM/);
+  assert.match(meetingDefaultTitle('meeting',time,'ja-JP','会議','ノート'),/^会議 · .*2026.*11.*22.*21:09/);
+  const title=source.slice(source.indexOf('TextInput({text:this.meetingTitle'),source.indexOf(".id('recordings.title')"));
+  assert.match(title,/placeholderFont\(\{size:Tokens.interfaceFontVp\(17,nativeEnvironment.fontScale\)/);
+  assert.doesNotMatch(title,/\.maxFontScale/);
+});
+
+test('an idle meeting menu only offers the offline language and physical inputs reported for its own visible draft',async()=>{
+  const form=new PhoneMeetingOptions(),old={},next={},marks=[];
+  let active=true,resolve,inputs=[{id:11,bluetooth:false,name:''},{id:21,bluetooth:true,name:'Synthetic headset'}];
+  form.bind(old,true,true,false,()=>active,value=>marks.push(value),()=>new Promise(done=>resolve=done),()=>inputs);
+  form.togglePrivate();form.togglePrivate();assert.deepEqual(marks,[true,false]);
+  form.selectInput(21);assert.equal(form.selectedInput,21);inputs=[];await form.prepare();assert.equal(form.selectedInput,-1);
+  form.clear(old);form.bind(next,true,false,false,()=>active,()=>assert.fail(),async()=>['zh-CN'],()=>[]);
+  resolve(['en-US','ja-JP']);await settle();assert.equal(form.languageAvailable,true);assert.deepEqual(form.inputs,[]);
+  form.togglePrivate();assert.equal(form.marked,false);
+  active=false;form.selectInput(21);assert.equal(form.selectedInput,-1);
+  form.clear(next);assert.equal(form.available,false);assert.equal(form.languageAvailable,false);
 });
