@@ -546,8 +546,9 @@ export struct AssistantCards {
   }
   @Builder decisionArrow(next:boolean) {
     Button({type:ButtonType.Normal}) {
-      SymbolGlyph(next ? Symbols.expand : Symbols.collapse).fontSize(Tokens.interfaceFontVp(13,this.environment.fontScale)).fontColor([Colors.ink])
-        .width(this.metric(28)).height(this.metric(28)).textAlign(TextAlign.Center).backgroundColor(Colors.control).borderRadius(this.metric(28)/2)
+      Stack() {
+        SymbolGlyph(next ? Symbols.expand : Symbols.collapse).fontSize(Tokens.interfaceFontVp(13,this.environment.fontScale)).fontColor([Colors.ink])
+      }.width(this.metric(28)).height(this.metric(28)).backgroundColor(Colors.control).borderRadius(this.metric(28)/2)
     }.width(44).height(this.metric(28)).padding(0).backgroundColor(Color.Transparent)
       .responseRegion({x:0,y:(this.metric(28)-44)/2,width:44,height:Math.max(44,this.metric(28))}).accessibilityText(tr(next ? 'decision_next' : 'decision_previous'))
       .enabled(next ? this.decisionPager!.position(this.decisionIds) < this.decisionIds.length - 1 : this.decisionPager!.position(this.decisionIds) > 0)
