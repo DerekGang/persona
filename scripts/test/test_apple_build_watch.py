@@ -42,6 +42,174 @@ class CompilerResourceTests(unittest.TestCase):
         self.assertEqual(frontend["primary_source"], "Example.swift")
         self.assertEqual(frontend["process_start_status"], "uncertain")
 
+    @staticmethod
+    def pipe_fixture(source):
+        def popen(_command, **kwargs):
+            return subprocess.Popen([sys.executable, "-I", "-c", source], **kwargs)
+        return popen
+
+    def test_streaming_selection_survives_noise_and_long_frontend_argv(self):
+        source = textwrap.dedent('''\
+            for pid in range(1000, 1200):
+                print(f"{pid} 2 1.0 100 00:10 00:00.10 Sun Nov 22 10:00:00 2026 noise "
+                      "/usr/bin/noise swift-frontend " + "N" * 4096)
+            print("999 2 1.0 100 00:10 00:00.10 Sun Nov 22 10:00:00 2026 noise "
+                  "/usr/bin/noise " + "N" * 100000)
+            print("42 2 90.0 6000 00:05 00:01.50 Sun Nov 22 10:00:00 2026 swift-frontend "
+                  "/Toolchain/swift-frontend -module-name Example " + "X" * 131072
+                  + " -primary-file /private/source/NeverExport.swift")
+            print("43 2 80.0 7000 00:06 00:02.50 Sun Nov 22 10:00:00 2026 swift-frontend "
+                  "/Toolchain/swift-frontend -module-name Example "
+                  "-primary-file /private/source/Second.swift -o /tmp/Second.o")
+        ''')
+        calls = []
+        def popen(command, **kwargs):
+            calls.append(command)
+            return self.pipe_fixture(source)(command, **kwargs)
+        parsed = watch.processes(popen=popen)
+        self.assertEqual(parsed["counts"], {"swift-frontend": 2})
+        self.assertEqual(parsed["total_rss_kib"], 13000)
+        self.assertNotIn("unavailable", parsed)
+        self.assertIn("ucomm=", calls[0][2])
+        frontend = next(entry for entry in parsed["largest"] if entry["pid"] == 42)
+        self.assertEqual(frontend["process_start"], "Sun Nov 22 10:00:00 2026")
+        self.assertEqual(frontend["process_start_status"], "known")
+        self.assertEqual(frontend["cpu_seconds"], 1.5)
+        self.assertEqual(frontend["elapsed_seconds"], 5.0)
+        self.assertEqual(frontend["target_module"], "unavailable")
+        self.assertEqual(frontend["primary_source"], "unavailable")
+        self.assertEqual(frontend["output"], "unavailable")
+        other = next(entry for entry in parsed["largest"] if entry["pid"] == 43)
+        self.assertEqual(other["primary_source"], "Second.swift")
+        serialized = json.dumps(parsed)
+        for forbidden in ("NeverExport", "/private", "/tmp", "NNNN", "XXXX", "args"):
+            self.assertNotIn(forbidden, serialized)
+
+        history = {}
+        watch.track_frontends(history, parsed["largest"], 100.0)
+        later = watch.processes(popen=self.pipe_fixture(source.replace("00:01.50", "00:03.50")))
+        watch.track_frontends(history, later["largest"], 115.0)
+        records = watch.final_frontend_history(history)
+        record = next(item for item in records["records"] if item["pid"] == 42)
+        self.assertEqual(record["sample_count"], 2)
+        self.assertEqual(record["first_cpu_seconds"], 1.5)
+        self.assertEqual(record["last_cpu_seconds"], 3.5)
+        self.assertEqual(record["continuity"], "known")
+        self.assertEqual(records["status"], "complete")
+        self.assertLessEqual(len(records["records"]), watch.MAX_FINAL_FRONTEND_RECORDS)
+
+    def test_streaming_legacy_lstart_fallback_and_command_failure_keep_their_semantics(self):
+        legacy = self.pipe_fixture(
+            "print('42 2 90.0 10000 01:10 00:02.50 swift-frontend "
+            "/Toolchain/swift-frontend -module-name Example -primary-file /tmp/Example.swift')")
+        calls = []
+        def legacy_popen(command, **kwargs):
+            calls.append(command)
+            return legacy(command, **kwargs)
+        parsed = watch.processes(popen=legacy_popen)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("lstart=", calls[1][2])
+        self.assertNotIn("unavailable", parsed)
+        self.assertIsNone(parsed["largest"][0]["process_start"])
+        self.assertEqual(parsed["largest"][0]["process_start_status"], "uncertain")
+
+        failed = self.pipe_fixture("raise SystemExit(1)")
+        calls = []
+        def failed_popen(command, **kwargs):
+            calls.append(command)
+            if "lstart=" in command[2]:
+                return self.pipe_fixture("raise SystemExit(1)")(command, **kwargs)
+            return self.pipe_fixture(
+                "print('42 2 90.0 10000 01:10 00:02.50 swift-frontend /Toolchain/swift-frontend')"
+            )(command, **kwargs)
+        parsed = watch.processes(popen=failed_popen)
+        self.assertNotIn("unavailable", parsed)
+        self.assertIsNone(parsed["largest"][0]["process_start"])
+        self.assertEqual(parsed["largest"][0]["process_start_status"], "uncertain")
+        self.assertEqual(len(calls), 2)
+
+        def both_failed_popen(command, **kwargs):
+            calls.append(command)
+            return failed(command, **kwargs)
+        parsed = watch.processes(popen=both_failed_popen)
+        self.assertEqual(parsed["unavailable"], "process-command-failed")
+        self.assertEqual(parsed["process_start_status"], "uncertain")
+        self.assertEqual(parsed["counts"], {})
+
+    def test_streaming_collector_timeout_is_explicit_and_reaps_ps(self):
+        process = None
+        def popen(_command, **kwargs):
+            nonlocal process
+            process = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(30)"], **kwargs)
+            return process
+        with mock.patch.object(watch, "COMMAND_TIMEOUT", 0.05):
+            parsed = watch.processes(popen=popen)
+        self.assertEqual(parsed["unavailable"], "TimeoutExpired")
+        self.assertIsNotNone(process.poll())
+
+    def test_invalid_frontend_durations_fail_closed_in_both_collectors(self):
+        for value in ("invalid", "00:invalid", "invalid:00", "nan", "inf"):
+            with self.subTest(value=value):
+                self.assertIsNone(watch.duration(value))
+                line = (f"42 2 90.0 6000 00:05 {value} Sun Nov 22 10:00:00 2026 "
+                        "swift-frontend /Toolchain/swift-frontend -module-name Example "
+                        "-primary-file /private/Example.swift")
+                legacy = watch.processes(
+                    lambda *args, **kwargs: subprocess.CompletedProcess([], 1, "", ""))
+                self.assertEqual(legacy["unavailable"], "process-command-failed")
+                legacy = watch.processes(
+                    lambda *args, **kwargs: subprocess.CompletedProcess([], 0, line, ""))
+                self.assertEqual(legacy["unavailable"], "invalid-process-duration")
+                self.assertEqual(legacy["counts"], {})
+                self.assertEqual(legacy["largest"], [])
+                self.assertNotIn("private", json.dumps(legacy))
+                parsed = watch.processes(popen=self.pipe_fixture(f"print({line!r})"))
+                self.assertEqual(parsed["unavailable"], "invalid-process-duration")
+                self.assertEqual(parsed["counts"], {})
+                self.assertEqual(parsed["largest"], [])
+                self.assertNotIn("private", json.dumps(parsed))
+
+    def test_partial_successful_listing_retries_without_lstart(self):
+        calls = []
+        def partial_stream(command, **kwargs):
+            calls.append(command)
+            source = "print('incomplete row')"
+            if "lstart=" not in command[2]:
+                source = ("print('42 2 90.0 6000 00:05 00:01.50 swift-frontend "
+                          "/Toolchain/swift-frontend -module-name Example -primary-file /private/Example.swift')")
+            return self.pipe_fixture(source)(command, **kwargs)
+        parsed = watch.processes(popen=partial_stream)
+        self.assertEqual(len(calls), 2)
+        frontend = parsed["largest"][0]
+        self.assertIsNone(frontend["process_start"])
+        self.assertEqual(frontend["process_start_status"], "uncertain")
+        self.assertEqual(frontend["cpu_seconds"], 1.5)
+
+        without_start = ("42 2 90.0 6000 00:05 00:01.50 /Toolchain/swift-frontend "
+                         "-module-name Example -primary-file /private/Example.swift")
+        legacy_calls = []
+        def partial_legacy(command, **kwargs):
+            legacy_calls.append(command)
+            output = "incomplete row"
+            if "lstart=" not in command[2]:
+                output = without_start
+            return subprocess.CompletedProcess(command, 0, output, "")
+        parsed = watch.processes(partial_legacy)
+        self.assertEqual(len(legacy_calls), 1)
+        self.assertEqual(parsed["unavailable"], "invalid-process-output")
+        self.assertEqual(parsed["largest"], [])
+
+    def test_incomplete_no_start_listing_is_explicitly_unavailable(self):
+        incomplete = "incomplete row"
+        parsed = watch.processes(popen=self.pipe_fixture(f"print({incomplete!r})"))
+        self.assertEqual(parsed["unavailable"], "invalid-process-output")
+        self.assertEqual(parsed["largest"], [])
+
+        parsed = watch.processes(
+            lambda *args, **kwargs: subprocess.CompletedProcess([], 0, incomplete, ""))
+        self.assertEqual(parsed["unavailable"], "invalid-process-output")
+        self.assertEqual(parsed["largest"], [])
+
     def test_process_summary_keeps_the_eight_largest_compiler_entries(self):
         result = subprocess.CompletedProcess([], 0, "\n".join(
             f"  {pid}  2 1.0 {pid * 1000} 00:01 00:00.01 /Toolchain/usr/bin/swift-frontend" for pid in range(10, 22)), "")
@@ -206,8 +374,8 @@ class CompilerResourceTests(unittest.TestCase):
         self.assertEqual(len(summary["records"]), watch.MAX_FINAL_FRONTEND_RECORDS)
         self.assertEqual(summary["status"], "truncated")
         self.assertGreater(summary["omitted_records"], watch.MAX_FRONTEND_LIFETIMES - watch.MAX_FINAL_FRONTEND_RECORDS)
-        self.assertLessEqual(watch.MAX_FINAL_JSON_BYTES, 16 * 1024)
-        self.assertLessEqual(watch.MAX_OUTPUT_BYTES, 64 * 1024)
+        self.assertEqual(watch.MAX_FINAL_JSON_BYTES, 16 * 1024)
+        self.assertEqual(watch.MAX_OUTPUT_BYTES, 64 * 1024)
         self.assertEqual(watch.MAX_PROCESSES, 8)
 
     def test_activity_log_path_allowlist_does_not_copy_or_export_contents(self):

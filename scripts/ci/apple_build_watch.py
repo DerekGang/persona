@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -101,7 +102,13 @@ def duration(value):
     except ValueError:
         return None
     seconds = numbers[-1] + numbers[-2] * 60 + (numbers[-3] * 3600 if len(numbers) == 3 else 0)
-    return days * 86400 + seconds
+    seconds += days * 86400
+    return seconds if math.isfinite(seconds) else None
+
+
+def valid_duration(value):
+    """Reject malformed/non-finite ps counters before frontend arithmetic."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def process_snapshot(rows):
@@ -138,9 +145,11 @@ def process_start(value):
     return None
 
 
-def process_rows(text, with_start):
-    """Accept the bounded ps formats with and without optional start identity."""
+def _process_rows_with_status(text, with_start):
+    """Internal row parser retains whether compiler counters were invalid."""
     rows = []
+    invalid_compiler_durations = False
+    valid_rows = 0
     fields = r"\s*(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\S+)\s+"
     pattern = re.compile(fields + (r"(.{24})(?:\s+|$)(.*)$" if with_start else r"(.*)$"))
     for line in text.splitlines():
@@ -153,10 +162,22 @@ def process_rows(text, with_start):
                 continue
         else:
             start, command = None, match.group(7)
+        valid_rows += 1
+        elapsed, cpu_time = duration(match.group(5)), duration(match.group(6))
+        executable = Path(command.split()[0]).name if command.split() else ""
+        suffix_name = Path(command).name.split(" ", 1)[0]
+        name = executable if executable in COMPILER_NAMES else suffix_name
+        if name == "swift-frontend" and not (valid_duration(elapsed) and valid_duration(cpu_time)):
+            invalid_compiler_durations = True
+            continue
         rows.append((int(match.group(1)), int(match.group(2)), match.group(3),
-                     int(match.group(4)), duration(match.group(5)), duration(match.group(6)),
-                     start, command))
-    return rows
+                     int(match.group(4)), elapsed, cpu_time, start, command))
+    return rows, invalid_compiler_durations, valid_rows
+
+
+def process_rows(text, with_start):
+    """Accept the bounded ps formats with and without optional start identity."""
+    return _process_rows_with_status(text, with_start)[0]
 
 
 def process_output(command, with_start, popen=subprocess.Popen):
@@ -177,9 +198,10 @@ def process_output(command, with_start, popen=subprocess.Popen):
     truncated = False
     saw_output = False
     valid_rows = 0
+    invalid_compiler_durations = False
 
     def consume(raw):
-        nonlocal valid_rows
+        nonlocal valid_rows, invalid_compiler_durations
         match = pattern.match(raw)
         if not match:
             return
@@ -197,14 +219,19 @@ def process_output(command, with_start, popen=subprocess.Popen):
                  "cpu_percent": match.group(3).decode("ascii", "replace"),
                  "rss_kib": int(match.group(4)), "name": name}
         if name == "swift-frontend":
+            cpu_seconds = duration(match.group(6).decode("ascii", "replace"))
+            elapsed_seconds = duration(match.group(5).decode("ascii", "replace"))
+            if not (valid_duration(elapsed_seconds) and valid_duration(cpu_seconds)):
+                invalid_compiler_durations = True
+                return
             if truncated:
                 identity = {"target_module": "unavailable", "primary_source": "unavailable",
                             "output": "unavailable"}
             else:
                 argv = match.group(name_index + 1) or b""
                 identity = swift_frontend_identity(argv.decode("utf-8", "replace"))
-            entry.update({"cpu_seconds": duration(match.group(6).decode("ascii", "replace")),
-                          "elapsed_seconds": duration(match.group(5).decode("ascii", "replace")),
+            entry.update({"cpu_seconds": cpu_seconds,
+                          "elapsed_seconds": elapsed_seconds,
                           "process_start": start,
                           "process_start_status": "known" if start is not None else "uncertain",
                           **identity})
@@ -250,7 +277,8 @@ def process_output(command, with_start, popen=subprocess.Popen):
         if code:
             return {"command": selected, "unavailable": "process-command-failed"}
         return {"command": selected, "exit": 0, "summary": summary,
-                "saw_output": saw_output, "valid_rows": valid_rows}
+                "saw_output": saw_output, "valid_rows": valid_rows,
+                "invalid_compiler_durations": invalid_compiler_durations}
     except (OSError, subprocess.SubprocessError) as error:
         return {"command": selected, "unavailable": type(error).__name__}
     finally:
@@ -264,7 +292,9 @@ def process_output(command, with_start, popen=subprocess.Popen):
 def stream_processes(popen):
     """Retry a failed or legacy lstart listing once with the no-start format."""
     def usable(result):
-        return result.get("exit") == 0 and (result["valid_rows"] or not result["saw_output"])
+        if result.get("exit") != 0 or result["invalid_compiler_durations"]:
+            return False
+        return not result["saw_output"] or result["valid_rows"]
 
     def unavailable(result):
         reason = result.get("unavailable", "invalid-process-output")
@@ -275,7 +305,11 @@ def stream_processes(popen):
         return result["summary"]
     if result.get("unavailable") not in (None, "process-command-failed"):
         return unavailable(result)
+    if result.get("invalid_compiler_durations"):
+        return unavailable({"unavailable": "invalid-process-duration"})
     result = process_output(["ps", "-axo"], False, popen)
+    if result.get("invalid_compiler_durations"):
+        result["unavailable"] = "invalid-process-duration"
     return result["summary"] if usable(result) else unavailable(result)
 
 
@@ -286,17 +320,19 @@ def processes(runner=subprocess.run, *, popen=None):
     command = ["ps", "-axo", "pid=,ppid=,%cpu=,rss=,etime=,time=,lstart=,args="]
     result = output(command, runner=runner)
     with_start = result.get("exit") == 0
-    rows = process_rows(result.get("stdout", ""), with_start) if with_start else []
+    rows, invalid_durations, valid_rows = (_process_rows_with_status(result.get("stdout", ""), True)
+                                          if with_start else ([], False, 0))
     unavailable = result.get("unavailable")
-    if with_start and result.get("stdout", "").strip() and not rows:
+    if with_start and result.get("stdout", "").strip() and (not valid_rows or invalid_durations):
         # A successful but demonstrably legacy-shaped response can be retried;
         # invalid lstart output is not silently converted to valid evidence.
-        legacy_rows = process_rows(result.get("stdout", ""), False)
-        if legacy_rows:
+        legacy_rows, legacy_invalid_durations, _ = _process_rows_with_status(result.get("stdout", ""), False)
+        if legacy_rows and not legacy_invalid_durations and process_snapshot(legacy_rows)["counts"]:
             rows = legacy_rows
             with_start = False
         else:
-            unavailable = "invalid-process-output"
+            unavailable = "invalid-process-duration" if invalid_durations else "invalid-process-output"
+            rows = []
     if not with_start and "unavailable" not in result:
         if result.get("exit", 0) != 0:
             unavailable = "process-command-failed"
@@ -307,8 +343,10 @@ def processes(runner=subprocess.run, *, popen=None):
                 unavailable = result.get("unavailable", "process-command-failed")
                 rows = []
             else:
-                rows = process_rows(result.get("stdout", ""), False)
-                if result.get("stdout", "").strip() and not rows:
+                rows, invalid_durations, _ = _process_rows_with_status(result.get("stdout", ""), False)
+                if invalid_durations:
+                    unavailable = "invalid-process-duration"
+                elif result.get("stdout", "").strip() and not rows:
                     unavailable = "invalid-process-output"
     summary = process_snapshot(rows)
     if unavailable:
@@ -335,6 +373,8 @@ def track_frontends(history, entries, now):
     for entry in entries:
         if entry["name"] != "swift-frontend":
             continue
+        if not (valid_duration(entry.get("cpu_seconds")) and valid_duration(entry.get("elapsed_seconds"))):
+            continue  # Invalid counters never enter PID-reuse arithmetic or lifetime evidence.
         start = entry.get("process_start")
         key = (entry["pid"], start)
         current = history.get(key)
