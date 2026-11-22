@@ -32,7 +32,7 @@ internal/assistant app-exported-record InboxFeedback #4512
 internal/assistant app-exported-record InboxProgress #4512
 internal/assistant app-exported-record MessageAuthorization #9782
 internal/assistant app-exported-record ModelProfilePermissionChange #12042
-internal/assistant app-exported-record SpacePolicy #13113
+internal/assistant app-exported-record SpacePolicy #13113 #13178
 internal/assistant app-exported-record TaskDistinctFrom #9744 #12524
 internal/assistant app-exported-record TodoUsage #13027
 internal/assistant app-exported-record TodoUsageModel #13027
@@ -282,6 +282,7 @@ internal/transcript app-exported-record BotmuxTurnPlacement #10770 #12114 #12161
 internal/transcript app-exported-record BotmuxTurnReply #10770 #12114 #12161 #12344
 internal/transcript app-exported-record BotmuxTurnSender #10770 #12114 #12161 #12344
 internal/transcript app-exported-record BotmuxTurnsResponse #10770 #12114 #12161 #12344
+internal/transcript app-exported-record SupervisionRoundVisibility #13167
 internal/transcript app-named-primitive 2
 internal/transcript app-named-primitive botmuxSendFlag #10770 #12114 #12161 #12344
 internal/transcript app-named-primitive fileFingerprint #11629
