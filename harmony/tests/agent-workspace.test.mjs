@@ -153,6 +153,19 @@ test('phone grouping preference survives temporarily unavailable tasks and the s
   workspace.toggleGroupingFold('todo/unknown',false); assert.equal(workspace.groupingFolded('todo/unknown',true),true);
 });
 
+test('machine and project groupings display the real pending rows above their outline only for an unfiltered or Needs You view', async () => {
+  const {workspace}=await opened({sessions:[agent('pending',{state:'needs_you',status:'needs_you',space_name:'Weather'}),agent('running',{space_name:'Weather'})]});
+  for(const mode of ['machine','space']){
+    workspace.setGroupingMode(mode);
+    assert.deepEqual(workspace.groups[0].rows.map(value=>value.id),['pending']);
+    assert.equal(workspace.groups[0].id,'state/needs');
+    workspace.setSearch('Weather');assert.ok(workspace.groups.every(group=>group.id!=='state/needs'));
+    workspace.setSearch('');workspace.setQuickFilter('working');assert.ok(workspace.groups.every(group=>group.id!=='state/needs'));
+    workspace.setQuickFilter('needsYou');assert.equal(workspace.groups[0].id,'state/needs');
+    workspace.setQuickFilter('all');
+  }
+});
+
 test('pins fetch the current document and preserve unrelated space and session keys', async () => {
   const { workspace, state, client } = await opened();
   const row = client.sessions[0];

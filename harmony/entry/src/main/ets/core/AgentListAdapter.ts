@@ -36,6 +36,12 @@ export class CoreAgentListAdapter implements AgentListAdapter {
       baseInput.settings['quick'] = selectedQuick;
       shown = this.sort(baseInput);
     }
+    if ((input.grouping === 'machine' || input.grouping === 'space') && !input.query &&
+        (input.quick === 'all' || input.quick === 'needsYou') && Number(counts['needsYou']) > 0) {
+      const attention = this.sort({...baseInput, settings:{...baseInput.settings,grouping:'state',quick:'needsYou'}})
+        .groups.find((group) => group.id === 'state/needs');
+      if (attention) shown.groups = [attention, ...shown.groups];
+    }
     shown.filter_counts = counts;
     return shown;
   }
