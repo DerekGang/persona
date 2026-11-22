@@ -1704,7 +1704,7 @@ struct Index {
           Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('20vp').fontColor([Colors.ink]) }
             .width(42).height(42).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:21})
             .accessibilityText(tr('cancel')).onClick(() => this.showSheet = false).enabled(!this.creatingAgent).id('agent.cancel')
-          Text(tr('phone_new_chat_title')).fontSize(17).maxFontScale(1.12).maxLines(2).fontWeight(600).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
+          Text(tr('phone_new_chat_title')).fontSize(17).maxFontScale(Tokens.chromeFontMaxScale).maxLines(2).fontWeight(600).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
           Blank().width(42)
         }.width('100%').constraintSize({minHeight:52}).padding({left:14,right:14,top:4,bottom:4})
         Scroll(this.agentFormScroll) {
