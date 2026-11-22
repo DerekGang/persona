@@ -121,28 +121,28 @@ try {
     check(`${theme}: no browser page errors`, errors.length === 0, errors);
     await page.context().close();
   }
-  {
-    const { page, errors, coldSceneRequests } = await openPage("light", "/overview");
-    check("compact: cold main chat loads no scene renderer", coldSceneRequests.length === 0, coldSceneRequests);
+  for (const theme of ["light", "dark"]) {
+    const { page, errors, coldSceneRequests } = await openPage(theme, "/overview");
+    check(`${theme} compact: cold main chat loads no scene renderer`, coldSceneRequests.length === 0, coldSceneRequests);
     const preview = page.locator("button.graph-preview").first();
     await preview.waitFor({ timeout: 15_000 });
     const height = await preview.evaluate((e) => e.getBoundingClientRect().height);
-    check("compact: still preview is 200 px", Math.abs(height - 200) < 4, height);
-    check("compact: no nested interactive pins or controls", await preview.locator("button").count() === 0);
+    check(`${theme} compact: still preview is 200 px`, Math.abs(height - 200) < 4, height);
+    check(`${theme} compact: no nested interactive pins or controls`, await preview.locator("button").count() === 0);
     await preview.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(shots, "scene-card-light.png") });
+    await page.screenshot({ path: join(shots, `scene-card-${theme}.png`) });
     await preview.click();
     await page.locator("[role='dialog']").waitFor();
-    check("compact: preview opens interactive Full screen", await page.locator("[role='dialog'] [data-scene-pin='living-lamp']").isVisible());
+    check(`${theme} compact: preview opens interactive Full screen`, await page.locator("[role='dialog'] [data-scene-pin='living-lamp']").isVisible());
     const compactFullPins = await page.locator("[role='dialog'] [data-scene-pin]").evaluateAll((pins) => pins.map((pin) => {
       const r = pin.getBoundingClientRect();
       return { id: pin.getAttribute("data-scene-pin"), visible: r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth && pin.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
     }));
-    check("compact: every pin stays inside Full screen", compactFullPins.every((p) => p.visible), compactFullPins);
-    await page.screenshot({ path: join(shots, "scene-card-light-full.png") });
+    check(`${theme} compact: every pin stays inside Full screen`, compactFullPins.every((p) => p.visible), compactFullPins);
+    await page.screenshot({ path: join(shots, `scene-card-${theme}-full.png`) });
     await page.keyboard.press("Escape");
-    check("compact: focus returns to the preview", await preview.evaluate((e) => document.activeElement === e));
-    check("compact: no browser page errors", errors.length === 0, errors);
+    check(`${theme} compact: focus returns to the preview`, await preview.evaluate((e) => document.activeElement === e));
+    check(`${theme} compact: no browser page errors`, errors.length === 0, errors);
     await page.context().close();
   }
   for (const theme of ["light", "dark"]) {
