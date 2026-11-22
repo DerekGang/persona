@@ -138,3 +138,54 @@ test('the three-line Agents preview uses the interface text size while a questio
   const detail=readFileSync(new URL('../entry/src/main/ets/components/InteractionDecisionForm.ets',import.meta.url),'utf8');
   assert.ok(detail.split('\n').some(line=>line.includes('Text(field.title).fontSize(Tokens.body)') && !line.includes('maxFontScale')));
 });
+
+const { DecisionPager, orderedDecisions } = await import('../entry/src/main/ets/models/DecisionPager.ets');
+const { interactionSkipReason } = await import('../entry/src/main/ets/models/InteractionDecision.ets');
+
+test('the assistant pages its own requests before unique supervised requests and follows an insert or resolution', () => {
+  const item = (id,kind='question',status='open') => ({id,kind,status,raw:JSON.stringify({id,kind})});
+  const own=item('own'), plan=item('plan','plan'), last=item('last');
+  const items=orderedDecisions([own],[plan,own,last,plan,item('retired','question','resolved')]);
+  assert.deepEqual(items,[own,plan,last]);
+  const pager=new DecisionPager();pager.bind('first');
+  const ids=items.map(x=>x.id);pager.reconcile(ids);assert.equal(pager.current,'own');
+  pager.select(ids,1);pager.reconcile(['new',...ids]);assert.equal(pager.current,'plan');
+  pager.reconcile(['new','own','last']);assert.equal(pager.current,'last');
+  pager.select(['new','own','last'],3);assert.equal(pager.current,'last');
+  pager.fold(['new','own','last']);assert.equal(pager.arrived(['own','fresh']),1);
+  pager.reconcile(['fresh']);assert.equal(pager.collapsed(['fresh']),false);
+  assert.deepEqual(pager.dots(['1','2','3','4','5','6','7','8','9']),[0,1,2,3,4,5,6]);
+});
+
+test('paging retains only the immutable question draft in the same conversation', () => {
+  const pager=new DecisionPager();pager.bind('A');
+  const q={id:'question',raw:'v1',kind:'question'};const first=pager.draft(q);
+  first.save({answer:'draft'},{choices:['blue']},'A');pager.fold(['question']);pager.show();
+  assert.deepEqual(pager.draft(q).text,{answer:'draft'});assert.deepEqual(pager.draft(q).picks,{choices:['blue']});
+  assert.deepEqual(pager.draft({...q,raw:'v2'}).text,{});
+  pager.bind('B');assert.notEqual(pager.draft(q),first);assert.equal(pager.draft({...q,kind:'plan'}),undefined);
+});
+
+test('skip explains unsendable plans, permissions and terminal requests without manufacturing a response', () => {
+  const q=(kind,raw={})=>({kind,raw:JSON.stringify(raw)});
+  assert.equal(interactionSkipReason(q('plan')),'decision_skip_plan');assert.equal(interactionSkipReason(q('permission')),'decision_skip_permission');
+  assert.equal(interactionSkipReason(q('screen')),'decision_skip_terminal');assert.equal(interactionSkipReason(q('question',{can_cancel:true})),'');
+});
+
+const { decisionSourceItem } = await import('../entry/src/main/ets/models/InteractionHistory.ets');
+
+test('view in chat lands on the words before the named tool, with a bounded latest-question fallback', () => {
+  const items=[
+    {id:'start',role:'user',kind:'text',text:'original'},
+    {id:'a',role:'assistant',kind:'text',text:'first question'},
+    {id:'call-1',kind:'tool_use',tool_name:'ask_user',tool_use_id:'one'},
+    {id:'result',role:'user',kind:'text',text:'machine result',tool_use_id:'one'},
+    {id:'next',role:'user',kind:'text',text:'next turn'},
+    {id:'call-2',kind:'tool_use',tool_name:'request_user_input',tool_use_id:'two'}
+  ];
+  assert.equal(decisionSourceItem(items,'one'),'a');
+  assert.equal(decisionSourceItem(items,'two'),'next');
+  assert.equal(decisionSourceItem(items,''),'next');
+  assert.equal(decisionSourceItem(items,'missing'),'');
+  assert.equal(decisionSourceItem([...items,...Array.from({length:400},(_,i)=>({id:String(i),kind:'status'}))],'one'),'');
+});

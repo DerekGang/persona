@@ -349,6 +349,15 @@ export function interactionScreenOptions(request: Decision): InteractionChoice[]
 export function interactionScreenMulti(request: Decision): boolean { return Wire.bool(screenDialog(request), 'multi'); }
 export function interactionScreenSubmitLabel(request: Decision): string { return Wire.text(screenDialog(request), 'submit', 'submit'); }
 export function interactionScreenQuestion(request: Decision): string { return Wire.text(screenDialog(request), 'question', request.prompt); }
+export function interactionSkipReason(request: Decision): string {
+  if (Wire.bool(rawInteraction(request), 'can_cancel')) return '';
+  if (request.kind === 'plan') return 'decision_skip_plan';
+  if (request.kind === 'permission') return 'decision_skip_permission';
+  if (request.kind === 'screen') {
+    return Object.keys(Wire.object(screenDialog(request), 'command_ask')).length ? 'decision_skip_permission' : 'decision_skip_terminal';
+  }
+  return '';
+}
 export function interactionScreenCanCancel(request: Decision): boolean { return request.kind === 'question' && Wire.bool(rawInteraction(request), 'can_cancel'); }
 
 export function interactionSchemaFields(request: Decision): InteractionSchemaField[] { return schemaFields(request); }

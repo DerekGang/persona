@@ -11,7 +11,9 @@ import { assistantCardResource } from '../models/AssistantCardLinks';
 import { ComposeListItemV2, ContentItemV2, OperateItemV2, OperateCheckV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
 import { AssistantFeedModel, PlanEditTask } from '../models/AssistantFeed';
-import { ResourceRow, Wire } from '../models/Wire';
+import { NavigationContext } from '../models/NavigationContext';
+import { DecisionPager, orderedDecisions } from '../models/DecisionPager';
+import { Decision, ResourceRow, Wire } from '../models/Wire';
 import { MarkdownText } from './MarkdownText';
 import { Tokens } from '../design/Tokens';
 import { Colors } from '../design/Colors';
@@ -41,6 +43,7 @@ export struct AssistantCards {
   @Require @Param feed: AssistantFeedModel;
   @Param item: Record<string, Object> | undefined = undefined;
   @Param dockOnly: boolean = false;
+  @Param decisionPager: DecisionPager | undefined = undefined;
   @Param dockRoom: number = 400;
   @Param detailOnly: boolean = false;
   @Param active: boolean = false;
@@ -62,6 +65,7 @@ export struct AssistantCards {
   private requestModel: ClientModel | undefined;
   private syncRequests():void {
     const key=this.dockOnly && this.active && this.model.connected && this.feed.conversationId && this.model.selected.kind==='conversation' ? this.trayScope() : '';
+    if (key) this.decisionPager?.bind(key);
     if (key===this.subscribedOwner && (!key || this.requestModel===this.model)) return;
     this.offRequests?.(); this.offRequests=undefined; this.requests.clear(); this.subscribedOwner=key; this.requestModel=this.model;
     if (!key) return;
@@ -101,12 +105,55 @@ export struct AssistantCards {
     return questions.sort((a:TaskQuestionRow,b:TaskQuestionRow) => a.at-b.at);
   }
 
-  private questionCurrent(row:TaskQuestionRow):boolean {
-    if (!this.active || !this.model.connected || this.subscribedOwner!==this.trayScope() || this.model.selected.kind!=='conversation') return false;
-    return this.taskQuestions.some((value:TaskQuestionRow) => value.todoId===row.todoId && value.agent.key()===row.agent.key() &&
-      value.card.key===row.card.key && value.card.request.raw===row.card.request.raw);
+  @Computed get decisionPages(): Decision[] {
+    if (!this.dockOnly || !this.active || !this.decisionPager) return [];
+    const own = this.model.pendingDecisions.length ? this.model.pendingDecisions : this.model.decision ? [this.model.decision] : [];
+    return orderedDecisions(own, this.taskQuestions.map((row:TaskQuestionRow) => row.card.request));
   }
-
+  @Computed get decisionIds(): string[] { return this.decisionPages.map((request:Decision) => request.id); }
+  @Computed get shownDecisions(): Decision[] {
+    const pager = this.decisionPager;
+    if (!pager || this.trayOpen || pager.collapsed(this.decisionIds)) return [];
+    const current = this.decisionPages[pager.position(this.decisionIds)];
+    return current ? [current] : [];
+  }
+  @Monitor('decisionIds', 'requests.snapshotComplete', 'feed.todosReady') decisionListChanged(): void {
+    if (this.dockOnly && this.active && this.subscribedOwner === this.trayScope() && this.feed.todosReady && this.requests.snapshotComplete) {
+      this.decisionPager?.reconcile(this.decisionIds);
+    }
+  }
+  private supervised(request: Decision): TaskQuestionRow | undefined {
+    // A conversation's own request uses the conversation's admission and answer path.
+    if (this.model.pendingDecisions.some((own:Decision) => own.id === request.id) || this.model.decision?.id === request.id) return undefined;
+    return this.taskQuestions.find((row:TaskQuestionRow) => row.card.request.id === request.id && row.card.request.raw === request.raw);
+  }
+  private decisionVisible(request: Decision, scope: string): boolean {
+    return this.active && this.model.connected && this.subscribedOwner === scope && this.trayScope() === scope &&
+      this.shownDecisions.some((shown:Decision) => shown.id === request.id && shown.raw === request.raw && shown.machine === request.machine && shown.session === request.session);
+  }
+  private decisionAdmission(request: Decision): () => boolean {
+    const scope = this.trayScope();
+    return ():boolean => this.decisionVisible(request, scope);
+  }
+  private openQuestionSource(row: TaskQuestionRow, scope: string): void {
+    if (!this.decisionVisible(row.card.request, scope)) return;
+    const copy = NavigationContext.rowFrom(JSON.stringify(row.agent));
+    const envelope = Wire.parse(row.card.request.raw), inner = Wire.object(envelope, 'interaction');
+    const data = copy.data();
+    data['navigation_decision_tool'] = Wire.text(inner,'tool_use_id',Wire.text(envelope,'tool_use_id'));
+    copy.raw = JSON.stringify(data);
+    this.onOpenSession(copy);
+  }
+  private toggleDecisions(): void {
+    const pager = this.decisionPager;
+    if (!pager || !this.decisionIds.length) return;
+    if (this.trayOpen || pager.collapsed(this.decisionIds)) { this.trayOpen = false; pager.show(); }
+    else pager.fold(this.decisionIds);
+  }
+  private moveDecision(offset: number): void {
+    const pager = this.decisionPager;
+    if (pager && this.shownDecisions.length) pager.select(this.decisionIds, pager.position(this.decisionIds) + offset);
+  }
   private trayScope(): string { return JSON.stringify([this.model.scope(), this.model.connectionGeneration(), this.model.target()]); }
   @Monitor('active', 'model.selected', 'model.profile', 'model.connected', 'feed.conversationId')
   trayOwnerChanged(): void { if (this.trayOpen && (!this.active || this.trayOwner !== this.trayScope())) this.trayOpen = false; this.syncRequests(); }
@@ -147,6 +194,10 @@ export struct AssistantCards {
     if (!actual) return;
     if (actual.kind==='message' || actual.kind==='plan') { this.expandedEntry=this.expandedEntry===actual.key() ? '' : actual.key(); return; }
     this.trayOpen=false;
+    if (actual.kind === 'question') {
+      const at = this.decisionIds.indexOf(actual.id);
+      if (at >= 0) { this.decisionPager?.show(); this.decisionPager?.select(this.decisionIds, at); }
+    }
     if (actual.resource && actual.kind==='todo') this.onOpenTodo(actual.resource);
     if (actual.resource && actual.kind==='agent') this.onOpenSession(actual.resource);
   }
@@ -445,27 +496,62 @@ export struct AssistantCards {
       .backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:14}).borderRadius(14).id('chat.tasks.tray')
   }
 
-  @Builder questionCard(row:TaskQuestionRow) {
-    Column({space:3}) {
-      Row({space:5}) {
-        SymbolGlyph($r('sys.symbol.hand_raised_fingers_spread')).fontSize('12vp').fontColor([Colors.link])
-        Text(row.title).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link).layoutWeight(1).maxLines(2)
-        if (this.taskQuestions.length>1) Text(tr('session_task_more').replace('{count}',String(this.taskQuestions.length-1))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
-      }.width('100%')
-      InteractionDecisionForm({model:this.model,request:row.card.request,taskAgent:row.agent,taskCard:row.card,taskQueue:this.requests,
-        heightLimit:Math.max(116,this.dockRoom*(this.trayOpen || this.model.decision ? 0.35 : 0.52)),admission:():boolean => this.questionCurrent(row),
-        onLink:(address:string) => { if (this.questionCurrent(row)) this.onLink(address); }})
-    }.width('100%').id('chat.tasks.question.'+row.card.request.id)
+  @Builder decisionArrow(next: boolean) {
+    Button({type:ButtonType.Circle}) { SymbolGlyph(next ? Symbols.expand : Symbols.collapse).fontSize('13vp').fontColor([Colors.ink]) }
+      .width(26).height(26).padding(0).backgroundColor(Colors.control).margin({left:9,right:9,top:9,bottom:9})
+      .responseRegion({x:-9,y:-9,width:44,height:44}).accessibilityText(tr(next ? 'decision_next' : 'decision_previous'))
+      .enabled(next ? this.decisionPager!.position(this.decisionIds) < this.decisionIds.length - 1 : this.decisionPager!.position(this.decisionIds) > 0)
+      .onClick(() => this.moveDecision(next ? 1 : -1)).id(next ? 'chat.decisions.next' : 'chat.decisions.previous')
   }
-
+  @Builder decisionNavigation() {
+    Row({space:4}) {
+      ForEach(this.decisionPager!.dots(this.decisionIds),(at:number) => {
+        Blank().width(at === this.decisionPager!.position(this.decisionIds) ? 12 : 6).height(6).borderRadius(3)
+          .backgroundColor(at === this.decisionPager!.position(this.decisionIds) ? Colors.link : Colors.control).accessibilityLevel('no')
+      },(at:number) => String(at))
+      Text(String(this.decisionPager!.position(this.decisionIds)+1)+' / '+String(this.decisionIds.length))
+        .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).margin({left:4}).id('chat.decisions.position')
+      Blank().layoutWeight(1)
+      this.decisionArrow(false)
+      this.decisionArrow(true)
+    }.width('100%').padding({left:4,right:4})
+  }
+  @Builder questionCard(request:Decision, row:TaskQuestionRow | undefined, scope:string) {
+    Column({space:3}) {
+      InteractionDecisionForm({model:this.model,request:request,taskAgent:row?.agent,taskCard:row?.card,taskQueue:row ? this.requests : undefined,
+        docked:true, dockSource:row?.title || '', draft:this.decisionPager?.draft(request), draftSession:this.trayScope(),
+        heightLimit:Math.max(116,this.dockRoom*0.52-(this.decisionIds.length > 1 ? 44 : 0)),admission:this.decisionAdmission(request),
+        onDockFold:() => this.decisionPager?.fold(this.decisionIds), onLater:() => this.decisionPager?.fold(this.decisionIds),
+        onViewTask:() => { if (row) this.openQuestionSource(row,scope); },
+        onLink:(address:string) => { if (this.decisionVisible(request,scope)) this.onLink(address); }})
+    }.width('100%').id('chat.tasks.question.'+request.id)
+      .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:24}).onActionEnd((event:GestureEvent) => {
+        if (Math.abs(event.offsetX)>66 && Math.abs(event.offsetX)>2*Math.abs(event.offsetY)) this.moveDecision(event.offsetX<0 ? 1 : -1);
+      }))
+  }
+  @Builder decisionEntry() {
+    Button({type:ButtonType.Capsule}) {
+      Row({space:4}) {
+        Text(tr('decision_to_decide')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs)
+        Text(String(this.decisionIds.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs)
+        SymbolGlyph(this.shownDecisions.length ? Symbols.up : Symbols.down).fontSize('11vp').fontColor([this.shownDecisions.length ? Colors.onAction : Colors.needs])
+        if (this.decisionPager!.arrived(this.decisionIds)>0) Text('+'+String(this.decisionPager!.arrived(this.decisionIds))).fontSize(12).fontColor(Colors.needs)
+      }
+    }.constraintSize({minHeight:28}).padding({left:10,right:10,top:4,bottom:4})
+      .fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs).backgroundColor(this.shownDecisions.length ? Colors.action : Colors.subtle)
+      .responseRegion({x:0,y:-7,width:'100%',height:44}).accessibilitySelected(this.shownDecisions.length>0)
+      .accessibilityText(tr('decision_to_decide')+' '+String(this.decisionIds.length)).onClick(() => this.toggleDecisions()).id('chat.decisions.toggle')
+  }
   @Builder taskDock() {
     Column({space:4}) {
       if (this.trayOpen) this.trayList()
-      if (this.taskQuestions.length) ForEach([this.taskQuestions[0]],(row:TaskQuestionRow) => {
-        this.questionCard(row)
-      },(row:TaskQuestionRow) => JSON.stringify([row.todoId,row.card.key,row.card.request.raw]))
+      if (this.shownDecisions.length && this.decisionIds.length > 1) this.decisionNavigation()
+      ForEach(this.shownDecisions,(request:Decision) => {
+        this.questionCard(request,this.supervised(request),this.trayScope())
+      },(request:Decision) => JSON.stringify([this.trayScope(),request.id,request.raw]))
       Scroll() {
         Row({space:6}) {
+          if (this.decisionPager && this.decisionIds.length) this.decisionEntry()
           ForEach(['needs','progress','done'],(bucket:string) => {
             if (bucket!=='done' || this.trayBucket==='done' && this.trayOpen || this.trayRows.some((r:TaskTrayRow) => r.bucket===bucket)) Button({type:ButtonType.Capsule}) {
               Row({space:4}) {

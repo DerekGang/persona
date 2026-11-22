@@ -1082,6 +1082,9 @@ export class ClientModel {
   private closeTranscript(): void { this.transcriptHistoryReady = false; this.transcript?.close(); this.transcript = undefined; this.transcriptKey = ''; this.revisionItems = []; }
   showConversation(row: ResourceRow): void { this.chatVisible = true; this.loadChat(row).catch((error: Error) => this.failure(error)); }
   hideConversation(releaseTools: boolean = true): void { this.chatVisible = false; this.closeTranscript(); this.clearPendingDecisions(); if (releaseTools) this.releaseTerminal(); this.persistDraft().catch(() => this.error = 'failed'); }
+  decisionSourceMessage(toolUseId: string): string {
+    return this.transcriptKey === this.target() ? this.transcript?.decisionSource(toolUseId) || '' : '';
+  }
   async loadOlder(): Promise<boolean> { try { if (!this.transcript) return false; await this.transcript.older(); return true; } catch (error) { this.failure(error as Error); return false; } }
   async expandWork(message: ChatMessage): Promise<void> {
     try {

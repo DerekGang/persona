@@ -22,6 +22,7 @@ import { conversationImageEntries, conversationImageKey } from '../core/MessageI
 import type { MessageImageGalleryEntry, LoadedMessageImage } from '../core/MessageImageGallery';
 import { MarkdownText } from './MarkdownText';
 import { AssistantCards } from './AssistantCards';
+import { DecisionPager } from '../models/DecisionPager';
 import { QuestionWorkspace, QuestionSheet, questionPrompt } from '../models/QuestionWorkspace';
 import { InteractionDecisionForm } from './InteractionDecisionForm';
 import { AssistantFeedModel } from '../models/AssistantFeed';
@@ -99,6 +100,7 @@ export struct Conversation {
   @Require @Param model: ClientModel;
   @Param active: boolean = true;
   @Param searchHitId: string = '';
+  @Param decisionTool: string | undefined = undefined;
   @Param showContextMenu: boolean = false;
   @Param actionItems: SheetInfo[] = [];
   @Param actionsVisible: boolean = false;
@@ -149,7 +151,7 @@ export struct Conversation {
   private searchHighlightTimer: number = -1;
   @Local highlightedLine: string = '';
   private hitScope(): string {
-    return JSON.stringify([this.model.scope(),this.model.connectionGeneration(),this.model.target(),this.searchHitId]);
+    return JSON.stringify([this.model.scope(),this.model.connectionGeneration(),this.model.target(),this.searchHitId,this.decisionTool]);
   }
   private findSearchLine(hit:string): number {
     const direct = this.lines.findIndex((line:ConversationLine) => !!line.message &&
@@ -167,18 +169,20 @@ export struct Conversation {
     if (this.searchHighlightTimer !== -1) clearTimeout(this.searchHighlightTimer);
     this.searchHighlightTimer = -1; this.highlightedLine = '';
   }
-  @Monitor('searchHitId') requestedHitChanged(): void {
+  @Monitor('searchHitId','decisionTool') requestedHitChanged(): void {
     this.searchedHit = ''; this.seekingHit = ''; this.clearSearchHighlight(); this.scheduleReading();
   }
   private async seekSearchHit(key:string): Promise<void> {
     if (this.seekingHit === key) return;
-    const owner = this.model, hit = this.searchHitId, epoch = this.readingEpoch, motion = this.readingMotion;
+    const owner = this.model, source = this.decisionTool, epoch = this.readingEpoch, motion = this.readingMotion;
+    let hit = this.searchHitId;
     const current = (): boolean => this.active && this.model === owner && this.seekingHit === key &&
       epoch === this.readingEpoch && this.hitScope() === key && this.readingMotion === motion;
     this.seekingHit = key;
     try {
       for (let page = 0; page <= 6 && current(); page++) {
-        const index = this.findSearchLine(hit);
+        if (source !== undefined) hit = owner.decisionSourceMessage(source);
+        const index = hit ? this.findSearchLine(hit) : -1;
         if (index >= 0) {
           const line = this.lines[index];
           this.readingRestoring = false;
@@ -193,10 +197,13 @@ export struct Conversation {
           }));
           return;
         }
-        if (page === 6 || !owner.hasMoreMessages || !owner.connected || !await owner.loadOlder()) break;
+        if (source === '' || page === 6 || !owner.hasMoreMessages || !owner.connected || !await owner.loadOlder()) break;
         if (current()) this.syncTimeline();
       }
     } catch (_) { /* Leave this conversation readable when more history is unavailable. */ } finally {
+      if (current() && source !== undefined && (!hit || this.findSearchLine(hit) < 0)) {
+        this.scroller.scrollEdge(Edge.Bottom); this.atEnd = true; this.readingRestoring = false;
+      }
       if (this.seekingHit === key) {
         this.seekingHit = ''; this.searchedHit = key;
         if (this.readingRestoring && this.findSearchLine(hit) < 0) this.scheduleReading();
@@ -231,7 +238,7 @@ export struct Conversation {
     }).catch(() => {
       if (epoch !== this.readingEpoch || key !== this.readingKey || !lease.valid()) return;
       this.readingFailed = true;
-      if (this.searchHitId) this.scheduleReading();
+      if (this.searchHitId || this.decisionTool !== undefined) this.scheduleReading();
     });
   }
   private scheduleReading(): void {
@@ -239,7 +246,7 @@ export struct Conversation {
     this.getUIContext().postFrameCallback(new ConversationFrame(() => { if (epoch === this.readingEpoch && this.active) this.restoreReading(); }));
   }
   private async restoreReading(): Promise<void> {
-    if (this.active && this.searchHitId && this.searchedHit !== this.hitScope()) {
+    if (this.active && (this.searchHitId || this.decisionTool !== undefined) && this.searchedHit !== this.hitScope()) {
       if ((this.readingAnchorReady || this.readingFailed) && this.model.transcriptHistoryReady) await this.seekSearchHit(this.hitScope());
       return;
     }
@@ -368,6 +375,7 @@ export struct Conversation {
   private parkedEnd: number = 0;
   private refocusInline: boolean = false;
   @Local composerWidth: number = 360;
+  @Local decisionPager: DecisionPager = new DecisionPager();
   @Local questions: QuestionWorkspace = new QuestionWorkspace();
   @Local questionInset: number = 0;
   private questionNodeId: string = 'chat.question.' + util.generateRandomUUID();
@@ -1284,7 +1292,7 @@ export struct Conversation {
 
   @Builder taskDock(horizontalInset: number = 0) {
     if (this.model.selected.kind === 'conversation' && this.model.connected) {
-          AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, dockRoom:this.availableHeight, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
+          AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, decisionPager:this.decisionPager, dockRoom:this.availableHeight, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
             onOpenTodo: (row: ResourceRow) => this.onOpenResource(row), onOpenInbox: (row: ResourceRow) => this.onOpenResource(row), onLink: (address: string) => this.onLink(address) })
             .width('100%').padding({ left: horizontalInset, right: horizontalInset })
     }
@@ -1292,7 +1300,7 @@ export struct Conversation {
   @Builder blockingContent() {
     Column({ space: Tokens.gap }) {
       this.taskDock()
-      ForEach(this.model.decision ? [this.model.decision] : [], (request: Decision) => {
+      ForEach(this.model.selected.kind !== 'conversation' && this.model.decision ? [this.model.decision] : [], (request: Decision) => {
         InteractionDecisionForm({ model: this.model, request: request, fillAvailable: true,
           heightLimit: Math.max(Tokens.touch, this.maxControlsHeight() - this.decisionToolsHeight() - Tokens.gap - Tokens.footer),
           onLink: (address: string) => this.onLink(address) })

@@ -7095,6 +7095,38 @@
     {
       "name": "meeting_note_without_minutes",
       "value": "議事録は作成されず、Persona は参加しません。"
+    },
+    {
+      "name": "decision_to_decide",
+      "value": "選択待ち"
+    },
+    {
+      "name": "decision_previous",
+      "value": "前へ"
+    },
+    {
+      "name": "decision_next",
+      "value": "次へ"
+    },
+    {
+      "name": "decision_view_in_chat",
+      "value": "元のメッセージ"
+    },
+    {
+      "name": "decision_skip",
+      "value": "スキップ"
+    },
+    {
+      "name": "decision_skip_plan",
+      "value": "これはプランの承認のためスキップできません。進めない場合は差し戻してください。"
+    },
+    {
+      "name": "decision_skip_permission",
+      "value": "これは権限のリクエストのためスキップできません。実行させない場合は「拒否」をタップしてください。"
+    },
+    {
+      "name": "decision_skip_terminal",
+      "value": "これはターミナルから読み取った質問のため、まだスキップできません。選ばない場合は「チャットで伝える」をタップしてください。"
     }
   ]
 }

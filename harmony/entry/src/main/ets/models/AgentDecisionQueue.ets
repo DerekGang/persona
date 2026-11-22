@@ -52,6 +52,7 @@ export class AgentDecisionCard {
 @ObservedV2
 export class AgentDecisionQueue {
   @Trace cards: AgentDecisionCard[]=[];
+  @Trace snapshotComplete: boolean = false;
   @Trace submitted: string[]=[];
   @Trace error:string='';
   private acknowledged:Map<string,string>=new Map();
@@ -61,6 +62,7 @@ export class AgentDecisionQueue {
   private singleOwner:ClientModel|undefined;
 
   clear():void {
+    this.snapshotComplete = false;
     this.generation++; this.sequence++; this.current=undefined; this.singleOwner=undefined; this.cards=[]; this.submitted=[]; this.acknowledged.clear(); this.error='';
   }
   private read(owner:ClientModel,rows:Record<string,Object>[]):AgentDecisionCard[] {
@@ -81,17 +83,21 @@ export class AgentDecisionQueue {
     if (this.current!==root || this.singleOwner!==singleOwner) { this.clear(); this.current=root; this.singleOwner=singleOwner; }
     const n=++this.sequence, generation=root.connectionGeneration(), scope=root.scope();
     const owners=singleOwner ? root.directoryOwners().filter((owner:ClientModel) => singleOwner===owner) : root.directoryOwners();
+    let complete = owners.length > 0;
     const groups=await Promise.all(owners.map(async (owner:ClientModel):Promise<AgentDecisionCard[]> => {
       const ownerGeneration=owner.connectionGeneration(), ownerScope=owner.scope();
-      if (!owner.connected) return [];
+      if (!owner.connected) { complete = false; return []; }
       try {
         const data=await owner.repo().decisions();
-        if (!owner.owns(ownerGeneration,ownerScope)) return [];
+        if (!owner.owns(ownerGeneration,ownerScope)) { complete = false; return []; }
         const cards=this.read(owner,data);
         return cards.filter((card:AgentDecisionCard) => this.acknowledged.get(card.key)!==card.request.raw);
-      } catch (_) { return []; }
+      } catch (_) { complete = false; return []; }
     }));
-    if (this.current===root && this.sequence===n && root.owns(generation,scope)) this.cards=groups.flat();
+    if (this.current===root && this.sequence===n && root.owns(generation,scope)) {
+      this.cards=groups.flat();
+      this.snapshotComplete=complete;
+    }
   }
   forSession(root:ClientModel,row:ResourceRow):AgentDecisionCard[] {
     const owner=root.directoryOwnerFor(row);

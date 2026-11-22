@@ -7095,6 +7095,38 @@
     {
       "name": "meeting_note_without_minutes",
       "value": "不生成纪要，Persona 不参加。"
+    },
+    {
+      "name": "decision_to_decide",
+      "value": "待选择"
+    },
+    {
+      "name": "decision_previous",
+      "value": "上一张"
+    },
+    {
+      "name": "decision_next",
+      "value": "下一张"
+    },
+    {
+      "name": "decision_view_in_chat",
+      "value": "看原文"
+    },
+    {
+      "name": "decision_skip",
+      "value": "跳过"
+    },
+    {
+      "name": "decision_skip_plan",
+      "value": "这是计划审批，不能跳过：不想按这个计划做就打回。"
+    },
+    {
+      "name": "decision_skip_permission",
+      "value": "这是权限请求，不能跳过：不想让它运行就点「拒绝」。"
+    },
+    {
+      "name": "decision_skip_terminal",
+      "value": "这是从终端读出来的提问，暂时不能跳过：不想选就点下面的「改在对话里说」。"
     }
   ]
 }

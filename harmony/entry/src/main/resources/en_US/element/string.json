@@ -7095,6 +7095,38 @@
     {
       "name": "meeting_note_without_minutes",
       "value": "No minutes, and Persona stays out."
+    },
+    {
+      "name": "decision_to_decide",
+      "value": "To Decide"
+    },
+    {
+      "name": "decision_previous",
+      "value": "Previous"
+    },
+    {
+      "name": "decision_next",
+      "value": "Next"
+    },
+    {
+      "name": "decision_view_in_chat",
+      "value": "View in Chat"
+    },
+    {
+      "name": "decision_skip",
+      "value": "Skip"
+    },
+    {
+      "name": "decision_skip_plan",
+      "value": "This is a plan approval and can't be skipped. To not go ahead, send it back."
+    },
+    {
+      "name": "decision_skip_permission",
+      "value": "This is a permission request and can't be skipped. To stop it running, tap Deny."
+    },
+    {
+      "name": "decision_skip_terminal",
+      "value": "This question was read off the terminal and can't be skipped yet. To leave it, tap Reply in Chat Instead."
     }
   ]
 }

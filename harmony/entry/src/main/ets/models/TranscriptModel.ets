@@ -1,3 +1,4 @@
+import { decisionSourceItem } from './InteractionHistory';
 import { TranscriptReducer, TranscriptSync, TranscriptItem, TranscriptBatch, TranscriptAction, TranscriptSnapshot } from '../core/Domain';
 import { HubRepository, segment } from './HubRepository';
 import { ResourceRow, Wire } from './Wire';
@@ -6,6 +7,7 @@ import { boundedTranscriptCache } from '../core/TranscriptCache';
 
 // A visible conversation owns its subscription, paging and continuity state.
 export class TranscriptModel {
+  decisionSource(toolUseId: string): string { return decisionSourceItem(this.reducer.items, toolUseId); }
   private reducer: TranscriptReducer = new TranscriptReducer();
   private sync: TranscriptSync = new TranscriptSync(this.reducer);
   private active: boolean = true;
