@@ -1535,7 +1535,10 @@ export struct SessionTools {
 
   private commitDate(value:string):string {
     const date=new Date(value);
-    return Number.isFinite(date.getTime()) && date.getTime()>0 ? date.toLocaleString(this.model.language==='default' ? i18n.getSystemLanguage() : this.model.language,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+    if (!Number.isFinite(date.getTime()) || date.getTime()<=0) return '';
+    const locale=this.model.language==='default' ? i18n.getSystemLanguage() : this.model.language;
+    return date.toLocaleString(locale,{year:'numeric',month:'short',day:'numeric',
+      hour:'numeric',minute:'2-digit',hour12:!i18n.System.is24HourClock()});
   }
 
   @Computed get hashTapHeight():number {
@@ -1549,11 +1552,14 @@ export struct SessionTools {
   @Builder commitInfo(commit: Record<string,Object>) {
     Column({space:this.phoneGitReader ? 8 : 5}) {
       Text(Wire.text(commit,'subject')).fontSize(this.phoneGitReader ? 17 : 18).maxFontScale(Tokens.interfaceScaleFor(17))
+        .lineHeight(this.phoneGitReader ? String(PhoneStyle.formSize(20.3,27.7,nativeEnvironment.fontScale))+'vp' : undefined)
         .fontWeight(FontWeight.Medium).fontColor(Colors.ink)
       if (Wire.text(commit,'body')) Text(Wire.text(commit,'body')).fontSize(this.phoneGitReader ? 17 : 15)
-        .maxFontScale(Tokens.interfaceScaleFor(this.phoneGitReader ? 17 : 15)).fontColor(Colors.secondary).copyOption(CopyOptions.LocalDevice)
+        .maxFontScale(Tokens.interfaceScaleFor(this.phoneGitReader ? 17 : 15))
+        .lineHeight(this.phoneGitReader ? String(PhoneStyle.formSize(20.3,28.3,nativeEnvironment.fontScale))+'vp' : undefined).fontColor(Colors.secondary).copyOption(CopyOptions.LocalDevice)
       Text([Wire.text(commit,'author'),this.commitDate(Wire.text(commit,'date'))].filter((v:string) => !!v).join(' · '))
-        .fontSize(this.phoneGitReader ? 12 : 13).maxFontScale(Tokens.interfaceScaleFor(this.phoneGitReader ? 12 : 13)).fontColor(Colors.secondary)
+        .fontSize(this.phoneGitReader ? 12 : 13).maxFontScale(Tokens.interfaceScaleFor(this.phoneGitReader ? 12 : 13))
+        .lineHeight(this.phoneGitReader ? String(PhoneStyle.formSize(14.3,21.7,nativeEnvironment.fontScale))+'vp' : undefined).fontColor(Colors.secondary)
       Button({type:ButtonType.Normal}) {
         Row({space:7}) {
           SymbolGlyph(this.phoneGitReader ? $r('sys.symbol.hash') : IconActions.symbol('copy'))
