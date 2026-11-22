@@ -90,22 +90,43 @@ export struct KnowledgeRecordingView {
     if (phase==='device') return this.model.entry?.effectiveTranscription==='device' ? 'meeting_audio_fallback' : 'meeting_audio_previous';
     return 'meeting_audio_'+phase;
   }
+  private hasHubTranscription():boolean {
+    return this.model.hubAudio.phase!=='device' || this.model.entry?.askedTranscription==='hub';
+  }
+  private phoneLines():boolean {
+    return this.model.hubAudio.usePhoneLines(this.model.entry?.roomRole || 'off');
+  }
+  private currentLine():string { return this.phoneLines() ? this.model.room.latest : this.model.hubAudio.latestLine; }
+  private currentCaption():string {
+    return this.model.hubAudio.showCaption() ? this.model.hubAudio.caption : '';
+  }
   @Builder hubTranscription() {
     Column({space:7}) {
       Text(tr('meeting_cloud_transcription')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
         .fontWeight(FontWeight.Medium).fontColor(Colors.ink)
       Text(tr(this.hubStatus())).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).id('recordings.hub.status')
-      if (this.model.hubAudio.problem && this.model.hubAudio.phase==='live') {
+      if (this.model.hubAudio.problem && this.model.hubAudio.problem!=='no_interim' && this.model.hubAudio.phase==='live') {
         Text(tr('meeting_audio_processing_problem')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.working)
       }
       if (this.model.hubAudio.ackSeconds>0) {
         Text(tr('meeting_audio_received').replace('{seconds}',String(Math.floor(this.model.hubAudio.ackSeconds))))
           .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).id('recordings.hub.received')
       }
-      if (this.model.hubAudio.latestLine) Text(this.model.hubAudio.latestLine).fontSize(16).fontColor(Colors.ink)
-        .copyOption(CopyOptions.LocalDevice).width('100%').id('recordings.hub.line')
-      if (this.model.hubAudio.caption) Text(this.model.hubAudio.caption).fontSize(16).fontColor(Colors.secondary)
-        .width('100%').id('recordings.hub.caption')
+      if (this.currentLine() || this.currentCaption()) {
+        if (this.currentLine()) {
+          Text(tr(this.phoneLines() ? 'phone_meeting_local_transcription' : 'meeting_cloud_transcription')).fontSize(13)
+            .maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).id('recordings.hub.source')
+          Text(this.currentLine()).fontSize(16).fontColor(Colors.ink)
+            .copyOption(CopyOptions.LocalDevice).width('100%').id('recordings.hub.line')
+        }
+        if (this.currentCaption()) {
+          if (this.phoneLines() || !this.currentLine()) Text(tr('meeting_cloud_transcription')).fontSize(13)
+            .maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).id('recordings.hub.captionSource')
+          Text(this.currentCaption()).fontSize(16).fontColor(Colors.secondary).width('100%').id('recordings.hub.caption')
+        }
+      } else if (this.phoneLines() && this.model.entry?.roomRole==='off' && this.model.roomSpeechProblem) {
+        Text(tr(this.model.roomSpeechProblem)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
+      }
       if (this.canWithdraw()) {
         Button(tr('meeting_audio_withdraw'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
           .fontColor(Colors.danger).onClick(() => this.model.withdrawHubAudio()).id('recordings.hub.withdraw')
@@ -124,7 +145,7 @@ export struct KnowledgeRecordingView {
         Text(tr(this.model.room.problem)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).layoutWeight(1)
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).onClick(() => this.model.room.sync())
       }.width('100%')
-      if (this.model.room.latest) Text(this.model.room.latest).fontSize(16).fontColor(Colors.ink).width('100%').id('recordings.room.line')
+      if (!this.hasHubTranscription() && this.model.room.latest) Text(this.model.room.latest).fontSize(16).fontColor(Colors.ink).width('100%').id('recordings.room.line')
       if (this.model.captureState==='recording') Row({space:8}) {
         Text(tr('phone_meeting_speaker')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
         Toggle({type:ToggleType.Switch,isOn:this.model.entry?.roomRole==='participant'}).enabled(!this.model.speakerChanging)
@@ -166,7 +187,7 @@ export struct KnowledgeRecordingView {
           .enabled(this.model.canStart()).onClick(() => this.onStart()).id('knowledge.recording.start')
         if (this.model.hubAudio.phase==='device' && this.model.entry?.askedTranscription!=='hub') Text(tr('phone_record_audio_local')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%')
       }.width('100%').alignItems(HorizontalAlign.Start).padding(15).backgroundColor(Colors.surface).borderRadius(15)
-      if (this.model.hubAudio.phase!=='device' || this.model.entry?.askedTranscription==='hub') this.hubTranscription()
+      if (this.hasHubTranscription()) this.hubTranscription()
       if (this.model.room.active && this.model.entry?.roomRole!=='off') this.meetingRoom()
       if (this.model.entries.length > 1) Select(this.recordingOptions()).selected(this.recordingIndex())
         .enabled(this.model.canSelectEntry()).onSelect((i:number) => {

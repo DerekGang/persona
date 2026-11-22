@@ -14,7 +14,7 @@ registerHooks({
     return {format:'module',shortCircuit:true,source:stripTypeScriptTypes(code)};
   }
 });
-const {MeetingHubChoice}=await import('../entry/src/main/ets/models/MeetingHubAudio.ets');
+const {MeetingHubAudio,MeetingHubChoice}=await import('../entry/src/main/ets/models/MeetingHubAudio.ets');
 const source=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeWorkspacePage.ets',import.meta.url),'utf8');
 const recording=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeRecordingView.ets',import.meta.url),'utf8');
 const strings=new Map(JSON.parse(readFileSync(new URL('../entry/src/main/resources/en_US/element/string.json',import.meta.url))).string.map(s=>[s.name,s.value]));
@@ -86,4 +86,24 @@ test('the picker, privacy statements and status labels resolve in all four shipp
     for(const key of ['meeting_start_privacy_cloud_days','meeting_start_privacy_local_days'])assert.ok(words.get(key).includes('{days}'));
     assert.ok(words.has('meeting_configured_service'));
   }
+});
+
+test('the meeting shows one identified transcript, choosing the device or hub that actually produced each line',()=>{
+  const methods=recording.slice(recording.indexOf('  private hasHubTranscription('),recording.indexOf('  @Builder hubTranscription('));
+  const View=new Function('return '+stripTypeScriptTypes('class SourceView {'+methods+'}'))();
+  const view=new View(),audio=new MeetingHubAudio();
+  view.model={hubAudio:audio,room:{latest:'Phone sentence'},entry:{roomRole:'listener',askedTranscription:'hub'}};
+  audio.phase='live';audio.latestLine='Hub sentence';audio.caption='Temporary hub words';
+  assert.equal(view.currentLine(),'Hub sentence');assert.equal(view.currentCaption(),'Temporary hub words');assert.equal(view.phoneLines(),false);
+  audio.problem='no_interim';assert.equal(view.currentLine(),'Hub sentence');assert.equal(view.currentCaption(),'');
+  audio.problem='upstream_unavailable';assert.equal(view.currentLine(),'Phone sentence');assert.equal(view.currentCaption(),'');
+  audio.problem='';assert.equal(view.currentCaption(),'Temporary hub words');
+  view.model.entry.roomRole='off';assert.equal(view.currentLine(),'Phone sentence');assert.equal(view.currentCaption(),'Temporary hub words');
+  view.model.entry.roomRole='participant';
+  for(const phase of ['waiting_network','reconnecting','fallback','failed','revoked']){
+    audio.phase=phase;assert.equal(view.currentLine(),'Phone sentence');assert.equal(view.currentCaption(),'');
+  }
+  audio.phase='final';assert.equal(view.currentLine(),'Phone sentence');assert.equal(view.currentCaption(),'');
+  assert.match(recording,/!this\.hasHubTranscription\(\) && this\.model\.room\.latest/);
+  assert.match(recording,/this\.model\.room\.active && this\.model\.entry\?\.roomRole!=='off'/);
 });
