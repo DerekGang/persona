@@ -51,8 +51,9 @@ struct OpenPersonaDictationIntent: AppIntent {
 }
 
 /// Calls Persona on the main conversation (#13241): the Call Persona control's intent. The call is Call Persona's own
-/// (`CallPersonaIntent.place()`, #9290), waiting for the app to be in front before its Start. Not in Shortcuts, where
-/// the Call Persona App Shortcut already is: a control needs an intent the widget extension also compiles.
+/// (`CallPersonaIntent.place()`, #9290), waiting for the app to be in front before its Start. A control needs an intent
+/// the widget extension also compiles, and `CallPersonaIntent` is the app's alone. Hidden from Shortcuts, where the
+/// Call Persona App Shortcut already is.
 struct OpenPersonaCallIntent: AppIntent {
     nonisolated static let title: LocalizedStringResource = "Call Persona"
     nonisolated static let description = IntentDescription("Opens Persona and calls it on your main chat.")

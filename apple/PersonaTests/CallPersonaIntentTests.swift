@@ -32,7 +32,8 @@ struct CallPersonaIntentTests {
         #expect(intent.contains("await MainActor.run { CallPersonaIntent.place() }"))
         let controls = try String(contentsOf: apple.appending(path: "PersonaWidgets/PersonaControls.swift"), encoding: .utf8)
         let control = try #require(controls.range(of: "struct CallPersonaControl: ControlWidget {"))
-        let drawing = String(controls[control.upperBound...].prefix(500))
+        let drawingEnd = try #require(controls.range(of: "\n}\n", range: control.upperBound..<controls.endIndex))
+        let drawing = String(controls[control.upperBound..<drawingEnd.lowerBound])
         #expect(drawing.contains("ControlWidgetButton(action: OpenPersonaCallIntent())"))
         #expect(drawing.contains("systemImage: \"\(Theme.Icon.callPersona)\""))
     }
