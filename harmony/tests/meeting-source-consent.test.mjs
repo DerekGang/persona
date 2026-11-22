@@ -14,7 +14,7 @@ registerHooks({
     return {format:'module',shortCircuit:true,source:stripTypeScriptTypes(code)};
   }
 });
-const {PhoneMeetingOptions,meetingDefaultTitle,meetingPlaceholderVp}=await import('../entry/src/main/ets/models/PhoneMeetingOptions.ets');
+const {PhoneMeetingOptions,meetingCaptureHeight,meetingDefaultTitle,meetingPlaceholderVp}=await import('../entry/src/main/ets/models/PhoneMeetingOptions.ets');
 const {MeetingHubAudio,MeetingHubChoice}=await import('../entry/src/main/ets/models/MeetingHubAudio.ets');
 const source=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeWorkspacePage.ets',import.meta.url),'utf8');
 const recording=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeRecordingView.ets',import.meta.url),'utf8');
@@ -123,6 +123,14 @@ test('the title uses the mobile date and minutes for the real locale and only it
   assert.equal(meetingPlaceholderVp(380,335,23),'23vp');
   assert.ok(parseFloat(meetingPlaceholderVp(258,375,23))*375/23<=246);
   assert.doesNotMatch(title,/\.maxFontScale/);
+});
+
+test('the meeting start action scales its real height and gives a short form room to scroll',()=>{
+  assert.equal(meetingCaptureHeight(1,700),58);
+  assert.ok(Math.abs(meetingCaptureHeight(3.2,700)-71.8)<.02);
+  assert.equal(meetingCaptureHeight(3.2,143),55);
+  assert.equal(meetingCaptureHeight(3.2,115),44);
+  assert.ok(meetingCaptureHeight(1.2,700)>58);
 });
 
 test('an idle meeting menu only offers the offline language and physical inputs reported for its own visible draft',async()=>{

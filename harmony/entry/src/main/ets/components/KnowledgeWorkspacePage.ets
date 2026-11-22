@@ -24,7 +24,7 @@ import { NativeRecording } from '../platform/NativeRecording';
 import { KnowledgeRecordingView } from './KnowledgeRecordingView';
 import { LengthMetrics, UIUtils } from '@kit.ArkUI';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
-import { PhoneMeetingOptions, meetingDefaultTitle, meetingPlaceholderVp } from '../models/PhoneMeetingOptions';
+import { PhoneMeetingOptions, meetingCaptureHeight, meetingDefaultTitle, meetingPlaceholderVp } from '../models/PhoneMeetingOptions';
 import { PhoneMeetingTranscription } from '../models/PhoneMeetingTranscription';
 import { MeetingHubChoice } from '../models/MeetingHubAudio';
 import { meetingAudioNetwork } from '../platform/MeetingAudioNetwork';
@@ -149,6 +149,7 @@ export struct KnowledgeWorkspacePage {
     },()=>NativeRecording.meetingLanguages(),()=>NativeRecording.meetingInputs());
   }
   @Local recordingTitleWidth:number=0;
+  @Local recordingPageHeight: number = 0;
   private placeholderSize():string {
     const ctx=this.getUIContext(),preferred=17*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17));
     const width=this.recordingTitleWidth || (nativeEnvironment.windowWidthPx ? ctx.px2vp(nativeEnvironment.windowWidthPx)-62 : 0);
@@ -777,12 +778,12 @@ export struct KnowledgeWorkspacePage {
       Row() {
         Button({type:ButtonType.Capsule}) {
           Row({space:8}) {
-            SymbolGlyph($r('sys.symbol.mic_fill')).fontSize('18vp').fontColor([Colors.onAction])
+            SymbolGlyph($r('sys.symbol.waveform_circle')).fontSize(Tokens.interfaceFontVp(17, nativeEnvironment.fontScale)).fontWeight(600).fontColor([Colors.onAction])
             Text(tr(this.recording.captureState === 'recording' ? 'knowledge_recording_active' : this.meetingKind==='meeting' ? 'phone_meeting_start' : 'phone_start_note'))
-              .fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Color.White).textAlign(TextAlign.Center)
-              .flexShrink(1).id('recordings.capture.label')
+              .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).minFontSize(10.2).maxFontSize(17).fontWeight(600)
+              .fontColor(Colors.onAction).textAlign(TextAlign.Center).maxLines(1).flexShrink(1).id('recordings.capture.label')
           }.width('100%').justifyContent(FlexAlign.Center)
-        }.width('100%').constraintSize({minHeight:Math.max(45,Math.ceil(22*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+12)})
+        }.width('100%').height(meetingCaptureHeight(nativeEnvironment.fontScale, this.recordingPageHeight))
           .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(this.recording.canStop() ? Colors.danger : Colors.action).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
           .onClick(() => {
             if (this.recording.canStop()) this.openRecording().catch(() => undefined);
@@ -790,6 +791,7 @@ export struct KnowledgeWorkspacePage {
           }).id('recordings.capture')
       }.width('100%').padding({top:4,bottom:4}).id('knowledge.recording.open')
     }.width('100%').height('100%').padding({left:16,right:16,top:18,bottom:12}).backgroundColor(Colors.grouped).id('recordings.home')
+      .onAreaChange((_: Area, next: Area) => { const height = Number(next.height); if (height !== this.recordingPageHeight) this.recordingPageHeight = height; })
       .bindSheet($$this.recordingOpen,this.recordingSheet(),{title:{title:tr('knowledge_recording_open')},height:SheetSize.LARGE,showClose:true,
         onDisappear:() => { this.recording.stopForBackground().catch(() => undefined); }})
   }

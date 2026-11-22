@@ -15,6 +15,23 @@ export function meetingPlaceholderVp(width:number,measured:number,preferred:numb
   return String(Math.max(10,Math.floor(fitted*10)/10))+'vp';
 }
 
+// UIFontMetrics body values used by the recording hero's scaled 44pt label.
+// The prominent button adds seven points above and below that label.
+const recordingBodyMetrics: number[][] = [
+  [14, 14], [15, 46/3], [16, 49/3], [17, 17], [19, 56/3], [21, 20], [23, 67/3]
+];
+export function meetingCaptureHeight(fontScale: number, pageHeight: number): number {
+  const points = Math.max(14, Math.min(23, 17 * (fontScale > 0 ? fontScale : 1)));
+  let index = 1;
+  while (index < recordingBodyMetrics.length-1 && points > recordingBodyMetrics[index][0]) index++;
+  const lower = recordingBodyMetrics[index-1], upper = recordingBodyMetrics[index];
+  const body = lower[1] + (upper[1]-lower[1]) * (points-lower[0]) / (upper[0]-lower[0]);
+  const preferred = 44 * body / 17 + 14;
+  // Leave a tappable row in the independently scrollable form above the footer.
+  // The page insets, footer insets and spacing occupy another 44vp.
+  return pageHeight > 0 ? Math.max(44, Math.min(preferred, pageHeight-88)) : preferred;
+}
+
 /** The recordings destination owns its draft. An open header menu may only change that same, idle draft. */
 @ObservedV2
 export class PhoneMeetingOptions {
