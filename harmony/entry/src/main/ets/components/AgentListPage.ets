@@ -663,6 +663,7 @@ export struct AgentListPage {
   @Builder searchControl() {
     Search({value:this.workspace.search,placeholder:tr('agents_search_prompt'),controller:this.searchField})
       .maxFontScale(Tokens.interfaceFontMaxScale).height(44).margin(0)
+      .cancelButton({style:this.workspace.search ? CancelButtonStyle.INPUT : CancelButtonStyle.INVISIBLE})
       .textFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).caretStyle({color:Colors.action})
       .onFocus(() => { if (this.compactRoot) { this.focusSearch = false; this.searchOpen = true; this.setSearchEditing(true); } })
       .onBlur(() => { if (!this.workspace.search) this.setSearchEditing(false); })
