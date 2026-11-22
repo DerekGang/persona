@@ -85,6 +85,28 @@ import PersonaWire
         _ = try await api.mailAccounts()
     }
 
+    @Test func healthIntakeLoadsRecordsAndUndoesWithoutResurrectingARetry() async throws {
+        let before = try await api.healthIntake()
+        #expect(before.water.today == 750)
+        #expect(before.protein.today == 36)
+        let draft = HealthIntake.Draft(kind: .water)
+        let logged = try await api.recordHealthIntake(draft)
+        #expect(logged.today.water == 1000)
+        #expect(logged.entry?.amount == 250)
+        let repeated = try await api.recordHealthIntake(draft)
+        #expect(repeated.today.water == 1000)
+        #expect(repeated.entry?.id == draft.id)
+        let undone = try await api.undoHealthIntake(draft.id)
+        #expect(undone.today.water == 750)
+        #expect(try await api.undoHealthIntake(draft.id).today.water == 750)
+        let tombstone = try await api.recordHealthIntake(draft)
+        #expect(tombstone.entry?.deletedAt != nil)
+        #expect(tombstone.today.water == 750)
+        let final = try await api.healthIntake()
+        #expect(final.water.entries.count == before.water.entries.count)
+        #expect(final.days.last?.water == final.water.today)
+    }
+
     /// Times are moved to now: the demo never looks days old.
     @Test func timesAreCurrent() async throws {
         let sessions = try await api.sessions()

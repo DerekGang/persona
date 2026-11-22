@@ -1,6 +1,7 @@
 import XCTest
+import UIKit
 
-/// Local sample values exercise the real Health home without an intake API or access to someone's Health store.
+/// Intake comes from the local mock's real HTTP routes; only Apple Health readings are synthetic.
 final class HealthHomeUITests: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
 
@@ -10,8 +11,9 @@ final class HealthHomeUITests: XCTestCase {
         continueAfterFailure = false
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         let app = XCUIApplication()
-        app.launchArguments = ["-pairURL", pair, "-openShellPage", "health", "-ui.scheme", scheme,
-                               "-showHealthTodayExample", "YES", "-showHealthActivityExample", activity,
+        app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-demo.on", "NO", "-dev.openChat", "",
+                               "-openShellPage", "health", "-ui.scheme", scheme,
+                               "-showHealthActivityExample", activity,
                                "-showHealthHomeTrendsExample", trends, "-showHealthBottom", bottom ? "YES" : "NO",
                                "-UIPreferredContentSizeCategoryName", largest ? "UICTContentSizeCategoryAccessibilityXXXL" : "UICTContentSizeCategoryL"]
         app.launchPinned()
@@ -19,7 +21,7 @@ final class HealthHomeUITests: XCTestCase {
         for label in ["Allow", "允许", "OK", "好"] where springboard.buttons[label].waitForExistence(timeout: 1) {
             springboard.buttons[label].tap()
         }
-        let ready = bottom ? "health-privacy" : "health-today-example"
+        let ready = bottom ? "health-privacy" : "health-today"
         XCTAssertTrue(app.descendants(matching: .any)[ready].waitForExistence(timeout: 20), app.debugDescription)
         return app
     }
@@ -43,7 +45,7 @@ final class HealthHomeUITests: XCTestCase {
         for scheme in ["light", "dark"] { for largest in [false, true] {
             let size = largest ? "largest" : "default"
             var app = try launch(scheme: scheme, largest: largest)
-            XCTAssertTrue(app.descendants(matching: .any)["health-today-example"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["health-today"].exists)
             XCTAssertTrue(app.otherElements["health-water-ring"].exists)
             XCTAssertTrue(app.otherElements["health-protein-ring"].exists)
             XCTAssertFalse(app.buttons["health-activity-rings"].exists)
@@ -53,6 +55,94 @@ final class HealthHomeUITests: XCTestCase {
             try shot(app, "health-bottom-\(scheme)-\(size)")
             app.terminate()
         } }
+    }
+
+    @MainActor func testLoggingAGlassChangesTheHubTotalAndUndoRestoresIt() throws {
+        let app = try launch()
+        let ring = app.otherElements["health-water-ring"]
+        let before = ring.value as? String
+        let first = app.buttons["health-log-water"], second = app.buttons["health-log-water-amount"]
+        XCTAssertEqual(first.frame.minY, second.frame.minY, accuracy: 1, "both water actions share a row at default size")
+        XCTAssertEqual(first.frame.height, second.frame.height, accuracy: 1)
+        first.tap()
+        let changed = NSPredicate { _, _ in (ring.value as? String) != before }
+        expectation(for: changed, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        let undo = app.buttons["toast-action"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 10))
+        undo.tap()
+        let restored = NSPredicate { _, _ in (ring.value as? String) == before }
+        expectation(for: restored, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        app.terminate()
+    }
+
+    /// The app caps interface text in its window; the system's accessibility category still decides the layout.
+    @MainActor func testAccessibilityWaterActionsUseFullWidth() throws {
+        for scheme in ["light", "dark"] {
+            let app = try launch(scheme: scheme, largest: true)
+            let first = app.buttons["health-log-water"], second = app.buttons["health-log-water-amount"]
+            XCTAssertGreaterThan(second.frame.minY, first.frame.maxY, "accessibility sizes stack the two water actions")
+            XCTAssertEqual(first.frame.width, second.frame.width, accuracy: 1)
+            XCTAssertFalse(first.label.contains("\n"))
+            XCTAssertFalse(second.label.contains("\n"))
+            try shot(app, "health-top-\(scheme)-largest")
+            app.terminate()
+        }
+    }
+
+    @MainActor func testOldHubShowsUpdateHint() throws {
+        guard let hub = env["PERSONA_HEALTH_OLD_HUB"] else { throw XCTSkip("needs a local mock without health_intake") }
+        let app = XCUIApplication()
+        let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
+        app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-demo.on", "NO", "-dev.openChat", "",
+                               "-openShellPage", "health", "-ui.scheme", "light"]
+        app.launchPinned()
+        XCTAssertTrue(app.staticTexts["health-update-hub"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["health-today"].exists)
+        try shot(app, "health-update-hub")
+        app.terminate()
+    }
+
+    @MainActor func testOtherWaterAndProteinAmountsUseTheEnteredUnits() throws {
+        let app = try launch()
+        for (button, ringID, text, unit) in [
+            ("health-log-water-amount", "health-water-ring", "125.5", "毫升"),
+            ("health-log-protein", "health-protein-ring", "12.3", "克"),
+        ] {
+            let ring = app.otherElements[ringID]
+            let before = ring.value as? String
+            app.buttons[button].tap()
+            let alert = app.alerts.firstMatch
+            XCTAssertTrue(alert.waitForExistence(timeout: 5))
+            XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", unit)).firstMatch.exists)
+            let field = alert.textFields.firstMatch
+            XCTAssertTrue(field.exists)
+            field.tap()
+            field.typeText(text)
+            if button == "health-log-water-amount" { try shot(app, "health-water-amount") }
+            let submit = alert.buttons["记录"]
+            XCTAssertTrue(submit.isEnabled)
+            submit.tap()
+            expectation(for: NSPredicate { _, _ in (ring.value as? String) != before }, evaluatedWith: nil)
+            waitForExpectations(timeout: 10)
+            let undo = app.buttons["toast-action"]
+            XCTAssertTrue(undo.waitForExistence(timeout: 10))
+            undo.tap()
+            expectation(for: NSPredicate { _, _ in (ring.value as? String) == before }, evaluatedWith: nil)
+            waitForExpectations(timeout: 10)
+        }
+        app.terminate()
+    }
+
+    @MainActor func testIPadShowsTodayAndTrendsWithoutActivity() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("iPad-only acceptance") }
+        let app = try launch()
+        XCTAssertTrue(app.descendants(matching: .any)["health-today"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["health-activity-rings"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["health-trends"].exists)
+        try shot(app, "health-ipad")
+        app.terminate()
     }
 
     @MainActor func testActivityPermissionUnavailableMoveAndThreeRingStates() throws {

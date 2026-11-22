@@ -198,6 +198,7 @@ data = {
     "todos": m.sorted_todos(),
     "runs": m.RUNS,
     "memory": m.MEMORY,
+    "health_intake": m.health_intake_snapshot(),
     "inbox": m.INBOX,
     "mail_accounts": mail_mock.MAIL_ACCOUNTS,
     "mail": MAIL,

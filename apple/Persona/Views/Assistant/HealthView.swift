@@ -14,12 +14,23 @@ import SwiftUI
     private(set) var loaded = false
     /// Why the list could not be read; shown only while there is nothing to show.
     private(set) var error: String?
+    private(set) var intake: HealthIntake?
+    private(set) var supportsIntake = false
+    private(set) var intakeError: String?
+    private(set) var intakeBusy = false
+    /// A broadcast arriving during a write is read once the write has settled, by the foreground task.
+    private(set) var intakeRefresh = 0
+    @ObservationIgnored private var intakeReadPending = false
+    @ObservationIgnored private var intakeRead = 0
+    @ObservationIgnored private var intakeScope: APIClient?
+    @ObservationIgnored private var cupAmount: Double = 250
     @ObservationIgnored private let deps: AssistantDeps
 
     init(deps: AssistantDeps = .live) { self.deps = deps }
 
-    func load(machine: String) async {
+    func load(machine: String, features: Set<String> = []) async {
         guard let api = deps.api() else { return }
+        async let today: Void = loadIntake(api: api, supported: features.contains(HealthIntake.feature))
         async let memory = try? api.assistantMemory(space: Session.healthSpace)
         async let reports = try? api.healthReports(machine: machine)
         do {
@@ -30,7 +41,106 @@ import SwiftUI
         }
         if let files = await memory { memoryCount = files.filter { $0.name != AssistantMemoryEntry.index }.count }
         if let list = await reports { reportCount = list.count }
+        await today
         loaded = true
+    }
+
+    private func loadIntake(api: APIClient, supported: Bool) async {
+        let api = api.manager(nil)
+        if !api.sameSettingsScope(as: intakeScope) {
+            intake = nil
+            intakeError = nil
+            intakeBusy = false
+            intakeReadPending = false
+            cupAmount = 250
+            intakeScope = api
+        }
+        supportsIntake = supported
+        guard supported else { intake = nil; intakeRead += 1; return }
+        // Keep optimistic feedback until the write answers, then honor every invalidation seen meanwhile.
+        guard !intakeBusy else { intakeReadPending = true; return }
+        intakeRead += 1
+        let read = intakeRead
+        do {
+            let value = try await api.healthIntake()
+            guard !Task.isCancelled, read == intakeRead, isCurrent(api) else { return }
+            intake = value
+            intakeError = nil
+        } catch {
+            guard !Task.isCancelled, read == intakeRead, isCurrent(api) else { return }
+            intakeError = error.shown
+        }
+    }
+
+    private func isCurrent(_ api: APIClient) -> Bool {
+        api.sameSettingsScope(as: deps.api()?.manager(nil)) && api.sameSettingsScope(as: intakeScope)
+    }
+
+    private func finishIntake(_ api: APIClient) {
+        guard isCurrent(api) else { return }
+        intakeBusy = false
+        if intakeReadPending {
+            intakeReadPending = false
+            intakeRefresh += 1
+        }
+    }
+
+    /// One request at a time, with feedback before the first suspension and authoritative totals afterwards.
+    func record(_ kind: HealthIntake.Kind, amount: Double? = nil) async {
+        await record(HealthIntake.Draft(kind: kind, amount: amount))
+    }
+
+    private func record(_ draft: HealthIntake.Draft, on captured: APIClient? = nil) async {
+        guard !intakeBusy, supportsIntake, let api = captured ?? deps.api()?.manager(nil), isCurrent(api),
+              let previous = intake else { return }
+        intakeBusy = true
+        intakeRead += 1
+        if draft.kind == .water { intake?.water.today += draft.amount ?? cupAmount }
+        else { intake?.protein.today += draft.amount ?? 0 }
+        defer { finishIntake(api) }
+        do {
+            let result = try await api.recordHealthIntake(draft)
+            guard isCurrent(api) else { return }
+            intake?.align(result)
+            intakeError = nil
+            if result.entry?.deletedAt != nil {
+                deps.toast(Toast(String(localized: "Intake undone"), style: .success))
+                return
+            }
+            if draft.kind == .water, draft.amount == nil, let entry = result.entry { cupAmount = entry.amount }
+            deps.toast(Toast(String(localized: "Intake logged"), style: .success,
+                             action: .init(title: String(localized: "Undo"), run: { [weak self] in
+                                 Task { await self?.undo(draft.id, on: api) }
+                             })))
+        } catch {
+            guard isCurrent(api) else { return }
+            intake = previous
+            deps.toast(Toast(error.shown ?? String(localized: "Couldn't log intake"), style: .error,
+                             action: .init(title: String(localized: "Try Again"), run: { [weak self] in
+                                 Task { await self?.record(draft, on: api) }
+                             })))
+        }
+    }
+
+    func undo(_ id: String) async { await undo(id, on: deps.api()?.manager(nil)) }
+
+    private func undo(_ id: String, on captured: APIClient?) async {
+        guard !intakeBusy, let api = captured, isCurrent(api) else { return }
+        intakeBusy = true
+        intakeRead += 1
+        defer { finishIntake(api) }
+        do {
+            let result = try await api.undoHealthIntake(id)
+            guard isCurrent(api) else { return }
+            intake?.align(result)
+            deps.toast(Toast(String(localized: "Intake undone"), style: .success))
+        } catch {
+            guard isCurrent(api) else { return }
+            deps.toast(Toast(error.shown ?? String(localized: "Couldn't undo intake"), style: .error,
+                             action: .init(title: String(localized: "Try Again"), run: { [weak self] in
+                                 Task { await self?.undo(id, on: api) }
+                             })))
+        }
     }
 
     /// The space's open conversations, newest first: the hub's list, with what the pushes say since (a title, its
@@ -71,6 +181,13 @@ import SwiftUI
 }
 
 struct HealthView: View {
+    private nonisolated struct IntakeRefresh: Hashable, Sendable {
+        var group: String
+        var hellos: Int
+        var revision: Int
+        var retry: Int
+        var supported: Bool
+    }
     @Environment(AppModel.self) private var model
     /// A conversation is being started (the Persona page shows it coming).
     var disabled: Bool
@@ -157,8 +274,12 @@ struct HealthView: View {
             }
         }
         #endif
-        .task { await page.load(machine: machine.id) }
-        .refreshable { await page.load(machine: machine.id) }
+        .tabActiveTask(id: IntakeRefresh(group: model.hubGroup, hellos: model.hubHellos,
+                                        revision: model.healthIntakeRevision, retry: page.intakeRefresh,
+                                        supported: model.hubFeatures.contains(HealthIntake.feature))) {
+            await page.load(machine: machine.id, features: model.hubFeatures)
+        }
+        .refreshable { await page.load(machine: machine.id, features: model.hubFeatures) }
         #if os(iOS)
         // Load outside the conditional List row: a hidden empty section has no row to run its task.
         .tabActiveTask(id: trends.range) { await trends.load() }
@@ -168,12 +289,8 @@ struct HealthView: View {
     private func sections(_ list: [Session]) -> some View {
         ScrollViewReader { proxy in
             List {
+                Section { HealthTodaySection(page: page) } header: { Text("Today") }
                 #if os(iOS)
-                #if DEBUG
-                if HealthHomeSamples.showToday {
-                    Section { HealthTodayExample() } header: { Text("Today") }
-                }
-                #endif
                 if UIDevice.current.userInterfaceIdiom == .phone {
                     #if DEBUG
                     HealthActivitySection(model: HealthHomeSamples.activityModel())

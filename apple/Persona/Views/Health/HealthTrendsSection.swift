@@ -30,7 +30,7 @@ struct HealthTrendsSection: View {
                 .accessibilityIdentifier("health-trends-range")
             }
             content
-            Text("Data is read and charted only on this iPhone and never sent to the hub.")
+            Text("Data is read and charted only on this device and never sent to the hub.")
                 .font(Theme.Font.caption)
                 .foregroundStyle(.secondary)
         }
@@ -66,7 +66,7 @@ struct HealthTrendsSection: View {
 
 #if DEBUG
 extension View {
-    /// `-showHealthTrends YES`: Health Trends in a sheet reading this phone's Health; `-showHealthTrends sample`: with made-up
+    /// `-showHealthTrends YES`: Health Trends in a sheet reading this device's Health; `-showHealthTrends sample`: with made-up
     /// days (a simulator has no Health data), `-showHealthTrends empty` / `ask`: the empty and never-asked states.
     func healthTrendsSample() -> some View { modifier(HealthTrendsSample()) }
 }

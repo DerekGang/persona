@@ -1709,6 +1709,13 @@ The widget extension doesn't build `Theme`: Persona's widgets take their colors,
 - Health intake uses `Theme.Health.water` (blue) and `Theme.Health.protein` (amber), shared under
   `apple/Shared/Design/HealthTokens.swift` for future widgets. These hues stay apart from Apple's Activity colors.
   Values remain in the primary ink; the colors identify the rings rather than replacing readable text.
+  The Health home reads the default manager's `health_intake` capability and totals while in front. Without it,
+  a single Update your hub first line takes the rings' place. Drank a Glass and Other Amount are matching text
+  buttons in one row below Water; only accessibility text sizes stack them. Labels stay on one line. Other Amount
+  and Log Grams use the short text-entry alert (4.4). Logging changes the local total immediately, then takes the
+  hub's totals; failure rolls back and says why with Try Again using the same record id. The result toast offers
+  Undo through the intake DELETE route. These totals count Persona records only, in the hub's today bucket.
+  iPad shows intake and available trends; Vision Pro shows intake without Activity or trends.
 - `ActivityRings` is iPhone-only: Apple's `HKActivityRingView`, with an outer black margin inside a rounded black
   surface. Move, Exercise and Stand labels use Apple's fixed colors on that same black surface. Missing Exercise
   and Stand goals leave Move alone. At accessibility text sizes the values sit below the rings; VoiceOver reads the

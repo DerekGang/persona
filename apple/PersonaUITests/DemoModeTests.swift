@@ -315,6 +315,23 @@ final class DemoModeTests: XCTestCase {
         see(app.buttons["welcome.demo"], "the pairing page after a relaunch", timeout: 15)
     }
 
+    /// Demo Mode offers the same Health home, without a network hub.
+    @MainActor func testHealthTodayIsAvailableInDemoMode() throws {
+        app = XCUIApplication()
+        app.launchArguments = ["-openWelcome", "YES", "-openShellPage", "health", "-ui.scheme", "light", "-probes", "YES"]
+        app.launchPinned()
+        see(app.buttons["welcome.demo"], "demo entry", timeout: 15).tap()
+        see(text(Self.firstAgent), "the demo's initial Agents page", timeout: 15)
+        tab("Persona")
+        see(app.descendants(matching: .any)["health-today"], "today's intake in demo mode", timeout: 20)
+        XCTAssertTrue(app.otherElements["health-water-ring"].exists)
+        XCTAssertTrue(app.buttons["health-log-water"].exists)
+        XCTAssertFalse(app.staticTexts["health-update-hub"].exists)
+        noErrors("Health")
+        shot("health-today")
+        app.terminate()
+    }
+
     /// Demo Mode is remembered: a relaunch opens the demo again, not the pairing page.
     @MainActor func testStaysAcrossLaunches() throws {
         app = XCUIApplication()
