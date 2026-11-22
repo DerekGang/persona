@@ -93,6 +93,24 @@ outputs restore the original reviewed bytes and return nonzero. If restoration i
 diagnostic remains first and the restoration error is explicitly secondary; no successful rollback is claimed.
 These tests do not regenerate or edit the reviewed Kotlin.
 
+#13282 reuses the existing `createAndroidComposeRule<ComponentActivity>()` instrumentation host in settings
+`src/androidTest`. Its `java` source-set filter shares only the exact reviewed generated Build Kotlin and immutable
+adapter from `src/test`; ordinary source sets never gain them. The host exercises real package metadata, including
+the instrumentation package's zero `longVersionCode`, handwritten → generated → handwritten rollback, native Commit
+copy and localized read-only rows. When captures are available, real-window screenshots and target metadata are
+written to test-app storage and are attached only as review evidence. Compose semantics and screenshots are not
+TalkBack: accessibility-service verification is separately named and must not be inferred from them.
+
+The initial #13282 target is a dedicated x86_64 Android 15 / API 35 AOSP emulator (model
+`Android SDK built for x86_64`, build `AE3A.240806.019`, userdebug/test-keys), not a physical device. It runs
+without hardware acceleration; a separate `System UI isn't responding` capture is environment diagnostics, not an
+application screenshot. Standard `:feature:settings:connectedDebugAndroidTest` reached the actual assertions:
+the localized en/zh-Hans/ja generated/native read-only and 48 dp test passed, but the full rollback test failed its
+read-only click assertion with unexpected native Commit copy notices and therefore is not a completed rollback or
+light/dark screenshot result. Direct `am instrument` startup failed separately and is not substituted for the
+standard channel. There is no TalkBack, full device-matrix, performance or Gate A–D claim. Keep this limitation
+with any PR using the host rather than treating a successful JVM or build result as device acceptance.
+
 These are Native JVM Compose comparisons, not a physical device,
 TalkBack, accessibility-service or performance result. This local generation, Kotlin compilation and JVM comparison
 does not complete any part of Gates A–D, their required visual/device acceptance, or the separately unauthorized
