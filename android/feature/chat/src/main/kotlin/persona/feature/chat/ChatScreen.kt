@@ -704,8 +704,8 @@ private fun ChatPage(
     // Paths in messages link only when there on the machine (PathLinks.kt): asked of the session's directory.
     val pathPresence = remember(chrome.files, key, session?.cwd, chrome.onOpenPath != null) {
         val files = chrome.files
-        val cwd = session?.cwd.orEmpty()
-        if (files == null || cwd.isBlank() || chrome.onOpenPath == null) null
+        val cwd = session?.cwd.orEmpty().ifBlank { "~" }
+        if (files == null || key.machineId.isBlank() || chrome.onOpenPath == null) null
         else PathPresence(scope, { paths -> files.stat(key.machineId, cwd, paths) })
     }
     val currentSend by rememberUpdatedState<(String) -> Unit>({ send(it) })
@@ -1006,8 +1006,9 @@ private fun ChatPage(
                                 onFreeze = { timeline.freeze(currentItems()); timelineVersion++ },
                                 onVisibilityChanged = { taskPageVisible = it },
                                 onExpandFold = ::expand, foldErrors = foldErrors,
-                                // While the link card peeks, the composer needs the room more (glass laid them over each other).
-                                showBar = linkInset.value <= 0f, callJumps = callJumps)
+                                // Glass agent chats surface the plan via the floating PlanPill above the composer (matching iOS)
+                                // instead of a top full-width progress bar; also hide while the link card peeks.
+                                showBar = linkInset.value <= 0f && !(glass && agentChat), callJumps = callJumps)
                         }
                     },
                     bottomBar = footer@ {
@@ -1227,7 +1228,8 @@ private fun ChatPage(
                         onFullText = { item -> readFullText(key, item) }, loader = loader, session = session,
                         earlierEngines = earlierEngines, onReadEarlierText = ::readFullText,
                         machineName = machines.firstOrNull { it.id == key.machineId }?.name, subagentCards = subagentCards,
-                        messageMenu = messageMenu, turnLauncher = session?.launcher)
+                        messageMenu = messageMenu, turnLauncher = session?.launcher,
+                        hasPendingCards = requests.isNotEmpty() || taskAsk != null)
                 }
             }
             ChatPageOverlays(pushedDetail, taskHost, search, searchableItems, projection.turns.size, snapshot.hasOlder,
