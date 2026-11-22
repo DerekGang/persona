@@ -48,6 +48,13 @@ test('successful empty reads offer both modes, only a 404 withdraws them, and th
   repo.todos=fail(404);repo.call=fail(404);await g.refresh(c);assert.deepEqual([g.supportsTodos,g.supportsDirections,g.directions.length],[false,false,0]);
   repo.todos=async()=>[];repo.call=async()=>({});await g.refresh(c);assert.deepEqual([g.supportsTodos,g.supportsDirections],[true,true]);
 });
+test('the built-in offline demo uses its existing local repository and routes its own task card',async()=>{
+  const {c,repo}=client('demo'),g=new AgentTaskGrouping();c.demo=true;c.profile.id='demo';
+  repo.todos=async()=>[row('todo','local',{agents:[linked('a')]},'demo','demo')];await g.refresh(c);
+  const local=row('session','a',{machine_id:'studio',session_id:'a'},'demo','demo');
+  const card=todoAgentSections(g.currentTodos(c),[local],'demo','demo',false,off)[0].todo;
+  assert.deepEqual([g.supportsTodos,g.supportsDirections,card.id,card.group,card.manager],[true,false,'local','demo','demo']);
+});
 test('a manager switch and a reconnect discard superseded reads, a foreign manager never requests the default direction tree',async()=>{
   const g=new AgentTaskGrouping(),{c,repo}=client(),first=Promise.withResolvers();let todos=0,trees=0;
   repo.todos=async()=>{todos++;return first.promise};repo.call=async()=>{trees++;await first.promise;return {directions:[{id:'private'}]}};

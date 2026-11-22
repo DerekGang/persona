@@ -42,7 +42,7 @@ export class AgentTaskGrouping {
       this.pending = undefined;
       this.revision++;
     }
-    if (!client.connected || client.demo) return;
+    if (!client.connected) return;
     if (this.pending) return this.pending;
     const repo = client.repo(), revision = this.revision;
     const current = (): boolean => this.revision === revision && this.client === client && client.connected && client.owns(generation, owner);
