@@ -18,7 +18,7 @@ const render = (input: Item[]) => {
 const input = (seq: number, text: string, kind = "conversation"): Item => ({ id: `${seq}#0`, seq, role: "user", kind: "text", text, source: { kind, title: "Build review", conversation_id: "test-source" } });
 
 describe("source messages in the actual transcript renderer", () => {
-  it.each(["conversation", "patrol", "followup", "supervision", "future-kind"])("renders %s at the source, not the user", (kind) => {
+  it.each(["conversation", "patrol", "followup", "supervision", "hub", "future-kind"])("renders %s at the source, not the user", (kind) => {
     const host = render([input(1, "Checks passed", kind)]);
     expect(host.querySelector("[data-user-bubble]")).toBeNull();
     expect(host.querySelector("[data-message-source]")?.getAttribute("data-message-source")).toBe(kind);
@@ -51,6 +51,25 @@ describe("source messages in the actual transcript renderer", () => {
     act(() => toggle.click());
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(preview?.hasAttribute("data-source-folded")).toBe(true);
+  });
+
+  it("shows a partner hub's request under its hub's name, with the hub mark and a note that it is not the user's", () => {
+    // two hubs of the same name: each its own label
+    const hub = (seq: number, hub_id: string, title = "家里"): Item => ({ id: `${seq}#0`, seq, role: "user", kind: "text", text: "周六下午有空吗？", source: { kind: "hub", title, hub_id } });
+    const host = render([hub(1, "hub-b"), hub(2, "hub-b"), hub(3, "hub-c")]);
+    expect(host.querySelector("[data-user-bubble]")).toBeNull();
+    const cards = [...host.querySelectorAll('[data-message-source="hub"]')];
+    expect(cards.map((card) => card.getAttribute("data-source-hub"))).toEqual(["hub-b", "hub-b", "hub-c"]);
+    const labels = [...host.querySelectorAll(".chat-source-label")];
+    expect(labels.map((label) => label.textContent)).toEqual(["@家里", "@家里"]);
+    expect(labels.every((label) => label.querySelector("svg"))).toBe(true);
+    expect([...host.querySelectorAll(".chat-source-note")].map((note) => note.textContent)).toEqual(["来自另一个 hub 的请求，不是你发的", "来自另一个 hub 的请求，不是你发的"]);
+    expect(cards[1].querySelector(".chat-source-label, .chat-source-note")).toBeNull();
+  });
+
+  it("names a partner hub without a name as a partner hub", () => {
+    const host = render([{ id: "1#0", seq: 1, role: "user", kind: "text", text: "你好", source: { kind: "hub", hub_id: "hub-b" } }]);
+    expect(host.querySelector(".chat-source-label")?.textContent).toBe("@协作 hub");
   });
 
   it("shows the source once for consecutive messages", () => {
