@@ -116,6 +116,10 @@ type PartnerHub struct {
 	Name   string `json:"name"`
 	Online bool   `json:"online"`         // a link is up now
 	Dial   string `json:"dial,omitempty"` // PartnerDialAuto / PartnerDialNever: whether this hub dials it
+	// PairedAt is when this pairing was made. A hub paired again under the same hub_id (after an unpair) has a later
+	// one: what the manager kept for the earlier pairing (its "ask me before sending" setting, messages still waiting)
+	// is not this one's.
+	PairedAt time.Time `json:"paired_at,omitzero"`
 }
 
 // PartnerHubs is partner.hubs's answer and partner.changed's params.
