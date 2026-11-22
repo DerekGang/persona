@@ -147,6 +147,10 @@
     {
       "name": "persona_dock_warning",
       "value": "#B35400"
+    },
+    {
+      "name": "persona_dock_secondary_surface",
+      "value": "#FCFCFD"
     }
   ]
 }

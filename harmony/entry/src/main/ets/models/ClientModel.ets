@@ -413,6 +413,7 @@ export class ClientModel {
   // A device preference shared by Persona's conversation docks across Hubs and rotations.
   @Trace questionCardHeightShare: number = -1;
   async setQuestionCardHeight(share: number): Promise<void> {
+    if (!Number.isFinite(share)) return;
     this.questionCardHeightShare = share < 0 ? -1 : Math.max(0,Math.min(1,share));
     const stored = this.questionCardHeightShare;
     await this.changePreferences(async (): Promise<void> => {

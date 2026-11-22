@@ -660,7 +660,7 @@ export struct InteractionDecisionForm {
   }
   @Builder dockSecondary(label:string,id:string,edits:boolean) {
     Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(this.dockActionSize(false)).padding({left:8,right:8})
-      .fontSize(17).maxFontScale(19/17).fontWeight(FontWeight.Normal).fontColor(Colors.ink).backgroundColor(Colors.surface)
+      .fontSize(17).maxFontScale(19/17).fontWeight(FontWeight.Normal).fontColor(Colors.link).backgroundColor($r('app.color.persona_dock_secondary_surface'))
       .border({width:Tokens.divider,color:Colors.divider,radius:this.dockActionSize(false)/2})
       .shadow({radius:3,color:nativeEnvironment.dark ? '#30000000' : '#16000000',offsetY:1})
       .responseRegion({x:0,y:(this.dockActionSize(false)-44)/2,width:'100%',height:Math.max(44,this.dockActionSize(false))})
@@ -948,7 +948,7 @@ export struct InteractionDecisionForm {
           .backgroundColor(Colors.tertiary).borderRadius(4)
       }.width('100%').height(16).justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
     }.width('100%').height(16).padding(0).backgroundColor(Color.Transparent)
-      .responseRegion({x:-8,y:-8,width:'100%',height:32}).accessibilityText(tr('phone_decision_height'))
+      .responseRegion({x:-8,y:-8,width:'calc(100% + 16vp)',height:32}).accessibilityText(tr('phone_decision_height'))
       .accessibilityDescription(tr('phone_decision_height_hint')).accessibilityCustomActions([
         {name:tr('phone_decision_taller'),onAction:() => this.onDockResize('up',0)},
         {name:tr('phone_decision_shorter'),onAction:() => this.onDockResize('down',0)}])
