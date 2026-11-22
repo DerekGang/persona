@@ -261,6 +261,28 @@ function inboxSourceGroup(row:ResourceRow):string {
   return source==='mail' ? 'mail:'+account : source || 'inbox';
 }
 
+// Calendar days keep local midnight boundaries across daylight-saving changes.
+function inboxTimeGroup(row: ResourceRow, now: Date): string {
+  if (row.kind === 'session') return 'agents';
+  const data = row.data();
+  const date = new Date(Wire.text(data, 'updated_at') || Wire.text(data, 'at') || Wire.text(data, 'created_at'));
+  if (!Number.isFinite(date.getTime())) return 'time:month';
+  const localDay = (value: Date): number => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / 86400000;
+  const days = localDay(now) - localDay(date);
+  if (days <= 0) return 'time:today';
+  if (days === 1) return 'time:yesterday';
+  if (days < 7) return 'time:d:' + date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
+  return days < 30 ? 'time:week' : 'time:month';
+}
+
+function inboxTimeOrder(key: string): number {
+  if (key === 'agents') return 0;
+  if (key === 'time:today') return 1;
+  if (key === 'time:yesterday') return 2;
+  if (key.startsWith('time:d:')) return 3;
+  return key === 'time:week' ? 4 : 5;
+}
+
 export class InboxListSection {
   key:string;
   rows:ResourceRow[] = [];
@@ -392,7 +414,7 @@ export class InboxWorkspace {
       (Wire.bool(data,'mentioned') || !!mentionLabel && Wire.text(data,'kind_label')===mentionLabel));
   }
 
-  listView(mentionLabel:string='',requestLabel:(row:ResourceRow)=>string=() => ''):InboxListView {
+  listView(mentionLabel:string='', requestLabel:(row:ResourceRow)=>string=() => '', byTime:boolean=false, now:Date=new Date()):InboxListView {
     const buckets = new Map<string,InboxListSection>(), seen = new Set<string>(), query = this.search.trim().toLocaleLowerCase();
     for (const key of INBOX_TIERS) buckets.set(key,new InboxListSection(key));
     if (this.sourceFilter === 'all' && this.accountFilter === 'all' && (!this.kindFilter || this.kindFilter==='agent')) {
@@ -424,15 +446,16 @@ export class InboxWorkspace {
         if (key === 'done') section.rows.sort((a:ResourceRow,b:ResourceRow) => Wire.text(b.data(),'done_at').localeCompare(Wire.text(a.data(),'done_at')));
         if (section.rows.length) {
           if (key!=='working' && key!=='done') {
-            const bySource=new Map<string,InboxListSection>();
+            const groups = new Map<string,InboxListSection>();
             for (const row of section.rows) {
-              const groupKey=inboxSourceGroup(row);
-              let group=bySource.get(groupKey);
-              if (!group) { group=new InboxListSection(groupKey); bySource.set(groupKey,group); }
+              const groupKey = byTime ? inboxTimeGroup(row, now) : inboxSourceGroup(row);
+              let group = groups.get(groupKey);
+              if (!group) { group = new InboxListSection(groupKey); groups.set(groupKey, group); }
               group.rows.push(row);
             }
-            if (bySource.size>1) section.groups=Array.from(bySource.values()).sort((a:InboxListSection,b:InboxListSection) =>
-              this.sourceGroupOrder(a.key)-this.sourceGroupOrder(b.key));
+            if (groups.size > 1) section.groups = Array.from(groups.values()).sort((a:InboxListSection,b:InboxListSection) =>
+              byTime ? inboxTimeOrder(a.key) - inboxTimeOrder(b.key) || b.key.localeCompare(a.key) :
+                this.sourceGroupOrder(a.key) - this.sourceGroupOrder(b.key));
           }
           result.sections.push(section);
         }

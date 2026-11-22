@@ -7343,6 +7343,26 @@
     {
       "name": "phone_all_chats_filter_count",
       "value": "{name}, {count}"
+    },
+    {
+      "name": "phone_inbox_by_source",
+      "value": "By Source"
+    },
+    {
+      "name": "phone_inbox_by_time",
+      "value": "By Time"
+    },
+    {
+      "name": "phone_inbox_week_ago",
+      "value": "7+ Days Ago"
+    },
+    {
+      "name": "phone_inbox_month_ago",
+      "value": "1+ Month Ago"
+    },
+    {
+      "name": "phone_inbox_grouping_mode",
+      "value": "Grouping: {name}"
     }
   ]
 }

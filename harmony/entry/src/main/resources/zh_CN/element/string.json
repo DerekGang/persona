@@ -7343,6 +7343,26 @@
     {
       "name": "phone_all_chats_filter_count",
       "value": "{name}，{count} 个"
+    },
+    {
+      "name": "phone_inbox_by_source",
+      "value": "按来源"
+    },
+    {
+      "name": "phone_inbox_by_time",
+      "value": "按时间"
+    },
+    {
+      "name": "phone_inbox_week_ago",
+      "value": "7 天前"
+    },
+    {
+      "name": "phone_inbox_month_ago",
+      "value": "1 个月前"
+    },
+    {
+      "name": "phone_inbox_grouping_mode",
+      "value": "分组：{name}"
     }
   ]
 }

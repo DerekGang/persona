@@ -2,6 +2,9 @@ import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironment';
 import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
+import { i18n } from '@kit.LocalizationKit';
+import { PhoneStyle } from '../design/PhoneStyle';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { ComposeListItemV2, ContentItemV2, LengthMetrics } from '@kit.ArkUI';
@@ -18,6 +21,35 @@ import { tr } from '../design/Strings';
 const MAX_IMAGE_PIXELS: number = 40000000;
 const MAX_IMAGE_EDGE: number = 8192;
 const MAX_UPLOAD_BYTES: number = 32 * 1024 * 1024;
+
+// Grouping belongs to this device, independently of the Hub and assistant being viewed.
+@ObservedV2
+class InboxGroupingPreference {
+  @Trace byTime: boolean = false;
+  @Trace saving: boolean = false;
+  private store: preferences.Preferences | undefined;
+  load(context: common.Context): void {
+    if (this.store) return;
+    try {
+      this.store = preferences.getPreferencesSync(context, {name: 'persona_inbox'});
+      this.byTime = this.store.getSync('grouping', 'source') === 'time';
+    } catch (_) { /* The default grouping remains usable. */ }
+  }
+  async choose(byTime: boolean): Promise<boolean> {
+    const store = this.store;
+    if (!store || this.saving) return false;
+    if (byTime === this.byTime) return true;
+    this.saving = true;
+    try {
+      store.putSync('grouping', byTime ? 'time' : 'source');
+      await store.flush(); this.byTime = byTime; return true;
+    } catch (_) {
+      try { store.putSync('grouping', this.byTime ? 'time' : 'source'); } catch (_) {}
+      return false;
+    } finally { this.saving = false; }
+  }
+}
+const inboxGrouping = new InboxGroupingPreference();
 
 class PickedInboxFile {
   name: string = '';
@@ -202,6 +234,7 @@ export struct InboxWorkspacePage {
   @Event onLink: (address: string) => void = (_address: string) => {};
   @Local environment: NativeEnvironment = nativeEnvironment;
   @Local workspace: InboxWorkspace = new InboxWorkspace();
+  @Local grouping: InboxGroupingPreference = inboxGrouping;
   @Local itemRowBindings: BoundRow<ResourceRow>[] = [];
   @Local sections: BoundInboxSection[] = [];
   @Local choices: InboxQuickFilter[] = [];
@@ -224,6 +257,7 @@ export struct InboxWorkspacePage {
   private stopEvents: (() => void) | undefined;
 
   aboutToAppear(): void {
+    if (this.list) this.grouping.load(this.uiContext());
     this.active = true; this.pendingHandoff = this.handoffRequested; this.handoffLoaded = false;
     this.stopEvents = this.model.observeEvents((payload: string): void => {
       if (!this.active || !this.visible || !this.list) return;
@@ -269,13 +303,13 @@ export struct InboxWorkspacePage {
   }
   private acknowledged(changed: boolean): void { if (changed && this.active && this.visible) this.onChanged(); }
 
-  @Monitor('workspace.items', 'workspace.search', 'workspace.sourceFilter', 'workspace.accountFilter', 'workspace.kindFilter','workspace.statusFilter','workspace.doneItems','workspace.haveDoneDays','workspace.waitingAgents') itemRowsChanged(): void {
+  @Monitor('grouping.byTime', 'workspace.items', 'workspace.search', 'workspace.sourceFilter', 'workspace.accountFilter', 'workspace.kindFilter','workspace.statusFilter','workspace.doneItems','workspace.haveDoneDays','workspace.waitingAgents') itemRowsChanged(): void {
     this.syncItemRows();
   }
 
   private syncItemRows(): void {
     const scope = JSON.stringify([this.model.scope(), this.model.profile.id, this.model.profile.manager]);
-    const view=this.workspace.listView(tr('phone_inbox_mention'),(row:ResourceRow) => this.requestLabel(row));
+    const view=this.workspace.listView(tr('phone_inbox_mention'),(row:ResourceRow) => this.requestLabel(row), this.grouping.byTime);
     const same=this.model === this.rowBindingOwner && scope === this.rowBindingScope;
     const previous=same ? this.sections : [];
     if (!same) this.restoreFolds();
@@ -529,9 +563,34 @@ export struct InboxWorkspacePage {
     this.workspace.statusFilter=key;
     if (key === 'done' && this.workspace.haveDoneDays && !this.workspace.doneItems.length && !this.workspace.historyEnded) this.workspace.loadOlderDone();
   }
+  private async chooseGrouping(byTime: boolean): Promise<void> {
+    if (!await this.grouping.choose(byTime)) this.workspace.error = 'cache_unavailable';
+  }
+  @Builder groupingOptions() {
+    Menu() {
+      MenuItemGroup({header:tr('grouping')}) {
+        MenuItem({content:tr('phone_inbox_by_source')}).selectIcon(true).selected(!this.grouping.byTime)
+          .onClick(() => this.chooseGrouping(false)).id('inbox.group.source')
+        MenuItem({content:tr('phone_inbox_by_time')}).selectIcon(true).selected(this.grouping.byTime)
+          .onClick(() => this.chooseGrouping(true)).id('inbox.group.time')
+      }
+    }
+  }
+  @Builder groupingButton() {
+    Button({type:ButtonType.Circle}) {
+      Column({space:3}) {
+        ForEach([17,12,7],(size:number) => {
+          Rect().width(PhoneStyle.sidebarMetric(size,this.environment.fontScale)).height(1.6).radius(0.8).fill(Colors.ink)
+        },(size:number) => String(size))
+      }
+    }.width(PhoneStyle.sidebarMetric(44,this.environment.fontScale)).height(PhoneStyle.sidebarMetric(44,this.environment.fontScale))
+      .padding(0).backgroundColor(Color.Transparent).enabled(!this.grouping.saving)
+      .accessibilityText(tr('phone_inbox_grouping_mode').replace('{name}',tr(this.grouping.byTime ? 'phone_inbox_by_time' : 'phone_inbox_by_source')))
+      .bindMenu(this.groupingOptions).id('inbox.grouping')
+  }
   @Builder choiceBar() {
     Scroll() {
-      Row({space:5}) {
+      Row({space:4}) {
         ForEach(this.choices,(choice:InboxQuickFilter) => {
           Button({type:ButtonType.Capsule}) {
             Row({space:5}) {
@@ -542,12 +601,12 @@ export struct InboxWorkspacePage {
                 .maxFontScale(Tokens.navigationTextMaxScale).maxLines(1).fontWeight(FontWeight.Bold)
                 .fontColor(this.workspace.statusFilter === choice.key ? Colors.link : choice.key === 'action' ? Colors.needs : Colors.secondary)
             }
-          }.constraintSize({ minHeight: this.environment.fontScale >= 1.5 ? Tokens.touch : 34 })
-            .padding({ left: 10, right: 10, top: 4, bottom: 4 }).backgroundColor(this.workspace.statusFilter === choice.key ? Colors.selection : Color.Transparent)
+          }.height(PhoneStyle.sidebarMetric(44,this.environment.fontScale))
+            .padding({ left: 12, right: 12, top: 4, bottom: 4 }).backgroundColor(this.workspace.statusFilter === choice.key ? Colors.selection : Color.Transparent)
             .accessibilityText([tr(inboxTierLabel(choice.key)),choice.count ? String(choice.count) : ''].filter((v:string) => !!v).join(' · '))
             .accessibilitySelected(this.workspace.statusFilter === choice.key).onClick(() => this.pickChoice(choice.key)).id('inbox.choice.'+choice.key)
         },(choice:InboxQuickFilter) => choice.key + '/' + String(choice.count))
-      }.padding({left:8,right:0})
+      }.padding({left:4,right:0})
     }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).width('100%').id('inbox.status')
   }
   @Builder sourceChip(value:string, account:boolean) {
@@ -558,7 +617,7 @@ export struct InboxWorkspacePage {
         Text(account ? this.workspace.filterAccountName(value) : this.sourceLabel(value)).fontSize(13)
           .maxFontScale(Tokens.navigationTextMaxScale).maxLines(1).fontColor(this.chipSelected(value,account) ? Colors.onAction : Colors.ink)
       }
-    }.constraintSize({minHeight:this.environment.fontScale>=1.5 ? Tokens.touch : 30}).padding({left:10,right:10,top:3,bottom:3})
+    }.height(PhoneStyle.formSize(30,37.3,this.environment.fontScale)).padding({left:13,right:13,top:3,bottom:3})
       .backgroundColor(this.chipSelected(value,account) ? Colors.action : Colors.control).accessibilitySelected(this.chipSelected(value,account))
       .onClick(() => {
         const clear=this.chipSelected(value,account);
@@ -582,7 +641,7 @@ export struct InboxWorkspacePage {
         Divider().vertical(true).height(19).color(Colors.divider)
         ForEach(['mention','dm','group','mail','agent'],(kind:string) => {
           Button(tr(kind==='mail' || kind==='agent' ? kind : 'phone_inbox_'+kind),{type:ButtonType.Capsule})
-            .constraintSize({minHeight:this.environment.fontScale>=1.5 ? Tokens.touch : 30}).padding({left:10,right:10,top:3,bottom:3})
+            .height(PhoneStyle.formSize(30,37.3,this.environment.fontScale)).padding({left:13,right:13,top:3,bottom:3})
             .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).backgroundColor(this.workspace.kindFilter===kind ? Colors.action : Colors.subtle)
             .fontColor(this.workspace.kindFilter===kind ? Colors.onAction : Colors.ink).accessibilitySelected(this.workspace.kindFilter===kind)
             .onClick(() => this.workspace.kindFilter=this.workspace.kindFilter===kind ? '' : kind).id('inbox.kind.'+kind)
@@ -632,6 +691,15 @@ export struct InboxWorkspacePage {
   private subheading(section:BoundInboxSection):string {
     const group=section.sourceGroup;
     if (group==='agents') return tr('phone_inbox_waiting_agents');
+    if (group.startsWith('time:d:')) {
+      const date = new Date(group.slice(7) + 'T12:00:00');
+      const locale = this.model.language === 'default' ? i18n.System.getSystemLanguage() : this.model.language;
+      return date.toLocaleDateString(locale, {weekday:'short',month:'short',day:'numeric'});
+    }
+    if (group === 'time:today') return tr('machine_today');
+    if (group === 'time:yesterday') return tr('kb_yesterday');
+    if (group === 'time:week') return tr('phone_inbox_week_ago');
+    if (group === 'time:month') return tr('phone_inbox_month_ago');
     if (group.startsWith('mail:')) return this.workspace.filterAccountName(group.slice(5)) || tr('mail');
     if (group.startsWith('c:')) return this.workspace.filterAccountName(group.slice(2)) || this.sourceLabel('connector');
     return this.sourceLabel(group);
@@ -667,31 +735,32 @@ export struct InboxWorkspacePage {
       Text(String(section.count)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(section.sourceGroup ? Colors.secondary : Colors.ink).layoutWeight(1)
       if (!section.sourceGroup && this.workspace.statusFilter==='all' && ['done','noise'].includes(section.tier))
         SymbolGlyph(this.groupOpen(section.tier) ? Symbols.down : Symbols.expand).fontSize('13vp').fontColor([Colors.secondary])
-    }.constraintSize({minHeight:section.sourceGroup ? 42 : 52}).width('100%').padding({left:3,right:5,top:10,bottom:8})
+    }.constraintSize({minHeight:PhoneStyle.sidebarMetric(44,this.environment.fontScale)}).width('100%').padding({left:16,right:12,top:4,bottom:4})
       .accessibilityGroup(true).onClick(() => this.toggleSection(section)).id('inbox.section.'+section.key)
   }
   @Builder inboxList() {
     Column({ space: Tokens.gap }) {
-      Row({space:2}) {
+      Row() {
         Column() { this.choiceBar() }.layoutWeight(1)
-        this.inboxActions()
-      }.width('100%').padding({left:5,right:8}).backgroundColor(Colors.grouped).borderRadius(20)
-      this.sourceBar()
+        if (!['done','working'].includes(this.workspace.statusFilter)) this.groupingButton()
+        if (!this.toolbarActions) this.inboxActions()
+      }.width('100%').padding({left:16,right:16,top:8})
+      Column() { this.sourceBar() }.width('100%').margin({top:5})
       if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger')).padding({ left: Tokens.page, right: Tokens.page })
       if (this.workspace.loading) LoadingProgress().width(Tokens.touch).height(Tokens.touch)
-      List({ space: 7 }) {
+      List({ space: 22 }) {
         ForEach(this.sections,(section:BoundInboxSection) => {
           if (!section.sourceGroup || this.groupOpen(section.tier)) ListItemGroup({header:() => this.sectionHeading(section)}) {
             if (this.groupOpen(section.tier) && !this.collapsedSources.includes(section.key)) {
         ForEach(section.rows, (binding: BoundRow<ResourceRow>) => {
           ListItem() {
-            Row({ space: 10 }) {
+            Row({ space: 12 }) {
               Stack() { SymbolGlyph(this.rowSymbol(binding.value)).fontSize('18vp').fontColor([Colors.link]) }
                 .width(40).height(40).flexShrink(0).borderRadius(10).backgroundColor(Colors.subtle).id('inbox.row.icon.' + binding.key)
               Column({ space: 4 }) {
                 Row({space:5}) {
                   Text(binding.value.title || tr('inbox')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-                    .layoutWeight(1).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+                    .layoutWeight(1).maxLines(binding.value.kind === 'session' ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
                   if (this.rowTime(binding.value))
                     Text(this.rowTime(binding.value)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
                 }.width('100%').alignItems(VerticalAlign.Top)
@@ -703,11 +772,12 @@ export struct InboxWorkspacePage {
                     .fontColor(Colors.secondary).id('inbox.row.source.' + binding.key)
                 }.width('100%')
               }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-            }.width('100%').alignItems(VerticalAlign.Top).padding({left:12,right:12,top:10,bottom:10}).backgroundColor(Colors.surface)
+            }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(86,108,this.environment.fontScale)}).alignItems(VerticalAlign.Top)
+              .padding({left:16,right:12,top:12,bottom:12}).backgroundColor(Colors.surface)
           }.onClick(() => this.openRow(binding.value)).accessibilityGroup(true).id('inbox.' + inboxLineKey(binding.value))
         }, (binding: BoundRow<ResourceRow>) => binding.key)
             }
-          }.divider({strokeWidth:0.5,startMargin:52,endMargin:12,color:Colors.divider})
+          }.divider({strokeWidth:0.5,startMargin:68,endMargin:12,color:Colors.divider})
         },(section:BoundInboxSection) => section.key)
         if (this.workspace.statusFilter === 'done' && !this.workspace.historyEnded && (this.workspace.haveDoneDays || this.workspace.doneItems.length)) ListItem() {
           Button(tr('flow_inbox_older_done'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).enabled(!this.workspace.historyBusy)
@@ -715,7 +785,7 @@ export struct InboxWorkspacePage {
         }
         if (!this.itemRowBindings.length && !this.workspace.loading)
           ListItem() { Text(tr(this.workspace.search.trim() ? 'no_results' : 'flow_inbox_section_empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(Tokens.page).width('100%') }
-      }.layoutWeight(1).width('100%').padding({left:Tokens.page,right:Tokens.page,bottom:Tokens.inset})
+      }.layoutWeight(1).width('100%').margin({top:27}).padding({bottom:Tokens.inset})
       Row() { this.inboxSearch(true) }.width('100%').padding({left:Tokens.page,right:Tokens.page,top:3,bottom:8})
     }.width('100%').height('100%').backgroundColor(Colors.surface)
   }

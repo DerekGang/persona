@@ -1099,3 +1099,38 @@ test('an outstanding history request cannot populate a closed or newly bound Inb
   finish({items:[{id:'old',source:'mail',done_at:'2026-11-12T00:00:00Z'}]});await loading;
   assert.deepEqual(workspace.doneItems,[]);
 });
+
+test('grouping open Inbox items by local calendar day keeps waiting Agents first and restores source grouping', () => {
+  const workspace = new InboxWorkspace();
+  const now = new Date(2026, 10, 23, 1, 15);
+  function dated(id, days, source = 'lark') {
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate()-days, 23, 30);
+    return rowFor({id, title:id, source, account:'mailbox', tier:'action', updated_at:date.toISOString()});
+  }
+  const waiting = ResourceRow.from({session_id:'s',machine_id:'m',title:'Agent'},'session');
+  workspace.waitingAgents = [waiting];
+  workspace.items = [dated('last week',7), dated('two days',2,'mail'), dated('today',0), dated('yesterday',1),
+    dated('six days',6), dated('last month',30), dated('today later',-1,'mail'), rowFor({id:'undated',title:'undated',source:'lark'})];
+  const timed = workspace.listView('', () => '', true, now).sections[0];
+  assert.deepEqual(timed.groups.map(g => g.key), ['agents','time:today','time:yesterday','time:d:2026-11-21','time:d:2026-11-17','time:week','time:month']);
+  assert.deepEqual(timed.groups[0].rows, [waiting]);
+  assert.deepEqual(timed.groups[1].rows.map(r => r.id), ['today','today later']);
+  assert.deepEqual(timed.groups.at(-1).rows.map(r => r.id), ['last month','undated']);
+  assert.deepEqual(workspace.listView().sections[0].groups.map(g => g.key), ['agents','lark','mail:mailbox']);
+  workspace.kindFilter='agent';
+  assert.deepEqual(workspace.listView('', () => '', true, now).sections[0].groups, []);
+  assert.equal(workspace.filteredItems[0], waiting);
+});
+
+test('Inbox time grouping preserves applied filters, does not add a heading to a single open bucket, and leaves in-progress rows flat', () => {
+  const workspace = new InboxWorkspace();
+  const now = new Date(2026,10,23,12);
+  workspace.items=['action','working'].flatMap(tier => ['lark','mail'].map(source =>
+    rowFor({id: tier+source, title: tier+source, tier, status:tier, source, account:'work', updated_at:now.toISOString()})));
+  workspace.sourceFilter='lark';
+  const only = workspace.listView('', () => '', true, now).sections[0];
+  assert.deepEqual(only.groups, []); assert.deepEqual(only.rows.map(r=>r.id),['actionlark']);
+  workspace.sourceFilter='all'; workspace.statusFilter='working';
+  const working = workspace.listView('', () => '', true, now).sections[0];
+  assert.deepEqual(working.groups, []); assert.equal(working.rows.length,2);
+});
