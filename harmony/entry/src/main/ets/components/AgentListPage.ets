@@ -445,7 +445,7 @@ export struct AgentListPage {
   private cardTitle(card:AgentDecisionCard,binding:BoundAgentRow):string {
     if (card.request.kind==='plan') return tr('phone_agent_plan_approval');
     if (card.request.kind==='permission') return tr('phone_agent_needs_approval');
-    if (card.request.kind==='question') return tr('phone_agent_asks').replace('{agent}',binding.presentation.provider || tr('agent'));
+    if (card.request.kind==='question') return tr('phone_agent_asks').replace('{agent}',card.questionAgent(binding.bound.value) || tr('agent'));
     return tr('needs_you');
   }
 
@@ -467,8 +467,8 @@ export struct AgentListPage {
               }.width('100%')
             }.width('100%').constraintSize({minHeight:40}).padding(0).backgroundColor(Color.Transparent)
               .onClick(() => this.openRow(binding.bound.value)).id('agents.request.'+card.request.id)
-            if (card.preview) Text(card.preview).fontSize(16).fontColor(Colors.ink).maxLines(3)
-              .width('100%').onClick(() => this.openRow(binding.bound.value))
+            if (card.preview) Text(card.preview).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).maxLines(3)
+              .width('100%').onClick(() => this.openRow(binding.bound.value)).id('agents.preview.'+card.request.id)
             if (card.quickOptions().length) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(7),cross:LengthMetrics.vp(6)}}) {
               ForEach(card.quickOptions(),(choice:string) => {
                 Button({type:ButtonType.Capsule}) {

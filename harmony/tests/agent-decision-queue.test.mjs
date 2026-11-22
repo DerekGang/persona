@@ -15,7 +15,7 @@ registerHooks({
     return {format:'module',source:stripTypeScriptTypes(source),shortCircuit:true};
   }
 });
-const { AgentDecisionQueue }=await import('../entry/src/main/ets/models/AgentDecisionQueue.ets');
+const { AgentDecisionCard, AgentDecisionQueue }=await import('../entry/src/main/ets/models/AgentDecisionQueue.ets');
 const { interactionResolution }=await import('../entry/src/main/ets/models/InteractionDecision.ets');
 const { ResourceRow, Wire }=await import('../entry/src/main/ets/models/Wire.ets');
 
@@ -112,4 +112,29 @@ test('each supervising task displays the shared Agent question once, while one a
   const card=panel.taskQuestions[0].card;
   await requests.answerForm(owner,row,card,'answer',{'Which color?':'Green'},'once',()=>true);
   assert.equal(state.writes.length,1);assert.deepEqual(panel.taskQuestions,[]);
+});
+
+test('an Agent question preview names the actual provider, including an assistant tool and launcher-backed multi-provider engines',()=>{
+  const {owner}=pair('p');
+  function shown(interaction,session={}) {
+    const card=new AgentDecisionCard(owner,'assistant','test','s',{id:'ask',kind:'question',...interaction});
+    return card.questionAgent(ResourceRow.from({id:'s',...session},'session'));
+  }
+  assert.equal(shown({}, {agent:'claude',launcher:'claude',agent_label:'claude'}),'Claude');
+  assert.equal(shown({agent:'codex'},{agent:'claude'}),'Codex');
+  assert.equal(shown({agent:'traex'}),'TRAEX');
+  assert.equal(shown({agent:'paseo',agent_label:'Paseo'},{agent:'paseo',agent_label:'Paseo',launcher:'Grok'}),'Grok');
+  assert.equal(shown({agent:'paseo',agent_label:'Kimi'},{agent:'paseo',launcher:'Other'}),'Kimi');
+  assert.equal(shown({}, {agent:'CaseSensitiveRuntime'}),'CaseSensitiveRuntime');
+  assert.equal(shown({tool_name:'ask_user',agent:'codex'}),'Persona');
+  assert.equal(shown({},{}),'');
+});
+
+test('the three-line Agents preview uses the interface text size while a question in its full form keeps the reading size',()=>{
+  const page=readFileSync(new URL('../entry/src/main/ets/components/AgentListPage.ets',import.meta.url),'utf8');
+  assert.match(page,/Text\(card\.preview\)\.fontSize\(16\)\.maxFontScale\(Tokens\.interfaceScaleFor\(16\)\)[^\n]+\.maxLines\(3\)/);
+  assert.match(page,/card\.questionAgent\(binding\.bound\.value\)/);
+  assert.match(page,/onClick\(\(\) => this\.openRow\(binding\.bound\.value\)\)\.id\('agents.preview.'/);
+  const detail=readFileSync(new URL('../entry/src/main/ets/components/InteractionDecisionForm.ets',import.meta.url),'utf8');
+  assert.ok(detail.split('\n').some(line=>line.includes('Text(field.title).fontSize(Tokens.body)') && !line.includes('maxFontScale')));
 });

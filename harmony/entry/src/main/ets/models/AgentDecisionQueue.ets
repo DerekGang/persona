@@ -2,11 +2,24 @@ import type { ClientModel } from './ClientModel';
 import { Decision, ResourceRow, Wire } from './Wire';
 import { decodeInteractionDecision, interactionCanSubmit } from './InteractionDecision';
 
+// A runtime can host several providers. Its own name alone does not identify which one is asking.
+function previewAgent(data:Record<string,Object>):string {
+  const agent=(Wire.text(data,'agent') || Wire.text(data,'agent_type')).trim();
+  const label=Wire.text(data,'agent_label').trim(),launcher=Wire.text(data,'launcher').trim();
+  const id=(agent || label || launcher).toLowerCase();
+  if (id==='codex' || id==='openai') return 'Codex';
+  if (id==='traex') return 'TRAEX';
+  if (['claude','claude-code','claude code'].includes(id)) return 'Claude';
+  if (id==='paseo' && (!label || label.toLowerCase()===id)) return launcher.toLowerCase()===id ? '' : launcher;
+  return label || agent || launcher;
+}
+
 export class AgentDecisionCard {
   readonly request: Decision;
   readonly key: string;
   readonly preview: string;
   readonly since: number;
+  private readonly requestAgent:string;
   readonly owner: ClientModel;
   readonly manager: string;
   readonly machine: string;
@@ -19,11 +32,14 @@ export class AgentDecisionCard {
     const nested=Wire.object(data,'interaction'), source=Object.keys(nested).length ? nested : data;
     this.since = Date.parse(Wire.text(source,'created_at') || Wire.text(data,'created_at')) || 0;
     const tool=Wire.text(source,'tool_name'), input=Wire.object(source,'tool_input');
+    this.requestAgent=tool==='ask_user' ? 'Persona' : previewAgent(source) || (source===data ? '' : previewAgent(data));
     if (this.request.kind==='question') this.preview=this.request.fields[0]?.title || this.request.prompt;
     else if (this.request.kind==='permission') this.preview=tool==='Bash' && Wire.text(input,'command') ?
       tool+': '+Wire.text(input,'command') : Wire.text(source,'summary') || Wire.text(input,'description') || tool;
     else this.preview=this.request.prompt.replace(/^#+\s*/,'').split('\n')[0];
   }
+
+  questionAgent(row:ResourceRow):string { return this.requestAgent || previewAgent(row.data()); }
 
   quickOptions(): string[] {
     if (this.request.kind==='permission' && !this.request.fields.length) return ['allow','deny'];
