@@ -40,9 +40,13 @@ export function sidebarConversationTitle(row: ResourceRow, translate: (key:strin
   return row.title && row.title !== 'Claude Code' ? row.title : translate('phone_new_chat_title');
 }
 
-const sourceKeys: Record<string,string> = {inbox:'inbox',task:'phone_drawer_schedules',spawned:'phone_sidebar_source_spawned',
-  extension:'phone_sidebar_source_extension',lark_agent:'phone_sidebar_source_lark'};
-const stateKeys: Record<string,string> = {needs_you:'phone_todo_section_needs',working:'phone_todo_section_working',unread:'phone_sidebar_unread'};
+const sourceKeys: Record<string,string> = {
+  'inbox': 'inbox', 'task': 'phone_drawer_schedules', 'spawned': 'phone_sidebar_source_spawned',
+  'extension': 'phone_sidebar_source_extension', 'lark_agent': 'phone_sidebar_source_lark'
+};
+const stateKeys: Record<string,string> = {
+  'needs_you': 'phone_todo_section_needs', 'working': 'phone_todo_section_working', 'unread': 'phone_sidebar_unread'
+};
 
 export function sidebarConversationLabel(row: ResourceRow, history: ScheduledChatOrigins, locale: string, now: number,
   translate: (key:string) => string): string {
