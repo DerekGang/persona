@@ -1,11 +1,13 @@
 package archguard
 
 import (
+	"bytes"
 	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -119,22 +121,26 @@ func domainBaseMeasure(t *testing.T, lists domainrules.Lists) *domainrules.Measu
 	changed, gone := map[string]string{}, map[string]bool{}
 	touched := strings.Fields(git("diff", "--name-only", "--no-renames", mergeBase, "--", "."))
 	untracked := strings.Fields(git("ls-files", "--others", "--exclude-standard", "--full-name", "--", "."))
+	var tracked []string
 	for _, path := range append(touched, untracked...) {
 		rel, ok := strings.CutPrefix(path, "server/")
 		if !ok || !strings.HasSuffix(rel, ".go") {
 			continue
 		}
-		if !slices.Contains(untracked, path) {
-			if text, err := exec.Command("git", "-C", serverDir, "show", mergeBase+":"+path).Output(); err == nil {
-				changed[rel] = string(text)
-				continue
-			}
-			if strings.TrimSpace(git("ls-tree", "--name-only", mergeBase, "--", "../"+path)) != "" {
-				t.Fatalf("git show %s:%s failed, but the file is there: refusing to read the merge base without it",
-					mergeBase, path)
-			}
+		if slices.Contains(untracked, path) {
+			gone[rel] = true
+		} else {
+			tracked = append(tracked, path)
 		}
-		gone[rel] = true
+	}
+	blobs := gitBlobs(t, mergeBase, tracked)
+	for _, path := range tracked {
+		rel := strings.TrimPrefix(path, "server/")
+		if text, ok := blobs[path]; ok {
+			changed[rel] = text
+		} else {
+			gone[rel] = true // the change added it
+		}
 	}
 	pkgs, err := domainrules.LoadOver(serverDir, serverModule, changed, gone)
 	if err != nil {
@@ -151,6 +157,45 @@ func domainBaseMeasure(t *testing.T, lists domainrules.Lists) *domainrules.Measu
 		}
 	}
 	return &held
+}
+
+// gitBlobs is the text of each path (from the repository's root) at revision, read in one git cat-file --batch, so a
+// change of many files costs one process; a path the revision does not have has no entry.
+func gitBlobs(t *testing.T, revision string, paths []string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	if len(paths) == 0 {
+		return out
+	}
+	var in strings.Builder
+	for _, p := range paths {
+		in.WriteString(revision + ":" + p + "\n")
+	}
+	cmd := exec.Command("git", "-C", serverDir, "cat-file", "--batch")
+	cmd.Stdin = strings.NewReader(in.String())
+	data, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git cat-file --batch at %s: %v", revision, err)
+	}
+	for _, p := range paths {
+		nl := bytes.IndexByte(data, '\n')
+		if nl < 0 {
+			t.Fatalf("git cat-file --batch at %s: no answer for %s", revision, p)
+		}
+		header := string(data[:nl])
+		data = data[nl+1:]
+		if strings.HasSuffix(header, " missing") {
+			continue
+		}
+		fields := strings.Fields(header)
+		size, err := strconv.Atoi(fields[len(fields)-1])
+		if err != nil || len(fields) != 3 || fields[1] != "blob" || size+1 > len(data) {
+			t.Fatalf("git cat-file --batch at %s: %q for %s", revision, header, p)
+		}
+		out[p] = string(data[:size])
+		data = data[size+1:]
+	}
+	return out
 }
 
 // domainLayerNames is for scripts/test/name_freezes.py, which needs what the domain rules read at other commits (an
