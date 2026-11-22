@@ -243,3 +243,13 @@ test('the full localized range remains readable at large type and each segment f
   for(const range of [1,2,0]) { screen.chooseRange(range); await refreshed; assert.equal(screen.shownRange,range); }
   assert.deepEqual(calls.map(url=>url.split('?range=')[1]),['1h','6h','24h','1h']);
 });
+
+test('live monitoring keeps the iPhone two-column summary on a phone and collapses only a genuinely narrow pane',()=>{
+  const live=directorySource.slice(directorySource.indexOf('  @Builder liveTile('),directorySource.indexOf('  @Builder seriesValue('));
+  const expression=live.match(/GridRow\(\{columns:([^,]+),gutter/)[1];
+  const columns=new Function('return '+expression);
+  for(const width of [0,258,288,320,328,370,402])assert.equal(columns.call({liveGridWidth:width}),2,'width '+width);
+  for(const width of [160,220,257])assert.equal(columns.call({liveGridWidth:width}),1,'width '+width);
+  assert.match(live,/Text\(tile\.title\)[^\n]*\.maxLines\(2\)/);
+  assert.match(live,/Text\(tile\.detail[^\n]*\.minFontSize\(9\)[\s\S]*?\.maxLines\(2\)/);
+});

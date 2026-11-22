@@ -586,12 +586,13 @@ export struct MachineDirectory {
   @Builder liveTile(tile:LiveMetric,alert:MachineAlert|undefined) {
     Column({space:3}) {
       Row({space:5}) {
-        Text(tile.title).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+        Text(tile.title).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(2).flexShrink(1)
         if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle_fill')).fontSize('13vp')
           .fontColor([alert.severity === 2 ? Colors.danger : Colors.working]).accessibilityText(tr(alert.key))
       }
       Text(tile.value).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).minFontSize(16).maxFontSize(22).maxLines(1).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-      Text(tile.detail || ' ').fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+      Text(tile.detail || ' ').fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).minFontSize(9).maxFontSize(12)
+        .fontColor(Colors.secondary).maxLines(2).width('100%').textOverflow({overflow:TextOverflow.Ellipsis})
       if (tile.percent >= 0) Progress({value:Math.min(100,tile.percent),total:100,type:ProgressType.Linear})
         .width('100%').height(4).style({strokeWidth:4}).color(alert ? alert.severity === 2 ? Colors.danger : Colors.working : tile.tint)
         .backgroundColor(Colors.control).accessibilityLevel('no')
@@ -604,7 +605,8 @@ export struct MachineDirectory {
     return card?.online && sample && Object.keys(sample.latest).length ? this.liveMetrics(card,sample) : [];
   }
   @Builder liveGrid() {
-    GridRow({columns:this.liveGridWidth>0 && this.liveGridWidth<248*Math.min(nativeEnvironment.fontScale,Tokens.interfaceFontMaxScale) ? 1 : 2,gutter:{x:10,y:10}}) {
+    // The phone keeps two equally flexible tiles. Only fold them when the measured pane cannot fit two 124vp cards and their gutter.
+    GridRow({columns:this.liveGridWidth>0 && this.liveGridWidth<258 ? 1 : 2,gutter:{x:10,y:10}}) {
       ForEach(this.liveTiles,(tile:LiveMetric) => {
         GridCol({span:1}) { this.liveTile(tile,this.cards[0]?.alerts.find((a:MachineAlert) => a.key === tile.alert)) }
       },(tile:LiveMetric) => JSON.stringify([tile.key,tile.value,tile.detail,tile.percent,this.cards[0]?.alerts,nativeEnvironment.dark]))
