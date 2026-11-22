@@ -84,6 +84,7 @@ export struct AgentListPage {
   @Local refreshing: boolean = false;
   @Local environment: NativeEnvironment = nativeEnvironment;
   @Event onOpen: (row: ResourceRow) => void = () => {};
+  @Event onSearchMode: (editing: boolean) => void = () => {};
   @Event onVisible: (row: ResourceRow, ratio: number) => void = () => {};
   @Param workspace: AgentWorkspace = new AgentWorkspace();
   @Local look: DeviceLook = deviceLook;
@@ -103,6 +104,7 @@ export struct AgentListPage {
 
   @Local searchOpen: boolean = false;
   @Local searchEditing: boolean = false;
+  @Local pageOriginY: number = -1;
   private searchField: SearchController = new SearchController();
   private agentScroller: Scroller = new Scroller();
   private pullY: number = -1;
@@ -589,7 +591,7 @@ export struct AgentListPage {
 
   private searchVisible(): boolean { return !this.compactRoot || this.searchOpen || !!this.workspace.search; }
   private resetSearchReveal(): void {
-    this.searchOpen = false; this.searchEditing = false; this.focusSearch = false; this.pullY = -1; this.revealedDuringPull = false;
+    this.searchOpen = false; this.setSearchEditing(false); this.focusSearch = false; this.pullY = -1; this.revealedDuringPull = false;
   }
   private trackPull(event: TouchEvent): void {
     if (event.type === TouchType.Down) this.revealedDuringPull = false;
@@ -623,13 +625,39 @@ export struct AgentListPage {
     return QUICK_FILTERS.filter((key: string) => !known || key === 'all' || key === this.workspace.quickFilter || Wire.number(counts,key)>0);
   }
   private quickHeight(): number { return PhoneStyle.formSize(44,57.7,this.environment.fontScale); }
+  private setSearchEditing(editing:boolean): void {
+    if (editing === this.searchEditing) return;
+    this.searchEditing = editing; this.onSearchMode(editing);
+  }
+  private activateSearch(): void {
+    this.focusSearch = true; this.searchOpen = true;
+    if (this.searchVisible()) {
+      setTimeout(() => {
+        if (this.active && this.searchOpen && this.focusSearch) {
+          this.focusSearch = false;
+          this.getUIContext().getFocusController().requestFocus('agents.search');
+        }
+      }, 0);
+    }
+  }
+  private headerTopInset(): number {
+    if (!this.compactRoot || this.pageOriginY < 0 || !this.environment.isFullScreen) return 6;
+    const ui=this.getUIContext();
+    const height=ui.px2vp(this.environment.windowHeightPx), width=ui.px2vp(this.environment.windowWidthPx);
+    if (height < 600 || width >= height) return 6;
+    const top=Math.max(Tokens.compactStatusInset,ui.px2vp(this.environment.safeTopPx));
+    // The phone shell leaves 34 points of room under its 44-point navigation bar.
+    // A folded search band is 54 points shorter than its revealed field and filters.
+    const firstRow=this.searchEditing ? top+4 : top+44+34+(this.searchVisible() ? 10 : 20);
+    return Math.max(0,firstRow-this.pageOriginY);
+  }
 
   @Builder searchControl() {
     Search({value:this.workspace.search,placeholder:tr('agents_search_prompt'),controller:this.searchField})
-      .maxFontScale(Tokens.interfaceFontMaxScale).height(44)
+      .maxFontScale(Tokens.interfaceFontMaxScale).height(44).margin(0)
       .textFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).caretStyle({color:Colors.action})
-      .onFocus(() => { if (this.compactRoot) { this.searchEditing = true; this.searchOpen = true; } })
-      .onBlur(() => { this.searchEditing = false; })
+      .onFocus(() => { if (this.compactRoot) { this.searchOpen = true; this.setSearchEditing(true); } })
+      .onBlur(() => this.setSearchEditing(false))
       .onChange((value: string) => { if (this.compactRoot) this.searchOpen = true; this.workspace.setSearch(value); })
       .onAppear(() => {
         if (!this.focusSearch) return;
@@ -641,16 +669,24 @@ export struct AgentListPage {
     Menu() {
       ForEach(GROUPINGS,(key:string,index:number) => {
         MenuItem({content:tr(GROUP_LABELS[key])}).selected(key===this.workspace.groupingMode).selectIcon(true)
-          .onClick(() => { this.selectGrouping(index); this.searchOpen = true; this.agentScroller.scrollToIndex(0); }).id('agents.grouping.'+key)
+          .onClick(() => { this.selectGrouping(index); this.resetSearchReveal(); this.agentScroller.scrollToIndex(0); }).id('agents.grouping.'+key)
       },(key:string)=>key)
+      MenuItem({content:tr('search_sessions')}).onClick(()=>this.activateSearch()).id('agents.search_reveal')
       MenuItem({content:tr('agent_filters_title')}).onClick(()=>this.filterSheetOpen=true).id('agents.grouping.filters')
     }
   }
   @Builder filterControl() {
     if (this.compactRoot) {
-      Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.filter).fontSize(Tokens.interfaceFontVp(15,this.environment.fontScale)).fontColor([Colors.ink]) }
+      Button({type:ButtonType.Circle}) {
+        Column({space:2}) {
+          ForEach([14,10,5],(width:number)=>{
+            Row().width(width*this.quickHeight()/44).height(1.5*this.quickHeight()/44).borderRadius(1).backgroundColor(Colors.ink)
+          },(width:number)=>String(width))
+        }.alignItems(HorizontalAlign.Center).accessibilityLevel('no')
+      }
         .width(this.quickHeight()).height(this.quickHeight()).padding(0).backgroundColor(Color.Transparent)
         .accessibilityText(tr('agent_grouping_current').replace('{group}',tr(GROUP_LABELS[this.workspace.groupingMode])))
+        .accessibilityCustomActions([{name:tr('search_sessions'),onAction:()=>this.activateSearch()}])
         .bindMenu(this.groupingMenu).id('agents.grouping.quick')
     } else {
       Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.filter).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('agent_filter_button'))
@@ -658,7 +694,7 @@ export struct AgentListPage {
     }
   }
   @Builder filters() {
-    if (!this.rail) Column({ space: 6 }) {
+    if (!this.rail) Column({ space: this.compactRoot && this.searchVisible() ? 20 : 6 }) {
       if (this.searchVisible()) {
         if (this.compactRoot) Row({space: 6}) {
           Column() { this.searchControl() }.layoutWeight(1)
@@ -667,23 +703,24 @@ export struct AgentListPage {
         }.width('100%')
         else this.searchControl()
       }
-      Row({ space: 6 }) {
+      Row({ space: this.compactRoot ? 0 : 6 }) {
         Scroll() {
-          Row({ space: 3 }) {
+          Row({ space: 4 }) {
             ForEach(this.shownQuickFilters, (key: string) => {
               Button({ type: ButtonType.Capsule }) {
                 Row({space:4}) {
                   if (key !== 'all' && key !== 'feishu' && key !== 'terminal') Circle().width(5).height(5)
                     .fill(key === 'needsYou' ? Colors.needs : key === 'unread' ? Colors.unread : key === 'working' ? Colors.working : Colors.secondary)
-                  Text(tr(QUICK_LABELS[key])).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale)
+                  Text(tr(QUICK_LABELS[key])).fontSize(Tokens.interfaceFontVp(15,this.environment.fontScale))
                     .fontWeight(this.workspace.quickFilter === key ? FontWeight.Bold : FontWeight.Normal)
                     .fontColor(this.workspace.quickFilter === key ? Colors.link : Colors.ink).maxLines(1)
-                  if (Wire.number(this.workspace.filterCounts,key)>0) Text(String(Wire.number(this.workspace.filterCounts,key)))
-                    .fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-                }
+                  if (key !== 'all' && this.workspace.filterCounts[key] !== undefined) Text(String(Wire.number(this.workspace.filterCounts,key)))
+                    .fontSize(Tokens.interfaceFontVp(15,this.environment.fontScale)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+                }.padding({left:8,right:8,top:4,bottom:4}).borderRadius(40)
+                  .backgroundColor(this.compactRoot && this.workspace.quickFilter === key ? Colors.selection : Color.Transparent)
               }
-                .height(this.quickHeight()).constraintSize({minWidth:this.quickHeight()}).padding({left:10,right:10})
-                .backgroundColor(this.workspace.quickFilter === key ? Colors.selection : Colors.control)
+                .height(this.quickHeight()).constraintSize({minWidth:this.quickHeight()}).padding(0)
+                .backgroundColor(this.compactRoot ? Color.Transparent : this.workspace.quickFilter === key ? Colors.selection : Colors.control)
                 .accessibilityText(tr(QUICK_LABELS[key]))
                 .accessibilityDescription(Wire.number(this.workspace.filterCounts,key)>0 ? String(Wire.number(this.workspace.filterCounts,key)) : '')
                 .accessibilitySelected(this.workspace.quickFilter === key)
@@ -691,16 +728,13 @@ export struct AgentListPage {
                 .onClick(() => { if (this.workspace.quickFilter !== key) this.workspace.setQuickFilter(key); }).id('agents.quick.' + key)
             }, (key: string) => key)
           }.padding({left:4,right:4})
-        }.layoutWeight(1).height(this.quickHeight()).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+        }.layoutWeight(1).height(this.quickHeight()).align(Alignment.Start).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
           .id('agents.quick')
-        if (this.compactRoot && !this.searchVisible()) {
-          Button({type:ButtonType.Circle}) {
-            SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize(Tokens.symbolFont).fontColor([Colors.link])
-          }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('search_sessions'))
-            .onClick(() => { this.focusSearch = true; this.searchOpen = true; }).id('agents.search_reveal')
-        }
+        if (this.compactRoot) Divider().vertical(true).strokeWidth(0.5).height(22*this.quickHeight()/44).color(Colors.divider)
         this.filterControl()
-      }.width('100%')
+      }.width('100%').height(this.quickHeight()).borderRadius(this.compactRoot ? 44 : 0).clip(this.compactRoot)
+        .backgroundColor(this.compactRoot ? Colors.grouped : Color.Transparent)
+        .border({width:this.compactRoot ? 0.5 : 0,color:Colors.divider,radius:44})
       if (this.workspace.machineFilter) {
         Button({ type: ButtonType.Capsule }) {
           Row({ space: 5 }) {
@@ -710,7 +744,7 @@ export struct AgentListPage {
         }.constraintSize({minHeight:44,maxWidth:'100%'}).padding({ left: 10, right: 10, top:3, bottom:3 }).backgroundColor(Colors.surface)
           .accessibilityText(this.machineLabel() + ' · ' + tr('clear')).onClick(() => this.selectMachine(0)).id('agents.machine.clear')
       }
-    }.alignItems(HorizontalAlign.Start).padding({ left: Tokens.page, right: Tokens.page, top: 6, bottom: 4 }).width('100%')
+    }.alignItems(HorizontalAlign.Start).padding({ left: Tokens.page, right: Tokens.page, top: this.headerTopInset(), bottom: 4 }).width('100%')
   }
 
   @Builder renameForm() {
@@ -764,6 +798,10 @@ export struct AgentListPage {
         onAppear: () => { this.filterReady = true; this.measureFilters(); }, onDisappear: () => this.filterReady = false
       })
     }.width('100%').height('100%').backgroundColor(Colors.grouped)
+      .onAreaChange((_previous:Area,area:Area) => {
+        const y=Number(area.globalPosition.y);
+        if (this.compactRoot && Math.abs(y-this.pageOriginY)>0.2) this.pageOriginY=y;
+      })
       .bindSheet($$this.editorOpen, this.renameForm(), { title: { title: tr('rename') }, height: SheetSize.MEDIUM, showClose: true })
   }
 }

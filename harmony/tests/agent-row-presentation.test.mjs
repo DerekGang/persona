@@ -262,11 +262,11 @@ test('state group headers replace repeated status words, while muted and machine
 test('phone search starts folded, reveals only from a downward top pull, and a saved query survives leaving',()=>{
  const TouchType={Down:0,Move:1,Up:2};
  const Search=new Function('TouchType','return '+stripTypeScriptTypes('class Search {'+
-   ['searchVisible','resetSearchReveal','trackPull','refreshAgents'].map(methodCode).join('\n')+'}'))(TouchType);
+   ['searchVisible','setSearchEditing','resetSearchReveal','trackPull','refreshAgents'].map(methodCode).join('\n')+'}'))(TouchType);
  const page=new Search(); page.reloadDecisions=()=>{};
  let top=0,refreshes=0;
  page.workspace={search:'',setReadingDetail(){},refresh(){refreshes++;return Promise.resolve();},isBoundTo(){return true;}};
- page.agentScroller={currentOffset:()=>({yOffset:top})};page.compactRoot=true;page.active=true;page.resetSearchReveal();
+ page.agentScroller={currentOffset:()=>({yOffset:top})};page.compactRoot=true;page.active=true;page.onSearchMode=()=>{};page.resetSearchReveal();
  const gesture=(x,y)=>{page.trackPull({type:0,touches:[{windowX:0,windowY:10}]});page.trackPull({type:1,touches:[{windowX:x,windowY:10+y}]});};
  assert.equal(page.searchVisible(),false);
  top=180;gesture(0,80);assert.equal(page.searchVisible(),false);
@@ -276,7 +276,8 @@ test('phone search starts folded, reveals only from a downward top pull, and a s
  page.trackPull({type:0,touches:[{windowX:0,windowY:10}]});page.refreshAgents();assert.equal(refreshes,1);
  page.workspace.search='login';page.resetSearchReveal();assert.equal(page.searchVisible(),true);
  page.workspace.search='';page.compactRoot=false;assert.equal(page.searchVisible(),true);
- assert.match(source,/accessibilityText\(tr\('search_sessions'\)\)[\s\S]{0,180}id\('agents.search_reveal'\)/);
+ assert.match(source,/accessibilityCustomActions\(\[\{name:tr\('search_sessions'\),onAction:\(\)=>this.activateSearch\(\)\}\]\)/);
+ assert.match(source,/MenuItem\(\{content:tr\('search_sessions'\)\}\).*id\('agents.search_reveal'\)/);
 });
 
 test('visible selection can clear on Home without changing the cached selected Agent',()=>{
