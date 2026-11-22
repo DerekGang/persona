@@ -19,6 +19,22 @@ const {phonePlaceAtRoot,phonePanIntent,finishesPhonePan}=await import('../entry/
 const {PhoneSearchIndex,PhoneChatMatch,mergeChatMatches,localChatMatches}=await import('../entry/src/main/ets/models/PhoneChatSearch.ets');
 const {Tokens}=await import('../entry/src/main/ets/design/Tokens.ets');
 
+test('the in-chat recap preview and its date follow interface type while the full recap keeps reading type', () => {
+  const source = readFileSync(new URL('../entry/src/main/ets/components/ConversationRecap.ets', import.meta.url), 'utf8');
+  const marker = source.slice(source.indexOf('@Builder marker'), source.indexOf('@Builder strip'));
+  const strip = source.slice(source.indexOf('@Builder strip'), source.indexOf('@Builder details'));
+  const details = source.slice(source.indexOf('@Builder details'), source.indexOf('  build()'));
+  assert.match(marker, /Text\('· ' \+ this\.relative\(items[^\n]+\n\s*\.fontSize\(Tokens.caption\)\.maxFontScale\(Tokens.interfaceScaleFor\(Tokens.caption\)\)/);
+  assert.match(strip, /Text\(markdownVisibleText\(parseMarkdown\(item.text\)\)\)\.fontSize\(15\)\.maxFontScale\(Tokens.interfaceScaleFor\(15\)\)/);
+  assert.match(strip, /\.lineHeight\(Tokens.interfaceFontVp\(19.5, nativeEnvironment.fontScale\)\)/);
+  for (const icon of strip.matchAll(/SymbolGlyph[^\n]+/g)) {
+    assert.match(icon[0], /\.fontSize\(Tokens.interfaceFontVp\(/);
+  }
+  assert.equal(Tokens.interfaceFontVp(19.5, 1), '19.5vp');
+  assert.equal(Tokens.interfaceFontVp(19.5, 3.2), '25.5vp');
+  assert.match(details, /MarkdownText\(\{ text: item.text, chatReply: true/);
+});
+
 test('native phone search sizes the entered text and placeholder together and preserves the iPhone interface limit at maximum type',()=>{
   for (const [scale,vp] of [[0.85,13.6],[1,16],[1.2,19.2],[1.5,22],[3.2,22]]) {
     assert.equal(Tokens.interfaceFontVp(16,scale),String(vp)+'vp');

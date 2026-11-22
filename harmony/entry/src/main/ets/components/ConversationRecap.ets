@@ -5,6 +5,7 @@ import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { Tokens } from '../design/Tokens';
 import { tr } from '../design/Strings';
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { markdownVisibleText, parseMarkdown } from '../core/Markdown';
 import { MarkdownText } from './MarkdownText';
 
@@ -71,12 +72,13 @@ export struct ConversationRecap {
   @Builder marker(items: ConversationRecapItem[]) {
     Button({ type: ButtonType.Normal }) {
       Row({ space: 6 }) {
-        SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(15).fontColor([Colors.link])
+        SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(Tokens.interfaceFontVp(15, nativeEnvironment.fontScale)).fontColor([Colors.link])
         Text(tr('chat_away_recap')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.ink).maxLines(1)
         if (items.length > 1) Text('· ' + String(items.length) + '×').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
         if (this.relative(items[items.length - 1].at)) Text('· ' + this.relative(items[items.length - 1].at))
-          .fontSize(13).fontColor(Colors.secondary).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
+          .fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption))
+          .fontColor(Colors.secondary).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12, nativeEnvironment.fontScale)).fontColor([Colors.secondary])
       }.constraintSize({ minHeight: 36 })
     }.backgroundColor(Colors.control).borderRadius(12).padding({left: 10, right: 10})
       .accessibilityText(tr('chat_away_recap') + ' · ' + tr('expand'))
@@ -84,19 +86,20 @@ export struct ConversationRecap {
   }
   @Builder strip(item: ConversationRecapItem) {
     Button({ type: ButtonType.Normal }) {
-      Column({ space: 4 }) {
+      Column({ space: 6 }) {
         Row({ space: 6 }) {
-          SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(15).fontColor([Colors.link])
+          SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(Tokens.interfaceFontVp(17, nativeEnvironment.fontScale)).fontColor([Colors.link])
           Text(tr('chat_away_recap')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
           if (this.relative(item.at)) Text('· ' + this.relative(item.at)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
           else Blank().layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.xmark')).fontSize(13).fontColor([Colors.secondary])
+          SymbolGlyph($r('sys.symbol.xmark')).fontSize(Tokens.interfaceFontVp(12, nativeEnvironment.fontScale)).fontColor([Colors.secondary])
         }.width('100%')
-        Text(markdownVisibleText(parseMarkdown(item.text))).fontSize(16).fontColor(Colors.ink).lineHeight('22fp')
+        Text(markdownVisibleText(parseMarkdown(item.text))).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
+          .fontColor(Colors.ink).lineHeight(Tokens.interfaceFontVp(19.5, nativeEnvironment.fontScale))
           .maxLines(8).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%').textAlign(TextAlign.Start)
-      }.width('100%').alignItems(HorizontalAlign.Start).padding({left: 10})
-        .border({ width: {left: 2}, color: Colors.link })
+      }.width('100%').alignItems(HorizontalAlign.Start).padding({left: Tokens.inset})
+        .border({ width: {left: 3}, color: Colors.link })
     }.width('100%').padding(12).backgroundColor(Colors.selection).borderRadius(12)
       .accessibilityText(tr('chat_away_recap') + ' · ' + item.text + ' · ' + tr('close'))
       .id('chat.recap.open').onClick(() => this.dismiss())
