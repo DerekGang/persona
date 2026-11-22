@@ -445,30 +445,10 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 	if !freshLogical {
 		restartPrepared := false
 		s.fleet.mu.Lock()
-		if p := s.fleet.interactions[ix.ID]; p != nil && p.local == nil {
-			if ix.Resumable && p.prepared != nil {
-				// The reconnecting hook is now the caller whose lifetime governs the
-				// initial wait. The disconnected context must not expire a card its
-				// resumable request has already reclaimed.
-				p.prepared.caller = ctx
-			}
-			if ix.Resumable && p.graceEnded {
-				// The grace period ended and the card is being ended outside the lock (the history, the apps): the
-				// hook hands over, as one back just after would (#5043's kind of gap).
+		if p := s.fleet.interactions[ix.ID]; p != nil {
+			if p.local != nil {
 				s.fleet.mu.Unlock()
-				return proto.Resolution{Dismiss: true}, nil
-			}
-			if p.orphaned != nil {
-				p.orphaned.Stop() // fired but not decided yet: it finds p.orphaned nil and leaves the card to the hook
-				p.orphaned = nil
-			}
-			if a := p.prepared; ix.Resumable && a != nil && !a.clarified && !a.terminal {
-				// The initial timer may have fired while the card was orphaned and
-				// deliberately done nothing. Reclaiming starts a fresh initial wait.
-				if a.decisionTimer != nil {
-					a.decisionTimer.Stop()
-				}
-				restartPrepared = true
+				return proto.Resolution{}, fmt.Errorf("%w: %s", errInteractionIDReused, ix.ID)
 			}
 			// Detachable original replays use exact call identity; ordinary
 			// resumable cards use their creation timestamp. Legacy zero-time
@@ -499,6 +479,30 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 				// are not resumable, so this branch never has a wait reporter to restore.
 				return s.await(ctx, p)
 			}
+			if ix.Resumable && p.prepared != nil {
+				// The reconnecting hook is now the caller whose lifetime governs the
+				// initial wait. The disconnected context must not expire a card its
+				// resumable request has already reclaimed.
+				p.prepared.caller = ctx
+			}
+			if p.graceEnded {
+				// The grace period ended and the card is being ended outside the lock (the history, the apps): the
+				// hook hands over, as one back just after would (#5043's kind of gap).
+				s.fleet.mu.Unlock()
+				return proto.Resolution{Dismiss: true}, nil
+			}
+			if p.orphaned != nil {
+				p.orphaned.Stop() // fired but not decided yet: it finds p.orphaned nil and leaves the card to the hook
+				p.orphaned = nil
+			}
+			if a := p.prepared; ix.Resumable && a != nil && !a.clarified && !a.terminal {
+				// The initial timer may have fired while the card was orphaned and
+				// deliberately done nothing. Reclaiming starts a fresh initial wait.
+				if a.decisionTimer != nil {
+					a.decisionTimer.Stop()
+				}
+				restartPrepared = true
+			}
 			s.fleet.mu.Unlock()
 			releaseAdmission()
 			if restartPrepared {
@@ -513,16 +517,16 @@ func (s *Service) waitInteractionReady(ctx context.Context, ix proto.Interaction
 			return s.await(ctx, p)
 		}
 		s.fleet.mu.Unlock()
-	}
-	if ix.Resumable {
-		if err := s.checkRecordedInteractionOccurrence(ctx, ix); err != nil {
-			return proto.Resolution{}, err
+		if ix.Resumable {
+			if err := s.checkRecordedInteractionOccurrence(ctx, ix); err != nil {
+				return proto.Resolution{}, err
+			}
+			status, r, ended := s.outcome(ix.ID)
+			if ended {
+				return r, nil
+			}
+			again = status == "pending"
 		}
-		status, r, ended := s.outcome(ix.ID)
-		if ended {
-			return r, nil
-		}
-		again = status == "pending"
 	}
 	if ix.Kind == proto.IxElicitation && !s.elicitationReachable(ix) {
 		return proto.Resolution{Dismiss: true}, nil

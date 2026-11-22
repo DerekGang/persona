@@ -33,9 +33,26 @@ func interactionOccurrenceTimeSQL(value string) string {
 // and occurrence replace the older terminal row. An older replay cannot overwrite
 // the latest occurrence, and an owner-resolved occurrence never reopens.
 func (d *DB) InsertInteraction(ctx context.Context, ix proto.Interaction) error {
+	return d.insertInteraction(ctx, ix, true)
+}
+
+// InsertInteractionOccurrence publishes an occurrence without overwriting a
+// different pending occurrence that concurrently won the same runtime ID. A
+// later occurrence may replace terminal history, and the same cancelled
+// non-resumable occurrence may reopen; callers read back to detect the winner.
+func (d *DB) InsertInteractionOccurrence(ctx context.Context, ix proto.Interaction) error {
+	return d.insertInteraction(ctx, ix, false)
+}
+
+func (d *DB) insertInteraction(ctx context.Context, ix proto.Interaction, replacePending bool) error {
 	payload, err := json.Marshal(ix)
 	if err != nil {
 		return err
+	}
+	differentOccurrence := `(` + interactionOccurrenceTimeSQL("EXCLUDED.payload->>'created_at'") + ` > ` +
+		interactionOccurrenceTimeSQL("interactions.payload->>'created_at'") + `)`
+	if !replacePending {
+		differentOccurrence = `(` + differentOccurrence + ` AND interactions.status <> 'pending')`
 	}
 	_, err = d.pool.Exec(ctx, `INSERT INTO interactions (id, machine_id, session_id, kind, payload, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -52,8 +69,7 @@ func (d *DB) InsertInteraction(ctx context.Context, ix proto.Interaction) error 
 			auto_authorized_at = NULL,
 			authorization_id = '',
 			todo_id = ''
-		WHERE (`+interactionOccurrenceTimeSQL("EXCLUDED.payload->>'created_at'")+` > `+
-		interactionOccurrenceTimeSQL("interactions.payload->>'created_at'")+`) OR (
+		WHERE (`+differentOccurrence+`) OR (
 			`+interactionOccurrenceTimeSQL("EXCLUDED.payload->>'created_at'")+` = `+
 		interactionOccurrenceTimeSQL("interactions.payload->>'created_at'")+`
 			AND interactions.status = 'cancelled' AND interactions.resolution IS NULL
