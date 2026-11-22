@@ -246,7 +246,7 @@ test('switching an agent tab replaces only the owning route and a stale tap cann
 test('a restored offline detail adopts live permissions without replacing session rows, and old menus recheck their scoped checkout', () => {
   const source = readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets', import.meta.url), 'utf8');
   const phoneBar=source.slice(source.indexOf('  @Builder spaceBar('),source.indexOf('  build()',source.indexOf('  @Builder spaceBar(')));
-  assert.match(phoneBar,/ForEach\(this\.menuEntries\(tree\.key\),[\s\S]*this\.more\(current\)[\s\S]*this\.headerIdentity\(current\)/);
+  assert.match(phoneBar,/ForEach\(this\.menuEntries\(this\.target\),[\s\S]*this\.more\(current\)[\s\S]*this\.headerIdentity\(current\)/);
   const methods = ['menuTarget','menuEntries','headerIdentity','startFromTree','openEditor'].map(name => {
     const start = source.indexOf('  private ' + name + '(');
     assert.notEqual(start, -1, name);
@@ -798,4 +798,19 @@ test('Agents repository routes stay on the owning stack and refuse stale targets
     ['project_tree','repository'],['project','workspace'],['machine_projects','other-owner']]) page.openAgentRepositoryRoute(name,key);
   page.model.section=4;page.openAgentRepositoryRoute('project','repository');
   assert.deepEqual(calls,[['project','repository'],['project_tree','workspace'],['start','workspace'],['machine_projects','the-owner']]);
+});
+
+test('an open worktree form adopts its same live name and retries only a fresh read on that checkout', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const methods=source.slice(source.indexOf('  private currentEditorTree('),source.indexOf('  @Builder editorSheet('))
+    .replace(/@Monitor\([^)]*\) /g,'');
+  const Page=new Function('return '+stripTypeScriptTypes('class Page {'+methods+'}'))();
+  const old={key:'owner/tree',cwd:'/work/branch',title:'old'}, fresh={...old,title:'new'};
+  let canonical=fresh;const calls=[];
+  const editor={action:'clean',title:'old',locationTitle:'old',open:(model,target,action)=>calls.push([target,action])};
+  const page=Object.assign(new Page(),{editedTree:old,menuTarget:k=>k===canonical.key?canonical:undefined,editorShown:true,editor});
+  page.editorLocationChanged();assert.equal(editor.locationTitle,'new');assert.equal(editor.title,'old');
+  editor.unknown=true;page.retryEditor();assert.deepEqual(calls,[]);
+  editor.unknown=false;page.retryEditor();assert.deepEqual(calls,[[fresh,'clean']]);
+  canonical={...fresh,cwd:'/different/checkpoint'};page.retryEditor();assert.equal(editor.error,'request_updated');assert.equal(calls.length,1);
 });

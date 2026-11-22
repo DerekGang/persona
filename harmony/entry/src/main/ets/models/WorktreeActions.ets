@@ -63,6 +63,7 @@ export class WorktreeActions {
   @Trace unknown: boolean = false;
   @Trace error: string = '';
   @Trace title: string = '';
+  @Trace locationTitle: string = '';
   @Trace machine: string = '';
   @Trace branch: string = '';
   @Trace name: string = '';
@@ -200,7 +201,7 @@ export class WorktreeActions {
   async open(model: ClientModel, tree: ProjectWorktree, action: string): Promise<void> {
     this.close();
     const revision = this.revision, scope = model.scope(), epoch = model.connectionGeneration();
-    this.action = action; this.title = tree.title; this.machine = tree.machineTitle;
+    this.action = action; this.title = tree.title; this.locationTitle = tree.title; this.machine = tree.machineTitle;
     this.branch = ''; this.baseBranch = ''; this.name = tree.title; this.path = tree.cwd;
     this.error = ''; this.base = ''; this.token = ''; this.requestId = ''; this.dirty = 0; this.folder = false;
     this.force = false; this.deleteBranch = false; this.supportsAutomatic = false; this.automatic = false; this.pathEdited = false;

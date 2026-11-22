@@ -293,10 +293,28 @@ export struct ProjectsPage {
     if (!change || this.editedTree !== tree || !this.editorShown) return;
     this.editorShown = false; this.onChanged(tree, change);
   }
+  private currentEditorTree(): ProjectWorktree | undefined {
+    const previous = this.editedTree;
+    if (!previous) return undefined;
+    const current = this.menuTarget(previous.key);
+    return current?.cwd === previous.cwd ? current : undefined;
+  }
+  @Monitor('catalog.projects') editorLocationChanged(): void {
+    if (!this.editorShown) return;
+    const current = this.currentEditorTree();
+    if (current) this.editor.locationTitle = current.title;
+  }
+  private retryEditor(): void {
+    if (!this.editorShown || this.editor.busy || this.editor.loading || this.editor.ready || this.editor.unknown) return;
+    const current = this.currentEditorTree();
+    if (!current) { this.editor.error = 'request_updated'; return; }
+    this.editedTree = current;
+    this.editor.open(this.model,current,this.editor.action);
+  }
   @Builder editorSheet() {
     WorktreeSheet({ form: this.editor, onCancel: () => { if (!this.editor.busy) this.editorShown = false; },
       onSubmit: () => this.complete(), onReconcile: (replay: boolean) => this.complete(true,replay),
-      onRetry: () => { if (this.editedTree) this.editor.open(this.model, this.editedTree, this.editor.action); } })
+      onRetry: () => this.retryEditor() })
   }
   @Builder actionMenu(key: string) {
     Menu() {
@@ -798,18 +816,18 @@ export struct ProjectsPage {
     }.width('100%').layoutWeight(1).maintainVisibleContentPosition(true)
       .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:8,bottom:12}).id('projects.sessions')
   }
-  @Builder spaceBar(tree: ProjectWorktree) {
+  @Builder spaceBar() {
     Row() {
       Button({type:ButtonType.Circle}) {
         SymbolGlyph(Symbols.collapse).fontSize('21vp').fontColor([Colors.ink])
       }.width(42).height(42).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:21})
         .responseRegion({x:-1,y:-1,width:44,height:44}).accessibilityText(tr('back')).onClick(() => this.onBack()).id('shell.back')
       Blank().layoutWeight(1)
-      ForEach(this.menuEntries(tree.key), (current:ProjectWorktree) => {
+      ForEach(this.menuEntries(this.target), (current:ProjectWorktree) => {
         this.more(current)
       }, (current:ProjectWorktree):string => this.headerIdentity(current))
     }.width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:3,bottom:3})
-    Text(tree.title).fontSize(PhoneStyle.title).fontWeight(FontWeight.Bold).maxFontScale(Tokens.interfaceScaleFor(34))
+    Text(this.detailTree?.title || '').fontSize(PhoneStyle.title).fontWeight(FontWeight.Bold).maxFontScale(Tokens.interfaceScaleFor(34))
       .fontColor(Colors.ink).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%').textAlign(TextAlign.Start)
       .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:15,bottom:6}).id('shell.page_title')
   }
@@ -826,7 +844,7 @@ export struct ProjectsPage {
           onWillDismiss:(dismiss:DismissSheetAction) => { if (!this.editor.busy) dismiss.dismiss(); },
           onDisappear:() => { this.editor.close();this.editedTree=undefined; }})
     } else Column() {
-      if (this.compact && this.detailTree) this.spaceBar(this.detailTree!)
+      if (this.compact && this.detailTree) this.spaceBar()
       if (this.catalog.loading && !this.catalog.projects.length) LoadingProgress().width(29).height(29).margin(14)
       if (this.catalog.startError) this.message(tr('project_start_unavailable'))
       if (this.catalog.notice) Text(this.catalog.notice).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.link).width('100%').padding({ left: 18, right: 18, top: 4, bottom: 7 }).id('tree.result')
