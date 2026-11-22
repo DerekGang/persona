@@ -7207,6 +7207,10 @@
     {
       "name": "chat_pending_cards_count",
       "value": "保留中{count}件"
+    },
+    {
+      "name": "phone_all_chats_display_options",
+      "value": "表示オプション"
     }
   ]
 }

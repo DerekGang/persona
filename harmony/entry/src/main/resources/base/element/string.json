@@ -7207,6 +7207,10 @@
     {
       "name": "chat_pending_cards_count",
       "value": "{count} pending"
+    },
+    {
+      "name": "phone_all_chats_display_options",
+      "value": "Display Options"
     }
   ]
 }
