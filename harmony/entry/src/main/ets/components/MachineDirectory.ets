@@ -359,7 +359,7 @@ export struct MachineDirectory {
         this.count(tr('needs_you'),c.needs,Colors.needs,Colors.needsMark)
         this.count(tr('working'),c.working,Colors.working,Colors.workingMark)
         this.count(tr('machine_agent_idle'),c.idle,Colors.ink,Colors.tertiary)
-      }.width('100%').padding({left:12,right:12,top:8,bottom:8}).borderRadius(10).backgroundColor(Colors.grouped)
+      }.width('100%').padding({left:12,right:12,top:8,bottom:8}).borderRadius(10).backgroundColor($r('app.color.machine_count_surface'))
       else if (this.reason(c)) Column({space:4}) {
         Text(this.reason(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
         if (Wire.text(c.raw,'error') && Wire.text(c.raw,'error') !== this.reason(c))
@@ -460,7 +460,7 @@ export struct MachineDirectory {
             Blank().height(PhoneStyle.sidebarMetric(7,nativeEnvironment.fontScale)).layoutWeight(c.tokens).backgroundColor(Colors.ink).borderRadius(5).opacity(NEUTRAL_SHADES[Math.min(i,4)])
           },(c:ComputerCard,i:number) => c.key+String(c.tokens)+String(i))
         }.width('100%')
-        Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(4)}}) {
+        Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(6)}}) {
           ForEach(this.shares.filter((c:ComputerCard) => c.tokens>0),(c:ComputerCard,i:number) => {
             Row({space:4}) {
               Circle().width(6).height(6).fill(Colors.ink).opacity(NEUTRAL_SHADES[Math.min(i,4)])
@@ -676,12 +676,14 @@ export struct MachineDirectory {
       Text(this.present(key,this.currentChartValue(key,upload))).fontSize(key === 'network' ? 18 : 24).maxFontScale(Tokens.interfaceScaleFor(key === 'network' ? 18 : 24)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
     }.accessibilityGroup(true)
   }
+  // The horizontal time labels are outside the canvas. Scale the remaining plot and its vertical axis together.
+  @Computed get historyPlotHeight():number { return PhoneStyle.formSize(131,171.33,nativeEnvironment.fontScale); }
   @Builder historyPlot(key:string) {
     Row({space:6}) {
       Column({space:5}) {
         MachineChart({points:this.series(key).points,end:this.chartEnd,seconds:RANGE_SECONDS[this.shownRange],step:RANGE_STEPS[this.shownRange],
           tint:this.tint(key),alternateTint:key === 'network' ? this.tint('upload') : '',
-          ceiling:this.series(key).ceiling,chartHeight:115,selectedTime:this.inspected,interactive:true,
+          ceiling:this.series(key).ceiling,chartHeight:this.historyPlotHeight,selectedTime:this.inspected,interactive:true,
           dark:nativeEnvironment.dark,pick:(time:number) => this.inspected=time}).id('machines.chart.'+key)
         MachineTimeAxis({end:this.chartEnd,seconds:RANGE_SECONDS[this.shownRange]})
       }.layoutWeight(1)
@@ -689,12 +691,12 @@ export struct MachineDirectory {
         Text(this.present(key,this.series(key).ceiling)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
         Text(this.present(key,this.series(key).ceiling/2)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
         Text(this.present(key,0)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
-      }.height(115).alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.SpaceBetween)
+      }.height(this.historyPlotHeight).alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.SpaceBetween)
         .accessibilityLevel('no-hide-descendants')
     }.width('100%').alignItems(VerticalAlign.Top)
   }
   @Builder chartRow(key:string) {
-    Column({space:7}) {
+    Column({space:Tokens.inset}) {
       Row({space:8}) {
         Text(this.historyTitle(key)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
         if (this.inspected) Text(clockLabel(this.inspected)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
@@ -707,7 +709,7 @@ export struct MachineDirectory {
     }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
   }
   @Builder monitor() {
-    Column({space:10}) {
+    Column({space:Tokens.inset}) {
       if (this.liveTiles.length) this.liveGrid()
       Row({space:2}) {
         ForEach(RANGE_LABELS,(key:string,i:number) => {
@@ -793,7 +795,8 @@ export struct MachineDirectory {
           ListItem() { Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
             .onClick(() => this.onManage()).id('machines.manage') }
         }
-      }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:PhoneStyle.page,bottom:24}).id('machines.list')
+      }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,
+        top:this.selected ? PhoneStyle.detailListTop : PhoneStyle.formSize(20,16,nativeEnvironment.fontScale),bottom:24}).id('machines.list')
     }.onRefreshing(() => {
       this.sync(true); this.refreshing=this.active && this.model.connected;
     }).width('100%').height('100%').backgroundColor(Colors.grouped)

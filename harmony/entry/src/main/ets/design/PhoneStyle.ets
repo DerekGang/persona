@@ -7,6 +7,7 @@ export class PhoneStyle {
   static readonly page: number = 16;
   static readonly cardRadius: number = 15;
   static readonly inset: number = 14;
+  static readonly detailListTop: number = 36;
   static readonly rowHeight: number = 48;
   static readonly bar: number = 44;
   static readonly title: number = 34;

@@ -101,6 +101,10 @@
       "value": "#D9D9DF"
     },
     {
+      "name": "machine_count_surface",
+      "value": "#0A000000"
+    },
+    {
       "name": "persona_subtle",
       "value": "#F1F3F6"
     },
