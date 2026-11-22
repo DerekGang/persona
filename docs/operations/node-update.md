@@ -84,7 +84,7 @@ which follow the same rule). Each check is one run, so 60 s is the most it waits
 still fails. A check that ran out of time says `node-update-check timed out after …`, which tells it apart from a
 version, platform or program mismatch. `node.update.commit` answers only after the upload's checks, and with a signer those of up to
 two signed copies, each a new file. The hub's deploy and its relay therefore wait for that answer for
-`nodeupdate.CommitWait` (three first runs plus a margin, 3.5 min) and 10 s more, instead of taking a slow scan for a lost
+`nodeupdate.CommitWait` (three first runs, two signings with their checks of the signature, and a margin: 4 min 40 s) and 10 s more, instead of taking a slow scan for a lost
 answer and showing a failed check as the two-minute `not_confirmed`. If preflight fails, the resident keeps serving and
 logs the exact error along with the replacement's reported version, OS, architecture, program and listener handover
 support when it could read them. For an RPC deployment, the node sends `node.update.preflight_failed` with the
