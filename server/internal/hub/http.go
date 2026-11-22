@@ -70,6 +70,7 @@ func (h *Hub) routes() http.Handler {
 	h.paneRoutes(api)
 	h.nodeDoctorRoutes(api)
 	h.machineProcRoutes(api)
+	h.machineToolchainRoutes(api)
 	h.machineServicesRoutes(api)
 	h.machineNetworkRoutes(api)
 	h.nodeUpdateRelayRoutes(api)
