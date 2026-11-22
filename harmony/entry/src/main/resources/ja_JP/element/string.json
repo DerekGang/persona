@@ -6919,6 +6919,30 @@
     {
       "name": "meeting_reminder_count",
       "value": "この端末で設定済みの会議通知：{count}件。"
+    },
+    {
+      "name": "kb_search_profiles",
+      "value": "プロフィールとチャット履歴を検索"
+    },
+    {
+      "name": "kb_minutes_ago",
+      "value": "{n}分前"
+    },
+    {
+      "name": "kb_yesterday",
+      "value": "昨日"
+    },
+    {
+      "name": "kb_relevance_value",
+      "value": "関連度{n}"
+    },
+    {
+      "name": "kb_people",
+      "value": "人物"
+    },
+    {
+      "name": "kb_events",
+      "value": "予定"
     }
   ]
 }

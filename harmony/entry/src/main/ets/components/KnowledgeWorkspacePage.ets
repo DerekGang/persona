@@ -1,3 +1,6 @@
+import { i18n } from '@kit.LocalizationKit';
+import { KnowledgeLandingMenu, knowledgeDateLabel, knowledgeInk, knowledgePriorityTone, knowledgeRelevanceTone, knowledgeWash } from '../models/KnowledgeListPresentation';
+import { PhoneKnowledgeSelection } from './PhoneKnowledgeSelection';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { PhoneSectionTitle } from '../design/PhoneStyle';
@@ -28,51 +31,64 @@ const KB_KINDS: string[] = ['projects', 'topics', 'chats', 'people', 'docs', 'me
 struct KnowledgeLibraryRow {
   @Require @Param row: ResourceRow;
   @Require @Param symbol: Resource;
+  @Param language:string='default';
   @Event open: () => void = () => {};
+  @Local badgesWidth:number=0;
   @Computed get entry(): KnowledgeListEntry { return new KnowledgeListEntry(this.row); }
 
   private dateLabel(): string {
-    const stamp = Date.parse(this.entry.updated);
-    if (!Number.isFinite(stamp)) return '';
-    const minutes = Math.floor((Date.now()-stamp)/60000);
-    if (minutes >= 0 && minutes < 1440)
-      return minutes < 1 ? tr('agent_time_just_now') : minutes < 60 ? String(minutes)+tr('agent_time_minute_suffix') :
-        String(Math.floor(minutes/60))+tr('agent_time_hour_suffix');
-    return new Date(stamp).toLocaleDateString();
+    return knowledgeDateLabel(this.entry.updated,Date.now(),this.language==='default' ? i18n.System.getSystemLanguage() : this.language,
+      tr('agent_time_just_now'),tr('kb_minutes_ago'),tr('kb_yesterday'));
   }
-  private tint(): ResourceColor {
-    if (this.entry.priority === 'P0' || this.entry.priority === 'P2') return Colors.link;
-    return this.entry.priority === 'P1' ? Colors.working : Colors.secondary;
+  private textWidth(label:string,points:number,bold:boolean):number {
+    const ctx=this.getUIContext(), scale=Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(points));
+    return ctx.px2vp(ctx.getMeasureUtils().measureText({textContent:label,fontSize:String(points*scale)+'vp',fontWeight:bold ? FontWeight.Bold : FontWeight.Medium}));
   }
-  @Builder badge(value: string, tint: ResourceColor) {
-    Text(value).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(tint).padding({left:5,right:5,top:1,bottom:1})
-      .borderRadius(6).backgroundColor(Colors.control)
+  @Computed get fittedTags():string[] {
+    const pills:string[]=[];
+    if (this.entry.priority) pills.push(this.entry.priority);
+    if (this.entry.duration) pills.push(tr(this.entry.duration==='long' ? 'knowledge_project_long' : 'knowledge_project_short'));
+    if (this.entry.relevance>0) pills.push(tr('kb_relevance_value').replace('{n}',String(this.entry.relevance)));
+    let used=0;
+    for (const label of pills) used+=this.textWidth(label,12,label===this.entry.priority)+12+(used ? 5 : 0);
+    const tags:string[]=[];
+    for (const tag of this.entry.tags.slice(0,2)) {
+      const width=this.textWidth('#'+tag,12,false)+(used ? 5 : 0);
+      if (used+width>this.badgesWidth) break; used+=width;tags.push(tag);
+    }
+    return tags;
+  }
+  private priority():string { return knowledgePriorityTone(this.entry.priority); }
+  @Builder badge(value:string,tone:string,bold:boolean=false) {
+    Text(value).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(bold ? FontWeight.Bold : FontWeight.Medium)
+      .maxLines(1).fontColor(knowledgeInk(tone,nativeEnvironment.dark)).padding({left:6,right:6,top:1,bottom:1})
+      .borderRadius(18).backgroundColor(knowledgeWash(tone,nativeEnvironment.dark)).flexShrink(0)
   }
   build() {
-    Row({space:10}) {
+    Row({space:12}) {
       Stack() {
-        Rect().width(36).height(36).radius(10).fill(this.tint()).opacity(0.12)
-        SymbolGlyph(this.symbol).fontSize('17vp').fontColor([this.tint()])
+        Rect().width(36).height(36).radius(10).fill(knowledgeWash(this.priority(),nativeEnvironment.dark))
+        SymbolGlyph(this.symbol).fontSize('16vp').fontWeight(FontWeight.Medium).fontColor([knowledgeInk(this.priority(),nativeEnvironment.dark)])
       }.width(36).height(36).flexShrink(0)
-      Column({space:3}) {
+      Column({space:4}) {
         Row({space:6}) {
-          Text(this.row.title || this.row.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
+          Text(this.row.title || this.row.id).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(600).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
           if (this.dateLabel())
-            Text(this.dateLabel()).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
+            Text(this.dateLabel()).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(nativeEnvironment.dark ? '#6696969C' : '#6675757C').maxLines(1)
         }.width('100%').alignItems(VerticalAlign.Top)
-        if (this.entry.summary) Text(this.entry.summary).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(2)
+        if (this.entry.summary) Text(this.entry.summary).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).maxLines(2)
           .textOverflow({overflow:TextOverflow.Ellipsis})
-        Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(4),cross:LengthMetrics.vp(3)}}) {
-          if (this.entry.priority) this.badge(this.entry.priority, this.tint())
-          if (this.entry.duration) this.badge(tr(this.entry.duration==='long' ? 'knowledge_project_long' : 'knowledge_project_short'),Colors.secondary)
-          if (this.entry.relevance>0) this.badge(tr('knowledge_relevance')+' '+String(this.entry.relevance), Colors.link)
-          ForEach(this.entry.tags.slice(0,2),(tag:string) => {
-            Text('#'+tag).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
-          },(tag:string) => tag)
-        }.width('100%')
+        Row({space:5}) {
+          if (this.entry.priority) this.badge(this.entry.priority,this.priority(),true)
+          if (this.entry.duration) this.badge(tr(this.entry.duration==='long' ? 'knowledge_project_long' : 'knowledge_project_short'),this.entry.duration==='long' ? 'blue' : 'neutral')
+          if (this.entry.relevance>0) this.badge(tr('kb_relevance_value').replace('{n}',String(this.entry.relevance)),knowledgeRelevanceTone(this.entry.relevance))
+          ForEach(this.fittedTags,(tag:string)=>{
+            Text('#'+tag).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
+          },(tag:string)=>tag)
+        }.width('100%').onAreaChange((_previous:Area,area:Area)=>{ const width=Number(area.width);if (this.badgesWidth!==width) this.badgesWidth=width; })
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary]).alignSelf(ItemAlign.Center)
-    }.width('100%').alignItems(VerticalAlign.Top).padding({left:14,right:12,top:12,bottom:12}).constraintSize({minHeight:52})
+    }.width('100%').alignItems(VerticalAlign.Top).padding({left:20,right:18,top:17,bottom:17}).constraintSize({minHeight:63})
       .backgroundColor(Colors.surface).accessibilityGroup(true).onClick(() => this.open()).id('knowledge.entry.'+this.row.path+'.'+this.row.id)
   }
 }
@@ -82,14 +98,14 @@ export struct KnowledgeWorkspacePage {
   @Local dispatchExpanded: boolean = false;
   @Local facts: RecordingFactsDraft = new RecordingFactsDraft();
   @Local recordingTools: boolean = false;
-  private kindScroller: Scroller = new Scroller();
-  private kindListMounted: boolean = false;
   @Require @Param model: ClientModel;
   @Param row: ResourceRow | undefined = undefined;
   @Param list: ResourceRow[] = [];
   @Param visible: boolean = true;
   @Param rail: boolean = false;
   @Param initialKind: string = '';
+  @Param landingMenu:KnowledgeLandingMenu|undefined=undefined;
+  @Local knowledgeMapOpen:boolean=false;
   @Param editRevision: number = 0;
   @Local metadataSheet: boolean = false;
   @Local localMeetings: boolean = false;
@@ -144,11 +160,20 @@ export struct KnowledgeWorkspacePage {
   private openSerial: number = 0;
   private pageAvailable: boolean = false;
 
+  private menuCurrent():boolean { return this.pageAvailable && this.visible && !this.row && !this.initialKind; }
+  @Monitor('workspace.tags','workspace.tag','workspace.query','model.profile','model.connected','visible','row','landingMenu')
+  syncLandingMenu():void {
+    if (this.menuCurrent()) {
+      const scope=this.model.scope(),generation=this.model.connectionGeneration();
+      this.landingMenu?.bind(this.workspace,()=>this.menuCurrent() && this.model.owns(generation,scope),()=>this.knowledgeMapOpen=true);
+    } else { this.landingMenu?.clear(this.workspace);this.knowledgeMapOpen=false; }
+  }
   aboutToAppear(): void {
-    this.pageAvailable = true; this.meetingFeaturesChanged(); this.lastVisible = this.visible; this.syncRowBindings(); this.openWorkspace();
+    this.pageAvailable = true; this.syncLandingMenu(); this.meetingFeaturesChanged(); this.lastVisible = this.visible; this.syncRowBindings(); this.openWorkspace();
     if (this.initialKind === 'recordings' && !this.row) this.loadRecordings().catch(() => undefined);
   }
   aboutToDisappear(): void {
+    this.landingMenu?.clear(this.workspace);this.knowledgeMapOpen=false;
     this.pageAvailable = false; this.meetingPreferences.close(); this.calendarRequest++; this.localOwner = ''; this.localOpening = undefined; this.openSerial++; this.workspaceOpening = false; this.queuedRefresh = false;
     this.workspace.hide(); this.recording.dispose().catch(() => undefined);
   }
@@ -160,10 +185,7 @@ export struct KnowledgeWorkspacePage {
   }
   @Monitor('workspace.editOpen') metadataChanged():void { if (!this.workspace.editOpen) this.metadataSheet=false; }
   @Monitor('row') rowChanged(): void { this.metadataSheet=false; this.facts.close(); this.recordingTools=false; this.syncRowBindings(); this.openWorkspace(); }
-  @Monitor('workspace.kind') centerKind(): void {
-    const index=KB_KINDS.indexOf(this.workspace.kind);
-    if (index>=0 && this.kindListMounted) this.kindScroller.scrollToIndex(index,false,ScrollAlign.CENTER);
-  }
+
   @Monitor('model.profile') profileChanged(): void {
     this.metadataSheet=false; this.facts.close(); this.recordingTools=false; this.showIgnored=false; this.recordingOpen = false;
     this.selectedCalendarEvent=''; this.calendarRequest++; this.calendarEvents=[]; this.calendarState=''; this.meetingTitle=''; this.meetingKind='meeting';
@@ -268,14 +290,28 @@ export struct KnowledgeWorkspacePage {
       .width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped)
   }
 
-  private kindLabel(kind: string): string { return tr('knowledge_kind_' + kind); }
+  @Local kindsWidth:number=0;
+  @Computed get kindsLayout():number {
+    const ctx=this.getUIContext(),scale=Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15));
+    const width=this.kindsWidth || (nativeEnvironment.windowWidthPx ? ctx.px2vp(nativeEnvironment.windowWidthPx)-32 : 360);
+    let labels=0;for (const kind of KB_KINDS) labels+=ctx.px2vp(ctx.getMeasureUtils().measureText({
+      textContent:this.kindLabel(kind),fontSize:String(15*scale)+'vp',fontWeight:FontWeight.Bold
+    }));
+    const n=KB_KINDS.length;
+    if (labels+n*(24+14*scale+4)+(n-1)*8<=width) return 0;
+    if (labels+n*24+(n-1)*6<=width) return 1;
+    if (labels+n*16+(n-1)*4<=width) return 2;
+    return 3;
+  }
+  private kindLabel(kind: string): string { return tr(kind==='people' ? 'kb_people' : kind==='events' ? 'kb_events' : 'knowledge_kind_' + kind); }
   private kindIcon(kind: string): Resource {
-    if (kind === 'projects') return Symbols.folder;
+    if (kind === 'projects') return $r('sys.symbol.square_stack_3d');
     if (kind === 'chats') return Symbols.persona;
     if (kind === 'people') return Symbols.agents;
-    if (kind === 'meetings' || kind === 'events') return Symbols.calendar;
+    if (kind === 'meetings') return $r('sys.symbol.video');
+    if (kind === 'events') return Symbols.calendar;
     if (kind === 'recordings') return $r('sys.symbol.mic');
-    return kind === 'topics' ? Symbols.apps : Symbols.document;
+    return kind === 'topics' ? $r('sys.symbol.lightbulb') : Symbols.document;
   }
   private clock(seconds: number): string {
     const whole = Number.isFinite(seconds) ? Math.max(0,Math.floor(seconds)) : 0;
@@ -327,12 +363,14 @@ export struct KnowledgeWorkspacePage {
   }
 
   @Builder searchField(meetings:boolean) {
-    Search({value:this.workspace.query,placeholder:tr(meetings ? 'phone_record_search' : 'knowledge_search')}).maxFontScale(Tokens.interfaceFontMaxScale)
-      .height(Math.max(38,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+8)).textFont({size:16}).backgroundColor(Colors.control)
+    Search({value:this.workspace.query,placeholder:tr(meetings ? 'phone_record_search' : 'kb_search_profiles')}).maxFontScale(Tokens.interfaceFontMaxScale)
+      .height(Math.max(44,Math.ceil(28*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+10)).textFont({size:17})
+      .borderRadius(27).backgroundColor(meetings ? Colors.control : Colors.surface)
+      .border({width:0.5,color:Colors.divider,radius:27})
       .onChange((value:string) => this.workspace.setQuery(value)).id('knowledge.search')
   }
   @Builder libraryRow(row: ResourceRow) {
-    KnowledgeLibraryRow({row:row, symbol:this.kindIcon(row.path), open:():void => {
+    KnowledgeLibraryRow({row:row, language:this.model.language, symbol:this.kindIcon(row.path), open:():void => {
       this.workspace.openEntry(row).then((next:ResourceRow) => this.onOpenResource(next)).catch(() => undefined);
     }})
   }
@@ -372,27 +410,20 @@ export struct KnowledgeWorkspacePage {
   @Builder kindChip(kind:string) {
     Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
-        if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15))>1.3) SymbolGlyph(this.kindIcon(kind)).fontSize('14vp')
+        if (this.kindsLayout===0 || this.kindsLayout===3) SymbolGlyph(this.kindIcon(kind)).fontSize(String(14*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(14)))+'vp')
           .fontColor([kind===this.workspace.kind ? Colors.onAction : Colors.ink])
         Text(this.kindLabel(kind)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
           .fontColor(kind===this.workspace.kind ? Colors.onAction : Colors.ink)
       }
-    }.constraintSize({minHeight:34}).padding({left:10,right:10,top:4,bottom:4})
+    }.constraintSize({minHeight:34}).padding({left:this.kindsLayout===2 ? 8 : 12,right:this.kindsLayout===2 ? 8 : 12,top:5,bottom:5})
       .backgroundColor(kind===this.workspace.kind ? Colors.action : Colors.control)
       .accessibilitySelected(kind===this.workspace.kind).onClick(() => this.workspace.setKind(kind)).id('knowledge.kind.'+kind)
   }
   @Builder kindBar() {
-    if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15))>1.3) {
-      Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(5)}}) {
-        ForEach(KB_KINDS,(kind:string) => { this.kindChip(kind) },(kind:string) => kind)
-      }.width('100%').padding({top:6,bottom:6}).id('knowledge.kinds')
-    } else {
-      List({space:6,scroller:this.kindScroller}) {
-        ForEach(KB_KINDS,(kind:string) => { ListItem() { this.kindChip(kind) } },(kind:string) => kind)
-      }.width('100%').height(48).listDirection(Axis.Horizontal).scrollBar(BarState.Off).alignListItem(ListItemAlign.Center)
-        .onAppear(() => { this.kindListMounted=true; })
-        .onAreaChange(() => this.centerKind()).onDisAppear(() => { this.kindListMounted=false; }).id('knowledge.kinds')
-    }
+    Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(this.kindsLayout===2 ? 4 : this.kindsLayout===0 ? 8 : 6),cross:LengthMetrics.vp(8)}}) {
+      ForEach(KB_KINDS,(kind:string)=>{ this.kindChip(kind) },(kind:string)=>kind)
+    }.width('100%').onAreaChange((_previous:Area,area:Area)=>{ const width=Number(area.width);if (width!==this.kindsWidth)this.kindsWidth=width; })
+      .id('knowledge.kinds')
   }
   @Builder tagFilter() {
     if (this.workspace.tags.length || this.workspace.tag) {
@@ -408,18 +439,21 @@ export struct KnowledgeWorkspacePage {
         .accessibilityText(tr('knowledge_filter_tag')).bindMenu(this.knowledgeFilters).id('knowledge.filters')
     }
   }
+  @Builder landingMap() {
+    PhoneKnowledgeSelection({model:this.model,mapOnly:true,onCloseMap:()=>this.knowledgeMapOpen=false})
+  }
   @Builder rootList() {
     Column({space:6}) {
       Row({space:4}) {
         Column() { this.searchField(false) }.layoutWeight(1)
-        if (!this.separateTagLine() && !this.workspace.query.trim() && (this.workspace.tags.length || this.workspace.tag))
+        if (!this.landingMenu && !this.separateTagLine() && !this.workspace.query.trim() && (this.workspace.tags.length || this.workspace.tag))
           Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.filter).fontSize('16vp').fontColor([Colors.link]) }
             .width(38).height(38).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('knowledge_filter_tag')+' · '+(this.workspace.tag || tr('knowledge_all_tags')))
             .bindMenu(this.knowledgeFilters).id('knowledge.filters')
       }.width('100%').onAreaChange((_:Area,area:Area)=>{this.filterWidth=Number(area.width);})
       if (!this.workspace.query.trim()) {
-        this.kindBar()
-        if (this.separateTagLine() && (this.workspace.tags.length || this.workspace.tag)) this.tagFilter()
+        Column() { this.kindBar() }.width('100%').margin({top:nativeEnvironment.fontScale>1.3 ? 28 : 36})
+        if (!this.landingMenu && this.separateTagLine() && (this.workspace.tags.length || this.workspace.tag)) this.tagFilter()
         if (!this.isProjectList()) Row({space:5}) {
           Text(this.workspace.tag ? '#' + this.workspace.tag : tr('all')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
           Text(String(this.workspace.entries.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
@@ -435,7 +469,7 @@ export struct KnowledgeWorkspacePage {
                   Text(this.sectionLabel(section)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).id('knowledge.group.title.'+section)
                   Text(String(this.projectRows(section).length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
                   if (section==='ignored') SymbolGlyph(this.showIgnored ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-                }.width('100%').padding({left:10,top:16,bottom:8})
+                }.width('100%').padding({left:20,top:24,bottom:10})
                   .accessibilityGroup(true).accessibilityText(this.sectionLabel(section)+' '+String(this.projectRows(section).length))
                   .onClick(() => { if (section==='ignored') this.showIgnored=!this.showIgnored; }).id('knowledge.group.'+section)
               }
@@ -443,7 +477,7 @@ export struct KnowledgeWorkspacePage {
                 ForEach(this.projectRows(section), (binding: BoundRow<ResourceRow>) => {
                   ListItem() { this.libraryRow(binding.value) }
                 }, (binding: BoundRow<ResourceRow>) => binding.key)
-              }.divider({strokeWidth:0.5,color:Colors.divider,startMargin:60}).backgroundColor(Colors.surface).borderRadius(16).clip(true)
+              }.divider({strokeWidth:0.5,color:Colors.divider,startMargin:68,endMargin:20}).backgroundColor(Colors.surface).borderRadius(24).clip(true)
             }
           }, (section: string) => section)
         } else if (this.entryRowBindings.length || this.resultRowBindings.length) ListItemGroup() {
@@ -454,6 +488,7 @@ export struct KnowledgeWorkspacePage {
         this.workspace.refresh().finally(() => { this.refreshing=false; });
       }).layoutWeight(1).width('100%').id('knowledge.entries')
     }.width('100%').height('100%').padding({left:16,right:16,top:6,bottom:8}).backgroundColor(Colors.grouped)
+      .bindSheet($$this.knowledgeMapOpen,this.landingMap(),{height:SheetSize.LARGE,showClose:false,dragBar:false})
   }
   @Builder recordingHome() {
     Column({space:6}) {

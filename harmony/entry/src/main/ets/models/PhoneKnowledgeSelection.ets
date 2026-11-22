@@ -118,9 +118,10 @@ export class PhoneKnowledgeSelectionModel {
     return manager ? base+(base.includes('?') ? '&' : '?')+'manager='+encodeURIComponent(manager) : base;
   }
   private live(epoch:number):boolean { return !!this.client && epoch===this.epoch && this.client.connected && this.client.owns(this.generation,this.scope); }
-  async open(client:ClientModel):Promise<void> {
+  async open(client:ClientModel,mapOnly:boolean=false):Promise<void> {
     this.close(); this.client=client; this.scope=client.scope(); this.generation=client.connectionGeneration();
     if (!client.connected) { this.problem='offline'; return; }
+    if (mapOnly) return;
     const epoch=this.epoch;
     this.offEvents=client.observeEvents((raw:string) => {
       if (!this.live(epoch) || this.saving || raw.length>1024*1024) return;

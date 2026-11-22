@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {registerHooks,stripTypeScriptTypes} from 'node:module';
+import {readFileSync} from 'node:fs';
+registerHooks({load(url,context,next){
+  if(url.endsWith('.ets'))return {format:'module',shortCircuit:true,source:stripTypeScriptTypes(readFileSync(new URL(url),'utf8').replace(/@ObservedV2\s*/g,'').replace(/@Trace\s+/g,''))};
+  return next(url,context);
+}});
+const {knowledgeDateLabel,knowledgePriorityTone,knowledgeRelevanceTone,knowledgeInk,knowledgeWash,KnowledgeLandingMenu}=await import('../entry/src/main/ets/models/KnowledgeListPresentation.ets');
+test('knowledge dates match the iPhone calendar-day, weekday, and relative-minute boundaries in the active locale',()=>{
+  const now=new Date(2026,10,22,12,0).getTime(), local=(day,hour,minute=0)=>new Date(2026,10,day,hour,minute).toISOString();
+  const say=(raw,locale='zh-CN')=>knowledgeDateLabel(raw,now,locale,'刚刚','{n} 分钟前','昨天');
+  assert.equal(say(new Date(now-44000).toISOString()),'刚刚');
+  assert.equal(say(new Date(now-45000).toISOString()),'1 分钟前');
+  assert.equal(say(local(22,11,35)),'25 分钟前');assert.match(say(local(22,8,30)),/8:30/);
+  assert.equal(say(local(21,23,30)),'昨天');assert.equal(say(local(18,9)),'星期三');assert.equal(say(local(18,9),'en-US'),'Wednesday');
+  assert.equal(say(local(7,8)),new Date(local(7,8)).toLocaleDateString('zh-CN',{month:'short',day:'numeric'}));
+  assert.equal(say('invalid'),'');assert.equal(say('1970-01-01T00:00:00Z'),'');
+});
+test('priority and relevance have separate tone ranges and the same swatch remains legible on both standard appearances',()=>{
+  assert.deepEqual(['P0','P1','P2','P3',''].map(knowledgePriorityTone),['attention','working','blue','secondary','secondary']);
+  assert.deepEqual([100,70,69,40,39,0].map(knowledgeRelevanceTone),['attention','attention','working','working','neutral','neutral']);
+  assert.equal(knowledgeInk('attention',false),'#007AFF');assert.equal(knowledgeInk('working',true),'#FFB224');
+  assert.notEqual(knowledgeInk('attention',false),knowledgeInk('blue',false));assert.notEqual(knowledgeWash('neutral',true),knowledgeWash('neutral',false));
+});
+test('the top bar uses only its actual visible library, validates choices, and retires callbacks after navigation',()=>{
+  let current=true,opened=0;const tags=[];
+  const workspace={tags:['one','two'],tag:'two',query:'',setTag:x=>tags.push(x)}, other={tags:[],tag:'',query:'',setTag:()=>assert.fail()};
+  const menu=new KnowledgeLandingMenu();menu.bind(workspace,()=>current,()=>opened++);
+  menu.choose('one');menu.choose('unknown');workspace.query='search';menu.choose('two');workspace.query='';menu.choose('');menu.map();
+  assert.deepEqual(tags,['one','']);assert.equal(opened,1);
+  menu.clear(other);current=false;menu.choose('one');menu.map();assert.equal(opened,1);
+  menu.clear(workspace);assert.deepEqual(menu.tags,[]);assert.deepEqual(menu.selected,'');menu.map();assert.equal(opened,1);
+});

@@ -6919,6 +6919,30 @@
     {
       "name": "meeting_reminder_count",
       "value": "本机系统已安排 {count} 个会前提醒。"
+    },
+    {
+      "name": "kb_search_profiles",
+      "value": "搜索档案和聊天记录"
+    },
+    {
+      "name": "kb_minutes_ago",
+      "value": "{n} 分钟前"
+    },
+    {
+      "name": "kb_yesterday",
+      "value": "昨天"
+    },
+    {
+      "name": "kb_relevance_value",
+      "value": "相关 {n}"
+    },
+    {
+      "name": "kb_people",
+      "value": "人"
+    },
+    {
+      "name": "kb_events",
+      "value": "日程"
     }
   ]
 }

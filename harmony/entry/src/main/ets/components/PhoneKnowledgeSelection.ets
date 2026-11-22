@@ -13,6 +13,8 @@ type Fields=Record<string,Object>;
 @ComponentV2
 export struct PhoneKnowledgeSelection {
   @Require @Param model:ClientModel;
+  @Param mapOnly:boolean=false;
+  @Event onCloseMap:()=>void=()=>{};
   @Local form:PhoneKnowledgeSelectionModel=new PhoneKnowledgeSelectionModel();
   @Local shown:boolean=false;
   @Local modal:string='';
@@ -39,7 +41,8 @@ export struct PhoneKnowledgeSelection {
   @Monitor('model.profile','model.connected') ownerChanged():void { this.begin(); }
   private begin():void {
     this.view++; this.shown=false; this.modal=''; this.removed=undefined; this.query=''; this.originalItem=undefined;
-    this.form.open(this.model);
+    const rev=this.view;
+    this.form.open(this.model,this.mapOnly).then(() => { if (this.mapOnly && this.view===rev) this.openMap(); });
   }
 
   private title(name:string):string { return tr('ks_rule_'+name); }
@@ -118,7 +121,7 @@ export struct PhoneKnowledgeSelection {
     saved.then((ok:boolean) => { if (ok && view===this.view) this.closeModal(); });
   }
   private closeModal():void {
-    this.view++; this.shown=false; this.form.cancelPicker(); this.modal=''; this.form.problem='';
+    this.view++; this.shown=false; this.form.cancelPicker(); this.modal=''; this.form.problem=''; if (this.mapOnly) this.onCloseMap();
   }
   private cancel():void {
     if (this.form.saving) return;
@@ -396,7 +399,8 @@ export struct PhoneKnowledgeSelection {
     }.width('100%').height('100%').backgroundColor(Colors.grouped).id('settings.knowledge.modal.'+this.modal)
   }
   build() {
-    Column() { this.landing() }.width('100%').height('100%')
+    if (this.mapOnly) this.modalContent()
+    else Column() { this.landing() }.width('100%').height('100%')
       .bindSheet($$this.shown,this.modalContent(),{height:SheetSize.LARGE,showClose:false,dragBar:false,
         onWillDismiss:()=>this.cancel(),onDisappear:()=>{ if (!this.shown) this.form.cancelPicker(); }})
   }

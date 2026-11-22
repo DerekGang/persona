@@ -17,6 +17,7 @@ import { ThemeScope } from '../design/ThemeScope';
 import { util } from '@kit.ArkTS';
 import { PhoneAgentSettingsPage } from '../components/PhoneAgentSettingsPage';
 import { PhoneMeetingSettings } from '../components/PhoneMeetingSettings';
+import { KnowledgeLandingMenu } from '../models/KnowledgeListPresentation';
 import { PhoneKnowledgeSelection } from '../components/PhoneKnowledgeSelection';
 import { AdminWorkspacePage } from '../components/AdminWorkspacePage';
 import { ExtensionPage } from '../components/ExtensionPage';
@@ -86,6 +87,13 @@ struct Index {
   private detailOwner: ClientModel | undefined;
   @Local adminRefreshRevision: number = 0;
   @Local inboxRefreshRevision: number = 0;
+  @Local inboxComposeRevision:number=0;
+  @Local inboxComposeAvailable:boolean=false;
+  private inboxComposeScope:string='';
+  @Local knowledgeMenu:KnowledgeLandingMenu=new KnowledgeLandingMenu();
+  @Local moduleMenuShown:boolean=false;
+  private moduleMenuOwner:string='';
+  private moduleMenuKind:string='';
   @Local recordingEditRevision: number = 0;
   @Local extensionTitle: string = '';
   @Local todoTitle: string = '';
@@ -509,6 +517,50 @@ struct Index {
       }, (dark:boolean) => String(dark))
     } else this.compactPlaces()
   }
+  private rootModuleMenuKind():string {
+    if (this.phoneTop==='resources' && ['knowledge','inbox'].includes(this.phoneParam)) return this.phoneParam;
+    return this.model.section===2 && !this.phoneTop ? 'inbox' : '';
+  }
+  private menuOwner(kind:string):string {
+    return JSON.stringify([kind,this.model.scope(),this.model.connectionGeneration(),this.model.section,this.phoneTop,this.phoneParam,this.navigationIntent]);
+  }
+  private inboxPermissionOwner():string { return JSON.stringify([this.model.scope(),this.model.connectionGeneration()]); }
+  private canComposeFromMenu():boolean { return this.model.connected && this.inboxComposeAvailable && this.inboxComposeScope===this.inboxPermissionOwner(); }
+  private menuCurrent(kind:string):boolean {
+    return this.rootModuleMenuKind()===kind && !this.spacesShown && this.moduleMenuKind===kind && this.moduleMenuOwner===this.menuOwner(kind);
+  }
+  @Builder rootModuleMenu() {
+    Menu() {
+      if (this.moduleMenuKind==='knowledge') {
+        if (!this.knowledgeMenu.searching) MenuItemGroup({header:tr('knowledge_filter_tag')}) {
+          MenuItem({content:tr('knowledge_all_tags')}).selectIcon(true).selected(!this.knowledgeMenu.selected)
+            .onClick(()=>{if(this.menuCurrent('knowledge')) this.knowledgeMenu.choose('');}).id('knowledge.filter.all')
+          ForEach(this.knowledgeMenu.tags,(tag:string)=>{
+            MenuItem({content:'#'+tag}).selectIcon(true).selected(this.knowledgeMenu.selected===tag)
+              .onClick(()=>{if(this.menuCurrent('knowledge')) this.knowledgeMenu.choose(tag);}).id('knowledge.filter.'+tag)
+          },(tag:string)=>tag)
+        }
+        MenuItem({content:tr('ks_map')}).onClick(()=>{if(this.menuCurrent('knowledge'))this.knowledgeMenu.map();}).id('knowledge.map')
+      } else if (this.moduleMenuKind==='inbox') {
+        MenuItem({content:tr('mail_compose')}).enabled(this.canComposeFromMenu())
+          .onClick(()=>{if(this.menuCurrent('inbox') && this.canComposeFromMenu())this.inboxComposeRevision++;}).id('inbox.more.compose')
+        MenuItem({content:tr('refresh')}).enabled(this.model.connected)
+          .onClick(()=>{if(this.menuCurrent('inbox') && this.model.connected)this.inboxRefreshRevision++;}).id('inbox.more.refresh')
+      }
+    }
+  }
+  @Builder phoneModuleMore(kind:string) {
+    Button({type:ButtonType.Circle}) {
+      Stack() {
+        Circle().width(20).height(20).stroke(Colors.link).strokeWidth(1.4).fill(Color.Transparent)
+        Image(Symbols.more).width(15).height(15).fillColor(Colors.link)
+      }
+    }.width(44).height(44).padding(0).backgroundColor(Colors.surface)
+      .border({width:0.5,color:Colors.divider,radius:22}).accessibilityText(tr('more'))
+      .id(kind==='knowledge' ? 'knowledge.filters' : 'inbox.more')
+      .onClick(()=>{if(this.rootModuleMenuKind()===kind){this.moduleMenuKind=kind;this.moduleMenuOwner=this.menuOwner(kind);this.moduleMenuShown=true;}})
+      .bindMenu(this.moduleMenuShown && this.moduleMenuKind===kind,this.rootModuleMenu,{placement:Placement.BottomRight,onDisappear:()=>this.moduleMenuShown=false})
+  }
   @Builder compactPlaces() {
     Column() {
       Row({space: 6}) {
@@ -576,6 +628,8 @@ struct Index {
           PhoneIconButton({symbol: this.phonePeer() || this.model.section === 0 ? Symbols.edit : Symbols.plus, label: tr(this.model.section === 0 ? 'new_chat' : 'new_agent'), identity:'shell.new', action:() => this.startFromPlace()})
         } else if (this.compactChatMenu(this.phoneTop) && !this.mainDestination(this.phoneTop,this.phoneParam)) {
           this.compactSessionMore()
+        } else if (this.rootModuleMenuKind()) {
+          this.phoneModuleMore(this.rootModuleMenuKind())
         } else if (this.activeChild && this.destinationMenuItems(this.shownName, this.shownParam).length) {
           this.destinationMenus(this.shownName, this.shownParam)
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
@@ -1395,7 +1449,7 @@ struct Index {
       } })
   }
   @Builder inboxList() {
-    InboxWorkspacePage({ model: this.model, visible: this.model.section === 2, refreshRevision: this.inboxRefreshRevision, onChanged: () => this.inboxRefreshRevision++, onOpen: (row: ResourceRow) => this.openRow(row), onLink: (address: string) => this.openReader(address),
+    InboxWorkspacePage({ model: this.model, visible: this.model.section === 2, refreshRevision: this.inboxRefreshRevision, toolbarActions:!this.wide() && this.rootModuleMenuKind()==='inbox', composeRevision:this.inboxComposeRevision, onComposeAvailability:(enabled:boolean) => { if (this.model.section===2 && !this.phoneTop) { this.inboxComposeScope=this.inboxPermissionOwner();this.inboxComposeAvailable=enabled; } }, onChanged: () => this.inboxRefreshRevision++, onOpen: (row: ResourceRow) => this.openRow(row), onLink: (address: string) => this.openReader(address),
       onHandoff: (row: ResourceRow) => this.openLinkedResource(row) })
   }
   private openFromPhoneSettings(page: string): void {
@@ -2116,7 +2170,7 @@ struct Index {
         if (this.targetReady(name, param)) RemoteDocumentPage({ model: this.detailModel, row: this.routeRow(param), active: this.activeChild === this.childKey(name, param), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'inbox' || name === 'todo_source' || name === 'todo_thread' || name === 'resources' && param === 'inbox') {
-        if (name === 'resources' || this.targetReady(name, param)) InboxWorkspacePage({ model: name === 'resources' ? this.model : this.detailModel, row: name === 'resources' ? undefined : this.routeRow(param), list: name === 'resources', visible: this.activeChild === this.childKey(name, param), refreshRevision: this.inboxRefreshRevision, handoffRequested: this.pendingInboxHandoff === this.childKey(name, param), onHandoffConsumed: () => { if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; },
+        if (name === 'resources' || this.targetReady(name, param)) InboxWorkspacePage({ model: name === 'resources' ? this.model : this.detailModel, row: name === 'resources' ? undefined : this.routeRow(param), list: name === 'resources', visible: this.activeChild === this.childKey(name, param), refreshRevision: this.inboxRefreshRevision, toolbarActions:!this.wide() && this.rootModuleMenuKind()==='inbox', composeRevision:this.inboxComposeRevision, onComposeAvailability:(enabled:boolean) => { if (this.activeChild===this.childKey(name,param) && this.rootModuleMenuKind()==='inbox') { this.inboxComposeScope=this.inboxPermissionOwner();this.inboxComposeAvailable=enabled; } }, handoffRequested: this.pendingInboxHandoff === this.childKey(name, param), onHandoffConsumed: () => { if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; },
           onChanged: () => { if (this.activeChild === this.childKey(name, param)) this.inboxRefreshRevision++; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onHandoff: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'todo' || name === 'resources' && param === 'todo') {
@@ -2124,7 +2178,7 @@ struct Index {
           onTitle: (title: string) => { if (name === 'todo' && this.activeChild === this.childKey(name, param)) this.todoTitle = title; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), onCreateAgent: (todo: ResourceRow) => this.createAgentFrom(name, param, todo) })
         else this.targetLoading(name, param)
       } else if (name === 'knowledge' || name === 'recordings' || name === 'knowledge_meetings' || name === 'resources' && param === 'knowledge') {
-        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
+        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ landingMenu:!this.wide() && name==='resources' && param==='knowledge' ? this.knowledgeMenu : undefined, initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onChat: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'resources' && param === 'health') {

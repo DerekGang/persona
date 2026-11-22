@@ -6919,6 +6919,30 @@
     {
       "name": "meeting_reminder_count",
       "value": "Meeting reminders scheduled on this phone: {count}."
+    },
+    {
+      "name": "kb_search_profiles",
+      "value": "Search profiles and chat history"
+    },
+    {
+      "name": "kb_minutes_ago",
+      "value": "{n} min ago"
+    },
+    {
+      "name": "kb_yesterday",
+      "value": "Yesterday"
+    },
+    {
+      "name": "kb_relevance_value",
+      "value": "Relevance {n}"
+    },
+    {
+      "name": "kb_people",
+      "value": "People"
+    },
+    {
+      "name": "kb_events",
+      "value": "Events"
     }
   ]
 }
