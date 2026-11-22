@@ -76,6 +76,7 @@ export class HubRepository {
   }
   async sessions(): Promise<ResourceRow[]> { return this.list('/api/v1/sessions', 'sessions', 'session', true); }
   async machines(): Promise<ResourceRow[]> { return this.list('/api/v1/machines', 'machines', 'machine', true); }
+  isDefaultManager(): boolean { return !this.defaultOwner || this.owner === this.defaultOwner; }
   async todos(): Promise<ResourceRow[]> { return this.list('/api/v1/todos', 'todos', 'todo'); }
   async inbox(): Promise<ResourceRow[]> { return this.list('/api/v1/inbox?sources=all', 'items', 'inbox', true); }
   async knowledge(kind: string = 'projects', query: string = ''): Promise<ResourceRow[]> {
