@@ -1043,3 +1043,35 @@ func TestPartnerAnswerOnlyTheOwnersYes(t *testing.T) {
 		}
 	}
 }
+
+// The partner's delivered status for a reply can come back over the link before partner.send's answer is written here:
+// the message the reply answers is answered all the same (once the partner took the reply, whatever the row read then).
+func TestPartnerReplyAnsweredWhenItsStatusCameFirst(t *testing.T) {
+	r := newPartnerRig(t)
+	if err := r.db.SetPartnerConfirm(context.Background(), pHub, false, partnerPairedAt); err != nil {
+		t.Fatal(err)
+	}
+	r.loop(t)
+	asked := assistantwire.PartnerEnvelope{MessageID: "pm_dddddddddddddddddddddddddddddddd", Kind: assistantwire.PartnerKindMessage, Hop: 1,
+		Text: "Can your computers run the tests of X?", SentAt: time.Now()}
+	if res := partnerGot(t, r.s, asked); res.Status != assistantwire.PartnerAccepted {
+		t.Fatalf("message: %+v", res)
+	}
+	r.waitState(t, partnerIn, asked.MessageID, partnerDelivered)
+	r.h.setAnswer(func(p assistantwire.PartnerSend) (assistantwire.PartnerResult, error) {
+		if p.Envelope.Kind != assistantwire.PartnerKindReply {
+			return assistantwire.PartnerResult{Status: assistantwire.PartnerAccepted}, nil
+		}
+		// The partner's delivered status, taken and applied while this send is still in flight.
+		partnerGot(t, r.s, assistantwire.PartnerEnvelope{MessageID: "pm_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", Kind: assistantwire.PartnerKindStatus,
+			ReplyTo: p.Envelope.MessageID, State: assistantwire.PartnerStateDelivered})
+		r.waitState(t, partnerOut, p.Envelope.MessageID, partnerDelivered)
+		return assistantwire.PartnerResult{Status: assistantwire.PartnerAccepted}, nil
+	})
+	out, isErr := r.tool(pMain, "hub_send", `{"hub":"hub-b","reply_to":"`+asked.MessageID+`","text":"Yes: 2 failed, see the list."}`)
+	if isErr {
+		t.Fatalf("hub_send: %s", out)
+	}
+	r.waitState(t, partnerOut, messageIDOf(t, out), partnerDelivered)
+	r.waitState(t, partnerIn, asked.MessageID, partnerReplied)
+}

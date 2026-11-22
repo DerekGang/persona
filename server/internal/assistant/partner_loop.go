@@ -267,6 +267,11 @@ func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.Part
 	if merr != nil {
 		s.logf("partner %s: %s: %v", short(m.PeerHub), m.MessageID, merr)
 	}
+	if state == partnerSent && m.Kind == assistantwire.PartnerKindReply {
+		// The partner took the reply: the message it answers is answered, whether this row still read queued (the
+		// partner's delivered status can come back over the link before this write).
+		s.partnerReplied(ctx, st, m)
+	}
 	if !changed {
 		return nil
 	}
@@ -274,8 +279,6 @@ func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.Part
 		return written.NextTry
 	}
 	switch {
-	case state == partnerSent && m.Kind == assistantwire.PartnerKindReply:
-		s.partnerReplied(ctx, st, m)
 	case state == partnerFailed && m.Kind != assistantwire.PartnerKindStatus:
 		event := "refused"
 		if code == assistantwire.PartnerCodeUnpaired {

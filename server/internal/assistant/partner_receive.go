@@ -351,6 +351,9 @@ func (s *Service) partnerStatusIn(ctx context.Context, st partnerStore, m db.Par
 		if changed && failed && out.Kind != assistantwire.PartnerKindStatus {
 			s.partnerTell(ctx, *out, "undelivered", m.Code)
 		}
+		if changed && !failed && out.Kind == assistantwire.PartnerKindReply {
+			s.partnerReplied(ctx, st, *out) // delivered there before partnerSendOne wrote sent
+		}
 	}
 	if _, _, err := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
 		if r.State != partnerReceived {
