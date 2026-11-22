@@ -49,8 +49,8 @@ type partnerState struct {
 	// changed is closed and replaced on every change (waiters: the dialers).
 	changed chan struct{}
 	// kick wakes tellLoop, which tells the default manager (manager) and the apps (apps) the list as it is then, and
-	// the managers that are not the default an empty one: those that said their hello since (hellos), and the one told
-	// last (told) once the default may have changed (recheck).
+	// the managers that are not the default an empty one: those that said their hello since (hellos), and the default
+	// the list last went to or was meant for (told) once the default may have changed (recheck).
 	kick                   chan struct{}
 	manager, apps, recheck bool
 	hellos                 map[string]bool
@@ -320,26 +320,23 @@ func (h *Hub) tellLoop(ctx context.Context) {
 		if !manager || !loaded { // not read yet: told once it is (retryPartnerLoad)
 			continue
 		}
-		told = ""
-		if h.tellPartners(to, h.partnerHubsWire()) {
-			told = to
-		}
+		h.tellPartners(to, h.partnerHubsWire())
+		// The default the list went to, or would have (one not connected hears it at its hello): told, whether it went
+		// or not, so that a later default tells it the empty list and itself made the default again hears the list.
 		ps.mu.Lock()
-		ps.told = told
+		ps.told = to
 		ps.mu.Unlock()
 	}
 }
 
-// tellPartners sends manager id partner.changed with list when it takes partner messages; whether it went.
-func (h *Hub) tellPartners(id string, list assistantwire.PartnerHubs) bool {
+// tellPartners sends manager id partner.changed with list when it takes partner messages.
+func (h *Hub) tellPartners(id string, list assistantwire.PartnerHubs) {
 	if h.archiveManagerHas(id, assistantwire.CapabilityPartnerHubs) != http.StatusOK {
-		return false
+		return
 	}
 	if err := h.notifyBus(id, assistantwire.EventPartnerHubs, list); err != nil {
 		h.logf("partners: tell %s: %v", id, err)
-		return false
 	}
-	return true
 }
 
 // partnerHubsWire is the list as the managers get it (partner.hubs, partner.changed): none while partner hubs are off.

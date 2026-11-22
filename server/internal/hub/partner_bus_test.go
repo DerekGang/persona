@@ -328,6 +328,14 @@ func TestPartnerListFollowsTheDefaultManager(t *testing.T) {
 	}
 	makeDefault(assistantwire.AssistantID)
 	eventually(t, 10*time.Second, "back to the first", func() bool { return m1.listed(hubB) && m2.unlisted() })
+	// Made the default while it is not connected (it hears the list once it says its hello), then back: the first
+	// hears the list again, though the one in between was never told it.
+	const away = "m-0c0c0c"
+	busToken(t, a.h, away, away)
+	makeDefault(away)
+	eventually(t, 10*time.Second, "the first told the empty list", func() bool { return m1.unlisted() })
+	makeDefault(assistantwire.AssistantID)
+	eventually(t, 10*time.Second, "the first told the list again", func() bool { return m1.listed(hubB) })
 }
 
 // The managers' list says when each pairing was made (the row's created_at, the same in the hub's copy and the
