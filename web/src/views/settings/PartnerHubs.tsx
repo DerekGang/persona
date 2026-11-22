@@ -180,15 +180,15 @@ function PartnerRow({ h, now, asks, prefsFailed, busy, unpairOpen, onUnpairOpen,
       <div className="flex items-center gap-3 px-4 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span id={nameId} className="truncate text-[13px] font-medium text-ink" title={h.hub_id}>
+            <span id={nameId} className="truncate text-meta font-medium text-ink" title={h.hub_id}>
               {h.name || h.hub_id}
             </span>
             <Pill tone={status.tone} animated>
               {status.label}
             </Pill>
           </div>
-          {line && <div className="mt-0.5 truncate text-[11.5px] text-ink-3">{line}</div>}
-          {h.error && <div className={cx("mt-0.5 text-[11.5px] leading-snug break-words", h.state === "refused" ? "text-red" : "text-ink-3")}>{h.error}</div>}
+          {line && <div className="mt-0.5 truncate text-submeta text-ink-3">{line}</div>}
+          {h.error && <div className={cx("mt-0.5 text-submeta leading-snug break-words", h.state === "refused" ? "text-red" : "text-ink-3")}>{h.error}</div>}
         </div>
         <RowConfirm
           open={unpairOpen}
@@ -251,10 +251,10 @@ function CodeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Dialog open={open} onClose={onClose} width={480} title={t("settings-partnerhubs.code_title")} footer={<Button tone="primary" onClick={onClose}>{t("settings-partnerhubs.done")}</Button>}>
       <div className="flex flex-col gap-3" data-partner-code-dialog>
-        {!code && !error && <p className="py-6 text-center text-[12.5px] text-ink-3">{t("settings-partnerhubs.code_making")}</p>}
+        {!code && !error && <p className="py-6 text-center text-meta text-ink-3">{t("settings-partnerhubs.code_making")}</p>}
         {code && left === 0 && (
           <div className="flex flex-col items-center gap-3 py-6 text-center">
-            <p className="text-[13px] text-ink-2">{t("settings-partnerhubs.code_expired")}</p>
+            <p className="text-meta text-ink-2">{t("settings-partnerhubs.code_expired")}</p>
             <Button busy={busy} onClick={() => void make()}>
               {t("settings-partnerhubs.new_code")}
             </Button>
@@ -263,19 +263,19 @@ function CodeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
         {code && left > 0 && (
           <>
             <div>
-              <div className="mb-1 flex justify-end text-[12px] text-ink-3">
+              <div className="mb-1 flex justify-end text-label text-ink-3">
                 <span className="tabular-nums">{t("settings-partnerhubs.expires_in", { time: clock(left) })}</span>
               </div>
               <CopyLine text={code.code} />
             </div>
             {fp && <CodeFacts name={null} fp={fp} />}
-            <p className="text-[12px] leading-relaxed text-ink-3">{t("settings-partnerhubs.code_note")}</p>
-            <p className="text-[12px] leading-relaxed text-orange">{t("settings-partnerhubs.code_warning")}</p>
+            <p className="text-label leading-relaxed text-ink-3">{t("settings-partnerhubs.code_note")}</p>
+            <p className="text-label leading-relaxed text-orange">{t("settings-partnerhubs.code_warning")}</p>
           </>
         )}
         {error && (
           <div className="flex flex-col items-start gap-2">
-            <p role="alert" className="text-[12.5px] text-red">{error}</p>
+            <p role="alert" className="text-meta text-red">{error}</p>
             {/* this hub could not make one (a database that did not answer): ask again without closing */}
             {!code && (
               <Button busy={busy} onClick={() => void make()}>
@@ -361,10 +361,10 @@ function PairDialog({ open, onClose, onPaired }: { open: boolean; onClose: () =>
         {info && (
           <>
             <CodeFacts name={info.name} fp={info.fp} />
-            <p className="text-[11.5px] leading-relaxed text-ink-3">{t("settings-partnerhubs.check_fp")}</p>
+            <p className="text-submeta leading-relaxed text-ink-3">{t("settings-partnerhubs.check_fp")}</p>
           </>
         )}
-        {error && <p role="alert" className="text-[12.5px] text-red">{error}</p>}
+        {error && <p role="alert" className="text-meta text-red">{error}</p>}
       </div>
     </Dialog>
   );
@@ -376,11 +376,11 @@ function CodeFacts({ name, fp }: { name: string | null; fp: string }) {
     <div data-partner-code-facts className="divide-y divide-line overflow-hidden rounded-control bg-inset shadow-hairline">
       {name !== null && (
         <Fact label={t("settings-partnerhubs.name")}>
-          <span className="truncate text-[13px] font-medium text-ink">{name}</span>
+          <span className="truncate text-meta font-medium text-ink">{name}</span>
         </Fact>
       )}
       <Fact label={t("settings-partnerhubs.fingerprint")}>
-        <span className="font-mono text-[12px] break-all text-ink">{fp}</span>
+        <span className="font-mono text-label break-all text-ink">{fp}</span>
       </Fact>
     </div>
   );
@@ -389,7 +389,7 @@ function CodeFacts({ name, fp }: { name: string | null; fp: string }) {
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 px-3 py-2">
-      <span className="shrink-0 text-[11.5px] whitespace-nowrap text-ink-3">{label}</span>
+      <span className="shrink-0 text-submeta whitespace-nowrap text-ink-3">{label}</span>
       <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
     </div>
   );
