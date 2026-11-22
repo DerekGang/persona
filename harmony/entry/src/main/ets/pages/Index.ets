@@ -320,7 +320,9 @@ struct Index {
   }
   private compactPeerIndex(): number { return this.model.section === 4 ? 1 : this.model.section; }
   private showAllChats(agents:boolean): void {
-    this.startSearchInAgents = agents; this.drawerSearching = false; this.spacesShown = false; this.chatSearchShown = true;
+    this.startSearchInAgents = agents; this.drawerSearching = false;
+    if (agents) this.spacesShown = false;
+    this.chatSearchShown = true;
   }
   private hitIdentity(row:ResourceRow):string {
     return JSON.stringify([this.model.scope(),row.group || this.model.profile.id,row.manager || this.model.profile.manager,row.kind,row.machine,row.id]);

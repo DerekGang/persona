@@ -72,6 +72,21 @@ test('compact sidebar rows, glyphs and their hit targets share the interface sca
   assert.ok(places.includes('constraintSize({minHeight:this.drawerMetric(44)})'));
 });
 
+test('All Chats leaves the presenting drawer in place until a conversation is selected', () => {
+  const shell=readFileSync(new URL('../entry/src/main/ets/pages/Index.ets',import.meta.url),'utf8');
+  const show=shell.match(/private showAllChats\(agents:boolean\): void \{([^}]+)\}/)[1];
+  const open=new Function('agents',show);
+  for(const openedFromDrawer of [false,true]) {
+    const host={spacesShown:openedFromDrawer,drawerSearching:true,chatSearchShown:false};
+    open.call(host,false);
+    assert.equal(host.spacesShown,openedFromDrawer);
+    assert.ok(host.chatSearchShown&&!host.drawerSearching);
+    open.call(host,true);
+    assert.equal(host.spacesShown,false);
+  }
+  assert.match(shell,/private openPickedChat\([^}]+this\.spacesShown = false; this\.drawerSearching = false; this\.chatSearchShown = false/);
+});
+
 test('drawer roots and drill-downs leave always exactly one leading action',()=>{
   assert.equal(phonePlaceAtRoot(4,[],false),true);assert.equal(phonePlaceAtRoot(4,['project'],false),false);
   assert.equal(phonePlaceAtRoot(0,['conversation'],true),true);assert.equal(phonePlaceAtRoot(0,['conversation'],false),false);
