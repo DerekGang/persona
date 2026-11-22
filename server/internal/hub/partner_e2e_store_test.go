@@ -14,7 +14,8 @@ import (
 // as *db.DB does in Postgres (db/partner_messages.go), so an in-process hub's real manager has partner messaging (the
 // assistant's partnerStore; without it hub_list and hub_send are not listed and partner.receive is refused).
 
-// memPartnerMessages are the rows, in the order they were written, and the prefs by hub_id.
+// memPartnerMessages are the rows, in the order they were written, and the prefs by hub_id (each with the pairing it
+// was set for).
 type memPartnerMessages struct {
 	rows  []db.PartnerMessage
 	prefs map[string]db.PartnerPref
@@ -30,7 +31,7 @@ type assistantPartnerStore interface {
 	RecentPartnerMessages(ctx context.Context, peer string, limit int) ([]db.PartnerMessage, error)
 	CountPartnerMessages(ctx context.Context, direction, peer string, status bool, since time.Time) (int, error)
 	PartnerPrefs(ctx context.Context) ([]db.PartnerPref, error)
-	SetPartnerConfirm(ctx context.Context, hub string, confirm bool) error
+	SetPartnerConfirm(ctx context.Context, hub string, confirm bool, pairedAt time.Time) error
 }
 
 var (
@@ -182,10 +183,13 @@ func (s *meshStore) PartnerPrefs(context.Context) ([]db.PartnerPref, error) {
 	return out, nil
 }
 
-func (s *meshStore) SetPartnerConfirm(_ context.Context, hub string, confirm bool) error {
+func (s *meshStore) SetPartnerConfirm(_ context.Context, hub string, confirm bool, pairedAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.partnerMsgsLocked().prefs[hub] = db.PartnerPref{HubID: hub, Confirm: confirm, UpdatedAt: time.Now().UTC()}
+	if !pairedAt.IsZero() {
+		pairedAt = pairedAt.UTC().Truncate(time.Microsecond) // as Postgres keeps it
+	}
+	s.partnerMsgsLocked().prefs[hub] = db.PartnerPref{HubID: hub, Confirm: confirm, PairedAt: pairedAt, UpdatedAt: time.Now().UTC()}
 	return nil
 }
 

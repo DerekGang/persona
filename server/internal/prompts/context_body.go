@@ -1,6 +1,9 @@
 package prompts
 
-import "github.com/nwverse/persona/server/internal/lazyre"
+import (
+	"github.com/nwverse/persona/server/internal/compat"
+	"github.com/nwverse/persona/server/internal/lazyre"
+)
 
 // closingTag is anything a reader of a message could take for the end of a <persona-context>
 // block: either name (#3182), any case, spaces around the slash and before `>` (the apps match it as loosely, web
@@ -15,4 +18,20 @@ var closingTag = lazyre.New(`(?i)<\s*/\s*persona-context\s*>`)
 func ContextBody(s string) string {
 	s = closingTag.ReplaceAllString(s, "")
 	return closingTag.ReplaceAllStringFunc(s, func(tag string) string { return "&lt;" + tag[1:] })
+}
+
+// shownTag is the start of any tag the apps and the hub read out of a message's text instead of showing it: a context
+// block's opening or closing and a file's (either name), the photos and pasted text a message carries (web
+// lib/turns.ts parseUserText); and of the notes Persona and the runtime add to a message, which the apps hide and the
+// model takes for theirs: the view feedback, a system reminder, a local command's caveat (transcript.StripInjected).
+// Any case, spaces after `<` and around the slash.
+var shownTag = lazyre.New(`(?i)<(\s*/?\s*(?:` + compat.ContextPattern() + `|` + compat.FilePattern() +
+	`|attached_images|pasted_content|persona-view-errors|system-reminder|local-command-caveat))`)
+
+// PlainWords is someone else's text that stands as a message's own words after Persona's framing block (a partner
+// hub's message): no tag in it opens, closes or forges a block, a file, a photo or a note of Persona's or the
+// runtime's, each one's `<` written as `&lt;`, so the apps show all of it and the model reads it as the words it is.
+// Templates call it as `plain`.
+func PlainWords(s string) string {
+	return shownTag.ReplaceAllString(s, "&lt;$1")
 }

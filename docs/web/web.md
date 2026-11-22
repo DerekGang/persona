@@ -1385,7 +1385,8 @@ synthetic data and takes the screenshots; with the switch off the chat is pixel-
 message or reply a partner hub's assistant sent. Its label is `@<hub name>` with the hub icon (`chat-messages.source_hub` when it has no
 name) and a quiet line under it, "Request from another hub, not from you" (`.chat-source-note`); `sourceKey` includes
 `hub_id`, so two hubs of one name never share a label, and the transcript metadata keeps it. It is never folded as a
-background round. The assistant's own steps read "Send to partner hub" / "List partner hubs", and the card that asks
+background round. Its text is the partner's own words; Persona's framing for the assistant (who sent it, how to answer)
+comes first in a `kind="context"` block and shows as a folded context row (`prompts/assistant/partner_message.md`). The assistant's own steps read "Send to partner hub" / "List partner hubs", and the card that asks
 before a message leaves shows the hub and the message exactly as it is sent (`permissionDetail` `hub_send`).
 
 The cache retains the source metadata. Unknown nonempty source kinds still use the source presentation. Old hubs fall back

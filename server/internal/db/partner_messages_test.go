@@ -172,11 +172,20 @@ func TestPartnerMessagesListsCountsAndPrefs(t *testing.T) {
 		t.Fatalf("no prefs = %+v %v", prefs, err)
 	}
 	for _, v := range []bool{false, true, false} {
-		if err := d.SetPartnerConfirm(ctx, "hub-b", v); err != nil {
+		if err := d.SetPartnerConfirm(ctx, "hub-b", v, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if prefs, err := d.PartnerPrefs(ctx); err != nil || len(prefs) != 1 || prefs[0].HubID != "hub-b" || prefs[0].Confirm {
+	if prefs, err := d.PartnerPrefs(ctx); err != nil || len(prefs) != 1 || prefs[0].HubID != "hub-b" || prefs[0].Confirm ||
+		!prefs[0].PairedAt.IsZero() {
 		t.Fatalf("prefs = %+v %v", prefs, err)
+	}
+	// A setting keeps the pairing it was made for; one for a later pairing replaces it.
+	paired := time.Date(2026, 11, 20, 9, 30, 0, 123456000, time.UTC)
+	if err := d.SetPartnerConfirm(ctx, "hub-b", true, paired); err != nil {
+		t.Fatal(err)
+	}
+	if prefs, err := d.PartnerPrefs(ctx); err != nil || len(prefs) != 1 || !prefs[0].Confirm || !prefs[0].PairedAt.Equal(paired) {
+		t.Fatalf("prefs of a pairing = %+v %v", prefs, err)
 	}
 }
