@@ -42,3 +42,16 @@ test('removing a split-only More anchor retires its session but leaves the attac
 test('removing More while an old presentation exits withdraws the queued request as well',()=>{const {p}=fixture();p.openComposerActions({source:2});p.syncChooser();const old=p.chooser.session;p.chooser.begin(old);p.openComposerActions({source:4});p.syncChooser();assert.equal(p.actionsRequest,2);p.showContextMenu=false;p.syncChooser();assert.equal(p.actionsVisible,false);assert.equal(p.chooser.presenting,false);p.finishChooser(old);p.showContextMenu=true;p.model.decision={id:'blocking'};p.syncChooser();assert.equal(p.actionsVisible,false);});
 
 test('blocking host removal withdraws an unpresented or queued request without reopening fallback',()=>{for(const queue of [false,true]){const {p,model}=fixture();p.openComposerActions({source:2});if(queue){p.syncChooser();p.chooser.begin(p.chooser.session);p.openComposerActions({source:4});p.syncChooser();}model.decision={id:'blocking'};p.syncChooser();assert.equal(p.actionsVisible,false);assert.equal(p.chooser.presenting,false);p.openFallbackActions();p.syncChooser();assert.equal(p.actionsVisible,true);}});
+
+test('the single phone plus exposes scoped More actions without consuming or retyping the draft',()=>{
+  for (const source of [2,4]) {
+    const {p,effects}=fixture();
+    p.openAttachmentChooser({source});
+    const attachment=p.chooser.session;
+    const other=p.chooserItems.find(c=>c.key==='actions');
+    assert.ok(other);p.chooser.begin(attachment);
+    p.chooseItem(other);p.syncChooser();p.finishChooser(attachment);p.syncChooser();
+    assert.equal(p.chooser.session.kind,'actions');assert.equal(p.chooser.session.preserveInput,attachment.preserveInput);
+    assert.deepEqual(effects,[]);p.chooseItem(p.chooserItems[0]);assert.deepEqual(effects,['history']);
+  }
+});

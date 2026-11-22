@@ -7,6 +7,7 @@ import { NativeDictation, DictationListener } from '../platform/NativeDictation'
 
 @ComponentV2
 export struct PhoneDictationControl {
+  @Param ink:ResourceColor=Colors.ink;
   @Require @Param owner: string;
   @Param active: boolean = true;
   @Param language: string = 'default';
@@ -47,8 +48,12 @@ export struct PhoneDictationControl {
     this.transcript = '';
     this.message = '';
     this.keyboardOwner = '';
-    this.shown = true;
     const selectedLanguage = this.chooseLanguage() || this.language;
+    if (selectedLanguage === 'keyboard') {
+      this.keyboard();
+      return;
+    }
+    this.shown = true;
     const language = selectedLanguage === 'default' ? i18n.getSystemLanguage() : selectedLanguage;
     const context = this.getUIContext().getHostContext();
     if (!context || !/^zh(?:-hans|-cn|-sg|$)/i.test(language)) {
@@ -112,7 +117,7 @@ export struct PhoneDictationControl {
   }
 
   build() {
-    Button({type: ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.mic')).fontSize(Tokens.symbolFont).fontColor([Colors.ink]) }
+    Button({type: ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.mic')).fontSize('22vp').fontWeight(FontWeight.Medium).fontColor([this.ink]) }
       .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0)
       .accessibilityText(tr('phone_chat_dictation')).bindTips(tr('phone_chat_dictation')).enabled(this.active)
       .id('chat.dictation').onClick(() => this.start())

@@ -56,20 +56,20 @@ export struct AssistantBriefCard {
                 if (index<STAGES.indexOf(stage)) SymbolGlyph(Symbols.check).fontSize('8vp').fontColor([Colors.onAction])
               }
             }.width('100%')
-            if (nativeEnvironment.fontScale<1.5) Text(tr('session_brief_stage_'+name)).fontSize(10)
+            if (nativeEnvironment.fontScale<1.5) Text(tr('session_brief_stage_'+name)).fontSize(10).maxFontScale(Tokens.interfaceScaleFor(10))
               .fontColor(name===stage ? Colors.link : Colors.secondary).fontWeight(name===stage ? FontWeight.Medium : FontWeight.Normal)
               .textAlign(TextAlign.Center).maxLines(1)
           }.layoutWeight(1)
         },(name:string) => name)
       }.width('100%')
-      if (nativeEnvironment.fontScale>=1.5) Text(tr('session_brief_stage_'+stage)).fontSize(13).fontColor(Colors.link)
+      if (nativeEnvironment.fontScale>=1.5) Text(tr('session_brief_stage_'+stage)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link)
     }.width('100%').accessibilityGroup(true).accessibilityText(tr('session_brief_stage_'+stage))
       .id('assistant.brief.stage.'+stage)
   }
 
   @Builder section(section:string,key:string) {
     Column({space:4}) {
-      Text(tr(key)+' ('+this.count(section)+')').fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+      Text(tr(key)+' ('+this.count(section)+')').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
       ForEach(Wire.rows(this.body,section),(row:Record<string,Object>) => {
         Column({space:3}) {
           Row({space:8}) {
@@ -87,7 +87,7 @@ export struct AssistantBriefCard {
           else if (section==='progress' && Wire.text(row,'stage')) Text(Wire.text(row,'stage')).fontSize(12).fontColor(Colors.secondary)
         }.width('100%').alignItems(HorizontalAlign.Start).padding({top:4,bottom:4})
       },(row:Record<string,Object>,index:number) => JSON.stringify([section,Wire.text(row,'id'),index]))
-      if (this.count(section)>Wire.rows(this.body,section).length) Text(tr('session_task_more').replace('{count}',String(this.count(section)-Wire.rows(this.body,section).length))).fontSize(12).fontColor(Colors.secondary)
+      if (this.count(section)>Wire.rows(this.body,section).length) Text(tr('session_task_more').replace('{count}',String(this.count(section)-Wire.rows(this.body,section).length))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
     }.width('100%').alignItems(HorizontalAlign.Start).id('assistant.brief.'+section)
   }
 

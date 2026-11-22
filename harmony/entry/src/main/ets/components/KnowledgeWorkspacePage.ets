@@ -44,7 +44,7 @@ struct KnowledgeLibraryRow {
     return this.entry.priority === 'P1' ? Colors.working : Colors.secondary;
   }
   @Builder badge(value: string, tint: ResourceColor) {
-    Text(value).fontSize(11).fontColor(tint).padding({left:5,right:5,top:1,bottom:1})
+    Text(value).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(tint).padding({left:5,right:5,top:1,bottom:1})
       .borderRadius(6).backgroundColor(Colors.control)
   }
   build() {
@@ -55,18 +55,18 @@ struct KnowledgeLibraryRow {
       }.width(36).height(36).flexShrink(0)
       Column({space:3}) {
         Row({space:6}) {
-          Text(this.row.title || this.row.id).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
-          if (nativeEnvironment.fontScale<1.5 && this.dateLabel())
-            Text(this.dateLabel()).fontSize(11).fontColor(Colors.secondary).maxLines(1)
+          Text(this.row.title || this.row.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
+          if (this.dateLabel())
+            Text(this.dateLabel()).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
         }.width('100%').alignItems(VerticalAlign.Top)
-        if (this.entry.summary) Text(this.entry.summary).fontSize(14).fontColor(Colors.secondary).maxLines(2)
+        if (this.entry.summary) Text(this.entry.summary).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(2)
           .textOverflow({overflow:TextOverflow.Ellipsis})
         Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(4),cross:LengthMetrics.vp(3)}}) {
           if (this.entry.priority) this.badge(this.entry.priority, this.tint())
           if (this.entry.duration) this.badge(tr(this.entry.duration==='long' ? 'knowledge_project_long' : 'knowledge_project_short'),Colors.secondary)
           if (this.entry.relevance>0) this.badge(tr('knowledge_relevance')+' '+String(this.entry.relevance), Colors.link)
           ForEach(this.entry.tags.slice(0,2),(tag:string) => {
-            Text('#'+tag).fontSize(11).fontColor(Colors.secondary).maxLines(1)
+            Text('#'+tag).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
           },(tag:string) => tag)
         }.width('100%')
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
@@ -112,6 +112,10 @@ export struct KnowledgeWorkspacePage {
   private calendarRequest: number = 0;
   @Local showIgnored: boolean = false;
   @Local refreshing: boolean = false;
+  @Local filterWidth:number=0;
+  private separateTagLine():boolean {
+    return this.filterWidth>0 && this.filterWidth<215*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(14));
+  }
   @Event onAllMeetings: () => void = () => { this.localMeetings = true; this.workspace.setKind('meetings'); };
   private localOwner: string = '';
   private localOpening: Promise<void> | undefined;
@@ -326,8 +330,8 @@ export struct KnowledgeWorkspacePage {
   }
 
   @Builder searchField(meetings:boolean) {
-    Search({value:this.workspace.query,placeholder:tr(meetings ? 'phone_record_search' : 'knowledge_search')})
-      .height(Math.max(38,Math.ceil(24*nativeEnvironment.fontScale)+8)).textFont({size:16}).backgroundColor(Colors.control)
+    Search({value:this.workspace.query,placeholder:tr(meetings ? 'phone_record_search' : 'knowledge_search')}).maxFontScale(Tokens.interfaceFontMaxScale)
+      .height(Math.max(38,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+8)).textFont({size:16}).backgroundColor(Colors.control)
       .onChange((value:string) => this.workspace.setQuery(value)).id('knowledge.search')
   }
   @Builder libraryRow(row: ResourceRow) {
@@ -337,9 +341,9 @@ export struct KnowledgeWorkspacePage {
   }
   @Builder searchHit(hit:KnowledgeSearchHit) {
     Column({space:4}) {
-      Text(hit.entry.title || hit.entry.id).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
-      Text(this.kindLabel(hit.entry.path) + ' · ' + String(hit.count)).fontSize(12).fontColor(Colors.secondary)
-      ForEach(hit.hits.slice(0,2), (line:string,index:number) => Text(line).fontSize(14).fontColor(Colors.secondary)
+      Text(hit.entry.title || hit.entry.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+      Text(this.kindLabel(hit.entry.path) + ' · ' + String(hit.count)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+      ForEach(hit.hits.slice(0,2), (line:string,index:number) => Text(line).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
         .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}), (line:string,index:number) => JSON.stringify([index, line]))
     }.width('100%').padding(13).alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(12)
       .onClick(() => this.workspace.openEntry(hit.entry).then((next:ResourceRow) => this.onOpenResource(next)).catch(() => undefined))
@@ -359,21 +363,21 @@ export struct KnowledgeWorkspacePage {
   @Builder listStatus() {
     if (this.workspace.error) ListItem() {
       Row({space:8}) {
-        Text(tr(this.workspace.error)).fontSize(14).fontColor(Colors.secondary).layoutWeight(1)
-        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => this.workspace.refresh()).id('knowledge.retry')
+        Text(tr(this.workspace.error)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).layoutWeight(1)
+        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).onClick(() => this.workspace.refresh()).id('knowledge.retry')
       }.width('100%').padding(10)
     }
     if (this.workspace.loading && !this.workspace.entries.length && !this.workspace.results.length)
       ListItem() { LoadingProgress().width(26).height(26).margin(10) }
     if (!this.workspace.loading && !this.workspace.error && (this.initialKind !== 'recordings' || !this.visibleLocal().length) && (this.workspace.query.trim() ? !this.workspace.results.length : !this.workspace.entries.length))
-      ListItem() { Text(tr(this.workspace.query.trim() ? 'knowledge_no_results' : this.workspace.kind === 'recordings' ? 'phone_read_only_recording' : 'knowledge_empty')).fontSize(15).fontColor(Colors.secondary).padding(10) }
+      ListItem() { Text(tr(this.workspace.query.trim() ? 'knowledge_no_results' : this.workspace.kind === 'recordings' ? 'phone_read_only_recording' : 'knowledge_empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(10) }
   }
   @Builder kindChip(kind:string) {
     Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
-        if (nativeEnvironment.fontScale>1.3) SymbolGlyph(this.kindIcon(kind)).fontSize('14vp')
+        if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15))>1.3) SymbolGlyph(this.kindIcon(kind)).fontSize('14vp')
           .fontColor([kind===this.workspace.kind ? Colors.onAction : Colors.ink])
-        Text(this.kindLabel(kind)).fontSize(15).fontWeight(FontWeight.Medium)
+        Text(this.kindLabel(kind)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
           .fontColor(kind===this.workspace.kind ? Colors.onAction : Colors.ink)
       }
     }.constraintSize({minHeight:34}).padding({left:10,right:10,top:4,bottom:4})
@@ -381,7 +385,7 @@ export struct KnowledgeWorkspacePage {
       .accessibilitySelected(kind===this.workspace.kind).onClick(() => this.workspace.setKind(kind)).id('knowledge.kind.'+kind)
   }
   @Builder kindBar() {
-    if (nativeEnvironment.fontScale>1.3) {
+    if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15))>1.3) {
       Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(5)}}) {
         ForEach(KB_KINDS,(kind:string) => { this.kindChip(kind) },(kind:string) => kind)
       }.width('100%').padding({top:6,bottom:6}).id('knowledge.kinds')
@@ -398,11 +402,11 @@ export struct KnowledgeWorkspacePage {
       Button({ type: ButtonType.Normal, buttonStyle: ButtonStyleMode.TEXTUAL }) {
         Row({space:5}) {
           Text(this.workspace.tag ? '#' + this.workspace.tag : tr('knowledge_all_tags'))
-            .fontSize(14).fontColor(Colors.link).flexShrink(1).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+            .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.link).flexShrink(1).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
             .id('knowledge.filters.label')
           SymbolGlyph(Symbols.down).fontSize('12vp').fontColor([Colors.link])
         }
-      }.constraintSize({minHeight:Math.max(34,Math.ceil(21*nativeEnvironment.fontScale)+10),maxWidth:'100%'})
+      }.constraintSize({minHeight:Math.max(34,Math.ceil(21*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+10),maxWidth:'100%'})
         .padding({left:8,right:8,top:5,bottom:5}).backgroundColor(Color.Transparent)
         .accessibilityText(tr('knowledge_filter_tag')).bindMenu(this.knowledgeFilters).id('knowledge.filters')
     }
@@ -411,17 +415,17 @@ export struct KnowledgeWorkspacePage {
     Column({space:6}) {
       Row({space:4}) {
         Column() { this.searchField(false) }.layoutWeight(1)
-        if (nativeEnvironment.fontScale<1.5 && !this.workspace.query.trim() && (this.workspace.tags.length || this.workspace.tag))
+        if (!this.separateTagLine() && !this.workspace.query.trim() && (this.workspace.tags.length || this.workspace.tag))
           Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.filter).fontSize('16vp').fontColor([Colors.link]) }
-            .width(38).height(38).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('knowledge_filter_tag'))
+            .width(38).height(38).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('knowledge_filter_tag')+' · '+(this.workspace.tag || tr('knowledge_all_tags')))
             .bindMenu(this.knowledgeFilters).id('knowledge.filters')
-      }.width('100%')
+      }.width('100%').onAreaChange((_:Area,area:Area)=>{this.filterWidth=Number(area.width);})
       if (!this.workspace.query.trim()) {
         this.kindBar()
-        if (nativeEnvironment.fontScale>=1.5 && (this.workspace.tags.length || this.workspace.tag)) this.tagFilter()
+        if (this.separateTagLine() && (this.workspace.tags.length || this.workspace.tag)) this.tagFilter()
         if (!this.isProjectList()) Row({space:5}) {
-          Text(this.workspace.tag ? '#' + this.workspace.tag : tr('all')).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-          Text(String(this.workspace.entries.length)).fontSize(13).fontColor(Colors.secondary)
+          Text(this.workspace.tag ? '#' + this.workspace.tag : tr('all')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+          Text(String(this.workspace.entries.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
         }.width('100%').padding({left:10,top:7,bottom:3})
       }
       Refresh({ refreshing: $$this.refreshing }) { List() {
@@ -431,10 +435,11 @@ export struct KnowledgeWorkspacePage {
             if (this.projectRows(section).length) {
               ListItem() {
                 Row({space:6}) {
-                  Text(this.sectionLabel(section)).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-                  Text(String(this.projectRows(section).length)).fontSize(13).fontColor(Colors.secondary)
+                  Text(this.sectionLabel(section)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).id('knowledge.group.title.'+section)
+                  Text(String(this.projectRows(section).length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
                   if (section==='ignored') SymbolGlyph(this.showIgnored ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
                 }.width('100%').padding({left:10,top:16,bottom:8})
+                  .accessibilityGroup(true).accessibilityText(this.sectionLabel(section)+' '+String(this.projectRows(section).length))
                   .onClick(() => { if (section==='ignored') this.showIgnored=!this.showIgnored; }).id('knowledge.group.'+section)
               }
               if (section !== 'ignored' || this.showIgnored) ListItemGroup() {
@@ -461,16 +466,16 @@ export struct KnowledgeWorkspacePage {
             Button({type:ButtonType.Normal}) {
               Row({space:10}) {
                 SymbolGlyph(Symbols.calendar).fontSize('18vp').fontColor([Colors.link])
-                Text(tr('phone_meeting_calendar')).fontSize(16).fontColor(Colors.link).layoutWeight(1)
+                Text(tr('phone_meeting_calendar')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link).layoutWeight(1)
                 if (this.calendarState==='loading') LoadingProgress().width(18).height(18)
               }.width('100%')
             }.width('100%').constraintSize({minHeight:46}).padding({left:15,right:15,top:8,bottom:8})
               .backgroundColor(Color.Transparent).onClick(() => this.readMeetingCalendar()).id('recordings.calendar')
             if (this.calendarState && !['loading','ready'].includes(this.calendarState))
-              Text(tr(this.calendarState)).fontSize(14).fontColor(Colors.secondary).width('100%').padding({left:15,right:15,bottom:9})
+              Text(tr(this.calendarState)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({left:15,right:15,bottom:9})
             ForEach(this.calendarEvents,(event:calendarManager.Event) => {
               Button({type:ButtonType.Normal}) {
-                Text(this.clockTime(event.startTime)+'  '+event.title).fontSize(15).fontColor(Colors.ink).width('100%')
+                Text(this.clockTime(event.startTime)+'  '+event.title).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).width('100%')
               }.width('100%').constraintSize({minHeight:44}).padding({left:15,right:15}).backgroundColor(Color.Transparent)
                 .onClick(() => { this.meetingKind='meeting'; this.meetingTitle=event.title || ''; this.calendarEvents=[]; this.calendarState=''; })
             },(event:calendarManager.Event,index:number) => String(index)+'/'+String(event.id)+'/'+String(event.startTime))
@@ -485,7 +490,7 @@ export struct KnowledgeWorkspacePage {
             Row() {
               ForEach(['meeting','note'],(kind:string) => {
                 Button({type:ButtonType.Capsule}) {
-                  Text(tr(kind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')).fontSize(14)
+                  Text(tr(kind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
                     .fontWeight(this.meetingKind===kind ? FontWeight.Bold : FontWeight.Normal).fontColor(Colors.ink)
                 }.layoutWeight(1).constraintSize({minHeight:34}).padding({top:3,bottom:3})
                   .backgroundColor(this.meetingKind===kind ? Colors.surface : Color.Transparent)
@@ -498,14 +503,14 @@ export struct KnowledgeWorkspacePage {
                 Column({space:4}) {
                   Text(tr('you').slice(0,1)).width(36).height(36).fontSize('16vp').textAlign(TextAlign.Center)
                     .backgroundColor(Colors.control).borderRadius(18).fontColor(Colors.ink)
-                  Text(tr('you')).fontSize(13).fontColor(Colors.ink)
+                  Text(tr('you')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink)
                 }
                 Button({type:ButtonType.Normal}) {
                   Column({space:4}) {
                     SymbolGlyph(this.roomRole()==='off' ? Symbols.plus : Symbols.persona).fontSize('18vp').fontColor([Colors.link])
                       .width(36).height(36).border({width:1,radius:18,color:Colors.link})
-                    Text(this.roomRole()==='off' ? tr('phone_meeting_invite') : tr('persona')).fontSize(13).fontColor(Colors.link)
-                    if (this.roomRole()!=='off') Text(tr(meetingRoleLabel(this.roomRole()))).fontSize(11).fontColor(Colors.secondary)
+                    Text(this.roomRole()==='off' ? tr('phone_meeting_invite') : tr('persona')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link)
+                    if (this.roomRole()!=='off') Text(tr(meetingRoleLabel(this.roomRole()))).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
                   }
                 }.padding(3).backgroundColor(Color.Transparent).accessibilitySelected(this.roomRole()!=='off')
                   .accessibilityText(tr(this.roomRole()==='off' ? 'phone_meeting_invite' : 'phone_meeting_remove'))
@@ -513,28 +518,28 @@ export struct KnowledgeWorkspacePage {
                 Blank().layoutWeight(1)
               }.width('100%').alignItems(VerticalAlign.Top)
               if (this.roomRole()!=='off') {
-                Text(tr('phone_meeting_live_note')).fontSize(13).fontColor(Colors.secondary).width('100%').id('recordings.invite.detail')
+                Text(tr('phone_meeting_live_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').id('recordings.invite.detail')
                 Row() {
-                  Text(tr('phone_meeting_private')).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
+                  Text(tr('phone_meeting_private')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
                   Toggle({type:ToggleType.Switch,isOn:this.privateMeeting}).onChange((value:boolean) => this.privateMeeting=value).id('recordings.private')
                 }.width('100%')
               }
             }
             Row({space:9}) {
               SymbolGlyph($r('sys.symbol.mic')).fontSize('17vp').fontColor([Colors.link])
-              Text(tr('phone_meeting_local_transcription')).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
+              Text(tr('phone_meeting_local_transcription')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
             }.width('100%').constraintSize({minHeight:38}).accessibilityGroup(true).id('recordings.transcription')
           }.width('100%').alignItems(HorizontalAlign.Start).padding(15).borderRadius(16).backgroundColor(Colors.surface)
         }
-        ListItem() { Text(tr('phone_record_audio_local')).width('100%').fontSize(13).fontColor(Colors.secondary).padding({left:14,right:12,bottom:6}) }
+        ListItem() { Text(tr('phone_record_audio_local')).width('100%').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding({left:14,right:12,bottom:6}) }
         if (this.visibleLocal().length) ListItem() { PhoneSectionTitle({text:tr('phone_record_local'),trailing:String(this.visibleLocal().length)}) }
         ForEach(this.visibleLocal(), (entry:KnowledgeRecordingEntry) => {
           ListItem() {
             Row({space:10}) {
               SymbolGlyph($r('sys.symbol.mic')).fontSize('19vp').fontColor([Colors.danger])
               Column({space:3}) {
-                Text(entry.title || this.localDate(entry.startedAt)).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
-                Text(this.clock(entry.duration) + ' · ' + this.localDate(entry.startedAt)).fontSize(13).fontColor(Colors.secondary)
+                Text(entry.title || this.localDate(entry.startedAt)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+                Text(this.clock(entry.duration) + ' · ' + this.localDate(entry.startedAt)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
               }.layoutWeight(1).alignItems(HorizontalAlign.Start)
               SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.width('100%').padding(13).borderRadius(12).backgroundColor(Colors.surface)
@@ -544,7 +549,7 @@ export struct KnowledgeWorkspacePage {
         if (!this.workspace.query.trim()) ListItem() {
           Row({space:10}) {
             SymbolGlyph(Symbols.calendar).fontSize('19vp').fontColor([Colors.link])
-            Text(tr('phone_all_meetings')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
+            Text(tr('phone_all_meetings')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.width('100%').padding({left:14,right:13,top:6,bottom:6}).constraintSize({minHeight:48}).backgroundColor(Colors.surface).borderRadius(13)
             .onClick(() => this.onAllMeetings()).id('recordings.all')
@@ -555,10 +560,10 @@ export struct KnowledgeWorkspacePage {
           Row({space:8}) {
             SymbolGlyph($r('sys.symbol.mic_fill')).fontSize('18vp').fontColor([Colors.onAction])
             Text(tr(this.recording.captureState === 'recording' ? 'knowledge_recording_active' : this.meetingKind==='meeting' ? 'phone_meeting_start' : 'phone_start_note'))
-              .fontSize(16).fontWeight(FontWeight.Medium).fontColor(Color.White).textAlign(TextAlign.Center)
-              .layoutWeight(nativeEnvironment.fontScale>=1.5 ? 1 : 0).id('recordings.capture.label')
+              .fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Color.White).textAlign(TextAlign.Center)
+              .flexShrink(1).id('recordings.capture.label')
           }.width('100%').justifyContent(FlexAlign.Center)
-        }.width('100%').constraintSize({minHeight:Math.max(45,Math.ceil(22*nativeEnvironment.fontScale)+12)})
+        }.width('100%').constraintSize({minHeight:Math.max(45,Math.ceil(22*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+12)})
           .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(this.recording.canStop() ? Colors.danger : Colors.action).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
           .onClick(() => this.openRecording('', !this.recording.canStop())).id('recordings.capture')
       }.width('100%').padding({top:4,bottom:4}).id('knowledge.recording.open')
@@ -628,7 +633,7 @@ export struct KnowledgeWorkspacePage {
 
   @Builder editForm() {
     Column({ space: Tokens.gap }) {
-      Text(tr('knowledge_edit_metadata')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+      Text(tr('knowledge_edit_metadata')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
       Select(['P0', 'P1', 'P2', 'P3'].map((value: string): SelectOption => ({ value: value }))).attributeModifier(SelectStyles.inline).value(this.workspace.editImportance)
         .onSelect((index: number) => this.workspace.setEditImportance(['P0', 'P1', 'P2', 'P3'][index] || 'P2')).id('knowledge.edit.importance')
       TextInput({ text: this.workspace.editRelevance, placeholder: tr('knowledge_relevance') }).type(InputType.Number)
@@ -656,21 +661,21 @@ export struct KnowledgeWorkspacePage {
   @Builder entryEvidence() {
     if (this.workspace.agents.length) {
       Column({ space: Tokens.gap }) {
-        Text(tr('knowledge_project_agents')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+        Text(tr('knowledge_project_agents')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
         ForEach(this.agentRowBindings, (binding: BoundRow<ResourceRow>) => Button({ type: ButtonType.Normal }) { this.navigationLabel(binding.value.title || binding.value.id) }.buttonStyle(ButtonStyleMode.TEXTUAL).backgroundColor(Color.Transparent).padding(0).width('100%')
           .onClick(() => this.onChat(binding.value)).id('knowledge.agent.' + binding.value.id), (binding: BoundRow<ResourceRow>) => binding.key)
       }.width('100%').alignItems(HorizontalAlign.Start)
     }
     if (this.workspace.matches.length) {
       Column({ space: Tokens.gap }) {
-        Text(tr('knowledge_search_matches')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+        Text(tr('knowledge_search_matches')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
         ForEach(this.workspace.matches, (match: Record<string, Object>, index: number) => Text(Wire.text(match, 'line'))
           .fontSize(Tokens.meta).width('100%').id('knowledge.match.' + String(index)),
           (match: Record<string, Object>, index: number) => JSON.stringify([index, Wire.text(match, 'id'), JSON.stringify(match)]))
       }.width('100%').alignItems(HorizontalAlign.Start)
     }
     if (Wire.strings(this.workspace.detail, 'log').length) {
-      Column({ space: Tokens.gap }) { Text(tr('knowledge_timeline')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+      Column({ space: Tokens.gap }) { Text(tr('knowledge_timeline')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
         ForEach(Wire.strings(this.workspace.detail, 'log').slice().reverse(), (line: string, index: number) => Text(line).fontSize(Tokens.meta).width('100%')
           .id('knowledge.timeline.' + String(index)), (line: string, index: number) => JSON.stringify([index, line]))
       }.width('100%').alignItems(HorizontalAlign.Start)
@@ -683,30 +688,30 @@ export struct KnowledgeWorkspacePage {
         Row({space:10}) {
           Stack() { SymbolGlyph(this.kindIcon('recordings')).fontSize('20vp').fontColor([Colors.secondary]) }
             .width(36).height(36).backgroundColor(Colors.control).borderRadius(10)
-          Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
+          Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
         }.width('100%')
         if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(16).fontColor(Colors.ink).width('100%')
         Button({type:ButtonType.Capsule}) {
           Row({space:7}) {
             SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize('18vp').fontColor([Colors.onAction])
-            Text(tr('knowledge_ask_persona')).fontSize(17).fontColor(Colors.onAction).textAlign(TextAlign.Center)
-              .layoutWeight(nativeEnvironment.fontScale>=1.5 ? 1 : 0).id('knowledge.ask.label')
+            Text(tr('knowledge_ask_persona')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.onAction).textAlign(TextAlign.Center)
+              .flexShrink(1).id('knowledge.ask.label')
           }.width('100%').justifyContent(FlexAlign.Center)
-        }.width('100%').constraintSize({minHeight:Math.max(46,Math.ceil(23*nativeEnvironment.fontScale)+12)})
+        }.width('100%').constraintSize({minHeight:Math.max(46,Math.ceil(23*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+12)})
           .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(Colors.action).onClick(() => this.askPersona()).id('knowledge.ask')
         this.entryEvidence()
         PhoneSectionTitle({text:tr('phone_kb_confirmed')})
         Column({space:6}) {
           if (this.facts.open) {
             if (this.facts.conflict) {
-              Text(tr('phone_facts_changed')).fontSize(14).fontColor(Colors.needs).width('100%')
+              Text(tr('phone_facts_changed')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.needs).width('100%')
               Text(this.facts.baseline || tr('empty')).fontSize(15).fontColor(Colors.ink).width('100%').copyOption(CopyOptions.LocalDevice).id('knowledge.facts.latest')
             }
             TextArea({text:this.facts.text,placeholder:tr('phone_kb_confirmed')}).width('100%').height(100)
               .onChange((v:string) => this.facts.edit(v)).id('knowledge.facts.text')
             Row() {
-              Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.facts.close())
-              Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL})
+              Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).onClick(() => this.facts.close())
+              Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale)
                 .enabled(this.workspace.supportsExpectedPinned && !this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) &&
                   this.facts.text.trim()!==Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned').trim())
                 .onClick(() => this.facts.save(this.workspace)).id('knowledge.facts.save')
@@ -715,16 +720,16 @@ export struct KnowledgeWorkspacePage {
             if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
               .fontSize(16).fontColor(Colors.ink).width('100%')
             if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
-              .fontSize(14).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
+              .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
             if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
               Row({space:8}) {
                 SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
-                Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(16).fontColor(Colors.link)
+                Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link)
               }.width('100%')
             }.width('100%').constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
           }
         }.width('100%').alignItems(HorizontalAlign.Start).padding({left:14,right:14,top:4,bottom:4}).backgroundColor(Colors.surface).borderRadius(14)
-        Text(tr('phone_kb_fact_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:6,right:6})
+        Text(tr('phone_kb_fact_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:6,right:6})
         if (Wire.text(this.workspace.detail,'summary')) {
           PhoneSectionTitle({text:tr('phone_kb_profile')})
           Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),onLink:(url:string) => this.openSafeLink(url)}) }
@@ -735,10 +740,10 @@ export struct KnowledgeWorkspacePage {
           Text(Wire.text(this.workspace.detail,'path')).fontFamily('monospace').fontSize(13).fontColor(Colors.secondary).width('100%')
             .padding(14).backgroundColor(Colors.surface).borderRadius(14).copyOption(CopyOptions.LocalDevice).id('knowledge.recording.directory')
         }
-        if (this.workspace.error && !(this.facts.open && this.facts.conflict && this.workspace.error==='phone_facts_changed')) Text(tr(this.workspace.error)).fontSize(14).fontColor(Colors.danger).width('100%')
+        if (this.workspace.error && !(this.facts.open && this.facts.conflict && this.workspace.error==='phone_facts_changed')) Text(tr(this.workspace.error)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).width('100%')
         Button({type:ButtonType.Normal}) {
           Row() {
-            Text(tr('knowledge_minutes')+' · '+tr('knowledge_transcript')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+            Text(tr('knowledge_minutes')+' · '+tr('knowledge_transcript')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
             SymbolGlyph(this.recordingTools ? Symbols.down : Symbols.expand).fontSize('14vp').fontColor([Colors.secondary])
           }.width('100%')
         }.width('100%').constraintSize({minHeight:44}).padding(12).backgroundColor(Colors.surface).borderRadius(12)
@@ -746,12 +751,12 @@ export struct KnowledgeWorkspacePage {
         if (this.recordingTools) {
           this.recordingSection(UIUtils.makeBinding(():Record<string,Object> => this.workspace.detail))
           this.relatedEntries(UIUtils.makeBinding(():Record<string,Object> => this.workspace.detail))
-          if (this.importedMeeting()) Button(this.importedMeeting()!.title,{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => {
+          if (this.importedMeeting()) Button(this.importedMeeting()!.title,{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).onClick(() => {
             const item=this.importedMeeting(); if (item) this.onOpenResource(item);
           }).id('knowledge.recording.imported')
-          Button(tr('knowledge_edit_metadata'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.beginEdit()).id('knowledge.edit.open')
+          Button(tr('knowledge_edit_metadata'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).onClick(() => this.workspace.beginEdit()).id('knowledge.edit.open')
           if (this.workspace.editOpen && !this.metadataSheet) this.editForm()
-          Button(tr('knowledge_forget_recording'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.danger)
+          Button(tr('knowledge_forget_recording'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.danger)
             .enabled(this.workspace.canDeleteRecording()).onClick(() => this.confirmDeleteRecording()).id('knowledge.recording.delete')
         }
       }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:20,bottom:24})
@@ -768,7 +773,7 @@ export struct KnowledgeWorkspacePage {
             .fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary')).width('100%')
           if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(Tokens.body).width('100%')
         if (Wire.text(this.workspace.detail, 'summary')) {
-          Column({ space: Tokens.gap }) { Text(tr(this.workspace.selected.path === 'recordings' ? 'knowledge_recording_summary' : 'knowledge_profile')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+          Column({ space: Tokens.gap }) { Text(tr(this.workspace.selected.path === 'recordings' ? 'knowledge_recording_summary' : 'knowledge_profile')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
             MarkdownText({ text: Wire.text(this.workspace.detail, 'summary'), onLink: (url: string) => this.openSafeLink(url) })
           }.width('100%').alignItems(HorizontalAlign.Start).padding(14).backgroundColor(Colors.surface).borderRadius(14).id('knowledge.summary')
         }
@@ -809,7 +814,7 @@ export struct KnowledgeWorkspacePage {
           if (this.workspace.selected.path === 'projects') Button({ type: ButtonType.Normal }) {
             Row({ space: Tokens.gap }) {
             SymbolGlyph(Symbols.agent).fontSize(Tokens.symbolFont).fontColor([Colors.ai])
-            Text(tr('knowledge_agent_configuration')).fontSize(Tokens.body).fontColor(Colors.link).layoutWeight(1)
+            Text(tr('knowledge_agent_configuration')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.link).layoutWeight(1)
             SymbolGlyph(this.dispatchExpanded ? Symbols.up : Symbols.down).fontSize(Tokens.meta).fontColor([Colors.secondary])
           }.width('100%')
           }.attributeModifier(ButtonStyles.quiet).width('100%').onClick(() => this.dispatchExpanded = !this.dispatchExpanded).accessibilityText(tr('knowledge_agent_configuration')).accessibilityDescription(tr(this.dispatchExpanded ? 'control_expanded' : 'control_collapsed')).id('knowledge.dispatch.toggle')
@@ -822,21 +827,21 @@ export struct KnowledgeWorkspacePage {
               TextInput({ text: this.workspace.agentLauncher, placeholder: tr('launcher') }).onChange((value: string) => this.workspace.setAgentLauncher(value))
                 .id('knowledge.agent.launcher')
               Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('knowledge_start_agent')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('knowledge_start_agent', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(tr('knowledge_start_agent')).bindTips(tr('knowledge_start_agent')).enabled(!!this.workspace.agentDraft.trim() && !!this.workspace.agentLauncher.trim() && !this.workspace.busy).onClick(() => this.confirmDispatch()).id('knowledge.agent.start')
-            } else Text(tr('knowledge_agent_unavailable')).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
+            } else Text(tr('knowledge_agent_unavailable')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
           }
-          if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger')).width('100%')
+          if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger')).width('100%')
         }.alignItems(HorizontalAlign.Start).width('100%')
         if (this.workspace.editOpen) this.editForm()
         this.entryEvidence()
         if (this.workspace.selected.path === 'recordings') this.recordingSection(UIUtils.makeBinding((): Record<string, Object> => this.workspace.detail))
         if (this.workspace.selected.path !== 'recordings' && Wire.text(this.workspace.detail, 'recent')) {
-          Column({ space: Tokens.gap }) { Text(tr('knowledge_recent')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+          Column({ space: Tokens.gap }) { Text(tr('knowledge_recent')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
             Text(Wire.text(this.workspace.detail, 'recent')).fontSize(Tokens.meta).width('100%')
           }.width('100%').alignItems(HorizontalAlign.Start)
         }
         if (this.workspace.selected.path === 'projects' && Wire.rows(this.workspace.detail, 'moments').length) {
           Column({ space: Tokens.gap }) {
-            Text(tr('knowledge_related_moments')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+            Text(tr('knowledge_related_moments')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
             ForEach(Wire.rows(this.workspace.detail, 'moments'), (moment: Record<string, Object>) => Button({ type: ButtonType.Normal }) { this.navigationLabel(Wire.text(moment, 'author') + ' · ' + Wire.text(moment, 'text')) }.buttonStyle(ButtonStyleMode.TEXTUAL).backgroundColor(Color.Transparent).padding(0).width('100%').onClick(() => this.loadMoment(Wire.text(moment, 'id'))).id('knowledge.moment.' + Wire.text(moment, 'id')),
               (moment: Record<string, Object>, index: number) => JSON.stringify([index, Wire.text(moment, 'id'), JSON.stringify(moment)]))
             if (this.momentText) MarkdownText({ text: this.momentText, onLink: (url: string) => this.openSafeLink(url) })
@@ -860,7 +865,7 @@ export struct KnowledgeWorkspacePage {
   @Builder relatedEntries(detail: Binding<Record<string, Object>>) {
     if (Wire.rows(detail.value, 'links').length) {
       Column({ space: Tokens.gap }) {
-        Text(tr('knowledge_related')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+        Text(tr('knowledge_related')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
         ForEach(Wire.rows(detail.value, 'links'), (item: Record<string, Object>) => {
           Button({ type: ButtonType.Normal }) { this.navigationLabel(Wire.text(item, 'title', Wire.text(item, 'id'))) }.buttonStyle(ButtonStyleMode.TEXTUAL).backgroundColor(Color.Transparent).padding(0).width('100%').onClick(() => this.openRelated(item)).id('knowledge.related.' + Wire.text(item, 'kind') + '.' + Wire.text(item, 'id'))
         }, (item: Record<string, Object>, index: number) => JSON.stringify([index, Wire.text(item, 'kind') + '/' + Wire.text(item, 'id'), JSON.stringify(item)]))
@@ -871,7 +876,7 @@ export struct KnowledgeWorkspacePage {
   @Builder recordingSection(detail: Binding<Record<string, Object>>) {
     Column({ space: Tokens.gap }) {
       if (Object.keys(Wire.object(detail.value, 'minutes')).length) {
-        Text(tr('knowledge_minutes')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+        Text(tr('knowledge_minutes')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
         if (Wire.text(Wire.object(detail.value, 'minutes'), 'markdown')) MarkdownText({ text: Wire.text(Wire.object(detail.value, 'minutes'), 'markdown'), onLink: (url: string) => this.openSafeLink(url) })
         ForEach(Wire.rows(Wire.object(detail.value, 'minutes'), 'actions'), (action: Record<string, Object>) => {
           Row({ space: Tokens.gap }) { Toggle({ type: ToggleType.Checkbox, isOn: this.selectedActions.includes(Wire.text(action, 'id')) }).onChange(() => this.toggleAction(Wire.text(action, 'id')))
@@ -882,7 +887,7 @@ export struct KnowledgeWorkspacePage {
       }
       Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('knowledge_minutes_make')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('knowledge_minutes_make', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('knowledge_minutes_make')).bindTips(tr('knowledge_minutes_make')).enabled(!this.workspace.busy && this.workspace.writeState !== 'pending' && this.workspace.writeState !== 'unknown').onClick(() => this.workspace.makeMinutes()).id('knowledge.minutes.make')
       if (Wire.rows(detail.value, 'segments').length) {
-        Text(tr('knowledge_transcript')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
+        Text(tr('knowledge_transcript')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
         ForEach(Wire.rows(detail.value, 'segments'), (line: Record<string, Object>, index: number) => Text(Wire.text(line, 'text'))
           .fontSize(Tokens.meta).width('100%').id('knowledge.transcript.' + String(index)),
           (line: Record<string, Object>, index: number) => JSON.stringify([index, JSON.stringify(line)]))

@@ -155,20 +155,20 @@ export struct PhoneKnowledgeSelection {
   private modeHint():string { return tr(this.mode==='skip' ? 'ks_skip_hint' : 'ks_'+this.mode+'_'+this.kind+'_hint'); }
 
   @Builder note(label:string) {
-    Text(label).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:12,right:10,top:5,bottom:7})
+    Text(label).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:12,right:10,top:5,bottom:7})
   }
   @Builder groupLabel(label:string) {
-    Text(label).fontSize(14).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).width('100%')
+    Text(label).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).width('100%')
       .padding({left:14,right:8,top:19,bottom:6})
   }
   @Builder row(title:string,detail:string,value:string,identity:string,action:()=>void) {
     Row({space:8}) {
       Column({space:3}) {
-        Text(title).fontSize(16).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
-        if (detail) Text(detail).fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
-        if (value && nativeEnvironment.fontScale>=1.5) Text(value).fontSize(13).fontColor(Colors.secondary)
+        Text(title).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
+        if (detail) Text(detail).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
+        if (value && nativeEnvironment.fontScale>=1.5) Text(value).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      if (value && nativeEnvironment.fontScale<1.5) Text(value).fontSize(14).fontColor(Colors.secondary).constraintSize({maxWidth:'42%'})
+      if (value && nativeEnvironment.fontScale<1.5) Text(value).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).constraintSize({maxWidth:'42%'})
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').constraintSize({minHeight:PhoneStyle.rowHeight}).padding({left:14,right:12,top:8,bottom:8})
       .backgroundColor(Colors.surface).accessibilityGroup(true).accessibilityText([title,detail,value].filter((v:string) => !!v).join(' · '))
@@ -188,8 +188,8 @@ export struct PhoneKnowledgeSelection {
   }
   @Builder ruler(part:string,level:string[],i:number,n:number) {
     Row({space:8}) {
-      Text(this.levelTitle(part,i)).fontSize(14).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
-      Button({type:ButtonType.Circle}) { Text('•••').fontSize(13).fontColor(Colors.link) }.width(44).height(44).padding(0)
+      Text(this.levelTitle(part,i)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
+      Button({type:ButtonType.Circle}) { Text('•••').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link) }.width(44).height(44).padding(0)
         .backgroundColor(Color.Transparent).bindMenu(this.ruleMenu(part,level,i,n)).accessibilityText(this.levelTitle(part,i)+' · '+tr('more'))
         .id('settings.knowledge.level.'+part+'.'+String(i+1))
     }.width('100%').padding({left:14,right:1,top:7})
@@ -202,7 +202,7 @@ export struct PhoneKnowledgeSelection {
   }
   @Builder toggle(label:string,on:boolean,identity:string,valid:boolean,change:(enabled:boolean)=>void) {
     Row({space:8}) {
-      Text(label).fontSize(16).fontColor(Colors.ink).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
+      Text(label).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
       Toggle({type:ToggleType.Switch,isOn:on}).accessibilityText(label).enabled(valid).onChange(change).id(identity)
     }.width('100%').constraintSize({minHeight:PhoneStyle.rowHeight}).padding({left:14,right:10,top:5,bottom:5}).backgroundColor(Colors.surface)
   }
@@ -210,7 +210,7 @@ export struct PhoneKnowledgeSelection {
     Button({type:ButtonType.Normal}) {
       Row({space:9}) {
         SymbolGlyph(Symbols.plus).fontSize('16vp').fontColor([Colors.link])
-        Text(tr(kind==='chat' ? 'ks_add_chat' : 'ks_add_doc')).fontSize(16).fontColor(Colors.link)
+        Text(tr(kind==='chat' ? 'ks_add_chat' : 'ks_add_doc')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link)
       }.width('100%')
     }.width('100%').constraintSize({minHeight:44}).padding({left:14,right:12}).backgroundColor(Colors.surface)
       .onClick(()=>this.pick(kind)).id('settings.knowledge.add.'+kind)
@@ -227,7 +227,7 @@ export struct PhoneKnowledgeSelection {
       if (this.form.topicProblem) ListItem() { this.note(tr(this.form.topicProblem)) }
       if (this.form.problem) ListItem() {
         Row() {
-          Text(tr(this.form.problem)).fontSize(14).fontColor(Colors.danger).layoutWeight(1)
+          Text(tr(this.form.problem)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).layoutWeight(1)
           Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).enabled(!this.form.saving).onClick(()=>this.form.load())
         }.width('100%').padding(Tokens.gap)
       }
@@ -247,7 +247,7 @@ export struct PhoneKnowledgeSelection {
             }.width('100%').borderRadius(Tokens.card).clip(true)
             this.note(tr('ks_individual_hint'))
             if (this.removed) Row() {
-              Text(tr('ks_removed')).layoutWeight(1).fontSize(14).fontColor(Colors.secondary)
+              Text(tr('ks_removed')).layoutWeight(1).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
               Button(tr('ks_undo'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(()=>this.undo())
             }.width('100%')
           }
@@ -265,7 +265,7 @@ export struct PhoneKnowledgeSelection {
 
   @Builder numField(name:string,field:string,key:string) {
     Column({space:4}) {
-      Text(tr(name)).fontSize(15).fontColor(Colors.ink)
+      Text(tr(name)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink)
       TextInput({text:field,placeholder:key==='context' ? '50' : tr('default')}).type(InputType.Number).accessibilityText(tr(name))
         .onChange((v:string)=>{ if (key==='days') this.days=v; else if (key==='attachments') this.attachmentDays=v; else this.context=v; })
         .id('settings.knowledge.'+key)
@@ -294,7 +294,7 @@ export struct PhoneKnowledgeSelection {
         this.groupLabel(tr('ks_mode'))
         ForEach(['skip','rules','all'],(m:string)=>{
           Row({space:8}) {
-            Text(this.optionTitle(m,this.kind)).layoutWeight(1).fontSize(16).fontColor(Colors.ink)
+            Text(this.optionTitle(m,this.kind)).layoutWeight(1).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
             if (m===this.mode) SymbolGlyph(Symbols.check).fontSize('15vp').fontColor([Colors.link])
           }.width('100%').constraintSize({minHeight:44}).backgroundColor(Colors.surface).padding({left:14,right:14})
             .accessibilityText(this.optionTitle(m,this.kind)).accessibilitySelected(this.mode===m).onClick(()=>{this.mode=m; if (m!=='all') this.days='';}).id('settings.knowledge.mode.'+m)
@@ -387,7 +387,7 @@ export struct PhoneKnowledgeSelection {
         else if (this.modal==='item') this.itemEditor()
         else if (this.modal==='map') this.knowledgeMap()
         else if (this.modal==='point') Scroll() { Column({space:8}) {
-          Text(Wire.text(this.point,'text')).fontSize(17).fontColor(Colors.ink)
+          Text(Wire.text(this.point,'text')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink)
           if (Wire.text(this.point,'why')) this.note(Wire.text(this.point,'why'))
           if (Wire.text(this.point,'when')) this.note(Wire.text(this.point,'when'))
           ForEach(Wire.rows(this.point,'sources'),(entry:Fields)=>{this.note(Wire.text(entry,'kind')+' · '+Wire.text(entry,'id'))},(entry:Fields,i:number)=>String(i)+Wire.text(entry,'id'))

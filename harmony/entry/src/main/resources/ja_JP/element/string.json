@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "project_temporary_session",
+      "value": "一時セッション"
+    },
+    {
       "name": "module_desc",
       "value": "Persona モバイルクライアント"
     },
@@ -5153,6 +5157,14 @@
       "value": "モデルを取得できません"
     },
     {
+      "name": "project_checkout_primary",
+      "value": "メイン"
+    },
+    {
+      "name": "project_worktree_idle",
+      "value": "アイドル"
+    },
+    {
       "name": "project_primary",
       "value": "メイン"
     },
@@ -6619,6 +6631,58 @@
     {
       "name": "phone_meeting_voice_unavailable",
       "value": "回答を表示しました。この端末では読み上げられませんでした。"
+    },
+    {
+      "name": "chat_tray_needs",
+      "value": "あなたの対応が必要"
+    },
+    {
+      "name": "chat_tray_progress",
+      "value": "進行中"
+    },
+    {
+      "name": "phone_settings_models",
+      "value": "モデル"
+    },
+    {
+      "name": "phone_settings_profile",
+      "value": "アシスタントのプロフィール"
+    },
+    {
+      "name": "phone_settings_display",
+      "value": "外観と表示"
+    },
+    {
+      "name": "phone_settings_language_dictation",
+      "value": "言語と音声入力"
+    },
+    {
+      "name": "phone_settings_switch",
+      "value": "切り替え"
+    },
+    {
+      "name": "phone_settings_system_language",
+      "value": "システムと同じ（{language}）"
+    },
+    {
+      "name": "phone_settings_owner_note",
+      "value": "「{name}」の設定だけを表示しています。ほかのアシスタントを変更するには、先に切り替えてください。"
+    },
+    {
+      "name": "chat_tray_other",
+      "value": "別の会話"
+    },
+    {
+      "name": "phone_drawer_recent",
+      "value": "最近"
+    },
+    {
+      "name": "phone_drawer_schedules",
+      "value": "定期タスク"
+    },
+    {
+      "name": "phone_drawer_health",
+      "value": "ヘルスケア"
     }
   ]
 }

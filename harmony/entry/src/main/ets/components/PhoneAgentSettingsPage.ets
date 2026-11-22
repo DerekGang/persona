@@ -1,3 +1,4 @@
+import { Tokens } from '../design/Tokens';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { Colors } from '../design/Colors';
 import { PhoneSectionTitle, PhoneStyle } from '../design/PhoneStyle';
@@ -35,7 +36,7 @@ export struct PhoneAgentSettingsPage {
   private save(key:string,value:Object):void { this.form.setOption(key,value).catch(() => undefined); }
 
   @Builder separator() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:15}) }
-  private inputHeight():number { return Math.max(40,Math.ceil(24*nativeEnvironment.fontScale)+10); }
+  private inputHeight():number { return Math.max(40,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+10); }
   @Builder machinePicker() {
     Select(this.machines.map((r:ResourceRow) => ({value:r.title || r.id} as SelectOption)))
       .value(this.machines.find((r:ResourceRow) => r.id===this.form.machine)?.title || this.form.machine)
@@ -43,12 +44,12 @@ export struct PhoneAgentSettingsPage {
       .onSelect((index:number) => { if(this.machines[index]) this.open(this.machines[index].id); }).id('settings.agent.machine')
   }
   @Builder machineSelector() {
-    if (nativeEnvironment.fontScale>=1.4) Column({space:5}) {
-      Text(tr('machines')).fontSize(16).fontColor(Colors.ink)
+    if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17))>=1.4) Column({space:5}) {
+      Text(tr('machines')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
       this.machinePicker()
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left:15,right:12,top:8,bottom:8}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
     else Row({space:10}) {
-      Text(tr('machines')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+      Text(tr('machines')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
       this.machinePicker()
     }.width('100%').constraintSize({minHeight:48}).padding({left:15,right:12,top:5,bottom:5})
       .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
@@ -61,27 +62,27 @@ export struct PhoneAgentSettingsPage {
       .constraintSize({maxWidth:'100%',minHeight:this.inputHeight()}).value(String(agentSettingValue(row)??'')).enabled(this.canEdit())
       .onSelect((_index:number,v:string) => this.save(Wire.text(row,'key'),v)).id('settings.agent.option.'+Wire.text(row,'key'))
     else if (Wire.text(row,'type')==='string' && !this.textDraft.isEditing(this.textTarget(),Wire.text(row,'key')))
-      Button(String(agentSettingValue(row)??'') || tr('edit'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({maxWidth:'100%',minHeight:this.inputHeight()})
+      Button(String(agentSettingValue(row)??'') || tr('edit'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).constraintSize({maxWidth:'100%',minHeight:this.inputHeight()})
         .fontColor(Colors.link).enabled(this.canEdit()).onClick(() => { this.textDraft.begin(this.textTarget(),Wire.text(row,'key'),String(agentSettingValue(row)??'')); })
         .id('settings.agent.option.'+Wire.text(row,'key'))
   }
   @Builder option(row:Record<string,Object>) {
     Column({space:5}) {
-      if (nativeEnvironment.fontScale>=1.4 && Wire.text(row,'type')!=='bool') Column({space:5}) {
-        Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).fontColor(Colors.ink)
+      if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17))>=1.4 && Wire.text(row,'type')!=='bool') Column({space:5}) {
+        Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
         this.optionAction(row)
       }.width('100%').alignItems(HorizontalAlign.Start)
       else Row({space:8}) {
-        Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+        Text(Wire.text(row,'title') || Wire.text(row,'key')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
         this.optionAction(row)
       }.width('100%')
       if (this.textDraft.isEditing(this.textTarget(),Wire.text(row,'key'))) Row({space:6}) {
         TextInput({text:this.textDraft.text}).height(this.inputHeight()).layoutWeight(1).onChange((value:string) => this.textDraft.edit(value))
           .id('settings.agent.option.editor')
-        Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({minHeight:this.inputHeight()}).enabled(this.canEdit())
+        Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).constraintSize({minHeight:this.inputHeight()}).enabled(this.canEdit())
           .onClick(() => this.textDraft.save(this.form,this.textTarget())).id('settings.agent.option.save')
       }.width('100%')
-      if (Wire.text(row,'detail')) Text(Wire.text(row,'detail')).fontSize(13).fontColor(Colors.secondary).width('100%')
+      if (Wire.text(row,'detail')) Text(Wire.text(row,'detail')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%')
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left:15,right:12,top:8,bottom:8})
   }
 
@@ -98,14 +99,14 @@ export struct PhoneAgentSettingsPage {
       ForEach(this.rules,(rule:Record<string,Object>) => {
         Column() {
           Row({space:8}) {
-            Text(Wire.text(rule,'pattern')).fontFamily('monospace').fontSize(15).layoutWeight(1).fontColor(Colors.ink)
+            Text(Wire.text(rule,'pattern')).fontFamily('monospace').fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).layoutWeight(1).fontColor(Colors.ink)
             Toggle({type:ToggleType.Switch,isOn:Wire.bool(rule,'enabled')}).selectedColor(Colors.action).enabled(this.canEdit())
               .onChange((v:boolean) => this.folderChange(rule,v,Wire.text(rule,'action','hide')))
           }.width('100%')
           Row() {
             this.actionPicker(Wire.text(rule,'action','hide'),(s:string) => this.folderChange(rule,Wire.bool(rule,'enabled'),s))
             Blank()
-            Button(tr('delete'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.danger).enabled(this.canEdit())
+            Button(tr('delete'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.danger).enabled(this.canEdit())
               .onClick(() => this.form.changeFolder(Wire.text(rule,'pattern'),undefined))
           }.width('100%')
         }.padding({left:15,right:12,top:7,bottom:7}).width('100%')
@@ -116,7 +117,7 @@ export struct PhoneAgentSettingsPage {
       Row() {
         this.actionPicker(this.folderAction,(s:string) => this.folderAction=s)
         Blank()
-        Button(tr('add'),{buttonStyle:ButtonStyleMode.TEXTUAL}).enabled(this.canEdit() && !!cleanAgentFolder(this.draft) &&
+        Button(tr('add'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).enabled(this.canEdit() && !!cleanAgentFolder(this.draft) &&
           !this.rules.some((r:Record<string,Object>) => Wire.text(r,'pattern')===cleanAgentFolder(this.draft)))
           .onClick(() => {
             const pattern=cleanAgentFolder(this.draft);
@@ -133,17 +134,17 @@ export struct PhoneAgentSettingsPage {
         if (this.page!=='phone_agent_followup') this.machineSelector()
         if (this.form.loading || this.form.saving) LoadingProgress().height(23).width(23)
         if (this.page==='phone_agent_folders' && !this.form.loading && Array.isArray(this.form.data['rules']) && !Wire.bool(this.form.data,'supports_expected_rules'))
-          Text(tr('phone_conditional_read_only')).fontSize(14).fontColor(Colors.secondary).width('100%').id('settings.agent.folder.read_only')
-        if (this.form.notice) Text(tr(this.form.notice)).fontSize(14).fontColor(Colors.needs).width('100%').id('settings.agent.folder.notice')
+          Text(tr('phone_conditional_read_only')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').id('settings.agent.folder.read_only')
+        if (this.form.notice) Text(tr(this.form.notice)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.needs).width('100%').id('settings.agent.folder.notice')
         if (this.form.error) Row({space:8}) {
-          Text(tr(this.form.error)).layoutWeight(1).fontColor(Colors.secondary)
-          Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.form.read()).id('settings.agent.retry')
+          Text(tr(this.form.error)).maxFontScale(Tokens.interfaceFontMaxScale).layoutWeight(1).fontColor(Colors.secondary)
+          Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).onClick(() => this.form.read()).id('settings.agent.retry')
         }.width('100%')
         if (this.page==='phone_agent_folders' && Array.isArray(this.form.data['rules'])) this.folderRules()
         else if (this.page==='phone_agent_followup') Column() {
           ForEach(this.follow,(key:string,index:number) => {
             Row({space:8}) {
-              Text(tr(FOLLOW_FIELDS[key])).layoutWeight(1).fontSize(16).fontColor(Colors.ink)
+              Text(tr(FOLLOW_FIELDS[key])).layoutWeight(1).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
               Toggle({type:ToggleType.Switch,isOn:Wire.bool(this.form.data,key)}).enabled(this.canEdit()).selectedColor(Colors.action)
                 .onChange((v:boolean) => this.save(key,v)).id('settings.agent.option.'+key)
             }.width('100%').constraintSize({minHeight:48}).padding({left:15,right:12,top:5,bottom:5})
@@ -157,7 +158,7 @@ export struct PhoneAgentSettingsPage {
           },(row:Record<string,Object>) => JSON.stringify(row))
         }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
         if (this.canEdit() && !this.options.length && !this.follow.length && this.page!=='phone_agent_folders')
-          Text(tr('empty')).fontColor(Colors.secondary).width('100%')
+          Text(tr('empty')).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.secondary).width('100%')
       }.width('100%').alignItems(HorizontalAlign.Start).padding(PhoneStyle.page)
     }.width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped).id('settings.agent.configuration')
   }

@@ -763,7 +763,7 @@ export struct SessionTools {
         .fontSize('19vp').fontColor([binding.value.ignored ? Colors.secondary : binding.value.directory ? Colors.link : Colors.secondary])
         .width(23).flexShrink(0).id('session.fileRow.icon.'+binding.value.path)
       Column({space:1}) {
-        Text(binding.value.name).fontSize(16).fontColor(binding.value.ignored ? Colors.secondary : Colors.ink)
+        Text(binding.value.name).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(binding.value.ignored ? Colors.secondary : Colors.ink)
           .wordBreak(WordBreak.BREAK_WORD).id('session.fileRow.name.'+binding.value.path)
         if (this.fileSubtitle(binding.value)) Text(this.fileSubtitle(binding.value))
           .fontSize(12).fontColor(binding.value.linkBroken ? Colors.danger : Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
@@ -820,14 +820,14 @@ export struct SessionTools {
           .backgroundColor(Colors.control).borderRadius(22).layoutWeight(1)
           .onChange((v:string) => { this.fileQuery=v; if (v.trim()) this.workspace.loadFileIndex(); }).id('session.files.query')
         else Blank().layoutWeight(1)
-        Button({type:ButtonType.Circle}) { Text('•••').fontSize(13).fontWeight(FontWeight.Bold).fontColor(Colors.link) }
+        Button({type:ButtonType.Circle}) { Text('•••').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Bold).fontColor(Colors.link) }
           .width(44).height(44).padding(0).backgroundColor(Colors.control).bindMenu(this.fileMenu).accessibilityText(tr('more')).id('session.files.more')
           .bindSheet($$this.transferOpen,this.fileTransferForm(),{title:{title:tr('file_transfer_title')},height:SheetSize.LARGE,showClose:true})
       }.width('100%').id('session.files.find')
       if (this.fileQuery.trim()) Row({space:6}) {
         Text(tr('session_find_here')+' · '+(this.pathCrumbs[this.pathCrumbs.length-1]?.title || this.workspace.currentPath))
           .fontSize(12).fontColor(Colors.secondary).layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-        if (!this.workspace.findBusy) Text((this.findRows.length>=100 ? '≥' : '')+this.findRows.length).fontSize(12).fontColor(Colors.secondary)
+        if (!this.workspace.findBusy) Text((this.findRows.length>=100 ? '≥' : '')+this.findRows.length).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
       }.width('100%').padding({left:4,right:4})
     }.padding({left:PhoneStyle.page,right:PhoneStyle.page,top:5,bottom:8}).width('100%')
   }
@@ -835,13 +835,13 @@ export struct SessionTools {
     Column() {
       this.folderBar()
       if (this.workspace.trashUndo.length && this.workspace.canEditFiles()) Row({ space: Tokens.gap }) {
-        Text(tr('session_tools_trashed_count').replace('{count}', String(this.workspace.trashUndo.length))).fontSize(Tokens.meta).layoutWeight(1)
+        Text(tr('session_tools_trashed_count').replace('{count}', String(this.workspace.trashUndo.length))).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).layoutWeight(1)
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('session_tools_restore')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('session_tools_restore', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('session_tools_restore')).bindTips(tr('session_tools_restore')).onClick(() => this.restoreTrash())
       }.padding({ left: Tokens.inset, right: Tokens.inset, bottom: Tokens.gap })
 
-      if (this.transferError) Text(this.transferError).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger')).padding(Tokens.inset)
+      if (this.transferError) Text(this.transferError).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger')).padding(Tokens.inset)
       if (this.workspace.fileError) Row({space:8}) {
-        Text(tr(this.workspace.fileError === 'upstream_error' ? 'phone_directory_read_failed' : this.workspace.fileError)).fontSize(14).fontColor(Colors.secondary).layoutWeight(1)
+        Text(tr(this.workspace.fileError === 'upstream_error' ? 'phone_directory_read_failed' : this.workspace.fileError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).layoutWeight(1)
         Button(tr('retry'), {buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(14).fontColor(Colors.link).onClick(() => this.openPath())
       }.padding(12).width('100%')
       if (['pending', 'unknown'].includes(this.workspace.fileWriteState)) Text(tr('session_tools_write_' + this.workspace.fileWriteState))
@@ -850,27 +850,27 @@ export struct SessionTools {
       if (this.workspace.fileBusy || this.fileQuery.trim() && this.workspace.findBusy) LoadingProgress().height(28).width(28)
       List() {
         if (this.fileQuery.trim()) {
-          if (this.workspace.findError) ListItem() { Text(tr('session_find_unavailable')).fontSize(13).fontColor(Colors.secondary).padding(10) }
+          if (this.workspace.findError) ListItem() { Text(tr('session_find_unavailable')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding(10) }
           ForEach(this.findRows,(hit:FileFindHit) => {
             ListItem() {
               Row({space:10}) {
                 SymbolGlyph(hit.directory ? Symbols.folder : Symbols.document).fontSize('18vp').fontColor([hit.directory ? Colors.link : Colors.secondary])
                 Column({space:2}) {
-                  Text(this.leaf(hit.relative)).fontSize(16).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
-                  Text('./'+this.relativeParent(hit.relative)).fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
+                  Text(this.leaf(hit.relative)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
+                  Text('./'+this.relativeParent(hit.relative)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
                 }.layoutWeight(1).alignItems(HorizontalAlign.Start)
                 if (hit.directory) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
               }.width('100%').constraintSize({minHeight:54}).padding({top:7,bottom:7}).backgroundColor(Colors.canvas)
             }.onClick(() => this.findHit(hit)).id('session.find.'+hit.relative)
           },(hit:FileFindHit) => hit.relative)
-          if (!this.workspace.findBusy && !this.findRows.length) ListItem() { Text(tr('no_results')).fontSize(14).fontColor(Colors.secondary).padding(14) }
-          if (this.workspace.findTruncated) ListItem() { Text(tr('session_tools_first_entries')).fontSize(13).padding(10) }
+          if (!this.workspace.findBusy && !this.findRows.length) ListItem() { Text(tr('no_results')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).padding(14) }
+          if (this.workspace.findTruncated) ListItem() { Text(tr('session_tools_first_entries')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).padding(10) }
         } else {
         ForEach(this.shownFileRows, (binding: BoundRow<WorkspaceEntry>) => {
           ListItem() { this.fileRow(binding) }.onClick(() => this.openEntry(binding.value))
             .bindContextMenu(this.fileEntryMenu(binding), ResponseType.LongPress).id('session.files.' + binding.value.path)
         }, (binding: BoundRow<WorkspaceEntry>) => binding.key)
-        if (!this.shownFileRows.length && !this.workspace.fileBusy && !this.workspace.fileError) ListItem() { Text(tr('empty')).fontSize(15).fontColor(Colors.secondary).padding(14) }
+        if (!this.shownFileRows.length && !this.workspace.fileBusy && !this.workspace.fileError) ListItem() { Text(tr('empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(14) }
         if (this.workspace.hasMoreEntries) ListItem() { Text(tr('session_tools_first_entries')).padding(Tokens.inset) }
         }
       }.divider({strokeWidth:Tokens.divider,startMargin:35,color:Colors.divider}).width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page})
@@ -894,7 +894,7 @@ export struct SessionTools {
   @Builder transferSettingRow(source: boolean) {
     Column({ space: Tokens.fine }) {
       Row({ space: Tokens.gap }) {
-        Text(this.transferSettingLabel(source)).fontSize(Tokens.body).layoutWeight(1)
+        Text(this.transferSettingLabel(source)).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.transferSetting(source).enabled })
           .enabled(this.transferSetting(source).state === 'ready' && this.workspace.fileTransfer.isAvailable() && !this.workspace.fileTransfer.createBusy)
           .accessibilityText(this.transferSettingLabel(source))
@@ -902,7 +902,7 @@ export struct SessionTools {
       }.width('100%')
       if (this.transferSetting(source).state === 'loading' || this.transferSetting(source).state === 'saving') Row({ space: Tokens.gap }) {
         LoadingProgress().width(Tokens.touch).height(Tokens.touch)
-        Text(tr('file_transfer_setting_' + this.transferSetting(source).state)).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
+        Text(tr('file_transfer_setting_' + this.transferSetting(source).state)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
       }
       if (this.transferSetting(source).state === 'unknown') Text(tr('file_transfer_setting_unknown') + (this.transferSetting(source).error ? ': ' + this.transferSetting(source).error : ''))
         .fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
@@ -924,7 +924,7 @@ export struct SessionTools {
         .enabled(!this.workspace.fileTransfer.targetSelectionFrozen())
         .accessibilityText(machine.title)
         .onChange((checked: boolean) => { if (checked && !this.workspace.fileTransfer.targetSelectionFrozen()) this.selectTransferTarget(machine.id); })
-      Text(machine.title).fontSize(Tokens.body).layoutWeight(1)
+      Text(machine.title).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).layoutWeight(1)
     }.width('100%').padding({ left: Tokens.inset, right: Tokens.inset, top: Tokens.fine, bottom: Tokens.fine })
       .enabled(!this.workspace.fileTransfer.targetSelectionFrozen())
       .opacity(this.workspace.fileTransfer.targetSelectionFrozen() ? 0.55 : 1)
@@ -933,13 +933,13 @@ export struct SessionTools {
 
   @Builder transferUnknownRow(record: FileTransferRecord) {
     Column({ space: Tokens.fine }) {
-      Text(tr('file_transfer_status_unknown') + ' · ' + record.targetName).fontSize(Tokens.body).width('100%')
+      Text(tr('file_transfer_status_unknown') + ' · ' + record.targetName).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).width('100%')
       Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
         if (record.id) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('file_transfer_check_status')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('file_transfer_check_status', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('file_transfer_check_status')).bindTips(tr('file_transfer_check_status')).flexShrink(0).onClick(() => this.checkTransfer(record.key))
         if (!record.acknowledged) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('file_transfer_i_checked')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('file_transfer_i_checked', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('file_transfer_i_checked')).bindTips(tr('file_transfer_i_checked')).flexShrink(0).onClick(() => this.acknowledgeTransfer(record.key))
       }.width('100%')
-      if (record.code) Text(tr('file_transfer_error') + ': ' + record.code).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
-      if (record.acknowledged) Text(tr('file_transfer_possible_duplicate')).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
+      if (record.code) Text(tr('file_transfer_error') + ': ' + record.code).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
+      if (record.acknowledged) Text(tr('file_transfer_possible_duplicate')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
     }.width('100%').padding({ top: Tokens.gap, bottom: Tokens.gap })
   }
 
@@ -947,12 +947,12 @@ export struct SessionTools {
     Column({ space: Tokens.gap }) {
       Scroll() {
         Column({ space: Tokens.gap }) {
-      Text(this.workspace.fileTransfer.sourceFileName()).fontSize(Tokens.title)
+      Text(this.workspace.fileTransfer.sourceFileName()).fontSize(Tokens.title).maxFontScale(Tokens.interfaceScaleFor(Tokens.title))
       Text(this.workspace.fileTransfer.sourceMachineName() + ' · ' + this.workspace.fileTransfer.sourceFilePath())
         .fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
       this.transferSettingRow(true)
-      Text(tr('file_transfer_choose_target')).fontSize(Tokens.body).fontWeight(FontWeight.Medium)
-      if (!this.workspace.fileTransfer.targets.length) Text(tr('file_transfer_no_targets')).fontSize(Tokens.meta)
+      Text(tr('file_transfer_choose_target')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium)
+      if (!this.workspace.fileTransfer.targets.length) Text(tr('file_transfer_no_targets')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
       List() {
         ForEach(this.workspace.fileTransfer.targets, (machine: FileTransferMachine) => {
           ListItem() { this.transferTargetRow(machine) }.id('session.file-transfer.target.' + machine.id)
@@ -963,22 +963,22 @@ export struct SessionTools {
         this.transferSettingRow(false)
       if (this.currentTransfer()) {
         if (this.workspace.fileTransfer.targetId !== this.currentTransfer()?.targetMachine) {
-          Text(this.currentTransfer()?.targetName || this.currentTransfer()?.targetMachine || '').fontSize(Tokens.body)
-          if (this.currentTransfer()?.targetInbox) Text(this.currentTransfer()?.targetInbox || '').fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
+          Text(this.currentTransfer()?.targetName || this.currentTransfer()?.targetMachine || '').fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body))
+          if (this.currentTransfer()?.targetInbox) Text(this.currentTransfer()?.targetInbox || '').fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
         }
         if (this.currentTransfer()?.state === 'running') Progress({ value: this.currentTransferProgress(), total: 100, type: ProgressType.Linear }).width('100%')
-        Text(this.currentTransferStatus()).fontSize(Tokens.body)
-        if (this.currentTransfer()?.resultPath) Text(this.currentTransfer()?.resultPath || '').fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
+        Text(this.currentTransferStatus()).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body))
+        if (this.currentTransfer()?.resultPath) Text(this.currentTransfer()?.resultPath || '').fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
         if (this.currentTransfer()?.code) Text(tr('file_transfer_error') + ': ' + (this.currentTransfer()?.code || ''))
           .fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
-        if (this.currentTransfer()?.cancelUnknown) Text(tr('file_transfer_cancel_unknown')).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
+        if (this.currentTransfer()?.cancelUnknown) Text(tr('file_transfer_cancel_unknown')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
         if (this.currentTransfer()?.state === 'running' && this.currentTransfer()?.id) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('file_transfer_cancel_transfer')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('file_transfer_cancel_transfer', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('file_transfer_cancel_transfer')).bindTips(tr('file_transfer_cancel_transfer'))
           .enabled(!this.currentTransfer()?.cancelBusy).onClick(() => this.cancelTransfer(this.currentTransferCancelKey()))
       }
       ForEach(this.workspace.fileTransfer.unknownForSource(), (record: FileTransferRecord) => {
         this.transferUnknownRow(record)
       }, (record: FileTransferRecord) => record.key)
-      if (this.transferError) Text(this.transferError).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
+      if (this.transferError) Text(this.transferError).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
       if (this.workspace.fileTransfer.createBusy) LoadingProgress().width(Tokens.touch).height(Tokens.touch)
       if (this.workspace.fileTransfer.journalError) Text(tr('file_transfer_journal_unavailable'))
         .fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
@@ -1013,11 +1013,11 @@ export struct SessionTools {
             .width('100%').textAlign(TextAlign.Start)
         }.layoutWeight(1).width('100%')
         if (this.workspace.fileHasMore) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('load_more')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('load_more', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('load_more')).bindTips(tr('load_more')).onClick(() => this.workspace.loadMoreText())
-        if (this.workspace.fileTruncated && !this.workspace.fileHasMore) Text(tr('session_tools_truncated')).fontSize(Tokens.meta)
+        if (this.workspace.fileTruncated && !this.workspace.fileHasMore) Text(tr('session_tools_truncated')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
       } else {
         Column({ space: Tokens.gap }) {
-          Text(tr('session_tools_binary_file')).fontSize(Tokens.body)
-          Text(this.workspace.selectedFileMime).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
+          Text(tr('session_tools_binary_file')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body))
+          Text(this.workspace.selectedFileMime).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
         }.layoutWeight(1).justifyContent(FlexAlign.Center)
       }
     }.padding(Tokens.page).width('100%').height('100%')
@@ -1025,20 +1025,20 @@ export struct SessionTools {
 
   @Builder fileEditForm() {
     Column({ space: Tokens.gap }) {
-      if (this.fileActionEntry) Text(this.fileActionEntry.path).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary')).maxLines(2)
+      if (this.fileActionEntry) Text(this.fileActionEntry.path).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary')).maxLines(2)
       if (this.fileEditMode === 'rename') TextInput({ text: this.renameDraft, placeholder: tr('session_tools_new_name') })
         .onChange((value: string) => this.renameDraft = value).id('session.files.rename')
       else TextInput({ text: this.moveTarget, placeholder: tr('session_tools_destination_folder') })
         .onChange((value: string) => this.moveTarget = value).id('session.files.move')
       if (this.fileEditMode === 'move_conflict') {
-        Text(tr('session_tools_move_conflict') + ' · ' + this.workspace.fileConflictName).fontSize(Tokens.meta)
+        Text(tr('session_tools_move_conflict') + ' · ' + this.workspace.fileConflictName).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         Select([{ value: tr('session_tools_conflict_keep') }, { value: tr('session_tools_conflict_replace') }])
           .selected(this.moveConflictChoice).value(tr(this.moveConflictChoice === 0 ? 'session_tools_conflict_keep' : 'session_tools_conflict_replace'))
           .onSelect((index: number) => this.moveConflictChoice = index === 1 ? 1 : 0).id('session.files.conflict')
       }
       if (['pending', 'unknown'].includes(this.workspace.fileWriteState)) Text(tr('session_tools_write_' + this.workspace.fileWriteState))
         .fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
-      if (this.workspace.fileWriteError) Text(trError(this.workspace.fileWriteError)).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
+      if (this.workspace.fileWriteError) Text(trError(this.workspace.fileWriteError)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
       Row({ space: Tokens.gap }) {
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('cancel')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('cancel', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('cancel')).bindTips(tr('cancel')).onClick(() => this.fileEditSheetOpen = false)
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('continue')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('continue', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('continue')).bindTips(tr('continue'))
@@ -1077,8 +1077,8 @@ export struct SessionTools {
     Divider().strokeWidth(Tokens.divider).color(Colors.divider).margin({left:42,right:14})
     Row({space:Tokens.inset}) {
       SymbolGlyph(symbol).fontSize('17vp').width(20).fontColor([Colors.link])
-      Text(tr(label)).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-      if (count) Text(count).fontSize(15).fontColor(Colors.secondary)
+      Text(tr(label)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
+      if (count) Text(count).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').constraintSize({minHeight:48}).padding({left:16,right:18,top:6,bottom:6})
       .accessibilityGroup(true).accessibilityText(tr(label)+(count ? ' '+count : ''))
@@ -1096,7 +1096,7 @@ export struct SessionTools {
       Column({space:4}) {
         Row({space:Tokens.gap}) {
           SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize('18vp').fontColor([Colors.link])
-          Text(Wire.text(this.workspace.gitStatus,'branch') || tr('session_git_detached')).fontSize(17).fontWeight(FontWeight.Medium)
+          Text(Wire.text(this.workspace.gitStatus,'branch') || tr('session_git_detached')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium)
             .fontColor(Colors.ink).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
           if (this.model.features.includes('git_write') && Wire.text(this.workspace.gitStatus,'branch') && (!Wire.text(this.workspace.gitStatus,'upstream') || Wire.number(this.workspace.gitStatus,'ahead')>0)) {
             Button({type:ButtonType.Capsule}) {
@@ -1114,7 +1114,7 @@ export struct SessionTools {
           Wire.number(this.workspace.gitStatus,'behind')>0 ? '↓ '+Wire.number(this.workspace.gitStatus,'behind') : '',
           this.workspace.gitStashCount() ? tr('session_tools_stashes')+' '+this.workspace.gitStashCount() : ''].filter((v:string) => !!v).join(' · '))
           .fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
-        Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).fontColor(Colors.secondary)
+        Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
           .fontFamily('monospace').maxLines(3).copyOption(CopyOptions.LocalDevice)
       }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:10,bottom:13})
       if (this.model.features.includes('git_write')) {
@@ -1126,24 +1126,24 @@ export struct SessionTools {
 
   @Builder pullRequestSection() {
     Column({space:7}) {
-      Text(tr('session_git_pull_request')).fontSize(14).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+      Text(tr('session_git_pull_request')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
         .padding({left:16,right:16})
       Row({space:Tokens.gap}) {
         SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize('17vp').fontColor([Colors.secondary])
         if (this.workspace.gitPrError) {
-          Text(tr('session_git_pr_read_failed')).fontSize(15).fontColor(Colors.secondary).layoutWeight(1)
+          Text(tr('session_git_pr_read_failed')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).layoutWeight(1)
           Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.loadGitPullRequest(true)).id('session.git.pr.retry')
         } else if (Wire.number(Wire.object(this.workspace.gitPrAnswer,'pr'),'number')>0) {
           Button({type:ButtonType.Normal}) {
             Column({space:3}) {
               Text('#'+Wire.number(Wire.object(this.workspace.gitPrAnswer,'pr'),'number')+' '+Wire.text(Wire.object(this.workspace.gitPrAnswer,'pr'),'title'))
                 .fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
-              Text(Wire.text(Wire.object(this.workspace.gitPrAnswer,'pr'),'state')).fontSize(12).fontColor(Colors.secondary)
+              Text(Wire.text(Wire.object(this.workspace.gitPrAnswer,'pr'),'state')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             }.width('100%').alignItems(HorizontalAlign.Start)
           }.layoutWeight(1).constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent)
             .onClick(() => this.openGitSheet('pr_detail')).id('session.git.pr.open')
         } else {
-          Text(tr(this.workspace.branchPushedForPr() ? 'session_git_no_pr' : 'session_git_push_before_pr')).fontSize(14)
+          Text(tr(this.workspace.branchPushedForPr() ? 'session_git_no_pr' : 'session_git_push_before_pr')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
             .fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD).layoutWeight(1)
           Button(tr('session_git_create_pr'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({minHeight:44,maxWidth:'52%'}).fontSize(13)
             .maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).enabled(this.workspace.canWriteGit() && this.workspace.branchPushedForPr())
@@ -1156,14 +1156,14 @@ export struct SessionTools {
 
   @Builder changesHeader() {
     Row({space:6}) {
-      Text(tr('session_tools_changes')).fontSize(14).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-      Text(String(this.workspace.gitFiles.length)).fontSize(14).fontColor(Colors.secondary)
+      Text(tr('session_tools_changes')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+      Text(String(this.workspace.gitFiles.length)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
       Blank().layoutWeight(1)
       if (this.workspace.gitFiles.length) {
-        Text('+'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.added,0)).fontSize(13).fontColor(Colors.positive)
-        Text('−'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.deleted,0)).fontSize(13).fontColor(Colors.danger)
+        Text('+'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.added,0)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.positive)
+        Text('−'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.deleted,0)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.danger)
       }
-      Button({type:ButtonType.Circle}) { Text('•••').fontSize(12).fontWeight(FontWeight.Bold).fontColor(Colors.secondary) }
+      Button({type:ButtonType.Circle}) { Text('•••').fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Bold).fontColor(Colors.secondary) }
           .width(32).height(36).padding(0).backgroundColor(Color.Transparent)
           .responseRegion({x:-6,y:-4,width:44,height:44}).bindMenu(this.gitMenu).accessibilityText(tr('more')).id('session.git.menu')
     }.width('100%').constraintSize({minHeight:44}).padding({left:16,right:4,top:4}).onClick(() => this.collapseChanges=!this.collapseChanges)
@@ -1184,16 +1184,16 @@ export struct SessionTools {
         Text(binding.value.mark).width(20).fontSize('13vp').textAlign(TextAlign.Center).fontWeight(FontWeight.Bold)
           .fontColor(this.fileInk(binding.value)).padding({top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(5)
         Column({space:3}) {
-          Text(this.leaf(binding.value.path)).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
+          Text(this.leaf(binding.value.path)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
           if (this.fileChangeDetail(binding.value)) Text(this.fileChangeDetail(binding.value))
             .fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
           if (nativeEnvironment.fontScale >= 1.5 && (binding.value.binary || binding.value.added || binding.value.deleted)) {
-            if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(11).fontColor(Colors.secondary)
+            if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
             else Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(5)}}) { this.lineCounts(binding.value.added,binding.value.deleted) }.width('100%')
           }
         }.alignItems(HorizontalAlign.Start).layoutWeight(1)
         if (nativeEnvironment.fontScale < 1.5) {
-          if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(11).fontColor(Colors.secondary)
+          if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
           else if (binding.value.added || binding.value.deleted) Row({space:4}) {
             this.lineCounts(binding.value.added,binding.value.deleted)
           }.alignItems(VerticalAlign.Center)
@@ -1205,10 +1205,10 @@ export struct SessionTools {
   @Builder commitRow(c:Record<string,Object>) {
     Row({space:10}) {
       Column({space:4}) {
-        Text(Wire.text(c,'subject') || Wire.text(c,'short')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+        Text(Wire.text(c,'subject') || Wire.text(c,'short')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
         Text([Wire.text(c,'short') || Wire.text(c,'hash').slice(0,8),Wire.text(c,'author'),this.timeLabel(Wire.text(c,'date'))]
           .filter((v:string) => !!v).join(' · ')).fontSize(12).fontColor(Colors.secondary).maxLines(2)
-        if (Wire.text(c,'refs')) Text(Wire.text(c,'refs').replace(/HEAD -> /g,'')).fontSize(12).fontColor(Colors.link).maxLines(2)
+        if (Wire.text(c,'refs')) Text(Wire.text(c,'refs').replace(/HEAD -> /g,'')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link).maxLines(2)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').padding({left:13,right:12,top:9,bottom:9}).backgroundColor(Colors.surface)
@@ -1258,7 +1258,7 @@ export struct SessionTools {
           Text(this.relativeParent(this.commitFilePath)).fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary).maxLines(1)
       }.layoutWeight(1)
       if (this.gitSheetMode==='diff' && this.workspace.gitDiff || this.gitSheetMode==='history' && Wire.text(this.workspace.gitShow,'diff')) {
-        Button({type:ButtonType.Circle}) { Text('•••').fontSize(13).fontWeight(FontWeight.Bold).fontColor(Colors.link) }
+        Button({type:ButtonType.Circle}) { Text('•••').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Bold).fontColor(Colors.link) }
           .width(44).height(44).padding(0).backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:22})
           .bindMenu(this.gitSheetMenu).accessibilityText(tr('more')).id('session.git.sheet.more')
       } else Blank().width(44)
@@ -1275,7 +1275,7 @@ export struct SessionTools {
         ListItem() {
           Row({space:8}) {
             Text('stash@{'+String(Wire.number(binding.value,'index'))+'}').fontSize(13).fontFamily('monospace').fontColor(Colors.secondary)
-            Text(Wire.text(binding.value,'message')).fontSize(15).fontColor(Colors.ink).layoutWeight(1).maxLines(3)
+            Text(Wire.text(binding.value,'message')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1).maxLines(3)
             Button({type:ButtonType.Circle}) { Text('•••').fontColor(Colors.link) }.width(44).height(44).padding(0)
               .backgroundColor(Color.Transparent).bindMenu(this.gitStashMenu(binding)).accessibilityText(tr('more'))
           }.width('100%').constraintSize({minHeight:48}).padding(8).backgroundColor(Colors.surface)
@@ -1313,10 +1313,10 @@ export struct SessionTools {
           .onChange((v:string) => this.gitPrBody=v).id('session.git.pr.body')
         TextInput({text:this.gitPrBase,placeholder:tr('session_git_base_branch')}).onChange((v:string) => this.gitPrBase=v).id('session.git.pr.base')
         Row() {
-          Text(tr('session_git_pr_draft')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
+          Text(tr('session_git_pr_draft')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
           Toggle({type:ToggleType.Switch,isOn:this.gitPrDraft}).accessibilityText(tr('session_git_pr_draft')).onChange((v:boolean) => this.gitPrDraft=v)
         }.width('100%')
-        if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(14).fontColor(Colors.danger)
+        if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger)
         Button(tr('session_git_create_pr')).enabled(this.workspace.canWriteGit() && this.workspace.branchPushedForPr() && !!this.gitPrTitle.trim())
           .onClick(() => this.confirmCreatePr()).id('session.git.pr.confirm')
       }.padding(PhoneStyle.page).width('100%')
@@ -1327,9 +1327,9 @@ export struct SessionTools {
     List() {
       ListItem() {
         Column({space:6}) {
-          Text('#'+Wire.number(pr,'number')+' '+Wire.text(pr,'title')).fontSize(19).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-          Text([Wire.text(pr,'state'),Wire.text(pr,'head'),Wire.text(pr,'base')].filter((s:string) => !!s).join(' · ')).fontSize(13).fontColor(Colors.secondary)
-          if (Wire.text(pr,'body')) Text(Wire.text(pr,'body')).fontSize(15).fontColor(Colors.ink).copyOption(CopyOptions.LocalDevice)
+          Text('#'+Wire.number(pr,'number')+' '+Wire.text(pr,'title')).fontSize(19).maxFontScale(Tokens.interfaceScaleFor(19)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          Text([Wire.text(pr,'state'),Wire.text(pr,'head'),Wire.text(pr,'base')].filter((s:string) => !!s).join(' · ')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+          if (Wire.text(pr,'body')) Text(Wire.text(pr,'body')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).copyOption(CopyOptions.LocalDevice)
           if (readerLink(Wire.text(pr,'url'))) Button(tr('open'),{buttonStyle:ButtonStyleMode.TEXTUAL})
             .onClick(() => this.onOpenLink(readerLink(Wire.text(pr,'url')))).id('session.git.pr.link')
         }.padding(14).width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(Tokens.card)
@@ -1337,8 +1337,8 @@ export struct SessionTools {
       ForEach(Wire.rows(pr,'checks'),(check:Record<string,Object>) => {
         ListItem() {
           Row({space:8}) {
-            Text(Wire.text(check,'name')).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
-            Text(Wire.text(check,'state')).fontSize(13).fontColor(Colors.secondary)
+            Text(Wire.text(check,'name')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
+            Text(Wire.text(check,'state')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
           }.width('100%').constraintSize({minHeight:44}).padding(8)
             .onClick(() => { const url=readerLink(Wire.text(check,'url')); if (url) this.onOpenLink(url); })
         }
@@ -1370,8 +1370,8 @@ export struct SessionTools {
         .accessibilityText(tr(this.workspace.allFilesStaged() ? 'session_git_unstage_all' : 'session_git_stage_all'))
         .onClick(() => this.workspace.toggleAllGitFiles()).id('session.git.stage_all')
       Column({space:1}) {
-        Text(tr('session_tools_staged')+' '+String(this.filterCount('staged'))).fontSize(14).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        Text(tr('session_tools_changes')+' '+String(this.workspace.gitFiles.length)).fontSize(12).fontColor(Colors.secondary)
+        Text(tr('session_tools_staged')+' '+String(this.filterCount('staged'))).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        Text(tr('session_tools_changes')+' '+String(this.workspace.gitFiles.length)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       Button(tr('session_tools_commit')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).padding({left:14,right:14}).constraintSize({minHeight:44})
         .enabled(this.workspace.canWriteGit() && !!Wire.text(this.workspace.gitStatus,'branch') && this.filterCount('staged') > 0)
@@ -1383,12 +1383,12 @@ export struct SessionTools {
   @Builder gitView() {
     Column() {
       if (this.workspace.gitError) Row() {
-        Text(trError(this.workspace.gitError)).fontSize(14).fontColor(Colors.danger).layoutWeight(1)
+        Text(trError(this.workspace.gitError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).layoutWeight(1)
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.loadGit())
       }.width('100%').padding(10)
-      if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(14).fontColor(Colors.danger).padding(8)
+      if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
       if (this.workspace.gitWriteState==='pending' || this.workspace.gitWriteState==='unknown')
-        Text(tr('session_tools_write_'+this.workspace.gitWriteState)).fontSize(14).fontColor(Colors.danger).padding(8)
+        Text(tr('session_tools_write_'+this.workspace.gitWriteState)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
       if (Object.keys(this.workspace.gitStatus).length && Wire.bool(this.workspace.gitStatus,'is_repo')) {
         List() {
           ListItem() { this.gitBranchCard() }
@@ -1405,12 +1405,12 @@ export struct SessionTools {
             if (!this.visibleGitRows.length) ListItem() {
               Row({space:7}) {
                 SymbolGlyph(this.workspace.gitFiles.length ? Symbols.filter : Symbols.check).fontSize('16vp').fontColor([this.workspace.gitFiles.length ? Colors.secondary : Colors.positive])
-                Text(tr(!this.workspace.gitFiles.length ? 'session_tools_clean' : 'no_results')).fontSize(15).fontColor(Colors.secondary)
+                Text(tr(!this.workspace.gitFiles.length ? 'session_tools_clean' : 'no_results')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
               }.width('100%').padding(14).borderRadius(12).backgroundColor(Colors.surface)
             }
           }
           if (this.workspace.gitCommits.length) ListItem() {
-            Text(tr('session_git_history')).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+            Text(tr('session_git_history')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
               .padding({left:5,top:14,bottom:7}).width('100%').id('session.git.history')
           }
           if (this.workspace.gitCommits.length) ListItemGroup() {
@@ -1425,13 +1425,13 @@ export struct SessionTools {
               .onClick(() => this.workspace.olderGitCommits()).id('session.git.older')
           }
           if (this.workspace.gitHistoryBusy) ListItem() { LoadingProgress().width(25).height(25) }
-          if (this.workspace.gitHistoryError) ListItem() { Text(tr('session_git_history_error')).fontSize(14).fontColor(Colors.danger).padding(9) }
+          if (this.workspace.gitHistoryError) ListItem() { Text(tr('session_git_history_error')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(9) }
         }.width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:nativeEnvironment.fontScale>=1.5 ? 10 : 27,bottom:12})
         if (this.workspace.gitFiles.length > 0 && this.workspace.canWriteGit()) Row() { this.stagedCommitBar() }
           .width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:2,bottom:8})
       } else if (Object.keys(this.workspace.gitStatus).length) {
         Column({space:6}) {
-          Text(tr('session_tools_not_repository')).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          Text(tr('session_tools_not_repository')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
           Text(this.workspace.cwd).fontFamily('monospace').fontSize(13).fontColor(Colors.secondary).copyOption(CopyOptions.LocalDevice)
           Button(tr('refresh'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.loadGit())
         }.width('100%').alignItems(HorizontalAlign.Start).padding(15)
@@ -1451,7 +1451,7 @@ export struct SessionTools {
           Select(this.branchOptions()).selected(Math.max(0, this.gitSelectedBranch)).value(this.branchLabel(this.workspace.gitBranches[this.gitSelectedBranch] || this.workspace.gitBranches[0]))
             .onSelect((index: number) => this.gitSelectedBranch = index).id('session.git.branch')
           Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('session_tools_switch_branch')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('session_tools_switch_branch', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('session_tools_switch_branch')).bindTips(tr('session_tools_switch_branch')).enabled(this.workspace.canWriteGit() && !this.workspace.gitBranches[this.gitSelectedBranch]?.current).onClick(() => this.confirmGitWrite('switch')).id('session.git.switch')
-        } else Text(tr('session_tools_no_branches')).fontSize(Tokens.meta)
+        } else Text(tr('session_tools_no_branches')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         TextInput({ text: this.gitNewBranchName, placeholder: tr('session_tools_new_branch') })
           .onChange((value: string) => this.gitNewBranchName = value).id('session.git.new_branch')
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('session_tools_create_branch')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('session_tools_create_branch', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('session_tools_create_branch')).bindTips(tr('session_tools_create_branch')).enabled(this.workspace.canWriteGit() && !!this.gitNewBranchName.trim()).onClick(() => this.confirmGitWrite('create')).id('session.git.create_branch')
@@ -1459,15 +1459,15 @@ export struct SessionTools {
         TextInput({ text: this.gitStashMessage, placeholder: tr('session_tools_stash_message') })
           .onChange((value: string) => this.gitStashMessage = value).id('session.git.stash_message')
         Row({ space: Tokens.gap }) {
-          Text(tr('session_tools_stash_untracked')).layoutWeight(1).fontSize(Tokens.body)
+          Text(tr('session_tools_stash_untracked')).layoutWeight(1).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body))
           Toggle({ type: ToggleType.Switch, isOn: this.gitStashUntracked }).onChange((value: boolean) => this.gitStashUntracked = value)
             .accessibilityText(tr('session_tools_stash_untracked')).id('session.git.stash_untracked')
         }.width('100%')
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('session_tools_stash_save')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('session_tools_stash_save', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('session_tools_stash_save')).bindTips(tr('session_tools_stash_save')).enabled(this.workspace.canWriteGit() && !this.workspace.gitWriteBusy).onClick(() => this.confirmGitWrite('stash_push')).id('session.git.stash_save')
       }
       if (this.workspace.gitWriteState === 'pending' || this.workspace.gitWriteState === 'unknown')
-        Text(tr('session_tools_write_' + this.workspace.gitWriteState)).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
-      if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
+        Text(tr('session_tools_write_' + this.workspace.gitWriteState)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
+      if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
       if (this.workspace.gitWriteBusy) LoadingProgress().height(Tokens.touch).width(Tokens.touch)
       Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('cancel')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('cancel', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('cancel')).bindTips(tr('cancel')).onClick(() => this.gitSheetOpen = false)
     }.alignItems(HorizontalAlign.Start).padding(Tokens.page).width('100%')
@@ -1495,13 +1495,13 @@ export struct SessionTools {
         },(key:string) => key)
       }.width('100%').padding(3).borderRadius(10).backgroundColor(Colors.control)
       if (this.workspace.gitDiffError) Row() {
-        Text(trError(this.workspace.gitDiffError)).fontSize(14).fontColor(Colors.danger).layoutWeight(1)
+        Text(trError(this.workspace.gitDiffError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).layoutWeight(1)
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.loadGitDiff())
       }.width('100%')
       if (this.workspace.gitDiffBusy) LoadingProgress().height(28).width(28)
       else if (this.workspace.gitDiff) WorkspacePatch({patch:this.workspace.gitDiff, fileOnly:true}).layoutWeight(1)
-      else if (!this.workspace.gitDiffError) Text(tr('session_tools_no_diff')).fontSize(15).fontColor(Colors.secondary)
-      if (this.workspace.gitDiffTruncated) Text(tr('session_tools_truncated')).fontSize(13).fontColor(Colors.secondary)
+      else if (!this.workspace.gitDiffError) Text(tr('session_tools_no_diff')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+      if (this.workspace.gitDiffTruncated) Text(tr('session_tools_truncated')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
     }.padding({bottom:8}).width('100%').height('100%').alignItems(HorizontalAlign.Start)
   }
 
@@ -1516,8 +1516,8 @@ export struct SessionTools {
 
   @Builder commitInfo(commit: Record<string,Object>) {
     Column({space:5}) {
-      Text(Wire.text(commit,'subject')).fontSize(18).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-      if (Wire.text(commit,'body')) Text(Wire.text(commit,'body')).fontSize(15).fontColor(Colors.secondary)
+      Text(Wire.text(commit,'subject')).fontSize(18).maxFontScale(Tokens.interfaceScaleFor(18)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+      if (Wire.text(commit,'body')) Text(Wire.text(commit,'body')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
       Text([Wire.text(commit,'author'),this.commitDate(Wire.text(commit,'date'))].filter((v:string) => !!v).join(' · '))
         .fontSize(13).fontColor(Colors.secondary)
       Button({type:ButtonType.Normal}) {
@@ -1532,8 +1532,8 @@ export struct SessionTools {
   }
 
   @Builder lineCounts(added:number,deleted:number) {
-    Text('+'+added).fontSize(12).fontColor(Colors.positive)
-    Text('−'+deleted).fontSize(12).fontColor(Colors.danger)
+    Text('+'+added).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.positive)
+    Text('−'+deleted).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.danger)
   }
 
   @Builder commitFile(file: Record<string,Object>) {
@@ -1542,7 +1542,7 @@ export struct SessionTools {
         .fontColor(this.gitMarkColor(Wire.text(file,'index') || Wire.text(file,'worktree'))).padding({top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(5).flexShrink(0)
         .id('session.commitRow.icon.'+Wire.text(file,'path'))
       Column({space:2}) {
-        Text(this.leaf(Wire.text(file,'path'))).fontSize(16).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
+        Text(this.leaf(Wire.text(file,'path'))).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
           .id('session.commitRow.name.'+Wire.text(file,'path'))
         if (Wire.text(file,'path').includes('/')) Text(Wire.text(file,'path').split('/').slice(0,-1).join('/'))
           .fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
@@ -1563,7 +1563,7 @@ export struct SessionTools {
     Column({space:9}) {
       if (this.workspace.gitShowBusy) LoadingProgress().height(28).width(28)
       if (this.workspace.gitShowError) Row() {
-        Text(tr('session_git_history_error')).fontSize(14).fontColor(Colors.danger).layoutWeight(1)
+        Text(tr('session_git_history_error')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).layoutWeight(1)
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.showGitCommit(this.workspace.gitCommitHash))
       }.width('100%')
       if (Object.keys(this.workspace.gitShow).length) {
@@ -1587,7 +1587,7 @@ export struct SessionTools {
           }.width('100%').layoutWeight(1)
         }
         if (Wire.bool(this.workspace.gitShow,'truncated') && (!this.commitFilePath || this.selectedCommitPatch))
-          Text(tr('session_tools_truncated')).fontSize(13).fontColor(Colors.secondary)
+          Text(tr('session_tools_truncated')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
       }
     }.width('100%').height('100%').padding(this.patchSubpage() ? 0 : PhoneStyle.page).alignItems(HorizontalAlign.Start).id('session.git.commit_details')
   }
@@ -1655,16 +1655,16 @@ export struct SessionTools {
   @Builder previewServerRow(binding: BoundRow<WorkspacePreviewServer>) {
     Column({ space: Tokens.gap }) {
       Row({ space: Tokens.gap }) {
-        Text(binding.value.name).fontSize(Tokens.body).fontWeight(FontWeight.Medium).layoutWeight(1).maxLines(1)
+        Text(binding.value.name).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium).layoutWeight(1).maxLines(1)
         Text(binding.value.listening ? tr('session_tools_preview_listening') : tr('session_tools_preview_stopped'))
           .fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary'))
       }
-      if (binding.value.title) Text(binding.value.title).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary')).maxLines(2)
-      if (binding.value.problem) Text(tr('session_tools_preview_problem') + ': ' + binding.value.problem).fontSize(Tokens.meta)
+      if (binding.value.title) Text(binding.value.title).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary')).maxLines(2)
+      if (binding.value.problem) Text(tr('session_tools_preview_problem') + ': ' + binding.value.problem).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         .fontColor($r('app.color.persona_danger'))
       if (binding.value.command.length) Text(this.previewCommand(binding.value)).fontSize(Tokens.meta).fontFamily('monospace').maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(binding.value.cwd || this.workspace.cwd).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary')).maxLines(2)
+      Text(binding.value.cwd || this.workspace.cwd).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary')).maxLines(2)
       if (binding.value.listening && binding.value.port > 0) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('session_tools_preview_open')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('session_tools_preview_open', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('session_tools_preview_open')).bindTips(tr('session_tools_preview_open')).enabled(this.workspace.canUsePreview()).onClick(() => this.openReadyPreview(binding.value))
       else if (binding.value.command.length) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('start')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('start', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(tr('start')).bindTips(tr('start')).enabled(this.workspace.canStartPreview() && !binding.value.problem).onClick(() => this.confirmStartPreview(binding.value))
     }.alignItems(HorizontalAlign.Start).padding(Tokens.inset).width('100%')
@@ -1673,7 +1673,7 @@ export struct SessionTools {
   @Builder previewView() {
     Column({ space: Tokens.gap }) {
       Row({ space: Tokens.gap }) {
-        Text(tr('preview')).fontSize(Tokens.title).layoutWeight(1)
+        Text(tr('preview')).fontSize(Tokens.title).maxFontScale(Tokens.interfaceScaleFor(Tokens.title)).layoutWeight(1)
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('refresh')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('refresh', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('refresh')).bindTips(tr('refresh')).onClick(() => this.workspace.loadPreviewServers())
         if (this.workspace.previewState === 'live') {
           Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.collapse).fontSize(Tokens.symbolFont).fontColor([IconActions.color('back', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('back')).bindTips(tr('back')).onClick(() => this.previewAction('back'))
@@ -1681,11 +1681,11 @@ export struct SessionTools {
           Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('refresh')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('refresh', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('refresh')).bindTips(tr('refresh')).onClick(() => this.previewAction('reload'))
         }
       }.padding({ left: Tokens.page, right: Tokens.page, top: Tokens.inset, bottom: Tokens.gap })
-      if (this.workspace.previewError) Text(trError(this.workspace.previewError)).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger')).padding(Tokens.inset)
-      if (this.transferError) Text(this.transferError).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger')).padding(Tokens.inset)
+      if (this.workspace.previewError) Text(trError(this.workspace.previewError)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger')).padding(Tokens.inset)
+      if (this.transferError) Text(this.transferError).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger')).padding(Tokens.inset)
       if (this.workspace.previewState === 'starting' || this.workspace.previewState === 'opening' || this.workspace.previewState === 'connecting') LoadingProgress()
         .height(Tokens.touch).width(Tokens.touch)
-      if (this.workspace.previewMessage) Text(this.workspace.previewMessage).fontSize(Tokens.meta).maxLines(1)
+      if (this.workspace.previewMessage) Text(this.workspace.previewMessage).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).maxLines(1)
         .fontColor($r('sys.color.font_secondary')).padding({ left: Tokens.inset, right: Tokens.inset })
       if (this.workspace.previewState === 'live' && this.previewPixels) {
         Row({ space: Tokens.gap }) {
@@ -1706,7 +1706,7 @@ export struct SessionTools {
           ForEach(this.previewRowBindings, (binding: BoundRow<WorkspacePreviewServer>) => ListItem() { this.previewServerRow(binding) }
             .id('session.preview.' + binding.value.name), (binding: BoundRow<WorkspacePreviewServer>) => binding.key)
           if (!this.workspace.previewServers.length && !this.workspace.previewError && this.workspace.previewState !== 'unsupported')
-            ListItem() { Text(tr('session_tools_preview_none')).fontSize(Tokens.meta).padding(Tokens.page) }
+            ListItem() { Text(tr('session_tools_preview_none')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page) }
         }.layoutWeight(1).width('100%')
       }
     }.width('100%').height('100%')

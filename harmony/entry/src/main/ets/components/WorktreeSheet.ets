@@ -1,3 +1,4 @@
+import { Tokens } from '../design/Tokens';
 import { WorktreeActions } from '../models/WorktreeActions';
 import { PhoneStyle, PhoneSectionTitle } from '../design/PhoneStyle';
 import { Colors } from '../design/Colors';
@@ -21,7 +22,7 @@ export struct WorktreeSheet {
   }
   @Builder field(label: string, identity: string, placeholder: string, change: (text: string) => void) {
     Column({ space: 2 }) {
-      Text(label).fontSize(13).fontColor(Colors.secondary)
+      Text(label).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
       if (identity === 'tree.form.path') {
         TextArea({ text: this.form.path, placeholder: placeholder }).fontSize(15).fontFamily('monospace')
           .lineHeight('22fp').constraintSize({ minHeight: 44, maxHeight: 112 }).maxLines(4)
@@ -33,7 +34,7 @@ export struct WorktreeSheet {
           .enabled(!this.form.busy && (!this.form.unknown || this.form.legacy)).accessibilityDescription(label).id(identity)
       } else {
         TextInput({ text: identity === 'tree.form.branch' ? this.form.branch : this.form.name, placeholder: placeholder })
-          .fontSize(16).fontFamily('monospace').height(44).padding({ left: 0, right: 0 }).borderRadius(0)
+          .fontSize(16).fontFamily('monospace').constraintSize({minHeight:44}).padding({ left: 0, right: 0 }).borderRadius(0)
           .backgroundColor(Color.Transparent).fontColor(Colors.ink).caretColor(Colors.action)
           .onChange(change).enabled(!this.form.busy && (!this.form.unknown || this.form.legacy)).accessibilityDescription(label).id(identity)
       }
@@ -41,15 +42,15 @@ export struct WorktreeSheet {
   }
   @Builder valueRow(label: string, value: string, danger: boolean = false) {
     Row({ space: 14 }) {
-      Text(label).fontSize(15).fontColor(Colors.secondary)
-      Text(value).fontSize(16).fontWeight(FontWeight.Medium).fontColor(danger ? Colors.danger : Colors.ink)
+      Text(label).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+      Text(value).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(danger ? Colors.danger : Colors.ink)
         .textAlign(TextAlign.End).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
     }.width('100%').constraintSize({ minHeight: 45 }).padding({ left: 15, right: 15, top: 7, bottom: 7 })
   }
   @Builder codeValue(label: string, value: string) {
     Column({ space: 5 }) {
-      Text(label).fontSize(13).fontColor(Colors.secondary)
-      Text(value).fontSize(15).fontFamily('monospace').fontColor(Colors.ink).wordBreak(WordBreak.BREAK_ALL)
+      Text(label).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+      Text(value).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontFamily('monospace').fontColor(Colors.ink).wordBreak(WordBreak.BREAK_ALL)
         .width('100%').textAlign(TextAlign.Start).copyOption(CopyOptions.LocalDevice)
     }.width('100%').alignItems(HorizontalAlign.Start).padding({ left: 15, right: 15, top: 11, bottom: 11 })
   }
@@ -58,7 +59,7 @@ export struct WorktreeSheet {
   }
   @Builder toggle(label: string, checked: boolean, identity: string, change: (v: boolean) => void) {
     Row({ space: 10 }) {
-      Text(label).layoutWeight(1).fontColor(Colors.ink).fontSize(16)
+      Text(label).layoutWeight(1).fontColor(Colors.ink).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
       Toggle({ type: ToggleType.Switch, isOn: checked }).selectedColor(this.form.action === 'clean' ? Colors.danger : Colors.action).onChange(change)
         .enabled(!this.form.busy && !this.form.unknown).accessibilityText(label).id(identity)
     }.width('100%').constraintSize({ minHeight: 48 }).padding({ left: 15, right: 15, top: 6, bottom: 6 })
@@ -66,17 +67,17 @@ export struct WorktreeSheet {
   @Builder worktreeBar() {
     Row({ space: 8 }) {
       Button({ type: ButtonType.Circle }) {
-        SymbolGlyph($r('sys.symbol.xmark')).fontSize(17).fontColor([Colors.ink])
+        SymbolGlyph($r('sys.symbol.xmark')).fontSize('17vp').fontColor([Colors.ink])
       }.width(38).height(38).padding(0).backgroundColor(Colors.surface)
         .responseRegion({ x: -3, y: -3, width: 44, height: 44 }).accessibilityText(tr('close'))
         .enabled(!this.form.busy).onClick(() => this.onCancel()).id('tree.form.cancel')
-      Text(this.heading()).layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).fontWeight(FontWeight.Bold)
+      Text(this.heading()).layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).maxFontScale(Tokens.interfaceScaleFor(18)).fontWeight(FontWeight.Bold)
         .fontColor(Colors.ink).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
       Button({ type: this.form.action === 'rename' ? ButtonType.Circle : ButtonType.Capsule }) {
         if (this.form.busy) LoadingProgress().width(19).height(19).color(Colors.secondary)
-        else if (this.form.action === 'rename') SymbolGlyph(Symbols.check).fontSize(18)
+        else if (this.form.action === 'rename') SymbolGlyph(Symbols.check).fontSize('18vp')
           .fontColor([this.form.canSubmit ? Colors.onAction : Colors.secondary])
-        else Text(this.verb()).fontSize(15).fontWeight(FontWeight.Medium)
+        else Text(this.verb()).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
           .fontColor(this.form.canSubmit ? (this.form.action === 'clean' ? Colors.danger : Colors.onAction) : Colors.secondary)
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       }.height(38).constraintSize({ minWidth: this.form.action === 'rename' ? 38 : 54, maxWidth: '30%' })
@@ -146,7 +147,7 @@ export struct WorktreeSheet {
                 }
                 this.valueRow(tr('tree_dirty_files'), String(this.form.dirty), this.form.dirty > 0)
               }.width('100%').borderRadius(PhoneStyle.cardRadius).backgroundColor(Colors.surface).clip(true).id('tree.form.preview')
-              if (this.form.dirty > 0) Text(tr('tree_changed_files')).fontSize(13).fontColor(Colors.danger)
+              if (this.form.dirty > 0) Text(tr('tree_changed_files')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.danger)
                 .padding({ left: 6, right: 6, top: 6 })
               if (this.form.dirty || (!this.form.folder && this.form.branch)) {
                 Column() {
@@ -160,7 +161,7 @@ export struct WorktreeSheet {
             }
           }
           if (this.form.error) {
-            Text(tr(this.form.error)).fontSize(15).fontColor(this.form.renameCurrent ? Colors.secondary : Colors.danger).padding(12).id('tree.form.error')
+            Text(tr(this.form.error)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(this.form.renameCurrent ? Colors.secondary : Colors.danger).padding(12).id('tree.form.error')
             if (!this.form.ready && !this.form.unknown) Button(tr('retry'), { buttonStyle: ButtonStyleMode.TEXTUAL }).onClick(() => this.onRetry()).id('tree.form.retry')
             if (this.form.unknown && (this.form.requestCheckAvailable || this.form.busy)) {
               Button(tr(this.form.action === 'clean' ? 'tree_check_result' : 'tree_check_worktree_result'), { buttonStyle: ButtonStyleMode.TEXTUAL })
@@ -169,7 +170,7 @@ export struct WorktreeSheet {
                 .onClick(() => this.onReconcile(true)).id('tree.form.retry_same')
               if (this.form.action === 'rename' && this.form.renameCurrent) {
                 Button({type:ButtonType.Normal,buttonStyle:ButtonStyleMode.TEXTUAL}) {
-                  Text(tr('tree_rename_keep_current')).fontSize(16).fontColor(Colors.link).textAlign(TextAlign.Center).wordBreak(WordBreak.BREAK_WORD)
+                  Text(tr('tree_rename_keep_current')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link).textAlign(TextAlign.Center).wordBreak(WordBreak.BREAK_WORD)
                 }.width('100%').constraintSize({minHeight:48}).padding({left:12,right:12,top:8,bottom:8})
                   .accessibilityText(tr('tree_rename_keep_current')).enabled(this.form.canCheck)
                   .onClick(() => this.onReconcile(true)).id('tree.form.rename.keep')

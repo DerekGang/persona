@@ -1,3 +1,4 @@
+import { Tokens } from '../design/Tokens';
 import { ClientModel } from '../models/ClientModel';
 import { MEETING_ROLES, MeetingPreferences, meetingRoleLabel } from '../models/MeetingPreferences';
 import { Colors } from '../design/Colors';
@@ -21,7 +22,7 @@ export struct PhoneMeetingSettings {
           ForEach(MEETING_ROLES,(role:string,i:number) => {
             Button({type:ButtonType.Normal}) {
               Row({space:8}) {
-                Text(tr(meetingRoleLabel(role))).fontSize(17).fontColor(Colors.ink).layoutWeight(1)
+                Text(tr(meetingRoleLabel(role))).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.ink).layoutWeight(1)
                 if (this.preferences.role===role) SymbolGlyph(Symbols.check).fontSize('17vp').fontColor([Colors.link])
               }.width('100%')
             }.width('100%').constraintSize({minHeight:48}).padding({left:16,right:16,top:7,bottom:7}).backgroundColor(Color.Transparent)
@@ -30,12 +31,12 @@ export struct PhoneMeetingSettings {
             if (i<MEETING_ROLES.length-1) Divider().strokeWidth(0.5).color(Colors.divider).margin({left:16})
           },(role:string) => role)
         }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
-        Text(tr('phone_meeting_default_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:12,right:12})
+        Text(tr('phone_meeting_default_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:12,right:12})
       } else if (!this.model.connected || !this.model.features.includes('meeting_attendance') || this.preferences.error) {
-        Text(tr(!this.model.connected ? 'offline' : this.preferences.error || 'phone_meeting_unavailable')).fontSize(15).fontColor(Colors.secondary)
-        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => this.preferences.open(this.model))
+        Text(tr(!this.model.connected ? 'offline' : this.preferences.error || 'phone_meeting_unavailable')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).onClick(() => this.preferences.open(this.model))
       } else LoadingProgress().width(26).height(26)
-      if (this.preferences.ready && this.preferences.error) Text(tr(this.preferences.error)).fontSize(14).fontColor(Colors.danger)
+      if (this.preferences.ready && this.preferences.error) Text(tr(this.preferences.error)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger)
     }.width('100%').alignItems(HorizontalAlign.Start).padding(16) }.width('100%').height('100%').align(Alignment.TopStart)
       .backgroundColor(Colors.grouped).id('settings.meetings.options')
   }

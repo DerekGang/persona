@@ -1,3 +1,4 @@
+import { Tokens } from '../design/Tokens';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { ClientModel } from '../models/ClientModel';
 import { ResourceRow } from '../models/Wire';
@@ -39,12 +40,12 @@ export struct PhoneConversationSearch {
           .backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
           .onChange((v:string) => this.query = v).enterKeyType(EnterKeyType.Search).defaultFocus(true).id('phone_search.field')
       }.layoutWeight(1).alignItems(VerticalAlign.Center).padding({left:10,right:5}).backgroundColor(Colors.control).borderRadius(12)
-      Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).height(Math.max(38,Math.ceil(22*nativeEnvironment.fontScale)+10)).fontSize(15).fontColor(Colors.link).padding({left:3,right:2})
+      Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).height(Math.max(38,Math.ceil(22*nativeEnvironment.fontScale)+10)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).padding({left:3,right:2})
         .onClick(() => this.onCancel()).id('phone_search.cancel')
     }.width('100%').padding({left:12,right:12,top:6,bottom:6})
   }
   @Builder scopeButton(isAgent:boolean,label:string) {
-    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(Math.max(31,Math.ceil(21*nativeEnvironment.fontScale)+8)).fontSize(14)
+    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(Math.max(31,Math.ceil(21*nativeEnvironment.fontScale)+8)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
       .fontWeight(this.agents === isAgent ? FontWeight.Bold : FontWeight.Normal)
       .fontColor(this.agents === isAgent ? Colors.ink : Colors.secondary)
       .backgroundColor(this.agents === isAgent ? Colors.surface : Color.Transparent)
@@ -54,7 +55,7 @@ export struct PhoneConversationSearch {
     Column() {
       if (this.inline) this.fieldBar()
       else Row() {
-        Text(tr('flow_all_chats')).fontSize(29).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+        Text(tr('flow_all_chats')).fontSize(29).maxFontScale(Tokens.interfaceScaleFor(29)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       }.width('100%').padding({left:16,right:16,top:12,bottom:8})
       if (this.showScopes) Row() { this.scopeButton(false,'persona'); this.scopeButton(true,'agents') }
         .constraintSize({minHeight:35}).padding(2).margin({left:12,right:12,top:3,bottom:5}).width('92%').backgroundColor(Colors.control).borderRadius(18)
@@ -64,14 +65,14 @@ export struct PhoneConversationSearch {
             .fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:15,right:12,top:7,bottom:5})
         }
         if (this.search.busy) ListItem() { LoadingProgress().width(23).height(23).margin(10) }
-        if (!this.rows.length && !this.search.busy) ListItem() { Text(tr(this.query ? 'no_results' : 'empty')).fontSize(15).fontColor(Colors.secondary).padding(16) }
+        if (!this.rows.length && !this.search.busy) ListItem() { Text(tr(this.query ? 'no_results' : 'empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(16) }
         ForEach(this.rows,(hit:PhoneChatMatch) => {
           ListItem() {
             Row({space:10}) {
               SymbolGlyph(this.agents ? Symbols.agent : this.main(hit) ? $r('sys.symbol.house') : Symbols.persona).fontSize('19vp').fontColor([Colors.secondary])
               Column({space:3}) {
-                Text(this.main(hit) ? tr('main_chat') : hit.row.title || tr('persona')).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
-                if (hit.subtitle) Text(hit.subtitle).fontSize(14).fontColor(Colors.secondary).maxLines(this.inline ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
+                Text(this.main(hit) ? tr('main_chat') : hit.row.title || tr('persona')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+                if (hit.subtitle) Text(hit.subtitle).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(this.inline ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
               }.alignItems(HorizontalAlign.Start).layoutWeight(1)
               if (!this.inline) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.width('100%').constraintSize({minHeight:48}).padding({left:13,right:12,top:8,bottom:8})
@@ -79,7 +80,7 @@ export struct PhoneConversationSearch {
           }.onClick(() => this.onOpen(hit.row,hit.hitId)).accessibilityGroup(true).id('phone_search.result')
         },(hit:PhoneChatMatch) => JSON.stringify([hit.row.key(),hit.row.title,hit.subtitle]))
         if (this.search.partial || this.search.failed) ListItem() {
-          Text(tr(this.search.failed ? 'flow_search_local' : 'flow_search_partial')).fontSize(13).fontColor(Colors.secondary).padding(12)
+          Text(tr(this.search.failed ? 'flow_search_local' : 'flow_search_partial')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding(12)
         }
       }.layoutWeight(1).width('100%').divider({strokeWidth:0.5,startMargin:43,endMargin:12,color:Colors.divider})
       if (!this.inline) this.fieldBar()

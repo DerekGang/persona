@@ -420,10 +420,10 @@ export struct TodoWorkspacePage {
     if (Number.isFinite(todo.due) || !!todo.priority) Row({space:6}) {
       if (Number.isFinite(todo.due)) {
         SymbolGlyph(Symbols.calendar).fontSize('12vp').fontColor([!todo.isDone() && todo.dueBy < this.clock ? Colors.danger : Colors.secondary])
-        Text(this.dueTitle(todo)).fontSize(12).fontColor(!todo.isDone() && todo.dueBy < this.clock ? Colors.danger : Colors.secondary)
+        Text(this.dueTitle(todo)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(!todo.isDone() && todo.dueBy < this.clock ? Colors.danger : Colors.secondary)
       }
       if (todo.priority) Text(tr(['low','medium','high'].includes(todo.priority) ? todo.priority : 'flow_todo_priority') +
-        (!['low','medium','high'].includes(todo.priority) ? ' · ' + todo.priority : '')).fontSize(12)
+        (!['low','medium','high'].includes(todo.priority) ? ' · ' + todo.priority : '')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
         .fontColor(todo.priority === 'high' ? Colors.needs : Colors.secondary).padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.control).borderRadius(5)
     }.width('100%')
   }
@@ -455,20 +455,20 @@ export struct TodoWorkspacePage {
           Row({space:7}) {
             Column({space:4}) {
               Row({space:5}) {
-                Text(binding.value.lead.title).fontSize(17).fontWeight(FontWeight.Medium).layoutWeight(1)
+                Text(binding.value.lead.title).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).layoutWeight(1)
                   .fontColor(this.rowClosed(binding.value.lead) ? Colors.secondary : Colors.ink)
                   .decoration({type:this.rowClosed(binding.value.lead) ? TextDecorationType.LineThrough : TextDecorationType.None}).maxLines(2)
-                if (nativeEnvironment.fontScale<1.5 && this.since(binding.value.lead))
-                  Text(this.since(binding.value.lead)).fontSize(11).fontColor(Colors.secondary)
+                if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17))<1.5 && this.since(binding.value.lead))
+                  Text(this.since(binding.value.lead)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
               }.width('100%').alignItems(VerticalAlign.Top)
               if (!this.hubMode()) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(4),cross:LengthMetrics.vp(2)}}) {
-                Text(tr('todo_state_'+binding.value.state)).fontSize(12).fontColor(binding.value.state==='needs_you' ? Colors.needs : Colors.secondary)
+                Text(tr('todo_state_'+binding.value.state)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(binding.value.state==='needs_you' ? Colors.needs : Colors.secondary)
                 if (binding.value.lead.activeAgents().length)
                   Text('· '+tr('project_agent_count').replace('{count}',String(binding.value.lead.activeAgents().length)))
-                    .fontSize(12).fontColor(Colors.secondary)
+                    .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
               }.width('100%')
               this.metadata(binding.value.lead)
-              if (this.rowLine(binding.value)) Text(this.rowLine(binding.value)).fontSize(14)
+              if (this.rowLine(binding.value)) Text(this.rowLine(binding.value)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
                 .fontColor(binding.value.state==='needs_you' ? Colors.link : Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
             }.alignItems(HorizontalAlign.Start).layoutWeight(1)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
@@ -480,12 +480,12 @@ export struct TodoWorkspacePage {
           Divider().strokeWidth(0.5).color(Colors.divider).margin({left:54})
           Row({space:6}) {
             SymbolGlyph(this.expandedGroups.includes(binding.value.key) ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-            Text(tr('todo_related') + ' · ' + String(binding.value.members.length-1)).fontSize(14).fontColor(Colors.link)
+            Text(tr('todo_related') + ' · ' + String(binding.value.members.length-1)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.link)
           }.height(42).width('100%').padding({left:57}).accessibilityGroup(true).onClick(() => this.toggleGroup(binding.value.key))
             .id('todos.related.'+binding.value.lead.id)
           if (this.expandedGroups.includes(binding.value.key)) ForEach(binding.value.related(),(todo:TodoWorkspaceItem) => {
             Row({space:8}) {
-              Text(todo.title).fontSize(15).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
+              Text(todo.title).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
               SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.constraintSize({minHeight:44}).width('100%').padding({left:57,right:14})
               .accessibilityGroup(true).onClick(() => this.onOpenResource(this.workspace.todoResource(todo))).id('todos.member.'+todo.id)
@@ -508,8 +508,8 @@ export struct TodoWorkspacePage {
   }
   @Builder sectionHeader(binding:BoundTodoSection) {
     if (!this.hubMode() || !this.workspace.hubCalm()) Row({space:6}) {
-      Text(this.sectionTitle(binding.value)).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-      Text(String(this.sectionCount(binding))).fontSize(13)
+      Text(this.sectionTitle(binding.value)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+      Text(String(this.sectionCount(binding))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
         .fontColor(binding.value.key === 'needs_you' ? Colors.needs : Colors.secondary).layoutWeight(1)
       if (this.foldable(binding.value)) SymbolGlyph(this.sectionOpen(binding.value) ? Symbols.down : Symbols.expand)
         .fontSize(12).fontColor([Colors.secondary])
@@ -527,10 +527,10 @@ export struct TodoWorkspacePage {
         ForEach(this.workspace.hubCounts?.choices(this.workspace.hubChoice) || [], (key: string) => {
           Button({ type: ButtonType.Capsule }) {
             Row({ space: 5 }) {
-              Text(tr(todoHubLabel(key))).fontSize(14).fontWeight(FontWeight.Medium)
+              Text(tr(todoHubLabel(key))).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium)
                 .fontColor(this.workspace.hubChoice === key ? Colors.onAction : Colors.ink)
               if (['needs_you','in_progress','todo'].includes(key) && this.workspace.hubCounts?.choiceCount(key))
-                Text(String(this.workspace.hubCounts?.choiceCount(key) || 0)).fontSize(12).fontWeight(FontWeight.Bold)
+                Text(String(this.workspace.hubCounts?.choiceCount(key) || 0)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Bold)
                   .fontColor(this.workspace.hubChoice === key ? Colors.onAction : key === 'needs_you' ? Colors.needs : Colors.secondary)
             }
           }.height(34).padding({ left: 10, right: 10 }).backgroundColor(this.workspace.hubChoice === key ? Colors.action : Colors.surface)
@@ -605,7 +605,7 @@ export struct TodoWorkspacePage {
     Button({type:ButtonType.Normal}) {
       Row({space:6}) {
         Circle().width(7).height(7).fill(item.isDone() ? Colors.secondary : Colors.link)
-        Text(item.title).fontSize(15).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
+        Text(item.title).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
         SymbolGlyph(Symbols.expand).fontSize('11vp').fontColor([Colors.secondary])
       }.width('100%')
     }.width('100%').constraintSize({minHeight:42}).padding({left:10,right:10,top:4,bottom:4}).backgroundColor(Colors.surface)
@@ -632,8 +632,8 @@ export struct TodoWorkspacePage {
       ForEach(todoCalendarDays(this.calendarMode,this.calendarAnchor,this.weekStart),(day:number) => {
         Column({space:4}) {
           Text(new Date(day).toLocaleDateString(this.dateLocale(),{weekday:'short'})).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
-          Text(String(new Date(day).getDate())).fontSize(16).fontColor(Colors.ink)
-          if (this.agendaItems(day).length) Text(String(this.agendaItems(day).length)).fontSize(11).fontColor(Colors.link)
+          Text(String(new Date(day).getDate())).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
+          if (this.agendaItems(day).length) Text(String(this.agendaItems(day).length)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.link)
         }.width('14.28%').constraintSize({minHeight:62}).padding({top:4,bottom:4}).borderRadius(8)
           .backgroundColor(todoDayKey(new Date(day))===todoDayKey(new Date(this.calendarAnchor)) ? Colors.selection : Color.Transparent)
           .accessibilityText(new Date(day).toLocaleDateString(this.dateLocale())+' · '+String(this.agendaItems(day).length))
@@ -643,7 +643,7 @@ export struct TodoWorkspacePage {
     if (this.calendarMode==='week') {
       ForEach(todoCalendarDays('week',this.calendarAnchor,this.weekStart),(day:number) => {
         if (this.agendaItems(day).length) {
-          Text(new Date(day).toLocaleDateString(this.dateLocale())).fontSize(14).fontColor(Colors.secondary).width('100%').padding(8)
+          Text(new Date(day).toLocaleDateString(this.dateLocale())).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding(8)
           ForEach(this.agendaItems(day),(item:TodoWorkspaceItem) => { this.calendarItem(item) },(item:TodoWorkspaceItem) => item.id+item.raw)
         }
       },(day:number) => String(day))
@@ -665,7 +665,7 @@ export struct TodoWorkspacePage {
         Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.collapse).fontSize('16vp').fontColor([Colors.link]) }
           .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('back')).onClick(() => this.moveCalendar(-1)).id('todos.calendar.prev')
         Button(new Date(this.calendarAnchor).toLocaleDateString(this.dateLocale()),{buttonStyle:ButtonStyleMode.TEXTUAL}).layoutWeight(1)
-          .fontSize(16).fontColor(Colors.ink).accessibilityText(tr('flow_todo_today')).onClick(() => this.calendarAnchor=Date.now()).id('todos.calendar.today')
+          .fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).accessibilityText(tr('flow_todo_today')).onClick(() => this.calendarAnchor=Date.now()).id('todos.calendar.today')
         Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.expand).fontSize('16vp').fontColor([Colors.link]) }
           .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('phone_calendar_'+this.calendarMode)+' +1').onClick(() => this.moveCalendar(1)).id('todos.calendar.next')
         Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.plus).fontSize('18vp').fontColor([Colors.link]) }
@@ -674,7 +674,7 @@ export struct TodoWorkspacePage {
       Scroll() { Column() {
         if (this.calendarMode==='day') this.calendarDay()
         else this.calendarGrid()
-        Button(tr('flow_todo_no_due')+' '+String(this.workspace.items.filter((i:TodoWorkspaceItem)=>!Number.isFinite(i.due)).length),{buttonStyle:ButtonStyleMode.TEXTUAL})
+        Button(tr('flow_todo_no_due')+' '+String(this.workspace.items.filter((i:TodoWorkspaceItem)=>!Number.isFinite(i.due)).length),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale)
           .fontColor(Colors.link).onClick(() => this.calendarOpen=false)
       }.width('100%').alignItems(HorizontalAlign.Start) }.layoutWeight(1).width('100%')
     }.width('100%').height('100%').padding({left:16,right:16,top:7,bottom:8}).backgroundColor(Colors.grouped).id('todos.calendar')
@@ -686,12 +686,12 @@ export struct TodoWorkspacePage {
         Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(5),cross:LengthMetrics.vp(5)}}) {
           Button({type:ButtonType.Capsule}) {
             Row({space:5}) {
-              Text(this.groupOptions()[Math.max(0,this.groupIndex())].value).fontSize(14).fontColor(Colors.ink)
+              Text(this.groupOptions()[Math.max(0,this.groupIndex())].value).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.ink)
               SymbolGlyph(Symbols.down).fontSize('10vp').fontColor([Colors.secondary])
             }
-          }.padding({left:12,right:12}).height(Math.max(38,Math.ceil(21*nativeEnvironment.fontScale)+10)).backgroundColor(Colors.surface).bindMenu(this.listFilters).id('todos.group')
+          }.padding({left:12,right:12}).height(Math.max(38,Math.ceil(21*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+10)).backgroundColor(Colors.surface).bindMenu(this.listFilters).id('todos.group')
           if (this.workspace.dueFilter !== 'all') Button(this.dueFilterLabel(this.workspace.dueFilter) + ' ×', {type:ButtonType.Capsule})
-            .fontColor(Colors.onAction).backgroundColor(Colors.action).fontSize(14).height(Math.max(38,Math.ceil(21*nativeEnvironment.fontScale)+10)).padding({left:12,right:12})
+            .fontColor(Colors.onAction).backgroundColor(Colors.action).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).height(Math.max(38,Math.ceil(21*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+10)).padding({left:12,right:12})
             .onClick(() => this.workspace.setDueFilter('all')).id('todos.due.clear')
         }.layoutWeight(1)
         Badge({ count: (!this.hubMode() && this.workspace.statusFilter !== 'all' ? 1 : 0) + (this.workspace.effectiveGroup() !== 'status' ? 1 : 0) + (this.workspace.dueFilter !== 'all' ? 1 : 0) + (this.workspace.order !== 'recent' ? 1 : 0),
@@ -702,20 +702,20 @@ export struct TodoWorkspacePage {
         }
         Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('add')).onClick(() => this.workspace.startCreate()).id('todos.add')
       }.padding({ left: Tokens.inset, right: Tokens.inset, top: Tokens.inset, bottom: Tokens.gap })
-      Search({value:this.workspace.search,placeholder:tr('todo_search')}).width('100%').height(Math.max(40,Math.ceil(24*nativeEnvironment.fontScale)+8))
+      Search({value:this.workspace.search,placeholder:tr('todo_search')}).maxFontScale(Tokens.interfaceFontMaxScale).width('100%').height(Math.max(40,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+8))
         .padding({left:Tokens.page,right:Tokens.page}).onChange((value:string) => this.workspace.setSearch(value)).id('todos.search')
       if (this.hiddenWaitingCount) Column({space:4}) {
         Row({space:8}) {
           SymbolGlyph(Symbols.inbox).fontSize('16vp').fontColor([Colors.needs])
           Text(tr('phone_todo_waiting_hidden').replace('{count}',String(this.hiddenWaitingCount))
-            .replace('{filter}',this.dueFilterLabel(this.workspace.dueFilter))).fontSize(15).fontColor(Colors.ink).layoutWeight(1)
+            .replace('{filter}',this.dueFilterLabel(this.workspace.dueFilter))).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
         }.width('100%')
-        Button(tr('project_show_all'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link)
-          .alignSelf(ItemAlign.Start).constraintSize({minHeight:Math.max(36,Math.ceil(22*nativeEnvironment.fontScale)+8)}).padding({left:6,right:6}).onClick(() => this.workspace.setDueFilter('all')).id('todos.due.show_all')
+        Button(tr('project_show_all'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
+          .alignSelf(ItemAlign.Start).constraintSize({minHeight:Math.max(36,Math.ceil(22*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+8)}).padding({left:6,right:6}).onClick(() => this.workspace.setDueFilter('all')).id('todos.due.show_all')
       }.width('100%').padding({left:13,right:10,top:6,bottom:6}).constraintSize({minHeight:44})
         .backgroundColor(Colors.surface).borderRadius(12).margin({top:6}).id('todos.due.hidden')
       if (this.hubMode() && !this.workspace.hubCalm() && !this.workspace.search.trim()) this.hubChoiceBar()
-      if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta)
+      if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         .fontColor($r('app.color.persona_danger')).padding(Tokens.inset).width('100%')
       List({space:3}) {
         if (this.workspace.loading && !this.workspace.items.length) ListItem() { LoadingProgress().height(Tokens.touch).width(Tokens.touch).padding(Tokens.page) }
@@ -726,7 +726,7 @@ export struct TodoWorkspacePage {
           }.id(section.key)
         }, (section: BoundTodoSection) => section.key)
         if (!this.sectionBindings.length && !this.workspace.loading) ListItem() {
-          Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).padding(Tokens.page).width('100%')
+          Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
         }
       }.width('100%').layoutWeight(1).padding({ left: Tokens.page, right: Tokens.page, bottom: Tokens.inset })
     }.width('100%').height('100%').backgroundColor(Colors.grouped)
@@ -773,10 +773,10 @@ export struct TodoWorkspacePage {
         if (this.workspace.selected.id) Column({ space: Tokens.page }) {
           Column({space:8}) {
             Text(tr(this.hubMode() ? todoHubLabel(this.workspace.hubSection(this.workspace.selected, this.clock)) :
-              this.workspace.stateLabelKey(this.workspace.selected))).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.link)
+              this.workspace.stateLabelKey(this.workspace.selected))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.link)
               .padding({left:8,right:8,top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(9)
               .bindContextMenu(this.todoMenu(this.workspace.selected), ResponseType.LongPress)
-            Text(this.workspace.selected.title).fontSize(21).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(4)
+            Text(this.workspace.selected.title).fontSize(21).maxFontScale(Tokens.interfaceScaleFor(21)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(4)
             this.metadata(this.workspace.selected)
             if (this.hubMode() && this.workspace.selected.hubView?.line && this.workspace.selected.hubView?.line !== this.workspace.selected.startError &&
               this.workspace.selected.hubView?.line !== this.workspace.selected.doneReason && this.workspace.selected.hubView?.line !== this.workspace.selected.notes)
@@ -807,12 +807,12 @@ export struct TodoWorkspacePage {
           }, (binding: BoundRow<TodoWorkspaceItem>) => binding.key)
 
           if (this.spaceBindings.length) {
-            Text(tr('todo_projects')).fontSize(Tokens.meta).width('100%')
+            Text(tr('todo_projects')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).width('100%')
             List() { ForEach(this.spaceBindings, (binding: BoundRow<TodoWorkspaceSpace>) => this.spaceRow(binding),
               (binding: BoundRow<TodoWorkspaceSpace>) => binding.key) }.height(Math.min(300, Tokens.touch * this.spaceBindings.length))
           }
 
-          if (this.activeAgentBindings.length || this.previousAgentBindings.length || !this.workspace.selected.isDone() && this.workspace.candidateSessions().length) Text(tr('todo_agents')).fontSize(Tokens.meta).width('100%')
+          if (this.activeAgentBindings.length || this.previousAgentBindings.length || !this.workspace.selected.isDone() && this.workspace.candidateSessions().length) Text(tr('todo_agents')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).width('100%')
           ForEach(this.activeAgentBindings, (binding: BoundRow<TodoWorkspaceAgent>) => this.agentRow(binding),
             (binding: BoundRow<TodoWorkspaceAgent>) => binding.key)
           if (this.previousAgentBindings.length) {
@@ -844,10 +844,10 @@ export struct TodoWorkspacePage {
                 .onClick(() => this.confirmLinkSpace(this.workspace.selected))
             }
           }
-          if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta)
+          if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
             .fontColor($r('app.color.persona_danger')).width('100%')
         }.alignItems(HorizontalAlign.Start).padding(Tokens.page).width('100%')
-        else Text(tr(this.detailEmptyKey())).fontSize(Tokens.meta).padding(Tokens.page).width('100%')
+        else Text(tr(this.detailEmptyKey())).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
       }.align(Alignment.TopStart).layoutWeight(1).width('100%')
       if (this.workspace.selected.id) Row({ space: Tokens.gap }) {
         Button({ type: ButtonType.Circle }) { if (IconActions.busy(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_complete')) LoadingProgress().width(Tokens.symbol).height(Tokens.symbol).color(Colors.onAction); else SymbolGlyph(IconActions.symbol(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_complete')).fontSize(Tokens.symbolFont).fontColor([IconActions.color(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_complete', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(this.completionLabel()).bindTips(this.completionLabel()).enabled(!this.workspace.saving && !this.workspace.targetGone).onClick(() => this.changeCompletion())
@@ -860,12 +860,12 @@ export struct TodoWorkspacePage {
   @Builder editor() {
     Column({ space: Tokens.page }) {
       if (!this.workspace.selected.id && Number.isFinite(this.workspace.selected.due))
-        Text(tr('flow_todo_due')+' · '+this.dueTitle(this.workspace.selected)).fontSize(15).fontColor(Colors.secondary).width('100%').id('todos.calendar.create_due')
+        Text(tr('flow_todo_due')+' · '+this.dueTitle(this.workspace.selected)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).width('100%').id('todos.calendar.create_due')
       TextInput({ text: this.workspace.titleDraft, placeholder: tr('title') }).onChange((value: string) => this.workspace.setTitleDraft(value))
         .id('todos.title')
       TextArea({ text: this.workspace.notesDraft, placeholder: tr('todo_notes') }).onChange((value: string) => this.workspace.setNotesDraft(value))
         .height(Tokens.inputExpanded).id('todos.notes')
-      if (this.workspace.error) Text(tr(this.workspace.error)).fontColor($r('app.color.persona_danger')).width('100%')
+      if (this.workspace.error) Text(tr(this.workspace.error)).maxFontScale(Tokens.interfaceFontMaxScale).fontColor($r('app.color.persona_danger')).width('100%')
       Row({ space: Tokens.gap }) {
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('save')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('save', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(tr('save')).bindTips(tr('save'))
           .enabled(!this.workspace.saving && !this.workspace.targetGone && !!this.workspace.titleDraft.trim())

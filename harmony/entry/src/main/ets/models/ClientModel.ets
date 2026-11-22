@@ -104,6 +104,10 @@ export class ClientModel {
   @Trace knowledge: ResourceRow[] = [];
   @Trace knowledgeKind: string = 'projects';
   @Trace inbox: ResourceRow[] = [];
+  private inboxSnapshotKey: string = '';
+  private inboxChange: number = 0;
+  private inboxReadKey: string = '';
+  private inboxRead: Promise<void> | undefined;
   @Trace selected: ResourceRow = new ResourceRow();
   @Trace messages: ChatMessage[] = [];
   @Trace cards: ResourceRow[] = [];
@@ -688,6 +692,7 @@ export class ClientModel {
         if (Wire.text(data, 'machine_id') === this.selected.machine && Wire.text(data, 'session_id') === this.selected.session)
           this.terminalText = (this.terminalText + Wire.text(data, 'data')).slice(-200000);
       } else if (['interaction', 'interactions', 'interaction_resolved', 'session', 'sessions', 'sessions_delta', 'item', 'items', 'session_delta', 'todo', 'inbox', 'task_plan', 'assistant_feed', 'managers', 'machines'].includes(type)) {
+        if (type === 'inbox') this.inboxChange++;
         this.queueRefresh();
       }
     } catch (_) { this.error = 'failed'; }
@@ -756,9 +761,24 @@ export class ClientModel {
       catch (_) { if (this.owns(generation, scope)) this.error = 'cache_unavailable'; }
       if (this.isChat() && this.chatVisible) await this.loadChat(this.selected);
       else if (this.isChat() && this.decisionsVisible) await this.refreshDecisions();
-      if (this.section === 2) { const inbox = await repo.inbox(); if (this.owns(generation, scope)) this.inbox = inbox; }
+      if (this.section === 2) await this.refreshInboxSnapshot(repo, generation, scope, true);
+      else if (!this.detached) this.refreshInboxSnapshot(repo, generation, scope, false).catch(() => {});
     } catch (error) { if (this.owns(generation, scope)) this.failure(error as Error); }
     finally { if (this.owns(generation, scope)) { this.busy = false; this.publishDirectory(); } }
+  }
+  private async refreshInboxSnapshot(repo: HubRepository, generation: number, scope: string, force: boolean): Promise<void> {
+    const change = this.inboxChange, key = JSON.stringify([generation, scope, change]);
+    if (key === this.inboxReadKey && this.inboxRead) return this.inboxRead;
+    if (!force && key === this.inboxSnapshotKey) return Promise.resolve();
+    this.inboxReadKey = key;
+    this.inboxRead = repo.inbox().then((rows: ResourceRow[]) => {
+      if (this.owns(generation, scope) && this.inboxChange === change) {
+        this.inbox = rows; this.inboxSnapshotKey = key;
+      }
+    }).finally(() => {
+      if (this.inboxReadKey === key) { this.inboxRead = undefined; this.inboxReadKey = ''; }
+    });
+    return this.inboxRead;
   }
   async openMain(): Promise<ResourceRow> {
     const generation = this.generation, scope = this.scope(), repository = this.repository;

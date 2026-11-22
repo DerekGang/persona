@@ -1,6 +1,18 @@
 {
   "color": [
     {
+      "name": "project_card_secondary",
+      "value": "#99EBEBF5"
+    },
+    {
+      "name": "project_card_tertiary",
+      "value": "#4CEBEBF5"
+    },
+    {
+      "name": "project_card_needs_border",
+      "value": "#8086B6FF"
+    },
+    {
       "name": "start_window_background",
       "value": "#000000"
     },

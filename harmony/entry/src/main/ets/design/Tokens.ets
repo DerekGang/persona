@@ -9,7 +9,15 @@ export class Tokens {
   static readonly chrome: number = 40;
   static readonly symbol: number = 22;
   static readonly symbolFont: string = String(Tokens.symbol) + 'vp';
-  static readonly chromeFontMaxScale: number = 2;
+  // Persona caps interface text at iOS xxxLarge. UIKit adds six points to its
+  // standard interface styles there. Message, document and editor text retain
+  // the full accessibility scale.
+  static readonly interfaceFontMaxScale: number = 23 / 17;
+  static readonly chromeFontMaxScale: number = 40 / 34;
+  static interfaceScaleFor(points: number): number {
+    const standard = Math.max(11, Math.min(34, points));
+    return (standard + 6) / standard;
+  }
   static readonly avatar: number = 40;
   static readonly avatarChoice: number = 56;
   static readonly caption: number = 13;
@@ -22,7 +30,7 @@ export class Tokens {
   static readonly compactPane: number = 340;
   static readonly popupWidth: number = 280;
   // Compact system-like navigation shares a line with back and menu buttons at every text size.
-  static readonly navigationTextMaxScale: number = 1.35;
+  static readonly navigationTextMaxScale: number = Tokens.interfaceFontMaxScale;
   static readonly headerSegment: number = 192;
   static readonly headerWideSegment: number = 176;
   static readonly minimumInput: number = 136;

@@ -120,17 +120,17 @@ struct MachineTimeAxis {
   build() {
     Stack({alignContent:Alignment.TopStart}) {
       // This native label reserves a full line and measures the actual scaled, tabular clock face.
-      Text('00:00').fontSize(10).fontFeature('tnum 1').visibility(Visibility.Hidden)
+      Text('00:00').fontSize(10).maxFontScale(Tokens.interfaceScaleFor(10)).fontFeature('tnum 1').visibility(Visibility.Hidden)
         .onAreaChange((_:Area,area:Area) => { this.labelWidth = Math.ceil(Number(area.width)); })
       if (this.ticks.length) {
         ForEach(this.ticks,(time:number) => {
-          Text(clockLabel(time)).fontSize(10).fontFeature('tnum 1').fontColor(Colors.secondary)
+          Text(clockLabel(time)).fontSize(10).maxFontScale(Tokens.interfaceScaleFor(10)).fontFeature('tnum 1').fontColor(Colors.secondary)
             .position({x:dashboardTickLeft(time,this.end,this.seconds,this.axisWidth,this.labelWidth),y:0})
         },(time:number) => String(time))
       } else {
         Flex({wrap:FlexWrap.Wrap,justifyContent:FlexAlign.SpaceBetween}) {
-          Text(clockLabel(this.end-this.seconds)).fontSize(10).fontFeature('tnum 1').fontColor(Colors.secondary)
-          Text(clockLabel(this.end)).fontSize(10).fontFeature('tnum 1').fontColor(Colors.secondary)
+          Text(clockLabel(this.end-this.seconds)).fontSize(10).maxFontScale(Tokens.interfaceScaleFor(10)).fontFeature('tnum 1').fontColor(Colors.secondary)
+          Text(clockLabel(this.end)).fontSize(10).maxFontScale(Tokens.interfaceScaleFor(10)).fontFeature('tnum 1').fontColor(Colors.secondary)
         }.width('100%')
       }
     }.width('100%').accessibilityLevel('no-hide-descendants')
@@ -140,6 +140,7 @@ struct MachineTimeAxis {
 
 @ComponentV2
 export struct MachineDirectory {
+  @Local liveGridWidth:number=0;
   @Require @Param model: ClientModel;
   @Param active: boolean = true;
   @Param settingsScope: boolean = false;
@@ -328,14 +329,14 @@ export struct MachineDirectory {
   @Builder count(label:string,n:number,tint:ResourceColor) {
     Row({space:4}) {
       Circle().width(6).height(6).fill(n ? tint : Colors.secondary).opacity(n ? 1 : 0.45)
-      Text(String(n)).fontSize(14).fontWeight(FontWeight.Bold).fontColor(n ? tint : Colors.secondary)
-      Text(label).fontSize(12).fontColor(Colors.secondary).maxLines(1)
+      Text(String(n)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Bold).fontColor(n ? tint : Colors.secondary)
+      Text(label).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
     }.flexShrink(0)
   }
   @Builder tag(a:MachineAlert) {
     Row({space:4}) {
       SymbolGlyph(a.severity === 2 ? $r('sys.symbol.exclamationmark_circle_fill') : $r('sys.symbol.exclamationmark_triangle_fill')).fontSize('12vp').fontColor([a.severity === 2 ? Colors.danger : Colors.working])
-      Text(tr(a.key)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+      Text(tr(a.key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
     }.padding({left:7,right:7,top:3,bottom:3}).borderRadius(9)
       .backgroundColor(a.severity === 2 ? '#21FF3B30' : '#24FFAA22')
   }
@@ -344,16 +345,16 @@ export struct MachineDirectory {
       Row({space:10}) {
         this.osMark(c)
         Column({space:2}) {
-          if (!selected) Text(c.row.title || c.row.id).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-          Text(this.hardware(c)).fontSize(12).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          if (!selected) Text(c.row.title || c.row.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
+          Text(this.hardware(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         Column({space:2}) {
           Row({space:4}) {
             if (c.online && !c.pending) Circle().width(6).height(6).fill(Colors.positive)
-            Text(this.status(c)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(c.pending ? Colors.working : c.online ? Colors.positive : Colors.secondary)
+            Text(this.status(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(c.pending ? Colors.working : c.online ? Colors.positive : Colors.secondary)
           }
           if (!c.online && ageLabel(Date.parse(Wire.text(c.raw,'last_seen')),this.chartEnd)) Text(ageLabel(Date.parse(Wire.text(c.raw,'last_seen')),this.chartEnd))
-            .fontSize(11).fontColor(Colors.secondary)
+            .fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
         }.alignItems(HorizontalAlign.End)
       }.width('100%')
       if (c.alerts.length > 0) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(3)}}) {
@@ -365,12 +366,12 @@ export struct MachineDirectory {
         this.count(tr('idle'),c.idle,Colors.secondary)
       }.width('100%').padding({left:9,right:9,top:7,bottom:7}).borderRadius(8).backgroundColor(Colors.grouped)
       else if (this.reason(c)) Column({space:4}) {
-        Text(this.reason(c)).fontSize(14).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
+        Text(this.reason(c)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
         if (Wire.text(c.raw,'error') && Wire.text(c.raw,'error') !== this.reason(c))
-          Text(Wire.text(c.raw,'error')).fontSize(12).fontColor(Colors.secondary).maxLines(selected ? 7 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
+          Text(Wire.text(c.raw,'error')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(selected ? 7 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
       }.width('100%').alignItems(HorizontalAlign.Start)
       if (Wire.bool(c.raw,'node_mismatch') || Wire.bool(c.raw,'deploying')) Text(tr(Wire.bool(c.raw,'deploying') ? 'admin_node_deploying' : 'machine_update_needed'))
-        .fontSize(13).fontColor(Colors.working)
+        .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.working)
       if (!selected && c.online && c.sample && Object.keys(c.sample.latest).length) this.metrics(c.sample)
     }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
       .border({width:c.alerts.length ? 0.7 : 0,color:c.alerts[0]?.severity === 2 ? Colors.danger : Colors.working,radius:PhoneStyle.cardRadius})
@@ -403,19 +404,19 @@ export struct MachineDirectory {
   @Builder metricCell(m:MachineReading,key:string) {
     Column({space:2}) {
       Row({space:3}) {
-        Text(this.label(key)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
+        Text(this.label(key)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
         if (key === 'cpu' && this.latest(m,key) >= 75 || key === 'mem' && this.latest(m,key) >= 80)
           SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize('10vp').fontColor([this.latest(m,key) >= 90 ? Colors.danger : Colors.working])
       }
-      Text((key === 'network' ? '↓ ' : '') + this.present(key,this.latest(m,key))).fontSize(15).minFontSize(10).maxFontSize(15)
+      Text((key === 'network' ? '↓ ' : '') + this.present(key,this.latest(m,key))).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).minFontSize(10).maxFontSize(15)
         .fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-      Text(this.metricDetail(m,key) || ' ').fontSize(11).minFontSize(8).maxFontSize(11).fontColor(Colors.secondary).maxLines(1)
+      Text(this.metricDetail(m,key) || ' ').fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).minFontSize(8).maxFontSize(11).fontColor(Colors.secondary).maxLines(1)
       MachineChart({points:machineTrace(m,key,3600,this.chartEnd),end:this.chartEnd,tint:this.tint(key),
         ceiling:key === 'cpu' || key === 'mem' ? 100 : 0,alternateTint:key === 'network' ? this.tint('upload') : '',dark:nativeEnvironment.dark})
     }.layoutWeight(1).alignItems(HorizontalAlign.Start)
   }
   @Builder metrics(m:MachineReading) {
-    if (nativeEnvironment.fontScale < 1.4) Row({space:7}) {
+    if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(12)) < 1.4) Row({space:7}) {
       this.metricCell(m,'cpu'); this.metricCell(m,'mem'); this.metricCell(m,'network')
       if (Object.keys(m.usage).length) this.metricCell(m,'tokens')
     }.width('100%')
@@ -432,13 +433,13 @@ export struct MachineDirectory {
   }
   @Builder stat(key:string,value:string) {
     Column({space:3}) {
-      Text(tr(key)).fontSize(12).fontColor(Colors.secondary)
-      Text(value).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).minFontSize(12).maxFontSize(17)
+      Text(tr(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+      Text(value).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).minFontSize(12).maxFontSize(17)
     }.alignItems(HorizontalAlign.Start).layoutWeight(1)
   }
   @Builder tokensCard() {
     Column({space:9}) {
-      Text(tr('phone_today_tokens')).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+      Text(tr('phone_today_tokens')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       Row({space:8}) {
         this.stat('phone_total',machineTokens(this.total))
         this.stat('phone_rate',tr('machine_per_minute').replace('{value}',machineTokens(this.shares.reduce((s:number,c:ComputerCard) => s+Wire.number(c.sample!.usage,'per_minute'),0))))
@@ -454,7 +455,7 @@ export struct MachineDirectory {
           ForEach(this.shares.filter((c:ComputerCard) => c.tokens>0),(c:ComputerCard,i:number) => {
             Row({space:4}) {
               Circle().width(6).height(6).fill(Colors.ink).opacity(NEUTRAL_SHADES[Math.min(i,4)])
-              Text(c.row.title+' '+machineTokens(c.tokens)).fontSize(12).fontColor(Colors.secondary)
+              Text(c.row.title+' '+machineTokens(c.tokens)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             }
           },(c:ComputerCard,i:number) => c.key+String(c.tokens)+String(i))
         }.width('100%')
@@ -465,7 +466,7 @@ export struct MachineDirectory {
     Row({space:4}) {
       if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize('12vp').fontColor([tint])
       else Circle().width(6).height(6).fill(tint)
-      Text(value).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+      Text(value).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
     }
   }
   @Builder homeStatus() {
@@ -481,16 +482,16 @@ export struct MachineDirectory {
   @Builder groupHeader(group:string) {
     if (this.groupCards(group).length) Row({space:6}) {
       Circle().width(7).height(7).fill(this.groupCards(group).some((c:ComputerCard) => this.model.directoryOwnerFor(c.row)?.connected) ? Colors.positive : Colors.secondary)
-      Text(this.model.groupName(this.groupCards(group)[0].row) || group).fontSize(15).fontWeight(FontWeight.Medium)
+      Text(this.model.groupName(this.groupCards(group)[0].row) || group).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
         .fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
-      Text(String(this.groupCards(group).filter((c:ComputerCard) => c.online).length)+'/'+String(this.groupCards(group).length)).fontSize(13).fontColor(Colors.secondary)
+      Text(String(this.groupCards(group).filter((c:ComputerCard) => c.online).length)+'/'+String(this.groupCards(group).length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
     }.width('100%').alignItems(VerticalAlign.Center).padding({left:4,right:4,top:10,bottom:1}).accessibilityGroup(true).id('machines.group.'+group)
   }
 
   @Builder section(title:string,count:string = '') {
     Row({space:6}) {
-      Text(title).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-      if (count) Text(count).fontSize(14).fontColor(Colors.secondary)
+      Text(title).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+      if (count) Text(count).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
     }.width('100%').padding({left:5,top:12,bottom:2})
   }
   private agentInk(a:MachineAgent):ResourceColor {
@@ -503,15 +504,15 @@ export struct MachineDirectory {
         SymbolGlyph(Symbols.agent).fontSize('18vp').fontColor([this.agentInk(a)])
       }.width(34).height(34)
       Column({space:3}) {
-        Text(a.row.title || tr('agent_untitled')).fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
-        if (a.note) Text(a.note).fontSize(14).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+        Text(a.row.title || tr('agent_untitled')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+        if (a.note) Text(a.note).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
         Row({space:4}) {
-          Text(tr(a.state)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(this.agentInk(a))
-          if (a.context) Text('· '+a.context).fontSize(12).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
+          Text(tr(a.state)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(this.agentInk(a))
+          if (a.context) Text('· '+a.context).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
         }.width('100%')
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       Column({space:6}) {
-        if (Number.isFinite(a.updated)) Text(ageLabel(a.updated,this.chartEnd)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
+        if (Number.isFinite(a.updated)) Text(ageLabel(a.updated,this.chartEnd)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
         if (a.sourceLabel) Text(tr(a.sourceLabel)).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale)
           .fontColor(Colors.secondary).borderRadius(8).padding({left:6,right:6,top:2,bottom:2}).backgroundColor(Colors.control)
       }.alignItems(HorizontalAlign.End)
@@ -527,9 +528,9 @@ export struct MachineDirectory {
       if (c.agents.length>5 && !this.expanded) {
         Divider().strokeWidth(0.5).color(Colors.divider).margin({left:14})
         Button(tr('machine_all_agents').replace('{count}',String(c.agents.length)),{buttonStyle:ButtonStyleMode.TEXTUAL})
-          .height(44).width('100%').fontSize(15).fontColor(Colors.link).onClick(() => this.expanded = true).id('machines.show_all')
+          .height(44).width('100%').fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).onClick(() => this.expanded = true).id('machines.show_all')
       }
-      if (!c.agents.length) Text(tr(c.online ? 'machine_no_agents' : 'machine_offline_agents')).fontSize(15).fontColor(Colors.secondary).width('100%').padding(14)
+      if (!c.agents.length) Text(tr(c.online ? 'machine_no_agents' : 'machine_offline_agents')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).width('100%').padding(14)
     }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
   }
   // ArkUI keeps the view for each metric when a poll or range changes. Its reactive reads
@@ -584,12 +585,12 @@ export struct MachineDirectory {
   @Builder liveTile(tile:LiveMetric,alert:MachineAlert|undefined) {
     Column({space:3}) {
       Row({space:5}) {
-        Text(tile.title).fontSize(13).fontColor(Colors.secondary)
+        Text(tile.title).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
         if (alert) SymbolGlyph($r('sys.symbol.exclamationmark_circle_fill')).fontSize('13vp')
           .fontColor([alert.severity === 2 ? Colors.danger : Colors.working]).accessibilityText(tr(alert.key))
       }
-      Text(tile.value).fontSize(22).minFontSize(16).maxFontSize(22).maxLines(1).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-      Text(tile.detail || ' ').fontSize(12).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+      Text(tile.value).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).minFontSize(16).maxFontSize(22).maxLines(1).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+      Text(tile.detail || ' ').fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
       if (tile.percent >= 0) Progress({value:Math.min(100,tile.percent),total:100,type:ProgressType.Linear})
         .width('100%').height(4).style({strokeWidth:4}).color(alert ? alert.severity === 2 ? Colors.danger : Colors.working : tile.tint)
         .backgroundColor(Colors.control).accessibilityLevel('no')
@@ -602,19 +603,19 @@ export struct MachineDirectory {
     return card?.online && sample && Object.keys(sample.latest).length ? this.liveMetrics(card,sample) : [];
   }
   @Builder liveGrid() {
-    GridRow({columns:nativeEnvironment.fontScale >= 1.5 ? 1 : 2,gutter:{x:10,y:10}}) {
+    GridRow({columns:this.liveGridWidth>0 && this.liveGridWidth<248*Math.min(nativeEnvironment.fontScale,Tokens.interfaceFontMaxScale) ? 1 : 2,gutter:{x:10,y:10}}) {
       ForEach(this.liveTiles,(tile:LiveMetric) => {
         GridCol({span:1}) { this.liveTile(tile,this.cards[0]?.alerts.find((a:MachineAlert) => a.key === tile.alert)) }
       },(tile:LiveMetric) => JSON.stringify([tile.key,tile.value,tile.detail,tile.percent,this.cards[0]?.alerts,nativeEnvironment.dark]))
-    }.width('100%').id('machines.now')
+    }.width('100%').onAreaChange((_:Area,area:Area)=>{this.liveGridWidth=Number(area.width);}).id('machines.now')
   }
   @Builder seriesValue(key:string,upload:boolean = false) {
     Row({space:5}) {
       if (key === 'network') {
         Circle().width(7).height(7).fill(this.tint(upload ? 'upload' : key))
-        Text(tr(upload ? 'machine_net_up' : 'machine_net_down')).fontSize(12).fontColor(Colors.secondary)
+        Text(tr(upload ? 'machine_net_up' : 'machine_net_down')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
       }
-      Text(this.present(key,this.currentChartValue(key,upload))).fontSize(key === 'network' ? 18 : 24).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+      Text(this.present(key,this.currentChartValue(key,upload))).fontSize(key === 'network' ? 18 : 24).maxFontScale(Tokens.interfaceScaleFor(key === 'network' ? 18 : 24)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
     }.accessibilityGroup(true)
   }
   @Builder historyPlot(key:string) {
@@ -627,9 +628,9 @@ export struct MachineDirectory {
         MachineTimeAxis({end:this.chartEnd,seconds:RANGE_SECONDS[this.shownRange]})
       }.layoutWeight(1)
       Column() {
-        Text(this.present(key,this.series(key).ceiling)).fontSize(11).fontColor(Colors.secondary)
-        Text(this.present(key,this.series(key).ceiling/2)).fontSize(11).fontColor(Colors.secondary)
-        Text(this.present(key,0)).fontSize(11).fontColor(Colors.secondary)
+        Text(this.present(key,this.series(key).ceiling)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
+        Text(this.present(key,this.series(key).ceiling/2)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
+        Text(this.present(key,0)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
       }.height(115).alignItems(HorizontalAlign.Start).justifyContent(FlexAlign.SpaceBetween)
         .accessibilityLevel('no-hide-descendants')
     }.width('100%').alignItems(VerticalAlign.Top)
@@ -637,8 +638,8 @@ export struct MachineDirectory {
   @Builder chartRow(key:string) {
     Column({space:7}) {
       Row({space:8}) {
-        Text(this.label(key)).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
-        if (this.inspected) Text(clockLabel(this.inspected)).fontSize(13).fontColor(Colors.secondary)
+        Text(this.label(key)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
+        if (this.inspected) Text(clockLabel(this.inspected)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
       }.width('100%')
       Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(13),cross:LengthMetrics.vp(4)}}) {
         this.seriesValue(key)
@@ -664,25 +665,25 @@ export struct MachineDirectory {
         if (this.inspected || (this.loading && this.shownRange !== this.range)) Row() {
           if (this.loading && this.shownRange !== this.range) LoadingProgress().width(18).height(18).margin({right:6})
           Text(this.inspected ? clockLabel(this.inspected) : tr(RANGE_LABELS[this.shownRange]))
-            .fontSize(13).fontColor(Colors.secondary).layoutWeight(1)
+            .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).layoutWeight(1)
           if (this.inspected) Button(tr('machine_now'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({minHeight:44})
-            .fontSize(13).fontColor(Colors.link).onClick(() => this.inspected=0).id('machines.chart.latest')
+            .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link).onClick(() => this.inspected=0).id('machines.chart.latest')
         }.width('100%').constraintSize({minHeight:44}).padding({left:4,right:4})
         if (this.detailSample.points.some((p:Record<string,Object>) => !Wire.bool(p,'gap'))) {
           ForEach(HISTORY_FIELDS,(key:string) => { this.chartRow(key) },(key:string) => key)
-          Text(tr('machine_history_hint')).fontSize(12).fontColor(Colors.secondary)
-        } else Text(tr('machine_no_samples')).fontSize(14).fontColor(Colors.secondary).padding(8)
+          Text(tr('machine_history_hint')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        } else Text(tr('machine_no_samples')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).padding(8)
       } else if (this.loading) LoadingProgress().width(26).height(26).margin(12)
       if (this.failed) Row({space:7}) {
-        Text(tr('machine_monitor_unavailable')).fontSize(14).fontColor(Colors.secondary).layoutWeight(1)
-        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => this.sync(false))
+        Text(tr('machine_monitor_unavailable')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).layoutWeight(1)
+        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).onClick(() => this.sync(false))
       }.width('100%')
     }.width('100%').alignItems(HorizontalAlign.Start).id('machines.monitor')
   }
   @Builder property(label:string,value:string) {
     Row({space:10}) {
-      Text(tr(label)).fontSize(15).fontColor(Colors.ink)
-      Text(value).fontSize(14).fontColor(Colors.secondary).textAlign(TextAlign.End).layoutWeight(1)
+      Text(tr(label)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink)
+      Text(value).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).textAlign(TextAlign.End).layoutWeight(1)
     }.width('100%').constraintSize({minHeight:40})
   }
   @Builder systemCard(c:ComputerCard) {
@@ -694,7 +695,7 @@ export struct MachineDirectory {
       if (Wire.text(c.raw,'hostname')) this.property('machine_hostname',Wire.text(c.raw,'hostname'))
       if (this.detailSample && Wire.number(this.detailSample.latest,'disk_total')) this.property('machine_disk',
         machineBytes(Wire.number(this.detailSample.latest,'disk_used',-1))+' / '+machineBytes(Wire.number(this.detailSample.latest,'disk_total')))
-      Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).width('100%')
+      Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).width('100%')
         .onClick(() => this.onDetails(c.row)).id('machines.management')
     }.width('100%').padding({left:14,right:14,top:4,bottom:4}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
   }
@@ -711,7 +712,7 @@ export struct MachineDirectory {
             ListItem() { this.section(tr('system')) }
             ListItem() { this.systemCard(this.cards[0]) }
           } else if (this.loading) ListItem() { LoadingProgress().width(28).height(28) }
-          else ListItem() { Text(tr('machine_time_unavailable')).fontSize(15).fontColor(Colors.secondary).padding(14) }
+          else ListItem() { Text(tr('machine_time_unavailable')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(14) }
         } else {
           if (this.cards.length) ListItem() { this.homeStatus() }
           if (this.shares.length) ListItem() { this.tokensCard() }
@@ -726,12 +727,12 @@ export struct MachineDirectory {
           if (!this.cards.length && !this.loading) ListItem() {
             Column({space:8}) {
               SymbolGlyph(Symbols.device).fontSize('34vp').fontColor([Colors.secondary]).accessibilityLevel('no')
-              Text(tr('machine_empty_title')).fontSize(20).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-              Text(tr('machine_empty_detail')).fontSize(15).fontColor(Colors.secondary).textAlign(TextAlign.Center)
+              Text(tr('machine_empty_title')).fontSize(20).maxFontScale(Tokens.interfaceScaleFor(20)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+              Text(tr('machine_empty_detail')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).textAlign(TextAlign.Center)
             }.width('100%').padding({left:24,right:24,top:35,bottom:16}).accessibilityGroup(true)
           }
           if (this.loading && !this.cards.length) ListItem() { LoadingProgress().width(28).height(28) }
-          ListItem() { Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link)
+          ListItem() { Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
             .onClick(() => this.onManage()).id('machines.manage') }
         }
       }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,bottom:24}).id('machines.list')

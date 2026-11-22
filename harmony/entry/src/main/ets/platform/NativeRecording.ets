@@ -57,12 +57,20 @@ export class NativeMeetingSpeech {
   private frame:Uint8Array=new Uint8Array(640);
   private filled:number=0;
   private bytes:number=0;
+  private queued:Uint8Array[]=[];
+  private lastWrite:number=0;
+  private pumpTimer:number=-1;
+  private drain:()=>void=()=>{};
+  private endedInput:boolean=false;
+  private failedInput:boolean=false;
+  private reportFailure:()=>void=()=>{};
   private lastEnd:number=0;
   private complete:()=>void=()=>{};
   private readonly done:Promise<void>;
   constructor() { this.done=new Promise<void>((resolve) => { this.complete=resolve; }); }
 
   async open(line:(start:number,end:number,text:string)=>void, unavailable:()=>void):Promise<void> {
+    this.reportFailure=unavailable;
     const engine=await speechRecognizer.createEngine({language:'zh-CN',online:1,extraParams:{locate:'CN',recognizerMode:'long'}});
     if (this.closed) { engine.shutdown(); return; }
     this.engine=engine;
@@ -78,7 +86,7 @@ export class NativeMeetingSpeech {
       onComplete:(id:string):void => { if (id===this.session) this.complete(); },
       onError:(id:string,_code:number,_message:string):void => {
         if (id!==this.session || this.closed) return;
-        this.ready=false; started(); this.complete(); unavailable();
+        this.failedInput=true; this.ready=false; started(); this.complete(); this.drain(); unavailable();
       }
     });
     engine.startListening({sessionId:this.session,audioInfo:{audioType:'pcm',sampleRate:SAMPLE_RATE,soundChannel:1,sampleBit:16},
@@ -88,32 +96,59 @@ export class NativeMeetingSpeech {
     finally { clearTimeout(timer); }
     if (!this.ready && !this.closed) { this.release(); throw new Error('phone_dictation_unavailable'); }
   }
+  private pump():void {
+    clearTimeout(this.pumpTimer);
+    if (this.closed || this.failedInput || !this.engine || !this.ready) { this.drain(); return; }
+    const remaining=20-(Date.now()-this.lastWrite);
+    if (remaining>0) { this.pumpTimer=setTimeout(() => this.pump(),remaining); return; }
+    if (!this.queued.length) { this.drain(); return; }
+    try {
+      const frame=this.queued.shift()!;
+      this.engine.writeAudio(this.session,frame);
+      this.bytes+=frame.byteLength;
+      this.lastWrite=Date.now();
+      this.pumpTimer=setTimeout(() => this.pump(),20);
+    } catch (_) {
+      this.failedInput=true; this.queued=[]; this.drain(); this.reportFailure();
+    }
+  }
   feed(buffer:ArrayBuffer):void {
-    if (!this.ready || !this.engine || this.closed) return;
+    if (!this.ready || !this.engine || this.closed || this.endedInput || this.failedInput) return;
     const input=new Uint8Array(buffer);
     let offset=0;
     while (offset<input.length) {
       const count=Math.min(this.frame.length-this.filled,input.length-offset);
       this.frame.set(input.subarray(offset,offset+count),this.filled); this.filled+=count; offset+=count;
       if (this.filled===this.frame.length) {
-        this.engine.writeAudio(this.session,this.frame); this.bytes+=this.filled; this.frame=new Uint8Array(640); this.filled=0;
+        this.queued.push(this.frame); this.frame=new Uint8Array(640); this.filled=0;
       }
     }
+    if (this.queued.length>240) { this.failedInput=true; this.queued=[]; this.reportFailure(); this.drain(); return; }
+    this.pump();
   }
   async finish():Promise<void> {
     if (!this.engine || this.closed) { this.release(); return; }
     let timer:number=-1;
     try {
-      if (this.ready && this.filled) { this.engine.writeAudio(this.session,this.frame); this.bytes+=this.filled; this.filled=0; }
+      this.endedInput=true;
+      if (this.ready && this.filled) { this.queued.push(this.frame); this.filled=0; }
+      const drained=new Promise<void>((resolve)=>{this.drain=resolve;});
+      this.pump();
+      await drained;
+      if (this.closed || this.failedInput) return;
       this.engine.finish(this.session);
-      await Promise.race([this.done,new Promise<void>((resolve)=>{timer=setTimeout(resolve,1800);})]);
+      await Promise.race([this.done,new Promise<void>((resolve)=>{timer=setTimeout(resolve,3000);})]);
     } catch (_) {} finally { clearTimeout(timer); this.release(); }
   }
   release():void {
-    this.closed=true; this.ready=false; this.complete();
+    this.closed=true; this.ready=false; clearTimeout(this.pumpTimer); this.queued=[]; this.drain(); this.complete();
     const engine=this.engine; this.engine=undefined;
     if (engine) { try { engine.cancel(this.session); } catch (_) {} try { engine.shutdown(); } catch (_) {} }
   }
+}
+
+class FinalSpeechFrameError extends Error {
+  constructor() { super('knowledge_recording_transcribe_failed'); }
 }
 
 /** App-private bounded PCM storage and foreground-only native audio / offline ASR. */
@@ -431,7 +466,7 @@ export class NativeRecording {
     if (size > MAX_RECORDING_BYTES || size % 2 !== 0) throw new Error('recording_invalid_size');
     if (this.asrPending) throw new Error('transcription_busy');
     this.cancelAsr = false;
-    const operation = this.runTranscription(path, size);
+    const operation = this.transcribeSavedPcm(path, size);
     this.asrPending = operation;
     try { return await operation; } finally { if (this.asrPending === operation) this.asrPending = undefined; }
   }
@@ -471,12 +506,22 @@ export class NativeRecording {
     }
   }
 
-  private async runTranscription(path: string, size: number): Promise<string> {
+  private async transcribeSavedPcm(path:string,size:number):Promise<string> {
+    try { return await this.runTranscription(path,size,PCM_CHUNK_BYTES); }
+    catch (error) {
+      // SpeechKit can reject finish after receiving every frame, even after producing partial text.
+      // A fresh session reads the original file. Only its complete result is returned.
+      if (!(error instanceof FinalSpeechFrameError) || this.cancelAsr) throw error as Error;
+      return this.runTranscription(path,size,640);
+    }
+  }
+
+  private async runTranscription(path: string, size: number, frameBytes:number): Promise<string> {
     const engine = await speechRecognizer.createEngine({
       language: 'zh-CN', online: 1, extraParams: { locate: 'CN', recognizerMode: 'long' }
     });
     const session = util.generateRandomUUID(); this.asr = engine; this.asrSession = session;
-    let finished = false, failed: Error | undefined, latest = '', finals: string[] = [];
+    let finished = false, allFramesSent=false, failed: Error | undefined, latest = '', finals: string[] = [];
     let started = false, notifyStarted: () => void = (): void => {};
     const startReady = new Promise<void>((resolve) => { notifyStarted = resolve; });
     let complete: () => void = (): void => {};
@@ -499,7 +544,8 @@ export class NativeRecording {
       onComplete: (_session: string, _message: string): void => { if (_session === session && this.asr === engine && this.asrSession === session) settle(); },
       onError: (_session: string, code: number, _message: string): void => {
         if (_session !== session || this.asr !== engine || this.asrSession !== session || finished) return;
-        failed = new Error(code === 1002200012 ? 'knowledge_recording_microphone_denied' : 'knowledge_recording_transcribe_failed');
+        failed = code===1002200010 && allFramesSent && !this.cancelAsr ? new FinalSpeechFrameError() :
+          new Error(code === 1002200012 ? 'knowledge_recording_microphone_denied' : 'knowledge_recording_transcribe_failed');
         settle(failed);
       }
     });
@@ -525,18 +571,20 @@ export class NativeRecording {
           if (this.cancelAsr) throw new Error('transcription_cancelled');
           if (failed) throw failed as Error;
           if (finished) throw new Error('knowledge_recording_transcribe_failed');
-          const length = Math.min(PCM_CHUNK_BYTES, size - offset);
+          const length = Math.min(frameBytes, size - offset);
           const source = new ArrayBuffer(length);
           const read = fileIo.readSync(input.fd, source, { length: length });
           if (read !== length) throw new Error('recording_file_read_failed');
           let send = new Uint8Array(source);
           if (send.length < 640) { const padded = new Uint8Array(640); padded.set(send); send = padded; }
           else if (send.length !== 640 && send.length !== 1280) { const padded = new Uint8Array(1280); padded.set(send); send = padded; }
+          allFramesSent=offset+read===size;
           engine.writeAudio(session, send);
           offset += read;
           if (failed) throw failed as Error;
           if (finished && offset < size) throw new Error('knowledge_recording_transcribe_failed');
-          if (offset < size) await new Promise<void>((resolve) => setTimeout(resolve, send.length === 640 ? 20 : 40));
+          // writeAudio queues PCM. Keep its 20/40 ms cadence through the final padded frame before finish.
+          if (!finished) await new Promise<void>((resolve) => setTimeout(resolve, send.length === 640 ? 20 : 40));
         }
       } finally { fileIo.closeSync(input.fd); }
       if (this.cancelAsr) throw new Error('transcription_cancelled');

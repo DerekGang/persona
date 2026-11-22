@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "project_temporary_session",
+      "value": "Temporary Session"
+    },
+    {
       "name": "module_desc",
       "value": "Persona phone client"
     },
@@ -5153,6 +5157,14 @@
       "value": "Model choices are unavailable"
     },
     {
+      "name": "project_checkout_primary",
+      "value": "Primary"
+    },
+    {
+      "name": "project_worktree_idle",
+      "value": "Idle"
+    },
+    {
       "name": "project_primary",
       "value": "Primary"
     },
@@ -6619,6 +6631,58 @@
     {
       "name": "phone_meeting_voice_unavailable",
       "value": "The answer is on screen. This device couldn’t read it aloud."
+    },
+    {
+      "name": "chat_tray_needs",
+      "value": "Needs You"
+    },
+    {
+      "name": "chat_tray_progress",
+      "value": "In Progress"
+    },
+    {
+      "name": "phone_settings_models",
+      "value": "Models"
+    },
+    {
+      "name": "phone_settings_profile",
+      "value": "Assistant Profile"
+    },
+    {
+      "name": "phone_settings_display",
+      "value": "Appearance & Display"
+    },
+    {
+      "name": "phone_settings_language_dictation",
+      "value": "Language & Dictation"
+    },
+    {
+      "name": "phone_settings_switch",
+      "value": "Switch"
+    },
+    {
+      "name": "phone_settings_system_language",
+      "value": "Match System ({language})"
+    },
+    {
+      "name": "phone_settings_owner_note",
+      "value": "Only {name}'s own settings are shown. To change another assistant's, switch to it first."
+    },
+    {
+      "name": "chat_tray_other",
+      "value": "Another conversation"
+    },
+    {
+      "name": "phone_drawer_recent",
+      "value": "Recent"
+    },
+    {
+      "name": "phone_drawer_schedules",
+      "value": "Scheduled Tasks"
+    },
+    {
+      "name": "phone_drawer_health",
+      "value": "Health"
     }
   ]
 }

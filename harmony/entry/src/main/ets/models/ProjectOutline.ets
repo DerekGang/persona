@@ -41,7 +41,7 @@ export function projectHosts(projects:PersonaProject[]): ProjectHost[] {
 
 function unstructuredIdle(p:PersonaProject): boolean {
   return p.activeCount === 0 && p.pinnedAt === 0 && p.trees.every((t:ProjectWorktree) =>
-    (!t.source || t.source === 'session-directory') && !t.children.length);
+    t.source !== 'orca' && t.source !== 'paseo' && !t.children.length);
 }
 
 class ProjectMatch {

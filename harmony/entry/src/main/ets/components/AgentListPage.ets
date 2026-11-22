@@ -88,6 +88,8 @@ export struct AgentListPage {
   @Local look: DeviceLook = deviceLook;
   @Local groupBindings: BoundAgentGroup[] = [];
   @Local mixedMachines: boolean = false;
+  @Local listWidth:number=0;
+  private narrowRow():boolean { return this.listWidth>0 && this.listWidth<252*Math.min(this.environment.fontScale,Tokens.interfaceScaleFor(15)); }
   @Local decisions: AgentDecisionQueue = new AgentDecisionQueue();
   private stopDecisionEvents: (()=>void) | undefined;
   private decisionQueued: number = -1;
@@ -357,13 +359,13 @@ export struct AgentListPage {
   @Builder groupHeader(binding: BoundAgentGroup) {
     Column({ space: 4 }) {
       if (binding.value.parent === 'quiet') {
-        Text(tr('agent_group_quiet_spaces')).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink).width('100%')
+        Text(tr('agent_group_quiet_spaces')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).width('100%')
       }
       Button({ type: ButtonType.Normal }) {
         Row({ space: 6 }) {
           Text(tr(STATE_LABELS[binding.value.id] || '') || binding.value.machineName)
-            .fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink).flexShrink(1).maxLines(this.environment.fontScale >= 1.5 ? 4 : 2)
-          Text(String(binding.value.totalRowCount)).fontSize(13).fontColor(Colors.secondary)
+            .fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).flexShrink(1).maxLines(this.narrowRow() ? 4 : 2)
+          Text(String(binding.value.totalRowCount)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
           Blank().layoutWeight(1)
           SymbolGlyph(binding.value.folded ? Symbols.expand : Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
         }.width('100%').constraintSize({ minHeight: 44 })
@@ -403,7 +405,7 @@ export struct AgentListPage {
     Column() {
       if (this.model.profiles.length > 1 || this.workspace.currentHubOnly) {
         Row({ space: Tokens.page }) {
-          Text(tr('phone_agents_current_hub')).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1)
+          Text(tr('phone_agents_current_hub')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.workspace.currentHubOnly })
             .accessibilityText(tr('phone_agents_current_hub')).id('agents.current_hub')
             .onChange((value: boolean) => this.workspace.setCurrentHubOnly(value))
@@ -411,7 +413,7 @@ export struct AgentListPage {
         Divider().strokeWidth(Tokens.hairline).color(Colors.divider)
       }
       Row({ space: Tokens.page }) {
-        Text(tr('agent_filter_machine')).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1)
+        Text(tr('agent_filter_machine')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).layoutWeight(1)
         Select(this.machineSelectOptions()).selected(this.machineIndex()).value(this.machineLabel())
           .attributeModifier(SelectStyles.inline).constraintSize({ minHeight: Tokens.touch, maxWidth: '68%' })
           .onSelect((index: number) => this.selectMachine(index)).id('agents.machine_filter')
@@ -419,7 +421,7 @@ export struct AgentListPage {
       Divider().strokeWidth(Tokens.hairline).color(Colors.divider)
       if (this.workspace.historySupported()) {
         Row({ space: Tokens.page }) {
-          Text(tr('agent_history')).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1)
+          Text(tr('agent_history')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.workspace.history })
             .onChange((value: boolean) => this.workspace.setHistory(value))
             .accessibilityText(tr('agent_history')).id('agents.history')
@@ -427,7 +429,7 @@ export struct AgentListPage {
         Divider().strokeWidth(Tokens.hairline).color(Colors.divider)
       }
       Row({ space: Tokens.page }) {
-        Text(tr('grouping')).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1)
+        Text(tr('grouping')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).layoutWeight(1)
         Select(GROUPINGS.map((key) => ({ value: tr(GROUP_LABELS[key]) } as SelectOption)))
           .selected(this.groupingIndex()).value(tr(GROUP_LABELS[GROUPINGS[this.groupingIndex()]]))
           .attributeModifier(SelectStyles.inline).constraintSize({ minHeight: Tokens.touch, maxWidth: '68%' })
@@ -457,9 +459,9 @@ export struct AgentListPage {
                 SymbolGlyph(card.request.kind==='plan' ? Symbols.document : card.request.kind==='permission' ?
                   IconActions.symbol('approve') : $r('sys.symbol.questionmark_circle')).fontSize('18vp').fontColor([Colors.link])
                 Column({space:2}) {
-                  Text(this.cardTitle(card,binding)).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+                  Text(this.cardTitle(card,binding)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
                   if (!index) Text([binding.bound.value.title,this.model.machineName(card.machine)].filter((v:string)=>!!v).join(' · '))
-                    .fontSize(13).fontColor(Colors.secondary).maxLines(2)
+                    .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(2)
                 }.layoutWeight(1).alignItems(HorizontalAlign.Start)
                 SymbolGlyph(Symbols.expand).fontSize('13vp').fontColor([Colors.secondary])
               }.width('100%')
@@ -470,7 +472,7 @@ export struct AgentListPage {
             if (card.quickOptions().length) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(7),cross:LengthMetrics.vp(6)}}) {
               ForEach(card.quickOptions(),(choice:string) => {
                 Button({type:ButtonType.Capsule}) {
-                  Text(card.request.kind==='permission' ? tr(choice) : choice).fontSize(15)
+                  Text(card.request.kind==='permission' ? tr(choice) : choice).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
                     .fontColor(card.request.kind==='permission' && choice==='allow' ? Colors.onAction : Colors.link)
                 }.constraintSize({minHeight:35}).padding({left:12,right:12,top:4,bottom:4})
                   .backgroundColor(card.request.kind==='permission' && choice==='allow' ? Colors.action : Colors.surface)
@@ -523,19 +525,19 @@ export struct AgentListPage {
           }.width(34).height(34)
           if (!this.rail) Column({ space: 3 }) {
             Row({ space: 6 }) {
-              Text(binding.bound.value.title || tr('agent_untitled')).fontSize(17).fontWeight(FontWeight.Bold)
-                .fontColor(Colors.ink).layoutWeight(1).maxLines(this.environment.fontScale >= 1.5 ? 4 : 1)
+              Text(binding.bound.value.title || tr('agent_untitled')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold)
+                .fontColor(Colors.ink).layoutWeight(1).maxLines(this.narrowRow() ? 4 : 1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
-              if (this.environment.fontScale < 1.5) Text(this.rowTime(binding.presentation)).fontSize(12).fontColor(Colors.secondary)
+              if (!this.narrowRow()) Text(this.rowTime(binding.presentation)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             }.width('100%').alignItems(VerticalAlign.Center)
             if (binding.presentation.recentContent) {
-              Text(binding.presentation.recentContent).fontSize(15).fontColor(Colors.secondary).width('100%')
-                .maxLines(this.environment.fontScale >= 1.5 ? 4 : this.look.density === 'compact' ? 1 : 2).textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(binding.presentation.recentContent).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).width('100%')
+                .maxLines(this.narrowRow() ? 4 : this.look.density === 'compact' ? 1 : 2).textOverflow({ overflow: TextOverflow.Ellipsis })
             }
             this.rowContext(this.rowPlace(binding.presentation), this.needsStatusLabel(groupId) ? this.rowStatus(binding.presentation) : '',
               this.rowStatusColor(binding.presentation))
-            if (this.environment.fontScale >= 1.5 && this.rowTime(binding.presentation)) {
-              Text(this.rowTime(binding.presentation)).fontSize(13).fontColor(Colors.secondary)
+            if (this.narrowRow() && this.rowTime(binding.presentation)) {
+              Text(this.rowTime(binding.presentation)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
             }
           }.alignItems(HorizontalAlign.Start).layoutWeight(1)
           if (!this.rail) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
@@ -558,15 +560,15 @@ export struct AgentListPage {
   }
 
   @Builder rowContext(place: string, status: string, color: ResourceColor) {
-    if ((place || status) && this.environment.fontScale >= 1.5) {
+    if ((place || status) && this.narrowRow()) {
       Column({ space: 3 }) {
-        if (status) Text(status).fontSize(12).fontWeight(FontWeight.Medium).fontColor(color)
-        if (place) Text(place).fontSize(12).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
+        if (status) Text(status).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(color)
+        if (place) Text(place).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
       }.width('100%').alignItems(HorizontalAlign.Start)
     } else if (place || status) {
       Row({ space: 5 }) {
-        if (status) Text(status).fontSize(12).fontWeight(FontWeight.Medium).fontColor(color).maxLines(1)
-        if (place) Text(place).fontSize(12).fontColor(Colors.secondary).layoutWeight(1).maxLines(1)
+        if (status) Text(status).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(color).maxLines(1)
+        if (place) Text(place).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).layoutWeight(1).maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }.width('100%')
     }
@@ -608,8 +610,8 @@ export struct AgentListPage {
     });
   }
   @Builder searchControl() {
-    Search({ value: this.workspace.search, placeholder: tr('search_sessions') })
-      .height(Math.max(38, Tokens.lineHeight * this.environment.fontScale + 10))
+    Search({ value: this.workspace.search, placeholder: tr('search_sessions') }).maxFontScale(Tokens.interfaceFontMaxScale)
+      .height(Math.max(38, Tokens.lineHeight * Math.min(this.environment.fontScale,Tokens.interfaceScaleFor(17)) + 10))
       .textFont({ size: Tokens.body }).placeholderFont({ size: Tokens.body }).caretStyle({ color: Colors.action })
       .onChange((value: string) => { if (this.compactRoot) this.searchOpen = true; this.workspace.setSearch(value); })
       .onAppear(() => {
@@ -688,7 +690,7 @@ export struct AgentListPage {
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('save')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('save', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(tr('save')).bindTips(tr('save')).enabled(!this.workspace.busy)
           .onClick(() => this.saveRename()).id('agents.rename_save')
       }.width('100%').justifyContent(FlexAlign.End)
-      if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta)
+      if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         .fontColor($r('app.color.persona_danger')).width('100%')
     }.padding(Tokens.page).width('100%')
   }
@@ -696,9 +698,9 @@ export struct AgentListPage {
   build() {
     Column() {
       this.filters()
-      if (this.model.directoryUnavailable > 0) Text(tr('directory_partly_unavailable')).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary')).padding(Tokens.inset).width('100%')
-      if (this.decisions.error) Text(tr(this.decisions.error)).fontSize(Tokens.meta).fontColor(Colors.danger).padding(Tokens.inset).width('100%')
-      if (this.workspace.error && !this.editorOpen) Text(tr(this.workspace.error)).fontSize(Tokens.meta)
+      if (this.model.directoryUnavailable > 0) Text(tr('directory_partly_unavailable')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary')).padding(Tokens.inset).width('100%')
+      if (this.decisions.error) Text(tr(this.decisions.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.danger).padding(Tokens.inset).width('100%')
+      if (this.workspace.error && !this.editorOpen) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         .fontColor($r('app.color.persona_danger')).padding(Tokens.inset).width('100%')
       Refresh({ refreshing: $$this.refreshing }) {
       List({scroller:this.agentScroller}) {
@@ -711,7 +713,7 @@ export struct AgentListPage {
             if (binding.value.totalRowCount > binding.value.rows.length && !binding.value.folded) ListItem() {
               Button() {
                 Row({ space: Tokens.gap }) {
-                  Text(String(binding.value.totalRowCount - binding.value.rows.length) + ' ' + tr('agent_group_more_idle')).fontSize(Tokens.meta).fontColor(Colors.link).layoutWeight(1)
+                  Text(String(binding.value.totalRowCount - binding.value.rows.length) + ' ' + tr('agent_group_more_idle')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.link).layoutWeight(1)
                   SymbolGlyph(Symbols.down).fontSize(Tokens.symbolFont).fontColor([Colors.link])
                 }.width('100%').padding(Tokens.page).constraintSize({ minHeight: Tokens.touch })
               }.type(ButtonType.Normal).buttonStyle(ButtonStyleMode.TEXTUAL).backgroundColor(Color.Transparent).width('100%')
@@ -719,9 +721,9 @@ export struct AgentListPage {
             }
           }, (binding: BoundAgentGroup) => binding.key)
         if (!this.workspace.hasRows() && !this.workspace.loading) ListItem() {
-          Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).padding(Tokens.page).width('100%')
+          Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
         }.id('agents.empty')
-      }.width('100%').height('100%').padding({ left: this.rail ? 0 : 12, right: this.rail ? 0 : 12, bottom: Tokens.listTail }).backgroundColor(Colors.grouped)
+      }.width('100%').height('100%').onAreaChange((_:Area,area:Area)=>{this.listWidth=Number(area.width);}).padding({ left: this.rail ? 0 : 12, right: this.rail ? 0 : 12, bottom: Tokens.listTail }).backgroundColor(Colors.grouped)
         .onTouch((event: TouchEvent) => this.trackPull(event))
       }.width('100%').layoutWeight(1).onRefreshing(() => this.refreshAgents())
       .bindSheet($$this.filterSheetOpen, this.filterSheet(), {

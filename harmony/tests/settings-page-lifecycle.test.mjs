@@ -9,14 +9,14 @@ const directory = readFileSync(new URL('../entry/src/main/ets/components/Setting
 test('the phone searches nested settings and restores exactly the query used to open a result', () => {
   const catalog = directory.slice(directory.indexOf('const AGENT_OPTIONS:'), directory.indexOf('function languageName('));
   const labels = directory.slice(directory.indexOf('function settingLabel('), directory.indexOf('@ComponentV2'));
-  const appear = directory.slice(directory.indexOf('  aboutToAppear():'), directory.indexOf('  @Computed get managers()'));
+  const appear = directory.slice(directory.indexOf('  aboutToAppear():'), directory.indexOf('  aboutToDisappear():'));
   const lookup = directory.slice(directory.indexOf('  @Computed get results()'), directory.indexOf('  @Builder managerMenu('))
     .replace('@Computed ', '');
   const strings = new Map(JSON.parse(readFileSync(new URL('../entry/src/main/resources/zh_CN/element/string.json', import.meta.url))).string
     .map(entry => [entry.name, entry.value]));
   const Search = new Function('tr',stripTypeScriptTypes(catalog + labels + ' class Search {' + appear + lookup + '}')+';return Search')(key => strings.get(key) || key);
   const page = new Search(), actions = [];
-  Object.assign(page,{ initialQuery:' 深色  主题 ', label:id=>id, subtitle:()=>'', field:{ stopEditing:()=>actions.push('dismiss') }, onOpen:id=>actions.push(id) });
+  Object.assign(page,{ initialQuery:' 深色  主题 ', label:id=>id, subtitle:()=>'', meeting:{open(){}}, field:{ stopEditing:()=>actions.push('dismiss') }, onOpen:id=>actions.push(id) });
   page.aboutToAppear();
   assert.deepEqual(page.results,['appearance']);
   page.openEntry(page.results[0]);
@@ -24,6 +24,10 @@ test('the phone searches nested settings and restores exactly the query used to 
   assert.equal(page.query,' 深色  主题 ');
   page.query='LaUnChErS'; assert.ok(page.results.includes('launchers'));
   page.query=' '; assert.deepEqual(page.results,[]);
+  for(const [text,target] of [['模型','models'],['助手资料','assistant'],['知识库选择','phone_knowledge_selection'],
+    ['会议','phone_meeting_options'],['语言与听写','phone_language_options'],['外观与显示','appearance']]) {
+    page.query=text; assert.ok(page.results.includes(target),text);
+  }
 });
 
 function method(name) {

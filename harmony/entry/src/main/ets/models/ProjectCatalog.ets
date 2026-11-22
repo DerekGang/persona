@@ -33,6 +33,7 @@ export class ProjectAgent {
   spaceKind: string;
   archived: boolean;
   pending: number;
+  todoTitle: string;
   tabKey: string = '';
   tabTitle: string = '';
   pane?: SessionSpaceTab;
@@ -66,6 +67,8 @@ export class ProjectAgent {
     this.tab = Wire.text(data,'slot_name') || Wire.text(data,'space_name');
     this.spaceId = Wire.text(data,'space_id'); this.spaceKind = Wire.text(data,'space_kind');
     this.archived = Wire.bool(data,'archived'); this.pending = Wire.number(data,'pending_interactions');
+    const todo = Wire.object(data,'todo');
+    this.todoTitle = Wire.text(todo,'id') ? Wire.text(todo,'title') : '';
     const space = this.spaceId, slot = Wire.text(data,'slot_id');
     if (space && slot) {
       this.pane = new SessionSpaceTab(row, data);
@@ -224,9 +227,12 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
     tree.title = tree.source === 'session-directory' && cleanPath(row.title) === cleanPath(tree.cwd) ? leaf(tree.cwd) :
       row.title || tree.branch || leaf(tree.cwd);
     tree.parent = Wire.text(data, 'parent_source_id');
-    const hostProject = Wire.text(data, 'project_id');
+    const catalogWorkspace = tree.source === 'orca' || tree.source === 'paseo';
+    const address = tree.sourceId.split('::');
+    const hostProject = Wire.text(data, 'project_id') || (catalogWorkspace && address.length > 1 ? address[0] : '');
     tree.projectId = hostProject ? JSON.stringify([tree.source, hostProject]) : Wire.text(data, 'project_path');
-    tree.projectTitle = Wire.text(data, 'project_name') || leaf(Wire.text(data, 'project_path'));
+    tree.projectTitle = Wire.text(data, 'project_name') ||
+      (catalogWorkspace && !hostProject ? tree.title : leaf(Wire.text(data, 'project_path')));
     tree.main = Wire.bool(data, 'is_main'); tree.workspaceKind = Wire.text(data, 'workspace_kind');
     tree.head = Wire.text(data,'head'); tree.folder = ['folder','folder-workspace'].includes(tree.workspaceKind);
     tree.index = Wire.number(data,'index',Number.MAX_SAFE_INTEGER); tree.pinnedAt = parsedTime(Wire.text(data,'pinned_at'));
@@ -262,7 +268,7 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
     const agent = new ProjectAgent(row,data);
     tree.agents.push(agent);
     if (!tree.branch) tree.branch = Wire.text(data, 'branch');
-    if (!tree.projectId && place.repo) { tree.projectId = place.repo; tree.projectTitle = leaf(place.repo); }
+    if (!tree.projectId && place.repo) { tree.projectId = place.repo; if (!tree.projectTitle) tree.projectTitle = leaf(place.repo); }
     if (tree.source === 'session-directory' && place.main && tree.cwd === place.checkout) tree.main = true;
   }
   for (const key of loose.keys()) {

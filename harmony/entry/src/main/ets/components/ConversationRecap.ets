@@ -72,8 +72,8 @@ export struct ConversationRecap {
     Button({ type: ButtonType.Normal }) {
       Row({ space: 6 }) {
         SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(15).fontColor([Colors.link])
-        Text(tr('chat_away_recap')).fontSize(14).fontColor(Colors.ink).maxLines(1)
-        if (items.length > 1) Text('· ' + String(items.length) + '×').fontSize(13).fontColor(Colors.secondary)
+        Text(tr('chat_away_recap')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.ink).maxLines(1)
+        if (items.length > 1) Text('· ' + String(items.length) + '×').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
         if (this.relative(items[items.length - 1].at)) Text('· ' + this.relative(items[items.length - 1].at))
           .fontSize(13).fontColor(Colors.secondary).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
@@ -87,8 +87,8 @@ export struct ConversationRecap {
       Column({ space: 4 }) {
         Row({ space: 6 }) {
           SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(15).fontColor([Colors.link])
-          Text(tr('chat_away_recap')).fontSize(14).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-          if (this.relative(item.at)) Text('· ' + this.relative(item.at)).fontSize(13).fontColor(Colors.secondary)
+          Text(tr('chat_away_recap')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          if (this.relative(item.at)) Text('· ' + this.relative(item.at)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
           else Blank().layoutWeight(1)
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(13).fontColor([Colors.secondary])
@@ -116,7 +116,7 @@ export struct ConversationRecap {
       Column({ space: 16 }) {
         ForEach(this.sheetItems, (item: ConversationRecapItem, index: number) => {
           if (index > 0) Divider().strokeWidth(Tokens.divider).color(Colors.divider)
-          if (this.relative(item.at)) Text(tr('chat_recap_written').replace('{time}',this.relative(item.at))).fontSize(Tokens.caption).fontColor(Colors.secondary)
+          if (this.relative(item.at)) Text(tr('chat_recap_written').replace('{time}',this.relative(item.at))).fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary)
           MarkdownText({ text: item.text, chatReply: true, onLink: (url: string) => { if (this.current()) this.onLink(url); } })
         }, (item: ConversationRecapItem) => item.id)
       }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.page)

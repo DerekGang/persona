@@ -1,4 +1,3 @@
-import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { Colors } from './Colors';
 import { Tokens } from './Tokens';
 
@@ -9,7 +8,7 @@ export class PhoneStyle {
   static readonly inset: number = 14;
   static readonly rowHeight: number = 48;
   static readonly bar: number = 44;
-  static readonly title: number = 32;
+  static readonly title: number = 34;
 }
 
 @ComponentV2
@@ -34,19 +33,11 @@ export struct PhoneSectionTitle {
   @Require @Param text: string;
   @Param trailing: string = '';
   build() {
-    Column() {
-      if (nativeEnvironment.fontScale >= 1.5) {
-        Column({ space: Tokens.fine }) {
-          Text(this.text).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-          if (this.trailing) Text(this.trailing).fontSize(13).fontColor(Colors.secondary)
-        }.width('100%').alignItems(HorizontalAlign.Start)
-      } else {
-        Row({ space: Tokens.gap }) {
-          Text(this.text).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
-          if (this.trailing) Text(this.trailing).fontSize(13).fontColor(Colors.secondary)
-        }.width('100%')
-      }
-    }.width('100%').alignItems(HorizontalAlign.Start).padding({ left: 6, right: 6, top: 14, bottom: 7 })
+    Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center}) {
+      Text(this.text).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
+        .fontColor(Colors.secondary).flexGrow(1).margin({right:6})
+      if (this.trailing) Text(this.trailing).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+    }.width('100%').padding({ left: 6, right: 6, top: 14, bottom: 7 })
   }
 }
 
@@ -54,6 +45,7 @@ export struct PhoneSectionTitle {
 export struct PhoneSettingsRow {
   @Require @Param label: string;
   @Require @Param symbol: Resource;
+  @Param artwork:Resource|undefined=undefined;
   @Require @Param tint: ResourceColor;
   @Param identity: string = '';
   @Param detail: string = '';
@@ -62,16 +54,15 @@ export struct PhoneSettingsRow {
   build() {
     Column() {
       Row({ space: 12 }) {
-        SymbolGlyph(this.symbol).fontSize('20vp').fontColor([this.tint]).width(27).height(28)
-        if (nativeEnvironment.fontScale >= 1.5 && this.detail) {
-          Column({ space: 3 }) {
-            Text(this.label).fontSize(Tokens.body).fontColor(Colors.ink)
-            Text(this.detail).fontSize(14).fontColor(Colors.secondary)
-          }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-        } else {
-          Text(this.label).fontSize(Tokens.body).fontColor(Colors.ink).layoutWeight(1).maxLines(nativeEnvironment.fontScale >= 1.5 ? 4 : 2)
-          if (this.detail) Text(this.detail).fontSize(14).fontColor(Colors.secondary).maxLines(1)
-        }
+        if (this.artwork) Stack() {
+          Image(this.artwork).width(22).height(22).objectFit(ImageFit.Contain).fillColor(this.tint)
+        }.width(27).height(28).accessibilityLevel('no-hide-descendants')
+        else SymbolGlyph(this.symbol).fontSize('20vp').fontColor([this.tint]).width(27).height(28)
+        Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center}) {
+          Text(this.label).fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.ink)
+            .flexGrow(1).margin({right:4})
+          if (this.detail) Text(this.detail).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
+        }.layoutWeight(1)
         SymbolGlyph($r('sys.symbol.chevron_right')).fontSize('14vp').fontColor([Colors.secondary])
       }.width('100%').constraintSize({ minHeight: PhoneStyle.rowHeight }).padding({ left: 14, right: 14, top: 5, bottom: 5 })
       if (!this.last) Divider().color(Colors.divider).strokeWidth(0.5).margin({ left: 54 })

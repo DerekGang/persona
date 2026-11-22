@@ -85,7 +85,7 @@ test('repository scroll anchors keep the same worktree when the summary scrolls 
 
 test('a mounted worktree card opens the newest scoped row and rejects cards removed or shown under another checkout',()=>{
   const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
-  const method=source.slice(source.indexOf('  private openSpaceCard('),source.indexOf('  @Builder spaceCard('));
+  const method=source.slice(source.indexOf('  private openSpaceCard('),source.indexOf('  @Builder spaceStatus('));
   const Page=new Function('return '+stripTypeScriptTypes('class Page {'+method+'}'))();
   const live=session('same'),foreign=session('same');foreign.group='elsewhere';
   const current={row:live};let agents=[current];const opened=[];
@@ -448,6 +448,20 @@ test('project quick filters retain matching panes and disclose repositories inli
   const repo=query('working').find(l=>l.kind==='project');
   browser.toggleSearch(repo.key);assert.deepEqual(ids('working'),[]);assert.ok(query('working').find(l=>l.key===repo.key));
   assert.equal(browser.open(repo.key,true),true);browser.resetSearchFolds();assert.deepEqual(ids('working'),['active']);
+});
+
+test('the machine’s first repository precedes an unnamed project’s named Orca workspace and quiet Herdr checkouts stay reachable below them', () => {
+  const collection=workspace('orca:collection',{title:'Workspace collection',cwd:'/code',source:'orca'});
+  const notes=workspace('notes',{title:'notes',cwd:'/code/notes',source:'herdr'});
+  const weather=session('weather-agent',{title:'Weather',state:'working',cwd:'/code/weather',repo_root:'/code/weather',
+    todo:{id:'todo-weather',title:'Widget follow-up'}});
+  const plain=session('standalone',{title:'Other',state:'idle',cwd:'/code/notes',space_kind:'herdr',workspace_id:'notes'});
+  const projects=projectDirectory([collection,notes],[weather,plain],[machine]), browser=new ProjectBrowserState();
+  const lines=projectOutline(projects,browser);
+  assert.deepEqual(lines.filter(line=>line.kind==='project').map(line=>line.project.title),['weather','Workspace collection','notes']);
+  assert.ok(lines.findIndex(line=>line.kind==='idle-projects')<lines.findIndex(line=>line.kind==='project' && line.project.title==='notes'));
+  assert.equal(lines.find(line=>line.agent?.row.id==='weather-agent').agent.todoTitle,'Widget follow-up');
+  browser.query='notes';assert.ok(projectOutline(projects,browser).some(line=>line.kind==='tree' && line.tree.sourceId==='notes'));
 });
 
 test('typing a repository name or a distinct Agent title narrows the status counts to the same Agent rows', () => {

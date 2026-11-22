@@ -34,9 +34,9 @@ test('compact Persona and Agent editors get the remaining width after fixed acti
   const v = fixture();
   assert.equal(v.expandedComposer(), false);
   assert.equal(v.composerColumns(), 1116);
-  assert.equal(v.leftColumns(), 336);
+  assert.equal(v.leftColumns(), 168);
   assert.equal(v.sendColumns(), 168);
-  assert.equal(v.composerColumns() - v.leftColumns() - v.sendColumns(), 612);
+  assert.equal(v.composerColumns() - v.leftColumns() - v.sendColumns(), 780);
   v.showContextMenu = false;
   assert.equal(v.leftColumns(), 168);
   assert.equal(v.composerColumns() - v.leftColumns() - v.sendColumns(), 780);
@@ -73,14 +73,16 @@ test('a blurred empty composer returns to one line, with enough space for the ke
   v.fieldFocused = false;
   assert.equal(v.expandedComposer(), false);
 
-  for (const change of [
-    v => { v.environment.fontScale = 1.5; },
-    v => { v.composerWidth = 300; }]) {
-    const narrow = fixture();
-    change(narrow);
-    assert.equal(narrow.expandedComposer(), true);
-    assert.equal(narrow.composerColumns(), 12);
+  // The iPhone keeps the unedited attachment / field / microphone row compact at AX5.
+  for (const scale of [1,1.5,3.2]) for (const width of [300,372]) {
+    const phone=fixture(3,width); phone.environment.fontScale=scale;
+    assert.equal(phone.expandedComposer(),false);
+    assert.equal(phone.composerColumns(),width*3);
   }
+  const narrow=fixture(3,220);
+  assert.equal(narrow.expandedComposer(),true);
+  assert.equal(narrow.composerColumns(),12);
+
 });
 
 test('a draft can expand above the keyboard, while a short unfocused draft keeps its quiet shape', () => {

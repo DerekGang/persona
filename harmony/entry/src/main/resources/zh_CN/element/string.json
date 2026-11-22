@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "project_temporary_session",
+      "value": "临时会话"
+    },
+    {
       "name": "module_desc",
       "value": "Persona 手机客户端"
     },
@@ -5153,6 +5157,14 @@
       "value": "暂时无法获取模型列表"
     },
     {
+      "name": "project_checkout_primary",
+      "value": "主要"
+    },
+    {
+      "name": "project_worktree_idle",
+      "value": "空闲"
+    },
+    {
       "name": "project_primary",
       "value": "主检出"
     },
@@ -6619,6 +6631,58 @@
     {
       "name": "phone_meeting_voice_unavailable",
       "value": "回答已显示，本机暂时无法朗读。"
+    },
+    {
+      "name": "chat_tray_needs",
+      "value": "要你处理"
+    },
+    {
+      "name": "chat_tray_progress",
+      "value": "进行中"
+    },
+    {
+      "name": "phone_settings_models",
+      "value": "模型"
+    },
+    {
+      "name": "phone_settings_profile",
+      "value": "助手资料"
+    },
+    {
+      "name": "phone_settings_display",
+      "value": "外观与显示"
+    },
+    {
+      "name": "phone_settings_language_dictation",
+      "value": "语言与听写"
+    },
+    {
+      "name": "phone_settings_switch",
+      "value": "切换"
+    },
+    {
+      "name": "phone_settings_system_language",
+      "value": "跟随系统（{language}）"
+    },
+    {
+      "name": "phone_settings_owner_note",
+      "value": "只显示「{name}」自己的内容。要改别的助手，先切换过去。"
+    },
+    {
+      "name": "chat_tray_other",
+      "value": "其他对话"
+    },
+    {
+      "name": "phone_drawer_recent",
+      "value": "最近"
+    },
+    {
+      "name": "phone_drawer_schedules",
+      "value": "定时任务"
+    },
+    {
+      "name": "phone_drawer_health",
+      "value": "健康"
     }
   ]
 }

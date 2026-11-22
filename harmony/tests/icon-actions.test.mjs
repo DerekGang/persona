@@ -65,12 +65,18 @@ test('magnified project and Agent views keep symbols inside their slots and give
  for (const source of [phone, projects, agents, picker, launch]) {
    assert.doesNotMatch(source, /SymbolGlyph\([^\n]*?\)\s*\.fontSize\(\d+\)/, 'a fixed symbol must use vp independent of system text scaling');
  }
- assert.match(projects, /nativeEnvironment\.fontScale >= 1\.5[\s\S]{0,120}Column\(\{space:3\}\)[\s\S]{0,110}Text\(line\.tree!\.title\)/);
- assert.match(projects, /GridRow\(\{columns:nativeEnvironment\.fontScale >= 1\.5 \? 1 : 2/);
+ assert.match(projects, /this\.narrowOutline\(\)[\s\S]{0,120}Column\(\{space:3\}\)[\s\S]{0,110}Text\(line\.tree!\.title\)/);
+ assert.match(projects, /GridRow\(\{columns:this\.narrowOutline\(\) \? 1 : 2/);
  assert.match(agents, /Text\(tr\(QUICK_LABELS\[index\]\)\)\.fontSize\(14\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
  assert.match(picker, /TextInput\(\{text:this\.address[^\n]+\.height\(Math\.max\(46, 22 \* nativeEnvironment\.fontScale \+ 14\)\)/);
- assert.match(launch, /width\(this\.environment\.fontScale >= 1\.5 \? Math\.min\(250,130 \* this\.environment\.fontScale\) : 138\)/);
+ assert.match(launch, /width\(120\*Math\.min\(this\.environment\.fontScale,Tokens\.interfaceFontMaxScale\)\+24\)/);
+ assert.match(launch, /Wire\.text\(row\.data\(\),'hostname'\) \|\| tr\('online'\)/);
+ assert.match(projects, /15\*this\.spaceCardScale\(\)\)\.maxFontScale\(Tokens\.interfaceScaleFor\(15\)\)\.fontWeight\(600\)/);
  assert.match(launch, /this\.machineChoice\(m\)[\s\S]{0,160}scrollable\(ScrollDirection\.Horizontal\)/);
+ assert.match(projects, /px2vp\(width\) < 320/);
+ assert.match(projects, /Text\(agent.row.title[^\n]+maxFontScale\(Tokens.interfaceScaleFor\(15\)\)/);
+ assert.match(picker, /Text\(o.title\)\.fontSize\(16\)\.maxFontScale\(Tokens.interfaceScaleFor\(16\)\)/);
+ assert.doesNotMatch(launch.match(/TextArea\(\{text:this.newTask[\s\S]*?id\('agent.task'\)/)[0],/maxFontScale/);
  assert.match(launch, /Text\(tr\('new_chat'\)\)\.fontSize\(18\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
 });
 

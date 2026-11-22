@@ -353,13 +353,19 @@ test('a foreground appearance change recreates just the retained session header 
   assert.match(header,/this\.phoneTop === 'session' \|\| this\.phoneToolParent/);
   assert.match(header,/ForEach\(\[this\.environment\.dark\],\s*\(dark:boolean\) => \{\s*WithTheme\(\{[^}]*colorMode:dark \? ThemeColorMode\.DARK : ThemeColorMode\.LIGHT[^}]*\}\) \{\s*this\.compactPlaces\(\)\s*\}\s*\},\s*\(dark:boolean\) => String\(dark\)\)/);
   // The Navigation owns Files/search/Git, the selected session, and its mounted conversation draft.
-  assert.match(formSource,/if \(!this\.wide\(\) && this\.phoneTop !== 'project_tree' && \(this\.phoneTop \|\| !this\.projectPlace\(\) \|\| !this\.projectSearching\)\) this\.phoneHeader\(\)\s*Navigation\(this\.stack\)/);
-  const visibility=formSource.match(/if \((!this\.wide\(\).*?this\.projectSearching\))\) this\.phoneHeader\(\)/)[1];
-  const shows=new Function('return '+visibility);
-  const at=(top,search,wide=false,projects=true)=>Boolean(shows.call({phoneTop:top,projectSearching:search,wide:()=>wide,projectPlace:()=>projects}));
-  assert.equal(at('',true),false); assert.equal(at('project_tree',false),false);
-  assert.equal(at('session',true),true); assert.equal(at('',false),true);
-  assert.equal(at('',true,false,false),true); assert.equal(at('session',false,true),false);
+  const regular=formSource.match(/if \((!this\.wide\(\) && !this\.floatingProjectHeader[^\n]+)\) this\.phoneHeader\(\)\s*Navigation\(this\.stack\)/)[1];
+  const floating=formSource.match(/@Computed get floatingProjectHeader\(\): boolean \{\s*return ([\s\S]+?);\s*\}/)[1];
+  const row=new Function('return '+regular),overlay=new Function('return '+floating);
+  const count=(top,search,wide=false,projects=true,merged=false)=>{
+    const context={phoneTop:top,projectSearching:search,wide:()=>wide,projectPlace:()=>projects,mergedPhone:()=>merged,model:{profile:{id:'hub'}}};
+    context.floatingProjectHeader=Boolean(overlay.call(context));
+    return [Boolean(row.call(context)),context.floatingProjectHeader];
+  };
+  assert.deepEqual(count('',true),[false,false]);assert.deepEqual(count('project_tree',false),[false,false]);
+  assert.deepEqual(count('session',true),[true,false]);assert.deepEqual(count('',false),[false,true]);
+  assert.deepEqual(count('',false,false,true,true),[true,false]);
+  assert.deepEqual(count('',true,false,false),[true,false]);assert.deepEqual(count('session',false,true),[false,false]);
+  assert.match(formSource,/if \(this\.floatingProjectHeader\) [\s\S]{0,100}this\.phoneHeader\(\)/);
   const chrome = formSource.slice(formSource.indexOf('  @Builder compactPlaces()'), formSource.indexOf('  private parentIndexes()'));
   assert.match(chrome,/SessionSpaceTabs\(\{space:this\.phoneSessionSpace/);
 });

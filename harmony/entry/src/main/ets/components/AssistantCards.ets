@@ -15,7 +15,7 @@ import { ResourceRow, Wire } from '../models/Wire';
 import { MarkdownText } from './MarkdownText';
 import { Tokens } from '../design/Tokens';
 import { Colors } from '../design/Colors';
-import { TodoWorkspaceItem, todoWorkspaceStatus } from '../models/TodoWorkspace';
+import { assistantTrayRows, TaskTrayRow, TrayRequest } from '../models/AssistantTrays';
 import { ButtonStyles } from '../design/Controls';
 import { tr } from '../design/Strings';
 import { projectAssistantReceipt, AssistantReceiptProjection, AssistantReceiptCriterion } from '../models/AssistantReceipt';
@@ -23,15 +23,6 @@ import { projectAssistantReceipt, AssistantReceiptProjection, AssistantReceiptCr
 // The Hub accepts bypassPermissions for writable task plans; read-only tasks
 // are locked to plan mode and cannot be upgraded from this editor.
 const PLAN_PERMISSIONS: string[] = ['bypassPermissions'];
-
-class TaskTrayRow {
-  card: Record<string,Object>;
-  bucket: string;
-  state: string;
-  constructor(card: Record<string,Object>, bucket: string, state: string) {
-    this.card = card; this.bucket = bucket; this.state = state;
-  }
-}
 
 class TaskQuestionRow {
   readonly todoId:string;
@@ -85,10 +76,10 @@ export struct AssistantCards {
   @Computed get taskQuestions():TaskQuestionRow[] {
     const questions:TaskQuestionRow[]=[], seen=new Set<string>();
     if (!this.dockOnly || !this.active || !this.feed.todosReady) return questions;
-    for (const entry of this.trayRows) {
-      const todo=this.taskTodo(entry.card), todoId=this.todoId(entry.card);
+    for (const task of this.feed.taskCardsForConversation()) {
+      const todo=this.taskTodo(task), todoId=this.todoId(task);
       if (!todoId) continue;
-      for (const agent of this.activeAgents(entry.card)) {
+      for (const agent of this.activeAgents(task)) {
         const row=this.feed.openAgent(todoId,agent);
         if (!row) continue;
         for (const card of this.requests.forSession(this.model,row)) {
@@ -115,24 +106,44 @@ export struct AssistantCards {
   private openTray(bucket: string): void {
     if (!this.active) return;
     if (this.trayOpen && this.trayBucket===bucket) { this.trayOpen=false; return; }
-    this.trayBucket=bucket; this.trayOwner=this.trayScope(); this.trayOpen=true;
+    this.trayBucket=bucket; this.trayOwner=this.trayScope(); this.expandedEntry=''; this.trayOpen=true;
   }
   @Computed get trayRows(): TaskTrayRow[] {
-    if (!this.dockOnly) return [];
-    const rows: TaskTrayRow[] = [];
-    for (const card of this.feed.taskCardsForConversation()) {
-      const todo = new TodoWorkspaceItem(this.taskTodo(card), this.feed.owner);
-      const state = todoWorkspaceStatus(todo, this.model.sessions);
-      const declared = Wire.text(card, 'state');
-      const ask = todo.ask;
-      const asksOwner = !!Wire.text(ask,'asked_at') && !!Wire.text(ask,'verdict') && !(todo.isDone() && Wire.text(ask,'outcome') === 'decide');
-      const bucket = asksOwner || state === 'needs_you' || !todo.isDone() && ['needs_you','interrupted','usage_limit','failed'].includes(declared) ? 'needs' :
-        state === 'done' ? 'done' : 'progress';
-      rows.push(new TaskTrayRow(card,bucket, declared && declared !== 'unknown' ? this.stateLabel(declared) : tr('todo_state_' + state)));
+    if (!this.dockOnly || !this.active || !this.feed.todosReady || this.feed.owner!==this.model.profile.manager) return [];
+    const manager=this.feed.owner, session=this.feed.conversationId;
+    const main=!this.model.mainMachineId || this.model.mainMachineId===this.model.selected.machine ? this.model.mainId : '';
+    const requests=this.requests.cards.filter((c:AgentDecisionCard) => c.owner===this.model && c.manager===manager)
+      .map((c:AgentDecisionCard) => new TrayRequest(c.machine,c.session,c.request.id,c.preview,c.since));
+    const feed=this.feed.items.filter((i:Record<string,Object>) => Wire.text(i,'kind')!=='message' || this.feed.messageState(i)==='open');
+    const rows=assistantTrayRows(this.feed.directoryTodos,this.model.sessions,feed,this.feed.plans,requests,manager,this.model.profile.id,session,main,Date.now());
+    for (const req of requests) {
+      if (req.machine!==this.model.selected.machine || req.session!==session) continue;
+      rows.unshift(new TaskTrayRow('question',req.id,'needs','needs_you',req.title,'',{}));
     }
     return rows;
   }
-  private trayLabel(bucket: string): string { return tr(bucket === 'needs' ? 'needs_you' : bucket === 'done' ? 'done' : 'todo_state_working'); }
+  @Local private expandedEntry:string='';
+  private rowState(entry:TaskTrayRow):string {
+    if (entry.kind==='plan' || entry.kind==='message') return tr('assistant_feed_'+entry.kind);
+    if (entry.status==='failed') return tr('failed');
+    if (entry.status==='interrupted' || entry.status==='usage_limit') return this.stateLabel(entry.status);
+    if (entry.status==='unread') return tr('todo_state_checking');
+    if (entry.status==='waiting') return tr('todo_state_working');
+    return tr('todo_state_'+entry.status);
+  }
+  private trayGroupTitle(id:string):string {
+    return this.model.conversations.find((r:ResourceRow) => r.id===id && r.manager===this.feed.owner && (!r.group || r.group===this.model.profile.id))?.title || tr('chat_tray_other');
+  }
+  private activateTray(entry:TaskTrayRow):void {
+    if (!this.active || !this.trayOpen || this.trayScope()!==this.trayOwner) return;
+    const actual=this.trayRows.find((r:TaskTrayRow) => r.key()===entry.key());
+    if (!actual) return;
+    if (actual.kind==='message' || actual.kind==='plan') { this.expandedEntry=this.expandedEntry===actual.key() ? '' : actual.key(); return; }
+    this.trayOpen=false;
+    if (actual.resource && actual.kind==='todo') this.onOpenTodo(actual.resource);
+    if (actual.resource && actual.kind==='agent') this.onOpenSession(actual.resource);
+  }
+  private trayLabel(bucket: string): string { return tr(bucket === 'needs' ? 'chat_tray_needs' : bucket === 'done' ? 'done' : 'chat_tray_progress'); }
   private trayColor(bucket: string): ResourceColor { return bucket === 'needs' ? Colors.needs : bucket === 'done' ? Colors.positive : Colors.working; }
 
   private editorReady: boolean = false;
@@ -249,9 +260,9 @@ export struct AssistantCards {
       Row({ space: Tokens.inset }) {
         SymbolGlyph(Symbols.document).fontSize(Tokens.symbolFont).fontColor([Colors.ai])
         Column({ space: Tokens.fine }) {
-          Text(tr('assistant_feed_plan')).fontSize(Tokens.meta).fontColor(Colors.ai).width('100%')
-          Text(this.planSummaryTitle(item)).fontSize(Tokens.body).fontWeight(FontWeight.Medium).fontColor(Colors.ink).width('100%')
-          if (this.planTasks(item).length > 1) Text(this.planSummaryMore(item)).fontSize(Tokens.meta).fontColor(Colors.secondary).width('100%')
+          Text(tr('assistant_feed_plan')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.ai).width('100%')
+          Text(this.planSummaryTitle(item)).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).width('100%')
+          if (this.planTasks(item).length > 1) Text(this.planSummaryMore(item)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.secondary).width('100%')
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         SymbolGlyph(Symbols.expand).fontSize(Tokens.meta).fontColor([Colors.secondary])
       }.width('100%').alignItems(VerticalAlign.Center)
@@ -383,31 +394,25 @@ export struct AssistantCards {
   }
 
   @Builder taskRow(entry: TaskTrayRow) {
-    Column({ space: 6 }) {
-      Row({ space: 9 }) {
-        Circle().width(8).height(8).fill(this.trayColor(entry.bucket))
-        Text(Wire.text(this.taskTodo(entry.card), 'title', tr('assistant_feed_task')))
-          .fontSize(17).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
-        Text(entry.state).fontSize(12).fontColor(this.trayColor(entry.bucket))
-        SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
-      }.width('100%').constraintSize({minHeight:44}).onClick(() => this.openTodo(this.todoId(entry.card)))
-        .accessibilityGroup(true).id('chat.tasks.todo.' + this.todoId(entry.card))
-      ForEach(this.activeAgents(entry.card), (agent: Record<string,Object>) => {
-        if (this.feed.openAgent(this.todoId(entry.card), agent)) {
-          Row({space:8}) {
-            SymbolGlyph(Symbols.agent).fontSize(15).fontColor([Colors.secondary])
-            Column({space:3}) {
-              Text(this.agentTitle(this.todoId(entry.card),agent)).fontSize(15).fontColor(Colors.ink).maxLines(2)
-              Text(this.sessionProgress(this.todoId(entry.card),agent) || this.agentMachine(this.todoId(entry.card),agent))
-                .fontSize(13).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-            SymbolGlyph(Symbols.expand).fontSize(12).fontColor([Colors.secondary])
-          }.width('100%').padding({left:12,right:4,top:4,bottom:4}).constraintSize({minHeight:44})
-            .onClick(() => this.openAgentSession(this.todoId(entry.card),agent)).accessibilityGroup(true)
-        }
-      }, (agent:Record<string,Object>) => JSON.stringify([Wire.text(agent,'machine_id'),Wire.text(agent,'session_id')]))
-    }.padding({left:13,right:13,bottom:6}).width('100%').alignItems(HorizontalAlign.Start)
-      .backgroundColor(Colors.surface).borderRadius(13)
+    Column() {
+      Button({type:ButtonType.Normal}) {
+        Row({space:9}) {
+          Circle().width(7).height(7).fill(this.trayColor(entry.bucket))
+          Column({space:2}) {
+            Text(entry.title || this.rowState(entry)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
+              .textOverflow({overflow:TextOverflow.Ellipsis})
+            if (entry.note) Text(entry.note).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+          Text(this.rowState(entry)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(this.trayColor(entry.bucket)).maxLines(1)
+          SymbolGlyph(Symbols.expand).fontSize('11vp').fontColor([Colors.secondary])
+        }.width('100%').padding({top:5,bottom:5}).constraintSize({minHeight:entry.note ? 52 : 38})
+      }.width('100%').padding({left:8,right:8}).backgroundColor(Color.Transparent)
+        .id('chat.tasks.'+entry.kind+'.'+entry.id).accessibilityText([entry.title,this.rowState(entry),entry.note].filter((v:string) => !!v).join('、'))
+        .onClick(() => this.activateTray(entry))
+      if (this.expandedEntry===entry.key() && entry.kind==='message') this.message(entry.data)
+      if (this.expandedEntry===entry.key() && entry.kind==='plan') this.planSummary(entry.data)
+      Divider().color(Colors.divider).margin({left:24})
+    }.width('100%').alignItems(HorizontalAlign.Start)
   }
 
   @Builder trayList() {
@@ -421,10 +426,12 @@ export struct AssistantCards {
       Scroll() {
         Column({space:2}) {
           ForEach(this.trayRows.filter((row:TaskTrayRow) => row.bucket===this.trayBucket),(row:TaskTrayRow) => {
+            if (row.groupHeading) Text(this.trayGroupTitle(row.groupHeading)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
+              .fontWeight(FontWeight.Medium).fontColor(Colors.secondary).padding({left:12,top:5}).width('100%').id('chat.tasks.group.'+row.groupHeading)
             this.taskRow(row)
-          },(row:TaskTrayRow) => JSON.stringify([this.todoId(row.card),row.state,this.taskTodo(row.card)]))
-          if (!this.trayRows.some((row:TaskTrayRow) => row.bucket===this.trayBucket)) Text(tr('empty')).fontSize(13).fontColor(Colors.secondary)
-          if (this.feed.todoError) Text(tr(this.feed.todoError)).fontSize(13).fontColor(Colors.danger)
+          },(row:TaskTrayRow) => JSON.stringify([row.key(),row.title,row.status,row.note,row.groupHeading]))
+          if (!this.trayRows.some((row:TaskTrayRow) => row.bucket===this.trayBucket)) Text(tr('empty')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+          if (this.feed.todoError) Text(tr(this.feed.todoError)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.danger)
         }.width('100%')
       }.width('100%').constraintSize({maxHeight:Math.max(48,Math.min(this.dockRoom*(this.taskQuestions.length ? 0.21 : 0.45),260))}).align(Alignment.TopStart)
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left:10,right:10,top:3,bottom:7})
@@ -435,8 +442,8 @@ export struct AssistantCards {
     Column({space:3}) {
       Row({space:5}) {
         SymbolGlyph($r('sys.symbol.hand_raised_fingers_spread')).fontSize('12vp').fontColor([Colors.link])
-        Text(row.title).fontSize(12).fontColor(Colors.link).layoutWeight(1).maxLines(2)
-        if (this.taskQuestions.length>1) Text(tr('session_task_more').replace('{count}',String(this.taskQuestions.length-1))).fontSize(12).fontColor(Colors.link)
+        Text(row.title).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link).layoutWeight(1).maxLines(2)
+        if (this.taskQuestions.length>1) Text(tr('session_task_more').replace('{count}',String(this.taskQuestions.length-1))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
       }.width('100%')
       InteractionDecisionForm({model:this.model,request:row.card.request,taskAgent:row.agent,taskCard:row.card,taskQueue:this.requests,
         heightLimit:Math.max(116,Math.min(this.dockRoom*(this.trayOpen ? 0.35 : 0.46),360)),admission:():boolean => this.questionCurrent(row),
@@ -455,11 +462,12 @@ export struct AssistantCards {
           ForEach(['needs','progress','done'],(bucket:string) => {
             if (bucket!=='done' || this.trayBucket==='done' && this.trayOpen || this.trayRows.some((r:TaskTrayRow) => r.bucket===bucket)) Button({type:ButtonType.Capsule}) {
               Row({space:4}) {
-                Text(this.trayLabel(bucket)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(this.trayOpen && this.trayBucket===bucket ? Colors.link : Colors.ink)
-                Text(String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length)).fontSize(12).fontColor(Colors.secondary)
+                Text(this.trayLabel(bucket)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(this.trayOpen && this.trayBucket===bucket ? Colors.link : Colors.ink)
+                Text(String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
               }
             }.height(29).padding({left:9,right:9}).backgroundColor(this.trayOpen && this.trayBucket===bucket ? Colors.selection : Colors.control)
               .responseRegion({x:0,y:-7,width:'100%',height:44}).accessibilitySelected(this.trayOpen && this.trayBucket===bucket)
+              .accessibilityText(this.trayLabel(bucket)+'、'+String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length))
               .onClick(() => this.openTray(bucket)).id('chat.tasks.'+bucket)
           },(bucket:string) => bucket)
         }
@@ -492,10 +500,10 @@ export struct AssistantCards {
           .fontColor([this.receiptTone(projection)])
         Column({ space: Tokens.fine }) {
           Row({ space: Tokens.gap }) {
-            Text(projection.title || tr('assistant_feed_receipt')).fontSize(Tokens.body).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
-            Text(tr('assistant_detail_receipt_' + projection.outcome)).fontSize(Tokens.meta).fontColor(this.receiptTone(projection))
+            Text(projection.title || tr('assistant_feed_receipt')).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
+            Text(tr('assistant_detail_receipt_' + projection.outcome)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(this.receiptTone(projection))
           }.width('100%')
-          if (projection.summary) Text(projection.summary).fontSize(Tokens.body).fontColor(Colors.secondary).width('100%').maxLines(3)
+          if (projection.summary) Text(projection.summary).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.secondary).width('100%').maxLines(3)
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         SymbolGlyph(Symbols.expand).fontSize(Tokens.meta).fontColor([Colors.secondary])
       }.width('100%')
@@ -745,7 +753,7 @@ export struct AssistantCards {
             (_task: PlanEditTask, index: number) => String(index))
         }.width('100%').alignItems(HorizontalAlign.Start)
       }.layoutWeight(1).width('100%').align(Alignment.TopStart)
-      if (this.feed.error) Text(tr(this.feed.error)).fontSize(Tokens.meta).fontColor($r('app.color.persona_danger'))
+      if (this.feed.error) Text(tr(this.feed.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
       Row({ space: Tokens.gap }) {
         Blank().layoutWeight(1)
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('assistant_feed_start')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('assistant_feed_start', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(tr('assistant_feed_start')).bindTips(tr('assistant_feed_start')).id('assistant.plan.editor.start')

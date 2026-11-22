@@ -80,6 +80,7 @@ export class AssistantFeedModel {
   @Trace planActionErrors: Record<string, Object> = {};
   @Trace taskCards: Record<string, Object>[] = [];
   @Trace todos: Record<string, Object>[] = [];
+  @Trace directoryTodos: Record<string,Object>[] = [];
   @Trace views: Record<string, Object> = {};
   @Trace viewActions: Record<string, Object> = {};
   @Trace viewBlocks: string[] = [];
@@ -135,7 +136,7 @@ export class AssistantFeedModel {
 
   private clearState(): void {
     this.loading = false; this.loadingMore = false; this.error = ''; this.todoError = ''; this.todosReady = false; this.itemLookupStatus = '';
-    this.conversationId = ''; this.owner = ''; this.items = []; this.plans = {}; this.freshPlanIds = []; this.loadingPlanIds = []; this.planActionErrors = {}; this.taskCards = []; this.todos = [];
+    this.conversationId = ''; this.owner = ''; this.items = []; this.plans = {}; this.freshPlanIds = []; this.loadingPlanIds = []; this.planActionErrors = {}; this.taskCards = []; this.todos = []; this.directoryTodos = [];
     this.views = {}; this.viewActions = {}; this.viewBlocks = []; this.nextCursor = ''; this.hasLoaded = false; this.feedUnavailable = false;
     this.editing = false; this.editingPlanId = ''; this.editingPlanVersion = ''; this.editTasks = []; this.rememberPlans = [];
     this.busyKeys = []; this.uncertainKeys = []; this.pendingMessageIds = []; this.messageDrafts = {};
@@ -478,11 +479,10 @@ export class AssistantFeedModel {
       if (!this.current(run)) return;
       const result = await this.repository.call(path);
       if (!this.current(run)) return;
-      this.todos = Wire.rows(result, 'todos').filter((todo: Record<string, Object>) => {
-        const id = Wire.text(todo, 'id');
-        const manager = Wire.text(todo, 'manager', this.owner);
-        return !!id && manager === this.owner && Wire.text(todo, 'origin') === this.conversationId;
-      });
+      this.directoryTodos = Wire.rows(result, 'todos').filter((todo:Record<string,Object>) =>
+        !!Wire.text(todo,'id') && Wire.text(todo,'manager', this.owner) === this.owner);
+      // Workflow writes stay with the supervising conversation, even when its main tray lists the whole directory.
+      this.todos = this.directoryTodos.filter((todo:Record<string,Object>) => Wire.text(todo,'origin') === this.conversationId);
       this.todoError = '';
       this.todosReady = true;
     } catch (error) { if (this.current(run)) { this.todoError = this.errorKey(error as Error); this.todosReady = false; } }

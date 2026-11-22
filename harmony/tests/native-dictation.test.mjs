@@ -131,6 +131,18 @@ function reviewHarness() {
     native.engine.listener.onComplete(native.engine.session);};
   return {native,control,state,finish};
 }
+
+test('the explicit keyboard choice opens the input method directly and preserves the draft', () => {
+  const {control, state} = reviewHarness();
+  let opened = 0;
+  control.chooseLanguage = () => 'keyboard';
+  control.keyboard = () => opened++;
+  control.start();
+  assert.equal(opened, 1);
+  assert.equal(control.shown, false);
+  assert.equal(state.drafts.A, 'existing');
+  assert.equal(state.insertions, 0);
+});
 test('a confirmed dictation is inserted exactly once and appends to the latest typed draft',async()=>{
   const {control,state,finish}=reviewHarness();
   control.start();await tick();state.drafts.A+=' edited';finish();
