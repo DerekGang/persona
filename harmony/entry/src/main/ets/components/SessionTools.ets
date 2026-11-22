@@ -1123,6 +1123,17 @@ export struct SessionTools {
           SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize(Tokens.interfaceFontVp(18,nativeEnvironment.fontScale)).width(this.gitMetric(20,26.3,18)).fontColor([Colors.iconAccent]).rotate({angle:180})
           Text(Wire.text(this.workspace.gitStatus,'branch') || tr('session_git_detached')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium)
             .fontColor(Colors.ink).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
+          if (Wire.text(this.workspace.gitStatus,'upstream') && !Wire.bool(this.workspace.gitStatus,'gone')) {
+            Button({type:ButtonType.Capsule}) {
+              Row({space:3}) {
+                SymbolGlyph($r('sys.symbol.arrow_down')).fontSize('12vp').fontColor([Colors.link])
+                Text(this.workspace.gitPullState==='pulling' ? tr('session_git_pulling') : tr('pull')+
+                  (Wire.number(this.workspace.gitStatus,'behind')>0 ? ' '+Wire.number(this.workspace.gitStatus,'behind') : ''))
+                  .fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link)
+              }.padding({left:8,right:8,top:3,bottom:3}).backgroundColor(Colors.selection).borderRadius(16)
+            }.height(44).padding(0).backgroundColor(Color.Transparent).enabled(this.workspace.canPullGit())
+              .accessibilityText(tr('session_git_pull_latest')).onClick(() => this.workspace.pullGit()).id('session.git.pull')
+          }
           if (this.model.features.includes('git_write') && Wire.text(this.workspace.gitStatus,'branch') && (!Wire.text(this.workspace.gitStatus,'upstream') || Wire.number(this.workspace.gitStatus,'ahead')>0)) {
             Button({type:ButtonType.Capsule}) {
               Row({space:3}) {
@@ -1145,6 +1156,9 @@ export struct SessionTools {
         }.width('100%')
         Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.tertiary)
           .fontFamily('monospace').maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START).copyOption(CopyOptions.LocalDevice)
+        if (this.workspace.gitPullState==='updated' || this.workspace.gitPullState==='current')
+          Text(tr(this.workspace.gitPullState==='updated' ? 'session_git_pulled' : 'session_git_up_to_date'))
+            .fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.positive).id('session.git.pull.result')
       }.width('100%').constraintSize({minHeight:this.gitMetric(113.7,135.7,0)}).justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Start).padding({left:this.gitMetric(20,20,16),right:this.gitMetric(20,20,16),top:10,bottom:12})
       if (this.model.features.includes('git_write')) {

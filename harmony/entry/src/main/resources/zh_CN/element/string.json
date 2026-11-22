@@ -1117,6 +1117,22 @@
       "value": "先切换到分支再提交"
     },
     {
+      "name": "session_git_pulling",
+      "value": "正在拉取"
+    },
+    {
+      "name": "session_git_pull_latest",
+      "value": "拉取最新代码"
+    },
+    {
+      "name": "session_git_pulled",
+      "value": "已拉取最新代码"
+    },
+    {
+      "name": "session_git_up_to_date",
+      "value": "已经是最新代码"
+    },
+    {
       "name": "session_git_commit_action",
       "value": "提交…"
     },

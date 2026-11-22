@@ -368,9 +368,10 @@ export class HubTransport {
     }
     const session = rcp.createSession(); this.requests.add(session);
     const request = new rcp.Request(target, verb as rcp.HttpMethod, headers, body);
-    // Creating or removing a checkout waits on its host. Keep the normal connection and response limits for other calls.
+    // Git pull allows the Hub 90 seconds, and checkout creation/removal may wait longer on its host.
     const worktreeRequest = verb === 'POST' && /^\/api\/v1\/machines\/[^/]+\/worktree\/(create|delete|add|remove)$/.test(path);
-    const responseTimeout = worktreeRequest ? 165000 : REQUEST_TIMEOUT_MS;
+    const pullRequest = verb === 'POST' && /^\/api\/v1\/machines\/[^/]+\/git\/pull$/.test(path);
+    const responseTimeout = worktreeRequest ? 165000 : pullRequest ? 100000 : REQUEST_TIMEOUT_MS;
     request.configuration = { transfer: { autoRedirect: false, timeout: { connectMs: REQUEST_TIMEOUT_MS, transferMs: responseTimeout, inactivityMs: responseTimeout } },
       security: { remoteValidation: this.pin ? (context: rcp.ValidationContext) => this.validateContextPin(context) : 'system' } };
     if (this.proxy) request.configuration.proxy = { url: 'http://' + this.proxy.host + ':' + this.proxy.port,

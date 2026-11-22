@@ -493,3 +493,56 @@ test('the Git footer stages every reported path once and unstages only when all 
     {cwd:'/repo',paths:['a','b']},{cwd:'/repo',paths:['a','b'],unstage:true}]);
   workspace.hide();
 });
+
+test('pull uses the tracked checkout, installs the returned status, and works on Hubs predating git_write',async()=>{
+  let behind=2;
+  const status=()=>({is_repo:true,root:'/repo',branch:'main',upstream:'origin/main',behind,files:[],commits:[{hash:behind?'old':'new'}]});
+  const {workspace,state}=fixture({features:[],handle:call=>{
+    if(call.path.includes('/git/status')) return status();
+    if(call.path.endsWith('/git/pull')){
+      assert.equal(call.method,'POST');assert.deepEqual(call.body,{cwd:'/repo'});
+      const updated=behind>0;behind=0;return {updated,status:status()};
+    }
+  }});
+  workspace.selectTab(1);await waitForTurn();
+  assert.equal(workspace.canWriteGit(),false);assert.equal(workspace.canPullGit(),true);
+  assert.equal(await workspace.pullGit(),true);
+  assert.equal(workspace.gitPullState,'updated');assert.equal(workspace.gitStatus.behind,0);assert.equal(workspace.gitCommits[0].hash,'new');
+  assert.equal(await workspace.pullGit(),true);assert.equal(workspace.gitPullState,'current');
+  assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,2);
+});
+
+test('pull rejects missing and deleted upstreams, read-only sessions and a branch changed before dispatch',async()=>{
+  const {workspace,state}=fixture();
+  workspace.selectTab(1);await waitForTurn();
+  const tracked={is_repo:true,root:'/repo',branch:'main',upstream:'origin/main',files:[],commits:[]};
+  for(const change of [{upstream:''},{gone:true},{branch:''}]){
+    workspace.gitStatus={...tracked,...change};assert.equal(await workspace.pullGit(),false);
+  }
+  workspace.gitStatus=tracked;
+  const readOnly=fixture({session:{read_only:true}});
+  readOnly.workspace.selectTab(1);await waitForTurn();readOnly.workspace.gitStatus=tracked;
+  assert.equal(await readOnly.workspace.pullGit(),false);
+  state.beforeDispatch=()=>{workspace.gitStatus={...tracked,branch:'another',upstream:'origin/another'};};
+  assert.equal(await workspace.pullGit(),false);
+  assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,0);
+});
+
+test('pull reports a refused dirty checkout and cannot apply an in-flight reply to another branch',async()=>{
+  const tracked={is_repo:true,root:'/repo',branch:'main',upstream:'origin/main',files:[],commits:[]};
+  let pending,first=true;
+  const {workspace,state}=fixture({handle:call=>{
+    if(call.path.includes('/git/status')) return tracked;
+    if(call.path.endsWith('/git/pull')){
+      if(first){first=false;throw new HttpFailure(409,'dirty_worktree');}
+      return new Promise(resolve=>{pending=resolve;});
+    }
+  }});
+  workspace.selectTab(1);await waitForTurn();assert.equal(await workspace.pullGit(),false);assert.equal(workspace.gitWriteState,'failed');
+  const attempt=workspace.pullGit();await waitForTurn();assert.equal(workspace.gitPullState,'pulling');
+  assert.equal(await workspace.pullGit(),false);
+  workspace.gitStatus={...tracked,branch:'other',upstream:'origin/other'};
+  pending({status:tracked,updated:true});await attempt;
+  assert.equal(workspace.gitStatus.branch,'other');assert.equal(workspace.gitPullState,'');
+  assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,2);
+});

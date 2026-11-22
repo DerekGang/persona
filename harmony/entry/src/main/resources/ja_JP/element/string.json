@@ -1117,6 +1117,22 @@
       "value": "ブランチに切り替えてコミット"
     },
     {
+      "name": "session_git_pulling",
+      "value": "取得中"
+    },
+    {
+      "name": "session_git_pull_latest",
+      "value": "最新のコードを取得"
+    },
+    {
+      "name": "session_git_pulled",
+      "value": "最新のコードを取得しました"
+    },
+    {
+      "name": "session_git_up_to_date",
+      "value": "すでに最新です"
+    },
+    {
       "name": "session_git_commit_action",
       "value": "コミット…"
     },

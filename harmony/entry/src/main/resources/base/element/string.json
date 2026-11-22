@@ -1117,6 +1117,22 @@
       "value": "Switch to a branch to commit"
     },
     {
+      "name": "session_git_pulling",
+      "value": "Pulling"
+    },
+    {
+      "name": "session_git_pull_latest",
+      "value": "Pull latest code"
+    },
+    {
+      "name": "session_git_pulled",
+      "value": "Pulled the latest code"
+    },
+    {
+      "name": "session_git_up_to_date",
+      "value": "Already up to date"
+    },
+    {
       "name": "session_git_commit_action",
       "value": "Commit…"
     },
