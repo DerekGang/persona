@@ -31,6 +31,22 @@ import { meetingAudioNetwork } from '../platform/MeetingAudioNetwork';
 import type { Binding } from '@kit.ArkUI';
 
 const KB_KINDS: string[] = ['projects', 'topics', 'chats', 'people', 'docs', 'meetings', 'events'];
+// The iPhone's caption symbols have different advances and optical bounds; ArkUI's glyphs use a square em.
+// Express their native measurements in em, so the same proportions apply to every width and font setting.
+class KindSymbolMetrics {
+  advance: number;
+  size: number;
+  horizontalScale: number;
+  constructor(advance: number, size: number, horizontalScale: number) {
+    this.advance = advance; this.size = size; this.horizontalScale = horizontalScale;
+  }
+}
+const KIND_SYMBOLS: Map<string, KindSymbolMetrics> = new Map<string, KindSymbolMetrics>([
+  ['projects', new KindSymbolMetrics(1.28, 1.20, 1.00)], ['topics', new KindSymbolMetrics(1.30, 1.15, 1.22)],
+  ['chats', new KindSymbolMetrics(1.70, 1.32, 1.23)], ['people', new KindSymbolMetrics(2.14, 1.18, 1.55)],
+  ['docs', new KindSymbolMetrics(1.11, 1.15, 0.95)], ['meetings', new KindSymbolMetrics(1.46, 1.34, 0.96)],
+  ['events', new KindSymbolMetrics(1.26, 1.04, 1.11)]
+]);
 
 @ComponentV2
 struct KnowledgeLibraryRow {
@@ -406,24 +422,40 @@ export struct KnowledgeWorkspacePage {
       .width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped)
   }
 
-  @Local kindsWidth:number=0;
-  @Computed get kindsLayout():number {
-    const ctx=this.getUIContext(),scale=Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15));
-    const width=this.kindsWidth || (nativeEnvironment.windowWidthPx ? ctx.px2vp(nativeEnvironment.windowWidthPx)-32 : 360);
-    let labels=0;for (const kind of KB_KINDS) labels+=ctx.px2vp(ctx.getMeasureUtils().measureText({
-      textContent:this.kindLabel(kind),fontSize:String(15*scale)+'vp',fontWeight:FontWeight.Bold
-    }));
-    const n=KB_KINDS.length;
-    if (labels+n*(24+14*scale+4)+(n-1)*8<=width) return 0;
-    if (labels+n*24+(n-1)*6<=width) return 1;
-    if (labels+n*16+(n-1)*4<=width) return 2;
+  @Local kindsWidth: number = 0;
+  @Computed get kindLabelWidths(): Map<string, number> {
+    const context = this.getUIContext(), widths = new Map<string, number>();
+    for (const kind of KB_KINDS) {
+      const pixels = context.getMeasureUtils().measureText({
+        textContent: this.kindLabel(kind), fontSize: Tokens.interfaceFontVp(15, nativeEnvironment.fontScale),
+        fontWeight: 600
+      });
+      widths.set(kind, context.px2vp(Math.ceil(pixels)));
+    }
+    return widths;
+  }
+  private kindSymbolPointSize(): number {
+    return 13 * Math.min(nativeEnvironment.fontScale, Tokens.interfaceScaleFor(13));
+  }
+  @Computed get kindsLayout(): number {
+    const context = this.getUIContext();
+    const width = this.kindsWidth || (nativeEnvironment.windowWidthPx ? context.px2vp(nativeEnvironment.windowWidthPx)-32 : 360);
+    let labels = 0, symbols = 0;
+    for (const kind of KB_KINDS) {
+      labels += this.kindLabelWidths.get(kind) || 0;
+      symbols += this.kindSymbolPointSize() * KIND_SYMBOLS.get(kind)!.advance;
+    }
+    const count = KB_KINDS.length;
+    if (labels + symbols + count*28 + (count-1)*8 <= width) return 0;
+    if (labels + count*24 + (count-1)*6 <= width) return 1;
+    if (labels + count*16 + (count-1)*4 <= width) return 2;
     return 3;
   }
   private kindLabel(kind: string): string { return tr(kind==='people' ? 'kb_people' : kind==='events' ? 'kb_events' : 'knowledge_kind_' + kind); }
   private kindIcon(kind: string): Resource {
     if (kind === 'projects') return $r('sys.symbol.square_stack_3d');
-    if (kind === 'chats') return Symbols.persona;
-    if (kind === 'people') return Symbols.agents;
+    if (kind === 'chats') return $r('sys.symbol.text_bubble_left_2');
+    if (kind === 'people') return $r('sys.symbol.person_3');
     if (kind === 'meetings') return $r('sys.symbol.video');
     if (kind === 'events') return Symbols.calendar;
     if (kind === 'recordings') return $r('sys.symbol.mic');
@@ -523,15 +555,24 @@ export struct KnowledgeWorkspacePage {
     if (!this.workspace.loading && !this.workspace.error && (this.initialKind !== 'recordings' || !this.visibleLocal().length) && (this.workspace.query.trim() ? !this.workspace.results.length : !this.workspace.entries.length))
       ListItem() { Text(tr(this.workspace.query.trim() ? 'knowledge_no_results' : this.workspace.kind === 'recordings' ? 'phone_read_only_recording' : 'knowledge_empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(10) }
   }
+  @Builder kindGlyph(kind: string, metrics: KindSymbolMetrics) {
+    Stack({alignContent:Alignment.Center}) {
+      SymbolGlyph(this.kindIcon(kind)).fontSize(String(this.kindSymbolPointSize() * metrics.size)+'vp')
+        .width(this.kindSymbolPointSize() * metrics.size).height(this.kindSymbolPointSize() * metrics.size)
+        .scale({x:metrics.horizontalScale,y:1}).fontColor([kind===this.workspace.kind ? Colors.onAction : Colors.ink])
+    }.width(this.kindSymbolPointSize() * metrics.advance).height(Tokens.interfaceFontVp(18, nativeEnvironment.fontScale)).clip(true)
+  }
   @Builder kindChip(kind:string) {
     Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
-        if (this.kindsLayout===0 || this.kindsLayout===3) SymbolGlyph(this.kindIcon(kind)).fontSize(String(14*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(14)))+'vp')
-          .fontColor([kind===this.workspace.kind ? Colors.onAction : Colors.ink])
-        Text(this.kindLabel(kind)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
+        if (this.kindsLayout===0 || this.kindsLayout===3) this.kindGlyph(kind, KIND_SYMBOLS.get(kind)!)
+        Text(this.kindLabel(kind)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
+          .lineHeight(String(18 * Math.min(nativeEnvironment.fontScale, Tokens.interfaceScaleFor(15)))+'vp')
+          .width(this.kindLabelWidths.get(kind)).maxLines(1)
+          .fontWeight(kind===this.workspace.kind ? 600 : FontWeight.Medium)
           .fontColor(kind===this.workspace.kind ? Colors.onAction : Colors.ink)
       }
-    }.constraintSize({minHeight:34}).padding({left:this.kindsLayout===2 ? 8 : 12,right:this.kindsLayout===2 ? 8 : 12,top:5,bottom:5})
+    }.constraintSize({minHeight:34}).padding({left:this.kindsLayout===2 ? 8 : 12,right:this.kindsLayout===2 ? 8 : 12,top:8,bottom:8})
       .backgroundColor(kind===this.workspace.kind ? Colors.action : Colors.control)
       .accessibilitySelected(kind===this.workspace.kind).onClick(() => this.workspace.setKind(kind)).id('knowledge.kind.'+kind)
   }
