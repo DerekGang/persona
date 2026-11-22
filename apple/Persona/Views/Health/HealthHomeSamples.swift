@@ -87,6 +87,7 @@ struct HealthTodayExample: View {
             .frame(maxWidth: .infinity)
         }
         .font(Theme.Font.label)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("health-today-example")
     }
 }
