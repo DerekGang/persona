@@ -39,6 +39,10 @@ type runtimeRegistry struct {
 	// away: runtime id -> the rows of its last list whose conversation is a Claude transcript here, listed as not
 	// running for a while after it left (runtimeaway.go).
 	away map[string]awayOf
+	// codexClaims: runtime id -> the Codex app-server instances it serves itself, which the node does not attach to,
+	// kept for claimKeep after it left (0: codexClaimKeep; codex_instance_claims.go).
+	codexClaims map[string]codexClaimsOf
+	claimKeep   time.Duration
 	// logf reports what an operator should fix (a launcher two runtimes offer); nil: nowhere. warned: said once each.
 	logf   func(format string, args ...any)
 	warned map[string]bool
@@ -498,6 +502,7 @@ func (b *runtimeRegistry) remove(h *runtimeConn) {
 	h.mu.Unlock()
 	b.leftUnlisted(id)
 	b.leftRows(h, id)
+	b.leftCodexClaims(id)
 	b.recomputeOwners()
 }
 

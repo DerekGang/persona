@@ -38,6 +38,11 @@ type codexRegistry struct {
 	// checked lists the processes as scan does, and says whether it could (scanCodexProcessesChecked); nil: scan's
 	// list, taken as complete.
 	checked func() ([]codexProcess, bool)
+	// claimed: server id -> the runtime that claims the instance, which the node keeps no connection to
+	// (codex_instance_claims.go). attach serializes checking the claims with attaching, so an instance a runtime
+	// claims meanwhile is not dialled after the claim took it.
+	claimed map[string]string
+	attach  sync.Mutex
 }
 
 type codexSource struct{ home, thread, path string }
@@ -372,9 +377,7 @@ func (n *Node) runCodex(ctx context.Context) {
 		for _, home := range cfg.Homes {
 			n.registerRollouts(home)
 		}
-		for _, s := range cfg.Servers {
-			n.ensureCodexRemote(ctx, s)
-		}
+		n.attachCodexServers(ctx, cfg.Servers) // but not to the ones a runtime claims (codex_instance_claims.go)
 		select {
 		case <-ctx.Done():
 			n.codices.mu.Lock()

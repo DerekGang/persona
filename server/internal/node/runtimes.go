@@ -119,6 +119,9 @@ type runtimeHello struct {
 		// inactive ones too (sessions_history.go).
 		History bool `json:"history"`
 	} `json:"caps"`
+	// CodexClaims are the Codex app-server instances the runtime serves itself, which the node leaves to it
+	// (codex_instance_claims.go): a runtime on the socket's, never a daemon's.
+	CodexClaims []runtimeCodexClaim `json:"codex_claims,omitempty"`
 }
 
 // runtimeConn is one connected runtime.
