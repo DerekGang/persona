@@ -29,7 +29,6 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasAnyChild
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -106,8 +105,8 @@ class AboutBuildHostInstrumentedTest {
         assertHost(build, native = false)
         capture("generated-light", "English light; the same real package value through the generated Build slot")
         assertEquals("Switching only the test Build slot must not copy", emptyList<String>(), notices)
-        rule.onAllNodes(nativeBuildRow(build)).assertCountEquals(1).onFirst().performClick()
-        rule.onNodeWithTag("generated-build", useUnmergedTree = true).performClick()
+        mergedBuildRow("Build", build).performClick()
+        geometryBuildRow("Build", build).performClick()
         rule.waitForIdle()
         assertEquals("Read-only Build clicks must not copy", emptyList<String>(), notices)
 
@@ -171,24 +170,17 @@ class AboutBuildHostInstrumentedTest {
             for (useGenerated in listOf(false, true)) {
                 rule.runOnIdle { generated = useGenerated }
                 rule.waitForIdle()
-                val row = if (useGenerated) {
-                    rule.onNodeWithTag("generated-build", useUnmergedTree = true)
-                } else {
-                    rule.onAllNodes(nativeBuildRow(realBuild)).assertCountEquals(1).onFirst()
-                }
+                val expectedValue = if (useGenerated) fallback else realBuild
+                val row = mergedBuildRow(title, expectedValue)
                 row.assertIsDisplayed().assertHasNoClickAction()
-                row.assertMinimumTouchTarget("$tag generated=$useGenerated")
+                geometryBuildRow(title, expectedValue).assertMinimumTouchTarget("$tag generated=$useGenerated")
                 val semantics = row.readRowSemantics()
-                if (useGenerated) {
-                    assertEquals("$tag generated title/fallback", listOf(title, fallback), semantics.text)
-                } else {
-                    assertEquals("$tag handwritten real Build", listOf(title, realBuild), semantics.text)
-                }
+                assertEquals("$tag exact Build row title/value", listOf(title, expectedValue), semantics.text)
                 assertTrue("$tag read-only descriptions", semantics.descriptions.isEmpty())
                 assertTrue("$tag read-only click labels", semantics.clickLabels.isEmpty())
                 assertTrue("$tag read-only custom actions", semantics.customActions.isEmpty())
                 if (useGenerated) {
-                    assertRealClickLeavesBuildUnchanged()
+                    assertRealClickLeavesBuildUnchanged(title, expectedValue)
                     capture("$tag-generated-fallback", "$tag localized generated optional-input fallback; no TalkBack enabled")
                 }
             }
@@ -198,19 +190,14 @@ class AboutBuildHostInstrumentedTest {
     private fun assertHost(build: String, native: Boolean) {
         rule.onAllNodesWithText("Build").assertCountEquals(1)
         rule.onNodeWithText(build, useUnmergedTree = true).assertIsDisplayed()
-        val title = if (native) {
-            rule.onAllNodes(nativeBuildRow(build)).assertCountEquals(1).onFirst()
-        } else {
-            rule.onNodeWithTag("generated-build", useUnmergedTree = true)
-        }
+        val title = mergedBuildRow("Build", build)
         title.assertHasNoClickAction()
-        title.assertMinimumTouchTarget(if (native) "handwritten" else "generated")
-        if (!native) {
-            val semantics = title.readRowSemantics()
-            assertEquals(listOf("Build", build), semantics.text)
-            assertTrue(semantics.clickLabels.isEmpty())
-            assertTrue(semantics.customActions.isEmpty())
-        }
+        geometryBuildRow("Build", build).assertMinimumTouchTarget(if (native) "handwritten" else "generated")
+        val semantics = title.readRowSemantics()
+        assertEquals(listOf("Build", build), semantics.text)
+        assertTrue(semantics.descriptions.isEmpty())
+        assertTrue(semantics.clickLabels.isEmpty())
+        assertTrue(semantics.customActions.isEmpty())
         if (native) {
             rule.onNodeWithTag("generated-build", useUnmergedTree = true).assertDoesNotExist()
         } else {
@@ -219,14 +206,19 @@ class AboutBuildHostInstrumentedTest {
         rule.onNodeWithText("Commit").assertIsDisplayed()
     }
 
-    private fun nativeBuildRow(value: String) =
-        hasAnyChild(hasText("Build", substring = false)) and
-            hasAnyChild(hasText(value, substring = false))
+    private fun buildRowMatcher(title: String, value: String) =
+        hasText(title, substring = false) and hasText(value, substring = false)
 
-    private fun assertRealClickLeavesBuildUnchanged() {
+    private fun mergedBuildRow(title: String, value: String) =
+        rule.onAllNodes(buildRowMatcher(title, value)).assertCountEquals(1).onFirst()
+
+    private fun geometryBuildRow(title: String, value: String) =
+        rule.onAllNodes(buildRowMatcher(title, value), useUnmergedTree = true).assertCountEquals(1).onFirst()
+
+    private fun assertRealClickLeavesBuildUnchanged(title: String, value: String) {
         val before = clipboardText()
-        val row = rule.onNodeWithTag("generated-build", useUnmergedTree = true)
-        row.performClick()
+        mergedBuildRow(title, value).performClick()
+        geometryBuildRow(title, value).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("generated-build", useUnmergedTree = true).assertIsDisplayed()
         assertEquals("Read-only Build must not change the clipboard", before, clipboardText())
