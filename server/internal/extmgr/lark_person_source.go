@@ -86,8 +86,14 @@ func slicesContainsString(values []string, want string) bool {
 	return false
 }
 
-func (s *larkPersonSource) Name() string   { return "bot_" + s.endpoint.ID }
-func (s *larkPersonSource) taskID() string { return "todo_lark_" + s.endpoint.ID }
+func (s *larkPersonSource) Name() string { return "bot_" + s.endpoint.ID }
+
+// taskID is the assistant to-do that carries this endpoint's task. It is listed on the To-dos page, so it is an opaque
+// digest of the endpoint rather than the endpoint ID itself.
+func (s *larkPersonSource) taskID() string {
+	digest := sha256.Sum256([]byte("lark_person_task\x00" + s.endpoint.ID))
+	return "todo_lark_" + hex.EncodeToString(digest[:10])
+}
 
 func (s *larkPersonSource) session(ctx context.Context) (agents.Session, error) {
 	state, err := s.review.State(ctx, s.taskID())

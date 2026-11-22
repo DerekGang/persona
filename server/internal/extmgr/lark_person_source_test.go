@@ -534,3 +534,12 @@ func TestLarkPersonFollowUpRecordsAnEarlierUnreadReplyFirst(t *testing.T) {
 		t.Fatalf("follow-up parked before the earlier reply was recorded: records=%d parks=%d", records, parks)
 	}
 }
+
+func TestLarkPersonTaskIDIsOpaqueAndStable(t *testing.T) {
+	f := newConversationFixture(t)
+	source := f.source(t)
+	id := source.taskID()
+	if !strings.HasPrefix(id, "todo_lark_") || strings.Contains(id, f.endpoint.ID) || id != f.source(t).taskID() {
+		t.Fatalf("task ID %q is not an opaque, stable digest of the endpoint", id)
+	}
+}
