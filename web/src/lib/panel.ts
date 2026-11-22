@@ -132,13 +132,28 @@ function setTracking(on: boolean) {
   if (!on) trigger = null;
 }
 
-function same(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
-  const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
-  for (const k in x) if (!same(x[k], y[k])) return false;
-  for (const k in y) if (!(k in x) && y[k] !== undefined) return false;
-  return true;
+function panelTargetKey(p: Panel): string {
+  switch (p.kind) {
+    case "files":
+    case "git":
+    case "review":
+    case "preview":
+      return `${p.kind}:${directoryPanelKey(p)}`;
+    case "changes":
+    case "agent":
+    case "team":
+    case "sides":
+    case "background":
+      return `${p.kind}:${p.mid}/${p.sid}`;
+    case "file":
+      return `file:${p.mid}:${p.path}`;
+    case "link":
+      return `link:${p.manager ?? ""}:${p.url}`;
+    case "task":
+      return `task:${p.todo}`;
+    case "conversation-tasks":
+      return `conversation-tasks:${p.manager}:${p.mid}/${p.sid}`;
+  }
 }
 
 const sub = (l: () => void) => {
@@ -161,10 +176,16 @@ export function openPanel(p: Panel | null, options?: OpenPanelOptions) {
   } else if (options?.replace) {
     current = p;
   } else {
-    const inside = trigger !== null ? inSidePanel(trigger) : typeof document !== "undefined" && inSidePanel(document.activeElement);
-    if ((options?.push ?? (Boolean(current) && inside)) && current) {
-      if (!same(current, p) && !same(history[history.length - 1], current)) {
-        history = [...history, current].slice(-MAX_PANEL_HISTORY);
+    // Auto-push only during an active user interaction event inside the side panel; programmatic opens clear history
+    // by default unless the caller opts into push or replace.
+    const shouldPush = options?.push ?? (Boolean(current) && trigger !== null && inSidePanel(trigger));
+    if (shouldPush && current) {
+      const curKey = panelTargetKey(current);
+      if (curKey !== panelTargetKey(p)) {
+        const top = history[history.length - 1];
+        if (!top || panelTargetKey(top) !== curKey) {
+          history = [...history, current].slice(-MAX_PANEL_HISTORY);
+        }
       }
     } else {
       history = [];
@@ -172,6 +193,13 @@ export function openPanel(p: Panel | null, options?: OpenPanelOptions) {
     current = p;
   }
   setTracking(current !== null);
+  emit();
+}
+
+/** Clears the side-panel back stack without closing the currently open panel. */
+export function clearPanelHistory() {
+  if (!history.length) return;
+  history = [];
   emit();
 }
 
@@ -209,11 +237,11 @@ export function panelOpener(): Element | null {
   return opener;
 }
 
-/** Toggle a session panel from a header button: the same kind for the same session closes it. */
+/** Toggle a session panel from a header button: the same kind for the same session closes it; another replaces it. */
 export function togglePanel(p: Panel) {
   const c = current;
   const sameKind = c && c.kind === p.kind && "mid" in c && "mid" in p && c.mid === p.mid && ("sid" in c && "sid" in p ? c.sid === p.sid : true);
-  openPanel(sameKind ? null : p);
+  openPanel(sameKind ? null : p, { push: false });
 }
 
 export function usePanel(): Panel | null {

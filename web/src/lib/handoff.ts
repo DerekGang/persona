@@ -53,7 +53,7 @@ if (typeof addEventListener !== "undefined") {
   // again, as the chat's place is put back; the strip's "click to return" is this same Back
   addEventListener("popstate", () => {
     const p = panelIn();
-    if (p) openPanel(p);
+    if (p) openPanel(p, { push: false });
   });
 }
 

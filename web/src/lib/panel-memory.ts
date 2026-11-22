@@ -8,7 +8,7 @@
 // link (a task's or an agent's chat, a file): opened from that chat, it goes and comes back with it (#6199).
 import { useEffect, useRef } from "react";
 import { agentOpenMode } from "./agent-open";
-import { closePanel, directoryPanelKey, getPanel, openPanel, type Panel } from "./panel";
+import { clearPanelHistory, closePanel, directoryPanelKey, getPanel, openPanel, type Panel } from "./panel";
 
 /** The panels that belong to the session the page shows (the ones App closes when the page moves on). */
 export type SessionPanel = Extract<Panel, { kind: "files" | "git" | "review" | "changes" | "file" | "preview" | "background" }>;
@@ -109,6 +109,8 @@ export function useSessionPanels(at: string, pane: { mid: string; sid: string } 
     if (left && left.key !== key) {
       own = left.pane ? (belongsTo(p, left.pane) ? p : null) : p && p.kind !== "link" ? p : null;
       memory = leaving(memory, left.key, own, own?.kind === "files" ? places.get(directoryPanelKey(own)) : undefined);
+      // Drop any back-stack entries from the session/chat being left, even if a persistent panel (e.g. link) stays open.
+      clearPanelHistory();
     }
     // a session's terminal / files / Git belong to that conversation: moving to another page closes them (a link, a
     // task and an agent stay, unless a Persona chat being left owns them)
@@ -116,7 +118,7 @@ export function useSessionPanels(at: string, pane: { mid: string; sid: string } 
     if (key) {
       const r = arriving(memory, key, getPanel());
       memory = r.memory;
-      if (r.back) openPanel(r.back);
+      if (r.back) openPanel(r.back, { push: false });
     }
     save(memory);
     // eslint-disable-next-line react-hooks/exhaustive-deps
