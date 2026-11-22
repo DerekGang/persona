@@ -2422,7 +2422,7 @@ struct Index {
         if (this.targetReady(name, param)) InteractionHistoryPage({ model: this.detailModel, active: this.activeChild === this.childKey(name, param), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'tools') {
-        if (this.targetReady(name, param)) SessionTools({ model: this.detailModel, initialTab:Wire.number(Wire.parse(param as string),'entry_tab'), onOpenLink: (address: string) => this.openReader(address), initialFile: Wire.text(Wire.parse(param as string), 'open_file'), onWorkspaceReady: (workspace: SessionWorkspace | undefined) => this.detailModel.setWorkspace(workspace) })
+        if (this.targetReady(name, param)) SessionTools({ model: this.detailModel, phoneSheetHeight:this.compactFormHeight(), initialTab:Wire.number(Wire.parse(param as string),'entry_tab'), onOpenLink: (address: string) => this.openReader(address), initialFile: Wire.text(Wire.parse(param as string), 'open_file'), onWorkspaceReady: (workspace: SessionWorkspace | undefined) => this.detailModel.setWorkspace(workspace) })
         else this.targetLoading(name, param)
       } else if (name === 'applications') {
         ExtensionNavigationPage({ directory: this.applications, onOpen: (entry: ExtensionNavigationEntry): void => { if (this.activeChild === this.childKey(name, param)) this.openApplication(entry); } })
