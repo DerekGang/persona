@@ -1,5 +1,18 @@
 # Lessons: hub / node and networking
 
+## An IMAP retry that replays the step that ended the connection fails the same way (2026-11-22, #12808)
+
+go-imap/v2 completes a command when its tagged answer arrives, before it reads on. A server that hangs up right after
+answering (QQ Mail does after a keyword `UID SEARCH`) leaves the command a success and fails the *next* one: the reader
+has already closed the connection, so over TLS the write returns a bare `net.ErrClosed` ("use of closed network
+connection"). Retrying the whole operation on a new login sends the search again, and the server ends that connection
+too: two QQ accounts' `mail_search` failed on every try with `fetch: use of closed network connection`, and nothing
+was logged. What a try already got (the search's UIDs) has to survive into the retry, so the retry only does what
+failed (`listOne` in `server/internal/mail/imap_list.go`). Tell a dead connection by `Client.State() ==
+ConnStateLogout`: the reader sets it before it fails the waiting commands, so a command that failed sees it already,
+and `Client.Close()` then returns the reader's own error, the reason to log. A proxy that closes after a chosen tagged
+answer reproduces it (`server/internal/mail/closed_conn_test.go`).
+
 ## Under a full-tunnel VPN the default route's address is the tunnel's (#11125)
 
 A UDP "connect" towards a far address reports the source address of the route it would take, the usual way to find
@@ -2898,6 +2911,74 @@ nothing ran the old build after the new one.
   video status. Check the folder's build before pressing Redeploy, and after a deploy check that no machine reports
   `node_mismatch`.
 
+## Shared preparation inputs must stay outside Manager implementation (#7357)
+
+Repository binding types were first delivered under the assistant package. Once the database and
+naming contracts consumed them, the Hub inherited that Manager dependency through the database,
+even though the Hub's new code only routed requests. Put the pure shared definitions and validators
+in `repositorywire`, retaining the delivered import path with aliases and forwarding helpers. Check
+the full Hub dependency guard as well as the Manager tests when adding shared persistent contracts.
+
+A preparation request can be saved before the Node admits it. After a rejected correction, the newest
+business operation can therefore differ from the operation that still owns the physical resources.
+Record that Node operation explicitly and target further correction/cleanup through its trusted
+record. Cover repeated corrections and cancellation before any Node effect, not only one failed fetch.
+
+Default cleanup retains branches. A workspace-private bare repository must survive removal of its
+worktree for that promise to hold. Verify the retained branch's actual commit after cleanup, including
+local commits; a directory-exists assertion alone does not show that the branch data survived.
+
+For a test of a newer transcript copy, give the base fixture an explicitly older timestamp.
+The filesystem's timestamp on a new write can lag a wall-clock value passed to `os.Chtimes`,
+so writing the continuation next does not establish the ordering the test requires. Keep
+equal-timestamp selection covered separately.
+
+
+When main moves repository persistence into the Manager-owned store, preparation and naming
+transactions must move with it and share that store's Todo lock and database pool. Keeping an old
+copy in shared db would drop link receipts and reintroduce the dependency the move removed. Node
+consumers use the neutral repositorywire contract, not its Manager compatibility import.
+
+A checkout removed during partial cleanup still has a task branch to protect. Preflight non-force
+branch deletion for removed instances too, including removal reconciled after a lost receipt; a retry
+must not reach branch -D merely because the checkout is gone. Test a real first removal followed by a
+second removal failure, refusal of the non-force retry with the local commit still referenced, and
+successful explicit force. A branch already deleted before its receipt is a separate recovery case.
+
+
+When compressed tool guidance meets a changed continuation contract, retain the upstream effective
+criteria, owner-authorized scope changes and stale scope-revision check. Regenerate tool snapshots
+from the merged source, then measure the complete schema; an old snapshot can silently lose a new
+argument even when its shorter description still fits the budget.
+
+Compare the complete measurement with the fixed main total too. A merged inventory can include the
+extra tool and pass its own updater while exceeding main's allowance. Keep every new schema field
+and shorten equivalent repeated parameter guidance rather than hiding entries or raising the limit.
+
+Regenerating the full catalog may also expose upstream tools or fields missing from main's snapshots.
+Keep those measured too; move space from equivalent parameter guidance before the guarded update,
+and compare the resulting complete total with the fixed main allowance.
+
+Keep a shared request-context hook separate from repository editor UI, so a lazy naming form does
+not pull that editor into its dependency graph just to reuse ownership and lifetime checks.
+
+The shell's worktree request channel and Agent cleanup reads must also stay separate from creation
+transport and form guidance. Import those narrow modules eagerly and retain the old exports for lazy
+callers; moving only the dialog leaves the form's top-level translations on the first screen.
+
+A cache getter must copy its map while holding the lock before a publisher iterates it. Returning the
+book after unlocking races with tag insertion/deletion even when each record is replaced atomically.
+Keep a snapshot stable across later writes and verify concurrent publication under the race detector.
+
+An automatically merged route inventory can still miss newly registered upstream routes. Regenerate
+it from actual registrations and inspect the classifications; administration routes stay restricted
+to full credentials unless the authorization policy explicitly grants an extension scope.
+
+When repository providers add shared identity, snapshot or link validation, extend the neutral `repositorywire`
+contract and keep the delivered Manager import as aliases and forwarding helpers. Provider registries and extension
+calls stay in the Manager; moving those calls with the shared fields would make Node and Hub depend on Manager
+execution. Run the original provider tests as well as workspace and dependency guards after the split.
+
 ## A fence keyed to the first credential keeps a re-paired phone under its old one (2026-11-17, #9611)
 
 - A push registration is keyed by the app's own `device_id` and fenced to the credential that first registered it.
@@ -3033,3 +3114,13 @@ the TLS hello then held it open forever, on the direct route and through the pro
 Whoever writes a `DialTLSContext` gives the handshake its own deadline and closes the raw connection when it runs out.
 Test it by waiting for the far end to see the connection close, not by how long the request took: the request returns
 on its own deadline either way (`TestDirectStalledHandshakeIsClosed`, `TestProxyStallingInsideTheTunnelIsClosed`).
+
+## Rich-text mention boundaries are not textual whitespace (#12655)
+
+A received Lark post can place an `at` element immediately before a command's `text` element. Flattening those into
+`@Persona/read` loses the boundary that the whole-word textual mention stripper needs. Retain the structured nodes
+for command extraction, resolve each leading `at` through the event's mention IDs, and stop at unapproved mentions
+or ordinary text. Display names can collide; inserting spaces alone cannot establish which person was mentioned.
+Check both the manager's admission gate and the assistant's reparse of the original event, using a synthetic event,
+a recording handoff and a queue barrier. Such a test proves local handling of that event shape, not whether a live
+client inserts whitespace.

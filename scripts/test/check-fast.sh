@@ -15,12 +15,19 @@
 #   scripts/check-fast.sh --dry-run --changed-from <file|-> --each
 #                                         # the plan of each listed path on its own, after a "== <path>" line;
 #                                         # scripts/ci/affected_drift.py compares them with the CI lanes (#11026)
+#   scripts/check-fast.sh --compare-main  # after the run, rerun only what failed at the merge base and say, for each
+#                                         # failure, whether the base fails it too (scripts/ci/check_fast_compare.py)
+#   scripts/check-fast.sh --compare-tip   # --compare-main, and the failures the base has too also at the base ref's tip
 #   scripts/check-fast.sh -h|--help
 #
-# Path mapping (diff mode):
-#   web/**                     npm ci (only with no node_modules or a changed package.json/package-lock.json),
-#                              node_modules against package-lock.json, typecheck, then the tests that python3
-#                              scripts/ci/paths.py --web-plan picks (#10619):
+# Path mapping (diff mode): the table in scripts/ci/check_fast_map.py maps each changed path to its checks, and a new
+# mapping is a rule there (python3 scripts/ci/check_fast_map.py < paths prints the checks of each path). What a change
+# selects that depends on the tree or on a rename is found here at run time instead:
+#   web/**, and files outside web/ that web/src and its tests name (spec/fixtures/<case>/..., schema/extension/...,
+#   scripts/mock/...)          the tests that python3 scripts/ci/paths.py --web-plan picks (#10619), after npm ci
+#                              (only with no node_modules or a changed package.json/package-lock.json), node_modules
+#                              against package-lock.json and the typecheck. paths.py derives the files outside web/
+#                              from the paths web/src and its tests name, CI's web lane inputs too (--web-inputs):
 #     web/src/** only          npx vitest related --run: the tests whose imports reach a changed file, plus every
 #                              vitest file that reads files from disk (fs, node:fs/promises, readFileSync,
 #                              import.meta.glob, ?raw) or builds through a Vite config (imports vite): the import
@@ -30,19 +37,6 @@
 #     to the end, such as web/src/admin/catalog.ts), anything in web/ outside web/src (configs, package.json,
 #     package-lock.json, scripts/, e2e/)
 #                              npm test, the whole suite (as --all does)
-#   files outside web/ that web/src and its tests name (spec/fixtures/<case>/..., schema/extension/..., scripts/mock/...)
-#                              also the web check, related tests as above: scripts/ci/paths.py derives the list from
-#                              the paths web/src and its tests name, the web lane's inputs in CI too (--web-inputs)
-#   integrations/<pkg>/**      node --test test/*.test.{js,mjs} (packages without tests are skipped)
-#   site/**                    node --test site/worker.test.mjs
-#   sdk/ts/**                  bun test (skipped with a reason when bun is absent)
-#   sdk/ts/src/**              also go test ./internal/extension/denohost/...: the trusted Deno adapter bundles it,
-#                              and TestTrustedAdapterMatchesOfficialSDK fails while the committed one is stale (#4221)
-#   sdk/go/**                  go test ./... inside the sdk/go module
-#   server/internal/foo/**     go test ./internal/foo/...   (cmd/<x>/** and plugins/<x>/** likewise; other server
-#                              changes: go build ./...)
-#   server/**, sdk/go/**       also the server's repo-wide guard tests (GO_GUARD_PKGS, GO_GUARD_TESTS), which fail on
-#                              code outside their own package; --all runs them as part of go test ./...
 #   server/internal/db/migrations/**, scripts/ci/migration_freeze.py
 #                              python3 scripts/ci/migration_freeze.py (a migration already on the base must not be
 #                              edited, deleted or renamed; comment- and whitespace-only edits pass; a new file may be
@@ -60,66 +54,15 @@
 #                              (internal/proto's Swift and Kotlin contract checks, #11026)
 #   spec/**, schema/**         also the tests of each integrations/<pkg> and of sdk/ts whose files name the path or a
 #                              directory it is in (CI's runtimes lane runs for all of them), found at run time
-#   android/**                 scripts/app/android_i18n_check.py plus the android checkers' own unittests (no gradle)
-#   .github/**                 scripts/test/pr_needs_issue_test.mjs
-#   schema/**                  the extension-schema py, the sdk bundle py, and sdk/go go test (mirrors CI's job)
-#   schema/wire/**, spec/fixtures/**, scripts/gen/extension_schema.py, scripts/test/test_extension_schema.py
-#                              also scripts/test/test_wire_schema.py: it holds the fixtures' samples to the wire schemas
-#                              (and imports the extension test's validator); CI's guards step always runs it
-#   spec/fixtures/todo-{detail,layout}/**, spec/fixtures/todo-view/README.md, spec/fixtures/agent-names/**,
-#   schema/wire/todo-view.schema.json, server/internal/assistant/{todos,todo_ask}.go, scripts/test/test_wire_schema.py,
-#   scripts/test/test_extension_schema.py
-#                              also scripts/test/test_todo_fixtures.py: it holds the to-do page and window fixtures to
-#                              their READMEs' rules, the view schema, the todo-view line keys, the agent names and the
-#                              fields the hub writes on a listed to-do (and imports the wire and extension schema tests)
-#   scripts/**                 privacy/PR/extension/refs/bundle/i18n checks picked by path; PR+extension when
-#                              ambiguous (a case "*" matches slashes, so scripts/* covers nested paths too); plus
-#                              each changed scripts/<dir>/test_*.py and the test_<name>.py of each changed script
+#   scripts/**                 each changed scripts/<dir>/test_*.py and the test_<name>.py of each changed script
 #                              <name>.py / <name>.sh (- read as _; db.sh's is test_db_sh.py), run from its
 #                              directory as CI does (#3968), and every scripts/**/test_*.py that imports a changed
 #                              <name>.py from its own directory or from one it names, found at run time (a suite a
-#                              dedicated check runs schedules that check; #11026). scripts/hooks/** also runs
-#                              scripts/test/test_privacy_check.py and test_check_deno_adapter_sh.py (they run the
-#                              hooks; the latter also for scripts/gen/deno_adapter.sh); scripts/privacy_check.py also
-#                              scripts/release/test_check_bundle_privacy.py (it imports privacy_check);
-#                              scripts/release/debug_switches.{txt,py} and release.sh also test_debug_switches.py,
-#                              test_release_debug_guard.py and scripts/test/test_apple_release_switch_names.py;
-#                              scripts/test/go_trimpath.sh also scripts/ci/test_ci.py and
-#                              scripts/test/test_check_fast_inputs.py (they run server.sh and check-fast.sh with it);
-#                              scripts/heavy_slot.py also scripts/test/test_check_fast_inputs.py and test_android_sh.py
-#                              (they run check-fast.sh and android.sh with it); check-fast.sh (either path) and
-#                              scripts/test/test_check_fast.py also
-#                              scripts/test/test_check_fast_guards.py and test_check_fast_inputs.py (the rest of
-#                              check-fast.sh's tests, which import test_check_fast.py's fixtures); scripts/ci/paths.py
-#                              also test_ci.py, test_check_fast_inputs.py and scripts/ci/test_affected_drift.py, this
-#                              script and scripts/operations/pr_watch_verify.py also test_affected_drift.py, and each
-#                              scripts/operations/pr_watch_*.py also scripts/operations/test_pr_watch.py
-#   .github/workflows/*.yml, scripts/ci/*.{sh,py}, scripts/operations/*.py, *watch*.{json,service} there,
-#   .claude/skills/{pr-review-merge-loop,main-verify-fix-loop}/**
-#                              also scripts/test/test_heavy_slot.py: a CI lane or watcher step that names a script
-#                              taking a slot must set PERSONA_HEAVY_SLOTS=0 (#11026)
-#   docs/**, any *.md          scripts/test/test_doc_paths.py and test_doc_go_paths.py (paths quoted in the docs, the
-#                              CLAUDE.md doc index), test_doc_sections.py (section names quoted after a doc path),
-#                              test_doc_wire.py (the wire lists in protocol.md, extensions.md)
-#   server/**, web/src/**, web/e2e/**, scripts/**, sdk/**, apple/**, android/**, integrations/**, spec/**, schema/**
-#                              also test_doc_sections.py: it reads the code comments there too (its SOURCE_DIRS)
-#   server/internal/{proto,hub,extension}/**, schema/extension/manifest.schema.json
-#                              also test_doc_wire.py: the code side of those wire lists
-#   apple/**                   scripts/test/test_apple_l10n.py (String Catalogs, Chinese Swift literals) and
-#                              test_apple_no_callkit.py (no CallKit import or link setting, #9290; also for
-#                              scripts/persona_config.py, whose xcconfig it reads); the iOS/macOS builds and tests
-#                              are skipped with a note (they need a Mac)
-#   apple/project.yml, apple/{app-entitlements,watch-and-share,lean-dev-build,siri-calls}.yml,
-#   scripts/app/{sim,ui-test,perf-test,share-from-apps,lean-build-note,island_peer}.sh,
-#   scripts/diag/stream-scroll/run-ios.sh, scripts/release/release.sh, scripts/ci/apple.sh,
-#   native/iphone-bridge/build.sh
-#                              also scripts/test/test_apple_dev_build.py (the development build's switch and stamp, the
-#                              scripts that generate a project or build the Rust core, the lean build's note; #10713)
-#   native/app-core/scripts/build-apple.sh
-#                              scripts/test/test_app_core_apple_build.py (the shared XCFramework cache, #10713)
-#   deploy/docker/**, docs/operations/docker.md, Dockerfile
-#                              scripts/test/test_docker_entrypoint.py (it also reads the root Dockerfile)
-#                              These Linux suites run in CI's Scripts tests job; they run from scripts/test as there.
+#                              dedicated check runs schedules that check; #11026); then the table's suites
+# A change under server/ or sdk/go/ also runs the repo-wide guard step (job_go_guards: GO_GUARD_PKGS, GO_GUARD_TEST_PKGS
+# and GO_GUARD_TESTS below), the guards and cross-package contract tests that fail on code outside the touched group:
+# the architecture and link guards, the i18n and prompts packages, and the hub's and the assistant's goldens, wire
+# samples, route scopes and size budgets (#12842).
 # scripts/privacy_check.py runs on every invocation that has changes (it is a seconds-long local scan, no network).
 # The plan ends with an INFO line naming the CI lanes the change selects (python3 scripts/ci/paths.py --lanes-for, the
 # selection CI and the PR watcher read) that it runs no part of, such as android, core or desktop (#11026).
@@ -133,13 +76,26 @@
 # Every check prints one PASS / FAIL / TIMEOUT / SKIP line with its duration, followed by a summary; a check that
 # waited for a slot names the wait apart from its own time: "PASS     server go test ./... (95s, plus 140s waiting for a
 # go slot)". The temp log directory is kept when a check fails or times out and removed on a fully clean run.
+# Each failed or timed-out check ends with a "rerun:" line per failure, the command that reruns just that: the failing
+# Go tests of each package (go test -count=1 -run '^(A|B)$' ./pkg), the failing unittest ids, or the step's own
+# command. step() records each failed step for them (record_step); scripts/ci/check_fast_compare.py narrows it.
+#
+# --compare-main (#12733): when a check failed, rerun only the failures, in a detached worktree of the merge base
+# (<log dir>/compare/base, removed afterwards by that path; a signal removes it too), and print one line for each:
+# ALREADY (also fails at the base), NEW (passes there and fails again rerun here on its own, so likely this change),
+# FLAKY (passes there and rerun here on its own), EDITED (not attributable: the change edits that test's files) or
+# UNKNOWN (not compared, and why). The rules are the PR watcher's: named tests only, no attribution when the change
+# edits the test. --compare-tip also reruns the ALREADY ones at the base ref's tip
+# (TIP-PASS: main fixed it since; TIP-FAIL: it still fails; TIP-?: no answer there). The exit code stays the run's: a failure main already has
+# is still a failure here. With --all the merge base and the change's files are found as in diff mode.
 #
 # Exit codes: 0 all checks passed, skipped or not needed; 1 one or more checks FAILED; 124 no failure but at least
 # one check TIMEOUT (a timeout is reported, not silently treated as success; run the full suite when that happens).
 # Ctrl-C, SIGTERM and SIGHUP, to the script or to its whole process group, stop every running check first, keep the
 # log directory, and exit 130, 143 or 129.
 # A missing optional toolchain (node < 22, go, bun) skips only its checks in diff mode; in --all mode a missing
-# core tool (node >= 22, go, python3) is a failure.
+# core tool (node >= 22, go, python3) is a failure. A diff cannot be planned without python3, which reads the table:
+# check-fast stops with exit 2, as it does when a search the plan depends on fails.
 #
 # This script never runs iOS/macOS checks (use a Mac with scripts/app/sim.sh; PersonaKit: swift test, docs/operations/testing.md),
 # the Android gradle build (scripts/app/android.sh), or the full server suite against real Postgres
@@ -153,6 +109,7 @@ set -uo pipefail
 
 CALLER_DIR=$PWD  # a relative --changed-from file is read from here
 cd "$(dirname "$0")/../.."
+ROOT=$PWD  # the directory each failed step ran in is recorded relative to it (record_step)
 
 # Per-command timeouts in seconds (CLAUDE.md: every background step carries a timeout). Override for slow machines.
 TIMEOUT_NPM_CI="${CHECK_FAST_TIMEOUT_NPM_CI:-600}"
@@ -166,6 +123,7 @@ usage() {
 
 ALL=0
 BASE_REF=""
+COMPARE=0  # 1: --compare-main, 2: --compare-tip
 DRY_RUN=0
 CHANGED_FROM=""
 EACH=0
@@ -187,6 +145,8 @@ while [ $# -gt 0 ]; do
       CHANGED_FROM=${1#*=}
       [ -n "$CHANGED_FROM" ] || { echo "check-fast: --changed-from needs a file (- for stdin)" >&2; exit 2; } ;;
     --each) EACH=1 ;;
+    --compare-main) [ "$COMPARE" -eq 2 ] || COMPARE=1 ;;
+    --compare-tip) COMPARE=2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "check-fast: unknown argument: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -199,6 +159,9 @@ if [ -n "$CHANGED_FROM" ] && { [ "$DRY_RUN" -eq 0 ] || [ "$ALL" -eq 1 ] || [ -n 
 fi
 if [ "$EACH" -eq 1 ] && [ -z "$CHANGED_FROM" ]; then
   echo "check-fast: --each needs --dry-run --changed-from <file>" >&2; exit 2
+fi
+if [ "$COMPARE" -gt 0 ] && [ "$DRY_RUN" -eq 1 ]; then
+  echo "check-fast: --compare-main and --compare-tip rerun failures, which a dry run has none of" >&2; exit 2
 fi
 case "$CHANGED_FROM" in ""|-|/*) ;; *) CHANGED_FROM="$CALLER_DIR/$CHANGED_FROM" ;; esac
 if [ -n "$CHANGED_FROM" ] && [ "$CHANGED_FROM" != "-" ] && [ ! -f "$CHANGED_FROM" ]; then
@@ -234,6 +197,10 @@ fi
 # A job that sets JOB_SLOT (go, web) runs its steps in a machine-wide slot of that kind (#10714); with the slots off
 # (PERSONA_HEAVY_SLOTS=0), or without the helper or python3, they run directly, as before.
 HEAVY_SLOT="$PWD/scripts/heavy_slot.py"
+# The per-path table: the checks each changed path selects (plan_changes reads it once a run).
+CHECK_FAST_MAP=scripts/ci/check_fast_map.py
+# What a failed step's rerun line is, and --compare-main's reruns at the merge base (#12733).
+COMPARE_HELPER=scripts/ci/check_fast_compare.py
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/check-fast.XXXXXX")
 # Keep WORK after a failure or timeout (its logs are the trail to read); a clean run removes it on exit.
@@ -306,6 +273,10 @@ on_signal() {  # on_signal <signal name> <exit code>
   fi
   wait
   exec 2>&3 3>&-
+  # --compare-main's checkouts: the helper removes them itself, but it was just killed with the rest. By their paths.
+  for _p in "$WORK/compare/base" "$WORK/compare/tip"; do
+    [ -d "$_p" ] && "$TIMEOUT_BIN" -k 5s 120 git worktree remove --force "$_p" >/dev/null 2>&1
+  done
   KEEP_WORK=1
   echo >&2
   echo "check-fast: interrupted (SIG$_sig); stopped the running checks; logs in $WORK" >&2
@@ -341,7 +312,8 @@ step() {
   #   go test panics "panic: test timed out after …" when ITS suite deadline kills the run;
   #   node's TAP reporter emits "failureType: 'testTimeoutFailure'". A node per-test timeout under the default
   #   reporter is a clean exit 1 naming the test, so it rightly stays a FAIL, not a whole-job TIMEOUT.
-  local _out="$WORK/job.${JOB_I:-x}.steps.log" _rc
+  local _out="$WORK/job.${JOB_I:-x}.steps.log" _rc _from=0
+  [ -f "$_out" ] && _from=$(wc -c < "$_out")
   # The slot comes before the timeout, so waiting in its queue is not counted as a hung step. The helper's lines come
   # before the command's first output: slot_lines shows them live on fd 4 (launch_all's stderr) and records the wait.
   # fd 4 is closed for the command and tee, so nothing a check leaves running holds the caller's stderr open.
@@ -358,19 +330,41 @@ step() {
     # The helper's own 124: no slot came free in time, so the command never ran (not a hung check).
     [ -n "${JOB_SLOT:-}" ] && grep -q '^heavy_slot: timed out' "$_out" 2>/dev/null &&
       _hint=" (no ${JOB_SLOT:-} slot came free; it did not run)$_hint"
+    record_step TIMEOUT "$_rc" "$_from" "$_desc" "$@"
     printf 'TIMEOUT\t%s\t%s\t%s%s\n' "$_rc" "$SECONDS" "$_desc" "$_hint" > "$JOB_STATUS"
     exit 0
   fi
   if [ "$_rc" -eq 137 ]; then
     # SIGKILL: timeout -k's kill after a command that ignored TERM, or the OOM killer — both mean "did not finish".
+    record_step TIMEOUT "$_rc" "$_from" "$_desc" "$@"
     printf 'TIMEOUT\t%s\t%s\t%s (killed: timeout SIGKILL or OOM)%s\n' "$_rc" "$SECONDS" "$_desc" "$_hint" > "$JOB_STATUS"
     exit 0
   fi
   if [ "$_rc" -ne 0 ] && grep -qE "panic: test timed out after [0-9]|failureType: '?testTimeoutFailure'?" "$_out" 2>/dev/null; then
+    record_step TIMEOUT "$_rc" "$_from" "$_desc" "$@"
     printf 'TIMEOUT\t%s\t%s\t%s (test suite self-timed out)%s\n' "$_rc" "$SECONDS" "$_desc" "$_hint" > "$JOB_STATUS"
     exit 0
   fi
+  [ "$_rc" -eq 0 ] || record_step FAIL "$_rc" "$_from" "$_desc" "$@"
   return "$_rc"
+}
+
+# record_step <FAIL|TIMEOUT> <exit code> <offset> <description> <command...> records a step that did not pass, for the
+# summary's rerun lines and --compare-main (scripts/ci/check_fast_compare.py reads it): job.<n>.step.<m> in the log
+# directory, NUL-separated fields: the status, the exit code, the directory it ran in (relative to the repository), the
+# byte range of its output in job.<n>.steps.log (from <offset>, the log's size when the step started, to its size now),
+# the description, then the command. A job's steps run one after another, so a counter file numbers them; in_dir's
+# subshell would lose a variable.
+record_step() {
+  local _status=$1 _rc=$2 _from=$3 _desc=$4 _to=0 _n=0 _dir
+  local _out="$WORK/job.${JOB_I:-x}.steps.log" _count="$WORK/job.${JOB_I:-x}.nsteps"
+  shift 4
+  [ -f "$_out" ] && _to=$(wc -c < "$_out")
+  [ -f "$_count" ] && read -r _n < "$_count"
+  _n=$((_n + 1))
+  echo "$_n" > "$_count"
+  _dir=${PWD#"$ROOT"}; _dir=${_dir#/}
+  printf '%s\0' "$_status" "$_rc" "${_dir:-.}" "$((_from))" "$((_to))" "$_desc" "$@" > "$WORK/job.${JOB_I:-x}.step.$_n"
 }
 
 # slot_lines <step> passes a slot step's output through. The helper's lines about a wait come before the command's
@@ -514,25 +508,53 @@ job_sdk_ts() {
   in_dir sdk/ts step "$TIMEOUT_OTHER" "sdk/ts: bun test" bun test
 }
 
+# Every Go group runs through the partitioned runner, inside the same timeout (#12765). For a ./<dir>/... that covers
+# internal/assistant, whose serial run alone outgrew the budget, it runs that package's tests in go_partitions.py's
+# partitions beside the other packages, and for ./... both partitioned packages' as test-server.sh does; any other
+# group it execs exactly as given (internal/node/... too: its TestMain splits it). Without python3 (an --all run,
+# already failing for it) go test runs directly.
+GO_RUNNER=../scripts/test/go_test_partitioned.py  # from server/
 job_go() {  # $1 = a package dir (internal/foo, cmd/bar, plugins/baz) or ALL for ./...
   [ "$HAVE_GO" -eq 1 ] || skip "go not found"
   JOB_SLOT=go
-  local _pattern _label _inner
+  local _pattern _label _inner _go=(go)
   if [ "$1" = ALL ]; then _pattern=./...; _label="go test ./..."; else _pattern="./$1/..."; _label="go test ./$1/..."; fi
   _inner=$((TIMEOUT_GO_TEST - 10)); [ "$_inner" -lt 5 ] && _inner=5
-  in_dir server step "$TIMEOUT_GO_TEST" "$_label" go test -count=1 -timeout "${_inner}s" "$_pattern"
+  [ "$HAVE_PY" -eq 1 ] && _go=(python3 -B "$GO_RUNNER" go)
+  in_dir server step "$TIMEOUT_GO_TEST" "$_label" "${_go[@]}" test -count=1 -timeout "${_inner}s" "$_pattern"
 }
 
-# The server's repo-wide guards: tests that read other packages' source, go list output, the migrations or sdk/go, so
-# a change anywhere under server/ or sdk/go/ can fail them while go test on the touched packages passes (#1936 broke
-# the lazyre guard on main that way). The list is curated, not every *guard*_test.go: internal/node's pathguard and
-# writeguard tests and internal/hub's ownership_guard_test.go test their own package's behaviour. GO_GUARD_PKGS run
-# whole; GO_GUARD_TESTS names the guard tests of GO_GUARD_TEST_PKGS, whose other tests are slow or need Postgres.
-GO_GUARD_PKGS=(./internal/lazyre ./internal/archguard ./internal/tzguard ./plugins)
-GO_GUARD_TEST_PKGS=(./internal/hub ./internal/assistant)
+# The server's repo-wide guards: tests that read other packages' source, go list output, the migrations or sdk/go, or
+# that pin what other packages render, so a change anywhere under server/ or sdk/go/ can fail them while go test on the
+# touched packages passes (#1936 broke the lazyre guard on main that way). A server change tests only its own group's
+# subtree (./internal/<x>/...), so these run for every one of them (#12842, #10615):
+#   - lazyre, archguard, tzguard and plugins, and the hub's and the assistant's architecture tests, which read source,
+#     go list output, the migrations or sdk/go;
+#   - internal/i18n (its tests walk the whole module for hard-coded text and for keys its call sites use) and
+#     internal/prompts (its tests walk the other packages for the code that offers each MCP tool, and read
+#     docs/assistant/prompts.md);
+#   - TestOneBuild (internal/update: no file builds differently with the release tags) and each program's link guard
+#     (cmd/persona-hub, cmd/persona-manager, cmd/persona-node: go list -deps on every platform they ship for);
+#   - the hub's and the assistant's cross-package contract tests: the prompt and MCP tool goldens (TestGolden.*), the
+#     wire samples, the route scopes and extension route bounds, the prompt and instruction size budgets, and the
+#     contracts of the model purposes, repository guidance and start paths. Their packages render, route or start what
+#     other packages define, so a change there fails them.
+# The list is curated, not every *guard*_test.go: internal/node's pathguard and writeguard tests and internal/hub's
+# ownership_guard_test.go test their own package's behaviour. GO_GUARD_PKGS run whole; GO_GUARD_TESTS names the tests of
+# GO_GUARD_TEST_PKGS that run, since their other tests are slow or need Postgres. go test -run silently matches nothing
+# once a listed test is renamed, so scripts/test/test_check_fast_guards.py fails when an entry names no func Test... of
+# those packages, or a listed package directory is gone. Every test runs with -count=1, as the other go steps do.
+GO_GUARD_PKGS=(./internal/lazyre ./internal/archguard ./internal/tzguard ./plugins ./internal/i18n ./internal/prompts)
+GO_GUARD_TEST_PKGS=(./internal/hub ./internal/assistant ./internal/update ./cmd/persona-hub ./cmd/persona-manager
+  ./cmd/persona-node)
 GO_GUARD_TESTS='^(TestHubAnswersOnlyItsOwnRoutes|TestHubDoesNotImportTheManager|TestHubCallsNoModel|TestHubStoreStaysSmall'\
 '|TestTheHubOpensNoneOfTheManagersFiles|TestStoresTouchTheirOwnTables|TestSettingsKeysAreOneSidesOwn'\
-'|TestTheLaunchersSealedFieldsAreReSealed|TestPlacesThatSealAreKnown)$'
+'|TestTheLaunchersSealedFieldsAreReSealed|TestPlacesThatSealAreKnown'\
+'|TestOneBuild|TestPersonaHubDoesNotLinkTheManager|TestPersonaManagerDoesNotLinkTheHub'\
+'|TestPersonaNodeDoesNotLinkTheHubOrTheManager'\
+'|TestGolden.*|TestNoWholeListMCPToolGoldens|TestWireSamples|TestRouteScopes|TestEveryExtensionRouteIsBounded'\
+'|TestPromptSizeRatchet|TestSupervisionPolicySizeBudget|TestModelPurposesDescribeThemselves'\
+'|TestRepositoryRetrievalGuidanceContract|TestEveryStartPathIsSupervisedOrOptedOut)$'
 
 # job_go_guards runs both guard commands, the second one also when the first failed, so one run names every failure.
 job_go_guards() {
@@ -602,15 +624,20 @@ job_scripts_test() {  # $1 = scripts/<dir>/test_<name>.py, run from its director
 # last so the summary's log tail names them. Any failure makes the job a FAIL; only timeouts make it a TIMEOUT.
 job_scripts_all() {
   [ "$HAVE_PY" -eq 1 ] || skip "python3 not found"
-  local _t _rc _failed=() _timed_out=()
+  local _t _rc _failed=() _timed_out=() _out="$WORK/job.${JOB_I:-x}.steps.log" _from
   for _t in "${SCRIPT_TESTS[@]}"; do
     echo "+ $_t (timeout ${TIMEOUT_OTHER}s)"
-    ( cd "$(dirname "$_t")" && "$TIMEOUT_BIN" -k 5s "$TIMEOUT_OTHER" python3 -B -m unittest -q "$(basename "$_t" .py)" ) 4>&- 2>&1
-    _rc=$?
+    # Into the job's steps log too, so a failed suite is recorded like a step (record_step) and gets its rerun line.
+    _from=0; [ -f "$_out" ] && _from=$(wc -c < "$_out")
+    ( cd "$(dirname "$_t")" && "$TIMEOUT_BIN" -k 5s "$TIMEOUT_OTHER" python3 -B -m unittest -q "$(basename "$_t" .py)" ) \
+      4>&- 2>&1 | tee -a "$_out" 4>&-
+    _rc=${PIPESTATUS[0]}
     case "$_rc" in
       0) ;;
-      124|137) _timed_out+=("$_t") ;;
-      *) _failed+=("$_t") ;;
+      124|137) _timed_out+=("$_t")
+        ( cd "$(dirname "$_t")" && record_step TIMEOUT "$_rc" "$_from" "$_t" python3 -B -m unittest -q "$(basename "$_t" .py)" ) ;;
+      *) _failed+=("$_t")
+        ( cd "$(dirname "$_t")" && record_step FAIL "$_rc" "$_from" "$_t" python3 -B -m unittest -q "$(basename "$_t" .py)" ) ;;
     esac
   done
   echo "${#SCRIPT_TESTS[@]} suite(s): ${#_failed[@]} failed, ${#_timed_out[@]} timed out"
@@ -641,7 +668,8 @@ job_migration_freeze() {
 }
 
 # job_sleep_ratchet counts fixed time.Sleep calls in Go tests. In diff mode the base is the merge-base check-fast
-# already resolved (so --base agrees); --all resolves the default branch itself.
+# already resolved (so --base agrees), which also holds each changed file to its count there. --all is a full-tree run:
+# counts are held to the baseline only, and the ratchet resolves the default branch itself for its never-raise check.
 job_sleep_ratchet() {
   [ "$HAVE_PY" -eq 1 ] || skip "python3 not found"
   if [ "$ALL" -eq 1 ]; then
@@ -727,8 +755,8 @@ job_extension_schema() {
 plan_reset() {
   CORE_FAIL=0
   WEB=0; SDKTS=0; ANDROID=0; PRNEEDS=0; EXTSCHEMA=0; SERVER_BUILD=0; APPLE=0; UNMAPPED=0; GO_GUARDS=0
-  SITE=0; SDKGO=0; EXTREFS=0; SDKBUNDLE=0
-  INTEG=(); GO_GROUPS=(); UNMAPPED_FILES=(); SCRIPT_TESTS=()
+  SITE=0; SDKGO=0; EXTREFS=0; SDKBUNDLE=0; WEB_INSTALL=0; DENO_ADAPTER=0
+  INTEG=(); GO_GROUPS=(); UNMAPPED_FILES=(); SCRIPT_TESTS=(); TABLE_SUITES=()
   CORE_MISSING=(); INFO=()
   JOB_NAME=(); JOB_FN=(); JOB_ARG=(); JOB_LOG=(); JOB_STATUS=()
 }
@@ -744,20 +772,13 @@ core_missing() {  # --all treats a missing core toolchain as a failure; diff mod
   fi
 }
 
-if [ "$ALL" -eq 1 ]; then
-  echo "check-fast: --all, running every local fast check (iOS/macOS and Postgres suites excluded)"
-elif [ -n "$CHANGED_FROM" ]; then
-  if [ "$CHANGED_FROM" = - ]; then CHANGED=$(sed '/^$/d' | sort -u); else CHANGED=$(sed '/^$/d' "$CHANGED_FROM" | sort -u); fi
-  if [ -z "$CHANGED" ]; then
-    echo "check-fast: no paths listed in $CHANGED_FROM; nothing to check."
-    exit 0
-  fi
-  [ "$EACH" -eq 1 ] || echo "check-fast: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ') listed file(s) from $CHANGED_FROM"
-else
-  # Without --base: the clone's default branch, from local refs only so the script works offline. origin/HEAD is
-  # set at clone time and can name a branch that is gone since, so it counts only if it resolves to a commit. Its
-  # symbolic target names the base in the output; an origin/HEAD that is a plain ref is used as it is. Full ref
-  # names: a local branch called origin/main would otherwise shadow the remote-tracking one.
+# resolve_base sets BASE_REF and MB, the merge-base the diff starts from (exit 2 when there is none).
+# Without --base: the clone's default branch, from local refs only so the script works offline. origin/HEAD is set at
+# clone time and can name a branch that is gone since, so it counts only if it resolves to a commit. Its symbolic
+# target names the base in the output; an origin/HEAD that is a plain ref is used as it is. Full ref names: a local
+# branch called origin/main would otherwise shadow the remote-tracking one.
+resolve_base() {
+  local _head _ref
   if [ -z "$BASE_REF" ]; then
     _head=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || _head=refs/remotes/origin/HEAD
     for _ref in "$_head" refs/remotes/origin/main refs/remotes/origin/master; do
@@ -776,13 +797,38 @@ else
     exit 2
   fi
   MB=$(git merge-base HEAD "$BASE_REF" 2>/dev/null) || { echo "check-fast: no merge-base with $BASE_REF" >&2; exit 2; }
-  # Committed since the merge-base, plus staged/unstaged/untracked work, so the script works before a commit too.
-  CHANGED=$({
+}
+
+# changed_files prints the paths changed since the merge-base: committed since then, plus staged/unstaged/untracked
+# work, so the script works before a commit too.
+changed_files() {
+  {
     git diff --name-only --no-renames -z "$MB" HEAD
     git diff --name-only --no-renames -z HEAD
     git diff --cached --name-only --no-renames -z
     git ls-files --others --exclude-standard -z
-  } | tr '\0' '\n' | sed '/^$/d' | sort -u)
+  } | tr '\0' '\n' | sed '/^$/d' | sort -u
+}
+
+COMPARE_CHANGED=""  # the change's paths, for --compare-main's EDITED verdicts
+if [ "$ALL" -eq 1 ]; then
+  echo "check-fast: --all, running every local fast check (iOS/macOS and Postgres suites excluded)"
+  # --all plans no diff, but --compare-main needs the merge base to rerun at and the change's files to attribute by.
+  if [ "$COMPARE" -gt 0 ]; then
+    resolve_base
+    COMPARE_CHANGED=$(changed_files)
+  fi
+elif [ -n "$CHANGED_FROM" ]; then
+  if [ "$CHANGED_FROM" = - ]; then CHANGED=$(sed '/^$/d' | sort -u); else CHANGED=$(sed '/^$/d' "$CHANGED_FROM" | sort -u); fi
+  if [ -z "$CHANGED" ]; then
+    echo "check-fast: no paths listed in $CHANGED_FROM; nothing to check."
+    exit 0
+  fi
+  [ "$EACH" -eq 1 ] || echo "check-fast: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ') listed file(s) from $CHANGED_FROM"
+else
+  resolve_base
+  CHANGED=$(changed_files)
+  COMPARE_CHANGED=$CHANGED
   if [ -z "$CHANGED" ]; then
     echo "check-fast: no changes since $(git rev-parse --short "$MB") ($BASE_REF); nothing to check."
     exit 0
@@ -850,65 +896,48 @@ if [ "$ALL" -eq 1 ]; then
     fi
   done
 else
+  # The table's checks for each path (scripts/ci/check_fast_map.py), one line per path in $CHANGED's order on fd 8,
+  # their tab-separated checks (check_fast_map.CHECKS). The suites among them are added after the ones found below
+  # from the path's own name and its importers, in the table's order (TABLE_SUITES, one entry per path).
   while IFS= read -r f; do
-    # Files outside web/ that web/src and its tests read also run the web check, on top of their own mapping below:
-    # the web plan after this loop finds them.
-    case "$f" in server/*|sdk/go/*) GO_GUARDS=1 ;; esac  # on top of the mapping below (job_go_guards)
-    case "$f" in
-      web/*) WEB=1 ;;
-      site/*) SITE=1 ;;
-      integrations/*/*)
-        _p=$(printf '%s' "$f" | cut -d/ -f2)
-        arr_has "$_p" "${INTEG[@]:-}" || INTEG+=("$_p") ;;
-      sdk/ts/*) SDKTS=1 ;;
-      spec/fixtures/*) ;;  # read by server tests: the reader packages are collected in a pass below
-      spec/tokens/*|spec/icons/*) ;;  # test_gen_tokens.py / test_gen_icon_meanings.py, added with the scripts/ unittests below
-      server/*)
-        _rest=${f#server/}
-        case "$_rest" in
-          # Package groups are collected in a second pass below; plugins/<file> is the plugins package, which the
-          # repo-wide guard job runs.
-          internal/*/*|plugins/*) ;;
-          cmd/*)
-            _after=${_rest#cmd/}
-            case "$_after" in
-              */*)
-                _g="cmd/${_after%%/*}"
-                arr_has "$_g" "${GO_GROUPS[@]:-}" || GO_GROUPS+=("$_g") ;;
-              *) SERVER_BUILD=1 ;;
-            esac ;;
-          *) SERVER_BUILD=1 ;;
-        esac
-        ;;
-      sdk/go/*) SDKGO=1 ;;  # sdk/go is its own module; run its tests there, not server's build
-      android/*) ANDROID=1 ;;
-      .github/*) PRNEEDS=1 ;;
-      schema/*)
-        # Mirror CI's extension-schema job: the conformance py, the sdk bundle py, and the Go wire round-trip.
-        EXTSCHEMA=1; SDKBUNDLE=1; SDKGO=1 ;;
-      scripts/app/*android*)
-        # The i18n/token checkers and four of their test_android_* unittests belong to the android check job.
-        ANDROID=1 ;;
-      scripts/test/test_external_service_refs.py) EXTREFS=1 ;;
-      scripts/gen/sdk_bundle.py|scripts/test/test_sdk_bundle.py) SDKBUNDLE=1 ;;
-      scripts/gen/*extension*|scripts/test/test_extension_schema.py) EXTSCHEMA=1 ;;
-      scripts/*)
-        # Ambiguous script change: run the seconds-level repository checks. A case "*" matches "/" too, so this
-        # also covers nested paths such as scripts/hooks/foo.sh, not only files directly under scripts/.
-        PRNEEDS=1; EXTSCHEMA=1 ;;
-      apple/*) APPLE=1 ;;
-      # The suites guarding docs, markdown and deploy/docker (and the root Dockerfile), and the suites of two native/
-      # build scripts, are added with the scripts/ unittests below.
-      docs/*|deploy/docker/*|Dockerfile|*.md) ;;
-      native/app-core/scripts/build-apple.sh|native/iphone-bridge/build.sh) ;;  # their suites, below too
-      *) UNMAPPED=1; UNMAPPED_FILES+=("$f") ;;
-    esac
+    if ! IFS= read -r _line <&8; then
+      echo "check-fast: python3 $CHECK_FAST_MAP listed fewer lines than paths; no plan made" >&2
+      exit 2
+    fi
+    _listed=""
+    _ifs=$IFS; IFS=$'\t'; set -f; _checks=($_line); set +f; IFS=$_ifs
+    for _c in ${_checks[@]+"${_checks[@]}"}; do
+      case "$_c" in
+        web) WEB=1 ;;
+        web-install) WEB_INSTALL=1 ;;
+        site) SITE=1 ;;
+        integration:*) _p=${_c#integration:}; arr_has "$_p" "${INTEG[@]:-}" || INTEG+=("$_p") ;;
+        sdk-ts) SDKTS=1 ;;
+        deno-adapter) DENO_ADAPTER=1 ;;
+        go-package:*) _g=${_c#go-package:}; arr_has "$_g" "${GO_GROUPS[@]:-}" || GO_GROUPS+=("$_g") ;;
+        server-build) SERVER_BUILD=1 ;;
+        go-guards) GO_GUARDS=1 ;;
+        sdk-go) SDKGO=1 ;;
+        android) ANDROID=1 ;;
+        pr-needs-issue) PRNEEDS=1 ;;
+        extension-schema) EXTSCHEMA=1 ;;
+        sdk-bundle) SDKBUNDLE=1 ;;
+        external-refs) EXTREFS=1 ;;
+        apple) APPLE=1 ;;
+        unmapped) UNMAPPED=1; UNMAPPED_FILES+=("$f") ;;
+        suite:*) _listed="$_listed${_c#suite:}"$'\t' ;;
+        *) echo "check-fast: python3 $CHECK_FAST_MAP named a check this script does not know: $_c; no plan made" >&2
+           exit 2 ;;
+      esac
+    done
+    TABLE_SUITES+=("$_listed")
   done <<< "$CHANGED"
 fi
 
 # The web check's plan (#10619): scripts/ci/paths.py scans web/src and the web tests for the files they read, and
-# prints "none", "full" or "related" with a reason, then the files vitest related starts from. Without it (no python3,
-# or the scan failed), a change under web/ runs the whole suite and files outside web/ do not run the web check.
+# prints "none", "full" or "related" with a reason, then the files vitest related starts from. Without it (no
+# scripts/ci/paths.py, or the scan failed), a change under web/ runs the whole suite and files outside web/ do not run
+# the web check.
 WEB_MODE=full; WEB_REASON=""; WEB_PLAN="$WORK/web-plan.txt"
 if [ "$ALL" -eq 0 ]; then
   if [ "$HAVE_PY" -eq 1 ] && [ -f scripts/ci/paths.py ]; then
@@ -932,19 +961,6 @@ if [ "$ALL" -eq 0 ]; then
       echo "check-fast: web tests: the whole suite${WEB_REASON:+, $WEB_REASON}"
     fi
   fi
-fi
-
-# Collect affected server packages: server/internal/foo/... -> ./internal/foo/..., plugins/bar/... likewise.
-if [ "$ALL" -eq 0 ]; then
-  while IFS= read -r f; do
-    case "$f" in
-      server/internal/*/*|server/plugins/*/*)
-        _rest=${f#server/}
-        _top=${_rest%%/*}; _rest=${_rest#*/}
-        _g="$_top/${_rest%%/*}"
-        arr_has "$_g" "${GO_GROUPS[@]:-}" || GO_GROUPS+=("$_g") ;;
-    esac
-  done <<< "$CHANGED"
 fi
 
 # search <what> <output file> <git grep arguments...> runs git grep into the file; no match leaves it empty. Any other
@@ -1068,9 +1084,10 @@ if [ "$ALL" -eq 0 ] && printf '%s\n' "$CHANGED" | grep -qE '^(spec|schema)/'; th
 fi
 
 # The trusted Deno adapter (server/internal/extension/denohost/adapter.mjs) is generated from adapter.ts, which bundles
-# sdk/ts/src: a change there also runs denohost's tests, whose TestTrustedAdapterMatchesOfficialSDK fails while the
-# committed adapter is stale (#4221; scripts/gen/deno_adapter.sh regenerates it). A few seconds; it needs bun.
-if [ "$ALL" -eq 0 ] && printf '%s\n' "$CHANGED" | grep -q '^sdk/ts/src/'; then
+# sdk/ts/src: a change there (the table's deno-adapter) also runs denohost's tests, whose
+# TestTrustedAdapterMatchesOfficialSDK fails while the committed adapter is stale (#4221; scripts/gen/deno_adapter.sh
+# regenerates it). A few seconds; it needs bun.
+if [ "$ALL" -eq 0 ] && [ "$DENO_ADAPTER" -eq 1 ]; then
   if [ "$HAVE_BUN" -eq 0 ]; then
     INFO+=("SKIP  trusted Deno adapter (go test ./internal/extension/denohost/...): bun not found in PATH")
   elif ! arr_has internal/extension "${GO_GROUPS[@]:-}"; then  # ./internal/extension/... already covers it
@@ -1104,7 +1121,8 @@ script_test_add() {
 # The scripts/ unittests a change needs (#3968): each changed scripts/<dir>/test_*.py, and for each changed script
 # <name>.py / <name>.sh anywhere under scripts/, every scripts/<dir>/test_<name>.py, and test_<name>_sh.py for a .sh
 # (CI's Scripts tests job runs scripts/**/test_*.py; sim-boot.sh is tested by test_sim_boot.py, db.sh by test_db_sh.py).
-# Changes to docs, markdown, apple/, deploy/docker/ and the root Dockerfile add the scripts/test suites that guard them.
+# Then each path adds the suites the table maps it to (scripts/ci/check_fast_map.py): the ones guarding docs, markdown,
+# apple/, deploy/docker/ and the root Dockerfile, and the ones that run or read a script by its path.
 # --all runs every scripts/**/test_*.py suite, the same find as CI's Scripts tests job, minus the few script_test_add
 # skips because a dedicated check above runs them; renaming or dropping one of those checks must update that skip list.
 # test_check_fast.py compares the --all selection with python-tests.py's.
@@ -1134,6 +1152,7 @@ if [ "$ALL" -eq 1 ]; then
     script_test_add "$f"
   done < <(find scripts -name 'test_*.py' -not -path '*/node_modules/*' | sort)
 else
+  _n=0
   while IFS= read -r f; do
     case "$f" in
       scripts/*/test_*.py) script_test_add "$f" ;;
@@ -1150,115 +1169,11 @@ else
         script_importers "$f" > "$WORK/importers.txt"
         while IFS= read -r _t; do script_test_add "$_t"; done < "$WORK/importers.txt" ;;
     esac
-    # The Linux suites in CI's Scripts tests job that guard files outside scripts/; a file can need several.
-    case "$f" in
-      docs/*|*.md)
-        script_test_add scripts/test/test_doc_paths.py; script_test_add scripts/test/test_doc_go_paths.py
-        script_test_add scripts/test/test_doc_sections.py; script_test_add scripts/test/test_doc_wire.py ;;
-      # The code side of the wire lists test_doc_wire.py compares with the docs.
-      server/internal/proto/*|server/internal/hub/*|server/internal/extension/*|schema/extension/manifest.schema.json)
-        script_test_add scripts/test/test_doc_wire.py ;;
-    esac
-    # Most section names test_doc_sections.py checks sit in code comments under its SOURCE_DIRS (about a second).
-    case "$f" in
-      server/*|web/src/*|web/e2e/*|scripts/*|sdk/*|apple/*|android/*|integrations/*|spec/*|schema/*)
-        script_test_add scripts/test/test_doc_sections.py ;;
-    esac
-    case "$f" in apple/*) script_test_add scripts/test/test_apple_l10n.py ;; esac
-    # Every Apple source and build file, and the xcconfig persona_config.py writes, against CallKit (#9290).
-    case "$f" in apple/*|scripts/persona_config.py) script_test_add scripts/test/test_apple_no_callkit.py ;; esac
-    # The development build (#10713): the switch that leaves the watch app and the share extension out, who sets it,
-    # the Release-only commit stamp; and the Rust core's XCFramework cache shared between worktrees.
-    # test_apple_dev_build.py reads the project and the includes its xcodegen dumps turn on, every script that
-    # generates a project or builds the Rust core it names, and the note a lean build prints (#11250). Its two searches
-    # of the whole tree (who sets the switch, who runs xcodegen generate) also see a new caller; that one is not mapped.
-    case "$f" in
-      apple/project.yml|apple/app-entitlements.yml|apple/watch-and-share.yml|apple/lean-dev-build.yml|\
-      apple/siri-calls.yml|scripts/app/sim.sh|scripts/app/ui-test.sh|scripts/app/perf-test.sh|\
-      scripts/app/share-from-apps.sh|scripts/app/lean-build-note.sh|scripts/app/island_peer.sh|\
-      scripts/diag/stream-scroll/run-ios.sh|scripts/release/release.sh|scripts/ci/apple.sh|\
-      native/iphone-bridge/build.sh)
-        script_test_add scripts/test/test_apple_dev_build.py ;;
-      native/app-core/scripts/build-apple.sh) script_test_add scripts/test/test_app_core_apple_build.py ;;
-    esac
-    # test_gen_tokens.py checks the token sources against the iOS values and the committed Android Tokens.kt (#4209).
-    case "$f" in
-      spec/tokens/*|apple/Shared/Design/*|android/core/designsystem/src/main/kotlin/persona/core/designsystem/Tokens.kt)
-        script_test_add scripts/assets/test_gen_tokens.py ;;
-    esac
-    # test_gen_icon_meanings.py checks spec/icons against Theme.Icon and the Phosphor glyphs, and PersonaIcons.kt.
-    case "$f" in
-      spec/icons/*|apple/Shared/Design/Icons.swift|android/core/designsystem/src/main/kotlin/persona/core/designsystem/icons/*)
-        script_test_add scripts/assets/test_gen_icon_meanings.py ;;
-    esac
-    # Suites whose names do not match the file they test: test_privacy_check.py and test_check_deno_adapter_sh.py copy
-    # scripts/hooks into their temp repositories and run the hooks there (the latter also scripts/gen/deno_adapter.sh);
-    # check_bundle_privacy.py imports privacy_check; test_merge_pr_sh.py copies privacy_check.py into its temp
-    # repositories, where merge-pr.sh runs it, and checks that pr_watch_merge.py's merge lock excludes merge-pr.sh's.
-    # It copies changed_ratchets.py and the two ratchets it imports there too (#7977); test_changed_ratchets.py imports them.
-    # test_ci.py and test_check_fast_inputs.py run server.sh and this script with go_trimpath.sh, which composes their
-    # GOFLAGS; test_check_fast_inputs.py runs this script with heavy_slot.py too. This script's tests are three files
-    # (#11017): its own name picks test_check_fast.py, and the other two, which import its fixtures, come along.
-    case "$f" in
-      scripts/hooks/*)
-        script_test_add scripts/test/test_privacy_check.py; script_test_add scripts/test/test_check_deno_adapter_sh.py ;;
-      scripts/gen/deno_adapter.sh) script_test_add scripts/test/test_check_deno_adapter_sh.py ;;
-      scripts/privacy_check.py)
-        script_test_add scripts/release/test_check_bundle_privacy.py; script_test_add scripts/test/test_merge_pr_sh.py ;;
-      scripts/operations/pr_watch_merge.py|scripts/ci/changed_ratchets.py) script_test_add scripts/test/test_merge_pr_sh.py ;;
-      scripts/ci/sleep_ratchet.py|scripts/ci/web_font_ratchet.py)
-        script_test_add scripts/ci/test_changed_ratchets.py; script_test_add scripts/test/test_merge_pr_sh.py ;;
-      scripts/test/go_trimpath.sh)
-        script_test_add scripts/ci/test_ci.py; script_test_add scripts/test/test_check_fast_inputs.py ;;
-      # test_android_sh.py runs android.sh with the helper (#11250).
-      scripts/heavy_slot.py)
-        script_test_add scripts/test/test_check_fast_inputs.py; script_test_add scripts/test/test_android_sh.py ;;
-      scripts/check-fast.sh|scripts/test/check-fast.sh|scripts/test/test_check_fast.py)
-        script_test_add scripts/test/test_check_fast_guards.py; script_test_add scripts/test/test_check_fast_inputs.py ;;
-    esac
-    # test_heavy_slot.py reads CI's lanes, the operations scripts (the watchers among them), their example configs and
-    # services, and both watcher skills: one that names a script taking a slot must set PERSONA_HEAVY_SLOTS=0
-    # (docs/operations/testing.md "Heavy build slots"). A new lane script once broke it unseen (#11026). It skips
-    # test_* files, as this does.
-    case "${f##*/}:$f" in
-      test_*) ;;
-      *:.github/workflows/*.yml|*:scripts/ci/*.sh|*:scripts/ci/*.py|*:scripts/operations/*.py|\
-      *:scripts/operations/*watch*.json|*:scripts/operations/*watch*.service|*:.claude/skills/pr-review-merge-loop/*|\
-      *:.claude/skills/main-verify-fix-loop/*)
-        script_test_add scripts/test/test_heavy_slot.py ;;
-    esac
-    # The three selections of what a change affects (#11026): CI's lanes (paths.py, tested in test_ci.py and, for the
-    # web plan and the lanes a plan names, test_check_fast_inputs.py), this script and the watcher's lanes;
-    # test_affected_drift.py compares them.
-    case "$f" in
-      scripts/ci/paths.py)
-        script_test_add scripts/ci/test_ci.py; script_test_add scripts/test/test_check_fast_inputs.py
-        script_test_add scripts/ci/test_affected_drift.py ;;
-      scripts/test/check-fast.sh) script_test_add scripts/ci/test_affected_drift.py ;;
-      scripts/operations/pr_watch_*.py)
-        script_test_add scripts/operations/test_pr_watch.py
-        case "$f" in scripts/operations/pr_watch_verify.py) script_test_add scripts/ci/test_affected_drift.py ;; esac ;;
-    esac
-    # The Release binary's DEBUG checks (#10616, #10654): a list that matches no script name, whose union merges can
-    # leave it out of order, the checker test_apple_release_switch_names.py imports, and release.sh, which runs it.
-    case "$f" in
-      scripts/release/debug_switches.txt|scripts/release/debug_switches.py|scripts/release/release.sh)
-        script_test_add scripts/release/test_debug_switches.py; script_test_add scripts/release/test_release_debug_guard.py
-        script_test_add scripts/test/test_apple_release_switch_names.py ;;
-    esac
-    case "$f" in deploy/docker/*|docs/operations/docker.md|Dockerfile) script_test_add scripts/test/test_docker_entrypoint.py ;; esac
-    # test_wire_schema.py holds every sample the shared fixtures keep for a wire schema to that schema, at any depth.
-    case "$f" in
-      schema/wire/*|spec/fixtures/*|scripts/gen/extension_schema.py|scripts/test/test_extension_schema.py)
-        script_test_add scripts/test/test_wire_schema.py ;;
-    esac
-    # test_todo_fixtures.py holds the to-do page and window fixtures to their READMEs' rules; it also reads the view
-    # schema, the todo-view line keys, the agent names and the row fields of the hub's Todo and listedTodo, and imports
-    # the wire and extension schema tests.
-    case "$f" in
-      spec/fixtures/todo-detail/*|spec/fixtures/todo-layout/*|spec/fixtures/todo-view/README.md|spec/fixtures/agent-names/*|schema/wire/todo-view.schema.json|server/internal/assistant/todos.go|server/internal/assistant/todo_ask.go|scripts/test/test_wire_schema.py|scripts/test/test_extension_schema.py)
-        script_test_add scripts/test/test_todo_fixtures.py ;;
-    esac
+    # The suites the table maps the path to, in its order (TABLE_SUITES from the first loop): the ones that guard
+    # files outside scripts/, and the ones that run or read a script by its path rather than importing it.
+    _ifs=$IFS; IFS=$'\t'; set -f; _suites=(${TABLE_SUITES[$_n]}); set +f; IFS=$_ifs
+    for _t in ${_suites[@]+"${_suites[@]}"}; do script_test_add "$_t"; done
+    _n=$((_n + 1))
   done <<< "$CHANGED"
 fi
 
@@ -1277,8 +1192,7 @@ if [ "$WEB" -eq 1 ]; then
     WEB_CI=noci
     if [ ! -d web/node_modules ]; then
       WEB_CI=ci
-    elif [ "$ALL" -eq 0 ] && printf '%s\n' "$CHANGED" | grep -qxE 'web/(package\.json|package-lock\.json)'; then
-      # A changed manifest can make the installed node_modules stale, even when the diff touched package.json only.
+    elif [ "$ALL" -eq 0 ] && [ "$WEB_INSTALL" -eq 1 ]; then  # a changed manifest (the table's web-install)
       WEB_CI=ci
     fi
     if node_ok; then schedule "web" job_web "$WEB_CI"; else INFO+=("SKIP  web: node >= 22 not found (found: $(node -v 2>/dev/null || echo none))"); fi
@@ -1402,6 +1316,22 @@ if [ "$LANES_READ" -eq 1 ] || { [ -n "$LANES_PID" ] && wait "$LANES_PID"; }; the
 fi
 }
 
+# The table lists the checks of every path at once (one line per path, in $CHANGED's order), and plan_changes reads
+# them in step with $CHANGED on fd 8; --each reads one line per listed path. --all does not read it. Without python3 or
+# the table no plan can be made, so the run stops, as it does when a search fails (search, above).
+if [ "$ALL" -eq 0 ]; then
+  if [ "$HAVE_PY" -eq 0 ] || [ ! -f "$CHECK_FAST_MAP" ]; then
+    echo "check-fast: picking the checks for a change needs python3 and $CHECK_FAST_MAP; no plan made" >&2
+    exit 2
+  fi
+  if ! printf '%s\n' "$CHANGED" | "$TIMEOUT_BIN" -k 5s "$TIMEOUT_OTHER" python3 "$CHECK_FAST_MAP" \
+      > "$WORK/table.txt" 2> "$WORK/table.err"; then
+    echo "check-fast: python3 $CHECK_FAST_MAP failed ($(tail -n 1 "$WORK/table.err" 2>/dev/null)); no plan made" >&2
+    exit 2
+  fi
+  exec 8< "$WORK/table.txt"
+fi
+
 # --each: plan every listed path on its own. paths.py plans the web check of all of them in one scan (web_plan) and
 # lists the CI lanes of each in one run (plan_changes).
 if [ "$EACH" -eq 1 ]; then
@@ -1424,6 +1354,7 @@ if [ "$EACH" -eq 1 ]; then
 fi
 
 plan_changes
+[ "$ALL" -eq 1 ] || exec 8<&-  # the table's lines are read: the checks do not need the file open
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "check-fast: dry run, ${#JOB_NAME[@]} check(s) planned; nothing ran."
   plan_notes
@@ -1441,9 +1372,39 @@ launch_all
 
 # --- summary --------------------------------------------------------------
 
+# rerun_lines <job> prints, for each step of the job that failed or timed out, the command that reruns just what
+# failed in it: the failing Go tests of each package, the failing unittest ids, or the step's own command
+# (scripts/ci/check_fast_compare.py rerun, from the steps record_step wrote). Nothing without python3 or the helper.
+rerun_lines() {
+  [ "$HAVE_PY" -eq 1 ] && [ -f "$COMPARE_HELPER" ] || return 0
+  "$TIMEOUT_BIN" -k 5s "$TIMEOUT_OTHER" python3 "$COMPARE_HELPER" rerun --work "$WORK" --job "$1" --root "$ROOT" \
+    2>/dev/null | sed 's/^/         rerun: /'
+}
+
+# compare_with_base reruns the failures at the merge base (and with --compare-tip at the base ref's tip) and prints
+# a verdict line for each, then one that counts them (scripts/ci/check_fast_compare.py compare). Each rerun has its
+# check's timeout; the checkouts are removed by their paths, by the helper or by on_signal.
+compare_with_base() {
+  echo
+  echo "== check-fast --compare-main =="
+  if [ "$HAVE_PY" -eq 0 ] || [ ! -f "$COMPARE_HELPER" ]; then
+    echo "check-fast --compare-main: needs python3 and $COMPARE_HELPER; nothing compared"
+    return 0
+  fi
+  printf '%s\n' "$COMPARE_CHANGED" > "$WORK/changed.txt"
+  local _tip=()
+  [ "$COMPARE" -eq 2 ] && _tip=(--tip "$(git rev-parse "${BASE_REF}^{commit}")")
+  # In the background and waited for: bash runs a trap only after the foreground command ends, so a signal during a
+  # long rerun would wait for it; wait returns at once and on_signal stops the reruns and removes the checkouts.
+  python3 "$COMPARE_HELPER" compare --work "$WORK" --root "$ROOT" --base "$MB" --base-ref "$BASE_REF" \
+    ${_tip[@]+"${_tip[@]}"} --changed "$WORK/changed.txt" --timeout-go "$TIMEOUT_GO_TEST" \
+    --timeout-other "$TIMEOUT_OTHER" --timeout-bin "$TIMEOUT_BIN" &
+  wait $!
+}
+
 echo
 echo "== check-fast summary =="
-N_PASS=0; N_FAIL=0; N_TIMEOUT=0; N_SKIP=0
+N_PASS=0; N_FAIL=0; N_TIMEOUT=0; N_SKIP=0; N_JOB_FAIL=0
 for _i in "${!JOB_NAME[@]}"; do
   _kind=""; _rc=""; _seconds=""; _detail=""  # don't inherit a previous job's values if this status file is missing
   IFS=$'\t' read -r _kind _rc _seconds _detail < "${JOB_STATUS[$_i]}"
@@ -1470,10 +1431,12 @@ for _i in "${!JOB_NAME[@]}"; do
     FAIL)
       echo "FAIL     ${JOB_NAME[$_i]} (${_seconds}s$_waited, $_detail); log: ${JOB_LOG[$_i]}"
       LC_ALL=C sed 's/^/         /' "${JOB_LOG[$_i]}" | tail -n 25
-      N_FAIL=$((N_FAIL+1)) ;;
+      rerun_lines "$_i"
+      N_FAIL=$((N_FAIL+1)); N_JOB_FAIL=$((N_JOB_FAIL+1)) ;;
     TIMEOUT)
       echo "TIMEOUT  ${JOB_NAME[$_i]} (${_seconds}s$_waited, $_detail); log: ${JOB_LOG[$_i]}"
       LC_ALL=C sed 's/^/         /' "${JOB_LOG[$_i]}" | tail -n 25
+      rerun_lines "$_i"
       N_TIMEOUT=$((N_TIMEOUT+1)) ;;
   esac
 done
@@ -1481,6 +1444,14 @@ for _msg in "${CORE_MISSING[@]:-}"; do
   [ -n "$_msg" ] && { echo "FAIL     core toolchain: $_msg"; N_FAIL=$((N_FAIL+1)); }
 done
 for _line in "${INFO[@]:-}"; do [ -n "$_line" ] && echo "$_line"; done
+if [ "$COMPARE" -gt 0 ]; then
+  if [ "$N_JOB_FAIL" -gt 0 ]; then
+    compare_with_base
+  else
+    echo
+    echo "check-fast --compare-main: no check failed; nothing to compare"
+  fi
+fi
 
 echo
 if [ "$N_FAIL" -gt 0 ] || [ "$CORE_FAIL" -eq 1 ]; then

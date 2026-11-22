@@ -74,8 +74,11 @@ nonisolated struct LauncherView: Codable, Identifiable, Hashable, Sendable {
     /// A direct API connection's Send Through: the computer whose node sends its requests; nil the hub itself.
     var viaMachine: String?
     var id: String { name }
-    /// What a person reads: the display name, else the name.
-    var title: String { displayName.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } ?? name }
+    /// What a person reads: its display name, the built-in CLI's name on older hubs, or the startup name.
+    var title: String {
+        let label = displayName.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        return Launcher.traeCLITitle(name: name, source: source, agent: agent, baseURL: baseURL, displayName: label) ?? label ?? name
+    }
     var managed: Bool { source == "persona" || source == LegacyNames.product }
     /// A wrapper script on a computer's PATH (#5954) rather than a ~/.zshrc function.
     var pathScript: Bool { source == "path" }
@@ -193,7 +196,7 @@ nonisolated struct LauncherDetail: Codable, Hashable, Sendable {
     var agentName: String {
         switch agent {
         case "codex": "Codex"
-        case "traex": "TRAEX"
+        case "traex", "traecli", "trae-cli": Session.traeCLIName
         default: "Claude Code"
         }
     }
@@ -550,13 +553,15 @@ extension APIClient {
         try await post("/api/v1/launchers/discover", body: probe, timeout: 45)
     }
     /// Import from ~/.zshrc: what the machine's claude aliases come to (409 `node_outdated` from a node too old to say).
-    func launcherImportPreview(machine: String) async throws -> LauncherImportPreview {
-        try JSON.decoder.decode(LauncherImportPreview.self,
-                                from: await request("GET", "/api/v1/launchers/import", query: ["machine": machine], timeout: 45))
+    func launcherImportPreview(machine: String, alias: String? = nil) async throws -> LauncherImportPreview {
+        var query = ["machine": machine]
+        query["alias"] = alias
+        return try JSON.decoder.decode(LauncherImportPreview.self,
+                                       from: await request("GET", "/api/v1/launchers/import", query: query, timeout: 45))
     }
-    func importLaunchers(machine: String, providers: [String]) async throws -> LauncherImportResult {
-        struct Body: Encodable { var machine: String; var providers: [String] }
-        return try await post("/api/v1/launchers/import", body: Body(machine: machine, providers: providers), timeout: 45)
+    func importLaunchers(machine: String, providers: [String], alias: String? = nil) async throws -> LauncherImportResult {
+        struct Body: Encodable { var machine: String; var providers: [String]; var alias: String? }
+        return try await post("/api/v1/launchers/import", body: Body(machine: machine, providers: providers, alias: alias), timeout: 45)
     }
 }
 

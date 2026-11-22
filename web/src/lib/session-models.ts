@@ -6,7 +6,7 @@
 // A list read from the agent takes seconds the first time, so what was read is kept per computer, launcher and host for the
 // page's life: the pill and a later opening show the last list at once, and an opening reads every list again behind it
 // (the session's own first, at most three at a time).
-import { useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import { ApiError, credentialOwner, errorText, onCredentialChange } from "./api";
 import { agentId, sessionAgent } from "./agent-kind";
@@ -17,7 +17,7 @@ import { SUPERVISE_PURPOSE } from "./background-supervisor";
 import {
   defaultModel, forgetCustomModel, launcherModels, listedModel, machineLaunchers, modelName, withoutCustom, type AgentModel, type LauncherDefault, type LauncherModels, type UnavailableLauncher,
 } from "./launcher-models";
-import { canSwitchModel, isCurrentModel, sessionLauncher } from "./model-switch";
+import { canSwitchModel, isCurrentModel, namesWholeModel, rowModelIds, sessionLauncher } from "./model-switch";
 import { hasEffortOnly, hasModes } from "./session-actions";
 import type { Launcher, Session } from "./types";
 import { chosenManager, defaultKnown, defaultManager, onDefaultManager, onManagerChoice } from "./manager-choice";
@@ -95,6 +95,8 @@ export const assistantLaunchers = (mid: string): { info?: AssistantLaunchers; lo
   read: assistantReads.get(machineKey(mid, catalogScope("assistant"))),
 });
 
+const mainDefaults = new Map<string, LauncherDefault | null>();
+const mainReads = new Map<string, Promise<void>>();
 const superviseDefaults = new Map<string, LauncherDefault | null>();
 const superviseReads = new Map<string, Promise<void>>();
 
@@ -104,19 +106,29 @@ export const superviseDefault = (mid: string): LauncherDefault | null | undefine
 
 /** Reads it: once, or `again` (a push changed the conversation, an opening of the panel). */
 export function readSuperviseDefault(mid: string, o: { again?: boolean } = {}): Promise<void> {
+  return readPurposeDefault(mid, SUPERVISE_PURPOSE, superviseDefaults, superviseReads, o);
+}
+
+/** Main-only settings are separate from the new-conversation catalog's default. */
+export const mainDefault = (mid: string): LauncherDefault | null | undefined => mainDefaults.get(machineKey(mid, catalogScope("assistant"))) ?? undefined;
+export function readMainDefault(mid: string, o: { again?: boolean } = {}): Promise<void> {
+  return readPurposeDefault(mid, "assistant.main", mainDefaults, mainReads, o);
+}
+
+function readPurposeDefault(mid: string, purpose: string, defaults: Map<string, LauncherDefault | null>, pending: Map<string, Promise<void>>, o: { again?: boolean }): Promise<void> {
   const scope = catalogScope("assistant");
   const key = machineKey(mid, scope);
-  const reading = superviseReads.get(key);
+  const reading = pending.get(key);
   if (reading) return reading;
-  if (superviseDefaults.has(key) && !o.again) return Promise.resolve();
-  const read = machineLaunchers(mid, { purpose: SUPERVISE_PURPOSE, manager: scope.manager }).then(
-    (r) => void superviseDefaults.set(key, r.default ?? null),
-    () => undefined, // the one shown stays; none shown: Main chat's default is the closest thing known
+  if (defaults.has(key) && !o.again) return Promise.resolve();
+  const read = machineLaunchers(mid, { purpose, manager: scope.manager }).then(
+    (r) => void defaults.set(key, r.default ?? null),
+    () => undefined, // An older hub has no main purpose: retain the shared default.
   ).finally(() => {
-    superviseReads.delete(key);
+    pending.delete(key);
     changed();
   });
-  superviseReads.set(key, read);
+  pending.set(key, read);
   return read;
 }
 
@@ -140,6 +152,52 @@ export function readAssistantLaunchers(mid: string, o: { again?: boolean } = {})
   });
   assistantReads.set(key, read);
   return read;
+}
+
+/** Calls `read` after a push moved conversation `s`'s revision (#6542), once per turn instead of once per write: `rev`
+ *  moves whenever the transcript does (proto Session.Rev), many times a minute while a turn streams, and what these
+ *  reads show (the computer's launchers, Main chat's default) only matters for the next message. A move while the
+ *  conversation works waits until it stops; a move while it doesn't reads at once. A move while `enabled` is false
+ *  (no computer yet) is kept and read once it turns true. Another conversation (machine and session id) starts afresh:
+ *  its revision is not a move, and nothing owed carries over. `read` may return a cleanup, run before the next read,
+ *  when the conversation changes or `enabled` turns false, and on unmount, not when the conversation starts working: a
+ *  turn starting must not drop what the last read left pending (a trailing read, #12778 review). */
+export function useRevisionReread(s: Session | undefined, enabled: boolean, read: () => void | (() => void)): void {
+  const rev = s?.rev;
+  const who = `${s?.machine_id ?? ""}/${s?.session_id ?? ""}`;
+  const working = Boolean(s && stateOf(s) === "working" && !s.background_working);
+  const seen = useRef({ who, rev });
+  const owed = useRef(false);
+  const latest = useRef(read);
+  const cleanup = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => {
+    latest.current = read;
+  });
+  useEffect(() => {
+    const done = () => {
+      cleanup.current?.();
+      cleanup.current = undefined;
+    };
+    if (seen.current.who !== who) {
+      seen.current = { who, rev };
+      owed.current = false;
+      done();
+      return;
+    }
+    if (rev !== undefined && rev !== seen.current.rev) {
+      seen.current.rev = rev;
+      owed.current = true;
+    }
+    if (!enabled) done();
+    if (!owed.current || working || !enabled) return;
+    owed.current = false;
+    done();
+    cleanup.current = latest.current() || undefined;
+  }, [who, rev, working, enabled]);
+  useEffect(() => () => {
+    cleanup.current?.();
+    cleanup.current = undefined;
+  }, []);
 }
 
 // at most three lists are read at a time (each may start the agent's CLI on the computer); `first` jumps the queue
@@ -184,9 +242,10 @@ export function readModels(mid: string, launcher: string, o: { again?: boolean; 
       }
       lists.set(key, { list: r && hidden.size ? { ...r, models: r.models.filter((m) => !(m.custom && hidden.has(m.id))) } : r });
     } catch (e) {
-      // a list already shown stays (and says nothing): a newer one just didn't come
-      const now = lists.get(key);
-      lists.set(key, now?.list !== undefined ? { list: now.list } : { error: errorText(e) });
+      // Keep the catalog on a failed refresh. A new omp start still needs the node to confirm its capability.
+      const list = lists.get(key)?.list;
+      lists.set(key, list === undefined ? { error: errorText(e) } :
+        { list: list?.supports_start_model ? { ...list, supports_start_model: false } : list });
     } finally {
       done();
       reads.delete(key);
@@ -315,17 +374,22 @@ export function sessionSwitches(s: Session): { model: boolean; effort: boolean }
 export function currentModelRow(models: AgentModel[], model: string | undefined): AgentModel | undefined {
   if (!model) return defaultModel(models);
   const c = model.toLowerCase();
-  const exact = models.filter((m) => [m.id, m.resolved, ...(m.aliases ?? [])].some((v) => v && v.toLowerCase() === c));
+  const exact = models.filter((m) => rowModelIds(m).some((v) => v?.toLowerCase() === c));
   const hits = exact.length ? exact : models.filter((m) => isCurrentModel(m, model));
   return hits.find((m) => !m.default) ?? hits[0];
 }
 
-/** A model ID said briefly where no list names it: Claude's as "opus 5.5", GPT's as their list would, a gateway's path
- *  without its vendor. */
+/** A model ID said briefly where no list names it: Claude's as "opus 5.5", GPT's as their list would; gateway paths keep
+ *  their routing prefix so the upstream channel stays visible (#10125). */
 export function modelLabel(id: string): string {
-  const short = id.split("/").pop() || id;
-  const claude = modelShort(short);
-  return claude !== short ? claude : modelName({ id: short });
+  const trimmed = id.trim();
+  const claude = modelShort(trimmed);
+  return claude !== trimmed ? claude : modelName({ id: trimmed });
+}
+
+export function pillModel(models: AgentModel[], active: string | undefined, fallback = active): string | undefined {
+  const row = currentModelRow(models, active);
+  return row && namesWholeModel(row, active) ? modelName(row) : fallback ? modelLabel(fallback) : undefined;
 }
 
 /** One setup as the pill draws it. */
@@ -382,9 +446,8 @@ export function pendingView(s: Session, listOf: (launcher: string) => ModelList)
   return out;
 }
 
-export function pillView(s: Session, e: ModelList): PillView {
-  const row = currentModelRow(e.list?.models ?? [], s.model);
-  const model = row ? modelName(row) : s.model ? modelLabel(s.model) : undefined;
+export function pillView(s: Session, e: ModelList, displayModel?: string): PillView {
+  const model = pillModel(e.list?.models ?? [], s.model || displayModel);
   const out: PillView = { engine: sessionEngine(s), provider: sessionLauncher(s), loading: e.list === undefined && Boolean(e.loading), failed: e.list === undefined && Boolean(e.error) };
   if (s.agent_label) out.engineLabel = s.agent_label;
   if (model) out.model = model;

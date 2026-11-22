@@ -22,6 +22,9 @@ const (
 	spawnNoticeTool = "spawn_notice"
 	// taskEndTool is the relay kind of a task's end told to the conversation that planned it (taskEndedNotice).
 	taskEndTool = "task_end"
+	// prFollowupTool is the relay kind of a post-closure delivery-PR event told to the closed to-do's original
+	// supervisor conversation (pr_followup.go). Like task_end it is a record, not a push of its own and no hop.
+	prFollowupTool = "pr_followup"
 	// spawnedKeep is how long a spawned conversation is followed: one that has not ended a turn by then is the
 	// user's own conversation by now.
 	spawnedKeep = 7 * 24 * time.Hour
@@ -141,8 +144,7 @@ func (s *Service) relayOrQueue(ctx context.Context, to string, msg relayMsg) {
 		return
 	}
 	if err := s.tryDirectRelay(ctx, machine, to, &msg); err != nil {
-		if supervisionRuntimeRefused(err) {
-			s.reportRuntimeRelayFailure(ctx, machine, to, msg)
+		if s.refusedDirect(ctx, machine, to, msg, err) {
 			return
 		}
 		s.logf("relay %s to %s: %v; queued", msg.Tool, short(to), err)
