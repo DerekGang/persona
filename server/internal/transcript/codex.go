@@ -52,6 +52,17 @@ type codexPayload struct {
 	Reason     string              `json:"reason"`
 	Info       *tokenuse.CodexInfo `json:"info"`        // token_count
 	RateLimits *codexRateLimits    `json:"rate_limits"` // token_count: the account's limits as the last response gave them
+	// thread_settings_applied: the settings the thread runs its next turn with, written when a turn starts and when they
+	// change during the session (the TUI's /model, thread/settings/update)
+	ThreadSettings *CodexThreadSettings `json:"thread_settings"`
+}
+
+// CodexThreadSettings is the part of a rollout's thread_settings_applied that says what the thread runs with (Codex
+// 0.169): its model and reasoning effort, null when the model takes none (node/codex_terminal_modes.go confirms a
+// typed /model by it).
+type CodexThreadSettings struct {
+	Model           string  `json:"model"`
+	ReasoningEffort *string `json:"reasoning_effort"`
 }
 
 // codexRateLimits is a token_count's rate_limits (node/usagewindows.go reads the same for the usage windows).
@@ -359,6 +370,19 @@ func parseCodexLine(seq int, line []byte, meta *Meta) []proto.Item {
 	case "context_compacted", "compacted":
 		meta.ContextTokens, meta.ContextCompacted = 0, true
 		meta.ContextStats.ResetCompacted()
+		return nil
+	case "thread_settings_applied":
+		// What the thread runs its next turn with, as soon as it changes (a /model typed mid-turn, #12572), not only at
+		// the next turn_context; the turn already running keeps its own (codexTurnModel). No effort leaves the last one,
+		// as a turn_context without one does.
+		if s := p.ThreadSettings; s != nil {
+			if s.Model != "" {
+				meta.Model, meta.ModelAt = s.Model, l.Timestamp
+			}
+			if s.ReasoningEffort != nil && *s.ReasoningEffort != "" {
+				meta.Effort, meta.EffortAt = *s.ReasoningEffort, l.Timestamp
+			}
+		}
 		return nil
 	case "item_completed":
 	default:

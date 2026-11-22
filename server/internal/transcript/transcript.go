@@ -308,7 +308,8 @@ func (m *Meta) ObserveNamingMetadata(line []byte) {
 	if !bytes.Contains(line, []byte(`"custom-title"`)) && !bytes.Contains(line, []byte(`"ai-title"`)) &&
 		!bytes.Contains(line, []byte(`"usage"`)) && !bytes.Contains(line, []byte(`"turn_context"`)) &&
 		!bytes.Contains(line, []byte(`"compact_boundary"`)) && !bytes.Contains(line, []byte(`"compacted"`)) &&
-		!bytes.Contains(line, []byte(`"context_compacted"`)) && !bytes.Contains(line, []byte(`"token_count"`)) {
+		!bytes.Contains(line, []byte(`"context_compacted"`)) && !bytes.Contains(line, []byte(`"token_count"`)) &&
+		!bytes.Contains(line, []byte(`"thread_settings_applied"`)) {
 		return
 	}
 	var e struct {
@@ -325,10 +326,11 @@ func (m *Meta) ObserveNamingMetadata(line []byte) {
 			Usage *tokenuse.ClaudeUsage `json:"usage"`
 		} `json:"message"`
 		Payload struct {
-			Type   string              `json:"type"`
-			Model  string              `json:"model"`
-			Effort string              `json:"effort"`
-			Info   *tokenuse.CodexInfo `json:"info"`
+			Type           string               `json:"type"`
+			Model          string               `json:"model"`
+			Effort         string               `json:"effort"`
+			Info           *tokenuse.CodexInfo  `json:"info"`
+			ThreadSettings *CodexThreadSettings `json:"thread_settings"` // thread_settings_applied (codex.go)
 		} `json:"payload"`
 	}
 	if json.Unmarshal(line, &e) != nil {
@@ -374,6 +376,16 @@ func (m *Meta) ObserveNamingMetadata(line []byte) {
 				m.OutputTokens = int(info.Total.Output)
 				if m.restartCodex.Grew(info.Total.Total) && info.Last.Input > 0 && info.Last.Input <= MaxContextTokens {
 					m.restartContext.observe("", info.Last.Input)
+				}
+			}
+		case "thread_settings_applied":
+			// A /model typed between turns is a small line too: a long tool result after it can push it out of the tail.
+			if s := e.Payload.ThreadSettings; s != nil {
+				if s.Model != "" && !e.Timestamp.Before(m.ModelAt) {
+					m.Model, m.ModelAt = s.Model, e.Timestamp
+				}
+				if s.ReasoningEffort != nil && *s.ReasoningEffort != "" && !e.Timestamp.Before(m.EffortAt) {
+					m.Effort, m.EffortAt = *s.ReasoningEffort, e.Timestamp
 				}
 			}
 		}
