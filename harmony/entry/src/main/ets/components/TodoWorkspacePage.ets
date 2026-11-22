@@ -4,6 +4,7 @@ import { i18n } from '@kit.LocalizationKit';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { Colors } from '../design/Colors';
+import { PhoneStyle } from '../design/PhoneStyle';
 import { ButtonStyles, SelectStyles } from '../design/Controls';
 import { ComposeListItemV2, ContentItemV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
@@ -47,6 +48,7 @@ export struct TodoWorkspacePage {
   @Event onCreateAgent: (todo: ResourceRow) => void = (_todo: ResourceRow) => {};
   @Event onTitle: (title: string) => void = (_title: string) => {};
   @Local workspace: TodoWorkspace = new TodoWorkspace();
+  @Local detailWidth:number=402;
   @Local detailEditor: PhoneTodoDetailEditor = new PhoneTodoDetailEditor();
   private detailPlanKey: string = '';
   @Local sectionBindings: BoundTodoSection[] = [];
@@ -950,15 +952,58 @@ export struct TodoWorkspacePage {
     return line && ![todo.notes,todo.startError,todo.doneReason].includes(line) ? line : '';
   }
 
+  private detailFooterHeight():number { return PhoneStyle.formSize(46,60.3,nativeEnvironment.fontScale); }
+  private footerWords(handoff:boolean):string {
+    if (handoff) return tr('todo_detail_hand_to_agent');
+    return tr(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_detail_done');
+  }
+  private stackFooter():boolean {
+    if (this.workspace.selected.isDone()) return false;
+    const ui=this.getUIContext(), available=(Math.min(680,this.detailWidth)-44)/2;
+    return [this.footerWords(true),this.footerWords(false)].some((text:string) =>
+      ui.px2vp(ui.getMeasureUtils().measureText({textContent:text,fontSize:Tokens.interfaceFontVp(17,nativeEnvironment.fontScale),fontWeight:600}))+52>available);
+  }
+
+  @Builder detailFooterAction(handoff:boolean) {
+    Button({type:ButtonType.Capsule}) {
+      Row({space:5}) {
+        SymbolGlyph(handoff ? $r('sys.symbol.sparkles') : this.workspace.selected.isDone() ? $r('sys.symbol.arrow_counterclockwise') : Symbols.check)
+          .fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)).fontColor([handoff ? Colors.onAction : Colors.ink])
+        Text(this.footerWords(handoff)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600)
+          .fontColor(handoff ? Colors.onAction : Colors.ink).maxLines(1)
+      }.justifyContent(FlexAlign.Center).width('100%')
+    }.height(this.detailFooterHeight()).padding({left:8,right:8}).backgroundColor(handoff ? Colors.action : Colors.surface)
+      .border({width:handoff ? 0 : 0.5,color:Colors.divider}).enabled(this.workspace.detailEditable() && !this.workspace.saving)
+      .onClick(() => { if (handoff) this.onCreateAgent(this.workspace.todoResource(this.workspace.selected)); else this.changeCompletion(); })
+      .id(handoff ? 'todo.handToAgent' : 'todo.toggleDone')
+  }
+
+  @Builder detailFooter() {
+    if (this.stackFooter()) Column({space:8}) {
+      this.detailFooterAction(true)
+      this.detailFooterAction(false)
+    }.width('100%').constraintSize({maxWidth:680}).padding({left:16,right:16,bottom:14})
+    else Row({space:12}) {
+      if (!this.workspace.selected.isDone()) Row() { this.detailFooterAction(true) }.layoutWeight(1)
+      Row() { this.detailFooterAction(false) }.layoutWeight(1)
+    }.width('100%').constraintSize({maxWidth:680}).padding({left:16,right:16,bottom:14})
+  }
+
   @Builder detailContent() {
-    Column() {
+    Stack({alignContent:Alignment.Bottom}) {
       Scroll() {
         if (this.workspace.selected.id) Column({ space: Tokens.page }) {
           PhoneTodoDetailForm({workspace:this.workspace, editor:this.detailEditor,locale:this.dateLocale(),now:this.clock,
             status:this.detailState(), statusLine:this.detailStatusLine(),statusMenu:():void=>this.todoMenu(this.workspace.selected),tone:Colors.link})
-          if (this.workspace.selected.notes) Column({space:6}) {
-            Text(tr('todo_detail_notes')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
-            MarkdownText({text:this.workspace.selected.notes,onLink:(address:string) => this.onLink(address)})
+          Column({space:6}) {
+            Row() {
+              Text(tr('todo_detail_notes')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).layoutWeight(1)
+              Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.edit).fontSize('16vp').fontColor([Colors.link]) }
+                .padding(0).width(36).height(36).backgroundColor(Color.Transparent).accessibilityText(tr('edit')).id('todo.notes.edit')
+                .enabled(this.workspace.detailEditable() && !this.workspace.saving).onClick(() => this.workspace.beginEdit(this.workspace.selected))
+            }.width('100%')
+            if (this.workspace.selected.notes) MarkdownText({text:this.workspace.selected.notes,onLink:(address:string) => this.onLink(address)})
+            else Text(tr('todo_detail_empty_notes')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
           }.alignItems(HorizontalAlign.Start).width('100%').padding(16).backgroundColor(Colors.surface).borderRadius(13)
           if (this.workspace.selected.project) {
             Row() { ComposeListItemV2({ contentItemV2: new ContentItemV2({ primaryText: this.workspace.projectTitle(this.workspace.selected) }) }) }
@@ -1021,15 +1066,12 @@ export struct TodoWorkspacePage {
           }
           if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
             .fontColor($r('app.color.persona_danger')).width('100%')
-        }.alignItems(HorizontalAlign.Start).padding(Tokens.page).width('100%')
+        }.alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:16,bottom:this.stackFooter() ? this.detailFooterHeight()*2+48 : this.detailFooterHeight()+38}).width('100%')
         else Text(tr(this.detailEmptyKey())).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
-      }.align(Alignment.TopStart).layoutWeight(1).width('100%')
-      if (this.workspace.selected.id) Row({ space: Tokens.gap }) {
-        Button({ type: ButtonType.Circle }) { if (IconActions.busy(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_complete')) LoadingProgress().width(Tokens.symbol).height(Tokens.symbol).color(Colors.onAction); else SymbolGlyph(IconActions.symbol(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_complete')).fontSize(Tokens.symbolFont).fontColor([IconActions.color(this.workspace.selected.isDone() && !this.workspace.selected.startError ? 'reopen' : 'todo_complete', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(this.completionLabel()).bindTips(this.completionLabel()).enabled(!this.workspace.saving && !this.workspace.targetGone).onClick(() => this.changeCompletion())
-        Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.edit).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('edit')).enabled(!this.workspace.saving && !this.workspace.targetGone)
-          .onClick(() => this.workspace.beginEdit(this.workspace.selected))
-      }.justifyContent(FlexAlign.End).padding(Tokens.inset).width('100%')
+      }.align(Alignment.TopStart).height('100%').width('100%')
+      if (this.workspace.selected.id) this.detailFooter()
     }.width('100%').height('100%').backgroundColor(Colors.grouped)
+      .onAreaChange((_:Area,area:Area)=>{this.detailWidth=Number(area.width);})
   }
 
   @Builder editor() {

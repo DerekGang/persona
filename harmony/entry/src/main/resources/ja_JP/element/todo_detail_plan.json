@@ -67,6 +67,18 @@
     {
       "name": "todo_detail_unsupported",
       "value": "このHubではこの項目を保存できませんでした。"
+    },
+    {
+      "name": "todo_detail_hand_to_agent",
+      "value": "エージェントへ"
+    },
+    {
+      "name": "todo_detail_done",
+      "value": "完了"
+    },
+    {
+      "name": "todo_detail_empty_notes",
+      "value": "メモはまだありません"
     }
   ]
 }

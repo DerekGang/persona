@@ -67,6 +67,18 @@
     {
       "name": "todo_detail_unsupported",
       "value": "This Hub did not save this field."
+    },
+    {
+      "name": "todo_detail_hand_to_agent",
+      "value": "Hand to Agent"
+    },
+    {
+      "name": "todo_detail_done",
+      "value": "Done"
+    },
+    {
+      "name": "todo_detail_empty_notes",
+      "value": "No notes yet"
     }
   ]
 }

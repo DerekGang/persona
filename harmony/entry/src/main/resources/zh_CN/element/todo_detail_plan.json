@@ -67,6 +67,18 @@
     {
       "name": "todo_detail_unsupported",
       "value": "此 Hub 未保存此项。"
+    },
+    {
+      "name": "todo_detail_hand_to_agent",
+      "value": "交给 Agent"
+    },
+    {
+      "name": "todo_detail_done",
+      "value": "完成"
+    },
+    {
+      "name": "todo_detail_empty_notes",
+      "value": "暂无说明"
     }
   ]
 }
