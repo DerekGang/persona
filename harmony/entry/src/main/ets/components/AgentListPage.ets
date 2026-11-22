@@ -865,12 +865,12 @@ export struct AgentListPage {
         } else if (this.workspace.groupingMode === 'todo' || this.workspace.groupingMode === 'direction') {
           AgentTaskGroupRows({model:this.model,workspace:this.workspace,source:this.taskGrouping,mode:this.workspace.groupingMode,
             onOpen:(row:ResourceRow)=>this.openRow(row),onOpenTodo:(row:ResourceRow)=>this.onOpenTodo(row),
-            rowContent:(row:ResourceRow,depth:number)=>this.taskRow(row,depth)})
+            rowContent:(row:ResourceRow,depth:number):void=>this.taskRow(row,depth)})
         } else if (!this.workspace.hasRows() && !this.workspace.loading) ListItem() {
           Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
         }.id('agents.empty')
       }.width('100%').height('100%').onAreaChange((_:Area,area:Area)=>{this.listWidth=Number(area.width);}).padding({ left: this.rail ? 0 : 12, right: this.rail ? 0 : 12, bottom: Tokens.listTail }).backgroundColor(Colors.grouped)
-        .onTouch((event: TouchEvent) => this.trackPull(event))
+        .onTouch((event: TouchEvent) => this.trackPull(event)).id('agents.list.'+this.workspace.groupingMode)
       }.width('100%').layoutWeight(1).onRefreshing(() => this.refreshAgents())
       .bindSheet($$this.filterSheetOpen, this.filterSheet(), {
         title: { title: tr('agent_filters_title') }, height: SheetSize.FIT_CONTENT, showClose: true,

@@ -59,7 +59,7 @@ export struct AgentTaskGroupRows {
 
   @Builder header(section: AgentTaskSection) {
     Row({space:6}) {
-      Text(this.title(section)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.SemiBold)
+      Text(this.title(section)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600)
         .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
       if (section.hint) {
         Button({type:ButtonType.Circle}) {
@@ -76,7 +76,7 @@ export struct AgentTaskGroupRows {
           .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(1)
       } else {
         Text(String(section.lines.length)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
-          .fontWeight(FontWeight.SemiBold).fontColor(this.tone(section.state)).textAlign(TextAlign.Center)
+          .fontWeight(600).fontColor(this.tone(section.state)).textAlign(TextAlign.Center)
           .padding({left:6,right:6,top:1,bottom:1}).borderRadius(9).backgroundColor(Colors.control)
       }
       if (section.todo) {
