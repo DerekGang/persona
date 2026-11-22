@@ -1,7 +1,7 @@
 /// <reference types="node" />
 // The two rings of Health's "Today" (water, protein; styles.css `--health-water` and `--health-protein`) keep clear of
 // Apple's Activity rings: Apple's guidelines reserve the Move red, Exercise green and Stand cyan for them and ask that
-// other rings be told apart from them (docs/assistant/health.md "Activity rings"). So each color stays at least 40 degrees
+// other rings be told apart from them (docs/design/DESIGN_SYSTEM.md). So each color stays at least 40 degrees
 // of hue from all three, in light and dark, and reads on the card's surface as an icon would (3:1).
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";

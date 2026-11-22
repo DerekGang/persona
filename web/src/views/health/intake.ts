@@ -1,4 +1,4 @@
-// Health's water and protein records (docs/assistant/health.md, docs/protocol/protocol.md "Health intake", #13175): the hub's
+// Health's water and protein records (docs/assistant/health.md, docs/protocol/protocol.md, #13175): the hub's
 // routes under /assistant/health/intake, the feature that says it has them, and what the page checks before it asks.
 //
 // Every request names `space=health` and no manager: the health space stays the default manager's whichever assistant

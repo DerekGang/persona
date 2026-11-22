@@ -1,4 +1,4 @@
-// "Today" at the top of the Health home (#13176, docs/assistant/health.md "Water and protein"): the water and protein
+// "Today" at the top of the Health home (#13176, docs/assistant/health.md): the water and protein
 // rings with today's amount and goal, and the buttons that log them. A press moves the ring at once and the hub's total
 // settles it (useHealthIntake.ts); a logged one offers Undo, a failed one says why and offers Retry with the same record
 // number, so a retry never logs twice. Shown only when the hub says it has intake.

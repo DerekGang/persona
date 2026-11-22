@@ -1,4 +1,4 @@
-// The water and protein pages (#13176, docs/assistant/health.md "Water and protein"): the default manager's own declarative
+// The water and protein pages (#13176, docs/assistant/health.md): the default manager's own declarative
 // pages (today, the records with Undo, the 7 and 30 day charts, the goal and reminder settings), drawn by the extension
 // pages' renderer under the reserved id (lib/health-intake-ui.ts) the way the subscription pages are, so the web has no
 // second renderer. A full page at `/extension/-health-intake/pages?state=`: the route the renderer already opens its pushed
