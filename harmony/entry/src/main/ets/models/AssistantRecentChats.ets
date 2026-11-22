@@ -1,5 +1,6 @@
 import type { ClientModel } from './ClientModel';
 import { ResourceRow, Wire } from './Wire';
+import { relativeActivityDate } from '../core/PhoneDate';
 
 // Older Hubs identify a scheduled conversation through its task and run history.
 // A task that continues the conversation it came from leaves that conversation in Recent.
@@ -29,6 +30,37 @@ export class SidebarChats {
   directions: ResourceRow[] = [];
 }
 
+function sidebarOrigin(row: ResourceRow, data: Record<string,Object>, history: ScheduledChatOrigins): string {
+  const origin = Wire.text(data,'origin').trim();
+  if (origin && origin !== 'user' && origin !== 'channel') return origin;
+  return history.contains(row) ? 'task' : '';
+}
+
+export function sidebarConversationTitle(row: ResourceRow, translate: (key:string) => string): string {
+  return row.title && row.title !== 'Claude Code' ? row.title : translate('phone_new_chat_title');
+}
+
+const sourceKeys: Record<string,string> = {inbox:'inbox',task:'phone_drawer_schedules',spawned:'phone_sidebar_source_spawned',
+  extension:'phone_sidebar_source_extension',lark_agent:'phone_sidebar_source_lark'};
+const stateKeys: Record<string,string> = {needs_you:'phone_todo_section_needs',working:'phone_todo_section_working',unread:'phone_sidebar_unread'};
+
+export function sidebarConversationLabel(row: ResourceRow, history: ScheduledChatOrigins, locale: string, now: number,
+  translate: (key:string) => string): string {
+  const data = row.data(), words = [sidebarConversationTitle(row,translate)];
+  const origin = sidebarOrigin(row,data,history);
+  if (origin) words.push(translate(Wire.text(sourceKeys,origin,'phone_sidebar_source_other')));
+  // Older Hubs have only status. An explicit unknown state is still unknown on iPhone.
+  let state = Wire.text(data,'state');
+  if (!state) state = row.state === 'blocked' ? 'needs_you' : row.state === 'done' ? 'unread' : row.state;
+  const stateKey = Wire.text(stateKeys,state);
+  const activity = stateKey ? translate(stateKey) : relativeActivityDate(Date.parse(Wire.text(data,'updated_at')),now,
+    locale,translate('agent_time_just_now'),translate('kb_minutes_ago'),translate('kb_yesterday'));
+  if (activity) words.push(activity);
+  const preview = Wire.text(data,'last_text').replace(/\*\*|__|`|### |## |# |> /g,'').replace(/\r\n?|\n/g,' ');
+  if (preview) words.push(preview);
+  return words.join(translate('phone_sidebar_label_separator'));
+}
+
 export function assistantSidebarChats(conversations: ResourceRow[], main: string, mainMachine: string,
   options: Record<string,Object>, history: ScheduledChatOrigins, group: string, manager: string): SidebarChats {
   const result = new SidebarChats();
@@ -45,9 +77,7 @@ export function assistantSidebarChats(conversations: ResourceRow[], main: string
       if (!leadRows.has(id)) leadRows.set(id,row);
       continue;
     }
-    const origin = Wire.text(data,'origin').trim();
-    if (!showScheduled && (id === background || origin === 'task' ||
-        (origin === '' || origin === 'user' || origin === 'channel') && history.contains(row))) continue;
+    if (!showScheduled && (id === background || sidebarOrigin(row,data,history) === 'task')) continue;
     const value=Wire.text(data,'updated_at'), stamp=Date.parse(value);
     const fraction=value.match(/:\d{2}\.\d{3}(\d+)/);
     activity.set(row,Number.isFinite(stamp) ? stamp + (fraction ? Number('0.'+fraction[1]) : 0) : Number.NEGATIVE_INFINITY);

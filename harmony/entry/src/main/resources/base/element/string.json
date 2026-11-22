@@ -7147,6 +7147,30 @@
     {
       "name": "phone_sidebar_show_scheduled",
       "value": "Show Scheduled Task Chats"
+    },
+    {
+      "name": "phone_sidebar_label_separator",
+      "value": ", "
+    },
+    {
+      "name": "phone_sidebar_source_spawned",
+      "value": "Spawned from Chats"
+    },
+    {
+      "name": "phone_sidebar_source_extension",
+      "value": "From an extension"
+    },
+    {
+      "name": "phone_sidebar_source_lark",
+      "value": "From Lark /agent"
+    },
+    {
+      "name": "phone_sidebar_source_other",
+      "value": "Other"
+    },
+    {
+      "name": "phone_sidebar_unread",
+      "value": "Unread"
     }
   ]
 }

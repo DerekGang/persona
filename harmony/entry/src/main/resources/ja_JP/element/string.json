@@ -7147,6 +7147,30 @@
     {
       "name": "phone_sidebar_show_scheduled",
       "value": "定期タスクのチャットを表示"
+    },
+    {
+      "name": "phone_sidebar_label_separator",
+      "value": "、"
+    },
+    {
+      "name": "phone_sidebar_source_spawned",
+      "value": "チャットから派生"
+    },
+    {
+      "name": "phone_sidebar_source_extension",
+      "value": "拡張機能から"
+    },
+    {
+      "name": "phone_sidebar_source_lark",
+      "value": "Lark /agentから"
+    },
+    {
+      "name": "phone_sidebar_source_other",
+      "value": "その他"
+    },
+    {
+      "name": "phone_sidebar_unread",
+      "value": "未確認"
     }
   ]
 }

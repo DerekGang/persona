@@ -7147,6 +7147,30 @@
     {
       "name": "phone_sidebar_show_scheduled",
       "value": "显示定时任务的对话"
+    },
+    {
+      "name": "phone_sidebar_label_separator",
+      "value": "，"
+    },
+    {
+      "name": "phone_sidebar_source_spawned",
+      "value": "对话派生"
+    },
+    {
+      "name": "phone_sidebar_source_extension",
+      "value": "来自扩展"
+    },
+    {
+      "name": "phone_sidebar_source_lark",
+      "value": "来自 飞书 /agent"
+    },
+    {
+      "name": "phone_sidebar_source_other",
+      "value": "其他"
+    },
+    {
+      "name": "phone_sidebar_unread",
+      "value": "完成未看"
     }
   ]
 }

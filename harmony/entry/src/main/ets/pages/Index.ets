@@ -1,4 +1,5 @@
-import { assistantSidebarChats, SidebarTaskHistory } from '../models/AssistantRecentChats';
+import { assistantSidebarChats, sidebarConversationLabel, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
+import { i18n } from '@kit.LocalizationKit';
 import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { AgentStartPicker } from '../components/AgentStartPicker';
 import { AgentLaunchChoices, providerStartModes, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
@@ -1439,12 +1440,20 @@ struct Index {
     return row.kind === 'session' ? [this.model.machineName(row.machine), this.model.shortPath(row.path), row.state ? tr(row.state) : ''].filter((value: string) => value.length > 0).join(' · ') : row.detail;
   }
   @Builder drawerChat(binding: BoundRow<ResourceRow>, prefix: string) {
-    if (this.matchesDrawer(binding.value.title)) ListItem() {
-      if (this.wide()) this.conversationRow(binding, true)
-      else Text(binding.value.title || tr('new_chat')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
-        .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-        .width('100%').constraintSize({minHeight:44}).padding({left:13,right:14})
-    }.onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)
+    if (this.matchesDrawer(binding.value.title)) {
+      if (this.wide()) {
+        ListItem() { this.conversationRow(binding,true) }
+          .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)
+      } else {
+        ListItem() {
+          Text(sidebarConversationTitle(binding.value,tr)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
+            .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+            .width('100%').constraintSize({minHeight:44}).padding({left:13,right:14})
+        }.accessibilityGroup(true).accessibilityText(sidebarConversationLabel(binding.value,this.sidebarTaskHistory.known(this.model.scope()),
+          this.model.language === 'default' ? i18n.System.getSystemLanguage() : this.model.language,Date.now(),tr))
+          .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)
+      }
+    }
   }
 
   @Builder conversationRow(binding: BoundRow<ResourceRow>, showDetail: boolean) {
