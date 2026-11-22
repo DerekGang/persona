@@ -708,6 +708,7 @@ export struct SessionTools {
         MenuItem({content:(key==='all' ? tr('all') : tr(key==='untracked' ? 'session_git_untracked' : 'session_tools_'+key))+' '+this.filterCount(key)})
           .selectIcon(true).selected(this.gitFilter===key).onClick(() => { this.gitFilter=key; this.collapseChanges=false; }).id('session.git.filter.'+key)
       },(key:string) => key)
+      MenuItem({content:tr(this.collapseChanges ? 'expand' : 'collapse')}).onClick(() => this.collapseChanges=!this.collapseChanges)
       if (this.model.features.includes('git_write')) {
         MenuItem({ content: tr('session_tools_commit') }).enabled(this.workspace.canWriteGit() && this.workspace.gitFiles.some((file: WorkspaceGitFile) => file.staged))
           .onClick(() => this.openGitSheet('commit'))
@@ -1086,14 +1087,25 @@ export struct SessionTools {
     const date=new Date(value);
     return Number.isFinite(date.getTime()) && date.getTime()>0 ? date.toLocaleDateString(this.model.language==='default' ? i18n.getSystemLanguage() : this.model.language) : '';
   }
+  private gitMetric(regular:number, largest:number, other:number):number {
+    return this.phoneSheetHeight === SheetSize.LARGE ? other : PhoneStyle.formSize(regular,largest,nativeEnvironment.fontScale);
+  }
+
+  @Builder gitStatusBadge(mark:string, identity:string) {
+    Stack() {
+      Rect().width('100%').height('100%').fill(this.gitMarkColor(mark)).opacity(0.14).radius(5)
+      Text(mark || 'M').fontSize('12vp').fontWeight(FontWeight.Bold).fontFamily('monospace').fontColor(this.gitMarkColor(mark))
+    }.width(this.gitMetric(20,26.3,20)).aspectRatio(1).flexShrink(0).id(identity)
+  }
+
   @Builder branchSectionRow(label:string,symbol:Resource,count:string,mode:string,identity:string) {
-    Divider().strokeWidth(Tokens.divider).color(Colors.divider).margin({left:42,right:14})
-    Row({space:Tokens.inset}) {
-      SymbolGlyph(symbol).fontSize('17vp').width(20).fontColor([Colors.link])
-      Text(tr(label)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
+    Divider().strokeWidth(Tokens.divider).color(Colors.divider).margin({left:this.gitMetric(60,66,42),right:20})
+    Row({space:12}) {
+      SymbolGlyph(symbol).fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)).width(this.gitMetric(20,26.3,20)).fontColor([Colors.iconAccent]).rotate({angle:mode==='branch' ? 180 : 0})
+      Text(tr(label)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
       if (count) Text(count).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-    }.width('100%').constraintSize({minHeight:48}).padding({left:16,right:18,top:6,bottom:6})
+    }.width('100%').constraintSize({minHeight:this.gitMetric(52,59,48)}).padding({left:this.gitMetric(20,20,16),right:20,top:6,bottom:6})
       .accessibilityGroup(true).accessibilityText(tr(label)+(count ? ' '+count : ''))
       .enabled(this.workspace.canWriteGit()).onClick(() => this.openGitSheet(mode)).id(identity)
   }
@@ -1106,9 +1118,9 @@ export struct SessionTools {
 
   @Builder gitBranchCard() {
     Column() {
-      Column({space:4}) {
+      Column({space:this.gitMetric(6,8,4)}) {
         Row({space:Tokens.gap}) {
-          SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize('18vp').fontColor([Colors.link])
+          SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize(Tokens.interfaceFontVp(18,nativeEnvironment.fontScale)).width(this.gitMetric(20,26.3,18)).fontColor([Colors.iconAccent]).rotate({angle:180})
           Text(Wire.text(this.workspace.gitStatus,'branch') || tr('session_git_detached')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium)
             .fontColor(Colors.ink).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
           if (this.model.features.includes('git_write') && Wire.text(this.workspace.gitStatus,'branch') && (!Wire.text(this.workspace.gitStatus,'upstream') || Wire.number(this.workspace.gitStatus,'ahead')>0)) {
@@ -1121,26 +1133,31 @@ export struct SessionTools {
               .onClick(() => this.confirmGitWrite(Wire.text(this.workspace.gitStatus,'upstream') ? 'push' : 'publish')).id('session.git.push')
           }
         }.width('100%')
-        Text([Wire.text(this.workspace.gitStatus,'upstream') || tr('session_tools_no_upstream'),
+        Row({space:6}) {
+          SymbolGlyph(Wire.text(this.workspace.gitStatus,'upstream') ? $r('sys.symbol.icloud') : $r('sys.symbol.icloud_slash'))
+            .fontSize(Tokens.interfaceFontVp(15,nativeEnvironment.fontScale)).fontColor([Colors.secondary])
+          Text([Wire.text(this.workspace.gitStatus,'upstream') || tr('session_tools_no_upstream'),
           Wire.bool(this.workspace.gitStatus,'gone') ? tr('session_git_remote_gone') : '',
           Wire.text(this.workspace.gitStatus,'upstream') && Wire.number(this.workspace.gitStatus,'ahead')>0 ? '↑ '+Wire.number(this.workspace.gitStatus,'ahead') : '',
           Wire.number(this.workspace.gitStatus,'behind')>0 ? '↓ '+Wire.number(this.workspace.gitStatus,'behind') : '',
           this.workspace.gitStashCount() ? tr('session_tools_stashes')+' '+this.workspace.gitStashCount() : ''].filter((v:string) => !!v).join(' · '))
-          .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
-        Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-          .fontFamily('monospace').maxLines(3).copyOption(CopyOptions.LocalDevice)
-      }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:10,bottom:13})
+          .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+        }.width('100%')
+        Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.tertiary)
+          .fontFamily('monospace').maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START).copyOption(CopyOptions.LocalDevice)
+      }.width('100%').constraintSize({minHeight:this.gitMetric(113.7,135.7,0)}).justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Start).padding({left:this.gitMetric(20,20,16),right:this.gitMetric(20,20,16),top:10,bottom:12})
       if (this.model.features.includes('git_write')) {
         this.branchSectionRow('branch',$r('sys.symbol.arrow_triangle_merge'),'','branch','session.git.branch_picker')
-        this.branchSectionRow('session_tools_stashes',Symbols.document,this.workspace.gitStashCount() ? String(this.workspace.gitStashCount()) : '','stashes','session.git.stashes')
+        this.branchSectionRow('session_tools_stashes',$r('sys.symbol.archivebox'),this.workspace.gitStashCount() ? String(this.workspace.gitStashCount()) : '','stashes','session.git.stashes')
       }
-    }.width('100%').backgroundColor(Colors.surface).borderRadius(Tokens.card).clip(true).id('session.git.summary')
+    }.width('100%').backgroundColor(Colors.surface).borderRadius(this.gitMetric(26,26,Tokens.card)).clip(true).id('session.git.summary')
   }
 
   @Builder pullRequestSection() {
-    Column({space:7}) {
+    Column({space:this.gitMetric(0,0,7)}) {
       Text(tr('session_git_pull_request')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-        .padding({left:16,right:16})
+         .width('100%').height(this.gitMetric(40.3,47.7,24)).padding({left:20,right:16,top:11})
       Row({space:Tokens.gap}) {
         SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize('17vp').fontColor([Colors.secondary])
         if (this.workspace.gitPrError) {
@@ -1156,48 +1173,54 @@ export struct SessionTools {
           }.layoutWeight(1).constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent)
             .onClick(() => this.openGitSheet('pr_detail')).id('session.git.pr.open')
         } else {
-          Text(tr(this.workspace.branchPushedForPr() ? 'session_git_no_pr' : 'session_git_push_before_pr')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
-            .fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD).layoutWeight(1)
-          Button(tr('session_git_create_pr'),{buttonStyle:ButtonStyleMode.TEXTUAL}).constraintSize({minHeight:44,maxWidth:'52%'}).fontSize(13)
-            .maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).enabled(this.workspace.canWriteGit() && this.workspace.branchPushedForPr())
+          Text(tr(this.workspace.branchPushedForPr() ? 'session_git_no_pr' : 'session_git_push_before_pr')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
+            .fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
+          Button({type:ButtonType.Capsule}) {
+            Text(tr('session_git_create_pr')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).maxLines(1)
+              .fontColor(this.workspace.branchPushedForPr() ? Colors.link : Colors.secondary).textAlign(TextAlign.Center)
+              .constraintSize({minHeight:this.gitMetric(34.3,36.3,34)}).padding({left:12,right:12})
+              .border({width:Tokens.divider,color:Colors.divider,radius:24})
+          }.height(44).padding(0).constraintSize({maxWidth:'52%'}).backgroundColor(Color.Transparent)
+            .enabled(this.workspace.canWriteGit() && this.workspace.branchPushedForPr())
             .onClick(() => this.openGitSheet('pr_create')).id('session.git.pr.create')
         }
-      }.width('100%').constraintSize({minHeight:62}).padding({left:16,right:12,top:7,bottom:7})
-        .backgroundColor(Colors.surface).borderRadius(Tokens.card)
-    }.width('100%').alignItems(HorizontalAlign.Start).padding({top:21,bottom:8}).id('session.git.pr')
+      }.width('100%').constraintSize({minHeight:this.gitMetric(68,81.3,62)}).padding({left:this.gitMetric(20,20,16),right:this.gitMetric(20,20,12),top:7,bottom:7})
+        .backgroundColor(Colors.surface).borderRadius(this.gitMetric(26,26,Tokens.card))
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({top:this.gitMetric(17.7,17.7,21),bottom:0}).id('session.git.pr')
   }
 
   @Builder changesHeader() {
-    Row({space:6}) {
-      Text(tr('session_tools_changes')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
-      Text(String(this.workspace.gitFiles.length)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
+    Row({space:8}) {
+      Button({type:ButtonType.Normal}) {
+        Text(tr('session_tools_changes')+' '+String(this.workspace.gitFiles.length)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
+          .fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+      }.padding(0).constraintSize({minHeight:40}).backgroundColor(Color.Transparent)
+        .bindMenu(this.gitMenu).accessibilityText(tr('session_tools_changes')+' · '+tr('more')).id('session.git.menu')
       Blank().layoutWeight(1)
       if (this.workspace.gitFiles.length) {
-        Text('+'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.added,0)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.positive)
-        Text('−'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.deleted,0)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.danger)
+        Text('+'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.added,0)).fontSize(17)
+          .maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium).fontColor(Colors.diffAdded)
+        Text('−'+this.workspace.gitFiles.reduce((n:number,f:WorkspaceGitFile) => n+f.deleted,0)).fontSize(17)
+          .maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium).fontColor(Colors.diffRemoved)
       }
-      Button({type:ButtonType.Circle}) { Text('•••').fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Bold).fontColor(Colors.secondary) }
-          .width(32).height(36).padding(0).backgroundColor(Color.Transparent)
-          .responseRegion({x:-6,y:-4,width:44,height:44}).bindMenu(this.gitMenu).accessibilityText(tr('more')).id('session.git.menu')
-    }.width('100%').constraintSize({minHeight:44}).padding({left:16,right:4,top:4}).onClick(() => this.collapseChanges=!this.collapseChanges)
-      .id('session.git.changes_header')
+    }.width('100%').constraintSize({minHeight:this.gitMetric(40.3,47.7,44)}).padding({left:20,right:20})
+      .margin({top:this.gitMetric(17.7,17.7,4)}).onClick(() => this.collapseChanges=!this.collapseChanges).id('session.git.changes_header')
   }
   @Builder gitFileRow(binding:BoundRow<WorkspaceGitFile>) {
-    Row({space:8}) {
+    Row({space:this.gitMetric(4,4,8)}) {
       if (this.workspace.canWriteGit()) Button({type:ButtonType.Normal}) {
         Stack() {
           if (binding.value.staged) Text(binding.value.unstaged ? '−' : '✓').fontWeight(FontWeight.Bold).fontSize('13vp').fontColor(Colors.onAction)
         }.width(16).height(16).border({width:1.2,color:binding.value.staged ? Colors.positive : Colors.secondary,radius:3})
           .backgroundColor(binding.value.staged ? Colors.positive : Color.Transparent)
-      }.width(44).height(44).padding(0).backgroundColor(Color.Transparent)
+      }.width(this.gitMetric(44,57.7,44)).height(this.gitMetric(44,57.7,44)).padding(0).backgroundColor(Color.Transparent)
         .accessibilityText(tr(binding.value.staged && !binding.value.unstaged ? 'session_tools_unstage' : 'session_tools_stage')+' '+binding.value.path)
         .onClick(() => this.workspace.stageGitFile(binding.value,binding.value.staged && !binding.value.unstaged))
         .id('session.git.toggle.'+binding.value.path)
-      Row({space:8}) {
-        Text(binding.value.mark).width(20).fontSize('13vp').textAlign(TextAlign.Center).fontWeight(FontWeight.Bold)
-          .fontColor(this.fileInk(binding.value)).padding({top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(5)
+      Row({space:this.gitMetric(12,12,8)}) {
+        this.gitStatusBadge(binding.value.mark,'session.git.change_badge.'+binding.value.path)
         Column({space:3}) {
-          Text(this.leaf(binding.value.path)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          Text(this.leaf(binding.value.path)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
           if (this.fileChangeDetail(binding.value)) Text(this.fileChangeDetail(binding.value))
             .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
@@ -1208,7 +1231,7 @@ export struct SessionTools {
         }.flexShrink(0)
       }.layoutWeight(1).constraintSize({minHeight:44}).onClick(() => this.openGitFile(binding.value,this.gitFilter==='all' ? undefined : this.gitFilter==='staged'))
         .bindContextMenu(this.gitFileMenu(binding),ResponseType.LongPress).id('session.git.'+binding.value.path)
-    }.width('100%').padding({left:3,right:16,top:2,bottom:2}).backgroundColor(Colors.surface)
+    }.width('100%').constraintSize({minHeight:this.gitMetric(52,65.7,48)}).padding({left:4,right:16,top:2,bottom:2}).backgroundColor(Colors.surface)
   }
   @Builder commitRow(c:Record<string,Object>) {
     Row({space:10}) {
@@ -1387,24 +1410,28 @@ export struct SessionTools {
     }.width('100%').height('100%').backgroundColor(this.gitSheetMode==='diff' || this.patchSubpage() ? (this.phoneGitReader ? Colors.codeCanvas : Colors.canvas) : Colors.grouped)
   }
   @Builder stagedCommitBar() {
-    Row({space:8}) {
+    Row({space:4}) {
       Button({type:ButtonType.Normal}) {
         Stack() {
           if (this.filterCount('staged')) Text(this.workspace.allFilesStaged() ? '✓' : '−').fontSize('12vp').fontWeight(FontWeight.Bold).fontColor(Colors.onAction)
         }.width(16).height(16).border({width:1.2,color:this.filterCount('staged') ? Colors.positive : Colors.secondary,radius:3})
           .backgroundColor(this.filterCount('staged') ? Colors.positive : Color.Transparent)
-      }.width(40).height(44).padding(0).backgroundColor(Color.Transparent).enabled(this.workspace.canWriteGit())
+      }.width(this.gitMetric(44,57.7,40)).height(this.gitMetric(44,57.7,44)).padding(0).backgroundColor(Color.Transparent).enabled(this.workspace.canWriteGit())
         .accessibilityText(tr(this.workspace.allFilesStaged() ? 'session_git_unstage_all' : 'session_git_stage_all'))
         .onClick(() => this.workspace.toggleAllGitFiles()).id('session.git.stage_all')
       Column({space:1}) {
-        Text(tr('session_tools_staged')+' '+String(this.filterCount('staged'))).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        Text(tr('session_tools_changes')+' '+String(this.workspace.gitFiles.length)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        Text(!Wire.text(this.workspace.gitStatus,'branch') ? tr('session_git_detached_commit') :
+          this.filterCount('staged') ? tr('session_git_staged_count').replace('{count}',String(this.filterCount('staged'))) : tr('session_git_choose_files')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        Text(tr('session_git_changes_count').replace('{count}',String(this.workspace.gitFiles.length))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      Button(tr('session_tools_commit')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).padding({left:14,right:14}).constraintSize({minHeight:44})
+      Button({type:ButtonType.Capsule}) {
+        Text(tr('session_git_commit_action')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.onAction)
+          .padding({left:12,right:12}).height(this.gitMetric(34.3,41.7,38)).backgroundColor(Colors.action).borderRadius(24)
+      }.height(this.gitMetric(44,57.7,44)).padding(0)
         .enabled(this.workspace.canWriteGit() && !!Wire.text(this.workspace.gitStatus,'branch') && this.filterCount('staged') > 0)
-        .backgroundColor(Colors.action).fontColor(Colors.onAction).onClick(() => this.openGitSheet('commit')).id('session.git.commit.new')
-    }.width('100%').padding({left:12,right:9,top:6,bottom:6}).backgroundColor(Colors.surface)
-      .border({width:0.5,color:Colors.divider,radius:14}).borderRadius(14).id('session.git.staged_summary')
+        .backgroundColor(Color.Transparent).onClick(() => this.openGitSheet('commit')).id('session.git.commit.new')
+    }.width('100%').padding({left:4,right:12,top:4,bottom:4}).backgroundColor(Colors.surface)
+      .border({width:0.5,color:Colors.divider,radius:26}).borderRadius(26).id('session.git.staged_summary')
   }
 
   @Builder gitView() {
@@ -1427,8 +1454,8 @@ export struct SessionTools {
               ForEach(this.visibleGitRows,(binding:BoundRow<WorkspaceGitFile>) => {
                 ListItem() { this.gitFileRow(binding) }
               },(binding:BoundRow<WorkspaceGitFile>) => binding.key)
-            }.divider({strokeWidth:Tokens.divider,startMargin:48,endMargin:12,color:Colors.divider})
-              .backgroundColor(Colors.surface).borderRadius(Tokens.card).clip(true)
+            }.divider({strokeWidth:Tokens.divider,startMargin:this.gitMetric(52,65,48),endMargin:16,color:Colors.divider})
+              .backgroundColor(Colors.surface).borderRadius(this.gitMetric(26,26,Tokens.card)).clip(true)
             if (!this.visibleGitRows.length) ListItem() {
               Row({space:7}) {
                 SymbolGlyph(this.workspace.gitFiles.length ? Symbols.filter : Symbols.check).fontSize('16vp').fontColor([this.workspace.gitFiles.length ? Colors.secondary : Colors.positive])
@@ -1445,7 +1472,7 @@ export struct SessionTools {
               ListItem() { this.commitRow(commit) }
             },(commit:Record<string,Object>) => Wire.text(commit,'hash')+'|'+Wire.text(commit,'refs'))
           }.divider({strokeWidth:Tokens.divider,startMargin:14,endMargin:12,color:Colors.divider})
-            .backgroundColor(Colors.surface).borderRadius(Tokens.card).clip(true)
+            .backgroundColor(Colors.surface).borderRadius(this.gitMetric(26,26,Tokens.card)).clip(true)
           if (this.workspace.gitMoreCommits) ListItem() {
             Button(tr(this.workspace.gitHistoryError ? 'retry' : 'session_git_earlier'),{buttonStyle:ButtonStyleMode.TEXTUAL})
               .height(44).width('100%').fontColor(Colors.link).enabled(!this.workspace.gitHistoryBusy)
@@ -1453,9 +1480,9 @@ export struct SessionTools {
           }
           if (this.workspace.gitHistoryBusy) ListItem() { LoadingProgress().width(25).height(25) }
           if (this.workspace.gitHistoryError) ListItem() { Text(tr('session_git_history_error')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(9) }
-        }.width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:nativeEnvironment.fontScale>=1.5 ? 10 : 27,bottom:12})
+        }.width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:this.gitMetric(31,41.7,nativeEnvironment.fontScale>=1.5 ? 10 : 27),bottom:12})
         if (this.workspace.gitFiles.length > 0 && this.workspace.canWriteGit()) Row() { this.stagedCommitBar() }
-          .width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:2,bottom:8})
+          .width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:2,bottom:this.gitMetric(14,14,8)})
       } else if (Object.keys(this.workspace.gitStatus).length) {
         Column({space:6}) {
           Text(tr('session_tools_not_repository')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
@@ -1586,12 +1613,7 @@ export struct SessionTools {
 
   @Builder commitFile(file: Record<string,Object>) {
     Row({space:this.phoneGitReader ? 12 : 8}) {
-      Stack() {
-        Rect().width('100%').height('100%').fill(this.gitMarkColor(Wire.text(file,'index') || Wire.text(file,'worktree'))).opacity(0.14).radius(5)
-        Text(Wire.text(file,'index') || Wire.text(file,'worktree') || 'M').fontSize('12vp').fontWeight(FontWeight.Bold).fontFamily('monospace')
-          .fontColor(this.gitMarkColor(Wire.text(file,'index') || Wire.text(file,'worktree')))
-      }.width(this.phoneGitReader ? PhoneStyle.formSize(20,26.3,nativeEnvironment.fontScale) : 20)
-        .aspectRatio(1).flexShrink(0).id('session.commitRow.icon.'+Wire.text(file,'path'))
+      this.gitStatusBadge(Wire.text(file,'index') || Wire.text(file,'worktree'),'session.commitRow.icon.'+Wire.text(file,'path'))
       Column({space:2}) {
         Text(this.leaf(Wire.text(file,'path'))).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
           .id('session.commitRow.name.'+Wire.text(file,'path'))

@@ -1101,6 +1101,26 @@
       "value": "接管"
     },
     {
+      "name": "session_git_staged_count",
+      "value": "已暂存 {count} 个"
+    },
+    {
+      "name": "session_git_changes_count",
+      "value": "共 {count} 个改动"
+    },
+    {
+      "name": "session_git_choose_files",
+      "value": "勾选要提交的文件"
+    },
+    {
+      "name": "session_git_detached_commit",
+      "value": "先切换到分支再提交"
+    },
+    {
+      "name": "session_git_commit_action",
+      "value": "提交…"
+    },
+    {
       "name": "session_git_binary",
       "value": "二进制"
     },
@@ -1110,7 +1130,7 @@
     },
     {
       "name": "session_tools_changes",
-      "value": "更改"
+      "value": "改动"
     },
     {
       "name": "session_tools_clean",
@@ -2782,7 +2802,7 @@
     },
     {
       "name": "session_tools_stashes",
-      "value": "暂存列表"
+      "value": "贮藏"
     },
     {
       "name": "session_tools_switch_branch",

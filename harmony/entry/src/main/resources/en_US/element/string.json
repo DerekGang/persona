@@ -1101,6 +1101,26 @@
       "value": "Take over"
     },
     {
+      "name": "session_git_staged_count",
+      "value": "{count} staged"
+    },
+    {
+      "name": "session_git_changes_count",
+      "value": "{count} changes"
+    },
+    {
+      "name": "session_git_choose_files",
+      "value": "Tick the files to commit"
+    },
+    {
+      "name": "session_git_detached_commit",
+      "value": "Switch to a branch to commit"
+    },
+    {
+      "name": "session_git_commit_action",
+      "value": "Commit…"
+    },
+    {
       "name": "session_git_binary",
       "value": "Binary"
     },
