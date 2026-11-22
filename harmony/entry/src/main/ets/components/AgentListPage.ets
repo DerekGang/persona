@@ -7,6 +7,8 @@ import { AgentWorkspace, AgentWorkspaceGroup } from '../models/AgentWorkspace';
 import { ProjectCatalog, ProjectWorktree } from '../models/ProjectCatalog';
 import { WorktreeChange } from '../models/WorktreeActions';
 import { AgentRepositoryRows } from './AgentRepositoryRows';
+import { AgentTaskGrouping } from '../models/AgentTaskGrouping';
+import { AgentTaskGroupRows } from './AgentTaskGroupRows';
 import { ResourceRow, Wire } from '../models/Wire';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { Tokens } from '../design/Tokens';
@@ -94,6 +96,8 @@ export struct AgentListPage {
   @Event onVisible: (row: ResourceRow, ratio: number) => void = () => {};
   @Param workspace: AgentWorkspace = new AgentWorkspace();
   @Param projectCatalog: ProjectCatalog = new ProjectCatalog();
+  @Local taskGrouping: AgentTaskGrouping = new AgentTaskGrouping();
+  @Local taskRowsByKey: Map<string,BoundAgentRow> = new Map();
   @Local look: DeviceLook = deviceLook;
   @Local groupBindings: BoundAgentGroup[] = [];
   @Local mixedMachines: boolean = false;
@@ -140,14 +144,16 @@ export struct AgentListPage {
 
   aboutToAppear(): void {
     this.stopDecisionEvents=this.model.observeEvents((payload:string) => {
-      if (['interaction','interactions','interaction_resolved'].includes(Wire.text(Wire.parse(payload),'type'))) this.reloadDecisions();
+      const type=Wire.text(Wire.parse(payload),'type');
+      if (['interaction','interactions','interaction_resolved'].includes(type)) this.reloadDecisions();
+      if (['todo','assistant_feed'].includes(type) && ['todo','direction'].includes(this.workspace.groupingMode)) this.refreshGroupingSupport();
     });
     this.reloadDecisions(); this.syncRowBindings(); if (this.active) this.activateWorkspace(); }
-  aboutToDisappear(): void { this.stopDecisionEvents?.(); this.retireDecisions(); this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); }
+  aboutToDisappear(): void { this.taskGrouping.clear(); this.stopDecisionEvents?.(); this.retireDecisions(); this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); }
 
   @Monitor('active') visibleChanged(): void { if (this.active) this.reloadDecisions(); else this.retireDecisions(); if (!this.active) { this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingRow = undefined; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); } else this.activateWorkspace(); }
   @Monitor('model.forgottenEpoch') forgottenChanged(): void { this.retireDecisions(); this.reloadDecisions(); this.workspace.forgetHub(this.model.forgottenProfile); if (this.editingRow?.group === this.model.forgottenProfile) { this.editorOpen = false; this.editingRow = undefined; this.editingAdmission = undefined; } }
-  @Monitor('model.profile') profileChanged(): void { this.retireDecisions(); this.reloadDecisions(); this.resetSearchReveal(); this.editorOpen = false; this.editingAdmission = undefined; this.syncRowBindings(); if (!this.active) return; this.activateWorkspace(); }
+  @Monitor('model.profile') profileChanged(): void { this.taskGrouping.clear(); this.retireDecisions(); this.reloadDecisions(); this.resetSearchReveal(); this.editorOpen = false; this.editingAdmission = undefined; this.syncRowBindings(); if (!this.active) return; this.activateWorkspace(); }
   @Monitor('selectedRow') externalSelectionChanged(): void { this.workspace.selectExternal(this.selectedRow); }
   @Monitor('model.directorySessions', 'model.directoryReady') directoryChanged(): void { if (!this.active) return; this.reloadDecisions(); this.workspace.update(this.model, this.readingDetail); this.workspace.selectExternal(this.selectedRow); }
   @Monitor('model.sessionsReady') catalogChanged(): void { if (!this.active) return; this.workspace.update(this.model, this.readingDetail); }
@@ -156,16 +162,26 @@ export struct AgentListPage {
   @Monitor('model.machines') machinesChanged(): void { if (!this.active) return; this.workspace.update(this.model, this.readingDetail); }
   @Monitor('model.features') featuresChanged(): void {
     if (!this.active) return; this.workspace.update(this.model, this.readingDetail);
+    this.refreshGroupingSupport();
     this.workspace.refresh(this.model).catch(() => undefined);
   }
   @Monitor('model.connected') connectionChanged(): void {
     this.reloadDecisions(); if (!this.active) return; this.workspace.update(this.model, this.readingDetail);
-    if (this.model.connected) this.workspace.refresh(this.model).catch(() => undefined);
+    if (this.model.connected) { this.refreshGroupingSupport(); this.workspace.refresh(this.model).catch(() => undefined); }
   }
   @Monitor('workspace.groups', 'workspace.groupingMode') rowsChanged(): void { this.syncRowBindings(); }
   @Monitor('readingDetail') detailChanged(): void { this.workspace.setReadingDetail(this.readingDetail); }
 
+  private refreshGroupingSupport(): void {
+    if (!this.active) return;
+    const client=this.model, scope=client.scope(), generation=client.connectionGeneration();
+    this.taskGrouping.refresh(client).then(() => {
+      if (this.active && this.model === client && client.owns(generation,scope) && this.workspace.isBoundTo(client))
+        this.workspace.updateGroupingSupport(this.taskGrouping.supportsTodos,this.taskGrouping.supportsDirections);
+    }).catch(() => {});
+  }
   private activateWorkspace(): void {
+    this.refreshGroupingSupport();
     if (this.workspace.isBoundTo(this.model)) {
       this.workspace.update(this.model, this.readingDetail);
       this.workspace.selectExternal(this.selectedRow);
@@ -174,6 +190,7 @@ export struct AgentListPage {
     }
     this.workspace.open(this.model, this.readingDetail).then(() => {
       if (!this.active || !this.workspace.isBoundTo(this.model)) return;
+      this.workspace.updateGroupingSupport(this.taskGrouping.supportsTodos,this.taskGrouping.supportsDirections);
       this.workspace.selectExternal(this.selectedRow); this.syncRowBindings();
     }).catch(() => undefined);
   }
@@ -211,6 +228,14 @@ export struct AgentListPage {
       next.push(binding);
     });
     this.groupBindings = next;
+    if (this.workspace.groupingMode === 'todo' || this.workspace.groupingMode === 'direction') {
+      const prior = sameOwnerScope ? Array.from(this.taskRowsByKey.values()) : [];
+      const taskRows = reconcileBoundRows(prior.map((binding:BoundAgentRow)=>binding.bound),this.workspace.unpinnedRows,
+        (row:ResourceRow)=>row.key(),sameOwnerScope ? this.model : undefined,this.model,scope,scope);
+      const mapped = new Map<string,BoundAgentRow>();
+      for (const binding of this.bindAgentRows(prior,taskRows,true)) mapped.set(binding.bound.value.key(),binding);
+      this.taskRowsByKey = mapped;
+    } else if (this.taskRowsByKey?.size) this.taskRowsByKey = new Map();
     this.rowBindingOwner = this.model; this.rowBindingScope = scope;
   }
 
@@ -294,7 +319,7 @@ export struct AgentListPage {
   }
 
   @Computed get availableGroupings(): string[] {
-    return this.workspace.groupingOptions().filter((key:string)=>key !== 'todo' && key !== 'direction');
+    return this.workspace.groupingOptions();
   }
   private groupingIndex(): number {
     return this.availableGroupings.indexOf(this.workspace.groupingMode);
@@ -538,7 +563,10 @@ export struct AgentListPage {
     else this.agentRow(binding,groupId)
   }
 
-  @Builder agentRow(binding: BoundAgentRow, groupId: string) {
+  @Builder taskRow(row:ResourceRow,depth:number) {
+    if (this.taskRowsByKey.has(row.key())) this.agentRow(this.taskRowsByKey.get(row.key())!,this.workspace.groupingMode,depth)
+  }
+  @Builder agentRow(binding: BoundAgentRow, groupId: string, depth:number=0) {
     ListItem() {
       Column() {
         Row({ space: 10 }) {
@@ -583,7 +611,7 @@ export struct AgentListPage {
       }.width('100%')
     }.accessibilityGroup(true).accessibilityText([binding.bound.value.title || tr('agent_untitled'),
       binding.presentation.recentContent, ...binding.presentation.metadata.slice(0, 2), this.rowStatus(binding.presentation)].filter((s: string) => !!s).join(' · '))
-      .selectable(true).selected(this.isRowSelected(binding))
+      .selectable(true).selected(this.isRowSelected(binding)).padding({left:18*Math.min(3,Math.max(0,depth))})
       .backgroundColor(this.isRowSelected(binding) ? Colors.selection : Colors.surface)
       .borderRadius({ topLeft: binding.first && !this.rail ? 13 : 0, topRight: binding.first && !this.rail ? 13 : 0,
         bottomLeft: binding.last && !this.rail ? 13 : 0, bottomRight: binding.last && !this.rail ? 13 : 0 })
@@ -645,6 +673,7 @@ export struct AgentListPage {
     this.reloadDecisions(); this.workspace.setReadingDetail(false);
     const refreshes:Promise<void>[] = [this.workspace.refresh(this.model)];
     if (this.workspace.groupingMode === 'repo') refreshes.push(this.projectCatalog.refresh(this.model));
+    this.refreshGroupingSupport();
     Promise.all(refreshes).catch(() => {}).finally(() => {
       if (this.active && this.workspace.isBoundTo(this.model)) this.workspace.setReadingDetail(this.readingDetail);
       this.refreshing = false;
@@ -833,6 +862,10 @@ export struct AgentListPage {
           AgentRepositoryRows({model:this.model,workspace:this.workspace,catalog:this.projectCatalog,rows:this.workspace.unpinnedRows,
             onOpen:(row:ResourceRow)=>this.openRow(row),onRoute:(kind:string,key:string)=>this.onRepositoryOpen(kind,key),
             onChanged:(tree:ProjectWorktree,change:WorktreeChange)=>this.onRepositoryChanged(tree,change)})
+        } else if (this.workspace.groupingMode === 'todo' || this.workspace.groupingMode === 'direction') {
+          AgentTaskGroupRows({model:this.model,workspace:this.workspace,source:this.taskGrouping,mode:this.workspace.groupingMode,
+            onOpen:(row:ResourceRow)=>this.openRow(row),onOpenTodo:(row:ResourceRow)=>this.onOpenTodo(row),
+            rowContent:(row:ResourceRow,depth:number)=>this.taskRow(row,depth)})
         } else if (!this.workspace.hasRows() && !this.workspace.loading) ListItem() {
           Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
         }.id('agents.empty')
