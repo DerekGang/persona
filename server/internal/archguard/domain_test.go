@@ -23,8 +23,9 @@ const domainBaselineUpdate = "DOMAIN_LAYERS_UPDATE"
 // package declares its layer or is frozen by name in testdata/domain_layers/undeclared.txt, each declaration is
 // checked, the declared domain packages follow their layer's rules and carry the rules_test.go hook, and the code
 // that predates the rules stays within testdata/domain_layers' shrink-only counts and frozen imports. With a base
-// (CI_BASE_SHA), a count may not rise above its count at the merge base either. It prints the packages it checked
-// per layer and the files it parsed in full, which is its budget, and fails when it inspected nothing.
+// (CI_BASE_SHA, which check-fast's diff mode sets to its merge base), a count may not rise above its count at the
+// merge base either. It prints the packages it checked per layer and the files it parsed in full, which is its
+// budget, and fails when it inspected nothing.
 func TestDomainLayers(t *testing.T) {
 	lists, err := domainrules.ReadLists("testdata")
 	if err != nil {
@@ -40,9 +41,9 @@ func TestDomainLayers(t *testing.T) {
 		t.Fatalf("the domain rules inspected nothing under %s: %s", serverDir, st.Summary())
 	}
 	if os.Getenv(domainBaselineUpdate) != "" {
-		lists = lowerDomainBaseline(t, lists, domainrules.Tally(findings, counts))
+		lists = lowerDomainBaseline(t, lists, domainrules.Measured(findings, counts))
 	}
-	v := domainrules.Judge(findings, counts, pkgs, lists, domainBaseTally(t, lists), "")
+	v := domainrules.Judge(findings, counts, pkgs, lists, domainBaseMeasure(t, lists), "")
 	for _, n := range v.Notices {
 		t.Log("notice: " + n)
 	}
@@ -68,15 +69,15 @@ func domainRun(t *testing.T, pkgs []*domainrules.Pkg, lists domainrules.Lists) (
 	return findings, counts, st
 }
 
-// lowerDomainBaseline writes the baseline lowered to tally, the counts now, and returns the lists with it.
-func lowerDomainBaseline(t *testing.T, lists domainrules.Lists, tally map[string]int) domainrules.Lists {
+// lowerDomainBaseline writes the baseline lowered to m, the tree now, and returns the lists with it.
+func lowerDomainBaseline(t *testing.T, lists domainrules.Lists, m domainrules.Measure) domainrules.Lists {
 	t.Helper()
 	path := filepath.Join("testdata", "domain_layers", "baseline.txt")
 	old, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lowered := lists.Baseline.Lowered(string(old), tally)
+	lowered := lists.Baseline.Lowered(string(old), m)
 	if lowered == string(old) {
 		return lists
 	}
@@ -91,11 +92,11 @@ func lowerDomainBaseline(t *testing.T, lists domainrules.Lists, tally map[string
 	return lists
 }
 
-// domainBaseTally is the counts at the merge base with CI_BASE_SHA of the lines the merge base's baseline has, nil
-// when no base is given. It reads the tree as it is, with every .go file under server/ the change touched since the
-// merge base (committed or not, untracked included) put back as it was there. A base that does not resolve is an
+// domainBaseMeasure is the measure at the merge base with CI_BASE_SHA of the counts the merge base's baseline has,
+// nil when no base is given. It reads the tree as it is, with every .go file under server/ the change touched since
+// the merge base (committed or not, untracked included) put back as it was there. A base that does not resolve is an
 // error, never "no base".
-func domainBaseTally(t *testing.T, lists domainrules.Lists) map[string]int {
+func domainBaseMeasure(t *testing.T, lists domainrules.Lists) *domainrules.Measure {
 	t.Helper()
 	base := os.Getenv("CI_BASE_SHA")
 	if base == "" {
@@ -140,34 +141,76 @@ func domainBaseTally(t *testing.T, lists domainrules.Lists) map[string]int {
 		t.Fatal(err)
 	}
 	findings, counts, _ := domainRun(t, pkgs, lists)
-	tally := domainrules.Tally(findings, counts)
-	// A line the merge base's baseline does not have is the change's own, and only the baseline holds it.
-	held := map[string]int{}
+	m := domainrules.Measured(findings, counts)
+	// A count the merge base's baseline does not have is the change's own, and only the baseline holds it.
+	held := domainrules.Measure{Counts: map[string]int{}, Names: m.Names}
 	if text, err := exec.Command("git", "-C", serverDir, "show",
 		mergeBase+":server/internal/archguard/testdata/domain_layers/baseline.txt").Output(); err == nil {
 		for _, e := range domainrules.ParseLists("", "", "", string(text)).Baseline.Entries {
-			held[e.Key+" "+e.Rule] = tally[e.Key+" "+e.Rule]
+			held.Counts[e.ID()] = m.Counts[e.ID()]
 		}
 	}
-	return held
+	return &held
 }
 
-// domainLayerNames is for scripts/test/name_freezes.py, which needs the packages without a //persona:layer line at
-// other commits (an open PR's head, its merge base) read exactly as TestDomainLayers reads them. Given a directory,
-// TestDomainLayerNames reads each directory under it as a tree of the server's files and writes the undeclared
-// package directories it finds there to <dir>/<name>.names, one per line. It checks nothing; without the flag it is
-// skipped.
-var domainLayerNames = flag.String("domain-layer-names", "",
-	"write the undeclared packages of each tree under this directory (scripts/test/name_freezes.py)")
+// domainLayerNames is for scripts/test/name_freezes.py, which needs what the domain rules read at other commits (an
+// open PR's head, its merge base) read exactly as TestDomainLayers reads it. Given a directory, TestDomainLayerNames
+// reads each directory under it as a tree of the server's files and writes the undeclared package directories it
+// finds there to <dir>/<name>.names, one per line; the tree's counts, with the types behind the ones an allowance can
+// name, to <dir>/<name>.counts (domainrules.Measure's Lines); and the findings no count holds (an import a frozen list
+// may hold, or a rule that fails at once) to <dir>/<name>.others, "<rule>\t<frozen name or message>". With
+// -domain-layer-self it writes the server's own counts to <dir>/self.counts too. It checks nothing; without the flag
+// it is skipped.
+var (
+	domainLayerNames = flag.String("domain-layer-names", "",
+		"write the undeclared packages and the counts of each tree under this directory (scripts/test/name_freezes.py)")
+	domainLayerSelf = flag.Bool("domain-layer-self", false, "with -domain-layer-names, also write the server's own counts")
+)
 
 func TestDomainLayerNames(t *testing.T) {
 	dir := *domainLayerNames
 	if dir == "" {
 		t.Skip("only with -domain-layer-names (scripts/test/name_freezes.py)")
 	}
+	lists, err := domainrules.ReadLists("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	write := func(name string, lines []string) {
+		t.Helper()
+		text := strings.Join(lines, "\n")
+		if text != "" {
+			text += "\n"
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	measure := func(pkgs []*domainrules.Pkg) (lines, others []string, err error) {
+		idx := domainrules.NewIndex(serverModule, pkgs, lists.Contracts)
+		findings, _, err := domainrules.Run(pkgs, idx, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		counts, err := domainrules.Ratchets(pkgs, idx)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, f := range findings {
+			switch {
+			case f.Rule == "layer-declared" && f.Edge != "": // the undeclared packages' freeze
+			case f.Edge != "":
+				others = append(others, f.Rule+"\t"+f.Edge)
+			case domainrules.Strict(f.Rule):
+				others = append(others, f.Rule+"\t"+f.Msg)
+			}
+		}
+		slices.Sort(others)
+		return domainrules.Measured(findings, counts).Lines(), others, nil
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -178,12 +221,23 @@ func TestDomainLayerNames(t *testing.T) {
 			t.Logf("%s: %v", e.Name(), err)
 			continue
 		}
-		var names strings.Builder
-		for _, n := range domainrules.Undeclared(pkgs) {
-			names.WriteString(n + "\n")
+		write(e.Name()+".names", domainrules.Undeclared(pkgs))
+		if lines, others, err := measure(pkgs); err != nil {
+			t.Logf("%s: %v", e.Name(), err)
+		} else {
+			write(e.Name()+".counts", lines)
+			write(e.Name()+".others", others)
 		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()+".names"), []byte(names.String()), 0o644); err != nil {
+	}
+	if *domainLayerSelf {
+		pkgs, err := domainrules.Load(serverDir, serverModule)
+		if err != nil {
 			t.Fatal(err)
 		}
+		lines, _, err := measure(pkgs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write("self.counts", lines)
 	}
 }

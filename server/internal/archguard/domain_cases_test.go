@@ -170,7 +170,7 @@ func legacyCore() map[string]string {
 }
 
 // judge runs every rule over files and holds them to the lists' text.
-func judge(t *testing.T, files map[string]string, undeclared, edges, baseline string, base map[string]int) domainrules.Verdict {
+func judge(t *testing.T, files map[string]string, undeclared, edges, baseline string, base *domainrules.Measure) domainrules.Verdict {
 	t.Helper()
 	_, findings, counts := domainCase(t, files, nil)
 	lists := domainrules.ParseLists("", undeclared, edges, baseline)
@@ -209,15 +209,11 @@ func TestDomainLists(t *testing.T) {
 		t.Errorf("an importer literal of a legacy core: %q", v.Failures)
 	}
 
-	// With a base, a count may not rise above the merge base's, unless its line is an allowance for an open PR.
-	base := map[string]int{"internal/legacy core-package-var": 1, "internal/legacy out-literal": 1}
+	// With a base, a count may not rise above the merge base's.
+	base := &domainrules.Measure{Counts: map[string]int{"internal/legacy core-package-var": 1, "internal/legacy out-literal": 1}}
 	v = judge(t, files, "", edges, baseline, base)
 	if len(v.Failures) != 3 || !strings.Contains(v.Failures[2], "merge base 1, baseline 2") {
 		t.Errorf("a rise above the merge base: %q", v.Failures)
-	}
-	v = judge(t, files, "", edges, "internal/legacy core-package-var 2 #4512\ninternal/legacy out-literal 1\n", base)
-	if len(v.Failures) != 0 {
-		t.Errorf("an allowance for an open PR: %q", v.Failures)
 	}
 
 	// A swapped import fails, and the frozen one that left is a notice.
@@ -245,13 +241,60 @@ func TestDomainLists(t *testing.T) {
 	}
 }
 
-// The lists' format, and lowering: only falling counts change, allowances stay, a count gone to zero leaves.
+// An allowance is one open PR's room: it names the type the PR adds and counts only while that type is in the
+// package, so no other change can spend it. Once the type is on main the count takes it in; with a base, the merge
+// base's count holds what it has already.
+func TestDomainAllowances(t *testing.T) {
+	files := merged(legacyCore(), app("internal/seats", "", "// Seat is a record.\ntype Seat struct{ Name string }\n"))
+	const legacy = "internal/legacy core-package-var 2\ninternal/legacy out-literal 1\n"
+	const edges = "internal/legacy imports time\n"
+	const id = "internal/seats app-exported-record"
+	v := judge(t, files, "", edges, legacy, nil)
+	if len(v.Failures) != 1 || !strings.Contains(v.Failures[0], "RULE app-exported-record internal/seats adds an exported-field record (count 1 > 0)") {
+		t.Errorf("a new record with no line: %q", v.Failures)
+	}
+	v = judge(t, files, "", edges, legacy+id+" Seat #4512\n", nil)
+	if len(v.Failures) != 0 || len(v.Notices) != 1 || !strings.Contains(v.Notices[0], "Seat (#4512) is in internal/seats now: take it into the count with python3 scripts/ci/lower_baselines.py --only domain-rules") {
+		t.Errorf("the allowed type: %q, %q", v.Failures, v.Notices)
+	}
+	// The room is the named type's: another change's record does not get it.
+	v = judge(t, files, "", edges, legacy+id+" Desk #4512\n", nil)
+	if len(v.Failures) != 1 || !strings.Contains(v.Failures[0], "(count 1 > 0)") || len(v.Notices) != 1 ||
+		!strings.Contains(v.Notices[0], "internal/seats app-exported-record allows Desk (#4512), not here yet; once a type's PRs have all closed, python3 scripts/test/name_freezes.py pending --write --only domain_layers_baseline drops its line") {
+		t.Errorf("another type than the allowed one: %q, %q", v.Failures, v.Notices)
+	}
+	// With a base: the merge base without the type leaves the room; one that has it (the PR merged) holds the count.
+	v = judge(t, files, "", edges, legacy+id+" Seat #4512\n", &domainrules.Measure{Counts: map[string]int{id: 0}})
+	if len(v.Failures) != 0 {
+		t.Errorf("the allowed type, the merge base without it: %q", v.Failures)
+	}
+	more := merged(files, map[string]string{"internal/seats/desk.go": "package seats\n\n// Desk is another record.\ntype Desk struct{ Name string }\n"})
+	landed := &domainrules.Measure{Counts: map[string]int{id: 1}, Names: map[string]map[string]bool{id: {"Seat": true}}}
+	v = judge(t, more, "", edges, legacy+id+" 1\n"+id+" Seat #4512\n", landed)
+	if len(v.Failures) != 1 || !strings.Contains(v.Failures[0], "(count 2 > 1)") {
+		t.Errorf("a record beside an allowed type the merge base has: %q", v.Failures)
+	}
+	// Only the counts of named types take an allowance.
+	lists := domainrules.ParseLists("", "", "", "internal/legacy core-package-var Seat #4512\n")
+	if len(lists.Problems) != 1 || !strings.Contains(lists.Problems[0], "is an allowance for core-package-var, which takes none") {
+		t.Errorf("an allowance for a finding: %q", lists.Problems)
+	}
+}
+
+// The lists' format, and lowering: counts fall to the tree's, an allowance whose type landed is taken into its count,
+// one still waiting stays, and a count gone to zero leaves; no limit rises.
 func TestDomainListFormat(t *testing.T) {
 	for _, c := range []struct{ baseline, problem string }{
 		{"b core-any 1\na core-any 1\n", "line 2 (a core-any) is out of order"},
 		{"a core-any 1\na core-any 2\n", "line 2 repeats a core-any (line 1)"},
+		{"a app-exported-record B #1\na app-exported-record A #2\n", "line 2 (a app-exported-record) is out of order"},
+		{"a app-exported-record A #1\na app-exported-record 2\n", "line 2 (a app-exported-record) is out of order"},
+		{"a app-exported-record A #1\na app-exported-record A #2\n", "line 2 repeats a app-exported-record A (line 1)"},
 		{"a no-such-rule 1\n", "line 1 names no rule: no-such-rule"},
-		{"a core-any one\n", "line 1 is not <key> <rule> <count> [#PR ...]"},
+		{"a core-any one\n", "line 1 is neither <key> <rule> <count> nor an allowance"},
+		{"a core-any 4 #12\n", "line 1 is neither <key> <rule> <count> nor an allowance"},
+		{"a app-exported-record Seat\n", "line 1 is neither <key> <rule> <count> nor an allowance"},
+		{"a app-exported-record Seat 12\n", "line 1 is neither <key> <rule> <count> nor an allowance"},
 	} {
 		lists := domainrules.ParseLists("", "", "", c.baseline)
 		if !slices.ContainsFunc(lists.Problems, func(p string) bool { return strings.Contains(p, c.problem) }) {
@@ -262,10 +305,22 @@ func TestDomainListFormat(t *testing.T) {
 	if len(lists.Problems) != 1 || !strings.Contains(lists.Problems[0], "line 2 (a) is out of order") {
 		t.Errorf("an unsorted freeze list: %q", lists.Problems)
 	}
-	const text = "# header\na core-any 3\na core-package-var 2\nb core-any 4 #12\nc core-tag 1\n"
-	lowered := domainrules.ParseLists("", "", "", text).Baseline.Lowered(text,
-		map[string]int{"a core-any 2": 0, "a core-any": 2, "a core-package-var": 5, "b core-any": 1})
-	if want := "# header\na core-any 2\na core-package-var 2\nb core-any 4 #12\n"; lowered != want {
+	const text = "# header\n\na core-any 3\na core-package-var 2\nb app-exported-record 4\nb app-exported-record Landed #12\n" +
+		"b app-exported-record Waiting #13 #15\nc core-tag 1\nd app-named-primitive Fresh #14\ne app-named-primitive 2\n" +
+		"e app-named-primitive Early #16\n"
+	m := domainrules.Measure{
+		Counts: map[string]int{"a core-any": 2, "a core-package-var": 5, "b app-exported-record": 5,
+			"d app-named-primitive": 1, "e app-named-primitive": 2},
+		Names: map[string]map[string]bool{"b app-exported-record": {"Landed": true, "Other": true},
+			"d app-named-primitive": {"Fresh": true}, "e app-named-primitive": {"Early": true, "Kept": true}},
+	}
+	lists = domainrules.ParseLists("", "", "", text)
+	if len(lists.Problems) != 0 {
+		t.Fatalf("problems: %q", lists.Problems)
+	}
+	want := "# header\na core-any 2\na core-package-var 2\nb app-exported-record 5\nb app-exported-record Waiting #13 #15\n" +
+		"d app-named-primitive 1\ne app-named-primitive 2\n"
+	if lowered := lists.Baseline.Lowered(text, m); lowered != want {
 		t.Errorf("Lowered = %q, want %q", lowered, want)
 	}
 }

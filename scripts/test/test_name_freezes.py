@@ -260,6 +260,91 @@ class TreeTests(unittest.TestCase):
         self.assertGreater(len(entries), 100)
 
 
+class BaselineTests(unittest.TestCase):
+    """The domain baseline: counts from the tree, and allowances naming the types open PRs add."""
+    ID = "internal/seats app-exported-record"
+    TEXT = ("# a header\n\ninternal/a core-any 3\n" + ID + " 2\n" + ID + " Closed #5\n" + ID + " Landed #7\n" +
+            ID + " Waiting #8 #9\n")
+
+    def test_the_entries_and_the_text_they_make(self):
+        lead, counts, allowances = name_freezes.baseline_entries(self.TEXT)
+        self.assertEqual(lead, ["# a header"])
+        self.assertEqual(counts, {"internal/a core-any": 3, self.ID: 2})
+        self.assertEqual(allowances, {(self.ID, "Closed"): [5], (self.ID, "Landed"): [7], (self.ID, "Waiting"): [8, 9]})
+        # Each count's line before its allowances, the allowances by type, whatever order they come in.
+        text = name_freezes.compose_baseline(lead, {self.ID: 2, "internal/a core-any": 3},
+                                             {(self.ID, "Waiting"): [9, 8], (self.ID, "Closed"): [5],
+                                              (self.ID, "Landed"): [7]})
+        self.assertEqual(text, self.TEXT.replace("\n\n", "\n"))
+
+    def test_the_land_day_rewrite_takes_the_tree_and_the_open_prs(self):
+        # The tree has Landed now (#7 merged) and counts 3; #5 closed; #9 still open, not measured this time (an idle
+        # draft now); #12 adds Fresh; #13 was measured and no longer adds Gone.
+        pending = name_freezes.Pending(own={"internal/a core-any": (1, set()), self.ID: (3, {"Landed", "Old"})},
+                                       found={self.ID: {"Fresh": [12]}, "internal/b app-named-primitive": {"Kind": [12]}},
+                                       failing={}, measured={12, 13})
+        text = name_freezes.baseline_rewrite(self.TEXT + self.ID + " Gone #13\n", pending, {9, 12, 13})
+        self.assertEqual(text, "# a header\ninternal/a core-any 1\ninternal/b app-named-primitive Kind #12\n" + self.ID +
+                         " 3\n" + self.ID + " Fresh #12\n" + self.ID + " Waiting #9\n")
+
+    def test_a_landed_baseline_drops_the_allowances_whose_prs_all_closed(self):
+        text, dropped = name_freezes.baseline_prune(self.TEXT, {7, 8})
+        self.assertEqual(text, "# a header\ninternal/a core-any 3\n" + self.ID + " 2\n" + self.ID + " Landed #7\n" +
+                         self.ID + " Waiting #8\n")
+        self.assertEqual(dropped, [self.ID + " Closed"])
+
+    def test_what_a_pr_adds_and_what_no_allowance_covers(self):
+        # #1 adds two records to internal/seats (one of them the tree has already) and a literal of a legacy core;
+        # #2 changes a package this tree declares; #3 adds a frozen import and a new one; #4's head is in the tree.
+        count = "internal/legacy out-literal"
+        reads = name_freezes.Trees(
+            names={}, own={self.ID: (2, {"Seat", "Desk"})},
+            counts={"head1": {self.ID: (3, {"Seat", "Desk", "Chair"}), count: (2, set())},
+                    "mb1": {self.ID: (1, {"Seat"}), count: (1, set())},
+                    "head3": {}, "mb3": {}},
+            others={"head1": set(), "mb1": set(),
+                    "head3": {"path-no-core\tinternal/hub imports internal/legacy",
+                              "core-hook\tRULE core-hook internal/x has no rules_test.go"}, "mb3": set()})
+        prs = [name_freezes.PR(n, False, "head%d" % n, NOW, {"server/"}) for n in (1, 2, 3, 4)]
+        dirs = {"head1": ["internal/seats"], "head2": ["internal/legacy"], "head3": ["internal/hub"],
+                "head4": ["internal/legacy"]}
+        with tempfile.TemporaryDirectory() as root:
+            edges = Path(root, name_freezes.EDGES)
+            edges.parent.mkdir(parents=True)
+            edges.write_text("# frozen\ninternal/hub imports internal/legacy\n")
+            with mock.patch.multiple(name_freezes, ROOT=Path(root), fetch=lambda prs: None,
+                                     merge_base=lambda head, base: "mb" + head[4:],
+                                     changed_dirs=lambda old, new: dirs[new], in_tree=lambda head: head == "head4",
+                                     declared_dirs=lambda revision: ["internal/legacy"],
+                                     tree_files=lambda revision, dirs=None: {},
+                                     domain_trees=lambda work, trees, own=False: reads):
+                got = name_freezes.baseline_pending("base", prs, 14, "unused", log=io.StringIO())
+        self.assertEqual(got.found, {self.ID: {"Chair": [1]}})
+        self.assertEqual(got.failing, {
+            1: ["adds 1 to internal/legacy out-literal, which takes no allowance"],
+            2: ["changes internal/legacy, which this tree declares: check it against the rules by hand"],
+            3: ["core-hook: RULE core-hook internal/x has no rules_test.go"]})
+
+    def test_a_landed_baseline_is_tidied_only_on_a_checkout_of_the_base(self):
+        with mock.patch.multiple(name_freezes, run=lambda args, timeout, **kw: "elsewhere\n" if args[-1] == "HEAD"
+                                 else "base\n", central_names=lambda work, sources=None: ([], {}),
+                                 on_base=lambda base, p: True), \
+                mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", io.StringIO()) as err:
+            code = name_freezes.main(["pending", "--write", "--only", name_freezes.BASELINE.id])
+        self.assertEqual(code, 1)
+        self.assertIn("check out origin/main first", err.getvalue())
+
+    def test_the_committed_baseline_reads_cleanly(self):
+        text = (ROOT / name_freezes.BASELINE.file).read_text()
+        lead, counts, allowances = name_freezes.baseline_entries(text)
+        self.assertTrue(lead and lead[0].startswith("# "), "the baseline starts with what it is")
+        self.assertGreater(len(counts), 100)
+        self.assertEqual(name_freezes.compose_baseline(lead, counts, allowances), text,
+                         "every line is a count or an allowance, sorted")
+        rules = {key.split(" ")[1] for key, _ in allowances}
+        self.assertLessEqual(rules, set(name_freezes.ALLOWABLE))
+
+
 @unittest.skipUnless(shutil.which("go"), "needs go")
 class GoLayerNamesTests(unittest.TestCase):
     """The undeclared packages come from the archguard test itself, read as TestDomainLayers reads them."""
@@ -273,6 +358,16 @@ class GoLayerNamesTests(unittest.TestCase):
                         "internal/a/testdata/x.go": "package x\n"},
                 "empty": {}})
         self.assertEqual(names, {"one": {"internal/a"}, "empty": set()})
+
+    def test_the_counts_of_each_tree_and_of_the_server(self):
+        with tempfile.TemporaryDirectory() as work:
+            read = name_freezes.domain_trees(work, {
+                "one": {"internal/a/a.go": "// Package a is plain.\npackage a\n\n// Seat is a record.\ntype Seat struct{ Name string }\n\n"
+                                           "// Kind is a name.\ntype Kind string\n"}}, own=True)
+        self.assertEqual(read.counts["one"], {"internal/a app-exported-record": (1, {"Seat"}),
+                                              "internal/a app-named-primitive": (1, {"Kind"})})
+        self.assertEqual(read.others["one"], set())
+        self.assertGreater(len(read.own), 100)
 
     def test_the_files_of_a_directory_at_a_commit(self):
         files = name_freezes.tree_files("HEAD", ["internal/lazyre"])

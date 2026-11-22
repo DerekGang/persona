@@ -96,6 +96,7 @@ internal/lazyre
 internal/lcuconfirm
 internal/link
 internal/linktray
+internal/machineops
 internal/mail
 internal/manager
 internal/managercli
@@ -196,6 +197,7 @@ plugins
 # (python3 scripts/test/name_freezes.py pending --write, 2026-11-22; drafts idle more than 14 days left out).
 # A name stays when its PR merges; a rerun of --write drops one whose PRs have all closed. No PR opened later gets a
 # line here.
-internal/machineops #13065
+internal/larkperson #13145
 internal/operations/recovery #12876
+internal/resourcequeue #13110
 internal/rpcio #1507

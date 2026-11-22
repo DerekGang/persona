@@ -136,20 +136,54 @@ func prNumber(s string) bool {
 	return strings.HasPrefix(s, "#") && ok
 }
 
-// Baseline is the shrink-only counts of code that predates the rules, one per package and rule.
+// Baseline is the shrink-only counts of code that predates the rules, one per package and rule, and the allowances
+// made the day the rules landed for the types open PRs were adding.
 type Baseline struct{ Entries []BaselineEntry }
 
-// A BaselineEntry is one line: the package a count is kept against, the rule, the count and, for an allowance made
-// the day the rules landed for an open PR's additions, the PRs it allows for.
+// A BaselineEntry is one line: the package a count is kept against and the rule, then either the count (a count
+// line) or, for an allowance, the type an open PR adds and the PRs that add it. An allowance adds one to its count's
+// limit while the type is in the package, so the room is that PR's and nobody else's; once the type is on main, the
+// count takes it in (Lowered), and once its PRs have all closed without it, scripts/test/name_freezes.py pending
+// --write drops the line.
 type BaselineEntry struct {
 	Line  int
 	Key   string
 	Rule  string
-	Count int
-	PRs   []string
+	Count int      // a count line's count
+	Name  string   // an allowance's type, "" on a count line
+	PRs   []string // an allowance's PRs ("#12508")
 }
 
-// ReadBaseline reads baseline.txt: "<key> <rule> <count>" per line, optionally followed by PRs, sorted by key and rule.
+// ID is the count the line belongs to, "<key> <rule>".
+func (e BaselineEntry) ID() string { return e.Key + " " + e.Rule }
+
+// Allowance says whether the line is an allowance rather than a count.
+func (e BaselineEntry) Allowance() bool { return e.Name != "" }
+
+// allowable says whether a rule's count can take an allowance: its findings are named types, which an allowance
+// names.
+func allowable(rule string) bool {
+	return rule == "app-exported-record" || rule == "app-named-primitive"
+}
+
+// sortKey orders a baseline's lines: by count, the count line before its allowances, the allowances by type.
+func (e BaselineEntry) sortKey() string {
+	if e.Allowance() {
+		return e.ID() + " 1 " + e.Name
+	}
+	return e.ID() + " 0"
+}
+
+// line is the entry as baseline.txt writes it.
+func (e BaselineEntry) line() string {
+	if e.Allowance() {
+		return e.ID() + " " + e.Name + " " + strings.Join(e.PRs, " ")
+	}
+	return e.ID() + " " + itoa(e.Count)
+}
+
+// ReadBaseline reads baseline.txt: "<key> <rule> <count>" lines and "<key> <rule> <Type> #PR [#PR ...]" allowances,
+// sorted by key and rule, each count's line before its allowances and these by type.
 func ReadBaseline(text string) (Baseline, []string) {
 	var b Baseline
 	var problems []string
@@ -160,63 +194,120 @@ func ReadBaseline(text string) (Baseline, []string) {
 			continue
 		}
 		f := strings.Fields(line)
-		n := 0
+		e := BaselineEntry{Line: i + 1}
 		ok := len(f) >= 3
 		if ok {
-			n, ok = atoi(f[2])
-		}
-		for _, pr := range f[min(3, len(f)):] {
-			ok = ok && prNumber(pr)
+			e.Key, e.Rule = f[0], f[1]
+			if n, number := atoi(f[2]); number {
+				e.Count, ok = n, len(f) == 3
+			} else {
+				e.Name, e.PRs, ok = f[2], f[3:], identifier(f[2]) && len(f) > 3
+				for _, pr := range e.PRs {
+					ok = ok && prNumber(pr)
+				}
+			}
 		}
 		if !ok {
-			problems = append(problems, "line "+itoa(i+1)+" is not <key> <rule> <count> [#PR ...]: "+line)
+			problems = append(problems, "line "+itoa(i+1)+" is neither <key> <rule> <count> nor an allowance "+
+				"<key> <rule> <Type> #PR [#PR ...]: "+line)
 			continue
 		}
-		if _, known := rules[f[1]]; !known {
-			problems = append(problems, "line "+itoa(i+1)+" names no rule: "+f[1])
+		if _, known := rules[e.Rule]; !known {
+			problems = append(problems, "line "+itoa(i+1)+" names no rule: "+e.Rule)
 			continue
 		}
-		e := BaselineEntry{i + 1, f[0], f[1], n, f[3:]}
-		id := e.Key + " " + e.Rule
-		if first, dup := seen[id]; dup {
-			problems = append(problems, "line "+itoa(e.Line)+" repeats "+id+" (line "+itoa(first)+")")
+		if e.Allowance() && !allowable(e.Rule) {
+			problems = append(problems, "line "+itoa(i+1)+" is an allowance for "+e.Rule+", which takes none: only "+
+				"app-exported-record and app-named-primitive count named types")
+			continue
 		}
-		seen[id] = e.Line
-		if len(b.Entries) > 0 {
-			prev := b.Entries[len(b.Entries)-1]
-			if id < prev.Key+" "+prev.Rule {
-				problems = append(problems, "line "+itoa(e.Line)+" ("+id+") is out of order: keep the lines sorted")
+		k := e.sortKey()
+		if first, dup := seen[k]; dup {
+			what := e.ID()
+			if e.Allowance() {
+				what += " " + e.Name
 			}
+			problems = append(problems, "line "+itoa(e.Line)+" repeats "+what+" (line "+itoa(first)+")")
+		}
+		seen[k] = e.Line
+		if len(b.Entries) > 0 && k < b.Entries[len(b.Entries)-1].sortKey() {
+			problems = append(problems, "line "+itoa(e.Line)+" ("+e.ID()+") is out of order: keep the lines sorted, "+
+				"each count before its allowances")
 		}
 		b.Entries = append(b.Entries, e)
 	}
 	return b, problems
 }
 
-// Lowered is the baseline's text with every count that fell set to its count now and every count gone to zero
-// removed; lines naming PRs (allowances for open PRs' additions) and comments stay as they are. It never raises or
-// adds: counts holds the counts now, by "<key> <rule>".
-func (b Baseline) Lowered(text string, counts map[string]int) string {
-	byLine := map[int]BaselineEntry{}
-	for _, e := range b.Entries {
-		byLine[e.Line] = e
-	}
-	lines := strings.Split(text, "\n")
-	var out []string
-	for i, line := range lines {
-		e, ok := byLine[i+1]
-		if !ok || len(e.PRs) > 0 {
-			out = append(out, line)
-			continue
+// identifier says whether s is a Go identifier: what an allowance names.
+func identifier(s string) bool {
+	for i, r := range s {
+		letter := r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		if !letter && (i == 0 || r < '0' || r > '9') {
+			return false
 		}
-		now := counts[e.Key+" "+e.Rule]
+	}
+	return s != ""
+}
+
+// Lowered is the baseline's text with the counts brought to the tree as m measures it: an allowance whose type is in
+// the package now is taken into its count (its PR landed) and its line removed, every count above what it holds now
+// is set to it, and a count gone to zero is removed. It never raises a limit: a count rises only by the allowances it
+// takes in, and only up to its count now. The comment the file starts with stays; the lines are written sorted.
+func (b Baseline) Lowered(text string, m Measure) string {
+	type limit struct {
+		count *BaselineEntry
+		taken int
+	}
+	byID := map[string]*limit{}
+	var ids []string
+	var kept []BaselineEntry
+	at := func(id string) *limit {
+		if byID[id] == nil {
+			byID[id] = &limit{}
+			ids = append(ids, id)
+		}
+		return byID[id]
+	}
+	for i := range b.Entries {
+		e := b.Entries[i]
+		l := at(e.ID())
 		switch {
-		case now == 0:
-		case now < e.Count:
-			out = append(out, e.Key+" "+e.Rule+" "+itoa(now))
+		case !e.Allowance():
+			l.count = &b.Entries[i]
+		case m.Names[e.ID()][e.Name]:
+			l.taken++
 		default:
-			out = append(out, line)
+			kept = append(kept, e)
 		}
 	}
-	return strings.Join(out, "\n")
+	for _, id := range ids {
+		l := byID[id]
+		n := l.taken
+		if l.count != nil {
+			n += l.count.Count
+		}
+		if now := m.Counts[id]; now < n {
+			n = now
+		}
+		if n > 0 {
+			key, rule, _ := strings.Cut(id, " ")
+			kept = append(kept, BaselineEntry{Key: key, Rule: rule, Count: n})
+		}
+	}
+	sortSlice(kept, func(a, b BaselineEntry) bool { return a.sortKey() < b.sortKey() })
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
+			break
+		}
+		out = append(out, line)
+	}
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	for _, e := range kept {
+		out = append(out, e.line())
+	}
+	return strings.Join(out, "\n") + "\n"
 }

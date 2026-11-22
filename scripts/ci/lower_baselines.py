@@ -54,15 +54,23 @@ class Ratchet:
 
 def domain_counts(data):
     """The domain rules' baseline (server/internal/archguard/testdata/domain_layers/baseline.txt) as counts: each
-    "<key> <rule> <count> [#PR ...]" line as {"<key> <rule> [#PR ...]": count}, comments and blank lines left out."""
+    count's limit, its "<key> <rule> <count>" line plus one per "<key> <rule> <Type> #PR ..." allowance, as
+    {"<key> <rule>": limit}, and each allowance as {"<key> <rule> <Type>": 1}. An allowance the count takes in (its
+    type landed) keeps the limit and removes its own entry; nothing may add one. Comments and blank lines are left out."""
     counts = {}
     for line in data.decode("utf-8").splitlines():
         fields = line.split()
         if not fields or fields[0].startswith("#"):
             continue
-        if len(fields) < 3 or not fields[2].isdigit():
-            raise ValueError("not <key> <rule> <count> [#PR ...]: " + line)
-        counts[" ".join(fields[:2] + fields[3:])] = int(fields[2])
+        if len(fields) == 3 and fields[2].isdigit():
+            key = " ".join(fields[:2])
+            counts[key] = counts.get(key, 0) + int(fields[2])
+        elif len(fields) > 3 and not fields[2].isdigit() and all(f.startswith("#") and f[1:].isdigit() for f in fields[3:]):
+            key = " ".join(fields[:2])
+            counts[key] = counts.get(key, 0) + 1
+            counts[" ".join(fields[:3])] = 1
+        else:
+            raise ValueError("neither <key> <rule> <count> nor <key> <rule> <Type> #PR ...: " + line)
     return counts
 
 

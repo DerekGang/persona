@@ -141,6 +141,9 @@ func sortFindings(fs []Finding) {
 	})
 }
 
+// Strict says whether a rule takes no count: what it reports fails at once, frozen lists aside.
+func Strict(rule string) bool { return strict(rule) }
+
 // strict are the rules that take no count: what they report fails at once, frozen lists aside.
 func strict(rule string) bool {
 	switch rule {
@@ -166,20 +169,71 @@ func Tally(findings []Finding, counts []Count) map[string]int {
 	return out
 }
 
+// A Measure is one tree's counts by "<key> <rule>" (Tally), with the type names behind the counts an allowance can
+// name.
+type Measure struct {
+	Counts map[string]int
+	Names  map[string]map[string]bool
+}
+
+// Measured is what findings and counts come to in one tree.
+func Measured(findings []Finding, counts []Count) Measure {
+	m := Measure{Counts: Tally(findings, counts), Names: map[string]map[string]bool{}}
+	for _, c := range counts {
+		if !allowable(c.Rule) {
+			continue
+		}
+		id := c.Key + " " + c.Rule
+		if m.Names[id] == nil {
+			m.Names[id] = map[string]bool{}
+		}
+		for _, n := range c.Names {
+			m.Names[id][n] = true
+		}
+	}
+	return m
+}
+
+// Lines is the measure as name_freezes.py reads it: "<key> <rule>\t<count>\t<type> <type> ..." per count, sorted.
+func (m Measure) Lines() []string {
+	var out []string
+	for id, n := range m.Counts {
+		var names []string
+		for name := range m.Names[id] {
+			names = append(names, name)
+		}
+		sortStrings(names)
+		out = append(out, id+"\t"+itoa(n)+"\t"+strings.Join(names, " "))
+	}
+	sortStrings(out)
+	return out
+}
+
 // A Verdict is what a run's findings come to against the lists: the failures, and the notices that say what can be
-// tidied (a count under its baseline, a frozen name that left).
+// tidied (a count under its baseline, an allowance whose type landed, a frozen name that left).
 type Verdict struct {
 	Failures []string
 	Notices  []string
 }
 
-// lowerHint is how to lower the domain baseline.
+// lowerHint is how to lower the domain baseline, and how its allowances whose types landed are taken in.
 const lowerHint = "python3 scripts/ci/lower_baselines.py --only domain-rules"
 
-// Judge holds findings and counts to the lists: frozen names suppress what they name, counts may not rise above their
-// baseline (or above the merge base's count, where base has one for a line that names no PR), and every other
+// dropHint is how an allowance whose PRs closed without its type leaves.
+const dropHint = "python3 scripts/test/name_freezes.py pending --write --only domain_layers_baseline"
+
+// A limit is what one count may reach: its count line, and the allowances whose types are in the tree.
+type limit struct {
+	count   BaselineEntry // the count line; Line is 0 when there is none
+	allowed []BaselineEntry
+	waiting []BaselineEntry // allowances whose types are not in the tree
+}
+
+// Judge holds findings and counts to the lists: frozen names suppress what they name, and a count may not rise above
+// its count line plus its allowances whose types are in the tree; given base (the merge base's measure, of the lines
+// its baseline has), not above its count there either, plus the allowed types the merge base lacks. Every other
 // finding fails. pkgs names what exists, for the notices. scope limits it to one package, as the hook runs.
-func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base map[string]int, scope string) Verdict {
+func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base *Measure, scope string) Verdict {
 	var v Verdict
 	in := func(key string) bool { return scope == "" || key == scope }
 	if scope == "" {
@@ -213,7 +267,7 @@ func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base ma
 			groups[id] = append(groups[id], f)
 		}
 	}
-	now := Tally(findings, counts)
+	now := Measured(findings, counts)
 	byID := map[string]Count{}
 	for _, c := range counts {
 		id := c.Key + " " + c.Rule
@@ -223,11 +277,25 @@ func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base ma
 			groups[id] = nil
 		}
 	}
-	entries := map[string]BaselineEntry{}
+	limits := map[string]*limit{}
+	var ids []string
 	for _, e := range lists.Baseline.Entries {
-		entries[e.Key+" "+e.Rule] = e
 		if strict(e.Rule) {
 			v.Failures = append(v.Failures, baselineFile+" line "+itoa(e.Line)+": "+e.Rule+" takes no count: fix what it reports")
+		}
+		l := limits[e.ID()]
+		if l == nil {
+			l = &limit{}
+			limits[e.ID()] = l
+			ids = append(ids, e.ID())
+		}
+		switch {
+		case !e.Allowance():
+			l.count = e
+		case now.Names[e.ID()][e.Name]:
+			l.allowed = append(l.allowed, e)
+		default:
+			l.waiting = append(l.waiting, e)
 		}
 	}
 	sortStrings(order)
@@ -236,16 +304,30 @@ func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base ma
 		if !in(key) {
 			continue
 		}
-		n, e := now[id], entries[id]
-		limit, why := e.Count, "baseline "+itoa(e.Count)
-		if b, ok := base[id]; ok && len(e.PRs) == 0 && b < limit {
-			limit, why = b, "merge base "+itoa(b)+", baseline "+itoa(e.Count)
+		n, l := now.Counts[id], limits[id]
+		if l == nil {
+			l = &limit{}
 		}
-		if n <= limit {
+		top, why := l.count.Count+len(l.allowed), "baseline "+itoa(l.count.Count)+allowedText(l.allowed)
+		if base != nil {
+			if b, ok := base.Counts[id]; ok {
+				// What the merge base has already holds the allowed types it has; the change may add the others.
+				fresh := 0
+				for _, e := range l.allowed {
+					if !base.Names[id][e.Name] {
+						fresh++
+					}
+				}
+				if b+fresh < top {
+					top, why = b+fresh, "merge base "+itoa(b)+", baseline "+itoa(l.count.Count)+allowedText(l.allowed)
+				}
+			}
+		}
+		if n <= top {
 			continue
 		}
 		if c, ok := byID[id]; ok {
-			what := c.Key + " adds " + countWhat(rule) + " (count " + itoa(n) + " > " + itoa(limit) + ")"
+			what := c.Key + " adds " + countWhat(rule) + " (count " + itoa(n) + " > " + itoa(top) + ")"
 			v.Failures = append(v.Failures, c.Pos.Filename+":1: "+message(rule, what)+" Counted: "+strings.Join(c.Names, ", "))
 			continue
 		}
@@ -254,15 +336,28 @@ func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base ma
 		}
 		v.Failures = append(v.Failures, key+" "+rule+": "+itoa(n)+" now, above its limit ("+why+"): the count only falls; fix the code the lines above name")
 	}
-	// What can be tidied.
-	for _, e := range lists.Baseline.Entries {
-		id := e.Key + " " + e.Rule
-		if !in(e.Key) || len(e.PRs) > 0 || strict(e.Rule) {
+	// What can be tidied: a count under its line, an allowance whose type landed, one still waiting for its PRs.
+	for _, id := range ids {
+		l := limits[id]
+		key, rule, _ := strings.Cut(id, " ")
+		if !in(key) || strict(rule) {
 			continue
 		}
-		if n := now[id]; n < e.Count {
-			v.Notices = append(v.Notices, baselineFile+" line "+itoa(e.Line)+": "+id+" is "+itoa(n)+", under its baseline "+
-				itoa(e.Count)+": lower it with "+lowerHint)
+		for _, e := range l.allowed {
+			v.Notices = append(v.Notices, baselineFile+" line "+itoa(e.Line)+": "+e.Name+" ("+strings.Join(e.PRs, " ")+") is in "+
+				key+" now: take it into the count with "+lowerHint)
+		}
+		if n, top := now.Counts[id], l.count.Count+len(l.allowed); l.count.Line > 0 && n < top {
+			v.Notices = append(v.Notices, baselineFile+" line "+itoa(l.count.Line)+": "+id+" is "+itoa(n)+", under its baseline "+
+				itoa(l.count.Count)+allowedText(l.allowed)+": lower it with "+lowerHint)
+		}
+		if len(l.waiting) > 0 {
+			var waiting []string
+			for _, e := range l.waiting {
+				waiting = append(waiting, e.Name+" ("+strings.Join(e.PRs, " ")+")")
+			}
+			v.Notices = append(v.Notices, baselineFile+" line "+itoa(l.waiting[0].Line)+": "+id+" allows "+
+				strings.Join(waiting, ", ")+", not here yet; once a type's PRs have all closed, "+dropHint+" drops its line")
 		}
 	}
 	if scope == "" {
@@ -291,6 +386,18 @@ func Judge(findings []Finding, counts []Count, pkgs []*Pkg, lists Lists, base ma
 		v.Notices = append(v.Notices, e.Name+" no longer happens: delete line "+itoa(e.Line)+" of "+edgesFile)
 	}
 	return v
+}
+
+// allowedText is the allowances a limit holds, for a message: "" for none, " and 2 allowed (A, B)".
+func allowedText(allowed []BaselineEntry) string {
+	if len(allowed) == 0 {
+		return ""
+	}
+	var names []string
+	for _, e := range allowed {
+		names = append(names, e.Name)
+	}
+	return " and " + itoa(len(allowed)) + " allowed (" + strings.Join(names, ", ") + ")"
 }
 
 // countWhat is what an app-* count holds, for its message.
