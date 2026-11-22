@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +81,28 @@ func TestLarkPersonBotOpaqueParkPendingReviewAndClose(t *testing.T) {
 	}
 	if kinds := personReplyPendingKinds(assistantService, request.TaskID); len(kinds) != 1 || kinds[0] != "review" {
 		t.Fatalf("pending signals=%v", kinds)
+	}
+	// GET /api/v1/todos shows the task without its raw source identity; the in-memory evidence keeps it for matching.
+	listed, err := assistantService.listedTodosOf(context.Background(), false, map[string]bool{request.TaskID: true})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("listed to-dos=%d err=%v", len(listed), err)
+	}
+	raw, err := json.Marshal(listed[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"oc_allowed", "omt_task", "om_request", "om_reply", "ou_person", "ou_owner", "cli_bot", "applink", request.ParkInstance} {
+		if strings.Contains(string(raw), private) {
+			t.Fatalf("to-dos API exposed %q: %s", private, raw)
+		}
+	}
+	watchKept, observationKept := false, false
+	for _, review := range todoNow(assistantService, request.TaskID).Supervision.Reviews {
+		watchKept = watchKept || review.Evidence != nil && review.Evidence.Reply != nil
+		observationKept = observationKept || review.Reply != nil
+	}
+	if !watchKept || !observationKept {
+		t.Fatal("redaction removed the server-side reply watch or observation")
 	}
 	if sends := sentToAgent(fakeHub); len(sends) != 0 {
 		t.Fatalf("exact reply became an Agent instruction: %v", sends)

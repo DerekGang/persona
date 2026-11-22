@@ -51,7 +51,7 @@ func (s *Service) listedTodosOf(ctx context.Context, briefs bool, ids map[string
 	list := make([]listedTodo, 0, n)
 	for _, t := range s.todos.todos {
 		if ids == nil || ids[t.ID] {
-			list = append(list, listedTodo{Todo: formatTodo(copyTodoLocked(t))})
+			list = append(list, listedTodo{Todo: clientTodo(formatTodo(copyTodoLocked(t)))})
 		}
 	}
 	s.todos.mu.RUnlock()
