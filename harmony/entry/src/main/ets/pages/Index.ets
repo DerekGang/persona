@@ -6,13 +6,14 @@ import { AgentStartPicker } from '../components/AgentStartPicker';
 import { AgentLaunchChoices, providerStartModes, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
 import { WorktreeSheet } from '../components/WorktreeSheet';
 import { phonePlaceAtRoot, phonePanIntent, finishesPhonePan } from '../models/PhoneNavigation';
+import { relativeActivityDate } from '../core/PhoneDate';
 import { PhoneConversationSearch } from '../components/PhoneConversationSearch';
 import { PhoneAllChats } from '../components/PhoneAllChats';
 import { SessionSpaceTabs } from '../components/SessionSpaceTabs';
 import { PhoneSessionHeading } from '../components/PhoneSessionHeading';
 import { SessionSpace, SessionSpaceTab, sessionSpace, worktreeForSessionSpace } from '../models/SessionSpace';
 import { MachineDirectory } from '../components/MachineDirectory';
-import { PhoneIconButton, PhoneStyle, PhoneSectionTitle } from '../design/PhoneStyle';
+import { PhoneIconButton, PhoneStyle } from '../design/PhoneStyle';
 import { SettingsDirectory, PhoneSettingsOptions } from '../components/SettingsDirectory';
 import { WorktreeChange, WorktreeActions } from '../models/WorktreeActions';
 import { ProjectCatalog, ProjectWorktree, PersonaProject } from '../models/ProjectCatalog';
@@ -1791,7 +1792,8 @@ struct Index {
     if (this.agentPanel === 'workspace') {
       const tree = this.availableAgentTrees().find((t:ProjectWorktree) => t.key === value);
       if (value && (!tree || !tree.boundStart)) return;
-      this.pickedAgentTree = value; this.directory = tree?.cwd || '';
+      this.pickedAgentTree = value;
+      if (tree) this.directory = tree.cwd;
     } else if (this.agentPanel === 'folder') {
       if (value !== this.launchChoices.path || this.launchChoices.loading) return;
       this.pickedAgentTree = ''; this.directory = value;
@@ -1839,7 +1841,7 @@ struct Index {
   private launchRowTitle(key:string): string {
     if (key === 'workspace') return tr('workspace');
     if (key === 'folder') return this.directory ? this.directory.split('/').filter((part:string) => !!part).pop() || '/' : tr('directory');
-    if (key === 'preset') return tr('phone_preset');
+    if (key === 'preset') return tr('phone_start_preset');
     if (key === 'launcher') return this.launcher || (this.machineDefaultLabel ? tr('admin_default')+' · '+this.machineDefaultLabel : tr('launcher'));
     if (key === 'model') return this.agentModelId ? this.launchChoices.models.find((option:LaunchChoice) => option.id === this.agentModelId)?.title || this.agentModelId : tr('flow_model');
     return tr('flow_effort');
@@ -1852,18 +1854,45 @@ struct Index {
     if (key === 'model') return this.agentModelId || this.launchChoices.defaultModelName() || tr('flow_use_default');
     return this.agentEffort || tr('flow_use_default');
   }
+  private agentSize(regular: number, largest: number): number {
+    return PhoneStyle.formSize(regular,largest,this.environment.fontScale);
+  }
+  @Builder agentSectionTitle(key: string, followsGroup: boolean) {
+    Row() {
+      Text(tr(key)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(600).fontColor(Colors.secondary)
+        .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+    }.width('100%').height(this.agentSize(40.33,47.67)).padding({left:20,right:20,top:10})
+      .margin({top:followsGroup ? 17.67 : 0}).id('agent.section.'+key)
+  }
+  @Builder workspaceOption() {
+    Row({space:12}) {
+      Text(tr('workspace')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink)
+        .layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+      Text(this.launchRowDetail('workspace')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+        .constraintSize({maxWidth:'60%'}).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+      if (!this.agentWorktree) SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12,this.environment.fontScale)).fontColor([Colors.secondary])
+    }.width('100%').constraintSize({minHeight:this.agentSize(52.33,59.33)}).padding({left:20,right:20})
+      .onClick(() => { if (!this.agentWorktree) this.openAgentPicker('workspace'); }).accessibilityGroup(true).id('agent.workspace')
+  }
+  private selectedTreeKind(tree: ProjectWorktree): string {
+    const kind = tr(tree.workspaceKind === 'folder' ? 'phone_session_folder' : tree.main ? 'project_primary' : 'project_worktree');
+    return kind+(tree.workspaceKind !== 'folder' && tree.branch && tree.branch !== tree.title ? ' · '+tree.branch : '');
+  }
   @Builder agentOptionRow(key:string) {
-    Row({space:11}) {
-      SymbolGlyph(key === 'folder' || key === 'workspace' ? Symbols.folder : key === 'launcher' ? Symbols.agent : key === 'effort' ? Symbols.gear : Symbols.apps)
-        .fontSize('18vp').fontColor([Colors.link]).width(24)
+    Row({space:10}) {
+      SymbolGlyph(key === 'folder' ? $r('sys.symbol.folder_fill') : key === 'launcher' ? Symbols.agent :
+        key === 'effort' ? Symbols.health : Symbols.apps)
+        .fontSize(Tokens.interfaceFontVp(key==='preset' ? 22 : 18,this.environment.fontScale))
+        .fontColor([Colors.link]).width(this.agentSize(key==='preset' ? 30 : 21,key==='preset' ? 38 : 29))
       Column({space:2}) {
-        Text(this.launchRowTitle(key)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        if (this.launchRowDetail(key)) Text(this.launchRowDetail(key)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
-          .maxLines(this.environment.fontScale >= 1.5 ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
+        Text(this.launchRowTitle(key)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
+          .fontWeight(key==='folder' ? 600 : 400).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+        if (this.launchRowDetail(key)) Text(this.launchRowDetail(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(key==='folder' ? EllipsisMode.START : EllipsisMode.END)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      if (key !== 'workspace' || !this.agentWorktree) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-    }.width('100%').constraintSize({minHeight:49}).padding({left:13,right:12,top:7,bottom:7})
-      .onClick(() => { if (key !== 'workspace' || !this.agentWorktree) this.openAgentPicker(key); }).accessibilityGroup(true).id('agent.'+key)
+      SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12,this.environment.fontScale)).fontColor([Colors.secondary])
+    }.width('100%').constraintSize({minHeight:this.launchRowDetail(key) ? this.agentSize(66.67,81.33) : this.agentSize(52.33,59.33)})
+      .padding({left:20,right:20,top:12,bottom:12}).onClick(() => this.openAgentPicker(key)).accessibilityGroup(true).id('agent.'+key)
   }
   @Builder launchDivider() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:48}) }
   private agentPathLabel(path:string): string {
@@ -1874,16 +1903,26 @@ struct Index {
     if (this.agentWorktree || !this.recentAgentDirectories.some((row:LaunchChoice) => row.id === choice.id)) return;
     this.pickedAgentTree = ''; this.directory = choice.id; this.saveAgentDraft();
   }
+  private recentUsed(choice: LaunchChoice): string {
+    const locale = this.model.language === 'default' ? i18n.System.getSystemLanguage() : this.model.language;
+    return relativeActivityDate(Date.parse(choice.description),Date.now(),locale,tr('agent_time_just_now'),tr('kb_minutes_ago'),tr('kb_yesterday'));
+  }
   @Builder recentDirectory(choice: LaunchChoice) {
-    Row({space:11}) {
-      SymbolGlyph(this.directory === choice.id ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.clock'))
-        .fontSize('18vp').fontColor([this.directory === choice.id ? Colors.link : Colors.secondary]).width(24)
+    Row({space:8}) {
+      SymbolGlyph(this.directory === choice.id ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.clock_arrow_2_circlepath'))
+        .fontSize(Tokens.interfaceFontVp(18,this.environment.fontScale)).fontColor([this.directory === choice.id ? Colors.link : Colors.secondary])
+        .width(this.agentSize(20,27))
       Column({space:2}) {
-        Text(choice.title).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
-        Text(this.agentPathLabel(choice.id.substring(0,choice.id.lastIndexOf('/')) || '/')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+        Text(choice.title).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+        Text(this.agentPathLabel(choice.id.substring(0,choice.id.lastIndexOf('/')) || '/')).fontSize(12)
+          .maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
+          .textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-    }.width('100%').constraintSize({minHeight:56}).padding({left:14,right:14,top:7,bottom:7})
-      .accessibilityGroup(true).accessibilityText(choice.title+' · '+choice.id).accessibilitySelected(this.directory === choice.id)
+      if (this.recentUsed(choice)) Text(this.recentUsed(choice)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).constraintSize({maxWidth:'40%'}).id('agent.recent_directory.time')
+    }.width('100%').constraintSize({minHeight:this.agentSize(66.67,81.33)}).padding({left:20,right:20,top:12,bottom:12})
+      .accessibilityGroup(true).accessibilitySelected(this.directory === choice.id)
       .onClick(() => this.selectRecentDirectory(choice)).id('agent.recent_directory')
   }
   private machineChoiceDetail(row:ResourceRow):string {
@@ -1905,19 +1944,22 @@ struct Index {
   }
   @Monitor('environment.fontScale','environment.keyboardHeightPx') agentDraftEnvironmentChanged():void { this.revealFocusedAgentDraft(); }
 
+  private machineCardHeight(row: ResourceRow): number {
+    return Wire.text(row.data(),'icon') === 'desktop' ? this.agentSize(99,120.67) : this.agentSize(96.67,117.67);
+  }
   @Builder machineChoice(row:ResourceRow) {
     Button({type:ButtonType.Normal}) {
       Column({space:8}) {
         Row() {
           SymbolGlyph(Wire.text(row.data(),'icon') === 'server' ? $r('sys.symbol.externaldrive') :
-            Wire.text(row.data(),'icon') === 'desktop' ? $r('sys.symbol.desktop') : Symbols.device).fontSize('22vp').fontColor([Colors.ink])
+            Wire.text(row.data(),'icon') === 'desktop' ? $r('sys.symbol.desktop') : Symbols.device).fontSize(Tokens.interfaceFontVp(22,this.environment.fontScale)).fontColor([Colors.ink])
           Blank().layoutWeight(1)
           Circle().width(7).height(7).fill(this.agentMachineOnline(row) ? Colors.positive : Colors.secondary)
         }.width('100%')
         Text(row.title || row.id).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(600).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         Text(this.machineChoiceDetail(row)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).id('agent.machine_detail.'+row.id)
       }.width('100%').alignItems(HorizontalAlign.Start).padding(12)
-    }.width(120*Math.min(this.environment.fontScale,Tokens.interfaceFontMaxScale)+24).padding(0).borderRadius(14)
+    }.width(this.agentSize(144,181.67)).height(this.machineCardHeight(row)).padding(0).borderRadius(14)
       .backgroundColor(this.sameMachine(row,this.chosenAgentMachine()) ? Colors.selection : Colors.subtle)
       .border({width:this.sameMachine(row,this.chosenAgentMachine()) ? 1.5 : 0,color:Colors.link,radius:14})
       .enabled(this.agentMachineOnline(row) && (!this.agentWorktree || this.sameMachine(row,this.chosenAgentMachine())))
@@ -1943,7 +1985,7 @@ struct Index {
         Scroll(this.agentFormScroll) {
           Column() {
             if (!this.agentWorktree && !this.agentTodo && this.recentSetups.length) {
-              PhoneSectionTitle({text:tr('flow_recent_setups')})
+              this.agentSectionTitle('flow_recent_setups',false)
               Column() { ForEach(this.recentSetups.slice(0,3),(r:RecentAgentSetup) => {
                 Row({space:12}) {
                   SymbolGlyph(Symbols.folder).fontSize('17vp').fontColor([Colors.link])
@@ -1961,36 +2003,46 @@ struct Index {
               },(r:RecentAgentSetup) => r.key) }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
             }
             if (!this.agentWorktree) {
-              PhoneSectionTitle({text:tr('phone_machines')})
+              this.agentSectionTitle('phone_machines',!this.agentTodo && this.recentSetups.length > 0)
               Scroll() { Row({space:12}) {
                 ForEach(this.agentMachines(),(m:ResourceRow) => this.machineChoice(m),(m:ResourceRow) => JSON.stringify([m.group,m.manager,m.id,m.title,m.state,this.machineChoiceDetail(m)]))
               } }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).width('100%')
                 .padding({left:16,right:16,top:12,bottom:12}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
             }
             if (this.agentWorktree || this.selectedAgentTree() || this.availableAgentTrees().some((t:ProjectWorktree) => t.boundStart)) {
-              PhoneSectionTitle({text:tr('workspace')})
               Column() {
-                this.agentOptionRow('workspace')
+                this.workspaceOption()
                 if (this.selectedAgentTree()) {
-                  Text(this.agentPathLabel(this.selectedAgentTree()!.cwd)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding({left:48,right:13,bottom:6}).width('100%').id('agent.worktree')
                   if (this.selectedAgentTree()!.permits('create')) {
                     this.launchDivider()
                     Button(tr('tree_create'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).onClick(() => this.makeChildFromAgent()).id('agent.child')
                   }
                 }
               }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+                .margin({top:this.agentWorktree ? 0 : 35})
+              if (this.selectedAgentTree()) {
+                Column() {
+                  Text(this.selectedTreeKind(this.selectedAgentTree()!)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+                    .fontColor(Colors.secondary).id('agent.worktree.kind')
+                  Text(this.agentPathLabel(this.selectedAgentTree()!.cwd)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+                    .fontColor(Colors.secondary).id('agent.worktree')
+                }.width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20,top:6})
+              }
             }
             if (!this.selectedAgentTree() && !this.agentWorktree) {
-              PhoneSectionTitle({text:tr('directory')})
+              this.agentSectionTitle('directory',true)
               Column() {
                 this.agentOptionRow('folder')
                 ForEach(this.recentAgentDirectories.slice(0,6),(row:LaunchChoice) => {
-                  this.launchDivider()
-                  this.recentDirectory(row)
+                  Stack({alignContent:Alignment.TopStart}) {
+                    this.recentDirectory(row)
+                    Divider().strokeWidth(Tokens.divider).color(Colors.divider).margin({left:this.agentSize(48,55),right:20})
+                      .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
+                  }.width('100%')
                 },(row:LaunchChoice) => row.id)
               }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
             }
-            PhoneSectionTitle({text:tr('flow_launcher_model_once')})
+            this.agentSectionTitle('flow_launcher_model_once',true)
             Column() {
               if (this.agentPresets.length) {
                 this.agentOptionRow('preset')
@@ -2008,7 +2060,7 @@ struct Index {
             }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
             Text(this.agentModelHelp()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
               .width('100%').padding({left:12,right:12,top:6}).id('agent.model.help')
-            PhoneSectionTitle({text:tr('flow_first_message')})
+            this.agentSectionTitle('flow_first_message',true)
             TextArea({text:this.newTask,placeholder:tr(this.promptOptional() ? 'flow_draft_optional' : 'task')})
               .minLines(3).maxLines(10,{overflowMode:MaxLinesMode.SCROLL}).width('100%')
               .fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale)).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)})

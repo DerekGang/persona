@@ -7273,6 +7273,10 @@
       "value": "文件夹"
     },
     {
+      "name": "phone_start_preset",
+      "value": "预设"
+    },
+    {
       "name": "phone_session_permissions",
       "value": "权限"
     },

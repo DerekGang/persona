@@ -69,7 +69,7 @@ test('magnified project and Agent views keep symbols inside their slots and give
  assert.match(projects, /GridRow\(\{columns:this\.narrowOutline\(\) \? 1 : 2/);
  assert.match(agents, /Text\(tr\(QUICK_LABELS\[index\]\)\)\.fontSize\(14\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
  assert.match(picker, /TextInput\(\{text:this\.address[^\n]+\.height\(PhoneStyle\.groupedRowHeight\(nativeEnvironment\.fontScale\)\)\.fontSize\(Tokens\.interfaceFontVp\(13,nativeEnvironment\.fontScale\)\)/);
- assert.match(launch, /width\(120\*Math\.min\(this\.environment\.fontScale,Tokens\.interfaceFontMaxScale\)\+24\)/);
+ assert.match(launch, /width\(this\.agentSize\(144,181\.67\)\)\.height\(this\.machineCardHeight\(row\)\)/);
  assert.match(launch, /Wire\.text\(row\.data\(\),'hostname'\) \|\| tr\('online'\)/);
  assert.match(projects, /15\*this\.spaceCardScale\(\)\)\.maxFontScale\(Tokens\.interfaceScaleFor\(15\)\)\.fontWeight\(600\)/);
  assert.match(launch, /this\.machineChoice\(m\)[\s\S]{0,160}scrollable\(ScrollDirection\.Horizontal\)/);

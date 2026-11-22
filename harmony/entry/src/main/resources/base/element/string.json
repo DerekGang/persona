@@ -7273,6 +7273,10 @@
       "value": "Folder"
     },
     {
+      "name": "phone_start_preset",
+      "value": "Preset"
+    },
+    {
       "name": "phone_session_permissions",
       "value": "Permissions"
     },

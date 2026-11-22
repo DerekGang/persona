@@ -7273,6 +7273,10 @@
       "value": "フォルダ"
     },
     {
+      "name": "phone_start_preset",
+      "value": "プリセット"
+    },
+    {
       "name": "phone_session_permissions",
       "value": "権限"
     },
