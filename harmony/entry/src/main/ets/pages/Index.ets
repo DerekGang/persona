@@ -1758,7 +1758,11 @@ struct Index {
     if (this.agentPanel === 'preset') return [new LaunchChoice('',tr('phone_default_preset'))].concat(
       this.agentPresets.map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'name'),Wire.text(v,'name'),
         [Wire.text(v,'launcher'),Wire.text(v,'model'),Wire.text(v,'effort')].filter((label:string) => !!label).join(' · '))));
-    if (this.agentPanel === 'model') return [new LaunchChoice('',tr('admin_default'),[this.effectiveLauncher(),this.launchChoices.defaultModelName()].filter((v:string) => !!v).join(' · '))].concat(this.launchChoices.locked ? [] : this.launchChoices.models);
+    if (this.agentPanel === 'model') {
+      const hint = this.startModelRow('').detail;
+      const detail = [this.effectiveLauncher(),hint === tr('flow_use_default') ? '' : hint].filter((v:string) => !!v).join(' · ');
+      return [new LaunchChoice('',tr('admin_default'),detail)].concat(this.launchChoices.locked ? [] : this.launchChoices.models);
+    }
     if (this.agentPanel === 'effort') return [new LaunchChoice('',tr('flow_use_default'))].concat(
       this.launchChoices.startEfforts(this.chosenLauncher()).map((v:string) => new LaunchChoice(v,v)));
     return [];
@@ -1839,12 +1843,16 @@ struct Index {
     this.pickedAgentTree = key; this.directory = change.path; this.closeAgentPanel(); this.saveAgentDraft();
     if (!this.projectCatalog.tree(key)) this.startFailure = 'project_gone';
   }
+  private startModelRow(picked: string): LaunchChoice {
+    const inherited = this.agentUsesModelSettings && this.effectiveLauncher() === this.defaultLauncherName ? this.agentConfiguredModel : '';
+    return this.launchChoices.modelPresentation(picked,inherited,this.chosenLauncher(),!!this.launcher,tr);
+  }
   private launchRowTitle(key:string): string {
     if (key === 'workspace') return tr('workspace');
     if (key === 'folder') return this.directory ? this.directory.split('/').filter((part:string) => !!part).pop() || '/' : tr('directory');
     if (key === 'preset') return tr('phone_start_preset');
     if (key === 'launcher') return this.launcher || (this.machineDefaultLabel ? tr('admin_default')+' · '+this.machineDefaultLabel : tr('launcher'));
-    if (key === 'model') return this.agentModelId ? this.launchChoices.models.find((option:LaunchChoice) => option.id === this.agentModelId)?.title || this.agentModelId : tr('flow_model');
+    if (key === 'model') return this.startModelRow(this.agentModelId).title;
     return tr('flow_effort');
   }
   private launchRowDetail(key:string): string {
@@ -1852,7 +1860,7 @@ struct Index {
     if (key === 'folder') return this.agentPathLabel(this.directory || Wire.text(this.chosenAgentMachine()?.data() || {},'home') || '~');
     if (key === 'preset') return this.agentPreset || this.agentTierProfile || tr('phone_default_preset');
     if (key === 'launcher') return this.launcher ? Wire.text(this.chosenLauncher(),'model') : '';
-    if (key === 'model') return this.agentModelId || this.launchChoices.defaultModelName() || tr('flow_use_default');
+    if (key === 'model') return this.startModelRow(this.agentModelId).detail;
     return this.agentEffort || tr('flow_use_default');
   }
   private agentSize(regular: number, largest: number): number {
@@ -1884,6 +1892,8 @@ struct Index {
       Stack() {
         if (key === 'preset' || key === 'launcher') {
           PhoneOutlineIcon({name:'cube',iconScale:(key === 'preset' ? 1 : 0.82)*this.agentSize(1,1.35)})
+        } else if (key === 'model') {
+          PhoneOutlineIcon({name:'sparkles',iconScale:this.agentSize(1,1.35)})
         } else {
           SymbolGlyph(key === 'folder' ? $r('sys.symbol.folder_fill') : key === 'effort' ? Symbols.health : Symbols.apps)
             .fontSize(Tokens.interfaceFontVp(18,this.environment.fontScale)).fontColor([Colors.link])
@@ -2108,8 +2118,8 @@ struct Index {
       const standard = Wire.object(reply,'default');
       const purpose = Wire.object(replies[1],'purpose'), configured = Wire.object(purpose,'effective');
       this.agentUsesModelSettings = Wire.text(purpose,'id') === 'agent.new';
-      this.agentConfiguredModel = this.agentUsesModelSettings ? Wire.text(configured,'model') : '';
       const configuredProvider = this.agentUsesModelSettings ? Wire.text(configured,'provider') : '';
+      this.agentConfiguredModel = configuredProvider ? Wire.text(configured,'model') : '';
       this.defaultLauncherName = (configuredProvider || Wire.text(standard,'provider')).replace(/^launcher\./,'');
       const machineProvider = Wire.text(standard,'provider').replace(/^launcher\./,''), machineModel = Wire.text(standard,'model');
       const label = machineProvider || machineModel ? [machineProvider,machineModel] : [this.defaultLauncherName,this.agentConfiguredModel];

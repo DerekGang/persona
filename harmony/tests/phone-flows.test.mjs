@@ -166,6 +166,25 @@ test('recent setups deduplicate exact workspace/launcher/model choices and never
   assert.deepEqual(loadAgentSetups('{"entries":[{"machine":"m","cwd":"/a","prompt":"private"},{"machine":""}]}').map(x=>[x.machine,x.cwd,x.prompt]),[['m','/a',undefined]]);
 });
 
+test('model detail follows the configured launcher, explicit preset or typed model and the older catalog default',async()=>{
+  const word=key=>({phone_start_configured_model:'Model Settings: {model}',phone_start_typed_model_id:'Typed model ID: {id}'}[key]??key);
+  const choices=new AgentLaunchChoices(), catalog={agent:'claude',models:[
+    {id:'local-default',name:'Local',default:true,resolved:'launcher-model-5'},
+    {id:'chosen',name:'Quality',resolved:'remote-model'},{id:'remembered',name:'remembered',custom:true}
+  ]};
+  await choices.loadModels(makeOwner(async()=>catalog),'mac','claude');
+  const view=(id,setting,launcher={},explicit=false)=>choices.modelPresentation(id,setting,launcher,explicit,word);
+  assert.deepEqual([view('','group/model').title,view('','group/model').detail],['phone_start_default_model','Model Settings: group/model']);
+  assert.deepEqual([view('chosen','group/model').title,view('chosen','group/model').detail],['Quality','chosen → remote-model']);
+  assert.equal(view('local-default','group/model').detail,'local-default → launcher-model-5');
+  assert.equal(view('remembered','group/model').detail,'phone_start_typed_model');
+  assert.match(view('gpt-5.5','group/model').detail,/Typed model ID: gpt-5.5/);
+  assert.equal(view('','').detail,'launcher-model-5');
+  assert.equal(view('','group/model',{name:'omp',source:'path',agent:'omp'},true).detail,'launcher-model-5');
+  const offline=new AgentLaunchChoices();assert.equal(offline.modelPresentation('','',{},false,word).detail,'flow_use_default');
+  choices.locked='locked by launcher';assert.equal(view('chosen','group/model').detail,'locked by launcher');
+});
+
 test('the model picker preserves the host default as one choice and shows the launcher identity and description',async()=>{
   const choices=new AgentLaunchChoices(),owner=makeOwner(async()=>({agent:'codex',models:[
     {id:'first',name:'First',default:true,efforts:['low']},
@@ -189,7 +208,7 @@ for (const match of formSource.matchAll(/^  private (?:async )?(\w+)\(/gm)) {
 }
 const externalEffects = new Set(['saveAgentDraft', 'loadRecentSetups', 'closeAgentPanel', 'projectPlace', 'openLinkedResource', 'openPickedChat']);
 const required = new Set(['pickerOptions', 'chooseAgentOption', 'selectedAgentTree', 'openAgentPicker', 'pickAgentMachine',
-  'canStartAgent', 'browseAgentFolder', 'loadAgentLaunchers', 'loadInitialAgentDirectory', 'createAgent', 'agentModelHelp']);
+  'canStartAgent', 'browseAgentFolder', 'loadAgentLaunchers', 'loadInitialAgentDirectory', 'createAgent', 'agentModelHelp', 'launchRowTitle', 'launchRowDetail']);
 for (const name of required) {
   const body = formMethods.get(name);
   assert.ok(body, name);
@@ -198,7 +217,8 @@ for (const name of required) {
   }
 }
 const nativeFormDependencies = { Wire, LaunchChoice, RecentAgentSetup, rememberAgentSetup, recentLaunchDirectories, providerStartModes,
-  tr: key => key === 'flow_start_model_terminal_hint' ? '{about} /model' : key };
+  tr: key => ({ flow_start_model_terminal_hint:'{about} /model', phone_start_configured_model:'Model Settings: {model}',
+    phone_start_typed_model_id:'Typed model ID: {id}' }[key] ?? key) };
 const NativeAgentForm = new Function(...Object.keys(nativeFormDependencies), 'return ' + stripTypeScriptTypes(
   'class NativeAgentForm {\n' + [...required].map(name => formMethods.get(name)).join('\n') + '\n}'))(...Object.values(nativeFormDependencies));
 
@@ -254,6 +274,23 @@ function phoneForm(root, selectedMachine, machines, trees) {
   form.agentMachineKey = form.machineKey(selectedMachine);
   return form;
 }
+
+test('New Agent shows the row and picker default from the current machine purpose without choosing a start model',async()=>{
+  const owner=clientForForm('A','work',[]), machine=formMachine(owner,'mac'), form=phoneForm(owner,machine,[machine],[]);
+  Object.assign(form,{agentUsesModelSettings:true,defaultLauncherName:'claude',agentConfiguredModel:'model-chat',launcher:'',
+    launcherData:[{name:'claude',agent:'claude'},{name:'codex',agent:'codex'}],agentPanel:'model'});
+  await form.launchChoices.loadModels(makeOwner(async()=>({agent:'claude',models:[{id:'host',name:'Host choice',is_default:true},
+    {id:'preset-id',name:'Preset choice'}]})),'mac','claude');
+  assert.equal(form.launchRowTitle('model'),'phone_start_default_model');
+  assert.equal(form.launchRowDetail('model'),'Model Settings: model-chat');
+  assert.equal(form.pickerOptions()[0].detail,'claude · Model Settings: model-chat');
+  assert.equal(form.agentModelId,'');
+  form.launcher='codex';assert.equal(form.launchRowDetail('model'),'Host choice');
+  form.agentPreset='explicit';form.agentModelId='preset-id';assert.equal(form.launchRowTitle('model'),'Preset choice');
+  assert.equal(form.launchRowDetail('model'),'preset-id');
+  form.agentModelId='';form.launcher='';form.agentUsesModelSettings=false;
+  assert.equal(form.launchRowDetail('model'),'Host choice');assert.equal(form.agentModelId,'');
+});
 
 test('the start sheet and the session request agree on thinking effort for each launcher and model', async () => {
   const repoSource = readFileSync(new URL('../entry/src/main/ets/models/HubRepository.ets', import.meta.url), 'utf8');

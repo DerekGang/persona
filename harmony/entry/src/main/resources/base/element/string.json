@@ -7277,6 +7277,22 @@
       "value": "Folder"
     },
     {
+      "name": "phone_start_default_model",
+      "value": "Default Model"
+    },
+    {
+      "name": "phone_start_configured_model",
+      "value": "Model Settings: {model}"
+    },
+    {
+      "name": "phone_start_typed_model",
+      "value": "Typed model ID"
+    },
+    {
+      "name": "phone_start_typed_model_id",
+      "value": "Typed model ID: {id}"
+    },
+    {
       "name": "phone_start_preset",
       "value": "Preset"
     },

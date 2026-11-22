@@ -7277,6 +7277,22 @@
       "value": "フォルダ"
     },
     {
+      "name": "phone_start_default_model",
+      "value": "デフォルトモデル"
+    },
+    {
+      "name": "phone_start_configured_model",
+      "value": "モデル設定：{model}"
+    },
+    {
+      "name": "phone_start_typed_model",
+      "value": "手入力のモデルID"
+    },
+    {
+      "name": "phone_start_typed_model_id",
+      "value": "手入力のモデルID：{id}"
+    },
+    {
       "name": "phone_start_preset",
       "value": "プリセット"
     },

@@ -77,7 +77,7 @@ export class AgentLaunchChoices {
   @Trace acceptsTypedModel: boolean = false;
   @Trace effortNames: string[] = [];
   @Trace private effortListKnown: boolean = false;
-  private modelData: Record<string,Object>[] = [];
+  @Trace private modelData: Record<string,Object>[] = [];
   private revision: number = 0;
 
   clear(): void {
@@ -130,6 +130,31 @@ export class AgentLaunchChoices {
   selectedModelId(id:string): string {
     const selected = this.modelData.find((m:Record<string,Object>) => Wire.text(m,'id') === id);
     return selected && (Wire.bool(selected,'is_default') || Wire.bool(selected,'default')) ? '' : id;
+  }
+  modelPresentation(picked: string, configured: string, launcher: Record<string,Object>, explicitlyChosen: boolean,
+    word: (key:string) => string): LaunchChoice {
+    const title = word('phone_start_default_model');
+    if (this.locked) return new LaunchChoice('',title,this.locked);
+    if (picked) {
+      const model = this.modelData.find((item:Record<string,Object>) => Wire.text(item,'id') === picked);
+      const display = launchModelName(picked,model ? Wire.text(model,'name') : picked);
+      const resolved = model ? Wire.text(model,'resolved') : '';
+      let detail = '';
+      if (!model || Wire.bool(model,'custom')) {
+        detail = !model && display !== picked ? word('phone_start_typed_model_id').replace('{id}',picked) : word('phone_start_typed_model');
+      } else {
+        detail = [display !== picked ? picked : '',resolved && resolved !== picked && resolved !== display ? '→ '+resolved : '']
+          .filter((part:string) => !!part).join(' ');
+      }
+      return new LaunchChoice(picked,display,detail);
+    }
+    if (configured && (!explicitlyChosen || !startsNativeOmp(launcher))) {
+      return new LaunchChoice('',title,word('phone_start_configured_model').replace('{model}',launchModelName(configured,configured)));
+    }
+    const def = this.modelData.find((item:Record<string,Object>) => Wire.bool(item,'is_default') || Wire.bool(item,'default'));
+    if (!def) return new LaunchChoice('',title,word('flow_use_default'));
+    const resolved = Wire.text(def,'resolved');
+    return new LaunchChoice('',title,resolved ? launchModelName(resolved,resolved) : launchModelName(Wire.text(def,'id'),Wire.text(def,'name')));
   }
   defaultModelName():string {
     const model = this.modelData.find((m:Record<string,Object>) => Wire.bool(m,'is_default') || Wire.bool(m,'default'));

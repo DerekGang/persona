@@ -7277,6 +7277,22 @@
       "value": "文件夹"
     },
     {
+      "name": "phone_start_default_model",
+      "value": "默认模型"
+    },
+    {
+      "name": "phone_start_configured_model",
+      "value": "模型配置：{model}"
+    },
+    {
+      "name": "phone_start_typed_model",
+      "value": "手动输入的模型 ID"
+    },
+    {
+      "name": "phone_start_typed_model_id",
+      "value": "手动输入的模型 ID：{id}"
+    },
+    {
       "name": "phone_start_preset",
       "value": "预设"
     },
