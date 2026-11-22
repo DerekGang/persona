@@ -130,7 +130,7 @@ func TestArchiveWhenTheExtensionStops(t *testing.T) {
 func TestArchiveOffWritesNothing(t *testing.T) {
 	hub := agentHub(t)
 	_, logs := archivedCall(t, Config{}, hub, "hello", "and you", "fine", appHangsUp)
-	time.Sleep(100 * time.Millisecond)
+	// Off, shutdown starts no write at all (archive() is nil before any goroutine), so nothing can come later.
 	if files, dirs := hubFiles(hub); len(files) != 0 || len(dirs) != 0 {
 		t.Fatalf("wrote %v %v", files, dirs)
 	}
