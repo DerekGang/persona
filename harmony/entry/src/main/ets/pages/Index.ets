@@ -1,7 +1,7 @@
 import { assistantSidebarChats, SidebarTaskHistory } from '../models/AssistantRecentChats';
 import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { AgentStartPicker } from '../components/AgentStartPicker';
-import { AgentLaunchChoices, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
+import { AgentLaunchChoices, providerStartModes, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
 import { WorktreeSheet } from '../components/WorktreeSheet';
 import { phonePlaceAtRoot, phonePanIntent, finishesPhonePan } from '../models/PhoneNavigation';
 import { PhoneConversationSearch } from '../components/PhoneConversationSearch';
@@ -178,6 +178,8 @@ struct Index {
   @Local agentModelId: string = '';
   @Local agentEffort: string = '';
   @Local defaultLauncherName: string = '';
+  @Local agentUsesModelSettings: boolean = false;
+  @Local agentConfiguredModel: string = '';
   @Local launcherData: Record<string,Object>[] = [];
   @Local blockedLaunchers: LaunchChoice[] = [];
   @Local launchListReady: boolean = false;
@@ -1658,6 +1660,19 @@ struct Index {
   private chosenLauncher(): Record<string,Object> {
     return this.launcherData.find((v:Record<string,Object>) => Wire.text(v,'name') === this.effectiveLauncher()) || {};
   }
+  private updateAgentEfforts(): void {
+    const configured = this.agentUsesModelSettings && this.effectiveLauncher() === this.defaultLauncherName ? this.agentConfiguredModel : '';
+    this.launchChoices.updateEfforts(this.agentModelId || configured);
+  }
+  private startAgentEffort(): string {
+    return this.launchChoices.startEfforts(this.chosenLauncher()).includes(this.agentEffort) ? this.agentEffort : '';
+  }
+  private agentModelHelp(): string {
+    const about = tr(this.agentUsesModelSettings ? 'flow_start_model_settings_hint' : 'flow_start_machine_launchers_hint');
+    const choices = !this.launchChoices.locked && (this.launchChoices.acceptsTypedModel ||
+      this.launchChoices.models.length > 0 || !!this.launchChoices.defaultModelName());
+    return choices && !providerStartModes(this.chosenLauncher()) ? tr('flow_start_model_terminal_hint').replace('{about}',about) : about;
+  }
   private promptOptional(): boolean {
     const choice = this.chosenLauncher();
     if (Wire.bool(choice,'prompt_optional')) return true;
@@ -1684,7 +1699,7 @@ struct Index {
         [Wire.text(v,'launcher'),Wire.text(v,'model'),Wire.text(v,'effort')].filter((label:string) => !!label).join(' · '))));
     if (this.agentPanel === 'model') return [new LaunchChoice('',tr('admin_default'),[this.effectiveLauncher(),this.launchChoices.defaultModelName()].filter((v:string) => !!v).join(' · '))].concat(this.launchChoices.locked ? [] : this.launchChoices.models);
     if (this.agentPanel === 'effort') return [new LaunchChoice('',tr('flow_use_default'))].concat(
-      this.launchChoices.effortNames.map((v:string) => new LaunchChoice(v,v)));
+      this.launchChoices.startEfforts(this.chosenLauncher()).map((v:string) => new LaunchChoice(v,v)));
     return [];
   }
   private selectedPickerId(): string {
@@ -1694,24 +1709,26 @@ struct Index {
     return this.agentPanel === 'model' ? this.agentModelId : this.agentEffort;
   }
   private openAgentPicker(kind:string): void {
-    if (this.switchingAgentMachine || this.creatingAgent || !this.agentOwnsMachine(this.chosenAgentMachine())) return;
+    if (this.switchingAgentMachine || this.creatingAgent || !this.agentOwnsMachine(this.chosenAgentMachine()) || kind === 'effort' && this.launchChoices.startEfforts(this.chosenLauncher()).length === 0) return;
     this.startFailure = ''; this.agentPanel = kind;
     if (kind === 'workspace' && !this.projectCatalog.loading) this.projectCatalog.refresh(this.model);
     else if (kind === 'folder') this.browseAgentFolder(this.directory);
-    else if (kind === 'model') {
-      const m = this.chosenAgentMachine(); if (!m) return;
-      const form = this.agentFormRevision, owner = this.agentModel;
-      this.launchChoices.loadModels(owner,m.id,this.effectiveLauncher()).then(() => {
-        if (form === this.agentFormRevision && owner === this.agentModel && this.chosenAgentMachine()?.key() === m.key())
-          this.launchChoices.updateEfforts(this.agentModelId);
-      });
-    }
+    else if (kind === 'model') this.loadAgentModels();
+  }
+  private loadAgentModels(): void {
+    const machine = this.chosenAgentMachine(), launcher = this.effectiveLauncher(), form = this.agentFormRevision, owner = this.agentModel;
+    if (!launcher || !machine || !this.agentOwnsMachine(machine)) return;
+    this.launchChoices.loadModels(owner,machine.id,launcher).then(() => {
+      if (form === this.agentFormRevision && owner === this.agentModel && this.chosenAgentMachine()?.key() === machine.key() &&
+          this.effectiveLauncher() === launcher) this.updateAgentEfforts();
+    });
   }
   private browseAgentFolder(path:string): void {
     const machine = this.chosenAgentMachine();
     if (machine && this.agentOwnsMachine(machine) && this.agentPanel === 'folder') this.launchChoices.folder(this.agentModel,machine.id,path);
   }
   private chooseAgentOption(value:string): void {
+    const refreshModels = this.agentPanel === 'launcher' || this.agentPanel === 'preset';
     if (this.agentPanel === 'workspace') {
       const tree = this.availableAgentTrees().find((t:ProjectWorktree) => t.key === value);
       if (value && (!tree || !tree.boundStart)) return;
@@ -1729,13 +1746,15 @@ struct Index {
       this.launchChoices.clear();
     } else if (this.agentPanel === 'model') {
       if (this.launchChoices.locked && value) return;
-      this.agentPreset = ''; this.agentModelId = this.launchChoices.selectedModelId(value); this.launchChoices.updateEfforts(value);
-      if (!this.launchChoices.effortNames.includes(this.agentEffort)) this.agentEffort = '';
+      this.agentPreset = ''; this.agentModelId = this.launchChoices.selectedModelId(value); this.updateAgentEfforts();
+      this.agentEffort = this.startAgentEffort();
     } else if (this.agentPanel === 'effort') {
-      if (value && !this.launchChoices.effortNames.includes(value)) return;
+      const options = this.launchChoices.startEfforts(this.chosenLauncher());
+      if (!options.length || value && !options.includes(value)) return;
       this.agentPreset = ''; this.agentEffort = value;
     }
     this.closeAgentPanel(); this.saveAgentDraft();
+    if (refreshModels) this.loadAgentModels();
   }
   private closeAgentPanel(): void {
     if (this.startWorktree.busy) return;
@@ -1909,11 +1928,13 @@ struct Index {
                 this.launchDivider()
                 this.agentOptionRow('model')
               }
-              if (this.launchChoices.effortNames.length || this.agentEffort) {
+              if (this.launchChoices.startEfforts(this.chosenLauncher()).length > 0) {
                 this.launchDivider()
                 this.agentOptionRow('effort')
               }
             }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
+            Text(this.agentModelHelp()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+              .width('100%').padding({left:12,right:12,top:6}).id('agent.model.help')
             PhoneSectionTitle({text:tr('flow_first_message')})
             TextArea({text:this.newTask,placeholder:tr(this.promptOptional() ? 'flow_draft_optional' : 'task')}).minLines(2).height(Math.max(91, 46 * this.environment.fontScale + 24))
               .fontSize(16).padding(14).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
@@ -1936,15 +1957,25 @@ struct Index {
   }
   private async loadAgentLaunchers(): Promise<void> {
     const rev = ++this.launcherRevision, form = this.agentFormRevision, owner = this.agentModel, machine = this.chosenAgentMachine()?.id;
-    this.agentLauncherOptions = []; this.agentLauncherLabels = []; this.agentPresets = []; this.agentTierProfile = ''; this.machineDefaultLabel = ''; this.launchListReady = false; this.launcherData = []; this.blockedLaunchers = []; this.defaultLauncherName = '';
+    this.agentLauncherOptions = []; this.agentLauncherLabels = []; this.agentPresets = []; this.agentTierProfile = ''; this.machineDefaultLabel = ''; this.launchListReady = false; this.launcherData = []; this.blockedLaunchers = []; this.defaultLauncherName = ''; this.agentUsesModelSettings = false; this.agentConfiguredModel = '';
     if (!machine || !owner.connected) return;
     const scope = owner.scope(), epoch = owner.connectionGeneration();
     try {
-      const reply = await owner.repo().call('/api/v1/machines/' + encodeURIComponent(machine) + '/launchers?purpose=agent.new');
+      const replies = await Promise.all([
+        owner.repo().call('/api/v1/machines/' + encodeURIComponent(machine) + '/launchers?purpose=agent.new'),
+        owner.repo().call('/api/v1/model-config/purposes/agent.new').catch((): Record<string,Object> => Wire.payload([],[]))
+      ]);
+      const reply = replies[0];
       if (rev !== this.launcherRevision || form !== this.agentFormRevision || !owner.owns(epoch,scope) || this.chosenAgentMachine()?.id !== machine) return;
       const standard = Wire.object(reply,'default');
-      this.defaultLauncherName = Wire.text(standard,'provider').replace(/^launcher\./,'');
-      this.machineDefaultLabel = [Wire.text(standard,'provider').replace(/^launcher\./,''),Wire.text(standard,'model')].filter((v:string) => !!v).join(' · ');
+      const purpose = Wire.object(replies[1],'purpose'), configured = Wire.object(purpose,'effective');
+      this.agentUsesModelSettings = Wire.text(purpose,'id') === 'agent.new';
+      this.agentConfiguredModel = this.agentUsesModelSettings ? Wire.text(configured,'model') : '';
+      const configuredProvider = this.agentUsesModelSettings ? Wire.text(configured,'provider') : '';
+      this.defaultLauncherName = (configuredProvider || Wire.text(standard,'provider')).replace(/^launcher\./,'');
+      const machineProvider = Wire.text(standard,'provider').replace(/^launcher\./,''), machineModel = Wire.text(standard,'model');
+      const label = machineProvider || machineModel ? [machineProvider,machineModel] : [this.defaultLauncherName,this.agentConfiguredModel];
+      this.machineDefaultLabel = label.filter((v:string) => !!v).join(' · ');
       const allowed = Wire.rows(reply, 'launchers').filter((item: Record<string,Object>) => !!Wire.text(item,'name') && !Object.keys(Wire.object(item,'block')).length);
       this.launcherData = allowed; this.launchListReady = Array.isArray(reply['launchers']);
       const blocked = Wire.rows(reply,'launchers').filter((v:Record<string,Object>) => !!Object.keys(Wire.object(v,'block')).length)
@@ -1957,13 +1988,7 @@ struct Index {
       this.agentTierProfile = Wire.text(Wire.object(reply,'tiers_profile'),'name');
       this.agentPresets = Wire.rows(reply,'tiers').filter((v:Record<string,Object>) => !!Wire.text(v,'name') && this.agentLauncherOptions.includes(Wire.text(v,'launcher')));
       this.agentLauncherLabels = allowed.map((item: Record<string,Object>) => Wire.text(item,'display_name') || Wire.text(item,'name'));
-      if (!this.agentPanel && this.effectiveLauncher()) {
-        const launcher = this.effectiveLauncher();
-        this.launchChoices.loadModels(owner,machine,launcher).then(() => {
-          if (rev === this.launcherRevision && form === this.agentFormRevision && this.agentModel === owner &&
-            this.effectiveLauncher() === launcher) this.launchChoices.updateEfforts(this.agentModelId);
-        });
-      }
+      if (!this.agentPanel) this.loadAgentModels();
     } catch (_) { /* Older nodes support entering the existing launcher name directly. */ }
   }
   private agentDraftKey(): string { return 'new-agent:' + (this.agentWorktree?.key || this.agentTodo?.id || 'standalone'); }
@@ -2114,10 +2139,11 @@ struct Index {
     const valid = (): boolean => owner.owns(generation, scope) && this.model.owns(rootGeneration, rootScope) && revision === this.agentFormRevision && this.showSheet && this.sheetKind === 'newagent' && fingerprint === this.agentFingerprint();
     this.creatingAgent = true;
     try {
-      const row = await owner.createAgent(this.newTask, machine, this.directory, this.launcher, this.agentTodo?.id || '', valid, tree?.boundStart ? tree.sourceId : '', tree?.boundStart ? tree.source : '', this.agentModelId, this.agentEffort);
+      const effort = this.startAgentEffort();
+      const row = await owner.createAgent(this.newTask, machine, this.directory, this.launcher, this.agentTodo?.id || '', valid, tree?.boundStart ? tree.sourceId : '', tree?.boundStart ? tree.source : '', this.agentModelId, effort);
       if (!valid()) return;
       const setup = new RecentAgentSetup(); setup.machine = this.machineKey(machine); setup.cwd = this.directory; setup.tree = tree?.key || '';
-      setup.launcher = this.launcher; setup.model = this.agentModelId; setup.effort = this.agentEffort; setup.preset = this.agentPreset;
+      setup.launcher = this.launcher; setup.model = this.agentModelId; setup.effort = effort; setup.preset = this.agentPreset;
       const updated = rememberAgentSetup(this.recentSetups,setup);
       owner.saveView('recent-agent-setups',JSON.stringify(Wire.payload(['entries'],[updated]))).catch(() => {});
       this.showSheet = false; this.newTask = ''; owner.saveView(draftKey, '').catch(() => {});

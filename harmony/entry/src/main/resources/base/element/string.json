@@ -6057,6 +6057,18 @@
       "value": "Edit the path above and press Return to go there. ~ is your home folder."
     },
     {
+      "name": "flow_start_model_settings_hint",
+      "value": "Uses Model Configuration › New Agent by default. A choice here applies to this session only and doesn't change the global default."
+    },
+    {
+      "name": "flow_start_machine_launchers_hint",
+      "value": "Claude Code / Codex launchers from this machine. It runs in a new tab in the terminal engine."
+    },
+    {
+      "name": "flow_start_model_terminal_hint",
+      "value": "{about} Models are the same as what /model shows in the terminal."
+    },
+    {
       "name": "flow_model_default_hint",
       "value": "The launcher uses its default model."
     },

@@ -36,7 +36,7 @@ test('native phone search sizes the entered text and placeholder together and pr
     assert.match(shell.slice(start,start+250),/contentFont\(\{size:Tokens\.interfaceFontVp\(16,this\.environment\.fontScale\)\}\)/);
   }
 });
-const {AgentLaunchChoices,launchModelName,recentLaunchDirectories,LaunchChoice,RecentAgentSetup,rememberAgentSetup,loadAgentSetups}=await import('../entry/src/main/ets/models/AgentLaunchChoices.ets');
+const {AgentLaunchChoices,providerStartModes,launchModelName,recentLaunchDirectories,LaunchChoice,RecentAgentSetup,rememberAgentSetup,loadAgentSetups}=await import('../entry/src/main/ets/models/AgentLaunchChoices.ets');
 const {ProjectWorktree}=await import('../entry/src/main/ets/models/ProjectCatalog.ets');
 const {ResourceRow,Wire}=await import('../entry/src/main/ets/models/Wire.ets');
 
@@ -122,9 +122,9 @@ for (const match of formSource.matchAll(/^  private (?:async )?(\w+)\(/gm)) {
   const end = formSource.slice(match.index, lineEnd).trimEnd().endsWith('}') ? lineEnd : formSource.indexOf('\n  }', lineEnd) + 4;
   formMethods.set(match[1], formSource.slice(match.index, end));
 }
-const externalEffects = new Set(['saveAgentDraft', 'loadRecentSetups', 'closeAgentPanel']);
+const externalEffects = new Set(['saveAgentDraft', 'loadRecentSetups', 'closeAgentPanel', 'projectPlace', 'openLinkedResource', 'openPickedChat']);
 const required = new Set(['pickerOptions', 'chooseAgentOption', 'selectedAgentTree', 'openAgentPicker', 'pickAgentMachine',
-  'canStartAgent', 'browseAgentFolder', 'loadAgentLaunchers', 'loadInitialAgentDirectory']);
+  'canStartAgent', 'browseAgentFolder', 'loadAgentLaunchers', 'loadInitialAgentDirectory', 'createAgent', 'agentModelHelp']);
 for (const name of required) {
   const body = formMethods.get(name);
   assert.ok(body, name);
@@ -132,8 +132,11 @@ for (const name of required) {
     if (formMethods.has(callee) && !externalEffects.has(callee)) required.add(callee);
   }
 }
-const NativeAgentForm = new Function('Wire', 'LaunchChoice', 'tr', 'recentLaunchDirectories', 'return ' + stripTypeScriptTypes(
-  'class NativeAgentForm {\n' + [...required].map(name => formMethods.get(name)).join('\n') + '\n}'))(Wire, LaunchChoice, key => key, recentLaunchDirectories);
+const nativeFormDependencies = { Wire, LaunchChoice, RecentAgentSetup, rememberAgentSetup, recentLaunchDirectories, providerStartModes,
+  tr: key => key === 'flow_start_model_terminal_hint' ? '{about} /model' : key };
+const NativeAgentForm = new Function(...Object.keys(nativeFormDependencies), 'return ' + stripTypeScriptTypes(
+  'class NativeAgentForm {\n' + [...required].map(name => formMethods.get(name)).join('\n') + '\n}'))(...Object.values(nativeFormDependencies));
+
 
 function clientForForm(group, manager, calls) {
   const owner = makeOwner(async path => {
@@ -169,6 +172,77 @@ function phoneForm(root, selectedMachine, machines, trees) {
   form.agentMachineKey = form.machineKey(selectedMachine);
   return form;
 }
+
+test('the start sheet and the session request agree on thinking effort for each launcher and model', async () => {
+  const repoSource = readFileSync(new URL('../entry/src/main/ets/models/HubRepository.ets', import.meta.url), 'utf8');
+  const create = repoSource.match(/^  async createAgent\([^]*?^  }/m)[0];
+  const StartRepository = new Function('Wire','ResourceRow','return '+stripTypeScriptTypes('class StartRepository {\n'+create+'\n}'))(Wire,ResourceRow);
+  const starts = [];
+  const repository = Object.assign(new StartRepository(), {owner:'work', async call(path,method,data,op,allowed) {
+    assert.equal(path,'/api/v1/sessions'); assert.equal(method,'POST'); assert.equal(allowed(),true);
+    starts.push(data); return {session:{id:'started'}};
+  }});
+  const ordinary = {name:'codex',agent:'codex'};
+  const alias = {name:'team',agent:'codex',permission_modes:[]};
+  const provider = {name:'provider',source:'paseo',agent:'codex',permission_modes:['launcherDefault','bypassPermissions']};
+  const nativeOmp = {name:'omp',source:'path',agent:'omp',permission_modes:['launcherDefault']};
+  const registeredOmp = {...nativeOmp,source:'paseo'};
+  const terminalTraex = {name:'traex',agent_type:'traex',source:'zshrc'};
+  const claude = {name:'classic',agent:'claude'};
+  const olderPaseo = {name:'grok',agent:'grok',source:'paseo'};
+  for (const [launcher,model,choices,saved,expected] of [
+    [ordinary,'picked',[], 'high',''], [alias,'picked',[], 'high',''],
+    [provider,'picked',['medium','high'], 'high','high'], [provider,'picked',['medium','high'], 'max',''],
+    [provider,'unlisted',[], 'high',''], [nativeOmp,'picked',[], 'high',''], [terminalTraex,'picked',[], 'high',''],
+    [registeredOmp,'picked',['medium','high'], 'high','high'], [olderPaseo,'unlisted',[], 'high',''],
+    [claude,'unlisted',['low','medium','high','xhigh','max'], 'high','high'],
+    [claude,'no-efforts',[], 'high','']
+  ]) {
+    const owner=clientForForm('A','work',[]), machine=formMachine(owner,'mac');
+    const form=phoneForm(owner,machine,[machine],[]);
+    form.launcher=launcher.name; form.launcherData=[launcher]; form.agentEffort=saved; form.agentModelId=model;
+    form.agentLauncherOptions=[launcher.name]; form.launchListReady=true; form.recentSetups=[];
+    owner.repo=()=>({call:async()=>({agent:launcher.agent,models:[{id:'picked',efforts:['high','medium','unrecognized']},{id:'no-efforts'}]})});
+    await form.launchChoices.loadModels(owner,'mac',launcher.name); form.updateAgentEfforts();
+    form.openAgentPicker('effort');
+    assert.equal(form.agentPanel,choices.length?'effort':'',launcher.name);
+    if (choices.length) assert.deepEqual(form.pickerOptions().map(x=>x.id),['',...choices],launcher.name);
+    form.closeAgentPanel(); form.directory='/work/login';
+    owner.createAgent=(prompt,machine,cwd,launcher,todo,admit,id,host,model,effort)=>
+      repository.createAgent(prompt,machine,cwd,launcher,'test-operation',todo,admit,id,host,model,effort);
+    owner.saveView=async()=>{}; form.openPickedChat=()=>{}; form.projectPlace=()=>false;
+    await form.createAgent();
+    assert.equal(form.startFailure??'',''); assert.equal(form.showSheet,false);
+    const wire=starts.at(-1);
+    assert.deepEqual([wire.machine_id,wire.cwd,wire.launcher,wire.model,wire.prompt],['mac','/work/login',launcher.name,model,'test']);
+    assert.equal(Object.hasOwn(wire,'effort'),!!expected,launcher.name);
+    assert.equal(wire.effort??'',expected,launcher.name);
+  }
+});
+
+test('the New Agent footer follows an available model purpose and still loads launchers on an older hub', async () => {
+  const launcherPath='/api/v1/machines/mac/launchers?purpose=agent.new', purposePath='/api/v1/model-config/purposes/agent.new';
+  for (const [purpose,machineDefault,launcher,label,hint] of [
+    [{id:'agent.new',effective:{provider:'launcher.codex',model:'picked'}}, {}, 'codex','codex · picked','flow_start_model_settings_hint /model'],
+    [undefined,{provider:'launcher.classic',model:'node-default'},'classic','classic · node-default','flow_start_machine_launchers_hint /model']
+  ]) {
+    const owner=clientForForm('A','work',[]),machine=formMachine(owner,'mac'),form=phoneForm(owner,machine,[machine],[]);
+    const calls=[]; form.launcher='';
+    owner.repo=()=>({call:async path=>{
+      calls.push(path);
+      if (path===purposePath) { if (!purpose) throw Error('404'); return {purpose}; }
+      if (path===launcherPath) return {default:machineDefault,launchers:[{name:launcher,agent:launcher==='classic'?'claude':'codex'}]};
+      return {agent:'codex',models:[{id:'picked',efforts:['high']}]};
+    }});
+    await form.loadAgentLaunchers();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(calls.slice(0,2),[launcherPath,purposePath]); assert.ok(calls[2].includes('/launchers/'+launcher+'/models?'));
+    assert.equal(form.defaultLauncherName,launcher); assert.equal(form.machineDefaultLabel,label);
+    assert.equal(form.launchListReady,true); assert.equal(form.agentModelHelp(),hint);
+    form.launcherData=[{name:launcher,source:'paseo',agent:'grok'}];
+    assert.equal(form.agentModelHelp(),hint.replace(' /model',''));
+  }
+});
 
 test('opening the phone form offers a recent directory and a promptless Claude start while an older Codex still needs a first message', () => {
   const owner=clientForForm('A','work',[]),machine=formMachine(owner,'laptop');

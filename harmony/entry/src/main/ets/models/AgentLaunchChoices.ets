@@ -1,6 +1,21 @@
 import type { ClientModel } from './ClientModel';
 import { Wire } from './Wire';
 
+const START_EFFORTS: string[] = ['low','medium','high','xhigh','max'];
+
+function startsNativeOmp(launcher: Record<string, Object>): boolean {
+  const runtime = Wire.text(launcher,'agent_type') || Wire.text(launcher,'agent');
+  const source = Wire.text(launcher,'source');
+  return Wire.text(launcher,'name') === 'omp' && ['', 'zshrc', 'path', 'builtin'].includes(source) && (!runtime || runtime === 'omp');
+}
+
+// Providers with their own start modes can only offer efforts from the selected model.
+export function providerStartModes(launcher: Record<string, Object>): boolean {
+  const agent = Wire.text(launcher,'agent');
+  return startsNativeOmp(launcher) || Wire.strings(launcher,'permission_modes').length > 0 ||
+    Wire.text(launcher,'source') === 'paseo' && !!agent && !['claude','codex'].includes(agent);
+}
+
 export class LaunchChoice {
   id: string;
   title: string;
@@ -61,12 +76,13 @@ export class AgentLaunchChoices {
   @Trace locked: string = '';
   @Trace acceptsTypedModel: boolean = false;
   @Trace effortNames: string[] = [];
+  @Trace private effortListKnown: boolean = false;
   private modelData: Record<string,Object>[] = [];
   private revision: number = 0;
 
   clear(): void {
     this.revision++; this.loading = false; this.error = ''; this.path = ''; this.parent = '';
-    this.directories = []; this.recentDirectories = []; this.models = []; this.locked = ''; this.effortNames = []; this.modelData = []; this.acceptsTypedModel = false;
+    this.directories = []; this.recentDirectories = []; this.models = []; this.locked = ''; this.effortNames = []; this.effortListKnown = false; this.modelData = []; this.acceptsTypedModel = false;
   }
   cancelRead(): void { this.revision++; this.loading = false; }
   async folder(owner:ClientModel,machine:string,path:string): Promise<void> {
@@ -122,10 +138,15 @@ export class AgentLaunchChoices {
   updateEfforts(id:string): void {
     const model = id ? this.modelData.find((m:Record<string,Object>) => Wire.text(m,'id') === id) :
       this.modelData.find((m:Record<string,Object>) => Wire.bool(m,'is_default') || Wire.bool(m,'default'));
-    const available: string[] = [];
-    for (const row of model ? [model] : id ? [] : this.modelData) {
-      for (const value of Wire.strings(row,'efforts')) if (!available.includes(value)) available.push(value);
-    }
-    this.effortNames = available;
+    this.effortListKnown = !!model && !Wire.bool(model,'custom');
+    const reported = model ? Wire.strings(model,'efforts') : [];
+    this.effortNames = START_EFFORTS.filter((level:string) => reported.includes(level));
+  }
+  startEfforts(launcher: Record<string,Object>): string[] {
+    const runtime = Wire.text(launcher,'agent_type') || Wire.text(launcher,'agent');
+    if (startsNativeOmp(launcher) || runtime === 'traex' && ['', 'zshrc'].includes(Wire.text(launcher,'source'))) return [];
+    if (Wire.text(launcher,'agent') === 'codex' && Wire.strings(launcher,'permission_modes').length === 0) return [];
+    if (this.effortListKnown) return this.effortNames;
+    return providerStartModes(launcher) ? [] : START_EFFORTS;
   }
 }

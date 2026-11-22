@@ -6057,6 +6057,18 @@
       "value": "可以直接改上面的路径，回车前往。~ 是主目录。"
     },
     {
+      "name": "flow_start_model_settings_hint",
+      "value": "默认使用「模型配置 › 新建 Agent」的设置。手动选择只影响这次会话，不改变全局默认。"
+    },
+    {
+      "name": "flow_start_machine_launchers_hint",
+      "value": "来自这台机器的 Claude Code / Codex 启动器，会在终端引擎里新开一个标签页运行。"
+    },
+    {
+      "name": "flow_start_model_terminal_hint",
+      "value": "{about}模型和在终端里输入 /model 看到的一样。"
+    },
+    {
       "name": "flow_model_default_hint",
       "value": "不指定模型时，按启动器自己的设置运行。"
     },

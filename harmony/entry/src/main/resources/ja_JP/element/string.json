@@ -6057,6 +6057,18 @@
       "value": "上のパスを編集し、Return で移動できます。~ はホームフォルダです。"
     },
     {
+      "name": "flow_start_model_settings_hint",
+      "value": "デフォルトでは「モデル設定 › 新規エージェント」の設定を使います。ここでの選択は今回のセッションだけに適用され、全体のデフォルトは変わりません。"
+    },
+    {
+      "name": "flow_start_machine_launchers_hint",
+      "value": "このマシンのClaude Code / Codexランチャーです。ターミナルエンジンの新しいタブで実行します。"
+    },
+    {
+      "name": "flow_start_model_terminal_hint",
+      "value": "{about}モデルはターミナルで /modelを入力したときと同じです。"
+    },
+    {
       "name": "flow_model_default_hint",
       "value": "モデルを指定しない場合、ランチャーの既定値を使います。"
     },
