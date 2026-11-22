@@ -12,6 +12,7 @@ import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironm
 export struct AgentTaskGroupRows {
   @Require @Param section: AgentTaskSection;
   @Require @Param workspace: AgentWorkspace;
+  @Param phone: boolean = false;
   @Event onOpen: (row: ResourceRow) => void = () => {};
   @Event onOpenTodo: (row: ResourceRow) => void = () => {};
   @BuilderParam rowContent: (row: ResourceRow, depth: number) => void;
@@ -113,6 +114,6 @@ export struct AgentTaskGroupRows {
           else this.taskOrTree(entry.item)
         }).key((line: AgentTaskLine) => line.kind + line.row.key())
       }
-    }.id('agents.group.' + this.section.key)
+    }.margin({left:this.phone ? 4 : 0,right:this.phone ? 4 : 0}).id('agents.group.' + this.section.key)
   }
 }
