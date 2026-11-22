@@ -45,8 +45,8 @@ export class ChatDraftStore {
   async readSessionSnapshot(scope: string): Promise<string> {
     const key = 'snapshot:' + scope; return this.transaction(key, (): Promise<string> => this.local.get(key));
   }
-  async saveSessionSnapshot(scope: string, sessions: ResourceRow[], conversations: ResourceRow[], heldActions: Record<string, Object>[], current: () => boolean): Promise<void> {
-    const key = 'snapshot:' + scope, value = JSON.stringify({ sessions: sessions, conversations: conversations, heldActions: heldActions });
+  async saveSessionSnapshot(scope: string, sessions: ResourceRow[], conversations: ResourceRow[], heldActions: Record<string, Object>[], current: () => boolean, sidebarConfig?: string): Promise<void> {
+    const key = 'snapshot:' + scope, value = JSON.stringify({ sessions: sessions, conversations: conversations, heldActions: heldActions, sidebarConfig: sidebarConfig });
     await this.transaction(key, async (epoch: number): Promise<void> => {
       if (current()) await this.local.put(key, value, epoch);
     });

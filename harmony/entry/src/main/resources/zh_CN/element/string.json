@@ -7127,6 +7127,14 @@
     {
       "name": "decision_skip_terminal",
       "value": "这是从终端读出来的提问，暂时不能跳过：不想选就点下面的「改在对话里说」。"
+    },
+    {
+      "name": "phone_sidebar_directions",
+      "value": "常驻"
+    },
+    {
+      "name": "phone_sidebar_show_scheduled",
+      "value": "显示定时任务的对话"
     }
   ]
 }

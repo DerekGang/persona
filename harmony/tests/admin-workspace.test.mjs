@@ -101,6 +101,26 @@ function deferred() {
   return { promise, resolve };
 }
 
+test('the assistant Recent setting changes only its supported Hub field and retains an unsaved profile draft', async () => {
+  const server={recent_task_chats:false,notes:'Original',leaders:['direction']};
+  const env=fixture({root:{onCall:async call=>{
+    if (call.path!=='/api/v1/assistant') return undefined;
+    if (call.method==='PUT') Object.assign(server,call.body);
+    return server;
+  }}});
+  const applied=[];env.root.acceptSidebarConfig=data=>applied.push(data.recent_task_chats);
+  const workspace=new AdminWorkspace();await workspace.open(env.root,'assistant',true);
+  workspace.setForm('notes','My unsaved note');
+  const ticket=workspace.capture('/api/v1/assistant');
+  assert.equal(await workspace.setRecentTaskChats(ticket,true),true);
+  assert.deepEqual(env.shared.calls.filter(call=>call.method==='PUT').map(call=>call.body),[{recent_task_chats:true}]);
+  assert.equal(workspace.formText('notes'),'My unsaved note');assert.equal(workspace.draftDirty,true);assert.deepEqual(applied,[true]);
+  workspace.hide();assert.equal(await workspace.setRecentTaskChats(ticket,false),false);
+  const legacy=fixture(),old=new AdminWorkspace();await old.open(legacy.root,'assistant',true);
+  assert.equal(await old.setRecentTaskChats(old.capture('/api/v1/assistant'),true),false);
+  assert.deepEqual(legacy.shared.calls.filter(call=>call.method==='PUT'),[]);
+});
+
 test('assistant profile writes use the documented path and changed fields only', async () => {
   const env = fixture(), workspace = new AdminWorkspace();
   await workspace.open(env.root, 'assistant', true);

@@ -553,6 +553,19 @@ export class AdminWorkspace {
     }).filter((value: string) => !!value);
   }
 
+  async setRecentTaskChats(snapshot: AdminSnapshot, enabled: boolean): Promise<boolean> {
+    const path='/api/v1/assistant';
+    if (this.page !== 'assistant' || this.saving || !this.admits(snapshot,path) || typeof this.assistantData['recent_task_chats'] !== 'boolean') return false;
+    if (Wire.bool(this.assistantData,'recent_task_chats') === enabled) return true;
+    const result=await this.write(snapshot,path,'PUT',Wire.payload(['recent_task_chats'],[enabled]));
+    if (!result || Wire.bool(result,'recent_task_chats',!enabled) !== enabled) return false;
+    if (this.admits(snapshot,path)) {
+      this.assistantData=result;
+      this.root?.acceptSidebarConfig(result,true);
+    }
+    return true;
+  }
+
   async saveAssistant(snapshot: AdminSnapshot): Promise<boolean> {
     const form = this.form(), body: Record<string, Object> = {};
     const sentRevision = this.draftRevision;

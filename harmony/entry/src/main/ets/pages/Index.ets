@@ -1,3 +1,4 @@
+import { assistantSidebarChats, SidebarTaskHistory } from '../models/AssistantRecentChats';
 import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { AgentStartPicker } from '../components/AgentStartPicker';
 import { AgentLaunchChoices, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
@@ -135,6 +136,8 @@ struct Index {
   private drawerTapBlockedUntil: number = 0;
   @Local query: string = '';
   @Local filter: number = 0;
+  @Local sidebarTaskHistory: SidebarTaskHistory = new SidebarTaskHistory();
+  @Local directionRowBindings: BoundRow<ResourceRow>[] = [];
   @Local conversationRowBindings: BoundRow<ResourceRow>[] = [];
   private conversationBindingOwner: Object | undefined;
   private conversationBindingScope: string = '';
@@ -797,7 +800,7 @@ struct Index {
     this.applications.bind(this.model); this.applications.connectionChanged();
   }
   @Monitor('model.profile') scopeChanged(): void { if (this.activeScope !== this.model.scope()) { this.pendingSearchHit = ''; this.pendingSearchTarget = ''; this.chatSearchShown = false; this.drawerSearching = false; this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; this.phoneSettingsDepth = -1; this.pendingInboxHandoff = ''; this.projectCatalog.clear(); this.agentWorktree = undefined; this.pickedAgentTree = ''; this.agentWorkspace.hide(); this.spacesShown = false; this.dismissChatActions(); this.showSheet = false; this.agentFormRevision++; this.creatingAgent = false; this.agentTodo = undefined; this.readerShown = false; this.readerAddress = ''; this.readerTitle = ''; this.detailModel.hideConversation(); this.detailModel = this.model; this.chatReady = false; this.detailRoute = ''; this.routeRevision++; this.bindDeviceOwner(this.model); } this.syncConversationRows(); this.restoreScope(); deviceFeatures.context(); }
-  @Monitor('model.conversations', 'model.mainId', 'model.mainMachineId') conversationsChanged(): void { this.syncConversationRows(); }
+  @Monitor('model.conversations', 'model.mainId', 'model.mainMachineId', 'model.sidebarConfig', 'model.connected', 'spacesShown', 'breakpoint', 'collapsed', 'sidebarTaskHistory.revision') conversationsChanged(): void { this.syncConversationRows(); }
   @Monitor('model.appearance') appearanceChanged(): void {
     this.getUIContext().getHostContext()?.getApplicationContext().setColorMode(this.model.appearance === 1 ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT : this.model.appearance === 2 ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK : ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
   }
@@ -1281,6 +1284,13 @@ struct Index {
         if (this.applications.visible) this.spaceRow('applications')
         this.spaceRow('devices')
         if (this.wide()) this.spaceRow('settings')
+        if (this.directionRowBindings.length) ListItem() {
+          Text(tr('phone_sidebar_directions')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
+            .fontColor(Colors.secondary).width('100%').padding({left:13,top:12,bottom:4}).id('spaces.directions')
+        }
+        ForEach(this.directionRowBindings, (binding: BoundRow<ResourceRow>) => {
+          this.drawerChat(binding,'spaces.direction.')
+        }, (binding: BoundRow<ResourceRow>) => binding.key)
         if (this.conversationRowBindings.length) ListItem() {
           Row() {
             Text(tr('phone_drawer_recent')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
@@ -1288,13 +1298,7 @@ struct Index {
           }.width('100%').constraintSize({minHeight:44}).padding({left:13,right:14,top:6,bottom:4}).onClick(() => { if (this.drawerAcceptsTap()) this.recentExpanded = !this.recentExpanded; }).id('spaces.recent')
         }
         if (this.recentExpanded || this.drawerSearch) ForEach(this.conversationRowBindings, (binding: BoundRow<ResourceRow>) => {
-          if (this.matchesDrawer(binding.value.title)) ListItem() {
-            if (this.wide()) this.conversationRow(binding, true)
-            else Text(binding.value.title || tr('new_chat')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).maxLines(1)
-              .textOverflow({overflow:TextOverflow.Ellipsis}).width('100%').constraintSize({minHeight:44})
-              .padding({left:13,right:14})
-          }
-            .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); })
+          this.drawerChat(binding,'spaces.recent.')
         }, (binding: BoundRow<ResourceRow>) => binding.key)
         ListItem() {
           Row() { Text(tr('flow_all_chats')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1); SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary]) }
@@ -1419,8 +1423,12 @@ struct Index {
   }
   private syncConversationRows(): void {
     const scope = JSON.stringify([this.model.scope(), this.model.profile.id, this.model.profile.manager]);
-    const rows = this.model.conversations.filter((row: ResourceRow) => row.id !== this.model.mainId || !!this.model.mainMachineId && row.machine !== this.model.mainMachineId);
-    this.conversationRowBindings = reconcileBoundRows(this.conversationRowBindings, rows,
+    this.sidebarTaskHistory.refresh(this.model,this.spacesShown || this.wide() && !this.collapsed);
+    const groups=assistantSidebarChats(this.model.conversations,this.model.mainId,this.model.mainMachineId,Wire.parse(this.model.sidebarConfig),
+      this.sidebarTaskHistory.known(this.model.scope()),this.model.profile.id,this.model.profile.manager);
+    this.directionRowBindings = reconcileBoundRows(this.directionRowBindings, groups.directions,
+      (row: ResourceRow) => row.key(), this.conversationBindingOwner, this.model, this.conversationBindingScope, scope);
+    this.conversationRowBindings = reconcileBoundRows(this.conversationRowBindings, groups.recent,
       (row: ResourceRow) => row.key(), this.conversationBindingOwner, this.model, this.conversationBindingScope, scope);
     this.conversationBindingOwner = this.model;
     this.conversationBindingScope = scope;
@@ -1428,6 +1436,15 @@ struct Index {
   private conversationDetail(row: ResourceRow): string {
     return row.kind === 'session' ? [this.model.machineName(row.machine), this.model.shortPath(row.path), row.state ? tr(row.state) : ''].filter((value: string) => value.length > 0).join(' · ') : row.detail;
   }
+  @Builder drawerChat(binding: BoundRow<ResourceRow>, prefix: string) {
+    if (this.matchesDrawer(binding.value.title)) ListItem() {
+      if (this.wide()) this.conversationRow(binding, true)
+      else Text(binding.value.title || tr('new_chat')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
+        .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+        .width('100%').constraintSize({minHeight:44}).padding({left:13,right:14})
+    }.onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)
+  }
+
   @Builder conversationRow(binding: BoundRow<ResourceRow>, showDetail: boolean) {
     Row({ space: Tokens.inset }) {
       SymbolGlyph(Symbols.spaces).fontSize(Tokens.symbolFont).fontColor([Colors.secondary]).width(Tokens.symbol)

@@ -371,6 +371,13 @@ export struct AdminWorkspacePage {
         .backgroundColor($r('sys.color.comp_background_tertiary')).borderRadius(Tokens.inset)
       Column({ space: Tokens.gap }) {
         this.title('admin_preferences')
+        if (typeof this.workspace.assistantData['recent_task_chats'] === 'boolean') Row({ space: Tokens.gap }) {
+          Text(tr('phone_sidebar_show_scheduled')).layoutWeight(1).fontSize(Tokens.body)
+          Toggle({type:ToggleType.Switch,isOn:Wire.bool(this.workspace.assistantData,'recent_task_chats')}).enabled(!this.workspace.saving)
+            .accessibilityText(tr('phone_sidebar_show_scheduled')).onChange((on:boolean) => {
+              this.workspace.setRecentTaskChats(this.workspace.capture('/api/v1/assistant'),on).catch(() => undefined);
+            }).id('admin.assistant.recent_task_chats')
+        }.width('100%')
         Row({ space: Tokens.gap }) {
           Text(tr('admin_main_tasks_quiet')).layoutWeight(1).fontSize(Tokens.body)
           Toggle({ type: ToggleType.Switch, isOn: this.workspace.formBool('main_tasks_quiet', true) })

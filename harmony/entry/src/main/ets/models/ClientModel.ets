@@ -144,6 +144,20 @@ export class ClientModel {
   @Trace operationState: string = '';
   @Trace mainId: string = '';
   @Trace mainMachineId: string = '';
+  @Trace sidebarConfig: string = '';
+  acceptSidebarConfig(assistant: Record<string,Object>, confirmedEdit: boolean = false): void {
+    const config = JSON.stringify(Wire.payload(['main','main_machine_id','leaders','background_supervisor','recent_task_chats'],
+      [Wire.text(assistant,'main'),Wire.text(assistant,'main_machine_id',Wire.text(assistant,'machine_id')),
+        Wire.strings(assistant,'leaders'),Wire.text(assistant,'background_supervisor'),Wire.bool(assistant,'recent_task_chats')]));
+    if (this.sidebarConfig !== config) this.sidebarConfig = config;
+    // A scoped settings page can use a detached model. Publish its confirmed Hub preference to the visible drawer only for the same owner.
+    const parent = this.directoryParent;
+    if (confirmedEdit && parent && parent.scope() === this.scope() && parent.profile.hubId === this.profile.hubId) {
+      const current = Wire.parse(parent.sidebarConfig);
+      current['recent_task_chats'] = Wire.bool(assistant,'recent_task_chats');
+      parent.sidebarConfig = JSON.stringify(current);
+    }
+  }
   private preferenceTask: Promise<void> = Promise.resolve();
   private async changePreferences(action: () => Promise<void>): Promise<void> { const task = this.preferenceTask.then(action, action); this.preferenceTask = task.catch(() => {}); await task; }
   @Trace language: string = 'default';
@@ -544,7 +558,7 @@ export class ClientModel {
     const generation = ++this.generation; this.selectionGeneration++; const selection = this.selected;
     this.profile = profile; const scope = this.scope(); this.connected = false;
     this.clearPendingDecisions();
-    this.unresolvedWrites = []; this.operationState = ''; this.mainId = ''; this.mainMachineId = ''; this.features = []; this.managers = [];
+    this.unresolvedWrites = []; this.operationState = ''; this.mainId = ''; this.mainMachineId = ''; this.sidebarConfig = ''; this.features = []; this.managers = [];
     this.demo = false; this.demoRepository = undefined; this.error = '';
     if (!keep) { this.sessionsReady = false; this.sessions = []; this.machines = []; this.conversations = []; this.todos = []; this.inbox = []; this.knowledge = []; this.messages = []; } this.selected = keep ? selection : new ResourceRow(); this.draftLoading = false;
     if (!keep && !this.detached) { this.directoryReady = false; this.directoryLoading = false; this.directoryUnavailable = 0; this.publishDirectory(); }
@@ -621,6 +635,11 @@ export class ClientModel {
       owner.heldReceipts = restored;
       this.sessionsReady = Wire.has(snapshot, 'sessions');
       this.sessions = Wire.rows(snapshot, 'sessions').map((data: Record<string, Object>) => this.cachedRow(data, 'session'));
+      this.sidebarConfig = Wire.text(snapshot, 'sidebarConfig');
+      if (this.sidebarConfig) {
+        const config=Wire.parse(this.sidebarConfig);
+        this.mainId=Wire.text(config,'main'); this.mainMachineId=Wire.text(config,'main_machine_id');
+      }
       this.conversations = Wire.rows(snapshot, 'conversations').map((data: Record<string, Object>) => this.cachedRow(data, 'conversation')); this.publishDirectory();
     } catch (_) { if (this.owns(generation, scope)) this.error = 'cache_unavailable'; }
   }
@@ -665,7 +684,7 @@ export class ClientModel {
       this.profile = new HubProfile(); this.connected = false; this.selected = new ResourceRow();
       this.sessionsReady = false; this.sessions = []; this.conversations = []; this.machines = []; this.managers = []; this.todos = []; this.knowledge = []; this.inbox = [];
       this.clearPendingDecisions();
-      this.messages = []; this.draft = ''; this.sourceContext = ''; this.draftRevision = ''; this.localMessages = []; this.renderedMessages = []; this.echoedMessages.clear(); this.detail = ''; this.reply = ''; this.mainId = ''; this.mainMachineId = '';
+      this.messages = []; this.draft = ''; this.sourceContext = ''; this.draftRevision = ''; this.localMessages = []; this.renderedMessages = []; this.echoedMessages.clear(); this.detail = ''; this.reply = ''; this.mainId = ''; this.mainMachineId = ''; this.sidebarConfig = '';
       this.unresolvedWrites = []; this.operationState = ''; this.notificationTarget = ''; this.draftLoading = false; this.features = []; this.error = '';
     }
     this.publishDirectory();
@@ -773,6 +792,7 @@ export class ClientModel {
         else { this.selected.raw = JSON.stringify(Wire.payload(['read_only'], [true])); this.selected.state = 'unknown'; this.clearPendingDecisions(); }
         this.reconcileMessageCopies();
       }
+      this.acceptSidebarConfig(assistant);
       this.mainId = Wire.text(assistant, 'main'); this.mainMachineId = Wire.text(assistant, 'main_machine_id', Wire.text(assistant, 'machine_id'));
       this.conversations = Wire.rows(assistant, 'conversations').map((data: Record<string, Object>) => {
         const row = ResourceRow.from(data, 'conversation'); row.manager = this.profile.manager;
@@ -782,7 +802,7 @@ export class ClientModel {
       const heldActions = owner.heldReceipts.filter((receipt: HeldActionReceipt) => receipt.scope === scope)
         .map((receipt: HeldActionReceipt) => this.cachedHeldAction(receipt));
       try { await new ChatDraftStore(this.local).saveSessionSnapshot(scope, sessions, this.conversations, heldActions,
-        (): boolean => this.owns(generation, scope) && owner.heldRevision(scope) === heldRevision); }
+        (): boolean => this.owns(generation, scope) && owner.heldRevision(scope) === heldRevision, this.sidebarConfig); }
       catch (_) { if (this.owns(generation, scope)) this.error = 'cache_unavailable'; }
       if (this.isChat() && this.chatVisible) await this.loadChat(this.selected);
       else if (this.isChat() && this.decisionsVisible) await this.refreshDecisions();

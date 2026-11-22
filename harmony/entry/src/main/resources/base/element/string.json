@@ -7127,6 +7127,14 @@
     {
       "name": "decision_skip_terminal",
       "value": "This question was read off the terminal and can't be skipped yet. To leave it, tap Reply in Chat Instead."
+    },
+    {
+      "name": "phone_sidebar_directions",
+      "value": "Pinned"
+    },
+    {
+      "name": "phone_sidebar_show_scheduled",
+      "value": "Show Scheduled Task Chats"
     }
   ]
 }
