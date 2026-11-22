@@ -2342,6 +2342,10 @@ def health_intake_route(h, method, path, query, body=b""):
                 if not 1 <= days <= 366: raise ValueError("days must be 1–366")
                 h.send_json(health_intake_snapshot(days))
                 return True
+            if method == "POST" and path == base + "/ui":
+                import health_intake_ui
+                h.send_json(health_intake_ui.answer(json.loads(body or b"{}")))
+                return True
             if method == "POST" and path == base:
                 draft = json.loads(body or b"{}")
                 identity = str(uuid.UUID(draft["id"]))

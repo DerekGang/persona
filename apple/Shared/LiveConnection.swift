@@ -319,6 +319,7 @@ nonisolated enum ServerEvent: Sendable {
             return .look(id: e.id, effective: e.effective)
         case "managers": return .managers
         case "directions": return .directions
+        // The app refreshes the home totals and any open reserved intake page for this hub.
         case "health_intake": return .healthIntake
         case "assistant_feed": return e.item.map { .assistantFeed($0) }
         case "assistant_view":

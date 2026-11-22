@@ -192,6 +192,20 @@ final class DemoHub {
 
     private func intakeAnswer(_ req: LocalRequest, _ path: [String]) throws -> JSONValue {
         guard req.query["space"] == Session.healthSpace else { throw notFound() }
+        if req.method == "POST", path == ["assistant", "health", "intake", "ui"] {
+            let request = body(req)
+            let state = request["state"]?.string.flatMap { try? JSON.decoder.decode(JSONValue.self, from: Data($0.utf8)) }
+            let kind = state?["kind"]?.string == "protein" ? "protein" : "water"
+            let edit = state?["edit"]?.bool == true || request["action"]?.string == "settings"
+            let locale = request["context"]?["locale"]?.string?.hasPrefix("zh") == true ? "zh-Hans" : "en"
+            let version = (request["context"]?["ui_version"]?.int ?? 4) >= 9 ? 10 : 4
+            let key = "\(locale).\(version).\(kind)" + (edit ? "-settings" : "")
+            guard case .object(var result) = data["health_intake_ui"]?[key] else { throw notFound() }
+            if let action = request["action"]?.string, action != "settings" {
+                result["toast"] = .string(DemoText.notSent)
+            }
+            return .object(result)
+        }
         let today = String(Self.iso(.now).prefix(10))
         func snapshot() -> JSONValue {
             let active = intakeEntries.values.filter { $0["deleted_at"] == nil }

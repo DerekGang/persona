@@ -1,6 +1,17 @@
 import Foundation
 import PersonaWire
 
+/// The default manager draws these pages with the extension renderer, under an id no extension can own.
+nonisolated enum HealthIntakeUI {
+    static let id = "-health-intake"
+    static let page = "pages"
+    static let path = "/api/v1/assistant/health/intake/ui"
+
+    static func state(_ kind: HealthIntake.Kind) -> String {
+        kind == .water ? #"{"kind":"water"}"# : #"{"kind":"protein"}"#
+    }
+}
+
 /// Persona's own intake only; the hub decides which date bucket is today.
 nonisolated struct HealthIntake: Decodable, Sendable, Equatable {
     static let feature = "health_intake"

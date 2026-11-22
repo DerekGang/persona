@@ -49,6 +49,25 @@ class HealthIntakeMockTests(unittest.TestCase):
         self.assertEqual(response.result["days"][0]["water"], 0)
         self.assertEqual(response.result["days"][-1]["water"], 750)
 
+    def test_detail_pages_use_exported_gauges_settings_and_action_toasts(self):
+        for kind, color in [("water", "blue"), ("protein", "amber")]:
+            body = {"context": {"locale": "en", "ui_version": 11}, "state": json.dumps({"kind": kind})}
+            initial = self.request("POST", "/ui", body).result
+            self.assertEqual(initial["view"]["title"], kind.title())
+            self.assertEqual(initial["view"]["sections"][0]["items"][0]["tiles"][0]["gauge"]["color"], color)
+            body["state"] = initial["view"]["state"]
+            body["action"] = "drink" if kind == "water" else "log"
+            acted = self.request("POST", "/ui", body).result
+            self.assertEqual(acted["view"], initial["view"])
+            self.assertTrue(acted["toast"])
+            body["action"] = "settings"
+            settings = self.request("POST", "/ui", body).result["view"]
+            self.assertTrue(json.loads(settings["state"])["edit"])
+            self.assertEqual(settings["sections"][0]["items"][0]["name"], "goal_ml" if kind == "water" else "goal_g")
+        legacy = self.request("POST", "/ui", {"context": {"locale": "zh-Hans", "ui_version": 4}}).result
+        self.assertEqual(legacy["view"]["title"], "喝水")
+        self.assertEqual(legacy["view"]["sections"][0]["items"][0]["type"], "row")
+
     def test_default_cup_retry_and_tombstone_are_idempotent(self):
         draft = {"id": str(uuid.uuid4()), "kind": "water"}
         first = self.request("POST", body=draft).result

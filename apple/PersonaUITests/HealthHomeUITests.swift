@@ -46,8 +46,8 @@ final class HealthHomeUITests: XCTestCase {
             let size = largest ? "largest" : "default"
             var app = try launch(scheme: scheme, largest: largest)
             XCTAssertTrue(app.descendants(matching: .any)["health-today"].exists)
-            XCTAssertTrue(app.otherElements["health-water-ring"].exists)
-            XCTAssertTrue(app.otherElements["health-protein-ring"].exists)
+            XCTAssertTrue(app.buttons["health-water-ring"].exists)
+            XCTAssertTrue(app.buttons["health-protein-ring"].exists)
             XCTAssertFalse(app.buttons["health-activity-rings"].exists)
             try shot(app, "health-top-\(scheme)-\(size)")
             app.terminate()
@@ -59,7 +59,7 @@ final class HealthHomeUITests: XCTestCase {
 
     @MainActor func testLoggingAGlassChangesTheHubTotalAndUndoRestoresIt() throws {
         let app = try launch()
-        let ring = app.otherElements["health-water-ring"]
+        let ring = app.buttons["health-water-ring"]
         let before = ring.value as? String
         let first = app.buttons["health-log-water"], second = app.buttons["health-log-water-amount"]
         XCTAssertEqual(first.frame.minY, second.frame.minY, accuracy: 1, "both water actions share a row at default size")
@@ -110,7 +110,7 @@ final class HealthHomeUITests: XCTestCase {
             ("health-log-water-amount", "health-water-ring", "125.5", "毫升"),
             ("health-log-protein", "health-protein-ring", "12.3", "克"),
         ] {
-            let ring = app.otherElements[ringID]
+            let ring = app.buttons[ringID]
             let before = ring.value as? String
             app.buttons[button].tap()
             let alert = app.alerts.firstMatch
@@ -143,6 +143,26 @@ final class HealthHomeUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["health-trends"].exists)
         try shot(app, "health-ipad")
         app.terminate()
+    }
+
+    @MainActor func testIntakeRingsOpenTheManagerDrawnDetails() throws {
+        for scheme in ["light", "dark"] {
+            for (kind, title) in [("water", "喝水"), ("protein", "蛋白质")] {
+                let app = try launch(scheme: scheme)
+                let ring = app.buttons["health-\(kind)-ring"]
+                XCTAssertTrue(ring.isHittable, app.debugDescription)
+                XCTAssertFalse(ring.label.isEmpty)
+                ring.tap()
+                XCTAssertTrue(app.descendants(matching: .any)["extension-ui-ready"].waitForExistence(timeout: 20), app.debugDescription)
+                XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), app.debugDescription)
+                XCTAssertTrue(app.staticTexts["今天的记录"].exists)
+                XCTAssertTrue(app.buttons["sheet-close"].isHittable)
+                try shot(app, "health-detail-\(kind)-\(scheme)")
+                app.buttons["sheet-close"].tap()
+                XCTAssertTrue(app.buttons["health-\(kind)-ring"].waitForExistence(timeout: 5))
+                app.terminate()
+            }
+        }
     }
 
     @MainActor func testActivityPermissionUnavailableMoveAndThreeRingStates() throws {

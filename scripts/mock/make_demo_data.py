@@ -22,6 +22,7 @@ os.environ.update(MOCK_TASKS="1", MOCK_RICH="1")
 sys.path.insert(0, HERE)
 import mock_hub as m  # noqa: E402
 import mail_mock  # noqa: E402  the mail domain mock_hub loaded (scripts/mock/mock_domains.py)
+import health_intake_ui  # noqa: E402
 
 ISO = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$")
 DAY = re.compile(r"^\d{4}-\d\d-\d\d$")
@@ -199,6 +200,12 @@ data = {
     "runs": m.RUNS,
     "memory": m.MEMORY,
     "health_intake": m.health_intake_snapshot(),
+    "health_intake_ui": {f"{locale}.{version}.{page}": health_intake_ui.answer({
+        "context": {"locale": locale, "ui_version": version},
+        "state": json.dumps({"kind": kind, "edit": edit})})
+        for locale in ("en", "zh-Hans") for version in (4, 10)
+        for page, kind, edit in (("water", "water", False), ("protein", "protein", False),
+                                 ("water-settings", "water", True), ("protein-settings", "protein", True))},
     "inbox": m.INBOX,
     "mail_accounts": mail_mock.MAIL_ACCOUNTS,
     "mail": MAIL,

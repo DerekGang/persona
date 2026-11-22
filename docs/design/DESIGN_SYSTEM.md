@@ -1718,6 +1718,10 @@ The widget extension doesn't build `Theme`: Persona's widgets take their colors,
   hub's totals; failure rolls back and says why with Try Again using the same record id. The result toast offers
   Undo through the intake DELETE route. These totals count Persona records only, in the hub's today bucket.
   iPad shows intake and available trends; Vision Pro shows intake without Activity or trends.
+  Each intake ring opens a sheet with its own navigation stack and `SheetClose`, as subscriptions do.
+  It draws the manager's detail page through `ExtensionPageView`, using the reserved
+  `-health-intake/pages` id and the default manager's health space. The ring's name and progress remain its
+  VoiceOver label and value. Intake broadcasts refresh open details as well as the home totals.
 - `ActivityRings` is iPhone-only: Apple's `HKActivityRingView`, with an outer black margin inside a rounded black
   surface. Move, Exercise and Stand labels use Apple's fixed colors on that same black surface. Missing Exercise
   and Stand goals leave Move alone. At accessibility text sizes the values sit below the rings; VoiceOver reads the

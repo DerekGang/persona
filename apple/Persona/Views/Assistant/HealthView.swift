@@ -201,6 +201,7 @@ struct HealthView: View {
     /// Starts a health conversation with the message (`AssistantView.start(…, space:)`).
     var send: (String, [ImagePayload]) -> Void
     @State private var page = HealthModel()
+    @State private var intakeDetail: HealthIntakeSheet.Route?
     #if os(iOS)
     #if DEBUG
     @State private var trends = HealthHomeSamples.trendsModel()
@@ -257,6 +258,7 @@ struct HealthView: View {
         .keepsHeightUnderUndockedKeyboard() // the composer stays at the bottom under a floating keyboard (#2565)
         .pageTitle(String(localized: "Health"))
         .fileUploadPicker(isPresented: $showReports) { uploadReports($0) }
+        .sheet(item: $intakeDetail) { HealthIntakeSheet(kind: $0.kind) }
         #if DEBUG
         // `-showReportUpload <name>[,<name>…]`: made-up reports uploaded as if picked, to check the whole way without the
         // picker; `-showReportUploadMB <n>`: each that big, on its way a while (the mock hub reads it slowly). Once a launch:
@@ -289,7 +291,7 @@ struct HealthView: View {
     private func sections(_ list: [Session]) -> some View {
         ScrollViewReader { proxy in
             List {
-                Section { HealthTodaySection(page: page) } header: { Text("Today") }
+                Section { HealthTodaySection(page: page) { intakeDetail = .init(kind: $0) } } header: { Text("Today") }
                 #if os(iOS)
                 if UIDevice.current.userInterfaceIdiom == .phone {
                     #if DEBUG

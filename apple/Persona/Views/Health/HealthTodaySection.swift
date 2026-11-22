@@ -3,6 +3,7 @@ import SwiftUI
 /// Today's hub totals. Entry uses the shared short-text alert and reversible-action toast.
 struct HealthTodaySection: View {
     let page: HealthModel
+    var openDetail: (HealthIntake.Kind) -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var asking = false
     @State private var kind = HealthIntake.Kind.water
@@ -105,14 +106,36 @@ struct HealthTodaySection: View {
         let goal = portion.goal.formatted()
         let unit = kind == .water ? String(localized: "ml") : String(localized: "g")
         let title = kind == .water ? String(localized: "Water") : String(localized: "Protein")
-        return GaugeRing(title: title, value: value, unit: unit,
+        return Button { openDetail(kind) } label: {
+            GaugeRing(title: title, value: value, unit: unit,
                          subtitle: String(localized: "Goal: \(goal) \(unit)"),
                          ratio: portion.today / Double(max(1, portion.goal)),
                          color: kind == .water ? Theme.Health.water : Theme.Health.protein,
                          subtitleLineLimit: nil)
-            .accessibilityElement(children: .ignore)
+                .accessibilityElement(children: .ignore)
+        }
+            .buttonStyle(.plain)
             .accessibilityLabel(title)
             .accessibilityValue(String(localized: "\(value) of \(goal) \(unit)"))
             .accessibilityIdentifier(kind == .water ? "health-water-ring" : "health-protein-ring")
+    }
+}
+
+/// Hosted by the Health page rather than a reusable List row, as the subscriptions sheet is.
+struct HealthIntakeSheet: View {
+    struct Route: Identifiable {
+        var kind: HealthIntake.Kind
+        var id: String { kind.rawValue }
+    }
+    var kind: HealthIntake.Kind
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ExtensionPageView(plugin: HealthIntakeUI.id, ui: HealthIntakeUI.page,
+                              title: kind == .water ? String(localized: "Water") : String(localized: "Protein"),
+                              state: HealthIntakeUI.state(kind))
+                .toolbar { SheetClose { dismiss() } }
+        }
     }
 }

@@ -107,6 +107,25 @@ import PersonaWire
         #expect(final.days.last?.water == final.water.today)
     }
 
+    @Test func intakeDetailsOpenBothKindsAndSettingsFromTheBundledPages() async throws {
+        for kind in [HealthIntake.Kind.water, .protein] {
+            let first = try await api.pluginUI(HealthIntakeUI.id, HealthIntakeUI.page, context: .here().forPage(),
+                                               state: HealthIntakeUI.state(kind))
+            let view = try #require(first.view)
+            #expect(view.title?.isEmpty == false)
+            #expect(!view.sections.isEmpty)
+            let settings = try await api.pluginUI(HealthIntakeUI.id, HealthIntakeUI.page, context: .here().forPage(),
+                                                  state: view.state, action: "settings")
+            let state = try JSON.decoder.decode(JSONValue.self, from: Data(#require(settings.view?.state).utf8))
+            #expect(state["kind"]?.string == kind.rawValue)
+            #expect(state["edit"]?.bool == true)
+            let action = try await api.pluginUI(HealthIntakeUI.id, HealthIntakeUI.page, context: .here().forPage(),
+                                                state: view.state, action: "log", values: ["amount": "10"])
+            #expect(action.view == view)
+            #expect(action.toast?.isEmpty == false)
+        }
+    }
+
     /// Times are moved to now: the demo never looks days old.
     @Test func timesAreCurrent() async throws {
         let sessions = try await api.sessions()
