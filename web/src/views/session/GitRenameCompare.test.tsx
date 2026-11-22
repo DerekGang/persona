@@ -35,6 +35,8 @@ let repo: string;
 let host: HTMLDivElement;
 let root: Root;
 let requested: Request[];
+let diffRequests: number;
+let holdDiff: ((path: string, staged: boolean) => Promise<Response>) | undefined;
 let downloads: string[];
 let oldToken: string;
 let oldManager: string | null;
@@ -80,7 +82,9 @@ function stub() {
     if (u.pathname.endsWith("/git/status")) return json({ is_repo: true, root: repo, branch: "main", files: statusOverride?.(files()) ?? files(), commits: [] });
     if (u.pathname.endsWith("/git/diff")) {
       const path = u.searchParams.get("path")!;
-      return json({ path, diff: git("diff", ...(u.searchParams.get("staged") === "1" ? ["--cached"] : []), "--", path), truncated: false });
+      const staged = u.searchParams.get("staged") === "1";
+      diffRequests++;
+      return holdDiff?.(path, staged) ?? json({ path, diff: git("diff", ...(staged ? ["--cached"] : []), "--", path), truncated: false });
     }
     if (u.pathname.endsWith("/git/blob")) {
       const request = { rev: u.searchParams.get("rev")!, path: u.searchParams.get("path")! };
@@ -136,7 +140,7 @@ beforeEach(() => {
   git("init", "-q", "--initial-branch=main");
   git("config", "user.name", "Sample Dev");
   git("config", "user.email", "dev@example.com");
-  requested = []; downloads = []; cached.clear(); hideOriginal = false; deny = false; hold = undefined; statusOverride = undefined; fsLive.notify = undefined;
+  requested = []; diffRequests = 0; holdDiff = undefined; downloads = []; cached.clear(); hideOriginal = false; deny = false; hold = undefined; statusOverride = undefined; fsLive.notify = undefined;
   documents.reads = []; documents.gate = undefined;
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   oldToken = getToken(); oldManager = chosenManager(); oldDefault = defaultManager(); features = getState().features;
@@ -216,6 +220,47 @@ describe("Git panel renamed version comparisons", () => {
     await show("notes.txt");
     expect(host.querySelector('[data-testid="diff"]')?.textContent).toContain("Added line");
     expect(requested).toEqual([]);
+  });
+
+  it("keeps an ordinary text diff visible and reads it once during a silent status refresh", async () => {
+    writeBase("notes.txt", "Original line\n"); appendFileSync(join(repo, "notes.txt"), "Added line\n"); git("add", "notes.txt"); stub();
+    await show("notes.txt");
+    expect(diffRequests).toBe(1);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    holdDiff = async (path, staged) => {
+      await gate;
+      return json({ path, diff: git("diff", ...(staged ? ["--cached"] : []), "--", path), truncated: false });
+    };
+    appendFileSync(join(repo, "notes.txt"), "Refreshed line\n"); git("add", "notes.txt");
+    await act(async () => { fsLive.notify?.({ git: true }); });
+    await vi.waitFor(() => expect(diffRequests).toBeGreaterThan(1));
+    const textDuringRefresh = host.querySelector('[data-testid="diff"]')?.textContent;
+    const readsDuringRefresh = diffRequests;
+    await act(async () => { release(); await gate; });
+    holdDiff = undefined;
+    expect(textDuringRefresh).toContain("Added line");
+    expect(readsDuringRefresh).toBe(2);
+    expect(host.querySelector('[data-testid="diff"]')?.textContent).toContain("Refreshed line");
+  });
+
+  it("keeps a pending text read alive when the selected change tab is clicked again", async () => {
+    writeBase("notes.txt", "Original line\n"); appendFileSync(join(repo, "notes.txt"), "Added line\n"); git("add", "notes.txt");
+    appendFileSync(join(repo, "notes.txt"), "Worktree line\n");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    holdDiff = async (path, staged) => {
+      await gate;
+      return json({ path, diff: git("diff", ...(staged ? ["--cached"] : []), "--", path), truncated: false });
+    };
+    stub();
+    await show("notes.txt");
+    expect(diffRequests).toBe(1);
+    await click(t("session-gitpanel.unstaged"));
+    await act(async () => { release(); await gate; });
+    holdDiff = undefined;
+    expect(diffRequests).toBe(1);
+    expect(host.querySelector('[data-testid="diff"]')?.textContent).toContain("Worktree line");
   });
 
   it("compares actual document text across a rename chain and a later worktree edit", async () => {

@@ -250,7 +250,7 @@ function GitPanelContent({ mid, sid, cwd, at, onClose: closePanel, ownerCurrent 
         </div>
       </div>
       {top?.kind === "diff" && (
-        <DiffView key={JSON.stringify([top.file.path, top.at?.line])} mid={mid} sid={sid} root={status?.root ?? cwd} base={base} cwd={cwd} file={binarySelection ? selectedFile ?? top.file : top.file} selectionGone={Boolean(binarySelection && status && (!selectedFile || (top.staged ? !isStaged(selectedFile) : !hasUnstaged(selectedFile) && selectedFile.index !== "?")))} staged={top.staged} at={top.at} refreshed={live} statusVersion={statusVersion} isAuthContextCurrent={comparisonCurrent} onRefresh={() => setReloads((n) => n + 1)} onStaged={(staged) => { viewEpoch.current++; setViews((vs) => {
+        <DiffView key={JSON.stringify([top.file.path, top.at?.line])} mid={mid} sid={sid} root={status?.root ?? cwd} base={base} cwd={cwd} file={binarySelection ? selectedFile ?? top.file : top.file} selectionGone={Boolean(binarySelection && status && (!selectedFile || (top.staged ? !isStaged(selectedFile) : !hasUnstaged(selectedFile) && selectedFile.index !== "?")))} staged={top.staged} at={top.at} refreshed={statusVersion} statusVersion={statusVersion} isAuthContextCurrent={comparisonCurrent} onRefresh={() => setReloads((n) => n + 1)} onStaged={(staged) => { if (staged === top.staged) return; viewEpoch.current++; setViews((vs) => {
           const current = vs[vs.length - 1];
           return current?.kind === "diff" && current.file.path === top.file.path ? [...vs.slice(0, -1), { ...current, staged, at: undefined }] : vs;
         }); }} onBack={back} onClose={onClose} />
@@ -482,19 +482,21 @@ function DiffView({
     },
     [base, cwd, file.path, staged, selectionGone, isAuthContextCurrent],
   );
+  const latestLoad = useRef(load);
+  useEffect(() => { latestLoad.current = load; });
   useEffect(() => {
     const ac = new AbortController();
-    load(ac.signal);
+    latestLoad.current(ac.signal);
     return () => ac.abort();
-  }, [load]);
+  }, [base, cwd, file.path, staged, selectionGone]);
   const seen = useRef(refreshed);
   useEffect(() => {
     if (seen.current === refreshed) return;
     seen.current = refreshed;
     const ac = new AbortController();
-    load(ac.signal, true);
+    latestLoad.current(ac.signal, true);
     return () => ac.abort();
-  }, [refreshed, load]);
+  }, [refreshed]);
   const both = isStaged(file) && hasUnstaged(file);
   const change = staged ? file.index : file.worktree;
   const renamed = change === "R" || change === "C";
