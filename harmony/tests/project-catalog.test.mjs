@@ -34,6 +34,23 @@ function session(id, extra = {}) {
 }
 const machine = row('machine', { id: 'mac', name: 'Studio', online: true });
 
+test('space cards fit their actual bordered grid columns and retain the natural style at 402 points or in one column', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const methods=source.slice(source.indexOf('  private narrowOutline()'),source.indexOf('  private treeInset('));
+  const environment={windowWidthPx:1280,fontScale:1};
+  const Page=new Function('nativeEnvironment','PhoneStyle','return '+stripTypeScriptTypes('class Page {'+methods+'}'))(environment,{page:16});
+  const page=new Page();
+  let density=3.5;
+  page.getUIContext=()=>({px2vp:px=>px/density,vp2px:vp=>vp*density});
+  const scale=page.spaceCardScale(),columnPx=Math.floor((1280-(32+12)*density)/2);
+  const textWidthPx=columnPx-2*(Math.ceil(1.5*density)+Math.ceil(12*scale*density));
+  assert.ok(scale>=.88 && scale<1);
+  assert.ok(textWidthPx>=Math.ceil(150.34*scale*density),'A naturally full 150-point CJK headline fits without wrapping by one character');
+  environment.fontScale=3.2;assert.equal(page.spaceCardScale(),scale);assert.equal(page.narrowOutline(),false);
+  density=3;environment.windowWidthPx=1206;assert.equal(page.spaceCardScale(),1);
+  environment.windowWidthPx=900;assert.equal(page.narrowOutline(),true);assert.equal(page.spaceCardScale(),1);
+});
+
 test('opening a terminal space resolves its owning checkout even when the two IDs differ', () => {
   const selected = session('selected', {space_kind: 'herdr', space_id: 'w1'});
   const space = sessionSpace(selected, [selected], [], 'home', 'work');

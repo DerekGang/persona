@@ -118,10 +118,12 @@ export struct ProjectsPage {
   }
   private spaceCardScale(): number {
     if (!nativeEnvironment.windowWidthPx || this.narrowOutline()) return 1;
-    const width = this.getUIContext().px2vp(nativeEnvironment.windowWidthPx);
-    const column = (width - PhoneStyle.page * 2 - 12) / 2;
-    // SlotCard's natural column is 150 points with 12-point insets. Keep its proportions on smaller phones.
-    return Math.max(0.88,Math.min(1,column / 174));
+    const ui = this.getUIContext();
+    const columnPx = Math.floor((nativeEnvironment.windowWidthPx-ui.vp2px(PhoneStyle.page*2+12))/2);
+    // Both columns follow the thicker selection stroke. The independently rasterized inset can round outward by one pixel.
+    const edgePx = Math.ceil(ui.vp2px(1.5))+1;
+    const available = Math.floor(ui.px2vp(columnPx-edgePx*2));
+    return Math.max(0.88,Math.min(1,available/(150+2*12)));
   }
   private treeInset(level: number): number {
     // The outline's mark and indentation track the interface type scale, including at accessibility sizes.
