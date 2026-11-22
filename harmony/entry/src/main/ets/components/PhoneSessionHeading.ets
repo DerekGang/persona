@@ -11,12 +11,14 @@ import { SessionSpace } from '../models/SessionSpace';
 import { Wire } from '../models/Wire';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 
+const cubeOutline: string = 'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z M3 7 L12 12 L21 7 M12 12 L12 22';
+
 class InfoLine {
   readonly id: string;
   readonly label: string;
   readonly value: string;
-  readonly icon: Resource;
-  constructor(id: string, label: string, value: string, icon: Resource) {
+  readonly icon?: Resource;
+  constructor(id: string, label: string, value: string, icon?: Resource) {
     this.id = id; this.label = label; this.value = value; this.icon = icon;
   }
 }
@@ -87,9 +89,9 @@ export struct PhoneSessionHeading {
   private runtimeRows(): InfoLine[] {
     const agent = this.mark().includes('claude') ? 'Claude Code' : this.mark().includes('codex') ? 'Codex' : tr('version');
     return [
-      new InfoLine('model',tr('model'),this.raw('model').split('/').pop() || '',$r('app.media.phone_settings_model')),
+      new InfoLine('model',tr('model'),this.raw('model').split('/').pop() || ''),
       new InfoLine('launcher',tr('launcher'),this.raw('launcher'),$r('sys.symbol.bolt')),
-      new InfoLine('version',agent,this.raw('version'),$r('app.media.phone_session_package')),
+      new InfoLine('version',agent,this.raw('version')),
       new InfoLine('permissions',tr('phone_session_permissions'),this.permission(),$r('sys.symbol.lock_open')),
       new InfoLine('effort',tr('phone_session_effort'),this.effort(),Symbols.health),
     ];
@@ -117,10 +119,14 @@ export struct PhoneSessionHeading {
   @Builder entry(line: InfoLine) {
     Row({space:13}) {
       Stack() {
-        if (line.id === 'model' || line.id === 'version') {
-          Image(line.icon).width(22*this.infoScale).height(22*this.infoScale).fillColor(Colors.link).objectFit(ImageFit.Contain)
-        } else {
+        if (line.icon) {
           SymbolGlyph(line.icon).fontSize(String(22*this.infoScale)+'vp').fontColor([Colors.link])
+        } else {
+          Shape() {
+            Path().commands(line.id === 'version' ? cubeOutline+' M7.5 4.5 L16.5 9.5' : cubeOutline)
+              .fill(Color.Transparent).stroke(Colors.link).strokeWidth(1.5)
+              .strokeLineCap(LineCapStyle.Round).strokeLineJoin(LineJoinStyle.Round)
+          }.viewPort({x:0,y:0,width:24,height:24}).width(24*this.infoScale).height(24*this.infoScale)
         }
       }.width(this.iconColumn()).accessibilityLevel('no').id('session.info.icon.'+line.id)
       Text(line.label).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink)
