@@ -125,9 +125,14 @@ export struct ProjectsPage {
     const available = Math.floor(ui.px2vp(columnPx-edgePx*2));
     return Math.max(0.88,Math.min(1,available/(150+2*12)));
   }
+  // UIFontMetrics scales the iPhone’s 17-point reference to 22⅓ at the interface maximum.
+  // This is the geometry scale of its grouped list, distinct from the 23-point body font.
+  private outlineControlScale(): number {
+    return Math.max(1,Math.min(nativeEnvironment.fontScale,67/51));
+  }
   private treeInset(level: number): number {
     // The outline's mark and indentation track the interface type scale, including at accessibility sizes.
-    return PhoneStyle.inset + 22 * Math.min(nativeEnvironment.fontScale,Tokens.interfaceFontMaxScale) * Math.min(level,3);
+    return PhoneStyle.inset + 22 * this.outlineControlScale() * Math.min(level,3);
   }
   @Computed get detailTree(): ProjectWorktree | undefined {
     return this.page === 'project_tree' ? this.catalog.tree(this.target) : undefined;
@@ -427,15 +432,15 @@ export struct ProjectsPage {
   @Builder agentMark(agent:ProjectAgent) {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Stack() {
-        if (agent.runtime.toLowerCase().includes('claude')) Image($r('app.media.project_agent_claude')).width(17).height(17).objectFit(ImageFit.Contain)
+        if (agent.runtime.toLowerCase().includes('claude')) Image($r('app.media.project_agent_claude')).width(17*this.outlineControlScale()).height(17*this.outlineControlScale()).objectFit(ImageFit.Contain)
         else if (agent.runtime.toLowerCase().includes('codex') || agent.runtime.toLowerCase().includes('openai'))
-          Image($r('app.media.project_agent_openai')).width(17).height(17).fillColor(Colors.ink).objectFit(ImageFit.Contain)
+          Image($r('app.media.project_agent_openai')).width(17*this.outlineControlScale()).height(17*this.outlineControlScale()).fillColor(Colors.ink).objectFit(ImageFit.Contain)
         else if (agent.runtime) Text(agent.runtime.slice(0,1).toUpperCase()).fontSize('16vp').fontWeight(FontWeight.Medium).fontColor(Colors.ink)
         else SymbolGlyph(Symbols.agent).fontSize('17vp').fontColor([Colors.secondary])
-      }.width(36).height(36).backgroundColor(Colors.subtle).borderRadius(18)
+      }.width(36*this.outlineControlScale()).height(36*this.outlineControlScale()).backgroundColor(Colors.subtle).borderRadius(18*this.outlineControlScale())
       if (agent.state && agent.state !== 'unknown') Circle().width(12).height(12).fill(this.tint(agent))
         .stroke(Colors.surface).strokeWidth(2)
-    }.width(36).height(36)
+    }.width(36*this.outlineControlScale()).height(36*this.outlineControlScale())
   }
   private agentContext(agent: ProjectAgent, paneName: string = '', starter: boolean = false): string {
     const special = [2, 4, 5, 6].includes(agent.rank) || agent.state === 'offline';
@@ -447,45 +452,47 @@ export struct ProjectsPage {
       .padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.selection).borderRadius(6)
       .constraintSize({maxWidth:this.narrowOutline() ? '100%' : '41%'}).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
   }
-  @Builder agentCell(agent:ProjectAgent, treeKey:string, identity:string, paneName:string = '', starter:boolean = false) {
-    Row({space:9}) {
+  @Builder agentCell(agent:ProjectAgent, treeKey:string, level:number, paneName:string = '', starter:boolean = false) {
+    Row({space:12}) {
       this.agentMark(agent)
-      Column({space:3}) {
-        Row({space:6}) {
-          Text(agent.row.title || tr('agent_untitled')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-            .layoutWeight(1).maxLines(this.narrowOutline() ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
-          if (!this.narrowOutline() && this.age(agent)) Text(this.age(agent)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
+      Column({space:2}) {
+        Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Baseline,space:{main:LengthMetrics.vp(8),cross:LengthMetrics.vp(4)}}) {
+          Text(agent.row.title || tr('agent_untitled')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
+            .fontWeight(agent.state === 'unread' ? FontWeight.Bold : 600).fontColor(Colors.ink)
+            .constraintSize({maxWidth:'100%'}).flexGrow(1).maxLines(this.narrowOutline() ? 4 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
+          if (this.age(agent)) Text(this.age(agent)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
         }.width('100%')
-        if (agent.preview) Row({space:6}) {
-          Text(agent.preview).maxLines(this.narrowOutline() ? 4 : 2).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
+        if (agent.preview) Row({space:8}) {
+          Text(agent.preview).maxLines(this.narrowOutline() ? 4 : 2).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
             .layoutWeight(1).textOverflow({overflow:TextOverflow.Ellipsis})
           if (agent.state === 'needs_you' && !this.narrowOutline()) this.needsReply()
         }.width('100%').alignItems(VerticalAlign.Top)
         if (agent.state === 'needs_you' && (!agent.preview || this.narrowOutline())) this.needsReply()
         Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center,space:{main:LengthMetrics.vp(5),cross:LengthMetrics.vp(2)}}) {
-          if (agent.tab || agent.runtime) Text(tr('terminal')).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.ai)
+          if (agent.tab || agent.runtime) Text(tr('terminal')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ai)
             .padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.subtle).borderRadius(7)
-          if (paneName || agent.tab) Text(paneName || agent.tab).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+          if (paneName || agent.tab) Text(paneName || agent.tab).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
           if (agent.model || agent.runtime) Text(agent.model || agent.runtime).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             .maxLines(this.narrowOutline() ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
           if (agent.todoTitle) SymbolGlyph($r('sys.symbol.list_checkmark')).fontSize('13vp').fontColor([Colors.secondary])
             .accessibilityText(tr('todo')+' · '+agent.todoTitle).id('projects.session_todo.'+agent.row.id)
-          if (starter) Text(tr('session_space_starter')).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
-        }.width('100%')
-        if (this.narrowOutline() && this.age(agent)) Text(this.age(agent)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
+          if (starter) Text(tr('session_space_starter')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        }.width('100%').margin({top:2})
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-    }.width('100%').alignItems(VerticalAlign.Top).constraintSize({minHeight:58}).padding({top:9,bottom:9,right:PhoneStyle.inset})
+    }.width('100%').alignItems(VerticalAlign.Top).constraintSize({minHeight:58}).padding({
+      left:this.treeInset(level)+6,right:20,top:19,bottom:19
+    })
       .accessibilityGroup(true).accessibilityText([agent.row.title,agent.preview,tr(agent.stateLabel),this.agentContext(agent,paneName,starter),agent.todoTitle,this.age(agent)].filter((v:string) => !!v).join(' · '))
       .accessibilitySelected(this.catalog.browser.selectedSession === agent.row.key())
-      .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id(identity)
+      .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id('projects.inline_session')
   }
   @Builder foldChevron(open:boolean) {
     SymbolGlyph(open ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
   }
   // A virtual row can outlive the projection object that created it. Keep only its scoped key in this builder.
   @Builder tabLine(key: string) {
-    Row({ space: 6 }) {
-      Stack() { Circle().width(7).height(7).fill(this.tabTint(key)) }.width(18)
+    Row({ space: 8 }) {
+      Stack() { Circle().width(7).height(7).fill(this.tabTint(key)) }.width(20)
       if (this.narrowOutline()) {
         Column({space:2}) {
           Text(this.tabRows.get(key)?.tabTitle || '').fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
@@ -502,7 +509,7 @@ export struct ProjectsPage {
       }
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary]).rotate({angle:this.tabOpen(key) ? 90 : 0})
         .visibility(this.filteringText() ? Visibility.None : Visibility.Visible)
-    }.width('100%').constraintSize({minHeight:44}).padding({left:this.treeInset(this.tabRows.get(key)?.level || 0),right:PhoneStyle.inset})
+    }.width('100%').constraintSize({minHeight:Math.max(46,44*this.outlineControlScale())}).padding({left:this.treeInset(this.tabRows.get(key)?.level || 0)+6,right:PhoneStyle.inset})
       .accessibilityGroup(true).accessibilityText(this.tabDescription(key)).onClick(() => this.toggleTab(key)).id('projects.tab')
   }
   @Builder countItems(key: string) {
@@ -537,8 +544,8 @@ export struct ProjectsPage {
           .fontColor(Colors.ink).layoutWeight(1).maxLines(this.narrowOutline() ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
       }
       this.foldChevron(line.open)
-    }.width('100%').constraintSize({minHeight:line.kind === 'host' ? 42 : 44})
-      .padding({left:PhoneStyle.inset,right:PhoneStyle.inset,top:4,bottom:4})
+    }.width('100%').constraintSize({minHeight:44*this.outlineControlScale()+(line.kind === 'host' ? 4 : 0)})
+      .padding({left:PhoneStyle.inset,right:PhoneStyle.inset,top:line.kind === 'host' ? 14 : 4,bottom:4})
       .accessibilityGroup(true).accessibilityText([line.kind === 'host' ? line.project.machine : line.project.title,
         line.kind === 'host' ? this.hostSummary(line.project.hostKey) : this.count(line.count,'project_sessions'),
         tr(line.open ? 'agent_collapse' : 'agent_expand')]
@@ -576,12 +583,12 @@ export struct ProjectsPage {
           if (line.count) Text(!line.tree!.activeCount ? tr('project_worktree_idle') : tr('project_agent_count').replace('{count}',String(line.count)))
             .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(1)
         }
-      }.layoutWeight(1).constraintSize({minHeight:44}).accessibilityGroup(true)
+      }.layoutWeight(1).constraintSize({minHeight:44*this.outlineControlScale()}).accessibilityGroup(true)
         .accessibilityText([line.tree!.title,this.treeDetail(line.tree!),line.tree!.cwd,this.count(line.count,'project_sessions')].filter((v:string) => !!v).join(' · '))
         .onClick(() => { if (this.filteringText() || line.tree!.source || !line.count) this.openTree(line.tree!); else this.toggle(line); })
         .bindContextMenu(this.actionMenu(line.tree!.key),ResponseType.LongPress).id('projects.worktree')
       if (!this.filteringText() && (line.count || line.tree!.children.length)) Button({type:ButtonType.Normal}) { this.foldChevron(line.open) }
-        .width(44).height(44).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr(line.open ? 'agent_collapse' : 'agent_expand'))
+        .width(44*this.outlineControlScale()).height(44*this.outlineControlScale()).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr(line.open ? 'agent_collapse' : 'agent_expand'))
         .onClick(() => this.toggle(line)).id('projects.fold')
     }.width('100%').padding({left:this.treeInset(line.level),right:this.filteringText() ? PhoneStyle.inset : 3})
       .id('projects.tree_owner.' + line.tree!.machine + '.' + line.tree!.source + '.' + line.tree!.sourceId)
@@ -593,7 +600,7 @@ export struct ProjectsPage {
         line.kind === 'children' ? this.count(line.count,'project_children') : tr('project_idle_named').replace('{count}',String(line.count)) + (line.preview ? ' · '+line.preview : ''))
         .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(line.kind === 'more' ? Colors.link : Colors.secondary).layoutWeight(1)
       if (!this.filteringText() || line.kind === 'more') this.foldChevron(line.kind !== 'more' && line.open)
-    }.width('100%').constraintSize({minHeight:44}).padding({left:this.treeInset(line.level),right:PhoneStyle.inset})
+    }.width('100%').constraintSize({minHeight:44*this.outlineControlScale()}).padding({left:this.treeInset(line.level),right:PhoneStyle.inset})
       .accessibilityGroup(true).onClick(() => {
         if (line.kind === 'more') this.catalog.browser.showAll(line.tree!.key);
         else if (!this.filteringText()) this.toggle(line);
@@ -607,8 +614,7 @@ export struct ProjectsPage {
     else if (line.kind === 'project') Row() { this.headerLine(line) }.width('100%').bindContextMenu(this.projectMenu(line.project.key),ResponseType.LongPress)
     else if (line.kind === 'tree') this.treeLine(line)
     else if (line.kind === 'tab') this.tabLine(line.key)
-    else if (line.kind === 'session') Row() { this.agentCell(line.agent!,line.tree!.key,'projects.inline_session',line.paneName,line.starter) }
-      .width('100%').padding({left:this.treeInset(line.level)})
+    else if (line.kind === 'session') this.agentCell(line.agent!,line.tree!.key,line.level,line.paneName,line.starter)
     else this.subsidiaryLine(line)
   }
   @Builder repositoryList() {
@@ -629,7 +635,7 @@ export struct ProjectsPage {
                 entry.item.kind === 'tree' && entry.item.tree!.key === this.catalog.browser.selectedTree ? Colors.selection : Colors.surface)
               .borderRadius({topLeft:entry.item.first ? PhoneStyle.cardRadius : 0,topRight:entry.item.first ? PhoneStyle.cardRadius : 0,
                 bottomLeft:entry.item.last ? PhoneStyle.cardRadius : 0,bottomRight:entry.item.last ? PhoneStyle.cardRadius : 0})
-              .margin({bottom:entry.item.last ? 10 : 0})
+              .margin({bottom:entry.item.last && this.lines[entry.index+1]?.kind !== 'host' ? 12 : 0})
           }
         }).key((line:ProjectLine) => line.key).virtualScroll({totalCount:this.lines.length,reusable:false})
         if (!this.lines.length && !this.catalog.loading) ListItem() {

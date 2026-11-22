@@ -139,13 +139,13 @@ function appendProject(out:ProjectLine[], p:PersonaProject, state:ProjectBrowser
   if (p.flat && !focus) appendAgents(out,p,p.roots[0],state,match.all ? p.roots[0].agents : match.agents.get(p.roots[0].key) || [],1,search,quiet);
   else {
     const level = focus ? 0 : 1;
-    for (const root of p.roots) appendTree(out,p,root,state,match,match.all,search,quiet,level);
+    for (const root of p.roots) appendTree(out,p,root,state,match,match.all,search,quiet,level,focus);
   }
   if (out.length > start) { out[start].first = true; out[out.length - 1].last = true; }
 }
 
 function appendTree(out:ProjectLine[],p:PersonaProject,t:ProjectWorktree,state:ProjectBrowserState,match:ProjectMatch,
-  inherited:boolean,search:boolean,quietRepo:boolean,level:number):void {
+  inherited:boolean,search:boolean,quietRepo:boolean,level:number,detail:boolean):void {
   if (!inherited && !match.visible.has(t.key)) return;
   const all = inherited || match.own.has(t.key);
   const line = new ProjectLine('tree',t.key,p,level,t);
@@ -153,13 +153,14 @@ function appendTree(out:ProjectLine[],p:PersonaProject,t:ProjectWorktree,state:P
   line.count = t.agents.length; out.push(line);
   if (!line.open) return;
   const agents = all ? t.agents : match.agents.get(t.key) || [];
-  appendAgents(out,p,t,state,agents,level + 1,search,t.activeCount === 0);
+  // The repository tree keeps a worktree’s agents at its own depth, including tabs.
+  appendAgents(out,p,t,state,agents,detail ? level + 1 : level,search,t.activeCount === 0);
   const children = t.children.filter((child:ProjectWorktree) => all || match.visible.has(child.key));
   if (!children.length) return;
   const header = new ProjectLine('children',t.key,p,level + 1,t);
   header.count = children.length; header.open = search || state.open(header.key,false);
   out.push(header);
-  if (header.open) for (const child of children) appendTree(out,p,child,state,match,all,search,false,level + 1);
+  if (header.open) for (const child of children) appendTree(out,p,child,state,match,all,search,false,level + 1,detail);
 }
 
 // A tab occupies the position of its first session in the list. Its members follow their host pane order.

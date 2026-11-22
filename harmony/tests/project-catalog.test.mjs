@@ -450,6 +450,7 @@ test('the phone outline puts busy agents directly below a lone main checkout and
   const visible = () => projectOutline(projects,state);
   assert.deepEqual(visible().map(l => l.kind),['project','session','session','session','idle-agents']);
   assert.deepEqual(visible().filter(l => l.agent).map(l => l.agent.row.id),['answer','newer','older']);
+  assert.ok(visible().filter(l => l.agent).every(line => line.level === 1));
   state.toggle(visible()[0].key,true);
   assert.deepEqual(visible().map(l => l.kind),['project']);
   state.query = 'model-idle';
@@ -469,7 +470,9 @@ test('nested empty workspaces keep their own controls and a search walks only ma
   assert.ok(visible().some(l => l.tree?.sourceId === 'sibling'));
   state.query = 'parser';
   assert.deepEqual(visible().filter(l => l.kind==='tree').map(l => l.tree.sourceId),['main','child','grandchild']);
-  assert.equal(visible().at(-1).agent.row.id,'wanted');
+  const found = visible().at(-1);
+  assert.equal(found.agent.row.id,'wanted');
+  assert.equal(found.level, visible().find(line => line.kind === 'tree' && line.tree === found.tree).level);
   assert.ok(!visible().find(l => l.tree?.sourceId === 'sibling'));
 });
 
