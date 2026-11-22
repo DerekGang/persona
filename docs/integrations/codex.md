@@ -200,8 +200,11 @@ mid-turn too; `config.toml` stays as it is (`node/codex_terminal_modes.go`).
 
 - **Row**: `capabilities.model: true`, and `efforts` the levels of the model the rollout last ran: `supported_reasoning_levels` in the
   `models_cache.json` of the Codex home the rollout is in, Codex's whole list for a model the cache does not name, none for a model that takes none.
-  Only when the session has a rollout whose `session_meta` names `cli_version` 0.169 or later: the version that started the session, so a session an
-  older Codex started stays refused after a newer one resumes it. Never on sub-Agents, botmux panes, TRAE CLI, or a session whose owner is in doubt.
+  Only when the session has a rollout whose `session_meta` names `cli_version` 0.169 or later: the version that started the session, not the one
+  running in the pane now. So a session an older Codex started stays refused after a newer one resumes it, and a session an older binary resumes
+  (a downgrade under a running session) gets `/model` with arguments it does not take: its picker or an error on the screen, then
+  `modes_codex_unconfirmed`, nothing typed again. Reading the running Codex's version is #13290. Never on sub-Agents, botmux panes, TRAE CLI, or a
+  session whose owner is in doubt.
 - **Changing it**: one `/model` line per request, after the checks a message gets (a draft in the box or a dialog on the screen refuses, nothing
   typed); the session's typing lock is held only while typing. A model alone keeps the current effort when the new model takes it (Codex would put
   the new model on its default level), as the app-server route does, and a pick equal to what the rollout shows types nothing. The change counts
@@ -210,14 +213,17 @@ mid-turn too; `config.toml` stays as it is (`node/codex_terminal_modes.go`).
   so the row shows the new values at once.
 - **Refusals** (`session.modes` codes, worded in en / zh-Hans / ja): a permission mode, as on the app-server route; a level the model does not take;
   `modes_codex_version` (an older Codex started the session); `modes_codex_no_rollout` (no rollout yet: a new Codex has none until its first
-  message); `modes_codex_refused` with Codex's own words (a model or level it does not have, Reserve, an unknown argument; "still starting" is
-  typed once more after 2 seconds); `modes_codex_unconfirmed` (`delivered: "unknown"`) when the rollout does not show the change within 15 seconds.
-  Nothing is typed again after it.
-- **Observed** with Codex 0.169.1 and 0.171.0-alpha.13 in a private pty, temporary `CODEX_HOME`, no model reachable: `Model changed to <model>
-  <level> for this session only` on the screen, `thread_settings_applied` in the rollout at once between turns and mid-turn, the model's default
-  level for a model alone, and `model` / `model_reasoning_effort` in `config.toml` unchanged.
+  message); `modes_codex_refused` with Codex's own words (a model or level it does not have, Reserve, an unknown argument, `/model` disabled
+  while a task runs; "still starting" is typed once more after 2 seconds, and a second "still starting" is passed on);
+  `modes_codex_unconfirmed` (`delivered: "unknown"`) when the rollout does not show the change within 15 seconds. Nothing is typed again after
+  it. Codex's words count only at the start of a screen line that is new since the typing (one more copy than before counts, as Codex prints a
+  repeated refusal again), and a record in the rollout wins over them.
+- **Observed** in a private pty, temporary `CODEX_HOME`, no model reachable: with Codex 0.169.1 mid-turn and 0.171.0-alpha.13 between turns,
+  `Model changed to <model> <level> for this session only` on the screen and `thread_settings_applied` in the rollout at once; the model's
+  default level for a model alone; `model` / `model_reasoning_effort` in `config.toml` unchanged. 0.171.0-alpha.13 was not tried mid-turn.
 - **Tests**: `node/codex_terminal_modes_test.go` (the row by version and cache; the line typed for an effort, a model, both, mid-turn and an
-  unchanged pick; every refusal; Codex's answers on the screen; the rollout's record), `transcript/codex_effort_observe_test.go`
+  unchanged pick; every refusal, including a dialog on the screen, a botmux pane, a subagent and "still starting" twice; Codex's answers on the
+  screen; the rollout's record), `transcript/codex_effort_observe_test.go`
   (`thread_settings_applied` in the parser and the incremental scan). `TestCodexTerminalLive` (`node/codex_terminal_modes_live_test.go`, opt-in
   with `PERSONA_LIVE_CODEX_TUI=<codex binary>`) runs a real Codex TUI in a private pty on a temporary home and a provider nothing listens to:
   the lines the node builds are recorded with their values, a model Codex does not have is refused with nothing recorded, and `config.toml` keeps

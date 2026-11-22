@@ -1,5 +1,14 @@
 # Lessons: Claude Code, Codex, and herdr
 
+## Codex's `/model` with arguments: confirm from the rollout, and send the effort with a model (2026-11-23, #12572)
+
+- Codex 0.169 and later take `/model <model> --reasoning=<level>` for this session only. `/model <model>` alone does not keep the effort: Codex
+  puts the new model on that model's default level. To keep the user's effort, type it with the model when the new model takes it
+  (`setCodexTerminalSettings` in `server/internal/node/codex_terminal_modes.go`).
+- Confirm the change from the rollout, not the screen: Codex writes `thread_settings_applied` with the thread's `model` and `reasoning_effort` as
+  soon as it applies them, between turns and mid-turn. The screen's `Model changed to …` line can scroll away or be a line from earlier; read the
+  screen only for Codex's refusal, and only lines that are new since the typing (a repeated refusal is printed again below the first).
+
 ## Detached approvals and hub-owned device methods (#12918)
 
 - When a prepared or detachable `PreToolUse` approval releases its hook with `approval.WaitingText` or `approval.ClarifyingText`, Claude Code writes that message into the transcript as an ordinary `tool_result` carrying the original `tool_use_id`. Transcript reconciliation for terminal-answered permissions (`syncPlanInteractions`) must skip `p.prepared != nil` and non-final approval tool results, or the retained 24-hour card is dismissed as `answered_by=terminal` a second later.

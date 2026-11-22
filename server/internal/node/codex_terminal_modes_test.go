@@ -183,8 +183,9 @@ func TestCodexTerminalModesTyped(t *testing.T) {
 }
 
 // Every refusal says why, with nothing typed when it is the node's own: a permission mode, a level the model does not
-// take, an older Codex, no rollout yet, a draft in the box. Codex's own refusal is passed on in its words; a Codex
-// still starting gets one more try; a change the rollout never shows is unconfirmed, typed once.
+// take, an older Codex, no rollout yet, a draft in the box, a dialog on the screen, a botmux pane, a subagent. Codex's
+// own refusal is passed on in its words; a Codex still starting gets one more try, and its second answer is passed on;
+// a change the rollout never shows is unconfirmed, typed once.
 func TestCodexTerminalModesRefused(t *testing.T) {
 	t.Run("permission mode", func(t *testing.T) {
 		n, f, _ := cxTerminalNode(t, proto.StatusIdle, "0.169.1", "gpt-a", "medium")
@@ -282,6 +283,78 @@ func TestCodexTerminalModesRefused(t *testing.T) {
 			t.Fatalf("typed %q", typed)
 		}
 	})
+	t.Run("still starting twice", func(t *testing.T) {
+		// Codex prints its answer again below the first: the second try's answer is new, and passed on.
+		n, f, _ := cxTerminalNode(t, proto.StatusIdle, "0.169.1", "gpt-a", "medium")
+		words := "Session is still starting; try /model again in a moment."
+		var mu sync.Mutex
+		shown := "• Done.\n\n"
+		f.after(func(c herdrCall) {
+			if c.Method != "agent.prompt" || !strings.HasPrefix(str(c.Params["text"]), "/model") {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			shown += "■ " + words + "\n\n"
+			f.setScreen(cxPane, shown+"› Ask Codex to do anything\n\n  gpt-6 low · /private/tmp/project\n")
+		})
+		err := cxModes(t, n, map[string]any{"effort": "high"})
+		if refusalCode(err) != proto.CodeModesCodexRefused || err.Error() != words {
+			t.Fatalf("err %v", err)
+		}
+		if typed := cxTyped(f); len(typed) != 2 {
+			t.Fatalf("typed %q", typed)
+		}
+	})
+	t.Run("dialog on the screen", func(t *testing.T) {
+		n, f, _ := cxTerminalNode(t, proto.StatusIdle, "0.169.1", "gpt-a", "medium")
+		f.setScreen(cxPane, screenFixture(t, "codex-0.163.0-exec-approval-120.txt"))
+		if err := cxModes(t, n, map[string]any{"effort": "high"}); refusalCode(err) != screen.DialogOpen {
+			t.Fatalf("err %v", err)
+		}
+		if typed := cxTyped(f); len(typed) != 0 {
+			t.Fatalf("typed %q", typed)
+		}
+	})
+	t.Run("botmux pane", func(t *testing.T) {
+		// botmux hands what is typed over as a whole message: /model would reach the model as a turn.
+		n, f, _ := cxTerminalNode(t, proto.StatusIdle, "0.169.1", "gpt-a", "medium")
+		n.mu.Lock()
+		a := n.agents[cxID]
+		a.PaneID = host.Botmux + ":b1"
+		n.agents[cxID] = a
+		n.mu.Unlock()
+		if s := paneRow(t, n, cxID); s.Capabilities != nil && s.Capabilities.Model != nil && *s.Capabilities.Model || len(s.Efforts) != 0 {
+			t.Fatalf("a botmux pane offers model %v, efforts %v", s.Capabilities.Model, s.Efforts)
+		}
+		if err := cxModes(t, n, map[string]any{"effort": "high"}); err == nil || !strings.Contains(err.Error(), "Codex / TRAE CLI 的会话不支持") {
+			t.Fatalf("err %v", err)
+		}
+		if typed := cxTyped(f); len(typed) != 0 {
+			t.Fatalf("typed %q", typed)
+		}
+	})
+	t.Run("subagent", func(t *testing.T) {
+		// Its parent drives it, through the app-server the parent runs on: nothing is typed into the pane.
+		n, f, _ := cxTerminalNode(t, proto.StatusIdle, "0.169.1", "gpt-a", "medium")
+		n.codices = newCodexRegistry()
+		home := canonicalCodexHome(filepath.Join(n.home, ".codex"), n.home)
+		n.codices.config.LegacyHome = home // the default home keeps the thread ids as they are
+		if id := n.registerCodex(home, cxID, ""); id != cxID {
+			t.Fatalf("registered as %q", id)
+		}
+		n.codices.remotes = map[string]*codexRemote{"daemon": {n: n, spec: proto.CodexServer{ID: "daemon", Home: home}, ready: true,
+			threads: map[string]remoteThread{cxID: {id: cxID, publicID: cxID, parent: "01a19756-0000-7000-8000-0000000000aa"}}}}
+		if _, _, ok := n.codexOnTerminal(cxID); ok {
+			t.Fatal("a subagent counted as on the terminal route")
+		}
+		if err := cxModes(t, n, map[string]any{"effort": "high"}); err == nil {
+			t.Fatal("a subagent's effort changed")
+		}
+		if typed := cxTyped(f); len(typed) != 0 {
+			t.Fatalf("typed %q", typed)
+		}
+	})
 }
 
 func TestCodexModelArgsCommand(t *testing.T) {
@@ -302,7 +375,8 @@ func TestCodexModelArgsCommand(t *testing.T) {
 	}
 }
 
-// Codex's refusals as 0.169 to 0.171 print them, each only when it is new on the screen and about what was typed.
+// Codex's refusals as 0.169 to 0.171 print them, each only when it is new on the screen (one more copy than before
+// counts), at the start of its line and about what was typed.
 func TestCodexModelArgsOutcome(t *testing.T) {
 	box := "\n› Ask Codex to do anything\n\n  GPT-6.2-Astra medium · ~/project\n"
 	for _, c := range []struct {
@@ -316,6 +390,9 @@ func TestCodexModelArgsOutcome(t *testing.T) {
 		{"starting", box, "■ Session is still starting; try /model again in a moment." + box, "", "high", "", "Session is still starting; try /model again in a moment."},
 		{"changed", box, "• Model changed to gpt-6.2-astra high for this session only" + box, "", "high", "", ""},
 		{"an earlier answer", "■ Model 'gpt-9' is unavailable. Use /model to see available models." + box, "■ Model 'gpt-9' is unavailable. Use /model to see available models." + box, "gpt-9", "", "", ""},
+		{"busy", box, "■ '/model' is disabled while a task is in progress." + box, "", "high", proto.CodeModesCodexRefused, "'/model' is disabled while a task is in progress."},
+		{"the same answer again", "■ Model 'gpt-9' is unavailable. Use /model to see available models." + box, "■ Model 'gpt-9' is unavailable. Use /model to see available models.\n\n■ Model 'gpt-9' is unavailable. Use /model to see available models." + box, "gpt-9", "", proto.CodeModesCodexRefused, "Model 'gpt-9' is unavailable. Use /model to see available models."},
+		{"quoted mid-line", box, "• The tool said: Unexpected argument 'x'. Use '--reasoning=<level>' or '--speed=<tier>'." + box, "", "high", "", ""},
 		{"another model", box, "■ Model 'gpt-8' is unavailable. Use /model to see available models." + box, "gpt-9", "", "", ""},
 	} {
 		err := codexModelArgsOutcome(c.before, c.after, c.model, c.effort)

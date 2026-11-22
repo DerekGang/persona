@@ -193,6 +193,9 @@ func (n *Node) typeCodexSettings(ctx context.Context, id string, t codexTerminal
 		}
 		if after, err := n.readPane(ctx, t.pane, "visible", 60); err == nil {
 			if err := codexModelArgsOutcome(before, after, model, effort); err != nil {
+				if codexSettingsRecorded(t.rollout, from, model, effort) {
+					return nil // recorded meanwhile: the record, not a line on the screen, says the change took
+				}
 				return err
 			}
 		}
@@ -247,28 +250,39 @@ type codexStarting struct{ words string }
 
 func (e codexStarting) Error() string { return e.words }
 
-// codexModelArgsOutcome is Codex's refusal of the /model typed between the screens before and after: a line of after
-// that before did not have, saying the model or level typed is unavailable, that the command takes no arguments now
-// (Codex's Reserve) or an argument it does not know, or that the session is still starting (codexStarting). Its words
-// are Codex's (Codex 0.169 to 0.171). nil when none shows: the rollout says whether the change took.
+// codexModelArgsOutcome is Codex's refusal of the /model typed between the screens before and after: a new line of
+// after that starts with Codex's words that the model or level typed is unavailable, that the command takes no
+// arguments now (Codex's Reserve) or an argument it does not know, that /model waits for the running task, or that the
+// session is still starting (codexStarting). Its words are Codex's (Codex 0.169 to 0.171). nil when none shows: the
+// rollout says whether the change took.
+//
+// A line is new when after has more copies of it than before: Codex prints the same refusal again for the same pick,
+// below the first one still on the screen. The words count only at the start of a line, so a tool's output or the
+// agent's text that quotes them is not taken for Codex's answer.
 func codexModelArgsOutcome(before, after, model, effort string) error {
-	seen := map[string]bool{}
+	onScreen := map[string]int{}
 	for _, l := range strings.Split(before, "\n") {
-		seen[strings.TrimSpace(l)] = true
+		onScreen[strings.TrimSpace(l)]++
 	}
 	for _, l := range strings.Split(after, "\n") {
 		line := strings.TrimSpace(l)
-		if line == "" || seen[line] { // an earlier answer still on the screen is not this command's
+		if line == "" {
+			continue
+		}
+		if onScreen[line] > 0 { // an earlier answer still on the screen is not this command's
+			onScreen[line]--
 			continue
 		}
 		words := strings.TrimSpace(strings.TrimLeft(line, "■•└ "))
 		switch {
-		case strings.Contains(words, "Session is still starting"):
+		case strings.HasPrefix(words, "Session is still starting; try /model"):
 			return codexStarting{words}
-		case model != "" && (strings.Contains(words, "Model '"+model+"' is unavailable") || strings.Contains(words, "doesn't include `"+model+"`")),
-			effort != "" && strings.Contains(words, "Reasoning level '"+effort+"' is unavailable"),
-			strings.Contains(words, "Model arguments are unavailable"),
-			strings.Contains(words, "Unexpected argument"):
+		case model != "" && (strings.HasPrefix(words, "Model '"+model+"' is unavailable") ||
+			strings.HasPrefix(words, "Your ChatGPT model list doesn't include `"+model+"`")),
+			effort != "" && strings.HasPrefix(words, "Reasoning level '"+effort+"' is unavailable"),
+			strings.HasPrefix(words, "Model arguments are unavailable"),
+			strings.HasPrefix(words, "Unexpected argument '"),
+			strings.HasPrefix(words, "'/model' is disabled while a task is in progress"):
 			return refusal(proto.CodeModesCodexRefused, words, nil)
 		}
 	}
