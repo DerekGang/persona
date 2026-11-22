@@ -47,6 +47,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 		CanWait bool `json:"can_wait"`
 		// accepted: what was done beyond the brief (#3822, task_brief_result.go).
 		AlsoDone []string `json:"also_done"`
+		// accepted: work from the original brief left for a later decision or to-do.
+		DeferredScope  string `json:"deferred_scope"`
+		FollowUpTodoID string `json:"follow_up_todo_id"`
 		// parked (parked.go): until when it waits (a duration or a time; reason says for what), and on what kind of thing.
 		Until     string        `json:"until"`
 		WaitingOn string        `json:"waiting_on"`
@@ -57,6 +60,8 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	}
 	a.Note = strings.TrimSpace(a.Note)
 	a.ReworkKind = strings.TrimSpace(a.ReworkKind)
+	a.DeferredScope = clip(oneLine(a.DeferredScope), 600)
+	a.FollowUpTodoID = strings.TrimSpace(a.FollowUpTodoID)
 	switch a.Verdict {
 	case reviewAccepted, reviewRework, reviewNeedsUser, reviewParked, reviewCancelled:
 	default:
@@ -67,6 +72,12 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	}
 	if !validReworkKind(a.ReworkKind) {
 		return "", fmt.Errorf("rework_kind must be external_input, substantive_new, repeated_error or low_roi_edge")
+	}
+	if (a.DeferredScope != "" || a.FollowUpTodoID != "") && a.Verdict != reviewAccepted {
+		return "", fmt.Errorf("deferred_scope and follow_up_todo_id apply to accepted only")
+	}
+	if a.FollowUpTodoID != "" && (a.DeferredScope == "" || a.UserCheck) {
+		return "", fmt.Errorf("follow_up_todo_id requires deferred_scope and applies to accepted without user_check")
 	}
 	switch a.Outcome = strings.TrimSpace(a.Outcome); a.Outcome {
 	case "", outcomeDone, outcomeCannot:
@@ -141,6 +152,13 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	}
 	if t.DoneAt != nil && (a.Verdict == reviewRework || a.Verdict == reviewNeedsUser || a.Verdict == reviewParked) {
 		return "", fmt.Errorf("task %s is done already (%s): hand out a new task for what is left", t.ID, cmp.Or(t.DoneReason, "closed"))
+	}
+	if a.DeferredScope != "" && !a.UserCheck && a.FollowUpTodoID == "" {
+		if ask, ok := s.askCopy(t.ID); ok && t.Supervision.state(t) == reviewNeedsUser && decisionOpen(&ask, t) {
+			// Closing this to-do would retire its decide card. Keep the original decision answerable.
+			return fmt.Sprintf("Task %s remains open with its existing owner decision. No acceptance was recorded.", t.ID), nil
+		}
+		return "", deferredScopeError("")
 	}
 	if t.DoneAt != nil && t.DoneBy == db.DoneByReview && a.Verdict == reviewAccepted && !a.UserCheck {
 		plan, _, _ := s.taskTerminalPlan(ctx, t)
@@ -243,7 +261,18 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	var v Supervision
 	var reviewedAt time.Time
 	if ledger {
-		v, _, err = s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
+		var followUpInvalid bool
+		var guard func(Todo) bool
+		if a.FollowUpTodoID != "" {
+			// Read the linked to-do inside the manager's write boundary.
+			guard = func(cur Todo) bool {
+				followUp, ok := s.todoNow(a.FollowUpTodoID)
+				followUpInvalid = !ok || followUp.ID == cur.ID || followUp.DoneAt != nil ||
+					(followUp.PartOf != cur.ID && !slices.Contains(followUp.After, cur.ID))
+				return !followUpInvalid
+			}
+		}
+		v, _, err = s.updateSupervisionGuarded(ctx, t.ID, guard, func(v *Supervision) bool {
 			if verdict == reviewAccepted && t.DoneAt == nil && v.Waits != nil {
 				w := *v.Waits
 				waiting = &w
@@ -280,7 +309,8 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 					park.Count = max(1, prev.Parks) + 1
 				}
 			}
-			r := TaskReview{At: time.Now().UTC(), Verdict: verdict, Checks: checks, Note: note, UserCheck: a.UserCheck}
+			r := TaskReview{At: time.Now().UTC(), Verdict: verdict, Checks: checks, Note: note, UserCheck: a.UserCheck,
+				DeferredScope: a.DeferredScope, FollowUpTodoID: a.FollowUpTodoID}
 			reviewedAt = r.At
 			v.applyChecks(checks, r.At, "supervisor:"+self)
 			if verdict == reviewNeedsUser {
@@ -317,6 +347,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 			}
 			return true
 		})
+		if followUpInvalid {
+			return "", deferredScopeError(a.FollowUpTodoID)
+		}
 	}
 	if err != nil {
 		return "", err
@@ -621,6 +654,15 @@ func reviewReply(note string, checks []ReviewCheck) string {
 		lines = append(lines, c.Criterion+": "+c.Evidence)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func deferredScopeError(followUpTodoID string) error {
+	detail := ""
+	if followUpTodoID != "" {
+		detail = fmt.Sprintf(" Follow-up %q must be open and linked through part_of or after.", followUpTodoID)
+	}
+	return fmt.Errorf("accepted: deferred scope has no owner action.%s Use needs_user for a decision, "+
+		"accepted with user_check: true for personal verification, or name an open linked follow-up to-do in follow_up_todo_id. Nothing was written.", detail)
 }
 
 func reworkChecks(list []ReviewCheck) []prompts.SuperviseCheck {
