@@ -55,6 +55,21 @@ func (s *Service) screenMechanicalSignals(ctx context.Context, list []superviseS
 	return kept
 }
 
+// screenFinalWakeSignals rechecks only wake promises after routing and recipient batches have merged their final lists.
+func (s *Service) screenFinalWakeSignals(ctx context.Context, list []superviseSignal, now, prev time.Time) []superviseSignal {
+	kept := list[:0]
+	for _, g := range list {
+		if g.Kind == sigIdle {
+			if _, retry := s.mechanicalCheck(ctx, g, now, true); !retry.IsZero() {
+				s.restoreScreened(g, now, prev)
+				continue
+			}
+		}
+		kept = append(kept, g)
+	}
+	return kept
+}
+
 // restoreScreened keeps a deferred signal out of the digest batch that screening just kept it out of.
 func (s *Service) restoreScreened(g superviseSignal, now, prev time.Time) {
 	g.batchTo, g.batchUntil = "", time.Time{}
@@ -64,6 +79,21 @@ func (s *Service) restoreScreened(g superviseSignal, now, prev time.Time) {
 // Unknown, actionable and conflicting evidence deliberately falls through to ordinary supervision.
 func (s *Service) mechanicalSignal(ctx context.Context, g superviseSignal, now time.Time) (bool, time.Time) {
 	return s.mechanicalCheck(ctx, g, now, false)
+}
+
+// futureNativeWake returns the earliest live native wakeup only when every current agent has one.
+func futureNativeWake(agents []proto.Session, now time.Time) (time.Time, bool) {
+	var wake time.Time
+	for _, c := range agents {
+		if c.Status != proto.StatusDone || c.ReadOnlyReason != "" ||
+			c.Loop == nil || c.Loop.Kind != "wakeup" || !c.Loop.NextAt.After(now) {
+			return time.Time{}, false
+		}
+		if wake.IsZero() || c.Loop.NextAt.Before(wake) {
+			wake = c.Loop.NextAt
+		}
+	}
+	return wake, len(agents) > 0
 }
 
 // mechanicalCheck is mechanicalSignal; wakeOnly stops before delivery reads, writes or automatic parking.
@@ -93,6 +123,11 @@ func (s *Service) mechanicalCheck(ctx context.Context, g superviseSignal, now ti
 		}
 		if c.Status != proto.StatusDone || c.State == proto.StateWorking || c.State == proto.StateNeedsYou ||
 			c.PendingInteractions > 0 || len(c.Queued) > 0 || c.TurnError != "" || c.ReadOnlyReason != "" {
+			if g.Kind == sigIdle {
+				if wake, ok := futureNativeWake(agents, now); ok {
+					return false, wake
+				}
+			}
 			return false, time.Time{}
 		}
 	}

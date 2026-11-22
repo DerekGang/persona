@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/prompts"
 )
@@ -50,6 +51,7 @@ func (s *Service) recheckQueuedDigest(ctx context.Context, to string, msg relayM
 	if err := s.ensureTodosLoaded(ctx); err != nil {
 		return msg, false, true
 	}
+	signals = s.screenFinalWakeSignals(ctx, signals, time.Now(), time.Time{})
 	var retry []superviseSignal
 	ctx, signals, retry = s.allStoppedBatch(ctx, signals)
 	if len(retry) > 0 {
