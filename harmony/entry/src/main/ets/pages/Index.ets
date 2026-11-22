@@ -1841,6 +1841,20 @@ struct Index {
     const group = this.model.profiles.length > 1 ? this.model.groupName(row) : '';
     return group || Wire.text(row.data(),'hostname') || tr('online');
   }
+  private revealFocusedAgentDraft():void {
+    if (!this.agentMessageFocused || !this.showSheet || this.sheetKind!=='newagent' || this.agentPanel) return;
+    const revision=this.agentFormRevision;
+    // The input method and Dynamic Type both relayout the form before its new scroll range is available.
+    setTimeout(() => {
+      if (revision===this.agentFormRevision && this.agentMessageFocused && this.showSheet && this.sheetKind==='newagent' && !this.agentPanel)
+        this.agentFormScroll.scrollEdge(Edge.Bottom);
+    },0);
+  }
+  private agentDraftAreaChanged(before:Area,after:Area):void {
+    if (before.width!==after.width || before.height!==after.height) this.revealFocusedAgentDraft();
+  }
+  @Monitor('environment.fontScale','environment.keyboardHeightPx') agentDraftEnvironmentChanged():void { this.revealFocusedAgentDraft(); }
+
   @Builder machineChoice(row:ResourceRow) {
     Button({type:ButtonType.Normal}) {
       Column({space:8}) {
@@ -1945,18 +1959,19 @@ struct Index {
             Text(this.agentModelHelp()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
               .width('100%').padding({left:12,right:12,top:6}).id('agent.model.help')
             PhoneSectionTitle({text:tr('flow_first_message')})
-            TextArea({text:this.newTask,placeholder:tr(this.promptOptional() ? 'flow_draft_optional' : 'task')}).minLines(2).height(Math.max(91, 46 * this.environment.fontScale + 24))
-              .fontSize(16).padding(14).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
-              .onFocus(() => { this.agentMessageFocused = true; this.agentFormScroll.scrollEdge(Edge.Bottom); })
+            TextArea({text:this.newTask,placeholder:tr(this.promptOptional() ? 'flow_draft_optional' : 'task')})
+              .minLines(3).maxLines(10,{overflowMode:MaxLinesMode.SCROLL}).width('100%')
+              .fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale)).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)})
+              .padding({left:16,right:16,top:11,bottom:11}).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              .onFocus(() => { this.agentMessageFocused = true; this.revealFocusedAgentDraft(); })
               .onBlur(() => { this.agentMessageFocused = false; })
               .onChange((v:string) => { this.newTask = v; this.saveAgentDraft(); }).id('agent.task')
             if ((this.agentWorktree || this.pickedAgentTree) && !this.selectedAgentTree()) Text(tr('project_gone')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
             if (this.startFailure) Text(trError(this.startFailure)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8).id('agent.error')
           }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,bottom:14})
+            .onAreaChange((before:Area,after:Area) => this.agentDraftAreaChanged(before,after))
         }.width('100%').layoutWeight(1).align(Alignment.TopStart)
-          .onAreaChange((before:Area,after:Area) => {
-            if (this.agentMessageFocused && Number(after.height) < Number(before.height)) this.agentFormScroll.scrollEdge(Edge.Bottom);
-          })
+          .onAreaChange((before:Area,after:Area) => this.agentDraftAreaChanged(before,after))
         Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start_chat'),{type:ButtonType.Capsule})
           .height(Math.max(50, 33 * Math.min(this.environment.fontScale,Tokens.interfaceFontMaxScale) + 17))
           .width('89%').margin({top:7,bottom:12}).backgroundColor(Colors.action).fontColor(Colors.onAction).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
@@ -2003,6 +2018,7 @@ struct Index {
   private agentDraftKey(): string { return 'new-agent:' + (this.agentWorktree?.key || this.agentTodo?.id || 'standalone'); }
   private async prepareAgent(todo?: ResourceRow, tree?: ProjectWorktree): Promise<void> {
     const revision = ++this.agentFormRevision, generation = this.model.connectionGeneration(), scope = this.model.scope();
+    this.agentMessageFocused = false;
     this.startTreeSource = undefined; this.startWorktree.close(); this.startFailure = ''; this.agentPanel = '';
     this.launchChoices.clear(); this.recentSetups = []; this.recentAgentDirectories = []; this.agentModelId = ''; this.agentEffort = '';
     this.machineIntent++; this.switchingAgentMachine = false; this.agentMachineKey = ''; this.agentPreset = ''; this.projectCatalog.startError = false; this.readerShown = false; this.creatingAgent = false; this.newTask = ''; this.directory = ''; this.launcher = ''; this.agentTodo = todo; this.agentWorktree = undefined; this.pickedAgentTree = '';

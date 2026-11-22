@@ -138,6 +138,23 @@ const NativeAgentForm = new Function(...Object.keys(nativeFormDependencies), 're
   'class NativeAgentForm {\n' + [...required].map(name => formMethods.get(name)).join('\n') + '\n}'))(...Object.values(nativeFormDependencies));
 
 
+test('the focused New Agent draft follows the settled keyboard, content and text-size layout, and never a closed form', () => {
+  const callbacks=[],edges=[];
+  const Form=new Function('setTimeout','Edge','return '+stripTypeScriptTypes(
+    'class Form {\n'+['revealFocusedAgentDraft','agentDraftAreaChanged'].map(x=>formMethods.get(x)).join('\n')+'\n}'))(
+      fn=>callbacks.push(fn),{Bottom:'bottom'});
+  const form=Object.assign(new Form(),{agentMessageFocused:true,showSheet:true,sheetKind:'newagent',agentPanel:'',
+      agentFormRevision:1,agentFormScroll:{scrollEdge:edge=>edges.push(edge)}});
+  form.agentDraftAreaChanged({width:360,height:370},{width:360,height:440});
+  assert.deepEqual(edges,[]);callbacks.shift()();assert.deepEqual(edges,['bottom']);
+  form.agentDraftAreaChanged({width:360,height:440},{width:360,height:440});assert.equal(callbacks.length,0);
+  form.revealFocusedAgentDraft();form.agentFormRevision++;callbacks.shift()();assert.deepEqual(edges,['bottom']);
+  form.agentPanel='folder';form.revealFocusedAgentDraft();assert.equal(callbacks.length,0);
+  form.agentPanel='';form.agentMessageFocused=false;form.revealFocusedAgentDraft();assert.equal(callbacks.length,0);
+  assert.match(formSource,/\.minLines\(3\)\.maxLines\(10,\{overflowMode:MaxLinesMode\.SCROLL\}\)/);
+  assert.match(formSource,/\.fontSize\(Tokens\.interfaceFontVp\(17,this\.environment\.fontScale\)\)\.placeholderFont\(\{size:Tokens\.interfaceFontVp\(17,this\.environment\.fontScale\)\}\)/);
+});
+
 function clientForForm(group, manager, calls) {
   const owner = makeOwner(async path => {
     calls.push([group, manager, path]);
