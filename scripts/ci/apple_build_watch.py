@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shlex
 import signal
 import stat
@@ -25,6 +26,7 @@ MAX_SAMPLE_JSON_BYTES = 64 * 1024
 MAX_ACTIVITY_LOGS = 4
 MAX_ACTIVITY_LOG_CANDIDATES = 64
 SAFE_IDENTITY = re.compile(r"[^A-Za-z0-9_.-]+")
+COMPILER_NAMES = {"swift-frontend", "swiftc", "swift", "clang", "clang++", "xcodebuild"}
 
 
 def output(command, timeout=COMMAND_TIMEOUT, limit=MAX_OUTPUT_BYTES, runner=subprocess.run):
@@ -110,8 +112,8 @@ def process_snapshot(rows):
         # support for an unquoted toolchain directory containing spaces.
         executable = Path(command.split()[0]).name if command.split() else ""
         suffix_name = Path(command).name.split(" ", 1)[0]
-        name = executable if executable in {"swift-frontend", "swiftc", "swift", "clang", "clang++", "xcodebuild"} else suffix_name
-        if name not in {"swift-frontend", "swiftc", "swift", "clang", "clang++", "xcodebuild"}:
+        name = executable if executable in COMPILER_NAMES else suffix_name
+        if name not in COMPILER_NAMES:
             continue
         entry = {"pid": pid, "ppid": ppid, "cpu_percent": cpu,
                  "rss_kib": rss, "name": name}
@@ -157,8 +159,130 @@ def process_rows(text, with_start):
     return rows
 
 
-def processes(runner=subprocess.run):
+def process_output(command, with_start, popen=subprocess.Popen):
+    """Stream ps, retaining only bounded compiler summaries and no raw diagnostics."""
+    fields = "pid=,ppid=,%cpu=,rss=,etime=,time=,"
+    selected = command[:2] + [fields + ("lstart=," if with_start else "") + "ucomm=,args="]
+    try:
+        process = popen(selected, stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"command": selected, "unavailable": type(error).__name__}
+    deadline = time.monotonic() + COMMAND_TIMEOUT
+    pattern = re.compile(rb"\s*(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\S+)"
+                         + (rb"\s+(.{24})" if with_start else b"")
+                         + rb"\s+(\S+)(?:\s+(.*))?$")
+    summary = process_snapshot([])
+    pending = bytearray()
+    truncated = False
+    saw_output = False
+    valid_rows = 0
+
+    def consume(raw):
+        nonlocal valid_rows
+        match = pattern.match(raw)
+        if not match:
+            return
+        name_index = 8 if with_start else 7
+        start = None
+        if with_start:
+            start = process_start(match.group(7).decode("ascii", "replace"))
+            if start is None:
+                return
+        valid_rows += 1
+        name = match.group(name_index).decode("ascii", "replace")
+        if name not in COMPILER_NAMES:
+            return
+        entry = {"pid": int(match.group(1)), "ppid": int(match.group(2)),
+                 "cpu_percent": match.group(3).decode("ascii", "replace"),
+                 "rss_kib": int(match.group(4)), "name": name}
+        if name == "swift-frontend":
+            if truncated:
+                identity = {"target_module": "unavailable", "primary_source": "unavailable",
+                            "output": "unavailable"}
+            else:
+                argv = match.group(name_index + 1) or b""
+                identity = swift_frontend_identity(argv.decode("utf-8", "replace"))
+            entry.update({"cpu_seconds": duration(match.group(6).decode("ascii", "replace")),
+                          "elapsed_seconds": duration(match.group(5).decode("ascii", "replace")),
+                          "process_start": start,
+                          "process_start_status": "known" if start is not None else "uncertain",
+                          **identity})
+        summary["counts"][name] = summary["counts"].get(name, 0) + 1
+        summary["total_rss_kib"] += entry["rss_kib"]
+        summary["largest"].append(entry)
+        summary["largest"].sort(key=lambda item: item["rss_kib"], reverse=True)
+        del summary["largest"][MAX_PROCESSES:]
+
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(selected, COMMAND_TIMEOUT)
+                for key, _ in selector.select(remaining):
+                    chunk = os.read(key.fd, 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.data == "stderr":
+                        continue  # Never retain command diagnostics or raw argv.
+                    while chunk:
+                        newline = chunk.find(b"\n")
+                        piece = chunk if newline < 0 else chunk[:newline]
+                        if piece.strip():
+                            saw_output = True
+                        room = max(0, MAX_OUTPUT_BYTES - len(pending))
+                        pending.extend(piece[:room])
+                        if len(piece) > room:
+                            truncated = True
+                        if newline < 0:
+                            break
+                        consume(pending)
+                        pending.clear()
+                        truncated = False
+                        chunk = chunk[newline + 1:]
+        if pending:
+            consume(pending)
+        code = process.wait(timeout=max(0, deadline - time.monotonic()))
+        if code:
+            return {"command": selected, "unavailable": "process-command-failed"}
+        return {"command": selected, "exit": 0, "summary": summary,
+                "saw_output": saw_output, "valid_rows": valid_rows}
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"command": selected, "unavailable": type(error).__name__}
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+        process.stderr.close()
+
+
+def stream_processes(popen):
+    """Retry a failed or legacy lstart listing once with the no-start format."""
+    def usable(result):
+        return result.get("exit") == 0 and (result["valid_rows"] or not result["saw_output"])
+
+    def unavailable(result):
+        reason = result.get("unavailable", "invalid-process-output")
+        return process_snapshot([]) | {"unavailable": reason, "process_start_status": "uncertain"}
+
+    result = process_output(["ps", "-axo"], True, popen)
+    if usable(result):
+        return result["summary"]
+    if result.get("unavailable") not in (None, "process-command-failed"):
+        return unavailable(result)
+    result = process_output(["ps", "-axo"], False, popen)
+    return result["summary"] if usable(result) else unavailable(result)
+
+
+def processes(runner=subprocess.run, *, popen=None):
     """Only bounded resource summaries; frontend identities are selected from argv in memory."""
+    if popen is not None or runner is subprocess.run:
+        return stream_processes(popen if popen is not None else subprocess.Popen)
     command = ["ps", "-axo", "pid=,ppid=,%cpu=,rss=,etime=,time=,lstart=,args="]
     result = output(command, runner=runner)
     with_start = result.get("exit") == 0
@@ -167,8 +291,9 @@ def processes(runner=subprocess.run):
     if with_start and result.get("stdout", "").strip() and not rows:
         # A successful but demonstrably legacy-shaped response can be retried;
         # invalid lstart output is not silently converted to valid evidence.
-        rows = process_rows(result.get("stdout", ""), False)
-        if rows:
+        legacy_rows = process_rows(result.get("stdout", ""), False)
+        if legacy_rows:
+            rows = legacy_rows
             with_start = False
         else:
             unavailable = "invalid-process-output"
