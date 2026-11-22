@@ -247,13 +247,27 @@ func TestRepoMirrorHTTPRoutesValidationAndLifecycle(t *testing.T) {
 		t.Fatalf("expected 403 for read-only role, got %d %s", w.Code, w.Body)
 	}
 
-	// 3. Enable mirror (auto_sync=false) and run explicit sync.
+	// 3. Enable mirror (auto_sync=false), reject malformed sync payloads, and run explicit sync.
 	w = placeDo(s, "", http.MethodPut, "/api/v1/assistant/repositories/repo_web/mirrors/dev1", `{"enabled":true,"auto_sync":false,"sync_interval_minutes":30}`)
 	if w.Code != 200 {
 		t.Fatalf("PUT enable: %d %s", w.Code, w.Body)
 	}
+	for _, badBody := range []string{
+		`{"force":true} garbage`,
+		`{"force":true}{}`,
+		`{"force":true,"extra":1}`,
+		`not-json`,
+	} {
+		if w := placeDo(s, "", http.MethodPost, "/api/v1/assistant/repositories/repo_web/mirrors/dev1/sync", badBody); w.Code != 400 || ensureCalls != 0 {
+			t.Fatalf("POST sync bad body %q: code=%d calls=%d body=%s", badBody, w.Code, ensureCalls, w.Body)
+		}
+	}
+	// Empty body is valid and triggers a normal TTL sync.
+	if w := placeDo(s, "", http.MethodPost, "/api/v1/assistant/repositories/repo_web/mirrors/dev1/sync", ""); w.Code != 200 || ensureCalls != 1 {
+		t.Fatalf("POST sync empty body: %d calls=%d %s", w.Code, ensureCalls, w.Body)
+	}
 	w = placeDo(s, "", http.MethodPost, "/api/v1/assistant/repositories/repo_web/mirrors/dev1/sync", `{"force":true}`)
-	if w.Code != 200 || ensureCalls != 1 {
+	if w.Code != 200 || ensureCalls != 2 {
 		t.Fatalf("POST sync: %d calls=%d %s", w.Code, ensureCalls, w.Body)
 	}
 	var synced struct {
@@ -531,4 +545,134 @@ func TestPrepareBackendWorkspaceUsesEnabledMirrorAndFallsBackCleanly(t *testing.
 			t.Fatalf("expected clean fallback on older node: calls=%d repos=%v state=%s", calls, mirrorRepos, rec.State)
 		}
 	})
+}
+
+func TestPrepareBackendWorkspaceFreshRefreshPreservesAutoSyncSchedule(t *testing.T) {
+	st := newMemRepoMirrorStore()
+	seedMirrorRepo(t, st, "repo_web", "https://github.com/example/web")
+	id, _ := repository.Parse("https://github.com/example/web", "")
+
+	baseTime := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	now := baseTime
+	scheduledNext := baseTime.Add(15 * time.Minute)
+	if _, err := st.UpsertRepoMirrorConfig(t.Context(), repository.RepoMirrorRecord{
+		MachineID:           "dev1",
+		RepoID:              "repo_web",
+		Enabled:             true,
+		AutoSync:            true,
+		SyncIntervalMinutes: 15,
+		NextSyncAt:          &scheduledNext,
+		UpdatedAt:           baseTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveRepoMirrorSyncResult(t.Context(), "dev1", "repo_web", repository.RepoMirrorSyncUpdate{
+		LastSyncedAt:   &baseTime,
+		LastHeadCommit: strings.Repeat("a", 40),
+		LastDefaultRef: "refs/heads/main",
+		DiskBytes:      2048,
+		HasDiskBytes:   true,
+		NextSyncAt:     &scheduledNext,
+		UpdatedAt:      baseTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var nodeFetched bool
+	var ensureCalls int
+	baseHub := newFakeHub()
+	baseHub.devices = []Device{{ID: "dev1", Name: "Dev 1", Online: true}}
+	hub := &repoMirrorTestHub{
+		fakeHub: baseHub,
+		onCall: func(_ context.Context, _ string, method string, _ json.RawMessage) (any, error) {
+			if method != repository.MethodRepoMirrorEnsure {
+				return nil, errors.New("unexpected method " + method)
+			}
+			ensureCalls++
+			if !nodeFetched {
+				t0 := baseTime
+				return repository.MirrorInfo{
+					RepoID:        "repo_web",
+					Exists:        true,
+					HeadCommit:    strings.Repeat("a", 40),
+					DefaultRef:    "refs/heads/main",
+					LastSyncedAt:  &t0,
+					DiskBytes:     2048,
+					Fetched:       false,
+					SkippedReason: "ttl_fresh",
+				}, nil
+			}
+			t0 := now
+			return repository.MirrorInfo{
+				RepoID:       "repo_web",
+				Exists:       true,
+				HeadCommit:   strings.Repeat("b", 40),
+				DefaultRef:   "refs/heads/main",
+				LastSyncedAt: &t0,
+				DiskBytes:    2048,
+				Fetched:      true,
+			}, nil
+		},
+	}
+
+	s := New(Options{Hub: hub, Store: func() Store { return st }})
+	s.repoMirrors.now = func() time.Time { return now }
+	s.repoMirrors.jitter = func(time.Duration) time.Duration { return 0 }
+
+	wsRec := &taskworkspace.Record{
+		Plan: workspacenaming.Plan{
+			Source: workspacenaming.Source{
+				MachineID: "dev1",
+				Repositories: repository.PreparationSnapshot{
+					Repositories: []repository.PreparationRepository{{
+						RepoID:       "repo_web",
+						RequestedRef: repository.RequestedRef{Kind: "default"},
+						SourceSnapshot: repository.SourceSnapshot{
+							Identity: id,
+							CloneURL: "https://github.com/example/web",
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	// Repeated fresh workspace prepares within TTL must not push next_sync_at forward.
+	for _, offset := range []time.Duration{2 * time.Minute, 4 * time.Minute} {
+		now = baseTime.Add(offset)
+		nodeFetched = false
+		ready := s.prepareEnabledMirrorsForWorkspace(t.Context(), wsRec)
+		if !slices.Equal(ready, []string{"repo_web"}) {
+			t.Fatalf("at +%v: expected repo_web ready, got %v", offset, ready)
+		}
+		got, err := st.RepoMirror(t.Context(), "dev1", "repo_web")
+		if err != nil || got == nil || got.NextSyncAt == nil || !got.NextSyncAt.Equal(scheduledNext) {
+			t.Fatalf("at +%v: expected next_sync_at=%v preserved, got %+v (%v)", offset, scheduledNext, got, err)
+		}
+	}
+
+	// Even a workspace prepare that does fetch (>5m TTL) preserves the periodic schedule.
+	now = baseTime.Add(8 * time.Minute)
+	nodeFetched = true
+	ready := s.prepareEnabledMirrorsForWorkspace(t.Context(), wsRec)
+	if !slices.Equal(ready, []string{"repo_web"}) {
+		t.Fatalf("at +8m: expected repo_web ready, got %v", ready)
+	}
+	got, _ := st.RepoMirror(t.Context(), "dev1", "repo_web")
+	if got.NextSyncAt == nil || !got.NextSyncAt.Equal(scheduledNext) || got.LastHeadCommit != strings.Repeat("b", 40) {
+		t.Fatalf("at +8m: expected head updated and next_sync_at=%v preserved, got %+v", scheduledNext, got)
+	}
+
+	// When the scheduled time arrives, the periodic pass selects the mirror and advances next_sync_at.
+	now = scheduledNext
+	nodeFetched = true
+	nextAfterPeriodic := s.runRepoMirrorSyncPass(t.Context())
+	wantNext := scheduledNext.Add(15 * time.Minute)
+	if ensureCalls != 4 || !nextAfterPeriodic.Equal(wantNext) {
+		t.Fatalf("periodic pass: calls=%d next=%v want=%v", ensureCalls, nextAfterPeriodic, wantNext)
+	}
+	got, _ = st.RepoMirror(t.Context(), "dev1", "repo_web")
+	if got.NextSyncAt == nil || !got.NextSyncAt.Equal(wantNext) {
+		t.Fatalf("expected periodic pass to advance next_sync_at to %v, got %+v", wantNext, got)
+	}
 }

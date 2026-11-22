@@ -365,11 +365,12 @@ func (s *Service) repoMirrorRoutes() {
 			r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 			d := json.NewDecoder(r.Body)
 			d.DisallowUnknownFields()
-			if err := d.Decode(&in); err != nil && !errors.Is(err, io.EOF) {
-				repoMirrorError(w, repoMirrorProblem("invalid"))
-				return
-			}
-			if err := d.Decode(new(any)); err != nil && !errors.Is(err, io.EOF) {
+			if err := d.Decode(&in); err != nil {
+				if !errors.Is(err, io.EOF) {
+					repoMirrorError(w, repoMirrorProblem("invalid"))
+					return
+				}
+			} else if err := d.Decode(new(any)); !errors.Is(err, io.EOF) {
 				repoMirrorError(w, repoMirrorProblem("invalid"))
 				return
 			}
@@ -427,7 +428,7 @@ func (s *Service) EnsureRepoMirror(ctx context.Context, machineID, repoID string
 	if _, ok := s.device(ctx, machineID); !ok {
 		return repository.RepoMirrorRecord{}, repository.MirrorInfo{}, repoMirrorProblem("node_unavailable")
 	}
-	info, err := s.callAndRecordRepoMirrorEnsure(ctx, st, *rec, binding.Identity, cloneURLForBinding(binding), ttlSeconds, force)
+	info, err := s.callAndRecordRepoMirrorEnsure(ctx, st, *rec, binding.Identity, cloneURLForBinding(binding), ttlSeconds, force, false)
 	if err != nil {
 		return repository.RepoMirrorRecord{}, repository.MirrorInfo{}, err
 	}
@@ -463,7 +464,7 @@ func (s *Service) RemoveRepoMirror(ctx context.Context, machineID, repoID string
 	return res, nil
 }
 
-func (s *Service) callAndRecordRepoMirrorEnsure(ctx context.Context, st repoMirrorStore, rec repository.RepoMirrorRecord, identity repository.Identity, cloneURL string, ttlSeconds int, force bool) (repository.MirrorInfo, error) {
+func (s *Service) callAndRecordRepoMirrorEnsure(ctx context.Context, st repoMirrorStore, rec repository.RepoMirrorRecord, identity repository.Identity, cloneURL string, ttlSeconds int, force, periodic bool) (repository.MirrorInfo, error) {
 	if ttlSeconds == 0 {
 		ttlSeconds = repository.DefaultMirrorFetchTTLSeconds
 	}
@@ -482,11 +483,14 @@ func (s *Service) callAndRecordRepoMirrorEnsure(ctx context.Context, st repoMirr
 		if isUnknownMirrorMethodError(err) {
 			return repository.MirrorInfo{}, repoMirrorProblem("unsupported")
 		}
-		failures := rec.ConsecutiveFailures + 1
-		var nextSync *time.Time
-		if rec.Enabled && rec.AutoSync {
-			t := nextRepoMirrorSyncTime(now, rec.SyncIntervalMinutes, failures, s.repoMirrors.jitterDelta)
-			nextSync = &t
+		failures := rec.ConsecutiveFailures
+		nextSync := rec.NextSyncAt
+		if periodic {
+			failures++
+			if rec.Enabled && rec.AutoSync {
+				t := nextRepoMirrorSyncTime(now, rec.SyncIntervalMinutes, failures, s.repoMirrors.jitterDelta)
+				nextSync = &t
+			}
 		}
 		_ = st.SaveRepoMirrorSyncResult(ctx, rec.MachineID, rec.RepoID, repository.RepoMirrorSyncUpdate{
 			LastError:           sanitizeMirrorError(err),
@@ -496,12 +500,16 @@ func (s *Service) callAndRecordRepoMirrorEnsure(ctx context.Context, st repoMirr
 		})
 		return repository.MirrorInfo{}, repoMirrorProblem("sync_failed")
 	}
+	// A non-periodic TTL-fresh hit did not fetch; avoid unnecessary writes and never push next_sync_at forward.
+	if !periodic && !info.Fetched && info.SkippedReason == "ttl_fresh" && rec.LastSyncedAt != nil {
+		return info, nil
+	}
 	syncedAt := now
 	if info.LastSyncedAt != nil {
 		syncedAt = info.LastSyncedAt.UTC()
 	}
-	var nextSync *time.Time
-	if rec.Enabled && rec.AutoSync {
+	nextSync := rec.NextSyncAt
+	if periodic && rec.Enabled && rec.AutoSync {
 		t := nextRepoMirrorSyncTime(now, rec.SyncIntervalMinutes, 0, s.repoMirrors.jitterDelta)
 		nextSync = &t
 	}
@@ -552,6 +560,7 @@ func (s *Service) prepareEnabledMirrorsForWorkspace(ctx context.Context, r *task
 			prep.SourceSnapshot.Identity,
 			prep.SourceSnapshot.CloneURL,
 			repository.DefaultMirrorFetchTTLSeconds,
+			false,
 			false,
 		)
 		if ensureErr != nil {
@@ -636,7 +645,7 @@ func (s *Service) runRepoMirrorSyncPass(ctx context.Context) time.Time {
 			}
 			continue
 		}
-		_, ensureErr := s.callAndRecordRepoMirrorEnsure(ctx, st, rec, binding.Identity, cloneURLForBinding(binding), repository.DefaultMirrorFetchTTLSeconds, false)
+		_, ensureErr := s.callAndRecordRepoMirrorEnsure(ctx, st, rec, binding.Identity, cloneURLForBinding(binding), repository.DefaultMirrorFetchTTLSeconds, false, true)
 		if errors.Is(ensureErr, repoMirrorProblem("unsupported")) {
 			next := nextRepoMirrorSyncTime(now, rec.SyncIntervalMinutes, rec.ConsecutiveFailures+1, s.repoMirrors.jitterDelta)
 			_ = st.SaveRepoMirrorSyncResult(ctx, rec.MachineID, rec.RepoID, repository.RepoMirrorSyncUpdate{
