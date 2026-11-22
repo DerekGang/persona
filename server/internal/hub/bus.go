@@ -484,6 +484,7 @@ func (h *Hub) busAccept(ctx context.Context, c *busConn, p busPresence) error {
 		if _, ok := h.mutesEvent(); !ok { // not in the hello's answer: handed over once they can be read (fleet_link.go)
 			go h.mutesRetry(c.ident.ID)
 		}
+		h.partnersToManager() // the partner hubs, to the default manager (partner.go)
 	}
 	return nil
 }
