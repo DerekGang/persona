@@ -19,7 +19,7 @@ import { Button, Dialog } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { Field, inputClass, SectionTitle } from "./parts";
 
-const HINT = "mt-1.5 px-1 text-[11.5px] leading-relaxed text-ink-3";
+const HINT = "mt-1.5 px-1 text-submeta leading-relaxed text-ink-3";
 
 export function ScenarioTemplateDialog({ template, onClose, onReview }: {
   template: ScenarioDefinition;
@@ -72,7 +72,7 @@ export function ScenarioTemplateDialog({ template, onClose, onReview }: {
   };
 
   const footer = <>
-    <span className="mr-auto min-w-0 truncate text-[11.5px] text-red">{edited && problem ? problem : ""}</span>
+    <span className="mr-auto min-w-0 truncate text-submeta text-red">{edited && problem ? problem : ""}</span>
     <Button tone="quiet" onClick={onClose}>{t("common.cancel")}</Button>
     <Button tone="primary" disabled={!!problem} onClick={review}>{t("assistant-scenario-templates.review")}</Button>
   </>;
