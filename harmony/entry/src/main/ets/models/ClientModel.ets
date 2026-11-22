@@ -16,6 +16,7 @@ import { clearImagePreviews } from '../platform/NativePreview';
 import { parseMessageContent } from '../core/MessageContent';
 import { decodeInteractionDecision, firstBlockingDecision, isPersonaAskUserQuestion } from './InteractionDecision';
 import { ChatAttachments } from './ChatAttachments';
+import { AgentAttentionCard, agentAttentionCards, waitingAgentBadge } from './AgentAttention';
 import type { PreparedAttachmentSend } from './ChatAttachments';
 import { nativeNotifications } from '../platform/NativeNotifications';
 import { resolveManagerScope } from '../core/ScopePolicy';
@@ -90,6 +91,9 @@ export class ClientModel {
   @Trace section: number = 0;
   @Trace sessions: ResourceRow[] = [];
   @Trace sessionsReady: boolean = false;
+  @Trace private attentionCards: AgentAttentionCard[] = [];
+  @Trace private attentionOwner: string = '';
+  private attentionReadRevision: number = 0;
   @Trace conversations: ResourceRow[] = [];
   @Trace machines: ResourceRow[] = [];
   @Trace directorySessions: ResourceRow[] = [];
@@ -328,6 +332,21 @@ export class ClientModel {
     this.personaQuestions = [];
     this.decision = undefined;
   }
+  private async readInteractionSnapshot(): Promise<Record<string, Object>[]> {
+    const generation = this.generation, scope = this.scope(), revision = ++this.attentionReadRevision;
+    const values = await this.repo().decisions();
+    if (revision === this.attentionReadRevision && this.owns(generation, scope)) {
+      this.attentionCards = agentAttentionCards(values, this.profile.manager);
+      this.attentionOwner = JSON.stringify([generation, scope]);
+    }
+    return values;
+  }
+  phoneAgentBadge(muted: (row: ResourceRow) => boolean): number {
+    if (!this.connected) return 0;
+    const current = this.attentionOwner === JSON.stringify([this.generation, this.scope()]);
+    return waitingAgentBadge(this.sessions, this.todos, current ? this.attentionCards : [],
+      this.profile.id, this.profile.manager, muted, current);
+  }
   private replacePendingDecisions(interactions: Record<string, Object>[], row: ResourceRow, target: string,
     generation: number, scope: string, sequence: number): void {
     if (!this.owns(generation, scope) || this.target() !== target || sequence !== this.decisionRefreshSequence) return;
@@ -364,7 +383,7 @@ export class ClientModel {
     const generation = this.generation, scope = this.scope(), target = this.target(), row = this.selected;
     const sequence = ++this.decisionRefreshSequence;
     try {
-      const interactions = await this.repo().decisions();
+      const interactions = await this.readInteractionSnapshot();
       this.replacePendingDecisions(interactions, row, target, generation, scope, sequence);
     } catch (error) {
       if (this.owns(generation, scope) && this.target() === target && sequence === this.decisionRefreshSequence) this.failure(error as Error);
@@ -761,6 +780,7 @@ export class ClientModel {
       catch (_) { if (this.owns(generation, scope)) this.error = 'cache_unavailable'; }
       if (this.isChat() && this.chatVisible) await this.loadChat(this.selected);
       else if (this.isChat() && this.decisionsVisible) await this.refreshDecisions();
+      else this.readInteractionSnapshot().catch(() => {});
       if (this.section === 2) await this.refreshInboxSnapshot(repo, generation, scope, true);
       else if (!this.detached) this.refreshInboxSnapshot(repo, generation, scope, false).catch(() => {});
     } catch (error) { if (this.owns(generation, scope)) this.failure(error as Error); }
@@ -980,7 +1000,7 @@ export class ClientModel {
     if (!this.connected) { await this.cachedChat(row); return; }
     const sequence = ++this.decisionRefreshSequence;
     let interactions: Record<string, Object>[] = [], decisionsRead = false;
-    try { interactions = await this.repo().decisions(); decisionsRead = true; }
+    try { interactions = await this.readInteractionSnapshot(); decisionsRead = true; }
     catch (error) { if (this.owns(generation, scope) && this.target() === target) this.failure(error as Error); }
     if (!this.owns(generation, scope) || this.target() !== target) return;
     if (decisionsRead) this.replacePendingDecisions(interactions, row, target, generation, scope, sequence);

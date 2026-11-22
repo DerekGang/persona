@@ -352,12 +352,14 @@ struct Index {
       Button(tr(label),{type:ButtonType.Capsule}).width(this.peerSegmentWidth()).height(36*this.peerBarScale()).padding({left:3,right:3})
         .fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold)
         .fontColor(Colors.ink).backgroundColor(Color.Transparent).responseRegion({x:0,y:-4,width:'100%',height:44*this.peerBarScale()})
-        .accessibilitySelected(true).bindMenu(this.selectedPeerMenu(index)).id(identity)
+        .accessibilitySelected(true).accessibilityDescription(index===1 && this.waitingAgentCount ? tr('needs_you')+' '+this.waitingAgentCount : '')
+        .bindMenu(this.selectedPeerMenu(index)).id(identity)
     } else {
       Button(tr(label),{type:ButtonType.Capsule}).width(this.peerSegmentWidth()).height(36*this.peerBarScale()).padding({left:3,right:3})
         .fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Regular)
         .fontColor(Colors.secondary).backgroundColor(Color.Transparent).responseRegion({x:0,y:-4,width:'100%',height:44*this.peerBarScale()})
-        .accessibilitySelected(false).onClick(action).id(identity)
+        .accessibilitySelected(false).accessibilityDescription(index===1 && this.waitingAgentCount ? tr('needs_you')+' '+this.waitingAgentCount : '')
+        .onClick(action).id(identity)
     }
   }
   private peerBarScale(): number { return Math.min(Tokens.interfaceFontMaxScale, Math.max(1, this.environment.fontScale)); }
@@ -596,12 +598,12 @@ struct Index {
             this.placeButton('phone_assistant_title', 0, 'shell.persona', () => this.browsePeer(0))
             Stack({alignContent: Alignment.TopEnd}) {
               this.placeButton('agents', 1, 'shell.agents', () => this.browsePeer(1))
-              if (Wire.number(this.agentWorkspace.filterCounts,'needsYou') > 0 && this.agentWorkspace.isBoundTo(this.model)) {
-                Text(String(Wire.number(this.agentWorkspace.filterCounts,'needsYou'))).fontSize(11).maxFontScale(1.2)
+              if (this.waitingAgentCount>0) {
+                Text(this.waitingAgentCount>99 ? '99+' : String(this.waitingAgentCount)).fontSize(11).maxFontScale(1.2)
                   .fontWeight(FontWeight.Bold).fontColor(Colors.link).textAlign(TextAlign.Center)
                   .constraintSize({minWidth:17,minHeight:17}).padding({left:3,right:3}).borderRadius(9)
                   .backgroundColor(Colors.selection).offset({x:3,y:-6}).hitTestBehavior(HitTestMode.None)
-                  .accessibilityLevel('no')
+                  .accessibilityLevel('no').id('shell.agents.waiting')
               }
             }
             }
@@ -666,7 +668,15 @@ struct Index {
   private ensureAgentWorkspace(): void {
     if (!this.agentWorkspace.isBoundTo(this.model)) this.agentWorkspace.open(this.model, this.peer() === 1).catch(() => {});
   }
-  @Monitor('model.ready', 'model.mainId', 'model.mainMachineId', 'model.connected') mainAvailabilityChanged(): void { this.ensureMainDestination(); }
+  @Computed get waitingAgentCount():number {
+    const bound=this.agentWorkspace.isBoundTo(this.model);
+    return this.model.directoryOwners().reduce((total:number,owner:ClientModel) =>
+      total+owner.phoneAgentBadge((row:ResourceRow) => bound && this.agentWorkspace.isMuted(row)),0);
+  }
+  @Monitor('model.ready', 'model.mainId', 'model.mainMachineId', 'model.connected') mainAvailabilityChanged(): void {
+    this.ensureMainDestination();
+    if (this.model.ready && this.model.connected && !this.wide()) this.ensureAgentWorkspace();
+  }
   private ensureMainDestination(): void {
     if (!this.model.ready || !this.model.connected || this.model.section !== 0 || this.navigationRestoredScope !== this.model.scope() || this.showSheet || this.spacesShown || this.stack.size() || this.defaultMainPending || (this.creatingConversations.get(JSON.stringify([this.model.scope(), this.model.connectionGeneration()])) || 0) > 0) return;
     const attempt = JSON.stringify([this.model.scope(), this.model.connectionGeneration(), this.model.mainId, this.model.mainMachineId]);
@@ -1142,17 +1152,17 @@ struct Index {
           .selected(row.id === this.model.profile.manager).selectIcon(false).accessibilitySelected(row.id === this.model.profile.manager).enabled(!row.isInstallingManager())
           .onClick(() => { if (this.drawerAcceptsTap()) this.model.selectListedManager(row.id, scope); }).id('spaces.assistant.' + row.id)
       }, (row: ResourceRow) => row.key())
-      MenuItem({ content: tr('phone_new_assistant'), symbolStartIcon: new SymbolGlyphModifier(Symbols.plus) })
-        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).onClick(() => {
+      MenuItem({ content: tr('phone_new_assistant'), symbolStartIcon: new SymbolGlyphModifier(Symbols.plus).fontColor([Colors.ink]) })
+        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).contentFontColor(Colors.ink).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('phone_new_assistant');
       }).id('spaces.new_assistant')
-      MenuItem({ content: tr('phone_manage_assistants'), symbolStartIcon: new SymbolGlyphModifier(Symbols.gear) })
-        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).onClick(() => {
+      MenuItem({ content: tr('phone_manage_assistants'), symbolStartIcon: new SymbolGlyphModifier(Symbols.gear).fontColor([Colors.ink]) })
+        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).contentFontColor(Colors.ink).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('managers');
       }).id('spaces.manage_assistants')
-    }
+    }.backgroundColor(Colors.surface)
   }
   @Builder assistantHeading(row: ResourceRow) {
     Button({ type: ButtonType.Normal }) {
@@ -1175,7 +1185,7 @@ struct Index {
       }.width('100%').constraintSize({ minHeight: 44 })
     }.padding(0).backgroundColor(Color.Transparent).layoutWeight(1)
       .accessibilityText([tr('phone_switch_assistant'), row.title || row.id, this.managerLine(row)].filter((s: string) => !!s).join(' · '))
-      .bindMenu(this.drawerManagerMenu(this.model.scope())).id('spaces.assistant_switcher')
+      .bindMenu(this.drawerManagerMenu(this.model.scope()),{backgroundColor:Colors.surface,backgroundBlurStyle:BlurStyle.NONE}).id('spaces.assistant_switcher')
   }
   @Computed get drawerAgentRows():ResourceRow[] {
     if (!this.mergedPhone()) return [];

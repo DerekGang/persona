@@ -7,7 +7,7 @@ registerHooks({
   resolve(specifier, context, next) {
     if (specifier === '@kit.ArkTS') return {url:'client-boundary:'+specifier,shortCircuit:true};
     if (context.parentURL?.endsWith('/ClientModel.ets')) {
-      if (['../core/DictationLanguage', './Wire', './AssistantView', './DemoRepository', './NavigationContext', './ChatDraftStore', './HubRepository', './MutationStore', './Compatibility', './InteractionDecision', '../core/ClientLocale', '../core/ClientLocale', '../core/Domain', '../core/ScopePolicy', '../core/StorageOwnership', '../core/MessageContent', '../core/TranscriptCache'].includes(specifier)) {
+      if (['../core/DictationLanguage', './Wire', './AgentAttention', './AssistantView', './DemoRepository', './NavigationContext', './ChatDraftStore', './HubRepository', './MutationStore', './Compatibility', './InteractionDecision', '../core/ClientLocale', '../core/ClientLocale', '../core/Domain', '../core/ScopePolicy', '../core/StorageOwnership', '../core/MessageContent', '../core/TranscriptCache'].includes(specifier)) {
         const base = new URL(specifier, context.parentURL);
         return {url: base.href + (existsSync(new URL(base.href + '.ts')) ? '.ts' : '.ets'), shortCircuit: true};
       }
@@ -29,7 +29,7 @@ registerHooks({
     }
     if((context.parentURL?.endsWith('/NavigationContext.ets')||context.parentURL?.endsWith('/ChatDraftStore.ets')||context.parentURL?.endsWith('/Compatibility.ets'))&&specifier==='./Wire')return {url:new URL('./Wire.ets',context.parentURL).href,shortCircuit:true};
     if(context.parentURL?.endsWith('/QuestionWorkspace.ets') && specifier==='./Wire')return {url:new URL('./Wire.ets',context.parentURL).href,shortCircuit:true};
-    if(context.parentURL?.endsWith('/InteractionDecision.ets')&&specifier.startsWith('.'))return {url:new URL(specifier+'.ets',context.parentURL).href,shortCircuit:true};
+    if(context.parentURL?.endsWith('/AgentAttention.ets') || context.parentURL?.endsWith('/InteractionDecision.ets')&&specifier.startsWith('.'))return {url:new URL(specifier+'.ets',context.parentURL).href,shortCircuit:true};
     return next(specifier, context);
   },
   load(url, context, next) {
@@ -100,6 +100,32 @@ test('only an identity-matched hello on the current live scope and connection ge
 });
 function decision(model,id='request-one') { const value=new Decision(); value.id=id; value.kind='permission'; value.raw=JSON.stringify({id}); model.decision=value; return value; }
 function deferred() { let resolve,reject; const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}); return {promise,resolve,reject}; }
+
+test('the global Agent badge keeps the newest owned snapshot across out-of-order reads and assistant switches', async () => {
+  const {model} = fixture();
+  const old = deferred(), replaced = deferred();
+  const card = id => ({machine_id: 'test-mac', interaction: {id, kind: 'question'}});
+  const muted = () => false;
+  model.repository.decisions = () => old.promise;
+  const oldRead = model.readInteractionSnapshot();
+  model.repository.decisions = async () => [card('current-a'), card('current-b')];
+  await model.readInteractionSnapshot();
+  old.resolve([card('late')]);
+  await oldRead;
+  assert.equal(model.phoneAgentBadge(muted), 2);
+
+  model.repository.decisions = () => replaced.promise;
+  const replacedRead = model.readInteractionSnapshot();
+  model.profile.manager = 'new-assistant';
+  replaced.resolve([card('previous-owner')]);
+  await replacedRead;
+  assert.equal(model.phoneAgentBadge(muted), 0);
+  model.repository.decisions = async () => [card('my-request')];
+  await model.readInteractionSnapshot();
+  assert.equal(model.phoneAgentBadge(muted), 1);
+  model.connected = false;
+  assert.equal(model.phoneAgentBadge(muted), 0);
+});
 
 function heldFixture() {
   const {model} = fixture();

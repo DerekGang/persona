@@ -578,7 +578,9 @@ export struct InteractionDecisionForm {
         .onClick(() => { if (this.admission()) this.fullPlan=true; }).id('interaction.task.expand_plan')
         .bindContentCover($$this.fullPlan,this.planReader())
       if (interactionToolName(this.request)!=='ask_user') Button({type:ButtonType.Circle}) {
-        Image(Symbols.more).width(16).height(16).fillColor(Colors.secondary)
+        Row({space:2}) {
+          ForEach([0,1,2],(_dot:number) => { Circle().width(2.5).height(2.5).fill(Colors.secondary) },(dot:number) => String(dot))
+        }
       }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).enabled(this.canRespond()).accessibilityText(tr('more'))
         .bindMenu([{value:tr('phone_interaction_terminal'),action:() => this.submit('dismiss')}]).id('interaction.task.menu')
       Button({type:ButtonType.Circle}) {

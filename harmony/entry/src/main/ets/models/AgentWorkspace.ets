@@ -110,7 +110,7 @@ export class AgentWorkspace {
   @Trace mutesAllowed: string[] = [];
 
   private client: ClientModel | undefined;
-  private preferences: Map<string, AgentPreferences> = new Map();
+  @Trace private preferences: Map<string, AgentPreferences> = new Map();
   private owner: string = '';
   private scope: string = '';
   private viewScope: string = '';
@@ -183,7 +183,7 @@ export class AgentWorkspace {
     this.externalSelection = undefined; this.groups = []; this.sourceRows = []; this.latestSourceRows = []; this.historyRows = []; this.historyLoaded = false; this.frozenGroups = undefined;
     this.quickFilter = 'all'; this.filterCounts = {}; this.groupingMode = 'state'; this.machineFilter = ''; this.search = ''; this.history = false; this.selectedKey = '';
     this.readingDetail = false; this.freezeSuppressed = false;
-    this.preferences.clear(); this.pinsSpaces = []; this.pinsSessions = []; this.mutesSpaces = []; this.mutesSessions = []; this.mutesAllowed = [];
+    this.preferences = new Map<string, AgentPreferences>(); this.pinsSpaces = []; this.pinsSessions = []; this.mutesSpaces = []; this.mutesSessions = []; this.mutesAllowed = [];
     try {
       const values = await Promise.all([client.loadView('agent-workspace'), this.hubModeLoaded ? Promise.resolve('') : client.loadView('agent-hub-mode')]);
       if (!this.loadCurrent(client, revision)) return;
@@ -370,7 +370,7 @@ export class AgentWorkspace {
     this.latestSourceRows = this.sourceRows.filter(keep); this.historyRows = this.historyRows.filter(keep);
     if (this.externalSelection?.group === group) { this.externalSelection = undefined; this.selectedKey = ''; }
     if (this.frozenGroups) this.frozenGroups = this.frozenGroups.map((source: AgentWorkspaceGroup) => { const copy = this.copyGroup(source); copy.rows = copy.rows.filter(keep); return copy; }).filter((source: AgentWorkspaceGroup) => source.rows.length > 0);
-    this.preferences.clear(); this.rebuild();
+    this.preferences = new Map<string, AgentPreferences>(); this.rebuild();
   }
   selectExternal(row: ResourceRow): void { this.externalSelection = row; if (this.client) this.syncSelected(this.client); }
 
@@ -640,11 +640,13 @@ export class AgentWorkspace {
   }
 
   private applyPins(spaces: string[], sessions: string[], owner: ClientModel): void {
-    const preferences = this.preferences.get(owner.scope()) || new AgentPreferences(); preferences.pinsSpaces = spaces.slice(); preferences.pinsSessions = sessions.slice(); this.preferences.set(owner.scope(), preferences);
+    const preferences = this.preferences.get(owner.scope()) || new AgentPreferences(); preferences.pinsSpaces = spaces.slice(); preferences.pinsSessions = sessions.slice();
+    this.preferences = new Map(this.preferences).set(owner.scope(), preferences);
     if (owner === this.client) { this.pinsSpaces = spaces.slice(); this.pinsSessions = sessions.slice(); } this.rebuild();
   }
   private applyMutes(spaces: string[], sessions: string[], allowed: string[], owner: ClientModel): void {
-    const preferences = this.preferences.get(owner.scope()) || new AgentPreferences(); preferences.mutesSpaces = spaces.slice(); preferences.mutesSessions = sessions.slice(); preferences.mutesAllowed = allowed.slice(); this.preferences.set(owner.scope(), preferences);
+    const preferences = this.preferences.get(owner.scope()) || new AgentPreferences(); preferences.mutesSpaces = spaces.slice(); preferences.mutesSessions = sessions.slice(); preferences.mutesAllowed = allowed.slice();
+    this.preferences = new Map(this.preferences).set(owner.scope(), preferences);
     if (owner === this.client) { this.mutesSpaces = spaces.slice(); this.mutesSessions = sessions.slice(); this.mutesAllowed = allowed.slice(); } this.rebuild();
   }
 
