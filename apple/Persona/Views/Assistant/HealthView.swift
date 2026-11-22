@@ -23,6 +23,8 @@ import SwiftUI
     @ObservationIgnored private var intakeReadPending = false
     @ObservationIgnored private var intakeRead = 0
     @ObservationIgnored private var intakeScope: APIClient?
+    @ObservationIgnored private var intakeOperation: Task<Void, Never>?
+    @ObservationIgnored private var intakeOperationID = 0
     @ObservationIgnored private var cupAmount: Double = 250
     @ObservationIgnored private let deps: AssistantDeps
 
@@ -51,6 +53,7 @@ import SwiftUI
             intake = nil
             intakeError = nil
             intakeBusy = false
+            intakeOperationID += 1
             intakeReadPending = false
             cupAmount = 250
             intakeScope = api
@@ -85,19 +88,45 @@ import SwiftUI
         }
     }
 
-    /// One request at a time, with feedback before the first suspension and authoritative totals afterwards.
-    func record(_ kind: HealthIntake.Kind, amount: Double? = nil) async {
-        await record(HealthIntake.Draft(kind: kind, amount: amount))
+    /// Keep every accepted intent, including a toast action tapped during another write. Each operation reads its
+    /// rollback baseline only when it reaches the front; refreshes wait until the entire queue has settled.
+    private func enqueueIntake(on api: APIClient, run: @escaping @MainActor () async -> Void) -> Task<Void, Never>? {
+        guard isCurrent(api) else { return nil }
+        intakeBusy = true
+        intakeOperationID += 1
+        let id = intakeOperationID
+        let previous = intakeOperation
+        let operation = Task { @MainActor in
+            await previous?.value
+            defer {
+                if id == self.intakeOperationID {
+                    self.intakeOperation = nil
+                    self.finishIntake(api)
+                }
+            }
+            guard self.isCurrent(api) else { return }
+            await run()
+        }
+        intakeOperation = operation
+        return operation
     }
 
-    private func record(_ draft: HealthIntake.Draft, on captured: APIClient? = nil) async {
-        guard !intakeBusy, supportsIntake, let api = captured ?? deps.api()?.manager(nil), isCurrent(api),
+    /// One request at a time, with optimistic feedback and authoritative totals afterwards.
+    func record(_ kind: HealthIntake.Kind, amount: Double? = nil) async {
+        await record(HealthIntake.Draft(kind: kind, amount: amount))?.value
+    }
+
+    private func record(_ draft: HealthIntake.Draft, on captured: APIClient? = nil) -> Task<Void, Never>? {
+        guard supportsIntake, let api = captured ?? deps.api()?.manager(nil) else { return nil }
+        return enqueueIntake(on: api) { await self.performRecord(draft, on: api) }
+    }
+
+    private func performRecord(_ draft: HealthIntake.Draft, on api: APIClient) async {
+        guard supportsIntake, isCurrent(api),
               let previous = intake else { return }
-        intakeBusy = true
         intakeRead += 1
         if draft.kind == .water { intake?.water.today += draft.amount ?? cupAmount }
         else { intake?.protein.today += draft.amount ?? 0 }
-        defer { finishIntake(api) }
         do {
             let result = try await api.recordHealthIntake(draft)
             guard isCurrent(api) else { return }
@@ -110,25 +139,27 @@ import SwiftUI
             if draft.kind == .water, draft.amount == nil, let entry = result.entry { cupAmount = entry.amount }
             deps.toast(Toast(String(localized: "Intake logged"), style: .success,
                              action: .init(title: String(localized: "Undo"), run: { [weak self] in
-                                 Task { await self?.undo(draft.id, on: api) }
+                                 _ = self?.enqueueUndo(draft.id, on: api)
                              })))
         } catch {
             guard isCurrent(api) else { return }
             intake = previous
             deps.toast(Toast(error.shown ?? String(localized: "Couldn't log intake"), style: .error,
                              action: .init(title: String(localized: "Try Again"), run: { [weak self] in
-                                 Task { await self?.record(draft, on: api) }
+                                 _ = self?.record(draft, on: api)
                              })))
         }
     }
 
-    func undo(_ id: String) async { await undo(id, on: deps.api()?.manager(nil)) }
+    func undo(_ id: String) async { await enqueueUndo(id, on: deps.api()?.manager(nil))?.value }
 
-    private func undo(_ id: String, on captured: APIClient?) async {
-        guard !intakeBusy, let api = captured, isCurrent(api) else { return }
-        intakeBusy = true
+    private func enqueueUndo(_ id: String, on captured: APIClient?) -> Task<Void, Never>? {
+        guard let api = captured else { return nil }
+        return enqueueIntake(on: api) { await self.performUndo(id, on: api) }
+    }
+
+    private func performUndo(_ id: String, on api: APIClient) async {
         intakeRead += 1
-        defer { finishIntake(api) }
         do {
             let result = try await api.undoHealthIntake(id)
             guard isCurrent(api) else { return }
@@ -138,7 +169,7 @@ import SwiftUI
             guard isCurrent(api) else { return }
             deps.toast(Toast(error.shown ?? String(localized: "Couldn't undo intake"), style: .error,
                              action: .init(title: String(localized: "Try Again"), run: { [weak self] in
-                                 Task { await self?.undo(id, on: api) }
+                                 _ = self?.enqueueUndo(id, on: api)
                              })))
         }
     }

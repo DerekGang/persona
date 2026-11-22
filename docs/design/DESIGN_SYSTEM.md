@@ -1716,7 +1716,9 @@ The widget extension doesn't build `Theme`: Persona's widgets take their colors,
   buttons in one row below Water; only accessibility text sizes stack them. Labels stay on one line. Other Amount
   and Log Grams use the short text-entry alert (4.4). Logging changes the local total immediately, then takes the
   hub's totals; failure rolls back and says why with Try Again using the same record id. The result toast offers
-  Undo through the intake DELETE route. These totals count Persona records only, in the hub's today bucket.
+  Undo through the intake DELETE route. Logging, Undo and Try Again share one serial queue: tapping a toast action
+  during another write keeps that intent until the earlier write finishes. These totals count Persona records only,
+  in the hub's today bucket.
   iPad shows intake and available trends; Vision Pro shows intake without Activity or trends.
   Each intake ring opens a sheet with its own navigation stack and `SheetClose`, as subscriptions do.
   It draws the manager's detail page through `ExtensionPageView`, using the reserved
@@ -1728,6 +1730,8 @@ The widget extension doesn't build `Theme`: Persona's widgets take their colors,
   whole tile as one element. It has no navigation action. Other rings sit in the preceding Today section, separated
   by the Activity heading and list spacing. Only the foreground Allow Reading button asks for Activity summary
   access; an empty read never claims the user denied permission.
+  Home trends only read existing access and never request authorization. Leaving the foreground cancels the current
+  HealthKit query and prevents further metric reads or publication of a late result.
 
 - `DataChart` (`apple/Persona/DesignSystem/DataChart.swift`): bars, lines and areas over categories, a few series in the data hues, holding a category reads it; a card's is compact (no axis text).
 - `RingChart`: a donut (its total in the hole) or a pie, one series of a few parts.

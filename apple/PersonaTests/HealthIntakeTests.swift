@@ -167,6 +167,108 @@ import PersonaWire
         #expect(toast?.action == nil)
     }
 
+    @Test func undoFromTheFirstToastWaitsForTheSecondPOSTAndPreservesItsTotal() async throws {
+        let hub = FakeHub()
+        setup(hub)
+        var toast: Toast?
+        var release: CheckedContinuation<Void, Never>?
+        var posts = 0
+        let page = HealthModel(deps: deps(hub, toast: { toast = $0 }))
+        await page.load(machine: "m", features: [HealthIntake.feature])
+        hub.onAsync("POST", path) { _ in
+            posts += 1
+            if posts == 2 { await withCheckedContinuation { release = $0 } }
+            return change(water: posts == 1 ? 1050 : 1350)
+        }
+        await page.record(.water)
+        let undo = try #require(toast?.action)
+        let first = try JSON.decoder.decode(JSONValue.self, from: #require(hub.sent("POST", path).first?.body))
+        let deletePath = path + "/" + (try #require(first["id"]?.string))
+        hub.on("DELETE", deletePath) { _ in change(water: 1050) }
+        let second = Task { await page.record(.water) }
+        await settle { release != nil }
+        #expect(page.intake?.water.today == 1350)
+        undo.run() // The toast consumes this click while POST B is still suspended.
+        #expect(hub.sent("DELETE", deletePath).isEmpty)
+        #expect(page.intakeBusy)
+        release?.resume()
+        await second.value
+        await settle { !page.intakeBusy }
+        #expect(hub.sent("DELETE", deletePath).count == 1)
+        #expect(hub.requests.filter { ["POST", "DELETE"].contains($0.method) }.map(\.method) == ["POST", "POST", "DELETE"])
+        #expect(page.intake?.water.today == 1050, "only A is undone; B remains in the authoritative total")
+        #expect(toast?.message == String(localized: "Intake undone"))
+    }
+
+    @Test(arguments: [false, true]) func recordRetryWaitsForAnotherWriteAndRollsBackToItsConfirmedTotal(failsAgain: Bool) async throws {
+        let hub = FakeHub()
+        setup(hub)
+        var toast: Toast?
+        var release: CheckedContinuation<Void, Never>?
+        var bodies: [Data] = []
+        let page = HealthModel(deps: deps(hub, toast: { toast = $0 }))
+        await page.load(machine: "m", features: [HealthIntake.feature])
+        hub.onAsync("POST", path) { request in
+            bodies.append(try #require(request.body))
+            if bodies.count == 1 { throw APIError(status: 503, message: "Sample write failed") }
+            if bodies.count == 2 {
+                await withCheckedContinuation { release = $0 }
+                return change(water: 1050)
+            }
+            if failsAgain { throw APIError(status: 503, message: "Sample retry failed") }
+            return change(water: 1350)
+        }
+        await page.record(.water)
+        let retry = try #require(toast?.action)
+        let second = Task { await page.record(.water) }
+        await settle { release != nil }
+        retry.run()
+        #expect(bodies.count == 2, "retry waits behind the in-flight write")
+        release?.resume()
+        await second.value
+        await settle { !page.intakeBusy }
+        #expect(bodies.count == 3)
+        let retried = try #require(bodies.last)
+        #expect(try JSON.decoder.decode(JSONValue.self, from: bodies[0]) == JSON.decoder.decode(JSONValue.self, from: retried))
+        #expect(page.intake?.water.today == (failsAgain ? 1050 : 1350))
+        #expect(toast?.action?.title == String(localized: failsAgain ? "Try Again" : "Undo"))
+    }
+
+    @Test func undoRetryWaitsForAnotherRecord() async throws {
+        let hub = FakeHub()
+        setup(hub)
+        var toast: Toast?
+        var release: CheckedContinuation<Void, Never>?
+        let page = HealthModel(deps: deps(hub, toast: { toast = $0 }))
+        await page.load(machine: "m", features: [HealthIntake.feature])
+        hub.on("POST", path) { _ in change() }
+        await page.record(.water)
+        let first = try JSON.decoder.decode(JSONValue.self, from: #require(hub.sent("POST", path).first?.body))
+        let identity = try #require(first["id"]?.string)
+        let deletePath = path + "/" + identity
+        var deletes = 0
+        hub.on("DELETE", deletePath) { _ in
+            deletes += 1
+            if deletes == 1 { throw APIError(status: 503, message: "Sample undo failed") }
+            return change(water: 1050)
+        }
+        await page.undo(identity)
+        let retry = try #require(toast?.action)
+        hub.onAsync("POST", path) { _ in
+            await withCheckedContinuation { release = $0 }
+            return change(water: 1350)
+        }
+        let second = Task { await page.record(.water) }
+        await settle { release != nil }
+        retry.run()
+        #expect(deletes == 1)
+        release?.resume()
+        await second.value
+        await settle { !page.intakeBusy }
+        #expect(deletes == 2)
+        #expect(page.intake?.water.today == 1050)
+    }
+
     @Test func everyIntakeVerbUsesHealthAndDropsTheSelectedOrExplicitManager() async throws {
         let hub = FakeHub()
         setup(hub)

@@ -97,6 +97,49 @@ struct HealthTrendsTests {
         #expect(model.state == .unavailable)
     }
 
+    @Test(arguments: [false, true]) func cancellingTheFirstDailyReadPreventsLaterQueriesAuthorizationAndPublication(queryFails: Bool) async {
+        var queries: [HealthTrendMetric] = []
+        var authorizations = 0
+        var release: CheckedContinuation<Void, Never>?
+        let model = HealthTrendsModel(deps: .init(
+            access: { .granted }, requestAccess: { authorizations += 1; return true },
+            daily: { metric, _ in
+                queries.append(metric)
+                if metric == .steps {
+                    await withCheckedContinuation { release = $0 }
+                    if queryFails { throw CancellationError() }
+                }
+                return [HealthTrends.dayKeys(1, now: Self.now).last!: 1234]
+            }, now: { Self.now }))
+        let work = Task { await model.load() }
+        let deadline = Date.now.addingTimeInterval(5)
+        while release == nil, Date.now < deadline { await Task.yield() }
+        #expect(release != nil)
+        #expect(queries == [.steps])
+        #expect(model.state == .loading)
+        work.cancel()
+        release?.resume()
+        await work.value
+        #expect(queries == [.steps], "sleep and weight must never start after cancellation")
+        #expect(authorizations == 0)
+        #expect(model.state == .loading, "cancelled reads must not publish a final state")
+        #expect(!model.hasData)
+    }
+
+    @Test func anAlreadyCancelledLoadDoesNotReadAccessOrChangeState() async {
+        let model = HealthTrendsModel(deps: .init(
+            access: { Issue.record("access read after cancellation"); return .notNeeded },
+            requestAccess: { Issue.record("authorization after cancellation"); return false },
+            daily: { _, _ in Issue.record("query after cancellation"); return [:] }, now: { Self.now }))
+        let work = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await model.load()
+            await model.requestAccess()
+        }
+        await work.value
+        #expect(model.state == .loading)
+    }
+
     /// The summary keys days in Gregorian whatever the region's calendar is; the trends must match those keys.
     @Test func keysAreGregorianOnAnyCalendar() {
         var buddhist = Calendar(identifier: .buddhist)
