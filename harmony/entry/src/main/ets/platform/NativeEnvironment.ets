@@ -12,6 +12,8 @@ export class NativeEnvironment {
   @Trace safeTopPx: number = 0;
   @Trace keyboardHeightPx: number = 0;
   @Trace windowWidthPx: number = 0;
+  @Trace windowHeightPx: number = 0;
+  @Trace isFullScreen: boolean = false;
   private windowRef: window.Window | undefined;
   private keyboardChanged: ((height: number) => void) | undefined;
   private sizeChanged: (size: window.Size) => void = (_size: window.Size): void => this.refreshWindow();
@@ -33,7 +35,7 @@ export class NativeEnvironment {
   }
   unbindWindow(): void {
     const value = this.windowRef, keyboard = this.keyboardChanged; this.windowRef = undefined; this.keyboardChanged = undefined;
-    this.keyboardHeightPx = 0;
+    this.keyboardHeightPx = 0; this.isFullScreen = false; this.windowHeightPx = 0;
     if (!value) return;
     try { value.off('windowSizeChange', this.sizeChanged); value.off('windowRectChange', this.rectChanged); value.off('avoidAreaChange', this.avoidChanged); if (keyboard) value.off('keyboardHeightChange', keyboard); } catch (_) {}
   }
@@ -45,7 +47,9 @@ export class NativeEnvironment {
       this.safeBottomPx = rect.top + rect.height - bottom;
       this.keyboardHeightPx = this.windowRef.getWindowAvoidArea(window.AvoidAreaType.TYPE_KEYBOARD).bottomRect?.height || 0;
       this.windowWidthPx = Number.isFinite(rect.width) ? rect.width : 0;
+      this.windowHeightPx = Number.isFinite(rect.height) ? rect.height : 0;
       this.safeTopPx = this.windowRef.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect?.height || 0;
+      this.isFullScreen = this.windowRef.getWindowStatus() === window.WindowStatusType.FULL_SCREEN;
     } catch (_) {}
   }
 

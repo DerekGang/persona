@@ -175,7 +175,7 @@ export struct SettingsDirectory {
         .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
       if (this.currentManager()) Text(tr('phone_settings_switch')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
     }.width('100%').padding({left:15,right:13,top:13,bottom:10})
-      }.width('100%').padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('settings_this_assistant')+' · '+this.account())
+      }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(64,78,nativeEnvironment.fontScale)}).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('settings_this_assistant')+' · '+this.account())
       .bindMenu(this.managerMenu(this.model.scope())).id('settings.assistant_switch')
   }
   @Builder section(title:string, entries?:string[]) {
@@ -200,16 +200,16 @@ export struct SettingsDirectory {
           SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize('16vp').fontColor([Colors.secondary])
           TextInput({text:this.query,placeholder:tr('phone_settings_search'),controller:this.field})
             .fontSize(Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)).placeholderFont({size:Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)})
-            .height(Math.max(36,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(16)))+8)).padding(0)
+            .height(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).padding(0)
             .layoutWeight(1).backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
             .enterKeyType(EnterKeyType.Search).onSubmit(() => this.field.stopEditing())
             .onChange((v:string) => { this.query = v; this.onQueryChange(v); }).id('settings.search')
-        }.constraintSize({minHeight:38}).padding({left:12,right:8,top:1,bottom:1}).layoutWeight(1).borderRadius(19).backgroundColor(Colors.control)
+        }.padding({left:12,right:8}).layoutWeight(1).borderRadius(32).backgroundColor(Colors.control)
           if (this.showDismissSearch && this.query.trim()) Button({type:ButtonType.Circle}) {
             SymbolGlyph($r('sys.symbol.xmark')).fontSize('18vp').fontColor([Colors.ink])
-          }.width(40).height(40).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('close'))
+          }.width(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).height(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('close'))
             .onClick(() => { this.field.stopEditing(); this.onDismissSearch(); }).id('settings.close')
-        }.width('100%')
+        }.width('100%').margin({bottom:10})
       }
       if (this.query.trim()) {
         this.section(tr('settings_search_results'))
@@ -223,7 +223,7 @@ export struct SettingsDirectory {
         this.section(tr('phone_settings_device'),DEVICE_OPTIONS)
         this.section(tr('phone_settings_hub'),HUB_OPTIONS)
       }
-    }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,bottom:24}).backgroundColor(Colors.grouped)
+    }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:this.showDismissSearch && this.query.trim() ? 16 : 0,bottom:24}).backgroundColor(Colors.grouped)
   }
 }
 
@@ -283,10 +283,10 @@ export struct PhoneSettingsOptions {
         Column() {
           ForEach(LANGUAGES,(lang:string,ix:number) => {
             Row({space:7}) {
-              Text(lang==='default' ? tr('system')+' · '+languageName(i18n.getSystemLanguage()) : languageName(lang))
+              Text(lang==='default' ? tr('phone_settings_system_language').replace('{language}',languageName(i18n.getSystemLanguage())) : languageName(lang))
                 .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
               if (this.model.language===lang) SymbolGlyph(Symbols.check).fontSize('17vp').width(21).flexShrink(0).fontColor([Colors.link])
-            }.width('100%').constraintSize({minHeight:46}).padding({left:15,right:14,top:6,bottom:6})
+            }.width('100%').constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).padding({left:15,right:14,top:6,bottom:6})
               .enabled(!this.model.languageChanging).accessibilitySelected(this.model.language===lang).accessibilityGroup(true)
               .onClick(() => this.choose(lang)).id('settings.language.'+lang)
             if (ix<LANGUAGES.length-1) Divider().strokeWidth(0.5).color(Colors.divider).margin({left:15})
@@ -299,12 +299,12 @@ export struct PhoneSettingsOptions {
             Text(tr('phone_dictation')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
             Text(this.dictationLabel(this.dictation.choice)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-          }.constraintSize({minHeight:48}).width('100%').padding({left:15,right:15,top:7,bottom:7})
+          }.constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).width('100%').padding({left:15,right:15,top:7,bottom:7})
             .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
             .bindMenu(this.dictationMenu()).accessibilityRole(AccessibilityRoleType.BUTTON).id('settings.dictation.choice')
         }
         ListItem() { Text(tr('phone_dictation_automatic_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
       }
-    }.width('100%').height('100%').padding({left:16,right:16,top:32,bottom:24}).backgroundColor(Colors.grouped)
+    }.width('100%').height('100%').padding({left:16,right:16,top:35,bottom:24}).backgroundColor(Colors.grouped)
   }
 }

@@ -17,7 +17,7 @@ registerHooks({
     if (url === 'native-environment:accessibility') return {format:'module',shortCircuit:true,source:'export const accessibility={isAnimationReduceEnabledSync:()=>globalThis.__personaNativeEnvironment.readMotion()};'};
     if (url === 'native-environment:display') return { format: 'module', shortCircuit: true, source: `
       const s = globalThis.__personaNativeEnvironment;
-      export const window = {AvoidAreaType:{TYPE_NAVIGATION_INDICATOR:3,TYPE_SYSTEM:0,TYPE_KEYBOARD:5}};
+      export const window = {WindowStatusType:{FULL_SCREEN:1},AvoidAreaType:{TYPE_NAVIGATION_INDICATOR:3,TYPE_SYSTEM:0,TYPE_KEYBOARD:5}};
       export const display = { isFoldable: () => s.foldable, getCurrentFoldCreaseRegion() {
         if (s.failure) throw new Error('display unavailable'); return s.region;
       } };
@@ -80,4 +80,27 @@ test('each transition reads the current system Reduce Motion preference', () => 
   }
   screen.readMotion = () => { throw new Error('Accessibility service unavailable'); };
   assert.equal(environment.reduceMotion, false);
+});
+
+
+test('phone form sheets follow the attached portrait window and retain native sizing in other windows', () => {
+  const env = new NativeEnvironment();
+  const handlers = new Map();
+  let width = 1206, height = 2622, inset = 117, status = 1;
+  const owner = {
+    getWindowProperties: () => ({ windowRect: { width, height, top: 0 } }),
+    getWindowStatus: () => status,
+    getWindowAvoidArea: type => type === 0 ? { topRect: { height: inset } } : { bottomRect: { height: 0 } },
+    on: (key, fn) => handlers.set(key, fn), off: key => handlers.delete(key)
+  };
+  const source = readFileSync(new URL('../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
+  const declaration = source.slice(source.indexOf('  private compactFormHeight()'), source.indexOf('  @Builder phoneSettings()'));
+  const Form = new Function('SheetSize', 'return '+stripTypeScriptTypes('class Form {'+declaration+'}'))({ LARGE:'native' });
+  const form = Object.assign(new Form(), { environment:env, getUIContext:() => ({ px2vp:px => px/3 }) });
+  env.bindWindow(owner); assert.equal(form.compactFormHeight(), 812);
+  inset = 270; handlers.get('avoidAreaChange')({}); assert.equal(form.compactFormHeight(), 776);
+  status = 2; handlers.get('windowRectChange')({}); assert.equal(form.compactFormHeight(), 'native');
+  status = 1; [width,height] = [height,width]; handlers.get('windowSizeChange')({}); assert.equal(form.compactFormHeight(), 'native');
+  [width,height] = [1206,2622]; handlers.get('windowSizeChange')({}); env.nativeHoverAvailable = true; assert.equal(form.compactFormHeight(), 'native');
+  env.unbindWindow(); assert.equal(env.windowHeightPx, 0); assert.equal(env.isFullScreen, false);
 });

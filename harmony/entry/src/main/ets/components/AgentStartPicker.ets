@@ -102,7 +102,7 @@ export struct AgentStartPicker {
         Text(this.kind === 'folder' && this.folderName() ? this.folderName() : this.heading).layoutWeight(1).textAlign(TextAlign.Center)
           .fontSize(18).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         Blank().width(42)
-      }.width('100%').padding({left:14,right:14,top:7,bottom:8})
+      }.width('100%').padding({left:14,right:14,top:17,bottom:11})
       if (this.kind !== 'folder' && this.kind !== 'model' && (this.kind === 'workspace' || this.options.length > 5 || this.manual)) this.pickerSearch()
       List({space:this.kind === 'folder' || this.kind === 'model' ? 12 : 3}) {
         if (this.kind === 'folder' && this.choices.path) ListItem() {

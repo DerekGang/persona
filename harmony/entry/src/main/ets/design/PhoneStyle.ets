@@ -1,4 +1,5 @@
 import { Colors } from './Colors';
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { Tokens } from './Tokens';
 
 // Compact iPhone's inset lists share their margins, hierarchy and grouped surfaces with the phone shell.
@@ -9,6 +10,14 @@ export class PhoneStyle {
   static readonly rowHeight: number = 48;
   static readonly bar: number = 44;
   static readonly title: number = 34;
+
+  // Grouped form controls follow the capped interface text, including their vertical padding.
+  static formSize(regular: number, largest: number, scale: number): number {
+    const progress = Math.max(0, Math.min(1, (scale - 1) / (Tokens.interfaceFontMaxScale - 1)));
+    return regular + (largest - regular) * progress;
+  }
+  static groupedRowHeight(scale: number): number { return PhoneStyle.formSize(52, 59, scale); }
+
 }
 
 @ComponentV2
@@ -64,7 +73,7 @@ export struct PhoneSettingsRow {
           if (this.detail) Text(this.detail).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
         }.layoutWeight(1)
         SymbolGlyph($r('sys.symbol.chevron_right')).fontSize('14vp').fontColor([Colors.secondary])
-      }.width('100%').constraintSize({ minHeight: PhoneStyle.rowHeight }).padding({ left: 14, right: 14, top: 5, bottom: 5 })
+      }.width('100%').constraintSize({ minHeight: PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale) }).padding({ left: 14, right: 14, top: 5, bottom: 5 })
       if (!this.last) Divider().color(Colors.divider).strokeWidth(0.5).margin({ left: 54 })
     }.width('100%').backgroundColor(Colors.surface).accessibilityGroup(true)
       .accessibilityText(this.label + (this.detail ? ' · ' + this.detail : '')).onClick(() => this.action()).id(this.identity)

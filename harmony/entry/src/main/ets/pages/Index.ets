@@ -1333,7 +1333,7 @@ struct Index {
             .onClick(() => { if (!this.drawerAcceptsTap()) return; this.spacesShown = false; if (this.model.section !== 0) this.changeSection(0); this.newConversation(); }).id('spaces.new')
           Blank().layoutWeight(1)
           PhoneIconButton({symbol:Symbols.gear,label:tr('settings'),identity:'spaces.settings',action:() => { if (this.drawerAcceptsTap()) this.openSpace('settings'); }})
-            .bindSheet($$this.phoneSettingsShown, this.phoneSettings(), {height: SheetSize.LARGE,showClose:false,dragBar:false,backgroundColor:Colors.grouped,
+            .bindSheet($$this.phoneSettingsShown, this.phoneSettings(), {height: this.compactFormHeight(),showClose:false,dragBar:false,backgroundColor:Colors.grouped,
               onWillDismiss:(dismiss:DismissSheetAction) => {
                 if (dismiss.reason === DismissReason.PRESS_BACK && this.phoneSettingsPage) this.phoneSettingsPage = '';
                 else dismiss.dismiss();
@@ -1542,6 +1542,13 @@ struct Index {
     this.spacesShown = false;
     this.openSettings(page);
   }
+  private compactFormHeight(): number | SheetSize {
+    const ui = this.getUIContext(), env = this.environment;
+    const width = ui.px2vp(env.windowWidthPx), height = ui.px2vp(env.windowHeightPx);
+    if (!env.isFullScreen || env.nativeHoverAvailable || width <= 0 || width >= 600 || height <= width) return SheetSize.LARGE;
+    // Leave the status area visible and retain a margin above a taller native cutout.
+    return height - Math.max(62, ui.px2vp(env.safeTopPx) + 8);
+  }
   @Builder phoneSettings() {
     Column() {
       if (this.phoneSettingsPage || !this.phoneSettingsQuery.trim()) Row() {
@@ -1552,7 +1559,7 @@ struct Index {
         Text(this.phoneSettingsPage === 'phone_language_options' ? tr('language') : this.phoneSettingsPage ? tr(this.settingsLabel(this.phoneSettingsPage)) : tr('settings'))
           .layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).maxFontScale(Tokens.interfaceScaleFor(18)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
         Blank().width(PhoneStyle.bar)
-      }.width('100%').padding({left:14,right:14,top:7,bottom:5})
+      }.width('100%').padding({left:14,right:14,top:16,bottom:10})
       if (this.phoneSettingsPage === 'phone_knowledge_selection') {
         PhoneKnowledgeSelection({model:this.model}).layoutWeight(1)
       } else if (this.phoneSettingsPage === 'phone_meeting_options') {
@@ -1888,7 +1895,7 @@ struct Index {
             .accessibilityText(tr('cancel')).onClick(() => this.showSheet = false).enabled(!this.creatingAgent).id('agent.cancel')
           Text(tr('phone_new_chat_title')).fontSize(17).maxFontScale(Tokens.chromeFontMaxScale).maxLines(2).fontWeight(600).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
           Blank().width(42)
-        }.width('100%').constraintSize({minHeight:52}).padding({left:14,right:14,top:4,bottom:4})
+        }.width('100%').padding({left:14,right:14,top:17,bottom:11})
         Scroll(this.agentFormScroll) {
           Column() {
             if (!this.agentWorktree && !this.agentTodo && this.recentSetups.length) {
@@ -2382,7 +2389,7 @@ struct Index {
             .onClick(() => this.model.useDemo()).id('welcome.demo')
           if (this.model.pendingCleanupCount > 0) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry_cleanup')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry_cleanup', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry_cleanup')).bindTips(tr('retry_cleanup')).onClick(() => this.model.retryCleanup())
         }.justifyContent(FlexAlign.Center).width('100%').height('100%').padding({left:32,right:32}).backgroundColor(Colors.grouped)
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       } else {
         if (!this.wide() && !this.floatingProjectHeader && this.phoneTop !== 'project_tree' && (this.phoneTop || !this.projectPlace() || !this.projectSearching)) this.phoneHeader()
         Navigation(this.stack) { this.primaryContent() }.title({ builder: this.peerTitle, height: this.headerHeight() }, { systemMaterial: this.titleMaterial }).titleMode(NavigationTitleMode.Mini)
@@ -2394,7 +2401,7 @@ struct Index {
           .minContentWidth(Tokens.detailMin).enableDragBar(!this.rail()).navDestination(this.destination)
           .onAreaChange(() => this.updateBreakpoint()).width('100%').layoutWeight(1)
 
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       }
     }.width('100%').height('100%').backgroundColor(Colors.canvas)
       .accessibilityLevel(this.chatSearchShown || this.spacesShown && !this.wide() ? 'no-hide-descendants' : 'auto')
