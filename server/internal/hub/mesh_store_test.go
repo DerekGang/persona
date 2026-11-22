@@ -32,6 +32,8 @@ type meshStore struct {
 	partners         map[string]db.PartnerHub
 	partnerCodes     map[string]time.Time // hash -> expiry
 	usedPartnerCodes map[string]bool
+	// The manager's partner messages and prefs (partner_e2e_store_test.go), made on first use.
+	partnerMsgs *memPartnerMessages
 }
 
 func newMeshStore() *meshStore {

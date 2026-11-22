@@ -22,17 +22,20 @@ import (
 
 // Partner hubs in one process (partner_*_test.go): hubs on httptest servers over TLS (or plain, for one without a TLS
 // listener), each on its own in-memory store (meshStore, which keeps partner_hubs too), with the mesh running so a
-// test can see partners never reach it, and no manager unless a test connects a scripted one (connectPartnerManager).
+// test can see partners never reach it, and no manager unless a test connects one (a scripted one:
+// connectPartnerManager; real ones with their nodes: startPartnerE2E).
 
 // partnerHubOpts: store (a restart: the one it had), cert (a TLS key of its own: every httptest server otherwise has
 // the same one, so the same pin), noTLS (served without TLS: no key, no https address), partners (hub.json's
-// partners), endpoints (the https addresses it hands out instead of its server's).
+// partners), endpoints (the https addresses it hands out instead of its server's), machines (hub.json's machines,
+// for a manager a test starts on it: partner_e2e_test.go).
 type partnerHubOpts struct {
 	store     *meshStore
 	cert      *tls.Certificate
 	noTLS     bool
 	partners  PartnersConfig
 	endpoints []string
+	machines  []MachineConfig
 }
 
 func startPartnerHub(t *testing.T, id, name string, o partnerHubOpts) *testHub {
@@ -42,7 +45,7 @@ func startPartnerHub(t *testing.T, id, name string, o partnerHubOpts) *testHub {
 		st = newMeshStore()
 	}
 	cfg := defaultConfig()
-	cfg.dir, cfg.Name, cfg.Partners, cfg.Machines = t.TempDir(), name, o.partners, nil
+	cfg.dir, cfg.Name, cfg.Partners, cfg.Machines = t.TempDir(), name, o.partners, o.machines
 	off := false
 	cfg.Mesh.Discovery = &off
 	logger := log.New(io.Discard, "", 0)
