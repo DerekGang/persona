@@ -1,5 +1,5 @@
 import { SessionComposerModeChip } from './SessionComposerModeChip';
-import { ComposerSize, restingComposerSize } from '../core/ComposerSize';
+import { ComposerSize, restingComposerSize, ComposerReadingSize, composerReadingSize, composerTypeSample } from '../core/ComposerSize';
 import { PhoneDictationControl } from './PhoneDictationControl';
 import { ConversationRecap } from './ConversationRecap';
 import { AssistantWelcome } from './AssistantWelcome';
@@ -459,16 +459,16 @@ export struct Conversation {
     return Math.max(1, Math.round(this.getUIContext().vp2px(this.composerStroke)));
   }
   private composerPadding(): Padding {
-    if (!this.restingComposer()) return { left: 5, right: 5, top: 3, bottom: 3 };
+    if (!this.restingComposer() && !this.expandedComposer()) return { left: 5, right: 5, top: 3, bottom: 3 };
     // ArkUI lays out the border and padding separately. Round their combined
     // 4vp / 2vp insets once so the stroke cannot cost either edge a device pixel.
     const ui = this.getUIContext(), stroke = this.restingStrokePx();
     const side = String(Math.max(0, Math.round(ui.vp2px(Tokens.fine)) - stroke)) + 'px';
     const end = String(Math.max(0, Math.round(ui.vp2px(2)) - stroke)) + 'px';
-    return { left: side, right: side, top: end, bottom: end };
+    return { left: side, right: side, top: this.expandedComposer() ? 0 : end, bottom: end };
   }
   private controlsPadding(): Padding {
-    const resting = this.restingComposer(), side = resting ? Tokens.inset : Tokens.page;
+    const resting = this.restingComposer(), side = resting || this.expandedComposer() ? Tokens.inset : Tokens.page;
     return { left: side, right: side, top: Tokens.gap, bottom: resting ? Tokens.gap : Tokens.footer };
   }
   private verticalActions(): boolean {
@@ -527,16 +527,15 @@ export struct Conversation {
   }
   private inlineEditorMaxHeight(): number {
     if (!this.expandedComposer()) return this.composerActionSize();
-    const line = Tokens.lineHeight * Math.max(1, this.environment.fontScale);
-    const padding = 2 * Tokens.inset;
+    const line = this.readingSize.line;
     const actions = Tokens.touch * (this.verticalActions() ? 2 : 1);
     // Include the outer spacing and both borders before the first native measurement.
     // After layout this also reserves the measured quote, attachment strip and Persona task dock.
     const chrome = Math.max(actions + Tokens.gap + Tokens.footer + 8,
       this.editorHeight > 0 ? this.controlsHeight - this.editorHeight : 0);
-    const room = Math.max(Tokens.touch, this.maxControlsHeight() - chrome);
-    const lines = Math.max(1, Math.min(6, Math.floor((room - padding) / line)));
-    return Math.min(room, padding + lines * line);
+    const room = Math.max(this.readingSize.height(1), this.maxControlsHeight() - chrome - Tokens.page);
+    const lines = Math.max(1, Math.min(6, Math.floor(room / line)));
+    return this.readingSize.height(lines);
   }
   private revealOverflowingActions(): void {
     // A long attachment error or a short split window can be taller than even a one-line editor.
@@ -767,9 +766,29 @@ export struct Conversation {
     if (this.model.stopPending() || this.sending || this.model.operationState === 'pending') return 'pending';
     return this.model.operationState === 'unknown' ? 'result_unknown' : 'send';
   }
+  @Computed get readingSize(): ComposerReadingSize { return composerReadingSize(this.environment.fontScale); }
+  @Computed get draftTracking(): number {
+    const ui = this.getUIContext(), size = this.readingSize;
+    const nativeWidth = ui.px2vp(ui.getMeasureUtils().measureText({ textContent: composerTypeSample, fontSize: String(size.points) + 'vp' }));
+    return Math.min(0, (size.sampleWidth - nativeWidth) / composerTypeSample.length);
+  }
+  private nativeDraftLines(width: number): number {
+    const ui = this.getUIContext(), text = this.model.draft;
+    const value = !text || text.endsWith('\n') ? text + ' ' : text;
+    const metrics = ui.getMeasureUtils().measureTextSize({ textContent: value, constraintWidth: String(Math.max(1, width)) + 'vp',
+      fontSize: String(this.readingSize.points) + 'vp', lineHeight: String(this.readingSize.line) + 'vp',
+      letterSpacing: String(this.draftTracking) + 'vp', maxLines: 7, wordBreak: WordBreak.BREAK_WORD });
+    return Math.max(1, Math.min(7, Math.round(ui.px2vp(Number(metrics.height)) / this.readingSize.line)));
+  }
   private offersDraftEditor(): boolean {
-    return this.fieldFocused || (this.model.draft.length > 0 && (this.model.draft.includes('\n') ||
-      this.editorHeight >= 5.5 * Tokens.lineHeight * Math.max(1, this.environment.fontScale) + Tokens.section));
+    if (this.fieldFocused) return true;
+    const text = this.model.draft;
+    return !!text && (text.includes('\n') || this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset) >= 6);
+  }
+  private expandedFieldHeight(): number {
+    const reserved = this.offersDraftEditor() ? this.restingSize.target : 0;
+    const lines = this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset - reserved);
+    return Math.min(this.inlineEditorMaxHeight(), this.readingSize.height(lines));
   }
   private draftEditorCurrent(): boolean {
     return !!this.draftEditorOwner && this.sendCurrent() && this.composerAvailable() &&
@@ -1305,23 +1324,28 @@ export struct Conversation {
       GridRow({ columns: this.composerColumns(), gutter: { x: 0, y: 0 } }) {
         GridCol({ span: this.expandedComposer() ? this.composerColumns() : this.composerColumns() - this.leftColumns() - this.sendColumns(), order: this.expandedComposer() ? 0 : 1 }) {
           Stack({alignContent:Alignment.TopEnd}) {
-          TextArea({ text: this.model.draft, controller:this.inlineField, placeholder: this.composerPlaceholder() }).maxLength(Tokens.maxMessage).width('100%')
-            .fontSize(Tokens.body).placeholderFont({ size: Tokens.body }).fontColor(Colors.ink).placeholderColor(Colors.secondary)
-            .lineHeight(String(Tokens.lineHeight) + 'fp').caretColor(Colors.action).backgroundColor(Color.Transparent)
-            .padding({ left: this.expandedComposer() ? Tokens.page : Tokens.gap, right: this.offersDraftEditor() ? Tokens.touch : this.expandedComposer() ? Tokens.page : Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
-            .constraintSize({ minHeight: this.composerActionSize(), maxHeight: this.inlineEditorMaxHeight() })
-            .height(this.expandedComposer() ? undefined : this.composerActionSize())
-            .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
-            .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
-            .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
+            Row() {
+              TextArea({ text: this.model.draft, controller:this.inlineField, placeholder:this.composerPlaceholder() })
+                .maxLength(Tokens.maxMessage).width('100%')
+                .fontSize(this.expandedComposer() ? String(this.readingSize.points) + 'vp' : Tokens.body)
+                .placeholderFont({ size: this.expandedComposer() ? String(this.readingSize.shellPoints) + 'vp' : Tokens.body })
+                .fontColor(Colors.ink).placeholderColor(Colors.secondary).caretColor(Colors.action).backgroundColor(Color.Transparent)
+                .lineHeight(this.expandedComposer() ? String(this.readingSize.line) + 'vp' : String(Tokens.lineHeight) + 'fp')
+                .letterSpacing(this.expandedComposer() ? String(this.draftTracking) + 'vp' : 0).wordBreak(WordBreak.BREAK_WORD)
+                .padding(this.expandedComposer() ? 0 : { left: Tokens.gap, right: Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
+                .height(this.expandedComposer() ? this.expandedFieldHeight() : this.composerActionSize())
+                .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
+                .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
+                .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
+            }.width('100%').padding(this.expandedComposer() ? {left:Tokens.inset, right:Tokens.inset + (this.offersDraftEditor() ? this.restingSize.target : 0), top:Tokens.page} : 0)
             if (this.offersDraftEditor()) {
               Button({type:ButtonType.Circle}) {
                 SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('17vp').fontColor([Colors.ink])
-              }.width(40).height(40).padding(0).backgroundColor(Color.Transparent)
-                .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('phone_chat_expand_editor')).bindTips(tr('phone_chat_expand_editor'))
+              }.width(this.restingSize.target).height(this.restingSize.target).padding(0).backgroundColor(Color.Transparent)
+                .responseRegion(ButtonStyles.touchRegion(this.restingSize.target)).accessibilityText(tr('phone_chat_expand_editor')).bindTips(tr('phone_chat_expand_editor'))
                 .onClick(() => this.expandDraftEditor()).id('chat.expand')
             }
-          }.width('100%').bindSheet($$this.draftEditorOpen,this.draftPage(),
+          }.width('100%').constraintSize({minHeight:this.expandedComposer() ? this.restingSize.target : this.composerActionSize()}).bindSheet($$this.draftEditorOpen,this.draftPage(),
             {height:SheetSize.LARGE,showClose:false,keyboardAvoidMode:SheetKeyboardAvoidMode.RESIZE_ONLY,
               onAppear:() => this.focusDraftPage(),onWillDismiss:(action:DismissSheetAction) => { this.finishPageInput(); action.dismiss(); },
               onDisappear:() => this.draftPageGone()})

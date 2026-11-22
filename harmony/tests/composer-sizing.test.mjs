@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
-import { restingComposerSize } from '../entry/src/main/ets/core/ComposerSize.ts';
+import { composerReadingSize, restingComposerSize } from '../entry/src/main/ets/core/ComposerSize.ts';
 
 const source = readFileSync(new URL('../entry/src/main/ets/components/Conversation.ets', import.meta.url), 'utf8');
 const tokens = readFileSync(new URL('../entry/src/main/ets/design/Tokens.ets', import.meta.url), 'utf8');
@@ -19,10 +19,10 @@ function method(name) {
   assert.equal(depth, 0, name);
   return source.slice(start, i);
 }
-const Composer = new Function('Tokens', 'Edge', 'restingComposerSize', 'return ' + stripTypeScriptTypes('class Composer { get restingSize() { return restingComposerSize(this.environment.fontScale); }' +
+const Composer = new Function('Tokens', 'Edge', 'restingComposerSize', 'composerReadingSize', 'return ' + stripTypeScriptTypes('class Composer { get readingSize() { return composerReadingSize(this.environment.fontScale); } get restingSize() { return restingComposerSize(this.environment.fontScale); }' +
   ['hasComposerAction', 'trailingActionWidth', 'leftActionWidth', 'expandedComposer', 'composerColumns', 'sendColumns',
     'restingComposer', 'composerActionSize', 'restingStrokePx', 'composerPadding', 'controlsPadding', 'composerAvailable',
-    'leftColumns', 'verticalActions', 'maxControlsHeight', 'inlineEditorMaxHeight', 'revealOverflowingActions'].map(method).join('\n') + '}'))(Tokens, { Bottom: 'bottom' }, restingComposerSize);
+    'leftColumns', 'verticalActions', 'maxControlsHeight', 'inlineEditorMaxHeight', 'revealOverflowingActions'].map(method).join('\n') + '}'))(Tokens, { Bottom: 'bottom' }, restingComposerSize, composerReadingSize);
 function fixture(density = 3, width = 372) {
   return Object.assign(new Composer(), {
     composerWidth: width, fieldFocused: false, primaryStop: () => false, sending: false, active: true,
@@ -80,8 +80,13 @@ test('focus, keyboard dismissal, draft, menu, narrow viewport and unavailable in
     const v = fixture();
     change(v);
     assert.equal(v.restingComposer(), false);
-    assert.deepEqual(v.controlsPadding(), {left:16,right:16,top:8,bottom:4});
-    assert.deepEqual(v.composerPadding(), {left:5,right:5,top:3,bottom:3});
+    if (v.expandedComposer()) {
+      assert.deepEqual(v.controlsPadding(), {left:12,right:12,top:8,bottom:4});
+      assert.deepEqual(v.composerPadding(), {left:'10px',right:'10px',top:0,bottom:'4px'});
+    } else {
+      assert.deepEqual(v.controlsPadding(), {left:16,right:16,top:8,bottom:4});
+      assert.deepEqual(v.composerPadding(), {left:5,right:5,top:3,bottom:3});
+    }
   }
 });
 
@@ -143,12 +148,12 @@ test('a blurred empty composer returns to one line, with enough space for the ke
 test('a draft can expand above the keyboard, while a short unfocused draft keeps its quiet shape', () => {
   const Editor = new Function('Tokens','return '+stripTypeScriptTypes('class Editor {'+
     ['offersDraftEditor','rememberSelection','parkSelection','restoreSelection','draftEditorCurrent'].map(method).join('\n')+'}'))(Tokens);
-  const v = Object.assign(new Editor(), {fieldFocused:false, model:{draft:'Review PR 42'}, editorHeight:48,
+  const v = Object.assign(new Editor(), {fieldFocused:false, model:{draft:'Review PR 42'}, composerWidth:370, nativeDraftLines:()=>1,
     environment:{fontScale:1}, draftEditorOwner:'hubA/review', sendCurrent:()=>true,composerAvailable:()=>true,
     composerOwnerKey:()=>'hubA/review'});
   assert.equal(v.offersDraftEditor(),false);v.fieldFocused=true;assert.equal(v.offersDraftEditor(),true);
   v.fieldFocused=false;v.model.draft='a\nb';assert.equal(v.offersDraftEditor(),true);
-  v.model.draft='wrapped';v.editorHeight=167;assert.equal(v.offersDraftEditor(),true);
+  v.model.draft='wrapped';v.nativeDraftLines=width=>{assert.equal(width,346);return 6;};assert.equal(v.offersDraftEditor(),true);
   v.rememberSelection(1,6);v.parkSelection();v.rememberSelection(0,0);
   v.model.draft='abc';let restored;
   v.restoreSelection({setTextSelection:(...range)=>{restored=range;}});
@@ -170,8 +175,7 @@ test('resized phone viewport leaves a full keyboard and send target at both text
     const reserved = actionRows * Tokens.touch + Tokens.gap + Tokens.footer + 8;
     const height = v.inlineEditorMaxHeight();
     assert.ok(height + reserved <= v.availableHeight);
-    const lines = (height - 2 * Tokens.inset) / (Tokens.lineHeight * scale);
-    assert.ok(lines >= 1 && lines <= 6 && Math.abs(lines - Math.round(lines)) < 1e-7);
+    assert.ok([1,2,3,4,5,6].some(lines => v.readingSize.height(lines) === height));
     if (!v.verticalActions()) {
       const middle = (12 - v.leftColumns() - v.sendColumns()) * width / 12;
       assert.ok(middle >= 44, 'keyboard button fits between leading tools and send');
@@ -188,9 +192,9 @@ test('quotes, attachments and the dock reserve their measured space before growi
   const v = fixture();
   Object.assign(v, { fieldFocused: true, availableHeight: 300, editorHeight: 170, controlsHeight: 310 });
   Object.assign(v.environment, { fontScale: 3.2, keyboardHeightPx: 1024 });
-  assert.equal(v.inlineEditorMaxHeight(), 2 * Tokens.inset + Tokens.lineHeight * 3.2);
+  assert.equal(v.inlineEditorMaxHeight(), v.readingSize.height(2));
   v.availableHeight = 125;
-  assert.equal(v.inlineEditorMaxHeight(), Tokens.touch);
+  assert.equal(v.inlineEditorMaxHeight(), v.readingSize.height(1));
   let scrolls = 0;
   v.controlsScroller = { scrollEdge(side) { assert.equal(side, 'bottom'); scrolls++; } };
   v.active = true;
@@ -253,4 +257,27 @@ test('pending Agent cards derive the half page from the compact portrait window 
   mode=1;width=874;height=402;insetTop=20;insetBottom=15;view.contentTop=90;view.availableWidth=874;view.availableHeight=312;insets();
   assert.equal(view.agentCardsRoom(),(402-15-90)/2);
   view.contentTop=354;view.availableHeight=48;view.agentComposerHeight=90;assert.equal(view.agentCardsRoom(),0);
+});
+
+test('draft wrapping uses the full text width and measures before reserving the corner button', () => {
+  const methods = ['offersDraftEditor','expandedFieldHeight','nativeDraftLines'].map(method).join('\n');
+  const Editor = new Function('Tokens', 'WordBreak', 'return '+stripTypeScriptTypes('class Editor {'+methods+'}'))(Tokens,{BREAK_WORD:'break-word'});
+  const calls = [];
+  const state = Object.assign(new Editor(), {composerWidth:370, model:{draft:'Review note 42'}, fieldFocused:false,
+    restingSize:{target:68}, readingSize:composerReadingSize(3.2), draftTracking:-1, inlineEditorMaxHeight:()=>380,
+    getUIContext:()=>({px2vp:px=>px/3, getMeasureUtils:()=>({measureTextSize:o=>{
+      calls.push(o);
+      return {height:3*state.readingSize.line*(Number.parseFloat(o.constraintWidth)<300?2:1)};
+    }})})});
+  assert.equal(state.expandedFieldHeight(),64);
+  assert.equal(calls.at(-1).constraintWidth,'346vp');
+  state.fieldFocused=true;
+  assert.equal(state.expandedFieldHeight(),126);
+  assert.equal(calls.at(-1).constraintWidth,'278vp');
+  state.model.draft='核对照片\n';state.fieldFocused=false;
+  assert.equal(state.offersDraftEditor(),true);
+  state.expandedFieldHeight();assert.equal(calls.at(-1).textContent,'核对照片\n ');
+  assert.equal(calls.at(-1).maxLines,7);
+  assert.equal(composerReadingSize(1).height(1),23);
+  assert.ok(composerReadingSize(1.63).points>composerReadingSize(1.4).points);
 });
