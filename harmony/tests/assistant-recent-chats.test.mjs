@@ -111,6 +111,9 @@ test('All Chats filters the full owned list by source, preserves scheduled runs,
   assert.equal(allChatDetail(rows[2],'','mine','en-US',Date.parse(stamp)+120000,k),'2 minutes ago');
   assert.deepEqual(assistantChatTitleParts('1105 | 类型 | first | second'),['1105 | 类型 | ','first | second']);
   assert.deepEqual(assistantChatTitleParts('My | conversation'),['','My | conversation']);
+  for (const [origin,word] of [['lark_agent','飞书 /agent'],['extension','扩展']]) {
+    assert.equal(allChatDetail(rows[1],origin,'all','zh-CN',Date.parse(stamp),strings('zh_CN')),word+' · 需要你');
+  }
   const legacy=allAssistantChatGroups([chat('own'),chat('legacy-task')],'main','computer','group','assistant',false,history);
   assert.deepEqual(legacy.map(g=>[g.id,g.rows.map(r=>r.id)]),[['all',['legacy-task','own']],['mine',['own']]]);
 });

@@ -55,7 +55,9 @@ export function assistantChatSource(row: ResourceRow, history: ScheduledChatOrig
   return !source || allChatSources.includes(source) ? source : 'other';
 }
 
-export function assistantChatSourceKey(source: string): string {
+export function assistantChatSourceKey(source: string, spoken: boolean = false): string {
+  if (!spoken && source === 'lark_agent') return 'phone_all_chats_lark';
+  if (!spoken && source === 'extension') return 'extensions';
   return Wire.text(sourceKeys, source, 'phone_sidebar_source_other');
 }
 

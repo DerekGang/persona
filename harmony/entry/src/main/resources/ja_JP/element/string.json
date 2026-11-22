@@ -7325,6 +7325,10 @@
       "value": "定期タスクとバックグラウンド監督が始めたチャットも、時間順にサイドバーの「最近」に並びます。すべてのデバイスに反映されます。"
     },
     {
+      "name": "phone_all_chats_lark",
+      "value": "Lark /agent"
+    },
+    {
       "name": "phone_all_chats_mine",
       "value": "自分"
     },

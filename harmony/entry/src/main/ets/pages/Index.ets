@@ -1430,7 +1430,7 @@ struct Index {
   }
   private syncConversationRows(): void {
     const scope = JSON.stringify([this.model.scope(), this.model.profile.id, this.model.profile.manager]);
-    this.sidebarTaskHistory.refresh(this.model,this.spacesShown || this.wide() && !this.collapsed);
+    this.sidebarTaskHistory.refresh(this.model,this.spacesShown || this.chatSearchShown && !this.startSearchInAgents || this.wide() && !this.collapsed);
     const groups=assistantSidebarChats(this.model.conversations,this.model.mainId,this.model.mainMachineId,Wire.parse(this.model.sidebarConfig),
       this.sidebarTaskHistory.known(this.model.scope()),this.model.profile.id,this.model.profile.manager);
     this.directionRowBindings = reconcileBoundRows(this.directionRowBindings, groups.directions,

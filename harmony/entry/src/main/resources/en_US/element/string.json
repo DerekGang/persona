@@ -7325,6 +7325,10 @@
       "value": "Chats your scheduled tasks and the background supervisor start also appear in the sidebar's Recent, by time. All your devices follow."
     },
     {
+      "name": "phone_all_chats_lark",
+      "value": "Lark /agent"
+    },
+    {
       "name": "phone_all_chats_mine",
       "value": "Mine"
     },

@@ -7325,6 +7325,10 @@
       "value": "定时任务和后台督办开的对话，也按时间排进侧边栏的「最近」。你的所有设备都会跟着变。"
     },
     {
+      "name": "phone_all_chats_lark",
+      "value": "飞书 /agent"
+    },
+    {
       "name": "phone_all_chats_mine",
       "value": "我的"
     },
