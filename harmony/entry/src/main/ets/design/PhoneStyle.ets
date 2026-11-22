@@ -25,14 +25,15 @@ export struct PhoneIconButton {
   @Require @Param symbol: Resource;
   @Require @Param label: string;
   @Param identity: string = '';
+  @Param controlDiameter: number = PhoneStyle.bar;
   @Param tint: ResourceColor = Colors.ink;
   @Param active: boolean = true;
   @Event action: () => void = () => {};
   build() {
     Button({ type: ButtonType.Circle }) {
-      SymbolGlyph(this.symbol).fontSize('19vp').fontColor([this.tint])
-    }.width(PhoneStyle.bar).height(PhoneStyle.bar).padding(0).backgroundColor(Colors.surface)
-      .border({ width: 0.5, color: Colors.divider, radius: PhoneStyle.bar / 2 })
+      SymbolGlyph(this.symbol).fontSize(String(19 * this.controlDiameter / PhoneStyle.bar) + 'vp').fontColor([this.tint])
+    }.width(this.controlDiameter).height(this.controlDiameter).padding(0).backgroundColor(Colors.surface)
+      .border({ width: 0.5, color: Colors.divider, radius: this.controlDiameter / 2 })
       .accessibilityText(this.label).bindTips(this.label).enabled(this.active).onClick(() => this.action()).id(this.identity)
   }
 }

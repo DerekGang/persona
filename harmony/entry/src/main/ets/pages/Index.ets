@@ -362,22 +362,25 @@ struct Index {
   }
   @Builder placeButton(label:string,index:number,identity:string,action:() => void) {
     if (index === this.compactPeerIndex()) {
-      Button(tr(label),{type:ButtonType.Capsule}).width(this.peerSegmentWidth()).height(36*this.peerBarScale()).padding({left:3,right:3})
+      Button(tr(label),{type:ButtonType.Capsule}).width(this.peerSegmentWidth()).height(this.peerSegmentHeight()).padding({left:3,right:3})
         .fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold)
-        .fontColor(Colors.ink).backgroundColor(Color.Transparent).responseRegion({x:0,y:-4,width:'100%',height:44*this.peerBarScale()})
+        .fontColor(Colors.ink).backgroundColor(Color.Transparent).responseRegion({x:0,y:-4,width:'100%',height:this.peerSegmentHeight()+8})
         .accessibilitySelected(true).accessibilityDescription(index===1 && this.waitingAgentCount ? tr('needs_you')+' '+this.waitingAgentCount : '')
         .bindMenu(this.selectedPeerMenu(index)).id(identity)
     } else {
-      Button(tr(label),{type:ButtonType.Capsule}).width(this.peerSegmentWidth()).height(36*this.peerBarScale()).padding({left:3,right:3})
+      Button(tr(label),{type:ButtonType.Capsule}).width(this.peerSegmentWidth()).height(this.peerSegmentHeight()).padding({left:3,right:3})
         .fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Regular)
-        .fontColor(Colors.secondary).backgroundColor(Color.Transparent).responseRegion({x:0,y:-4,width:'100%',height:44*this.peerBarScale()})
+        .fontColor(Colors.secondary).backgroundColor(Color.Transparent).responseRegion({x:0,y:-4,width:'100%',height:this.peerSegmentHeight()+8})
         .accessibilitySelected(false).accessibilityDescription(index===1 && this.waitingAgentCount ? tr('needs_you')+' '+this.waitingAgentCount : '')
         .onClick(action).id(identity)
     }
   }
-  private peerBarScale(): number { return Math.min(Tokens.interfaceFontMaxScale, Math.max(1, this.environment.fontScale)); }
+  private peerActionSize(): number { return PhoneStyle.formSize(48.3,57.7,this.environment.fontScale); }
+  private sessionActionSize(): number { return PhoneStyle.formSize(44,57.7,this.environment.fontScale); }
+  private peerSegmentHeight(): number { return PhoneStyle.formSize(39.7,47.3,this.environment.fontScale); }
   private peerSegmentWidth(): number {
-    return Math.max(48, Math.min(72 * this.peerBarScale(), (this.phoneWidth - 2 * PhoneStyle.bar - 60) / 2));
+    const room = (this.phoneWidth - 2 * this.peerActionSize() - 60) / 2;
+    return Math.max(48, Math.min(PhoneStyle.formSize(79,94.7,this.environment.fontScale), room));
   }
   private drawerWidth(): number { return Math.min(380, Math.max(1,this.phoneWidth * 0.82)); }
   @Monitor('spacesShown') drawerStateChanged(): void {
@@ -614,12 +617,12 @@ struct Index {
             if (this.phonePeer()) {
               Button({type:ButtonType.Circle}) {
                 Stack({alignContent: Alignment.BottomEnd}) {
-                  Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(PhoneStyle.bar).height(PhoneStyle.bar)
-                    .objectFit(ImageFit.Cover).borderRadius(PhoneStyle.bar / 2)
+                  Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(this.peerActionSize()).height(this.peerActionSize())
+                    .objectFit(ImageFit.Cover).borderRadius(this.peerActionSize()/2)
                   if (this.shellHasInboxAction) Circle().width(12).height(12).fill(Colors.needs)
                     .stroke(Colors.canvas).strokeWidth(2).offset({x:-4,y:-4}).accessibilityLevel('no')
                 }
-              }.width(PhoneStyle.bar).height(PhoneStyle.bar).padding(0).backgroundColor(Color.Transparent)
+              }.width(this.peerActionSize()).height(this.peerActionSize()).padding(0).backgroundColor(Color.Transparent)
                 .accessibilityText(tr('conversation_spaces'))
                 .onClick(() => { this.drawerSearching = false; this.spacesShown = true; }).id('shell.spaces')
             } else {
@@ -627,14 +630,14 @@ struct Index {
                 action:() => { this.drawerSearching = false; this.spacesShown = true; }})
             }
           } else {
-            PhoneIconButton({symbol:Symbols.collapse,label:tr('back'),identity:'shell.back',action:() => this.phoneBack()})
+            PhoneIconButton({symbol:Symbols.collapse,label:tr('back'),identity:'shell.back',controlDiameter:this.phoneTop === 'session' || this.phoneToolParent ? this.sessionActionSize() : PhoneStyle.bar,action:() => this.phoneBack()})
               .bindContextMenu(this.backHistory(),ResponseType.LongPress)
           }
         },(role:string) => role)
         if (this.phonePeer()) {
           Blank().layoutWeight(1)
           Stack({alignContent:Alignment.Start}) {
-            Row().width(this.peerSegmentWidth()).height(36*this.peerBarScale()).borderRadius(22*this.peerBarScale())
+            Row().width(this.peerSegmentWidth()).height(this.peerSegmentHeight()).borderRadius((this.peerSegmentHeight()+8)/2)
               .backgroundColor(Colors.control).translate({x:(this.compactPeerIndex()+this.peerDrag)*this.peerSegmentWidth()})
               .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
             Row() {
@@ -650,8 +653,8 @@ struct Index {
               }
             }
             }
-          }.padding(4).borderRadius(22*this.peerBarScale()).backgroundColor(Colors.surface)
-            .border({width:0.5,color:Colors.divider,radius:22*this.peerBarScale()})
+          }.padding(4).borderRadius((this.peerSegmentHeight()+8)/2).backgroundColor(Colors.surface)
+            .border({width:0.5,color:Colors.divider,radius:(this.peerSegmentHeight()+8)/2})
           Blank().layoutWeight(1)
         } else if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild === this.childKey(this.phoneTop,this.phoneParam) && this.targetReady(this.phoneTop,this.phoneParam)) {
           PhoneSessionHeading({model:this.detailModel,space:this.phoneSessionSpace,heading:this.phonePageName()}).layoutWeight(1)
@@ -660,7 +663,7 @@ struct Index {
             .textAlign(TextAlign.Center).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         } else Blank().layoutWeight(1)
         if (this.phonePeer() || this.projectPlace() && (!this.phoneTop || this.phoneTop === 'project' || this.phoneTop === 'project_tree') || this.mergedPhone() && this.phoneAtRoot && (this.model.section === 0 || this.model.section === 1 && !this.phoneTop)) {
-          PhoneIconButton({symbol: this.phonePeer() || this.model.section === 0 ? Symbols.edit : Symbols.plus, label: tr(this.model.section === 0 ? 'new_chat' : 'new_agent'), identity:'shell.new', action:() => this.startFromPlace()})
+          PhoneIconButton({symbol: this.phonePeer() || this.model.section === 0 ? Symbols.edit : Symbols.plus, label: tr(this.model.section === 0 ? 'new_chat' : 'new_agent'), identity:'shell.new', controlDiameter:this.phonePeer() ? this.peerActionSize() : PhoneStyle.bar, action:() => this.startFromPlace()})
         } else if (this.compactChatMenu(this.phoneTop) && !this.mainDestination(this.phoneTop,this.phoneParam)) {
           this.compactSessionMore()
         } else if (this.rootModuleMenuKind()) {
@@ -670,7 +673,7 @@ struct Index {
         } else if (this.activeChild && this.destinationMenuItems(this.shownName, this.shownParam).length) {
           this.destinationMenus(this.shownName, this.shownParam)
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
-      }.width('100%').constraintSize({minHeight:50}).padding({left:16,right:16,top:3,bottom:3}).alignItems(VerticalAlign.Center)
+      }.width('100%').constraintSize({minHeight:50}).padding({left:16,right:16,top:this.phonePeer() || this.phoneTop === 'session' || this.phoneToolParent ? 2 : 3,bottom:3}).alignItems(VerticalAlign.Center)
       if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild && this.targetReady(this.phoneTop,this.phoneParam) && this.detailModel.selected.machine) {
         if (this.phoneSessionSpace.tabs.length || this.phoneSessionSpace.key) SessionSpaceTabs({space:this.phoneSessionSpace,
           onOpenSpace:(key:string) => this.openSessionSpace(key),onPick:(key:string,from:string,id:string) => this.switchSessionTab(key,from,id)})
@@ -1049,8 +1052,8 @@ struct Index {
           Circle().width(4).height(4).fill(Colors.link)
         }, (dot:number) => String(dot))
       }
-    }.attributeModifier(ButtonStyles.chrome).width(PhoneStyle.bar).height(PhoneStyle.bar).backgroundColor(Colors.surface)
-      .border({width:0.5,color:Colors.divider,radius:PhoneStyle.bar/2}).accessibilityText(tr('more')).id('chat.title.more')
+    }.attributeModifier(ButtonStyles.chrome).width(this.sessionActionSize()).height(this.sessionActionSize()).backgroundColor(Colors.surface)
+      .border({width:0.5,color:Colors.divider,radius:this.sessionActionSize()/2}).accessibilityText(tr('more')).id('chat.title.more')
       .enabled(this.phoneChatActionsReady).onClick(() => this.showChatActions(this.phoneTop,this.phoneParam))
       .bindMenu(this.chatTitleMenuVisible && this.phoneChatActionsReady,this.chatActionsMenu,this.chatMenuOptions(this.chatMenuRevision))
   }
@@ -1621,7 +1624,7 @@ struct Index {
     ProjectsPage({ model: this.model, catalog: this.projectCatalog, page: name, target: param as string,
           compact: !this.wide(), adjacentItem: this.adjacentProjectItem, onBack: () => this.phoneBack(), onSearchMode: (active: boolean) => { this.projectSearching = active; },
           isMuted: (row: ResourceRow): boolean => this.agentWorkspace.isMuted(row),
-          topContentInset: name === 'projects' && this.floatingProjectHeader ? 36*this.peerBarScale() + 14 : 0,
+          topContentInset: name === 'projects' && this.floatingProjectHeader ? Math.max(this.peerActionSize(), this.peerSegmentHeight()+8) + 4 : 0,
           onMachine: (tree: ProjectWorktree) => this.pushPlace('machine_projects', JSON.stringify([tree.group,tree.manager,tree.machine])),
           onProject: (key: string) => this.pushPlace('project', key),
           onTree: (key: string) => this.pushPlace('project_tree', key),
