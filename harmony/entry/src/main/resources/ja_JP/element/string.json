@@ -7287,6 +7287,18 @@
     {
       "name": "phone_session_workspace",
       "value": "ワークスペース {space} を開く"
+    },
+    {
+      "name": "phone_todo_did_not_start",
+      "value": "起動失敗"
+    },
+    {
+      "name": "phone_todo_start_failure",
+      "value": "起動に失敗しました：{reason}"
+    },
+    {
+      "name": "phone_todo_not_handed",
+      "value": "まだエージェントに任せていません"
     }
   ]
 }

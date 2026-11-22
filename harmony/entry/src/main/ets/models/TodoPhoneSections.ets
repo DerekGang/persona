@@ -5,6 +5,14 @@ import { ResourceRow, Wire } from './Wire';
 export const TODO_PHONE_SECTIONS:string[]=['needs_you','working','pr','other','just_done','shelved','done'];
 export interface TodoPhonePlacement { section:string; last:number; superseded:boolean; }
 
+export class TodoPhoneRowContext {
+  lead: ResourceRow | undefined = undefined;
+  activeAgents: number = 0;
+  urgentState: string = '';
+  summary: string = '';
+  summaryKind: string = 'empty';
+}
+
 function time(value:string):number {
   const date=Date.parse(value); return Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY;
 }
@@ -31,6 +39,51 @@ export class TodoPhoneSections {
     });
   }
 
+  private session(manager: string, machine: string, id: string): ResourceRow | undefined {
+    return this.sessions.get(JSON.stringify([manager, machine, id])) || this.sessions.get(JSON.stringify(['', machine, id]));
+  }
+
+  rowContext(todo: TodoWorkspaceItem, placement?: TodoPhonePlacement): TodoPhoneRowContext {
+    const row = new TodoPhoneRowContext();
+    let best = -1, leadMoved = Number.NEGATIVE_INFINITY;
+    for (const agent of todo.activeAgents()) {
+      row.activeAgents++;
+      const candidate = this.session(todo.manager, agent.machineId, agent.sessionId);
+      const data = candidate?.data();
+      if (candidate && data) {
+        const moved = Math.max(time(Wire.text(data, 'updated_at')), time(Wire.text(data, 'state_since')));
+        const working = candidate.state === 'working', previousWorking = row.lead?.state === 'working';
+        if (!row.lead || (working !== previousWorking ? working : moved > leadMoved)) {
+          row.lead = candidate;
+          leadMoved = moved;
+        }
+      }
+      const state = agent.startError ? 'offline' : candidate?.state || 'offline';
+      const urgency = agent.startError ? 1 : state === 'needs_you' ? 4 : state === 'unread' ? 3 : state === 'working' ? 2 : 0;
+      if (urgency <= best) continue;
+      best = urgency;
+      row.urgentState = state;
+      row.summary = agent.startError || (candidate && data ? Wire.text(data, 'last_text') || candidate.title : agent.title);
+      row.summaryKind = agent.startError ? 'failure' : 'session';
+    }
+    const raw = todo.data(), closedBy = Wire.text(raw, 'done_by');
+    const cancelled = !!Wire.text(raw, 'cancelled_at') || closedBy === 'cancelled' ||
+      closedBy === 'review' && Wire.text(todo.supervision, 'state') === 'cancelled';
+    const reason = cancelled ? (Wire.text(raw, 'cancelled_reason') || todo.doneReason).trim() :
+      todo.isDone() && ['auto', 'review'].includes(closedBy) ? todo.doneReason.trim() : '';
+    if (todo.startError && (!todo.isDone() || !placement || placement.section === 'needs_you')) {
+      row.summaryKind = 'failure';
+      row.summary = todo.startError;
+    } else if (reason) {
+      row.summaryKind = 'closed';
+      row.summary = reason;
+    } else if (!row.summary) {
+      row.summaryKind = todo.notes ? 'notes' : 'empty';
+      row.summary = todo.notes;
+    }
+    return row;
+  }
+
   place(todo:TodoWorkspaceItem,superseded:boolean=false):TodoPhonePlacement {
     const sup=todo.supervision,reviews=Wire.rows(sup,'reviews'),review:Record<string,Object>=reviews[reviews.length-1] || Wire.payload([],[]);
     const reviewAt=time(Wire.text(review,'at')),delivery=Wire.text(todo.delivery,'state'),deliveredAt=time(Wire.text(todo.delivery,'at'));
@@ -39,7 +92,7 @@ export class TodoPhoneSections {
       time(Wire.text(Wire.object(sup,'progress'),'at')),reviewAt,deliveredAt,askTime);
     let asks=false,interrupted=false,limit=false,unread=false,working=false;
     for (const a of todo.activeAgents()) {
-      const row=this.sessions.get(JSON.stringify([todo.manager,a.machineId,a.sessionId])) || this.sessions.get(JSON.stringify(['',a.machineId,a.sessionId]));
+      const row=this.session(todo.manager,a.machineId,a.sessionId);
       if (!row) continue;
       const data=row.data(),state=row.state || Wire.text(data,'state');
       last=Math.max(last,time(Wire.text(data,'updated_at')),time(Wire.text(data,'state_since')));

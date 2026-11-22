@@ -15,6 +15,9 @@ import { ResourceRow, Wire } from '../models/Wire';
 import { Tokens } from '../design/Tokens';
 import { tr, trError } from '../design/Strings';
 import { MarkdownText } from './MarkdownText';
+import { markdownVisibleText, parseMarkdown } from '../core/Markdown';
+import { composerModelName } from '../models/SessionComposerModes';
+import { launchModelName } from '../models/AgentLaunchChoices';
 
 @ObservedV2
 class BoundTodoSection {
@@ -408,10 +411,35 @@ export struct TodoWorkspacePage {
     return this.hubMode() && todo.hubView ? todo.hubView.phase === 'done' : this.completionShown(todo);
   }
   private rowLine(group: TodoWorkspaceGroup): string {
-    if (!this.hubMode()) return group.lead.notes;
+    if (!this.hubMode()) {
+      const context = group.phone;
+      if (context.summaryKind === 'failure') return tr('phone_todo_start_failure').replace('{reason}', context.summary);
+      if (context.summaryKind === 'empty') return tr('phone_todo_not_handed');
+      return context.summaryKind === 'session' ? markdownVisibleText(parseMarkdown(context.summary)) : context.summary;
+    }
     const line = group.lead.hubView?.line || '';
     if (line) return line;
     return group.state === 'todo' || group.state === 'someday' ? group.lead.notes : tr(todoHubLabel(group.state));
+  }
+  private rowStatus(group: TodoWorkspaceGroup): string {
+    if (group.lead.startError) return tr('phone_todo_did_not_start');
+    return tr(['needs_you', 'working'].includes(group.state) ? group.state : 'todo_state_' + group.state);
+  }
+  private leadMetadata(group: TodoWorkspaceGroup): string {
+    const context = group.phone, lead = context.lead;
+    if (!lead) return context.activeAgents ? '· ' + tr('project_agent_count').replace('{count}', String(context.activeAgents)) : '';
+    const data = lead.data(), model = Wire.text(data, 'model').trim().replace(/\[[^\]]*\]$/, '');
+    const bare = model.split('/').pop() || model;
+    const effort = Wire.text(data, 'effort');
+    const effortName = effort === 'xhigh' ? tr('phone_session_extra_high') :
+      ['auto', 'low', 'medium', 'high', 'max'].includes(effort) ? tr(effort) : effort;
+    return '· ' + [this.workspace.machineName(lead.machine, group.lead.manager),
+      launchModelName(bare, composerModelName(bare)), effortName].filter((value: string) => !!value).join(' · ');
+  }
+  private rowLineColor(group: TodoWorkspaceGroup): ResourceColor {
+    if (this.hubMode()) return group.state === 'needs_you' ? Colors.link : Colors.secondary;
+    if (group.phone.summaryKind === 'failure') return Colors.danger;
+    return group.phone.summaryKind === 'session' && group.phone.urgentState === 'needs_you' ? Colors.needs : Colors.secondary;
   }
   @Builder rowMenu(todo:TodoWorkspaceItem) {
     Menu() {
@@ -465,15 +493,23 @@ export struct TodoWorkspacePage {
                 if (Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17))<1.5 && this.since(binding.value.lead))
                   Text(this.since(binding.value.lead)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
               }.width('100%').alignItems(VerticalAlign.Top)
-              if (!this.hubMode()) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(4),cross:LengthMetrics.vp(2)}}) {
-                Text(tr('todo_state_'+binding.value.state)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(binding.value.state==='needs_you' ? Colors.needs : Colors.secondary)
-                if (binding.value.lead.activeAgents().length)
-                  Text('· '+tr('project_agent_count').replace('{count}',String(binding.value.lead.activeAgents().length)))
-                    .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+              if (!this.hubMode()) Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center,space:{main:LengthMetrics.vp(4),cross:LengthMetrics.vp(2)}}) {
+                Circle().width(6).height(6).fill(binding.value.phone.urgentState === 'needs_you' ? Colors.needs :
+                  binding.value.phone.urgentState === 'working' ? Colors.link : Colors.secondary)
+                  .accessibilityText(tr(binding.value.phone.urgentState || (binding.value.state === 'done' ? 'idle' : 'unknown')))
+                Text(this.rowStatus(binding.value)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
+                  .fontColor(binding.value.lead.startError ? Colors.secondary : binding.value.state==='needs_you' ? Colors.needs : Colors.secondary)
+                if (binding.value.phone.activeAgents) Text(this.leadMetadata(binding.value))
+                  .fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary)
+                  .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
+                if (binding.value.phone.lead && binding.value.phone.activeAgents > 1) Text('+' + String(binding.value.phone.activeAgents-1))
+                  .fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary)
               }.width('100%')
               this.metadata(binding.value.lead)
-              if (this.rowLine(binding.value)) Text(this.rowLine(binding.value)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
-                .fontColor(binding.value.state==='needs_you' ? Colors.link : Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+              if (this.rowLine(binding.value)) Text(this.rowLine(binding.value)).fontSize(this.hubMode() ? 14 : Tokens.caption)
+                .maxFontScale(Tokens.interfaceScaleFor(this.hubMode() ? 14 : Tokens.caption))
+                .fontColor(this.rowLineColor(binding.value)).maxLines(!this.hubMode() && ['notes','empty'].includes(binding.value.phone.summaryKind) ? 1 : 2)
+                .textOverflow({overflow:TextOverflow.Ellipsis})
             }.alignItems(HorizontalAlign.Start).layoutWeight(1)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.layoutWeight(1).constraintSize({minHeight:44}).accessibilityGroup(true)

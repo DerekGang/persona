@@ -7287,6 +7287,18 @@
     {
       "name": "phone_session_workspace",
       "value": "Open workspace {space}"
+    },
+    {
+      "name": "phone_todo_did_not_start",
+      "value": "Didn't Start"
+    },
+    {
+      "name": "phone_todo_start_failure",
+      "value": "Failed to start: {reason}"
+    },
+    {
+      "name": "phone_todo_not_handed",
+      "value": "Not handed to an agent yet"
     }
   ]
 }

@@ -7287,6 +7287,18 @@
     {
       "name": "phone_session_workspace",
       "value": "打开工作区 {space}"
+    },
+    {
+      "name": "phone_todo_did_not_start",
+      "value": "没开起来"
+    },
+    {
+      "name": "phone_todo_start_failure",
+      "value": "启动失败：{reason}"
+    },
+    {
+      "name": "phone_todo_not_handed",
+      "value": "还没交给 Agent"
     }
   ]
 }

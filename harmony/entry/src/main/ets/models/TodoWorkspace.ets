@@ -4,7 +4,7 @@ import { HttpFailure } from '../platform/HubTransport';
 import { ResourceRow, Wire } from './Wire';
 import { TODO_HUB_CHOICES, TODO_HUB_SECTIONS, TodoHubCounts, TodoHubRow, todoHubChoiceIncludes, todoHubLabel } from './TodoHubView';
 import type { TodoPhonePlacement } from './TodoPhoneSections';
-import { TODO_PHONE_SECTIONS, TodoPhoneSections, phoneTodoTitle } from './TodoPhoneSections';
+import { TODO_PHONE_SECTIONS, TodoPhoneRowContext, TodoPhoneSections, phoneTodoTitle } from './TodoPhoneSections';
 
 const TODO_STATES: string[] = ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
 const TODO_STATUS_ORDER: string[] = ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
@@ -227,6 +227,7 @@ export class TodoWorkspaceGroup {
   title: string = '';
   state: string = '';
   members: TodoWorkspaceItem[] = [];
+  phone: TodoPhoneRowContext = new TodoPhoneRowContext();
 
   constructor(key: string, title: string, state: string, members: TodoWorkspaceItem[]) {
     this.key = key;
@@ -1146,8 +1147,10 @@ export class TodoWorkspace {
     return choices;
   }
 
-  machineName(machineId: string): string {
-    return this.machines.find((row: ResourceRow) => row.id === machineId)?.title || machineId;
+  machineName(machineId: string, manager?: string): string {
+    const named = this.machines.find((row: ResourceRow) => row.id === machineId && (manager === undefined || row.manager === manager)) ||
+      this.machines.find((row: ResourceRow) => row.id === machineId && !row.manager);
+    return named?.title || machineId;
   }
 
   agentSession(agent: TodoWorkspaceAgent): ResourceRow {
@@ -1189,8 +1192,8 @@ export class TodoWorkspace {
     return values.some((value: string) => value.toLocaleLowerCase().includes(needle));
   }
 
-  private phonePlacements(now:number):Map<TodoWorkspaceItem,TodoPhonePlacement> {
-    const triage=new TodoPhoneSections(this.sessions,now), placed=new Map<TodoWorkspaceItem,TodoPhonePlacement>();
+  private phonePlacements(now:number,triage:TodoPhoneSections=new TodoPhoneSections(this.sessions,now)):Map<TodoWorkspaceItem,TodoPhonePlacement> {
+    const placed=new Map<TodoWorkspaceItem,TodoPhonePlacement>();
     this.items.forEach((item:TodoWorkspaceItem)=>{
       const superseded=!!item.startError && item.isDone() && relatedTodoMembers(this.items,item).some((other:TodoWorkspaceItem)=>other.isDone() && !other.startError);
       placed.set(item,triage.place(item,superseded));
@@ -1198,7 +1201,7 @@ export class TodoWorkspace {
     return placed;
   }
 
-  private groupsFor(visible: TodoWorkspaceItem[],phone?:Map<TodoWorkspaceItem,TodoPhonePlacement>): TodoWorkspaceGroup[] {
+  private groupsFor(visible: TodoWorkspaceItem[],directory:TodoPhoneSections,phone?:Map<TodoWorkspaceItem,TodoPhonePlacement>): TodoWorkspaceGroup[] {
     const remaining: Set<TodoWorkspaceItem> = new Set(visible);
     const groups: TodoWorkspaceGroup[] = [];
     for (const todo of visible) {
@@ -1210,8 +1213,10 @@ export class TodoWorkspace {
           Number(left.superseded)-Number(right.superseded) || right.last-left.last || a.id.localeCompare(b.id);
       }) : groupLead(members,this.sessions);
       sorted.forEach((item:TodoWorkspaceItem)=>remaining.delete(item));
-      groups.push(new TodoWorkspaceGroup(sorted.map((item: TodoWorkspaceItem) => item.id).sort().join('|'), '',
-        this.state(sorted[0] || todo), sorted));
+      const group = new TodoWorkspaceGroup(sorted.map((item: TodoWorkspaceItem) => item.id).sort().join('|'), '',
+        this.state(sorted[0] || todo), sorted);
+      group.phone = directory.rowContext(group.lead,phone?.get(group.lead));
+      groups.push(group);
     }
     return groups;
   }
@@ -1291,8 +1296,9 @@ export class TodoWorkspace {
     let visible = this.items.filter((item: TodoWorkspaceItem) => this.searchMatches(item,this.search) && todoMatchesDue(item,this.dueFilter,now,firstWeekday));
     if (this.effectiveGroup() === 'hub') return this.hubSections(visible, now);
     if (this.statusFilter !== 'all') visible = visible.filter((item: TodoWorkspaceItem) => this.state(item) === this.statusFilter);
-    const phone=this.effectiveGroup()==='status' ? this.phonePlacements(now) : undefined;
-    const groups = this.groupsFor(visible,phone);
+    const directory = new TodoPhoneSections(this.sessions,now);
+    const phone=this.effectiveGroup()==='status' ? this.phonePlacements(now,directory) : undefined;
+    const groups = this.groupsFor(visible,directory,phone);
     const grouped: Map<string, TodoWorkspaceGroup[]> = new Map();
     const titles: Map<string, string> = new Map();
     for (const group of groups) {

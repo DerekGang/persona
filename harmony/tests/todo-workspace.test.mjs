@@ -40,6 +40,7 @@ const { todoDayKey, todoCalendarDays, todoCalendarDrop, todoDropDue, TodoWorkspa
   todoWorkspaceStatus, relatedTodoMembers, todoMatchesDue } = await import('../entry/src/main/ets/models/TodoWorkspace.ets');
 const { reconcileBoundRows } = await import('../entry/src/main/ets/models/RowBinding.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
+const { TodoPhoneSections } = await import('../entry/src/main/ets/models/TodoPhoneSections.ets');
 const { TodoHubCounts, TodoHubRow, TODO_HUB_SECTIONS } = await import('../entry/src/main/ets/models/TodoHubView.ets');
 const { HttpFailure } = await import('persona-todo:transport');
 
@@ -58,6 +59,37 @@ function session(id, state = 'offline', fields = {}) {
 function machine(id = 'm1', fields = {}) {
   return ResourceRow.from({ id, manager: 'work', name: 'Computer ' + id, online: true, trust: '', ...fields }, 'machine');
 }
+
+test('phone rows show the most urgent Agent preview and independently name the working or most recently moved Agent', () => {
+  const working = session('build', 'working', { model: 'claude-opus-5-5', effort: 'high', updated_at: '2026-11-10T08:00:00Z' });
+  const needs = session('test', 'needs_you', { last_text: 'Choose a test framework.', updated_at: '2026-11-10T09:00:00Z' });
+  const foreign = session('test', 'needs_you', { manager: 'different', last_text: 'An unrelated hub.' });
+  const ended = session('released', 'needs_you', { last_text: 'No longer assigned.' });
+  const item = fields => new TodoWorkspaceItem(todo('one', fields));
+  const agents = ['build', 'test', 'released', 'unknown'].map(session_id => ({
+    machine_id:'m1', session_id, ...(session_id === 'released' ? { released_at:'2026-11-10T09:01:00Z' } : {}),
+  }));
+  const row = item({agents, notes:'Original task notes.'});
+  let directory = new TodoPhoneSections([working, needs, ended, foreign], Date.now());
+  let context = directory.rowContext(row);
+  assert.equal(context.lead, working);
+  assert.equal(context.activeAgents, 3);
+  assert.deepEqual([context.urgentState, context.summaryKind, context.summary], ['needs_you', 'session', needs.data().last_text]);
+  const latest = session('build','idle',{state_since:'2026-11-10T10:00:00Z'});
+  directory = new TodoPhoneSections([latest, needs], Date.now());
+  assert.equal(directory.rowContext(row).lead, latest);
+  const failure = directory.rowContext(item({agents, start_error:'rpc: connection closed', done_at:'2026-11-10T10:00:00Z'}));
+  assert.deepEqual([failure.summaryKind,failure.summary], ['failure','rpc: connection closed']);
+  assert.equal(directory.rowContext(item({agents, done_at:'2026-11-10T10:00:00Z', done_by:'auto', done_reason:'Merged.'})).summary, 'Merged.');
+  assert.equal(directory.rowContext(item({agents, cancelled_at:'2026-11-10T10:00:00Z', cancelled_reason:'No longer requested.'})).summary, 'No longer requested.');
+  assert.equal(directory.rowContext(item({agents:[{machine_id:'m1',session_id:'missing',title:'Unloaded agent'}]})).summary,'Unloaded agent');
+  assert.equal(directory.rowContext(item({agents:[{machine_id:'m1',session_id:'missing',start_error:'Lost connection'}]})).summaryKind,'failure');
+  directory = new TodoPhoneSections([foreign], Date.now());
+  context = directory.rowContext(item({agents:[{machine_id:'m1',session_id:'test'}],notes:'Use the task notes.'}));
+  assert.equal(context.lead, undefined);
+  assert.deepEqual([context.activeAgents,context.summaryKind,context.summary],[1,'notes','Use the task notes.']);
+  assert.equal(directory.rowContext(item({})).summaryKind,'empty');
+});
 
 function deferred() {
   let resolve;
