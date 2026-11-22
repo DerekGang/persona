@@ -7273,6 +7273,10 @@
       "value": "フォルダ"
     },
     {
+      "name": "phone_session_permissions",
+      "value": "権限"
+    },
+    {
       "name": "phone_session_effort",
       "value": "思考の強さ"
     },

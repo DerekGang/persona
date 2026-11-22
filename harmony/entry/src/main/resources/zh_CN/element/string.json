@@ -7273,6 +7273,10 @@
       "value": "文件夹"
     },
     {
+      "name": "phone_session_permissions",
+      "value": "权限"
+    },
+    {
       "name": "phone_session_effort",
       "value": "思考强度"
     },
