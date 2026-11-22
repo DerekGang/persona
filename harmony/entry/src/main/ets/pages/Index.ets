@@ -1993,9 +1993,12 @@ struct Index {
       Column({space:8}) {
         Row() {
           if (['server','laptop','desktop'].includes(Wire.text(row.data(),'icon'))) {
-            PhoneOutlineIcon({name:Wire.text(row.data(),'icon'),iconScale:this.agentSize(1,1.35),color:Colors.ink})
-              .scale({x:this.machineSymbolScale(row),y:this.machineSymbolScale(row),centerX:0,centerY:0})
-              .id('agent.machine_icon.'+row.id)
+            // ArkUI's Shape can keep the old path transform when a mounted card changes its Dynamic Type size.
+            ForEach([this.agentSize(1,1.35)],(iconScale:number) => {
+              PhoneOutlineIcon({name:Wire.text(row.data(),'icon'),iconScale:iconScale,color:Colors.ink})
+                .scale({x:this.machineSymbolScale(row),y:this.machineSymbolScale(row),centerX:0,centerY:0})
+                .id('agent.machine_icon.'+row.id)
+            },(iconScale:number):string => String(iconScale))
           } else {
             SymbolGlyph(Symbols.device).fontSize(Tokens.interfaceFontVp(22,this.environment.fontScale)).fontColor([Colors.ink])
           }
