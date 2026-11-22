@@ -3,7 +3,8 @@ import XCTest
 /// The Agents list with a lot of agents (scripts/mock/mock_hub.py with MOCK_AGENTS=1: ~120 agents, a space with 3 needing
 /// you, 35 finished-unread and 12 working): the quick filters, the compact rows, folding spaces, marking read.
 ///   TEST_RUNNER_PERSONA_AGENTS_HUB=http://127.0.0.1:<port>
-/// TEST_RUNNER_PERSONA_SHOTS=<dir> also saves a screenshot of each step there (docs/operations/testing.md「Agents list」).
+/// TEST_RUNNER_PERSONA_SHOTS=<dir> also saves a screenshot of each step there (docs/operations/testing.md「Agents list」);
+/// TEST_RUNNER_PERSONA_TEXT_SIZE=<UIContentSizeCategory raw value> starts the By Status tests at that text size.
 final class AgentsListTests: XCTestCase {
     private var hub = ""
     private var app: XCUIApplication!
@@ -681,6 +682,7 @@ final class AgentsListTests: XCTestCase {
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         app.launchArguments = ["-pairURL", pair, "-app.tab", "chats", "-dev.openChat", "", "-tab", "dev", "-openAgentsFresh", "YES",
                                "-dev.grouping", "state", "-dev.machineFilter", "studio"]
+        if let size = ProcessInfo.processInfo.environment["PERSONA_TEXT_SIZE"] { app.launchArguments += ["-UIPreferredContentSizeCategoryName", size] }
         app.launchPinned()
         see(filter("all"), "the quick filters", timeout: 15)
     }
