@@ -283,8 +283,9 @@ Types in `server/internal/assistantwire/partners.go`.
   bidirectional formatting characters (names at most 64 characters, reasons 300); envelope text is at most 64 KiB at the
   hub and 12,000 characters at the manager, keeps no control characters but line breaks and tabs, is scrubbed again, and
   goes into the conversation as the message's own words after Persona's framing block, with the `<` of every
-  context-block, file, photo or pasted-text tag in it written as `&lt;` (`prompts.PlainWords`), so it can neither open,
-  close nor forge a block; the partner's name goes inline only after its angle brackets and quote marks were replaced by
+  context-block, file, photo or pasted-text tag in it, and of the notes the apps hide and the model takes for Persona's
+  or the runtime's (view feedback, a system reminder, a local command's caveat), written as `&lt;`
+  (`prompts.PlainWords`), so it can neither open, close nor forge a block or note; the partner's name goes inline only after its angle brackets and quote marks were replaced by
   look-alikes. Hub ids must match `^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`; addresses are cut to 8 https ones without
   `user:pass@`.
 - **A partner chooses its name** (and may change it in a later hello): the owner's card names it with the first 8

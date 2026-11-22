@@ -220,6 +220,36 @@ func TestPartnerRateLimits(t *testing.T) {
 	if n, err := r.db.CountPartnerMessages(ctx, partnerIn, pHub, false, time.Now().Add(-partnerRateWindow)); err != nil || n != partnerInRate {
 		t.Fatalf("%d kept, %v", n, err)
 	}
+	// The statuses' own budget holds as the messages' does, side by side: partnerStatusRate in all (the one above too).
+	statuses := make([]assistantwire.PartnerResult, partnerStatusRate+10)
+	for i := range statuses {
+		wg.Go(func() {
+			raw, _ := json.Marshal(assistantwire.PartnerReceive{FromHub: pHub, FromName: "Hub B", Envelope: assistantwire.PartnerEnvelope{
+				MessageID: fmt.Sprintf("pm_%032x", 0xb100+i), Kind: assistantwire.PartnerKindStatus, ReplyTo: sent.MessageID,
+				State: assistantwire.PartnerStateDelivered}})
+			out, _, err := r.s.partnerRequest(ctx, assistantwire.MethodPartnerReceive, raw)
+			if err != nil {
+				t.Errorf("status %d: %v", i, err)
+			}
+			statuses[i], _ = out.(assistantwire.PartnerResult)
+		})
+	}
+	wg.Wait()
+	accepted = 0
+	for i, res := range statuses {
+		switch {
+		case res.Status == assistantwire.PartnerAccepted:
+			accepted++
+		case res.Status != assistantwire.PartnerRefused || res.Code != assistantwire.PartnerCodeRateLimited:
+			t.Errorf("status %d: %+v", i, res)
+		}
+	}
+	if accepted != partnerStatusRate-1 {
+		t.Fatalf("%d statuses accepted at once after one, want %d", accepted, partnerStatusRate-1)
+	}
+	if n, err := r.db.CountPartnerMessages(ctx, partnerIn, pHub, true, time.Now().Add(-partnerRateWindow)); err != nil || n != partnerStatusRate {
+		t.Fatalf("%d statuses kept, %v", n, err)
+	}
 }
 
 // A partner's reply the conversation that asked refuses for good goes to the main conversation and counts as delivered
