@@ -222,6 +222,11 @@ func (s *Service) toolTaskScope(ctx context.Context, self string, args json.RawM
 	if supervisor != self && !(s.isMain(ctx, self) && !s.isLeader(ctx, supervisor)) && !s.backgroundSupervises(ctx, self, t) {
 		return "", fmt.Errorf("task %s is supervised by another conversation: only its supervisor changes its scope", t.ID)
 	}
+	// A card-less owner wait must not be pushed further out by an estimate extension or scope change (#12648); the
+	// refusal happens before the brief is written.
+	if err := s.cardlessOwnerWaitGuard(ctx, t); err != nil {
+		return "", err
+	}
 	c := scopeChange{By: self, Change: a.Change, Why: a.Why, Expect: a.ExpectMinutes}
 	if a.DoneWhen != nil {
 		c.DoneWhen = cleanDoneWhen(*a.DoneWhen)
@@ -330,7 +335,7 @@ func (s *Service) estimateDueCurrent(t Todo, brief TaskBrief, key string) bool {
 		return false
 	}
 	switch st := t.Supervision.state(t); st {
-	case reviewPending, reviewNeedsUser, reviewParked:
+	case reviewPending, reviewNeedsUser, reviewParked, reviewTimedOut, reviewClosing:
 		return false
 	case "":
 		tb := briefFromView(brief)
@@ -419,7 +424,7 @@ func (s *Service) briefClock(ctx context.Context, t Todo, now time.Time) {
 	if v == nil || t.DoneAt != nil {
 		return
 	}
-	if st := v.state(t); st == reviewNeedsUser || st == reviewPending || st == reviewParked {
+	if st := v.state(t); st == reviewNeedsUser || st == reviewPending || st == reviewParked || st == reviewTimedOut || st == reviewClosing {
 		return
 	}
 	brief, ok := s.briefOfTodo(t.ID)

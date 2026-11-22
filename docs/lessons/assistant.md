@@ -1,5 +1,21 @@
 # Lessons: assistant (headless Claude / Codex)
 
+- A command that returns text to the message pipeline must keep its explicit destination (#12700). In the official bot DM, resetting `current` for `/new <first message>` was insufficient: pending-card handlers could consume the text, and parent/root bindings could restore an old target. Carry the fresh Persona target past those handlers while retaining reply metadata for quoted context. Test through `FeishuMessage` with old Persona/Agent bindings, an answerable card and duplicate delivery; keep bare `/new` and ordinary replies as controls.
+
+- A launcher name does not identify an execution backend (#12791). Scheduled Assistant conversations must pass
+  `purpose: assistant` to model discovery and argument-forwarding checks, just as ordinary Assistant messages do.
+  On an exclusive Agent engine, a same-named provider can advertise different models and thinking levels from the
+  shell CLI that actually runs the conversation. Keep their cache partitions separate; do not lower a saved effort
+  to match the wrong catalog. Test the due-run, retry, workout admission and task-edit paths with conflicting
+  catalogs. A structured, deterministic pre-dispatch configuration refusal retains one failure/fallback notice and
+  must not arm an unchanged automatic retry. Similar provider prose and unavailable discovery remain retryable or
+  unknown; retry log counts alone do not establish how many requests reached a model.
+
+- Tool-result images use the user role in transcripts (#12573). A held channel run must check an image's `ToolUseID` before treating it as owner input; otherwise reading a screenshot silently discards the continuation answer. Apply that distinction in the shared classifier used by polling and live session items, and retain the unrelated-turn guard for actual owner text and photos, even after a wake or tool image.
+
+- The node process's PATH is not the assistant's shell PATH (#12483, 2026-11-21). A node started by a service manager has a minimal PATH, while the assistant's Bash runs through the user's login shell, whose PATH restores version-manager directories. `trustedPATH` then saw every `export PATH="<version manager>/bin:$PATH"; lark-cli …` as replacing the executable and asked for a whole-command card, one per call, even for `--help` reads. Ask the login shell for its PATH once (a marked line, cached; retried after a failed ask) and trust those directories; a directory outside that set and every write still ask. Tests seed the Node's login-shell directories instead of starting a shell.
+
+- Threaded extension input needs ordering at admission, before its receipt returns (#12616). Independent receive goroutines can both see an unbound thread and start separate conversations, or restore a binding after a later `/new`. Claim seen, capture the binding generation and reserve the position in one critical section before persisting the receipt; roll the claim and reservation back together if persistence fails. Keep commands, route lookup, start/send and binding ordered without holding the shared state mutex across RPCs. Include the generation in the queue key so rebinding does not wait for an old RPC, and carry that accepted generation through the guarded thread/default binding writes and run creation. A late old response may complete its node request but cannot restore channel state. Keep other keys and unthreaded input independent and remove drained entries. Exercise the public `ChannelReceive` entry: calling the forwarding helper directly does not verify admission.
 - `--allowedTools` and `--disallowedTools` govern approval, not a reliable tool-visibility boundary (#11736). Per-conversation MCP narrowing must filter the actual `sessionMCPTools` response and repeat the same decision at the assistant's call entry (`guardRefusal`). Changing only launch flags can leave stale clients or direct calls with the old tool set; hiding a tool is not a substitute for call admission.
 
 - Automatic-continuation triage and channel mirrors observe the same finished turn concurrently (#11848). The retry wake timestamp is not yet durable when the first mirror runs; gate Feishu and extension mirrors on the session's transient classification and the transient-retry switch instead. Cover several transient attempts, the later terminal error, and delivery with retry disabled.
@@ -279,6 +295,10 @@ Pitfalls, unusual behavior, and decisions at the time (formerly `CLAUDE.md`; ind
 - Machine trust updates can reach the manager placement and device configuration at different times (#5061). Treat either authoritative work restriction as sufficient until both have caught up, including physical aliases and current mesh paths. Keep new restrictions even when rejecting an invalid assistant placement during a handshake: existing node connections survive that rejection. Runtime `mcp.tools` discovery may omit the session even after startup: allow schema discovery from a recorded manager start, while keeping execution bound to its session and refusing node-derived backfilled origins.
 
 - **A space-wide rule must be at every entrance to the write** (#5278): the health space's "confirm every write, whatever a rule says" was in `larkCheck` (the gated command) only; the gate proxy, which a script reaches with no command in front, let a write through when a rule allowed it, with no card. Now the address is marked health when it is opened and takes only the grant a card left. When a rule is added to one check, look for the other route to the same write, and test it by calling the address itself. Both must decide the conversation's space from the same place: the process's own, noted when its address is opened. The hook's directory moves with the model's `cd`; and a grant kept under a conversation id needs the address to have that id, which a new Codex conversation gets only when its thread starts (`codexConn.start`).
+
+- **A space-wide read rule must be at every way the data leaves** (#10941): the health space's "an extension never sees its words" was on a to-do's timeline only (#10942); its row (a run's question, title, directory, report, the decision line its review stood on), its decisions, the answer of a write, `todo.changed` and `todo.decision` and the outcome a task wrote to a knowledge-base project still carried them, and the ids the row kept opened other routes. Hiding fields one by one left the next field open; leave the whole thing out instead (`todosHidden`, `todo_scope.go`: one verdict for the list, every route under `/api/v1/todos/{id}` through `s.handle`, the events and the outcome log), and keep what the verdict reads from being erased (a link's directory, a space's links). Test with a list of the space's words over every answer and event an extension's token can get, not with the fields the fix touched. The same records leave by other scopes too: a conversation's feed (`assistant.ask`) carries the to-do's history the timeline hides, `GET /api/v1/assistant` lists the space's conversations, and `agent.needs_you` (no scope at all) a health card's question and id. List every scope's routes and every event, not only the area's own, and do not put off a route because "no route hands out its id": another one will.
+
+- **A fail-closed rule must not read only what is live** (#10941): the health space's verdict told a conversation by its computer's list, and a computer lists a quiet assistant conversation for a week and only its 100 newest, and nothing until it reconnects after a restart. Every ordinary task of a quiet chat, every task a quiet direction supervised and, in the restart window, the main conversation's own vanished from extensions, their events were dropped for good, and the owner's own project timeline lost its outcome line. Note what the verdict needs when it is true (a conversation's space when it starts and whenever it is listed, `assistant_conversation_spaces`, `conversation_space.go`) and read that before failing closed, and backfill what was there before the note: every record the verdict reads, done ones and history included, not only the open ones (`conversation_space_backfill.go` has the computers list each never noted chat a to-do names until it is noted). Such a backfill reads the whole store, so run it on its own goroutine, never inside the snapshot that every owner's write waits behind; and "not noted" is not "not there": give a chat up only once every computer that may hold it was on for the whole wait, and never one a computer listed while its note could not be written. Keep "known to be the space's" apart from "cannot be told" (`todoVerdicts`): hide both from the outsider, and hold, rather than drop or send, what would tell of the second, including the owner's own records that an outsider can read (the outcome line on a project's timeline, which `kb.read` serves). Test with the conversation unlisted, the list empty and the manager restarted on the same store, not only with everything listed.
 
 - **`confirmOutbound` is not a general confirmation**: it asks on the phone only in the health space and returns true at once everywhere else (`assistant/health.go`). A tool that must always ask the user (closing an Agent with `agent_archive` and `close`, changing an assistant setting) builds its own permission card through `s.ask`, as `ownSettingAction` and `archiveAndCloseTool` do. A dismissed, expired or unanswered card changes nothing, but it is no decline: only the user's own answer counts (`Resolution.UserAllowed` / `UserDenied`; one with `AnsweredBy` set was given for them), and the tool says nobody answered. Reporting an expired card as "the user declined" made a leader conversation tell its supervisor the user had refused a change they never saw (#3722).
 
@@ -670,6 +690,10 @@ checks the orders a stress test meets only by chance; and a status that says "at
 that can say otherwise: the requests out, the cap, and how long the longest has been out, since none outlives its
 caller's deadline.
 
+## Channel image downloads reuse the bytes already read (#12654)
+
+An inline-size check must not discard a resource that its file fallback immediately needs (#12654). The official Feishu bot read a 4 MiB image twice: the 3 MiB inline decision used the 50 MiB downloader, then saving fetched it again. Decide inline versus file inside the same download lifecycle and upload the existing bytes; pass the image-count decision into that call too. Keep the file ceiling on both routes, distinguish download and upload failures, and turn only the size sentinel into the existing skipped-file result so accompanying words survive. Count actual response-body reads and uploads at the production transport entry, and separately test the asynchronous message entry.
+
 ## A send whose answer came too late may have gone in (2026-11-12)
 
 The manager waits 90 s for a relayed message (`drainRelays`) and kept it queued when no answer came. The node had
@@ -823,6 +847,34 @@ as delivered instead of moving to the replacement. A check that a resource is fr
 mark the conversation as being replaced under that same lock (`relayBook.replacing`), have every drain and every direct
 delivery respect the mark (the direct ones queue), and clear it only where what waited has moved or the replacement
 failed, draining it again then (`TestNothingGoesIntoABackgroundSupervisorBeingReplaced`).
+
+## Personal verification is unfinished work (#10047)
+
+A supervisor's accepted review is not the owner's personal verification. Keep an explicit `user_check` task open
+until Pass, so both completed-task and ordinary idle retirement leave its Agent available. Feedback starts a new
+work round even though the task was already open: otherwise its old Pass can verify rework. Test open counts and
+the actual retirement passes as well as the card; a still-pending card alone never proves its task is open.
+The acceptance record and completion are separate durable writes: recover a saved owner Pass after a restart,
+including the verified stage if the todo was already closed.
+Recovery follows the current round's owner Pass, not only a `user_check` ledger: completion and the ledger's
+transition to `accepted` can each precede a crash before verification. Retry only unfinished steps, keep ledger
+write failures recoverable, and do not repeat completion or verification notifications on subsequent sweeps.
+Serialize the round change, not an ordinary message's Agent-start wait: a second message must still join the
+Agent already starting (`TestStoppedTaskSecondMessageGoesToTheStartingAgent`), rather than wait behind the
+first sender's action lock.
+Cover the real database too: an ordinary `done: false` edit of an already-open todo intentionally does not advance
+`reopened_at`. Personal-verification feedback must explicitly restart that work round in the store; an in-memory
+timestamp alone lets an old Pass verify the rework after a manager restart.
+Reset the raw `user_check` ledger on every reopen, including a closed task's PATCH, since its effective state
+already reads accepted while closed. A fresh personal-verification review reopens before writing its new ledger.
+Commit the reopen and ledger reset together: a partial write leaves the task waiting on a Pass it can no longer use.
+On startup and the acceptance sweep, rebuild a missing ask from its saved review. Save the ask before posting the
+card, and check the round after taking the task action lock so a queued Pass cannot complete a newer check.
+Do not restart a waiting verification until its replacement review passed validation and was saved. Release the
+round's action lock before feedback delivery, and bind the eventual reply receipt to that ask's timestamp so a slow
+delivery cannot swallow a newer verification.
+An ordinary edit that repeats `done: false` is not a reopen. A saved replacement review also makes the old Pass
+stale if a later work-round write fails, so a restart cannot verify rework through that old card.
 
 ## A queued supervision digest is not a snapshot of work that still needs review (#10424)
 

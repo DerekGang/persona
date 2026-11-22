@@ -18,6 +18,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
@@ -343,6 +344,9 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 	purpose := p.Purpose
 	if purpose == "" {
 		purpose = "assistant"
+		if main {
+			purpose = purposeMain
+		}
 	}
 	if p.Launcher != "" {
 		fit, refusal := s.mainChatFit(ctx, machine, p.Launcher)
@@ -387,7 +391,11 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 			params["permission_mode"] = mode
 		}
 		if explicitPermission == "" && used != "" && used != "claude" {
-			if agent := s.launcherAgent(withUnhidden(ctx, used), machine, used); agent != "" && !permissionModeSupported(agent, 0, mode) {
+			if l, ok := s.targetMachineLauncher(ctx, machine, used); ok {
+				if !permissionModeSupported(cmp.Or(l.AgentType, l.Agent), l.PermissionModes, mode) {
+					delete(params, "permission_mode")
+				}
+			} else if agent := s.launcherAgent(withUnhidden(ctx, used), machine, used); agent != "" && !permissionModeSupported(agent, 0, mode) {
 				delete(params, "permission_mode")
 			}
 		}
@@ -413,6 +421,9 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 	}
 	var res struct {
 		SessionID string `json:"session_id"`
+	}
+	if p.GuestTools == nil {
+		s.putCacheKeepalive(ctx, machine, "", main, params)
 	}
 	if main && p.Space == "" && p.GuestTools == nil {
 		cfg := s.settings(ctx)
@@ -442,6 +453,7 @@ func (s *Service) startOn(ctx context.Context, machine string, p StartParams, ma
 	if p.Human && (p.Origin == "" || p.Origin == OriginUser) && strings.TrimSpace(p.Text) != "" {
 		s.humanSent.noteForReply(sess.SessionID, firstReplySendID, p.Text)
 	}
+	sess.Effort, _ = params["effort"].(string)
 	sess.Model, _ = params["model"].(string) // what it was started with ("": the launcher's default)
 	return sess, nil
 }
@@ -508,6 +520,8 @@ func (s *Service) startConversationOn(ctx context.Context, p StartParams, main b
 	}
 	sess.Origin, sess.OriginRef, sess.OpenedBy = firstNonEmpty(p.Origin, OriginUser), p.OriginRef, p.OpenedBy
 	s.originSet(ctx, sess.MachineID, sess.SessionID, sess.Origin, sess.OriginRef, sess.OpenedBy)
+	// Its space, for when no computer lists it (conversation_space.go).
+	s.noteConversationSpaces(ctx, []db.ConversationSpace{{MachineID: sess.MachineID, SessionID: sess.SessionID, Space: p.Space}})
 	return sess, nil
 }
 
@@ -556,6 +570,7 @@ type mainHandoff struct {
 	// A cleared external choice reserves this ID before its start, so retries cannot create another conversation.
 	For     string `json:"for,omitempty"`
 	Summary string `json:"summary,omitempty"`
+	Partial bool   `json:"partial,omitempty"`
 	Recent  []struct {
 		Role string `json:"role"`
 		Text string `json:"text"`
@@ -729,7 +744,7 @@ func (s *Service) newMain(ctx context.Context, carry bool, expect string) (strin
 	now := time.Now().UTC()
 	handoff := mainHandoff{From: old, MachineID: machine, Until: now}
 	carried := false
-	if carry && found {
+	if carry && (found || s.historyKnown(ctx, machine, old)) {
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		err := s.call(cctx, machine, DeviceAssistantHandoff, map[string]any{"session_id": old}, &handoff)
 		cancel()
@@ -944,7 +959,8 @@ func (s *Service) startRoutes() {
 			Guest *GuestSpec `json:"guest"`
 			// Via: how the user's app sent its first message when not typed in the app itself: "intent" (Siri,
 			// Shortcuts, an App Intent, which may run on a locked phone), "share" (the share sheet) or "card" (a card's
-			// button that wrote it). Such a message never counts as the user's own words (secret_handoff.go
+			// button that wrote it), or "handoff" (a generated context transfer). Such a message never counts as the
+			// user's own words (secret_handoff.go
 			// handoffUserTurn, the decision on #3962).
 			Via string `json:"via"`
 		}
@@ -962,6 +978,10 @@ func (s *Service) startRoutes() {
 		}
 		if in.Space != "" && in.Space != SpaceHealth {
 			apierr.Write(w, http.StatusBadRequest, fmt.Errorf("space %q: health or none", in.Space))
+			return
+		}
+		if in.Space == SpaceHealth && r.Header.Get(RoleHeader) == roleExtension {
+			apierr.WriteCode(w, http.StatusForbidden, "permission_denied", i18n.Err("apierr-apierr.health_start_forbidden"))
 			return
 		}
 		if in.Model = strings.TrimSpace(in.Model); checkModelID(in.Model) != nil {
@@ -992,7 +1012,7 @@ func (s *Service) startRoutes() {
 		}
 		origin, ref := requestOrigin(r, in.Purpose)
 		own := false // only the user's words in it, as filled in (workspace_mention.go fillWorkspaces)
-		if in.Guest == nil {
+		if in.Guest == nil && in.Via != "handoff" {
 			in.Prompt, own = s.fillWorkspaces(ctx, in.Prompt) // as SendParams does for the next messages
 		}
 		// The main conversation is the assistant's, on its machine.
@@ -1123,6 +1143,8 @@ func (s *Service) messageParams(ctx context.Context, p SendParams, owner bool) (
 	}
 	delete(p.Params, "source") // app input cannot claim an automated author
 	delete(p.Params, "message_source")
+	approvalTarget, _ := p.Params["approval_reply_to"].(string)
+	delete(p.Params, "approval_reply_to") // approval metadata is never model input, including on a failed send
 	if id, _ := p.Params["client_msg_id"].(string); id != "" {
 		s.availOwnerSent(p.MachineID, p.SessionID, id, time.Now()) // a replay opens no reply wait (availability.go)
 	}
@@ -1154,6 +1176,15 @@ func (s *Service) messageParams(ctx context.Context, p SendParams, owner bool) (
 		s.humanSent.note(p.SessionID, id, sent)
 	case err == nil:
 		s.humanSent.noteForReply(p.SessionID, id, sent)
+	}
+	if err == nil && approvalTarget != "" && owner && p.Human && !p.ReplyInput && own && !marked {
+		handled, approvalErr := s.resolveAppOwnerReply(ctx, p.MachineID, p.SessionID, id, approvalTarget, text)
+		if approvalErr != nil {
+			return nil, badRequest(approvalErr, s.appLang(ctx, p.Lang))
+		}
+		if handled {
+			return map[string]any{ownerApprovalHandledParam: approvalTarget}, nil
+		}
 	}
 	if err == nil && said && owner {
 		s.endHeldChannelRuns(p.MachineID, p.SessionID)
@@ -1188,6 +1219,7 @@ func (s *Service) sendParamsOwn(ctx context.Context, p SendParams) (map[string]a
 		params = map[string]any{}
 	}
 	delete(params, "external")
+	delete(params, "cache_keepalive") // only the manager may attest a refresh role, including on early returns
 	if launcher, _ := params["launcher"].(string); proto.IsExternalLauncher(launcher) {
 		return nil, false, badRequest(i18n.Err("external-adapter.scope_required"), s.appLang(ctx, p.Lang))
 	}
@@ -1275,7 +1307,11 @@ func (s *Service) sendModel(ctx context.Context, machine, sid string, p map[stri
 	if p["is_main"] == true {
 		p["idle_compaction"] = s.idleCompactionPolicy(ctx)
 	}
+	s.putCacheKeepalive(ctx, machine, sid, p["is_main"] == true, p)
 	putMainCompactWindow(cfg, p)
+	if handled, err := s.logicalSendModel(ctx, machine, sid, p); handled {
+		return err
+	}
 	if cfg.InterjectBackground != nil && *cfg.InterjectBackground {
 		p["interject_background"] = true
 	}
@@ -1335,8 +1371,18 @@ func (s *Service) sendModel(ctx context.Context, machine, sid string, p map[stri
 	if l == "" {
 		c, known := s.session(ctx, machine, sid)
 		if known && c.SourceKind == proto.SourceRuntime {
-			// The node resumes the session on the runtime that owns it, even for scheduled chats and leaders.
-			return nil
+			// Preserve existing runtime inheritance unless the main chat has its
+			// own binding. That binding still passes the execution identity check.
+			if p["is_main"] != true {
+				return nil
+			}
+			record, err := s.modelRecord(ctx, purposeMain)
+			if err != nil {
+				return err
+			}
+			if record.Binding == (ModelBinding{}) {
+				return nil
+			}
 		}
 		if known && !followsSetting {
 			l = c.Launcher // no launcher picked: the one this conversation runs
@@ -1383,7 +1429,9 @@ func (s *Service) sendModel(ctx context.Context, machine, sid string, p map[stri
 	// The background supervisor runs under its own purpose (which follows Main chat until it is set apart), whoever
 	// writes to it: the hub's relays already do (backgroundModel), so a message typed to it must too.
 	purpose := "assistant"
-	if s.isBackground(ctx, sid) {
+	if p["is_main"] == true {
+		purpose = purposeMain
+	} else if s.isBackground(ctx, sid) {
 		purpose = purposeSupervise
 	}
 	if pickedLauncher {
@@ -1392,6 +1440,11 @@ func (s *Service) sendModel(ctx context.Context, machine, sid string, p map[stri
 		}
 	} else {
 		if err := preservePermissionMode(p, func() error { return s.applyModel(ctx, purpose, p) }); err != nil {
+			return err
+		}
+	}
+	if purpose == purposeMain {
+		if err := s.mainDefaultExecution(ctx, machine, sid, p); err != nil {
 			return err
 		}
 	}

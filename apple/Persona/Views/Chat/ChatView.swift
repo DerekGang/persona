@@ -1101,6 +1101,7 @@ struct ChatView: View {
         builder.childSessions = Dictionary(uniqueKeysWithValues: kids.map { ($0.sessionID, $0) })
         builder.historyComplete = store.loadedOnce && !store.hasMore
         var lines = builder.build(Self.debugTrim(blocks), live: key.live, streaming: key.streaming)
+        lines = ModelChanges.mark(lines)
         #if os(iOS)
         // An Agent's long finished answers as several rows: one row many screens tall stuttered whenever it was on
         // screen (#4970). Persona's own conversation keeps its boxed answers whole.
@@ -1594,6 +1595,8 @@ struct ChatView: View {
         case .placeMap(let result): PlaceMapCard(result: result)
         case .day(let date): DayLine(date: date)
         case .modeChange(_, let change): ModeChangeLine(change: change, session: session)
+        case .modelChange(_, let from, let to):
+            if let names = line.modelNames { ModelChangeDivider(names: names, rawFrom: from, rawTo: to) }
         case .apiError(_, let info, _) where turnErrorCard(line, raw: info.raw) != nil:
             turnErrorCard(line, raw: info.raw)
         case .apiError(let item, let info, let count):
@@ -4862,7 +4865,7 @@ struct ChatView: View {
                     let answer = model.chat(key).blocks.reversed().lazy.compactMap { b -> Item? in
                         if case .turn(let t) = b, case .assistant(let i)? = t.answer { i } else { nil }
                     }.first
-                    if let a = answer { menu.sharing = ShareMessage(text: a.text ?? "", isUser: false, source: menu.source(), date: a.ts, agent: menu.agent()) }
+                    if let a = answer { menu.sharing = menu.shareMessage(text: a.text ?? "", isUser: false, date: a.ts) }
                 }
             }
             #if os(iOS)
@@ -5172,7 +5175,7 @@ struct ChatView: View {
             model.rewinding.contains(key) ? String(localized: "Rewinding") : Rewind.block(model.session(key))
         }
         menu.rewindOffer = { [model, key] in Rewind.offer(model.session(key)) }
-        menu.agent = { [model, key] in model.session(key)?.agentLabel ?? "Claude" }
+        menu.session = { [model, key] in model.session(key) }
         menu.source = { [model, key] in
             let s = model.session(key)
             return [s?.spaceName, s?.slotLabel].compactMap { $0 }.joined(separator: " › ")
@@ -5221,7 +5224,7 @@ struct ChatView: View {
                 return relayed ? MessageSource.body(whole) : whole.text ?? ""
             }
         }
-        let share = ShareMessage(text: bar.text, isUser: bar.isUser, source: menu.source(), date: bar.date, agent: menu.agent())
+        let share = menu.shareMessage(text: bar.text, isUser: bar.isUser, date: bar.date)
         // A forwarded photo is decoded off the main actor and no larger than a picked one, as the composer will send it
         // (`MessagePhotos.payload`; docs/apple/performance.md, P8).
         let side = MessagePhotos.maxSide
@@ -5333,7 +5336,8 @@ struct ChatView: View {
         exporting = ExportRequest(title: s?.displayTitle ?? "",
                                   agent: s?.assistant == true ? model.assistantShownName(in: key) : (s?.agentLabel ?? ""),
                                   pieces: { questions in (questions ? with : without).flatMap(\.pieces) },
-                                  loadImage: first.loadImage, width: menu.areaWidth > 0 ? menu.areaWidth : Self.phoneWidth)
+                                  loadImage: first.loadImage, width: menu.areaWidth > 0 ? menu.areaWidth : Self.phoneWidth,
+                                  prefersLetterMark: AgentKind.prefersLetterMark(for: s))
     }
 
     /// A phone's width, for a picture drawn before the chat knows its own.
@@ -5873,7 +5877,7 @@ struct Composer: View, Equatable {
         }
     }
 
-    /// /clear only for Claude in a herdr pane (the headless assistant and Codex / TRAEX have no such command here).
+    /// /clear only for Claude in a herdr pane (the headless assistant and Codex / TRAE CLI have no such command here).
     private var canClear: Bool {
         guard let s = model.session(key) else { return false }
         return s.canSend && s.canTerminal && s.paneID != nil && !s.isCodex && !s.isTraex
@@ -5922,7 +5926,7 @@ struct Composer: View, Equatable {
     /// The launcher's list behind this session's model menus once read (#3754); nil: the fixed aliases.
     private var runningModels: [AgentModel]? { RunningModelLists.shared.models(key, model.session(key)) }
 
-    /// The model menus offer models: Claude in a herdr pane (picks go as `/model`; Codex and TRAEX pick theirs in a
+    /// The model menus offer models: Claude in a herdr pane (picks go as `/model`; Codex and TRAE CLI pick theirs in a
     /// full-screen menu the phone cannot drive), and a session whose node takes the model (#6294, `capabilities.model`)
     /// from its launcher's list once read. The "/" list's `/model` is narrower (`Session.takesModelCommand`).
     private var canPickModel: Bool {
@@ -5943,12 +5947,12 @@ struct Composer: View, Equatable {
         guard isMainAssistantChat else { return nil }
         // The response cache is unobserved; this small revision is the redraw signal after a fresh hub answer.
         _ = model.assistantLauncherRevision
-        return AssistantModelChoice.effective(session: model.session(key), response: model.cachedAssistantLaunchers(key.machineRef))
+        return AssistantModelChoice.effective(session: model.session(key), response: model.cachedAssistantLaunchers(key.machineRef, main: true))
     }
     /// The model name the composer title and the modes menu row both show for the main chat, from the one effective
     /// setup (#6911 M7): the two surfaces never name different models.
     private var assistantEffectiveName: String? {
-        assistantEffective.flatMap { AssistantModelChoice.displayName($0, response: model.cachedAssistantLaunchers(key.machineRef)) }
+        assistantEffective.flatMap { AssistantModelChoice.displayName($0, response: model.cachedAssistantLaunchers(key.machineRef, main: true)) }
     }
 
     @ViewBuilder private var extensionPrompts: some View {
@@ -6598,7 +6602,7 @@ struct Composer: View, Equatable {
         // request every streaming tick, so the AppModel invalidates the cache from assistant snapshots instead.
         .task(id: "\(key.sessionID)-\(model.assistantLauncherRequestRevision)") {
             guard assistantModelPickAvailable else { return }
-            _ = try? await model.assistantLaunchers(key.machineRef, refresh: true)
+            _ = try? await model.assistantLaunchers(key.machineRef, refresh: true, main: true)
         }
         .onChange(of: picks) { _, items in
             guard !items.isEmpty else { return }
@@ -7777,6 +7781,12 @@ struct ChatLine: Identifiable {
     /// A scheduled task's or a follow-up's input in the main conversation while background rounds fold: its source
     /// block shows the one-line notice, never the prompt (`ChatLines.hidesPrompt`).
     var hidesPrompt = false
+    /// Friendly names computed by the model-change factory, never by a row's body.
+    var modelNames: (from: String, to: String)?
+    /// The first visible line of a photo-only or wake exchange (`ChatLines.flatLines`).
+    var startsExchange = false
+    /// A child revealed from a folded supervision/background round; still not a visible reply for model comparison.
+    var inFoldedRound = false
 
     indirect enum Content {
         /// One compact header for the entire quiet round; children are flattened only when it is opened. `source`: the
@@ -7816,6 +7826,8 @@ struct ChatLine: Identifiable {
         /// A permission mode change the hub recorded, at the end of the exchange it happened in (#10297,
         /// `ChatLines.mergeModeChanges`); `id` from its time and kind.
         case modeChange(id: String, change: APIClient.ModeChange)
+        /// The reply models on either side of a visible exchange boundary (#5055, `ModelChanges.mark`).
+        case modelChange(id: String, from: String, to: String)
 
         var id: String {
             switch self {
@@ -7838,6 +7850,7 @@ struct ChatLine: Identifiable {
             case .viewed(let id, _): id
             case .answerPart(let item, _, let index, _): index == 0 ? item.id : item.id + "/part-\(index)"
             case .modeChange(let id, _): id
+            case .modelChange(let id, _, _): id
             }
         }
     }
@@ -7881,6 +7894,11 @@ struct ChatLine: Identifiable {
     static func placeMap(_ result: PlaceMapResult) -> Self { Self(.placeMap(result)) }
     static func day(_ date: Date) -> Self { Self(.day(date)) }
     static func modeChange(id: String, _ change: APIClient.ModeChange) -> Self { Self(.modeChange(id: id, change: change)) }
+    static func modelChange(id: String, from: String, to: String) -> Self {
+        var line = Self(.modelChange(id: id, from: from, to: to))
+        line.modelNames = (replyModelName(from), replyModelName(to))
+        return line
+    }
     static func viewed(id: String, images: [ViewedImage]) -> Self { Self(.viewed(id: id, images: images)) }
     static func answerPart(item: Item, part: AnswerParts.Part, index: Int, count: Int) -> Self {
         Self(.answerPart(item: item, part: part, index: index, count: count))

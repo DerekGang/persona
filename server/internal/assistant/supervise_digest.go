@@ -561,10 +561,17 @@ func (s *Service) replaceQueuedSupervise(to string, msg relayMsg) bool {
 // digestEntry is signal g as the message lists it; false when it no longer holds.
 func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string) (prompts.SuperviseEntry, bool) {
 	t, ok := s.todoNow(g.Todo)
-	if !ok || t.Supervision == nil || t.DoneAt != nil && g.Kind != sigFailed {
+	acceptedFeedback := g.Kind == sigInbox && g.Inbox != nil && g.Inbox.AfterAcceptance
+	if !ok || t.DoneAt != nil && g.Kind != sigFailed && !acceptedFeedback {
 		return prompts.SuperviseEntry{}, false
 	}
 	v := t.Supervision
+	if v == nil {
+		if g.Kind != sigReport {
+			return prompts.SuperviseEntry{}, false
+		}
+		v = &Supervision{} // a reporting conversation's report has no ledger (agent_control.go)
+	}
 	st := v.state(t)
 	var replyAsk acceptAsk
 	var draft *TodoPRStatus
@@ -623,6 +630,10 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 			g.Key != p.URL+"@"+p.HeadOID || s.stagePR(t.ID) != p.URL {
 			return prompts.SuperviseEntry{}, false // resolved, closed, or replaced while the signal waited
 		}
+	case sigTimedOut:
+		if st != reviewTimedOut {
+			return prompts.SuperviseEntry{}, false
+		}
 	case sigReview:
 		if st != reviewPending || v.handoffResult() != nil {
 			return prompts.SuperviseEntry{}, false
@@ -669,7 +680,7 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 			return prompts.SuperviseEntry{}, false // progress came, or it was parked or reviewed, meanwhile
 		}
 	case sigIdle, sigUnjudged, sigStalled:
-		if st == reviewParked || v.handoffResult() != nil {
+		if st == reviewParked || st == reviewClosing || st == reviewTimedOut || v.handoffResult() != nil {
 			return prompts.SuperviseEntry{}, false // a hold or its handoff result superseded the old stop
 		}
 	case sigCheck:
@@ -701,7 +712,8 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 			return prompts.SuperviseEntry{}, false // answered, or asked again, meanwhile
 		}
 	case sigInbox:
-		if g.Inbox == nil || !s.inboxSignalHolds(t) || !s.inboxSignalsOn(ctx) {
+		if g.Inbox == nil || !s.inboxSignalsOn(ctx) || !s.inboxSignalHolds(t) &&
+			(!acceptedFeedback || !s.acceptedFeedbackHolds(t, g.Inbox) || s.agentSupervised(t)) {
 			return prompts.SuperviseEntry{}, false // waits for the owner's decision, or the switch went off, meanwhile
 		}
 		if g.Inbox.ToAgent == "unhandled" && !s.taskInboxUnhandled(ctx, g.Key) {
@@ -860,7 +872,7 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 
 // sortEntries puts what waits on a decision first.
 func sortEntries(list []prompts.SuperviseEntry) []prompts.SuperviseEntry {
-	rank := map[string]int{sigNeedsYou: 0, sigAsk: 0, sigEscalated: 0, sigDecide: 0, sigOwnerCannot: 0, sigUndecidable: 1, sigRecheck: 1, sigEstimateDue: 2, sigParkedDue: 2, sigParkDecided: 2, sigIdle: 2, sigUnjudged: 2, sigAllStopped: 2, sigFailed: 3, sigStarted: 3, sigInterrupted: 4, sigOrphaned: 4, sigReview: 5, sigStalled: 6, sigNoProgress: 6, sigLeaderStuck: 6, sigOverdue: 6, sigInbox: 6, sigReport: 7}
+	rank := map[string]int{sigNeedsYou: 0, sigAsk: 0, sigEscalated: 0, sigDecide: 0, sigOwnerCannot: 0, sigUndecidable: 1, sigRecheck: 1, sigEstimateDue: 2, sigParkedDue: 2, sigParkDecided: 2, sigIdle: 2, sigUnjudged: 2, sigAllStopped: 2, sigFailed: 3, sigStarted: 3, sigInterrupted: 4, sigOrphaned: 4, sigTimedOut: 4, sigReview: 5, sigStalled: 6, sigNoProgress: 6, sigLeaderStuck: 6, sigOverdue: 6, sigInbox: 6, sigReport: 7}
 	at := func(e prompts.SuperviseEntry) int {
 		switch {
 		case e.Kind == sigCheck && e.Report == checkDecidedReport: // the owner's answer

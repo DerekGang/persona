@@ -37,8 +37,7 @@ type quickMeta struct {
 	wfScript     map[string]string      // their script files by run id
 	// cwd: where the session runs. An agent's latest directory (Claude Code writes the shell's directory after each
 	// Bash `cd` into every line), but where it started when that latest one is an assistant or health directory; for
-	// a conversation that started in an assistant or health directory, that directory, wherever its `cd`s took it
-	// since (#2368).
+	// a session started in an assistant directory or inside a health space, the starting directory (#2368).
 	cwd string
 	// start: the first directory the transcript's head names, where the session started ("" when the head has none:
 	// a first prompt bigger than the head read).
@@ -76,6 +75,7 @@ type quickMeta struct {
 	// (transcript.Meta; Session.ContextTokens / ContextWindow, #2430). Carried over from the last read when the tail
 	// holds no reply (one huge line can fill it).
 	contextTokens, contextWindow int
+	contextRestartRecommended    bool
 	// turnClosed: the tail ends with a turn finished (transcript.Meta.TurnClosed): a Codex rollout's, a Claude
 	// transcript's (turn_duration, an interrupt)
 	turnClosed bool
@@ -332,12 +332,12 @@ func readQuickMetaSince(path string, st os.FileInfo, prev quickMeta) quickMeta {
 		m.titleSource = "" // a historical custom-title may be outside this bounded read
 	}
 	m.start = start
-	if identity.IsAssistantDir(start) || start != "" && identity.IsAssistantDir(m.cwd) {
+	if identity.IsAssistantDir(start) || identity.InHealthSpace(start) || start != "" && identity.IsAssistantDir(m.cwd) {
 		// An assistant or health conversation is where it started: its space, CLAUDE.md, memory and resume project.
 		// A `cd` into a skill's folder had it listed as an agent there (#2368). The other way round, an agent whose
 		// `cd` landed in an assistant or health directory (one started in the home directory) is not one of their
 		// conversations: listed there at rest, the hub took it for one. An exact assistant or health directory is
-		// only ever where a session started.
+		// only ever where a session started. Health subdirectories also retain their starting directory for privacy.
 		m.cwd = start
 	}
 	m.surface = tm.Surface
@@ -434,6 +434,7 @@ func (n *Node) mergeNamingMetadata(path string, m *quickMeta) {
 		return
 	}
 	m.outputTokens = sc.meta.OutputTokens
+	m.contextRestartRecommended = sc.meta.ContextRestartRecommended()
 	if m.codex && sc.meta.ModelAt.After(m.modelAt) {
 		// A long tool result can push the latest turn_context out of the quick tail.
 		m.model, m.modelAt = sc.meta.Model, sc.meta.ModelAt

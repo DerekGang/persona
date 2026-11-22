@@ -43,6 +43,8 @@ var supervisedStarts = map[string]string{
 	"startTaskSuccessor": "startTaskSuccessor",
 	// agent_send's resume of a stopped agent: on an open task of the caller's, or the task the send made (#8099)
 	"resumeAndSend": "resumeAndSend",
+	// a timed-out task's original session: the user's Resume keeps its existing supervision ledger
+	"continueTimedOut": "continueTimedOut",
 }
 
 // startOptOuts are the start paths that stay unsupervised on purpose, with why. Each is the user's own conversation or
@@ -62,6 +64,7 @@ var startOptOuts = map[string]string{
 	"startSessionReview":   "an explicit independent reviewer: its source session's owner asked for it and answers its result card",
 	"deliverSessionReview": "the owner chose Send on a finished review card: an explicit message or resume of the source session",
 	"startRepairAgent":     "a launcher repair Agent: the launcher health checks follow it (launcher_repair.go)",
+	"a2aLaunch":            "the persisted A2A task follows its Agent and returns questions, failures and results to the session that started it",
 	"startBackground":      "the background supervisor's own conversation: it is the supervisor of the tasks no leader supervises (supervise_background.go)",
 }
 

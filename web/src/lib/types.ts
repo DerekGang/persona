@@ -324,6 +324,7 @@ export interface Session {
   botmux_external_trigger?: boolean;
   /** What the model saw in the latest reply and the model's window, in tokens (#2430); omitted while the node cannot tell. */
   context_tokens?: number;
+  context_restart_recommended?: boolean;
   context_window?: number;
   /** The levels `effort` may be set to when they are not Claude Code's: a Codex thread driven through its app-server (only its effort changes; docs/protocol/protocol.md). */
   efforts?: string[];
@@ -931,6 +932,13 @@ export interface Interaction {
   agent?: string;
   /** Display label supplied by the source (for example a script request). */
   agent_label?: string;
+  /** A manager-owned exact operation or batch. Its reply control supplies the interaction id explicitly; ordinary
+   *  quote replies never acquire approval authority. The phrase list is a display snapshot, not an authorization. */
+  approval_batch_id?: string;
+  approval_item_id?: string;
+  owner_proposal?: boolean;
+  no_expiry?: boolean;
+  owner_approval_phrases?: string[];
   /** What "always allow" allows here; another agent's card offers it only with this. */
   always_label?: string;
   /** Permission scopes remembered by the hub for this conversation. */
@@ -966,6 +974,8 @@ export interface Interaction {
   /** The assistant is deciding whether it may answer this question for the user (docs/assistant/assistant.md "Assistant
    *  answers questions first"): nothing was pushed yet, and an answer given here wins. The same card comes again without it. */
   delegating?: boolean;
+  /** Hub push-grading urgency ("P0" | "P1" | "P2"): absent defaults to P0. */
+  push_level?: "P0" | "P1" | "P2" | (string & {});
   /** What the assistant filled in when it left the question to the user. */
   delegate?: Delegate;
   /** A rule the hub suggests on a question a supervisor passed up, once the owner gave the same answer three times
@@ -988,6 +998,9 @@ export interface Delegate {
 
 export interface Launcher {
   name: string;
+  /** A verified separate runtime channel, independent of ordinary Assistant support. */
+  supervision_policy?: boolean;
+  assistant?: boolean;
   /** A Persona-managed provider's name for people, any language (#5029), or a runtime's name for a provider it runs
    *  (Paseo's label, "Grok", #8261); absent for an rc alias or from an older hub. Show it through lib/provider-names.ts. */
   display_name?: string;
@@ -1028,6 +1041,8 @@ export interface LauncherHealth {
 }
 
 export interface AssistantInfo {
+  /** The manager that answered, including the default whose request carried no manager header. */
+  manager?: string;
   machine_id: string;
   main_machine_id?: string;
   launcher?: string;
@@ -1044,8 +1059,14 @@ export interface AssistantInfo {
   /** "Show scheduled task chats" in the sidebar's Recent (#8324, lib/recent-task-chats.ts): one value on the hub for all
    *  of the user's devices, off by default; absent from an older hub (no switch, and Recent leaves them out). */
   recent_task_chats?: boolean;
+  /** Exact, one-shot owner replies and persistent proposal cards; off by default and absent from an older hub. */
+  owner_reply_approval?: boolean;
+  persistent_owner_action_cards?: boolean;
+  owner_reply_approval_phrases?: string[];
   /** User-chosen ordinary conversation order (#12017), shared by every client; absent or empty means activity time. */
   conversation_order?: string[];
+  /** Exact user-chosen tag filter entries (#12018); null or absent means the automatic all-in-use-tag row. */
+  conversation_tag_filters?: string[] | null;
   /** The background supervisor's conversation (#4927, lib/background-supervisor.ts): its session id once the hub made
    *  it; absent before that and from an older hub. Read-only. */
   background_supervisor?: string;
