@@ -81,6 +81,18 @@
       "value": "#4CC38A"
     },
     {
+      "name": "persona_needs_mark",
+      "value": "#0A84FF"
+    },
+    {
+      "name": "persona_working_mark",
+      "value": "#FFB224"
+    },
+    {
+      "name": "persona_unread_mark",
+      "value": "#4CC38A"
+    },
+    {
       "name": "persona_positive",
       "value": "#30D158"
     },

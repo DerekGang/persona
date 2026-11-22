@@ -94,8 +94,12 @@ test('the sidebar and full list use the same source and state marks', () => {
     assert.ok(read(path).includes('AssistantChatStateMark({state:assistantChatState(binding.value)'));
   }
   const marks=read('components/AssistantChatMarks');
-  assert.ok(marks.includes("this.state === 'needs_you' ? Colors.needs : Colors.unread"));
+  assert.ok(marks.includes("this.state === 'needs_you' ? Colors.needsMark : Colors.unreadMark"));
   assert.ok(marks.includes("if (this.state === 'working') LoadingProgress()"));
+  for(const [mode,values] of [['base',['#007AFF','#E8890C','#30A46C']],['dark',['#0A84FF','#FFB224','#4CC38A']]]) {
+    const colors=JSON.parse(readFileSync(new URL('../entry/src/main/resources/'+mode+'/element/color.json',import.meta.url),'utf8')).color;
+    assert.deepEqual(['needs','working','unread'].map(key=>colors.find(row=>row.name==='persona_'+key+'_mark').value),values);
+  }
   assert.ok(marks.includes('Flex({direction:FlexDirection.Row') && marks.includes('flexShrink(1).constraintSize({minWidth:0})'));
   assert.ok(marks.includes(".flexShrink(0).accessibilityLevel('no').id(this.identity+'.source')"));
   assert.ok(marks.includes("if (this.source === 'lark_agent') Image($r('app.media.brand_lark'))"));

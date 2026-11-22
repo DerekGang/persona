@@ -16,6 +16,9 @@ class NativeColors {
   readonly needs: ResourceColor = $r('app.color.persona_needs');
   readonly working: ResourceColor = $r('app.color.persona_working');
   readonly unread: ResourceColor = $r('app.color.persona_unread');
+  readonly needsMark: ResourceColor = $r('app.color.persona_needs_mark');
+  readonly workingMark: ResourceColor = $r('app.color.persona_working_mark');
+  readonly unreadMark: ResourceColor = $r('app.color.persona_unread_mark');
   readonly positive: ResourceColor = $r('app.color.persona_positive');
   readonly divider: ResourceColor = $r('app.color.persona_divider');
   readonly danger: ResourceColor = $r('app.color.persona_danger');

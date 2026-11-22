@@ -49,9 +49,9 @@ export struct AssistantChatStateMark {
   build() {
     if (this.state === 'working') LoadingProgress()
       .width(PhoneStyle.sidebarMetric(13,nativeEnvironment.fontScale)).aspectRatio(1)
-      .color(Colors.working).accessibilityLevel('no').id(this.identity+'.working')
+      .color(Colors.workingMark).accessibilityLevel('no').id(this.identity+'.working')
     else if (this.state === 'needs_you' || this.state === 'unread') Circle()
       .width(PhoneStyle.sidebarMetric(8,nativeEnvironment.fontScale)).aspectRatio(1)
-      .fill(this.state === 'needs_you' ? Colors.needs : Colors.unread).accessibilityLevel('no').id(this.identity+'.'+this.state)
+      .fill(this.state === 'needs_you' ? Colors.needsMark : Colors.unreadMark).accessibilityLevel('no').id(this.identity+'.'+this.state)
   }
 }
