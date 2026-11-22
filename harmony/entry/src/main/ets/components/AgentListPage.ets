@@ -9,7 +9,8 @@ import { AgentDirectoryRowContent } from './AgentDirectoryRowContent';
 import { agentPaneSource } from '../core/AgentListAdapter';
 import { WorktreeChange } from '../models/WorktreeActions';
 import { AgentRepositoryRows } from './AgentRepositoryRows';
-import { AgentTaskGrouping } from '../models/AgentTaskGrouping';
+import { AgentTaskGrouping, agentTaskSectionsFor } from '../models/AgentTaskGrouping';
+import { AgentTaskSection } from '../models/AgentTaskSections';
 import { AgentTaskGroupRows } from './AgentTaskGroupRows';
 import { ResourceRow, Wire } from '../models/Wire';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
@@ -333,6 +334,9 @@ export struct AgentListPage {
 
   @Computed get availableGroupings(): string[] {
     return this.workspace.groupingOptions();
+  }
+  @Computed get taskSections(): AgentTaskSection[] {
+    return agentTaskSectionsFor(this.model,this.workspace,this.taskGrouping,this.workspace.groupingMode);
   }
   private groupingIndex(): number {
     return this.availableGroupings.indexOf(this.workspace.groupingMode);
@@ -942,9 +946,11 @@ export struct AgentListPage {
             onOpen:(row:ResourceRow)=>this.openRow(row),onRoute:(kind:string,key:string)=>this.onRepositoryOpen(kind,key),
             onChanged:(tree:ProjectWorktree,change:WorktreeChange)=>this.onRepositoryChanged(tree,change)})
         } else if (this.workspace.groupingMode === 'todo' || this.workspace.groupingMode === 'direction') {
-          AgentTaskGroupRows({model:this.model,workspace:this.workspace,source:this.taskGrouping,mode:this.workspace.groupingMode,
-            onOpen:(row:ResourceRow)=>this.openRow(row),onOpenTodo:(row:ResourceRow)=>this.onOpenTodo(row),
-            rowContent:(row:ResourceRow,depth:number):void=>this.taskRow(row,depth)})
+          Repeat<AgentTaskSection>(this.taskSections).each((entry:RepeatItem<AgentTaskSection>) => {
+            AgentTaskGroupRows({section:entry.item,workspace:this.workspace,phone:this.compactRoot && !this.rail,onOpen:(row:ResourceRow)=>this.openRow(row),
+              onOpenTodo:(row:ResourceRow)=>this.onOpenTodo(row),
+              rowContent:(row:ResourceRow,depth:number):void=>this.taskRow(row,depth)})
+          }).key((section:AgentTaskSection)=>section.key)
         } else if (!this.workspace.hasRows() && !this.workspace.loading) ListItem() {
           Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
         }.id('agents.empty')
