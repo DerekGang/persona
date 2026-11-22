@@ -46,6 +46,26 @@ describe("UI 11 scene geometry", () => {
     }
   });
 
+  it("fits square-on and diagonal views from their projected extents", () => {
+    const bounds = { minX: 0, maxX: 2, minY: 0, maxY: 8, minH: 0, maxH: 1 };
+    const corners = [0, 2].flatMap((x) => [0, 8].flatMap((y) => [0, 1].map((h) => ({ x, y, h }))));
+    const extents = (yaw: number, zoom = 1) => {
+      const project = sceneProjection(bounds, { yaw, pitch: 35, zoom }, 800, 450);
+      const points = corners.map((p) => project(p.x, p.y, p.h));
+      const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+      return { width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys), center: project(1, 4, 0.5) };
+    };
+    const square = extents(0), diagonal = extents(45), zoomed = extents(0, 2);
+    expect(square.width).toBeCloseTo(714.285714, 6);
+    expect(square.height).toBeCloseTo(175.562939, 6);
+    expect(diagonal.width).toBeCloseTo(582.786301, 6);
+    expect(diagonal.height).toBeCloseTo(401.785714, 6);
+    expect(square.width).toBeGreaterThan(diagonal.width);
+    expect(zoomed.width).toBeCloseTo(square.width * 2, 6);
+    expect(zoomed.height).toBeCloseTo(square.height * 2, 6);
+    expect(zoomed.center).toMatchObject({ x: 400, y: 225 });
+  });
+
   it("keeps the target centered and zooms around it", () => {
     const bounds = sceneBounds(scene.shapes);
     const cx = (bounds.minX + bounds.maxX) / 2, cy = (bounds.minY + bounds.maxY) / 2, h = (bounds.minH + bounds.maxH) / 2;

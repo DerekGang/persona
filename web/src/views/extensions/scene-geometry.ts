@@ -54,8 +54,9 @@ export function sceneProjection(bounds: Bounds, input: SceneCameraState, width: 
   const psi = rad(camera.yaw), phi = rad(camera.pitch);
   const sinPsi = Math.sin(psi), cosPsi = Math.cos(psi), sinPhi = Math.sin(phi), cosPhi = Math.cos(phi);
   const cx = (bounds.minX + bounds.maxX) / 2, cy = (bounds.minY + bounds.maxY) / 2, ch = (bounds.minH + bounds.maxH) / 2;
-  const halfU = Math.max(0.25, Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) / 2);
-  const halfV = halfU * Math.abs(sinPhi) + (bounds.maxH - bounds.minH) * Math.abs(cosPhi) / 2;
+  const hx = (bounds.maxX - bounds.minX) / 2, hy = (bounds.maxY - bounds.minY) / 2, hh = (bounds.maxH - bounds.minH) / 2;
+  const halfU = Math.max(0.25, Math.abs(sinPsi) * hx + Math.abs(cosPsi) * hy);
+  const halfV = (Math.abs(cosPsi) * hx + Math.abs(sinPsi) * hy) * Math.abs(sinPhi) + hh * Math.abs(cosPhi);
   const aspect = Math.max(width, 1) / Math.max(height, 1);
   const scale = Math.max(halfV, halfU / Math.max(aspect, 0.1)) * 1.12 / camera.zoom;
   const ppm = Math.max(height, 1) / (2 * scale);
