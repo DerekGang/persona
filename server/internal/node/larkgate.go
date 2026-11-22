@@ -105,8 +105,9 @@ func (n *Node) larkCheck(ctx context.Context, session, cwd, command string, ix p
 		return "deny", v.deny, nil
 	}
 	inSpace := n.gates().spaceSession(session) || identity.InSpace(cwd)
+	remote := n.isRemoteRuntimeSession(session)
 	mode, _ := n.modesOf(session)
-	bypass := !inSpace && mode == proto.ModeBypass && n.isAssistantSession(session) && n.guestOf(session) == nil
+	bypass := !inSpace && !remote && mode == proto.ModeBypass && n.isAssistantSession(session) && n.guestOf(session) == nil
 	// classified: every call read off the command and nothing else in it that the gate cannot follow.
 	classified := !v.unparsed && !v.unknown && !v.unsure
 	for _, c := range v.calls {
@@ -232,12 +233,12 @@ func (n *Node) larkCheck(ctx context.Context, session, cwd, command string, ix p
 	// The hub remembers these routes for assistant conversations and checks them again on every call.
 	ix.AlwaysKeys = nil
 	for _, c := range ask {
-		if k := "lark:" + larkPattern(c); !inSpace && !bypass && !slices.Contains(ix.AlwaysKeys, k) {
+		if k := "lark:" + larkPattern(c); !inSpace && !bypass && !remote && !slices.Contains(ix.AlwaysKeys, k) {
 			ix.AlwaysKeys = append(ix.AlwaysKeys, k)
 		}
 	}
 	remember := ask
-	if inSpace || bypass {
+	if inSpace || bypass || remote {
 		remember = nil // hard boundaries are confirmed each time
 	}
 	decision, reason, card, err := n.confirmLark(ctx, session, ix, remember, inSpace, ix.ToolName)

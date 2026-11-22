@@ -214,7 +214,7 @@ func (n *Node) assistantSendRuntime(ctx context.Context, h *runtimeConn, id, cwd
 			live, commit = n.turnContext(id, n.assistantContext(id))
 		}
 		if st.AwaitingFirstMessage {
-			live = strings.TrimSpace(n.runtimeInstructions(cwd, memDir) + "\n" + live)
+			live = strings.TrimSpace(n.runtimeInstructionsWithTools(cwd, memDir, h.remoteAgent()) + "\n" + live)
 		}
 	}
 	if len(selected) > 0 {
@@ -360,7 +360,11 @@ func (n *Node) runtimeStartWith(ctx context.Context, h *runtimeConn, params map[
 // runtimeInstructions is the first message's instructions for an assistant on a runtime: the memory it shares with
 // Claude and Codex (memory.go), and the skills' gated commands it runs as tools here.
 func (n *Node) runtimeInstructions(cwd, memDir string) string {
-	r := prompts.RuntimeInstructions{Dir: memDir}
+	return n.runtimeInstructionsWithTools(cwd, memDir, false)
+}
+
+func (n *Node) runtimeInstructionsWithTools(cwd, memDir string, memoryTools bool) string {
+	r := prompts.RuntimeInstructions{Dir: memDir, MemoryTools: memoryTools}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, g := range n.assistantLark(ctx).Gates {

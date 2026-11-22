@@ -75,6 +75,9 @@ type runtimeHello struct {
 		QueueSendNow bool `json:"queue_send_now"`
 		// Assistant: its launcher may run the Persona assistant (assistant_runtime.go; docs/integrations/runtimes.md "Assistant").
 		Assistant bool `json:"assistant"`
+		// RemoteAgent: the assistant runtime runs remotely (e.g. cloud API / extension backend) without local
+		// filesystem tools; node exposes memory_read/memory_write MCP tools and enforces confirm-writes posture.
+		RemoteAgent bool `json:"remote_agent"`
 		// SupervisionPolicy: the runtime carries manager-owned supervision_instructions on its own authoritative
 		// policy channel (separate from user messages) on session.start and session.send, and fails closed
 		// (assistant_supervision_runtime) when a nonempty policy cannot be applied (#11173).
@@ -195,6 +198,23 @@ func (h *runtimeConn) assistant() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.hello.Caps.Assistant
+}
+
+// remoteAgent: the runtime runs assistant conversations remotely without local filesystem access (caps.assistant && caps.remote_agent).
+func (h *runtimeConn) remoteAgent() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.hello.Caps.Assistant && h.hello.Caps.RemoteAgent
+}
+
+// isRemoteRuntimeSession reports whether session belongs to a connected runtime declaring caps.assistant and
+// caps.remote_agent.
+func (n *Node) isRemoteRuntimeSession(session string) bool {
+	if n == nil || n.runtimes == nil || session == "" {
+		return false
+	}
+	h, _, ok := n.runtimes.belongs(session)
+	return ok && h != nil && h.remoteAgent()
 }
 
 // supervisionPolicy: the runtime runs assistant conversations and accepts supervision_instructions on its own policy

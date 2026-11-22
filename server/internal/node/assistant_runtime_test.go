@@ -891,3 +891,223 @@ func TestAssistantRuntimeStartPropagatesPermissionMode(t *testing.T) {
 		t.Fatalf("session.start permission_mode = %q, want acceptEdits (%s)", start.PermissionMode, starts[0])
 	}
 }
+
+func TestRemoteAgentMemoryToolsAndPlanMode(t *testing.T) {
+	n, hub := runtimeNode(t)
+	assistantHub(hub)
+
+	remoteHello := map[string]any{
+		"runtime": "pac", "name": "PAC", "launcher": "pac",
+		"caps": map[string]any{"start": true, "send": true, "interrupt": true, "assistant": true, "remote_agent": true},
+	}
+	remoteHost := dialRuntime(t, n, remoteHello)
+	localHost := dialRuntime(t, n, assistantRuntimeHello())
+
+	cwd := identity.AssistantDir(n.home)
+	remoteHost.answer = func(method string, _ json.RawMessage) (any, error) {
+		if method == "session.start" {
+			return map[string]any{"session": map[string]any{"session_id": "pac-remote-1", "cwd": cwd, "status": "idle"}}, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	localHost.answer = func(method string, _ json.RawMessage) (any, error) {
+		if method == "session.start" {
+			return map[string]any{"session": map[string]any{"session_id": "dsh-local-1", "cwd": cwd, "status": "idle"}}, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+
+	if _, err := nodeCall(t, n, "assistant.send", map[string]any{"launcher": "pac", "cwd": cwd, "text": "hello remote"}); err != nil {
+		t.Fatal(err)
+	}
+	sends := remoteHost.got("session.send")
+	if len(sends) != 1 || !strings.Contains(string(sends[0]), "memory_read") || !strings.Contains(string(sends[0]), "memory_write") {
+		t.Fatalf("expected initial context to instruct memory_read/memory_write, got: %s", sends)
+	}
+
+	var remoteTools struct {
+		Tools []proto.Tool `json:"tools"`
+	}
+	if err := remoteHost.peer.Call(context.Background(), "mcp.tools", map[string]any{"assistant": true, "session_id": "pac-remote-1"}, &remoteTools); err != nil {
+		t.Fatal(err)
+	}
+	hasTool := func(tools []proto.Tool, name string) bool {
+		return slices.ContainsFunc(tools, func(tool proto.Tool) bool { return tool.Name == name })
+	}
+	if !hasTool(remoteTools.Tools, "memory_read") || !hasTool(remoteTools.Tools, "memory_write") {
+		t.Fatalf("remote runtime missing memory tools: %+v", remoteTools.Tools)
+	}
+
+	if _, err := nodeCall(t, n, "assistant.send", map[string]any{"launcher": "dsh", "cwd": cwd, "text": "hello local"}); err != nil {
+		t.Fatal(err)
+	}
+	var localTools struct {
+		Tools []proto.Tool `json:"tools"`
+	}
+	if err := localHost.peer.Call(context.Background(), "mcp.tools", map[string]any{"assistant": true, "session_id": "dsh-local-1"}, &localTools); err != nil {
+		t.Fatal(err)
+	}
+	if hasTool(localTools.Tools, "memory_read") || hasTool(localTools.Tools, "memory_write") {
+		t.Fatalf("non-remote runtime should not receive memory tools: %+v", localTools.Tools)
+	}
+
+	callMemory := func(tool string, args map[string]any) proto.ToolResult {
+		t.Helper()
+		rawArgs, _ := json.Marshal(args)
+		var res proto.ToolResult
+		if err := remoteHost.peer.Call(context.Background(), "mcp.call", map[string]any{
+			"name": tool, "args": json.RawMessage(rawArgs), "session_id": "pac-remote-1", "assistant": true,
+		}, &res); err != nil {
+			t.Fatalf("mcp.call %s: %v", tool, err)
+		}
+		return res
+	}
+
+	if res := callMemory("memory_write", map[string]any{"name": "MEMORY.md", "content": "# Notes\nhello\n"}); res.IsError {
+		t.Fatalf("memory_write failed: %+v", res)
+	}
+	if res := callMemory("memory_read", map[string]any{"name": "MEMORY.md"}); res.IsError || len(res.Content) == 0 || res.Content[0].Text != "# Notes\nhello\n" {
+		t.Fatalf("memory_read mismatch: %+v", res)
+	}
+
+	// Invalid names, unknown args, and oversized content must be rejected.
+	for _, name := range []string{"../escape.md", "sub/file.md", "notes.txt", ""} {
+		if res := callMemory("memory_read", map[string]any{"name": name}); !res.IsError {
+			t.Fatalf("expected invalid filename %q to fail, got: %+v", name, res)
+		}
+	}
+	if res := callMemory("memory_read", map[string]any{"name": "MEMORY.md", "extra": 1}); !res.IsError {
+		t.Fatalf("expected unknown argument to fail: %+v", res)
+	}
+	if res := callMemory("memory_write", map[string]any{"name": "big.md", "content": strings.Repeat("a", 65*1024)}); !res.IsError {
+		t.Fatalf("expected oversized write to fail: %+v", res)
+	}
+
+	// Symlinks inside the memory directory must be refused.
+	memDir := n.memoryDir(cwd)
+	symPath := filepath.Join(memDir, "link.md")
+	_ = os.WriteFile(filepath.Join(t.TempDir(), "outside.md"), []byte("secret"), 0o600)
+	if err := os.Symlink(filepath.Join(t.TempDir(), "outside.md"), symPath); err == nil {
+		if res := callMemory("memory_read", map[string]any{"name": "link.md"}); !res.IsError {
+			t.Fatalf("expected symlink read to fail: %+v", res)
+		}
+		if res := callMemory("memory_write", map[string]any{"name": "link.md", "content": "nope"}); !res.IsError {
+			t.Fatalf("expected symlink write to fail: %+v", res)
+		}
+	}
+
+	// Plan mode permits memory_read and refuses memory_write.
+	n.noteModes("pac-remote-1", proto.ModePlan, "")
+	if res := callMemory("memory_write", map[string]any{"name": "plan.md", "content": "denied"}); !res.IsError {
+		t.Fatalf("expected memory_write in plan mode to fail: %+v", res)
+	}
+	if res := callMemory("memory_read", map[string]any{"name": "MEMORY.md"}); res.IsError {
+		t.Fatalf("expected memory_read in plan mode to succeed: %+v", res)
+	}
+
+	// Guest sessions neither see nor can invoke memory tools.
+	n.noteModes("pac-remote-1", "default", "")
+	st, _ := n.state.get("pac-remote-1")
+	st.Guest = []string{"read_only"}
+	n.state.put("pac-remote-1", st)
+
+	var guestTools struct {
+		Tools []proto.Tool `json:"tools"`
+	}
+	if err := remoteHost.peer.Call(context.Background(), "mcp.tools", map[string]any{"assistant": true, "session_id": "pac-remote-1"}, &guestTools); err != nil {
+		t.Fatal(err)
+	}
+	if hasTool(guestTools.Tools, "memory_read") || hasTool(guestTools.Tools, "memory_write") {
+		t.Fatalf("guest session should not see memory tools: %+v", guestTools.Tools)
+	}
+	if res := callMemory("memory_read", map[string]any{"name": "MEMORY.md"}); !res.IsError {
+		t.Fatalf("expected guest memory_read to fail: %+v", res)
+	}
+	if res := callMemory("memory_write", map[string]any{"name": "MEMORY.md", "content": "x"}); !res.IsError {
+		t.Fatalf("expected guest memory_write to fail: %+v", res)
+	}
+}
+
+func TestRemoteAgentGateWriteRequiresConfirmEvenInBypass(t *testing.T) {
+	n, hub := runtimeNode(t)
+	assistantHub(hub)
+
+	n.mu.Lock()
+	n.larkCfg = olCfg()
+	n.larkCfgAt = time.Now().Add(time.Hour)
+	n.larkCfg.CLI = &proto.LarkCLI{Bin: "/nonexistent/lark-cli"}
+	n.larkRisks = map[string]string{"\x00docs +create": "write"}
+	n.mu.Unlock()
+
+	hub.mu.Lock()
+	hub.resolve = func(proto.Interaction) proto.Resolution {
+		no := false
+		return proto.Resolution{Allow: &no}
+	}
+	hub.mu.Unlock()
+
+	remoteHost := dialRuntime(t, n, map[string]any{
+		"runtime": "pac", "name": "PAC", "launcher": "pac",
+		"caps": map[string]any{"start": true, "send": true, "interrupt": true, "assistant": true, "remote_agent": true},
+	})
+	localHost := dialRuntime(t, n, assistantRuntimeHello())
+
+	cwd := identity.AssistantDir(n.home)
+	remoteHost.answer = func(method string, _ json.RawMessage) (any, error) {
+		if method == "session.start" {
+			return map[string]any{"session": map[string]any{"session_id": "pac-bypass-1", "cwd": cwd, "status": "idle"}}, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	localHost.answer = func(method string, _ json.RawMessage) (any, error) {
+		if method == "session.start" {
+			return map[string]any{"session": map[string]any{"session_id": "dsh-bypass-1", "cwd": cwd, "status": "idle"}}, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+
+	if _, err := nodeCall(t, n, "assistant.send", map[string]any{"launcher": "pac", "cwd": cwd, "text": "init remote", "permission_mode": proto.ModeBypass}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nodeCall(t, n, "assistant.send", map[string]any{"launcher": "dsh", "cwd": cwd, "text": "init local", "permission_mode": proto.ModeBypass}); err != nil {
+		t.Fatal(err)
+	}
+	n.noteModes("pac-bypass-1", proto.ModeBypass, "")
+	n.noteModes("dsh-bypass-1", proto.ModeBypass, "")
+
+	const cmd = `lark-cli docs +create --title notes --markdown hi`
+
+	// Non-remote assistant session in bypassPermissions executes ordinary write without a card.
+	decLocal, _, err := n.larkCheck(context.Background(), "dsh-bypass-1", cwd, cmd,
+		proto.Interaction{SessionID: "dsh-bypass-1", Cwd: cwd, ExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("local larkCheck: %v", err)
+	}
+	if decLocal == "deny" {
+		t.Fatalf("expected non-remote bypass session to allow docs +create without denial")
+	}
+	hub.mu.Lock()
+	localCards := len(hub.asked)
+	hub.mu.Unlock()
+	if localCards != 0 {
+		t.Fatalf("expected 0 confirmation cards for non-remote bypass session, got %d", localCards)
+	}
+
+	// Remote runtime session in bypassPermissions still raises a confirmation card with no AlwaysKeys.
+	decRemote, _, err := n.larkCheck(context.Background(), "pac-bypass-1", cwd, cmd,
+		proto.Interaction{SessionID: "pac-bypass-1", Cwd: cwd, ExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatalf("remote larkCheck: %v", err)
+	}
+	if decRemote != "deny" {
+		t.Fatalf("expected remote larkCheck to confirm (and deny on fake hub's allow=false), got %q", decRemote)
+	}
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if len(hub.asked) != 1 {
+		t.Fatalf("expected 1 confirmation card for remote bypass session, got %d", len(hub.asked))
+	}
+	if len(hub.asked[0].AlwaysKeys) != 0 {
+		t.Fatalf("expected AlwaysKeys to be empty on remote confirm card, got %v", hub.asked[0].AlwaysKeys)
+	}
+}
