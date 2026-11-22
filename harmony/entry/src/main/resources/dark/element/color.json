@@ -17,6 +17,34 @@
       "value": "#000000"
     },
     {
+      "name": "persona_code_canvas",
+      "value": "#1C1D21"
+    },
+    {
+      "name": "persona_code_hunk",
+      "value": "#2C2D32"
+    },
+    {
+      "name": "persona_diff_added",
+      "value": "#4CC38A"
+    },
+    {
+      "name": "persona_diff_removed",
+      "value": "#FF6369"
+    },
+    {
+      "name": "persona_diff_modified",
+      "value": "#E3B341"
+    },
+    {
+      "name": "persona_code_added_fill",
+      "value": "#214CC38A"
+    },
+    {
+      "name": "persona_code_removed_fill",
+      "value": "#1FFF6369"
+    },
+    {
       "name": "persona_canvas",
       "value": "#101012"
     },

@@ -1077,7 +1077,11 @@ export struct SessionTools {
   }
   private leaf(path:string):string { return path.split(/[\\/]/).pop() || path; }
   private relativeParent(path:string):string { return path.slice(0,Math.max(path.lastIndexOf('/'),path.lastIndexOf('\\'),0)); }
-  private gitMarkColor(mark:string):ResourceColor { return mark==='A' ? Colors.positive : mark==='D' || mark==='!' ? Colors.danger : mark==='M' ? Colors.working : Colors.secondary; }
+  private gitMarkColor(mark:string):ResourceColor {
+    if (mark==='A' || mark==='U') return Colors.diffAdded;
+    if (mark==='D' || mark==='!') return Colors.diffRemoved;
+    return mark==='M' ? Colors.diffModified : Colors.secondary;
+  }
   private gitDate(value:string):string {
     const date=new Date(value);
     return Number.isFinite(date.getTime()) && date.getTime()>0 ? date.toLocaleDateString(this.model.language==='default' ? i18n.getSystemLanguage() : this.model.language) : '';
@@ -1198,7 +1202,7 @@ export struct SessionTools {
             .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
         }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-        if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        if (binding.value.binary) Text(tr('session_git_binary')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
         else if (binding.value.added || binding.value.deleted) Row({space:4}) {
           this.lineCounts(binding.value.added,binding.value.deleted)
         }.flexShrink(0)
@@ -1377,7 +1381,7 @@ export struct SessionTools {
         else if (this.gitSheetMode==='pr_detail') this.prDetails(Wire.object(this.workspace.gitPrAnswer,'pr'))
         else this.gitSheet()
       }.width('100%').layoutWeight(1)
-    }.width('100%').height('100%').backgroundColor(this.gitSheetMode==='diff' || this.patchSubpage() ? Colors.canvas : Colors.grouped)
+    }.width('100%').height('100%').backgroundColor(this.gitSheetMode==='diff' || this.patchSubpage() ? (this.phoneGitReader ? Colors.codeCanvas : Colors.canvas) : Colors.grouped)
   }
   @Builder stagedCommitBar() {
     Row({space:8}) {
@@ -1519,7 +1523,7 @@ export struct SessionTools {
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.loadGitDiff())
       }.width('100%')
       if (this.workspace.gitDiffBusy) LoadingProgress().height(28).width(28)
-      else if (this.workspace.gitDiff) WorkspacePatch({patch:this.workspace.gitDiff, fileOnly:true}).layoutWeight(1)
+      else if (this.workspace.gitDiff) WorkspacePatch({patch:this.workspace.gitDiff, fileOnly:true, compact:this.phoneGitReader}).layoutWeight(1)
       else if (!this.workspace.gitDiffError) Text(tr('session_tools_no_diff')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
       if (this.workspace.gitDiffTruncated) Text(tr('session_tools_truncated')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
     }.padding({bottom:8}).width('100%').height('100%').alignItems(HorizontalAlign.Start)
@@ -1567,8 +1571,8 @@ export struct SessionTools {
   }
 
   @Builder lineCounts(added:number,deleted:number) {
-    Text('+'+added).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.positive)
-    Text('−'+deleted).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.danger)
+    Text('+'+added).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.diffAdded)
+    Text('−'+deleted).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.diffRemoved)
   }
 
   @Builder commitFile(file: Record<string,Object>) {
@@ -1586,7 +1590,7 @@ export struct SessionTools {
           .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
           .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      if (Wire.bool(file,'binary')) Text(tr('session_tools_binary_file')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+      if (Wire.bool(file,'binary')) Text(tr('session_git_binary')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
       else if (Wire.number(file,'added') + Wire.number(file,'deleted') > 0) Row({space:4}) { this.lineCounts(Wire.number(file,'added'),Wire.number(file,'deleted')) }.flexShrink(0)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').constraintSize({minHeight:this.phoneGitReader ?
@@ -1607,7 +1611,7 @@ export struct SessionTools {
         if (this.commitFilePath || this.showCommitPatch) {
           if (this.commitFilePath && !this.selectedCommitPatch) {
             Text(tr(Wire.bool(this.workspace.gitShow,'truncated') ? 'session_tools_truncated' : 'session_tools_no_diff')).fontColor(Colors.secondary)
-          } else WorkspacePatch({patch:this.commitFilePath ? this.selectedCommitPatch : Wire.text(this.workspace.gitShow,'diff'), fileOnly:!!this.commitFilePath}).layoutWeight(1)
+          } else WorkspacePatch({patch:this.commitFilePath ? this.selectedCommitPatch : Wire.text(this.workspace.gitShow,'diff'), fileOnly:!!this.commitFilePath, compact:this.phoneGitReader}).layoutWeight(1)
         } else {
           List({space:0}) {
             ListItem() { this.commitInfo(Wire.object(this.workspace.gitShow,'commit')) }

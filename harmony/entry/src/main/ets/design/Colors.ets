@@ -2,6 +2,13 @@
 @ObservedV2
 class NativeColors {
   readonly surface: ResourceColor = $r('app.color.persona_surface');
+  readonly codeCanvas: ResourceColor = $r('app.color.persona_code_canvas');
+  readonly codeHunk: ResourceColor = $r('app.color.persona_code_hunk');
+  readonly diffAdded: ResourceColor = $r('app.color.persona_diff_added');
+  readonly diffRemoved: ResourceColor = $r('app.color.persona_diff_removed');
+  readonly diffModified: ResourceColor = $r('app.color.persona_diff_modified');
+  readonly codeAddedFill: ResourceColor = $r('app.color.persona_code_added_fill');
+  readonly codeRemovedFill: ResourceColor = $r('app.color.persona_code_removed_fill');
   readonly canvas: ResourceColor = $r('app.color.persona_canvas');
   readonly grouped: ResourceColor = $r('app.color.persona_grouped');
   readonly ink: ResourceColor = $r('app.color.persona_ink');

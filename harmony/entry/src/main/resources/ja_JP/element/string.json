@@ -1101,6 +1101,10 @@
       "value": "引き継ぐ"
     },
     {
+      "name": "session_git_binary",
+      "value": "バイナリ"
+    },
+    {
       "name": "session_tools_binary_file",
       "value": "この形式のプレビューは利用できません"
     },

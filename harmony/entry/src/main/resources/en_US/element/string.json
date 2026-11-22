@@ -1101,6 +1101,10 @@
       "value": "Take over"
     },
     {
+      "name": "session_git_binary",
+      "value": "Binary"
+    },
+    {
       "name": "session_tools_binary_file",
       "value": "Preview unavailable for this file type"
     },

@@ -1101,6 +1101,10 @@
       "value": "接管"
     },
     {
+      "name": "session_git_binary",
+      "value": "二进制"
+    },
+    {
       "name": "session_tools_binary_file",
       "value": "此文件类型暂不支持预览"
     },
