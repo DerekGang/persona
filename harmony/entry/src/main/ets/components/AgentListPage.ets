@@ -4,6 +4,9 @@ import { util } from '@kit.ArkTS';
 import { ClientModel } from '../models/ClientModel';
 import { AgentDecisionCard, AgentDecisionQueue } from '../models/AgentDecisionQueue';
 import { AgentWorkspace, AgentWorkspaceGroup } from '../models/AgentWorkspace';
+import { ProjectCatalog, ProjectWorktree } from '../models/ProjectCatalog';
+import { WorktreeChange } from '../models/WorktreeActions';
+import { AgentRepositoryRows } from './AgentRepositoryRows';
 import { ResourceRow, Wire } from '../models/Wire';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { Tokens } from '../design/Tokens';
@@ -84,9 +87,13 @@ export struct AgentListPage {
   @Local refreshing: boolean = false;
   @Local environment: NativeEnvironment = nativeEnvironment;
   @Event onOpen: (row: ResourceRow) => void = () => {};
+  @Event onOpenTodo: (row: ResourceRow) => void = () => {};
+  @Event onRepositoryOpen: (kind:string,key:string) => void = () => {};
+  @Event onRepositoryChanged: (tree:ProjectWorktree,change:WorktreeChange) => void = () => {};
   @Event onSearchMode: (editing: boolean) => void = () => {};
   @Event onVisible: (row: ResourceRow, ratio: number) => void = () => {};
   @Param workspace: AgentWorkspace = new AgentWorkspace();
+  @Param projectCatalog: ProjectCatalog = new ProjectCatalog();
   @Local look: DeviceLook = deviceLook;
   @Local groupBindings: BoundAgentGroup[] = [];
   @Local mixedMachines: boolean = false;
@@ -287,7 +294,7 @@ export struct AgentListPage {
   }
 
   @Computed get availableGroupings(): string[] {
-    return this.workspace.groupingOptions().filter((key:string)=>!['repo','todo','direction'].includes(key));
+    return this.workspace.groupingOptions().filter((key:string)=>key !== 'todo' && key !== 'direction');
   }
   private groupingIndex(): number {
     return this.availableGroupings.indexOf(this.workspace.groupingMode);
@@ -374,8 +381,8 @@ export struct AgentListPage {
     if (group.id === 'app/desktop/claude code') Image($r('app.media.project_agent_claude')).width(18).height(18).objectFit(ImageFit.Contain)
     else if (group.id === 'app/desktop/codex') Image($r('app.media.project_agent_openai')).width(18).height(18).objectFit(ImageFit.Contain).fillColor(Colors.ink)
     else if (group.id.startsWith('app/desktop/') && group.presentation!=='app-project') Text(group.machineName.slice(0,1).toUpperCase()).fontSize(15).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-    else if (group.presentation === 'app-project') SymbolGlyph(Symbols.folder).fontSize('16vp').fontColor(Colors.secondary)
-    else if (group.id === 'app/other') SymbolGlyph(Symbols.agents).fontSize('16vp').fontColor(Colors.secondary)
+    else if (group.presentation === 'app-project') SymbolGlyph(Symbols.folder).fontSize('16vp').fontColor([Colors.secondary])
+    else if (group.id === 'app/other') SymbolGlyph(Symbols.agents).fontSize('16vp').fontColor([Colors.secondary])
     else Text('›_').fontSize('11vp').fontFamily('monospace').fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
       .width(18).height(14).textAlign(TextAlign.Center).border({width:1,color:Colors.secondary,radius:3}).accessibilityLevel('no')
   }
@@ -636,7 +643,9 @@ export struct AgentListPage {
   private refreshAgents(): void {
     if (this.revealedDuringPull) { this.revealedDuringPull = false; this.refreshing = false; return; }
     this.reloadDecisions(); this.workspace.setReadingDetail(false);
-    this.workspace.refresh(this.model).finally(() => {
+    const refreshes:Promise<void>[] = [this.workspace.refresh(this.model)];
+    if (this.workspace.groupingMode === 'repo') refreshes.push(this.projectCatalog.refresh(this.model));
+    Promise.all(refreshes).catch(() => {}).finally(() => {
       if (this.active && this.workspace.isBoundTo(this.model)) this.workspace.setReadingDetail(this.readingDetail);
       this.refreshing = false;
     });
@@ -820,7 +829,11 @@ export struct AgentListPage {
                 .onClick(() => this.workspace.toggleIdleRows(binding.value.id)).id('agents.idle.expand.' + binding.value.id)
             }
           }, (binding: BoundAgentGroup) => binding.key)
-        if (!this.workspace.hasRows() && !this.workspace.loading) ListItem() {
+        if (this.workspace.groupingMode === 'repo') {
+          AgentRepositoryRows({model:this.model,workspace:this.workspace,catalog:this.projectCatalog,rows:this.workspace.unpinnedRows,
+            onOpen:(row:ResourceRow)=>this.openRow(row),onRoute:(kind:string,key:string)=>this.onRepositoryOpen(kind,key),
+            onChanged:(tree:ProjectWorktree,change:WorktreeChange)=>this.onRepositoryChanged(tree,change)})
+        } else if (!this.workspace.hasRows() && !this.workspace.loading) ListItem() {
           Text(tr(this.workspace.search ? 'no_results' : 'empty')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page).width('100%')
         }.id('agents.empty')
       }.width('100%').height('100%').onAreaChange((_:Area,area:Area)=>{this.listWidth=Number(area.width);}).padding({ left: this.rail ? 0 : 12, right: this.rail ? 0 : 12, bottom: Tokens.listTail }).backgroundColor(Colors.grouped)
