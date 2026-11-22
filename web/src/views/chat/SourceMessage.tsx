@@ -4,6 +4,7 @@ import { isRelayContext, sourceLabel } from "../../lib/message-source";
 import { parseUserText } from "../../lib/turns";
 import type { UserMessage } from "../../lib/turns";
 import { cx } from "../../ui/atoms";
+import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
 import { useChatContext } from "./chat-context";
 import { useExpanded } from "./expanded";
@@ -42,10 +43,18 @@ function RelayedSourceMessage({ msg, mid, sid }: SourceProps) {
     return () => setOpen(false);
   });
   const label = sourceLabel(msg.source!);
+  // another hub's assistant asks: its hub's name with the hub mark, and once a line that it is not the user's request
+  const hub = msg.source!.kind === "hub";
   const contexts = (full.text ? parseUserText(full.text).contexts : msg.contexts).filter((context) => context.kind !== "message-source" && !isRelayContext(context));
   return (
-    <div className="chat-source" data-message-source={msg.source!.kind} data-source-conversation={msg.source!.conversation_id} data-items={[msg.id, ...msg.images.map((item) => item.id)].join(" ")}>
-      {!msg.continuedSource && <span className="chat-source-label" title={label}>@{label}</span>}
+    <div className="chat-source" data-message-source={msg.source!.kind} data-source-conversation={msg.source!.conversation_id} data-source-hub={hub ? msg.source!.hub_id : undefined} data-items={[msg.id, ...msg.images.map((item) => item.id)].join(" ")}>
+      {!msg.continuedSource && (hub ? (
+        <span className="chat-source-label flex items-center gap-1" title={label}>
+          <Icon name="hub" size={12} className="shrink-0" />
+          <span className="truncate">@{label}</span>
+        </span>
+      ) : <span className="chat-source-label" title={label}>@{label}</span>)}
+      {!msg.continuedSource && hub && <span className="chat-source-note">{t("chat-messages.source_hub_note")}</span>}
       <div className={cx("chat-source-body", long && !open && "chat-source-folded")} data-source-folded={long && !open || undefined} ref={(el) => {
         if (!el || open) return;
         const line = parseFloat(getComputedStyle(el).lineHeight);

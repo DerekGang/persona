@@ -65,6 +65,7 @@ DOMAINS = [
     "page_counts_mock",  # A paged session read with its counts, MOCK_PAGE_COUNTS
     "task_skip_mock",  # One scheduled occurrence, MOCK_SKIP_OCCURRENCE
     "direction_sessions_mock",  # Move To… and one direction's page (#11516), MOCK_DIRECTION_SESSIONS
+    "partner_hubs_mock",  # Settings › This hub › Partner hubs (/api/v1/partner-hubs…, …/partner-messages/prefs), MOCK_PARTNER_HUBS
 ]
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
