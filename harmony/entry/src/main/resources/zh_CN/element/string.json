@@ -7211,6 +7211,66 @@
     {
       "name": "phone_all_chats_display_options",
       "value": "显示选项"
+    },
+    {
+      "name": "phone_session_info",
+      "value": "会话信息"
+    },
+    {
+      "name": "phone_session_info_action",
+      "value": "{title}，查看会话信息"
+    },
+    {
+      "name": "phone_session_runtime",
+      "value": "运行"
+    },
+    {
+      "name": "phone_session_usage",
+      "value": "用量"
+    },
+    {
+      "name": "phone_session_context",
+      "value": "上下文"
+    },
+    {
+      "name": "phone_session_output",
+      "value": "共生成"
+    },
+    {
+      "name": "phone_session_started",
+      "value": "开始"
+    },
+    {
+      "name": "phone_session_folder",
+      "value": "文件夹"
+    },
+    {
+      "name": "phone_session_effort",
+      "value": "思考强度"
+    },
+    {
+      "name": "phone_session_extra_high",
+      "value": "很高"
+    },
+    {
+      "name": "phone_session_not_running",
+      "value": "未运行"
+    },
+    {
+      "name": "phone_session_background_work",
+      "value": "工作中（后台）"
+    },
+    {
+      "name": "phone_session_turns",
+      "value": "{n} 轮"
+    },
+    {
+      "name": "phone_session_turn_one",
+      "value": "{n} 轮"
+    },
+    {
+      "name": "phone_session_workspace",
+      "value": "打开工作区 {space}"
     }
   ]
 }

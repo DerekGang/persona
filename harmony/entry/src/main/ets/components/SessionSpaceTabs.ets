@@ -16,6 +16,7 @@ class TabLayoutFrame extends FrameCallback {
 export struct SessionSpaceTabs {
   @Require @Param space:SessionSpace;
   @Event onPick:(key:string,from:string,id:string) => void = () => {};
+  @Event onOpenSpace:(key:string) => void = () => {};
   private scroller:Scroller = new Scroller();
   private centered:string = '';
   private active:boolean = false;
@@ -74,7 +75,11 @@ export struct SessionSpaceTabs {
       }.listDirection(Axis.Horizontal).scrollBar(BarState.Off).edgeEffect(EdgeEffect.None).layoutWeight(1)
         .height(44)
         .onAreaChange(() => this.centerCurrent()).id('session.siblings')
-      Button({type:ButtonType.Capsule}) {
+      if (this.space.key) Button({type:ButtonType.Circle}) {
+        SymbolGlyph(Symbols.folder).fontSize('15vp').fontColor([Colors.secondary])
+      }.width(44).height(44).padding(0).backgroundColor(Color.Transparent).flexShrink(0)
+        .accessibilityText(tr('phone_session_workspace').replace('{space}',this.space.title)).onClick(() => this.onOpenSpace(this.space.key)).id('session.space.open')
+      if (this.space.tabs.length) Button({type:ButtonType.Capsule}) {
         Row({space:4}) {
           SymbolGlyph($r('sys.symbol.square_stack_3d')).fontSize('14vp').fontColor([Colors.secondary]).flexShrink(0)
           Text(String(this.space.tabs.length)).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)

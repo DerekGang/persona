@@ -20,6 +20,37 @@ const { ProjectCatalog, ProjectBrowserState, projectDirectory } = await import('
 const { projectOutline, projectHosts, projectSearchAgents, worktreeSpaceCards } = await import('../entry/src/main/ets/models/ProjectOutline.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
 const { SessionSpace, sessionSpace, worktreeForSessionSpace } = await import('../entry/src/main/ets/models/SessionSpace.ets');
+const { AgentSessionInfo,agentHeaderWords,sessionInfoPath } = await import('../entry/src/main/ets/models/AgentSessionInfo.ets');
+
+test('the Agent title prioritizes active state and worktree and the info sheet retains the separate slot and machine',()=>{
+  const tr=key=>({phone_todo_section_needs:'需要你',agent_group_idle:'已看'}[key] || key);
+  const needs=ResourceRow.from({session_id:'heic',machine_id:'studio',state:'needs_you',slot_index:1},'session');
+  const words=agentHeaderWords(needs,'Mac Studio','photo-sync',true,tr);
+  assert.deepEqual([words.full,words.short,words.location],['需要你 · Mac Studio · photo-sync','需要你 · photo-sync','Mac Studio › photo-sync › #1']);
+  const quiet=ResourceRow.from({session_id:'pr',machine_id:'book',state:'idle',slot_name:'review',slot_index:2},'session');
+  const pr=agentHeaderWords(quiet,'MacBook','weather',true,tr);
+  assert.deepEqual([pr.full,pr.short,pr.status,pr.location],['MacBook · weather','weather','已看','MacBook › weather › review']);
+  assert.equal(sessionInfoPath('/Users/me/code/weather','/Users/me'),'~/code/weather');
+  assert.equal(sessionInfoPath('/data00/home/agent/repo',''),'~/repo');
+});
+
+test('session info reads only its owning Hub and session and cannot fill a dismissed sheet or later session',async()=>{
+  const a=ResourceRow.from({session_id:'a / test',machine_id:'one/two',manager:'m'},'session');a.group='g';
+  const b=ResourceRow.from({session_id:'b',machine_id:'other',manager:'m'},'session');b.group='g';
+  const requests=[];let gate=Promise.withResolvers();
+  const client={selected:a,profile:{id:'g',manager:'m'},connected:true,generation:1,scope:()=>'g/m',
+    target(){return this.selected.key();},connectionGeneration(){return this.generation;},owns(g,scope){return this.generation===g && scope===this.scope();},
+    repo(){return{call:async(path,method,body,op,allowed)=>{requests.push({path,method,body,allowed});return gate.promise;}};}};
+  const sheet=new AgentSessionInfo();const first=sheet.open(client);
+  assert.equal(requests[0].path,'/api/v1/sessions/one%2Ftwo/a%20%2F%20test/info');assert.equal(requests[0].method,'GET');
+  sheet.close();gate.resolve({session_id:a.id,version:'ignored'});await first;assert.deepEqual(sheet.detail,{});
+  client.selected=b;gate=Promise.withResolvers();const second=sheet.open(client);client.generation++;
+  assert.equal(requests[1].allowed(),false);gate.resolve({session_id:'b',version:'old generation'});await second;assert.deepEqual(sheet.detail,{});
+  gate=Promise.withResolvers();const third=sheet.open(client);gate.resolve({session_id:'b',model:'live'});await third;
+  assert.equal(sheet.detail.model,'live');client.selected=a;assert.equal(sheet.owns(client),false);
+  gate=Promise.withResolvers();const mismatched=sheet.open(client);gate.resolve({session_id:'b',version:'wrong'});await mismatched;
+  assert.equal(sheet.error,'request_updated');assert.deepEqual(sheet.detail,{});
+});
 function row(kind, value, group = 'home', manager = 'work') {
   const item = ResourceRow.from(value, kind);
   item.group = group;

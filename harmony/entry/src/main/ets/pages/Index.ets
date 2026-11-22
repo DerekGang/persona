@@ -7,6 +7,7 @@ import { WorktreeSheet } from '../components/WorktreeSheet';
 import { phonePlaceAtRoot, phonePanIntent, finishesPhonePan } from '../models/PhoneNavigation';
 import { PhoneConversationSearch } from '../components/PhoneConversationSearch';
 import { SessionSpaceTabs } from '../components/SessionSpaceTabs';
+import { PhoneSessionHeading } from '../components/PhoneSessionHeading';
 import { SessionSpace, SessionSpaceTab, sessionSpace, worktreeForSessionSpace } from '../models/SessionSpace';
 import { MachineDirectory } from '../components/MachineDirectory';
 import { PhoneIconButton, PhoneStyle, PhoneSectionTitle } from '../design/PhoneStyle';
@@ -652,18 +653,8 @@ struct Index {
           }.padding(4).borderRadius(22*this.peerBarScale()).backgroundColor(Colors.surface)
             .border({width:0.5,color:Colors.divider,radius:22*this.peerBarScale()})
           Blank().layoutWeight(1)
-        } else if ((this.phoneTop === 'session' || this.phoneToolParent) && this.phoneSessionSpace.title) {
-          Column({space:2}) {
-            Text(this.phonePageName()).fontSize(17).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-              .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-            Row({space:4}) {
-              SymbolGlyph(Symbols.folder).fontSize('11vp').fontColor([Colors.secondary])
-              Text(this.phoneSessionSpace.title).fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
-                .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
-            }.id('session.space.title')
-          }.layoutWeight(1).alignItems(HorizontalAlign.Center)
-            .onClick(() => this.openSessionSpace(this.phoneSessionSpace.key))
-            .accessibilityRole(AccessibilityRoleType.BUTTON).id('session.space.open')
+        } else if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild === this.childKey(this.phoneTop,this.phoneParam) && this.targetReady(this.phoneTop,this.phoneParam)) {
+          PhoneSessionHeading({model:this.detailModel,space:this.phoneSessionSpace,heading:this.phonePageName()}).layoutWeight(1)
         } else if (this.phoneTop && !this.phoneLargeTitle()) {
           Text(this.phonePageName()).layoutWeight(1).fontSize(17).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
             .textAlign(TextAlign.Center).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
@@ -681,8 +672,8 @@ struct Index {
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
       }.width('100%').constraintSize({minHeight:50}).padding({left:16,right:16,top:3,bottom:3}).alignItems(VerticalAlign.Center)
       if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild && this.targetReady(this.phoneTop,this.phoneParam) && this.detailModel.selected.machine) {
-        if (this.phoneSessionSpace.tabs.length) SessionSpaceTabs({space:this.phoneSessionSpace,
-          onPick:(key:string,from:string,id:string) => this.switchSessionTab(key,from,id)})
+        if (this.phoneSessionSpace.tabs.length || this.phoneSessionSpace.key) SessionSpaceTabs({space:this.phoneSessionSpace,
+          onOpenSpace:(key:string) => this.openSessionSpace(key),onPick:(key:string,from:string,id:string) => this.switchSessionTab(key,from,id)})
       }
       if (this.phoneLargeTitle()) Text(this.phonePageName()).fontSize(PhoneStyle.title).maxFontScale(Tokens.chromeFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
         .width('100%').maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:4,bottom:8}).id('shell.page_title')

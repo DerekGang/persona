@@ -7211,6 +7211,66 @@
     {
       "name": "phone_all_chats_display_options",
       "value": "表示オプション"
+    },
+    {
+      "name": "phone_session_info",
+      "value": "セッション情報"
+    },
+    {
+      "name": "phone_session_info_action",
+      "value": "{title}、セッション情報を表示"
+    },
+    {
+      "name": "phone_session_runtime",
+      "value": "実行"
+    },
+    {
+      "name": "phone_session_usage",
+      "value": "使用量"
+    },
+    {
+      "name": "phone_session_context",
+      "value": "コンテキスト"
+    },
+    {
+      "name": "phone_session_output",
+      "value": "生成量"
+    },
+    {
+      "name": "phone_session_started",
+      "value": "開始"
+    },
+    {
+      "name": "phone_session_folder",
+      "value": "フォルダ"
+    },
+    {
+      "name": "phone_session_effort",
+      "value": "思考の強さ"
+    },
+    {
+      "name": "phone_session_extra_high",
+      "value": "とても高い"
+    },
+    {
+      "name": "phone_session_not_running",
+      "value": "停止中"
+    },
+    {
+      "name": "phone_session_background_work",
+      "value": "作業中（バックグラウンド）"
+    },
+    {
+      "name": "phone_session_turns",
+      "value": "{n}ターン"
+    },
+    {
+      "name": "phone_session_turn_one",
+      "value": "{n}ターン"
+    },
+    {
+      "name": "phone_session_workspace",
+      "value": "ワークスペース {space} を開く"
     }
   ]
 }

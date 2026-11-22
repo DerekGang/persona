@@ -7211,6 +7211,66 @@
     {
       "name": "phone_all_chats_display_options",
       "value": "Display Options"
+    },
+    {
+      "name": "phone_session_info",
+      "value": "Session Info"
+    },
+    {
+      "name": "phone_session_info_action",
+      "value": "{title}, view session info"
+    },
+    {
+      "name": "phone_session_runtime",
+      "value": "Runtime"
+    },
+    {
+      "name": "phone_session_usage",
+      "value": "Usage"
+    },
+    {
+      "name": "phone_session_context",
+      "value": "Context"
+    },
+    {
+      "name": "phone_session_output",
+      "value": "Output"
+    },
+    {
+      "name": "phone_session_started",
+      "value": "Start"
+    },
+    {
+      "name": "phone_session_folder",
+      "value": "Folder"
+    },
+    {
+      "name": "phone_session_effort",
+      "value": "Thinking Effort"
+    },
+    {
+      "name": "phone_session_extra_high",
+      "value": "Extra High"
+    },
+    {
+      "name": "phone_session_not_running",
+      "value": "Not running"
+    },
+    {
+      "name": "phone_session_background_work",
+      "value": "Working (Background)"
+    },
+    {
+      "name": "phone_session_turns",
+      "value": "{n} turns"
+    },
+    {
+      "name": "phone_session_turn_one",
+      "value": "{n} turn"
+    },
+    {
+      "name": "phone_session_workspace",
+      "value": "Open workspace {space}"
     }
   ]
 }
