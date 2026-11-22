@@ -5,6 +5,7 @@ import { KnowledgeRecording } from '../models/KnowledgeRecording';
 import type { KnowledgeRecordingEntry } from '../models/KnowledgeRecording';
 import { Tokens } from '../design/Tokens';
 import { tr, trError } from '../design/Strings';
+import { meetingEcho } from '../platform/MeetingEchoPreference';
 
 /** Capture controls for the local recording owned by the current Knowledge Hub/manager. */
 @ComponentV2
@@ -19,7 +20,7 @@ export struct KnowledgeRecordingView {
 
   @Local elapsed: number = 0;
   private tick: number = -1;
-  aboutToAppear(): void { this.updateClock(); }
+  aboutToAppear(): void { meetingEcho.load(this.getUIContext().getHostContext()); this.updateClock(); }
   @Monitor('model.captureState','model.entry') updateClock(): void {
     if (this.tick !== -1) clearInterval(this.tick);
     this.tick = -1;
@@ -95,6 +96,12 @@ export struct KnowledgeRecordingView {
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).onClick(() => this.model.room.sync())
       }.width('100%')
       if (this.model.room.latest) Text(this.model.room.latest).fontSize(16).fontColor(Colors.ink).width('100%').id('recordings.room.line')
+      if (this.model.captureState==='recording') Row({space:8}) {
+        Text(tr('phone_meeting_speaker')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
+        Toggle({type:ToggleType.Switch,isOn:this.model.entry?.roomRole==='participant'}).enabled(!this.model.speakerChanging)
+          .accessibilityText(tr('phone_meeting_speaker')).onChange((on:boolean)=>this.model.setRoomSpeaker(on,meetingEcho.enabled && meetingEcho.supported))
+          .id('recordings.room.speaker')
+      }.width('100%')
       ForEach(this.model.room.shownAsks,(ask:MeetingAsk) => {
         Column({space:4}) {
           Text(ask.question).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink)

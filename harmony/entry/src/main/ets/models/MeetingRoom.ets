@@ -50,11 +50,12 @@ export class MeetingRoom {
   private retryMs:number=1000;
   private wake:boolean=false;
   private textBytes:number=0;
+  private localAsks:Set<string>=new Set<string>();
 
   detach():void {
     this.generation++; clearTimeout(this.timer); this.timer=-1; this.running=undefined; this.io=undefined; this.journal=undefined;
     this.state=''; this.problem=''; this.latest=''; this.shownAsks=[]; this.liveNext=0; this.active=false; this.sending=false;
-    this.wake=false; this.retryMs=1000; this.textBytes=0;
+    this.wake=false; this.retryMs=1000; this.textBytes=0; this.localAsks.clear();
   }
   attach(journal:MeetingJournal,io:MeetingRoomIO):void {
     this.detach();
@@ -99,9 +100,19 @@ export class MeetingRoom {
   async ask(id:string,question:string,at:number):Promise<boolean> {
     const s=this.journal,io=this.io,n=this.generation,value=boundedText(question,4000);
     if (!s || !io || !this.owns(io,n) || s.endedAt || !value || !id || s.asks.some((a:MeetingAsk) => a.id===id)) return false;
+    this.localAsks.add(id);
     s.asks.push({id:id,question:value,at:Math.max(0,at),liveNext:s.lines.length,state:'queued',answer:''}); this.show();
     try { await this.persist(io,n); } catch (_) { if (this.owns(io,n)) this.problem='knowledge_storage_unavailable'; return false; }
     await this.sync(); return this.owns(io,n);
+  }
+  async changeSpeaker(on:boolean):Promise<boolean> {
+    const s=this.journal,io=this.io,n=this.generation,role=on ? 'participant' : 'listener';
+    if (!s || !io || !this.owns(io,n) || s.endedAt || !['listener','participant'].includes(s.role)) return false;
+    if (s.role!==role) {
+      s.role=role; s.revision=Math.max(Date.now(),s.revision+1); s.opened=false;
+    }
+    await this.sync();
+    return this.owns(io,n) && s.role===role && s.opened;
   }
   async finish(endedAt:string):Promise<void> {
     const s=this.journal,io=this.io,n=this.generation;
@@ -127,7 +138,9 @@ export class MeetingRoom {
   private async reply(ask:MeetingAsk,result:Record<string,Object>,s:MeetingJournal,io:MeetingRoomIO,n:number):Promise<void> {
     ask.state=Wire.text(result,'state',ask.state); ask.answer=Wire.text(result,'answer',ask.answer);
     this.show();
-    if (ask.state!=='answered' || !ask.answer || s.role!=='participant' || !Wire.bool(result,'speak') || ask.spoken || s.endedAt || !io.speak) return;
+    const age=Date.now()-Date.parse(s.startedAt)-ask.at*1000;
+    if (ask.state!=='answered' || !ask.answer || s.role!=='participant' || !Wire.bool(result,'speak') ||
+      !this.localAsks.has(ask.id) || age>60000 || ask.spoken || s.endedAt || !io.speak) return;
     ask.spoken=true;
     await this.persist(io,n);
     if (!this.owns(io,n) || s.endedAt) return;
@@ -160,8 +173,10 @@ export class MeetingRoom {
         await this.persist(io,n);
         if (!this.owns(io,n)) return;
         if (!s.opened) {
+          const requestedRevision=s.revision;
           const ack=await io.request(path,'PUT',this.upload(s,false));
           if (!this.owns(io,n)) return;
+          if (s.revision!==requestedRevision) { this.wake=true; continue; }
           if (Wire.text(ack,'id')!==s.id || Wire.text(ack,'status')==='expired' ||
             Wire.text(ack,'attendance')!==s.role || !Object.keys(Wire.object(ack,'room')).length) {
             this.problem='phone_meeting_unavailable'; this.state='unavailable'; return;
@@ -170,6 +185,7 @@ export class MeetingRoom {
           await this.persist(io,n);
         }
         if (!this.owns(io,n)) return;
+        if (!s.opened) { this.wake=true; continue; }
         const next=s.next, batch=s.lines.slice(next,next+64);
         if (batch.length && !s.ended) {
           const ack=await io.request(path+'/live','POST',Wire.payload(['from','segments'],[next,batch]));
@@ -180,6 +196,7 @@ export class MeetingRoom {
           await this.persist(io,n); this.show(); this.wake=true; continue;
         }
         for (const ask of s.asks) {
+          if (!s.opened) break;
           if (!this.owns(io,n)) return;
           if (ask.state!=='queued' || ask.liveNext>s.next || s.ended) continue;
           const reply=await io.request(path+'/ask','POST',Wire.payload(['id','question','at','live_next'],[ask.id,ask.question,ask.at,ask.liveNext]));
@@ -189,6 +206,7 @@ export class MeetingRoom {
           await this.reply(ask,resolved,s,io,n); await this.persist(io,n);
         }
         if (!this.owns(io,n)) return;
+        if (!s.opened) { this.wake=true; continue; }
         if (s.endedAt && !s.ended) {
           const ack=await io.request(path,'PUT',this.upload(s,true));
           if (!this.owns(io,n)) return;

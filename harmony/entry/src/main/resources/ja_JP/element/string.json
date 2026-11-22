@@ -6105,6 +6105,50 @@
       "value": "この端末で文字起こし"
     },
     {
+      "name": "phone_calendar_all_day",
+      "value": "終日"
+    },
+    {
+      "name": "phone_calendar_moved",
+      "value": "{due}に移動しました"
+    },
+    {
+      "name": "phone_meeting_auto_invite",
+      "value": "会議に Persona を自動で招待"
+    },
+    {
+      "name": "phone_meeting_auto_off_note",
+      "value": "会議はあなただけで始まります。必要なときに会議ページで Persona を招待してください。議事録と要点はどちらでも作られます。"
+    },
+    {
+      "name": "phone_meeting_auto_on_note",
+      "value": "どの会議も Persona が参加した状態で始まり、画面で回答します。会議から外すには会議ページで操作します。"
+    },
+    {
+      "name": "phone_meeting_experimental",
+      "value": "実験的機能"
+    },
+    {
+      "name": "phone_meeting_echo",
+      "value": "スピーカー使用時のエコー除去"
+    },
+    {
+      "name": "phone_meeting_echo_note",
+      "value": "会議中にスピーカーをオンにすると、マイクが一瞬止まります。"
+    },
+    {
+      "name": "phone_meeting_echo_unavailable",
+      "value": "この端末は音声収録時のエコー除去に対応していません。"
+    },
+    {
+      "name": "phone_meeting_echo_restore",
+      "value": "エコー除去を使用できないため、通常のマイクで録音を続けています。"
+    },
+    {
+      "name": "phone_meeting_speaker",
+      "value": "回答を読み上げる"
+    },
+    {
       "name": "phone_calendar_day",
       "value": "日"
     },

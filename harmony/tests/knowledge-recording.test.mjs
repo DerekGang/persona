@@ -87,6 +87,9 @@ class RecordingPlatformStub {
   async startRoomSpeech(final) { this.finalLine=final; }
   spoken=[];
   async speakRoom(id,text,language,admit) { if (admit()) this.spoken.push({id,text,language}); }
+  echoRequests=[];
+  stopRoomVoice() { this.stops=(this.stops || 0)+1; }
+  async enableSpeakerEcho(id) { this.echoRequests.push(id); return this.activeId===id; }
   activeId = '';
   bytes = 64000;
   transcribeCalls = [];
@@ -266,6 +269,27 @@ test('only a participant who asked for an audible answer invokes the speaker, an
     if (count) assert.equal(e.platform.spoken[0].text,'Synthetic answer');
     await e.model.stop(); await e.model.room.sync(); await e.model.dispose();
   }
+});
+
+test('changing the speaker updates the existing private room before any new asks and requests native echo only when opted in',async()=>{
+  const uploads=[]; let activeRole='off';
+  const e=await opened({features:['meeting_conversation','meeting_attendance'],request:async({method,path,body})=>{
+    const value=body ? JSON.parse(body) : {};
+    if (method==='PUT') { uploads.push(value); activeRole=value.room.attendance;
+      return JSON.stringify({id:path.split('/').at(-1),status:'stored',attendance:activeRole,room:{state:'ready'}}); }
+    return JSON.stringify({next:0,asks:[],room:{state:'ready'}});
+  }});
+  try {
+    assert.equal(await e.model.start('meeting','Synthetic speaker','listener',true),true); await e.model.room.sync();
+    assert.equal(await e.model.setRoomSpeaker(true,false),true); assert.equal(e.platform.echoRequests.length,0);
+    assert.equal(await e.model.setRoomSpeaker(false,false),true); assert.equal(e.platform.stops,1);
+    assert.equal(await e.model.setRoomSpeaker(true,true),true); assert.deepEqual(e.platform.echoRequests,[e.model.entry.id]);
+    assert.equal(e.model.entry.roomRole,'participant');
+    assert.deepEqual(uploads.map(u=>u.room.attendance),['listener','participant','listener','participant']);
+    assert.ok(uploads.every((u,n)=>u.private && !Object.hasOwn(u,'attending_session') && (!n || u.revision>uploads[n-1].revision)));
+    await e.model.stop(); await e.model.room.sync();
+    assert.equal(await e.model.setRoomSpeaker(false,true),false);
+  } finally { await e.model.dispose(); }
 });
 
 test('transcription failure keeps local audio and an explicit retry can transcribe and sync text', async () => {

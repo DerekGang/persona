@@ -6105,6 +6105,50 @@
       "value": "在本机转写"
     },
     {
+      "name": "phone_calendar_all_day",
+      "value": "全天"
+    },
+    {
+      "name": "phone_calendar_moved",
+      "value": "已移到 {due}"
+    },
+    {
+      "name": "phone_meeting_auto_invite",
+      "value": "开会时自动邀请 Persona"
+    },
+    {
+      "name": "phone_meeting_auto_off_note",
+      "value": "会议开始时只有你。需要时在会议页邀请 Persona；纪要和要点照常会有。"
+    },
+    {
+      "name": "phone_meeting_auto_on_note",
+      "value": "每场会议开始时 Persona 都在会里，在屏幕上回答。要在某场会里移出它，去会议页。"
+    },
+    {
+      "name": "phone_meeting_experimental",
+      "value": "实验"
+    },
+    {
+      "name": "phone_meeting_echo",
+      "value": "开喇叭时消除回声"
+    },
+    {
+      "name": "phone_meeting_echo_note",
+      "value": "会中打开喇叭时，麦克风会短暂中断一下。"
+    },
+    {
+      "name": "phone_meeting_echo_unavailable",
+      "value": "此设备的语音采集不支持回声消除。"
+    },
+    {
+      "name": "phone_meeting_echo_restore",
+      "value": "回声消除不可用，录音已使用普通麦克风继续。"
+    },
+    {
+      "name": "phone_meeting_speaker",
+      "value": "朗读回答"
+    },
+    {
       "name": "phone_calendar_day",
       "value": "日"
     },

@@ -20,6 +20,9 @@ const modules = {
   '@kit.AudioKit': `export const audio = {
     AudioState: {STATE_RUNNING: 2}, AudioChannel: {CHANNEL_1: 1},
     AudioSampleFormat: {SAMPLE_FORMAT_S16LE: 16}, AudioEncodingType: {ENCODING_TYPE_RAW: 0},
+    SourceType:{SOURCE_TYPE_MIC:0,SOURCE_TYPE_VOICE_COMMUNICATION:7},
+    getAudioManager:()=>({getStreamManager:()=>({isAcousticEchoCancelerSupported:(type)=>type===7 && globalThis.__playbackSdk().supportsEcho})}),
+    createAudioCapturer:(...args)=>globalThis.__playbackSdk().createCapturer(...args),
     StreamUsage: {STREAM_USAGE_MUSIC: 1}, AudioDataCallbackResult: {VALID: 1, INVALID: 0},
     createAudioRenderer: (...args) => globalThis.__playbackSdk().createRenderer(...args)
   };`
@@ -122,4 +125,34 @@ test('a different stored owner or mismatching PCM size never reaches an audio re
     await assert.rejects(platform.playLocal(entry, () => true, assert.fail), /phone_record_play_failed/);
   }
   assert.deepEqual([state.opened, state.readBytes, state.creates], [0, 0, 0]);
+});
+
+test('switching a live synthetic capture reports system echo support, preserves its file and recovers the ordinary source if AEC cannot start',async()=>{
+  for (const fails of [false,true]) {
+    const {platform,entry,state}=await fixture(), routes=[],released=[],frames=[];
+    const capture=(type)=>({ state:2, on(_k,fn){this.emit=fn;},off(){}, async stop(){this.state=0;},
+      async start(){if(fails && type===7) throw new Error('unavailable');this.state=2;},async release(){released.push(type);} });
+    state.supportsEcho=false;
+    state.createCapturer=async(config)=>{routes.push(config.capturerInfo.source);return capture(config.capturerInfo.source);};
+    platform.activeId=entry.id; platform.fileDescriptor=17; platform.activeBytes=1280; platform.capturer=capture(0); platform.readListener=b=>frames.push(b.byteLength);
+    assert.equal(await platform.enableSpeakerEcho(entry.id),false); assert.deepEqual(routes,[]);
+    state.supportsEcho=true;
+    assert.equal(await platform.enableSpeakerEcho('other'),false);
+    assert.equal(await platform.enableSpeakerEcho(entry.id),!fails);
+    assert.deepEqual(routes,fails ? [7,0] : [7]); assert.deepEqual(released,fails ? [0,7] : [0]);
+    platform.capturer.emit(new ArrayBuffer(640)); assert.deepEqual(frames,[640]);
+    assert.equal(platform.fileDescriptor,17); assert.equal(platform.activeBytes,1280);
+  }
+});
+
+test('a stop racing an unfinished synthetic echo reconfiguration releases the new source before closing the recording',async()=>{
+  const {platform,entry,state}=await fixture(), gate=Promise.withResolvers(), created=Promise.withResolvers();
+  let starts=0,releases=0;
+  const previous={state:2,off(){},async stop(){},async release(){}};
+  state.supportsEcho=true;
+  state.createCapturer=async()=>{created.resolve(); await gate.promise; return {state:0,async start(){starts++;},async release(){releases++;}};};
+  platform.activeId=entry.id;platform.fileDescriptor=17;platform.capturer=previous;platform.readListener=()=>{};
+  const change=platform.enableSpeakerEcho(entry.id);await created.promise;
+  const stop=platform.stop();gate.resolve();assert.equal(await change,false);await stop;
+  assert.deepEqual([starts,releases,platform.capturer,platform.fileDescriptor],[0,1,undefined,-1]);
 });

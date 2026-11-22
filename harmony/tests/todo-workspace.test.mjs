@@ -36,7 +36,7 @@ registerHooks({
   }
 });
 
-const { todoDayKey, todoCalendarDays, TodoWorkspace, TodoWorkspaceItem, TodoWorkspaceSpace, TodoWorkspaceSpaceChoice,
+const { todoDayKey, todoCalendarDays, todoCalendarDrop, todoDropDue, TodoWorkspace, TodoWorkspaceItem, TodoWorkspaceSpace, TodoWorkspaceSpaceChoice,
   todoWorkspaceStatus, relatedTodoMembers, todoMatchesDue } = await import('../entry/src/main/ets/models/TodoWorkspace.ets');
 const { reconcileBoundRows } = await import('../entry/src/main/ets/models/RowBinding.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
@@ -140,6 +140,92 @@ async function opened(options = {}) {
 }
 
 function pathOnly(path) { return path.split('?')[0]; }
+
+test('a reopened calendar restores its mode and local date even when the user leaves immediately',async()=>{
+  const e=await opened(), anchor=new Date(2026,10,25,16).getTime();
+  e.workspace.setCalendar(true,'week',anchor); e.workspace.close();
+  await e.workspace.open(e.client);
+  assert.equal(e.workspace.calendarOpen,true); assert.equal(e.workspace.calendarMode,'week');
+  assert.equal(todoDayKey(new Date(e.workspace.calendarAnchor)),'2026-11-25');
+  e.state.scope='hub:another'; e.state.generation++; await e.workspace.open(e.client);
+  assert.equal(e.workspace.calendarOpen,false); assert.equal(e.workspace.calendarMode,'day');
+});
+
+test('the local calendar date can be saved offline and does not depend on a usable write connection',async()=>{
+  const e=makeHarness();e.state.connected=false;
+  const ws=new TodoWorkspace();await ws.open(e.client);assert.equal(ws.calendarReady,true);
+  ws.setCalendar(true,'month',new Date(2026,11,4).getTime());ws.close();await ws.open(e.client);
+  assert.equal(ws.calendarMode,'month');assert.equal(todoDayKey(new Date(ws.calendarAnchor)),'2026-12-04');
+  assert.deepEqual(e.state.calls,[]);
+});
+
+test('native calendar drop geometry handles week columns, quarter hours, all-day conversion and month time preservation',()=>{
+  const days=[new Date(2026,10,22).getTime(),new Date(2026,10,23).getTime()];
+  const timed={left:10,top:100,width:200,height:60,days,hour:8};
+  assert.deepEqual(todoCalendarDrop([timed],110,126),{day:days[1],minute:510});
+  assert.equal(todoCalendarDrop([timed],210,126),undefined);
+  assert.equal(todoCalendarDrop([{...timed,hour:23}],12,159).minute,1425);
+  const item=new TodoWorkspaceItem(todo('a',{due_at:new Date(2026,10,22,14,45).toISOString()}),'work');
+  assert.deepEqual(todoDropDue(item,{day:days[1],minute:-1}),{day:'2026-11-23',at:''});
+  assert.deepEqual(todoDropDue(item,{day:days[1],minute:-2}),{at:new Date(2026,10,23,14,45).toISOString(),day:''});
+});
+
+test('a calendar move reads the owner again, shows a provisional position, changes only the due field and can be undone',async()=>{
+  const original=todo('a',{due_date:'2026-11-22',notes:'retain me'}),e=await opened({todos:[original]});
+  const before=deferred(), allow=deferred(), requests=[];
+  e.state.request=async ({method,path,body},s)=>{
+    if (method==='GET') { before.resolve(); await allow.promise; return {todos:structuredClone(s.todos)}; }
+    requests.push({path,body});
+    Object.assign(s.todos[0],{due_at:null,due_date:null},body);
+    return {todo:structuredClone(s.todos[0])};
+  };
+  const target={at:'2026-11-24T11:15:00.000Z',day:''};
+  const moving=e.workspace.reschedule(e.workspace.items[0],target);
+  await before.promise;
+  assert.equal(e.workspace.calendarRows()[0].dueAt,target.at);
+  assert.equal(e.workspace.items[0].dueDate,'2026-11-22');
+  allow.resolve(); assert.equal(await moving,true);
+  assert.equal(await e.workspace.undoCalendarMove(),true); assert.equal(e.workspace.undoTodo,'');
+  assert.deepEqual(requests,[{path:'/api/v1/todos/a?manager=work',body:{due_at:target.at}},
+    {path:'/api/v1/todos/a?manager=work',body:{due_date:'2026-11-22'}}]);
+  assert.equal(e.state.todos[0].notes,'retain me');
+});
+
+test('read-only, stale or changed-owner calendar gestures preserve the deadline and never submit a second move',async()=>{
+  const next={day:'2026-11-28',at:''}, e=await opened({todos:[todo('a',{due_date:'2026-11-22'})]});
+  const permission=deferred();
+  e.state.request=async ({method},s)=>{
+    if (method==='GET') return {todos:structuredClone(s.todos)};
+    await permission.promise;
+    throw new HttpFailure(403,'forbidden');
+  };
+  const denied=e.workspace.reschedule(e.workspace.items[0],next);
+  assert.equal(await e.workspace.reschedule(e.workspace.items[0],next),false);
+  permission.resolve(); assert.equal(await denied,false);
+  assert.equal(e.workspace.calendarRows()[0].dueDate,'2026-11-22'); assert.equal(e.workspace.calendarReadOnly,true);
+  assert.equal(e.workspace.error,'permission_denied'); assert.equal(e.workspace.undoTodo,'');
+  await e.workspace.open(e.client);
+  e.state.todos[0].due_date='2026-11-25'; const patches=e.state.calls.filter(x=>x.method==='PATCH').length;
+  assert.equal(await e.workspace.reschedule(e.workspace.items[0],next),false); assert.equal(e.workspace.error,'request_updated');
+  assert.equal(e.workspace.items[0].dueDate,'2026-11-25');
+  const gate=deferred(); e.state.request=async()=>{await gate.promise;return {todos:e.state.todos}};
+  const stale=e.workspace.reschedule(e.workspace.items[0],next); e.state.generation++; gate.resolve(); assert.equal(await stale,false);
+  assert.equal(e.workspace.movingItem,undefined); assert.equal(e.state.calls.filter(x=>x.method==='PATCH').length,patches);
+});
+
+test('two managers using the same to-do id keep independent deadline rows and undo targets',async()=>{
+  const e=await opened({todos:[todo('same',{manager:'other',due_date:'2026-11-20'}),todo('same',{due_date:'2026-11-23'})]});
+  const [other,own]=e.workspace.items;
+  assert.equal(e.workspace.canMove(other),false);
+  e.state.request=async({method,body},s)=>{
+    if (method==='GET') return {todos:structuredClone(s.todos)};
+    Object.assign(s.todos[1],body);return {todo:structuredClone(s.todos[1])};
+  };
+  assert.equal(await e.workspace.reschedule(own,{at:'',day:'2026-11-25'}),true);
+  assert.equal(e.workspace.movedItem().manager,'work');assert.equal(e.workspace.items[0],other);
+  assert.equal(await e.workspace.undoCalendarMove(),true);
+  assert.deepEqual(e.state.todos.map(x=>x.due_date),['2026-11-20','2026-11-23']);
+});
 
 function countsFor(sections, needs = sections.needs_you || 0) {
   const values = Object.fromEntries(TODO_HUB_SECTIONS.map(key => [key, sections[key] || 0]));

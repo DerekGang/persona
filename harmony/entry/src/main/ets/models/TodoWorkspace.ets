@@ -70,6 +70,39 @@ export function todoDayKey(date:Date):string {
   return String(date.getFullYear())+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
 }
 
+function dayFromKey(key:string):number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return Number.NaN;
+  const d=new Date(key+'T00:00:00');
+  return todoDayKey(d)===key ? d.getTime() : Number.NaN;
+}
+
+export interface TodoCalendarDue { at:string; day:string; }
+export interface TodoCalendarDrop { day:number; minute:number; }
+export interface TodoCalendarBand { left:number; top:number; width:number; height:number; days:number[]; hour:number; }
+
+/** Timed rows snap to the nearest quarter. The all-day row clears the time. Month cells keep it. */
+export function todoCalendarDrop(bands:TodoCalendarBand[],x:number,y:number):TodoCalendarDrop|undefined {
+  const band=bands.find((b:TodoCalendarBand)=>x>=b.left && x<b.left+b.width && y>=b.top && y<b.top+b.height);
+  if (!band || !band.days.length) return undefined;
+  const col=Math.min(band.days.length-1,Math.floor((x-band.left)*band.days.length/band.width));
+  const minute=band.hour<0 ? band.hour : Math.max(0,Math.min(1425,15*Math.round((band.hour*60+60*(y-band.top)/band.height)/15)));
+  return {day:band.days[col],minute:minute};
+}
+
+export function todoDropDue(item:TodoWorkspaceItem,target:TodoCalendarDrop):TodoCalendarDue {
+  const date=new Date(target.day);
+  if (target.minute===-1 || target.minute===-2 && !item.dueAt) return {at:'',day:todoDayKey(date)};
+  if (target.minute===-2) {
+    const previous=new Date(item.due);
+    date.setHours(previous.getHours(),previous.getMinutes(),previous.getSeconds(),0);
+  } else date.setHours(Math.floor(target.minute/60),target.minute%60,0,0);
+  return {at:date.toISOString(),day:''};
+}
+
+function sameTodoDue(a:TodoCalendarDue,b:TodoCalendarDue):boolean {
+  return a.day===b.day && (a.at===b.at || !!a.at && !!b.at && Date.parse(a.at)===Date.parse(b.at));
+}
+
 export function todoCalendarDays(mode:string, anchor:number, weekStart:number):number[] {
   const first=new Date(anchor);
   first.setHours(0,0,0,0);
@@ -374,6 +407,17 @@ export class TodoWorkspace {
   @Trace hubUnfolded: string[] = [];
   @Trace dueFilter:string = 'all';
   @Trace order:string = 'recent';
+  @Trace calendarOpen:boolean = false;
+  @Trace calendarMode:string = 'day';
+  @Trace calendarAnchor:number = Date.now();
+  @Trace movingItem:TodoWorkspaceItem|undefined = undefined;
+  @Trace undoTodo:string = '';
+  @Trace calendarReadOnly:boolean = false;
+  @Trace calendarReady:boolean = false;
+  private movedFrom:TodoCalendarDue = {at:'',day:''};
+  private movedTo:TodoCalendarDue = {at:'',day:''};
+  private movedManager:string = '';
+  private moveRevision:number = 0;
   @Trace selected: TodoWorkspaceItem = new TodoWorkspaceItem();
   @Trace loading: boolean = false;
   @Trace saving: boolean = false;
@@ -428,6 +472,8 @@ export class TodoWorkspace {
     this.search = '';
     this.dueFilter = 'all';
     this.order = 'recent';
+    this.calendarOpen=false; this.calendarMode='day'; this.calendarAnchor=Date.now(); this.calendarReady=false;
+    this.resetCalendarMove();
     this.sessions = [];
     this.machines = [];
     this.conversations = [];
@@ -445,10 +491,10 @@ export class TodoWorkspace {
       this.ownerGeneration = owner.connectionGeneration();
       this.ownerScope = owner.scope();
       this.managerId = owner.profile.manager;
-      this.boundRepo = owner.repo();
-      this.syncSessions(owner);
       await this.loadView(owner, revision);
       if (!this.loadCurrent(client, revision)) return;
+      this.boundRepo = owner.repo();
+      this.syncSessions(owner);
       const refreshRevision = this.listRequestRevision + 1;
       await this.refresh();
       if (!this.loadCurrent(client, revision)) return;
@@ -470,6 +516,8 @@ export class TodoWorkspace {
   }
 
   close(): void {
+    this.resetCalendarMove();
+    this.calendarReady=false;
     this.active = false;
     this.revision++;
     this.listRequestRevision++;
@@ -505,6 +553,7 @@ export class TodoWorkspace {
 
   private async loadView(client: ClientModel, revision: number): Promise<void> {
     try {
+      await this.draftWrites;
       const saved = Wire.parse(await client.loadView('todo-workspace'));
       if (this.ownerClient !== client || !this.loadCurrent(this.rootClient, revision)) return;
       this.search = Wire.text(saved, 'search');
@@ -513,20 +562,94 @@ export class TodoWorkspace {
       this.hubUnfolded = Wire.strings(saved, 'hubUnfolded').filter((key: string) => ['someday', 'can_wait', 'done'].includes(key));
       const due=Wire.text(saved,'due'),order=Wire.text(saved,'order');
       this.dueFilter=TODO_DUE_FILTERS.includes(due) ? due : 'all'; this.order=TODO_LIST_ORDERS.includes(order) ? order : 'recent';
+      this.calendarOpen=Wire.bool(saved,'calendar');
+      const mode=Wire.text(saved,'calendarMode'),date=dayFromKey(Wire.text(saved,'calendarDate'));
+      this.calendarMode=['day','week','month'].includes(mode) ? mode : 'day';
+      this.calendarAnchor=Number.isFinite(date) ? date : Date.now();
     } catch (_) { if (this.ownerClient === client && this.loadCurrent(this.rootClient, revision)) this.error = 'draft_restore_failed'; }
+    finally { if (this.ownerClient===client && this.loadCurrent(this.rootClient,revision)) this.calendarReady=true; }
   }
 
   private saveViewLater(): void {
-    const client = this.ownerClient;
-    if (!client || !this.active) return;
-    const owner = this.capture(undefined);
-    if (!owner) return;
-    const value = JSON.stringify(Wire.payload(['search', 'status', 'group', 'due', 'order', 'hubUnfolded'],
-      [this.search, this.statusFilter, this.groupBy, this.dueFilter, this.order, this.hubUnfolded]));
+    const client=this.ownerClient,root=this.rootClient;
+    if (!client || !root || !this.active) return;
+    const scope=this.ownerScope,rootScope=this.rootScope,group=this.groupId,manager=this.managerId;
+    const current=():boolean => client.scope()===scope && root.scope()===rootScope && root.profile.id===group && client.profile.manager===manager;
+    if (!current()) return;
+    const value = JSON.stringify(Wire.payload(['search','status','group','due','order','hubUnfolded','calendar','calendarMode','calendarDate'],
+      [this.search,this.statusFilter,this.groupBy,this.dueFilter,this.order,this.hubUnfolded,this.calendarOpen,this.calendarMode,todoDayKey(new Date(this.calendarAnchor))]));
+    const epoch=client.viewRevision('todo-workspace');
     this.draftWrites = this.draftWrites.catch(() => {}).then(async () => {
-      if (!this.ownsScope(owner)) return;
-      await owner.client.saveView('todo-workspace', value);
-    }).catch(() => { if (this.ownsScope(owner)) this.error = 'draft_save_failed'; });
+      if (current()) await client.saveView('todo-workspace',value,epoch);
+    }).catch(() => { if (current() && this.active && this.ownerClient===client) this.error='draft_save_failed'; });
+  }
+
+  setCalendar(open:boolean,mode:string=this.calendarMode,anchor:number=this.calendarAnchor):void {
+    if (!['day','week','month'].includes(mode) || !Number.isFinite(new Date(anchor).getTime())) return;
+    this.calendarOpen=open; this.calendarMode=mode; this.calendarAnchor=anchor; this.saveViewLater();
+  }
+
+  private resetCalendarMove():void {
+    this.moveRevision++; this.movingItem=undefined; this.undoTodo=''; this.movedManager=''; this.calendarReadOnly=false;
+  }
+
+  canMove(todo:TodoWorkspaceItem):boolean {
+    const data=todo.data();
+    return !this.calendarReadOnly && !this.saving && !this.movingItem && !!this.capture(todo) && this.items.includes(todo) &&
+      !Wire.bool(data,'read_only',Wire.bool(data,'readonly')) && (!Wire.has(data,'can_write') || Wire.bool(data,'can_write'));
+  }
+
+  calendarRows():TodoWorkspaceItem[] {
+    const pending=this.movingItem;
+    return pending ? this.items.map((row:TodoWorkspaceItem) => row.id===pending.id && row.manager===pending.manager ? pending : row) : this.items;
+  }
+
+  async reschedule(todo:TodoWorkspaceItem,due:TodoCalendarDue,undo:boolean=false):Promise<boolean> {
+    const owner=this.capture(todo);
+    if (!owner || !this.canMove(todo) || (!due.at && !Number.isFinite(dayFromKey(due.day))) ||
+      (!!due.at && (!!due.day || !Number.isFinite(Date.parse(due.at))))) return false;
+    const old:TodoCalendarDue={at:todo.dueAt,day:todo.dueDate};
+    if (sameTodoDue(old,due)) return false;
+    const path='/api/v1/todos/'+pathPart(todo.id)+managerQuery(owner.managerId);
+    if (owner.client.operationBlocked(path)) { this.error='todo_write_pending'; return false; }
+    const run=++this.moveRevision,current=():boolean=>this.moveRevision===run && this.owns(owner,false);
+    this.error=''; this.movingItem=updateRecord(todo,Wire.payload(['due_at','due_date'],[due.at,due.day]),owner.managerId);
+    try {
+      const list=await owner.repo.call('/api/v1/todos'+managerQuery(owner.managerId));
+      if (!current()) return false;
+      const live=Wire.rows(list,'todos').find((row:Record<string,Object>) => Wire.text(row,'id')===todo.id && Wire.text(row,'manager',owner.managerId)===owner.managerId);
+      const row=this.items.find((item:TodoWorkspaceItem)=>item.id===todo.id && (item.manager || owner.managerId)===owner.managerId);
+      if (!live || !row) { this.error='todo_gone'; return false; }
+      if (!sameTodoDue(old,{at:Wire.text(live,'due_at'),day:Wire.text(live,'due_date')}) || !sameTodoDue(old,{at:row.dueAt,day:row.dueDate})) {
+        this.upsert(live,owner.managerId); this.error='request_updated'; return false;
+      }
+      if (Wire.bool(live,'read_only',Wire.bool(live,'readonly')) || Wire.has(live,'can_write') && !Wire.bool(live,'can_write')) {
+        this.upsert(live,owner.managerId); this.error='permission_denied'; return false;
+      }
+      const result=await this.write(path,'PATCH',due.at ? Wire.payload(['due_at'],[due.at]) : Wire.payload(['due_date'],[due.day]),row,true,
+        ():boolean => current() && this.items.some((a:TodoWorkspaceItem)=>a.id===todo.id && a.manager===row.manager && sameTodoDue(old,{at:a.dueAt,day:a.dueDate})));
+      if (!result || !current()) {
+        if (current() && this.error==='permission_denied') this.calendarReadOnly=true;
+        if (current() && (this.writeState==='unknown' || this.writeState==='pending')) await this.refresh();
+        return false;
+      }
+      const updated=Wire.object(result,'todo');
+      if (Wire.text(updated,'id')!==todo.id || Wire.text(updated,'manager',owner.managerId)!==owner.managerId) { this.error='request_updated'; return false; }
+      const accepted=this.upsert(updated,owner.managerId);
+      if (!sameTodoDue(due,{at:accepted.dueAt,day:accepted.dueDate})) { this.error='request_updated'; return false; }
+      this.undoTodo=undo ? '' : todo.id; this.movedManager=owner.managerId; this.movedFrom=old; this.movedTo=due; return true;
+    } catch (failure) { if (current()) this.error=this.errorCode(failure as Error); return false;
+    } finally { if (this.moveRevision===run) this.movingItem=undefined; }
+  }
+
+  movedItem():TodoWorkspaceItem|undefined {
+    return this.items.find((row:TodoWorkspaceItem)=>row.id===this.undoTodo && (row.manager || this.managerId)===this.movedManager);
+  }
+
+  async undoCalendarMove():Promise<boolean> {
+    const item=this.movedItem();
+    if (!item || !sameTodoDue(this.movedTo,{at:item.dueAt,day:item.dueDate})) { this.undoTodo=''; this.error='request_updated'; return false; }
+    return this.reschedule(item,this.movedFrom,true);
   }
 
   setSearch(value: string): void { this.search = value; this.saveViewLater(); }
@@ -654,6 +777,7 @@ export class TodoWorkspace {
         if (revision !== this.listRequestRevision || !this.active || this.rootClient !== root ||
           rootScope !== this.rootScope || !root.owns(rootGeneration, rootScope)) return;
         this.hubCounts = undefined;
+        this.resetCalendarMove();
         this.ownerClient = next;
         this.boundRepo = next.repo();
         this.ownerGeneration = next.connectionGeneration();
@@ -799,11 +923,12 @@ export class TodoWorkspace {
     if (Wire.text(saved, 'title') === title && Wire.text(saved, 'notes') === notes) await owner.client.saveView(key, '');
   }
 
-  private async write(path: string, method: string, body: Record<string, Object>, todo: TodoWorkspaceItem | undefined, listRow:boolean=false): Promise<Record<string, Object> | undefined> {
+  private async write(path: string, method: string, body: Record<string, Object>, todo: TodoWorkspaceItem | undefined, listRow:boolean=false,
+    extraCheck?:()=>boolean): Promise<Record<string, Object> | undefined> {
     if (todo && this.rejectGoneTarget(todo)) return undefined;
     const owner = this.capture(todo);
     if (!owner) { this.error = 'offline'; return undefined; }
-    const admit=():boolean => this.owns(owner,!!todo && !listRow) && (!listRow || !!todo && this.items.some((item:TodoWorkspaceItem) =>
+    const admit=():boolean => (!extraCheck || extraCheck()) && this.owns(owner,!!todo && !listRow) && (!listRow || !!todo && this.items.some((item:TodoWorkspaceItem) =>
       item.id === todo.id && (item.manager || owner.managerId) === owner.todoManagerId && item.isDone() === todo.isDone()));
     if (listRow && (this.saving || !todo || !this.items.includes(todo) || !admit())) return undefined;
     if (owner.client.operationBlocked(path)) { this.error = 'todo_write_pending'; return undefined; }
@@ -830,11 +955,11 @@ export class TodoWorkspace {
 
   private upsert(data: Record<string, Object>, manager: string): TodoWorkspaceItem {
     const updated = new TodoWorkspaceItem(data, manager);
-    const index = this.items.findIndex((item: TodoWorkspaceItem) => item.id === updated.id);
+    const index = this.items.findIndex((item: TodoWorkspaceItem) => item.id === updated.id && (item.manager || manager) === (updated.manager || manager));
     const next = this.items.slice();
     if (index >= 0) next[index] = updated; else next.unshift(updated);
     this.items = next;
-    if (this.selected.id === updated.id) this.selected = updated;
+    if (this.selected.id === updated.id && (this.selected.manager || manager) === (updated.manager || manager)) this.selected = updated;
     this.refreshHubCountsAfterMutation();
     return updated;
   }

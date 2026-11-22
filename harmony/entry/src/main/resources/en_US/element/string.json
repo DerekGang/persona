@@ -6105,6 +6105,50 @@
       "value": "Transcription on this device"
     },
     {
+      "name": "phone_calendar_all_day",
+      "value": "All Day"
+    },
+    {
+      "name": "phone_calendar_moved",
+      "value": "Moved to {due}"
+    },
+    {
+      "name": "phone_meeting_auto_invite",
+      "value": "Invite Persona Automatically"
+    },
+    {
+      "name": "phone_meeting_auto_off_note",
+      "value": "A meeting starts with only you. Invite Persona on the Meetings page when you need it; the minutes and highlights come either way."
+    },
+    {
+      "name": "phone_meeting_auto_on_note",
+      "value": "Every meeting starts with Persona in it, answering on screen. Remove it from a meeting on the Meetings page."
+    },
+    {
+      "name": "phone_meeting_experimental",
+      "value": "Experimental"
+    },
+    {
+      "name": "phone_meeting_echo",
+      "value": "Echo Cancellation with the Speaker"
+    },
+    {
+      "name": "phone_meeting_echo_note",
+      "value": "Turning on the speaker during a meeting stops the microphone for a moment."
+    },
+    {
+      "name": "phone_meeting_echo_unavailable",
+      "value": "This device does not support echo cancellation for voice capture."
+    },
+    {
+      "name": "phone_meeting_echo_restore",
+      "value": "Echo cancellation was unavailable. Recording continued using the microphone."
+    },
+    {
+      "name": "phone_meeting_speaker",
+      "value": "Answer Aloud"
+    },
+    {
       "name": "phone_calendar_day",
       "value": "Day"
     },

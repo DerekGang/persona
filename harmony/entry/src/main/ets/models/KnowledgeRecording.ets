@@ -239,7 +239,7 @@ export class KnowledgeRecording {
 
   async dispose(): Promise<void> {
     try { await this.stopForBackground(); } catch (_) { }
-    this.room.detach(); this.openRevision++; this.activeTask++;
+    this.room.detach(); this.speakerRevision++; this.speakerChanging=false; this.openRevision++; this.activeTask++;
     this.local = undefined; this.root = undefined; this.context = undefined; this.ownerManager = '';
     this.activeTranscriptionId = '';
     this.entries = []; this.entry = undefined; this.transcript = '';
@@ -337,7 +337,7 @@ export class KnowledgeRecording {
       await this.platform.stop().catch(() => undefined);
     }
     if (this.activeTranscriptionId || this.transcriptionState === 'transcribing') await this.cancelTranscription().catch(() => undefined);
-    this.room.detach(); this.roomSpeechProblem='';
+    this.room.detach(); this.roomSpeechProblem=''; this.speakerRevision++; this.speakerChanging=false;
     const revision = ++this.openRevision;
     this.root = client; this.context = context; this.ownerManager = ownerManager || client.profile.manager;
     this.local = undefined;
@@ -431,6 +431,30 @@ export class KnowledgeRecording {
   canStart(): boolean { return !!this.local && !!this.context && this.pendingStartTask === 0 && this.activeEntryTasks.size === 0 &&
     this.uploadState !== 'uploading' && !['requesting', 'recording'].includes(this.captureState) && this.transcriptionState !== 'transcribing'; }
   canStop(): boolean { return this.captureState === 'recording'; }
+  @Trace speakerChanging:boolean=false;
+  private speakerRevision:number=0;
+
+  async setRoomSpeaker(on:boolean,echo:boolean):Promise<boolean> {
+    const entry=this.entry,local=this.local;
+    if (!entry || !local || !this.isLocalCurrent(local) || this.captureState!=='recording' || !entry.roomRole || !this.room.active || this.speakerChanging) return false;
+    const run=++this.speakerRevision;
+    const current=():boolean => this.speakerRevision===run && this.isLocalCurrent(local) && this.entry?.id===entry.id && this.captureState==='recording';
+    const copy=copyEntry(entry); copy.roomRole=on ? 'participant' : 'listener';
+    this.speakerChanging=true;
+    try {
+      if (!on) this.platform.stopRoomVoice();
+      this.entry=copy;
+      await this.saveLocal(copy,local); if (!current()) return false;
+      this.entries=this.entries.map((item:KnowledgeRecordingEntry)=>item.id===copy.id ? copy : item);
+      const changed=await this.room.changeSpeaker(on);
+      if (!current()) return false;
+      if (on && changed && echo && !await this.platform.enableSpeakerEcho(entry.id) && current()) this.roomSpeechProblem='phone_meeting_echo_restore';
+      return changed;
+    } catch (_) {
+      if (current()) { if (on && this.entry===copy) this.entry=entry; this.roomSpeechProblem='knowledge_storage_unavailable'; }
+      return false;
+    } finally { if (this.speakerRevision===run) this.speakerChanging=false; }
+  }
   canTranscribe(): boolean { return !!this.entry && this.entry.captureState === 'stopped' && this.entry.transcriptionState !== 'complete' && this.entry.transcriptionState !== 'transcribing'; }
   canRetryUpload(): boolean { return !!this.entry && !!this.entry.uploadBody && ['unknown', 'failed'].includes(this.entry.uploadState); }
   canDeleteLocal(): boolean { return !!this.entry && this.entry.captureState !== 'recording' && this.entry.transcriptionState !== 'transcribing' && this.entry.uploadState !== 'uploading'; }
@@ -509,7 +533,7 @@ export class KnowledgeRecording {
         },() => { if (this.isLocalCurrent(snapshot) && this.entry?.id===entry.id) this.roomSpeechProblem='phone_meeting_speech_unavailable'; });
         if (task!==this.activeTask || !this.isLocalCurrent(snapshot)) { await this.platform.stop(); return false; }
       }
-      await this.platform.start(context, recordingId, (reason: string) => { this.stopForCaptureFailure(reason).catch(() => undefined); });
+      await this.platform.start(context, recordingId, (reason: string) => { this.stopForCaptureFailure(reason).catch(() => undefined); },invitedRole==='participant' && invited);
       if (task !== this.activeTask || !this.isLocalCurrent(snapshot)) { await this.stopEntry(entry, true); return false; }
       this.captureState = 'recording'; if (invited) this.room.sync().catch(() => {}); return true;
     } catch (failure) {

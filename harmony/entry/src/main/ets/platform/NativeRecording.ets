@@ -167,6 +167,61 @@ export class NativeRecording {
   private voiceStop: (()=>void) | undefined;
   private silenceUntil:number=0;
   private voiceEpoch:number=0;
+  private echoActive:boolean=false;
+  private changingSource:Promise<boolean>|undefined;
+  private onCaptureFailure:((reason:string)=>void)|undefined;
+
+  static supportsEchoCancellation():boolean {
+    try { return audio.getAudioManager().getStreamManager().isAcousticEchoCancelerSupported(audio.SourceType.SOURCE_TYPE_VOICE_COMMUNICATION); }
+    catch (_) { return false; }
+  }
+
+  private openCapturer(withEcho:boolean):Promise<audio.AudioCapturer> {
+    return audio.createAudioCapturer({
+      streamInfo:{samplingRate:SAMPLE_RATE,channels:audio.AudioChannel.CHANNEL_1,sampleFormat:audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
+        encodingType:audio.AudioEncodingType.ENCODING_TYPE_RAW},
+      capturerInfo:{source:withEcho ? audio.SourceType.SOURCE_TYPE_VOICE_COMMUNICATION : audio.SourceType.SOURCE_TYPE_MIC,capturerFlags:0}
+    });
+  }
+
+  private async releaseCapturer(capturer:audio.AudioCapturer,listener?:((data:ArrayBuffer)=>void)):Promise<void> {
+    if (listener) { try { capturer.off('readData',listener); } catch (_) {} }
+    try { if (capturer.state===audio.AudioState.STATE_RUNNING) await capturer.stop(); } catch (_) {}
+    try { await capturer.release(); } catch (_) {}
+  }
+
+  stopRoomVoice():void { this.voiceEpoch++; this.voiceStop?.(); }
+
+  /** The PCM file and recognizer stay open while the system replaces its capture source. */
+  async enableSpeakerEcho(id:string):Promise<boolean> {
+    if (!id || id!==this.activeId || this.fileDescriptor<0) return false;
+    if (this.echoActive) return true;
+    if (this.changingSource) return this.changingSource;
+    if (!NativeRecording.supportsEchoCancellation() || !this.capturer || !this.readListener) return false;
+    const gen=this.generation,listener=this.readListener,old=this.capturer;
+    this.capturer=undefined;
+    const run=this.changeCaptureSource(gen,old,listener);
+    this.changingSource=run;
+    try { return await run; } finally { if (this.changingSource===run) this.changingSource=undefined; }
+  }
+
+  private async changeCaptureSource(gen:number,old:audio.AudioCapturer,listener:(data:ArrayBuffer)=>void):Promise<boolean> {
+    await this.releaseCapturer(old,listener);
+    for (const echo of [true,false]) {
+      if (gen!==this.generation) return false;
+      let replacement:audio.AudioCapturer|undefined;
+      try {
+        replacement=await this.openCapturer(echo);
+        if (gen!==this.generation) { await this.releaseCapturer(replacement); return false; }
+        replacement.on('readData',listener); await replacement.start();
+        if (gen!==this.generation) { await this.releaseCapturer(replacement,listener); return false; }
+        this.capturer=replacement; this.echoActive=echo; return echo;
+      } catch (_) { if (replacement) await this.releaseCapturer(replacement,listener); }
+    }
+    if (gen===this.generation) this.onCaptureFailure?.('recording_start_failed');
+    return false;
+  }
+
   async speakRoom(id:string,text:string,language:string,admit:()=>boolean):Promise<void> {
     this.voiceStop?.();
     const generation=++this.voiceEpoch;
@@ -230,7 +285,7 @@ export class NativeRecording {
 
   async ensureMicrophonePermission(context: Object): Promise<void> { await requestRecordingMicrophone(context); }
 
-  async start(context: Object, id: string, onLimit: (reason: string) => void): Promise<string> {
+  async start(context: Object, id: string, onLimit: (reason: string) => void,participant:boolean=false): Promise<string> {
     if (this.capturer || this.fileDescriptor >= 0 || !this.directory) throw new Error('recording_busy');
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('invalid_recording_id');
     const generation = ++this.generation;
@@ -242,15 +297,13 @@ export class NativeRecording {
     const output = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
     this.fileDescriptor = output.fd; this.activeId = id.toLowerCase(); this.activePath = path; this.activeBytes = 0;
     try {
-      const capturer = await audio.createAudioCapturer({
-        streamInfo: {
-          samplingRate: SAMPLE_RATE,
-          channels: audio.AudioChannel.CHANNEL_1,
-          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
-          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
-        },
-        capturerInfo: { source: audio.SourceType.SOURCE_TYPE_MIC, capturerFlags: 0 }
-      });
+      this.echoActive=participant && NativeRecording.supportsEchoCancellation(); this.onCaptureFailure=onLimit;
+      let capturer:audio.AudioCapturer;
+      try { capturer=await this.openCapturer(this.echoActive); }
+      catch (failure) {
+        if (!this.echoActive || generation!==this.generation) throw failure instanceof Error ? failure : new Error('recording_start_failed');
+        this.echoActive=false; capturer=await this.openCapturer(false);
+      }
       if (generation !== this.generation) { await capturer.release(); throw new Error('request_updated'); }
       this.capturer = capturer;
       const listener = (data: ArrayBuffer): void => {
@@ -292,21 +345,19 @@ export class NativeRecording {
   }
 
   async stop(): Promise<NativeRecordingStop> {
-    this.voiceEpoch++; this.voiceStop?.();
+    this.stopRoomVoice();
     if (this.stopping) return this.stopping;
     const path = this.activePath, fd = this.fileDescriptor, bytes = this.activeBytes;
     const capturer = this.capturer, listener = this.readListener, speech=this.roomSpeech;
+    const sourceChange=this.changingSource; this.echoActive=false; this.onCaptureFailure=undefined;
     this.roomSpeech=undefined; this.speechFailed=undefined;
     this.generation++;
     this.capturer = undefined; this.readListener = undefined; this.fileDescriptor = -1;
     this.activeId = ''; this.activePath = ''; this.activeBytes = 0;
     const result: NativeRecordingStop = { path, bytes, duration: bytes / BYTES_PER_SECOND };
     this.stopping = (async (): Promise<NativeRecordingStop> => {
-      if (capturer) {
-        if (listener) capturer.off('readData', listener);
-        try { if (capturer.state === audio.AudioState.STATE_RUNNING) await capturer.stop(); } catch (_) { }
-        try { await capturer.release(); } catch (_) { }
-      }
+      if (capturer) await this.releaseCapturer(capturer,listener);
+      if (sourceChange) await sourceChange.catch(()=>false);
       if (speech) await speech.finish();
       if (fd >= 0) {
         try { fileIo.fsyncSync(fd); } catch (_) { }
