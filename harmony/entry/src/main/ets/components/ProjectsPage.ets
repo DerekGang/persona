@@ -859,7 +859,7 @@ export struct ProjectsPage {
           if (this.catalog.loading) LoadingProgress().width(28).height(28).margin(12)
           else this.message(tr(this.agentFilterActive ? 'no_results' : this.catalog.partial ? 'project_catalog_unavailable' : 'project_empty'))
         }
-      }.width('100%').id('agents.repositories')
+      }.width('100%').padding({left:4,right:4}).id('agents.repositories')
         .bindSheet($$this.editorShown,this.editorSheet(),{height:SheetSize.LARGE,showClose:false,dragBar:false,
           onWillDismiss:(dismiss:DismissSheetAction) => { if (!this.editor.busy) dismiss.dismiss(); },
           onDisappear:() => { this.editor.close();this.editedTree=undefined; }})
