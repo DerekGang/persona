@@ -256,18 +256,21 @@ func TestDomainModelExamples(t *testing.T) {
 	}
 	for _, b := range blocks {
 		example := b[:strings.Index(b, "```")]
-		found := ""
+		var found []string
+		twin := false
 		for rel, text := range files {
 			if strings.Contains(text, example) && !strings.HasPrefix(rel, "internal/domainkit/") {
-				found = rel
+				found = append(found, rel)
+				twin = twin || !failing[rel[:strings.LastIndex(rel, "/")]]
 			}
 		}
 		switch {
-		case found == "":
+		case len(found) == 0:
 			t.Errorf("this example is in no planted file; copy it from a compliant twin:\n%s", example)
-		case failing[found[:strings.LastIndex(found, "/")]]:
-			t.Errorf("this example comes from %s, whose package has findings; copy it from a compliant twin:\n%s",
-				found, example)
+		case !twin:
+			slices.Sort(found)
+			t.Errorf("this example comes only from %s, whose packages have findings; copy it from a compliant twin:\n%s",
+				strings.Join(found, ", "), example)
 		}
 	}
 	for _, id := range domainrules.RuleIDs() {
