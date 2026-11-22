@@ -330,6 +330,12 @@ func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
 	// A screenshot with no words is the owner's first input too.
 	post("/api/v1/sessions", token, "10000000-0100-4000-8000-000000000008",
 		`{"machine_id":"machine","agent_type":"codex","launcher":"codex","cwd":"/code","tab_name":"Shot","images":[{"mime":"image/png","data":"iVBORw0KGgo="}]}`)
+	// A start the app marks "via" (a share, an intent) is delivered, but it is not the owner's input.
+	post("/api/v1/sessions", token, "10000000-0100-4000-8000-00000000a009",
+		`{"machine_id":"machine","agent_type":"codex","launcher":"codex","cwd":"/code","tab_name":"Shared","prompt":"shared private words","via":"share"}`)
+	if n := starts.Load(); n != 3 {
+		t.Fatalf("the marked start reached the node %d times in all, want 3 starts", n)
+	}
 	if err := h.deliverProjectReviewOwners(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +357,7 @@ func TestProjectReviewMainAndFirstAppInput(t *testing.T) {
 	if event, ok, err := manager.NextProjectReview(ctx, target); err != nil || ok {
 		t.Fatalf("automation, forward, retry, or management source loop: %s %v %v", event.Event, ok, err)
 	}
-	t.Log("authenticated new main and separate Assistant chats, main continuation and first Agent input once each; retries, app share, internal start and review session excluded")
+	t.Log("authenticated new main and separate Assistant chats, main continuation and first Agent input once each; retries, app shares (a message and a start), internal start and review session excluded")
 }
 
 func TestProjectReviewReceiptThroughBus(t *testing.T) {
