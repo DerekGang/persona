@@ -25,6 +25,36 @@ class AboutBuildConsumerTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "optional/native/token/localization"):
                 build.validate_consumer_lock()
 
+    def test_production_generated_reference_is_rejected(self):
+        with tempfile.TemporaryDirectory(prefix="persona-refract-build-production-") as temporary:
+            android = Path(temporary) / "android"
+            production = android / "feature/settings/src/main/kotlin/Host.kt"
+            production.parent.mkdir(parents=True)
+            production.write_text("import persona.feature.settings.generated.AboutBuildRow\n")
+            with self.assertRaisesRegex(
+                    ValueError, r"feature/settings/src/main/kotlin/Host\.kt$") as error:
+                build.validate_production_exclusion(android)
+            self.assertIn("AboutBuildRow", production.read_text())
+            self.assertEqual(str(production), str(android / error.exception.args[0].split(": ")[-1]))
+
+    def test_test_source_generated_reference_is_allowed(self):
+        with tempfile.TemporaryDirectory(prefix="persona-refract-build-production-") as temporary:
+            android = Path(temporary) / "android"
+            generated = android / "feature/settings/src/test/kotlin/Host.kt"
+            generated.parent.mkdir(parents=True)
+            generated.write_text("AboutBuildRow(AboutBuildSnapshot(\"42\").buildNumber)\n")
+            build.validate_production_exclusion(android)
+
+    def test_host_default_and_optional_slot_are_pinned(self):
+        host = build.HOST.read_text(encoding="utf-8")
+        build.validate_host(host)
+        with self.assertRaisesRegex(ValueError, "handwritten default"):
+            build.validate_host(host.replace("buildRow: (@Composable () -> Unit)? = null", "buildRow: @Composable () -> Unit"))
+        with self.assertRaisesRegex(ValueError, "handwritten PackageInfo default"):
+            build.validate_host(host.replace('Text("${info.longVersionCode}"', 'Text("42"'))
+        with self.assertRaisesRegex(ValueError, "only the supplied Build component"):
+            build.validate_host(host.replace("buildRow()", "OtherPage()"))
+
     def test_check_generates_twice_without_patching_the_reviewed_file(self):
         original = build.GENERATED.read_bytes()
         with tempfile.TemporaryDirectory() as temporary:

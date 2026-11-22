@@ -31,6 +31,7 @@ PILOT = ROOT / "android/refract/about-build"
 SOURCE = PILOT / "AboutBuildRow.swift"
 MAPPING = PILOT / "refract.json"
 GENERATED = ROOT / "android/feature/settings/src/test/kotlin/persona/feature/settings/generated/AboutBuildRow.kt"
+HOST = ROOT / "android/feature/settings/src/main/kotlin/persona/feature/settings/DeviceSettingsPages.kt"
 EXPECTED = {
     "source": "https://github.com/nwverse/refract",
     "commit": "811db385e4a38a4d5df720c795197368efe3602c",
@@ -55,8 +56,37 @@ source_lock.PILOT = PILOT
 source_lock.EXPECTED = EXPECTED
 
 
+def validate_host(source: str) -> None:
+    signature = re.search(
+        r"internal fun AboutSettingsPage\((?P<parameters>.*?)\n\) \{", source, flags=re.DOTALL)
+    if signature is None or not re.search(
+            r"buildRow:\s*\(@Composable \(\) -> Unit\)\? = null", signature.group("parameters")):
+        source_lock.fail("About Build host must keep an optional no-argument slot with a handwritten default")
+    body = source[signature.end():]
+    if not re.search(
+            r"JGroupItem\(GroupPosition\.of\(1, count\)\)\s*\{\s*"
+            r"if \(buildRow == null\) \{\s*"
+            r"JRow\(stringResource\(R\.string\.settings_about_build\), trailing = \{ "
+            r'Text\("\$\{info\.longVersionCode\}"', body):
+        source_lock.fail("About Build host must preserve its handwritten PackageInfo default")
+    if not re.search(r"\}\s*else\s*\{\s*buildRow\(\)\s*\}\s*\}", body):
+        source_lock.fail("About Build host must select only the supplied Build component")
+
+
+def validate_production_exclusion(android: Path) -> None:
+    for production in android.rglob("*.kt"):
+        relative = production.relative_to(android)
+        parts = relative.parts
+        if not any(parts[index:index + 2] == ("src", "main") for index in range(len(parts) - 1)):
+            continue
+        source = production.read_text(encoding="utf-8")
+        if any(fragment in source for fragment in ("AboutBuildSnapshot", "AboutBuildRow")):
+            source_lock.fail(f"Ordinary production source must exclude this test-only consumer: {relative}")
+
+
 def validate_consumer_lock() -> dict:
     lock = source_lock.validate_lock()
+    validate_host(HOST.read_text(encoding="utf-8"))
     text = GENERATED.read_text(encoding="utf-8")
     if any(fragment not in text for fragment in REQUIRED):
         source_lock.fail("Generated Build row no longer has the reviewed optional/native/token/localization boundary")
@@ -67,9 +97,7 @@ def validate_consumer_lock() -> dict:
         source_lock.fail("Generated Build row must not own framework metadata or an unlocalized fallback")
     if not (PILOT / "harmony-resource-validation-only/string.json").is_file():
         source_lock.fail("Missing second-backend schema-validation resource fixture")
-    for production in (ROOT / "android").glob("**/src/main/**/*.kt"):
-        if any(fragment in production.read_text(encoding="utf-8") for fragment in ("AboutBuildSnapshot", "generated.AboutBuildRow")):
-            source_lock.fail(f"Ordinary production source must exclude this test-only consumer: {production.relative_to(ROOT)}")
+    validate_production_exclusion(ROOT / "android")
     return lock
 
 

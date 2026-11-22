@@ -70,6 +70,16 @@ package metadata and generated/native text, descriptions, click/custom actions a
 bounds in en/zh-Hans/ja for present and absent optional inputs. It does not alter the generated source or repeat the
 pixel matrix.
 
+#13076 connects the generated component to the existing native `AboutSettingsPage` through its optional `buildRow`
+parameter. It defaults to null, preserving the existing handwritten `JRow` and remembered PackageInfo lookup; the
+production route never passes it. `AboutBuildHostTest` uses a real PackageInfo → `AboutBuildSnapshot` adapter to
+select a distinct comparison value, then checks handwritten default → generated → handwritten default under that
+same remembered snapshot. It retains one Build row, the native Version and the full-value Commit copy action. This
+is component-hosting/rollback evidence, not dynamic package-metadata refresh, production selection or a copied page.
+The checker pins this default and rejects any `AboutBuildRow` / `AboutBuildSnapshot` reference under production
+`src/main`, with an explicit temporary-path negative fixture. Removing the optional parameter and its test invocation
+restores the untouched handwritten host; no persisted state or migration is involved.
+
 #13061 adds isolated temporary-file rollback checks for the Build generation entrypoint. Nondeterministic successive
 outputs restore the original reviewed bytes and return nonzero. If restoration itself fails, the original generator
 diagnostic remains first and the restoration error is explicitly secondary; no successful rollback is claimed.
