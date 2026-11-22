@@ -127,6 +127,31 @@ test('the global Agent badge keeps the newest owned snapshot across out-of-order
   assert.equal(model.phoneAgentBadge(muted), 0);
 });
 
+test('the phone drawer reads current non-quiet open to-dos before opening the list and coalesces refreshes', async () => {
+  const {model} = fixture();
+  const reads = [], repo = {todos() { const result = deferred(); reads.push(result); return result.promise; }};
+  const row = (id, extra={}) => ResourceRow.from({id,manager:'personal',...extra},'todo');
+  const refresh = () => model.refreshPhoneList('todo', repo, model.generation, model.scope(), false);
+  const first = refresh(), concurrent = refresh();
+  assert.equal(reads.length, 1);
+  reads[0].resolve([row('open'),row('quiet',{quiet:true}),row('closed',{done_at:'2026-11-01'}),row('other',{manager:'other'})]);
+  await Promise.all([first,concurrent]);
+  assert.equal(model.phoneTodoBadge(), 1);
+  await refresh();
+  assert.equal(reads.length, 1);
+  model.todoRead.change++;
+  const delayed = refresh();
+  model.todoRead.change++;
+  const latest = refresh();
+  reads[2].resolve([row('open'),row('another')]);
+  await latest;
+  reads[1].resolve([]);
+  await delayed;
+  assert.equal(model.phoneTodoBadge(), 2);
+  model.profile.manager = 'other';
+  assert.equal(model.phoneTodoBadge(), 0);
+});
+
 function heldFixture() {
   const {model} = fixture();
   delete model.canSend;

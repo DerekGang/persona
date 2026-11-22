@@ -284,7 +284,7 @@ export struct PhoneSettingsOptions {
           ForEach(LANGUAGES,(lang:string,ix:number) => {
             Row({space:7}) {
               Text(lang==='default' ? tr('system')+' · '+languageName(i18n.getSystemLanguage()) : languageName(lang))
-                .fontSize(17).fontColor(Colors.ink).layoutWeight(1)
+                .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
               if (this.model.language===lang) SymbolGlyph(Symbols.check).fontSize('17vp').width(21).flexShrink(0).fontColor([Colors.link])
             }.width('100%').constraintSize({minHeight:46}).padding({left:15,right:14,top:6,bottom:6})
               .enabled(!this.model.languageChanging).accessibilitySelected(this.model.language===lang).accessibilityGroup(true)

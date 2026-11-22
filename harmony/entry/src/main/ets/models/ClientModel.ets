@@ -50,6 +50,13 @@ export interface ClientViewLease {
   clearIfUnchanged: (expected: string) => Promise<void>;
 }
 
+class PhoneListRead {
+  change: number = 0;
+  snapshot: string = '';
+  pendingKey: string = '';
+  pending: Promise<void> | undefined;
+}
+
 @ObservedV2
 export class ClientModel {
   readonly ssh: SshTunnel = new SshTunnel();
@@ -108,10 +115,8 @@ export class ClientModel {
   @Trace knowledge: ResourceRow[] = [];
   @Trace knowledgeKind: string = 'projects';
   @Trace inbox: ResourceRow[] = [];
-  private inboxSnapshotKey: string = '';
-  private inboxChange: number = 0;
-  private inboxReadKey: string = '';
-  private inboxRead: Promise<void> | undefined;
+  private inboxRead: PhoneListRead = new PhoneListRead();
+  private todoRead: PhoneListRead = new PhoneListRead();
   @Trace selected: ResourceRow = new ResourceRow();
   @Trace messages: ChatMessage[] = [];
   @Trace cards: ResourceRow[] = [];
@@ -711,7 +716,8 @@ export class ClientModel {
         if (Wire.text(data, 'machine_id') === this.selected.machine && Wire.text(data, 'session_id') === this.selected.session)
           this.terminalText = (this.terminalText + Wire.text(data, 'data')).slice(-200000);
       } else if (['interaction', 'interactions', 'interaction_resolved', 'session', 'sessions', 'sessions_delta', 'item', 'items', 'session_delta', 'todo', 'inbox', 'task_plan', 'assistant_feed', 'managers', 'machines'].includes(type)) {
-        if (type === 'inbox') this.inboxChange++;
+        if (type === 'inbox') this.inboxRead.change++;
+        if (type === 'todo') this.todoRead.change++;
         this.queueRefresh();
       }
     } catch (_) { this.error = 'failed'; }
@@ -781,24 +787,33 @@ export class ClientModel {
       if (this.isChat() && this.chatVisible) await this.loadChat(this.selected);
       else if (this.isChat() && this.decisionsVisible) await this.refreshDecisions();
       else this.readInteractionSnapshot().catch(() => {});
-      if (this.section === 2) await this.refreshInboxSnapshot(repo, generation, scope, true);
-      else if (!this.detached) this.refreshInboxSnapshot(repo, generation, scope, false).catch(() => {});
+      this.refreshPhoneList('todo', repo, generation, scope, false).catch(() => {});
+      if (this.section === 2) await this.refreshPhoneList('inbox', repo, generation, scope, true);
+      else if (!this.detached) this.refreshPhoneList('inbox', repo, generation, scope, false).catch(() => {});
     } catch (error) { if (this.owns(generation, scope)) this.failure(error as Error); }
     finally { if (this.owns(generation, scope)) { this.busy = false; this.publishDirectory(); } }
   }
-  private async refreshInboxSnapshot(repo: HubRepository, generation: number, scope: string, force: boolean): Promise<void> {
-    const change = this.inboxChange, key = JSON.stringify([generation, scope, change]);
-    if (key === this.inboxReadKey && this.inboxRead) return this.inboxRead;
-    if (!force && key === this.inboxSnapshotKey) return Promise.resolve();
-    this.inboxReadKey = key;
-    this.inboxRead = repo.inbox().then((rows: ResourceRow[]) => {
-      if (this.owns(generation, scope) && this.inboxChange === change) {
-        this.inbox = rows; this.inboxSnapshotKey = key;
-      }
+  private async refreshPhoneList(kind: string, repo: HubRepository, generation: number, scope: string, force: boolean): Promise<void> {
+    const state = kind === 'todo' ? this.todoRead : this.inboxRead;
+    const change = state.change, key = JSON.stringify([generation, scope, change]);
+    if (key === state.pendingKey && state.pending) return state.pending;
+    if (!force && key === state.snapshot) return;
+    state.pendingKey = key;
+    const read = kind === 'todo' ? repo.todos() : repo.inbox();
+    state.pending = read.then((rows: ResourceRow[]) => {
+      if (!this.owns(generation, scope) || state.change !== change) return;
+      if (kind === 'todo') this.todos = rows;
+      else this.inbox = rows;
+      state.snapshot = key;
     }).finally(() => {
-      if (this.inboxReadKey === key) { this.inboxRead = undefined; this.inboxReadKey = ''; }
+      if (state.pendingKey === key) { state.pending = undefined; state.pendingKey = ''; }
     });
-    return this.inboxRead;
+    return state.pending;
+  }
+  phoneTodoBadge(): number {
+    if (!this.connected) return 0;
+    return this.todos.filter((row: ResourceRow): boolean =>
+      (!row.manager || row.manager === this.profile.manager) && !row.isDone() && !Wire.bool(row.data(), 'quiet')).length;
   }
   async openMain(): Promise<ResourceRow> {
     const generation = this.generation, scope = this.scope(), repository = this.repository;

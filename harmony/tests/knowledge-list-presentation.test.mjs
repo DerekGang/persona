@@ -6,16 +6,25 @@ registerHooks({load(url,context,next){
   if(url.endsWith('.ets'))return {format:'module',shortCircuit:true,source:stripTypeScriptTypes(readFileSync(new URL(url),'utf8').replace(/@ObservedV2\s*/g,'').replace(/@Trace\s+/g,''))};
   return next(url,context);
 }});
-const {knowledgeDateLabel,knowledgePriorityTone,knowledgeRelevanceTone,knowledgeInk,knowledgeWash,KnowledgeLandingMenu}=await import('../entry/src/main/ets/models/KnowledgeListPresentation.ets');
-test('knowledge dates match the iPhone calendar-day, weekday, and relative-minute boundaries in the active locale',()=>{
+const {knowledgePriorityTone,knowledgeRelevanceTone,knowledgeInk,knowledgeWash,KnowledgeLandingMenu}=await import('../entry/src/main/ets/models/KnowledgeListPresentation.ets');
+const {relativeActivityDate,phoneDueDate}=await import('../entry/src/main/ets/core/PhoneDate.ts');
+test('activity dates match the iPhone calendar-day, weekday, and relative-minute boundaries in the active locale',()=>{
   const now=new Date(2026,10,22,12,0).getTime(), local=(day,hour,minute=0)=>new Date(2026,10,day,hour,minute).toISOString();
-  const say=(raw,locale='zh-CN')=>knowledgeDateLabel(raw,now,locale,'刚刚','{n} 分钟前','昨天');
+  const say=(raw,locale='zh-CN')=>relativeActivityDate(Date.parse(raw),now,locale,'刚刚','{n} 分钟前','昨天');
   assert.equal(say(new Date(now-44000).toISOString()),'刚刚');
   assert.equal(say(new Date(now-45000).toISOString()),'1 分钟前');
   assert.equal(say(local(22,11,35)),'25 分钟前');assert.match(say(local(22,8,30)),/8:30/);
   assert.equal(say(local(21,23,30)),'昨天');assert.equal(say(local(18,9)),'星期三');assert.equal(say(local(18,9),'en-US'),'Wednesday');
   assert.equal(say(local(7,8)),new Date(local(7,8)).toLocaleDateString('zh-CN',{month:'short',day:'numeric'}));
   assert.equal(say('invalid'),'');assert.equal(say('1970-01-01T00:00:00Z'),'');
+});
+test('timed and all-day deadlines name the local weekday and show the year only when it changes',()=>{
+  const when = new Date(2026,10,22,18,30).getTime();
+  const day = phoneDueDate(when,when,'en-US',false);
+  const timed = phoneDueDate(when,when,'en-US',true);
+  assert.match(day,/Sun/); assert.doesNotMatch(day,/2026|18:30|6:30/);
+  assert.match(timed,/6:30/);assert.match(phoneDueDate(when,new Date(2027,0).getTime(),'en-US',false),/2026/);
+  assert.equal(phoneDueDate(NaN,when,'en-US',true),'');
 });
 test('priority and relevance have separate tone ranges and the same swatch remains legible on both standard appearances',()=>{
   assert.deepEqual(['P0','P1','P2','P3',''].map(knowledgePriorityTone),['attention','working','blue','secondary','secondary']);

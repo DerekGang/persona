@@ -1,5 +1,6 @@
+import { relativeActivityDate } from '../core/PhoneDate';
 import { i18n } from '@kit.LocalizationKit';
-import { KnowledgeLandingMenu, knowledgeDateLabel, knowledgeInk, knowledgePriorityTone, knowledgeRelevanceTone, knowledgeWash } from '../models/KnowledgeListPresentation';
+import { KnowledgeLandingMenu, knowledgeInk, knowledgePriorityTone, knowledgeRelevanceTone, knowledgeWash } from '../models/KnowledgeListPresentation';
 import { PhoneKnowledgeSelection } from './PhoneKnowledgeSelection';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
@@ -40,7 +41,7 @@ struct KnowledgeLibraryRow {
   @Computed get entry(): KnowledgeListEntry { return new KnowledgeListEntry(this.row); }
 
   private dateLabel(): string {
-    return knowledgeDateLabel(this.entry.updated,Date.now(),this.language==='default' ? i18n.System.getSystemLanguage() : this.language,
+    return relativeActivityDate(Date.parse(this.entry.updated),Date.now(),this.language==='default' ? i18n.System.getSystemLanguage() : this.language,
       tr('agent_time_just_now'),tr('kb_minutes_ago'),tr('kb_yesterday'));
   }
   private textWidth(label:string,points:number,bold:boolean):number {

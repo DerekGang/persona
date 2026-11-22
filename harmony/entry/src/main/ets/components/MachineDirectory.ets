@@ -1,3 +1,5 @@
+import { i18n } from '@kit.LocalizationKit';
+import { relativeActivityDate } from '../core/PhoneDate';
 import { LengthMetrics } from '@kit.ArkUI';
 import { Colors } from '../design/Colors';
 import { PhoneStyle } from '../design/PhoneStyle';
@@ -92,16 +94,6 @@ class ComputerCard {
     this.tokens = sample ? machineTokenTotal(Wire.object(sample.usage,'today')) : 0;
     this.stamp = JSON.stringify([this.key,row.raw,sample?.latest,sample?.usage,this.needs,this.working,this.idle]);
   }
-}
-
-function ageLabel(stamp:number, now:number):string {
-  if (!Number.isFinite(stamp) || stamp <= 0) return '';
-  const minute = Math.floor((now * 1000 - stamp)/60000);
-  if (minute < 0) return '';
-  if (minute < 1) return tr('agent_time_just_now');
-  if (minute < 60) return String(minute)+tr('agent_time_minute_suffix');
-  if (minute < 1440) return String(Math.floor(minute/60))+tr('agent_time_hour_suffix');
-  return String(Math.floor(minute/1440))+tr('agent_time_day_suffix');
 }
 
 function clockLabel(time:number):string {
@@ -354,7 +346,7 @@ export struct MachineDirectory {
             if (c.online && !c.pending) Circle().width(6).height(6).fill(Colors.positive)
             Text(this.status(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(c.pending ? Colors.working : c.online ? Colors.positive : Colors.secondary)
           }
-          if (!c.online && ageLabel(Date.parse(Wire.text(c.raw,'last_seen')),this.chartEnd)) Text(ageLabel(Date.parse(Wire.text(c.raw,'last_seen')),this.chartEnd))
+          if (!c.online && this.ageLabel(Date.parse(Wire.text(c.raw,'last_seen')))) Text(this.ageLabel(Date.parse(Wire.text(c.raw,'last_seen'))))
             .fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
         }.alignItems(HorizontalAlign.End)
       }.width('100%')
@@ -381,6 +373,17 @@ export struct MachineDirectory {
         ...c.alerts.map((a:MachineAlert) => tr(a.key))].filter((v:string) => !!v).join(' · ')).id(selected ? 'machines.selected' : 'machines.row')
   }
 
+  private ageLabel(stamp: number): string {
+    const locale = this.model.language === 'default' ? i18n.getSystemLanguage() : this.model.language;
+    return relativeActivityDate(stamp, this.chartEnd * 1000, locale, tr('agent_time_just_now'), tr('kb_minutes_ago'), tr('kb_yesterday'));
+  }
+  private historyTitle(key: string): string {
+    if (key !== 'mem') return this.label(key);
+    const sample = this.detailSample;
+    const total = sample ? Wire.number(sample.latest, 'mem_total', Wire.number(sample.system, 'memory')) : 0;
+    const bytes = total || Wire.number(this.cards[0]?.system || {}, 'memory');
+    return bytes > 0 ? this.label(key) + ' (' + tr('machine_total_bytes').replace('{size}', machineBytes(bytes)) + ')' : this.label(key);
+  }
   private label(key:string):string { return key === 'cpu' ? 'CPU' : key === 'tokens' ? 'Tokens' : tr(key === 'mem' ? 'phone_ram' : key === 'network' ? 'phone_network' : 'machine_load'); }
   private present(key:string,n:number):string {
     if (n < 0) return '—';
@@ -513,7 +516,7 @@ export struct MachineDirectory {
         }.width('100%')
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       Column({space:6}) {
-        if (Number.isFinite(a.updated)) Text(ageLabel(a.updated,this.chartEnd)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
+        if (Number.isFinite(a.updated)) Text(this.ageLabel(a.updated)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
         if (a.sourceLabel) Text(tr(a.sourceLabel)).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale)
           .fontColor(Colors.secondary).borderRadius(8).padding({left:6,right:6,top:2,bottom:2}).backgroundColor(Colors.control)
       }.alignItems(HorizontalAlign.End)
@@ -641,7 +644,7 @@ export struct MachineDirectory {
   @Builder chartRow(key:string) {
     Column({space:7}) {
       Row({space:8}) {
-        Text(this.label(key)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
+        Text(this.historyTitle(key)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
         if (this.inspected) Text(clockLabel(this.inspected)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
       }.width('100%')
       Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(13),cross:LengthMetrics.vp(4)}}) {

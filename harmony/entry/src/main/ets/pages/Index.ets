@@ -1198,14 +1198,17 @@ struct Index {
   private placeCount(kind:string): number {
     if (kind === 'inbox') return this.model.inbox.filter((row:ResourceRow) => !row.isDone() &&
       inboxTier(row.data()) === 'action' && !Wire.bool(row.data(),'read')).length;
-    return this.model.todos.filter((r:ResourceRow) => !r.isDone() && !Wire.bool(r.data(),'handled') && !['done','handled','archived'].includes(r.state)).length;
+    return this.model.phoneTodoBadge();
   }
   @Builder spaceRow(kind: string) {
     if (this.matchesDrawer(this.spaceTitle(kind))) ListItem() {
       Row({ space: 16 }) {
         SymbolGlyph(this.spaceSymbol(kind)).fontSize('20vp').fontColor([Colors.ink]).width(24)
         Text(this.spaceTitle(kind)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
-        if ((kind === 'inbox' || kind === 'todo') && this.placeCount(kind) > 0) Text(String(this.placeCount(kind))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.link)
+        if ((kind === 'inbox' || kind === 'todo') && this.placeCount(kind) > 0) {
+          Text(String(this.placeCount(kind))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
+            .fontColor(Colors.link).id('spaces.count.' + kind)
+        }
       }.padding({left:12,right:12,top:5,bottom:5}).constraintSize({minHeight:44}).width('100%')
     }.borderRadius(10).backgroundColor(this.activeModule() === kind ? Colors.control : Color.Transparent)
       .selectable(true).selected(this.activeModule() === kind).onClick(() => { if (this.drawerAcceptsTap()) this.openSpace(kind); }).id('spaces.' + kind)

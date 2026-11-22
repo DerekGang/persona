@@ -54,9 +54,9 @@ export struct MachineChart {
         if (run.length === 1) { ctx.fillStyle = color; ctx.fillRect(x-0.7,y-0.7,1.4,1.4); }
       }
       ctx.strokeStyle = color; ctx.lineWidth = this.chartHeight > 30 ? 1.7 : 1.3; ctx.stroke();
-      if (!this.interactive && !alternate && !this.alternateTint && run.length > 1) {
+      if (!alternate && !this.alternateTint && run.length > 1) {
         ctx.lineTo(this.x(run[run.length-1].time), bottom); ctx.lineTo(this.x(run[0].time), bottom); ctx.closePath();
-        ctx.globalAlpha = this.dark ? 0.22 : 0.11; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.globalAlpha = this.interactive ? 0.1 : (this.dark ? 0.22 : 0.11); ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1;
       }
       run = [];
     };

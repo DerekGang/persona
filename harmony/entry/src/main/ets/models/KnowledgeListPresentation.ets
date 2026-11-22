@@ -1,17 +1,5 @@
 import type { KnowledgeWorkspace } from './KnowledgeWorkspace';
 
-export function knowledgeDateLabel(raw:string, now:number, locale:string, justNow:string, minutesAgo:string, yesterday:string):string {
-  const at=Date.parse(raw);if (!Number.isFinite(at) || at<=946684800000) return '';
-  const seconds=(now-at)/1000, date=new Date(at), current=new Date(now);
-  if (seconds<45) return justNow;
-  if (seconds<3600) return minutesAgo.replace('{n}',String(Math.max(1,Math.floor(seconds/60))));
-  const day=(d:Date):number => Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000;
-  const days=day(current)-day(date);
-  if (!days) return date.toLocaleTimeString(locale || undefined,{hour:'numeric',minute:'2-digit'});
-  if (days===1) return yesterday;
-  if (seconds<6*86400) return date.toLocaleDateString(locale || undefined,{weekday:'long'});
-  return date.toLocaleDateString(locale || undefined,{month:'short',day:'numeric'});
-}
 export function knowledgePriorityTone(priority:string):string { return priority==='P0' ? 'attention' : priority==='P1' ? 'working' : priority==='P2' ? 'blue' : 'secondary'; }
 export function knowledgeRelevanceTone(relevance:number):string { return relevance>=70 ? 'attention' : relevance>=40 ? 'working' : 'neutral'; }
 export function knowledgeInk(tone:string,dark:boolean):string {

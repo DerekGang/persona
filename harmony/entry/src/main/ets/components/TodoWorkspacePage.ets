@@ -1,3 +1,4 @@
+import { phoneDueDate, relativeActivityDate } from '../core/PhoneDate';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { i18n } from '@kit.LocalizationKit';
 import { IconActions } from '../design/IconActions';
@@ -392,10 +393,7 @@ export struct TodoWorkspacePage {
 
   private dueTitle(todo:TodoWorkspaceItem):string {
     if (!Number.isFinite(todo.due)) return '';
-    const date=new Date(todo.due);
-    const locale=this.model.language && this.model.language !== 'default' ? this.model.language : i18n.System.getSystemLocaleInstance().toString();
-    const day=todo.dueAt && Number.isFinite(Date.parse(todo.dueAt)) ? date.toLocaleDateString(locale) + ' ' +
-      String(date.getHours()).padStart(2,'0') + ':' + String(date.getMinutes()).padStart(2,'0') : date.toLocaleDateString(locale);
+    const day = phoneDueDate(todo.due, this.clock, this.dateLocale(), !!todo.dueAt && Number.isFinite(Date.parse(todo.dueAt)));
     return (!todo.isDone() && todo.dueBy < this.clock ? tr('flow_todo_overdue') + ' · ' : '') + day;
   }
   private setRowDone(todo:TodoWorkspaceItem):void {
@@ -437,11 +435,8 @@ export struct TodoWorkspacePage {
     }.width('100%')
   }
   private since(todo:TodoWorkspaceItem):string {
-    const delta=Math.floor((this.clock-Date.parse(todo.updatedAt || todo.createdAt))/60000);
-    if (!Number.isFinite(delta) || delta<0) return '';
-    if (delta<1) return tr('agent_time_just_now');
-    return delta<60 ? String(delta)+tr('agent_time_minute_suffix') : delta<1440 ? String(Math.floor(delta/60))+tr('agent_time_hour_suffix') :
-      new Date(Date.parse(todo.updatedAt || todo.createdAt)).toLocaleDateString(this.dateLocale());
+    return relativeActivityDate(Date.parse(todo.updatedAt || todo.createdAt), this.clock, this.dateLocale(),
+      tr('agent_time_just_now'), tr('kb_minutes_ago'), tr('kb_yesterday'));
   }
   @Builder todoRow(binding:BoundRow<TodoWorkspaceGroup>) {
     ListItem() {
