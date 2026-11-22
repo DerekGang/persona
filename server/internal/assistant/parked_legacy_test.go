@@ -100,6 +100,11 @@ func TestLegacyOwnerPriorityMovesToNeedsYouAndRestates(t *testing.T) {
 	}
 	after := cur.Supervision.Reviews[0]
 	after.RestateAt = before.RestateAt
+	// moving the wait to needs_user ends the park, so the review records when (#10798)
+	if after.ParkEndedAt.IsZero() {
+		t.Fatalf("the ended park does not record its end: %+v", after)
+	}
+	after.ParkEndedAt = before.ParkEndedAt
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("migration rewrote the original wait/history: before %+v, after %+v", before, after)
 	}

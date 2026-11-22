@@ -59,7 +59,7 @@ func TestPRReviewWakeBoundWait(t *testing.T) {
 				t.Fatalf("the bound change request did not return to review: %+v; signals %v", cur, pendingKinds(s, task.ID))
 			}
 			if cur.Supervision.Supervisor != before.Supervision.Supervisor ||
-				!reflect.DeepEqual(cur.Supervision.Reviews, before.Supervision.Reviews) || len(sentToAgent(f)) != sends {
+				!reflect.DeepEqual(endedParkHistory(t, cur.Supervision.Reviews), before.Supervision.Reviews) || len(sentToAgent(f)) != sends {
 				t.Fatal("the observation changed history, supervisor or sent an Agent instruction")
 			}
 			if name == "earlier PR while another is open" && (cur.PRURL == source || cur.PRStatus.State != "open") {
@@ -201,7 +201,7 @@ func TestPRReviewWakeRejectsReplacedWait(t *testing.T) {
 			s.sweepPRStatuses(ctx, now.Add(deployRecheck))
 			cur := todoNow(s, task.ID)
 			if cur.Supervision.State != reviewPending || !pendingReviewSignal(s, task.ID) ||
-				!reflect.DeepEqual(cur.Supervision.Reviews, before.Supervision.Reviews) {
+				!reflect.DeepEqual(endedParkHistory(t, cur.Supervision.Reviews), before.Supervision.Reviews) {
 				t.Fatal("a fresh observation failed to resolve the same recorded wait")
 			}
 		})
@@ -278,7 +278,7 @@ func TestPRReviewWakePersistsAndRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterHistory, err := json.Marshal(cur.Supervision.Reviews)
+	afterHistory, err := json.Marshal(endedParkHistory(t, cur.Supervision.Reviews))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,4 +302,22 @@ func TestPRReviewWakePersistsAndRecovers(t *testing.T) {
 	if err != nil || len(decisions) != 0 {
 		t.Fatalf("a forge observation manufactured an owner decision: %+v, %v", decisions, err)
 	}
+}
+
+// endedParkHistory is reviews as they were before a wake ended the park: the wake leaves the recorded history alone
+// except that the ended park's review now says when it ended (#10798, ParkEndedAt), which it must.
+func endedParkHistory(t *testing.T, reviews []TaskReview) []TaskReview {
+	t.Helper()
+	out := slices.Clone(reviews)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Verdict == reviewParked {
+			if out[i].ParkEndedAt.IsZero() {
+				t.Fatalf("the ended park does not record its end: %+v", out[i])
+			}
+			out[i].ParkEndedAt = time.Time{}
+			return out
+		}
+	}
+	t.Fatalf("no park review in %+v", reviews)
+	return nil
 }

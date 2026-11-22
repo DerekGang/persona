@@ -101,6 +101,11 @@ func TestPersonReplyWakeRecordsReceiptAndQueuesReviewOnce(t *testing.T) {
 	_ = json.Unmarshal(prior, &priorMaps)
 	_ = json.Unmarshal(latest, &latestMaps)
 	delete(latestMaps[len(latestMaps)-1], "reply")
+	// the wake ends the park, so the review records when (#10798); that is not a rewrite of what was recorded
+	if latestMaps[len(latestMaps)-1]["park_ended_at"] == nil {
+		t.Fatalf("the ended park does not record its end: %s", latest)
+	}
+	delete(latestMaps[len(latestMaps)-1], "park_ended_at")
 	stripped, _ := json.Marshal(latestMaps)
 	if !reflect.DeepEqual(priorMaps, latestMaps) {
 		t.Fatalf("reply wake changed review history beyond its receipt: before=%s after=%s", prior, stripped)

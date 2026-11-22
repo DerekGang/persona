@@ -96,6 +96,11 @@ func TestPersonReplyPersistsAndRecovers(t *testing.T) {
 		t.Fatalf("receipt identity missing: %s", raw)
 	}
 	delete(reviews[0], "reply")
+	// the reply ends the park, so the review records when (#10798); that is not a rewrite of what was recorded
+	if reviews[0]["park_ended_at"] == nil {
+		t.Fatalf("the ended park does not record its end: %s", raw)
+	}
+	delete(reviews[0], "park_ended_at")
 	unchanged, _ := json.Marshal(reviews)
 	var old []map[string]any
 	oldRaw, _ := json.Marshal(before.Supervision.Reviews)

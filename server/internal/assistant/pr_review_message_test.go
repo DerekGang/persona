@@ -44,7 +44,7 @@ func TestPRReviewWakeMessageDoesNotCompleteCriteria(t *testing.T) {
 			if cur.DoneAt != nil || cur.Supervision.State != reviewPending ||
 				!slices.Equal(cur.Supervision.DoneWhen, criteria) ||
 				!reflect.DeepEqual(cur.Supervision.Criteria, before.Supervision.Criteria) ||
-				!reflect.DeepEqual(cur.Supervision.Reviews, before.Supervision.Reviews) {
+				!reflect.DeepEqual(endedParkHistory(t, cur.Supervision.Reviews), before.Supervision.Reviews) {
 				t.Fatal("a PR review wake completed the task or changed its criteria/history")
 			}
 			signal, ok := reviewSignal(s, task.ID)
