@@ -967,12 +967,12 @@ export struct TodoWorkspacePage {
   @Builder detailFooterAction(handoff:boolean) {
     Button({type:ButtonType.Capsule}) {
       Row({space:5}) {
-        SymbolGlyph(handoff ? $r('sys.symbol.sparkles') : this.workspace.selected.isDone() ? $r('sys.symbol.arrow_counterclockwise') : Symbols.check)
+        SymbolGlyph(handoff ? $r('sys.symbol.paperplane') : this.workspace.selected.isDone() ? $r('sys.symbol.arrow_counterclockwise') : Symbols.check)
           .fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)).fontColor([handoff ? Colors.onAction : Colors.ink])
         Text(this.footerWords(handoff)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600)
           .fontColor(handoff ? Colors.onAction : Colors.ink).maxLines(1)
       }.justifyContent(FlexAlign.Center).width('100%')
-    }.height(this.detailFooterHeight()).padding({left:8,right:8}).backgroundColor(handoff ? Colors.action : Colors.surface)
+    }.width('100%').height(this.detailFooterHeight()).padding({left:8,right:8}).backgroundColor(handoff ? Colors.action : Colors.surface)
       .border({width:handoff ? 0 : 0.5,color:Colors.divider}).enabled(this.workspace.detailEditable() && !this.workspace.saving)
       .onClick(() => { if (handoff) this.onCreateAgent(this.workspace.todoResource(this.workspace.selected)); else this.changeCompletion(); })
       .id(handoff ? 'todo.handToAgent' : 'todo.toggleDone')
