@@ -1,3 +1,4 @@
+import { LengthMetrics } from '@kit.ArkUI';
 import { Colors } from '../design/Colors';
 import { PhoneStyle } from '../design/PhoneStyle';
 import { Symbols } from '../design/Symbols';
@@ -25,19 +26,19 @@ export struct AssistantChatTitle {
   @Param gap: number = 4;
   @Param identity: string = '';
   build() {
-    Row({space:this.gap}) {
+    Flex({direction:FlexDirection.Row,alignItems:ItemAlign.Center,space:{main:LengthMetrics.vp(this.gap)}}) {
       Text() {
         Span(assistantChatTitleParts(this.title)[0]).fontColor(Colors.secondary)
         Span(assistantChatTitleParts(this.title)[1]).fontColor(Colors.ink)
       }.fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body))
-        .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
+        .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1).constraintSize({minWidth:0}).id(this.identity+'.title')
       if (this.source === 'lark_agent') Image($r('app.media.brand_lark'))
         .width(PhoneStyle.sidebarMetric(14,nativeEnvironment.fontScale)).aspectRatio(1).objectFit(ImageFit.Contain)
-        .accessibilityLevel('no').id(this.identity+'.source')
+        .flexShrink(0).accessibilityLevel('no').id(this.identity+'.source')
       else if (this.source) SymbolGlyph(assistantSourceSymbol(this.source))
         .fontSize(Tokens.interfaceFontVp(13,nativeEnvironment.fontScale)).fontColor([Colors.secondary])
-        .accessibilityLevel('no').id(this.identity+'.source')
-    }.alignItems(VerticalAlign.Center)
+        .flexShrink(0).accessibilityLevel('no').id(this.identity+'.source')
+    }.width('100%')
   }
 }
 
