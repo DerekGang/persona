@@ -467,11 +467,7 @@ func TestFeishuStaleCallbackCannotActOnReplacement(t *testing.T) {
 					if swapAfterGet {
 						ft.s.endPrepared(p, "cancelled", "test replacement after get")
 						startReplacement()
-						deadline := time.Now().Add(5 * time.Second)
-						for !currentIsReplacement() && time.Now().Before(deadline) {
-							time.Sleep(time.Millisecond)
-						}
-						if currentIsReplacement() {
+						if ownerActionPoll(t, 5*time.Second, currentIsReplacement) {
 							swapped.Store(true)
 							// This is the replacement announcement's ledger write. It
 							// must survive the stale press's later cleanup/restore.

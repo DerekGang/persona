@@ -14,6 +14,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
+	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/shellcmd"
 )
@@ -292,7 +293,7 @@ func larkKnownWrite(c larkCall) bool {
 
 var (
 	larkCLIKnownWrites     = map[string]bool{"im/+messages-send": true, "im/+messages-reply": true}
-	gateLiteralWriteMethod = regexp.MustCompile(`(?i)(POST|PUT|PATCH|DELETE)\b`)
+	gateLiteralWriteMethod = lazyre.New(`(?i)(POST|PUT|PATCH|DELETE)\b`)
 )
 
 // gateWrite: a gated command (or its script) called with a method that is not a read, anywhere in a command.
@@ -476,8 +477,21 @@ func (n *Node) assistantLark(ctx context.Context) proto.AssistantLark {
 		n.logger.Printf("assistant: Feishu gate config from hub: %v", err) // never the config itself
 		return cached
 	}
+	relayGates(&cfg)
 	n.mu.Lock()
 	n.larkCfg, n.larkCfgAt = cfg, time.Now()
 	n.mu.Unlock()
 	return cfg
+}
+
+// relayGates makes each relayed gate (proto.CommandGate.Relay, #12904) one the gate proxy stands in for: an Auth of
+// its own (no header: the manager puts the credentials on the call), so that everything that holds a gate with Auth to
+// the proxy (larkgate.go, larkgate_env.go, gateproxy.go) holds this one too. Its socket and token stay out of the
+// assistant's process (larkgate_env.go).
+func relayGates(cfg *proto.AssistantLark) {
+	for i := range cfg.Gates {
+		if g := &cfg.Gates[i]; g.Relay && g.BaseEnv != "" && g.Auth == nil {
+			g.Auth = &proto.GateAuth{}
+		}
+	}
 }

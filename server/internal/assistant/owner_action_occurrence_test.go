@@ -218,18 +218,12 @@ func TestOwnerActionDecisionClaimsBeforeExpiry(t *testing.T) {
 		waited <- r
 		waitErr <- err
 	}()
-	deadline := time.Now().Add(time.Second)
-	for {
+	if !ownerActionPoll(t, time.Second, func() bool {
 		s.fleet.mu.Lock()
-		registered := p.resolved != nil
-		s.fleet.mu.Unlock()
-		if registered {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("owner-action waiter did not register")
-		}
-		time.Sleep(time.Millisecond)
+		defer s.fleet.mu.Unlock()
+		return p.resolved != nil
+	}) {
+		t.Fatal("owner-action waiter did not register")
 	}
 	st.casEntered = make(chan struct{}, 1)
 	st.casRelease = make(chan struct{})
@@ -394,9 +388,7 @@ func TestOwnerActionShutdownWakesPersistentWaiter(t *testing.T) {
 		r, err := s.await(context.Background(), p)
 		waited <- outcome{r: r, err: err}
 	}()
-	// Give the waiter a chance to block in the initial resolved/done select;
-	// the early persistenceErr check also makes the reverse scheduling safe.
-	time.Sleep(20 * time.Millisecond)
+	// The early persistenceErr check makes either waiter scheduling safe.
 	cancel()
 	s.failOwnerProposalClaim(p, runCtx.Err())
 	select {

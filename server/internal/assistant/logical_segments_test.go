@@ -955,22 +955,22 @@ func testLogicalConcurrentManagersAdmitOnlyOneOccurrence(t *testing.T, resumable
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	var early *result
-	for time.Now().Before(deadline) {
+	if !ownerActionPoll(t, time.Until(deadline), func() bool {
 		select {
 		case got := <-results:
 			consumed++
 			early = &got
+			return true
 		default:
-		}
-		if early != nil {
-			break
 		}
 		_, firstPending := managers[0].pendingIx(first.ID)
 		_, secondPending := managers[1].pendingIx(first.ID)
 		if firstPending && secondPending {
 			t.Fatal("two managers admitted different occurrences as fresh actionable cards")
 		}
-		time.Sleep(5 * time.Millisecond)
+		return false
+	}) {
+		t.Fatal("concurrent publication neither rejected one occurrence nor admitted both")
 	}
 	if early == nil {
 		t.Fatal("concurrent publication neither rejected one occurrence nor admitted both")
@@ -978,45 +978,44 @@ func testLogicalConcurrentManagersAdmitOnlyOneOccurrence(t *testing.T, resumable
 	if !errors.Is(early.err, errInteractionIDReused) {
 		t.Fatalf("losing occurrence = %+v, %v; want occurrence rejection", early.res, early.err)
 	}
-	for time.Now().Before(deadline) {
+	var secondPending bool
+	if !ownerActionPoll(t, time.Until(deadline), func() bool {
 		_, firstPending := managers[0].pendingIx(first.ID)
-		_, secondPending := managers[1].pendingIx(first.ID)
-		if firstPending != secondPending {
-			record, err := d.InteractionRecord(t.Context(), first.ID)
-			winner := 0
-			want := created
-			if secondPending {
-				winner = 1
-				want = second.CreatedAt
-			}
-			if err != nil || record == nil || !record.Interaction.CreatedAt.Equal(want) || record.Status != "pending" {
-				t.Fatalf("winning durable occurrence: %+v, %v", record, err)
-			}
-			expected := first
-			if winner == 1 {
-				expected = second
-			}
-			if err := managers[winner].resolveAnswerAt(t.Context(), first.ID, proto.Resolution{Dismiss: true}, true, nil, nil, &interactionExpectation{occurrence: &expected}); err != nil {
-				t.Fatalf("winning occurrence answer = %v", err)
-			}
-			select {
-			case got := <-results:
-				consumed++
-				if got.err != nil || !got.res.Dismiss {
-					t.Fatalf("winning waiter = %+v, %v", got.res, got.err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("winning waiter did not receive its answer")
-			}
-			record, err = d.InteractionRecord(t.Context(), first.ID)
-			if err != nil || record == nil || record.Status != "dismissed" || !record.Interaction.CreatedAt.Equal(want) {
-				t.Fatalf("answered durable occurrence: %+v, %v", record, err)
-			}
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+		_, secondPending = managers[1].pendingIx(first.ID)
+		return firstPending != secondPending
+	}) {
+		t.Fatal("the rejected occurrence did not leave exactly one live waiter")
 	}
-	t.Fatal("the rejected occurrence did not leave exactly one live waiter")
+	record, err := d.InteractionRecord(t.Context(), first.ID)
+	winner := 0
+	want := created
+	if secondPending {
+		winner = 1
+		want = second.CreatedAt
+	}
+	if err != nil || record == nil || !record.Interaction.CreatedAt.Equal(want) || record.Status != "pending" {
+		t.Fatalf("winning durable occurrence: %+v, %v", record, err)
+	}
+	expected := first
+	if winner == 1 {
+		expected = second
+	}
+	if err := managers[winner].resolveAnswerAt(t.Context(), first.ID, proto.Resolution{Dismiss: true}, true, nil, nil, &interactionExpectation{occurrence: &expected}); err != nil {
+		t.Fatalf("winning occurrence answer = %v", err)
+	}
+	select {
+	case got := <-results:
+		consumed++
+		if got.err != nil || !got.res.Dismiss {
+			t.Fatalf("winning waiter = %+v, %v", got.res, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("winning waiter did not receive its answer")
+	}
+	record, err = d.InteractionRecord(t.Context(), first.ID)
+	if err != nil || record == nil || record.Status != "dismissed" || !record.Interaction.CreatedAt.Equal(want) {
+		t.Fatalf("answered durable occurrence: %+v, %v", record, err)
+	}
 }
 
 func TestLogicalNonResumableGraceEndDoesNotReopenCancelledRow(t *testing.T) {
