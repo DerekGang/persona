@@ -17,16 +17,17 @@
 cmd/persona-link app-named-primitive 1
 cmd/vncbench app-named-primitive 1
 internal/agents app-exported-record 19
-internal/agents app-exported-record BotHistoryRequest #12806
-internal/agents app-exported-record BotPage #12806
-internal/agents app-exported-record BotRegistration #12806
-internal/agents app-exported-record BotSendRequest #12806
+internal/agents app-exported-record BotHistoryRequest #12806 #13145
+internal/agents app-exported-record BotPage #12806 #13145
+internal/agents app-exported-record BotRegistration #12806 #13145
+internal/agents app-exported-record BotSendRequest #12806 #13145
 internal/agentsend app-named-primitive 1
 internal/ai app-exported-record 6
 internal/ai app-named-primitive 1
 internal/apns app-exported-record 4
 internal/approval app-exported-record 2
 internal/assistant app-exported-record 156
+internal/assistant app-exported-record ContainerWorkspaceSelection #13160
 internal/assistant app-exported-record InboxFeedback #4512
 internal/assistant app-exported-record InboxProgress #4512
 internal/assistant app-exported-record MessageAuthorization #9782
@@ -110,15 +111,6 @@ internal/db app-lifecycle-write 6
 internal/db app-named-primitive 3
 internal/devices app-exported-record 19
 internal/devices app-named-primitive 4
-internal/entries app-exported-record Changed #13106
-internal/entries app-exported-record Cursor #13106
-internal/entries app-exported-record Decision #13106
-internal/entries app-exported-record Entry #13106
-internal/entries app-exported-record Params #13106
-internal/entries app-exported-record Result #13106
-internal/entries app-exported-record Scope #13106
-internal/entries app-exported-record ScopeFilter #13106
-internal/entries app-exported-record Source #13106
 internal/errreport app-exported-record 2
 internal/extension app-exported-record 105
 internal/extension/conformance app-exported-record 1
@@ -152,6 +144,18 @@ internal/kb app-named-primitive 4
 internal/lark app-exported-record 2
 internal/larkcli app-exported-record 24
 internal/larkcli app-named-primitive 2
+internal/larkperson app-exported-record ConversationScope #13145
+internal/larkperson app-exported-record DeliveryRequest #13145
+internal/larkperson app-exported-record Endpoint #13145
+internal/larkperson app-exported-record HistoryPage #13145
+internal/larkperson app-exported-record HistoryRequest #13145
+internal/larkperson app-exported-record Person #13145
+internal/larkperson app-exported-record ProactiveRequest #13145
+internal/larkperson app-exported-record Reservation #13145
+internal/larkperson app-exported-record RunnerTransport #13145
+internal/larkperson app-exported-record SentBinding #13145
+internal/larkperson app-exported-record Topic #13145
+internal/larkperson app-named-primitive DeliveryState #13145
 internal/lcuconfirm app-named-primitive 1
 internal/link app-exported-record 20
 internal/link app-exported-record CloudflareAccess #12022
@@ -187,11 +191,11 @@ internal/operations/recovery app-exported-record Capability #12876
 internal/operations/recovery app-exported-record Check #12876
 internal/operations/recovery app-exported-record Overview #12876
 internal/orcart app-exported-record 22
-internal/orcart app-exported-record HistoryCursor #12806
-internal/orcart app-exported-record HistoryPage #12806
-internal/orcart app-exported-record JournalBlock #12806
-internal/orcart app-exported-record JournalBody #12806
-internal/orcart app-exported-record JournalItem #12806
+internal/orcart app-exported-record HistoryCursor #12806 #13145
+internal/orcart app-exported-record HistoryPage #12806 #13145
+internal/orcart app-exported-record JournalBlock #12806 #13145
+internal/orcart app-exported-record JournalBody #12806 #13145
+internal/orcart app-exported-record JournalItem #12806 #13145
 internal/orcart/orcarttest app-exported-record 4
 internal/osproc app-exported-record 1
 internal/osproc/osproctest app-exported-record 2
