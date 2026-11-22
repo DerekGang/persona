@@ -725,7 +725,7 @@ export struct AgentListPage {
                 .height(this.quickHeight()).constraintSize({minWidth:this.quickHeight()}).padding(0)
                 .backgroundColor(this.compactRoot ? Color.Transparent : this.workspace.quickFilter === key ? Colors.selection : Colors.control)
                 .accessibilityText(tr(QUICK_LABELS[key]))
-                .accessibilityDescription(Wire.number(this.workspace.filterCounts,key)>0 ? String(Wire.number(this.workspace.filterCounts,key)) : '')
+                .accessibilityDescription(key !== 'all' && this.workspace.filterCounts[key] !== undefined ? String(Wire.number(this.workspace.filterCounts,key)) : '')
                 .accessibilitySelected(this.workspace.quickFilter === key)
                 .responseRegion({x:0,y:0,width:'100%',height:this.quickHeight()})
                 .onClick(() => { if (this.workspace.quickFilter !== key) this.workspace.setQuickFilter(key); }).id('agents.quick.' + key)

@@ -42,15 +42,18 @@ assert.equal(method(decision,'submitIconKey').call({request:{kind:'screen'},sele
 test('every quick filter keeps its complete localized accessible label and applies in one tap on narrow or magnified screens',()=>{
  const source=fs.readFileSync(w+'/components/AgentListPage.ets','utf8');
  const filters=source.slice(source.indexOf('  @Builder filters()'),source.indexOf('  @Builder renameForm()'));
- const keys=source.match(/const QUICK_FILTERS: string\[\] = \[([^\]]+)\]/)[1].match(/'([^']+)'/g);
- const labels=source.match(/const QUICK_LABELS: string\[\] = \[([^\]]+)\]/)[1].match(/'([^']+)'/g);
- assert.deepEqual(keys,["'all'","'needsYou'","'unread'","'working'","'backgroundWaiting'"]);
- assert.deepEqual(labels,["'all'","'needs_you'","'agent_group_unread'","'working'","'agent_group_background'"]);
- assert.match(filters,/ForEach\(QUICK_FILTERS,[\s\S]*Button\(\{ type: ButtonType.Capsule \}\)[\s\S]*Text\(tr\(QUICK_LABELS\[index\]\)/);
- assert.match(filters,/accessibilityText\(tr\(QUICK_LABELS\[index\]\)\)/);
- assert.match(filters,/accessibilityDescription\(Wire.number\(this.workspace.filterCounts,key\)/);
+ const keys=source.match(/const QUICK_FILTERS: string\[\] = (\[[^\]]+\])/)[1];
+ const labelSource=source.match(/const QUICK_LABELS: Record<string,string> = (\{[^;]+\});/)[1];
+ const labels=vm.runInNewContext('('+labelSource+')');
+ assert.deepEqual(Array.from(vm.runInNewContext(keys)),['all','needsYou','unread','working','backgroundWaiting','feishu','terminal']);
+ assert.deepEqual({...labels},{all:'all',needsYou:'needs_you',unread:'agent_group_unread',working:'working',backgroundWaiting:'agent_group_background',feishu:'agent_source_lark_group',terminal:'terminal'});
+ assert.match(source,/!known \|\| key === 'all' \|\| key === this\.workspace\.quickFilter \|\| Wire.number\(counts,key\)>0/);
+ assert.match(filters,/ForEach\(this.shownQuickFilters,[\s\S]*Button\(\{ type: ButtonType.Capsule \}\)[\s\S]*Text\(tr\(QUICK_LABELS\[key\]\)/);
+ assert.match(filters,/accessibilityText\(tr\(QUICK_LABELS\[key\]\)\)/);
+ assert.match(filters,/accessibilityDescription\(key !== 'all' && this.workspace.filterCounts\[key\] !== undefined/);
  assert.match(filters,/accessibilitySelected\(this\.workspace\.quickFilter === key\)/);
- assert.match(filters,/responseRegion\([\s\S]*Math\.max\(44, [^)]*this\.environment\.fontScale/);
+ assert.match(source,/private quickHeight\(\): number \{ return PhoneStyle.formSize\(44,57.7,this.environment.fontScale\)/);
+ assert.match(filters,/responseRegion\(\{x:0,y:0,width:'100%',height:this.quickHeight\(\)\}\)/);
  assert.match(filters,/onClick\([\s\S]*this\.workspace\.setQuickFilter\(key\)[\s\S]*\.id\('agents\.quick\.' \+ key\)/);
  assert.match(filters,/\.scrollable\(ScrollDirection\.Horizontal\)/);
  assert.ok(filters.indexOf('this.filterControl()')>filters.indexOf('.scrollable(ScrollDirection.Horizontal)'));
@@ -67,7 +70,7 @@ test('magnified project and Agent views keep symbols inside their slots and give
  }
  assert.match(projects, /this\.narrowOutline\(\)[\s\S]{0,120}Column\(\{space:3\}\)[\s\S]{0,110}Text\(line\.tree!\.title\)/);
  assert.match(projects, /GridRow\(\{columns:this\.narrowOutline\(\) \? 1 : 2/);
- assert.match(agents, /Text\(tr\(QUICK_LABELS\[index\]\)\)\.fontSize\(14\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
+ assert.match(agents, /Text\(tr\(QUICK_LABELS\[key\]\)\)\.fontSize\(Tokens\.interfaceFontVp\(15,this\.environment\.fontScale\)\)/);
  assert.match(picker, /TextInput\(\{text:this\.address[^\n]+\.height\(PhoneStyle\.groupedRowHeight\(nativeEnvironment\.fontScale\)\)\.fontSize\(Tokens\.interfaceFontVp\(13,nativeEnvironment\.fontScale\)\)/);
  assert.match(launch, /width\(this\.agentSize\(144,181\.67\)\)\.height\(this\.machineCardHeight\(row\)\)/);
  assert.match(launch, /Wire\.text\(row\.data\(\),'hostname'\) \|\| tr\('online'\)/);
