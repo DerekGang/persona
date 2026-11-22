@@ -62,7 +62,8 @@ describe("UI 11 SceneCanvas", () => {
   it("reads a scene and its pin actions from a wire view", () => {
     const parsed = readView(example).sections[0].items[0];
     expect(parsed.type).toBe("scene");
-    expect(parsed.shapes).toHaveLength(scene.shapes!.length);
+    expect(parsed.shapes).toEqual(scene.shapes);
+    expect(parsed.shapes!.some((shape) => shape.kind === "box" && shape.wall)).toBe(true);
     expect(parsed.pins![0].action).toEqual(scene.pins![0].action);
     expect(readView({ sections: [{ items: [{ type: "scene", alt: "empty", shapes: [] }, { type: "text", text: "kept" }] }] }).sections[0].items.map((i) => i.type)).toEqual(["text"]);
   });

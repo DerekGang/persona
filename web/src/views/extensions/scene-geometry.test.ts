@@ -26,6 +26,11 @@ describe("UI 11 scene geometry", () => {
     expect(faces.filter((f) => f.normal).every((f) => Math.abs(Math.hypot(...f.normal!) - 1) < 1e-9)).toBe(true);
   });
 
+  it("draws a wall-marked box as an ordinary box when the app has no cutaway", () => {
+    const wall: SceneShape = { kind: "box", center: [0, 0], size: [4, 0.1], bottom: 0, top: 2.5, wall: true };
+    expect(sceneFaces([wall])).toEqual(sceneFaces([{ ...wall, wall: false }]));
+  });
+
   it("fits the merged flat example at every quarter turn without using pins for its bounds", () => {
     const bounds = sceneBounds(scene.shapes);
     expect(bounds.maxX).toBeLessThanOrEqual(8.1);

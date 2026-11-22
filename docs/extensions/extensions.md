@@ -3139,7 +3139,8 @@ and sofas need colors no role or named color has. Pins and every control around 
 
 **The web renderer** uses a lazy Canvas 2D chunk, with no WebGL or new dependency and no scene code in the cold first screen.
 It builds rounded and beveled boxes, cylinders and prisms, projects the same orthographic camera around the shapes' bounds, and
-reuses geometry when a redraw leaves the shapes' content unchanged. Drag and arrow keys orbit; wheel, pinch, +/- and the Zoom
+reuses geometry when a redraw leaves the shapes' content unchanged. The optional `wall` flag is preserved and drawn as an ordinary
+box, as the contract allows; this renderer does not add a camera-following cutaway. Drag and arrow keys orbit; wheel, pinch, +/- and the Zoom
 buttons zoom; `0` and Reset restore the extension's current default. Camera changes are immediate, including with reduced motion.
 A touched camera survives redraws by owner scope and component `key` in a bounded 64-entry store; an untouched one follows a new
 default. Opaque design-system chips carry labels and pins in `alt`, `labels`, `pins`, controls reading order, and remain inside the
