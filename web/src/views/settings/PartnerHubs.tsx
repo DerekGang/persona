@@ -236,9 +236,15 @@ function CodeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   }, []);
   useEffect(() => {
     if (!open) return;
-    setCode(null);
     void make();
-    return () => void asked.current++;
+    return () => {
+      // closed: an answer still on its way is dropped, and the next opening starts without this code (the dialog keeps
+      // what it showed while it leaves)
+      asked.current++;
+      setCode(null);
+      setError("");
+      setBusy(false);
+    };
   }, [open, make]);
   const left = code ? secondsLeft(code.expires_at, Math.max(now, code.at)) : 0;
   const fp = code ? parsePartnerCode(code.code)?.fp : undefined;
@@ -267,7 +273,17 @@ function CodeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             <p className="text-[12px] leading-relaxed text-orange">{t("settings-partnerhubs.code_warning")}</p>
           </>
         )}
-        {error && <p role="alert" className="text-[12.5px] text-red">{error}</p>}
+        {error && (
+          <div className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-[12.5px] text-red">{error}</p>
+            {/* this hub could not make one (a database that did not answer): ask again without closing */}
+            {!code && (
+              <Button busy={busy} onClick={() => void make()}>
+                {t("settings-partnerhubs.retry")}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </Dialog>
   );
@@ -280,26 +296,33 @@ function PairDialog({ open, onClose, onPaired }: { open: boolean; onClose: () =>
   const [error, setError] = useState("");
   const id = useId();
   const hintId = useId();
+  // this opening of the dialog: a pairing that answers after it was closed (it can take half a minute) says how it went
+  // in a toast, and leaves the dialog's next opening alone
+  const opening = useRef(0);
   useEffect(() => {
     if (!open) return;
     setText("");
     setError("");
+    setBusy(false);
+    return () => void opening.current++;
   }, [open]);
   const info = parsePartnerCode(text);
   const wrong = text.trim() !== "" && !info;
   const pair = async () => {
     if (!info) return;
+    const n = opening.current;
     setBusy(true);
     setError("");
     try {
       const h = await pairPartnerHub(info.code);
       toast(t("settings-partnerhubs.paired", { name: h.name || info.name }), "ok");
       onPaired();
-      onClose();
+      if (n === opening.current) onClose();
     } catch (e) {
-      setError(partnerError(e));
+      if (n === opening.current) setError(partnerError(e));
+      else toast(partnerError(e), "error");
     } finally {
-      setBusy(false);
+      if (n === opening.current) setBusy(false);
     }
   };
   return (

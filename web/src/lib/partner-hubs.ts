@@ -55,8 +55,8 @@ export interface PartnerPref {
 
 export const listPartnerHubs = () => api<PartnerHubList>("/partner-hubs");
 export const makePartnerCode = () => api<PartnerCode>("/partner-hubs/code", { method: "POST" });
-// A 401 here is the other hub refusing the code (used or expired), not this page's credential: it must not sign the page
-// out. A credential that really stopped working still does on the next request.
+// A 401 here (code_refused) is the other hub refusing the code (used or expired), not this page's credential: it must
+// not sign the page out. A credential that really stopped working still does on the next request.
 export const pairPartnerHub = (code: string) => api<PartnerHub>("/partner-hubs", { method: "POST", json: { code }, isAuthContextCurrent: () => false });
 export const setPartnerDial = (id: string, dial: PartnerDial) => api<PartnerHub>(`/partner-hubs/${enc(id)}`, { method: "PATCH", json: { dial } });
 export const unpairPartnerHub = (id: string) => api<{ ok: boolean }>(`/partner-hubs/${enc(id)}`, { method: "DELETE" });
@@ -130,27 +130,43 @@ export function partnerLine(h: PartnerHub, now = Date.now()): string {
   return h.dial === "never" ? t("settings-partnerhubs.waits_for_it") : t("settings-partnerhubs.not_yet");
 }
 
-/** A pairing change that failed, in plain words: the hub's refusals by their codes, else its own text. */
+/** The hub's own sentence for a refusal, "" when it gave none. */
+function hubWords(e: ApiError): string {
+  return e.isJson && e.message !== `HTTP ${e.status}` ? e.message : "";
+}
+
+/** A pairing change that failed, in plain words. The page's words only where the code says which hub refused: the
+ *  other hub's refusal of a pairing comes back as this hub's 409 with the other hub's code (partners_off, member_hub,
+ *  pin_changed…), and the hub's own sentence says whose it is. */
 export function partnerError(e: unknown): string {
   if (e instanceof ApiError) {
     switch (e.code) {
       case "partners_off":
-        return t("settings-partnerhubs.err_off");
-      case "member_hub":
-        return t("settings-partnerhubs.err_member");
+        // this hub's is a 403; the other hub's comes as a 409
+        return t(e.status === 403 ? "settings-partnerhubs.err_off" : "settings-partnerhubs.err_other_off");
       case "no_tls":
         return t("settings-partnerhubs.err_no_tls");
       case "own_code":
         return t("settings-partnerhubs.err_own_code");
-      case "already_linked":
+      case "already_linked": // the same on either side: linked hubs are linked both ways
         return t("settings-partnerhubs.err_already_linked");
+      case "code_refused":
+        return t("settings-partnerhubs.err_code_refused");
+      case "member_hub":
+        return hubWords(e) || t("settings-partnerhubs.err_member");
       case "pin_changed":
-        return t("settings-partnerhubs.err_pin_changed");
+        return hubWords(e) || t("settings-partnerhubs.err_pin_changed");
+      case "bad_code": // not a code, incomplete, or without a secure address: the hub says which
+        return hubWords(e) || t("settings-partnerhubs.err_bad_code");
+      case "unreachable": {
+        // the other hub could not be reached, not this one: the plain sentence, with how each address failed
+        const detail = hubWords(e);
+        return detail ? t("settings-partnerhubs.err_unreachable_detail", { detail }) : t("settings-partnerhubs.err_unreachable");
+      }
     }
-    if (e.status === 401) return t("settings-partnerhubs.err_code_refused");
-    if (e.status === 400) return t("settings-partnerhubs.err_bad_code");
-    // the other hub could not be reached: the hub's own words say how, not "this hub is unavailable"
-    if (e.status === 502) return e.isJson && e.message !== "HTTP 502" ? e.message : t("settings-partnerhubs.err_unreachable");
+    // the other hub answered but did not pair (wrong_hub, no_credentials, refused): the hub's own sentence says how
+    if (e.status === 502 && hubWords(e)) return hubWords(e);
   }
+  // anything else (this page's own credential refused, a write the hub could not save) as every page says it
   return errorText(e);
 }

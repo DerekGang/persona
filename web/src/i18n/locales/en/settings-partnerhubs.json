@@ -44,6 +44,7 @@
   "pair_button": "Pair",
   "paired": "Paired with \"{name}\"",
   "err_off": "Partner hubs are turned off on this hub.",
+  "err_other_off": "The other hub has partner hubs turned off. Turn them on there, then pair again.",
   "err_member": "This hub is part of a linked-hubs group, so it can't pair with partner hubs.",
   "err_no_tls": "Other hubs can't reach this one over a secure connection, so it can't make a code. Show the code on the other hub instead.",
   "err_own_code": "That's this hub's own code. Paste the code from the other hub.",
@@ -51,5 +52,6 @@
   "err_pin_changed": "That hub's fingerprint has changed since you paired. Unpair it first, then pair again with a new code.",
   "err_code_refused": "The other hub refused this code: it was already used or has expired. Make a new one there.",
   "err_bad_code": "This code can't be read. Copy it again from the other hub.",
-  "err_unreachable": "Couldn't reach the other hub. Check that it's running and can be reached from this one, then try again."
+  "err_unreachable": "Couldn't reach the other hub. Check that it's running and can be reached from this one, then try again.",
+  "err_unreachable_detail": "Couldn't reach the other hub ({detail}). Check that it's running and can be reached from this one, then try again."
 }

@@ -182,9 +182,10 @@ describe("设置 › 这台 hub › 协作 hub", () => {
     expect(checked(switches("hub-b")[1])).toBe(false);
     await click(switches("hub-c")[1]);
     expect(last("PATCH", "/partner-hubs/hub-c")?.json).toEqual({ dial: "auto" });
-    await refuse(last("PATCH", "/partner-hubs/hub-c"), new ApiError(409, "member", { error: "member", code: "member_hub" }));
+    const member = "这台 hub 已加入互联的 hub 组，不能有协作 hub";
+    await refuse(last("PATCH", "/partner-hubs/hub-c"), new ApiError(409, member, { error: member, code: "member_hub" }));
     expect(checked(switches("hub-c")[1])).toBe(false);
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining("已加入互联的 hub 组"), "error");
+    expect(toast).toHaveBeenCalledWith(`没能保存：${member}`, "error");
   });
 
   it("解除配对先在这一行确认，再删除", async () => {
@@ -211,6 +212,39 @@ describe("设置 › 这台 hub › 协作 hub", () => {
     expect(dialog.textContent).toMatch(/(10:00|9:59) 后失效/);
     expect(dialog.textContent).toContain(FP);
     expect(dialog.querySelector('button[aria-label="复制"]')).not.toBeNull();
+  });
+
+  it("再打开「我的配对码」时从头生成，不先露出上一个；生成失败可以重试", async () => {
+    await shown();
+    await click(button("我的配对码"));
+    await answer(last("POST", "/partner-hubs/code"), { code: CODE, expires_at: new Date(Date.now() + 600_000).toISOString() });
+    await click(button("完成"));
+    await click(button("我的配对码"));
+    // the open dialog: the one that just closed stays in the page while it leaves
+    const open = () => document.body.querySelector('[role="dialog"][aria-modal="true"] [data-partner-code-dialog]')!;
+    expect(open().textContent).not.toContain(CODE);
+    expect(open().textContent).toContain("正在生成…");
+    expect(calls.filter((c) => c.method === "POST" && c.path === "/partner-hubs/code")).toHaveLength(2);
+    await refuse(last("POST", "/partner-hubs/code"), new ApiError(503, "数据库没有回应", { error: "数据库没有回应", code: "no_database" }));
+    expect(open().querySelector('[role="alert"]')?.textContent).toContain("数据库没有回应");
+    await click([...open().querySelectorAll("button")].find((b) => b.textContent?.trim() === "重试"));
+    expect(calls.filter((c) => c.method === "POST" && c.path === "/partner-hubs/code")).toHaveLength(3);
+    await answer(last("POST", "/partner-hubs/code"), { code: CODE, expires_at: new Date(Date.now() + 600_000).toISOString() });
+    expect(open().textContent).toContain(CODE);
+    expect(open().querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("关掉对话框后才答复的配对：用提示说结果，不留到下次打开", async () => {
+    await shown();
+    await click(button("配对…"));
+    await type(CODE);
+    await click(button("配对"));
+    await click(button("取消"));
+    await refuse(last("POST", "/partner-hubs"), new ApiError(401, "refused", { error: "refused", code: "code_refused" }));
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("已经用过或失效"), "error");
+    await click(button("配对…"));
+    expect(document.body.querySelector('[role="dialog"][aria-modal="true"] [role="alert"]')).toBeNull();
+    expect(button("配对")?.disabled).toBe(true);
   });
 
   it("「配对…」先检查粘贴的配对码，显示对方的名称和指纹，再配对", async () => {

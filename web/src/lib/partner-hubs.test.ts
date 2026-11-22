@@ -76,20 +76,41 @@ describe("a refused change", () => {
   it.each([
     ["own_code", 409, "这是这台 hub 自己的配对码"],
     ["already_linked", 409, "同一个互联的 hub 组"],
-    ["pin_changed", 409, "指纹变了"],
-    ["member_hub", 409, "已加入互联的 hub 组"],
     ["no_tls", 409, "不能生成配对码"],
-    ["partners_off", 403, "关闭了协作 hub"],
-  ])("%s reads in the page's words", (codeName, status, words) => {
+    ["partners_off", 403, "这台 hub 关闭了协作 hub"],
+    // the other hub's refusal of the pairing comes back as this hub's 409 with the other hub's code
+    ["partners_off", 409, "对方 hub 关闭了协作 hub"],
+    ["code_refused", 401, "已经用过或失效"],
+  ])("%s (%i) reads in the page's words", (codeName, status, words) => {
     expect(partnerError(new ApiError(status, "hub text", { error: "hub text", code: codeName }))).toContain(words);
   });
 
-  it("says a refused or expired code, an unreadable one, and an unreachable hub plainly", () => {
-    expect(partnerError(new ApiError(401, "refused", { error: "refused" }))).toContain("已经用过或失效");
-    expect(partnerError(new ApiError(400, "bad", { error: "bad" }))).toContain("读不出来");
-    // the hub's own words say what failed reaching the other hub
-    expect(partnerError(new ApiError(502, "连不上 hub.example.com：超时", { error: "连不上 hub.example.com：超时" }))).toBe("连不上 hub.example.com：超时");
-    expect(partnerError(new ApiError(502, "HTTP 502", {}, false))).toContain("连不上对方 hub");
+  it("leaves to the hub's own sentence what only it knows: which hub refused, and why a code does not read", () => {
+    // this hub's own member_hub and the other hub's look alike: the hub's sentence says whose it is
+    const other = "对方 hub 拒绝了：这台 hub 已加入互联的 hub 组";
+    expect(partnerError(new ApiError(409, other, { error: other, code: "member_hub" }))).toBe(other);
+    expect(partnerError(new ApiError(409, other, { error: other, code: "pin_changed" }))).toBe(other);
+    expect(partnerError(new ApiError(400, "配对码里没有对方的加密地址", { error: "配对码里没有对方的加密地址", code: "bad_code" }))).toBe("配对码里没有对方的加密地址");
+    // without a sentence, the page's own
+    expect(partnerError(new ApiError(409, "HTTP 409", { code: "member_hub" }))).toContain("已加入互联的 hub 组");
+    expect(partnerError(new ApiError(409, "HTTP 409", { code: "pin_changed" }))).toContain("指纹变了");
+    expect(partnerError(new ApiError(400, "HTTP 400", { code: "bad_code" }))).toContain("读不出来");
+  });
+
+  it("does not blame the code or the other hub for this page's own refusals", () => {
+    // this page's credential refused: not "the other hub refused this code"
+    expect(partnerError(new ApiError(401, "invalid token", { error: "invalid token", code: "invalid_token" }))).toBe("invalid token");
+    // a bad dial value: not "this code can't be read"
+    expect(partnerError(new ApiError(400, "dial 只能是 auto 或 never", { error: "dial 只能是 auto 或 never", code: "bad_request" }))).toBe("dial 只能是 auto 或 never");
+    // a proxy's 502 page in front of this hub: this hub is unavailable, not the other one
+    expect(partnerError(new ApiError(502, "HTTP 502", {}, false))).not.toContain("对方");
+  });
+
+  it("says an unreachable hub plainly, with how it failed, and the other hub's own answer as it gave it", () => {
+    expect(partnerError(new ApiError(502, "dial tcp 192.0.2.7:18662: i/o timeout", { error: "dial tcp 192.0.2.7:18662: i/o timeout", code: "unreachable" })))
+      .toBe("连不上对方 hub（dial tcp 192.0.2.7:18662: i/o timeout）。请确认它在运行、从这台 hub 能访问到，然后再试一次。");
+    expect(partnerError(new ApiError(502, "HTTP 502", { code: "unreachable" }))).toContain("连不上对方 hub");
+    expect(partnerError(new ApiError(502, "连上的是 hub x，不是配对码里的 y", { error: "连上的是 hub x，不是配对码里的 y", code: "wrong_hub" }))).toBe("连上的是 hub x，不是配对码里的 y");
   });
 });
 

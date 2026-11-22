@@ -44,6 +44,7 @@
   "pair_button": "配对",
   "paired": "已和「{name}」配对",
   "err_off": "这台 hub 关闭了协作 hub。",
+  "err_other_off": "对方 hub 关闭了协作 hub。请在那边打开后再配对。",
   "err_member": "这台 hub 已加入互联的 hub 组，不能再和协作 hub 配对。",
   "err_no_tls": "其他 hub 无法通过加密连接访问这台 hub，所以不能生成配对码。请改在另一个 hub 上显示配对码。",
   "err_own_code": "这是这台 hub 自己的配对码。请粘贴另一个 hub 的配对码。",
@@ -51,5 +52,6 @@
   "err_pin_changed": "配对之后，那个 hub 的指纹变了。先解除配对，再用新的配对码重新配对。",
   "err_code_refused": "对方 hub 拒绝了这个配对码：它已经用过或失效了。请在对方 hub 上重新生成。",
   "err_bad_code": "这个配对码读不出来。请从对方 hub 重新复制。",
-  "err_unreachable": "连不上对方 hub。请确认它在运行、从这台 hub 能访问到，然后再试一次。"
+  "err_unreachable": "连不上对方 hub。请确认它在运行、从这台 hub 能访问到，然后再试一次。",
+  "err_unreachable_detail": "连不上对方 hub（{detail}）。请确认它在运行、从这台 hub 能访问到，然后再试一次。"
 }
