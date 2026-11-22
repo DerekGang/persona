@@ -176,6 +176,8 @@ func (s *Service) intakeRoutes() {
 	s.handle("POST /api/v1/assistant/health/intake", s.postHealthIntake)
 	s.handle("DELETE /api/v1/assistant/health/intake/{id}", s.undoHealthIntake)
 	s.handle("GET /api/v1/assistant/health/intake/changes", s.healthIntakeChanges)
+	s.handle("POST /api/v1/assistant/health/intake/ui", s.healthIntakeUI)
+	s.handle("POST /api/v1/assistant/health/water/reminder", s.waterReminderAction)
 }
 
 func (s *Service) getHealthIntake(w http.ResponseWriter, r *http.Request) {
@@ -232,13 +234,10 @@ func (s *Service) postHealthIntake(w http.ResponseWriter, r *http.Request) {
 	if st == nil {
 		return
 	}
-	saved, changed, err := st.HealthIntakeAdd(r.Context(), v)
+	saved, _, err := s.addHealthIntake(r.Context(), st, v)
 	if err != nil {
 		intakeUnavailable(w)
 		return
-	}
-	if changed {
-		s.event(r.Context(), map[string]any{"type": "health_intake"})
 	}
 	s.intakeMutationReply(w, r, st, settings, &saved)
 }

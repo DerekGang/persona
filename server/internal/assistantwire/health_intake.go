@@ -10,5 +10,15 @@ func init() {
 		"POST /api/v1/assistant/health/intake",
 		"DELETE /api/v1/assistant/health/intake/{id}",
 		"GET /api/v1/assistant/health/intake/changes",
+		"POST /api/v1/assistant/health/intake/ui",
+		"POST /api/v1/assistant/health/water/reminder",
 	)
+}
+
+// NotifyHealthWater is an explicitly enabled water reminder, independent of a conversation.
+const NotifyHealthWater = "health_water"
+
+// NotifyHealth identifies the reminder whose fixed notification buttons may record water.
+type NotifyHealth struct {
+	Reminder string `json:"reminder"`
 }

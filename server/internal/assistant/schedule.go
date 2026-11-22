@@ -1570,6 +1570,7 @@ func (s *Service) Run(ctx context.Context) {
 	s.running.Store(&ctx)
 	go s.a2aLoop(ctx)
 	go s.transcriptionReadyLoop(ctx)
+	go s.waterReminderLoop(ctx)
 	recoverCtx, cancel := context.WithTimeout(ctx, taskFailTimeout)
 	if err := s.recoverTaskStarts(recoverCtx, s.tasks.recoverBefore); err != nil {
 		s.logf("recover interrupted task starts: %v", err)

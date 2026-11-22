@@ -2155,6 +2155,8 @@ Clients report their errors and crashes only while `features` has `error_reports
 | POST | `/api/v1/assistant/health/intake?space=health` | `{id,kind,amount?,at?,note?}` → `{entry,today:{water,protein},zone}`. The caller's UUID makes retries idempotent, including after undo. Full or answer role; see "Health intake" |
 | DELETE | `/api/v1/assistant/health/intake/{id}?space=health` | Undo from any date → `{today:{water,protein},zone}`. Repeating an undo succeeds; unknown id 404. Full role only; see "Health intake" |
 | GET | `/api/v1/assistant/health/intake/changes?after=0&limit=100&space=health` | `{changes:[HealthIntakeEntry],next,has_more}`: current row states after the cursor, ordered by `seq`, including undo markers. Full role only; see "Health intake" |
+| POST | `/api/v1/assistant/health/intake/ui?space=health` | `{context?,state?,action?,values?}` → an extension-page action result `{view,toast?}`. The manager draws water and protein pages under reserved `-health-intake/pages`. Full role only; see "Intake detail pages" |
+| POST | `/api/v1/assistant/health/water/reminder?space=health` | `{reminder:string,action:"drink"\|"snooze"\|"log",amount?:string}` → `{toast:string}`. Fixed `HEALTH_WATER` notification buttons; full role only; see "Water reminders" |
 | GET / PUT | `/api/v1/assistant/history` | Full role only. GET returns `{enabled,stats:{conversations,items,payload_bytes,summary_bytes,incomplete}}`; PUT requires `{enabled:boolean}`. Database-first assistant history defaults to enabled; false rolls reads and collection back to the runtime without deleting data. See `docs/assistant/assistant.md` ("Durable assistant history") |
 | GET | `/api/v1/remote-image?url=&size=` | A picture a reply names by address, fetched, checked and scaled by the manager (`remote_images`); see "Remote images (#9473)" |
 | GET | `/api/v1/avatars/{source}/{value}?size=` | A person's or a conversation's picture the lists name (`avatar_url`), drawn by the extension manager from the source's ref or an https address; see "Avatars (#10923)" |
@@ -2571,7 +2573,8 @@ The `health.intake` setting defaults to the following without writing it on a re
 
 Validation: water goal 500–6000 ml, cup 50–1000 ml, interval 15–240 minutes; protein goal 10–300 g.
 The reminder window uses exact `HH:mm` times with start before end. Reminders default to off.
-These routes read settings but do not change settings or schedule reminders.
+The record routes read these settings. The detail page's actions validate and save them;
+the manager schedules water reminders only after the user turns them on.
 
 Successful calls return 200. Invalid input is 400, a forbidden role is 403, and unavailable
 storage is 503, all with `{error:string}`. A 503 or a lost response after a mutation may follow
@@ -2583,6 +2586,101 @@ widget-only revision: a closed iPhone with widgets is woken at most once per 15 
 ordinary changes; a held revision is checked again by the existing widget tick. An open phone
 is not woken. Needs You retains its immediate wake path. Intake does not change fleet state or
 generate a Live Activity update.
+
+### Intake detail pages
+
+`POST /api/v1/assistant/health/intake/ui?space=health` uses the request and action-result
+envelope of an extension page, as the Subscriptions pages do. Clients open reserved extension
+id `-health-intake`, interface `pages`; extension ids cannot start with `-`. Initial `state`
+is the JSON string `{"kind":"water"}` or `{"kind":"protein"}`. Omitted state opens water.
+Send the returned state unchanged on subsequent requests. It retains the kind, 7/30-day range,
+entry-page offset and whether settings are open. No client draws a second native detail page.
+
+```json
+{"context":{"locale":"en","ui_version":4,"size":"full"},"state":"{\"kind\":\"protein\"}"}
+```
+
+`context` is the usual UI context. `locale` selects localized copy; `ui_version` fits the
+response to that renderer's supported components. The stored assistant time zone controls
+both records and reminders; `context.tz` does not change it. A render or action returns
+`{view:View,toast?:string}`. The view refreshes after 30 seconds while open, shows today's
+active entries (40 at a time, with earlier/latest buttons), and a bar chart for 7 or 30
+calendar days. Days meeting the current goal are counted within that selected range.
+Protein entries include their food note. Settings open from a separate Settings button.
+
+All `values` are strings. Page actions:
+
+| `action` | `values` | Effect |
+| --- | --- | --- |
+| `drink` | none | Water only: record the configured cup |
+| `log` | `amount`, protein optionally `note` | Record water in integer ml (1–3000, optional `ml` or `毫升` unit), or protein in grams (positive, up to 200, at most one decimal place) |
+| `undo` | `id` | Undo a current entry of this kind from today; absent/stale rows return a toast. Below UI version 4, rows send `undo:<id>` instead |
+| `range` | `days`: `7` or `30` | Change the chart range |
+| `older` / `latest` | none | Page through today's entries |
+| `settings` / `back` | none | Open settings / return to records |
+| `save` | fields below | Validate and save the provided settings for this kind, leaving the other kind unchanged |
+
+Water `save` accepts `goal_ml`, `cup_ml`, `remind`, `start`, `end`, `interval_minutes`,
+`weekends`, `stop_when_done`; the three boolean fields are exactly `"true"` or `"false"`.
+Protein accepts only `goal_g`. Limits and defaults are those of `health.intake` above.
+Unknown fields, invalid clocks, a reversed/equal window or out-of-range numbers return 400
+without writing the setting. A storage failure returns 503. Saving broadcasts `health_intake`
+so other screens reload their goals. Only full-access devices can render or act; answer,
+read-only, scoped and extension credentials receive 403.
+
+### Water reminders
+
+The manager checks every 30 seconds. Reminders default to off; there is no protein reminder.
+Within the inclusive start/end window, the later of the last reminder and last drink starts
+the interval. Weekends can be skipped, reaching the goal can stop the day's reminders, and
+overdue occurrences collapse to one catch-up while the window is open. Calendar boundaries
+use the stored assistant time zone, including daylight-saving changes. Any newly recorded
+water, from any intake entry point, clears snooze and restarts the interval from when it was
+recorded, even for a backdated measurement. Protein does not reset water reminders.
+`health.intake.water_reminder` stores `{last,snooze,reason}` (timestamps and a delivery status).
+The page shows the next reminder or why it is off, plus delivery and low-distraction status.
+
+The default manager sends `notify.request` with `kind:"health_water"`, a unique notification
+`id`, `health:{reminder:<that id>}`, `level:"P1"`, and no `related_key` or conversation reference.
+The hub delivers with fixed category `HEALTH_WATER` and `apns-collapse-id:"health-water"`.
+APNs and WebSocket payloads carry `health:{reminder:string}`. WebSocket notifications use
+`kind:"alert"` and fixed `id:"health-water"`, replacing the previous water alert. Other managers
+cannot send this kind. The user-enabled reminder follows input preferences, muted managers,
+Phone Muted / desktop presence, and the existing low-distraction policy (P1 kept for the
+briefing); quiet hours do not silence it. With no registered buttons a client shows a plain
+notification. The existing manager outbox queues it while the hub is disconnected; queued
+notifications older than 24 hours are not handed over. No extension-style retry loop is added.
+The localized title and today's progress ship in English, Simplified Chinese and Japanese.
+
+Clients register these fixed category actions and map them to the endpoint's action strings:
+
+| Category action identifier | Endpoint `action` | Meaning |
+| --- | --- | --- |
+| `HEALTH_WATER_DRINK` | `drink` | Drank a cup (configured cup size) |
+| `HEALTH_WATER_SNOOZE` | `snooze` | Later (30 minutes; repeating while snoozed does not extend it) |
+| `HEALTH_WATER_LOG` | `log` | Record another amount, using a text-input action |
+
+The full-access device posts to `POST /api/v1/assistant/health/water/reminder?space=health`,
+without a selected manager header, using the `health.reminder` from the notification:
+
+```json
+{"reminder":"<reminder id>","action":"log","amount":"300"}
+```
+
+`reminder` is a nonempty string of at most 128 bytes, without leading/trailing whitespace,
+NUL, CR or LF. `amount` is a string (the notification's typed text), required only for `log`;
+it accepts the same integer ml syntax as the water page. `drink` uses the current cup size;
+`snooze` records nothing. The response is 200 `{toast:string}`, localized from the request
+language or the assistant's language, for example `{"toast":"Recorded 300 ml. Today 550 / 2000 ml."}`.
+Invalid input is 400, non-full credentials 403, unavailable storage 503.
+
+For `drink` and `log`, the record UUID is UUIDv5 with fixed URL namespace
+`6ba7b811-9dad-11d1-80b4-00c04fd430c8` and UTF-8 name
+`"water-reminder:" + reminder + ":" + action`. Each action on a reminder records at most once,
+including across restarts and after undo. The two actions are independent. There is no
+24-hour button expiry. A retry returns the existing record's result without reviving it;
+an invalid amount does not consume the action. A failed response can follow a committed
+record: retry the same reminder and action, rather than minting another reminder id.
 
 ## WebSocket `/api/v1/ws`
 

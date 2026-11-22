@@ -31,6 +31,34 @@ func healthIntakeHub(t *testing.T) (*Hub, *httptest.Server) {
 	return h, srv
 }
 
+func TestHealthIntakeNewRoutesAuthenticateBeforeForwarding(t *testing.T) {
+	h, srv := healthIntakeHub(t)
+	m := connectGuardManager(t, h, srv.URL, assistantwire.AssistantID, func(method string, raw json.RawMessage) (any, error) {
+		if method == assistantwire.MethodHTTP {
+			var req assistantwire.HTTPRequest
+			json.Unmarshal(raw, &req)
+			if http.Header(req.Header).Get(assistantwire.RoleHeader) != roleFull {
+				t.Errorf("forwarded role: %v", req.Header)
+			}
+			return assistantwire.HTTPResponse{Status: 200, Body: []byte(`{"ok":true}`)}, nil
+		}
+		return map[string]any{}, nil
+	})
+	for _, path := range []string{"/api/v1/assistant/health/intake/ui", "/api/v1/assistant/health/water/reminder"} {
+		if code, body := call(t, h.routes(), "POST", path, "", `{}`); code != 401 {
+			t.Fatalf("unauthenticated %s: %d %v", path, code, body)
+		}
+	}
+	if strings.Contains(m.log(), assistantwire.MethodHTTP+" ") {
+		t.Fatal("unauthenticated request reached the manager")
+	}
+	for _, path := range []string{"/api/v1/assistant/health/intake/ui", "/api/v1/assistant/health/water/reminder"} {
+		if code, body := call(t, h.routes(), "POST", path+"?space=health", h.cfg.Token, `{}`); code != 200 {
+			t.Fatalf("full access %s: %d %v", path, code, body)
+		}
+	}
+}
+
 func TestHealthIntakeAnswerRoutesBeforeForwarding(t *testing.T) {
 	h, srv := healthIntakeHub(t)
 	m := connectGuardManager(t, h, srv.URL, assistantwire.AssistantID, func(method string, raw json.RawMessage) (any, error) {
@@ -99,6 +127,8 @@ func TestHealthIntakeExtensionsCannotReachRoutes(t *testing.T) {
 		{"POST", "/api/v1/assistant/health/intake"},
 		{"DELETE", "/api/v1/assistant/health/intake/00000000-0000-4000-8000-000000000001"},
 		{"GET", "/api/v1/assistant/health/intake/changes"},
+		{"POST", "/api/v1/assistant/health/intake/ui"},
+		{"POST", "/api/v1/assistant/health/water/reminder"},
 	} {
 		if code, body := call(t, h.routes(), route.method, route.path, extTokenPrefix+"synthetic-token", `{}`); code != 403 {
 			t.Errorf("extension %s %s: %d %v", route.method, route.path, code, body)

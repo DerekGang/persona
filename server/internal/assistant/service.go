@@ -161,6 +161,8 @@ type Service struct {
 	rules ruleSuggestState
 	// setupMu serializes the reads and the one write of the weekly setup block's book (setup_suggest.go).
 	setupMu sync.Mutex
+	// intakeMu serializes intake settings, reminder state and local intake mutations.
+	intakeMu sync.Mutex
 
 	// prepared is what this hub last gave a machine's node for a directory (key: machine id NUL directory), the
 	// CLAUDE.md and the plugin skills, by prepareSpaceIf; refreshInstructions gives again what differs.
