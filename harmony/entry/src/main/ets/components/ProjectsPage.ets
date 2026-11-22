@@ -556,6 +556,10 @@ export struct ProjectsPage {
     return [line.tree!.main ? tr('project_checkout_primary') : '', this.treeDetail(line.tree!),
       line.count ? tr('project_agent_count').replace('{count}',String(line.count)) : ''].filter((part:string) => !!part).join(' · ');
   }
+  // A worktree inferred from sessions has no host workspace to open. Its whole row folds the group.
+  private treeRowFolds(line:ProjectLine):boolean {
+    return !this.filteringText() && !line.tree!.source && (line.count > 0 || line.tree!.children.length > 0);
+  }
   @Builder treeLine(line:ProjectLine) {
     Row({space:0}) {
       Row({space:6}) {
@@ -583,14 +587,18 @@ export struct ProjectsPage {
           if (line.count) Text(!line.tree!.activeCount ? tr('project_worktree_idle') : tr('project_agent_count').replace('{count}',String(line.count)))
             .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(1)
         }
-      }.layoutWeight(1).constraintSize({minHeight:44*this.outlineControlScale()}).accessibilityGroup(true)
-        .accessibilityText([line.tree!.title,this.treeDetail(line.tree!),line.tree!.cwd,this.count(line.count,'project_sessions')].filter((v:string) => !!v).join(' · '))
-        .onClick(() => { if (this.filteringText() || line.tree!.source || !line.count) this.openTree(line.tree!); else this.toggle(line); })
+        if (this.treeRowFolds(line)) this.foldChevron(line.open)
+      }.layoutWeight(1).constraintSize({minHeight:44*this.outlineControlScale()})
+        .padding({left:this.treeInset(line.level),right:this.treeRowFolds(line) || this.filteringText() ? PhoneStyle.inset : 3})
+        .accessibilityGroup(true)
+        .accessibilityText([line.tree!.title,this.treeDetail(line.tree!),line.tree!.cwd,this.count(line.count,'project_sessions'),
+          this.treeRowFolds(line) ? tr(line.open ? 'agent_collapse' : 'agent_expand') : ''].filter((v:string) => !!v).join(' · '))
+        .onClick(() => { if (this.treeRowFolds(line)) this.toggle(line); else this.openTree(line.tree!); })
         .bindContextMenu(this.actionMenu(line.tree!.key),ResponseType.LongPress).id('projects.worktree')
-      if (!this.filteringText() && (line.count || line.tree!.children.length)) Button({type:ButtonType.Normal}) { this.foldChevron(line.open) }
+      if (line.tree!.source && !this.filteringText() && (line.count || line.tree!.children.length)) Button({type:ButtonType.Normal}) { this.foldChevron(line.open) }
         .width(44*this.outlineControlScale()).height(44*this.outlineControlScale()).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr(line.open ? 'agent_collapse' : 'agent_expand'))
         .onClick(() => this.toggle(line)).id('projects.fold')
-    }.width('100%').padding({left:this.treeInset(line.level),right:this.filteringText() ? PhoneStyle.inset : 3})
+    }.width('100%')
       .id('projects.tree_owner.' + line.tree!.machine + '.' + line.tree!.source + '.' + line.tree!.sourceId)
   }
   @Builder subsidiaryLine(line:ProjectLine) {

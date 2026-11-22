@@ -608,6 +608,20 @@ test('typing a repository name or a distinct Agent title narrows the status coun
   assert.deepEqual(matches('never-matches'),[]);assert.deepEqual(matches(''),['one','three','two']);
 });
 
+test('the full inferred-worktree row folds, while a host workspace or search result opens', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const method=source.match(/^  private treeRowFolds\(line:[\s\S]+?^  \}/m)[0];
+  const Page=new Function('return '+stripTypeScriptTypes('class Page {'+method+'}'))();
+  const page=new Page();
+  const inferred={count:3,tree:{source:'',children:[]}};
+  page.filteringText=()=>false;
+  assert.equal(page.treeRowFolds(inferred),true);
+  assert.equal(page.treeRowFolds({count:0,tree:{source:'',children:[inferred]}}),true);
+  assert.equal(page.treeRowFolds({count:3,tree:{source:'herdr',children:[]}}),false);
+  page.filteringText=()=>true;
+  assert.equal(page.treeRowFolds(inferred),false);
+});
+
 test('a mounted repository header reads the current fold on every tap of its original callback', () => {
   const body=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8')
     .match(/^  private toggle\(line:[\s\S]+?^  \}/m)[0];
