@@ -4653,6 +4653,10 @@
       "value": "Cancel question"
     },
     {
+      "name": "agent_group_machine",
+      "value": "By Machine"
+    },
+    {
       "name": "agent_group_state",
       "value": "By Status"
     },

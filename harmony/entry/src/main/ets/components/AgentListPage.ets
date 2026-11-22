@@ -18,8 +18,8 @@ import { DeviceLook, deviceLook } from '../models/DeviceLook';
 
 const QUICK_FILTERS: string[] = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting', 'feishu', 'terminal'];
 const QUICK_LABELS: Record<string,string> = { 'all':'all', 'needsYou':'needs_you', 'unread':'agent_group_unread', 'working':'working', 'backgroundWaiting':'agent_group_background', 'feishu':'agent_source_lark_group', 'terminal':'terminal' };
-const GROUPINGS: string[] = ['state', 'machine', 'space'];
-const GROUP_LABELS: Record<string, string> = {'state': 'agent_group_state', 'machine': 'agent_filter_machine', 'space': 'agent_group_space'};
+const GROUPINGS: string[] = ['space', 'state', 'machine'];
+const GROUP_LABELS: Record<string, string> = {'state': 'agent_group_state', 'machine': 'agent_group_machine', 'space': 'agent_group_space'};
 const STATE_LABELS: Record<string, string> = {'pinned': 'agent_group_pinned', 'state/needs': 'needs_you',
   'state/unread': 'agent_group_unread', 'state/awaiting': 'agent_group_awaiting', 'state/working': 'working',
   'state/background': 'agent_group_background', 'state/just_finished': 'agent_group_just_finished',
@@ -288,7 +288,7 @@ export struct AgentListPage {
 
   private groupingIndex(): number {
     const index = GROUPINGS.indexOf(this.workspace.groupingMode);
-    return index < 0 ? 0 : index;
+    return index < 0 ? GROUPINGS.indexOf('state') : index;
   }
 
   private selectGrouping(index: number): void {

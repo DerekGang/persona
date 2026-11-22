@@ -4653,6 +4653,10 @@
       "value": "質問を取り消す"
     },
     {
+      "name": "agent_group_machine",
+      "value": "マシン別"
+    },
+    {
       "name": "agent_group_state",
       "value": "状態別"
     },

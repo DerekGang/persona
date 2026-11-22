@@ -4653,6 +4653,10 @@
       "value": "取消问题"
     },
     {
+      "name": "agent_group_machine",
+      "value": "按机器"
+    },
+    {
       "name": "agent_group_state",
       "value": "按状态"
     },
