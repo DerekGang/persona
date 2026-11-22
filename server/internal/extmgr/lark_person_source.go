@@ -86,7 +86,14 @@ func slicesContainsString(values []string, want string) bool {
 	return false
 }
 
-func (s *larkPersonSource) Name() string { return "bot_" + s.endpoint.ID }
+// publicID is the endpoint as Agents → Bots names it: in the session and account IDs, links and events. The endpoint ID
+// is the owner's own label (it can name the person), so the public ID is an opaque digest of it.
+func (s *larkPersonSource) publicID() string {
+	digest := sha256.Sum256([]byte("lark_person_public\x00" + s.endpoint.ID))
+	return "lp_" + hex.EncodeToString(digest[:8])
+}
+
+func (s *larkPersonSource) Name() string { return "bot_" + s.publicID() }
 
 // taskID is the assistant to-do that carries this endpoint's task. It is listed on the To-dos page, so it is an opaque
 // digest of the endpoint rather than the endpoint ID itself.
@@ -101,7 +108,7 @@ func (s *larkPersonSource) session(ctx context.Context) (agents.Session, error) 
 		return agents.Session{}, &agents.Error{Status: http.StatusBadGateway, Msg: "agents: external bot task state is unavailable"}
 	}
 	active := state.Lifecycle == "" || state.Lifecycle == "active"
-	row := agents.AgentSession{SessionKey: agents.BotSessionKey, AccountID: s.endpoint.ID, Provider: "feishu_bot",
+	row := agents.AgentSession{SessionKey: agents.BotSessionKey, AccountID: s.publicID(), Provider: "feishu_bot",
 		Title: s.endpoint.DisplayName, Kind: "bot", CanSend: active, ReviewState: state.ReviewState, Proactive: "unsupported"}
 	if active {
 		row.Actions = []string{"complete", "abandon"}
@@ -123,7 +130,7 @@ func (s *larkPersonSource) session(ctx context.Context) (agents.Session, error) 
 func (s *larkPersonSource) Status(ctx context.Context) (agents.Status, error) {
 	status := agents.Status{Source: s.Name(), Enabled: true,
 		Providers: []agents.AgentProvider{{Provider: "feishu_bot", Connection: "server", Available: true}},
-		Accounts:  []agents.AgentAccount{{AccountID: s.endpoint.ID, Provider: "feishu_bot", DisplayName: s.endpoint.DisplayName, Status: "active", SessionCount: 1}}}
+		Accounts:  []agents.AgentAccount{{AccountID: s.publicID(), Provider: "feishu_bot", DisplayName: s.endpoint.DisplayName, Status: "active", SessionCount: 1}}}
 	if _, err := s.Sessions(ctx); err != nil {
 		status.Error = "agents: external bot is unavailable"
 		status.Providers[0].Available = false

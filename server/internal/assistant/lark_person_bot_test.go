@@ -96,6 +96,21 @@ func TestLarkPersonBotOpaqueParkPendingReviewAndClose(t *testing.T) {
 			t.Fatalf("to-dos API exposed %q: %s", private, raw)
 		}
 	}
+	// Routes that answer the whole to-do ({"todo": t}: seen, thread, marks, route) redact it too.
+	whole, err := json.Marshal(map[string]any{"todo": todoNow(assistantService, request.TaskID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"oc_allowed", "omt_task", "om_request", "om_reply", "ou_person", "ou_owner", "cli_bot", "applink", request.ParkInstance} {
+		if strings.Contains(string(whole), private) {
+			t.Fatalf("a whole to-do response exposed %q: %s", private, whole)
+		}
+	}
+	// Storage marshals the reviews apart (Supervision.row) and keeps the evidence reply correlation needs.
+	stored := todoNow(assistantService, request.TaskID).Supervision.row(request.TaskID)
+	if !strings.Contains(string(stored.Reviews), "om_request") || !strings.Contains(string(stored.Reviews), request.ParkInstance) {
+		t.Fatalf("the stored ledger lost its reply evidence: %s", stored.Reviews)
+	}
 	watchKept, observationKept := false, false
 	for _, review := range todoNow(assistantService, request.TaskID).Supervision.Reviews {
 		watchKept = watchKept || review.Evidence != nil && review.Evidence.Reply != nil

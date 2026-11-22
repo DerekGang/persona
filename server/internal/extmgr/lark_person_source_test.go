@@ -281,7 +281,7 @@ func (f conversationFixture) source(t *testing.T) *larkPersonSource {
 func TestLarkPersonEndpointProjectionIsScopedAndDisplaySafe(t *testing.T) {
 	f := newConversationFixture(t)
 	valid := f.source(t)
-	if valid.Name() != "bot_external_task" {
+	if valid.Name() != "bot_"+valid.publicID() || strings.Contains(valid.Name(), "external_task") {
 		t.Fatalf("stable source name %q", valid.Name())
 	}
 	rows, err := valid.Sessions(context.Background())
@@ -289,12 +289,12 @@ func TestLarkPersonEndpointProjectionIsScopedAndDisplaySafe(t *testing.T) {
 		t.Fatalf("projected sessions %+v %v", rows, err)
 	}
 	row := rows[0]
-	if row.ID != "bot_external_task:endpoint" || row.Provider != "feishu_bot" || row.Title != "Synthetic collaborator" ||
+	if row.ID != valid.Name()+":endpoint" || row.AccountID == f.endpoint.ID || row.Provider != "feishu_bot" || row.Title != "Synthetic collaborator" ||
 		!row.CanSend || row.Proactive != "unsupported" || !slicesContains(row.Actions, "complete") || !slicesContains(row.Actions, "abandon") {
 		t.Fatalf("display-safe projection %+v", row)
 	}
 	raw, _ := json.Marshal(row)
-	for _, private := range []string{"oc_scoped", "omt_scoped", "om_parent", "ou_external", "ou_bot", "cli_synthetic", "todo_"} {
+	for _, private := range []string{"oc_scoped", "omt_scoped", "om_parent", "ou_external", "ou_bot", "cli_synthetic", "todo_", f.endpoint.ID} {
 		if strings.Contains(string(raw), private) {
 			t.Fatalf("private endpoint data escaped in %s", raw)
 		}
@@ -324,7 +324,7 @@ func TestLarkPersonConversationAssignmentReplyFollowupAndCompletion(t *testing.T
 	source := f.source(t)
 	service := agents.NewService(f.settings, nil, nil, source)
 	ctx := context.Background()
-	id := "bot_external_task:endpoint"
+	id := source.Name() + ":" + agents.BotSessionKey
 	firstID := "11111111-1111-4111-8111-111111111111"
 	result, err := service.Send(ctx, id, firstID, "First synthetic assignment", "test")
 	if err != nil || result.Entry.Status != agents.OutSent || string(result.Upstream) != `{"accepted":true}` {
@@ -517,7 +517,7 @@ func TestLarkPersonFollowUpRecordsAnEarlierUnreadReplyFirst(t *testing.T) {
 	source := f.source(t)
 	service := agents.NewService(f.settings, nil, nil, source)
 	ctx := context.Background()
-	id := "bot_external_task:endpoint"
+	id := source.Name() + ":" + agents.BotSessionKey
 	if _, err := service.Send(ctx, id, "11111111-1111-4111-8111-111111111111", "First synthetic assignment", "test"); err != nil {
 		t.Fatal(err)
 	}
