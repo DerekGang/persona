@@ -1268,13 +1268,16 @@ export struct SessionTools {
         .accessibilityText(tr(this.patchSubpage() ? 'back' : 'close')).onClick(() => {
           if (this.patchSubpage()) { this.commitFilePath=''; this.showCommitPatch=false; } else this.gitSheetOpen=false;
         }).id(this.patchSubpage() ? 'session.git.commit.back' : 'session.git.sheet.close')
-      Column({space:1}) {
-        Text(this.gitModalTitle()).fontSize(16).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+      Column({space:this.phoneGitReader ? 0 : 1}) {
+        Text(this.gitModalTitle()).fontSize(16).maxFontScale(this.phoneGitReader ? 1.25 : Tokens.navigationTextMaxScale)
+          .lineHeight(this.phoneGitReader ? String(PhoneStyle.formSize(18.3,23.3,nativeEnvironment.fontScale))+'vp' : undefined).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
           .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).textAlign(TextAlign.Center)
         if (this.gitSheetMode==='diff' && this.relativeParent(this.workspace.gitDiffPath))
-          Text(this.relativeParent(this.workspace.gitDiffPath)).fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary).maxLines(1)
+          Text(this.relativeParent(this.workspace.gitDiffPath)).fontSize(12).maxFontScale(this.phoneGitReader ? 16/12 : Tokens.navigationTextMaxScale)
+            .lineHeight(this.phoneGitReader ? String(PhoneStyle.formSize(14.7,19.7,nativeEnvironment.fontScale))+'vp' : undefined).fontColor(Colors.secondary).maxLines(1)
         if (this.commitFilePath && this.relativeParent(this.commitFilePath))
-          Text(this.relativeParent(this.commitFilePath)).fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary).maxLines(1)
+          Text(this.relativeParent(this.commitFilePath)).fontSize(12).maxFontScale(this.phoneGitReader ? 16/12 : Tokens.navigationTextMaxScale)
+            .lineHeight(this.phoneGitReader ? String(PhoneStyle.formSize(14.7,19.7,nativeEnvironment.fontScale))+'vp' : undefined).fontColor(Colors.secondary).maxLines(1)
       }.layoutWeight(1)
       if (this.gitSheetMode==='diff' && this.workspace.gitDiff || this.gitSheetMode==='history' && Wire.text(this.workspace.gitShow,'diff') && (!this.phoneGitReader || this.patchSubpage())) {
         Button({type:ButtonType.Circle}) {
