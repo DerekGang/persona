@@ -11,15 +11,15 @@
 # SDK's wire and golang.org/x/text): its imports stay frozen here until it is converted.
 cmd/persona-link app-named-primitive 1
 cmd/vncbench app-named-primitive 1
-internal/agents app-exported-record 19
+internal/agents app-exported-record 23 #12806
 internal/agentsend app-named-primitive 1
 internal/ai app-exported-record 6
 internal/ai app-named-primitive 1
 internal/apns app-exported-record 4
 internal/approval app-exported-record 2
-internal/assistant app-exported-record 155
+internal/assistant app-exported-record 168 #4512 #9744 #9782 #12042 #12508 #12524 #13027
 internal/assistant app-lifecycle-write 30
-internal/assistant app-named-primitive 21
+internal/assistant app-named-primitive 27 #10572 #12286 #12300 #12307
 internal/assistant/archiverecovery app-exported-record 3
 internal/assistant/archiverecovery app-named-primitive 1
 internal/assistant/chatsearch core-collection 4
@@ -53,7 +53,7 @@ internal/assistant/todo/timeline core-test-package 1
 internal/assistant/todo/timeline core-type-param 1
 internal/assistant/todo/timeline core-zero-doc 16
 internal/assistant/todo/timeline out-literal 6
-internal/assistantskills app-exported-record 10
+internal/assistantskills app-exported-record 11 #13065
 internal/bus app-exported-record 3
 internal/channel app-exported-record 24
 internal/channel app-named-primitive 8
@@ -97,7 +97,7 @@ internal/extension/serve app-exported-record 1
 internal/extmgr app-exported-record 62
 internal/extmgr app-named-primitive 3
 internal/extmgr/storage app-exported-record 21
-internal/feishubot app-exported-record 28
+internal/feishubot app-exported-record 29 #11639 #12964
 internal/feishubot app-named-primitive 1
 internal/herdr app-exported-record 20
 internal/herdrcore app-exported-record 7
@@ -118,7 +118,7 @@ internal/lark app-exported-record 2
 internal/larkcli app-exported-record 24
 internal/larkcli app-named-primitive 2
 internal/lcuconfirm app-named-primitive 1
-internal/link app-exported-record 20
+internal/link app-exported-record 21 #12022
 internal/link app-named-primitive 1
 internal/linktray app-exported-record 1
 internal/mail app-exported-record 18
@@ -132,19 +132,21 @@ internal/netaddr app-named-primitive 2
 internal/netshape app-exported-record 1
 internal/netshape app-named-primitive 1
 internal/node app-exported-record 25
-internal/node app-named-primitive 10
-internal/nodeclient app-exported-record 9
+internal/node app-named-primitive 11 #11372
+internal/nodeclient app-exported-record 12 #12557
 internal/nodecmd app-exported-record 1
 internal/nodesign app-exported-record 1
 internal/nodeupdate app-exported-record 3
 internal/office app-named-primitive 2
-internal/operations/backup app-exported-record 8
+internal/operations/backup app-exported-record 9 #12876
 internal/operations/backup app-named-primitive 3
-internal/orcart app-exported-record 22
+internal/operations/recovery app-exported-record 5 #12876
+internal/orcart app-exported-record 27 #12806
 internal/orcart/orcarttest app-exported-record 4
 internal/osproc app-exported-record 1
 internal/osproc/osproctest app-exported-record 2
 internal/pgdocker app-exported-record 4
+internal/promptcontent app-exported-record 1 #11552 #11612 #11681 #12378
 internal/protectedapps app-exported-record 4
 internal/protectedapps app-named-primitive 2
 internal/proxyproto app-exported-record 3
@@ -205,8 +207,8 @@ internal/tokenuse core-tag 5
 internal/tokenuse core-test-package 1
 internal/tokenuse core-zero-doc 8
 internal/tokenuse out-literal 9
-internal/transcript app-exported-record 10
-internal/transcript app-named-primitive 2
+internal/transcript app-exported-record 20 #10770 #12114 #12161 #12344
+internal/transcript app-named-primitive 4 #10770 #11629 #12114 #12161 #12344
 internal/tunnel app-exported-record 3
 internal/update app-exported-record 16
 internal/update app-named-primitive 1
