@@ -6,6 +6,7 @@ class NativeColors {
   readonly grouped: ResourceColor = $r('app.color.persona_grouped');
   readonly ink: ResourceColor = $r('app.color.persona_ink');
   readonly secondary: ResourceColor = $r('app.color.persona_secondary');
+  readonly tertiary: ResourceColor = $r('app.color.project_card_tertiary');
   @Trace action: ResourceColor = $r('sys.color.comp_background_emphasize');
   @Trace onAction: ResourceColor = $r('sys.color.font_on_primary');
   @Trace link: ResourceColor = $r('sys.color.font_emphasize');

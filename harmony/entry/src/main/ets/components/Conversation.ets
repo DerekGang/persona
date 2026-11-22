@@ -1436,7 +1436,7 @@ export struct Conversation {
               if (!this.model.draft) {
                 Text(this.composerPlaceholder()).width('100%').maxLines(1)
                   .minFontSize(String(this.readingSize.shellPoints / 2) + 'vp').maxFontSize(String(this.readingSize.shellPoints) + 'vp')
-                  .textOverflow({overflow:TextOverflow.Ellipsis}).fontColor($r('app.color.persona_composer_hint'))
+                  .textOverflow({overflow:TextOverflow.Ellipsis}).fontColor(Colors.tertiary)
                   .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
               }
             }.width('100%').constraintSize({minHeight:this.expandedComposer() ? this.composerActionSize() * (this.offersDraftEditor() ? 48 : 44) / 44 : this.composerActionSize()})

@@ -336,3 +336,19 @@ test('the full draft uses capped navigation controls, shell-sized send and the n
     page.compactDraftSpace=undefined;assert.equal(page.pageSheetHeight(),'large');assert.equal(page.pageToolbarSize(),44);assert.equal(page.pageSendSize(),44);
   }
 });
+
+test('empty chat prompts use one fitted shell line while the editable draft keeps its reading size', () => {
+  const field = source.slice(source.indexOf('TextArea({ text: this.model.draft, controller:this.inlineField'),
+    source.indexOf("}.width('100%').constraintSize", source.indexOf(".id('chat.input')")));
+  assert.match(field, /placeholder:this\.composerPlaceholder\(\)/);
+  assert.match(field, /placeholderColor\(Color\.Transparent\)/);
+  assert.match(field, /fontSize\(this\.expandedComposer\(\) \? String\(this\.readingSize\.points\)/);
+  const prompt = field.slice(field.indexOf('if (!this.model.draft)'));
+  assert.match(prompt, /Text\(this\.composerPlaceholder\(\)\).*maxLines\(1\)/);
+  assert.match(prompt, /minFontSize\(String\(this\.readingSize\.shellPoints \/ 2\)/);
+  assert.match(prompt, /maxFontSize\(String\(this\.readingSize\.shellPoints\)/);
+  assert.match(prompt, /hitTestBehavior\(HitTestMode\.None\)\.accessibilityLevel\('no'\)/);
+  assert.equal(composerReadingSize(1).shellPoints, 19);
+  assert.equal(composerReadingSize(3.2).shellPoints, 28);
+  assert.equal(composerReadingSize(3.2).points, 53);
+});
