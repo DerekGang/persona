@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "recording_detail_ask",
+      "value": "问 Persona"
+    },
+    {
+      "name": "recording_detail_folder_access",
+      "value": "Persona、AI 分身和各台电脑上的 Agent 都能直接读这个目录。"
+    }
+  ]
+}

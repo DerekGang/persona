@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "recording_detail_ask",
+      "value": "Personaに聞く"
+    },
+    {
+      "name": "recording_detail_folder_access",
+      "value": "Persona、AI分身、各コンピューターのエージェントがこのフォルダーを直接読み取れます。"
+    }
+  ]
+}

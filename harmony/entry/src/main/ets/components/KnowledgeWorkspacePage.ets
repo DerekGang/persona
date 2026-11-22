@@ -4,7 +4,8 @@ import { KnowledgeLandingMenu, knowledgeInk, knowledgePriorityTone, knowledgeRel
 import { PhoneKnowledgeSelection } from './PhoneKnowledgeSelection';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
-import { PhoneSectionTitle } from '../design/PhoneStyle';
+import { PhoneSectionTitle, PhoneStyle } from '../design/PhoneStyle';
+import { PhoneOutlineIcon } from '../design/PhoneOutlineIcon';
 import type { KnowledgeRecordingEntry } from '../models/KnowledgeRecording';
 import { Colors } from '../design/Colors';
 import { ButtonStyles, SelectStyles } from '../design/Controls';
@@ -906,26 +907,43 @@ export struct KnowledgeWorkspacePage {
     }
   }
 
+  private recordingMetric(regular:number,largest:number):number {
+    return PhoneStyle.formSize(regular,largest,nativeEnvironment.fontScale);
+  }
+  @Builder recordingHeading(key:string) {
+    Row() {
+      Text(tr(key)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium)
+        .fontColor(Colors.secondary).width('100%')
+    }.width('100%').constraintSize({minHeight:this.recordingMetric(40.3,47.7)}).padding({left:20,right:20})
+  }
+  @Builder recordingFootnote(key:string) {
+    Text(tr(key)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+      .lineHeight(String(this.recordingMetric(15.7,22.5))+'vp').width('100%').padding({left:20,right:20,top:7,bottom:7})
+  }
+
   @Builder recordingDetail() {
     Scroll() {
-      Column({space:8}) {
-        Row({space:10}) {
-          Stack() { SymbolGlyph(this.kindIcon('recordings')).fontSize('20vp').fontColor([Colors.secondary]) }
-            .width(36).height(36).backgroundColor(Colors.control).borderRadius(10)
-          Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
+      Column() {
+        Column() {
+          Row({space:12}) {
+            Stack() { SymbolGlyph($r('sys.symbol.waveform_circle')).fontSize('22vp').fontColor([Colors.secondary]) }
+            .width(48).height(48).backgroundColor(Colors.control).borderRadius(13).id('knowledge.recording.avatar')
+          Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).fontWeight(600).fontColor(Colors.ink).layoutWeight(1).maxLines(3)
         }.width('100%')
         if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(Tokens.body)
-          .maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).opacity(0.85).width('100%').id('knowledge.recording.intro')
+          .maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).opacity(0.85).lineHeight(String(this.recordingMetric(20.3,28.35))+'vp').width('100%').margin({top:12}).id('knowledge.recording.intro')
         Button({type:ButtonType.Capsule}) {
-          Row({space:7}) {
-            SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize('18vp').fontColor([Colors.onAction])
-            Text(tr('knowledge_ask_persona')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.onAction).textAlign(TextAlign.Center)
+          Row({space:12}) {
+            PhoneOutlineIcon({name:'sparkles',iconScale:this.recordingMetric(1,1.33),color:Colors.onAction})
+            Text(tr('recording_detail_ask')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.onAction).textAlign(TextAlign.Center)
               .flexShrink(1).id('knowledge.ask.label')
           }.width('100%').justifyContent(FlexAlign.Center)
-        }.width('100%').constraintSize({minHeight:Math.max(46,Math.ceil(23*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+12)})
-          .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(Colors.action).onClick(() => this.askPersona()).id('knowledge.ask')
+        }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(50.3,57.7,nativeEnvironment.fontScale)}).margin({top:14})
+          .padding({left:14,right:14}).backgroundColor(Colors.action).accessibilityText(tr('recording_detail_ask'))
+          .onClick(() => this.askPersona()).id('knowledge.ask')
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:4,right:4,bottom:25.7})
         this.entryEvidence()
-        PhoneSectionTitle({text:tr('phone_kb_confirmed')})
+        this.recordingHeading('phone_kb_confirmed')
         Column({space:6}) {
           if (this.facts.open) {
             if (this.facts.conflict) {
@@ -947,23 +965,25 @@ export struct KnowledgeWorkspacePage {
             if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
               .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
             if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
-              Row({space:8}) {
+              Row({space:12}) {
                 SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
-                Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link)
+                Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link)
               }.width('100%')
-            }.width('100%').constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
+            }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
           }
-        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:14,right:14,top:4,bottom:4}).backgroundColor(Colors.surface).borderRadius(14)
-        Text(tr('phone_kb_fact_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:6,right:6})
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20,top:this.facts.open ? 10 : 0,bottom:this.facts.open ? 10 : 0}).backgroundColor(Colors.surface).borderRadius(29)
+        this.recordingFootnote('phone_kb_fact_note')
         if (Wire.text(this.workspace.detail,'summary')) {
-          PhoneSectionTitle({text:tr('phone_kb_profile')})
-          Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),onLink:(url:string) => this.openSafeLink(url)}) }
-            .width('100%').alignItems(HorizontalAlign.Start).padding(14).backgroundColor(Colors.surface).borderRadius(14).id('knowledge.summary')
+          this.recordingHeading('phone_kb_profile')
+          Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),recapReading:true,onLink:(url:string) => this.openSafeLink(url)}) }
+            .width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20,top:21,bottom:21}).backgroundColor(Colors.surface).borderRadius(29).id('knowledge.summary')
         }
         if (Wire.text(this.workspace.detail,'path')) {
-          PhoneSectionTitle({text:tr('directory')})
-          Text(Wire.text(this.workspace.detail,'path')).fontFamily('monospace').fontSize(13).fontColor(Colors.secondary).width('100%')
-            .padding(14).backgroundColor(Colors.surface).borderRadius(14).copyOption(CopyOptions.LocalDevice).id('knowledge.recording.directory')
+          if (Wire.text(this.workspace.detail,'summary')) Blank().height(17.3)
+          this.recordingHeading('directory')
+          Text(Wire.text(this.workspace.detail,'path')).fontFamily('monospace').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%')
+            .padding({left:20,right:20,top:15,bottom:15}).backgroundColor(Colors.surface).borderRadius(29).copyOption(CopyOptions.LocalDevice).id('knowledge.recording.directory')
+          this.recordingFootnote('recording_detail_folder_access')
         }
         if (this.workspace.error && !(this.facts.open && this.facts.conflict && this.workspace.error==='phone_facts_changed')) Text(tr(this.workspace.error)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).width('100%')
         Button({type:ButtonType.Normal}) {
@@ -971,7 +991,7 @@ export struct KnowledgeWorkspacePage {
             Text(tr('knowledge_minutes')+' · '+tr('knowledge_transcript')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
             SymbolGlyph(this.recordingTools ? Symbols.down : Symbols.expand).fontSize('14vp').fontColor([Colors.secondary])
           }.width('100%')
-        }.width('100%').constraintSize({minHeight:44}).padding(12).backgroundColor(Colors.surface).borderRadius(12)
+        }.width('100%').constraintSize({minHeight:44}).margin({top:16}).padding(12).backgroundColor(Colors.surface).borderRadius(15)
           .accessibilityDescription(tr(this.recordingTools ? 'control_expanded' : 'control_collapsed')).onClick(() => this.recordingTools=!this.recordingTools).id('knowledge.recording.tools')
         if (this.recordingTools) {
           this.recordingSection(UIUtils.makeBinding(():Record<string,Object> => this.workspace.detail))
@@ -984,7 +1004,7 @@ export struct KnowledgeWorkspacePage {
           Button(tr('knowledge_forget_recording'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.danger)
             .enabled(this.workspace.canDeleteRecording()).onClick(() => this.confirmDeleteRecording()).id('knowledge.recording.delete')
         }
-      }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:20,bottom:24})
+      }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:31,bottom:24})
     }.width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped).id('knowledge.recording.detail')
       .bindSheet($$this.metadataSheet,this.metadataForm(),{title:{title:tr('knowledge_edit_metadata')},height:SheetSize.LARGE,showClose:true,
         onDisappear:() => { this.workspace.editOpen=false; }})

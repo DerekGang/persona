@@ -152,3 +152,13 @@ test('the native recording header uses interface body type while its full profil
   assert.match(detail,/MarkdownText\(\{text:Wire\.text\(this\.workspace\.detail,'summary'\)/);
   assert.match(detail,/\.id\('knowledge.recording.intro'\)/);
 });
+
+
+test('the recording detail keeps its actual path explanation and its minutes entry alongside the source-bound reading profile',()=>{
+  const block=source.slice(source.indexOf('  @Builder recordingDetail()'),source.indexOf(".id('knowledge.recording.detail')"));
+  assert.match(block,/if \(Wire\.text\(this\.workspace\.detail,'path'\)\) \{[\s\S]*?recordingFootnote\('recording_detail_folder_access'\)/);
+  assert.match(block,/MarkdownText\(\{text:Wire\.text\(this\.workspace\.detail,'summary'\),recapReading:true/);
+  assert.match(block,/\.id\('knowledge\.recording\.tools'\)/);
+  const messages=['base','en_US','ja_JP','zh_CN'].map(locale=>JSON.parse(readFileSync(new URL('../entry/src/main/resources/'+locale+'/element/recording_detail.json',import.meta.url),'utf8')).string);
+  for (const entries of messages) assert.ok(entries.find(item=>item.name==='recording_detail_folder_access')?.value.length>16);
+});

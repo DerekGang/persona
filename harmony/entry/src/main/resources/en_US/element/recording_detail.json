@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "recording_detail_ask",
+      "value": "Ask Persona"
+    },
+    {
+      "name": "recording_detail_folder_access",
+      "value": "Persona, the AI twin and the agents on your computers can all read this folder directly."
+    }
+  ]
+}
