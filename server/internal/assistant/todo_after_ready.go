@@ -278,12 +278,54 @@ func (s *Service) clearSentTodoReady(list []superviseSignal) {
 	}
 }
 
-// todoReadyKey is the canonical idempotency key for candidate's current after prerequisite set. It is independent of
-// prerequisite order and of whether a prerequisite was satisfied first via PR merge and later marked done.
+// resetTodoReadyWake clears pending/sent in-memory todo_ready signals, the durable assistant.todo_ready_wakes marker,
+// and the task-bound todo_ready supervision dedup fingerprint for todoID when that to-do is reopened, so a subsequent
+// readiness transition can wake its owner once.
+func (s *Service) resetTodoReadyWake(ctx context.Context, todoID string) {
+	todoID = strings.TrimSpace(todoID)
+	if todoID == "" {
+		return
+	}
+	sigID := superviseSignal{Todo: todoID, Kind: sigTodoReady}.id()
+	b := &s.supervise
+	b.mu.Lock()
+	delete(b.pending, sigID)
+	delete(b.sent, sigID)
+	b.mu.Unlock()
+
+	tb := &s.todos
+	tb.readyWakeMu.Lock()
+	if err := s.loadTodoReadyWakesLocked(ctx); err != nil {
+		s.logf("todo_ready: load wake markers for reset (%s): %v", todoID, err)
+	} else if _, ok := tb.readyWakes[todoID]; ok {
+		next := maps.Clone(tb.readyWakes)
+		delete(next, todoID)
+		if st := s.store(); st != nil {
+			if err := st.PutSetting(ctx, todoReadyWakesKey, next); err != nil {
+				s.logf("todo_ready: clear wake marker for %s: %v", todoID, err)
+			} else {
+				tb.readyWakes = next
+			}
+		} else {
+			tb.readyWakes = next
+		}
+	}
+	tb.readyWakeMu.Unlock()
+
+	s.clearTodoReadyDedup(ctx, todoID)
+}
+
+// todoReadyKey is the canonical idempotency key for candidate's current after prerequisite set and reopen generation.
+// It is independent of prerequisite order and of whether a prerequisite was satisfied first via PR merge and later
+// marked done. Truncating ReopenedAt to microsecond precision keeps keys stable across Postgres round-trips.
 func todoReadyKey(candidate Todo) string {
 	ids := cleanIDs(candidate.After)
 	sort.Strings(ids)
-	return "after:" + strings.Join(ids, ",")
+	key := "after:" + strings.Join(ids, ",")
+	if candidate.ReopenedAt != nil && !candidate.ReopenedAt.IsZero() {
+		key += "@reopen:" + candidate.ReopenedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+	}
+	return key
 }
 
 // todoReadySupervisor resolves the owning supervisor conversation (Leader or Main chat) for an unstarted dependent

@@ -875,3 +875,178 @@ func TestTodoAfterReadyRepoStoreUnavailableFailsClosedAndRetriesAfterRecovery(t 
 		}
 	})
 }
+
+func TestTodoAfterReadyReopenDependentClearsWakeStateAndAllowsNextWake(t *testing.T) {
+	t.Run("closing and reopening a woken dependent without intermediate prune wakes again on next prerequisite completion", func(t *testing.T) {
+		st := &memStore{}
+		s, f := newTodoReadyService(t, st)
+		ctx := context.Background()
+
+		root := createRequestAndPiece(t, s, "conv1", "Reopen cycle root", "", "", nil)
+		pre := createRequestAndPiece(t, s, "conv1", "Prereq", "", root.ID, nil)
+		dep := createRequestAndPiece(t, s, "conv1", "Dependent", "Reopen cycle notes", root.ID, []string{pre.ID})
+
+		done, open := true, false
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "initial todo_ready wake", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+
+		// Confirm durable marker and dedup fingerprint were persisted for the initial wake.
+		initialKey := todoReadyKey(dep)
+		markers := map[string]todoReadyWakeMarker{}
+		if found, err := st.Setting(ctx, todoReadyWakesKey, &markers); err != nil || !found || markers[dep.ID].Key != initialKey {
+			t.Fatalf("initial wake markers = %+v (found=%v err=%v), want key %q", markers, found, err, initialKey)
+		}
+		dedupKey, _ := digestFingerprint(prompts.SuperviseEntry{}, superviseSignal{Todo: dep.ID, Kind: sigTodoReady})
+		dedup := map[string]superviseFingerprint{}
+		if found, err := st.Setting(ctx, superviseDedupKey, &dedup); err != nil || !found {
+			t.Fatalf("initial dedup = %+v (found=%v err=%v)", dedup, found, err)
+		}
+		if _, ok := dedup[dedupKey]; !ok {
+			t.Fatalf("expected initial todo_ready dedup entry %s in %+v", dedupKey, dedup)
+		}
+
+		// Close and reopen dep (and reopen pre) without running any prune sweep in between.
+		if _, err := s.editTodo(ctx, dep.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &open}); err != nil {
+			t.Fatal(err)
+		}
+		reopenedDep, err := s.editTodo(ctx, dep.ID, db.TodoEdit{Done: &open})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reopenedDep.ReopenedAt == nil {
+			t.Fatalf("expected ReopenedAt set on reopened dependent")
+		}
+		if reopenedKey := todoReadyKey(reopenedDep); reopenedKey == initialKey {
+			t.Fatalf("reopened todoReadyKey stayed %q, want new generation key", reopenedKey)
+		}
+
+		// Durable wake marker, todo_ready dedup fingerprint, and in-memory pending/sent must be cleared on reopen.
+		markersAfterReopen := map[string]todoReadyWakeMarker{}
+		if _, err := st.Setting(ctx, todoReadyWakesKey, &markersAfterReopen); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := markersAfterReopen[dep.ID]; exists {
+			t.Fatalf("reopen left stale wake marker for %s: %+v", dep.ID, markersAfterReopen)
+		}
+		dedupAfterReopen := map[string]superviseFingerprint{}
+		if _, err := st.Setting(ctx, superviseDedupKey, &dedupAfterReopen); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := dedupAfterReopen[dedupKey]; exists {
+			t.Fatalf("reopen left stale todo_ready dedup entry %s: %+v", dedupKey, dedupAfterReopen)
+		}
+		sigID := dep.ID + "|" + sigTodoReady
+		s.supervise.mu.Lock()
+		_, stillPending := s.supervise.pending[sigID]
+		_, stillSent := s.supervise.sent[sigID]
+		s.supervise.mu.Unlock()
+		if stillPending || stillSent {
+			t.Fatalf("reopen left stale signal state: pending=%v sent=%v", stillPending, stillSent)
+		}
+
+		// While pre is open, sweep must not wake dep prematurely.
+		s.sweepTodoAfterReady(ctx)
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f, "conv1")); got != 1 {
+			t.Fatalf("premature wake while reopened prereq is open: got %d, want 1", got)
+		}
+
+		// Re-completing pre must emit a fresh wake for the reopened dependent.
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "second todo_ready wake after reopen", func() bool { return len(sendsToConversation(f, "conv1")) == 2 })
+		if msg := sendsToConversation(f, "conv1")[1]; !strings.Contains(msg, dep.ID) || !strings.Contains(msg, "Reopen cycle notes") {
+			t.Fatalf("unexpected second wake:\n%s", msg)
+		}
+
+		// Repeated sweeps and a simulated restart (with Postgres microsecond ReopenedAt truncation) must not duplicate.
+		s.sweepTodoAfterReady(ctx)
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f, "conv1")); got != 2 {
+			t.Fatalf("re-sweep duplicated reopened wake: got %d, want 2", got)
+		}
+
+		s2, f2 := newTodoReadyService(t, st)
+		rootCopy, preCopy, depCopy := todoNow(s, root.ID), todoNow(s, pre.ID), todoNow(s, dep.ID)
+		if depCopy.ReopenedAt != nil {
+			trunc := depCopy.ReopenedAt.UTC().Truncate(time.Microsecond)
+			depCopy.ReopenedAt = &trunc
+		}
+		s2.todos.mu.Lock()
+		s2.todos.loaded = true
+		s2.todos.todos = map[string]*Todo{
+			root.ID: &rootCopy,
+			pre.ID:  &preCopy,
+			dep.ID:  &depCopy,
+		}
+		s2.todos.mu.Unlock()
+
+		s2.sweepTodoAfterReady(ctx)
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f2, "conv1")); got != 0 {
+			t.Fatalf("restarted service re-emitted %d duplicate wakes for reopened dependent, want 0", got)
+		}
+	})
+
+	t.Run("closing and reopening a woken dependent while prerequisite remains done wakes once on sweep", func(t *testing.T) {
+		st := &memStore{}
+		s, f := newTodoReadyService(t, st)
+		ctx := context.Background()
+
+		root := createRequestAndPiece(t, s, "conv1", "Reopen sweep root", "", "", nil)
+		pre := createRequestAndPiece(t, s, "conv1", "Prereq", "", root.ID, nil)
+		dep := createRequestAndPiece(t, s, "conv1", "Dependent", "Sweep notes", root.ID, []string{pre.ID})
+
+		done, open := true, false
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "initial wake", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+
+		if _, err := s.editTodo(ctx, dep.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.editTodo(ctx, dep.ID, db.TodoEdit{Done: &open}); err != nil {
+			t.Fatal(err)
+		}
+
+		s.sweepTodoAfterReady(ctx)
+		waitFor(t, "reopened dependent sweep wake", func() bool { return len(sendsToConversation(f, "conv1")) == 2 })
+		s.sweepTodoAfterReady(ctx)
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f, "conv1")); got != 2 {
+			t.Fatalf("second sweep duplicated reopened wake: got %d, want 2", got)
+		}
+	})
+
+	t.Run("no-op reopen on an already-open woken dependent preserves wake deduplication", func(t *testing.T) {
+		st := &memStore{}
+		s, f := newTodoReadyService(t, st)
+		ctx := context.Background()
+
+		root := createRequestAndPiece(t, s, "conv1", "No-op reopen root", "", "", nil)
+		pre := createRequestAndPiece(t, s, "conv1", "Prereq", "", root.ID, nil)
+		dep := createRequestAndPiece(t, s, "conv1", "Dependent", "No-op notes", root.ID, []string{pre.ID})
+
+		done, open := true, false
+		if _, err := s.editTodo(ctx, pre.ID, db.TodoEdit{Done: &done}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "initial wake", func() bool { return len(sendsToConversation(f, "conv1")) == 1 })
+
+		if _, err := s.editTodo(ctx, dep.ID, db.TodoEdit{Done: &open}); err != nil {
+			t.Fatal(err)
+		}
+		s.sweepTodoAfterReady(ctx)
+		time.Sleep(4 * shortSuperviseTimings.gather)
+		if got := len(sendsToConversation(f, "conv1")); got != 1 {
+			t.Fatalf("no-op reopen caused duplicate wake: got %d, want 1", got)
+		}
+	})
+}

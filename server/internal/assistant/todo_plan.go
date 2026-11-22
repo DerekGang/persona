@@ -310,6 +310,10 @@ func (s *Service) editTodo(ctx context.Context, id string, e db.TodoEdit) (Todo,
 			s.evaluateTodoAfterDependents(ctx, id)
 		}
 	}
+	if reopening && row.DoneAt == nil && (cur.DoneAt != nil || e.RestartWork ||
+		row.ReopenedAt != nil && (cur.ReopenedAt == nil || !row.ReopenedAt.Equal(*cur.ReopenedAt))) {
+		s.resetTodoReadyWake(ctx, id)
+	}
 	return out, nil
 }
 

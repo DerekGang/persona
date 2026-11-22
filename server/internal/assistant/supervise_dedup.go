@@ -278,6 +278,39 @@ func (s *Service) pruneAllStoppedDedup(ctx context.Context) {
 	b.dedup = next
 }
 
+// clearTodoReadyDedup removes the task-bound sigTodoReady deduplication entry for todoID when that to-do is reopened,
+// so a subsequent readiness transition after reopen is not suppressed by the earlier wake.
+func (s *Service) clearTodoReadyDedup(ctx context.Context, todoID string) {
+	b := &s.supervise
+	b.dedupMu.Lock()
+	defer b.dedupMu.Unlock()
+	history := b.dedup
+	if st := s.store(); st != nil {
+		loaded := map[string]superviseFingerprint{}
+		if _, err := st.Setting(ctx, superviseDedupKey, &loaded); err != nil {
+			s.logf("supervise: cannot load deduplication history for todo_ready reset (%s): %v", todoID, err)
+			return
+		}
+		history = loaded
+	}
+	if len(history) == 0 {
+		return
+	}
+	key, _ := digestFingerprint(prompts.SuperviseEntry{}, superviseSignal{Todo: todoID, Kind: sigTodoReady})
+	if _, ok := history[key]; !ok {
+		return
+	}
+	next := maps.Clone(history)
+	delete(next, key)
+	if st := s.store(); st != nil {
+		if err := st.PutSetting(ctx, superviseDedupKey, next); err != nil {
+			s.logf("supervise: cannot clear todo_ready deduplication entry for %s: %v", todoID, err)
+			return
+		}
+	}
+	b.dedup = next
+}
+
 func (s *Service) restoreDigest(signals []superviseSignal, at, prev time.Time) {
 	b := &s.supervise
 	b.mu.Lock()

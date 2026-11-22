@@ -2071,6 +2071,7 @@ func (s *Service) reopenFailedTodo(ctx context.Context, id string) (Todo, bool, 
 	if applied {
 		s.todoRowSet(ctx, doneKeys)
 	}
+	s.resetTodoReadyWake(ctx, id)
 	return out, true, nil
 }
 
