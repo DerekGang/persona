@@ -322,3 +322,16 @@ test('full-height shared footer reserves a half-page of requests or one accessib
   assert.equal(compactDraftRoom(402,874,402,39,28,150,true,false).bottomLift,0);
   assert.ok(Math.abs(composerReadingSize(1).height(6)-130.3)<.02);
 });
+
+test('the full draft uses capped navigation controls, shell-sized send and the native sheet safe area', () => {
+  const style=new Function('Tokens','return '+stripTypeScriptTypes('class Style {static formSize(regular:number,largest:number,scale:number):number {'+
+    readFileSync(new URL('../entry/src/main/ets/design/PhoneStyle.ets',import.meta.url),'utf8').split('static formSize(')[1].split('{')[1].split('}')[0]+'}}'))(Tokens);
+  const Page=new Function('PhoneStyle','SheetSize','Tokens','return '+stripTypeScriptTypes('class Page {'+
+    ['pageToolbarSize','pageSendSize','pageSheetHeight','measurePageSheet'].map(method).join('\n')+'}'))(style,{LARGE:'large'},Tokens);
+  for (const [scale,top] of [[1,44],[3.2,57.7]]) {
+    const page=Object.assign(new Page(),{compactDraftSpace:{},environment:{fontScale:scale,windowHeightPx:2622,safeTopPx:117},restingSize:restingComposerSize(scale),getUIContext:()=>({px2vp:v=>v/3})});
+    assert.equal(page.pageToolbarSize(),top);assert.equal(page.pageSendSize(),restingComposerSize(scale).target);
+    assert.equal(page.pageSheetHeight(),812);page.environment.safeTopPx=216;assert.equal(page.pageSheetHeight(),794);
+    page.compactDraftSpace=undefined;assert.equal(page.pageSheetHeight(),'large');assert.equal(page.pageToolbarSize(),44);assert.equal(page.pageSendSize(),44);
+  }
+});

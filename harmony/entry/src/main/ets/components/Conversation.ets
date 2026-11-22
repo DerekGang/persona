@@ -36,6 +36,7 @@ import { mergeConversationTimeline, reconcileTimelineRows, TimelineMessage, Time
 import { ClientModel } from '../models/ClientModel';
 import { ChatMessage, Decision, ResourceRow, Wire } from '../models/Wire';
 import { Tokens } from '../design/Tokens';
+import { PhoneStyle } from '../design/PhoneStyle';
 import { tr } from '../design/Strings';
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
@@ -597,7 +598,7 @@ export struct Conversation {
     const inset = nativeSheetInset(this.getUIContext(), this.attachmentNodeId, this.environment.safeBottomPx);
     if (Math.abs(inset - this.attachmentInset) > 0.1) this.attachmentInset = inset;
   }
-  @Monitor('environment.safeBottomPx') safeBottomChanged(): void { this.measureAttachment(); this.measureQuestion(); }
+  @Monitor('environment.safeBottomPx') safeBottomChanged(): void { this.measureAttachment(); this.measureQuestion(); this.measurePageSheet(); }
   private async selectContext(row: ResourceRow): Promise<void> {
     const generation = this.model.connectionGeneration(), scope = this.model.scope(), target = this.model.target();
     if (this.sending || !this.attachmentSheet || !this.active) return;
@@ -1317,16 +1318,36 @@ export struct Conversation {
       else SymbolGlyph(this.primaryStop() ? Symbols.stop : Symbols.send).fontSize(String(inline ? this.readingSize.shellPoints : 22) + 'vp').fontWeight(FontWeight.Bold).fontColor([this.roundSymbol()])
     }.width(size).height(size)
   }
+  private pageToolbarSize(): number {
+    return this.compactDraftSpace ? PhoneStyle.formSize(44,57.7,this.environment.fontScale) : 44;
+  }
+  private pageSendSize(): number { return this.compactDraftSpace ? this.restingSize.target : 44; }
+  private pageSymbolSize(): number { return PhoneStyle.formSize(15,21,this.environment.fontScale); }
+  private pageSheetHeight(): number | SheetSize {
+    if (!this.compactDraftSpace) return SheetSize.LARGE;
+    const ui=this.getUIContext(), env=this.environment;
+    return ui.px2vp(env.windowHeightPx) - Math.max(Tokens.compactStatusInset,ui.px2vp(env.safeTopPx)+Tokens.gap);
+  }
+  @Local pageSheetInset: number = 0;
+  private pageSheetNodeId: string = 'chat.draft-page.' + util.generateRandomUUID();
+  private measurePageSheet(): void {
+    if (!this.draftEditorOpen) return;
+    const inset=nativeSheetInset(this.getUIContext(),this.pageSheetNodeId,this.environment.safeBottomPx);
+    if (Math.abs(inset-this.pageSheetInset)>.1) this.pageSheetInset=inset;
+  }
   @Builder hideKeyboard(page: boolean) {
     Button({type:ButtonType.Circle}) {
       Column({space:0}) {
-        SymbolGlyph($r('sys.symbol.keyboard')).fontSize(String(page ? 19 : this.readingSize.shellPoints) + 'vp').fontColor([this.toolInk()])
-        SymbolGlyph(Symbols.down).fontSize(String(page ? 7 : this.readingSize.shellPoints * 7 / 19) + 'vp').fontWeight(FontWeight.Medium).fontColor([this.toolInk()])
+        SymbolGlyph($r('sys.symbol.keyboard')).fontSize(String(page ? this.pageSymbolSize() : this.readingSize.shellPoints) + 'vp').fontColor([this.toolInk()])
+        SymbolGlyph(Symbols.down).fontSize(String((page ? this.pageSymbolSize() : this.readingSize.shellPoints) * 7 / 19) + 'vp').fontWeight(FontWeight.Medium).fontColor([this.toolInk()])
       }
-    }.width(page ? 44 : this.composerActionSize()).height(page ? 44 : this.composerActionSize()).padding(0)
-      .responseRegion(ButtonStyles.touchRegion(page ? 44 : this.composerActionSize())).backgroundColor(Color.Transparent).accessibilityText(tr('phone_chat_hide_keyboard'))
+    }.width(page ? this.pageToolbarSize() : this.composerActionSize()).height(page ? this.pageToolbarSize() : this.composerActionSize()).padding(0)
+      .responseRegion(ButtonStyles.touchRegion(page ? this.pageToolbarSize() : this.composerActionSize())).backgroundColor(Color.Transparent).accessibilityText(tr('phone_chat_hide_keyboard'))
       .bindTips(tr('phone_chat_hide_keyboard')).id(page ? 'chat.editor.keyboard' : 'chat.keyboard')
-      .onClick(() => { if (page) this.pageField.stopEditing(); else this.inlineField.stopEditing(); })
+      .onClick(() => {
+        if (page) { this.pageField.stopEditing(); this.draftEditorFocused=false; }
+        else this.inlineField.stopEditing();
+      })
   }
   private composerPlaceholder():string {
     if (this.model.agentInputNotice()==='agent_computer_holds') return this.agentNotice();
@@ -1339,41 +1360,48 @@ export struct Conversation {
   }
 
   @Builder draftPage() {
-    Column({space:8}) {
-      Row({space:8}) {
-        Button({type:ButtonType.Circle}) {
-          SymbolGlyph($r('sys.symbol.arrow_down_right_and_arrow_up_left')).fontSize('19vp').fontColor([Colors.ink])
-        }.width(44).height(44).padding(0).backgroundColor(Colors.control).accessibilityText(tr('phone_chat_close_editor'))
-          .onClick(() => { this.finishPageInput(); this.draftEditorOpen=false; }).id('chat.editor.collapse')
-        Blank().layoutWeight(1)
-        if (this.draftEditorFocused || this.environment.keyboardHeightPx > 0) this.hideKeyboard(true)
-      }.width('100%').height(44)
-      Column({space:8}) {
-        if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.secondary)
-          .maxLines(this.environment.keyboardHeightPx > 0 ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
-        TextArea({text:this.model.draft,placeholder:this.composerPlaceholder(),controller:this.pageField})
-          .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(Tokens.body).fontColor(Colors.ink)
-          .lineHeight(String(Tokens.lineHeight)+'fp').backgroundColor(Color.Transparent).caretColor(Colors.link)
-          .padding({left:8,right:8,top:5,bottom:5}).enabled(!this.sending && !this.model.draftLoading)
-          .onFocus(() => this.draftEditorFocused=true).onBlur(() => this.draftEditorFocused=false)
-          .onTextSelectionChange((start:number,end:number) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.rememberSelection(start,end); })
-          .onChange((text:string) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.model.updateDraft(text); })
-          .id('chat.editor.input')
-      }.layoutWeight(1).width('100%').clip(true)
-      Row() {
-        Blank().layoutWeight(1)
-        Button({type:ButtonType.Circle}) {
-          this.composerRound()
-        }.width(44).height(44).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr(this.primaryActionKey()))
-          .enabled(this.draftEditorCurrent() && this.primaryEnabled()).id('chat.editor.send')
-          .onClick(() => {
-            if (!this.draftEditorCurrent() || !this.primaryEnabled()) return;
-            if (this.primaryStop()) { this.model.stop(() => this.draftEditorCurrent()); return; }
-            this.refocusInline=false; this.pageField.stopEditing(); this.draftEditorOpen=false; this.sendDraft();
-          })
-      }.width('100%').height(44)
-    }.width('100%').height('100%').padding({left:Tokens.page,right:Tokens.page,top:Tokens.inset,bottom:Tokens.page})
-      .backgroundColor(Colors.surface).id('chat.editor')
+    Column() {
+      Column({space:Tokens.gap}) {
+        Row({space:8}) {
+          Button({type:ButtonType.Circle}) {
+            SymbolGlyph($r('sys.symbol.arrow_down_right_and_arrow_up_left')).fontSize(String(this.pageSymbolSize())+'vp').fontColor([Colors.ink])
+          }.width(this.pageToolbarSize()).height(this.pageToolbarSize()).padding(0).backgroundColor(Color.Transparent)
+            .responseRegion(ButtonStyles.touchRegion(this.pageToolbarSize())).accessibilityText(tr('phone_chat_close_editor'))
+            .onClick(() => { this.finishPageInput(); this.draftEditorOpen=false; }).id('chat.editor.collapse')
+          Blank().layoutWeight(1)
+          if (this.draftEditorFocused || this.environment.keyboardHeightPx > 0) this.hideKeyboard(true)
+        }.width('100%').height(this.pageToolbarSize()).padding({left:Tokens.page,right:Tokens.page})
+        Column({space:8}) {
+          if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.secondary)
+            .maxLines(this.environment.keyboardHeightPx > 0 ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
+          TextArea({text:this.model.draft,placeholder:this.composerPlaceholder(),controller:this.pageField})
+            .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(String(this.readingSize.points)+'vp')
+            .placeholderFont({size:String(this.readingSize.shellPoints)+'vp'}).fontColor(Colors.ink)
+            .lineHeight(String(this.readingSize.advance)+'vp').letterSpacing(String(this.draftTracking)+'vp').wordBreak(WordBreak.BREAK_WORD).backgroundColor(Color.Transparent).caretColor(Colors.link)
+            .padding({left:6,right:6,top:Tokens.gap,bottom:Tokens.gap}).enabled(!this.sending && !this.model.draftLoading)
+            .onFocus(() => this.draftEditorFocused=true).onBlur(() => this.draftEditorFocused=false)
+            .onTextSelectionChange((start:number,end:number) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.rememberSelection(start,end); })
+            .onChange((text:string) => { if (this.draftEditorOpen && this.draftEditorCurrent()) this.model.updateDraft(text); })
+            .id('chat.editor.input')
+        }.layoutWeight(1).width('100%').padding({left:Tokens.inset,right:Tokens.inset}).clip(true)
+        Row() {
+          Blank().layoutWeight(1)
+          Button({type:ButtonType.Circle}) {
+            this.composerRound(this.pageSendSize(),true)
+          }.width(this.pageSendSize()).height(this.pageSendSize()).padding(0).backgroundColor(Color.Transparent)
+            .responseRegion(ButtonStyles.touchRegion(this.pageSendSize())).accessibilityText(tr(this.primaryActionKey()))
+            .enabled(this.draftEditorCurrent() && this.primaryEnabled()).id('chat.editor.send')
+            .onClick(() => {
+              if (!this.draftEditorCurrent() || !this.primaryEnabled()) return;
+              if (this.primaryStop()) { this.model.stop(() => this.draftEditorCurrent()); return; }
+              this.refocusInline=false; this.pageField.stopEditing(); this.draftEditorOpen=false; this.sendDraft();
+            })
+        }.width('100%').height(this.pageSendSize()+2*Tokens.gap)
+          .padding({left:Tokens.page,right:Tokens.page,top:Tokens.gap,bottom:Tokens.gap})
+      }.width('100%').height('100%').constraintSize({maxWidth:Tokens.readingMax})
+        .padding({top:Tokens.gap,bottom:this.pageSheetInset+(this.compactDraftSpace?.bottomLift ?? 0)}).id('chat.editor')
+    }.width('100%').height('100%').backgroundColor(Colors.surface).id(this.pageSheetNodeId)
+      .onAreaChange(() => this.measurePageSheet())
   }
   @Builder composer() {
     Column({ space: Tokens.gap }) {
@@ -1409,8 +1437,8 @@ export struct Conversation {
                 .onClick(() => this.expandDraftEditor()).id('chat.expand')
             }
           }.width('100%').constraintSize({minHeight:this.expandedComposer() ? this.restingSize.target : this.composerActionSize()}).bindSheet($$this.draftEditorOpen,this.draftPage(),
-            {height:SheetSize.LARGE,showClose:false,keyboardAvoidMode:SheetKeyboardAvoidMode.RESIZE_ONLY,
-              onAppear:() => this.focusDraftPage(),onWillDismiss:(action:DismissSheetAction) => { this.finishPageInput(); action.dismiss(); },
+            {height:this.pageSheetHeight(),showClose:false,dragBar:false,backgroundColor:Colors.surface,keyboardAvoidMode:SheetKeyboardAvoidMode.RESIZE_ONLY,
+              onAppear:() => { this.measurePageSheet(); this.focusDraftPage(); },onWillDismiss:(action:DismissSheetAction) => { this.finishPageInput(); action.dismiss(); },
               onDisappear:() => this.draftPageGone()})
         }.id(this.editorAnchorId)
           .onAreaChange((_old: Area, area: Area) => { this.editorLeft = Number(area.globalPosition.x); this.editorTop = Number(area.globalPosition.y); this.editorWidth = Number(area.width); this.editorHeight = Number(area.height); })
