@@ -18,7 +18,7 @@ registerHooks({
   }
 });
 const {ResourceRow}=await import('../entry/src/main/ets/models/Wire.ets');
-const {assistantSidebarChats,sidebarConversationLabel,ScheduledChatOrigins,SidebarTaskHistory}=await import('../entry/src/main/ets/models/AssistantRecentChats.ets');
+const {allAssistantChatGroups,allChatDetail,assistantChatTitleParts,assistantChatSource,assistantSidebarChats,sidebarConversationLabel,ScheduledChatOrigins,SidebarTaskHistory}=await import('../entry/src/main/ets/models/AssistantRecentChats.ets');
 const chat=(id,extra={})=>ResourceRow.from({session_id:id,machine_id:'computer',manager:'assistant',title:id,...extra},'conversation');
 const ids=rows=>rows.map(row=>row.id);
 
@@ -89,4 +89,28 @@ test('automatic conversations announce the local source and active states take p
   }
   const task=chat('run',{...activity,title:'作業',origin:'user',state:'working'});
   assert.equal(sidebarConversationLabel(task,history,'ja-JP',now,strings('ja_JP')),'作業、定期タスク、作業中、OK');
+});
+
+
+test('All Chats filters the full owned list by source, preserves scheduled runs, and excludes the main, archived and foreign rows', () => {
+  const history = new ScheduledChatOrigins([{session_id:'mine',run_session_id:'legacy-task',title:'Release'}],[]);
+  const stamp='2026-11-22T10:00:00.000Z';
+  const rows=[chat('main',{origin:'user'}),chat('inbox',{origin:'inbox',state:'needs_you',last_text:'an unrelated preview',updated_at:stamp}),
+    chat('mine',{origin:'channel',updated_at:stamp}),chat('scheduled',{origin:'task',updated_at:stamp}),
+    chat('legacy-task',{origin:'user'}),chat('other',{origin:'future-integration'}),
+    chat('lark',{origin:'lark_agent'}),chat('spawned',{origin:'spawned'}),chat('ext',{origin:'extension'}),
+    chat('foreign',{manager:'another'}),chat('archived',{origin:'inbox',archived:true})];
+  const foreignGroup=chat('different-profile',{origin:'task'});foreignGroup.group='bad';rows.push(foreignGroup);
+  const groups=allAssistantChatGroups(rows,'main','computer','group','assistant',true,history);
+  assert.deepEqual(groups.map(g=>[g.id,g.rows.length]),[['all',8],['mine',1],['inbox',1],['task',2],['lark_agent',1],['spawned',1],['extension',1],['other',1]]);
+  assert.deepEqual(groups[0].rows.slice(0,3).map(r=>r.id),['inbox','mine','scheduled']);
+  assert.equal(groups[1].rows[0].id,'mine');
+  const k=x=>({inbox:'Inbox',phone_todo_section_needs:'Needs you',kb_minutes_ago:'{n} minutes ago'}[x] || x);
+  assert.equal(allChatDetail(rows[1],assistantChatSource(rows[1],history),'all','en-US',Date.parse(stamp),k),'Inbox · Needs you');
+  assert.equal(allChatDetail(rows[1],'inbox','inbox','en-US',Date.parse(stamp),k),'Needs you');
+  assert.equal(allChatDetail(rows[2],'','mine','en-US',Date.parse(stamp)+120000,k),'2 minutes ago');
+  assert.deepEqual(assistantChatTitleParts('1105 | 类型 | first | second'),['1105 | 类型 | ','first | second']);
+  assert.deepEqual(assistantChatTitleParts('My | conversation'),['','My | conversation']);
+  const legacy=allAssistantChatGroups([chat('own'),chat('legacy-task')],'main','computer','group','assistant',false,history);
+  assert.deepEqual(legacy.map(g=>[g.id,g.rows.map(r=>r.id)]),[['all',['legacy-task','own']],['mine',['own']]]);
 });

@@ -7323,6 +7323,22 @@
     {
       "name": "phone_sidebar_recent_help",
       "value": "定期タスクとバックグラウンド監督が始めたチャットも、時間順にサイドバーの「最近」に並びます。すべてのデバイスに反映されます。"
+    },
+    {
+      "name": "phone_all_chats_mine",
+      "value": "自分"
+    },
+    {
+      "name": "phone_all_chats_empty",
+      "value": "ここにはチャットがありません"
+    },
+    {
+      "name": "phone_all_chats_empty_detail",
+      "value": "受信トレイのAI分身、定期タスク、Lark /agentが開いたチャットはソースごとにここにまとめられます。"
+    },
+    {
+      "name": "phone_all_chats_filter_count",
+      "value": "{name}、{count}件"
     }
   ]
 }

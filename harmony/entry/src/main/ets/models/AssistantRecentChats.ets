@@ -48,17 +48,97 @@ const stateKeys: Record<string,string> = {
   'needs_you': 'phone_todo_section_needs', 'working': 'phone_todo_section_working', 'unread': 'phone_sidebar_unread'
 };
 
+const allChatSources: string[] = ['inbox', 'task', 'lark_agent', 'spawned', 'extension', 'other'];
+
+export function assistantChatSource(row: ResourceRow, history: ScheduledChatOrigins): string {
+  const source = sidebarOrigin(row, row.data(), history);
+  return !source || allChatSources.includes(source) ? source : 'other';
+}
+
+export function assistantChatSourceKey(source: string): string {
+  return Wire.text(sourceKeys, source, 'phone_sidebar_source_other');
+}
+
+export function assistantChatState(row: ResourceRow): string {
+  const state = Wire.text(row.data(), 'state');
+  return state || (row.state === 'blocked' ? 'needs_you' : row.state === 'done' ? 'unread' : row.state);
+}
+
+function chatActivity(row: ResourceRow, locale: string, now: number, translate: (key: string) => string): string {
+  const key = Wire.text(stateKeys, assistantChatState(row));
+  return key ? translate(key) : relativeActivityDate(Date.parse(Wire.text(row.data(), 'updated_at')), now, locale,
+    translate('agent_time_just_now'), translate('kb_minutes_ago'), translate('kb_yesterday'));
+}
+
+export function allChatDetail(row: ResourceRow, source: string, filter: string, locale: string, now: number,
+  translate: (key: string) => string): string {
+  return [filter === 'all' && source ? translate(assistantChatSourceKey(source)) : '',
+    chatActivity(row, locale, now, translate)].filter((value: string) => !!value).join(' · ');
+}
+
+export function assistantChatTitleParts(title: string): string[] {
+  const parts = title.split(' | ');
+  if (parts.length < 3 || !/^[0-9]{4}$/.test(parts[0]) || parts[1].length < 1 || parts[1].length > 4) return ['', title];
+  const topic = parts.slice(2).join(' | ').trim();
+  return topic ? [parts[0] + ' | ' + parts[1] + ' | ', topic] : ['', title];
+}
+
+function updatedAt(row: ResourceRow): number {
+  const value = Wire.text(row.data(), 'updated_at'), stamp = Date.parse(value);
+  const fraction = value.match(/:\d{2}\.\d{3}(\d+)/);
+  return Number.isFinite(stamp) ? stamp + (fraction ? Number('0.' + fraction[1]) : 0) : Number.NEGATIVE_INFINITY;
+}
+
+function newestChats(rows: ResourceRow[]): ResourceRow[] {
+  const activity = new Map<ResourceRow,number>();
+  for (const row of rows) activity.set(row,updatedAt(row));
+  return rows.sort((a: ResourceRow,b: ResourceRow) => {
+    const order = activity.get(b)! - activity.get(a)!;
+    const left = a.session || a.id, right = b.session || b.id;
+    return order || (left < right ? -1 : left > right ? 1 : 0);
+  });
+}
+
+export class AllChatGroup {
+  id: string;
+  rows: ResourceRow[];
+  constructor(id: string, rows: ResourceRow[]) { this.id = id; this.rows = rows; }
+}
+
+export function allAssistantChatGroups(conversations: ResourceRow[], main: string, mainMachine: string, group: string,
+  manager: string, supportsOrigin: boolean, history: ScheduledChatOrigins): AllChatGroup[] {
+  const all = newestChats(conversations.filter((row: ResourceRow) => {
+    const id = row.session || row.id;
+    return id.length > 0 && (!row.group || row.group === group) && (!row.manager || row.manager === manager) &&
+      !(id === main && (!mainMachine || row.machine === mainMachine)) && !Wire.bool(row.data(), 'archived');
+  }));
+  const supported = supportsOrigin || all.some((row: ResourceRow) => typeof row.data()['origin'] === 'string');
+  const mine: ResourceRow[] = [], bySource = new Map<string,ResourceRow[]>();
+  for (const row of all) {
+    const source = assistantChatSource(row, history);
+    if (!supported) {
+      if (!history.contains(row)) mine.push(row);
+    } else if (!source) {
+      mine.push(row);
+    } else {
+      if (!bySource.has(source)) bySource.set(source, []);
+      bySource.get(source)!.push(row);
+    }
+  }
+  const groups = [new AllChatGroup('all',all), new AllChatGroup('mine',mine)];
+  for (const source of allChatSources) {
+    const rows = bySource.get(source);
+    if (rows?.length) groups.push(new AllChatGroup(source,rows));
+  }
+  return groups;
+}
+
 export function sidebarConversationLabel(row: ResourceRow, history: ScheduledChatOrigins, locale: string, now: number,
   translate: (key:string) => string): string {
   const data = row.data(), words = [sidebarConversationTitle(row,translate)];
   const origin = sidebarOrigin(row,data,history);
   if (origin) words.push(translate(Wire.text(sourceKeys,origin,'phone_sidebar_source_other')));
-  // Older Hubs have only status. An explicit unknown state is still unknown on iPhone.
-  let state = Wire.text(data,'state');
-  if (!state) state = row.state === 'blocked' ? 'needs_you' : row.state === 'done' ? 'unread' : row.state;
-  const stateKey = Wire.text(stateKeys,state);
-  const activity = stateKey ? translate(stateKey) : relativeActivityDate(Date.parse(Wire.text(data,'updated_at')),now,
-    locale,translate('agent_time_just_now'),translate('kb_minutes_ago'),translate('kb_yesterday'));
+  const activity = chatActivity(row, locale, now, translate);
   if (activity) words.push(activity);
   const preview = Wire.text(data,'last_text').replace(/\*\*|__|`|### |## |# |> /g,'').replace(/\r\n?|\n/g,' ');
   if (preview) words.push(preview);
@@ -70,7 +150,7 @@ export function assistantSidebarChats(conversations: ResourceRow[], main: string
   const result = new SidebarChats();
   const leaders = Wire.strings(options,'leaders'), background = Wire.text(options,'background_supervisor');
   const showScheduled = Wire.bool(options,'recent_task_chats');
-  const leadRows = new Map<string,ResourceRow>(), activity = new Map<ResourceRow,number>();
+  const leadRows = new Map<string,ResourceRow>();
   for (const row of conversations) {
     const id = row.session || row.id;
     if (!id || row.group && row.group !== group || row.manager && row.manager !== manager ||
@@ -82,21 +162,13 @@ export function assistantSidebarChats(conversations: ResourceRow[], main: string
       continue;
     }
     if (!showScheduled && (id === background || sidebarOrigin(row,data,history) === 'task')) continue;
-    const value=Wire.text(data,'updated_at'), stamp=Date.parse(value);
-    const fraction=value.match(/:\d{2}\.\d{3}(\d+)/);
-    activity.set(row,Number.isFinite(stamp) ? stamp + (fraction ? Number('0.'+fraction[1]) : 0) : Number.NEGATIVE_INFINITY);
     result.recent.push(row);
   }
   for (const id of leaders) {
     const row = leadRows.get(id);
     if (row) { result.directions.push(row); leadRows.delete(id); }
   }
-  result.recent.sort((a:ResourceRow,b:ResourceRow) => {
-    const order = activity.get(b)! - activity.get(a)!;
-    const left = a.session || a.id, right = b.session || b.id;
-    return order || (left < right ? -1 : left > right ? 1 : 0);
-  });
-  result.recent = result.recent.slice(0,5);
+  result.recent = newestChats(result.recent).slice(0,5);
   return result;
 }
 

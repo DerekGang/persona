@@ -1,12 +1,11 @@
 import { Tokens } from '../design/Tokens';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { ClientModel } from '../models/ClientModel';
-import { AdminSnapshot, AdminWorkspace } from '../models/AdminWorkspace';
-import { ResourceRow, Wire } from '../models/Wire';
+import { ResourceRow } from '../models/Wire';
 import { PhoneSearchIndex, PhoneChatMatch, localChatMatches, mergeChatMatches } from '../models/PhoneChatSearch';
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
-import { tr, trError } from '../design/Strings';
+import { tr } from '../design/Strings';
 
 @ComponentV2
 export struct PhoneConversationSearch {
@@ -19,32 +18,11 @@ export struct PhoneConversationSearch {
   @Local query: string = '';
   @Local agents: boolean = false;
   @Local search: PhoneSearchIndex = new PhoneSearchIndex();
-  @Local options: AdminWorkspace = new AdminWorkspace();
-  private mounted: boolean = false;
   private field: TextInputController = new TextInputController();
-  aboutToAppear(): void { this.agents = this.initialAgents; this.mounted = true; this.syncOptions(); }
-  aboutToDisappear(): void { this.mounted = false; this.options.hide(); this.search.close(); }
+  aboutToAppear(): void { this.agents = this.initialAgents; }
+  aboutToDisappear(): void { this.search.close(); }
   @Monitor('model.profile') newOwner(): void { this.query = ''; this.search.close(); }
   @Monitor('query','agents','model.connected') update(): void { this.search.schedule(this.model, this.query, this.agents); }
-  @Monitor('agents','inline','model','model.profile','model.connected') syncOptions(): void {
-    if (!this.mounted || this.inline || this.agents || !this.model.connected || this.model.demo) { this.options.hide(); return; }
-    if (!this.options.showsConversationOptions(this.model)) this.options.open(this.model,'conversation_options',true).catch(() => undefined);
-  }
-  private offersOptions(): boolean {
-    return !this.inline && !this.agents && this.model.connected && !this.model.demo && this.options.showsConversationOptions(this.model) &&
-      typeof this.options.assistantData['recent_task_chats'] === 'boolean';
-  }
-  @Builder displayMenu(snapshot: AdminSnapshot) {
-    Menu() {
-      MenuItem({content:tr('phone_sidebar_show_scheduled')}).selected(Wire.bool(this.options.assistantData,'recent_task_chats')).selectIcon(true)
-        .enabled(!this.options.saving && !this.model.operationBlocked('/api/v1/assistant'))
-        .onClick(() => {
-          if (this.offersOptions() && this.options.admits(snapshot,'/api/v1/assistant')) {
-            this.options.setRecentTaskChats(snapshot,!Wire.bool(this.options.assistantData,'recent_task_chats')).catch(() => undefined);
-          }
-        }).id('phone_search.recent_task_chats')
-    }
-  }
   @Computed get rows(): PhoneChatMatch[] {
     const rows = this.agents ? this.model.directorySessions : this.model.conversations;
     return mergeChatMatches(localChatMatches(rows,this.query,this.agents),this.agents ? [] : this.search.matches);
@@ -79,15 +57,8 @@ export struct PhoneConversationSearch {
     Column() {
       if (this.inline) this.fieldBar()
       else Row() {
-        Text(tr('flow_all_chats')).fontSize(29).maxFontScale(Tokens.interfaceScaleFor(29)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
-        if (this.offersOptions()) {
-          Button({type:ButtonType.Circle}) { Image(Symbols.more).width(19).height(19).fillColor(Colors.ink) }
-            .width(44).height(44).backgroundColor(Colors.control).accessibilityText(tr('phone_all_chats_display_options'))
-            .bindMenu(this.displayMenu(this.options.capture('/api/v1/assistant'))).id('phone_search.display_options')
-        }
+        Text(tr(this.agents ? 'search_sessions' : 'flow_search_chats')).fontSize(29).maxFontScale(Tokens.interfaceScaleFor(29)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
       }.width('100%').padding({left:16,right:16,top:12,bottom:8})
-      if (this.offersOptions() && this.options.error) Text(trError(this.options.error)).fontSize(Tokens.meta)
-        .fontColor($r('app.color.persona_danger')).width('100%').padding({left:16,right:16}).id('phone_search.options_error')
       if (this.showScopes) Row() { this.scopeButton(false,'persona'); this.scopeButton(true,'agents') }
         .constraintSize({minHeight:35}).padding(2).margin({left:12,right:12,top:3,bottom:5}).width('92%').backgroundColor(Colors.control).borderRadius(18)
       List() {

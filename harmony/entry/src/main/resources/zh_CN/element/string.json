@@ -7323,6 +7323,22 @@
     {
       "name": "phone_sidebar_recent_help",
       "value": "定时任务和后台督办开的对话，也按时间排进侧边栏的「最近」。你的所有设备都会跟着变。"
+    },
+    {
+      "name": "phone_all_chats_mine",
+      "value": "我的"
+    },
+    {
+      "name": "phone_all_chats_empty",
+      "value": "这里没有对话"
+    },
+    {
+      "name": "phone_all_chats_empty_detail",
+      "value": "收件箱的 AI 分身、定时任务、飞书 /agent 开的对话会按来源收在这里。"
+    },
+    {
+      "name": "phone_all_chats_filter_count",
+      "value": "{name}，{count} 个"
     }
   ]
 }

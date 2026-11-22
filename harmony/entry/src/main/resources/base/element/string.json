@@ -7323,6 +7323,22 @@
     {
       "name": "phone_sidebar_recent_help",
       "value": "Chats your scheduled tasks and the background supervisor start also appear in the sidebar's Recent, by time. All your devices follow."
+    },
+    {
+      "name": "phone_all_chats_mine",
+      "value": "Mine"
+    },
+    {
+      "name": "phone_all_chats_empty",
+      "value": "No Chats Here"
+    },
+    {
+      "name": "phone_all_chats_empty_detail",
+      "value": "Chats started by the Inbox's AI twin, scheduled tasks and Lark /agent are collected here by source."
+    },
+    {
+      "name": "phone_all_chats_filter_count",
+      "value": "{name}, {count}"
     }
   ]
 }

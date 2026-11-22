@@ -6,6 +6,7 @@ import { AgentLaunchChoices, providerStartModes, LaunchChoice, RecentAgentSetup,
 import { WorktreeSheet } from '../components/WorktreeSheet';
 import { phonePlaceAtRoot, phonePanIntent, finishesPhonePan } from '../models/PhoneNavigation';
 import { PhoneConversationSearch } from '../components/PhoneConversationSearch';
+import { PhoneAllChats } from '../components/PhoneAllChats';
 import { SessionSpaceTabs } from '../components/SessionSpaceTabs';
 import { PhoneSessionHeading } from '../components/PhoneSessionHeading';
 import { SessionSpace, SessionSpaceTab, sessionSpace, worktreeForSessionSpace } from '../models/SessionSpace';
@@ -339,6 +340,10 @@ struct Index {
     if (this.model.section !== section) this.changeSection(section);
     this.stack.clear();
     this.openRow(row, true);
+  }
+  @Builder allChatsSheet() {
+    PhoneAllChats({model:this.model,history:this.sidebarTaskHistory,onClose:() => this.chatSearchShown = false,
+      onOpen:(row:ResourceRow) => this.openPickedChat(row)})
   }
   @Builder phoneSearch() {
     PhoneConversationSearch({model:this.model,initialAgents:this.startSearchInAgents,
@@ -2446,9 +2451,14 @@ struct Index {
         .borderRadius(this.drawerFraction > 0 && !this.wide() ? 55 : 0).clip(this.drawerFraction > 0 && !this.wide())
         .shadow({radius:this.drawerFraction > 0 && !this.wide() ? 24 : 0,color:'#2E000000'})
         .translate({x:this.wide() ? 0 : this.drawerFraction * this.drawerWidth()})
-      if (this.chatSearchShown) Column() {
+      if (this.chatSearchShown && this.startSearchInAgents) Column() {
         this.phoneSearch()
-      }.width('100%').height('100%').backgroundColor(Colors.grouped).zIndex(2).id('shell.all_chats')
+      }.width('100%').height('100%').backgroundColor(Colors.grouped).zIndex(2).id('shell.chat_search')
+      Column().width(0).height(0)
+        .bindSheet(this.chatSearchShown && !this.startSearchInAgents, this.allChatsSheet(), {
+          height:this.compactFormHeight(), preferType:SheetType.BOTTOM, showClose:false, dragBar:false, backgroundColor:Colors.canvas,
+          onWillDismiss:(dismiss:DismissSheetAction) => { this.chatSearchShown=false; dismiss.dismiss(); }
+        })
     }.width('100%').height('100%').padding({top:this.compactNavigationInset()}).clip(true)
       .onAreaChange((_old:Area,now:Area) => { this.phoneWidth = Number(now.width); this.phoneHeight = Number(now.height); })
       .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:12}).tag('phone.shell.pan')
