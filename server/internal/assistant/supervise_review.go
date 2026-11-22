@@ -227,6 +227,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	// Dispatch-time topology is decided where the task is created, and nonterminal reviews still require an existing
 	// supervised task. Cancellation needs no such receipt ledger.
 	ledger := t.Supervision != nil || isMain && verdict == reviewAccepted || a.UserCheck
+	if err := deferredScopeLedgerError(ledger, a.DeferredScope); err != nil {
+		return "", err
+	}
 	if t.Supervision == nil && (verdict == reviewRework || verdict == reviewNeedsUser || verdict == reviewParked) {
 		return "", fmt.Errorf("task %s is not supervised: send what is missing to its agent with agent_send, or ask the user in your answer", t.ID)
 	}
@@ -654,6 +657,13 @@ func reviewReply(note string, checks []ReviewCheck) string {
 		lines = append(lines, c.Criterion+": "+c.Evidence)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func deferredScopeLedgerError(ledger bool, deferredScope string) error {
+	if !ledger && deferredScope != "" {
+		return errors.New("accepted: deferred scope requires a review ledger. Ask the main conversation to review it or use accepted with user_check: true. Nothing was written.")
+	}
+	return nil
 }
 
 func deferredScopeError(followUpTodoID string) error {

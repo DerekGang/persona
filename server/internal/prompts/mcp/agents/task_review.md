@@ -117,7 +117,7 @@ A non-main reviewer of another supervisor's task may only accept/cancel; send ga
     "deferred_scope": {
       "type": "string",
       "maxLength": 600,
-      "description": "accepted: describe in the owner's language which work in the original brief is deferred or requires separate approval"
+      "description": "accepted: describe in the owner's language which work in the original brief is deferred or requires separate approval. The personal verification card shows the first 120 characters"
     },
     "follow_up_todo_id": {
       "type": "string",
