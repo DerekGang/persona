@@ -81,9 +81,9 @@ try {
     check(`${theme}: zoom button`, (await camera(page)).zoom > 1);
     await page.getByRole("button", { name: "Reset" }).click();
     check(`${theme}: Reset restores the default`, JSON.stringify(await camera(page)) === JSON.stringify(before));
-    await page.mouse.move(690, 430);
+    await page.mouse.move(560, 650);
     await page.mouse.down();
-    await page.mouse.move(760, 470, { steps: 4 });
+    await page.mouse.move(630, 690, { steps: 4 });
     await page.mouse.up();
     const dragged = await camera(page);
     check(`${theme}: drag orbits`, dragged.yaw !== 225 && dragged.pitch !== 35, dragged);

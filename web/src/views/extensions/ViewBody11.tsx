@@ -183,7 +183,7 @@ function SceneView({ item, camera, interactive, busy, onPress, canPress, onCamer
           const common = {
             "data-scene-pin": pin.id,
             "aria-label": label,
-            className: "touch-hit absolute z-[2] flex max-w-44 -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-full border border-line bg-surface px-2 py-1 text-left text-[11px] whitespace-nowrap text-ink shadow-card disabled:opacity-60",
+            className: "touch-hit absolute z-[2] flex max-w-44 -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-full border border-line bg-surface px-2 py-1 text-left text-submeta whitespace-nowrap text-ink shadow-card disabled:opacity-60",
             style: { left: clamp(at.x, 90, Math.max(90, size.w - 90)), top: clamp(at.y, 44, Math.max(44, size.h - 12)), zIndex: 2 + Math.round((at.depth - minPinDepth) * 100) },
           } as const;
           return action ? (
