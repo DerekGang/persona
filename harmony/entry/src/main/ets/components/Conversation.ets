@@ -1,4 +1,5 @@
 import { SessionComposerModeChip } from './SessionComposerModeChip';
+import { ComposerSize, restingComposerSize } from '../core/ComposerSize';
 import { PhoneDictationControl } from './PhoneDictationControl';
 import { ConversationRecap } from './ConversationRecap';
 import { AssistantWelcome } from './AssistantWelcome';
@@ -396,14 +397,17 @@ export struct Conversation {
   @Local attachmentInset: number = 0;
   private attachmentNodeId: string = 'chat.attachment.' + util.generateRandomUUID();
   private attachmentLayoutReady: boolean = false;
-  private leftActionWidth(): number { return !this.model.demo || this.showContextMenu ? Tokens.touch : 0; }
+  @Computed get restingSize(): ComposerSize { return restingComposerSize(this.environment.fontScale); }
+  private composerActionSize(): number { return this.restingComposer() ? this.restingSize.target : Tokens.touch; }
+  private leftActionWidth(size: number): number { return !this.model.demo || this.showContextMenu ? size : 0; }
   private hasComposerAction(): boolean {
     return this.primaryStop() || this.sending || !!this.model.draft.trim() || this.attachments.attachments.length > 0 || !!this.model.sourceContext;
   }
-  private trailingActionWidth(): number { return Tokens.touch * (this.hasComposerAction() ? 2 : 1); }
+  private trailingActionWidth(size: number): number { return size + (this.hasComposerAction() ? Tokens.touch : 0); }
   private expandedComposer(): boolean {
-    const leading = this.leftActionWidth();
-    const available = this.composerWidth - leading - this.trailingActionWidth() - (leading ? 2 : 1) * Tokens.gap;
+    const candidate = this.environment.keyboardHeightPx === 0 && this.composerAvailable() ? this.restingSize.target : Tokens.touch;
+    const leading = this.leftActionWidth(candidate);
+    const available = this.composerWidth - leading - this.trailingActionWidth(candidate) - (leading ? 2 : 1) * Tokens.gap;
     return this.fieldFocused || this.modeMenuOpen || this.model.draft.length > 0 || this.attachments.attachments.length > 0 ||
       !!this.model.sourceContext || available < Tokens.minimumInput;
   }
@@ -435,8 +439,8 @@ export struct Conversation {
   }
   // Native ordering keeps the same editor mounted. Compact slots use pixel precision, not twelfths of the row.
   private composerColumns(): number { return this.expandedComposer() ? 12 : Math.max(1, Math.round(this.getUIContext().vp2px(this.composerWidth))); }
-  private sendColumns(): number { const width = this.trailingActionWidth() + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
-  private leftColumns(): number { const width = this.leftActionWidth(); return Math.ceil((width + (width && !this.expandedComposer() ? Tokens.gap : 0)) * this.composerColumns() / this.composerWidth); }
+  private sendColumns(): number { const width = this.trailingActionWidth(this.composerActionSize()) + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
+  private leftColumns(): number { const width = this.leftActionWidth(this.composerActionSize()); return Math.ceil((width + (width && !this.expandedComposer() ? Tokens.gap : 0)) * this.composerColumns() / this.composerWidth); }
   private primaryStop(): boolean { return !this.model.decision && this.model.canCompose() && this.model.canStop() && !this.model.draft.trim() && !this.attachments.attachments.length; }
   @Monitor('active', 'model.selected', 'model.sessions', 'model.connected', 'model.draft', 'model.decision', 'attachments.attachments', 'model.interruptPendingKey')
   primaryStopChanged(): void { this.onPrimaryStop(this.active && this.primaryStop()); }
@@ -448,7 +452,7 @@ export struct Conversation {
     return this.model.decision.kind === 'question' ? Math.max(half, this.availableHeight - 72) : half;
   }
   private inlineEditorMaxHeight(): number {
-    if (!this.expandedComposer()) return Tokens.touch;
+    if (!this.expandedComposer()) return this.composerActionSize();
     const line = Tokens.lineHeight * Math.max(1, this.environment.fontScale);
     const padding = 2 * Tokens.inset;
     const actions = Tokens.touch * (this.verticalActions() ? 2 : 1);
@@ -1220,8 +1224,8 @@ export struct Conversation {
             .fontSize(Tokens.body).placeholderFont({ size: Tokens.body }).fontColor(Colors.ink).placeholderColor(Colors.secondary)
             .lineHeight(String(Tokens.lineHeight) + 'fp').caretColor(Colors.action).backgroundColor(Color.Transparent)
             .padding({ left: this.expandedComposer() ? Tokens.page : Tokens.gap, right: this.offersDraftEditor() ? Tokens.touch : this.expandedComposer() ? Tokens.page : Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
-            .constraintSize({ minHeight: Tokens.touch, maxHeight: this.inlineEditorMaxHeight() })
-            .height(this.expandedComposer() ? undefined : Tokens.touch)
+            .constraintSize({ minHeight: this.composerActionSize(), maxHeight: this.inlineEditorMaxHeight() })
+            .height(this.expandedComposer() ? undefined : this.composerActionSize())
             .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
             .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
             .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
@@ -1241,8 +1245,10 @@ export struct Conversation {
           .bindPopup(this.chooser.shown && this.chooser.session?.preserveInput === true, this.chooserPopupOptions())
         if (!this.model.demo || this.showContextMenu || this.verticalActions() && (this.fieldFocused || this.environment.keyboardHeightPx > 0)) GridCol({ span: this.verticalActions() ? this.composerColumns() : this.leftColumns(), order: this.expandedComposer() ? this.verticalActions() ? 2 : 1 : 0 }) {
           Row({ space: Tokens.gap }) {
-            if (!this.model.demo) Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize('26vp').fontWeight(FontWeight.Regular).fontColor([this.toolInk()]) }
-              .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('attach'))
+            if (!this.model.demo) Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(String(this.restingComposer() ? this.restingSize.plus : 26) + 'vp').fontWeight(FontWeight.Regular).fontColor([this.toolInk()]) }
+              .attributeModifier(ButtonStyles.quiet).width(this.composerActionSize()).height(this.composerActionSize()).padding(0)
+              .responseRegion(ButtonStyles.touchRegion(this.composerActionSize()))
+              .accessibilityText(tr('attach'))
               .enabled(!this.sending && !this.attachments.busy && !this.model.draftLoading).onClick((event: ClickEvent) => this.openAttachmentChooser(event)).id('chat.attach')
               .bindMenu(this.nativeChooser('attachments'), this.attachmentNativeMenu, this.attachmentMenuOptions())
               .parallelGesture(LongPressGesture().onAction(() => { if (this.showContextMenu) this.requestComposerActions(false); }))
@@ -1252,7 +1258,7 @@ export struct Conversation {
               .parallelGesture(LongPressGesture().onAction(() => this.requestComposerActions(false)))
               .bindContextMenu(this.nativeChooser('actions'), this.attachmentNativeMenu, this.actionContextMenuOptions()).id('chat.more')
             if (this.verticalActions() && (this.fieldFocused || this.environment.keyboardHeightPx > 0)) this.hideKeyboard(false)
-          }.width('100%').constraintSize({ minHeight: Tokens.touch }).alignItems(VerticalAlign.Center)
+          }.width('100%').constraintSize({ minHeight: this.composerActionSize() }).alignItems(VerticalAlign.Center)
         }
         if (this.expandedComposer() && !this.verticalActions()) GridCol({ span: this.composerColumns() - this.leftColumns() - this.sendColumns(), order: 3 }) {
           Row() {
@@ -1263,7 +1269,8 @@ export struct Conversation {
         GridCol({ span: this.verticalActions() ? this.composerColumns() : this.sendColumns(), order: this.expandedComposer() ? this.verticalActions() ? 1 : 4 : 2 }) {
           Row() {
           if (this.verticalActions()) SessionComposerModeChip({model:this.model,active:this.active && !this.draftEditorOpen,onMenu:(open:boolean) => this.modeMenuOpen=open}).layoutWeight(1)
-          PhoneDictationControl({owner: this.dictationOwner(),ink:this.toolInk(),
+          PhoneDictationControl({owner: this.dictationOwner(),ink:this.toolInk(), target:this.composerActionSize(),
+            symbolSize:this.restingComposer() ? this.restingSize.microphone : 22,
             active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
             chooseLanguage: () => this.model.dictationLocaleForChat(), onListeningIn: (locale: string) => this.model.rememberDictationLocale(locale),
             allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.model.canCompose() && !this.model.decision,
@@ -1281,7 +1288,7 @@ export struct Conversation {
             .backgroundColor(Color.Transparent)
             .enabled(this.primaryEnabled())
             .onClick(() => { if (!this.sendCurrent()) return; if (this.primaryStop()) this.model.stop(() => this.sendCurrent()); else this.sendDraft(); }).id('chat.send')
-          }.width('100%').height(Tokens.touch).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End)
+          }.width('100%').height(this.composerActionSize()).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End)
             .padding({ right: this.restingComposer() ? 0 : 3 })
         }
       }.width('100%').onAreaChange((_old: Area, area: Area) => { const width = Number(area.width); if (Number.isFinite(width) && width > 0) this.composerWidth = width; })

@@ -8,6 +8,8 @@ import { NativeDictation, DictationListener } from '../platform/NativeDictation'
 @ComponentV2
 export struct PhoneDictationControl {
   @Param ink:ResourceColor=Colors.ink;
+  @Param target: number = Tokens.touch;
+  @Param symbolSize: number = 22;
   @Require @Param owner: string;
   @Param active: boolean = true;
   @Param language: string = 'default';
@@ -117,8 +119,9 @@ export struct PhoneDictationControl {
   }
 
   build() {
-    Button({type: ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.mic')).fontSize('22vp').fontWeight(FontWeight.Medium).fontColor([this.ink]) }
-      .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0)
+    Button({type: ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.mic')).fontSize(String(this.symbolSize) + 'vp').fontWeight(FontWeight.Medium).fontColor([this.ink]) }
+      .attributeModifier(ButtonStyles.quiet).width(this.target).height(this.target).padding(0)
+      .responseRegion(ButtonStyles.touchRegion(this.target))
       .accessibilityText(tr('phone_chat_dictation')).bindTips(tr('phone_chat_dictation')).enabled(this.active)
       .id('chat.dictation').onClick(() => this.start())
       .bindSheet($$this.shown, this.panel(), {title: {title: tr('phone_chat_dictation')}, height: SheetSize.MEDIUM,
