@@ -11,6 +11,22 @@ struct LayoutSettingsPage: View {
     private let seen = SeenRowsChoice()
 
     var body: some View {
+        ScrollViewReader { proxy in
+            form
+                // Opened from the Agents list's notice (#12514): the page arrives at the choice the notice names.
+                .task {
+                    guard model.revealSeenRowsSetting else { return }
+                    model.revealSeenRowsSetting = false
+                    await Task.yield()
+                    proxy.scrollTo(SeenRows.key, anchor: .top)
+                }
+        }
+        .themedGroupedPage()
+        .detailTitle(String(localized: "Agents List Layout"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var form: some View {
         SettingsForm {
             Section {
                 ForEach(AgentListDisplay.allCases) { display in
@@ -39,14 +55,11 @@ struct LayoutSettingsPage: View {
                 .pickerStyle(.inline)
                 .labelsHidden()
             } header: {
-                Text("Seen Agents")
+                Text("Seen Agents").id(SeenRows.key)
             } footer: {
                 Text("An Agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat.")
             }
         }
-        .themedGroupedPage()
-        .detailTitle(String(localized: "Agents List Layout"))
-        .navigationBarTitleDisplayMode(.inline)
     }
 
     /// The choice made here also answers the list's one-time notice; leaving with the chat lets go of what this visit holds.

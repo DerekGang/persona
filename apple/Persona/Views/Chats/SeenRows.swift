@@ -1,7 +1,7 @@
 import Foundation
 
 /// What an Agents row read from Unread or Just finished does once it is seen (#12514; docs/design/DESIGN_SYSTEM.md 3.4,
-/// "Rows seen during a visit"). Kept on this device: Settings › Appearance & Display › Agents List Layout, iPhone and
+/// "Rows read during a visit"). Kept on this device: Settings › Appearance & Display › Agents List Layout, iPhone and
 /// iPad only; elsewhere (no such setting) seen rows leave with their chat, as before.
 nonisolated enum SeenRows: String, CaseIterable, Identifiable, Sendable {
     /// It keeps its place, drawn as Seen, until the list is refreshed (`AppModel.seenThisVisit`): pull to refresh, Clear

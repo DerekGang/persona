@@ -625,6 +625,9 @@ final class AppModel {
     @ObservationIgnored private let seenRowsChoice = SeenRowsChoice()
     /// What a row read from Unread or Just finished does once seen, on this device (`SeenRows`).
     var seenRows: SeenRows { seenRowsForTests ?? seenRowsChoice.mode }
+    /// The Agents list's notice opened Settings for that choice (#12514): its page brings the choice into sight once
+    /// (`LayoutSettingsPage`).
+    @ObservationIgnored var revealSeenRowsSetting = false
     private(set) var assistantConfig: APIClient.AssistantState? {
         didSet {
             if let g = hub?.group, let a = assistantConfig {

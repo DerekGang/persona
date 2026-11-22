@@ -1390,14 +1390,6 @@ private struct AgentsList: View {
                 Section { HubNoticeRow() } // the hub's version: an update out, under way, or too old (docs/operations/hub-update.md)
             }
             #endif
-            #if os(iOS)
-            // The changed default said once (#12514, PRINCIPLES 1), when a read row first stays: where to change it back.
-            if holdsSeen && !seenRowsNoticed && model.seenRows == .stay && query.isEmpty {
-                Section { seenRowsNotice }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
-            }
-            #endif
             if (widthClass != .regular || unified != nil) && showsHerdrNotices {
                 // "MacBook's herdr is not running" with Start (#1916); beside the split they are under the filter bar (`herdrNoticesAbove`).
                 ForEach(herdrStopped) { m in
@@ -1530,6 +1522,16 @@ private struct AgentsList: View {
                 .listRowSeparator(floating ? .hidden : .automatic)
             }
         }
+        #if os(iOS)
+        // The changed default said once (#12514, PRINCIPLES 1), when a read row first stays, with the way to change it
+        // back: floating at the list's foot, not in the list, so no row moves when it comes or goes. A section at the
+        // list's top, put in while the chat was open over it, moved the rows ~570 pt on the way back.
+        .floatingFooter(over: listPage, shown: holdsSeen && !seenRowsNoticed && model.seenRows == .stay && query.isEmpty) {
+            seenRowsNotice
+                .padding(.horizontal, Theme.Space.page)
+                .padding(.bottom, Theme.Space.sm)
+        }
+        #endif
     }
 
     private func styledAgentList<Content: View>(_ list: Content, base: [Session], interactions: [Interaction]) -> some View {
@@ -1776,6 +1778,7 @@ private struct AgentsList: View {
         }) {
             Button {
                 Haptics.tap()
+                model.revealSeenRowsSetting = true
                 model.settingsPath = NavigationPath([SettingsPage.appearance, SettingsPage.layout])
                 model.showSettings()
             } label: {
@@ -1786,6 +1789,12 @@ private struct AgentsList: View {
             .accessibilityIdentifier("agents.seenNotice.settings")
         }
         .accessibilityIdentifier("agents.seenNotice")
+    }
+
+    /// The color behind the list (`AgentsListPage`), which what floats over its foot is washed back to.
+    private var listPage: Color {
+        if unified != nil { return UnifiedSidebar.columnColor }
+        return grouping == .repo && !repoTree ? Theme.WorkspaceSidebar.background : Theme.groupedPage
     }
     #endif
 

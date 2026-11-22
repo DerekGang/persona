@@ -310,7 +310,7 @@ import PersonaWire
         #expect(AgentListOrder(isPinned: { _ in false }, isMuted: { _ in false }, held: s.key).rank(s) == 3)
     }
 
-    // MARK: Rows seen during a visit (#12514)
+    // MARK: Rows read during a visit (#12514)
 
     private func visit(_ heldSeen: [String: AgentListOrder.Held], muted: Set<String> = []) -> AgentListOrder {
         AgentListOrder(isPinned: { _ in false }, isMuted: { muted.contains($0.sessionID) },
