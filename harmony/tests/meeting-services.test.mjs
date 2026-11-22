@@ -14,7 +14,7 @@ registerHooks({
     return next(url,context);
   }
 });
-const {MeetingReminderQueue,MeetingOccurrence,PublishedMeetingReminder,upcomingMeetingReminders}=await import('../entry/src/main/ets/models/MeetingCalendarReminders.ets');
+const {MeetingReminderQueue,MeetingOccurrence,PublishedMeetingReminder,upcomingMeetingReminders,meetingReminderFailure}=await import('../entry/src/main/ets/models/MeetingCalendarReminders.ets');
 const {meetingGlossary,meetingSpeechServices,PhoneMeetingTranscription}=await import('../entry/src/main/ets/models/PhoneMeetingTranscription.ets');
 const now=Date.UTC(2026,4,1,10);
 function occurrence(id,minutes,props={}) {
@@ -81,4 +81,12 @@ test('scope change while reading admission or saving never targets a second owne
   const form=new PhoneMeetingTranscription();await form.open(owner);
   const arrived=waitRead(),saving=form.choose('meeting_transcription_default','hub');await arrived;cfg.scope='replaced';resume();
   assert.equal(await saving,false);assert.equal(requests.some(r=>r[0]==='PUT'),false);
+});
+
+test('a background-reminder quota rejection is distinct from a notification refusal and never counted as an owned schedule',async()=>{
+  const system={existing:async()=>[],calendar:async()=>[occurrence('test',10)],cancel:async()=>{},publish:async()=>{throw Object.assign(new Error('quota'),{code:1700002})}};
+  const queue=new MeetingReminderQueue();
+  await assert.rejects(queue.refresh(system,()=>true,()=>'',()=>now),e=>meetingReminderFailure(e.code)==='meeting_reminder_quota');
+  assert.equal((await system.existing()).length,0);assert.equal(meetingReminderFailure(1700001),'notifications_denied');
+  assert.equal(meetingReminderFailure(500),'meeting_reminder_unavailable');
 });

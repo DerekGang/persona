@@ -3,7 +3,7 @@ import { calendarManager } from '@kit.CalendarKit';
 import { reminderAgentManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { LocalStore } from './LocalStore';
-import { MeetingOccurrence, MeetingReminderQueue, MeetingReminderSystem, PublishedMeetingReminder } from '../models/MeetingCalendarReminders';
+import { MeetingOccurrence, meetingReminderFailure, MeetingReminderQueue, MeetingReminderSystem, PublishedMeetingReminder } from '../models/MeetingCalendarReminders';
 import { Wire } from '../models/Wire';
 import { tr } from '../design/Strings';
 
@@ -70,6 +70,7 @@ export class NativeMeetingServices {
   @Trace enabled:boolean=true;
   @Trace calendar:string='unknown';
   @Trace notifications:boolean=false;
+  @Trace scheduled:number=-1;
   @Trace error:string='';
   @Trace pendingOpen:boolean=false;
   @Trace busy:boolean=false;
@@ -104,7 +105,15 @@ export class NativeMeetingServices {
     if (rev!==this.update) return;
     this.calendar=state;this.notifications=enabled;this.error='';
     try { await this.queue.refresh(this.system,() => this.enabled && this.calendar==='granted' && this.notifications,() => this.recording,() => Date.now()); }
-    catch (_) { if (rev===this.update) this.error='meeting_reminder_unavailable'; }
+    catch (error) {
+      if (rev===this.update) {
+        const code=Wire.number(error as Object as Record<string,Object>,'code');
+        if (code===1700001) this.notifications=false;
+        this.error=meetingReminderFailure(code);
+      }
+    }
+    try { const active=await this.system.existing(); if (rev===this.update) this.scheduled=active.length; }
+    catch (_) { if (rev===this.update) this.scheduled=-1; }
   }
   async today(context:common.UIAbilityContext):Promise<MeetingOccurrence[]> {
     await this.initialize(context);

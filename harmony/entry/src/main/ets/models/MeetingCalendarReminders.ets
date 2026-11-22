@@ -15,6 +15,12 @@ export function upcomingMeetingReminders(events:MeetingOccurrence[],now:number,r
     .filter((e:MeetingOccurrence) => { const id=e.key(); if (seen.has(id)) return false; seen.add(id); return true; }).slice(0,16);
 }
 
+export function meetingReminderFailure(code:number):string {
+  if (code===1700002) return 'meeting_reminder_quota';
+  if (code===1700001) return 'notifications_denied';
+  return 'meeting_reminder_unavailable';
+}
+
 export class PublishedMeetingReminder {
   systemID:number;
   key:string;

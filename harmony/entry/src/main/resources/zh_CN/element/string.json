@@ -6803,6 +6803,18 @@
     {
       "name": "meeting_privacy_this_phone",
       "value": "这台手机的录音保留在本机，只有经你确认的文字才会同步到 Hub。"
+    },
+    {
+      "name": "meeting_reminder_quota",
+      "value": "系统限制了 Persona 的后台提醒额度，暂时无法安排更多会前提醒。"
+    },
+    {
+      "name": "meeting_reminder_none",
+      "value": "目前没有已安排的会前提醒。"
+    },
+    {
+      "name": "meeting_reminder_count",
+      "value": "本机系统已安排 {count} 个会前提醒。"
     }
   ]
 }

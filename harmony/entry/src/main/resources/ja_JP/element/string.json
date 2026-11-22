@@ -6803,6 +6803,18 @@
     {
       "name": "meeting_privacy_this_phone",
       "value": "この端末の録音は端末内に保存されます。確認した文字起こしだけがHubに同期されます。"
+    },
+    {
+      "name": "meeting_reminder_quota",
+      "value": "システムがPersonaのバックグラウンド通知件数を制限しているため、これ以上の会議通知を設定できません。"
+    },
+    {
+      "name": "meeting_reminder_none",
+      "value": "現在設定されている会議通知はありません。"
+    },
+    {
+      "name": "meeting_reminder_count",
+      "value": "この端末で設定済みの会議通知：{count}件。"
     }
   ]
 }

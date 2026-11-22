@@ -64,7 +64,9 @@ export struct PhoneMeetingServices {
       if (this.local.enabled && !this.local.notifications) this.line(tr('meeting_notifications_allow'),'','settings.meeting.reminder.notification',() => this.local.request('notifications'))
     }.width('100%').backgroundColor(Colors.surface).borderRadius(12)
     this.note(tr(this.local.enabled && this.local.calendar!=='granted' ? 'meeting_calendar_needed' : 'meeting_reminder_footer'))
-    if (this.local.error) this.note(tr(this.local.error))
+    if (this.local.error) Text(tr(this.local.error)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.danger)
+      .width('100%').padding({left:14,right:14,top:3}).id('settings.meeting.reminder.status')
+    if (this.local.enabled && this.local.scheduled>=0) this.note(tr(this.local.scheduled===0 ? 'meeting_reminder_none' : 'meeting_reminder_count').replace('{count}',String(this.local.scheduled)))
   }
   @Builder glossary() {
     Column({space:10}) {

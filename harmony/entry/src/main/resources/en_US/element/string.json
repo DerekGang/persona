@@ -6803,6 +6803,18 @@
     {
       "name": "meeting_privacy_this_phone",
       "value": "Recordings on this phone keep their audio on the device. Only a transcript you confirm is synced to the hub."
+    },
+    {
+      "name": "meeting_reminder_quota",
+      "value": "The system has limited Persona’s background reminders. Further meeting reminders could not be scheduled."
+    },
+    {
+      "name": "meeting_reminder_none",
+      "value": "No meeting reminders are currently scheduled."
+    },
+    {
+      "name": "meeting_reminder_count",
+      "value": "Meeting reminders scheduled on this phone: {count}."
     }
   ]
 }
