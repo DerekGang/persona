@@ -20,7 +20,7 @@ const recording=readFileSync(new URL('../entry/src/main/ets/components/Knowledge
 const strings=new Map(JSON.parse(readFileSync(new URL('../entry/src/main/resources/en_US/element/string.json',import.meta.url))).string.map(s=>[s.name,s.value]));
 const tr=key=>strings.get(key) || key;
 const methods=source.slice(source.indexOf('  private resetMeetingMode()'),source.indexOf('  @Local meetingTitle:'))+
-  source.slice(source.indexOf('  private requestRecordingStart()'),source.indexOf('  // Calendar titles'));
+  source.slice(source.indexOf('  private requestRecordingStart()'),source.indexOf('  private async readMeetingCalendar('));
 const NativeStart=new Function('MeetingHubChoice','meetingAudioNetwork','tr','nativeMeetingServices',
   'return '+stripTypeScriptTypes('class Start {'+methods+'}'));
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
