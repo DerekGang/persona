@@ -76,7 +76,10 @@ var (
 // the same signal with the same key is told once.
 type superviseSignal struct {
 	Todo, Kind, Key string
-	PRURL           string // draft_pr: the current or earlier followed PR, revalidated before delivery
+	// Handoff is an idle-shaped report that an owner's decision or review rework did not reach the agent.
+	// It is not a turn-end stop, so a native wakeup must not defer it.
+	Handoff bool
+	PRURL   string // draft_pr: the current or earlier followed PR, revalidated before delivery
 	// Unreachable: this decision exists because the task leader's agent could not be reached, not because the worker
 	// waits for the user. It stays a decision even though the worker's ledger is not needs_user (task_leader.go).
 	Unreachable      bool
