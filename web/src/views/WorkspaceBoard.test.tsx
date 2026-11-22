@@ -186,13 +186,14 @@ describe("the workflow board with many cards and Agents", () => {
     act(() => root.render(<WorkspaceBoard />));
     await flush();
 
-    expect(laneBadge("待验收")).toBe("6");
-    expect(laneOption("review")).toBe("待验收 · 6");
-    expect(lane("待验收")?.querySelectorAll("article").length).toBe(6);
+    expect(laneBadge("待验收")).toBe("5");
+    expect(laneOption("review")).toBe("待验收 · 5");
+    expect(lane("待验收")?.querySelectorAll("article").length).toBe(5);
     expect(inLane("待验收", "c1")).toBe(true);
     expect(workInLane("待验收", "session:m2/loose-unread")).toBe(true);
     expect(workInLane("待验收", "session:m0/loose-finished")).toBe(true);
-    expect(workInLane("待验收", "todo:accepted-decision")).toBe(true);
+    expect(workInLane("需要你", "todo:accepted-decision")).toBe(true);
+    expect(workInLane("待验收", "todo:accepted-decision")).toBe(false);
     expect(workInLane("待验收", "todo:pending-review")).toBe(true);
     expect(workInLane("待验收", "todo:unread-todo")).toBe(true);
     expect(inLane("空闲", "c0")).toBe(true);
@@ -202,7 +203,7 @@ describe("the workflow board with many cards and Agents", () => {
     expect(workInLane("空闲", "todo:closed")).toBe(true);
     expect(workInLane("待验收", "todo:accepted")).toBe(false);
     expect(workInLane("待验收", "todo:closed")).toBe(false);
-    expect(laneBadge("需要你")).toBe("2");
+    expect(laneBadge("需要你")).toBe("3");
     expect(laneBadge("工作中")).toBe("2");
     expect(laneBadge("待办")).toBe("1");
 
@@ -210,8 +211,8 @@ describe("the workflow board with many cards and Agents", () => {
     setAgents(rows);
     expect(inLane("待验收", "c0")).toBe(true);
     expect(inLane("空闲", "c0")).toBe(false);
-    expect(laneBadge("待验收")).toBe("7");
-    expect(laneOption("review")).toBe("待验收 · 7");
+    expect(laneBadge("待验收")).toBe("6");
+    expect(laneOption("review")).toBe("待验收 · 6");
   });
 
   it("keeps accepted to-dos and seen sessions accessible in Idle and opens the original session", async () => {
@@ -241,5 +242,27 @@ describe("the workflow board with many cards and Agents", () => {
 
     openWork("todo:accepted-closed");
     expect(location.pathname + location.search).toBe("/todos?id=accepted-closed");
+  });
+
+  it("keeps only to-dos with an active Agent on the selected computer in the auto view", async () => {
+    localStorage.setItem("persona.workspace-board.view", "auto");
+    const link = (machine_id: string, released_at?: string) => ({ machine_id, session_id: `${machine_id}-${released_at ? "old" : "live"}`, linked_at: "2026-11-19T08:00:00Z", released_at });
+    const todo = (id: string, agent: ReturnType<typeof link>) => ({ id, title: id, created_at: "2026-11-19T08:00:00Z", updated_at: "2026-11-19T08:00:00Z", agents: [agent] });
+    answers["/api/v1/todos"] = { todos: [todo("m0", link("m0")), todo("m1", link("m1")), todo("released", link("m0", "2026-11-19T08:01:00Z"))] };
+    await act(() => refresh());
+    act(() => root.render(<WorkspaceBoard />));
+    await flush();
+    const shown = (id: string) => host.querySelector(`article[data-work-id="todo:${id}"]`) !== null;
+    expect([shown("m0"), shown("m1"), shown("released")]).toEqual([true, true, true]);
+
+    const choose = (machine: string) => act(() => {
+      const select = host.querySelector<HTMLSelectElement>('select[aria-label="筛选机器"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, machine);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    choose("m0");
+    expect([shown("m0"), shown("m1"), shown("released")]).toEqual([true, false, false]);
+    choose("m1");
+    expect([shown("m0"), shown("m1"), shown("released")]).toEqual([false, true, false]);
   });
 });

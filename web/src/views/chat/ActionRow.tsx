@@ -1,16 +1,16 @@
 // One tool call in a work group (cindy's AgentActionRow): [status][verb][what it worked on][+N -N][›]. A command and
 // the like open in place (what went in, what came out, in full); an edit opens the changes side panel; a read opens
 // the file in the side panel.
-import { memo, useMemo } from "react";
+import { lazy, memo, Suspense, useMemo } from "react";
 import { useExpanded } from "./expanded";
-import { diffLines, type Op } from "../../lib/compare";
+import { diffLines, type Op } from "../../lib/diff-lines";
 import { fileName, toolFile } from "../../lib/files";
 import { openPanel } from "../../lib/panel";
 import { getSession } from "../../lib/store";
 import { taskBadge } from "../../lib/tasks";
 import { ownEntry, personaToolVerb, SUBJECT_KEYS, toolChip, toolDisplayName, toolLabel } from "../../lib/turns";
 import type { Item } from "../../lib/types";
-import { toolDurationLabel, type ToolStep } from "../../lib/work-groups";
+import { toolDurationLabel, toolDurationMs, type ToolStep } from "../../lib/work-groups";
 import { cx, Spinner } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { NARROW, useMedia } from "../../ui/media-query";
@@ -22,6 +22,9 @@ import { hasStepDetail, showsResult, StepDetail } from "./StepDetail";
 import { useReveal } from "./search-reveal";
 import { Thumb } from "./Steps";
 import { t } from "../../i18n";
+
+// L3 per-step attribution badges load lazily only when a step with telemetry is expanded (#13054).
+const StepTelemetry = lazy(() => import("./StepTelemetry").then((m) => ({ default: m.StepTelemetry })));
 
 /** The row's chrome, shared with the thought rows (ThinkingRow.tsx) so a mixed list reads as one (cindy's
  *  activityRowChrome): radius, padding, the hover lift. On a touch screen a row is a finger tall (40). */
@@ -98,13 +101,11 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const commandOf = (inp: Record<string, unknown>) => (Array.isArray(inp.command) ? (inp.command as unknown[]).join(" ") : str(inp.command) || str(inp.cmd));
 
 export interface ActionPresentation {
-  /** Hidden when the agent described the command itself: its sentence is the row. */
+  /** Localized action verb, except for commands which lead directly with their command. */
   verb?: string;
   param?: { text: string; title?: string };
   /** A file the call worked on: drawn as a chip with its name. */
   file?: string;
-  /** A command without a description: on a quieter line under the row. */
-  raw?: string;
 }
 
 /** How a call reads in its row (cindy's describeToolUse + extractDisplayParam). */
@@ -114,14 +115,16 @@ export function presentAction(use: Item): ActionPresentation {
   if (COMMAND_TOOLS.has(name)) {
     const cmd = commandOf(inp);
     const desc = str(inp.description);
-    if (desc) return { param: { text: desc, title: cmd || undefined } };
-    return { verb: t("chat-actionrow.verb_run_command"), raw: cmd || undefined };
+    return { param: { text: cmd || desc || t("chat-actionrow.verb_run_command"), title: desc || cmd || undefined } };
   }
   if (FILE_TOOLS.has(name)) {
     const path = toolFile(name, inp)?.path ?? "";
     return { verb: VERB[name], ...(path ? { file: path, param: { text: truncateParam(fileName(path)), title: path } } : {}) };
   }
-  if (name === "Grep" || name === "Glob") return { verb: VERB[name], param: { text: truncateParam(str(inp.pattern)) } };
+  if (name === "Grep" || name === "Glob") {
+    const subject = [str(inp.pattern), str(inp.path) || str(inp.glob)].filter(Boolean).join(" · ");
+    return { verb: VERB[name], param: { text: truncateParam(subject), title: subject } };
+  }
   if (name === "WebFetch") return { verb: VERB[name], param: { text: truncateParam(str(inp.url)), title: str(inp.url) } };
   if (name === "WebSearch") return { verb: VERB[name], param: { text: truncateParam(str(inp.query)) } };
   if (name === "LS") return { verb: VERB[name], param: { text: truncateParam(str(inp.path)) } };
@@ -208,7 +211,7 @@ export function argumentLines(inp: Record<string, unknown>): string {
   return keys.flatMap((k) => (shown(inp[k]) ? [`${k}: ${shown(inp[k])}`] : [])).join("\n");
 }
 
-export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trace }: { step: ToolStep; running?: boolean; mid: string; sid: string; trace?: boolean }) {
+export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trace, inlineDiff }: { step: ToolStep; running?: boolean; mid: string; sid: string; trace?: boolean; inlineDiff?: boolean }) {
   const { use, result, images } = step;
   const name = use.tool_name ?? "";
   const { tasks, scope } = useChatContext();
@@ -224,6 +227,11 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
   // the call's own elapsed time (#8163): a quiet suffix on wide rows, the row's hover title on compact layouts
   const narrow = useMedia(NARROW);
   const duration = toolDurationLabel(step);
+  const rawDurationMs = toolDurationMs(step);
+  const hasTelemetry =
+    (rawDurationMs !== null && rawDurationMs > 0) ||
+    Boolean(use.usage?.length || result?.usage?.length || (typeof use.ttft_ms === "number" && use.ttft_ms >= 0));
+  const stepItems = useMemo(() => [use, result], [use, result]);
 
   const activate = () => {
     if (trace) return setOpen((o) => !o);
@@ -284,10 +292,8 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
           <Icon name={inPlace && open ? "chevron" : "chevronRight"} size={13} stroke={2.2} />
         </span>
       </button>
-      {p.raw && !open && (
-        <div title={p.raw} className="min-w-0 truncate px-2 pb-[3px] pl-[30px] font-mono text-label leading-[1.5] text-tool-ink">
-          {p.raw}
-        </div>
+      {inlineDiff && !trace && diffs && !error && (
+        <div className="mx-2 overflow-x-auto" data-live-edit-diff><DiffBlocks diffs={foldDiffs(diffs).shown} /></div>
       )}
       {images.length > 0 && (
         <div className="flex min-w-0 flex-wrap gap-1.5 py-2 pl-8">
@@ -298,11 +304,17 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
       )}
       {open && (
         <div className="mx-2 mt-1 mb-1 cursor-text rounded-[6px] border border-line bg-neutral-bubble px-[10px] py-2 font-mono text-label leading-[17px] text-ink select-text" data-inline-detail>
+          {hasTelemetry && (
+            <Suspense fallback={null}>
+              <StepTelemetry items={stepItems} durationMs={rawDurationMs} className="mb-2 border-b border-line pb-1.5" />
+            </Suspense>
+          )}
           {detail && (
             <div className="font-sans">
               <StepDetail use={use} result={result} />
             </div>
           )}
+          {COMMAND_TOOLS.has(name) && str((use.tool_input as Record<string, unknown> | undefined)?.description) && <div className="mb-2 font-sans">{str((use.tool_input as Record<string, unknown>).description)}</div>}
           {input && <pre className="m-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{input}</pre>}
           {output && (
             <>

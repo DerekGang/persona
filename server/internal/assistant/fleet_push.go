@@ -327,6 +327,9 @@ func (s *Service) notifyFinishedNow(machine, id string, gen int, t fleetTimings)
 	if s.supervising(id) && assistantwire.SupervisedFinish(sess, true) {
 		return
 	}
+	if s.quietBackgroundReply(machine, sess) {
+		return
+	}
 	if s.finishedDuplicate(machine, sess) {
 		return
 	}
@@ -339,13 +342,14 @@ func (s *Service) notifyFinishedNow(machine, id string, gen int, t fleetTimings)
 		return
 	}
 	place := s.pushPlace(machine, sess)
-	head, text := doneAlert(s.lang(context.Background()), sess)
+	redact := s.trackPolicy(context.Background(), spaceOf(sess)).Redact
+	head, text := doneAlertIn(s.lang(context.Background()), sess, redact)
 	if report && strings.HasPrefix(head, "⚠️") && s.briefOf(id) != nil {
 		return // the scheduled-run watcher sends the one fixed-facts fallback, not this model error
 	}
 	// A routine with facts says the counts it worked out (briefing.go) when it ended normally and asks nothing: a question
-	// is what the owner acts on, and a health conversation says only that there is news.
-	if !strings.HasPrefix(head, "⚠️") && !strings.HasPrefix(head, "⏳") && !sess.AwaitsReply && spaceOf(sess) != SpaceHealth {
+	// is what the owner acts on, and a conversation of a space that redacts says only that there is news.
+	if !strings.HasPrefix(head, "⚠️") && !strings.HasPrefix(head, "⏳") && !sess.AwaitsReply && !redact {
 		if counts := s.briefPush(id, s.lang(context.Background()), report); counts != "" {
 			text = counts
 		}
@@ -357,6 +361,26 @@ func (s *Service) notifyFinishedNow(machine, id string, gen int, t fleetTimings)
 	go s.feishuAgentDone(machine, sess, head, text, place)
 	// And the topic of the todo this agent works on, if it has one (the same decision again, not a second one).
 	s.threadAgentDone(machine, sess)
+}
+
+func (s *Service) quietBackgroundReply(machine string, sess proto.Session) bool {
+	if !sess.Assistant || !assistantwire.SupervisedFinish(sess, true) || sess.AwaitsReply {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var page struct {
+		Items []proto.Item `json:"items"`
+	}
+	if err := s.call(ctx, machine, DeviceSessionItems, map[string]any{
+		"session_id": sess.SessionID, "turns": 1, "lazy_images": true,
+	}, &page); err != nil {
+		return false
+	}
+	if transcript.BackgroundReplyMissing(page.Items) {
+		return true
+	}
+	return s.mainBackgroundFolded(ctx) && s.isMain(ctx, sess.SessionID) && transcript.RoutineConversationReply(page.Items)
 }
 
 // reportSlack is how long before its turn started a scheduled run or notice may have been sent (the node starts the
@@ -429,9 +453,15 @@ func pushTitle(sess proto.Session) string {
 	return title
 }
 
-// doneAlert is the title and body of the push for sess's finished turn, in l.
+// doneAlert is the title and body of the push for sess's finished turn, in l, a conversation of any space redacted
+// (fail closed: no registry here).
 func doneAlert(l i18n.Lang, sess proto.Session) (head, text string) {
-	if spaceOf(sess) == SpaceHealth { // the lock screen hears there is news, not what it is, nor the conversation's title
+	return doneAlertIn(l, sess, spaceOf(sess) != "")
+}
+
+// doneAlertIn is doneAlert with whether sess's space redacts (redact) decided by the caller.
+func doneAlertIn(l i18n.Lang, sess proto.Session, redact bool) (head, text string) {
+	if redact { // the lock screen hears there is news, not what it is, nor the conversation's title
 		return i18n.T(l, "push.health_title"), i18n.T(l, "push.health_body")
 	}
 	title := pushTitle(sess)
@@ -600,7 +630,7 @@ func (s *Service) supervisedTurn(machine, session string, start time.Time) bool 
 // chatBridgeFinish: sess runs in a Lark chat bridge (sessionorigin.ChatBridge: its own pane, the Agents rows' "Lark
 // group", or a pane of the herdr session it runs its agents in, #8845), which answers in the topic the turn was asked
 // in, and its turn ended normally (assistantwire.NormalFinish, the host reporting no failure of its own). Only on
-// Claude Code, Codex and TRAEX, which tell a failed turn on the session (TRAEX's conversation is a Codex rollout, read
+// Claude Code, Codex and TRAE CLI, which tell a failed turn on the session (TRAE CLI's conversation is a Codex rollout, read
 // as Codex's: task_complete's error is TurnError); another agent's is pushed as ever.
 func chatBridgeFinish(sess proto.Session) bool {
 	if !sessionorigin.ChatBridge(sess) || strings.TrimSpace(sess.FailureReason) != "" {

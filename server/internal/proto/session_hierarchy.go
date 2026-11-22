@@ -34,6 +34,8 @@ func (s Session) IsSubtask() bool {
 // member is empty): these sparse fields inline would take every row past its size class (TestSessionFitsItsSizeClass).
 // The Deleted flag describes no ancestry; it shares this storage to preserve the allocation budget for ordinary rows.
 type SessionHierarchy struct {
+	// HiddenByDirectory is manager-owned visibility, not collection or archive state.
+	HiddenByDirectory bool `json:"hidden_by_directory,omitempty"`
 	// CompletedTodo is display-only task ownership. Keep this sparse reference out of every Session's hot row.
 	CompletedTodo *TodoRef `json:"completed_todo,omitempty"`
 	// ParentAgentID is the session on the same machine a side session was started from (docs/protocol/protocol.md
@@ -45,6 +47,9 @@ type SessionHierarchy struct {
 	// StartedAt is when the session began: its transcript's first line, a runtime's created time. Set by the node where
 	// it knows it (Codex rollouts, runtime rows); zero when it does not.
 	StartedAt time.Time `json:"started_at,omitzero"`
+	// CreationID correlates an assistant-dispatched start with its pre-created to-do, including when the start's answer is
+	// lost. Empty for manually opened and older sessions (#5732). Set by the node from its persisted creation record.
+	CreationID string `json:"creation_id,omitempty"`
 	// AskingParentSessionID names the parent of a runtime child that waits for the user (status blocked). Such a row
 	// has is_subagent, parent_session_id and root_session_id cleared, so that apps which fold every child under its
 	// parent still list it while it needs the user (#4494); this keeps its parent known to those that fold it as a card
@@ -82,7 +87,30 @@ type SessionHierarchy struct {
 	// counting only running work. Oldest first, at most eight; the node lists entries from the last day. Sparse storage
 	// keeps ordinary Session rows in their allocation size class.
 	BackgroundEnded []BackgroundTask `json:"background_ended,omitempty"`
-	Deleted         bool             `json:"deleted,omitempty"` // Permanent manager tombstone; use Session.IsDeleted/SetDeleted.
+	// ContextBreakdown splits current context window occupancy by category with an exact/estimated honesty marker.
+	// Stored here so ordinary Session rows stay inside their 1,536-byte allocation size class; encoded as a top-level
+	// "context_breakdown" wire key.
+	ContextBreakdown *ContextBreakdown `json:"context_breakdown,omitempty"`
+	Deleted          bool              `json:"deleted,omitempty"` // Permanent manager tombstone; use Session.IsDeleted/SetDeleted.
+}
+
+// ContextBreakdown returns the session's structured context window breakdown, or nil when unavailable.
+// Shared with the row's other copies: not to be modified in place.
+func (s *Session) ContextBreakdown() *ContextBreakdown {
+	if s.Hierarchy == nil {
+		return nil
+	}
+	return s.Hierarchy.ContextBreakdown
+}
+
+// SetContextBreakdown replaces the session's context breakdown without changing other copies of the row.
+func (s *Session) SetContextBreakdown(b *ContextBreakdown) {
+	if s.ContextBreakdown().Equal(b) {
+		return
+	}
+	h := s.hierarchy()
+	h.ContextBreakdown = b.Clone()
+	s.setHierarchy(h)
 }
 
 // BackgroundEnded returns recent shell / Monitor outcomes, oldest first; nil when none are retained.
@@ -145,10 +173,25 @@ type SessionChildren struct {
 }
 
 func (h *SessionHierarchy) empty() bool {
-	return h.ParentAgentID == "" && h.StartedAt.IsZero() && h.AskingParentSessionID == "" && h.FoldedUnder == "" && h.FoldedAs == "" &&
+	return !h.HiddenByDirectory && h.ParentAgentID == "" && h.StartedAt.IsZero() && h.CreationID == "" && h.AskingParentSessionID == "" && h.FoldedUnder == "" && h.FoldedAs == "" &&
 		h.FoldedSide == "" &&
 		h.Children == nil && len(h.EngineHistory) == 0 && h.CompletedTodo == nil && len(h.Aliases) == 0 &&
-		len(h.BackgroundEnded) == 0 && !h.Deleted
+		len(h.BackgroundEnded) == 0 && h.ContextBreakdown == nil && !h.Deleted
+}
+
+// HiddenByDirectory reports the manager's directory visibility without growing every session row.
+func (s *Session) HiddenByDirectory() bool {
+	return s.Hierarchy != nil && s.Hierarchy.HiddenByDirectory
+}
+
+// SetHiddenByDirectory preserves sparse metadata shared by session copies.
+func (s *Session) SetHiddenByDirectory(hidden bool) {
+	if s.HiddenByDirectory() == hidden {
+		return
+	}
+	h := s.hierarchy()
+	h.HiddenByDirectory = hidden
+	s.setHierarchy(h)
 }
 
 // CompletedTodo is the last completed association for navigation, never active work.
@@ -182,6 +225,7 @@ func (s *Session) hierarchy() SessionHierarchy {
 	h.EngineHistory = slices.Clone(h.EngineHistory)
 	h.Aliases = slices.Clone(h.Aliases)
 	h.BackgroundEnded = slices.Clone(h.BackgroundEnded)
+	h.ContextBreakdown = h.ContextBreakdown.Clone()
 	return h
 }
 
@@ -233,6 +277,24 @@ func (s *Session) StartedAt() time.Time {
 		return time.Time{}
 	}
 	return s.Hierarchy.StartedAt
+}
+
+// CreationID is the identity the node recorded for an assistant-dispatched start; "" for any other session.
+func (s *Session) CreationID() string {
+	if s.Hierarchy == nil {
+		return ""
+	}
+	return s.Hierarchy.CreationID
+}
+
+// SetCreationID records an assistant-dispatched start's identity ("" when there is none).
+func (s *Session) SetCreationID(id string) {
+	if s.CreationID() == id {
+		return
+	}
+	h := s.hierarchy()
+	h.CreationID = id
+	s.setHierarchy(h)
 }
 
 // AskingParentSessionID is the parent of a blocked runtime child (SessionHierarchy.AskingParentSessionID).

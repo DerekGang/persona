@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import persona.core.contracts.*
 import persona.core.contracts.api.*
+import persona.core.contracts.api.ResolveOutcome
 import persona.core.domain.answer.*
 import persona.core.domain.sort.*
 import kotlinx.coroutines.CancellationException
@@ -17,6 +18,10 @@ import java.time.Instant
 import java.util.UUID
 
 private data class GroupListCounts(val filter: SessionListFilter, val revision: String, val counts: SessionListCounts)
+/** Older hubs omit the origin breakdown; use the visible projection for those pages. */
+private fun SessionListCounts.larkGroups(local: Map<AgentQuickFilter, Int>): Int =
+    if (paneSource.isEmpty()) local[AgentQuickFilter.Feishu] ?: 0 else paneSource["feishu"] ?: 0
+
 /** The chats the shell held on entry: one that was Unread, one that was Just finished (#9786). */
 private data class HeldChats(val unread: SessionKey?, val finished: SessionKey?)
 private data class HeldInputs(val settings: AgentListSettings, val group: GroupFilter?, val assistant: persona.core.contracts.api.CurrentAssistant?,
@@ -40,8 +45,6 @@ internal data class AgentsPageState(
     val machineTotal: Int = 0,
     /** Sessions of each hub group by its namespace, whichever group the list shows (AgentGroups.kt). */
     val groupCounts: Map<String?, Int> = emptyMap(),
-    /** botmux's sessions in the list's range, hidden or not: the "botmux" switch shows while there are any (#2786). */
-    val botmuxCount: Int = 0,
     /**
      * False only for the placeholder before the first build: the sessions and the local preferences arrive
      * asynchronously, so until then the list shows no empty state (as the space page's `loaded`, #5377).
@@ -55,6 +58,7 @@ internal data class AgentsPageState(
     val directionsAvailable: Boolean = false,
     /** The tap this page was built from. A throttled page from before the tap carries an older one (#9600). */
     val tapEpoch: Int = 0,
+    val hiddenSessions: Set<SessionKey> = emptySet(),
 )
 
 /**
@@ -78,7 +82,7 @@ internal class AgentsViewModel(
     val appBuild: Long = 1L,
     machineManagement: MachineManagement? = null,
     /** The phone's hub groups: a request is answered through its own group's connection (AgentGroups.kt stateFor). */
-    private val hubGroups: persona.core.contracts.api.HubGroups = persona.core.contracts.api.HubGroups.None,
+    internal val hubGroups: persona.core.contracts.api.HubGroups = persona.core.contracts.api.HubGroups.None,
     /**
      * Where [page] is built: the app passes [kotlinx.coroutines.Dispatchers.Default], so sorting, filtering and counting
      * every session on each push stays off the main thread. Empty (the caller's thread) keeps tests synchronous.
@@ -108,6 +112,7 @@ internal class AgentsViewModel(
         repository.refresh()
     } }
     private val operations = bindings?.operations?.let { AgentOperationsState(it, preferences.hubCache) }
+    val hasOperations: Boolean get() = operations != null
     val operationState = operations?.state ?: MutableStateFlow(AgentOperationsSnapshot())
     /**
      * Every Agents list on screen (#9600). A foldable's overlay and the page underneath can both be composed
@@ -258,15 +263,21 @@ internal class AgentsViewModel(
     // reads (RealAssistantRepository), already in the list's ids.
     private val directionsFlow: Flow<DirectionTree?> =
         bindings?.assistant?.assistant?.map { it.directionTree }?.distinctUntilChanged() ?: flowOf(null)
+    private val listPreferences = channelFlow {
+        launch { preferences.watchDisplaySettings(workspaceRefresh) }
+        preferences.snapshots(pairingScope).collect { send(it) }
+    }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
     private val projectedPage = combine(renamer?.project(repository.sessions) ?: repository.sessions, repository.machines,
-        preferences.snapshots(pairingScope).combine(repository.listStatus) { prefs, status -> prefs to status },
+        listPreferences.combine(repository.listStatus) { prefs, status -> prefs to status },
         combine(settings, groupFilter, assistant, visibleChat, heldChat.combine(finishedChat, ::HeldChats)) { settings, group, assistant, visible, held -> HeldInputs(settings, group, assistant, visible, held) }
             .combine(workspaceCatalog.rows) { inputs, workspaces -> ListInputs(inputs.settings, inputs.group, inputs.assistant, inputs.visible, inputs.held, workspaces) },
         combine(operationState, todosFlow.combine(directionsFlow, ::Pair), todosSupportedFlow, ::Triple)) { hubSessions, hubMachines, (localPrefs, pagination), (settings, group, assistant, visible, held, workspaces), (ops, todosAndTree, todosSupported) ->
         val (todos, directions) = todosAndTree
         val now = Instant.now()
         // The current assistant's (the hub's lists are every manager's, each row with its own).
-        val everySession = if (assistant == null) hubSessions else hubSessions.filter { assistant.ownsOn(it.machineId, it.manager) }
+        val (hiddenSessions, visibleSessions) = if (localPrefs.hiddenBotmuxHubs.isEmpty()) emptyList<Session>() to hubSessions
+            else hubSessions.partition(localPrefs::hides)
+        val everySession = if (assistant == null) visibleSessions else visibleSessions.filter { assistant.ownsOn(it.machineId, it.manager) }
         val everyMachine = if (assistant == null) hubMachines else hubMachines.filter { assistant.ownsOn(it.id, it.manager) }
         val source = if (group == null) everySession else everySession.filter { group.admits(it.machineId) }
         val machines = if (group == null) everyMachine else everyMachine.filter { group.admits(it.id) }
@@ -284,36 +295,44 @@ internal class AgentsViewModel(
         val knownMachines = machines + sessions.map { it.machineId }.distinct().filter { id -> machines.none { it.id == id } }
             .map { Machine(it) } // named by the list as not updated yet (AgentsScreen.kt)
         val admittedMachines = machines.mapTo(mutableSetOf()) { it.id }
-        val effective = settings.copy(grouping = prefs.grouping, sort = prefs.sort, hideBotmux = prefs.hideBotmux && !settings.quick.showsBotmux,
+        val rawGrouping = settings.pendingGrouping ?: localPrefs.grouping
+        val initialFolded = if (foldsAuthority == rawGrouping || settings.query.isNotEmpty())
+            settings.folded else localPrefs.folds[prefs.grouping].orEmpty()
+        val requested = settings.copy(grouping = prefs.grouping, sort = prefs.sort, folded = initialFolded,
             workspaces = workspaces.filter { it.machineId in admittedMachines })
-        val context = listOf(prefs.range, effective.grouping, effective.sort, effective.hideBotmux, effective.quick, effective.query, effective.machineFilter, prefs.pins, todos, directions,
-            effective.workspaces)
+        // A paged search already matched the words on the hub, including matches outside the truncated row summary.
+        val projection = if (pagination.paged) requested.copy(query = AgentQuery.parse(requested.query).conditions) else requested
+        val all = scopedAgentList(rows, knownMachines, prefs, projection.copy(quick = AgentQuickFilter.All, kept = emptySet()),
+            todos, directions = directions, now = now)
+        val hidden = group?.let { prefs.hiddenBotmuxHubs.intersect(setOf(it.namespace)) } ?: prefs.hiddenBotmuxHubs
+        val larkCount = if (pagination.paged && pagination.filter.hiddenBotmuxHubs == hidden)
+            pagination.counts.larkGroups(all.counts)
+        else all.counts[AgentQuickFilter.Feishu] ?: 0
+        val effective = if (requested.quick == AgentQuickFilter.Feishu && larkCount == 0) {
+            if (pagination.loaded && !pagination.loading) this.settings.compareAndSet(settings, settings.copy(quick = AgentQuickFilter.All, kept = emptySet()))
+            requested.copy(quick = AgentQuickFilter.All, kept = emptySet())
+        } else requested
+        val context = listOf(prefs.range, effective.grouping, effective.sort, hidden, effective.quick, effective.query, effective.machineFilter,
+            prefs.pins, todos, directions, effective.workspaces)
         if (context != previousContext) previous = null
         previousContext = context
-        // Server row search uses complete index text; searching the truncated summary again would lose matches.
-        // A paged list: the hub matched the words ([hubQuery]); the conditions (machine:, is:pinned…) are checked here.
-        val projectionSettings = if (pagination.paged) effective.copy(query = AgentQuery.parse(effective.query).conditions) else effective
+        val projectionSettings = projection.copy(quick = effective.quick, kept = effective.kept)
         val sorted = scopedAgentList(rows, knownMachines, prefs, projectionSettings, todos, openedRowsOfTheirOwn(previous, effective.kept), directions,
             listAdapter, held = heldSession, now = now)
         val result = retainOpenedRows(sorted, previous, effective.kept).also { previous = it }
-        val all = scopedAgentList(rows, knownMachines, prefs,
-            projectionSettings.copy(quick = AgentQuickFilter.All, kept = emptySet()), todos, directions = directions, now = now)
         // The chips count what each computer would show under the current range, search and quick filter.
         val everywhere = scopedAgentList(rows, knownMachines, prefs, projectionSettings.copy(machineFilter = "", kept = emptySet()), todos,
             directions = directions, now = now)
             .groups.flatMap { it.rows }.filterNot { it.isNestedSubtask }
-        AgentsPageState(sessions, knownMachines, prefs, effective, result, all.groups.sumOf { group -> group.rows.count { !it.isNestedSubtask } },
+        AgentsPageState(sessions, knownMachines, prefs.copy(hiddenBotmuxHubs = hidden), effective, result, all.groups.sumOf { group -> group.rows.count { !it.isNestedSubtask } },
             machineCounts(knownMachines, everywhere), everywhere.size, groupCounts(everySession, everyMachine, prefs, effective, ops),
-            // With botmux shown, "All"'s own "Lark groups" count is it; hidden, counted without a fourth list.
-            botmuxCount = if (effective.hideBotmux) botmuxCount(rows, prefs, effective)
-                else all.counts[AgentQuickFilter.Feishu] ?: 0,
             // Loaded as of the hub status this page was built from: [page] joins the latest status to a page that may be
             // one throttled build behind, and a page built before the load must not say the list is in.
             loaded = pagination.loaded).let { state ->
             // Computer projects use the same held marker as the main projection; ordinary space members stay as before.
             val spaces = agentSpaces(rows.map { it.copy(heldInList = it.id == heldSession) })
             state.copy(spaces = spaces, spacesById = spacesByGroup(result, prefs.grouping, spaces), directionsAvailable = directions != null,
-                tapEpoch = maxOf(effective.tapEpoch, ops.tapEpoch))
+                tapEpoch = maxOf(effective.tapEpoch, ops.tapEpoch), hiddenSessions = hiddenSessions.mapTo(mutableSetOf()) { it.key })
         }
     // The app (listContext set) builds only from the latest inputs and redraws at most every PAGE_MILLIS: with an
     // accessibility service on, Compose diffs the whole semantics tree on each recomposition, and one per pushed
@@ -334,13 +353,14 @@ internal class AgentsViewModel(
             catch (error: Exception) { _failure.value = error }
         }
     }, groupListCounts) { projected, status, _, metadata ->
-        if (!status.paged) projected.copy(loaded = projected.loaded && status.loaded, pagination = status)
+        if (!status.paged || status.filter.hiddenBotmuxHubs != projected.preferences.hiddenBotmuxHubs) projected.copy(loaded = projected.loaded && status.loaded, pagination = status)
         else {
             val counts = status.counts
             val machineCounts = status.machineCounts
             val quickCounts = AgentQuickFilter.entries.associateWith { filter ->
                 when (filter) {
                     // The hub counts them among working and apart too (#6045): Working leaves them out, as iOS.
+                    AgentQuickFilter.Feishu -> counts.larkGroups(projected.list.counts)
                     AgentQuickFilter.BackgroundWaiting -> counts.backgroundWaiting
                     AgentQuickFilter.Working -> ((counts.state[AgentState.Working.wire] ?: 0) - counts.backgroundWaiting).coerceAtLeast(0)
                     else -> filter.state?.let { counts.state[it.wire] ?: 0 }
@@ -349,7 +369,7 @@ internal class AgentsViewModel(
             }
             fun count(id: String): SessionListCounts? = metadata[id]?.takeIf {
                 it.revision == status.counts.revision && it.filter.query == hubQuery(projected.settings.query) &&
-                    it.filter.state == projected.settings.quick.state?.wire
+                    it.filter.state == projected.settings.quick.state?.wire && it.filter.hiddenBotmuxHubs == projected.preferences.hiddenBotmuxHubs
             }?.counts
             fun SessionListCounts.states() = AgentState.entries.associateWith { state -> this.state[state.wire] ?: 0 }
             val countedGroups = projected.list.groups.map { group ->
@@ -371,11 +391,12 @@ internal class AgentsViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), AgentsPageState())
 
     /** Network filters reset the frozen cursor; the repository discards responses from an older selection. */
-    private val remoteFilter = settings.combine(groupFilter) { settings, group ->
+    private val remoteFilter = combine(settings, groupFilter, listPreferences.map { it.hiddenBotmuxHubs }.distinctUntilChanged()) { settings, group, hidden ->
         SessionListFilter(state = settings.quick.state?.wire, machineId = settings.machineFilter.takeIf { it.isNotEmpty() },
             // Range, assistant exclusion, host and preference membership are local until #6108 is implemented.
             // A generic server total is not the number of rows this page admits.
-            query = hubQuery(settings.query), requiresCompleteMembership = true) to group
+            query = hubQuery(settings.query), requiresCompleteMembership = true,
+            hiddenBotmuxHubs = group?.let { hidden.intersect(setOf(it.namespace)) } ?: hidden) to group
     }.distinctUntilChanged()
 
     fun countMachine(machine: AgentMachineGroup) = requestGroupCounts("machine:${machine.machine.id}",
@@ -406,7 +427,8 @@ internal class AgentsViewModel(
         val page = this.page.value
         val revision = page.pagination.counts.revision
         if (!page.pagination.paged || revision.isEmpty()) return
-        val filter = dimension.copy(state = page.settings.quick.state?.wire, query = hubQuery(page.settings.query))
+        val filter = dimension.copy(state = page.settings.quick.state?.wire, query = hubQuery(page.settings.query),
+            hiddenBotmuxHubs = page.preferences.hiddenBotmuxHubs)
         val key = Triple(id, revision, filter)
         if (groupListCounts.value[id]?.let { it.revision == revision && it.filter == filter } == true || !countingGroups.add(key)) return
         viewModelScope.launch {
@@ -414,7 +436,7 @@ internal class AgentsViewModel(
                 val counts = repository.listCounts(filter)
                 val current = this@AgentsViewModel.page.value
                 if (current.pagination.counts.revision == revision && hubQuery(current.settings.query) == filter.query &&
-                    current.settings.quick.state?.wire == filter.state) groupListCounts.update { metadata ->
+                    current.settings.quick.state?.wire == filter.state && current.preferences.hiddenBotmuxHubs == filter.hiddenBotmuxHubs) groupListCounts.update { metadata ->
                     (metadata + (id to GroupListCounts(filter, revision, counts))).entries.toList().takeLast(512)
                         .associate { it.key to it.value }
                 }
@@ -502,17 +524,8 @@ internal class AgentsViewModel(
     fun filter(filter: AgentQuickFilter) {
         previous = null
         settings.update { it.copy(quick = filter, kept = emptySet()) }
-        // Choosing "Lark groups" shows botmux again (web `botmuxAndFilter`).
-        if (filter.showsBotmux && page.value.preferences.hideBotmux) localChange { preferences.hideBotmux(false) }
     }
     fun sort(sort: AgentSort) = localChange { previous = null; preferences.sort(sort) }
-    /** The botmux show / hide switch (#2786); hiding it under "Lark groups" goes back to "All". */
-    fun toggleBotmux() = localChange {
-        val hide = !page.value.preferences.hideBotmux
-        previous = null
-        if (hide && page.value.settings.quick.showsBotmux) settings.update { it.copy(quick = AgentQuickFilter.All, kept = emptySet()) }
-        preferences.hideBotmux(hide)
-    }
     fun range(range: AgentRange) = localChange {
         previous = null
         settings.update { it.copy(quick = AgentQuickFilter.All, kept = emptySet()) }
@@ -578,7 +591,14 @@ internal class AgentsViewModel(
         // (PinsStore.swift:131, :139, :163). A later tap, or a grouping saved by someone else, stays.
         val epoch = stamp(ListTapMotionKind.Layout)
         previous = null
-        settings.update { it.copy(kept = emptySet(), tapEpoch = epoch, pendingGrouping = group) }
+        val previousAuthority = foldsAuthority
+        val previousFolded = settings.value.folded
+        val targetFolds = page.value.preferences.folds[group].orEmpty()
+        foldsAuthority = group
+        settings.update { current ->
+            if (current.query.isEmpty()) current.copy(kept = emptySet(), tapEpoch = epoch, pendingGrouping = group, folded = targetFolds)
+            else { stashedFolds = targetFolds; current.copy(kept = emptySet(), tapEpoch = epoch, pendingGrouping = group) }
+        }
         localChange {
             try {
                 preferences.grouping(group)
@@ -587,9 +607,11 @@ internal class AgentsViewModel(
             catch (e: Exception) {
                 if (settings.value.pendingGrouping == group) {
                     val back = stamp(ListTapMotionKind.Layout)
+                    foldsAuthority = previousAuthority
                     settings.update { current ->
                         if (current.pendingGrouping != group) current
-                        else current.copy(kept = emptySet(), tapEpoch = back, pendingGrouping = null)
+                        else if (current.query.isEmpty()) current.copy(kept = emptySet(), tapEpoch = back, pendingGrouping = null, folded = previousFolded)
+                        else { stashedFolds = previousFolded; current.copy(kept = emptySet(), tapEpoch = back, pendingGrouping = null) }
                     }
                 }
                 throw e
@@ -660,6 +682,29 @@ internal class AgentsViewModel(
     /** Still running and closable from here, in a terminal pane or a runtime's (not closed elsewhere since a confirmation opened). */
     fun closable(session: Session): Boolean = page.value.sessions.firstOrNull { it.key == session.key }
         ?.let { it.isLive && it.canClose } ?: page.value.sessions.isEmpty()
+    /** "Branch to new chat": copies the session into a new one, refreshes the list and opens the branched session (#12996). */
+    fun fork(session: Session, onOpened: (SessionKey) -> Unit) = sendOperation("fork:${session.key.path}") {
+        val ops = operations ?: return@sendOperation
+        if (hubGroups.groups.value.stateFor(session.machineId, connection.state.value) != ConnectionState.Online) {
+            _notice.value = AgentText(persona.feature.chat.R.string.chat_menu_fork_failed,
+                persona.core.designsystem.UiText.of(persona.core.designsystem.R.string.designsystem_reason_unreachable))
+            _haptics.tryEmit(Haptic.Attention)
+            return@sendOperation
+        }
+        try {
+            val newId = ops.fork(session)
+            try { repository.refresh() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {}
+            _notice.value = AgentText(persona.feature.chat.R.string.chat_menu_forked)
+            _haptics.tryEmit(Haptic.Success)
+            onOpened(SessionKey(session.machineId, newId))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            val cause = (e as? AgentOperationFailure)?.cause ?: e
+            _notice.value = AgentText(persona.feature.chat.R.string.chat_menu_fork_failed,
+                persona.core.designsystem.operationFeedback(cause).text)
+        }
+    }
     /** "Join live": join a Codex app-server thread live; the list refreshes after it. */
     fun attach(session: Session) = change(session.machineId, R.string.agents_notice_attached) { it.attach(session) }
     /** Stop its turn from the list (iOS's row menu Interrupt): felt once it went through. */
@@ -744,6 +789,8 @@ internal class AgentsViewModel(
     }
     /** The grouping whose stored folds [settings] holds; folds are read again only when it changes (#4338 A6). */
     private var foldsGrouping: AgentGrouping? = null
+    /** The raw grouping ([AgentListSettings.pendingGrouping] or stored grouping) that [settings]'s fold set is authoritative for. */
+    @Volatile private var foldsAuthority: AgentGrouping? = null
     /** The list's folds while a search opens them ([query]). */
     private var stashedFolds: Set<String>? = null
 
@@ -753,21 +800,29 @@ internal class AgentsViewModel(
             preferences.snapshots(pairingScope).collect { prefs ->
                 if (prefs.grouping == foldsGrouping) return@collect
                 foldsGrouping = prefs.grouping
+                val pending = settings.value.pendingGrouping
+                if (pending != null && pending != prefs.grouping) return@collect
                 val stored = prefs.folds[prefs.grouping].orEmpty()
                 if (settings.value.query.isEmpty()) settings.update { it.copy(folded = stored) } else stashedFolds = stored
+                foldsAuthority = prefs.grouping
             }
         }
     }
 
+    private fun markFoldsAuthoritative() {
+        foldsAuthority = settings.value.pendingGrouping ?: foldsGrouping ?: page.value.preferences.grouping
+    }
+
     /** Keeps the current grouping's folds on this phone; a search's are not kept. */
     private fun saveFolds() {
-        val grouping = foldsGrouping ?: return
+        val grouping = settings.value.pendingGrouping ?: foldsGrouping ?: return
         if (settings.value.query.isNotEmpty()) return
         val folded = settings.value.folded
         localChange { preferences.folds(grouping, folded) }
     }
 
     fun fold(group: AgentListGroup) {
+        markFoldsAuthoritative()
         // Section fold and a quiet space (ChatsView.swift:1168, :2595, :3114, :3214, :3237).
         writeTap(ListTapMotionKind.State) { current ->
             if (group.parent == "quiet") current.copy(
@@ -788,11 +843,13 @@ internal class AgentsViewModel(
         saveFolds()
     }
     fun fold(machine: AgentMachineGroup) {
+        markFoldsAuthoritative()
         // ChatsView.swift:1168, the computer's section
         writeTap(ListTapMotionKind.State) { it.copy(folded = if (machine.folded) it.folded - machine.id else it.folded + machine.id) }
         saveFolds()
     }
     fun foldAll(fold: Boolean) {
+        markFoldsAuthoritative()
         // Collapse All / Expand All (AgentsMenus.swift:125, :128), Theme.Motion.standard.
         previous = null
         writeTap(ListTapMotionKind.State) { it.copy(
@@ -956,7 +1013,11 @@ internal class AgentsViewModel(
         _delivery.update { it + (interaction.id to RequestDelivery.Sending) }
         viewModelScope.launch {
             try {
-                val outcome = interactions.resolveOutcome(interaction.id, resolution)
+                val outcome = resolution.ownerApprovalPhrase?.let { phrase ->
+                    interactions.replyOwnerApproval(latest, phrase)
+                    ResolveOutcome()
+                } ?: interactions.resolveOutcome(interaction.id, resolution,
+                    handoffCard = interaction.isSecretHandoff && resolution.allow == true)
                 _delivery.update { it + (interaction.id to RequestDelivery.Sent) }
                 val effective = if (outcome.already) outcome.resolution else resolution
                 // The notice outlives the card: it keeps the answer without a password card's typed value (#1581).

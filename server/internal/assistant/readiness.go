@@ -330,7 +330,7 @@ type readinessEvidence struct {
 func (s *Service) readiness(ctx context.Context, probe bool, wait time.Duration) Readiness {
 	lang := s.requestCtxLang(ctx)
 	v := s.settings(ctx)
-	launcher := s.launcherNow(ctx)
+	launcher := s.mainLauncherNow(ctx)
 	out := Readiness{Version: 1, Launcher: launcher, CheckedAt: time.Now().UTC().Truncate(time.Second)}
 
 	d, has := s.device(ctx, v.MachineID)
@@ -752,7 +752,7 @@ func (s *Service) toolSearchWords(lang i18n.Lang, d Device, st ReadinessStep) Re
 	if st.Code != proto.TurnErrorToolSearchUnsupported {
 		return st
 	}
-	if nodes, ok := s.devs.(nodeAnnouncer); ok && nodes.NodeAnnounced(d.ID, nodeproto.AssistantToolSearchFallback) {
+	if nodes, ok := s.physicalDevices().(nodeAnnouncer); ok && nodes.NodeAnnounced(d.ID, nodeproto.AssistantToolSearchFallback) {
 		st.Detail = i18n.T(lang, "assistant-readiness.tool_search_unsupported_fallback_detail")
 	}
 	return st
@@ -851,6 +851,7 @@ func (s *Service) readinessProbe(ctx context.Context, machine string, v Settings
 		// Not the model's answer (the machine could not be asked): said, not kept.
 		return &proto.LauncherCheck{Error: i18n.Localize(err, s.requestCtxLang(ctx))}
 	}
+	cleanCheck(&res) // an un-updated node still sends the terminal's escapes and startup noise
 	// Detached from the client, the save needs its own deadline: one the database does not answer would hold the
 	// readiness lock, and every readiness request behind it, for good.
 	wctx, wcancel := context.WithTimeout(ctx, historyTimeout)

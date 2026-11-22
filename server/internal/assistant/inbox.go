@@ -8,6 +8,7 @@ import (
 
 	"github.com/nwverse/persona/sdk/go/wire"
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/extwire"
 )
 
 // The unified inbox (docs/assistant/inbox.md) is the manager's: Feishu messages, mail and the connectors' threads in one list,
@@ -56,6 +57,7 @@ type InboxItem struct {
 	Title       string     `json:"title"`        // chat name / mail subject
 	Sender      string     `json:"sender,omitempty"`
 	Avatar      string     `json:"avatar,omitempty"`
+	AvatarURL   string     `json:"avatar_url,omitempty"` // listed only, for Feishu; the stored avatar stays readable by older clients
 	Preview     string     `json:"preview"`
 	Count       int        `json:"count"`
 	StartedAt   time.Time  `json:"started_at"`
@@ -80,6 +82,8 @@ type InboxItem struct {
 	Connector *InboxConnector `json:"connector,omitempty"`
 	// Agent is the AI twin's work on the item: judged by model 2, handled and drafted by the agent (inbox_agent.go).
 	Agent *InboxAgent `json:"agent,omitempty"`
+	// TodoForward records deterministic PR/Issue auto-forwarding of this item to a bound open to-do (#12492, inbox_forward.go).
+	TodoForward *InboxTodoForward `json:"todo_forward,omitempty"`
 	// Mutes are what it can be muted by (listed only; inbox_mutes.go).
 	Mutes []MuteOption `json:"mutes,omitempty"`
 	// Version names what the item holds now (listed only): a bulk "Done" sends it back, so an item that took new
@@ -198,13 +202,14 @@ const (
 type MailAddress = assistantwire.MailAddress
 
 type InboxMail struct {
-	AccountID string      `json:"account_id"`
-	Mailbox   string      `json:"mailbox"`
-	UIDs      []uint32    `json:"uids"` // oldest first
-	MessageID string      `json:"message_id"`
-	From      MailAddress `json:"from"`
-	Direct    bool        `json:"direct,omitempty"` // to me, not cc / a list
-	Thread    string      `json:"thread"`           // normalized subject: replies join the same item
+	AccountID  string      `json:"account_id"`
+	Mailbox    string      `json:"mailbox"`
+	Generation uint32      `json:"generation,omitempty"` // follows known UIDVALIDITY changes in this mailbox
+	UIDs       []uint32    `json:"uids"`                 // oldest first
+	MessageID  string      `json:"message_id"`
+	From       MailAddress `json:"from"`
+	Direct     bool        `json:"direct,omitempty"` // to me, not cc / a list
+	Thread     string      `json:"thread"`           // normalized subject: replies join the same item
 }
 
 // open: not filed, and not a member of a merged row (inbox_merge.go): a member is hidden and its survivor stands for it.
@@ -264,6 +269,9 @@ func (it *InboxItem) listed() InboxItem {
 	c.Mutes = mutesOf(it)
 	c.Version = inboxVersion(it)
 	c.Conversation = conversationOf(it)
+	if it.Source == "lark" && it.Lark != nil {
+		c.AvatarURL = extwire.LarkAvatarURL(it.Avatar, it.Lark.AccountID)
+	}
 	if it.Agent != nil { // the copy is encoded after the lock is released
 		a := *it.Agent
 		if g := currentSuggestion(it); g != nil && suggestionAttempt(it, g.Version) != nil {
@@ -279,9 +287,14 @@ func (it *InboxItem) listed() InboxItem {
 		a.DeferredAt, a.WakeSlot = nil, false
 		c.Agent = &a
 	}
+	if it.TodoForward != nil {
+		tf := *it.TodoForward
+		tf.Last = ""
+		c.TodoForward = &tf
+	}
 	if it.Mail != nil {
 		m := *it.Mail
-		m.UIDs = append([]uint32(nil), m.UIDs...)
+		m.UIDs = slices.Clone(m.UIDs)
 		c.Mail = &m
 	}
 	if it.Doc != nil {
@@ -303,6 +316,8 @@ func (it *InboxItem) listed() InboxItem {
 	}
 	if it.Connector != nil {
 		k := *it.Connector
+		// The apps get the picture's hub path, never the source's value (docs/protocol/protocol.md "Avatars").
+		k.AvatarURL, k.Avatar = extwire.AvatarURL(it.Source, k.Avatar), ""
 		c.Connector = &k
 	}
 	return c

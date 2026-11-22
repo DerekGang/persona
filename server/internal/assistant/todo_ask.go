@@ -53,6 +53,8 @@ type todoAsk struct {
 	Suggestion *proto.RuleSuggestion `json:"suggestion,omitempty"`
 	// ForBriefing: it can wait and nothing was pushed for it yet: the next briefing lists it (decision_wait.go).
 	ForBriefing bool `json:"for_briefing,omitempty"`
+	// Questions retains an expired ask_user card's original form, including multiple questions/selections.
+	Questions []proto.Question `json:"questions,omitempty"`
 }
 
 // How a decision's default reads on its to-do (todoAsk.Default).
@@ -66,10 +68,11 @@ const (
 // the routes, its view (todo_view_routes.go).
 type listedTodo struct {
 	Todo
-	Ask            *todoAsk                   `json:"ask,omitempty"`
-	DecisionReview *decisionReview            `json:"decision_review,omitempty"`
-	Orphaned       *TodoOrphan                `json:"orphaned,omitempty"`
-	View           *assistantwire.TodoSummary `json:"view,omitempty"`
+	PrerequisiteBlockers []string                   `json:"prerequisite_blockers,omitzero"`
+	Ask                  *todoAsk                   `json:"ask,omitempty"`
+	DecisionReview       *decisionReview            `json:"decision_review,omitempty"`
+	Orphaned             *TodoOrphan                `json:"orphaned,omitempty"`
+	View                 *assistantwire.TodoSummary `json:"view,omitempty"`
 }
 
 // todoAsks are the open asks by to-do id, in the request's language: the ones the briefing lists (not passed, not ended,
@@ -101,6 +104,7 @@ func (s *Service) todoAsks(ctx context.Context) map[string]todoAsk {
 		}
 		out[w.todo] = a
 	}
+	s.addExpiredQuestionAsks(ctx, out)
 	return out
 }
 
@@ -109,7 +113,7 @@ func (s *Service) todoAsks(ctx context.Context) map[string]todoAsk {
 // safe. The list's ask carries it and the view's decision reads it from there (todo/projection), so whatever answers a
 // decision, a row or a push about it, can keep this one rule.
 func askRisk(a *acceptAsk) string {
-	if cannotUndo(a.WhyOwner, a.Deadline, a.Reversible) {
+	if a.OutsideID != "" && !a.Reversible || cannotUndo(a.WhyOwner, a.Deadline, a.Reversible) {
 		return assistantwire.OwnerAskRiskOpen
 	}
 	return assistantwire.OwnerAskRiskSafe
@@ -125,8 +129,8 @@ func (s *Service) askChanged(context.Context) {
 // pushDecision pushes task id's decision that waits for the owner and recommends an option (a "decide" push): what is to
 // be decided and the option, in the words of its card, what the notification's OK needs to take it (the to-do, the
 // round), and how its push may answer it (the view's ask and lock-screen rule). True when the hub took it. None for a
-// decision without a recommendation (nothing for OK to take), for a task from a health conversation (the lock screen
-// says nothing of those) or a muted one.
+// decision without a recommendation (nothing for OK to take), for a task from a conversation of a space that redacts
+// (the lock screen says nothing of those) or a muted one.
 func (s *Service) pushDecision(ctx context.Context, id string) bool {
 	sent, _ := s.pushDecisionErr(ctx, id)
 	return sent
@@ -137,16 +141,20 @@ func (s *Service) pushDecision(ctx context.Context, id string) bool {
 func (s *Service) pushDecisionErr(ctx context.Context, id string) (bool, error) {
 	a, ok := s.askCopy(id)
 	t, found := s.todoNow(id)
-	if !ok || !found || !decideAsk(&a) || a.Recommend == "" || !a.AcceptedAt.IsZero() || t.Origin == "" ||
-		!a.RecheckAt.IsZero() || ownerDecisionReturned(t.Supervision) {
+	if !ok || !found || !decideAsk(&a) || a.Recommend == "" || !a.AcceptedAt.IsZero() ||
+		a.OutsideID == "" && t.Origin == "" || !a.RecheckAt.IsZero() || ownerDecisionReturned(t.Supervision) {
 		return false, nil
 	}
 	here := s.settings(ctx).MachineID
-	if s.muted(here, t.Origin) || s.inHealth(ctx, t.Origin) {
+	sessionID := t.Origin
+	if a.OutsideID != "" && sessionID == "" {
+		sessionID = s.settings(ctx).Main // a standalone decision opens the main chat's Needs you
+	}
+	if s.muted(here, sessionID) || s.selfPolicy(ctx, sessionID).Redact {
 		return false, nil
 	}
 	l := s.lang(ctx)
-	n := Notification{ID: "ntf_" + randomHex(8), Kind: assistantwire.NotifyDecide, Subtitle: "Persona", DeviceID: here, SessionID: t.Origin,
+	n := Notification{ID: "ntf_" + randomHex(8), Kind: assistantwire.NotifyDecide, Subtitle: "Persona", DeviceID: here, SessionID: sessionID,
 		Title: i18n.T(l, "assistant-reports.verdict_title", i18n.Args{"task": clip(oneLine(t.Title), 30)}),
 		Body:  verdictText(l, &a) + "\n" + recommendText(l, &a),
 		// A decision the owner must take now: P0 interrupts even with the hub's push tiering on, every time it is
