@@ -27,6 +27,8 @@ export struct SessionSpaceTabs {
   @Computed get waiting():boolean {
     return this.space.tabs.some((tab:SessionSpaceTab)=>tab.id!==this.space.current && (tab.state==='needs_you' || tab.state==='blocked'));
   }
+  // The 44vp touch target extends beyond the type-scaled 30vp capsule equally on both sides.
+  private overhang():number { return Math.max(0,(44-30*Math.min(nativeEnvironment.fontScale,1.32))/2); }
   private stamp():string { return JSON.stringify([this.model.scope(),this.model.connectionGeneration(),this.space.key,this.space.current]); }
   private pickTab(id:string):void {
     if (!this.pickerShown || this.stamp()!==this.pickerOwner || !this.space.tabs.some((tab:SessionSpaceTab)=>tab.id===id)) return;
@@ -152,6 +154,6 @@ export struct SessionSpaceTabs {
           .onClick(()=>this.onOpenSpace(this.space.key)).id('session.space.open')
       }
       if (this.permission.visible) SessionHeaderPermissionChip({model:this.model,permission:this.permission}).flexShrink(0)
-    }.width('100%').padding({left:16,right:16})
+    }.width('100%').padding({left:16,right:16}).margin({top:-this.overhang(),bottom:8-this.overhang()})
   }
 }
