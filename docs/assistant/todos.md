@@ -1002,7 +1002,7 @@ default 24-hour deadline. A complete review wait can instead supply:
 
 ```text
 waiting: reviewer-a responds to the requested review
-park: {"waiting_on":"someone_else","until":"3d","evidence":{"kind":"merge_review","target":"reviewer-a","url":"https://github.com/example/project/pull/42","wake":"The requested review or merge changes","ready":true,"contact":{"channel":"project discussion","url":"https://example.org/messages/request-42","sender":"requester-a","sent_at":"2026-11-17T08:00:00Z","request":"Please review the ready change","status":"sent"}}}
+park: {"waiting_on":"someone_else","until":"3d","evidence":{"kind":"merge_review","target":"reviewer-a","next_actor":"external","url":"https://github.com/example/project/pull/42","wake":"The requested review or merge changes","ready":true,"contact":{"channel":"project discussion","url":"https://example.org/messages/request-42","sender":"requester-a","sent_at":"2026-11-17T08:00:00Z","request":"Please review the ready change","status":"sent"}}}
 ```
 
 The example is a schema illustration, not evidence of a real sent request. The source must be
