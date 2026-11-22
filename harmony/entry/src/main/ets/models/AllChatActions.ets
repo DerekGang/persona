@@ -147,6 +147,8 @@ export class AllChatActions {
         const status=typeof data['status']==='number' ? Number(data['status']) : 0;
         if (path.endsWith('/direction') && [404,405].includes(status) && !['session_not_found','machine_not_found','direction_not_found'].includes(code)) {
           this.missingRoutes=true; this.directions=[]; this.notice='phone_chat_direction_unavailable';
+        } else if (path.endsWith('/direction') && typeof data['userMessage']==='string' && String(data['userMessage']).length) {
+          this.detail=String(data['userMessage']);this.notice='from_hub';
         } else if (['full_access_required','forbidden'].includes(code) || status===403) this.notice='permission_denied';
         else if (code==='direction_full') this.notice='phone_chat_direction_full';
         else if (code==='direction_supervised_task') this.notice='phone_chat_direction_supervised';

@@ -68,6 +68,8 @@ test('different targets are never confused by pin and file, same-target changes 
 test('a missing manager route hides only filing; ordinary not-found refusals and uncertain responses remain visible',async()=>{
   let fail={code:'direction_not_found',status:404};const s=await setup(()=>{throw Object.assign(new Error(fail.code),fail)});
   await s.model.file(s.target(),s.model.directions[0]);assert.equal(s.model.choices(s.target()).length,1);
+  fail={code:'direction_full',status:409,userMessage:'The selected direction is full.'};await s.model.file(s.target(),s.model.directions[0]);
+  assert.equal(s.model.notice,'from_hub');assert.equal(s.model.detail,'The selected direction is full.');
   fail={code:'route_not_found',status:404};await s.model.file(s.target(),s.model.directions[0]);assert.equal(s.model.notice,'phone_chat_direction_unavailable');assert.equal(s.model.choices(s.target()).length,0);
   assert.equal(s.model.canChangeChat(s.target()),true);
   fail={code:'result_unknown',status:502,resultUnknown:true};await s.model.pin(s.target(),true);assert.equal(s.model.notice,'result_unknown');assert.equal(s.model.pinned(s.target()),false);

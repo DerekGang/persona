@@ -156,9 +156,14 @@ export struct PhoneAllChats {
     const lead=this.actions.pinned(target);
     const message=lead ? tr('phone_chat_unpin_message').replace('{name}',sidebarConversationTitle(row,tr))+
       (this.actions.hasFiling() ? '\n'+tr('phone_chat_unpin_filing') : '') : tr('phone_chat_pin_message');
-    this.getUIContext().showAlertDialog({title:tr(lead ? 'phone_chat_unpin_title' : 'phone_chat_pin_title'),message:message,
-      primaryButton:{value:tr('cancel'),action:() => {}},secondaryButton:{value:tr(lead ? 'phone_chat_unpin' : 'phone_chat_pin'),
-        action:() => { this.actions.pin(target,!lead).catch(() => {}); }}});
+    const title=tr(lead ? 'phone_chat_unpin_title' : 'phone_chat_pin_title');
+    const confirmButton: AlertDialogButtonBaseOptions={value:tr(lead ? 'phone_chat_unpin' : 'phone_chat_pin'),
+      action:() => { this.actions.pin(target,!lead).catch(() => {}); }};
+    if (nativeEnvironment.fontScale<=Tokens.interfaceFontMaxScale) {
+      this.getUIContext().showAlertDialog({title:title,message:message,width:250,alignment:DialogAlignment.Center,autoCancel:true,confirm:confirmButton});
+    } else {
+      this.getUIContext().showAlertDialog({title:title,message:message,primaryButton:{value:tr('cancel'),action:() => {}},secondaryButton:confirmButton});
+    }
   }
   @Builder moveMenu(target: ChatActionTarget) {
     Menu() {
@@ -177,7 +182,7 @@ export struct PhoneAllChats {
         .id('all_chats.action.move')
       if (this.actions.canChangeChat(target)) MenuItem({content:tr('archive'),symbolStartIcon:new SymbolGlyphModifier($r('sys.symbol.archivebox'))})
         .onClick(() => {this.actions.archive(target).catch(() => {});}).id('all_chats.action.archive')
-    }
+    }.width(250).subMenuExpandingMode(SubMenuExpandingMode.EMBEDDED_EXPAND)
   }
   @Builder swipeArchive(target: ChatActionTarget) {
     Button({type:ButtonType.Normal}) {
@@ -195,16 +200,16 @@ export struct PhoneAllChats {
     if (this.actions.canChangeChat(target)) {
       ListItem() { this.itemBody(binding) }
         .swipeAction({end:{builder:() => {this.swipeArchive(target);},actionAreaDistance:80,onAction:() => {this.actions.archive(target).catch(() => {});}}})
-        .bindContextMenu(this.rowMenu(target),ResponseType.LongPress)
+        .bindContextMenu(this.rowMenu(target),ResponseType.LongPress,{preview:MenuPreviewMode.IMAGE,placement:Placement.BottomLeft})
     } else if (this.actions.choices(target).length) {
-      ListItem() { this.itemBody(binding) }.bindContextMenu(this.rowMenu(target),ResponseType.LongPress)
+      ListItem() { this.itemBody(binding) }.bindContextMenu(this.rowMenu(target),ResponseType.LongPress,{preview:MenuPreviewMode.IMAGE,placement:Placement.BottomLeft})
     } else {
       ListItem() { this.itemBody(binding) }
     }
   }
   @Builder notice() {
     Row({space:8}) {
-      Text(tr(this.actions.notice).replace('{name}',this.actions.detail)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
+      Text(this.actions.notice==='from_hub' ? this.actions.detail : tr(this.actions.notice).replace('{name}',this.actions.detail)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
         .fontColor(this.actions.failure ? Colors.danger : Colors.ink).flexShrink(1).id('all_chats.feedback')
       if (this.actions.undo) Button(tr('phone_chat_undo')).height(38).fontColor(Colors.link).backgroundColor(Color.Transparent)
         .onClick(() => { this.actions.undoMove().catch(() => {}); }).id('all_chats.action.undo')

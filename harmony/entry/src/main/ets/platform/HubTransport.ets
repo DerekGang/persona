@@ -58,13 +58,15 @@ export class HttpFailure extends Error {
   readonly code: string;
   readonly resultUnknown: boolean;
   readonly resultPending: boolean;
-  constructor(status: number, code: string, resultUnknown: boolean = false, resultPending: boolean = false) {
+  readonly userMessage: string;
+  constructor(status: number, code: string, resultUnknown: boolean = false, resultPending: boolean = false, userMessage: string = '') {
     super(code || 'request_failed');
     this.name = 'HttpFailure';
     this.status = status;
     this.code = code || 'request_failed';
     this.resultUnknown = resultUnknown;
     this.resultPending = resultPending;
+    this.userMessage = userMessage;
   }
 }
 
@@ -390,8 +392,18 @@ export class HubTransport {
         const state = messagePost ? heldReceipt202(utf8String(bytes, false), opId) : 'pending';
         if (state !== 'held') throw new HttpFailure(202, state === 'unknown' ? 'result_unknown' : 'pending', true, state === 'pending');
       }
-      if (response.statusCode < 200 || response.statusCode >= 300)
-        throw new HttpFailure(response.statusCode, errorCode(text, path, verb, response.statusCode), !['GET', 'HEAD'].includes(verb) && writeResultUnknown(response.statusCode, text));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        let userMessage='';
+        if (verb==='PUT' && /^\/api\/v1\/assistant\/sessions\/[^/]+\/[^/]+\/direction$/.test(path) &&
+            response.statusCode>=400 && response.statusCode<500 && text.length<65536) {
+          try {
+            const publicError=(JSON.parse(text) as Record<string,Object>)['error'];
+            if (typeof publicError==='string') userMessage=publicError.trim().slice(0,512);
+          } catch (_) {}
+        }
+        throw new HttpFailure(response.statusCode,errorCode(text,path,verb,response.statusCode),
+          !['GET','HEAD'].includes(verb) && writeResultUnknown(response.statusCode,text),false,userMessage);
+      }
       const responseType = response.headers['content-type'] || response.headers['Content-Type'];
       return { data: toArrayBuffer(bytes), contentType: typeof responseType === 'string' ? responseType : '' };
     } catch (error) {
