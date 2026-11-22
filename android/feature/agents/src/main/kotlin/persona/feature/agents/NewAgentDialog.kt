@@ -23,8 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import persona.core.contracts.Machine
 import persona.core.contracts.PaseoAgent
+import persona.core.contracts.TraeCliDisplayName
 import persona.core.contracts.api.AgentLauncher
 import persona.core.contracts.api.PickerTier
+import persona.core.contracts.isTraeCliId
 import persona.core.designsystem.*
 import persona.core.designsystem.dense
 import persona.feature.chat.UltracodeQuotaLines
@@ -32,7 +34,7 @@ import persona.feature.chat.rememberUltracodeQuota
 import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.models.AgentModelPanel
-import persona.feature.chat.ForwardComposerCard
+import persona.feature.chat.ForwardComposerCards
 import persona.feature.chat.ForwardMessage
 import java.net.URI
 
@@ -412,7 +414,14 @@ private fun LazyListScope.newAgentItems(
         }
     }
     // A forwarded message (#3901) goes before the first message: its card over it.
-    usableForward(state.context)?.let(ForwardMessage::read)?.let { forward -> item("forward") { ForwardComposerCard(forward) } }
+    usableForward(state.context)?.let { context ->
+        item("forward") {
+            val refs = remember(context) { ForwardMessage.readAll(context) }
+            ForwardComposerCards(refs, singleLines = 4, onRemove = if (state.locked) null else ({ removed ->
+                model.forwardContext((refs - removed.toSet()).takeIf { it.isNotEmpty() }?.joinToString("\n") { it.xml() })
+            }))
+        }
+    }
     item("prompt") {
         JTextField(state.prompt, model::prompt, enabled = !state.locked,
             label = stringResource(when {
@@ -466,7 +475,12 @@ internal fun startable(state: NewAgentState, machines: List<Machine>): Boolean =
         machines.any { it.id == state.machineId && it.online } &&
         (!state.promptRequired || state.prompt.isNotBlank() || usableForward(state.context) != null) && state.attachmentsHold == null
 
-internal fun String.agentLabel() = when (this) { "claude" -> "Claude Code"; "codex" -> "Codex"; "traex" -> "TRAEX"; else -> this }
+internal fun String.agentLabel() = when {
+    this == "claude" -> "Claude Code"
+    this == "codex" -> "Codex"
+    isTraeCliId(this) -> TraeCliDisplayName
+    else -> this
+}
 
 /**
  * What the "Agent type" list calls a launcher's agent type ([agentLabel]): Paseo's providers other than Claude Code and

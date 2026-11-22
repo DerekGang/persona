@@ -26,6 +26,7 @@ type AssistantMachine struct {
 
 // AssistantClaudeMD is the assistant directory's CLAUDE.md (assistant/claude_md).
 type AssistantClaudeMD struct {
+	WorkGuide    bool
 	Owner        string // "" is "user"
 	Machines     []AssistantMachine
 	Notes        string // Settings › Assistant › About me, trimmed
@@ -299,7 +300,7 @@ type SnapshotProfile struct {
 // SnapshotTier is one tier of the profile in use: what an Agent started on it runs on ("" model or effort: the
 // launcher's), and when to use it.
 type SnapshotTier struct {
-	Name, Launcher, Model, Effort, Speed, Description string
+	Name, Launcher, Model, Effort, Speed, PermissionMode, Description string
 }
 
 // Snapshot is the live context a starting assistant gets in its system prompt.
@@ -433,10 +434,11 @@ func RenderSnapshotWorkflow(w SnapshotWorkflow) string {
 // AssistantContext is the hub's answer to assistant.context: the snapshot, for the main conversation with a line
 // saying so first (assistant/context). Node puts what changed of it at the start of each message (TurnContext).
 type AssistantContext struct {
-	Main     bool
-	Leader   bool // a leader conversation (#3133): it supervises the tasks it hands out
-	Owner    string
-	Snapshot string
+	ScheduledWorkPlan bool // Inline instructions for a granted scheduled round when the manager uses persona-work.
+	Main              bool
+	Leader            bool // a leader conversation (#3133): it supervises the tasks it hands out
+	Owner             string
+	Snapshot          string
 	// Directions: for the main conversation, the current leaders it hands work to (task_plan supervisor, #3609);
 	// LeaderName: for a leader, its direction's name.
 	Directions []ContextDirection
@@ -751,6 +753,45 @@ type TaskEnded struct {
 
 func RenderTaskEnded(n TaskEnded) string { return render("assistant/task_ended", n) }
 
+// PRFollowupNotice tells a closed to-do's original supervisor conversation that a delivery PR it no longer watches
+// through an open to-do changed after acceptance (#12371): merged, closed unmerged, a merge conflict, or a
+// changes-requested review on the current head. Event is one of merged | closed | conflict | changes_requested. The
+// to-do stays closed; this is a record, not a reopen and not an acceptance signal. Language is the owner's
+// (answerLanguage: empty Chinese, English or Japanese).
+type PRFollowupNotice struct {
+	ID, Title, PRURL string
+	Event            string
+	Realtime         bool
+	Language         string
+}
+
+func RenderPRFollowupNotice(n PRFollowupNotice) string { return render("assistant/pr_followup", n) }
+
+// RelayRefused tells a conversation that the message it sent another with conversation_send or conversation_new (Tool)
+// was refused for good by that conversation (Title, ID) with a refusal Code, and is not tried again (#11393). Excerpt
+// is how the message began. Language is the owner's (answerLanguage: "" Chinese, "English", "日本語").
+type RelayRefused struct {
+	Language                       string
+	Tool, ID, Title, Code, Excerpt string
+}
+
+func RenderRelayRefused(d RelayRefused) string { return render("assistant/relay_refused", d) }
+
+// RelayLater is what conversation_send with wake: false kept for a conversation (#11614): it goes in, as a context
+// block, at the start of the next message the hub delivers there for any other reason. Language is the owner's
+// (answerLanguage; empty: Chinese).
+type RelayLater struct {
+	Language string
+	Items    []RelayLaterItem
+}
+
+// RelayLaterItem is one kept message: the sending conversation, when it was sent (the owner's local time) and its words.
+type RelayLaterItem struct {
+	FromID, FromTitle, At, Text string
+}
+
+func RenderRelayLater(d RelayLater) string { return render("assistant/relay_later", d) }
+
 // ChatReply tells a conversation that wrote into a Lark chat as the user that others wrote there since (#10777): the
 // chat's name (Group: a group, else a direct chat with that person), when the conversation last wrote there (local
 // "01-02 15:04"), how many new messages and who wrote the newest, whether Context also repeats messages it was told
@@ -834,9 +875,9 @@ type Supervise struct {
 	// they wait here before going up a rung.
 	Asked      bool
 	AskMinutes int
-	// LowDistraction: the owner's low-distraction mode is on: a card is never handed to the user on a timeout, and ask_escalate
+	// PushGrading: the owner's push grading switch is on: a card is never handed to the user on a timeout, and ask_escalate
 	// pushes only what is the owner's alone (why_owner).
-	LowDistraction bool
+	PushGrading bool
 	// Decisions: an entry is about a decision the owner cannot answer as it is (recheck, undecidable,
 	// owner_cannot_answer; #3804).
 	Decisions bool
@@ -895,6 +936,8 @@ type SuperviseEntry struct {
 	// (decide_yourself, not_what_i_asked, explain_first).
 	Decision *SuperviseDecision
 	Response string
+	// Told: a check's decided entry whose answer is already in its Agent's chat (said there, or sent by agent_send).
+	Told bool
 	// parked_due: what the task was parked for; park_decided: what it was parked for again before the message went.
 	Parked *SuperviseParked
 	// From the task's brief (#3822): Asked is the owner's message that led to the work (clipped) and AskedAt its day;
@@ -918,6 +961,8 @@ type SuperviseLastReview struct {
 // DecisionAgentReply asks a supervisor to confirm a pending decision after its owner writes in the task's Agent chat.
 type DecisionAgentReply struct {
 	Language, Machine, Session string
+	Handled                    bool
+	Text, Closeout             string
 }
 
 // SuperviseInbox is the Inbox item an inbox entry names (#4293): its id, title (the chat's name or the mail's subject),
@@ -928,7 +973,8 @@ type SuperviseInbox struct {
 	Count                        int
 	// URL is a GitHub PR's or issue's address; ToAgent is "sent" once the note reached the task's agent (InboxToAgent,
 	// #7346), "unhandled" when its bounded retry failed, "" when only the supervisor is told.
-	URL, ToAgent string
+	URL, ToAgent    string
+	AfterAcceptance bool // new feedback on a still-open PR of an accepted task
 }
 
 // InboxToAgent is the note a task's agent gets when someone else writes on the task's GitHub thread (#7346): who,
@@ -980,6 +1026,14 @@ type DraftPR struct {
 }
 
 func RenderDraftPR(p DraftPR) string { return render("assistant/draft_pr", p) }
+
+// EstimateDue is the localized fact attached to an automatic estimate_due supervision entry.
+type EstimateDue struct {
+	Language          string
+	Expected, Elapsed int
+}
+
+func RenderEstimateDue(p EstimateDue) string { return render("assistant/estimate_due", p) }
 
 // SuperviseReviewed is the independent review of a task waiting for review: State clean (nothing blocking), blocking
 // (blocking findings left once the rework rounds ran out) or failed (Error says why), its counts and report.
@@ -1040,6 +1094,7 @@ type Relay struct {
 // RelayQuote is the owner's message a relay carries: its id, when and in which conversation they wrote it, the
 // conversations that passed it on after that one (oldest first), and the text verbatim. ParseRelayQuoteID reads the id back.
 type RelayQuote struct {
+	Part                 bool // the text is an excerpt from the source message
 	ID, At, Conversation string
 	Via                  []string
 	Text                 string
@@ -1205,6 +1260,14 @@ type HandoffTurn struct {
 // RenderMainHandoff is assistant/main_handoff.
 func RenderMainHandoff(h MainHandoff) string { return render("assistant/main_handoff", h) }
 
+// RenderSessionHandoff renders background for a fresh side conversation or Agent.
+func RenderSessionHandoff(summary string, recent []HandoffTurn) string {
+	return render("assistant/session_handoff", struct {
+		Summary string
+		Recent  []HandoffTurn
+	}{summary, recent})
+}
+
 // Acceptance is a deployed task, for the three lines of its "Please accept" card (assistant/acceptance_input; the system
 // prompt is assistant/acceptance; docs/extensions/bots.md "Task progress and review requests").
 type Acceptance struct {
@@ -1254,18 +1317,6 @@ type SuperviseCloseout struct {
 	LocalDeployment                bool
 }
 
-// Route is the system prompt of assistant.route (assistant/route): is a New chat's first message a direction or a quick
-// chat. Language is the direction name's language by its own name ("" Chinese); Crowded: there are Leaders leaders
-// already, so the model names the closest one too.
-type Route struct {
-	Language string
-	TitleMax int
-	Crowded  bool
-	Leaders  int
-}
-
-func RenderRoute(r Route) string { return render("assistant/route", r) }
-
 // RouteLeader is a current leader as the route model is shown it.
 type RouteLeader struct{ ID, Title, Project string }
 
@@ -1308,4 +1359,21 @@ func RenderTodoDirection(d DirectionNotes) string {
 		return ""
 	}
 	return render("todo/direction", d)
+}
+
+// SegmentHandoff continues the same logical conversation on a new engine.
+type SegmentHandoff struct {
+	Language string
+	Summary  string
+	Recent   []HandoffTurn
+	Text     string
+	Partial  bool
+}
+
+func RenderSegmentHandoff(h SegmentHandoff) string { return render("assistant/segment_handoff", h) }
+
+// RenderSegmentSummary accepts the established language display names as well as BCP 47 codes.
+// Empty and Chinese retain the original default bytes; Japanese and English are the other supported branches.
+func RenderSegmentSummary(language string) string {
+	return render("assistant/segment_summary", struct{ Language string }{Language: language})
 }

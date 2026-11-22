@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 from pathlib import Path
@@ -67,10 +68,20 @@ class PathTests(unittest.TestCase):
 
     def test_desktop_inputs_select_the_desktop_lane(self):
         for filename in ["desktop/src/main.ts", "web/src/main.tsx", "scripts/mock/mock_hub.py", "scripts/mock/mock_domains.py",
-                         "scripts/mock/desktops_mock.py", "scripts/mock/test_desktops_mock.py", "scripts/mock/stream_trace.py", "spec/desktop-bridge.d.ts",
+                         "scripts/mock/desktops_mock.py", "scripts/mock/github_mock.py", "scripts/mock/kb_selection_mock.py",
+                         "scripts/mock/mail_mock.py", "scripts/mock/hub_update_mock.py", "scripts/mock/imessage_mock.py",
+                         "scripts/mock/saved_prompts_mock.py", "scripts/mock/test_desktops_mock.py", "scripts/mock/stream_trace.py",
+                         "spec/desktop-bridge.d.ts",
                          "server/cmd/password-wasm/main.go", "server/internal/passwordpake/pake.go", "server/go.mod", "server/go.sum"]:
             self.assertTrue(paths.select([filename])["desktop"], filename)
         self.assertFalse(paths.select(["server/internal/hub/hub.go"])["desktop"])
+        # The synthetic hub loads every module of mock_domains.DOMAINS as it starts, so each one is a lane input too.
+        registry = ast.parse((Path(paths.ROOT) / "scripts/mock/mock_domains.py").read_text())
+        domains = next(ast.literal_eval(node.value) for node in registry.body if isinstance(node, ast.Assign)
+                       and [getattr(t, "id", None) for t in node.targets] == ["DOMAINS"])
+        self.assertIn("desktops_mock", domains)
+        for name in domains:
+            self.assertTrue(paths.select(["scripts/mock/%s.py" % name])["desktop"], name)
 
     def test_sdk_ts_sources_also_select_the_server_lane(self):
         # The trusted Deno adapter and the extension page tests bundle sdk/ts/src (#4221); the rest of sdk/ts is not.
@@ -78,7 +89,7 @@ class PathTests(unittest.TestCase):
         self.assertTrue(paths.select(["sdk/ts/src/wire.ts"])["runtimes"])
         # The shared Rust core: its own lane, and Android, whose tests load it.
         for filename in ["native/app-core/crates/persona-core/src/lib.rs", "spec/fixtures/continuity/append_and_gaps.json",
-                         "scripts/ci/core.sh"]:
+                         "spec/fixtures/sync-driver/lifecycle.json", "scripts/ci/core.sh"]:
             self.assertTrue(paths.select([filename])["core"], filename)
         self.assertTrue(paths.select(["native/app-core/Cargo.lock"])["android"])
         # The generated ArkTS codec and its host tests run in the same lane as the core they encode for (#7450).
@@ -267,7 +278,7 @@ class ManualWorkflowTests(unittest.TestCase):
         full = ci.split('      full:\n', 1)[1].split('      lanes:\n', 1)[0]
         self.assertIn('type: boolean', full)
         self.assertIn('default: true', full)
-        selection = ci.split('      - id: paths\n', 1)[1].split('\n  server:\n', 1)[0]
+        selection = ci.split('      - id: paths\n', 1)[1].split('\n  guards:\n', 1)[0]
         self.assertIn('CI_FULL: ${{ inputs.full }}', selection)
         self.assertIn('if [ "$CI_FULL" = true ]; then', selection)
         self.assertIn('python3 scripts/ci/paths.py --all', selection)
@@ -280,6 +291,65 @@ class ManualWorkflowTests(unittest.TestCase):
         self.assertIn('run: python3 scripts/ci/required.py', gate)
         self.assertNotIn('continue-on-error:', ci)
         self.assertNotIn('pull_request', ci)
+
+    def test_a_guard_failure_never_skips_a_platform_lane(self):
+        root = Path(__file__).resolve().parents[2]
+        jobs = yaml.load((root / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
+        platforms = ('server', 'web', 'android', 'apple', 'core', 'runtimes', 'desktop', 'scripts')
+        # Display names other tools and people look for stay as they were; the old combined job is split in two.
+        self.assertEqual({name: jobs[name].get('name') for name in ('changes', 'guards', 'apple', 'required')},
+                         {'changes': 'Manual path selection', 'guards': 'Manual repository guards',
+                          'apple': 'iOS and Watch', 'required': 'CI required'})
+        guards = jobs['guards']
+        self.assertEqual(guards['needs'], 'changes')
+        self.assertNotIn('if', guards)
+        run = [step for step in guards['steps'] if step.get('run') == 'scripts/ci/guards.sh']
+        self.assertEqual(len(run), 1)
+        self.assertEqual(run[0]['name'], 'Repository guards')
+        # One base per run: the guards check the commit path selection resolved, not a second origin/main.
+        self.assertEqual(run[0]['env'], {'CI_BASE_SHA': '${{ needs.changes.outputs.base }}'})
+        self.assertEqual(jobs['changes']['outputs']['base'], '${{ steps.base.outputs.base }}')
+        self.assertNotIn('guards.sh', str(jobs['changes']['steps']))
+        for name in platforms:
+            with self.subTest(platform=name):
+                self.assertEqual(jobs[name]['needs'], 'changes')
+        needs = {name: [job['needs']] if isinstance(job.get('needs'), str) else job.get('needs', [])
+                 for name, job in jobs.items()}
+        dependents = sorted(name for name, needed in needs.items() if 'guards' in needed)
+        self.assertEqual(dependents, ['required'])
+        self.assertEqual(jobs['required']['needs'], ['changes', 'guards', *platforms])
+
+    def test_required_reads_only_needs_from_a_shallow_checkout(self):
+        root = Path(__file__).resolve().parents[2]
+        required_job = yaml.load((root / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']['required']
+        checkout = next(step for step in required_job['steps'] if step.get('uses') == 'actions/checkout@v4')
+        self.assertEqual(checkout['with'], {'persist-credentials': 'false'},
+                         'the default depth fetches one commit instead of every branch')
+        tree = ast.parse((root / 'scripts/ci/required.py').read_text())
+        imported = {alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+                    for alias in node.names}
+        self.assertEqual(imported, {'json', 'os', 'sys'}, 'a shallow checkout has no history for git or subprocesses')
+
+    def test_history_checkouts_fetch_file_contents_only_at_the_tip(self):
+        # Path selection, the guards (commit privacy range, migration freeze, ratchets) and the scripts shards read
+        # history and the base, but only a few files at the base: a blobless clone of every branch and tag, with each
+        # blob a check reads at the base fetched on demand, skips the screenshot branches' contents (#12753).
+        root = Path(__file__).resolve().parents[2]
+        ci = yaml.load((root / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
+        scripts = yaml.load((root / '.github/workflows/scripts-tests.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
+        for name, job in (('changes', ci['changes']), ('guards', ci['guards']), ('scripts', scripts['scripts'])):
+            with self.subTest(job=name):
+                checkout = next(step for step in job['steps'] if step.get('uses') == 'actions/checkout@v4')
+                self.assertEqual(checkout['with'],
+                                 {'fetch-depth': '0', 'filter': 'blob:none', 'persist-credentials': 'false'})
+
+    def test_standalone_scripts_checkout_can_merge_base_origin_main(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = yaml.load((root / '.github/workflows/scripts-tests.yml').read_text(), Loader=yaml.BaseLoader)
+        checkout = next(step for step in workflow['jobs']['scripts']['steps']
+                        if step.get('uses') == 'actions/checkout@v4')
+        self.assertEqual(checkout.get('with', {}).get('fetch-depth'), '0',
+                         'standalone non-main dispatches need origin/main and shared history for git merge-base')
 
     def test_version_tag_publishes_a_release_after_the_image(self):
         root = Path(__file__).resolve().parents[2]
@@ -415,6 +485,7 @@ class RequiredTests(unittest.TestCase):
         needs = {name: {"result": "skipped"} for name in outputs}
         needs["scripts"] = {"result": "success"}
         needs["changes"] = {"result": "success", "outputs": outputs}
+        needs["guards"] = {"result": "success"}
         return needs
 
     def test_only_unselected_checks_can_skip(self):
@@ -441,10 +512,27 @@ class RequiredTests(unittest.TestCase):
             needs['apple']['result'] = ios_result
             self.assertTrue(required.failures(needs))
 
-    def test_guard_failure_never_passes(self):
+    def test_path_selection_failure_never_passes(self):
         needs = self.needs()
         needs["changes"]["result"] = "failure"
-        self.assertTrue(required.failures(needs))
+        self.assertIn("path selection did not succeed: failure", required.failures(needs))
+
+    def test_guard_failure_never_passes(self):
+        for result in ("failure", "cancelled", "skipped", None):
+            with self.subTest(result=result):
+                needs = self.needs()
+                needs["guards"]["result"] = result
+                self.assertEqual(required.failures(needs), [f"repository guards did not succeed: {result}"])
+        needs = self.needs()
+        del needs["guards"]
+        self.assertEqual(required.failures(needs), ["repository guards did not succeed: None"])
+
+    def test_a_guard_failure_and_a_lane_failure_are_both_reported(self):
+        needs = self.needs()
+        needs["guards"]["result"] = "failure"
+        needs["scripts"]["result"] = "failure"
+        self.assertEqual(required.failures(needs),
+                         ["repository guards did not succeed: failure", "scripts: selected but failure"])
 
 
 class DesktopWorkflowTests(unittest.TestCase):
@@ -453,7 +541,7 @@ class DesktopWorkflowTests(unittest.TestCase):
         ci = (root / '.github/workflows/ci.yml').read_text()
         self.assertIn('uses: ./.github/workflows/desktop-test.yml', ci)
         self.assertIn('desktop: ${{ steps.paths.outputs.desktop }}', ci)
-        self.assertIn('needs: [changes, server, web, android, apple, core, runtimes, desktop, scripts]', ci)
+        self.assertIn('needs: [changes, guards, server, web, android, apple, core, runtimes, desktop, scripts]', ci)
         workflow = yaml.load((root / '.github/workflows/desktop-test.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(set(workflow['jobs']), {'linux', 'macos', 'windows', 'update'})
         self.assertEqual(workflow['on']['workflow_call'], '')
@@ -489,14 +577,19 @@ class AppleWorkflowTests(unittest.TestCase):
         self.assertIn('      lane: ios', ios)
         self.assertNotIn('apple_macos', workflow)
         gate = workflow.split('\n  required:\n', 1)[1]
-        self.assertIn('needs: [changes, server, web, android, apple, core, runtimes, desktop, scripts]', gate)
+        self.assertIn('needs: [changes, guards, server, web, android, apple, core, runtimes, desktop, scripts]', gate)
         self.assertNotIn('apple_macos', gate)
         self.assertNotIn('continue-on-error:', workflow)
 
     def test_reusable_lane_uses_quoted_environment_not_script_interpolation(self):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / '.github/workflows/apple-test.yml').read_text()
-        self.assertIn('options: [ios]', workflow)
+        self.assertIn('options: [ios, ios18, ios-build, packages, ios-focused, ios-regressions, ios-ipad-diagnostic]', workflow)
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.lane == 'ios18'", workflow)
+        floor = workflow.split('\n  ios18:\n', 1)[1]
+        for required in ('runs-on: macos-15', '/Applications/Xcode_26.3.app/Contents/Developer',
+                         'run: scripts/ci/apple.sh ios18', 'timeout-minutes: 150'):
+            self.assertIn(required, floor)
         self.assertIn('APPLE_CI_LANE: ${{ inputs.lane }}', workflow)
         self.assertIn('run: scripts/ci/apple.sh "$APPLE_CI_LANE"', workflow)
         self.assertNotIn('continue-on-error:', workflow)
@@ -508,6 +601,15 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS HTML card tests (separate batch)',
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
+
+    def test_resolved_variant_is_staged_only_in_the_disposable_source(self):
+        root = Path(__file__).resolve().parents[2]
+        script = (root / 'scripts/ci/apple.sh').read_text()
+        for required in ('scripts/ci/apple_resolved.py',
+                         '--tracked "$CI_ROOT/apple/Packages/PersonaSSH/Package.resolved"',
+                         '--staged "$SOURCE/apple/Packages/PersonaSSH/Package.resolved"',
+                         '--meta "$PERSONA_META_WEARABLES"'):
+            self.assertIn(required, script)
 
 
 class PostgresCleanupTests(unittest.TestCase):

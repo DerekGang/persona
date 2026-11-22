@@ -3,6 +3,8 @@ package transcript
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
@@ -125,10 +127,11 @@ type Meta struct {
 	// VersionAt is when the line that said Version was written (zero when it had no timestamp).
 	VersionAt      time.Time
 	PermissionMode string
-	// ModeAt / Effort / EffortAt: when the permission mode was last seen, and the effort level of the latest reply.
+	// ModeAt / Effort / EffortAt / ModelAt: when the permission mode was last seen, and when the latest reply or turn_context named Effort or Model.
 	ModeAt   time.Time
 	Effort   string
 	EffortAt time.Time
+	ModelAt  time.Time
 	// Ultracode is independent of effort: nil means the transcript has no dated evidence. Since, when set by a
 	// caller, ignores observations from before the current Claude process (resume resets the session-only switch).
 	Ultracode        *bool
@@ -141,6 +144,8 @@ type Meta struct {
 	// ContextCompacted: a compaction came after the latest reply, so the context is not known (ContextTokens 0) until
 	// the next one; the size before it no longer stands (#9207).
 	ContextCompacted bool
+	restartContext   contextRestart
+	restartCodex     tokenuse.CodexTotal
 	// ContextWindow is the model's context window when the transcript says it (a Codex rollout's token_count carries
 	// model_context_window); 0 for Claude Code, whose transcripts do not (node/contextwindow.go knows by model id).
 	ContextWindow    int
@@ -293,33 +298,33 @@ type Meta struct {
 	Updated      time.Time
 }
 
-// ObserveNamingMetadata reads title provenance, generated usage and Codex turn settings during an existing incremental scan.
+// ObserveNamingMetadata reads title provenance, usage and Codex turn settings during an existing incremental scan.
 // It never decodes message content (which can contain large screenshots or tool output).
 func (m *Meta) ObserveNamingMetadata(line []byte) {
 	if !bytes.Contains(line, []byte(`"custom-title"`)) && !bytes.Contains(line, []byte(`"ai-title"`)) &&
-		!bytes.Contains(line, []byte(`"output_tokens"`)) && !bytes.Contains(line, []byte(`"turn_context"`)) {
+		!bytes.Contains(line, []byte(`"usage"`)) && !bytes.Contains(line, []byte(`"turn_context"`)) &&
+		!bytes.Contains(line, []byte(`"compact_boundary"`)) && !bytes.Contains(line, []byte(`"compacted"`)) &&
+		!bytes.Contains(line, []byte(`"context_compacted"`)) && !bytes.Contains(line, []byte(`"token_count"`)) {
 		return
 	}
 	var e struct {
 		Type        string    `json:"type"`
+		Subtype     string    `json:"subtype"`
 		Timestamp   time.Time `json:"timestamp"`
 		CustomTitle string    `json:"customTitle"`
 		AITitle     string    `json:"aiTitle"`
 		IsSidechain bool      `json:"isSidechain"`
+		APIError    bool      `json:"isApiErrorMessage"`
 		Message     *struct {
-			ID    string `json:"id"`
-			Usage *struct {
-				OutputTokens int `json:"output_tokens"`
-			} `json:"usage"`
+			ID    string                `json:"id"`
+			Model string                `json:"model"`
+			Usage *tokenuse.ClaudeUsage `json:"usage"`
 		} `json:"message"`
 		Payload struct {
-			Type   string `json:"type"`
-			Effort string `json:"effort"`
-			Info   *struct {
-				Total struct {
-					OutputTokens int `json:"output_tokens"`
-				} `json:"total_token_usage"`
-			} `json:"info"`
+			Type   string              `json:"type"`
+			Model  string              `json:"model"`
+			Effort string              `json:"effort"`
+			Info   *tokenuse.CodexInfo `json:"info"`
 		} `json:"payload"`
 	}
 	if json.Unmarshal(line, &e) != nil {
@@ -327,6 +332,9 @@ func (m *Meta) ObserveNamingMetadata(line []byte) {
 	}
 	switch e.Type {
 	case "turn_context":
+		if e.Payload.Model != "" && !e.Timestamp.Before(m.ModelAt) {
+			m.Model, m.ModelAt = e.Payload.Model, e.Timestamp
+		}
 		if e.Payload.Effort != "" && !e.Timestamp.Before(m.EffortAt) {
 			m.Effort, m.EffortAt = e.Payload.Effort, e.Timestamp
 		}
@@ -340,11 +348,30 @@ func (m *Meta) ObserveNamingMetadata(line []byte) {
 		}
 	case "assistant":
 		if !e.IsSidechain && e.Message != nil && e.Message.Usage != nil {
-			m.observeOutput(e.Message.ID, e.Message.Usage.OutputTokens)
+			m.observeOutput(e.Message.ID, int(e.Message.Usage.OutputTokens))
+			t, _, ok := tokenuse.ClaudeTokens(e.Message.Model, e.Message.Usage, e.APIError)
+			tokens := t.Input + t.CacheRead + t.CacheWrite
+			if ok && e.Message.ID != "" && tokens > 0 && tokens <= MaxContextTokens {
+				m.restartContext.observe(e.Message.ID, tokens)
+			}
 		}
+	case "system":
+		if e.Subtype == "compact_boundary" && !e.IsSidechain {
+			m.restartContext.compact()
+		}
+	case "compacted":
+		m.restartContext.compact()
 	case "event_msg":
-		if e.Payload.Type == "token_count" && e.Payload.Info != nil {
-			m.OutputTokens = e.Payload.Info.Total.OutputTokens
+		switch e.Payload.Type {
+		case "context_compacted":
+			m.restartContext.compact()
+		case "token_count":
+			if info := e.Payload.Info; info != nil {
+				m.OutputTokens = int(info.Total.Output)
+				if m.restartCodex.Grew(info.Total.Total) && info.Last.Input > 0 && info.Last.Input <= MaxContextTokens {
+					m.restartContext.observe("", info.Last.Input)
+				}
+			}
 		}
 	}
 }
@@ -466,12 +493,21 @@ func ParseLine(seq int, line []byte, meta *Meta) []proto.Item {
 		meta.FirstUser = clipTo(meta.FirstUser, pageTextLen)
 	}
 	defer func() { meta.localInput = false }()
-	for _, it := range items {
+	var fingerprint string
+	for i := range items {
+		it := &items[i]
+		if (it.Kind == proto.KindText || it.Kind == proto.KindImage && it.Role == "user") && proto.PositionalItemID(it.ID) {
+			if fingerprint == "" {
+				digest := sha256.Sum256(line)
+				fingerprint = hex.EncodeToString(digest[:16])
+			}
+			it.SourceFingerprint = fingerprint
+		}
 		if it.Role != "system" && !it.TS.IsZero() && it.TS.After(meta.LastActivity) {
 			meta.LastActivity = it.TS
 		}
-		meta.trackActivity(it)
-		meta.trackPlan(it)
+		meta.trackActivity(*it)
+		meta.trackPlan(*it)
 		if it.Wake || it.Role == "user" && !it.Queued && (it.Kind == proto.KindText || it.Kind == proto.KindImage) {
 			// A new turn's words start afresh (TurnAnswer): a photo with no caption and a command that runs the model
 			// start one too, though they do not reach ClaudeTurnStarted.
@@ -882,6 +918,9 @@ func parseLine(seq int, line []byte, meta *Meta) []proto.Item {
 		}
 		if model != "" {
 			meta.Model = model
+			if !e.IsSidechain && !meta.Updated.IsZero() {
+				meta.ModelAt = meta.Updated
+			}
 			meta.observeReplyModel(model)
 		}
 		var blocks []block

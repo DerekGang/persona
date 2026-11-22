@@ -91,9 +91,18 @@ type Placement struct {
 	MemoryDreaming bool `json:"memory_dreaming,omitempty"`
 	// CompleteAgentlessTodos lets a supervising conversation complete its own agentless memo without another card.
 	CompleteAgentlessTodos bool `json:"complete_agentless_todos,omitempty"`
+	// SupervisionBatchMinutes is manager.json's administrator-pinned routine supervision interval. Nil leaves the
+	// assistant's saved setting in effect; an explicit zero pins immediate delivery through the legacy cadence.
+	SupervisionBatchMinutes *int `json:"supervision_batch_minutes,omitempty"`
+	// TaskExecutionWaitSeconds bounds pre-delivery waits for a node with scheduled execution support (default 600).
+	TaskExecutionWaitSeconds *int `json:"task_execution_wait_seconds,omitempty"`
+	// TaskExecutionLegacyFallback permits only attested inherited ordinary tasks to omit task_execution on old nodes.
+	TaskExecutionLegacyFallback *bool `json:"task_execution_legacy_fallback,omitempty"`
+	// NodeUpdateHandoffGraceSeconds bounds natural-idle update waits before new headless turns are refused (default 60).
+	NodeUpdateHandoffGraceSeconds *int `json:"node_update_handoff_grace_seconds,omitempty"`
 }
 
-// DeviceCall is device.call's params. Device is a machine id, or DeviceAll for DeviceDevicesList.
+// DeviceCall is device.call's params. Device is a machine id, or DeviceAll for DeviceDevicesList and fleet-wide DeviceInteractionsList.
 type DeviceCall struct {
 	Device string          `json:"device"`
 	Method string          `json:"method"`
@@ -104,11 +113,12 @@ type DeviceCall struct {
 // answers the others from what it holds about the machine.
 const (
 	// The node's (docs/protocol/protocol.md "hub ↔ node").
-	DeviceSessionItems  = "session.items"  // {session_id, turns} → {items}
-	DeviceSessionRename = "session.rename" // {session_id, title} → {ok}
-	DeviceAssistantSend = "assistant.send" // {session_id, text, resume_only?, permission_mode?, …model} → {session_id}
-	DeviceSessionSend   = "session.send"   // {session_id, text} → {}
-	DeviceSessionStart  = "session.start"  // {cwd, prompt, launcher?, model?, permission_mode?, tab_name?, workspace_id?, session_id?} → {session}; session_id names the new session (Claude), for an exact reconciliation when the answer is lost
+	DeviceSessionItems              = "session.items"                 // {session_id, turns} → {items}
+	DeviceSessionRename             = "session.rename"                // {session_id, title?, tab_name?} → {ok}
+	DeviceSessionRenameTabIfCurrent = "session.rename_tab_if_current" // {session_id, tab_id, expected_tab_name, tab_name} → {ok}
+	DeviceAssistantSend             = "assistant.send"                // {session_id, text, resume_only?, permission_mode?, …model} → {session_id}
+	DeviceSessionSend               = "session.send"                  // {session_id, text} → {}
+	DeviceSessionStart              = "session.start"                 // {cwd, prompt, launcher?, model?, permission_mode?, tab_name?, workspace_id?, session_id?} → {session}; session_id names the new session (Claude), for an exact reconciliation when the answer is lost
 	// DeviceSessionModes: {session_id, launcher?, from?, model?, effort?, permission_mode?} → {}; a launcher other than
 	// the session's own is a switch to it, carried out by a session.send with apply_switch (docs/protocol/protocol.md).
 	DeviceSessionModes = "session.modes"
@@ -124,7 +134,7 @@ const (
 	// DeviceDevicesList (on DeviceAll): {} → {devices: [Device], phone_online, apps: [ClientApp]}, the user's machines
 	// and the Persona apps that last said their version (apps: absent from a hub from before).
 	DeviceDevicesList = "devices.list"
-	// DeviceInteractionsList (on DeviceAll): {} → {interactions}, what the machines' agents wait on the user for.
+	// DeviceInteractionsList (on DeviceAll or a machine id): {} → {interactions}, what the machines' agents wait on the user for.
 	DeviceInteractionsList = "interactions.list"
 	// DeviceSessionsList: {} → {sessions}, the machine's sessions as the apps get them (state, titles).
 	DeviceSessionsList = "sessions.list"
@@ -207,6 +217,8 @@ const (
 	// (internal/extmgr), not the hub; AppSettings is Persona's own settings (persona_settings).
 	AppInbox    = "inbox"
 	AppSettings = "settings"
+	// AgentsDisplayGet reads the default manager's shared Agents display settings for another manager.
+	AgentsDisplayGet = "agents.display.get"
 
 	// AppNotify is the hub's push settings: NotifyQuietGet tells whether the user is in their quiet hours now.
 	AppNotify = "notify"
@@ -236,9 +248,10 @@ const (
 // binding an older hub stored with the main chat's "runtime" ("cli" or "agentsdk") reads without it, as the CLI every
 // assistant conversation runs on; the key is gone from the next write.
 type ModelBinding struct {
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Effort   string `json:"effort,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
 	// ConfigDir is the main chat's only: the Claude profile its new conversations start in (#4633). None is Persona's
 	// own profile (the default); "legacy" is this computer's existing Claude Code setup. Kept across a provider change;
 	// an existing conversation keeps the profile it was started in.

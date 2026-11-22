@@ -164,12 +164,15 @@ Every write that went out through the gate is kept in the ledger `sent_as_user` 
 
 ### Inbox ingestion
 
-The connector provides `InboxThing` (one thing: `Thread` is its key, `Kind` its own kind, `Tier` / `Why` the tier chosen by its rules, and `Done` means it observed completion);
+The connector provides `InboxThing` (one thing: `Thread` is its key, `Kind` its own kind, `Tier` / `Why` the tier chosen by its rules, and `Done` means it observed completion).
+For a GitHub pull request, `thread_state` records the observed PR state (`open`, `closed` or `merged`) independently of Inbox filing.
 each round, the hub hands candidates to the manager (`inbox.collected` on the bus, `docs/assistant/inbox.md` ("Who owns what")). The manager (`applyConnector` in `assistant/inbox_connectors.go`)
 merges subsequent activity for the same `Thread` into an open item. Classification, AI twin, completion and retention then belong to the manager and are the same for every source; replies, `Settle` and tools derived from events
 are still dispatched to connectors by the hub (the manager asks through `app.call inbox.*`). Items use a generic block (`InboxConnector`), so the App can render them without knowing the source.
 
 A thing may name its thread's picture in `avatar` (#10923): the other person of a private chat, a group's own. Its value is one of the connector's own media refs (the same ref its conversation page's `ThreadChat.avatar` carries, its bytes from `Media(ref)`) or an `https` address; either always names the same bytes, so a changed picture gets a new value. The manager keeps it on the item's connector block and lists it as `connector.avatar_url`, the avatars route's path (`GET /api/v1/avatars/{source}/{value}`), never as the value: the manager draws the picture again from the connector's bytes, or fetches the address on the open internet only (`docs/protocol/protocol.md` ("Avatars (#10923)")). An open item takes a new picture without waiting for a new move. Without one (a connector that sends none, an older hub) the row draws the initial; an older hub ignores the field. Telegram sends its conversations' pictures (nwverse/persona-extensions#670); GitHub does not yet (#10931).
+
+For `thread.page`, provide `avatar` on the chat, its author and any message sender with a picture. The extension manager adds the app-facing `avatar_url` to each record when it serves `GET /api/v1/connectors/{id}/thread`. It retains the original `avatar` for older apps. New clients use the listed path and the item's manager; when talking to an older hub they can still request the original ref through connector media. Listing the page does not fetch any images.
 
 Android uses the same authenticated loader and encoded-byte / decoded-image caches as its Lark rows. The item's manager stays on deferred reads and cache keys, and the row asks for and decodes the picture at its avatar's actual dp size times display density. The initial remains while loading, without a picture or on failure, the source badge is unchanged, and scrolling a loaded row back does not request its picture again (#10932).
 

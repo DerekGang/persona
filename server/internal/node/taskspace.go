@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/nwverse/persona/server/internal/herdr"
@@ -15,6 +17,7 @@ import (
 // prove both IDs before closing anything. Other terminal hosts and runtimes ignore task placement as before.
 
 type taskSpaceKey struct{}
+type reopenWorktreeWorkspaceKey struct{}
 
 type taskSpace struct {
 	task, id, label string
@@ -114,6 +117,9 @@ func (n *Node) putAgentState(ctx context.Context, launch host.Launcher, id strin
 // tabSpace keeps ordinary directory placement unless this is a task start on classic herdr. A recorded task workspace
 // is selected by ID, never by a directory basename or a mutable label. If it is gone, the same task label is recreated.
 func (n *Node) tabSpace(ctx context.Context, launch host.Launcher, cwd, asked string) (string, error) {
+	if backendLaunchFrom(ctx) != nil {
+		return "", nil
+	}
 	ts := taskSpaceIn(ctx, launch)
 	if ts == nil {
 		if asked != "" {
@@ -138,7 +144,7 @@ func (n *Node) tabSpace(ctx context.Context, launch host.Launcher, cwd, asked st
 	}
 	for _, space := range spaces {
 		if space.ID == ts.id {
-			if ts.label == "" {
+			if space.Label != "" {
 				ts.label = space.Label
 			}
 			return space.ID, nil
@@ -148,6 +154,51 @@ func (n *Node) tabSpace(ctx context.Context, launch host.Launcher, cwd, asked st
 		return "", errors.New("the recorded task workspace is gone and its label is unknown")
 	}
 	return "", nil
+}
+
+// A classic herdr workspace disappears when its last tab closes. An allocated task worktree still exists on disk.
+// Before any command was typed, retry placement by the exact checkout directory on the same herdr server.
+func (n *Node) reopenWorktreeTab(ctx context.Context, h *herdrHost, staleID, cwd, tabName string) (*host.Created, error) {
+	target, err := h.target(ctx, staleID)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("the task's worktree path is no longer a directory")
+	}
+	defer n.typing.lock("herdr-worktree:" + target.session + "\x00" + dir)()
+	spaces, err := target.c.Workspaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, space := range spaces {
+		if (space.Cwd != "" && realPath(space.Cwd) == dir) ||
+			(space.Worktree != nil && space.Worktree.CheckoutPath != "" && realPath(space.Worktree.CheckoutPath) == dir) {
+			id := target.qualify(space.ID)
+			created, err := createStartSlot(ctx, h, id, cwd, tabLabel(tabName, n.tabLabels(ctx, h, id)))
+			if err == nil && created.SpaceID == "" {
+				created.SpaceID = id
+			}
+			return created, err
+		}
+	}
+	c, err := target.c.WorkspaceCreate(ctx, cwd, filepath.Base(cwd), startShellEnv...)
+	if err != nil {
+		return nil, err
+	}
+	created := fromHerdrCreated(target.session, c)
+	if created.SlotID != "" {
+		_ = renameSlot(ctx, h, created.SlotID, tabLabel(tabName, nil))
+	}
+	return created, nil
 }
 
 const (

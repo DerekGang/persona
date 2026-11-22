@@ -55,6 +55,29 @@ afterEach(() => {
 });
 
 describe("session metadata extractors & facet building", () => {
+  it("finds TRAE CLI by the product name and its command spelling", () => {
+    const aliases = ["traex", "traecli", "trae-cli"];
+    const sessions = aliases.map((agent, index) => mkSession(`cli-${index}`, { agent }));
+    sessions.push(mkSession("paseo", { agent: "paseo", launcher: "trae-cli" }), mkSession("launcher", { agent: "", launcher: "trae-cli" }));
+    for (const session of sessions) {
+      expect(agentSearchHit(session, "TRAE CLI", baseCtx).score).toBe(40);
+      expect(agentSearchHit(session, "traecli", baseCtx).score).toBe(40);
+      expect(agentSearchHit(session, "harness:trae", baseCtx).score).toBe(0);
+      for (const alias of aliases) expect(agentSearchHit(session, `harness:${alias}`, baseCtx).score).toBe(30);
+    }
+    const genericTrae = mkSession("generic", { agent: "trae" });
+    for (const alias of aliases) expect(agentSearchHit(genericTrae, `harness:${alias}`, baseCtx).score).toBe(0);
+    const list = [...sessions, genericTrae];
+    const facets = buildAgentFacets(list, machines, baseCtx.pins);
+    expect(facets.harnesses).toEqual([
+      { id: "traex", label: "TRAE CLI", count: 5 },
+      { id: "trae", label: "TRAE", count: 1 },
+    ]);
+    expect(applyDimensionFilters(list, { ...DEFAULT_DIMENSION_FILTERS, harnesses: ["trae"] }, baseCtx).sessions).toEqual([genericTrae]);
+    expect(applyDimensionFilters(list, { ...DEFAULT_DIMENSION_FILTERS, harnesses: ["traex"] }, baseCtx).sessions).toEqual(sessions);
+    expect(applyDimensionFilters(list, { ...DEFAULT_DIMENSION_FILTERS, searchAsCode: true, customPlanCode: 's.harness === "trae-cli"' }, baseCtx).sessions).toEqual(sessions);
+  });
+
   it("extracts harness, project, model, and error status", () => {
     const s1 = mkSession("s1", { agent: "claude-code", model: "claude-opus-5-5[1m]", repo_root: "/code/persona" });
     const s2 = mkSession("s2", { agent: "", launcher: "codex-gpt-5", model: "", repo_root: undefined, cwd: "/code/weather", turn_error: "rate_limited" });
@@ -69,9 +92,10 @@ describe("session metadata extractors & facet building", () => {
     expect(sessionHasError(s2)).toBe(true);
   });
 
-  it("names a gateway's routed model without its prefix", () => {
-    expect(sessionModelId(mkSession("s", { model: "passthrough/route-gemini-4-carbon/gemini-4-carbon" }))).toBe("gemini-4-carbon");
-    expect(sessionModelId(mkSession("s", { model: "passthrough/claude-opus-5-5[1m]" }))).toBe("opus 5.5 1M");
+  it("keeps a gateway's routed model with its prefix", () => {
+    expect(sessionModelId(mkSession("s", { model: "passthrough/route-gemini-4-carbon/gemini-4-carbon" }))).toBe("passthrough/route-gemini-4-carbon/gemini-4-carbon");
+    expect(sessionModelId(mkSession("s", { model: "route-a/gemini-4-carbon" }))).toBe("route-a/gemini-4-carbon");
+    expect(sessionModelId(mkSession("s", { model: "passthrough/claude-opus-5-5[1m]" }))).toBe("passthrough/claude-opus-5-5[1m]");
   });
 
   it("builds facet counts across harnesses, projects, models, machines, and pins", () => {

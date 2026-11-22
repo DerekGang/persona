@@ -108,6 +108,8 @@ type sendOpts struct {
 	WorkspaceLabel string `json:"workspace_label"`
 	// ClearDraft is the draft the user saw in a refusal and chose to clear: cleared only if the box still shows it.
 	ClearDraft string `json:"clear_draft"`
+	// WaitForEffort says the sender can keep the message if the thinking effort is still pending.
+	WaitForEffort bool `json:"wait_for_effort"`
 	// DismissNotice: a notice that Enter only closes («Enter to continue», no options) is closed before the text is
 	// typed. Any other dialog is refused as before.
 	DismissNotice bool `json:"dismiss_notice"`
@@ -541,10 +543,10 @@ const (
 // notRunningRefusal refuses, with nothing typed, a send to a session that is not live when the machine's engine
 // cannot start sessions (no host.Launcher) or is Orca, instead of trying to resume it there: when the pane it was last
 // seen in is still there, its agent is not in front (suspended, in the background); otherwise it is gone. nil when the
-// engine can resume it: herdr, and Orca for a Claude session (its own <id>.jsonl; Codex, TRAEX and pi sessions are
+// engine can resume it: herdr, and Orca for a Claude session (its own <id>.jsonl; Codex, TRAE CLI and pi sessions are
 // not resumed in Orca).
 // orcaContinues: Orca can continue session id once its agent is gone — a Claude session (its own <id>.jsonl, not a
-// Codex or TRAEX rollout); Codex, TRAEX and pi sessions are not resumed in Orca (#5548). Send (notRunningRefusal) and
+// Codex or TRAE CLI rollout); Codex, TRAE CLI and pi sessions are not resumed in Orca (#5548). Send (notRunningRefusal) and
 // retire share it, so the task closer never closes an agent a message cannot bring back.
 func (n *Node) orcaContinues(id string) bool { return n.claudeTranscript(id, true) != "" }
 
