@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -71,5 +72,48 @@ func TestLogicalAdoptedConversationRowIsReadFromTheFleet(t *testing.T) {
 	}
 	if calls := raw.callsTo("server", DeviceSessionGet); len(calls) != 0 {
 		t.Fatalf("session.get reached the node: %s", calls)
+	}
+}
+
+// A supervisor's switch prepares the target with the role's policy, as the first input will carry it: a Codex thread
+// with no turn yet cannot be resumed, so a policy arriving only with that input restarted it under a new thread id.
+func TestLogicalPreparationCarriesTheSupervisorPolicy(t *testing.T) {
+	s, f, d, _ := logicalPair(t, "codex")
+	ctx := t.Context()
+	setSettings(t, s, func(cfg *Settings) { cfg.Leaders = append(cfg.Leaders, "side-chat") })
+	if err := d.ResolveConversationSwitch(ctx, "server", "side-chat", "operation", "rejected", ""); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(logicalSwitchRequest{OperationID: "lead", ExpectedEpoch: 1, MachineID: "server", Launcher: "codex"})
+	if err := d.BeginConversationSwitch(ctx, "server", "side-chat", db.ConversationSwitch{OperationID: "lead", ExpectedEpoch: 1, SourceSegment: "one", Request: request}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PutConversationHandoff(ctx, "server", "side-chat", "lead", json.RawMessage(`{"summary":"saved summary"}`)); err != nil {
+		t.Fatal(err)
+	}
+	f.answerNode("assistant.segment.check", func(string, json.RawMessage) (any, error) {
+		return segmentTarget{Registered: true, Engine: "codex", Prepare: true, SupervisionPolicy: true}, nil
+	})
+	var prepared map[string]any
+	f.answerNode("assistant.segment.prepare", func(_ string, raw json.RawMessage) (any, error) {
+		_ = json.Unmarshal(raw, &prepared)
+		return map[string]any{"session_id": "lead-target", "prepared": true}, nil
+	})
+	want, err := s.supervisionInstructions(ctx, "server", "side-chat")
+	if err != nil || want == "" {
+		t.Fatalf("leader policy: %q %v", want, err)
+	}
+	c, _ := d.LogicalConversation(ctx, "server", "side-chat")
+	_ = s.advanceLogicalConversation(ctx, d, c)
+	if prepared == nil {
+		t.Fatal("no preparation")
+	}
+	if prepared["supervision_instructions"] != want {
+		t.Fatalf("preparation policy: %v", prepared["supervision_instructions"])
+	}
+	for _, key := range []string{"text", "prompt", "images", "client_msg_id"} {
+		if _, ok := prepared[key]; ok {
+			t.Fatalf("preparation carried input %q", key)
+		}
 	}
 }
