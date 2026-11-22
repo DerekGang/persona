@@ -6,13 +6,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -38,6 +38,7 @@ import coil3.fetch.SourceFetchResult
 import coil3.key.Keyer
 import coil3.request.Options
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownBlockQuote
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
 import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
@@ -48,16 +49,30 @@ import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownPadding
+import com.mikepenz.markdown.model.ImageTransformer
+import com.mikepenz.markdown.model.MarkdownAnnotator
+import com.mikepenz.markdown.model.MarkdownAnimations
+import com.mikepenz.markdown.model.MarkdownColors
+import com.mikepenz.markdown.model.MarkdownDimens
+import com.mikepenz.markdown.model.MarkdownPadding
+import com.mikepenz.markdown.model.MarkdownTypography
+import org.intellij.markdown.MarkdownTokenTypes
+import org.intellij.markdown.ast.ASTNode
+import com.mikepenz.markdown.model.State as MarkdownResult
 import persona.core.contracts.Item
 import persona.core.contracts.SessionKey
 import persona.core.contracts.api.ChatRepository
 import persona.core.designsystem.*
 import persona.core.designsystem.WorkStep as TimelineStep
+import persona.core.designsystem.dense
 import persona.core.designsystem.icons.PhIcons
+import persona.core.designsystem.row
 import persona.core.domain.lines.*
 import androidx.compose.runtime.key
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import okio.FileSystem
 import okio.Path.Companion.toOkioPath
 
@@ -73,7 +88,11 @@ internal val LocalChatMarkdownCache = staticCompositionLocalOf<ChatMarkdownCache
 internal fun ChatMarkdown(text: String, id: String = text,
     bodyStyle: TextStyle = PersonaTheme.type.body, color: Color = PersonaTheme.palette.ink, selectable: Boolean = true,
     viewKeys: ((Int) -> String)? = null, streaming: Boolean? = null) {
-    if (selectable) SelectionContainer { ChatMarkdownBody(text, id, bodyStyle, color, viewKeys, streaming) }
+    if (selectable) SelectionContainer {
+        CompositionLocalProvider(LocalChatLinkMenu provides null) {
+            ChatMarkdownBody(text, id, bodyStyle, color, viewKeys, streaming)
+        }
+    }
     else ChatMarkdownBody(text, id, bodyStyle, color, viewKeys, streaming)
 }
 
@@ -87,6 +106,7 @@ internal fun ChatMarkdown(text: String, id: String = text,
 private fun ChatMarkdownCards(text: String, id: String, fences: List<persona.core.domain.views.AssistantFence>,
     bodyStyle: TextStyle, color: Color, viewKeys: ((Int) -> String)?, streaming: Boolean?) {
     val blocks = LocalViewBlocks.current
+    val inPicture = LocalInPicture.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
         var at = 0
         fences.forEachIndexed { n, fence ->
@@ -94,10 +114,13 @@ private fun ChatMarkdownCards(text: String, id: String, fences: List<persona.cor
             at = fence.end
             when {
                 blocks == null -> CodeText(fence.raw.trimEnd('\n', '\r'), fence.language, syntax = true)
-                fence.isView -> key(fence.index) { blocks.block(viewKeys?.invoke(fence.index) ?: "$id/local/${fence.index}", fence.raw, fence.complete) }
+                // Share's picture: the card as it looks, with nothing that answers, never its JSON (#7261).
+                inPicture -> key(fence.start) { blocks.picture(fence.language, fence.raw, fence.complete, fence.index) }
+                // A card is not words: a selection of the message goes round it.
+                fence.isView -> key(fence.index) { DisableSelection { blocks.block(viewKeys?.invoke(fence.index) ?: "$id/local/${fence.index}", fence.raw, fence.complete) } }
                 else -> {
                     val card = remember(blocks, fence.raw, fence.complete) { if (fence.complete) blocks.parse(fence.language, fence.raw) else null }
-                    if (card != null) blocks.draw(card) else CodeText(fence.raw.trimEnd('\n', '\r'), fence.language, syntax = true)
+                    if (card != null) DisableSelection { blocks.draw(card) } else CodeText(fence.raw.trimEnd('\n', '\r'), fence.language, syntax = true)
                 }
             }
         }
@@ -108,7 +131,9 @@ private fun ChatMarkdownCards(text: String, id: String, fences: List<persona.cor
 @Composable
 private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, color: Color, viewKeys: ((Int) -> String)? = null,
     streaming: Boolean? = null) {
-    val fences = remember(text) {
+    val ancillaryStream = remember(id, streaming == true) { AssistantAncillaryStream { _, _ -> } }
+    val ancillary = if (streaming == true) ancillaryStream.update(text, linkable = emptySet()) else null
+    val fences = ancillary?.cards ?: remember(text) {
         if (persona.core.domain.views.AssistantFences.mentions(text)) persona.core.domain.views.AssistantFences.blocks(text) else emptyList()
     }
     if (fences.isNotEmpty()) return ChatMarkdownCards(text, id, fences, bodyStyle, color, viewKeys, streaming)
@@ -117,28 +142,78 @@ private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, col
     val actions = LocalChatRowActions.current
     val presence = actions?.paths
     val open = actions?.openPath
-    val asked = remember(text, presence) { if (presence == null) emptyList() else PathLinks.asked(text) }
+    val asked = if (presence == null) emptyList() else ancillary?.paths ?:
+        remember(text, presence) { PathLinks.asked(text) }
     if (presence != null && asked.isNotEmpty()) LaunchedEffect(presence, asked) { presence.ask(asked) }
     val linkable = if (presence == null || open == null) emptySet() else asked.filterTo(LinkedHashSet(), presence::linkable)
-    val source = remember(text, linkable) { PathLinks.markdown(text, linkable) }
+    val source = if (streaming == true) ancillaryStream.update(text, linkable = linkable).linkedMarkdown
+        else remember(text, linkable) { PathLinks.markdown(text, linkable) }
     // Keep this message's rendered Markdown while its next parse runs. Falling back to raw text on each delta
     // repeatedly changes block geometry. A different message or cache must start with its own state.
-    val parsed by key(id, cache) {
-        produceState(cache.cached(id, source), source, streaming) {
-            value = cache.parse(id, source, streaming)
+    val render by key(id, cache) {
+        produceState(cache.cachedRenderState(id, source), source, streaming) {
+            value = cache.parseRenderState(id, source, streaming)
         }
     }
+    val parsed = render?.result
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
     val outer = LocalUriHandler.current
     val uriHandler = remember(outer, open) { if (open == null) outer else PathLinks.handler(outer, open) }
-    // Inline code a tap copies, in the body's color on its well; inside a path's link it stays the link's (#2984).
+    // Linked code opens its target; elsewhere a tap copies the code.
     val copy = rememberCopy()
-    val codeSpan = inlineCodeStyle(color)
-    val annotator = remember(codeSpan, copy) { copyingCode(codeSpan) { copy(it, null) } }
+    val codeInk = if (color == palette.ink) palette.replyCodeInk else Color.Unspecified
+    // …except in a message whose words "Select" has selected in place: a tap there is the selection's (#4210).
+    val selecting = LocalSelectionAbove.current
+    val root = (parsed as? MarkdownResult.Success)?.node
+    val annotator = remember(codeInk, copy, selecting) {
+        DelegatingMarkdownAnnotator(copyingCode(root, codeInk, if (selecting) null else { words: String -> copy(words, null) }))
+    }
+    annotator.delegate = remember(root, codeInk, copy, selecting) {
+        copyingCode(root, codeInk, if (selecting) null else { words: String -> copy(words, null) })
+    }
+    val gallery = LocalReplyGallery.current
+    val inlinePictures = rememberInlineReplyPictures(gallery, bodyStyle)
+    val components = remember(color, bodyStyle, palette, type, gallery) {
+        markdownComponents(
+            paragraph = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.paragraph) },
+            heading1 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h1, contentChildType = MarkdownTokenTypes.ATX_CONTENT, isHeading = true) },
+            heading2 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h2, contentChildType = MarkdownTokenTypes.ATX_CONTENT, isHeading = true) },
+            heading3 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h3, contentChildType = MarkdownTokenTypes.ATX_CONTENT, isHeading = true) },
+            heading4 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h4, contentChildType = MarkdownTokenTypes.ATX_CONTENT, isHeading = true) },
+            heading5 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h5, contentChildType = MarkdownTokenTypes.ATX_CONTENT, isHeading = true) },
+            heading6 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h6, contentChildType = MarkdownTokenTypes.ATX_CONTENT, isHeading = true) },
+            setextHeading1 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h1, contentChildType = MarkdownTokenTypes.SETEXT_CONTENT, isHeading = true) },
+            setextHeading2 = { model -> LinkAwareMarkdownText(model.content, model.node, model.typography.h2, contentChildType = MarkdownTokenTypes.SETEXT_CONTENT, isHeading = true) },
+            orderedList = { model -> MarkdownOrderedList(model.content, model.node, depth = model.listDepth,
+                markerModifier = { firstBaselineAligned().padding(end = 8.dp.dense) },
+                listModifier = { firstBaselineAligned(Modifier.weight(1f)) }) },
+            unorderedList = { model -> MarkdownBulletList(model.content, model.node, depth = model.listDepth,
+                markerModifier = { firstBaselineAligned().padding(end = 8.dp.dense) },
+                listModifier = { firstBaselineAligned(Modifier.weight(1f)) }) },
+            table = { model -> ReadableMarkdownTable(model.content, model.node, model.typography.table,
+                enabled = !LocalInPicture.current) },
+            codeFence = { model ->
+                val raw = model.content.substring(model.node.startOffset, model.node.endOffset)
+                val group = gallery?.document?.group(raw)
+                if (group != null) ReplyPictureRun(gallery, group) else MarkdownFence(raw, color, bodyStyle) {
+                    // A card fence the hub's rules do not take as standalone (in a list or a quote): an example, drawn as
+                    // code. Standalone ones never get here (ChatMarkdownCards).
+                    CodeText(it.code, it.language, syntax = true, bar = true)
+                }
+            },
+            codeBlock = { model -> CodeText(model.content.substring(model.node.startOffset, model.node.endOffset).trimIndent(), bar = true) },
+            blockQuote = { model -> ReplyQuote(bodyStyle) { MarkdownBlockQuote(model.content, model.node) } },
+        )
+    }
     CompositionLocalProvider(LocalUriHandler provides uriHandler) {
-        if (parsed == null) ChatLinkText(text, Modifier.fillMaxWidth(), bodyStyle.copy(color = color))
-        else Markdown(parsed!!, modifier = Modifier.fillMaxWidth(), imageTransformer = rememberMathImages(color, bodyStyle),
+        val current = render
+        if (parsed == null || current == null) {
+            // The renderer's internal picture markers are never shown as reply text while the Markdown parse finishes.
+            val plain = when { gallery == null -> text; text == gallery.document.markdown -> gallery.document.original; else -> null }
+            if (plain != null) ChatLinkText(plain, Modifier.fillMaxWidth(), bodyStyle.copy(color = color))
+        }
+        else DrawParsedMarkdown(current, modifier = Modifier.fillMaxWidth(), imageTransformer = rememberMathImages(color, bodyStyle, inlinePictures),
             annotator = annotator,
             // Text grows at its measured size; the library's default spring trails each streamed line wrap.
             animations = markdownAnimations(animateTextSize = { this }),
@@ -146,7 +221,7 @@ private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, col
             dimens = markdownDimens(blockQuoteThickness = Dp(0f)), // none (a hairline still draws a pixel)
             padding = markdownPadding(blockQuote = PaddingValues(start = Tokens.Space.m), blockQuoteBar = PaddingValues.Absolute()),
             colors = markdownColor(text = color, codeBackground = palette.sunken,
-                inlineCodeBackground = palette.sunken, dividerColor = palette.line,
+                inlineCodeBackground = palette.sunken.copy(alpha = 0f), dividerColor = palette.line,
                 tableBackground = palette.surface, darkTheme = palette.dark,
                 highlightText = palette.ink, highlightBackground = palette.marker),
             typography = markdownTypography(h1 = type.largeTitle, h2 = type.title, h3 = type.headline,
@@ -155,23 +230,46 @@ private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, col
                 quote = type.callout.copy(color = palette.ink2), ordered = bodyStyle,
                 bullet = bodyStyle, list = bodyStyle, table = bodyStyle, alertTitle = type.bodyStrong,
                 textLink = TextLinkStyles(SpanStyle(color = palette.accent, textDecoration = TextDecoration.Underline))),
-            components = markdownComponents(
-                orderedList = { model -> MarkdownOrderedList(model.content, model.node, depth = model.listDepth,
-                    markerModifier = { Modifier.alignBy(FirstBaseline).padding(end = 8.dp) },
-                    listModifier = { Modifier.weight(1f).alignBy(FirstBaseline) }) },
-                unorderedList = { model -> MarkdownBulletList(model.content, model.node, depth = model.listDepth,
-                    markerModifier = { Modifier.alignBy(FirstBaseline).padding(end = 8.dp) },
-                    listModifier = { Modifier.weight(1f).alignBy(FirstBaseline) }) },
-                codeFence = { model ->
-                    MarkdownFence(model.content.substring(model.node.startOffset, model.node.endOffset), color, bodyStyle) {
-                        // A card fence the hub's rules do not take as standalone (in a list or a quote): an example, drawn as
-                        // code. Standalone ones never get here (ChatMarkdownCards).
-                        CodeText(it.code, it.language, syntax = true, bar = true)
-                    }
-                },
-                codeBlock = { model -> CodeText(model.content.substring(model.node.startOffset, model.node.endOffset).trimIndent(), bar = true) },
-                blockQuote = { model -> ReplyQuote(bodyStyle) { MarkdownBlockQuote(model.content, model.node) } },
-            ))
+            components = components)
+    }
+}
+
+private class DelegatingMarkdownAnnotator(
+    var delegate: MarkdownAnnotator,
+) : MarkdownAnnotator {
+    override val annotate: (AnnotatedString.Builder, String, ASTNode) -> Boolean = { builder, content, node ->
+        delegate.annotate?.invoke(builder, content, node) == true
+    }
+    override val config get() = delegate.config
+}
+
+@Composable
+private fun DrawParsedMarkdown(
+    render: ChatMarkdownRenderState,
+    modifier: Modifier,
+    imageTransformer: ImageTransformer,
+    annotator: MarkdownAnnotator,
+    animations: MarkdownAnimations,
+    dimens: MarkdownDimens,
+    padding: MarkdownPadding,
+    colors: MarkdownColors,
+    typography: MarkdownTypography,
+    components: MarkdownComponents,
+) {
+    val result = render.result
+    val stable = render.stable
+    if (stable != null && result is MarkdownResult.Success) {
+        val state = remember(render) {
+            stable.state.update(result, stable.stableCount)
+            stable.state
+        }
+        Markdown(state, modifier = modifier, imageTransformer = imageTransformer, annotator = annotator,
+            animations = animations, dimens = dimens, padding = padding, colors = colors, typography = typography,
+            components = components)
+    } else {
+        Markdown(result, modifier = modifier, imageTransformer = imageTransformer, annotator = annotator,
+            animations = animations, dimens = dimens, padding = padding, colors = colors, typography = typography,
+            components = components)
     }
 }
 
@@ -182,26 +280,36 @@ private fun ChatMarkdownBody(text: String, id: String, bodyStyle: TextStyle, col
  */
 @Composable
 internal fun CodeText(text: String, language: String = "", syntax: Boolean = false, bar: Boolean = false) {
+    // In a picture the whole code shows, with nothing to tap (iOS's card theme).
+    if (LocalInPicture.current) return CodeBody(text, language, syntax && language.isNotBlank())
     var expanded by remember(text) { mutableStateOf(false) }
     val preview = remember(text, expanded) { if (expanded) text else text.lineSequence().take(40).joinToString("\n") }
     val copy = rememberCopy()
     val palette = PersonaTheme.palette
     val colour = syntax && language.isNotBlank()
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp.dense)) {
         if (bar) CodeBody(preview, language, colour) { CodeBar(language) { copy(text, null) } }
         else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(language, Modifier.weight(1f), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
-                JTextButton(stringResource(R.string.chat_content_copy), { copy(text, null) }, icon = PhIcons.Copy)
+            DisableSelection {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(language, Modifier.weight(1f), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+                    JTextButton(stringResource(R.string.chat_content_copy), { copy(text, null) }, icon = PhIcons.Copy)
+                }
             }
             CodeBody(preview, language, colour)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
-            if (preview.length < text.length) JTextButton(stringResource(R.string.chat_content_show_all), { expanded = true })
-            ReaderEntry(text, language.ifBlank { stringResource(R.string.chat_content_full_text) })
+        // buttons, not words
+        DisableSelection {
+            Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                if (preview.length < text.length) JTextButton(stringResource(R.string.chat_content_show_all), { expanded = true })
+                ReaderEntry(text, language.ifBlank { stringResource(R.string.chat_content_full_text) })
+            }
         }
     }
 }
+
+/** True where messages are drawn into a picture (Share's card, [MessageShareCard]): code blocks lose their Copy bar and "Show all". */
+internal val LocalInPicture = staticCompositionLocalOf { false }
 
 /** A code block's code: links in it tappable, coloured by [language] when [colour]; [header] inside its box, on top. */
 @Composable
@@ -209,8 +317,8 @@ private fun CodeBody(preview: String, language: String, colour: Boolean, header:
     val palette = PersonaTheme.palette
     if (remember(preview) { ChatLinks.matches(preview).isNotEmpty() }) {
         Column(Modifier.fillMaxWidth().clip(PersonaTheme.shapes.controlShape).background(PersonaTheme.palette.sunken)) {
-            header?.invoke()
-            SelectionContainer {
+            if (header != null) DisableSelection { header() }
+            SelectableOnItsOwn {
                 val linked = chatLinkAnnotations(preview)
                 Text(if (colour) remember(linked, language, palette) { CodeSyntax.highlight(linked, language, palette) } else linked, style = PersonaTheme.type.code, color = PersonaTheme.palette.ink,
                     softWrap = false, modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(Tokens.Space.m))
@@ -222,22 +330,31 @@ private fun CodeBody(preview: String, language: String, colour: Boolean, header:
 
 internal data class ChatImage(val session: SessionKey, val item: Item)
 
-internal fun chatImageLoader(context: android.content.Context, repository: ChatRepository): ImageLoader =
-    ImageLoader.Builder(context).components {
-        add(Keyer<ChatImage> { data, _ -> "${(repository as? ChatLocalStorage)?.localStorage?.value?.scope}/${data.session.path}/${data.item.id}" })
-        add(object : Fetcher.Factory<ChatImage> {
-            override fun create(data: ChatImage, options: Options, imageLoader: ImageLoader): Fetcher = object : Fetcher {
-                override suspend fun fetch() = withContext(Dispatchers.IO) {
-                    val file = checkNotNull(repository as? ChatLocalStorage) { "Scoped image storage is unavailable" }
-                        .imageFile(data.session, data.item,
-                            (options.size.width as? coil3.size.Dimension.Pixels)?.px ?: context.resources.displayMetrics.widthPixels,
-                            (options.size.height as? coil3.size.Dimension.Pixels)?.px ?: context.resources.displayMetrics.heightPixels)
-                    SourceFetchResult(ImageSource(file.toOkioPath(), FileSystem.SYSTEM), "image/png",
-                        DataSource.DISK)
+internal const val CHAT_IMAGE_MEMORY_BYTES = 96L * 1024 * 1024
+
+fun chatImageLoader(context: android.content.Context, repository: ChatRepository, scope: String? = null): ImageLoader =
+    scopedChatImageLoader(context, repository as? ChatLocalStorage, scope)
+
+fun scopedChatImageLoader(context: android.content.Context, storage: ChatLocalStorage?, scope: String? = null): ImageLoader =
+    ImageLoader.Builder(context)
+        .memoryCache { coil3.memory.MemoryCache.Builder().maxSizeBytes(CHAT_IMAGE_MEMORY_BYTES).build() }
+        .components {
+            add(Keyer<ChatImage> { data, _ ->
+                "${scope ?: storage?.localStorage?.value?.scope}/${data.session.path}/${data.item.id}"
+            })
+            add(object : Fetcher.Factory<ChatImage> {
+                override fun create(data: ChatImage, options: Options, imageLoader: ImageLoader): Fetcher = object : Fetcher {
+                    override suspend fun fetch() = withContext(Dispatchers.IO) {
+                        val file = checkNotNull(storage) { "Scoped image storage is unavailable" }
+                            .imageFile(data.session, data.item,
+                                (options.size.width as? coil3.size.Dimension.Pixels)?.px ?: context.resources.displayMetrics.widthPixels,
+                                (options.size.height as? coil3.size.Dimension.Pixels)?.px ?: context.resources.displayMetrics.heightPixels)
+                        SourceFetchResult(ImageSource(file.toOkioPath(), FileSystem.SYSTEM), "image/png",
+                            DataSource.DISK)
+                    }
                 }
-            }
-        })
-    }.build()
+            })
+        }.build()
 
 /**
  * A picture of the conversation (R5): it keeps its shape while it loads, at most [ChatPictureMaxHeight] tall; a tap opens
@@ -265,6 +382,18 @@ internal fun ChatPicture(session: SessionKey, item: Item, loader: ImageLoader, a
  * group's plan ([latestPlan]): its TodoWrite is the full plan card, with earlier updates retained as ordinary steps.
  * [waiting]: the turn waits on you ([turnWaitsOnYou]); a running work line then reads "Waiting for you".
  */
+/** Collect a row's own stream inside this scope, so another delta cannot recompose its siblings. */
+@Composable
+private fun WithLiveText(item: Item, update: ChatTextUpdate?, live: StateFlow<String>?, streaming: Boolean,
+    content: @Composable (ChatTextUpdate?) -> Unit) {
+    if (update != null || live == null && !streaming) content(update)
+    else if (live == null) content(ChatTextUpdate(item.text.orEmpty(), streaming = true))
+    else {
+        val text by live.collectAsStateWithLifecycle()
+        content(ChatTextUpdate(text, streaming = true))
+    }
+}
+
 @Composable
 internal fun ChatLineContent(
     line: ChatLine, session: SessionKey, loader: ImageLoader, recordedDuration: Long?,
@@ -272,9 +401,13 @@ internal fun ChatLineContent(
     lastUserId: String? = null, onLastLine: (Int) -> Unit = {},
     onFullText: (Item) -> Unit,
     style: ChatRenderStyle = ChatRenderStyle.Agent,
+    agentSession: persona.core.contracts.Session? = null,
     textUpdates: Map<String, ChatTextUpdate> = emptyMap(),
+    liveText: Map<String, StateFlow<String>> = emptyMap(),
+    streamingItemIds: Set<String> = emptySet(),
     userImages: List<Item> = emptyList(),
     imagesInUserBubble: Boolean = false,
+    openingSource: (@Composable () -> Unit)? = null,
     workRunning: Boolean = false,
     lastWorkStep: Boolean = false,
     plan: LinePlan? = null,
@@ -284,8 +417,22 @@ internal fun ChatLineContent(
     closeoutReply: String? = null,
     /** The main conversation folds its background rounds (#4314): a scheduled task's or follow-up's prompt is never shown. */
     hideTaskPrompts: Boolean = false,
+    /** This line is the turn's error and the hub named its fix ([TurnErrorFix]): an answer, a notice or an API error draws the card. */
+    turnFix: TurnErrorFix? = null,
+    /** The session's launcher, named in the card's title when known. */
+    turnLauncher: String? = null,
+    /** Opens the session's terminal: the live work line's mark on Glass ([ChatTerminalPlaces.onWorkLine]). */
+    onTerminal: (() -> Unit)? = null,
 ) {
     val res = LocalResources.current
+    if (turnFix != null) {
+        val raw = when {
+            line is ChatLine.ApiError -> line.info.raw
+            line is ChatLine.Row && (line.row.type == "reply" || line.row.type == "notice") -> line.row.item?.item?.text
+            else -> null
+        }
+        if (raw != null || line is ChatLine.ApiError) return TurnErrorFixCard(turnFix, raw, turnLauncher)
+    }
     when (line) {
         is ChatLine.Row -> when (line.row.type) {
             "user" -> line.row.item?.item?.let { item ->
@@ -295,17 +442,24 @@ internal fun ChatLineContent(
                         images = userPictures(userImages, session, loader), hidePrompt = hideTaskPrompts)
                     line.row.item?.injected != null -> InjectedLine(line.row.id, line.row.item!!.injected!!, showDetail = !hideTaskPrompts)
                     else -> MergedUserBubble(listOf(item), textUpdates, onLastLine.takeIf { line.row.id == lastUserId },
-                        images = userPictures(userImages, session, loader))
+                        images = userPictures(userImages, session, loader), openingSource = openingSource)
                 }
             }
-            "reply" -> line.row.item?.item?.let {
-                val hideCloseout = closeoutReply == line.row.id && textUpdates[it.id]?.streaming != true
-                // only the block goes; a reply that said nothing else is not drawn at all
-                if (!hideCloseout || !onlyCloseout(textUpdates[it.id]?.text ?: it.text, cut = it.fullSize != null)) {
-                    MessageContent(it, false, textUpdates[it.id], boxed = true, hideCloseout = hideCloseout)
+            "reply" -> line.row.item?.item?.let { item ->
+                WithLiveText(item, textUpdates[item.id], liveText[item.id], item.id in streamingItemIds) { update ->
+                    val hideCloseout = closeoutReply == line.row.id && update?.streaming != true
+                    // only the block goes; a reply that said nothing else is not drawn at all
+                    if (!hideCloseout || !onlyCloseout(update?.text ?: item.text, cut = item.fullSize != null)) {
+                        Column(Modifier.fillMaxWidth()) {
+                            MessageContent(item, false, update, boxed = true, hideCloseout = hideCloseout)
+                            val usage = LocalReplyUsage.current[item.id]
+                            // A reply still streaming has no total yet (the web hides the bar while the turn is live).
+                            if (usage != null && update?.streaming != true) ReplyUsageFooter(item, usage)
+                        }
+                    }
                 }
             }
-            "thinking" -> if (!style.hideThoughts) ThoughtContent(line.row.item?.text.orEmpty(), line.id, style.collapseThoughts)
+            "thinking" -> if (!style.hidesThoughts()) ThoughtContent(line.row.item?.text.orEmpty(), line.id, style.collapseThoughts)
             "image" -> line.row.item?.item?.let { ChatPicture(session, it, loader) }
             "recap" -> line.row.item?.item?.let { RecapLine(listOf(it)) }
             else -> line.row.item?.item?.refusal?.let { RefusalNotice(it) }
@@ -314,32 +468,60 @@ internal fun ChatLineContent(
                 ?: ChatSystemLine(line.row.item?.text.orEmpty(), line.row.item?.task?.failed == true)
         }
         is ChatLine.Recaps -> RecapLine(line.items.map { it.item })
+        is ChatLine.Viewed -> ViewedImagesRow(line.images, session, loader)
+        is ChatLine.ModeChange -> ModeChangeDivider(line.change, agentSession)
+        is ChatLine.EngineChanged -> EngineChangeDivider(line.change)
+        // Glass: where the replies' model changed (#5055, ModelChanges.mark), as the transcript names both.
+        is ChatLine.ModelChange -> {
+            val from = persona.core.domain.lines.ModelChanges.replyModelName(line.from)
+            val to = persona.core.domain.lines.ModelChanges.replyModelName(line.to)
+            persona.core.designsystem.JModelChangeDivider("$from → $to", res.getString(R.string.chat_model_changed, from, to))
+        }
         is ChatLine.Extra -> {
             val round = line.payload as? persona.core.domain.tasks.BackgroundRound
             if (round != null) BackgroundRoundLine(round, onToggle) else AssistantExtraLine(line.payload, LocalAssistantTaskHost.current)
         }
-        is ChatLine.ApiError -> ApiErrorLine(line)
-        is ChatLine.UserImages -> if (!imagesInUserBubble) UserBubbleFrame {
+        is ChatLine.ApiError -> WithLiveText(line.item.item, textUpdates[line.item.id],
+            liveText[line.item.id], line.item.id in streamingItemIds) { update ->
+            if (update == null) ApiErrorLine(line)
+            else {
+                val text = update.text
+                ApiErrorLine(line.copy(item = line.item.copy(item = line.item.item.copy(text = text)),
+                    info = persona.core.domain.lines.ApiErrorInfo.parse(text) ?: line.info))
+            }
+        }
+        is ChatLine.UserImages -> if (!imagesInUserBubble) UserBubbleFrame(footer = openingSource) {
             line.images.forEach { ChatPicture(session, it.item, loader, alignEnd = true) }
         }
         is ChatLine.Work -> Column(Modifier.fillMaxWidth()) {
-            // No live preview: ordinary tools, thoughts and intermediate text stay inside the expandable summary.
-            if (style.compactToolSummary) AssistantWorkSummary(line, onToggle)
+            // No live preview: ordinary tools, thoughts and intermediate text stay inside the expandable summary. On Glass
+            // Persona's work line is the Agent chat's, ticking while it runs (iOS has one `WorkLine`, #4339 C13).
+            if (style.compactToolSummary && PersonaTheme.style != AppStyle.Glass) AssistantWorkSummary(line, onToggle)
             else {
                 // Waiting on you, the turn stays the live one (it folds and opens as while it runs), but its line says it
                 // waits: no "Working", no clock, no spinner, as the header says "Waiting for you".
                 val waits = waiting && line.live
                 val now by rememberNow(1_000, enabled = line.live && !waits)
-                WorkGroup(workSummary(res, line, recordedDuration, now.takeIf { line.live }, waiting = waits), line.open,
-                    { onToggle(line.id) }, running = line.live && !waits) {}
+                WorkGroup(workSummary(res, line, recordedDuration, now.takeIf { line.live }, waiting = waits, names = LocalToolNames.current), line.open,
+                    { onToggle(line.id) }, running = line.live && !waits,
+                    onTerminal = onTerminal?.takeIf { ChatTerminalPlaces.onWorkLine(line.live, PersonaTheme.style) },
+                    terminalLabel = stringResource(R.string.chat_screen_open_terminal)) {}
             }
         }
-        is ChatLine.Step -> WorkStep(line.step, session, loader, onFold, folding, foldErrors, onFullText, style, textUpdates, workRunning, lastWorkStep, plan)
+        // Every open step sits on the work line's rail, the plan and its items too (Glass, iOS's timeline, #4339 C5).
+        is ChatLine.Step -> Box(Modifier.fillMaxWidth().workRail(lastWorkStep)) {
+            WorkStep(line.step, session, loader, onFold, folding, foldErrors, onFullText, style, textUpdates,
+                liveText, streamingItemIds, workRunning, lastWorkStep, plan)
+        }
         is ChatLine.End -> TimelineMark(pluralStringResource(R.plurals.chat_content_collapse_steps, line.count, line.count),
-            Modifier.heightIn(min = 44.dp).clickable(role = Role.Button) { onToggle(line.groupId) })
+            Modifier.heightIn(min = 44.dp.row).clickable(role = Role.Button) { onToggle(line.groupId) })
         is ChatLine.Wakes -> ChatSystemLine(pluralStringResource(R.plurals.chat_content_wakes, line.turn.wakes.size, line.turn.wakes.size))
     }
 }
+
+/** Persona's thoughts stay out of its conversation, except on Glass: there its work line counts them and opens to them, as iOS's does. */
+@Composable
+private fun ChatRenderStyle.hidesThoughts(): Boolean = hideThoughts && PersonaTheme.style != AppStyle.Glass
 
 @Composable
 private fun AssistantWorkSummary(line: ChatLine.Work, onToggle: (String) -> Unit) {
@@ -366,7 +548,8 @@ internal fun AssistantFoldLine(label: String, open: Boolean, modifier: Modifier 
 @Composable
 private fun WorkStep(step: WorkItem, session: SessionKey, loader: ImageLoader, onFold: (Item) -> Unit,
     folding: Set<String>, errors: Map<String, String>, onFullText: (Item) -> Unit,
-    style: ChatRenderStyle, textUpdates: Map<String, ChatTextUpdate>, running: Boolean, last: Boolean, plan: LinePlan? = null) {
+    style: ChatRenderStyle, textUpdates: Map<String, ChatTextUpdate>, liveText: Map<String, StateFlow<String>>,
+    streamingItemIds: Set<String>, running: Boolean, last: Boolean, plan: LinePlan? = null) {
     when (step) {
         is WorkItem.Folded -> {
             val item = step.item.item
@@ -384,11 +567,24 @@ private fun WorkStep(step: WorkItem, session: SessionKey, loader: ImageLoader, o
             // A Workflow call whose run the session lists draws the run's card (#3435); otherwise the row it always was.
             if (call.name == "Workflow") LocalChatWorkflows.current?.let { workflows ->
                 call.use.item.toolUseId?.let(workflows.runs::get)?.let { run ->
-                    JWorkflowCallCard(run, folds = workflows.folds, onOpenAgent = workflows.open)
+                    Column {
+                        JWorkflowCallCard(run, folds = workflows.folds, onOpenAgent = workflows.open)
+                        workflows.openBackground?.let { open ->
+                            JTextButton(stringResource(R.string.chat_background_open_workflow), onClick = { open(run) })
+                        }
+                    }
                     return
                 }
             }
+            // Glass draws a subagent as its task card, running or done (#5045, DESIGN_SYSTEM.md 4.7 "Task cards").
+            if (PersonaTheme.style == AppStyle.Glass && Subagents.isAgent(call)) {
+                SubagentCard(call, live = running, assistant = style == ChatRenderStyle.Assistant)
+                return
+            }
             var open by remember(call.id) { mutableStateOf(false) }
+            // Tool details fade in place (ToolViews.swift:564, ChatPin.swift:707-726). TodoWrite does not: it is the plan bar.
+            val detailEdge = rememberOpenEdge(call.id)
+            val detailRevealing = detailEdge.revealing(open)
             val diff = remember(call.use.item) { toolDiff(call.use.item) }
             val todos = remember(call.use.item) { todoEntries(call.use.item) }
             val searchItem = LocalChatSearchItem.current
@@ -401,7 +597,7 @@ private fun WorkStep(step: WorkItem, session: SessionKey, loader: ImageLoader, o
                 PlanStep(plan, running)
                 return
             }
-            val presentation = toolPresentation(LocalResources.current, call.use.item)
+            val presentation = toolPresentation(LocalResources.current, call.use.item, LocalToolNames.current)
             val taskBadge = if (call.results.any { it.task?.kind == "agent" })
                 LocalChatTaskIndex.current.badge(call.use.item.toolUseId, concise = true)?.text?.text() else null
             Column(Modifier.fillMaxWidth()) {
@@ -417,18 +613,22 @@ private fun WorkStep(step: WorkItem, session: SessionKey, loader: ImageLoader, o
                     },
                     last = last, mono = presentation.mono, added = diff?.added ?: 0, removed = diff?.removed ?: 0,
                     onClick = { open = !open })
-                if (todos != null) TodoList(todos, call.failed)
+                if (todos != null) Box(Modifier.workDetail()) { TodoList(todos, call.failed) }
                 if (call.name == "Task" || call.name == "Agent") SubagentEntry(call.use.item.toolUseId)
                 if (call.failed && !open && call.result?.task?.kind != "agent") call.result?.text?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, maxLines = 3, overflow = TextOverflow.Ellipsis, color = PersonaTheme.palette.danger.text,
+                    Text(it, Modifier.workDetail(), maxLines = 3, overflow = TextOverflow.Ellipsis, color = PersonaTheme.palette.danger.text,
                         style = PersonaTheme.type.caption)
                 }
-                if (open) Column(Modifier.fillMaxWidth().padding(start = Tokens.Space.m),
+                // Right of the rail on Glass, under the step's words (iOS's timeline, `detailLeading`).
+                if (open) Column(Modifier.unfolding(detailRevealing).fillMaxWidth().workDetail(Tokens.Space.m),
                     verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                    // A tool that operates a Mac says its steps in words on Glass, its output and picture with them (iOS ComputerToolDetail).
+                    val computer = PersonaTheme.style == AppStyle.Glass && persona.core.domain.ComputerSteps.isComputerTool(call.name)
                     if (diff != null) {
                         toolPath(call.use.item)?.let { DiffHeader(it, diff.added, diff.removed) }
                         DiffView(diff, call.id)
-                    } else if (todos == null) ToolInputDetail(call.use.item, call.result?.item)
+                    } else if (computer) ComputerToolDetail(call, session, loader)
+                    else if (todos == null) ToolInputDetail(call.use.item, call.result?.item)
                     // A truncated output opens in full from "Raw output" below. An edit's own result only says it worked; an
                     // answered ask_user's result repeats the ticked choices above in the model's words (iOS ToolViews).
                     val agentReports = call.results.any { it.task?.kind == "agent" }
@@ -447,21 +647,28 @@ private fun WorkStep(step: WorkItem, session: SessionKey, loader: ImageLoader, o
                             }
                         }
                     } else call.result?.item?.let { result ->
-                        if (todos == null && (diff == null || call.failed) && (!PersonaTools.isAskUser(call.name) || call.failed))
+                        if (!computer && todos == null && (diff == null || call.failed) && (!PersonaTools.isAskUser(call.name) || call.failed))
                             CodeText(result.text.orEmpty(), stringResource(R.string.chat_content_output))
                     }
                     // A dev server saying where it listens (docs/operations/ports.md).
                     if (call.name == "Bash") call.result?.text?.let { PortBadges(it) }
-                    call.images.forEach { ChatPicture(session, it.item, loader) }
+                    if (!computer) call.images.forEach { ChatPicture(session, it.item, loader) }
                     ToolReaderActions(call.use.item.toolInput?.toString(), call.result?.text?.takeUnless { agentReports },
-                        call.result?.item?.takeIf { !agentReports && it.fullSize != null }?.let { result -> { onFullText(result) } })
+                        call.result?.item?.takeIf { !agentReports && it.fullSize != null }?.let { result -> { onFullText(result) } },
+                        rawInput = !drawsRawInput(call.use.item))
                 }
             }
         }
 
-        is WorkItem.Narration -> MessageContent(step.item.item, false, textUpdates[step.item.id])
+        is WorkItem.Narration -> WithLiveText(step.item.item, textUpdates[step.item.item.id],
+            liveText[step.item.item.id], step.item.item.id in streamingItemIds) { update ->
+            MessageContent(step.item.item, false, update)
+        }
         is WorkItem.Thought -> if (step.item.kind == "thinking") {
-            if (!style.hideThoughts) ThoughtContent(textUpdates[step.item.id]?.text ?: step.item.text.orEmpty(), step.item.id, style.collapseThoughts, last)
+            if (!style.hidesThoughts()) WithLiveText(step.item.item, textUpdates[step.item.id],
+                liveText[step.item.id], step.item.id in streamingItemIds) { update ->
+                ThoughtContent(update?.text ?: step.item.text.orEmpty(), step.item.id, style.collapseThoughts, last)
+            }
         }
         else step.item.compaction?.let { TimelineMark(it.label.text()) }
             ?: step.item.takeIf { it.task != null }?.let { TaskNoteLine(it, last, onFullText) }
@@ -487,15 +694,20 @@ private fun PlanStep(plan: LinePlan, running: Boolean, nested: Boolean = false) 
 private fun userPictures(images: List<Item>, session: SessionKey, loader: ImageLoader): (@Composable () -> Unit)? =
     if (images.isEmpty()) null else ({ images.forEach { image -> ChatPicture(session, image, loader, alignEnd = true) } })
 
-/** A message not in the transcript yet (the outbox): no long-press menu, its own status line has the actions. */
+/**
+ * A message not in the transcript yet (the outbox): its status line has the delivery actions; with its [pending] state its long
+ * press opens the menu for a message not sent ("Copy", "Select", "Share", "Delete"), without one none.
+ */
 @Composable
-internal fun UserBubble(text: String) {
-    MergedUserBubble(listOf(Item("pending", role = "user", kind = "text", text = text)), menu = false)
+internal fun UserBubble(text: String, id: String = "pending", pending: persona.core.contracts.api.DeliveryState? = null,
+    faded: Boolean = false, leading: (@Composable () -> Unit)? = null) {
+    MergedUserBubble(listOf(Item(id, role = "user", kind = "text", text = text)), menu = pending != null, pending = pending,
+        faded = faded, leading = leading)
 }
 
 @Composable
 internal fun ChatSystemLine(text: String, failed: Boolean = false) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp),
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp.dense), horizontalArrangement = Arrangement.spacedBy(6.dp.dense),
         verticalAlignment = Alignment.Top) {
         JIcon(if (failed) PhIcons.WarningCircle else PhIcons.Info, null, size = 16.dp,
             tint = if (failed) PersonaTheme.palette.danger.text else PersonaTheme.palette.ink2)

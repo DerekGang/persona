@@ -114,7 +114,7 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
     val desktops: StateFlow<List<HubDesktop>> = groupDesktops.selected
     override val lastHello: Hello? get() = selected.value?.hello?.value
     private var started = false
-    private var startup: Job? = null
+    @Volatile private var startup: Job? = null
     /** Live cadence: the app is in front, or the floating capsule is usable on an unlocked screen. */
     @Volatile private var foreground = false
     @Volatile private var appForeground = false
@@ -182,6 +182,13 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
 
     /** Every group's outbox in one list; a message goes to the group its session belongs to. */
     val messages: MessageSender = object : MessageSender {
+        override val sendReceipts = groups.flatMapLatest { list ->
+            val flows = list.mapNotNull { group -> group.data?.messages?.sendReceipts?.map { entries ->
+                val names = GroupNames(group.namespace)
+                entries.map(names::receipt)
+            } }
+            if (flows.isEmpty()) flowOf(emptyList()) else combine(flows) { lists -> lists.flatMap { it } }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
         override val outbox = groups.flatMapLatest { list ->
             val flows = list.mapNotNull { group -> group.data?.messages?.outbox?.map { entries ->
                 val names = GroupNames(group.namespace)
@@ -189,10 +196,29 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
             } }
             if (flows.isEmpty()) flowOf(emptyList()) else combine(flows) { lists -> lists.flatMap { it } }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
-        override suspend fun send(session: SessionKey, text: String, clientMessageId: String, clearDraft: String?) {
+        override val writtenAt = groups.flatMapLatest { list ->
+            val flows = list.mapNotNull { it.data?.messages?.writtenAt }
+            if (flows.isEmpty()) flowOf(emptyMap()) else combine(flows) { maps ->
+                maps.fold(emptyMap<String, Long>()) { acc, one -> acc + one }
+            }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+        override suspend fun send(session: SessionKey, text: String, clientMessageId: String, clearDraft: String?) =
+            send(session, text, clientMessageId, clearDraft, null, null)
+        override suspend fun send(session: SessionKey, text: String, clientMessageId: String, clearDraft: String?, launcher: String?, model: String?) =
+            send(session, text, clientMessageId, clearDraft, launcher, model, null)
+        override suspend fun send(
+            session: SessionKey, text: String, clientMessageId: String, clearDraft: String?, launcher: String?, model: String?, via: String?,
+        ) {
             gate.withLock {
                 val group = groupOf(session.machineId) ?: throw IllegalStateException(AppText.get(R.string.app_error_pair_first))
-                checkNotNull(group.data) { AppText.get(R.string.app_error_pair_first) }.messages.send(GroupKeys.rawKey(session), text, clientMessageId, clearDraft)
+                checkNotNull(group.data) { AppText.get(R.string.app_error_pair_first) }.messages.send(
+                    GroupKeys.rawKey(session), text, clientMessageId, clearDraft, launcher, model, via)
+            }
+        }
+        override suspend fun sendApplyingSwitch(session: SessionKey, text: String, clientMessageId: String) {
+            gate.withLock {
+                val group = groupOf(session.machineId) ?: throw IllegalStateException(AppText.get(R.string.app_error_pair_first))
+                checkNotNull(group.data) { AppText.get(R.string.app_error_pair_first) }.messages.sendApplyingSwitch(GroupKeys.rawKey(session), text, clientMessageId)
             }
         }
         override suspend fun cancel(clientMessageId: String) = gate.withLock {
@@ -200,6 +226,10 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
         }
         override suspend fun discard(clientMessageId: String) = gate.withLock {
             owner(clientMessageId)?.messages?.discard(clientMessageId) ?: false
+        }
+        // By its session: a cancelled message is in no group's outbox any more.
+        override fun restore(message: OutboxMessage) {
+            groupOf(message.session.machineId)?.data?.messages?.restore(message.copy(session = GroupKeys.rawKey(message.session)))
         }
         override suspend fun retry(clientMessageId: String) = gate.withLock {
             owner(clientMessageId)?.messages?.retry(clientMessageId) ?: false
@@ -233,26 +263,20 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refreshNetwork()
             override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = refreshNetwork()
         })
-        try {
-            // Receivers query pairing synchronously after Application.onCreate returns.
-            val restored = runBlocking(Dispatchers.IO) {
+        val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            try {
                 clearUnversionedPairingData(app)
-                gate.withLock { restoreLocked() }
+                val restored = gate.withLock { restoreLocked() }
+                if (!restored) gate.withLock { app.pairings.load()?.let { pairLegacyLocked(it) } }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                failClosed()
+                Log.w("ConnectionRuntime", "Cannot restore pairing; stored data retained")
             }
-            if (!restored) startup = scope.launch {
-                try {
-                    gate.withLock { app.pairings.load()?.let { pairLegacyLocked(it) } }
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    failClosed()
-                    Log.w("ConnectionRuntime", "Cannot migrate pairing; stored data retained")
-                }
-            }
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) {
-            failClosed()
-            Log.w("ConnectionRuntime", "Cannot restore pairing; stored data retained")
         }
+        // Publish the barrier before the restore can begin, so settled() cannot miss it.
+        startup = job
+        job.start()
     }
 
     private fun failClosed() {
@@ -263,7 +287,7 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
         paired.value = false
         app.showHub(null)
         mutableState.value = ConnectionState.Revoked
-        scope.launch { runCatching { dataStore.publish(null) } }
+        scope.launch { val _ = runCatching { dataStore.publish(null) } }
     }
 
     /** Opens every group the registry lists (the first read migrates a single pairing); false when there is none. */
@@ -318,6 +342,10 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
 
     private suspend fun cleanupLocked(revoked: Boolean = false) = withContext(NonCancellable) {
         lastRevoked = revoked
+        // Sign out on each hub before forgetting it (#5538, as Apple's HubSignOut.swift): only a revoked credential
+        // makes the hub drop this device's pushes and Live Activities; forgetting it here does not. The local cleanup
+        // runs either way, so a hub that cannot be reached is not a reason to stay paired.
+        revokeOnHubsLocked()
         closeAllLocked()
         persona.platform.notify.Notify.disconnect(app)
         ways.retain(emptySet())
@@ -346,6 +374,17 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
     private suspend fun closeLocked(group: GroupRuntime) {
         group.close()
         group.data?.let { runCatching { dataStore.closeGroup(it) } }
+    }
+
+    /** Revokes every group's credential on its hub, best-effort per hub. A hub that cannot be reached is not retried. */
+    private suspend fun revokeOnHubsLocked() {
+        for (group in mutableGroups.value) revokeOnHubLocked(group)
+    }
+
+    /** Revokes this device's credential on one hub (#5538): the hub then drops its pushes and Live Activities. */
+    private suspend fun revokeOnHubLocked(group: GroupRuntime?) {
+        val deviceId = group?.data?.credentials?.deviceId?.takeIf { it.isNotBlank() } ?: return
+        revokeCredential(group.connection, deviceId)
     }
 
     /**
@@ -583,6 +622,7 @@ class ConnectionRuntime @Inject constructor(application: Application) : HubConne
     }
 
     private suspend fun removeGroupLocked(groupId: String, revoked: Boolean = false): Unit = withContext(NonCancellable) {
+        revokeOnHubLocked(mutableGroups.value.firstOrNull { it.id == groupId })
         val change = dataStore.change { it.removeGroup(groupId) }
         if (change.document.groups.isEmpty()) {
             // The last group: exactly what disconnecting the only pairing always did.

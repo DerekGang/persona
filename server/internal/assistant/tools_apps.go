@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
+	"github.com/nwverse/persona/server/internal/kbwire"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -45,9 +47,9 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		var hits []kb.Hit
 		switch {
 		case a.Kind == "":
-			hits = e.Search(a.Query, messages, limit)
+			hits = e.Search(a.Query, messages, limit, profileSkip(ctx)...)
 		case kbRPCKind(a.Kind):
-			hits = e.SearchKind(a.Query, a.Kind, messages, limit)
+			hits = e.SearchKind(a.Query, a.Kind, messages, limit, profileSkip(ctx)...)
 		default:
 			return "", fmt.Errorf("kind %q: one of projects, chats, people, docs, meetings, events, recordings, topics", a.Kind)
 		}
@@ -92,9 +94,12 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			return i18n.T(s.lang(ctx), "assistant-kb_tools.list_empty"), nil
 		}
 		var b strings.Builder
+		lang := s.lang(ctx)
 		for _, x := range items {
-			fmt.Fprintf(&b, "- %s · %s [%s 相关%d] %s %s%s\n", x.ID, x.Name, orDash(x.Importance), x.Relevance,
+			fmt.Fprintf(&b, "- %s · %s [%s 相关%d] %s %s%s", x.ID, x.Name, orDash(x.Importance), x.Relevance,
 				strings.Join(x.Tags, ","), x.Extra, prefix(" — ", x.OneLine))
+			writeProjectReview(&b, lang, x.ProjectMode, x.Freshness, x.Sources, true)
+			b.WriteByte('\n')
 		}
 		return b.String(), nil
 	case "kb_get":
@@ -110,16 +115,29 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if err != nil {
 			return "", fmt.Errorf("%s/%s: %w", a.Kind, a.ID, err)
 		}
-		// meta.json as the file has it (one edited by hand into something else: its text, as it is).
-		meta := []byte(d.Meta)
+		// The public metadata, with a project's people folded to the first few (kb_get_fit.go).
+		meta, folded := []byte(d.Meta), ""
+		if a.Kind == kb.KindProject {
+			meta, folded = foldPeople(meta, d.Links, filepath.Join(d.Path, "meta.json"))
+		}
 		var indented bytes.Buffer
-		if json.Valid(d.Meta) && json.Indent(&indented, bytes.TrimSpace(d.Meta), "", "  ") == nil {
+		if json.Valid(meta) && json.Indent(&indented, bytes.TrimSpace(meta), "", "  ") == nil {
 			meta = append(indented.Bytes(), '\n')
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "Path: %s\n\nmeta.json:\n%s\n", d.Path, meta)
+		var review strings.Builder
+		writeProjectReview(&review, s.lang(ctx), d.ProjectMode, d.Freshness, d.Sources, false)
+		if review.Len() > 0 && estTokens(d.Summary)+estTokens(string(meta))+estTokens(review.String()) > kbGetMaxTokens/2 {
+			b.WriteString(review.String())
+			b.WriteString("\n\n")
+			review.Reset()
+		}
+		fmt.Fprintf(&b, "Path: %s\n\nmeta.json:\n%s%s\n", d.Path, meta, folded)
 		if d.Summary != "" {
 			fmt.Fprintf(&b, "\nsummary.md:\n%s\n", d.Summary)
+		}
+		if review.Len() > 0 {
+			fmt.Fprintf(&b, "\n%s\n", review.String())
 		}
 		if len(d.Log) > 0 {
 			fmt.Fprintf(&b, "\nlog.md (latest):\n%s\n", strings.Join(d.Log, "\n"))
@@ -138,13 +156,32 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 				b.WriteString(s.minutesActionLines(ctx, d.ID, &m))
 			}
 		}
+		if len(d.Recap) > 0 { // an all-day recording's recap (kb_day.go): a whole day's transcript is far past the cut
+			var rc kb.DayRecap
+			if json.Unmarshal(d.Recap, &rc) == nil && rc.Markdown != "" {
+				fmt.Fprintf(&b, "\nrecap.md:\n%s\n", rc.Markdown)
+				b.WriteString(s.recapActionLines(ctx, d.ID, &rc))
+			}
+		}
+		// A meeting's photos, their words (photos.md): after the minutes' action items, before the transcript.
+		if a.Kind == kb.KindRecording {
+			if photos := e.PhotosMarkdown(d.ID); photos != "" {
+				fmt.Fprintf(&b, "\nphotos.md:\n%s", photos)
+			}
+		}
 		if a.Kind == kb.KindMeeting || a.Kind == kb.KindEvent {
 			b.WriteString(s.recordingsAt(ctx, e, a.Kind, d.ID))
 		}
 		var trimmed struct {
-			At *time.Time `json:"trimmed_at"`
+			At   *time.Time `json:"trimmed_at"`
+			Kind string     `json:"kind"`
 		}
-		if a.Kind == kb.KindRecording && json.Unmarshal(d.Meta, &trimmed) == nil && trimmed.At != nil {
+		switch {
+		case a.Kind != kb.KindRecording || json.Unmarshal(d.Meta, &trimmed) != nil || trimmed.At == nil:
+		case trimmed.Kind == kb.RecordingDay:
+			fmt.Fprintf(&b, "\ntranscript.md: expired %s (assistant.recording_days); only the recap above is kept, until "+
+				"assistant.minutes_days after the day (0 means forever, the default), and it can't be written again.\n", trimmed.At.In(s.location(ctx)).Format("2006-01-02"))
+		default:
 			fmt.Fprintf(&b, "\ntranscript.md: expired %s (assistant.recording_days); only the minutes above are kept, until "+
 				"assistant.minutes_days after the meeting (0 means forever, the default), and they can't be made again.\n", trimmed.At.In(s.location(ctx)).Format("2006-01-02"))
 		}
@@ -154,7 +191,7 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		case d.Recent != "":
 			fmt.Fprintf(&b, "\nMessages, last 7 days:\n%s\n", d.Recent)
 		}
-		return b.String(), nil
+		return fitKBGet(b.String(), d.Path), nil
 	case "kb_update":
 		if e.Store.ReadOnly() {
 			return "", kb.ErrReadOnly
@@ -164,9 +201,13 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 			ID   string `json:"id"`
 			kb.UserUpdate
 		}
-		if err := json.Unmarshal(args, &a); err != nil {
+		if err := kbDecodeParams(name, args, &a); err != nil {
 			return "", err
 		}
+		if a.LockLists == nil { // a removal keeps out just that link; locking a whole list is the user's choice in the app
+			a.LockLists = new(false)
+		}
+		ignored := kb.UserUnsupported(a.Kind, a.UserUpdate)
 		id, err := e.ApplyUser(a.Kind, a.ID, a.UserUpdate)
 		if err != nil {
 			return "", err
@@ -174,9 +215,59 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if a.Unmerge {
 			return "Unmerged " + a.Kind + "/" + id + ".", nil
 		}
-		return "Saved " + a.Kind + "/" + id + ".", nil
+		out := "Saved " + a.Kind + "/" + id + "."
+		for _, f := range ignored { // said, so the model does not take a dropped field for written
+			out += "\nNot saved: " + f.Field + " (" + f.Reason + ")."
+		}
+		return out, nil
 	}
 	return "", fmt.Errorf("unknown tool %s", name)
+}
+
+// writeProjectReview gives tools the same review state as the wire. The list
+// shows the timeline positions and counts, while detail includes each input revision.
+func writeProjectReview(b *strings.Builder, lang i18n.Lang, mode string, freshness *kbwire.ProjectFreshness, sources []kbwire.ProjectSource, compact bool) {
+	if mode == "" && freshness == nil && len(sources) == 0 {
+		return
+	}
+	if compact {
+		summary := &kbwire.ProjectFreshness{}
+		if freshness != nil {
+			summary.NeedsReview, summary.TimelineEnd = freshness.NeedsReview, freshness.TimelineEnd
+			summary.Fields = make(map[string]kbwire.ProjectFieldFreshness, len(freshness.Fields))
+			for name, field := range freshness.Fields {
+				if field.Cutoff != nil {
+					cutoff := *field.Cutoff
+					cutoff.Sources = nil
+					field.Cutoff = &cutoff
+				}
+				summary.Fields[name] = field
+			}
+			freshness = summary
+		}
+		var linked []kbwire.ProjectSource
+		for _, source := range sources {
+			if source.URL != "" || source.DeliveryState != "" {
+				source.Refs = nil
+				linked = append(linked, source)
+			}
+		}
+		sources = linked
+		if mode == "" && freshness == nil && len(sources) == 0 {
+			return
+		}
+		b.WriteString(" · ")
+	}
+	if freshness != nil && freshness.NeedsReview {
+		b.WriteString(i18n.T(lang, "assistant-kb_tools.needs_review"))
+		b.WriteByte(' ')
+	}
+	raw, _ := json.Marshal(struct {
+		Mode      string                   `json:"project_mode,omitempty"`
+		Freshness *kbwire.ProjectFreshness `json:"freshness,omitempty"`
+		Sources   []kbwire.ProjectSource   `json:"sources,omitempty"`
+	}{mode, freshness, sources})
+	b.Write(raw)
 }
 
 func orDash(s string) string {
@@ -227,6 +318,11 @@ func (s *Service) toolInteractionAnswer(ctx context.Context, self string, args j
 		return "", interactionEnded(id, got.Status)
 	}
 	ix := got.Interaction
+	if ix.Kind == proto.IxScreen {
+		// A terminal dialog (Claude's Bypass Permissions confirmation, a safety check): its card offers the user its
+		// choices; it is never answered for them.
+		return "", fmt.Errorf("interaction %s is a screen (a terminal dialog), only the user can answer it in the app, where its card offers its choices", ix.ID)
+	}
 	if ix.Kind != proto.IxQuestion {
 		return "", fmt.Errorf("interaction %s is a %s (approval), only the user can answer it in the app", ix.ID, ix.Kind)
 	}
@@ -241,7 +337,7 @@ func (s *Service) toolInteractionAnswer(ctx context.Context, self string, args j
 		return "", err
 	}
 	// A card handed to this conversation before the user (ask_route.go): its answer is the task's decision.
-	todo, routed := s.routedTo(ix.ID, self)
+	todo, routed := s.routedTo(ix.ID, self, s.isMain(ctx, self))
 	var res struct {
 		OK     bool   `json:"ok"`
 		Status string `json:"status"`
@@ -487,8 +583,9 @@ func draftPlaceholder(text string) string {
 // it waits on the item for the user to send.
 func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.RawMessage) (string, error) {
 	var a struct {
-		Text, Note string
-		Changes    []DocChange
+		Text, Note     string
+		Changes        []DocChange
+		ProcessingTurn string `json:"processing_turn"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.Text) == "" {
 		return "", errors.New("text is required")
@@ -497,7 +594,7 @@ func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.Raw
 	if p := draftPlaceholder(a.Text); p != "" {
 		return "", fmt.Errorf("the draft leaves %s to fill in, and it goes out as it is: leave out what you could not find (say so in note) and submit again", p)
 	}
-	itemID, refused, err := s.inboxDraft(ctx, self, strings.TrimSpace(a.Text), clip(strings.TrimSpace(a.Note), 600), a.Changes)
+	itemID, refused, err := s.inboxDraft(ctx, self, strings.TrimSpace(a.Text), clip(strings.TrimSpace(a.Note), 600), a.Changes, a.ProcessingTurn)
 	if err != nil { // not kept: the event is back where the turn found it, so the draft can be handed in again
 		return "", err
 	}
@@ -512,11 +609,12 @@ func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.Raw
 }
 
 // recordingsAt is what kb_get adds to calendar item kind/id (meetings or events, id as stored): the recordings matched
-// to it by time (kb/minutes.go matchRecordings), which hold its minutes; "" when there are none.
+// to it by time (kb/minutes.go matchRecordings), as their calendar item or their imported meeting (#8872), which hold
+// its minutes; "" when there are none.
 func (s *Service) recordingsAt(ctx context.Context, e *kb.Engine, kind, id string) string {
 	var at []kb.Entry
 	for _, r := range e.Store.Recordings() {
-		if r.Meeting != nil && r.Meeting.Kind == kind && kb.SafeID(r.Meeting.ID) == id {
+		if matchedAt(r.Meeting, kind, id) || matchedAt(r.ImportedMeeting, kind, id) {
 			at = append(at, kb.Entry{Kind: kb.KindRecording, ID: r.ID, Name: r.Name, Updated: r.StartedAt})
 		}
 	}
@@ -529,6 +627,11 @@ func (s *Service) recordingsAt(ctx context.Context, e *kb.Engine, kind, id strin
 		fmt.Fprintf(&b, "- %s · %s %s\n", x.ID, x.Name, x.Extra)
 	}
 	return b.String()
+}
+
+// matchedAt says whether ref names calendar item kind/id (id as stored).
+func matchedAt(ref *kb.MeetingRef, kind, id string) bool {
+	return ref != nil && ref.Kind == kind && kb.SafeID(ref.ID) == id
 }
 
 // recordingLines is kb_list's first limit recordings newest first (what "the meeting just now" asks for), each saying
@@ -550,6 +653,12 @@ func (s *Service) recordingLines(ctx context.Context, e *kb.Engine, items []kb.E
 			extra += " minutes-pending"
 		case kb.MinutesFailed:
 			extra += " minutes-failed"
+		}
+		if r.Kind == kb.RecordingDay { // an all-day recording (kb_day.go): its recap, not minutes
+			extra += " all-day"
+			if r.RecapState != "" {
+				extra += " recap-" + r.RecapState
+			}
 		}
 		if r.Trimmed() {
 			extra += " transcript-expired"

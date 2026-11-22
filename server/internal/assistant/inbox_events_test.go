@@ -160,25 +160,26 @@ func TestInboxChainSynthesizedForOldItems(t *testing.T) {
 	}
 }
 
-// A mail batch: the new mails only, linked at the first new one.
+// A mail batch after triage: the new mails only, linked at the first new one.
 func TestInboxChainMail(t *testing.T) {
 	now := time.Now()
 	date := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
 	a := assistantwire.InboxMailAccount{ID: "a1", Email: "me@example.com"}
 	b := newInbox()
 	b.applyMail(a, []assistantwire.InboxMailSummary{{UID: 3, Subject: "周报", From: MailAddress{Name: "李四"}, Snippet: "第一封", Date: date(-2 * time.Hour)}}, now)
+	var it *InboxItem
+	for _, x := range b.items {
+		it = x
+		b.noteTriaged(x)
+	}
 	b.applyMail(a, []assistantwire.InboxMailSummary{
 		{UID: 3, Subject: "周报", From: MailAddress{Name: "李四"}, Snippet: "第一封", Date: date(-2 * time.Hour)},
 		{UID: 5, Subject: "Re: 周报", From: MailAddress{Email: "wang@example.com"}, Snippet: "补充", Date: date(-time.Hour)},
 	}, now)
-	var it *InboxItem
-	for _, x := range b.items {
-		it = x
-	}
-	if len(it.Chain) != 2 {
+	if len(it.Chain) != 3 {
 		t.Fatalf("chain: %+v", it.Chain)
 	}
-	e := it.Chain[1]
+	e := it.Chain[2]
 	if e.Count != 1 || e.Link.UID != 5 || len(e.Messages) != 1 || e.Messages[0].Sender != "wang@example.com" || e.Messages[0].Text != "补充" ||
 		e.Text != "收到 1 封邮件 · wang@example.com" {
 		t.Fatalf("second batch: %+v", e)
@@ -248,10 +249,14 @@ func TestInboxMergeFollowsHandledEvent(t *testing.T) {
 	}
 	ev := &InboxItem{ID: "lark:ev1", Source: "lark", Title: "报价", Summary: "客户要报价", Tier: TierAction, Last: "m1", Count: 1,
 		Handling: &InboxHandling{Owner: HandlingOwner, State: HandlingWaiting}, Group: &InboxGroup{Connector: "lark", Thread: "chat:g"}}
+	h.inbox.mu.Lock()
 	h.inbox.items[ev.ID] = ev
+	h.inbox.mu.Unlock()
 	c := assistantwire.InboxSource{ID: "lark", Name: "飞书"}
 	thing := connector.InboxThing{ID: ev.ID, Thread: "chat:g", Kind: KindGroup, Title: "x", Last: "m2", At: time.Now()}
 	h.putEvent(c, "chat:g", plannedEvent{existing: ev.ID, messages: []string{"m2"}, title: "闲聊", summary: "无关", tier: TierNoise}, thing, true)
+	h.inbox.mu.Lock()
+	defer h.inbox.mu.Unlock()
 	if ev.Tier != TierAction || ev.Title != "报价" || ev.Summary != "客户要报价" || ev.Count != 2 {
 		t.Fatalf("the event moved: %+v", ev)
 	}

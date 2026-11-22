@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// Settings › Model (docs/integrations/launchers.md): every launcher, from each machine's rc file (~/.zshrc, ~/.bashrc), added in
 /// Persona, or the built-in plain claude.
@@ -63,11 +64,21 @@ nonisolated struct LauncherView: Codable, Identifiable, Hashable, Sendable {
     var ownService: String?
     /// The computers with a key of their own (the keys are never sent back).
     var keyMachines: [String]?
+    /// The stored key is this secret provider's reference (docs/extensions/secret-providers.md "Launcher keys"); nil for a
+    /// key, and from a hub without `launcher_secret_references`.
+    var keyReference: SecretReference?
+    /// The computers whose own key is a reference, by computer.
+    var machineKeyReferences: [String: SecretReference]?
     /// Saved before scopes existed: all (work computers too) + push + use, until a scope field is saved.
     var legacyScope: Bool?
+    /// A direct API connection's Send Through: the computer whose node sends its requests; nil the hub itself.
+    var viaMachine: String?
     var id: String { name }
-    /// What a person reads: the display name, else the name.
-    var title: String { displayName.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } ?? name }
+    /// What a person reads: its display name, the built-in CLI's name on older hubs, or the startup name.
+    var title: String {
+        let label = displayName.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        return Launcher.traeCLITitle(name: name, source: source, agent: agent, baseURL: baseURL, displayName: label) ?? label ?? name
+    }
     var managed: Bool { source == "persona" || source == LegacyNames.product }
     /// A wrapper script on a computer's PATH (#5954) rather than a ~/.zshrc function.
     var pathScript: Bool { source == "path" }
@@ -81,6 +92,8 @@ nonisolated struct LauncherView: Codable, Identifiable, Hashable, Sendable {
         case stale, versions, agent, share, delivery
         case rcFiles = "rc_files"
         case scopeMachines = "scope_machines", ownService = "own_service", keyMachines = "key_machines", legacyScope = "legacy_scope"
+        case keyReference = "key_reference", machineKeyReferences = "machine_key_references"
+        case viaMachine = "via_machine"
         case baseURL = "base_url", smallModel = "small_model", hasKey = "has_key"
         case subagentModel = "subagent_model", customModel = "custom_model"
         case customModelName = "custom_model_name", customModelDescription = "custom_model_description"
@@ -183,7 +196,7 @@ nonisolated struct LauncherDetail: Codable, Hashable, Sendable {
     var agentName: String {
         switch agent {
         case "codex": "Codex"
-        case "traex": "TRAEX"
+        case "traex", "traecli", "trae-cli": Session.traeCLIName
         default: "Claude Code"
         }
     }
@@ -231,7 +244,12 @@ nonisolated struct LauncherInput: Encodable, Sendable {
     var args: [String]
     var apiKey: String?
     var kind: String? = nil
+    /// The runtime an import draft names (`claude`, `codex`, …); nil keeps every existing request unchanged.
+    var agent: String? = nil
     var api: String? = nil
+    /// A secret provider's reference in place of `apiKey` (docs/extensions/secret-providers.md "Launcher keys", a hub with
+    /// `launcher_secret_references`): the save checks it resolves.
+    var apiKeyReference: String? = nil
     /// A plugin's provider it is added from (`<plugin>/<provider>`): the hub fills in what is left empty.
     var preset: String? = nil
     var auth: String? = nil
@@ -265,9 +283,14 @@ nonisolated struct LauncherInput: Encodable, Sendable {
     var delivery: String? = nil
     var ownService: String? = nil
     var machineKeys: [String: String]? = nil
+    /// References for single computers' own keys, in place of a key in `machineKeys`.
+    var machineKeyReferences: [String: String]? = nil
+    /// Send Through (kind api): a computer's id, "" the hub itself; nil keeps what the hub has.
+    var viaMachine: String? = nil
     enum CodingKeys: String, CodingKey {
-        case name, model, args, kind, api, preset, auth, models, headers, env, proxy, effort, assign, share, delivery
-        case scopeMachines = "scope_machines", ownService = "own_service", machineKeys = "machine_keys"
+        case name, model, args, kind, agent, api, preset, auth, models, headers, env, proxy, effort, assign, share, delivery
+        case scopeMachines = "scope_machines", ownService = "own_service", machineKeys = "machine_keys", viaMachine = "via_machine"
+        case apiKeyReference = "api_key_reference", machineKeyReferences = "machine_key_references"
         case displayName = "display_name"
         case baseURL = "base_url", smallModel = "small_model", apiKey = "api_key"
         case subagentModel = "subagent_model", customModel = "custom_model"
@@ -289,9 +312,11 @@ nonisolated struct LauncherProbe: Encodable, Hashable, Sendable {
     var model: String?
     /// A preset's id: the hub fills in the address and, with no `model`, the preset's default model.
     var preset: String? = nil
+    /// Send Through as chosen (kind api): tested from where it will be sent; nil the stored one.
+    var viaMachine: String? = nil
     enum CodingKeys: String, CodingKey {
         case name, auth, headers, model, preset
-        case baseURL = "base_url", apiKey = "api_key"
+        case baseURL = "base_url", apiKey = "api_key", viaMachine = "via_machine"
     }
 }
 
@@ -356,6 +381,23 @@ nonisolated struct LauncherImportPreview: Decodable, Hashable, Sendable {
 nonisolated struct LauncherImportResult: Decodable, Hashable, Sendable {
     var created: [String]?
     var updated: [String]?
+}
+
+/// One Agent preset from the model profile in use (`tiers` of GET /api/v1/machines/{id}/launchers): a named way to fill
+/// New Agent's launcher, model and thinking effort for this start. The tier itself is not a session-start field.
+nonisolated struct AgentPreset: Decodable, Hashable, Sendable, Identifiable {
+    var name: String
+    var launcher: String
+    var model: String? = nil
+    var effort: String? = nil
+    var description: String? = nil
+    var id: String { name }
+}
+
+/// The model profile whose Agent presets a computer offers.
+nonisolated struct AgentPresetProfile: Decodable, Hashable, Sendable {
+    var id: String
+    var name: String
 }
 
 /// What a machine's launcher picker runs with no pick (`default` of GET /api/v1/machines/{id}/launchers): Model Settings'
@@ -467,9 +509,10 @@ extension APIClient {
         return r.launcher
     }
     /// The models this launcher's agent offers in its /model menu on this machine (the chat's model picker).
-    func launcherModels(machine: String, launcher: String) async throws -> [AgentModelOption] {
+    func launcherModels(machine: String, launcher: String, purpose: String? = nil) async throws -> [AgentModelOption] {
         struct R: Decodable { var models: [AgentModelOption]? }
-        let r: R = try await get("/api/v1/machines/\(machine)/launchers/\(launcher)/models")
+        let client = purpose == "assistant" ? currentAssistantSettings() : self
+        let r: R = try await client.get("/api/v1/machines/\(machine)/launchers/\(launcher)/models", query: purpose.map { ["purpose": $0] } ?? [:])
         return r.models ?? []
     }
     func saveLauncher(_ input: LauncherInput, isNew: Bool) async throws {
@@ -510,13 +553,15 @@ extension APIClient {
         try await post("/api/v1/launchers/discover", body: probe, timeout: 45)
     }
     /// Import from ~/.zshrc: what the machine's claude aliases come to (409 `node_outdated` from a node too old to say).
-    func launcherImportPreview(machine: String) async throws -> LauncherImportPreview {
-        try JSON.decoder.decode(LauncherImportPreview.self,
-                                from: await request("GET", "/api/v1/launchers/import", query: ["machine": machine], timeout: 45))
+    func launcherImportPreview(machine: String, alias: String? = nil) async throws -> LauncherImportPreview {
+        var query = ["machine": machine]
+        query["alias"] = alias
+        return try JSON.decoder.decode(LauncherImportPreview.self,
+                                       from: await request("GET", "/api/v1/launchers/import", query: query, timeout: 45))
     }
-    func importLaunchers(machine: String, providers: [String]) async throws -> LauncherImportResult {
-        struct Body: Encodable { var machine: String; var providers: [String] }
-        return try await post("/api/v1/launchers/import", body: Body(machine: machine, providers: providers), timeout: 45)
+    func importLaunchers(machine: String, providers: [String], alias: String? = nil) async throws -> LauncherImportResult {
+        struct Body: Encodable { var machine: String; var providers: [String]; var alias: String? }
+        return try await post("/api/v1/launchers/import", body: Body(machine: machine, providers: providers, alias: alias), timeout: 45)
     }
 }
 
@@ -555,10 +600,15 @@ nonisolated struct LauncherQuota: Decodable, Hashable, Sendable {
 
     nonisolated struct Usage: Decodable, Hashable, Sendable {
         var label: String
+        /// What `label` covers: `day`, `week` or `month`; nil when the extension does not say (shown by the label alone,
+        /// never added up).
+        var period: String?
         var requests: Int64
         var tokens: Int64
         var costUSD: Double?
-        enum CodingKeys: String, CodingKey { case label, requests, tokens; case costUSD = "cost_usd" }
+        enum CodingKeys: String, CodingKey { case label, period, requests, tokens; case costUSD = "cost_usd" }
+
+        static let day = "day"
     }
 
     nonisolated struct Pool: Decodable, Hashable, Sendable {

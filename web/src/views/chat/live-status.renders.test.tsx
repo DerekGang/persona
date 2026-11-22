@@ -64,21 +64,38 @@ afterEach(() => {
 });
 
 describe("status-line pushes", () => {
+  it("keeps the answer, Markdown paragraph and live work row mounted as the saved reply replaces the stream", () => {
+    const prompt = it_({ role: "user", kind: "text", text: "Check it." }, 0);
+    const persisted = it_({ role: "assistant", kind: "text", text: "Ready for review." }, 1);
+    const draw = (saved: boolean) => act(() => root.render(<SegmentView seg={segments(saved ? [prompt, persisted] : [prompt])[0]} live mid="m" sid="s"
+      streaming={saved ? undefined : "Ready for review."} batchedWords expandFold={async () => {}} />));
+    draw(false);
+    const prose = host.querySelector("[data-latest-text] .prose-j");
+    const paragraph = prose?.querySelector("p");
+    const work = host.querySelector("[data-work-group]");
+    expect(paragraph?.textContent).toBe("Ready for review.");
+    expect(work).not.toBeNull();
+    draw(true);
+    expect(host.querySelector("[data-latest-text] .prose-j")).toBe(prose);
+    expect(host.querySelector("[data-latest-text] p")).toBe(paragraph);
+    expect(host.querySelector("[data-work-group]")).toBe(work);
+  });
+
   it("do not redraw the folded work; the thinking card follows only after manual expansion", () => {
     const [seg] = segments(items);
     act(() => root.render(<SegmentView seg={seg} live mid="m" sid="s" expandFold={async () => {}} />));
     expect(titles.n).toBeGreaterThan(0);
-    expect(host.textContent).not.toContain("Thinking");
+    expect(host.querySelector('[data-thinking="live"]')).toBeNull();
     titles.n = 0;
     for (let s = 1; s <= 5; s++) act(() => receiveLive({ machine_id: "m", session_id: "s", live: { verb: "Frosting", thinking: true, elapsed_s: s } }));
     expect(titles.n).toBe(0);
-    expect(host.textContent).not.toContain("Thinking");
+    expect(host.querySelector('[data-thinking="live"]')).toBeNull();
     act(() => (host.querySelector("[data-work-group] > button") as HTMLButtonElement).click());
-    expect(host.textContent).toContain("Thinking");
+    expect(host.querySelectorAll('[data-thinking="live"]')).toHaveLength(1); // once, in the live inner group (#5155)
     titles.n = 0;
     act(() => receiveLive({ machine_id: "m", session_id: "s", live: { verb: "Frosting", thinking: false, elapsed_s: 6 } }));
     expect(titles.n).toBe(0);
-    expect(host.textContent).not.toContain("Thinking");
+    expect(host.querySelector('[data-thinking="live"]')).toBeNull();
   });
 
   it("keeps narration through new tool calls, replaces it on new words, and folds it when the turn ends", () => {

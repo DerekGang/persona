@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import persona.core.contracts.Machine
 import persona.core.contracts.api.AssistantReadinessSource
 import persona.core.contracts.api.HubLauncher
+import persona.core.contracts.api.LauncherImportResult
 import persona.core.contracts.api.ProviderSetup
 import persona.core.designsystem.*
 import persona.core.designsystem.icons.PhIcons
@@ -61,29 +62,42 @@ internal fun NewProviderPage(
     machines: List<Machine> = emptyList(),
     /** Opens straight on "Computers" (the provider page's row): back from it leaves, and it saves by itself. */
     startAtComputers: Boolean = false,
+    /** A provider import link opened from outside (#5428); read through the hub after the form loads. */
+    importLink: String? = null,
+    /** Identifies each external open, including the same link opened again while this page is active. */
+    importGeneration: Long = 0,
 ) {
     val model = remember(providers, readiness, existing) {
         NewProviderModel(providers, readiness?.let { source -> suspend { if (source.available.first()) source.readiness(false) else null } })
     }
     val state by model.state.collectAsState()
+    var referencesAvailable by remember(providers) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(providers) { providers.secretReferencesAvailable.collect { referencesAvailable = it } }
+    LaunchedEffect(referencesAvailable, state.draft.apiKeyByReference, state.scope?.keyRefs) {
+        if (referencesAvailable == false) model.referencesUnavailable()
+    }
     val scope = rememberCoroutineScope()
     val feedback = LocalAppFeedback.current
     val res = LocalResources.current
     var choosingModel by remember { mutableStateOf(false) }
     var choosingEffort by remember { mutableStateOf(false) }
+    var choosingVia by remember { mutableStateOf(false) }
     var more by remember { mutableStateOf(false) }
     var advanced by rememberSaveable { mutableStateOf(false) }
     var newModel by rememberSaveable { mutableStateOf("") }
     var sub by rememberSaveable { mutableStateOf(if (startAtComputers) ProviderSub.Computers else null) }
     var discarding by remember { mutableStateOf(false) }
-    LaunchedEffect(model) {
+    var foundImport by remember { mutableStateOf<FoundAlias?>(null) }
+    LaunchedEffect(model, importLink, importGeneration) {
         if (existing != null) { model.prepare(existing, existing.hasScope, machines); return@LaunchedEffect }
         // "Computers" needs the computers to choose from: opened where none are known (Model configuration), it waits
         // for the provider's page, and the hub's defaults apply meanwhile.
         model.prepare(null, providers.launcherScope.first() && machines.isNotEmpty(), machines)
         val hubNames = providers.builtinPresets.first()
+        val importParse = providers.launcherImportParse.first()
         if (hubNames) launch { model.loadReadiness() }
-        model.load(preferPreset, hubNames)
+        model.load(preferPreset, hubNames, importParse)
+        if (importLink != null) model.openImportLink(importLink)
     }
     LaunchedEffect(model, machines) { model.setMachines(machines) }
     LaunchedEffect(state.saved) {
@@ -94,8 +108,15 @@ internal fun NewProviderPage(
     }
     val draft = state.draft
     // ②'s key is tested once it stops changing.
-    LaunchedEffect(model, state.step, draft.apiKey, draft.presetModel, draft.preset) {
-        if (state.step == WizardStep.Key && testableKey(draft.apiKey)) { delay(AutoTestMillis); model.testKey() }
+    LaunchedEffect(model, state.step, draft.apiKey, draft.presetModel, draft.preset, draft.apiKeyByReference) {
+        if (state.step == WizardStep.Key && !draft.apiKeyByReference && testableKey(draft.apiKey)) { delay(AutoTestMillis); model.testKey() }
+    }
+    // A pasted configuration is read at once; typed changes settle for the same 0.7 s as the web wizard.
+    LaunchedEffect(model, state.step, state.paste.text, state.paste.readImmediately) {
+        if (state.step == WizardStep.Paste && !state.paste.fromLink && state.paste.answerText != state.paste.text) {
+            delay(if (state.paste.readImmediately || state.paste.text.isBlank()) 0 else AutoTestMillis)
+            model.parsePaste()
+        }
     }
     val finish = { state.added?.let { onSaved(providerId(it.result.name)) } ?: onBack() }
     // Leaving an edit with something changed asks first.
@@ -103,6 +124,14 @@ internal fun NewProviderPage(
     val editable = !state.busy
     val preset = state.selected
     if (discarding) DiscardChangesDialog(onDiscard = { discarding = false; onBack() }, onKeep = { discarding = false })
+    foundImport?.let { alias ->
+        ProviderImportPage(providers, machines, onBack = { foundImport = null }, onDone = { result ->
+            foundImport = null
+            val name = (result.created + result.updated).firstOrNull()
+            if (name == null) onBack() else onSaved(providerId(name))
+        }, initialMachine = alias.machine, initialAlias = alias.name)
+        return
+    }
     // The proxy's and the scope's own pages, in place of the form.
     if (sub == ProviderSub.Proxy) {
         ProviderProxyPage(draft, editable, model::edit, onBack = { sub = null })
@@ -115,13 +144,16 @@ internal fun NewProviderPage(
         BackHandler(onBack = close)
         val kind = if (state.usesPreset || state.step == WizardStep.Key) preset?.kind ?: "launcher" else draft.kind
         ProviderComputersPage(scopeForm, model::editScope, state.machines, state.existing, kind, draft.agent, state.defaultUse,
-            onBack = close, editable = editable,
+            onBack = close, editable = editable, referencesAvailable = referencesAvailable == true,
             save = if (alone) ({ scope.launch { model.saveEdit() }; Unit }) else null, saving = state.busy, canSave = state.canSaveEdit,
             error = state.error?.text() ?: state.editProblem?.takeIf { alone && state.dirty }?.text())
         return
     }
     BackHandler {
         when {
+            state.step == WizardStep.Paste && state.paste.fromLink -> onBack()
+            state.step == WizardStep.Paste -> model.leavePaste()
+            state.pasteContinued && state.step == WizardStep.Form -> model.backToPaste()
             state.editing -> leave()
             state.step == WizardStep.Done -> finish()
             state.hubNames && state.step != WizardStep.Pick -> model.backToPick()
@@ -129,12 +161,16 @@ internal fun NewProviderPage(
         }
     }
     val title = when {
+        state.step == WizardStep.Paste -> stringResource(R.string.settings_paste_title)
         state.editing -> stringResource(R.string.settings_pedit_title, state.existing?.title.orEmpty())
         state.step == WizardStep.Key -> preset?.title ?: stringResource(R.string.settings_src_provider_new)
         state.step == WizardStep.Done -> stringResource(R.string.settings_onb_step_done)
         else -> stringResource(R.string.settings_src_provider_new)
     }
     val pageBack: () -> Unit = when {
+        state.step == WizardStep.Paste && state.paste.fromLink -> onBack
+        state.step == WizardStep.Paste -> model::leavePaste
+        state.pasteContinued && state.step == WizardStep.Form -> model::backToPaste
         state.editing -> leave
         state.step == WizardStep.Done -> ({ finish() })
         state.hubNames && state.step != WizardStep.Pick -> model::backToPick
@@ -144,6 +180,10 @@ internal fun NewProviderPage(
     JListPage(title = title, onBack = pageBack, largeTitle = false, bottomBar = {
         when (state.step) {
             WizardStep.Pick -> {}
+            WizardStep.Paste -> Row(Modifier.fillMaxWidth().padding(horizontal = pagePadding, vertical = Tokens.Space.s)) {
+                JButton(stringResource(R.string.settings_paste_continue), { scope.launch { model.continuePaste() } },
+                    Modifier.fillMaxWidth(), loading = state.busy, enabled = state.paste.choice != null && !state.busy)
+            }
             WizardStep.Done -> Row(Modifier.fillMaxWidth().padding(horizontal = pagePadding, vertical = Tokens.Space.s)) {
                 JButton(stringResource(R.string.settings_onb_finish), { finish() }, Modifier.fillMaxWidth())
             }
@@ -162,26 +202,32 @@ internal fun NewProviderPage(
         manager?.let { owner -> item("manager") { ModelConfigurationOwner(owner) } }
         if (!state.loaded) item("loading") { JLoading() }
         when (state.step) {
-            WizardStep.Pick -> if (state.loaded) pickStep(res, state, model::choose)
+            WizardStep.Pick -> if (state.loaded) pickStep(res, state, model::choose, onPaste = model::openPaste, onAlias = { foundImport = it })
+            WizardStep.Paste -> pasteStep(state, model::editPaste, onRetry = { scope.launch { model.parsePaste() } },
+                onSomethingElse = model::pasteSomethingElse, onDraft = model::choosePasteDraft, onAction = model::choosePasteAction)
             WizardStep.Key -> if (preset != null) keyStep(state, preset, editable, model::editKey, model::setAssign,
                 onRetest = { scope.launch { model.testKey() } }, onModel = { choosingModel = true }, more = more, onMore = { more = !more },
-                onComputers = openComputers)
+                onComputers = openComputers, referencesAvailable = referencesAvailable == true)
             WizardStep.Done -> state.added?.let { added -> doneStep(state, added) }
             WizardStep.Form -> {
+                otherProviderWays(state, onPaste = model::openPaste, onAlias = { foundImport = it }, includeHeader = true)
                 if (!state.editing && !state.hubNames && state.presets.isNotEmpty()) item("source") {
                     JSegmented(listOf(JSegment(stringResource(R.string.settings_src_provider_manual)), JSegment(stringResource(R.string.settings_src_provider_from_extension))), if (draft.fromPreset) 1 else 0,
                         { model.edit(draft.copy(fromPreset = it == 1)) }, Modifier.fillMaxWidth().padding(top = Tokens.Space.s))
                 }
                 if (state.loaded) {
                     if (state.usesPreset) {
-                        presetForm(res, state, editable, model::edit, model::pick, onModel = { choosingModel = true })
+                        presetForm(res, state, editable, model::edit, model::pick, onModel = { choosingModel = true },
+                            referencesAvailable = referencesAvailable == true)
                         computersRow(state, openComputers)
                     } else {
                         manualForm(state, editable, model::edit, onProbe = { scope.launch { model.probeForm() } },
-                            onDiscover = { scope.launch { model.discoverForm() } }, onPickFound = { choosingModel = true })
+                            onDiscover = { scope.launch { model.discoverForm() } }, onPickFound = { choosingModel = true },
+                            referencesAvailable = referencesAvailable == true)
                         modelsSection(state, editable, model::edit, newModel) { newModel = it }
                         // Editing: "Computers" is its own row; adding: it waits under "Advanced" with the rest.
                         if (state.editing) computersRow(state, openComputers)
+                        if (state.editing && draft.kind == "api") viaRow(state, editable) { choosingVia = true }
                         item("advanced") {
                             JGroupItem(GroupPosition.Single, Modifier.padding(top = Tokens.Space.m)) {
                                 JRow(stringResource(R.string.settings_pedit_advanced), value = if (advanced) null else stringResource(R.string.settings_pedit_advanced_badge),
@@ -214,6 +260,26 @@ internal fun NewProviderPage(
     if (choosingEffort) JActionSheet((listOf("") + EffortLevels).map { level ->
         JAction(effortText(level), checked = level == draft.effort, onClick = { model.edit(draft.copy(effort = level)) })
     }, { choosingEffort = false }, title = stringResource(R.string.settings_pedit_effort))
+    if (choosingVia) JActionSheet(viaChoices(state).map { id ->
+        JAction(viaLabel(state, id), checked = id == draft.viaMachine, onClick = { model.edit(draft.copy(viaMachine = id)) })
+    }, { choosingVia = false }, title = stringResource(R.string.settings_pedit_via), note = stringResource(R.string.settings_pedit_via_note))
+}
+
+/** "Send through"'s choices: the hub itself, the hub's computers, and the stored one even when the hub no longer lists it. */
+internal fun viaChoices(state: NewProviderState): List<String> =
+    (listOf("") + state.machines.map { it.id } + state.draft.viaMachine).distinct()
+
+@Composable
+private fun viaLabel(state: NewProviderState, id: String): String =
+    if (id.isEmpty()) stringResource(R.string.settings_pedit_via_hub) else machineLabel(state.machines, id)
+
+/** "Send through": which machine sends a direct API connection's requests (docs/assistant/model-config.md "Sending through a computer"). */
+private fun androidx.compose.foundation.lazy.LazyListScope.viaRow(state: NewProviderState, editable: Boolean, onOpen: () -> Unit) {
+    item("via") {
+        JGroupItem(GroupPosition.Single, Modifier.padding(top = Tokens.Space.m)) {
+            JRow(stringResource(R.string.settings_pedit_via), value = viaLabel(state, state.draft.viaMachine), enabled = editable, onClick = onOpen)
+        }
+    }
 }
 
 /** The pages the form opens in its place. */
@@ -243,20 +309,31 @@ private fun androidx.compose.foundation.lazy.LazyListScope.nameField(state: NewP
     }
 }
 
-private fun androidx.compose.foundation.lazy.LazyListScope.keyField(state: NewProviderState, editable: Boolean, onEdit: (NewProviderDraft) -> Unit, hint: String?) {
+private fun androidx.compose.foundation.lazy.LazyListScope.keyField(
+    state: NewProviderState, editable: Boolean, onEdit: (NewProviderDraft) -> Unit, hint: String?, referencesAvailable: Boolean,
+) {
     item("key") {
-        // Editing: the stored key is never shown; left empty it stays.
-        JTextField(state.draft.apiKey, { onEdit(state.draft.copy(apiKey = it)) }, Modifier.fillMaxWidth().padding(top = Tokens.Space.m),
-            label = if (state.existing?.hasKey == true) stringResource(R.string.settings_pedit_key_keep) else "API Key",
-            singleLine = true, enabled = editable, visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            supportingText = listOfNotNull(hint, stringResource(R.string.settings_src_provider_key_hint)).joinToString("\n"))
+        val draft = state.draft
+        // Editing: the stored key/reference is never exposed as a resolved value; left empty it stays.
+        ProviderKeyField(draft.apiKey, { onEdit(draft.copy(apiKey = it)) }, draft.apiKeyByReference,
+            onByReferenceChange = if (referencesAvailable) ({ on ->
+                onEdit(draft.copy(apiKey = "", apiKeyByReference = on))
+            }) else null,
+            stored = state.existing?.keyReference,
+            label = if (state.existing?.hasKey == true || state.existing?.keyReference != null)
+                stringResource(R.string.settings_pedit_key_keep) else "API Key", // i18n-ignore: providers' own field name
+            modifier = Modifier.fillMaxWidth().padding(top = Tokens.Space.m), enabled = editable && (referencesAvailable || !draft.apiKeyByReference),
+            supportingText = listOfNotNull(hint,
+                if (state.referencePending) stringResource(R.string.settings_provider_reference_saved)
+                else stringResource(R.string.settings_src_provider_key_hint).takeUnless { draft.apiKeyByReference },
+            ).joinToString("\n"))
     }
 }
 
 /** "From extension": the presets to pick from, the name, the key and the model. */
 private fun androidx.compose.foundation.lazy.LazyListScope.presetForm(
     res: Resources, state: NewProviderState, editable: Boolean, onEdit: (NewProviderDraft) -> Unit, onPick: (String) -> Unit, onModel: () -> Unit,
+    referencesAvailable: Boolean,
 ) {
     val preset = state.selected ?: return
     item("presets-title") { JSectionHeader(stringResource(R.string.settings_src_provider_presets)) }
@@ -272,7 +349,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.presetForm(
             Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s))
     }
     nameField(state, editable, onEdit, "jv_team")
-    keyField(state, editable, onEdit, preset.keyHint?.takeIf { it.isNotBlank() })
+    keyField(state, editable, onEdit, preset.keyHint?.takeIf { it.isNotBlank() }, referencesAvailable)
     item("preset-model") {
         if (preset.choices.isEmpty()) {
             JTextField(state.draft.presetModel, { onEdit(state.draft.copy(presetModel = it)) }, Modifier.fillMaxWidth().padding(top = Tokens.Space.m),
@@ -294,7 +371,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.presetForm(
 /** "Fill in": the name, the kind, the gateway, its auth and key ("Test connection", "Fetch models"), the models, the flags. */
 private fun androidx.compose.foundation.lazy.LazyListScope.manualForm(
     state: NewProviderState, editable: Boolean, onEdit: (NewProviderDraft) -> Unit,
-    onProbe: () -> Unit, onDiscover: () -> Unit, onPickFound: () -> Unit,
+    onProbe: () -> Unit, onDiscover: () -> Unit, onPickFound: () -> Unit, referencesAvailable: Boolean,
 ) {
     val draft = state.draft
     val api = draft.kind == "api"
@@ -316,8 +393,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.manualForm(
         Column(Modifier.padding(top = Tokens.Space.m), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
             JSegmented(listOf(JSegment(stringResource(R.string.settings_src_provider_kind_launcher)), JSegment(stringResource(R.string.settings_src_provider_kind_api))), if (api) 1 else 0,
                 { if (editable) onEdit(draft.copy(kind = if (it == 1) "api" else "launcher")) }, Modifier.fillMaxWidth())
-            if (api) JSegmented(listOf(JSegment("Messages"), JSegment("Responses")), if (draft.api == "responses") 1 else 0, // i18n-ignore: API style names (Anthropic Messages / OpenAI Responses)
-                { if (editable) onEdit(draft.copy(api = if (it == 1) "responses" else "messages")) }, Modifier.fillMaxWidth())
+            if (api) JSegmented(listOf(JSegment("Messages"), JSegment("Responses"), JSegment("Chat")), when (draft.api) { "responses" -> 1; "chat" -> 2; else -> 0 }, // i18n-ignore: API style names (Anthropic Messages / OpenAI Responses / Chat Completions)
+                { if (editable) onEdit(draft.copy(api = when (it) { 1 -> "responses"; 2 -> "chat"; else -> "messages" })) }, Modifier.fillMaxWidth())
             SettingsCaption(stringResource(if (api) R.string.settings_src_provider_api_note else R.string.settings_src_provider_launcher_note),
                 Modifier.padding(horizontal = rowPadding))
         }
@@ -336,9 +413,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.manualForm(
                 Modifier.padding(horizontal = rowPadding))
         }
     }
-    keyField(state, editable, onEdit, null)
-    // The hub's test speaks Messages: a Responses API has none (its models are typed in).
-    if (!(api && draft.api == "responses")) item("probe") { FormProbe(state, onProbe, onDiscover, onPickFound) }
+    keyField(state, editable, onEdit, null, referencesAvailable)
+    // The hub's test speaks Messages: Responses and Chat Completions APIs have none (their models are typed in).
+    if (!(api && draft.api in listOf("responses", "chat"))) item("probe") { FormProbe(state, onProbe, onDiscover, onPickFound) }
     item("model") {
         JTextField(draft.model, { onEdit(draft.copy(model = it)) }, Modifier.fillMaxWidth().padding(top = Tokens.Space.m), label = stringResource(R.string.settings_src_provider_default_model),
             singleLine = true, enabled = editable, supportingText = stringResource(R.string.settings_src_provider_model_note))

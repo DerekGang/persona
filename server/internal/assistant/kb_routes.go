@@ -3,7 +3,9 @@ package assistant
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +42,7 @@ func (s *Service) kbRoutes() {
 	}
 	s.recordingRoutes(engine)
 	s.kbSelectionRoutes()
+	s.taskLessonRoutes(engine)
 	s.handle("GET /api/v1/kb/{kind}", func(w http.ResponseWriter, r *http.Request) {
 		e := engine(w, r)
 		kind := r.PathValue("kind")
@@ -158,10 +161,17 @@ func (s *Service) kbRoutes() {
 			return
 		}
 		var u kb.UserUpdate
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&u); err != nil {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&u); err != nil {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		if (u.ProjectMode != nil || u.SourceURLs != nil) && !fullRole(r) {
+			apierr.Write(w, http.StatusForbidden, i18n.Err("assistant-kb_routes.source_settings_forbidden"))
+			return
+		}
+		ignored := kb.UserUnsupported(r.PathValue("kind"), u) // not applied: said, not dropped silently
 		id, err := e.ApplyUser(r.PathValue("kind"), r.PathValue("id"), u)
 		if errors.Is(err, kb.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, err)
@@ -170,7 +180,11 @@ func (s *Service) kbRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
-		apierr.WriteJSON(w, map[string]any{"id": id})
+		out := map[string]any{"id": id}
+		if len(ignored) > 0 {
+			out["ignored"] = ignored
+		}
+		apierr.WriteJSON(w, out)
 	})
 	// A project's soft delete and its Undo (#4412, docs/assistant/knowledge.md "Deleting a project").
 	s.handle("DELETE /api/v1/kb/projects/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -217,16 +231,34 @@ func (s *Service) kbRoutes() {
 		if e == nil {
 			return
 		}
+		// kind: one kind only, as kb_search takes it (#3862 phase 6: recordings for meetings); an older hub ignores it.
+		q, kind := r.URL.Query().Get("q"), r.URL.Query().Get("kind")
+		if kind != "" && !kinds[kind] {
+			apierr.Write(w, http.StatusBadRequest, i18n.Err("assistant-kb_routes.unknown_kind"))
+			return
+		}
 		// results=1: entries ranked, a few lines each (the app since 2026-10-31); otherwise the lines as found.
 		if r.URL.Query().Get("results") == "1" {
-			res := e.Find(r.URL.Query().Get("q"), 80)
+			var res []kb.Result
+			if kind == "" {
+				res = e.Find(q, 80)
+			} else { // ranked over every kind (Find's order does not depend on its limit), then only this one's
+				res = slices.DeleteFunc(e.Find(q, math.MaxInt), func(x kb.Result) bool { return x.Entry.Kind != kind })
+				res = res[:min(len(res), 80)]
+			}
 			if res == nil {
 				res = []kb.Result{}
 			}
 			apierr.WriteJSON(w, map[string]any{"results": res})
 			return
 		}
-		hits := e.Search(r.URL.Query().Get("q"), r.URL.Query().Get("messages") != "0", 60)
+		messages := r.URL.Query().Get("messages") != "0"
+		var hits []kb.Hit
+		if kind == "" {
+			hits = e.Search(q, messages, 60)
+		} else {
+			hits = e.SearchKind(q, kind, messages, 60)
+		}
 		if hits == nil {
 			hits = []kb.Hit{}
 		}

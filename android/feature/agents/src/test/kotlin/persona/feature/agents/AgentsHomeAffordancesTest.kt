@@ -9,10 +9,17 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -28,7 +35,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import persona.core.contracts.*
 import persona.core.contracts.api.*
-import persona.core.designsystem.HomeChrome
+import persona.core.designsystem.AppStyle
 import persona.core.designsystem.LocalHomeChrome
 import persona.core.designsystem.PersonaTheme
 import persona.core.navigation.AppTab
@@ -41,8 +48,8 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import java.io.File
 
 /**
- * Home grouping opens a menu, while the request-history row keeps its navigation action. A row under "Subtasks" offers
- * no Pin (#4494).
+ * Home grouping opens a menu. On compact Glass, reselecting Agents opens list settings and its requests page.
+ * A row under "Subtasks" offers no Pin (#4494).
  */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [35], qualifiers = "en-w400dp-h900dp")
@@ -52,16 +59,22 @@ class AgentsHomeAffordancesTest {
 
     @Test fun groupingIsAMenuButtonAndQuickFiltersStayToggles() {
         showScreen()
-        val grouping = rule.onNodeWithText("Grouping: By repository")
+        // Final E: the fixed icon speaks the current grouping and opens groupings only.
+        val grouping = rule.onNodeWithTag("agents-grouping")
+        grouping.assertContentDescriptionEquals("Group By: By repository")
         grouping.assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
             .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
             .assertHasClickAction()
         rule.onAllNodes(
-            SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
+            hasAnyAncestor(hasTestTag("agents-status-scroll")) and
+                SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
                 SemanticsMatcher.expectValue(SemanticsProperties.Selected, true),
         ).assertCountEquals(1)
         grouping.performClick()
+        rule.onNode(isPopup()).assertIsDisplayed()
         rule.onNodeWithText("By status").assertIsDisplayed()
+        rule.onNodeWithText("By Machine").assertIsDisplayed()
+        rule.onAllNodesWithText("All machines").assertCountEquals(0) // The computers are in list settings.
     }
 
     // #4338 A3, iOS's "Only <computer>": a chosen computer shows on the page, and a tap shows every computer again.
@@ -88,11 +101,135 @@ class AgentsHomeAffordancesTest {
             .outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    @Test fun requestHistoryKeepsItsNavigationAction() {
+    // The grouping picker leaves computers, range, sort and display in list settings (#4338 A4).
+    @Test fun selectedAgentsTabOpensTheRestOfTheListSettings() {
         showScreen()
-        val history = rule.onNodeWithText("Requests and history")
-        history.assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)).performClick()
+        rule.onNodeWithContentDescription("List settings").assertDoesNotExist()
+        rule.reselectAgentsTab()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodesWithText("By status").assertCountEquals(0)
+    }
+
+    // #4338 A11, as iOS's list menu: Sort is not offered under By Status, whose sections are the states.
+    @Test fun sortIsOfferedUnderOtherGroupings() {
+        showScreen()
+        rule.reselectAgentsTab()
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(2)
+    }
+
+    @Test fun sortIsNotOfferedUnderByStatus() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.State) }
+        rule.waitForIdle()
+        rule.reselectAgentsTab()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(0)
+    }
+
+    // #9199: iOS hides Sort under By App and Recently Used; Collapse / Expand All under Recently Used.
+    @Test fun sortIsNotOfferedUnderByApp() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.App) }
+        rule.waitForIdle()
+        rule.reselectAgentsTab()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(0)
+    }
+
+    @Test fun sortIsNotOfferedUnderRecentlyUsed() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.Recent) }
+        rule.waitForIdle()
+        rule.reselectAgentsTab()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(0)
+    }
+
+    @Test fun collapseExpandAllAreNotOfferedUnderRecentlyUsed() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.Recent) }
+        rule.waitForIdle()
+        rule.reselectAgentsTab()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodesWithText("Collapse all").assertCountEquals(0)
+        rule.onAllNodesWithText("Expand all").assertCountEquals(0)
+    }
+
+    // #4338 A11, as iOS's row menu: a working agent can be interrupted from its row; a finished one offers nothing to stop.
+    @Test fun aWorkingRowOffersInterrupt() {
+        showScreen(rows = listOf(Session("box", "busy", title = "Busy task", state = "working")))
+        rule.onNodeWithText("Busy task").performTouchInput { longClick() }
+        rule.onNodeWithText("Interrupt").assertIsDisplayed()
+    }
+
+    @Test fun anUnreadRowOffersNoInterrupt() {
+        showScreen(rows = listOf(Session("box", "done", title = "Done task", state = "unread")))
+        rule.onNodeWithText("Done task").performTouchInput { longClick() }
+        rule.onNodeWithText("Mute").assertIsDisplayed()
+        rule.onAllNodesWithText("Interrupt").assertCountEquals(0)
+    }
+
+    /** A runtime's session (#6294): no terminal, so Rename and Close agent only where its node says it can. */
+    private fun runtimeRow(capabilities: SessionCapabilities) = Session("box", "paseo", title = "Runtime task", status = "working",
+        state = "working", sourceKind = "runtime", agent = "claude", capabilities = capabilities)
+
+    @Test fun aRuntimeRowRenamesAndClosesWhereItsNodeSays() {
+        showScreen(rows = listOf(runtimeRow(SessionCapabilities(read = true, send = true, close = true, rename = true))))
+        rule.onNodeWithText("Runtime task").performTouchInput { longClick() }
+        rule.onNodeWithText("Rename").assertIsDisplayed()
+        rule.onNodeWithText("Close agent").assertIsDisplayed()
+        rule.onNodeWithText("Copy resume command").assertDoesNotExist()
+    }
+
+    @Test fun aRuntimeRowFromAnOlderNodeOffersNeither() {
+        showScreen(rows = listOf(runtimeRow(SessionCapabilities(read = true, send = true))))
+        rule.onNodeWithText("Runtime task").performTouchInput { longClick() }
+        rule.onNodeWithText("Mute").assertIsDisplayed()
+        rule.onNodeWithText("Rename").assertDoesNotExist()
+        rule.onNodeWithText("Close agent").assertDoesNotExist()
+    }
+
+    @Test fun groupingLight() = shootGrouping(dark = false)
+    @Test fun groupingDark() = shootGrouping(dark = true)
+
+    private fun shootGrouping(dark: Boolean) {
+        showScreen(dark)
+        val out = File("build/grouping-shots").also { it.mkdirs() }
+        fun save(name: String, popup: Boolean = false) = (if (popup) rule.onNode(isPopup()) else rule.onRoot()).captureToImage().asAndroidBitmap().let { bitmap ->
+            out.resolve("$name-${if (dark) "dark" else "light"}.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        save("capsule")
+        rule.onNodeWithTag("agents-grouping").performClick()
+        rule.waitForIdle()
+        save("picker", popup = true)
+    }
+
+    // #4338 A1: on Glass the requests and their history are a page in list settings, after Machines.
+    @Test fun requestsAndHistoryAreInListSettingsOnGlass() {
+        showScreen()
+        rule.onAllNodesWithText("Requests and history").assertCountEquals(0)
+        rule.reselectAgentsTab()
+        // Display's four choices put the end of the sheet below the fold in a 900dp window (#4338 A9).
+        rule.onNodeWithText("Machine monitor").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Requests and history")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)).performScrollTo().performClick()
         rule.onNodeWithText("Requests waiting for you").assertIsDisplayed()
+    }
+
+    // Brief and Board keep their row (decision 8)...
+    @Test fun briefKeepsTheRequestsRow() {
+        showScreen(style = AppStyle.Brief)
+        rule.onNodeWithText("Requests and history")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)).performClick()
+        rule.onNodeWithText("Requests waiting for you").assertIsDisplayed()
+    }
+
+    // ...and their ⋯ adds no second way there: the one node is the row under the sheet.
+    @Test fun briefMoreHasNoRequestsItem() {
+        showScreen(style = AppStyle.Brief)
+        rule.onNodeWithContentDescription("List settings").performClick()
+        rule.onNodeWithText("Machine monitor").assertIsDisplayed()
+        rule.onAllNodesWithText("Requests and history").assertCountEquals(1)
     }
 
     /** A runtime's agent and one it created (#4494), which the list draws under "Subtasks (1)". */
@@ -129,7 +266,7 @@ class AgentsHomeAffordancesTest {
 
     private fun showScreen(
         dark: Boolean = false, rows: List<Session> = listOf(Session("box", "s1", title = "Example task", state = "working")),
-        pins: List<String> = emptyList(),
+        pins: List<String> = emptyList(), style: AppStyle = AppStyle.Glass,
     ): AgentsViewModel {
         val model = AgentsViewModel(object : SessionsRepository {
             override val sessions = MutableStateFlow(rows)
@@ -159,8 +296,8 @@ class AgentsHomeAffordancesTest {
             override suspend fun markSeen(session: SessionKey, version: String) = Unit
         }))
         rule.setContent {
-            PersonaTheme(darkTheme = dark, reduceMotion = true) {
-                CompositionLocalProvider(LocalHomeChrome provides HomeChrome(emptyList(), "Agents", onSelect = {}, leading = {})) {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                CompositionLocalProvider(LocalHomeChrome provides agentsHomeChrome) {
                     AgentsScreen(model, Nowhere, AgentsMetadata())
                 }
             }

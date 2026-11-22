@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from android_token_baseline import baseline_of, count, regressions, scan, wildcard_material3
+from android_token_baseline import baseline_of, count, lowerable, regressions, scan, wildcard_material3
 
 
 class TokenBaselineTest(unittest.TestCase):
@@ -29,12 +29,13 @@ class TokenBaselineTest(unittest.TestCase):
             import persona.core.designsystem.Tokens.Space as Spacing
             val color = Theme.palette.ink
             val font = PersonaTypography.body
+            val reading = Tokens.TypeGlass.Body.size
             val size = PersonaTheme.shapes.card
             val gap = Spacing.m
         '''
         counts = count(canonical)
         self.assertEqual(1, counts['color']['token'])
-        self.assertEqual(1, counts['font']['token'])
+        self.assertEqual(2, counts['font']['token'])
         self.assertEqual(2, counts['dp']['token'])
         former = ('jar' + 'vis').capitalize()
         retired_symbols = f'{former}Theme.palette.ink {former}Typography.body {former}Theme.shapes.card'
@@ -48,6 +49,14 @@ class TokenBaselineTest(unittest.TestCase):
         current = {'files': {'a.kt': count('Color.Red')}}
         self.assertEqual(1, len(regressions(current, baseline)))
         self.assertEqual([], regressions({'files': {'a.kt': count('Tokens.Space.m')}}, baseline))
+
+    def test_a_count_under_the_baseline_passes_and_is_listed_for_lowering(self):
+        baseline = baseline_of({'version': 2, 'files': {'a.kt': count('1.dp 2.dp'), 'gone.kt': count('3.dp')}})
+        current = {'files': {'a.kt': count('1.dp')}}
+        self.assertEqual([], regressions(current, baseline))
+        self.assertEqual(['a.kt: 1 hard-coded dp, baseline 2', 'gone.kt: 0 hard-coded dp, baseline 1'],
+                         lowerable(current, baseline))
+        self.assertEqual([], lowerable({'files': {'a.kt': count('1.dp 2.dp'), 'gone.kt': count('3.dp')}}, baseline))
 
     def test_material3_components_count_in_pages_only(self):
         page = '''

@@ -23,7 +23,9 @@ func (h *Hub) devicesConfigFor(id string) devicewire.Config {
 		out.SharePublicOrigin = h.sharingOrigin()
 	}
 	out.ShareAuthorities = map[string]devicewire.ShareAuthority{}
-	for _, mc := range h.cfgEntries() {
+	// Authority follows the trusted roster, including machines a recorded keeper
+	// holds out of hub.json. The actual machine-list handover below is unchanged.
+	for _, mc := range h.knownEntries() {
 		if h.entryOwner(mc.ID) != id {
 			continue
 		}
@@ -49,6 +51,7 @@ func (h *Hub) devicesConfigFor(id string) devicewire.Config {
 	if h.cfg != nil {
 		out.TailcatDERPMapURL = h.cfg.Tailcat.DERPMapURL
 		out.WebURL = h.webURL()
+		out.LinkSwitch = h.linkPairable() // and it answers devices.link_switch.* (link_switch.go)
 	}
 	out.NodePackagesURL, out.NodePackagesProxy = h.nodePackages()
 	if every, timeout, set := h.linkPingTimes(); set {
@@ -310,11 +313,14 @@ func (h *Hub) addedLive() []MachineConfig {
 	return out
 }
 
-func kindOf(c MachineConfig) string {
-	if c.Kind == "" {
+func kindOf(c MachineConfig) string { return kindName(c.Kind) }
+
+// kindName is an entry's kind as kindOf says it: "" is ssh.
+func kindName(kind string) string {
+	if kind == "" {
 		return "ssh"
 	}
-	return c.Kind
+	return kind
 }
 
 // withoutName is the entry but for its name, which the running hub takes as it is (machine_rename.go).

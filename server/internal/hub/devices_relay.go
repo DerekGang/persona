@@ -173,10 +173,11 @@ func (h *Hub) serveLinkStream(w http.ResponseWriter, r *http.Request) {
 // relayLinkConn takes Persona Link's connection and hands it to the manager: 503 assistant_offline while there is none
 // (Persona Link tries again).
 func (h *Hub) relayLinkConn(w http.ResponseWriter, r *http.Request, a devicewire.Accept, opts *websocket.AcceptOptions, limit int64) {
-	// Right after the hub started (its listeners come up before the manager does) the link waits for the manager a
-	// little, within what Persona Link gives a handshake; otherwise it is told to come back.
-	if owner := h.machineOwner(a.MachineID); owner == devicesOwner && !h.awaitManager(r.Context(), linkManagerWait) ||
-		owner != devicesOwner && h.busConnOf(owner) == nil {
+	// Right after the hub started (its listeners come up before the managers do) an absent manager's link waits for
+	// that manager a little, within what Persona Link gives a handshake. A connected non-carrier manager takes it as
+	// before; the carrier keeps its existing wait for its first report.
+	owner := h.machineOwner(a.MachineID)
+	if (owner == devicesOwner || h.busConnOf(owner) == nil) && !h.awaitManagerFor(r.Context(), owner, linkManagerWait) {
 		writeErrCode(w, http.StatusServiceUnavailable, "assistant_offline", errAssistantOffline)
 		return
 	}
@@ -266,23 +267,11 @@ func (h *Hub) handToManager(ctx context.Context, a devicewire.Accept) (*relayTak
 // handToManagerVia is handToManager with the manager's method that takes it: the devices' (devices.accept, a) or the
 // extensions' relayed requests (extensions.accept, a nil: only the id), handed to manager to.
 func (h *Hub) handToManagerVia(ctx context.Context, to, method string, a *devicewire.Accept) (*relayTaken, error) {
-	rs := &h.relay
-	id := randomHex(12)
-	ch := make(chan *relayTaken, 1)
-	rs.mu.Lock()
-	if rs.pending == nil {
-		rs.pending = map[string]chan *relayTaken{}
-	}
-	rs.pending[id] = ch
-	if rs.owner == nil {
-		rs.owner = map[string]relayFor{}
-	}
 	f := relayFor{manager: to}
 	if a != nil {
 		f.machine = a.MachineID
 	}
-	rs.owner[id] = f
-	rs.mu.Unlock()
+	id, ch, drop := h.offerRelay(f)
 	cctx, cancel := context.WithTimeout(ctx, relayWait)
 	defer cancel()
 	var params any = map[string]string{"id": id}
@@ -299,24 +288,45 @@ func (h *Hub) handToManagerVia(ctx context.Context, to, method string, a *device
 			err = errors.New("the manager did not take the connection in time")
 		}
 	}
-	// Not wanted any more; one the manager dialed just now goes away (serveRelay delivers under rs.mu, and the close
-	// handshake is not waited for under it).
-	rs.mu.Lock()
-	delete(rs.pending, id)
-	delete(rs.owner, id)
-	var late *relayTaken
-	select {
-	case late = <-ch:
-	default:
-	}
-	rs.mu.Unlock()
-	if late != nil {
-		go func() {
-			_ = late.conn.Close(websocket.StatusGoingAway, "not wanted any more")
-			close(late.done)
-		}()
-	}
+	drop()
 	return nil, err
+}
+
+// offerRelay registers a relay for f.manager to take (serveRelay ?id=): its id, and where the connection comes once
+// the manager dialed it (at most one). drop unregisters it; one the manager dialed just now, that nobody took from the
+// channel, goes away (serveRelay delivers under rs.mu, and the close handshake is not waited for under it). After the
+// connection was taken from the channel, drop changes nothing.
+func (h *Hub) offerRelay(f relayFor) (id string, taken <-chan *relayTaken, drop func()) {
+	rs := &h.relay
+	id = randomHex(12)
+	ch := make(chan *relayTaken, 1)
+	rs.mu.Lock()
+	if rs.pending == nil {
+		rs.pending = map[string]chan *relayTaken{}
+	}
+	rs.pending[id] = ch
+	if rs.owner == nil {
+		rs.owner = map[string]relayFor{}
+	}
+	rs.owner[id] = f
+	rs.mu.Unlock()
+	return id, ch, func() {
+		rs.mu.Lock()
+		delete(rs.pending, id)
+		delete(rs.owner, id)
+		var late *relayTaken
+		select {
+		case late = <-ch:
+		default:
+		}
+		rs.mu.Unlock()
+		if late != nil {
+			go func() {
+				_ = late.conn.Close(websocket.StatusGoingAway, "not wanted any more")
+				close(late.done)
+			}()
+		}
+	}
 }
 
 // serveRelay is the manager's side of a relay: one the hub holds for it (?id=), or a node stream through another hub

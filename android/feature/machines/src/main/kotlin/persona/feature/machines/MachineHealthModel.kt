@@ -6,6 +6,7 @@ import persona.core.contracts.MachineBrowser
 import persona.core.contracts.api.DoctorReport
 import persona.core.contracts.api.MachineManagement
 import persona.core.contracts.api.UsageAccount
+import persona.core.domain.usage.*
 import persona.core.contracts.api.hubCodedFailure
 import persona.core.designsystem.UiText
 import persona.core.designsystem.failureReasonText
@@ -174,13 +175,8 @@ internal class MachineHealthViewModel(private val management: MachineManagement)
      * of reach) keeps the last answer, which liveAccounts ages by its `stale_at` (#1905); only an older hub without the route (404)
      * means there is nothing to show.
      */
-    suspend fun pollUsage() {
-        while (true) {
-            try { mutable.update { it.copy(usage = management.usageWindows()) } }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (hubCodedFailure(error)?.status == 404) mutable.update { it.copy(usage = emptyList()) } }
-            delay(USAGE_POLL_MILLIS)
-        }
+    suspend fun pollUsage() = pollSubscriptionUsage(management) { accounts ->
+        mutable.update { it.copy(usage = accounts) }
     }
 
     /**
@@ -196,5 +192,18 @@ internal class MachineHealthViewModel(private val management: MachineManagement)
     }
 }
 
-private const val USAGE_POLL_MILLIS = 60_000L
+internal suspend fun pollSubscriptionUsage(management: MachineManagement, update: (List<UsageAccount>) -> Unit) {
+    while (true) {
+        try {
+            update(management.usageWindows())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (hubCodedFailure(error)?.status == 404) update(emptyList())
+        }
+        delay(USAGE_POLL_MILLIS)
+    }
+}
+
+internal const val USAGE_POLL_MILLIS = 60_000L
 private const val BROWSER_POLL_MILLIS = 2_000L

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
-import { agentName } from "../lib/agent-kind";
+import { agentName, providerAgent } from "../lib/agent-kind";
 import { api, ApiError, credentialOwner, enc, errorText, pastHub, subscribeCredentialOwner } from "../lib/api";
 import { pickAttachment, releaseAttachments, type LocalAttachment } from "../lib/attachments";
 import { useScopedMachines } from "../lib/current-assistant";
@@ -9,7 +9,9 @@ import { launcherBlock } from "../lib/launcher-health";
 import { machineLaunchers, modelName, type AgentModel } from "../lib/launcher-models";
 import { hubLabel } from "../lib/mesh";
 import { launchAgent } from "../lib/new-agent";
+import { providerLabel } from "../lib/provider-names";
 import { getState } from "../lib/store";
+import type { Launcher } from "../lib/types";
 import { AttachmentTray } from "../ui/AttachmentTray";
 import { Button, Dialog, Spinner, toast } from "../ui/atoms";
 import { useAddComputer } from "./machines/AddComputerEntry";
@@ -52,6 +54,9 @@ function useTarget<T>(key: string, read: (signal: AbortSignal) => Promise<T>): L
   return result?.key === key ? result : undefined;
 }
 
+/** What a launcher starts, as the hub's start options say it (agent_type). */
+const agentType = (l: Launcher) => l.agent_type || l.agent || "claude";
+
 function workSessionError(e: unknown) {
   if (e instanceof ApiError && e.code === "work_launcher_unavailable") return t("work-session.launcher_unavailable");
   return errorText(e);
@@ -84,22 +89,26 @@ export function WorkSessionForm({ open, onClose }: { open: boolean; onClose: () 
   const dirs = useTarget(target && JSON.stringify([target, browse]), (signal) => api<Dirs>(dirPath + enc(browse), { signal }));
   const project = useTarget(target && cwd && JSON.stringify([target, cwd]), (signal) => api<Dirs>(dirPath + enc(cwd), { signal }));
   const launcherList = useTarget(target, (signal) => machineLaunchers(mid, { signal }));
-  const groups = new Map<string, string[]>();
+  // The Harness choices, by what each launcher starts: each of Paseo's providers is one of its own, by its name, never
+  // the engine's "paseo" (providerAgent, #8142); a start still sends the launcher's own agent type.
+  const groups = new Map<string, Launcher[]>();
   for (const l of launcherList?.data?.launchers ?? []) {
     if (launcherBlock(l)) continue;
-    const agent = l.agent_type || l.agent || "claude";
+    const agent = providerAgent(agentType(l), l.name);
     if (!groups.has(agent)) groups.set(agent, []);
-    groups.get(agent)!.push(l.name);
+    groups.get(agent)!.push(l);
   }
   const matching = groups.get(harness) ?? [];
-  const validLauncher = matching.includes(launcher);
+  const chosen = matching.find((l) => l.name === launcher);
+  const validLauncher = Boolean(chosen);
+  const kind = chosen ? agentType(chosen) : harness;
   const optionsKey = target && project?.data && validLauncher ? JSON.stringify([target, cwd, harness, launcher]) : "";
   const options = useTarget(optionsKey, (signal) => api<StartOptions>(
     `/machines/${enc(mid)}/launchers/${enc(launcher)}/start-options`, { signal, timeout: pastHub(85_000) },
   ));
   const opts = options?.data;
   const models = opts?.model_mode === "selectable" ? (opts.models ?? []) : [];
-  const compatible = opts?.agent_type === harness;
+  const compatible = opts?.agent_type === kind;
   // Reconnecting may change what the same launcher can run. A removed model
   // should be picked again rather than silently replaced with the default.
   const staleModel = !!opts && !!model && !models.some((m) => m.id === model);
@@ -109,8 +118,8 @@ export function WorkSessionForm({ open, onClose }: { open: boolean; onClose: () 
   const chooseLauncher = (name: string) => { setLauncher(name); setModel(""); };
   const chooseHarness = (agent: string) => {
     setHarness(agent);
-    const names = groups.get(agent) ?? [];
-    chooseLauncher(names.length === 1 ? names[0] : "");
+    const list = groups.get(agent) ?? [];
+    chooseLauncher(list.length === 1 ? list[0].name : "");
   };
   const chooseDevice = (id: string) => {
     setMid(id);
@@ -134,7 +143,7 @@ export function WorkSessionForm({ open, onClose }: { open: boolean; onClose: () 
       || live.manager !== machine?.manager || live.engine !== machine?.engine || live.engine_default !== machine?.engine_default
       || credentialOwner() !== owner) return;
     submitted.current = true;
-    launchAgent({ machineId: mid, cwd: project!.data!.path, launcher, agentType: harness, workSession: true,
+    launchAgent({ machineId: mid, cwd: project!.data!.path, launcher, agentType: kind, workSession: true,
       model: model || undefined, inlinePrompt: opts.inline_prompt, text: prompt.trim(), attachments });
     keptFiles.current = []; // The launch owns the attachment previews after this point.
     setAttachments([]);
@@ -193,7 +202,7 @@ export function WorkSessionForm({ open, onClose }: { open: boolean; onClose: () 
           <select className={input} value={launcher} disabled={!project?.data || !matching.length} onChange={(e) => chooseLauncher(e.target.value)}>
             <option value="">{t("work-session.choose")}</option>
             {launcher && !validLauncher && <option value={launcher} disabled>{launcher}</option>}
-            {matching.map((name) => <option value={name} key={name}>{name}</option>)}
+            {matching.map((l) => <option value={l.name} key={l.name}>{providerLabel(l)}</option>)}
           </select>
         </label>
         <label className={label}>{t("work-session.model")}

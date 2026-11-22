@@ -31,6 +31,13 @@ import (
 
 const purposeMeetingAnswer = "meeting.answer"
 
+// purposeMeetingMinutes is the model purpose a meeting's minutes are written on (#7980): Information processing's
+// until it is set apart. meeting.answer stays a use of Information processing: it answers when the room cannot.
+const purposeMeetingMinutes = kb.PurposeMeetingMinutes
+
+// purposeMeetingTitle names a recording while it records (#8873).
+const purposeMeetingTitle = kb.PurposeMeetingTitle
+
 // A question's states, how it was asked, and why it failed (the contract's; the errors are an open set).
 const (
 	askPending  = "pending"
@@ -369,7 +376,7 @@ func (s *Service) askStart(ctx context.Context, e *kb.Engine, id string, req ask
 	switch {
 	case !s.meetingWritable(ctx, e):
 		return a, nil, kb.ErrReadOnly // and no model call
-	case !rec.Attending():
+	case !rec.Answering(): // off, or a room that only takes notes (#8851)
 		return a, nil, kb.ErrNotAttending
 	case rec.RoomMeeting() && rec.Conv.Room.State == kb.RoomEnded, rec.RoomMeeting() && rec.Conv.Room.State == kb.RoomDeleted:
 		return a, nil, errMeetingEnded // ask in the follow-up
@@ -404,8 +411,8 @@ func (s *Service) askStart(ctx context.Context, e *kb.Engine, id string, req ask
 		a = failAsk(a, askRoomUnavailble)
 	}
 	if _, err := e.LiveUpdate(id, func(l *kb.Live, r kb.Recording) error {
-		if !r.Attending() {
-			return kb.ErrNotAttending // an upload turned it off meanwhile
+		if !r.Answering() {
+			return kb.ErrNotAttending // an upload turned it off, or to notes, meanwhile
 		}
 		l.Asks = slices.DeleteFunc(l.Asks, func(x kb.LiveAsk) bool { return x.ID == a.ID }) // the failed one asked again
 		if len(l.Asks) >= maxAsks {
@@ -520,7 +527,7 @@ func (s *Service) answerMeetingAsk(ctx context.Context, e *kb.Engine, id string,
 	question := a.Question
 	var heard []kb.LiveSegment
 	if a.QuestionSource == askHeard {
-		l, err := awaitLive(ctx, e, id, a.LiveNext)
+		l, err := s.awaitHeard(ctx, e, id, a)
 		if err != nil {
 			return failed(askModelError)
 		}
@@ -625,6 +632,9 @@ func (s *Service) answerInput(ctx context.Context, m kb.MeetingMaterial, a kb.Li
 	for _, q := range m.Asks {
 		in.Asks = append(in.Asks, prompts.MeetingQA{Question: oneLine(q.Question), Answer: oneLine(q.Answer)})
 	}
+	if len(m.Photos) > 0 { // their words only, never an image
+		in.Photos = meetingPhotos(m.Photos)
+	}
 	for _, em := range m.Earlier {
 		mm := em.Minutes
 		pe := prompts.MeetingEarlier{ID: em.ID, Title: oneLine(em.Name), When: oneLine(em.When), Attendees: each(mm.Attendees)}
@@ -722,7 +732,7 @@ func answerSources(m kb.MeetingMaterial, named []json.RawMessage) []kb.AskSource
 		}
 		for _, em := range m.Earlier {
 			if strings.EqualFold(em.ID, ref) {
-				add(kb.AskSource{Kind: kb.KindRecording, ID: em.ID, Name: em.Name, When: em.When})
+				add(kb.AskSource{Kind: kb.KindRecording, ID: em.ID, Name: em.Name, When: em.When, Start: em.Start, End: em.End})
 			}
 			for _, p := range em.Projects {
 				if p.Slug == ref {

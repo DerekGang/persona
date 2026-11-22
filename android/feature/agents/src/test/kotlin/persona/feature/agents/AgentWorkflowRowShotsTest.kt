@@ -97,7 +97,7 @@ class AgentWorkflowRowShotsTest {
         fun textLayout(text: String): TextLayoutResult {
             val node = rule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode()
             val layouts = mutableListOf<TextLayoutResult>()
-            node.config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
+            val _ = node.config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
             return layouts.single()
         }
 
@@ -110,7 +110,9 @@ class AgentWorkflowRowShotsTest {
             criticalFacts.forEach { fact ->
                 rule.onNodeWithText(fact, substring = true, useUnmergedTree = true).assertIsDisplayed()
             }
-            val factsLayout = textLayout(factsText)
+            // Glass names the source on the row's third line (#4338 A9); view only stays among the critical facts.
+            if (nextStyle == AppStyle.Glass) rule.onNodeWithText("DSH", useUnmergedTree = true).assertIsDisplayed()
+            val factsLayout = textLayout(if (nextStyle == AppStyle.Glass) factsText.removePrefix("DSH   ") else factsText)
             assertFalse("$nextStyle dark=$nextDark: critical facts must keep their full text " +
                 "(desired=${factsLayout.multiParagraph.maxIntrinsicWidth}, available=${factsLayout.layoutInput.constraints.maxWidth})",
                 factsLayout.hasVisualOverflow)

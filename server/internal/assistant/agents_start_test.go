@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -106,6 +107,73 @@ func TestAgentStartParams(t *testing.T) {
 	p, err = s2.AgentResumeParams(ctx, AgentResumeParams{MachineID: "box", SessionID: "gone-1", Params: map[string]any{"text": "hi"}})
 	if err != nil || len(p) != 1 || p["text"] != "hi" {
 		t.Fatalf("resume params without a configuration: %v %v", p, err)
+	}
+}
+
+func TestAgentStartParamsResolvesAgyType(t *testing.T) {
+	f := newFakeHub().withMachine()
+	f.launcherList = []proto.Launcher{{Name: "agy-wrapper", Agent: "agy", Source: "zshrc"}}
+	s := newTestService(t, f)
+	setModel(t, s, "agent.new", ModelBinding{Provider: "launcher.agy-wrapper"})
+	got, err := s.AgentStartParams(t.Context(), AgentStartParams{MachineID: "server", Params: map[string]any{"async": true}})
+	if err != nil || got["launcher"] != "agy-wrapper" || got["agent_type"] != "agy" {
+		t.Fatalf("resolved start params = %v, %v", got, err)
+	}
+}
+
+func TestAgentStartParamsExplicitLauncherDefaultEffort(t *testing.T) {
+	s := newTestService(t, newFakeHub())
+	setModel(t, s, "agent.new", ModelBinding{Provider: "launcher.agy", Model: "configured-model", Effort: "xhigh"})
+	for _, tc := range []struct {
+		name       string
+		params     map[string]any
+		wantEffort string
+	}{
+		{"follow model settings", map[string]any{}, "xhigh"},
+		{"existing explicit launcher", map[string]any{"launcher": "agy"}, "xhigh"},
+		{"explicit launcher default", map[string]any{"launcher": "agy", "launcher_default_effort": true}, ""},
+		{"explicit effort wins", map[string]any{"launcher": "agy", "launcher_default_effort": true, "effort": "low"}, "low"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.AgentStartParams(t.Context(), AgentStartParams{Params: tc.params})
+			effort, _ := got["effort"].(string)
+			if err != nil || got["launcher"] != "agy" || got["model"] != "configured-model" ||
+				effort != tc.wantEffort || got["launcher_default_effort"] != nil {
+				t.Fatalf("start params = %v, %v, want effort %q", got, err, tc.wantEffort)
+			}
+		})
+	}
+}
+
+func TestAgentStartClaudeBypassesPermissions(t *testing.T) {
+	for _, tc := range []struct {
+		name, launcher, listed, agent, want string
+	}{
+		{"default Claude", "", "claude", "claude", "bypassPermissions"},
+		{"aliased Claude", "cc-grok", "cc-grok", "claude", "bypassPermissions"},
+		{"Codex", "codex", "codex", "codex", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := newQuietService(t)
+			f.launcherList = []proto.Launcher{{Name: tc.listed, Agent: tc.agent}}
+			input := map[string]any{"machine": "box", "cwd": "/code/app", "prompt": "Inspect the failure"}
+			if tc.launcher != "" {
+				input["launcher"] = tc.launcher
+			}
+			args, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.runTool(context.Background(), "server", "conv1", "agent_start", args); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.starts) != 1 {
+				t.Fatalf("starts = %v", f.starts)
+			}
+			if got, _ := f.starts[0]["permission_mode"].(string); got != tc.want {
+				t.Fatalf("permission_mode = %q, want %q; start = %v", got, tc.want, f.starts[0])
+			}
+		})
 	}
 }
 

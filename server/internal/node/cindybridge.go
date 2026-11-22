@@ -17,6 +17,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
+	"github.com/nwverse/persona/server/internal/shellcmd"
 )
 
 // The Cindy engine (docs/integrations/engines.md). Cindy runs coding agents (Claude Code, Codex, Pi) in its desktop
@@ -218,7 +219,7 @@ func (b *cindyBridge) run(ctx context.Context, version string) error {
 		"agent":     "claude",
 		"version":   version,
 		"instance":  newUUID(),
-		"caps":      map[string]any{"send": w, "interrupt": w, "start": w, "resume": w, "close": w, "modes": w},
+		"caps":      map[string]any{"send": w, "interrupt": w, "start": w, "resume": w, "close": w, "modes": w, "backend_workspace_root": w},
 		"launchers": launchers,
 	}
 	if err := b.peer.Call(ctx, "runtime.hello", hello, nil); err != nil {
@@ -393,7 +394,7 @@ func (b *cindyBridge) fetchLaunchers(ctx context.Context) []map[string]any {
 				continue
 			}
 			name := "cindy-" + ag.suffix
-			if p.ID != "" && p.ID != "xd" && nameRe.MatchString("cindy-"+p.ID+"-"+ag.suffix) {
+			if p.ID != "" && p.ID != "xd" && shellcmd.NameRe.MatchString("cindy-"+p.ID+"-"+ag.suffix) {
 				name = "cindy-" + p.ID + "-" + ag.suffix
 			}
 			var models []map[string]any

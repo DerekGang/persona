@@ -9,6 +9,7 @@ import org.robolectric.annotation.Config
 import persona.core.contracts.DetectedEngine
 import persona.core.contracts.Machine
 import persona.core.contracts.api.*
+import persona.core.domain.engines.Engines
 import persona.core.hub.HubError
 import persona.core.hub.HubFailure
 import kotlinx.coroutines.CompletableDeferred
@@ -71,6 +72,49 @@ class EngineSelectionModelTest {
         assertEquals("herdr", live.state.value.selected)
     }
 
+    @Test fun noTerminalEngineIsChosenSavedAndTakenBack() = runBlocking {
+        val withSets = machine.copy(engineHosts = listOf("herdr"))
+        val sent = mutableListOf<String>()
+        val applied = mutableListOf<Machine>()
+        // The hub keeps `engine` herdr for the empty set and says it in `engine_hosts`.
+        val model = EngineSelectionModel(withSets, put = { _, engine ->
+            sent += engine
+            if (engine == Engines.NONE) withSets.copy(engineHosts = emptyList()) else withSets.copy(engine = engine, engineHosts = listOf(engine))
+        }, applied = { applied += it })
+        assertEquals("herdr", model.state.value.selected)
+        model.choose(Engines.NONE)
+        assertTrue(model.save("m1"))
+        assertEquals(listOf(Engines.NONE), sent)
+        assertEquals(Engines.NONE, model.state.value.selected)
+        assertEquals(emptyList<String>(), applied.single().engineHosts)
+        // A push that says the same changes nothing; one from another client moves the picker until it is edited.
+        model.synchronize(withSets.copy(engineHosts = emptyList()))
+        assertEquals(Engines.NONE, model.state.value.selected)
+        model.synchronize(withSets.copy(engine = "orca", engineHosts = listOf("orca")))
+        assertEquals("orca", model.state.value.selected)
+        // Back to an engine.
+        model.choose("herdr")
+        assertTrue(model.save("m1"))
+        assertEquals("herdr", model.state.value.selected)
+        assertEquals(listOf(Engines.NONE, "herdr"), sent)
+    }
+
+    @Test fun aMachineSavedWithoutEnginesOpensOnNoTerminalEngineAndAFailedSaveStays() = runBlocking {
+        val offline = machine.copy(online = false, engines = emptyList(), engineHosts = emptyList())
+        val model = EngineSelectionModel(offline, put = { _, _ -> throw java.io.IOException("reset") }, applied = {})
+        assertEquals(Engines.NONE, model.state.value.selected)
+        model.choose("orca")
+        assertFalse(model.save("m1"))
+        assertEquals("orca", model.state.value.selected)
+        model.choose(Engines.NONE)
+        assertNull(model.state.value.error)
+        // Offline is saved too, and the hub's answer keeps the choice.
+        val saved = EngineSelectionModel(offline.copy(engineHosts = listOf("herdr")), put = { _, _ -> offline }, applied = {})
+        saved.choose(Engines.NONE)
+        assertTrue(saved.save("m1"))
+        assertEquals(Engines.NONE, saved.state.value.selected)
+    }
+
     @Test fun noSecondSaveWhileOneIsRunning() = runBlocking {
         val gate = CompletableDeferred<Unit>()
         var calls = 0
@@ -116,6 +160,13 @@ class ClaudeSettingsModelTest {
         override suspend fun setCodexSetting(machineId: String, key: String, value: JsonElement): List<ClaudeSetting> {
             codexWrites += Triple(machineId, key, value)
             return listOf(ClaudeSetting(key, "思考强度", type = "enum", options = listOf("low", "high"), value = value))
+        }
+        val agyWrites = mutableListOf<Triple<String, String, JsonElement>>()
+        override suspend fun agySettings(machineId: String) =
+            listOf(ClaudeSetting("toolPermission", "工具权限", type = "enum", options = listOf("ask", "always-proceed"), value = JsonPrimitive("ask")))
+        override suspend fun setAgySetting(machineId: String, key: String, value: JsonElement): List<ClaudeSetting> {
+            agyWrites += Triple(machineId, key, value)
+            return listOf(ClaudeSetting(key, "工具权限", type = "enum", options = listOf("ask", "always-proceed"), value = value))
         }
         override suspend fun launchers(machineId: String) = emptyList<AgentLauncher>()
         override suspend fun launcherQuota(machineId: String, name: String, refresh: Boolean) = persona.core.contracts.api.LauncherQuotaAnswer()
@@ -168,10 +219,26 @@ class ClaudeSettingsModelTest {
         assertEquals("low", model.state.value.settings.single().stringValue)
     }
 
+    @Test fun agyKindReadsAndWritesAgySettingsOnly() = runBlocking {
+        val api = Api()
+        val model = ClaudeSettingsModel(api, Choices(), AgentSettingsKind.Agy)
+        model.follow(listOf(mac, hub))
+        model.load()
+        assertEquals(0, api.reads)
+        assertEquals("ask", model.state.value.settings.single().stringValue)
+        assertEquals("已应用到 2 台机器", model.set("toolPermission", JsonPrimitive("always-proceed"), listOf(mac, hub))?.resolve(res))
+        assertEquals(listOf("mac", "hub"), api.agyWrites.map { it.first })
+        assertTrue(api.writes.isEmpty())
+        assertTrue(api.codexWrites.isEmpty())
+        assertEquals("always-proceed", model.state.value.settings.single().stringValue)
+    }
+
     @Test fun eachKindHasItsOwnWords() {
         assertEquals("Codex 设置", res.getString(AgentSettingsKind.Codex.title))
         assertEquals("Claude Code 设置", res.getString(AgentSettingsKind.Claude.title))
+        assertEquals("Antigravity 设置", res.getString(AgentSettingsKind.Agy.title))
         assertTrue(res.getString(AgentSettingsKind.Codex.caption).contains("~/.codex/config.toml"))
+        assertTrue(res.getString(AgentSettingsKind.Agy.caption).contains("~/.gemini/antigravity-cli/settings.json"))
     }
 
     @Test fun failuresAreListedPerMachineAndTheTableIsReadAgain() = runBlocking {
@@ -384,5 +451,85 @@ class ModelConfigurationStateTest {
         })
         broken.load()
         assertEquals("读取失败：boom", broken.state.value.error?.resolve(res))
+    }
+
+    /** #5084: the hub's catalog leaves the background supervisor's use out, so the page asks for it by its id. */
+    @Test fun theBackgroundSupervisorsUseIsListedWhenTheHubHasIt() = runBlocking {
+        val supervise = ModelPurpose(BackgroundSupervisor.PURPOSE, "后台督办", "对话与 Agent", parent = "assistant",
+            effective = ModelBinding("launcher.claude", "model-chat"), inheritedFrom = "assistant")
+        var answer: (String) -> ModelPurposeDetail = { ModelPurposeDetail(supervise, providers) }
+        var listed = catalog
+        val asked = mutableListOf<String>()
+        val model = ModelCatalogModel(object : ModelConfiguration {
+            override suspend fun catalog() = listed
+            override suspend fun purpose(id: String): ModelPurposeDetail { asked += id; return answer(id) }
+            override suspend fun save(purpose: ModelPurpose, draft: ModelConfigurationDraft): ModelPurposeSave = throw IllegalStateException()
+            override suspend fun providerModels(provider: String, refresh: Boolean, machine: String?): ProviderModels? = null
+        })
+        fun ids() = model.state.value.catalog?.purposes?.map { it.id }
+        model.load()
+        // after the last use of its group, the hub's order otherwise
+        assertEquals(listOf("agent.new", "assistant", "assistant.supervise", "inbox.triage", "misc"), ids())
+        assertEquals(listOf("assistant.supervise"), asked)
+        assertEquals("claude，model-chat\n跟随 Persona 对话", purposeSubtitle(res, supervise, requireNotNull(model.state.value.catalog)))
+        // a hub without it (404), one that cannot answer, and an answer about another use: the catalog as it is
+        answer = { throw ModelPurposeNotFound("no such purpose") }
+        model.load()
+        assertEquals(catalog.purposes.map { it.id }, ids())
+        answer = { throw HubFailure(HubError.Server, "boom", 500) }
+        model.load()
+        assertEquals(catalog.purposes.map { it.id }, ids())
+        assertNull(model.state.value.error)
+        answer = { ModelPurposeDetail(agent, providers) }
+        model.load()
+        assertEquals(catalog.purposes.map { it.id }, ids())
+        // a hub that lists it itself is not asked, and it is not listed twice
+        asked.clear()
+        listed = catalog.copy(purposes = catalog.purposes + supervise)
+        model.load()
+        assertEquals(listOf("agent.new", "assistant", "inbox.triage", "misc", "assistant.supervise"), ids())
+        assertTrue(asked.isEmpty())
+        // a group no listed use is in: at the end
+        assertEquals(listOf("agent.new", "assistant", "inbox.triage", "misc", "assistant.supervise"),
+            modelPurposesWith(catalog.purposes, supervise.copy(group = "主对话")).map { it.id })
+    }
+
+    /**
+     * #5806: the hub lists the background supervisor's use last of the built-in ones. The page asks for nothing by id
+     * then, and the row is where it was against a hub from before: after the last use of its group.
+     */
+    @Test fun aListedBackgroundSupervisorKeepsItsRowAndIsNotAskedFor() {
+        val supervise = ModelPurpose(BackgroundSupervisor.PURPOSE, "后台督办", "对话与 Agent", parent = "assistant",
+            effective = ModelBinding("launcher.claude", "model-chat"), inheritedFrom = "assistant", description = "跟进没有负责人督办的任务。")
+        fun rows(listed: Boolean, asked: MutableList<String>) = runBlocking {
+            val model = ModelCatalogModel(object : ModelConfiguration {
+                override suspend fun catalog() = if (listed) catalog.copy(purposes = catalog.purposes + supervise) else catalog
+                override suspend fun purpose(id: String): ModelPurposeDetail { asked += id; return ModelPurposeDetail(supervise, providers) }
+                override suspend fun save(purpose: ModelPurpose, draft: ModelConfigurationDraft): ModelPurposeSave = throw IllegalStateException()
+                override suspend fun providerModels(provider: String, refresh: Boolean, machine: String?): ProviderModels? = null
+            })
+            model.load()
+            modelPurposeGroups(res, requireNotNull(model.state.value.catalog).purposes, providers, "").map { (group, uses) -> group to uses.map { it.id } }
+        }
+        val askedByNewHub = mutableListOf<String>()
+        val askedByOldHub = mutableListOf<String>()
+        val listed = rows(listed = true, askedByNewHub)
+        val fetched = rows(listed = false, askedByOldHub)
+        assertTrue(askedByNewHub.isEmpty())
+        assertEquals(listOf(BackgroundSupervisor.PURPOSE), askedByOldHub)
+        assertEquals(listOf("对话与 Agent" to listOf("agent.new", "assistant", "assistant.supervise"), "收件箱" to listOf("inbox.triage"),
+            "其他" to listOf("misc")), listed)
+        assertEquals(fetched, listed)
+    }
+
+    /** #5086: a purpose says what it is for under its name, before what is in effect; one without the sentence reads as before. */
+    @Test fun aRowLeadsWithWhatThePurposeIsFor() {
+        val described = agent.copy(description = "  新建的 Agent 用它。 ")
+        assertEquals("新建的 Agent 用它。\nclaude，model-chat\n跟随 Persona 对话", purposeSubtitle(res, described, catalog))
+        assertEquals(6, purposeSubtitleLines(described))
+        for (plain in listOf(agent, agent.copy(description = ""), agent.copy(description = "  "))) {
+            assertEquals("claude，model-chat\n跟随 Persona 对话", purposeSubtitle(res, plain, catalog))
+            assertEquals(3, purposeSubtitleLines(plain))
+        }
     }
 }

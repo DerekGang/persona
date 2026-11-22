@@ -2,10 +2,11 @@
 import UIKit
 
 /// The home screen icon's long-press menu (#3199): the last conversation opened here (#2191, `RecentChatsStore`), then
-/// Record a Meeting, New Chat and Inbox; the system shows four at most, so Agents is not among them (the tab bar has it).
-/// They only open a page; with no hub paired the app stays on its welcome page. Record a Meeting starts recording too
+/// Record, New Chat and Inbox; the system shows four at most, so Agents is not among them (the tab bar has it).
+/// They only open a page; with no hub paired the app stays on its welcome page. Record starts recording a meeting too
 /// (docs/apple/recording.md「Meeting recordings」), with or without a hub: the text syncs once there is one.
 enum QuickAction: String, CaseIterable {
+    /// The type is the item's identity: kept from when it was called Record a Meeting.
     case meetingRecording = "persona.meeting-recording"
     case newConversation = "persona.new-conversation"
     case inbox = "persona.inbox"
@@ -14,7 +15,7 @@ enum QuickAction: String, CaseIterable {
 
     var item: UIApplicationShortcutItem {
         let (title, symbol): (String, String) = switch self {
-        case .meetingRecording: (String(localized: "Record a Meeting"), Theme.Icon.recording)
+        case .meetingRecording: (MeetingWords.start, Theme.Icon.recording)
         case .newConversation: (String(localized: "New Chat [Quick Actions ea4b29]"), Theme.Icon.compose)
         case .inbox: (String(localized: "Inbox"), Theme.Icon.inbox)
         }
@@ -55,26 +56,54 @@ enum QuickAction: String, CaseIterable {
         case .meetingRecording:
             Task { await MeetingRecorder.shared.startMeeting(inForeground: true) }
         case .newConversation:
-            model.selectedTab = .assistant
-            // As the drawer's New Chat: the shell takes Assistant back to its root (a pushed inbox included), the old tabs only
-            // need the conversation gone.
-            if let shell = model.tabRouter as? ShellState {
-                shell.show(.newConversation)
-                shell.drawer.close()
-            } else {
-                model.assistantCurrent = nil
-            }
+            model.openNewAssistant()
         case .inbox: model.selectedTab = .mail
         }
         return true
     }
 }
 
-/// The scene's delegate only for the menu: a tap while the app runs or is in the background comes here; one that
-/// launched it comes with the scene's connection options. SwiftUI still owns the window.
+@MainActor extension AppModel {
+    /// The home-screen New Chat action's navigation, shared with the dictate control.
+    func openNewAssistant() {
+        noteNewAssistantChat()
+        selectedTab = .assistant
+        // As the drawer's New Chat: either router takes Assistant back to its root (a pushed inbox included); without
+        // one yet, the cold launch only needs the conversation gone.
+        if let router = tabRouter {
+            router.show(.newConversation)
+            (router as? ShellState)?.drawer.close()
+        } else {
+            assistantCurrent = nil
+        }
+    }
+
+    /// Clear the old conversation before the first view can run, so a cold launch keeps the control's new conversation.
+    func openNewAssistantForDictation() {
+        assistantCurrent = nil
+        dictationRequest = DictationRequest()
+        #if DEBUG
+        ShellTrace.shared.note("dictation request installed")
+        #endif
+        openNewAssistant()
+    }
+}
+
+/// The scene's delegate for the menu and for a redial from the Phone app's Recents (#9290): a tap while the app runs or
+/// is in the background comes here; one that launched it comes with the scene's connection options. SwiftUI still owns
+/// the window.
 final class QuickActionSceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         if let item = connectionOptions.shortcutItem { Task { @MainActor in QuickAction.perform(item) } }
+        // Recents launched the app to call back: the call waits for the hubs (`PersonaCalls.callPersona`).
+        for activity in connectionOptions.userActivities where PersonaCalls.isCall(activity) {
+            Task { @MainActor in PersonaCalls.shared.continueActivity(activity) }
+        }
+    }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        guard PersonaCalls.isCall(userActivity) else { return }
+        Task { @MainActor in PersonaCalls.shared.continueActivity(userActivity) }
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,

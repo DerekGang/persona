@@ -19,6 +19,30 @@ import org.junit.Test
 class CompleteSessionsFollowTest {
     private val complete = SessionListFilter(requiresCompleteMembership = true)
 
+    @Test fun onlyChangedHeldDecisionsInManagerDeltasReachTheReceiptBeforeTheRowIsPublished() = runTest {
+        val hub = JournalHub(0)
+        val failed = HeldAgentMessage("kept", state = "failed", error = "Not sent", computer = "Demo Mac")
+        val session = Session("demo", "chat", undelivered = listOf(failed))
+        hub.add(session)
+        val connection = Connection()
+        val transitions = mutableListOf<Pair<String, String>>()
+        lateinit var repository: HubSessionsRepository
+        repository = HubSessionsRepository(hub, connection, backgroundScope, reconcileHeldRetries = { previous, next ->
+            assertEquals(previous, repository.sessions.value.single())
+            transitions += previous.undelivered!!.single().state to next.undelivered!!.single().state
+        })
+        connection.events.emit(Hello(features = listOf("sessions_list")))
+        repository.setListFilter(complete)
+        connection.state.value = ConnectionState.Online
+        runCurrent()
+        for (row in listOf(failed, failed.copy(state = "waiting", error = "Sending…"), failed)) {
+            hub.add(session.copy(undelivered = listOf(row), rev = (hub.deltaReads + 1).toLong()))
+            connection.events.emit(SessionsListEvent(hub.revision()))
+            advanceTimeBy(250); runCurrent()
+        }
+        assertEquals(listOf("failed" to "waiting", "waiting" to "failed"), transitions)
+    }
+
     @Test fun aMinuteOfHintsReadsOneBaselineAndThenOnlyChanges() = runTest {
         val hub = JournalHub(1000)
         val connection = Connection()
@@ -110,6 +134,35 @@ class CompleteSessionsFollowTest {
         assertEquals("t1", repository.sessions.value.single { it.sessionId == "session/3" }.title)
     }
 
+    @Test fun supersededFirstReadDoesNotStopApplyingTheFilterToOtherHubs() = runTest {
+        val legacyReadStarted = CompletableDeferred<Unit>()
+        val firstHub = JournalHub(1) {
+            legacyReadStarted.complete(Unit)
+            awaitCancellation()
+        }
+        val firstConnection = Connection()
+        val firstRepository = HubSessionsRepository(firstHub, firstConnection, backgroundScope)
+        val secondHub = JournalHub(2)
+        val hello = Hello(features = listOf("sessions_list"))
+        val secondConnection = Connection().apply { lastHello = hello }
+        val secondRepository = HubSessionsRepository(secondHub, secondConnection, backgroundScope)
+        val applied = async {
+            firstRepository.setListFilter(complete)
+            secondRepository.setListFilter(complete)
+        }
+
+        legacyReadStarted.await()
+        firstConnection.events.emit(hello)
+        applied.await()
+        assertEquals(secondHub.rows.values.toList(), secondRepository.sessions.value)
+
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(1, firstHub.baselines)
+        assertEquals(firstHub.rows.values.toList(), firstRepository.sessions.value)
+        assertTrue(firstRepository.listStatus.value.loaded)
+    }
+
     private class Connection : HubConnection {
         override val state = MutableStateFlow(ConnectionState.WaitingForNetwork)
         override val events = MutableSharedFlow<ServerEvent>()
@@ -120,7 +173,7 @@ class CompleteSessionsFollowTest {
     }
 
     /** A hub's complete collection with a small delta journal (`since`) and read counters. */
-    private class JournalHub(count: Int) : ChatTransport {
+    private class JournalHub(count: Int, private val beforeLegacyRead: suspend () -> Unit = {}) : ChatTransport {
         val rows = linkedMapOf<SessionKey, Session>()
         private val changedAt = mutableMapOf<SessionKey, Int>()
         private var epoch = 0
@@ -159,7 +212,11 @@ class CompleteSessionsFollowTest {
         }
         override suspend fun sessionCounts(filter: SessionListFilter): SessionListCounts = error("Counts are local in the complete view")
         override suspend fun machines(): List<Machine> { machineReads++; return listOf(Machine("demo", online = true)) }
-        override suspend fun sessions(): List<Session> { legacyReads++; return rows.values.toList() }
+        override suspend fun sessions(): List<Session> {
+            legacyReads++
+            beforeLegacyRead()
+            return rows.values.toList()
+        }
         override suspend fun items(session: SessionKey, query: ItemsQuery): ItemsResponse = error("Unexpected items")
         override suspend fun interactions() = emptyList<Interaction>()
         override suspend fun resolve(id: String, resolution: Resolution) = Unit

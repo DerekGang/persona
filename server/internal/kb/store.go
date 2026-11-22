@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/nwverse/persona/server/internal/kbwire"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 )
@@ -48,7 +49,10 @@ type Tagging struct {
 	LockedFields []string `json:"locked_fields,omitempty"`
 	// Provenance: the extension holding a locked field (attribution.go); without an entry a locked field is the user's.
 	Provenance map[string]Provenance `json:"provenance,omitempty"`
-	persisted  bool
+	// Excluded: links the user removed by hand, by list ("people", "chats", "projects", "items") and the id that list
+	// named: automatic writes leave them out while the rest of the list keeps changing (exclude.go).
+	Excluded  map[string][]string `json:"excluded,omitempty"`
+	persisted bool
 }
 
 // Chat is one conversation: a Feishu chat (lark-<feedId>) or the mail exchanged with one address (mail-<account>-<addr>).
@@ -88,7 +92,16 @@ type Chat struct {
 	// Compressions that failed in a row, and when the next try is due (compress.go compressFailed).
 	CompressFailures int       `json:"compress_failures,omitempty"`
 	CompressRetryAt  time.Time `json:"compress_retry_at,omitzero"`
+
+	// State is where the conversation stands at its source (kbwire.ChatOpen, ChatMerged, ChatClosed; "" none
+	// reported) and StateAt since when, as Ingest last recorded them (#9427): the source's fact, never the model's.
+	State     string    `json:"state,omitempty"`
+	StateAt   time.Time `json:"state_at,omitzero"`
+	SourceURL string    `json:"source_url,omitempty"`
 }
+
+// Ended reports whether the conversation has ended at its source (a pull request merged or closed, an issue closed).
+func (c *Chat) Ended() bool { return kbwire.ChatEnded(c.State) }
 
 // Person is someone the owner talks to: lark-<userId> or mail-<address>.
 type Person struct {
@@ -116,19 +129,24 @@ type Project struct {
 	Aliases    []string `json:"aliases,omitempty"`
 	Goal       string   `json:"goal,omitempty"`
 	MyRole     string   `json:"my_role,omitempty"`
+	Note       string   `json:"note,omitempty"`
 	People     []string `json:"people,omitempty"`
 	Chats      []string `json:"chats,omitempty"`
 	Items      []string `json:"items,omitempty"` // "<kind>/<id>" of docs, meetings, events
 	Dirs       []string `json:"dirs,omitempty"`  // code directories ("<machine>:<path>"): Agents working there belong to it
 	// Keywords: words the project goes by in public talk (product, feature names), from the project rewrite; what
 	// finds its Moments posts. Moments are the posts the model judged to be about it (LinkMoments).
-	Keywords []string        `json:"keywords,omitempty"`
-	Moments  []ProjectMoment `json:"moments,omitempty"`
-	Merge    *ProjectMerge   `json:"merge,omitempty"` // merged projects: what the merge gave MergedInto, for unmerge
-	Dirty    bool            `json:"dirty,omitempty"` // has news its summary does not reflect yet
-	OneLine  string          `json:"one_line,omitempty"`
-	Created  time.Time       `json:"created"`
-	Updated  time.Time       `json:"updated"`
+	Keywords           []string                      `json:"keywords,omitempty"`
+	Moments            []ProjectMoment               `json:"moments,omitempty"`
+	Merge              *ProjectMerge                 `json:"merge,omitempty"` // merged projects: what the merge gave MergedInto, for unmerge
+	Dirty              bool                          `json:"dirty,omitempty"` // has news its summary does not reflect yet
+	OneLine            string                        `json:"one_line,omitempty"`
+	Mode               string                        `json:"project_mode,omitempty"`
+	SourceURLs         []string                      `json:"source_urls,omitempty"`
+	FieldCoverage      map[string]projectFieldRecord `json:"field_coverage,omitempty"`
+	OneLineNeedsReview bool                          `json:"one_line_needs_summary_review,omitempty"`
+	Created            time.Time                     `json:"created"`
+	Updated            time.Time                     `json:"updated"`
 	Tagging
 }
 
@@ -162,6 +180,17 @@ type ProjectMerge struct {
 	Pinned *string `json:"pinned,omitempty"`
 	// Locks: the kept project's locks before a manual merge added this one's; unset when it did not change them.
 	Locks *MergeLocks `json:"locks,omitempty"`
+	// Excluded: the links the user had removed from this project that the merge kept off the kept project too, by
+	// list (exclude.go); an unmerge lets them back there.
+	Excluded map[string][]string `json:"excluded,omitempty"`
+}
+
+// exclude records that the merge kept id out of the kept project's list.
+func (m *ProjectMerge) exclude(list, id string) {
+	if m.Excluded == nil {
+		m.Excluded = map[string][]string{}
+	}
+	m.Excluded[list] = addUnique(m.Excluded[list], id)
 }
 
 // MergeLocks are a project's locked_fields and legacy locked.
@@ -197,10 +226,14 @@ type Store struct {
 	metaMu   sync.Mutex // acquire before mu when both are needed (projectInput reads Log under metaMu)
 	applyMu  sync.Mutex
 
-	recMu             sync.Mutex                 // a recording's read-compare-write (recordings.go)
-	recFilesMu        sync.RWMutex               // acquire before metaMu for recording snapshots and recovery
-	liveMu            sync.Mutex                 // a live log's read-modify-write (live.go); after recMu, before recFilesMu
-	meetMu            sync.Mutex                 // meeting.json's read-modify-write (meeting.go); after recMu, before liveMu
+	recMu      sync.Mutex   // a recording's read-compare-write (recordings.go)
+	recFilesMu sync.RWMutex // acquire before metaMu for recording snapshots and recovery
+	liveMu     sync.Mutex   // a live log's read-modify-write (live.go); after recMu, before recFilesMu
+	meetMu     sync.Mutex   // meeting.json's read-modify-write (meeting.go); after recMu, before liveMu
+	// audioMapMu guards audioRecs, hub-mode recordings' audio state (recording_audio.go); a leaf lock. Each one's own
+	// mutex comes after liveMu and before recFilesMu.
+	audioMapMu        sync.Mutex
+	audioRecs         map[string]*audioRec
 	recordingWrite    func(string, []byte) error // per-store candidate fault injection
 	recordingReadWait func()                     // per-store read-entry observation for concurrency tests
 	recordingRemove   func(string) error         // per-store commit fault injection
@@ -226,6 +259,8 @@ type Store struct {
 	settled string
 	// ingestWrite is a per-store failure-injection seam; nil uses fsync and atomic replacement.
 	ingestWrite func(string, []byte) error
+	// search is the search index over the files (search_index.go): its own locks, leaves.
+	search searchIndex
 }
 
 func NewStore(dir string) (*Store, error) {
@@ -462,9 +497,15 @@ func (s *Store) AppendLog(slug string, at time.Time, source, line string) (err e
 	if s.readOnly {
 		return ErrReadOnly
 	}
+	s.metaMu.Lock()
+	if err := s.checkProjectDetailWrite(slug, "log"); err != nil {
+		s.metaMu.Unlock()
+		return err
+	}
 	s.mu.Lock()
 	defer func() {
 		s.mu.Unlock()
+		s.metaMu.Unlock()
 		if err == nil {
 			s.notify(KindProject, slug, "log")
 		}

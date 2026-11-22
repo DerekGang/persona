@@ -573,9 +573,9 @@ transcription and library path, and a rule for replacing partial text in place. 
    **below a gap marker** ("Transcribing the last N s") in arrival order, and never between transcribed sentences. When the
    segment lands, its sentences arrive as one group above the marker, the marker's items re-sort by time, and the marker moves or
    goes. The group animates once with `reveal`. While the reader is detached the scroll position is anchored to the row at the top
-   of the viewport (`scrollPosition` by id), and the "N new" count counts items inserted below that anchor. Sentences spoken by
-   Persona itself are filtered out (`attendance.spokenBy`), so a row can disappear after appearing; this is accepted and not animated
-   under the finger.
+   of the viewport (`scrollPosition` by id), and the "N new" count counts items inserted below that anchor. Persona's echo
+   (a sentence that overlaps a stretch it spoke in and says its answer's words, `attendance.echo`, #5905) is filtered out, so a row can
+   disappear after appearing; this is accepted and not animated under the finger.
 6. The follow and unread logic are a pure function with unit tests (section 15).
 7. VoiceOver: transcript lines are an ordinary readable list and are not announced one by one; arriving Persona answers and state
    changes are (section 11).
@@ -738,7 +738,7 @@ minutes ready. It needs DEBUG-only members on `RecordingCapture` (a sample level
 flag, the expected segments and calls `onStopping` and `onSaved`), listed in the PR (section 1, exception 3). The user's real Stop
 button cannot drive the flow without a writer. Ask is shown through the existing `answered` samples, which bypass the hub: with no writer
 `MeetingAsk`'s heard and flush hooks do nothing, so a live ask through the mock hub is not part of `flow`. A launch argument name never equals a Swift identifier
-and is added to `scripts/release/release.sh` where the strings check asks.
+and is added to `scripts/release/debug_switches.txt`, the list the release's strings check reads.
 
 **Screenshots and video, light and dark, default and the largest accessibility size, on a simulator booted by `scripts/app/sim-boot.sh`:**
 idle, preparing, live (recording, paused, paused by a call, Persona listening, taking part, an answer), Jump to Latest, the Stop

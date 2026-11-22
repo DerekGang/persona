@@ -8,11 +8,16 @@ import { parseUserText, tagAttrs, type AttachedFile } from "./turns";
 /** The order to re-queue in when message `index` moves `by` places (−1 up, +1 down; #6088): every message, that one moved.
  *  Null when it cannot move that way. */
 export function moved(count: number, index: number, by: number): number[] | null {
-  const to = index + by;
-  if (index < 0 || index >= count || to < 0 || to >= count || by === 0) return null;
+  return by === 0 ? null : movedTo(count, index, index + by);
+}
+
+/** The order to re-queue in when message `from` is put at place `to` (the queue's drag handle, dragged or ↑ ↓ Home End;
+ *  #5327): every message, that one moved, the others in their order. Null when it stays or either place is outside. */
+export function movedTo(count: number, from: number, to: number): number[] | null {
+  if (from === to || from < 0 || from >= count || to < 0 || to >= count) return null;
   const order = Array.from({ length: count }, (_, i) => i);
-  order.splice(index, 1);
-  order.splice(to, 0, index);
+  order.splice(from, 1);
+  order.splice(to, 0, from);
   return order;
 }
 
@@ -32,6 +37,23 @@ export function sameMessage(a: string, b: string): boolean {
     y = normalize(b);
   if (!x || !y) return false;
   return x === y || (Math.min([...x].length, [...y].length) >= 8 && (x.includes(y) || y.includes(x)));
+}
+
+/** Pair each photo-only queue row with at most one local pending message, in order. Claude includes saved paths;
+ *  runtimes that keep photos separately can publish an empty string instead. Indexes distinguish identical rows. */
+export function pairPhotoOnly(queued: string[], pending: { text: string; images: number; carries?: boolean }[]): Map<number, number> {
+  const pairs = new Map<number, number>();
+  const taken = new Set<number>();
+  for (const [index, raw] of queued.entries()) {
+    const q = parseQueued(raw);
+    if (q.text || q.files.length || q.contexts.length || (raw !== "" && q.photos.length === 0)) continue;
+    const i = pending.findIndex((p, k) => !taken.has(k) && !p.carries && !normalize(p.text) &&
+      (raw === "" ? p.images > 0 : p.images === q.photos.length));
+    if (i < 0) continue;
+    taken.add(i);
+    pairs.set(index, i);
+  }
+  return pairs;
 }
 
 /** A queued message read apart (#3032): Claude Code's queue holds only text, so what a message carried rides in it. */
@@ -93,6 +115,7 @@ export function parseQueued(raw: string, photosBeside = 0): QueuedParts {
   const contexts: QueuedContext[] = [];
   let rest = raw.replace(CONTEXT_RE, (_, attrs: string, body: string) => {
     const { kind = "context", title = "", url = "", ...extra } = tagAttrs(attrs);
+    if (kind === "skill-instructions") return "";
     contexts.push({ kind, title, url, text: body.trim(), ...(Object.keys(extra).length ? { attrs: extra } : {}) });
     return "";
   });
@@ -107,7 +130,8 @@ function isStandIn(text: string): boolean {
   return STAND_INS.includes(s) || s === t("lib-links.see_images") || s === t("lib-links.see_context");
 }
 
-/** What a pulled-back message puts in the box: its words, then each file's path, as this composer sends a file. */
+/** What a pulled-back message puts in the box: its words, then the path of each file that did not go back to its tile
+ *  (lib/composer-files.ts restoreFiles). */
 export function queuedDraft(p: Pick<QueuedParts, "text" | "files">): string {
   return [p.text, ...p.files.map((f) => quotePath(f.path))].filter(Boolean).join(" ");
 }

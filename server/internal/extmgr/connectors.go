@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -46,7 +47,8 @@ func (h *Manager) builtinTools() []string {
 	return names
 }
 
-// connectorChanged is a connector's realtime event: collect the inbox or archive soon.
+// connectorChanged is a connector's realtime event: collect the inbox or archive soon, and run the subscriptions that
+// read it (#6247), in the background: the event's caller never waits on their store.
 func (h *Manager) connectorChanged(id string, scope connector.Scope) {
 	switch scope {
 	case connector.ScopeInbox:
@@ -54,11 +56,22 @@ func (h *Manager) connectorChanged(id string, scope connector.Scope) {
 	case connector.ScopeChats, connector.ScopeItems:
 		h.kbKick(id, scope)
 	}
+	if subs := h.subsLive.Load(); subs != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), subscriptionKickWait)
+			defer cancel()
+			subs.ConnectorChanged(ctx, id)
+		}()
+	}
 }
+
+// subscriptionKickWait bounds how long a changed event's look at the subscriptions may take.
+const subscriptionKickWait = 10 * time.Second
 
 // callConnector runs a connector's tool for an agent or assistant conversation (by: none when the user acts in a
 // connector's thread); a write the gate leaves to the user is asked on the phone like mail_send, in that conversation.
 func (h *Manager) callConnector(ctx context.Context, by asker, name string, args json.RawMessage) proto.ToolResult {
+	h.requestLarkCLIRecovery(ctx)
 	if inHealth(h.askerCwd(by)) { // a health conversation's writes: on the phone each time (assistant.go inHealth)
 		ctx = connector.ConfirmEach(ctx)
 	}
@@ -121,7 +134,7 @@ func (h *Manager) connectorRoutes(api *http.ServeMux) {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	// Settings › Connectors' switch: off, the connector stops and brings nothing in (Registry.SetEnabled); kept in
-	// settings.
+	// settings. An extension's connector restarts the extension (setConnectorEnabled).
 	api.HandleFunc("PUT /api/v1/connectors/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if h.connectors.Get(id) == nil {
@@ -235,6 +248,7 @@ func (h *Manager) forgetSource(ctx context.Context, source string) (sourceForgot
 	var kerr, ierr error
 	out.KBForgotten, kerr = h.forgetArchive(ctx, source)
 	out.Inbox, ierr = h.forgetInbox(ctx, source)
+	h.avatars.Drop(source) // the pictures its rows and pages showed
 	err := errors.Join(kerr, ierr)
 	h.auditConnector(ctx, source, auditConnectorDataDeleted, forgotten(map[string]any{"chats": out.Chats, "people": out.People, "posts": out.Posts, "items": out.Items, "inbox": out.Inbox}, err))
 	return out, err
@@ -278,9 +292,15 @@ func writeForgetErr(w http.ResponseWriter, err error) {
 }
 
 // withQR draws a QR step's code for the app (whatever the connector sent as QR is replaced: the code is always URL's).
+// A device-code step whose URL already carries its code (`user_code=` in the query, as Lark's does) gets one too, so
+// the phone can scan it instead of the code being typed (#5818); one whose page asks for the code (GitHub's) does not.
 func withQR(p *connector.Prompt) error {
 	p.QR = nil
-	if p.Kind != connector.PromptQRCode {
+	if p.Kind == connector.PromptDeviceCode {
+		if !urlCarriesCode(p.URL, p.UserCode) {
+			return nil
+		}
+	} else if p.Kind != connector.PromptQRCode {
 		return nil
 	}
 	if p.URL == "" {
@@ -292,6 +312,15 @@ func withQR(p *connector.Prompt) error {
 	}
 	p.QR = &connector.QRCode{Size: size, Rows: rows}
 	return nil
+}
+
+// urlCarriesCode: raw is an https URL whose query's user_code is code, so opening it needs nothing typed.
+func urlCarriesCode(raw, code string) bool {
+	if code == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.Query().Get("user_code") == code
 }
 
 // connectorLogin is connector id's sign-in, or writes why there is none.
@@ -344,6 +373,18 @@ func (h *Manager) setConnectorOptions(ctx context.Context, id string, raw json.R
 
 // applyConnectorOptions is setConnectorOptions without the mutes.
 func (h *Manager) applyConnectorOptions(ctx context.Context, id string, raw json.RawMessage) error {
+	if id == "larkcli" && h.larkCLIRecovery.preferencesUnread.Load() {
+		h.requestLarkCLIRecovery(ctx)
+		return errBotSettingsUnread
+	}
+
+	if id == "larkcli" {
+		h.larkCLIRefreshMu.Lock()
+		defer h.larkCLIRefreshMu.Unlock()
+		if h.larkCLIRecovery.preferencesUnread.Load() {
+			return errBotSettingsUnread
+		}
+	}
 	o, ok := connector.As[connector.Options](h.connectors.Get(id))
 	if !ok {
 		return fmt.Errorf("%s has no settings", id)
@@ -368,8 +409,23 @@ func (h *Manager) applyConnectorOptions(ctx context.Context, id string, raw json
 	return nil
 }
 
-// setConnectorEnabled switches a connector and keeps the choice for the next start.
+// setConnectorEnabled switches a connector and keeps the choice for the next start. A switch that changes an
+// extension's connector restarts that extension (connectorSwitched): its program learns which connectors are on only
+// at initialize.
 func (h *Manager) setConnectorEnabled(ctx context.Context, id string, on bool) error {
+	if id == "larkcli" && h.larkCLIRecovery.preferencesUnread.Load() {
+		h.requestLarkCLIRecovery(ctx)
+		return errBotSettingsUnread
+	}
+
+	if id == "larkcli" {
+		h.larkCLIRefreshMu.Lock()
+		defer h.larkCLIRefreshMu.Unlock()
+		if h.larkCLIRecovery.preferencesUnread.Load() {
+			return errBotSettingsUnread
+		}
+	}
+
 	h.kbPostsMu.Lock()
 	was := h.connectors.Enabled(id)
 	err := h.connectors.SetEnabled(id, on)
@@ -383,23 +439,43 @@ func (h *Manager) setConnectorEnabled(ctx context.Context, id string, on bool) e
 	if was != on {
 		h.auditConnector(ctx, id, auditConnectorEnabled, map[string]any{"enabled": on})
 	}
-	if h.store == nil {
-		return nil
+	if h.store != nil {
+		var cs connectorSettings
+		if _, err := h.store.Setting(ctx, connectorSettingsKey, &cs); err != nil {
+			return err
+		}
+		if cs.Switch == nil {
+			cs.Switch = map[string]bool{}
+		}
+		cs.Switch[id] = on
+		if err := h.store.PutSetting(ctx, connectorSettingsKey, cs); err != nil {
+			return err
+		}
 	}
-	var cs connectorSettings
-	if _, err := h.store.Setting(ctx, connectorSettingsKey, &cs); err != nil {
-		return err
+	if was != on {
+		// After the choice is kept: the restart registers the connector again with the switch it reads from there
+		// (addExtensionConnector).
+		h.extensions.connectorSwitched(ctx, id, on)
 	}
-	if cs.Switch == nil {
-		cs.Switch = map[string]bool{}
-	}
-	cs.Switch[id] = on
-	return h.store.PutSetting(ctx, connectorSettingsKey, cs)
+	return nil
 }
 
 // setConnectorFeed turns one of a connector's feeds on or off and keeps the choice for the next start; turned on, the
 // inbox or the archive goes again soon.
 func (h *Manager) setConnectorFeed(ctx context.Context, id string, f connector.Feed, on bool) error {
+	if id == "larkcli" && h.larkCLIRecovery.preferencesUnread.Load() {
+		h.requestLarkCLIRecovery(ctx)
+		return errBotSettingsUnread
+	}
+
+	if id == "larkcli" {
+		h.larkCLIRefreshMu.Lock()
+		defer h.larkCLIRefreshMu.Unlock()
+		if h.larkCLIRecovery.preferencesUnread.Load() {
+			return errBotSettingsUnread
+		}
+	}
+
 	h.kbPostsMu.Lock()
 	was := h.connectors.Feeds(id, f)
 	err := h.connectors.SetFeed(id, f, on)
@@ -425,6 +501,9 @@ func (h *Manager) setConnectorFeed(ctx context.Context, id string, f connector.F
 		}
 	}
 	if on && f == connector.FeedInbox {
+		if c := h.connectors.Get(id); c != nil && c.Manifest().InboxSwitch {
+			h.inbox.owed.Store(true) // mail is read on a full round: the next one is that (inboxLoop)
+		}
 		h.kickInbox()
 	} else if on {
 		h.kbKick(id, connector.ScopeChats)
@@ -435,19 +514,42 @@ func (h *Manager) setConnectorFeed(ctx context.Context, id string, f connector.F
 // restoreConnectorSwitches applies the user's switches before the connectors start. One the user never switched is
 // on, unless it was added to start off (addConnectorOff: a built-in plugin's waits for the user to turn it on).
 func (h *Manager) restoreConnectorSwitches(ctx context.Context) {
-	cs := h.connectorSettings(ctx)
+	cs, err := h.readConnectorSettings(ctx)
+	if err != nil {
+		h.logf("connectors: settings: %v", err)
+	}
 	for _, c := range h.connectors.All() {
+		if c.ID() == "larkcli" {
+			h.larkCLIRecovery.preferencesUnread.Store(err != nil)
+			if err != nil {
+				h.deferLarkCLIRecovery()
+				_ = h.connectors.SetEnabled(c.ID(), false)
+				_ = h.connectors.SetFeed(c.ID(), connector.FeedInbox, false)
+				continue
+			}
+		}
 		h.restoreSwitchesOf(c, cs)
 	}
 }
 
-// connectorSettings are the user's connector switches and settings.
-func (h *Manager) connectorSettings(ctx context.Context) connectorSettings {
+// readConnectorSettings distinguishes missing/default preferences from an unread
+// record. Decode only into a temporary value and bound database I/O.
+func (h *Manager) readConnectorSettings(ctx context.Context) (connectorSettings, error) {
 	var cs connectorSettings
 	if h.store != nil {
-		if _, err := h.store.Setting(ctx, connectorSettingsKey, &cs); err != nil {
-			h.logf("connectors: settings: %v", err)
+		readCtx, cancel := context.WithTimeout(ctx, botSettingsReadTimeout)
+		defer cancel()
+		if _, err := h.store.Setting(readCtx, connectorSettingsKey, &cs); err != nil {
+			return connectorSettings{}, err
 		}
+	}
+	return cs, nil
+}
+
+func (h *Manager) connectorSettings(ctx context.Context) connectorSettings {
+	cs, err := h.readConnectorSettings(ctx)
+	if err != nil {
+		h.logf("connectors: settings: %v", err)
 	}
 	return cs
 }
@@ -555,6 +657,13 @@ func (s connectorSecrets) Delete(ctx context.Context) error {
 
 // startConnectors registers the connectors, applies the user's switches and runs them.
 func (h *Manager) startConnectors(ctx context.Context) {
+	// Recovery cannot replace the placeholder until options and switches have
+	// been restored, before Registry.Start can launch its watchers.
+	h.larkCLIRefreshMu.Lock()
+	defer func() { h.larkCLIRefreshMu.Unlock(); h.requestLarkCLIRecovery(ctx) }()
+	if h.cfg.Lark.CLI != nil {
+		h.larkCLIRecovery.preferencesUnread.Store(true)
+	}
 	h.registerConnectors()
 	h.attachExtensions(ctx) // the plugins' connectors, after the hub's own: those ids are taken
 	h.migrateIMessage(ctx)  // manager.json's imessage.machine into Settings › Extensions › Messages, once (imessage_extension.go)
@@ -584,7 +693,7 @@ func (h *Manager) registerConnectors() {
 	if gh.Configured() {
 		name := gh.Auth.FromMachine
 		if m := h.localMachine(name); m != nil {
-			name = m.cfg.Name
+			name = m.name()
 		}
 		ghc = github.New(gh, name, h.ghToken(gh.Auth.FromMachine))
 	} else {
@@ -598,6 +707,9 @@ func (h *Manager) registerConnectors() {
 	// is deliberately absent when lark.cli is unset, preserving existing hubs.
 	if h.cfg.Lark.CLI != nil {
 		if err := h.syncLarkCLIProfile(context.Background()); err != nil {
+			if !errors.Is(err, errBotSettingsUnread) {
+				h.deferLarkCLIRecovery()
+			}
 			h.logf("larkcli profile sync: %v", err)
 		}
 		lc := h.newLarkCLIConnector(h.effectiveLarkCLIProfile(context.Background()))
@@ -631,7 +743,7 @@ func (h *Manager) ghToken(machine string) github.TokenSource {
 		case errors.As(err, &re) && re.Code == proto.CodeNotSignedIn:
 			return "", github.ErrNotSignedIn
 		case err != nil:
-			return "", fmt.Errorf("%s: %s", m.cfg.Name, github.Scrub(err.Error()))
+			return "", fmt.Errorf("%s: %s", m.name(), github.Scrub(err.Error()))
 		case out.Token == "":
 			return "", github.ErrNotSignedIn
 		}

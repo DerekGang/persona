@@ -61,6 +61,9 @@ func launcherHealthHub(t *testing.T) (*Service, *fakeHub) {
 // with no database the model settings stay as it is, so tasks name the launcher).
 func launcherHealthHubOn(t *testing.T, mk func(*testing.T, *fakeHub) *Service) (*Service, *fakeHub) {
 	t.Helper()
+	wasStagger := healthStagger
+	healthStagger = 40 * time.Millisecond // the real one would add half a minute to every round here
+	t.Cleanup(func() { healthStagger = wasStagger })
 	f := newFakeHub().withMachine()
 	f.sessions["l4"], f.sessions["box"] = nil, nil
 	f.devices = []Device{
@@ -283,6 +286,54 @@ func TestPickerKeepsTheConfiguredDefaultWithItsReason(t *testing.T) {
 	}
 }
 
+// The machines are checked spaces apart (healthStagger): every one runs the same probe prompt, and a model gateway
+// that pins it to one upstream account serves a burst of them behind one another until each times out.
+func TestLauncherHealthStaggersMachines(t *testing.T) {
+	s, f := launcherHealthHub(t)
+	healthStagger = 150 * time.Millisecond
+	s.healthRound(context.Background(), true)
+	if len(f.checkedAt) != 3 {
+		t.Fatalf("checked %v", f.checked)
+	}
+	for i := 1; i < len(f.checkedAt); i++ {
+		if gap := f.checkedAt[i].Sub(f.checkedAt[i-1]); gap < 120*time.Millisecond { // a little under for waking from the timer
+			t.Fatalf("checks %d and %d only %v apart; the machines are not staggered (%v)", i-1, i, gap, f.checked)
+		}
+	}
+}
+
+// A check that times out is asked once more at once: a gateway can leave one request silent while the account
+// answers the next. Only a second timeout in a row is recorded; other errors are recorded without a second check.
+func TestLauncherHealthRetriesATimeoutOnce(t *testing.T) {
+	s, f := launcherHealthHub(t)
+	f.checks["server/work"] = proto.LauncherCheck{Error: "90 秒内没有回答；signal: killed"} // answers the next time
+	f.checks["box/work"] = proto.LauncherCheck{Error: "90 秒内没有回答"}                   // silent twice
+	f.onCheck = func(f *fakeHub) {
+		if n := len(f.checked); n > 0 && f.checked[n-1] == "server/work" && slices.Contains(f.checked[:n-1], "server/work") {
+			delete(f.checks, "server/work")
+		}
+	}
+	s.healthRound(context.Background(), true)
+	count := func(key string) int {
+		n := 0
+		for _, c := range f.checked {
+			if c == key {
+				n++
+			}
+		}
+		return n
+	}
+	if r := healthState(s, "server", "work"); r.State != healthOK || r.Fails != 0 || count("server/work") != 2 {
+		t.Fatalf("server: %+v after %d checks (%v)", r, count("server/work"), f.checked)
+	}
+	if r := healthState(s, "box", "work"); r.State != healthFailing || r.Kind != errKindTimeout || r.Fails != 1 || count("box/work") != 2 {
+		t.Fatalf("box: %+v after %d checks (%v)", r, count("box/work"), f.checked)
+	}
+	if r := healthState(s, "l4", "work"); r.Kind != errKindModelRoute || count("l4/work") != 1 {
+		t.Fatalf("l4: %+v after %d checks (%v)", r, count("l4/work"), f.checked)
+	}
+}
+
 // Off unless hub.json turns it on: no checks, no repairs; a failed start still counts.
 func TestLauncherHealthOffByDefault(t *testing.T) {
 	s, f := launcherHealthHub(t)
@@ -420,6 +471,27 @@ func TestLauncherHealthMovesPlannedTasks(t *testing.T) {
 	}
 }
 
+func TestAgentStartDetourRecomputesLauncherPermission(t *testing.T) {
+	s, f := launcherHealthHub(t)
+	f.zshrc = map[string][]proto.Launcher{
+		"l4":     {{Name: "work", Agent: "claude"}},
+		"server": {{Name: "work", Agent: "codex"}},
+		"box":    {{Name: "work", Agent: "claude"}},
+	}
+	ctx := context.Background()
+	s.healthRound(ctx, true) // l4/work is blocked, so the start moves to box.
+	res, err := s.runTool(ctx, "server", "conv9", "agent_start", json.RawMessage(`{"machine":"l4","cwd":"/home/me/code/app","prompt":"修 CI"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res, "runs on server instead") || len(f.starts) != 1 {
+		t.Fatalf("start was not detoured: %v, %s", f.starts, res)
+	}
+	if got := f.starts[0]["permission_mode"]; got != nil {
+		t.Fatalf("detour to Codex inherited Claude permission %v", got)
+	}
+}
+
 // A start aimed at a machine whose launcher has a failing record probes that machine once on the spot: when the
 // launcher works now (fixed since the record), the record is cleared and the start stays on the asked machine (#2018).
 func TestLauncherHealthRecheckClearsStaleRecord(t *testing.T) {
@@ -502,8 +574,8 @@ func TestLauncherHealthRecheckThrottleAndFailure(t *testing.T) {
 	}
 }
 
-// Records a probe cannot settle are not rechecked on the spot: a subscription usage limit (the request would be
-// refused too) and a launcher missing from the terminal's shell (the probe's login shell runs it fine).
+// A fresh usage limit waits for the recheck throttle (TestUsageLimitRuleUnknownResetIsRechecked: after it); a
+// launcher missing from the terminal's shell cannot be rechecked in the probe's login shell, where it runs fine.
 func TestLauncherHealthRecheckSkipsSpecialRecords(t *testing.T) {
 	s, f := launcherHealthHub(t)
 	ctx := context.Background()

@@ -33,7 +33,10 @@ private class PinnedExtensionManagement(val source: ExtensionManagement, private
     override suspend fun triageTemplates() = withContext(pins) { source.triageTemplates() }
     override suspend fun setConfig(id: String, config: JsonObject) = withContext(pins) { source.setConfig(id, config) }
     override suspend fun setSecret(id: String, name: String, value: String) = withContext(pins) { source.setSecret(id, name, value) }
+    override suspend fun setSecretReference(id: String, name: String, reference: String) =
+        withContext(pins) { source.setSecretReference(id, name, reference) }
     override suspend fun clearSecret(id: String, name: String) = withContext(pins) { source.clearSecret(id, name) }
+    override suspend fun removeHandoffRule(id: String, rule: String) = withContext(pins) { source.removeHandoffRule(id, rule) }
     override suspend fun setAutoUpgrade(id: String, auto: Boolean) = withContext(pins) { source.setAutoUpgrade(id, auto) }
     override suspend fun auth(id: String) = withContext(pins) { source.auth(id) }
     override suspend fun authStep(id: String, step: String, values: Map<String, String>) = withContext(pins) { source.authStep(id, step, values) }
@@ -47,6 +50,8 @@ private class PinnedExtensionManagement(val source: ExtensionManagement, private
         values: Map<String, String>?) = withContext(pins) { source.uiAction(extension, ui, action, context, state, values) }
     override suspend fun uiImage(path: String) = withContext(pins) { source.uiImage(path) }
 
+    override fun iconPath(value: String) = source.iconPath(value)
+    override suspend fun icon(path: String) = withContext(pins) { source.icon(path) }
     override suspend fun markets() = withContext(pins) { source.markets() }
     override suspend fun addMarket(spec: String, token: String?) = withContext(pins) { source.addMarket(spec, token) }
     override suspend fun removeMarket(id: String) = withContext(pins) { source.removeMarket(id) }

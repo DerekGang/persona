@@ -1,6 +1,11 @@
+#if os(iOS) && canImport(AlarmKit)
+import AlarmKit
+#endif
 import Foundation
+import MapKit
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The iPhone system integrations (#2276–#2286): what each tool reads from its arguments, what its approval card says,
 /// and the rules that keep it from acting on a guess (an ambiguous occurrence, an overwritten field, an unallowed shortcut).
@@ -29,7 +34,7 @@ struct PhoneSystemToolsTests {
 
     @Test func homeIsOfferedOnlyInABuildWithHomeKit() {
         #expect(PhoneDataSource.onThisDevice.contains(.home) == HomeAccess.isBuilt)
-        #expect(PhoneDataSource.onThisDevice.contains(.alarms))
+        #expect(PhoneDataSource.onThisDevice.contains(.alarms) == AlarmsAccess.isSupported) // AlarmKit: iOS 26 (#6730)
     }
 
     // MARK: - Calendar (#2276)
@@ -96,7 +101,9 @@ struct PhoneSystemToolsTests {
         #expect(card.contains("Family"))
         #expect(card.contains(String(notes.prefix(200))))
         #expect(!card.contains(String(notes.prefix(201))))
-        #expect(card.contains(CardTime.text(start)) && card.contains(CardTime.text(end)))
+        let timeZone = try #require(TimeZone(secondsFromGMT: 8 * 3600))
+        #expect(card.contains(CardTime.text(start, timeZone: timeZone)))
+        #expect(card.contains(CardTime.text(end, timeZone: timeZone)))
         #expect(!card.contains("2027-01-15T15:00:00+08:00"))
     }
 
@@ -207,6 +214,42 @@ struct PhoneSystemToolsTests {
         #expect(throws: ToolFailure.self) { try MapsTool.Destination.parse(json(#"{"latitude":1,"longitude":2,"mode":"flying"}"#)) }
     }
 
+    /// A route starts at the phone unless both start coordinates are given (#5544); each mode asks Maps for its own kind
+    /// of route.
+    @Test func aRouteStartsAtThePhoneOrAtBothCoordinatesGiven() throws {
+        #expect(try MapsTool.routeStart(json(#"{"latitude":1,"longitude":2}"#)) == nil)
+        let given = try #require(try MapsTool.routeStart(json(#"{"from_latitude":31.2,"from_longitude":121.4}"#)))
+        #expect(given.latitude == 31.2 && given.longitude == 121.4)
+        #expect(throws: ToolFailure.self) { try MapsTool.routeStart(json(#"{"from_latitude":31.2}"#)) }
+        #expect(throws: ToolFailure.self) { try MapsTool.routeStart(json(#"{"from_latitude":31.2,"from_longitude":200}"#)) }
+        let modes = try ["driving", "walking", "transit"].map {
+            try MapsTool.Destination.parse(json(#"{"latitude":1,"longitude":2,"mode":"\#($0)"}"#)).transportType
+        }
+        #expect(modes == [.automobile, .walking, .transit])
+        let tool = PhoneToolRegistry.all.first { $0.spec.name == "phone_maps_route" }
+        #expect(tool != nil && tool?.confirmation == nil) // it opens nothing, so it asks nobody
+    }
+
+    /// A route's line is short enough for the model and the card: its ends stay, a straight stretch is two points, and a
+    /// winding one keeps at most `RouteLine.most`.
+    @Test func aRouteLineKeepsItsEndsAndStaysShort() {
+        func point(_ latitude: Double, _ longitude: Double) -> CLLocationCoordinate2D {
+            CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+        let straight = (0..<500).map { point(31.2 + Double($0) * 0.00001, 121.4 + Double($0) * 0.00002) }
+        let line = RouteLine.simplified(straight)
+        #expect(line.count == 2 && line.first?.latitude == straight.first?.latitude && line.last?.latitude == straight.last?.latitude)
+        let winding = (0..<3000).map { i -> CLLocationCoordinate2D in
+            let t = Double(i) / 3000
+            return point(31.2 + t * 0.05, 121.4 + 0.01 * sin(t * 40))
+        }
+        let kept = RouteLine.simplified(winding)
+        #expect(kept.count > 2 && kept.count <= RouteLine.most)
+        #expect(kept.first?.longitude == winding.first?.longitude && kept.last?.latitude == winding.last?.latitude)
+        #expect(RouteLine.simplified(Array(winding.prefix(10))).count == 10)
+        #expect(RouteLine.rounded(31.2304449) == 31.23044)
+    }
+
     // MARK: - Shortcuts (#2283)
 
     @Test func theRunLinkComesBackWithItsToken() throws {
@@ -257,6 +300,34 @@ struct PhoneSystemToolsTests {
         #expect(throws: ToolFailure.self) { try AlarmsTool.timerSeconds(json(#"{"seconds":86401}"#)) }
         #expect(AlarmsTool.timerSummary(seconds: 1500, label: "Focus").contains("Focus"))
     }
+
+    @Test func aPausedTimerShowsTheTimeLeftAsTheClockAppDoes() {
+        #expect(AlarmActivityTime.paused(total: 1500, elapsed: 1.2) == "24:58")
+        #expect(AlarmActivityTime.paused(total: 3 * 3600, elapsed: 3600) == "2:00:00")
+        #expect(AlarmActivityTime.paused(total: 60, elapsed: 90) == "0:00")
+    }
+
+    @Test func theCountdownNeverStartsAfterItRings() {
+        let fire = Date(timeIntervalSince1970: 1_000)
+        #expect(AlarmActivityTime.countdown(start: Date(timeIntervalSince1970: 400), fire: fire).lowerBound == Date(timeIntervalSince1970: 400))
+        #expect(AlarmActivityTime.countdown(start: Date(timeIntervalSince1970: 2_000), fire: fire) == fire...fire)
+    }
+
+    #if os(iOS) && canImport(AlarmKit)
+    /// The DEBUG sample requests its activity itself, where ActivityKit takes at most 4 KB of attributes; a timer's
+    /// with both states don't fit (~5.7 KB), so it keeps the one it draws (#11058). AlarmKit gets both.
+    @Test func theTimerSampleFitsInsideActivityKitsLimit() throws {
+        guard #available(iOS 26.0, *) else { return }
+        let running = AlarmsTool.attributes(label: "Focus", timer: true, only: .countdown)
+        let paused = AlarmsTool.attributes(label: "Focus", timer: true, only: .paused)
+        #expect(try JSONEncoder().encode(running).count < 4096)
+        #expect(try JSONEncoder().encode(paused).count < 4096)
+        #expect(running.presentation.countdown?.pauseButton != nil && running.presentation.paused == nil)
+        #expect(paused.presentation.paused != nil && paused.presentation.countdown == nil)
+        let timer = AlarmsTool.attributes(label: "Focus", timer: true).presentation
+        #expect(timer.countdown != nil && timer.paused != nil)
+    }
+    #endif
 
     // MARK: - Home (#2285)
 

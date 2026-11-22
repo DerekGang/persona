@@ -15,14 +15,16 @@ type MeetingAnswer struct {
 func RenderMeetingAnswer(d MeetingAnswer) string { return render("meeting/answer", d) }
 
 // MeetingAnswerInput is the material of one answer (meeting/answer_input). Lines are this meeting's live sentences so
-// far, Asks the questions already answered in it, Earlier the earlier meetings' minutes. Question is the typed one;
-// without it the question is in Heard, the lines of the 45 seconds before the tap at HeardAt. Times are clock strings
-// from the recording's start; the caller puts every text on one line.
+// far, Asks the questions already answered in it, Photos the words of the photos taken in it, Earlier the earlier
+// meetings' minutes. Question is the typed one; without it the question is in Heard, the lines of the 45 seconds
+// before the tap at HeardAt. Times are clock strings from the recording's start; the caller puts every text on one
+// line.
 type MeetingAnswerInput struct {
 	Title, Language   string
 	Calendar          *MeetingCalendar
 	Lines             []MeetingLine
 	Asks              []MeetingQA
+	Photos            []MeetingPhoto
 	EarlierAvailable  bool
 	Earlier           []MeetingEarlier
 	Question, HeardAt string
@@ -40,6 +42,13 @@ type MeetingLine struct{ At, Text string }
 
 // MeetingQA is a question already answered in this meeting.
 type MeetingQA struct{ Question, Answer string }
+
+// MeetingPhoto is the words of a photo taken in the meeting, never the image: its number, its time in the meeting, the
+// owner's caption, the text the phone recognized in it and the room's note on it (each "" when there is none).
+type MeetingPhoto struct {
+	N                       int
+	At, Caption, Text, Note string
+}
 
 // MeetingEarlier is an earlier meeting's minutes (its id is what the answer's sources name).
 type MeetingEarlier struct {
@@ -66,8 +75,12 @@ func RenderMeetingAnswerInput(in MeetingAnswerInput) string {
 }
 
 // MeetingRoomClaudeMD is a meeting room's CLAUDE.md (meeting/room_claude): the owner's name and the meeting's language,
-// nothing else of the owner's.
-type MeetingRoomClaudeMD struct{ Owner, Language string }
+// nothing else of the owner's. Lean: a room started with lean batches (#8253), told that batches come every two minutes
+// and show the lists only now and then, and to read the newest lines before answering about what was just said.
+type MeetingRoomClaudeMD struct {
+	Owner, Language string
+	Lean            bool
+}
 
 func RenderMeetingRoomClaudeMD(d MeetingRoomClaudeMD) string { return render("meeting/room_claude", d) }
 
@@ -88,6 +101,22 @@ type MeetingRoomHeard struct {
 
 func RenderMeetingRoomHeard(d MeetingRoomHeard) string { return render("meeting/room_heard", d) }
 
+// MeetingRoomPhoto is the text that goes into the room with a photo, the image beside it (meeting/room_photo): its
+// number, its time in the meeting, the owner's caption and the text the phone recognized in it.
+type MeetingRoomPhoto struct {
+	N                 int
+	At, Caption, Text string
+}
+
+func RenderMeetingRoomPhoto(d MeetingRoomPhoto) string { return render("meeting/room_photo", d) }
+
+// MeetingRoomPhotoWithdrawn tells the room that photo N was deleted after it went in (meeting/room_photo_withdrawn).
+type MeetingRoomPhotoWithdrawn struct{ N int }
+
+func RenderMeetingRoomPhotoWithdrawn(d MeetingRoomPhotoWithdrawn) string {
+	return render("meeting/room_photo_withdrawn", d)
+}
+
 // MeetingJustMe is a Just me message to the main chat (meeting/just_me): the meeting's title and calendar title (its
 // data), the recording, the time in the meeting, then the owner's text.
 type MeetingJustMe struct {
@@ -97,12 +126,21 @@ type MeetingJustMe struct {
 func RenderMeetingJustMe(d MeetingJustMe) string { return render("meeting/just_me", d) }
 
 // MeetingFollowupSeed is a follow-up's first message (meeting/followup_seed): the meeting's material, then the owner's
-// text. Transcript is the transcript of record (Cut: its start and end only); a trimmed recording has none.
+// text. Topics and Highlights are the room's topics and highlights of the meeting (a highlight's At its time from the
+// start, as the transcript's). Photos are the listed photos with a caption or recognized text (PhotosCut: some of the
+// texts were cut), Notes those with the room's note on them, which belong to the room thread. Transcript is the
+// transcript of record (Cut: its start and end only); a trimmed recording has none, nor photos, a thread or
+// highlights.
 type MeetingFollowupSeed struct {
 	Title, Calendar, Started, RecordingID string
 	PrivateSet, Private                   bool
 	Minutes                               string
+	Topics                                []MeetingTopic
+	Highlights                            []MeetingHighlight
+	Photos                                []MeetingPhoto
+	PhotosCut                             bool
 	Thread                                []MeetingQA
+	Notes                                 []MeetingPhoto
 	Transcript                            string
 	Cut, Trimmed                          bool
 	Text                                  string
@@ -110,4 +148,18 @@ type MeetingFollowupSeed struct {
 
 func RenderMeetingFollowupSeed(d MeetingFollowupSeed) string {
 	return render("meeting/followup_seed", d)
+}
+
+// MeetingHandoff is a meeting handed to an Agent after it (meeting/handoff, #8852): its name, calendar title, start,
+// minutes (Markdown) and, when the owner asked, its transcript (Cut: its middle left out); Text is the owner's line.
+type MeetingHandoff struct {
+	Title, Calendar, Started string
+	Minutes                  string
+	Transcript               string
+	Cut                      bool
+	Text                     string
+}
+
+func RenderMeetingHandoff(d MeetingHandoff) string {
+	return render("meeting/handoff", d)
 }

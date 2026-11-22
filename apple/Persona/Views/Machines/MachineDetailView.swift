@@ -1,5 +1,6 @@
 import BeautifulUI
 import SwiftUI
+import PersonaWire
 
 /// One machine (docs/server/machines.md「App」), most used first: how it is (the card of Machines, without its numbers), its
 /// agents (a tap opens the chat), its values now and CPU / memory / network / load over 1, 6 or 24 hours (hold a chart
@@ -11,6 +12,11 @@ struct MachineDetailView: View {
     @Environment(\.scenePhase) private var phase
     var ref: MachineRef
     private var machineID: String { ref.id }
+
+    init(ref: MachineRef) {
+        self.ref = ref
+        _browserLogins = State(initialValue: BrowserLoginsModel(machine: ref.id, deps: .live(group: ref.group)))
+    }
     @State private var range: MetricRange = Self.initialRange
     @State private var data: MachineMetrics?
     @State private var preparedCharts: [MetricSeriesKey: PreparedMetricSeries] = [:]
@@ -26,6 +32,12 @@ struct MachineDetailView: View {
     @State private var plugins = ExtensionMachineModel()
     @State private var pluginLink: LinkTarget?
     @State private var filesOpen = Self.initialFilesOpen
+    /// Lives through the Files push / pop, so a remote POST can regain its progress row on return.
+    @State private var folderTransfers = FolderTransfers()
+    /// Browser Sign-ins (#5821) and their whole list: owned here, beside Files, not by the section, which exists only
+    /// while this page has its machine; a destination inside it went away with it and broke the open list (#6050).
+    @State private var browserLogins: BrowserLoginsModel
+    @State private var browserLoginsOpen = false
     /// The rename alert is open, and what it holds.
     @State private var renaming = false
     @State private var newName = ""
@@ -38,16 +50,20 @@ struct MachineDetailView: View {
         #endif
     }
 
-    /// A machine's agents: live ones, not the Chat tab's assistant conversations (the Agents tab leaves those out too).
+    /// A machine's agents: live ones, not the Chat tab's assistant conversations (the Agents tab leaves those out too),
+    /// nor a subtask, which the Agents list folds under the session that started it and does not count unless it needs
+    /// the user (`Session.isNestedSubtask`, as Android's Machines card).
     static func agents(_ model: AppModel, _ ref: MachineRef) -> [Session] {
-        (model.sessionsByMachine[ref] ?? []).filter { $0.status.isLive && !$0.assistant }
+        ChildSessions.fold(model.sessionsByMachine[ref] ?? []).filter(isListed)
     }
 
     /// Every machine's agents (`agents(_:_:)`), for a page that can be kept hidden behind another: watched only in front
     /// (`AppModel.allSessions(inFront:)`).
     static func agentsByMachine(_ model: AppModel, inFront: Bool) -> [MachineRef: [Session]] {
-        Dictionary(grouping: model.allSessions(inFront: inFront).filter { $0.status.isLive && !$0.assistant }, by: \.machineRef)
+        Dictionary(grouping: ChildSessions.fold(model.allSessions(inFront: inFront)).filter(isListed), by: \.machineRef)
     }
+
+    private static func isListed(_ s: Session) -> Bool { s.status.isLive && !s.assistant && !s.isNestedSubtask }
 
     /// The agents before Show All: with dozens on one machine its charts would be screens away.
     static let agentsShown = 5
@@ -71,14 +87,15 @@ struct MachineDetailView: View {
                         VStack(spacing: Theme.Space.m) {
                             MachineCard(machine: machine, metrics: data, showsMetrics: false, showsName: false)
                             // The card says a known error_code in words; the hub's own words stay here.
-                            if AddComputerText.machineProblem(machine.errorCode) != nil, let raw = machine.error, !raw.isEmpty {
+                            if !machine.linkSwitchRunning, AddComputerText.machineProblem(machine.errorCode) != nil, let raw = machine.error, !raw.isEmpty {
                                 problemDetails(raw)
                             }
                             // Offline with its manager (the card says so): it comes back with that manager, and Reconnect
                             // goes through it.
-                            if !online, !machine.isPending, model.offlineManager(of: machine, group: ref.group) == nil {
+                            if !online, !machine.linkSwitchRunning, !machine.isPending, model.offlineManager(of: machine, group: ref.group) == nil {
                                 connection(machine)
                             }
+                            MachineLinkSwitchView(machine: machine).id(Self.linkSwitchAnchor)
                         }
                         agentsSection(machine)
                         filesRow(online: online)
@@ -104,7 +121,7 @@ struct MachineDetailView: View {
                         NodeHealthSection(ref: ref, machine: machine)
                         if let computer = machine.computer { ComputerSection(ref: ref, computer: computer, online: online) }
                         if let browser = machine.browser { BrowserSection(ref: ref, browser: browser, online: online) }
-                        if machine.browser?.setUp == true { BrowserLoginsSection(ref: ref, online: online) }
+                        if machine.browser?.setUp == true { BrowserLoginsSection(ref: ref, online: online, logins: browserLogins, listOpen: $browserLoginsOpen).id(Self.browserLoginsAnchor) }
                         #if os(iOS)
                         // The iPhones paired with this computer, for the assistant (docs/extensions/iphone.md); the frozen Mac app skips it.
                         if let iphone = machine.iphone { IPhoneControlSection(ref: ref, iphone: iphone, online: online) }
@@ -141,14 +158,32 @@ struct MachineDetailView: View {
                 try? await Task.sleep(for: .milliseconds(300))
                 scroller.scrollTo(Self.clipboardAnchor, anchor: at == "bottom" ? .bottom : .top)
             }
+            // `-openBrowserLogins YES`: the page opens scrolled to Browser Sign-ins' top (screenshots, #5821).
+            .task(id: machine?.browser?.setUp == true) {
+                guard machine?.browser?.setUp == true, UserDefaults.standard.string(forKey: "openBrowserLogins") != nil else { return }
+                try? await Task.sleep(for: .seconds(1)) // after the charts above have their height
+                scroller.scrollTo(Self.browserLoginsAnchor, anchor: .top)
+            }
+            // `-openLinkSwitch YES`: the page opens with its Link-switch card at the top (screenshots, #10671).
+            .task(id: machine?.linkSwitch) {
+                guard machine?.linkSwitch != nil, UserDefaults.standard.string(forKey: "openLinkSwitch") != nil else { return }
+                try? await Task.sleep(for: .milliseconds(300))
+                scroller.scrollTo(Self.linkSwitchAnchor, anchor: .top)
+                // A different phase can change the card's height after that first layout, especially at xxxLarge.
+                try? await Task.sleep(for: .milliseconds(300))
+                scroller.scrollTo(Self.linkSwitchAnchor, anchor: .top)
+            }
             #endif
         }
         .themedGroupedPage()
         .pluginLinks($pluginLink)
         .navigationDestination(isPresented: $filesOpen) { // a leaf: the browser walks folders and opens files in place
-            FilesPane(machineID: machineID, group: ref.group, cwd: "~")
+            FilesPane(machineID: machineID, group: ref.group, cwd: "~", transfers: folderTransfers)
                 .detailTitle(String(localized: "Files"))
                 .navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationDestination(isPresented: $browserLoginsOpen) { // a leaf: nothing is pushed from the list
+            BrowserLoginsListView(logins: browserLogins, online: online)
         }
         .extensionPushes(Array(plugins.models.values))
         .detailTitle(machine?.name ?? machineID)
@@ -196,6 +231,8 @@ struct MachineDetailView: View {
     }
 
     private static let clipboardAnchor = "machine-clipboard"
+    private static let browserLoginsAnchor = "machine-browser-logins"
+    private static let linkSwitchAnchor = "machine-link-switch"
 
     nonisolated private struct Poll: Hashable, Sendable { var range: MetricRange; var active: Bool }
     nonisolated private struct ExtensionsKey: Hashable, Sendable { var ref: MachineRef; var slots: Bool }
@@ -256,7 +293,28 @@ struct MachineDetailView: View {
                 .card(padding: 0)
             }
             engineRow(machine)
+            if machine.online { terminalsRow }
         }
+    }
+
+    /// This computer's terminals, plain ones too (#4754), pushed by value as the Agents menu pushes them: a view push in
+    /// this value stack could leave on screen a page whose load never ran (#6153). Every stack that shows this page
+    /// declares `TerminalsRoute`.
+    private var terminalsRow: some View {
+        NavigationLink(value: TerminalsRoute(machine: ref.path)) {
+            HStack(spacing: Theme.Space.s) {
+                ThemedIcon(Theme.Icon.terminal).font(Theme.Font.body).foregroundStyle(Theme.accent).scaledFrame(width: Theme.Size.icon)
+                Text("Terminals").font(Theme.Font.body).lineLimit(1)
+                Spacer(minLength: Theme.Space.s)
+                ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.labelStrong).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, Theme.Space.l)
+            .padding(.vertical, Theme.Space.m)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("machine.terminals")
+        .card(padding: 0)
     }
 
     /// Which engine's sessions the machine shows (herdr, Herdr App…): it decides the list above.
@@ -570,6 +628,17 @@ private struct NowGrid: View {
             tile(String(localized: "Swap"), sample.swapTotal > 0 ? MetricFormat.bytes(sample.swapUsed) : String(localized: "Off [Machine Detail View f95ea7]"),
                  detail: sample.swapTotal > 0 ? String(localized: "\(MetricFormat.bytes(sample.swapTotal)) total") : nil,
                  fraction: sample.swapPercent.map { $0 / 100 }, color: .secondary, level: .normal)
+            if let battery = sample.batteryPercent {
+                let charging = sample.batteryCharging == true
+                tile("Battery", MetricFormat.percent(battery), detail: charging ? "⚡" : nil,
+                     fraction: battery / 100, color: .secondary,
+                     level: !charging && battery <= 15 ? .critical : !charging && battery <= 25 ? .warning : .normal)
+            }
+            if let temp = sample.tempC {
+                tile("Temp", String(format: "%.1f°C", temp), detail: nil,
+                     fraction: min(1.0, max(0.0, temp / 125.0)), color: .secondary,
+                     level: MetricLevel.of(temp, warn: 75, crit: 90))
+            }
         }
     }
 

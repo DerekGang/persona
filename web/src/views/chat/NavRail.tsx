@@ -39,7 +39,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
   const card = useRef<HTMLDivElement>(null);
   const frame = useRef(0);
   const idleTimer = useRef(0);
-  const pendingTimer = useRef(0);
+  const jumpRun = useRef(0);
   const hovered = useRef(false);
   const focused = useRef(false);
   const drag = useRef<{ pointer: number; ids: string[]; pitch: number; top: number } | null>(null);
@@ -71,9 +71,13 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
     if (dirty.current) {
       dirty.current = false;
       setHeight(Math.max(0, scroller.clientHeight - M.padding * 2));
-      setRight(Math.max(0, scroller.offsetWidth - scroller.clientWidth));
+      setRight(Math.max(0, scroller.offsetWidth - scroller.clientWidth) + M.edgeGap);
+      const content = lineParent(scroller);
+      // Wide chats already have a margin. Add only the missing clearance, keeping that column centered.
+      const margin = Math.max(0, (scroller.clientWidth - content.clientWidth) / 2);
+      scroller.style.setProperty("--chat-nav-clearance", `${Math.max(0, M.width + M.edgeGap + M.endInset - margin)}px`);
       const rows = new Map<string, HTMLElement>();
-      for (const el of lineParent(scroller).children) {
+      for (const el of content.children) {
         const child = el.firstElementChild;
         if (el instanceof HTMLElement && el.dataset.line !== undefined && child instanceof HTMLElement) rows.set(el.dataset.line, child);
       }
@@ -110,6 +114,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
     if (content) mutations.observe(content, { childList: true, subtree: true });
     return () => {
       scroller.removeEventListener("scroll", scroll);
+      scroller.style.removeProperty("--chat-nav-clearance");
       resize.disconnect();
       mutations.disconnect();
       if (frame.current) cancelAnimationFrame(frame.current);
@@ -124,7 +129,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
     previewOrigin.current = null;
     suppressClick.current = false;
     clearTimeout(idleTimer.current);
-    clearTimeout(pendingTimer.current);
+    jumpRun.current++;
     setActive(null);
     setPending(null);
     setPreview(null);
@@ -138,26 +143,20 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
 
   useEffect(() => () => {
     clearTimeout(idleTimer.current);
-    clearTimeout(pendingTimer.current);
+    jumpRun.current++;
     if (frame.current) cancelAnimationFrame(frame.current);
     frame.current = 0;
   }, []);
 
-  useEffect(() => {
-    if (pending !== null && pending === active) {
-      clearTimeout(pendingTimer.current);
-      setPending(null);
-    }
-  }, [pending, active]);
-
   const indexOf = (id: string | null) => id === null ? -1 : ticks.findIndex((tick) => tick.id === id);
-  const current = pending ?? active;
-  const center = indexOf(windowCenter ?? current);
+  const marked = pending ?? active;
+  const center = indexOf(windowCenter ?? marked);
   const plan = planNavRailTicks(ticks.length, height, center < 0 ? ticks.length - 1 : center);
   const shown = ticks.slice(plan.start, plan.start + plan.count);
   const previewTick = ticks.find((tick) => tick.id === preview);
-  const currentIndex = indexOf(current);
-  const previewIndex = indexOf(preview);
+  const currentIndex = indexOf(marked);
+  const focusedMark = preview ?? pending;
+  const previewIndex = indexOf(focusedMark);
 
   useLayoutEffect(() => {
     if (!card.current || !rail.current || !previewTick) return;
@@ -177,13 +176,21 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
     setPreview(id);
     wake();
   };
-  const jump = (id: string) => {
+  const jump = async (id: string) => {
     if (!list.current.some((tick) => tick.id === id)) return;
+    const run = ++jumpRun.current;
     setPending(id);
-    clearTimeout(pendingTimer.current);
-    pendingTimer.current = window.setTimeout(() => setPending(null), M.pendingMs);
-    void onJump(id);
     wake();
+    const result = onJump(id);
+    if (!result) {
+      setPending(null);
+      return;
+    }
+    try {
+      await result;
+    } finally {
+      if (run === jumpRun.current) setPending(null);
+    }
   };
   const pickY = (y: number) => {
     const bounds = drag.current;
@@ -206,11 +213,11 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
       data-nav-source={total === undefined ? "loaded" : "server"}
       data-visible={visible}
       tabIndex={0}
-      className={cx("absolute inset-y-0 z-10 flex flex-col justify-center py-6 transition-opacity duration-200 motion-reduce:transition-none", visible ? "opacity-100" : "opacity-0")}
+      className={cx("absolute inset-y-0 z-10 flex flex-col justify-center py-6 transition-opacity duration-200 motion-reduce:transition-none", visible || pending ? "opacity-100" : "opacity-0")}
       style={{ right, width: M.width }}
       onMouseEnter={() => {
         hovered.current = true;
-        if (!drag.current) setWindowCenter(preview ?? current);
+        if (!drag.current) setWindowCenter(preview ?? active);
         wake();
       }}
       onMouseLeave={() => {
@@ -222,7 +229,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
       }}
       onFocus={() => {
         focused.current = true;
-        if (preview === null && !drag.current) pick(current ?? ticks[0].id, "keyboard");
+        if (preview === null && !drag.current) pick(active ?? ticks[0].id, "keyboard");
         else wake();
       }}
       onBlur={(e) => {
@@ -237,7 +244,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
       }}
       onKeyDown={(e) => {
         if (e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
-        const old = indexOf(preview ?? current);
+        const old = indexOf(preview ?? active);
         let next: number | null = null;
         if (e.key === "ArrowDown" || e.key === "ArrowRight") next = Math.min(ticks.length - 1, Math.max(0, old + 1));
         if (e.key === "ArrowUp" || e.key === "ArrowLeft") next = Math.max(0, old - 1);
@@ -248,11 +255,11 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
           e.stopPropagation();
           pick(ticks[next].id, "keyboard");
           setWindowCenter(ticks[next].id);
-          setAnnouncement(t("chat-navrail.selection", { index: next + 1, count: ticks.length, preview: labelOf(ticks[next]), answer: ticks[next].answerExcerpt ?? "" }));
+          setAnnouncement(t("chat-navrail.selection", { index: ticks[next].ordinal ?? next + 1, count: total ?? ticks.length, preview: labelOf(ticks[next]), answer: ticks[next].answerExcerpt ?? "" }));
         } else if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           e.stopPropagation();
-          const id = preview ?? current ?? ticks[0].id;
+          const id = preview ?? active ?? ticks[0].id;
           jump(id);
         } else if (e.key === "Escape") {
           e.preventDefault();
@@ -294,11 +301,16 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
         }
       }}
     >
+      {pending && (
+        <span role="status" data-nav-loading className="pointer-events-none absolute right-full top-0 whitespace-nowrap rounded-nav-preview border border-line bg-surface px-2 py-1 text-sm text-ink shadow-nav-preview">
+          {t("chat-navrail.loading_target")}
+        </span>
+      )}
       <span className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</span>
       {shown.map((tick, k) => {
         const i = plan.start + k;
-        const isCurrent = tick.id === current;
-        const isPreview = tick.id === preview;
+        const isCurrent = tick.id === active;
+        const isPreview = tick.id === focusedMark;
         const mark = navRailMark(i, ticks.length, currentIndex < 0 ? null : currentIndex, previewIndex < 0 ? null : previewIndex);
         return (
           <button
@@ -306,7 +318,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
             type="button"
             data-tick={i}
             tabIndex={-1}
-            aria-label={t("chat-navrail.jump", { index: i + 1, preview: labelOf(tick) })}
+            aria-label={t("chat-navrail.jump", { index: tick.ordinal ?? i + 1, preview: labelOf(tick) })}
             aria-current={isCurrent ? "true" : undefined}
             aria-describedby={tick.id === preview ? previewId : undefined}
             className="flex shrink-0 items-center justify-end"
@@ -320,7 +332,7 @@ export function NavRail({ ticks, total, scroller, onJump, reset }: {
             <span
               aria-hidden
               data-nav-mark={mark.state}
-              className={cx("shrink-0 rounded-full transition-[width,height,background-color,opacity] duration-150 motion-reduce:transition-none", isCurrent ? "bg-ink" : isPreview ? "bg-ink-2" : "bg-ink-3")}
+              className={cx("shrink-0 rounded-full transition-[width,height,background-color,opacity] duration-150 motion-reduce:transition-none", tick.id === marked ? "bg-ink" : isPreview ? "bg-ink-2" : "bg-ink-3")}
               style={{ width: mark.width, height: mark.height, opacity: mark.opacity }}
             />
           </button>

@@ -7,13 +7,13 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// Closing agents that have been idle for a long time (docs/assistant/todos.md "Idle agents close too"). The pass in
+// Stopping agents that have been idle for a long time (docs/assistant/todos.md "Idle Agents stop too"). The pass in
 // tasks_close.go only knows agents of finished tasks; agents started directly (agent_start), agents of tasks that
-// stall or are never accepted, and closed agents a message resumed (agent_send, the chat) would stay open for good.
-// An agent Persona started that has been still for idle_close_hours with nothing going on (retirable) is retired the
-// same way: its transcript and launch state stay and the next message resumes it.
+// stall or are never accepted, and stopped agents a message resumed (agent_send, the chat) would run for good.
+// An agent Persona started that has been still for idle_close_hours with nothing going on (retirable) is stopped the
+// same way (session.stop): its terminal, transcript and launch state stay and the next message resumes it.
 //
-// Left open besides what retirable keeps: an agent with a wake due (Work.WakeAt) or blocked on anything (Work.Phase
+// Left running besides what retirable keeps: an agent with a wake due (Work.WakeAt) or blocked on anything (Work.Phase
 // blocked: the user, another agent, CI or a deploy, a transient error), and one of an open task unless that task has
 // itself been quiet for idleStalledFactor times the idle time.
 
@@ -38,19 +38,19 @@ func (s *Service) idleCloseAfter(ctx context.Context) time.Duration {
 // old until its first step lands, so the idle time counts from the later of the two.
 type idleSeen map[[2]string]time.Time
 
-// openTaskOf reports whether key works for an open task, and when that task was last touched.
-func (s *Service) openTaskOf(key [2]string) (open bool, touched time.Time) {
+// openTaskOf reports key's open task, its last activity, and whether personal verification still protects it.
+func (s *Service) openTaskOf(key [2]string) (open bool, touched time.Time, userCheck bool) {
 	s.todos.mu.RLock()
 	defer s.todos.mu.RUnlock()
 	id, ok := s.todos.activeBySession[key]
 	if !ok {
-		return false, time.Time{}
+		return false, time.Time{}, false
 	}
 	t := s.todos.todos[id]
 	if t == nil {
-		return true, time.Time{}
+		return true, time.Time{}, false
 	}
-	return true, t.UpdatedAt
+	return true, t.UpdatedAt, t.Supervision.state(*t) == reviewUserCheck
 }
 
 // idleCloseable says whether c, first seen running at since, may be closed for being idle.
@@ -81,7 +81,7 @@ func (s *Service) closeIdleAgents(ctx context.Context, refused taskCloseRefused,
 			}
 			continue
 		}
-		list, err := s.sessions(ctx, d.ID)
+		list, err := s.listedSessions(ctx, d.ID) // an archive row is offline: never closed, never running
 		if err != nil {
 			for k := range seen {
 				if k[0] == d.ID {
@@ -101,8 +101,8 @@ func (s *Service) closeIdleAgents(ctx context.Context, refused taskCloseRefused,
 				seen[key] = now
 				since = now
 			}
-			open, touched := s.openTaskOf(key)
-			if !idleCloseable(c, since, now, idle, open, touched) {
+			open, touched, userCheck := s.openTaskOf(key)
+			if userCheck || !idleCloseable(c, since, now, idle, open, touched) {
 				continue
 			}
 			if r, ok := refused[key]; ok && r.updated.Equal(c.UpdatedAt) && now.Sub(r.at) < taskCloseRetry {

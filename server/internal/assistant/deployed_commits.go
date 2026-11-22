@@ -22,9 +22,13 @@ import (
 //	<full sha> <subject>        the deployed commit first, then its ancestors, newest first (git log --format='%H %s')
 //
 // It is believed only when its first commit is the one the running hub reports (a file left from another deploy is
-// ignored) and only for PRs of its repo. A PR's merge is found by its subject, as GitHub writes it: a squash merge's
+// ignored) and only for PRs of its repo. A PR can be identified by its subject, as GitHub writes it: a squash merge's
 // "<title> (#N)", a merge commit's "Merge pull request #N from …". Found: deployed. Not found: not in the running hub as
-// far as the file goes (it holds the last few thousand commits); GitHub, when it answers, says more.
+// far as the file goes (it holds the last few thousand commits). Upstream merge status comes from the forge.
+//
+// A build of a local branch can run a PR before it is merged upstream (#4867): the deploy names such PRs by their head
+// commit, "# pr: <N> <full sha>" (scripts/deploy/deployed_commits.py), and the PR counts as deployed when that commit is
+// one the file lists, so in the deployed one's history. A head the file does not list is not believed.
 
 const deployedCommitsName = "deployed-commits.txt"
 
@@ -33,22 +37,32 @@ const deployedCommitsHeader = "# persona deployed commits v1"
 var (
 	squashSubject = lazyre.New(`\(#([0-9]+)\)\s*$`)
 	mergeSubject  = lazyre.New(`^Merge pull request #([0-9]+)\b`)
+	// prHeadLine is a PR the deployed commit contains by its head ("pr: <N> <sha>", after the "#").
+	prHeadLine = lazyre.New(`^pr:\s*#?([0-9]+)\s+([0-9a-fA-F]{40})\s*$`)
 )
+
+// deployReceipt identifies the PR's commit in the running build and how the file named it.
+type deployReceipt struct {
+	sha    string
+	byHead bool // the explicit "# pr:" line, rather than a commit subject
+}
 
 // deployedList is one deployed-commits file as read.
 type deployedList struct {
-	repo  string         // owner/name, as the header says
-	head  string         // the deployed commit (its first line)
-	prs   map[int]string // PR number → its merge commit, the newest that names it
+	repo  string                // owner/name, as the header says
+	head  string                // the deployed commit (its first line)
+	prs   map[int]deployReceipt // PR number → the newest subject match or the explicit head
 	count int
 }
 
 // parseDeployedCommits reads a deployed-commits file; nil when it is not one (no header, no repo, no commit).
 func parseDeployedCommits(text string) *deployedList {
-	l := &deployedList{prs: map[int]string{}}
+	l := &deployedList{prs: map[int]deployReceipt{}}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
 	first := true
+	heads := map[int]string{}   // "# pr:" lines: PR number → its head commit, believed once the history lists it
+	listed := map[string]bool{} // the commits the file lists
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if first {
@@ -62,8 +76,13 @@ func parseDeployedCommits(text string) *deployedList {
 			continue
 		}
 		if rest, ok := strings.CutPrefix(line, "#"); ok {
-			if v, ok := strings.CutPrefix(strings.TrimSpace(rest), "repo:"); ok {
+			rest = strings.TrimSpace(rest)
+			if v, ok := strings.CutPrefix(rest, "repo:"); ok {
 				l.repo = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(v), ".git"))
+			} else if m := prHeadLine.FindStringSubmatch(rest); m != nil {
+				if n, err := strconv.Atoi(m[1]); err == nil {
+					heads[n] = strings.ToLower(m[2])
+				}
 			}
 			continue
 		}
@@ -76,6 +95,7 @@ func parseDeployedCommits(text string) *deployedList {
 			l.head = sha
 		}
 		l.count++
+		listed[sha] = true
 		m := squashSubject.FindStringSubmatch(subject)
 		if m == nil {
 			m = mergeSubject.FindStringSubmatch(subject)
@@ -83,13 +103,18 @@ func parseDeployedCommits(text string) *deployedList {
 		if m != nil {
 			if n, err := strconv.Atoi(m[1]); err == nil {
 				if _, seen := l.prs[n]; !seen {
-					l.prs[n] = sha
+					l.prs[n] = deployReceipt{sha: sha}
 				}
 			}
 		}
 	}
 	if l.repo == "" || l.head == "" {
 		return nil
+	}
+	for n, sha := range heads {
+		if _, bySubject := l.prs[n]; !bySubject && listed[sha] {
+			l.prs[n] = deployReceipt{sha: sha, byHead: true}
+		}
 	}
 	return l
 }

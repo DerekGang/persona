@@ -48,6 +48,9 @@ type voiceRun struct {
 	// State is the run frame's (protocol 2), with why it was refused or failed: Code, Message (the hub's words),
 	// Draft and Clearable (409 input_draft).
 	State, Code, Message, Draft, Clearable string
+	// resendable: kept for the app's resend (tracker.refused, a 409's or what the user-speech gate held back, #5904);
+	// its run frame says so, so an app offers Send Anyway only for what a resend will send.
+	resendable bool
 	// unsent: the app handed it back while it was being sent: past channel.QueuedMost without its message in the
 	// conversation it is unknown, not answered with the conversation's last words (docs/assistant/voice.md "Reconnect and resume").
 	unsent bool
@@ -128,6 +131,9 @@ func (c *conversation) runFrame(r *voiceRun) {
 			f[k] = v
 		}
 	}
+	if r.resendable {
+		f["resendable"] = true
+	}
 	c.sendApp(f)
 }
 
@@ -149,7 +155,8 @@ type tracker struct {
 	runs  []*voiceRun
 	last  time.Time             // the last check of everything
 	ended map[linkKey]time.Time // when the hub last said a turn ended there (one may end while its message is sent)
-	// refused are the runs the hub refused (409), by id, that the app may send again (resend).
+	// refused are the runs the hub refused (409) or the user-speech gate did (unprompted, with a task), by id, that
+	// the app may send again (resend).
 	refused map[string]*voiceRun
 	// stopAsked is when the voice side last asked the bound conversation to stop (stopTarget, unix ns): a run read as
 	// stopped after that ends quietly, as stopped() ends it: the model already said it was stopped.
@@ -263,7 +270,7 @@ func (t *tracker) adopt(r *voiceRun) {
 	}
 	t.runs = append(keep, r)
 	t.set(r, firstNonEmpty(r.State, runSent))
-	if at, ok := t.ended[linkKey{r.MachineID, r.SessionID}]; ok && !at.Before(r.Started) {
+	if at, ok := t.ended[linkKey{r.MachineID, r.SessionID}]; ok && !at.Before(r.WaitFrom()) {
 		r.ended, r.Seen = true, true // a turn ended while its message was being sent
 	}
 	t.last = time.Time{} // look at it on the next tick
@@ -316,7 +323,7 @@ func (t *tracker) check(ctx context.Context, r *voiceRun) {
 		onUser = waitingOnUser(sess)
 		if !look.Working {
 			look.Waiting = onUser
-			look.Failed = !look.Waiting && strings.TrimSpace(sess.TurnError) != ""
+			look.Failed = !look.Waiting && turnFailed(sess)
 		}
 		if !r.Seen && !look.Working && sess.Rev != 0 && sess.Rev != r.rev {
 			// Its transcript moved since the send: a short turn may have come and gone between two looks (no hub link
@@ -406,7 +413,7 @@ func (t *tracker) check(ctx context.Context, r *voiceRun) {
 		r.unsent = false
 	}
 	if !rd.Found {
-		if now.Sub(r.Started) < channel.QueuedMost {
+		if now.Sub(r.WaitFrom()) < channel.QueuedMost {
 			return // it waits behind another turn: it starts the next one
 		}
 		if r.unsent {
@@ -427,7 +434,7 @@ func (t *tracker) check(ctx context.Context, r *voiceRun) {
 		rd.Answer = withoutError(rd.Answer, sess.TurnError) // its sort is said, not its text
 	}
 	if rd.Stopped == "" && !look.Working && sess != nil {
-		rd.Stopped = channel.StopReason(sess.TurnError) // a Codex turn the model service failed writes no line of it
+		rd.Stopped = stopOf(sess) // a Codex turn the model service failed writes no line of it
 	}
 	if res := r.Decide(rd, look); res != nil {
 		if r.Observed {
@@ -449,7 +456,7 @@ func (t *tracker) finish(r *voiceRun, res *channel.Result, look channel.Look) {
 	t.obs.read(r, res.Last)
 	if res.End == channel.EndStopped {
 		r.Code = "stopped" // the app shows it as stopped, not done
-		if at := t.stopAsked.Load(); at != 0 && strings.TrimSpace(res.Answer) == "" && !time.Unix(0, at).Before(r.Started.Add(-time.Second)) {
+		if at := t.stopAsked.Load(); at != 0 && strings.TrimSpace(res.Answer) == "" && !time.Unix(0, at).Before(r.WaitFrom().Add(-time.Second)) {
 			t.drop(r) // the voice side stopped it: what the model was told of the stop is its end (stopped)
 			t.set(r, runDone)
 			return

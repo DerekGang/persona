@@ -45,11 +45,14 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
     var body: some View {
         Group {
             enabled
-            Section {
-                if !hasConfiguration { Text("No configuration required").foregroundStyle(.secondary) }
-            } header: {
-                SettingsHeading(String(localized: "Extension configuration"))
-                    .accessibilityIdentifier("extension-section-configuration")
+            // Every group of a configuration has a heading of its own; this one stands only over there being none (#8853).
+            if !hasConfiguration {
+                Section {
+                    Text("No configuration required").foregroundStyle(.secondary)
+                } header: {
+                    SettingsHeading(String(localized: "Extension configuration"))
+                        .accessibilityIdentifier("extension-section-configuration")
+                }
             }
             configuration.disabled(lifecycle.busy)
             information
@@ -73,7 +76,7 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
 
     private var enabled: some View {
         Section {
-            Toggle(isOn: Binding(get: { detail.plugin.enabled ?? true }, set: { on in Task { await page.setEnabled(on) } })) {
+            Toggle(isOn: Binding(get: { detail.plugin.enabled ?? true }, set: { on in Task { await page.requestEnabled(on) } })) {
                 Text("Enabled").lineLimit(1)
             }
             .disabled(busy || !policy.canEnable)
@@ -83,13 +86,14 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
                 .accessibilityIdentifier("extension-section-enabled")
         } footer: {
             Text(enabledReason)
+                .accessibilityIdentifier("extension-enabled-reason")
         }
     }
 
     private var enabledReason: String {
         if offline { return offlineReason }
         if policy.canEnable {
-            return String(localized: "When off, this extension’s capabilities are unavailable. Your configuration is kept.")
+            return ExtensionText.enabledReason(for: detail, memberNames: page.memberNames).text
         }
         if detail.readOnly || ["hub.json", "manager.json"].contains(detail.plugin.source ?? "") {
             return String(localized: "This extension is set in its assistant's manager.json; change its switch and settings there, then restart the assistant.")
@@ -176,7 +180,7 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
             Toggle(isOn: Binding(get: { ExtensionText.autoUpgradeShown(detail.plugin) }, set: { on in Task { await page.setAutoUpgrade(on) } })) {
                 Text("Auto-upgrade").lineLimit(1)
             }
-            .disabled(busy || !policy.canAutoUpgrade)
+            .disabled(busy || !policy.canFlipAutoUpgrade(globalAuto: lifecycle.globalAuto))
             .accessibilityIdentifier("plugin-auto-upgrade")
             Text(autoUpgradeReason).font(Theme.Font.label).foregroundStyle(.secondary)
             if let note = detail.plugin.upgradeNote, let text = ExtensionText.upgradeNote(note) {
@@ -217,7 +221,7 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
             return String(localized: "Auto-upgrade is paused while this extension is off.")
         }
         if !policy.canAutoUpgrade { return policy.updateReason }
-        if lifecycle.globalAuto == false { return String(localized: "Automatic upgrades are paused globally for this assistant.") }
+        if lifecycle.globalAuto == false { return ExtensionSettingsPolicy.globalAutoOffReason }
         return String(localized: "Compatible updates run automatically. Permission changes require review.")
     }
 
@@ -227,7 +231,6 @@ struct ExtensionSettingsView<Configuration: View, AdvancedInformation: View>: Vi
                 Label { Text("Uninstall").lineLimit(1) } icon: { ThemedIcon(Theme.Icon.delete) }
             }
             .themedButton()
-            .tint(Theme.danger)
             .disabled(busy || !policy.canUninstall)
             .accessibilityIdentifier("extension-uninstall")
         } header: {
@@ -267,7 +270,7 @@ struct ExtensionSettingsPageWork: ViewModifier {
             // Closed without Update: the operation waiting on this preview is canceled.
             .sheet(isPresented: Binding(get: { lifecycle.preview != nil }, set: { if !$0 { lifecycle.dismissPreview() } })) {
                 if let preview = lifecycle.preview {
-                    ExtensionInstallSheet(preview: preview, name: page.detail?.plugin.name ?? page.id) {
+                    ExtensionInstallSheet(preview: preview, name: page.detail?.plugin.name ?? page.id, installedNames: page.memberNames) {
                         guard let consent = lifecycle.takeConsent() else {
                             let succeeded = await lifecycle.confirmUpgrade()
                             if succeeded { await page.load() }

@@ -90,11 +90,12 @@ func TestStartOpensInTheNamedHost(t *testing.T) {
 	if hh.asked() != 1 || oh.asked() != 1 {
 		t.Errorf("default start: herdr asked %d, orca asked %d (%v)", hh.asked(), oh.asked(), err)
 	}
-	// A TRAEX resume named into Orca is refused before any host is asked (Orca continues only Claude, #5548); a
-	// Claude resume opens there.
+	// A TRAE CLI resume named into Orca is refused before any host is asked (Orca continues only Claude, #5548); a
+	// Claude resume of a session this computer has a record of opens there.
 	const id = "0d000000-0000-4000-8000-0000000000ee"
+	n.state.put(id, sessionState{Launcher: "claude", Cwd: t.TempDir()})
 	if _, err := n.start(withStartHost(context.Background(), "orca"), t.TempDir(), traexAgent, "", id, "", "", "", "", "", ""); !isRefusal(err, "orca_resume") {
-		t.Errorf("TRAEX resume into Orca: %v", err)
+		t.Errorf("TRAE CLI resume into Orca: %v", err)
 	}
 	if oh.asked() != 1 {
 		t.Errorf("orca asked for a refused resume")
@@ -149,5 +150,59 @@ func TestSessionRowsCarryTheirHost(t *testing.T) {
 		if s.Host != want {
 			t.Errorf("pane %q: host %q, want %q", pane, s.Host, want)
 		}
+	}
+}
+
+func TestResumeHostSelection(t *testing.T) {
+	n, _, _ := startNode(t)
+	choice := proto.EngineChoice{Hosts: []string{proto.EngineHerdr, proto.EngineOrca, proto.EnginePaseo}, Default: proto.EnginePaseo}
+	n.eng.name, n.eng.set = proto.LegacyEngine(choice), &choice
+	n.state.put(sidA, sessionState{Pane: "w1:p1"})
+	for _, tc := range []struct {
+		name, id, explicit, want string
+	}{
+		{"remembered terminal", sidA, "", proto.EngineHerdr},
+		{"explicit host", sidA, proto.EngineOrca, proto.EngineOrca},
+		{"unknown session", sidB, "", proto.EnginePaseo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := n.withResumeHost(withStartHost(context.Background(), tc.explicit), tc.id)
+			if got := n.startKind(ctx); got != tc.want {
+				t.Fatalf("host = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	n.runtimes = newRuntimeRegistry()
+	n.runtimes.known[sidA] = knownSession{runtime: proto.EnginePaseo}
+	if got := n.startKind(n.withResumeHost(context.Background(), sidA)); got != proto.EnginePaseo {
+		t.Fatalf("runtime ownership = %q", got)
+	}
+	delete(n.runtimes.known, sidA)
+	n.state.put(sidA, sessionState{Pane: "orca:t1:l1"})
+	if got := n.startKind(n.withResumeHost(context.Background(), sidA)); got != proto.EngineOrca {
+		t.Fatalf("recorded Orca host = %q", got)
+	}
+	n.eng.set = &proto.EngineChoice{Hosts: []string{proto.EnginePaseo}, Default: proto.EnginePaseo}
+	if got := n.startKind(n.withResumeHost(context.Background(), sidA)); got != proto.EnginePaseo {
+		t.Fatalf("disabled previous host = %q", got)
+	}
+}
+
+func TestSessionStartResumesInRecordedHost(t *testing.T) {
+	for _, def := range []string{proto.EnginePaseo, proto.EngineHerdr} {
+		t.Run(def, func(t *testing.T) {
+			n, hh, oh := startNode(t)
+			choice := proto.EngineChoice{Hosts: []string{proto.EngineHerdr, proto.EngineOrca, proto.EnginePaseo}, Default: def}
+			n.eng.name, n.eng.set = proto.LegacyEngine(choice), &choice
+			n.state.put(sidA, sessionState{Pane: "w1:p1", Cwd: t.TempDir()})
+			_, err := request(t, n, "session.start", map[string]any{"resume_session_id": sidA})
+			if hh.asked() != 1 || oh.asked() != 0 {
+				t.Fatalf("resume asked herdr %d, Orca %d: %v", hh.asked(), oh.asked(), err)
+			}
+			_, err = request(t, n, "session.start", map[string]any{"resume_session_id": sidA, "host": proto.EngineOrca})
+			if hh.asked() != 1 || oh.asked() != 1 {
+				t.Fatalf("explicit host asked herdr %d, Orca %d: %v", hh.asked(), oh.asked(), err)
+			}
+		})
 	}
 }

@@ -165,8 +165,9 @@ class CodexTaskForestTest {
                 assertEquals("$grouping", mapOf(AgentState.NeedsYou to 1, AgentState.Working to 1, AgentState.Idle to 0),
                     listOf(AgentState.NeedsYou, AgentState.Working, AgentState.Idle).associateWith { machine.stateCounts[it] })
             }
-            // The groups' headers ("By state"'s sections are the states themselves and count nothing).
-            if (grouping == AgentGrouping.State) continue
+            // By Status's sections are the states themselves and count nothing; By Machine leaves stateCounts null
+            // (shared fixtures / feature-layer header counts, #9319).
+            if (grouping == AgentGrouping.State || grouping == AgentGrouping.Machine) continue
             val leaves = list.groups.filter { it.rows.isNotEmpty() }.map { requireNotNull(it.stateCounts) }
             assertEquals("$grouping", 1, leaves.sumOf { it[AgentState.NeedsYou] ?: 0 })
             assertEquals("$grouping", 1, leaves.sumOf { it[AgentState.Working] ?: 0 })
@@ -213,6 +214,25 @@ class CodexTaskForestTest {
         assertEquals(listOf(helper), lost.children[leaf.id])
         // No list of running sessions (History): every subtask under its parent.
         assertEquals(listOf(gone), codexTaskForest(listOf(gone, working)).roots)
+    }
+
+    @Test fun aFlatListLeavesOutTheSubtasksItDrawsUnderARowItDraws() {
+        val lead = runtime("lead")
+        val review = runtime("review", "lead")
+        val probe = thread("probe", "lead")
+        val asks = runtime("asks", "lead", state = "needs_you")
+        val quiet = runtime("quiet", "lead", state = "idle")
+        val rows = listOf(lead, review, probe, asks, quiet)
+        val going = { row: AgentSession -> row.state == AgentState.Working || row.state == AgentState.NeedsYou }
+        // The one that needs you is never left out; one the list does not draw is not its to leave out.
+        assertEquals(setOf(review.id, probe.id), foldedSubtasks(rows, going))
+        // With its creator not drawn, each is an entry of its own, however many sessions lie above it.
+        assertTrue(foldedSubtasks(rows) { going(it) && it != lead }.isEmpty())
+        val leaf = runtime("leaf", "quiet")
+        assertEquals(setOf(review.id, probe.id, leaf.id), foldedSubtasks(rows + leaf, going))
+        assertTrue(foldedSubtasks(listOf(lead.copy(session = lead.session.copy(state = "offline")), quiet, leaf), going).isEmpty())
+        // Without subtasks nothing is left out.
+        assertTrue(foldedSubtasks(listOf(lead, runtime("other"), row("thread"), row("pane", source = null))) { true }.isEmpty())
     }
 
     @Test fun repositoriesUseFullPathAndMachineAndKeepNestedWorktrees() {

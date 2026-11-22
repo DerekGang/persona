@@ -141,7 +141,8 @@ func (s *Service) setFolderConfig(ctx context.Context, enabled *bool, rules *str
 	return cfg, nil
 }
 
-// folders are the folders the listed items are filed in (connectors' only when all), most used first.
+// folders are the folders the items of the list's window are filed in (open, or done within inboxKeepDone, though the
+// list carries only the newest of those; connectors' only when all), most used first.
 func (b *inboxBook) folders(all bool) []InboxFolder {
 	cutoff := time.Now().Add(-inboxKeepDone)
 	by := map[string]*InboxFolder{}
@@ -251,6 +252,7 @@ func (s *Service) fileBatch(ctx context.Context, batch []*InboxItem) error {
 		return nil
 	}
 	hello := s.hello(ctx)
+	in.Language = answerLanguage(hello.Locale)
 	system := prompts.RenderInboxFolders(prompts.InboxFolders{Owner: hello.Owner, FolderRules: cfg.Rules,
 		Rules: s.inboxConfig(ctx).Rules, Language: answerLanguage(hello.Locale), MaxDepth: 4})
 	var out struct {

@@ -8,6 +8,7 @@ import (
 	"github.com/nwverse/persona/sdk/go/wire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/textfmt"
 )
 
 // featureCardRing: the client draws a ```persona-card of type ring (#3068). A client declares it in client_hello's
@@ -20,18 +21,17 @@ import (
 // Nothing is stored: the transcript keeps the ring, and a client that declares the feature later gets it whole.
 const featureCardRing = "persona_card_ring"
 
+// Clients that draw Markdown work reports keep the original text. Older cards strip the XML projection.
+const featureMarkdownCloseout = "closeout.markdown.v1"
+
 // featuresHeader is how a REST request declares what it can draw (the same names as client_hello's features).
 const featuresHeader = "X-Persona-Features"
 
 // requestWants reports whether a REST request's client declared feature: in its X-Persona-Features header, or on a
 // connection of the same device, platform and version (requestHasElicitation's rule).
 func (h *Hub) requestWants(r *http.Request, feature string) bool {
-	for _, v := range r.Header.Values(featuresHeader) {
-		for _, f := range strings.Split(v, ",") {
-			if strings.TrimSpace(f) == feature {
-				return true
-			}
-		}
+	if requestDeclares(r, feature) {
+		return true
 	}
 	who, rc := principalOf(r.Context()), requestClientOf(r.Context())
 	if rc.Platform == "" {
@@ -50,19 +50,38 @@ func (h *Hub) requestWants(r *http.Request, feature string) bool {
 	return false
 }
 
-// cardCompatItems is items as a client gets them: unchanged when it draws rings, else a copy with each assistant
-// text's ring cards rewritten (ringCardsDowngraded). The node's slice is shared, so it is never written to.
-func cardCompatItems(l i18n.Lang, ring bool, items []proto.Item) []proto.Item {
-	if ring {
-		return items
+// requestDeclares reports whether this request itself declares feature in its X-Persona-Features header.
+func requestDeclares(r *http.Request, feature string) bool {
+	for _, v := range r.Header.Values(featuresHeader) {
+		for _, f := range strings.Split(v, ",") {
+			if strings.TrimSpace(f) == feature {
+				return true
+			}
+		}
 	}
+	return false
+}
+
+// cardCompatItems is items as a client gets them: a copy with each assistant text's paseo-ui blocks written as cards
+// (paseoUIConverted), unsupported rings rewritten (ringCardsDowngraded), and complete Markdown reports
+// projected for older closeout cards. The node's slice is shared and never modified.
+func cardCompatItems(l i18n.Lang, ring, markdownCloseout bool, items []proto.Item) []proto.Item {
 	var out []proto.Item
 	for i := range items {
 		it := items[i]
 		if it.Kind != proto.KindText || it.Role != "assistant" {
 			continue
 		}
-		text := ringCardsDowngraded(l, it.Text)
+		text := it.Text
+		if !markdownCloseout && it.FullSize == 0 {
+			if report, ok := textfmt.FinalWorkReport(text); ok {
+				text = report.LegacyText(text)
+			}
+		}
+		if !ring {
+			text = ringCardsDowngraded(l, text)
+		}
+		text = paseoUIConverted(l, text)
 		if text == it.Text {
 			continue
 		}

@@ -88,6 +88,8 @@ class AgentRepoTitleShotsTest {
                             statusText = entry.row.state.takeIf { it != AgentState.Idle }?.label)
                         is TreeChildrenEntry -> error("The fixture has no Codex subtasks")
                         is TreeIdleEntry -> AgentIdleRow(entry.hidden, {}, depth = entry.depth)
+                        is TreeIdleReposEntry -> error("Only Glass's By Repository on the page heads idle repositories")
+                        is TreeShowAllEntry -> AgentShowAllRow(entry.count, entry.expanded, {}, depth = entry.depth)
                         is TreeTabEntry -> error("By repository lists one agent a row")
                     }
                 }
@@ -103,7 +105,7 @@ class AgentRepoTitleShotsTest {
             rule.onNodeWithText("Fix the login flow").assertIsDisplayed()
             rule.onNodeWithText("Speed up the importer").assertIsDisplayed()
             val layouts = mutableListOf<TextLayoutResult>()
-            rule.onNodeWithText(longTitle).assertIsDisplayed().fetchSemanticsNode()
+            val _ = rule.onNodeWithText(longTitle).assertIsDisplayed().fetchSemanticsNode()
                 .config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
             assertEquals("a long title stays on one line", 1, layouts.single().lineCount)
             assertTrue("and ends in an ellipsis", layouts.single().isLineEllipsized(0))

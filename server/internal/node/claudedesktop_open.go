@@ -20,7 +20,7 @@ import (
 // transcript. Before, the node resumed it with `claude --resume` in a terminal tab, so the session ran outside the app,
 // and was refused on a machine without a terminal engine.
 //
-// Only the index's sessions (macOS: the index is read there alone), and only when no claude has the session open: one
+// Only the index's sessions, on macOS (claudeDesktopOpens), and only when no claude has the session open: one
 // that does (a terminal's claude without an inbox, a program's) is refused as before, never given a second claude.
 
 // desktopOpenWait bounds the wait for the app to start the session's claude and its inbox; desktopInboxGrace is how
@@ -42,8 +42,12 @@ const (
 
 // sendThroughDesktopApp sends text to session id through the desktop app when the app's sidebar lists it and nothing
 // runs it: the app opens it, then the message goes to its inbox. handled false for any other session, and when the link
-// cannot be opened at all (nothing was started: the caller goes on as before).
+// cannot be opened at all (nothing was started: the caller goes on as before), or not in the background here
+// (claudeDesktopOpens).
 func (n *Node) sendThroughDesktopApp(ctx context.Context, id, text string, images []proto.Image) (handled bool, err error) {
+	if !claudeDesktopOpens {
+		return false, nil
+	}
 	local := readClaudeDesktopIndex(n.home).about[id].local
 	if local == "" {
 		return false, nil
@@ -69,6 +73,7 @@ func (n *Node) sendThroughDesktopApp(ctx context.Context, id, text string, image
 				if _, err := os.Stat(p.socket); err == nil {
 					if cur != id {
 						log.Printf("send %s: the desktop app went on in %s", id, cur)
+						n.transferDesktopSettings(id, cur)
 					}
 					return n.sendOpened(ctx, cur, text, images)
 				}
@@ -110,4 +115,23 @@ func (n *Node) desktopTranscript(local, id string) string {
 		}
 	}
 	return id
+}
+
+func (n *Node) transferDesktopSettings(oldID, newID string) {
+	if oldID == "" || newID == "" || oldID == newID {
+		return
+	}
+	n.ccPlugins.moveQueuedSettings(oldID, newID)
+	n.mu.Lock()
+	if m, ok := n.modes[oldID]; ok {
+		cur := n.modes[newID]
+		if m.Model != nil {
+			cur.Model = m.Model
+		}
+		if m.Effort != "" {
+			cur.Effort, cur.EffortAt = m.Effort, m.EffortAt
+		}
+		n.modes[newID] = cur
+	}
+	n.mu.Unlock()
 }

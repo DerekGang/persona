@@ -5,6 +5,7 @@ import android.content.res.Resources
 import androidx.compose.runtime.*
 import persona.core.designsystem.operationFeedback
 import persona.core.domain.FailureAction
+import persona.core.domain.answer.Delegated
 import persona.core.contracts.*
 import persona.core.contracts.api.*
 import kotlinx.coroutines.CancellationException
@@ -18,11 +19,12 @@ import persona.core.domain.sort.tabKey
 
 internal fun spaceCompanions(session: Session?, sessions: List<Session>): List<Session> {
     if (session == null) return emptyList()
-    val space = session.spaceId?.takeIf(String::isNotBlank) ?: session.workspaceId?.takeIf(String::isNotBlank)
+    val space = session.spaceId?.takeIf(String::isNotBlank) ?: return emptyList()
+    val listed = (sessions + session).mapTo(HashSet()) { it.key }
     return sessions.filter { other ->
         other.machineId == session.machineId && other.key != session.key && !other.assistant &&
-            if (space != null) (other.spaceId?.takeIf(String::isNotBlank) ?: other.workspaceId) == space
-            else !session.spaceName.isNullOrBlank() && other.spaceName == session.spaceName
+            other.spaceId?.takeIf(String::isNotBlank) == space &&
+            other.foldedUnder?.takeIf(String::isNotBlank)?.let { SessionKey(other.machineId, it) in listed } != true
     // tab by tab, a tab's agents together by their place in it (#2515, as the web's tab groups): the launcher first
     }.sortedWith(compareBy<Session> { it.slotIndex ?: Int.MAX_VALUE }.thenBy { it.slotId.orEmpty() }.then(PaneOrder))
 }
@@ -62,6 +64,8 @@ internal class ChatChromeState(
     private val actions: ChatActions?, private val scope: CoroutineScope,
     private val refresh: suspend () -> Unit, private val onClosed: () -> Unit,
     private val renamer: SessionRenamer? = null,
+    /** The answers the assistant gave and Change answer, for Session info's questions it answered; none in previews. */
+    val interactions: InteractionCenter? = null,
 ) {
     var busy by mutableStateOf(false); private set
     var muted by mutableStateOf<Boolean?>(null); private set
@@ -87,6 +91,10 @@ internal class ChatChromeState(
     /** "Session info" (GET …/info); fails when the actions are not wired, which the sheet says. */
     suspend fun info(session: Session): SessionInfo =
         actions?.info(session) ?: throw UnsupportedOperationException(res.getString(R.string.chat_action_info_unavailable))
+
+    /** Session info's questions the assistant answered for this session ([Delegated.history]); none without the actions. */
+    suspend fun delegatedAnswers(session: Session): List<DelegatedAnswer> =
+        Delegated.history(actions?.interactionHistory(session).orEmpty())
 
     suspend fun loadMute(session: Session) {
         try { muted = actions?.isMuted(session) }

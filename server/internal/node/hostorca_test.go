@@ -19,6 +19,7 @@ import (
 	"github.com/nwverse/persona/server/internal/orcart"
 	"github.com/nwverse/persona/server/internal/orcart/orcarttest"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rexcli"
 	"github.com/nwverse/persona/server/internal/rpc"
 	"github.com/nwverse/persona/server/internal/terncli"
 )
@@ -48,6 +49,10 @@ func TestMain(m *testing.M) {
 		preflightChild(os.Args[1:], os.Stdout)
 		os.Exit(0)
 	}
+	// A plain run of the whole package: its tests in concurrent processes of this binary (partition_test.go, #5734).
+	if code, ran := runPartitioned(); ran {
+		os.Exit(code)
+	}
 	// Nor `node doctor` as the preflight's child: the test binary again, in that mode, given long enough to come up
 	// under the whole server suite's load (#1110); only a child that never starts waits that long.
 	preflightChildCmd = func(string) ([]string, []string) {
@@ -61,12 +66,25 @@ func TestMain(m *testing.M) {
 	botmuxBin = func() string { return "" }
 	// Nor the user's Tern: no tern binary is found (a test that wants one gives its client a fake).
 	ternClient = func() *terncli.Client { return &terncli.Client{Bin: func() string { return "" }} }
+	// Nor the user's Rex: no rex binary is found (a test that wants one gives its client a fake).
+	rexClient = func() *rexcli.Client { return &rexcli.Client{Bin: func() string { return "" }} }
 	// Nor the user's gh outside the test's PATH (ghpath.go).
 	ghFallbackDirs = func() []string { return nil }
+	// Nor the user's Codex catalog: a model recovery on a Codex list runs no `codex debug models` (a test that wants
+	// windows gives its own, assistant_fallback_window.go).
+	codexDebugModels = func(context.Context, *Node, string) ([]byte, error) { return nil, errors.New("no codex in tests") }
+	// Subscription usage tests provide their own app-server instead of polling a real account.
+	codexUsageCLI = func() (string, error) { return "", errors.New("no codex in tests") }
+	// Nor the ChatGPT app's bundled codex: a test that wants one sets its own (codex_bundled_test.go).
+	bundledCodexCLI = func() string { return "" }
 	// Nor the user's Paseo: its home points nowhere (a test that wants one sets its own).
 	os.Setenv("PASEO_HOME", "/tmp/persona-test-no-paseo")
 	// Nor the user's Cindy: its home points nowhere (a test that wants one sets its own).
 	os.Setenv("CINDY_HOME", "/tmp/persona-test-no-cindy")
+	// Nor the user's T3 Code: its home points nowhere and its command line is not found (a test that wants one sets
+	// its own).
+	os.Setenv("T3CODE_HOME", "/tmp/persona-test-no-t3code")
+	t3codeBin = func() string { return "" }
 	// Nor the user's Claude config directory (claude under a profile, or these tests run from inside a Claude Code
 	// session): the node's own default is then ~/.claude of the test's home (#2140; a test that wants one sets its own).
 	os.Unsetenv("CLAUDE_CONFIG_DIR")
@@ -290,6 +308,62 @@ func TestOrcaSendChecksForADialogThenPrompts(t *testing.T) {
 	}
 	if tr := o.Trace("terminal.send"); len(tr) != 0 {
 		t.Errorf("typed into a dialog: %v", tr)
+	}
+}
+
+func TestOrcaSendsToForegroundTraeCLI(t *testing.T) {
+	for _, executable := range []string{"traecli", "traex"} {
+		t.Run(executable, func(t *testing.T) {
+			n, _, o, procs, home := orcaNode(t)
+			const pane = "tab1:leaf1"
+			command := "/opt/bin/" + executable
+			pid := os.Getpid() // the writer lock must name a live process owned by this user
+			writeTraexOwner(t, home, threadMain, pid)
+			traexCache.Lock()
+			previous, present := traexCache.panes[pid]
+			traexCache.panes[pid] = "orca:" + pane
+			traexCache.Unlock()
+			t.Cleanup(func() {
+				traexCache.Lock()
+				defer traexCache.Unlock()
+				if present {
+					traexCache.panes[pid] = previous
+				} else {
+					delete(traexCache.panes, pid)
+				}
+			})
+			o.SetTerminals(orcaTerm("term_1", "tab1", "leaf1", traexAgent))
+			o.SetScreen("term_1", "› Ask Codex to do anything\n")
+			setProcess := func(state string) {
+				args := fmt.Sprintf("%d %s 01:00 %s", pid, state, command)
+				env := fmt.Sprintf("%d %s ORCA_PANE_KEY=%s", pid, command, pane)
+				procs.set(pane, parseOrcaPSEnv(env, parseOrcaPSArgs(args, time.Now()), nil)[pane]...)
+			}
+			setProcess("S+")
+			if s := byID(listSessions(t, n))[threadMain]; s.Agent != traexAgent || s.PaneID != "orca:"+pane {
+				t.Fatalf("TRAE CLI conversation is not bound to its terminal: %+v", s)
+			}
+			o.Reset()
+
+			req := map[string]any{"session_id": threadMain, "text": "hello"}
+			if _, err := request(t, n, "session.send", req); err != nil {
+				t.Fatalf("send to foreground TRAE CLI: %v", err)
+			}
+			if writes := o.Writes(); len(writes) != 2 || writes[0].Text != "\x1b[200~hello\x1b[201~" || writes[1].Text != "\r" {
+				t.Fatalf("expected a bracketed paste and a separate submit, got %+v", writes)
+			}
+
+			o.Reset()
+			setProcess("S") // the same process and pane still exist, but TRAE CLI no longer owns the foreground group
+			if _, err := request(t, n, "session.send", req); err == nil {
+				t.Fatal("the background TRAE CLI process accepted a send")
+			} else if code, data := refusalOf(t, err); code != "not_delivered" || data["delivered"] != "none" {
+				t.Fatalf("expected a refusal before typing, got %v", err)
+			}
+			if writes := o.Writes(); len(writes) != 0 {
+				t.Fatalf("wrote into the terminal without TRAE CLI in front: %+v", writes)
+			}
+		})
 	}
 }
 
@@ -826,7 +900,8 @@ func TestOrcaPromptSubmitFails(t *testing.T) {
 
 // A session that is not running that Orca does not resume (no Claude transcript) is refused, nothing typed, with a
 // reason: its claude not in front when its pane is still there (suspended), else not running — not "unsupported".
-// Orca resumes a Claude session whose pane is gone (#5548); Herdr App resumes one as herdr does (#2532).
+// A message to a stopped agent is refused (#4754); the user's Resume (session.start) brings back a Claude session
+// whose pane is gone on Orca (#5548), and on Herdr App as herdr does (#2532).
 func TestNotRunningOnAnEngineWithoutResume(t *testing.T) {
 	n, o, procs := orcaSession(t)
 	n.claudeStart, n.claudeReady = 200*time.Millisecond, 200*time.Millisecond
@@ -843,14 +918,19 @@ func TestNotRunningOnAnEngineWithoutResume(t *testing.T) {
 	if w := o.Writes(); len(w) != 0 {
 		t.Errorf("wrote %+v", w)
 	}
-	o.SetTerminals() // the terminal closed: resumed in a new one, with the launcher that started it
+	o.SetTerminals() // the terminal closed: a message is refused, Resume brings it back in a new one with its launcher
 	n.state.mu.Lock()
 	st := n.state.Sessions[sidA]
 	st.Launcher = "claude-gpt"
 	n.state.Sessions[sidA] = st
 	n.state.mu.Unlock()
-	_, _ = request(t, n, "session.send", map[string]any{"session_id": sidA, "text": "hello"})
-	if s := strings.Join(o.Trace("terminal.send"), "\n"); !strings.Contains(s, "--resume "+sidA) || !strings.Contains(s, "claude-gpt") {
+	_, err = request(t, n, "session.send", map[string]any{"session_id": sidA, "text": "hello"})
+	if code, _ := refusalOf(t, err); code != agentStopped {
+		t.Fatalf("a message to a stopped agent: %v", err)
+	}
+	starts := orcaTypedStarts(o)
+	_, _ = request(t, n, "session.start", map[string]any{"resume_session_id": sidA})
+	if s := strings.Join(starts(), "\n"); !strings.Contains(s, "--resume "+sidA) || !strings.Contains(s, "claude-gpt") {
 		t.Fatalf("gone: not resumed with its launcher; calls %v", o.Trace())
 	}
 	const unknown = "0e000000-0000-4000-8000-0000000000ff" // no Claude transcript: not Orca's to resume
@@ -865,7 +945,7 @@ func TestNotRunningOnAnEngineWithoutResume(t *testing.T) {
 	n.state.mu.Unlock()
 	o.Reset()
 	_, err = request(t, n, "session.send", map[string]any{"session_id": cx, "text": "hello"})
-	if code, _ := refusalOf(t, err); code != "not_running" {
+	if code, _ := refusalOf(t, err); code != agentStopped {
 		t.Fatalf("codex: %v", err)
 	}
 	if c := o.Trace("terminal.create", "terminal.send"); len(c) != 0 {
@@ -884,7 +964,7 @@ func TestNotRunningOnAnEngineWithoutResume(t *testing.T) {
 	hc.setTerminals()
 	time.Sleep(time.Second) // past the failed-list cache
 	listSessions(t, hn)
-	_, err = request(t, hn, "session.send", map[string]any{"session_id": sidA, "text": "hello"})
+	_, err = request(t, hn, "session.start", map[string]any{"resume_session_id": sidA})
 	if isRefusal(err, "not_running") {
 		t.Fatalf("herdr-core: %v", err)
 	}

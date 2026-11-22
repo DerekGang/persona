@@ -76,8 +76,9 @@ import java.time.Instant
  * The sidebar with the assistant switcher at its head (docs/assistant/managers.md "Clients"), the real sidebar and the real
  * switcher as the shell puts them together, in every style, light and dark: closed, open (the roster's menu with its
  * badges, presence dots, the tick, Default, one offline, one still installing, New assistant and Manage assistants…),
- * after switching to another assistant, on an offline one, and with one assistant; the open roster also in English and
- * Japanese, and at the largest text size (on a short screen scrolled to its actions). The roster is the mock hub's
+ * after switching to another assistant, on an offline one, and with one assistant, alone or with one still installing;
+ * the open roster also in English and Japanese, and at the largest text size (on a short screen scrolled to its
+ * actions). The roster is the mock hub's
  * (`scripts/mock/mock_hub.py`). PNGs go to `build/switcher-shots/` (or `-Dpersona.shots=<dir>`). The plain
  * Application keeps Hilt's PersonaApp out of the test.
  */
@@ -107,6 +108,7 @@ class AssistantSwitcherShotsTest {
         override suspend fun newCode(id: String): ManagerCode { codes += id; error("no code in this test") }
         override suspend fun rename(id: String, name: String) = error("not used")
         override suspend fun makeDefault(id: String) = error("not used")
+        override suspend fun setHide(id: String, hide: Boolean) = error("not used")
         override suspend fun delete(id: String) = error("not used")
     }
 
@@ -162,17 +164,17 @@ class AssistantSwitcherShotsTest {
         CompositionLocalProvider(LocalManagerRoster provides roster) {
             val choice = persona.core.designsystem.currentAssistant()
             // What the shown assistant's page read: its own conversations (another's has none here).
-            val snapshot = if (choice.id == "assistant") AssistantSnapshot(conversations = listOf(main) + conversations, mainSession = main.key,
+            val snapshot = if (choice.id == "assistant") AssistantSnapshot(conversations = listOf(main) + conversations, mainSession = main.key, leaders = conversations.map { it.sessionId },
                 manager = null, managerId = "assistant") else AssistantSnapshot(manager = choice.id, managerId = choice.id)
             val waiting = roster?.waiting(cards, sessions).orEmpty()
             Box(Modifier.testTag("shot").fillMaxSize().background(PersonaTheme.palette.background)) {
                 JSidebarColumn({
-                    AssistantSidebarContent(snapshot, repository, emptySet(), null, operations, demo = false,
+                    AssistantSidebarContent(snapshot, repository, null, operations, demo = false,
                         onOpen = {}, onAction = {}, onSettings = {}, onInbox = {}, onKnowledge = {}, onTodos = {},
                         todoCount = 2, showTodos = true, inboxCount = if (choice.id == "assistant") 12 else 2,
                         settingsCount = 0, settingsDot = false, settingsBadge = null,
                         pages = listOf(NavItem("machines", stringResource(persona.android.R.string.app_machines), PhIcons.Desktop)),
-                        onPage = {}, onTogglePin = {}, onRetired = {},
+                        onPage = {}, onRetired = {},
                         switcher = { head, trailing, fallback ->
                             AssistantSwitcher(fake, waiting, hubOnline = true, onManage = onManage, headModifier = head,
                                 ticking = false, trailing = trailing, fallback = fallback)
@@ -238,6 +240,17 @@ class AssistantSwitcherShotsTest {
         rule.onNodeWithText("在线 · MacBook").assertExists()
         rule.onAllNodesWithText("新建助手").assertCountEquals(0)
         each("switched")
+        // A manager rename updates the switcher/sidebar head; the main conversation keeps its fixed localized label.
+        val renamed = managers.map { if (it.id == "m-3fa21c") it.copy(name = "公司") else it }
+        rule.runOnIdle {
+            fake.list = renamed
+            roster = ManagerRoster(renamed, "assistant")
+        }
+        rule.onNodeWithText("公司").assertIsDisplayed()
+        rule.onNodeWithContentDescription("公司", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("主对话").assertIsDisplayed()
+        rule.onAllNodesWithText("公司的主对话").assertCountEquals(0)
+        each("renamed-current")
         // An offline one can be picked too.
         tap("在线 · MacBook")
         tap("家里")
@@ -260,6 +273,41 @@ class AssistantSwitcherShotsTest {
         rule.onAllNodesWithText("默认").assertCountEquals(0)
         assertTrue(out().listFiles().orEmpty().size >= 30)
         scenario.close()
+    }
+
+    /**
+     * The hub's own assistant kept out of the switcher while it is not used (#9055; 工作 is the default): the open
+     * roster leaves its row out, while 工作 keeps its Default tag (two installed still); once the hub shows it again
+     * (a computer went back to it) its row is back.
+     */
+    @Test fun aHiddenBuiltInIsLeftOutOfTheRosterInEveryStyle() {
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        val hidden = managers.map {
+            if (it.builtin) it.copy(isDefault = false, hide = true, hidden = true, inboxNeedsYou = null) else it.copy(isDefault = it.id == "m-3fa21c")
+        }
+        var roster by mutableStateOf(ManagerRoster(hidden, "m-3fa21c"))
+        AssistantManagerChoice.choose("hub", null, "m-3fa21c")
+        val scenario = launch {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) { Sidebar(roster, Fake(hidden)) {} }
+        }
+        try {
+            rule.waitForIdle()
+            tap("在线 · MacBook")
+            rule.onNodeWithText("新建助手").assertExists()
+            rule.onNodeWithContentDescription("工作，默认，在线 · MacBook，当前").assertExists()
+            rule.onNodeWithText("离线 · 最后同步于 3 小时前").assertExists()
+            rule.onNodeWithText("安装中 · 码 7 分钟后过期").assertExists()
+            rule.onAllNodesWithText("在线 · server").assertCountEquals(0)
+            for (s in AppStyle.entries) for (d in listOf(false, true)) {
+                rule.runOnIdle { style = s; dark = d }
+                rule.onAllNodesWithText("在线 · server").assertCountEquals(0)
+                capture("switcher-hidden-open-${s.name.lowercase()}-${if (d) "dark" else "light"}")
+            }
+            // Only the choice, not in effect: listed again.
+            rule.runOnIdle { style = AppStyle.Glass; dark = false; roster = ManagerRoster(hidden.map { it.copy(hidden = false) }, "m-3fa21c") }
+            rule.onNodeWithContentDescription("助手，在线 · server").assertExists()
+        } finally { scenario.close() }
     }
 
     // Taller than the class's screen: the drawer's Health row (#4329) left the conversations below 900dp.
@@ -296,6 +344,15 @@ class AssistantSwitcherShotsTest {
                     val shown = capture("$case-$suffix")
                     assertTrue("$case lost the assistant identity ($suffix)", !product.sameAs(shown))
                     assertEquals("assistant", AssistantManagerChoice.current.value.shown)
+                    tap(status)
+                    rule.onNodeWithText("新建助手").assertIsDisplayed()
+                    rule.onNodeWithText("管理助手…").assertIsDisplayed()
+                    rule.onAllNodesWithText("默认").assertCountEquals(0)
+                    if (case == "single-installing") {
+                        rule.onNodeWithText("测试").assertIsDisplayed()
+                        rule.onNodeWithText("安装中", substring = true).assertIsDisplayed()
+                    }
+                    rule.onNodeWithContentDescription("Sample assistant，$status").performSemanticsAction(SemanticsActions.OnClick)
                 }
                 rule.runOnIdle { roster = ManagerRoster(emptyList(), "assistant") }
                 rule.onAllNodesWithText("Sample assistant").assertCountEquals(0)

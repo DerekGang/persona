@@ -1,6 +1,8 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The current assistant (docs/assistant/managers.md "Clients"): the assistant's routes name the manager picked in the
 /// sidebar's switcher, except one conversation's and the health space's, and an item's client names only its own manager,
@@ -225,6 +227,36 @@ struct ManagerSwitchTests {
         while !what(), Date.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
     }
 
+    // MARK: whose page it is
+
+    /// The screenshot banner (#9508) names the page as the top bar does (#12243): with one assistant the current one
+    /// (the localized assistant name in the sidebar's head and the bar), not the persona's name, which the banner drew before; with
+    /// several the picked one; without a roster the persona's. The composer, calls and voice keep `assistantShownName`.
+    @Test func theScreenshotBannerSaysTheTopBarsName() throws {
+        let model = try model(FakeHub(), roster: try Self.roster(Self.oneManager))
+        let bar = "助手" // i18n-ignore: the made-up roster's assistant
+        #expect(model.persona.name != bar && model.managerRoster?.isMulti == false && model.assistantManager == nil)
+        #expect(model.assistantTitleName == bar, "one assistant: the bar's and the sidebar head's name")
+        #expect(model.assistantTitleName(in: SessionKey(machineID: "box", sessionID: "chat")) == bar)
+        #expect(model.assistantShownName == model.persona.name, "the composer and calls keep the persona's name")
+        #expect(try drawn(PersonaBrandLockup(size: .banner), model) == drawn(PersonaBrandLockup(size: .banner, name: bar), model),
+                "the banner draws the bar's name")
+        #expect(try drawn(PersonaBrandLockup(size: .banner), model) != drawn(PersonaBrandLockup(size: .banner, name: model.persona.name), model))
+
+        model.managerRosters[""] = try Self.roster()
+        model.selectAssistantManager("m-1")
+        #expect(model.assistantTitleName == "工作" && model.assistantShownName == "工作", "several: the picked one") // i18n-ignore: made-up name
+        model.managerRosters[""] = nil
+        #expect(model.assistantTitleName == model.persona.name, "no roster: the persona's name, as the sidebar's head")
+    }
+
+    /// A banner as a picture, drawn with `model`.
+    private func drawn(_ v: some View, _ model: AppModel) throws -> Data {
+        let r = ImageRenderer(content: v.frame(width: 370, alignment: .leading).background(Color.white).environment(model))
+        r.scale = 2
+        return try #require(r.uiImage?.pngData())
+    }
+
     // MARK: the page's manager
 
     @Test func thePageStartsOnTheDefaultAndShowsThePick() throws {
@@ -248,9 +280,10 @@ struct ManagerSwitchTests {
         model.managerRosters[""] = try Self.roster(Self.oneManager)
         model.selectAssistantManager("m-1")
         #expect(model.assistantManagerID == nil && model.assistantManager == nil, "one manager: nothing is named")
-        #expect(model.currentAssistant?.name == "助手" && model.managerRoster?.isMulti == false, "one manager: it is current, without a roster switcher")
+        #expect(model.currentAssistant?.name == "助手" && model.managerRoster?.isMulti == false && model.showsAssistantSwitcher,
+                "one manager: it is current, with the roster switcher")
         model.managerRosters[""] = nil
-        #expect(model.currentAssistant == nil, "a hub without a roster: no switcher")
+        #expect(model.currentAssistant == nil && !model.showsAssistantSwitcher, "a hub without a roster: no switcher")
     }
 
     @Test func thePickIsKeptOnThisDeviceAcrossLaunches() async throws {
@@ -260,10 +293,10 @@ struct ManagerSwitchTests {
         first.selectAssistantManager("m-1")
         #expect(AssistantPickStore.load(folder: folder) == ["": "m-1"])
 
-        // The next launch: the pick is there before the hub's roster is, and names its manager once it is read.
+        // The next launch routes to the saved pick before the roster arrives, not to another assistant's settings.
         hub.on("GET", "/api/v1/managers", json: Self.roster)
         let next = try model(hub, roster: nil, folder: folder)
-        #expect(next.assistantPicks == ["": "m-1"] && next.assistantManagerID == nil && next.api?.shownManager == nil)
+        #expect(next.assistantPicks == ["": "m-1"] && next.assistantManagerID == "m-1" && next.api?.shownManager == "m-1")
         await next.refreshManagerRoster("")
         #expect(next.assistantManagerID == "m-1" && next.currentAssistant?.name == "工作" && next.api?.shownManager == "m-1")
 
@@ -282,6 +315,17 @@ struct ManagerSwitchTests {
         #expect(model.currentAssistant?.id == "assistant")
         await model.refreshManagerRoster("")
         #expect(model.managerRoster == nil && model.currentAssistant == nil, "none from this hub: no switcher")
+    }
+
+    @Test func aLegacyHubDoesNotNameTheRememberedPickOnceAbsenceIsConfirmed() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "manager-startup-" + UUID().uuidString)
+        let first = try model(FakeHub(), roster: try Self.roster(), folder: folder)
+        first.selectAssistantManager("m-1")
+        let legacy = try model(FakeHub(), roster: nil, folder: folder)
+        #expect(legacy.assistantManagerID == "m-1")
+        await legacy.refreshManagerRoster("")
+        #expect(legacy.assistantManagerID == nil && legacy.api?.shownManager == nil)
+        #expect(legacy.assistantPicks == ["": "m-1"], "a compatibility read does not erase the user's pick")
     }
 
     @Test func thePickStaysOnItsManagerWhenTheDefaultMoves() async throws {
@@ -332,6 +376,30 @@ struct ManagerSwitchTests {
         await model.refreshManagerRoster("")
         #expect(model.assistantManagerID == nil && model.assistantManager?.id == "assistant" && model.api?.shownManager == nil)
         #expect(model.assistantPicks.isEmpty, "it doesn't come back with the manager")
+    }
+
+    /// The built-in assistant picked, then kept out of the switcher (`hidden`, #9055): the page goes back to the default,
+    /// as for one no longer installed, and it can't be picked again while it is hidden.
+    @Test func aHiddenAssistantTakesThePageBackToTheDefault() async throws {
+        let saved = UserDefaults.standard.object(forKey: "assistant.current")
+        defer { UserDefaults.standard.set(saved, forKey: "assistant.current") }
+        let hub = FakeHub()
+        let model = try model(hub, roster: try Self.roster(#"""
+        {"default":"m-1","managers":[{"id":"assistant","name":"助手","online":true,"builtin":true},
+          {"id":"m-1","name":"工作","online":true,"default":true}]}
+        """#))
+        model.selectAssistantManager("assistant")
+        #expect(model.assistantManagerID == "assistant" && model.currentAssistant?.id == "assistant")
+        hub.on("GET", "/api/v1/managers", json: #"""
+        {"default":"m-1","managers":[{"id":"assistant","name":"助手","online":true,"builtin":true,"hide":true,"hidden":true},
+          {"id":"m-1","name":"工作","online":true,"default":true}]}
+        """#)
+        await model.refreshManagerRoster("")
+        #expect(model.assistantManagerID == nil && model.currentAssistant?.id == "m-1" && model.api?.shownManager == nil)
+        #expect(model.assistantPicks.isEmpty, "it doesn't come back when it is shown again")
+        #expect(model.managerRoster?.isMulti == true, "still counted: the pages still scope by assistant")
+        model.selectAssistantManager("assistant")
+        #expect(model.assistantManagerID == nil, "not picked while hidden")
     }
 
     @Test func theListsAreTheShownManagers() throws {

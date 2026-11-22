@@ -1,7 +1,20 @@
 import SwiftUI
 
-/// Pushes Settings › Model (value-based, like the other settings pages).
-struct ModelLaunchersRoute: Hashable {}
+/// The assistant and hub a pending provider import belongs to; roster refreshes do not change this identity.
+struct ProviderImportOwner: Hashable {
+    var group: String
+    var manager: String?
+}
+
+/// Re-runs a pending import when its API client becomes available after a cold start or pairing.
+struct ProviderImportTask: Hashable {
+    var request: ProviderImportRequest?
+    var apiReady: Bool
+    var owner: ProviderImportOwner
+}
+
+/// Pushes Settings › Model (value-based, like the other settings pages). Each push has its own import ownership.
+struct ModelLaunchersRoute: Hashable { var id = UUID() }
 /// One launcher's page.
 struct ModelLauncherRoute: Hashable { var name: String }
 
@@ -9,13 +22,20 @@ struct ModelLauncherRoute: Hashable { var name: String }
 /// and key), found in a machine's rc file (~/.zshrc, ~/.bashrc) or on its PATH (synced each time this opens), or the built-in
 /// claude of each machine — the hidden ones, and how each machine's list came in (offline, timed out, failed).
 struct ModelLaunchersView: View {
+    var route: ModelLaunchersRoute? = nil
     @Environment(AppModel.self) private var model
+    private let requestScope = AssistantSettingsRequestScope(AppModel.shared)
     @State private var launchers: [LauncherView]?
+    @State private var listOwner: ProviderImportOwner?
     /// How each machine's list came in; nil from an older hub.
     @State private var sync: [LauncherSync]?
     @State private var error: String?
     /// The provider sheet, at its first step (Add) or at Import from ~/.zshrc; nil: closed.
     @State private var adding: ProviderWizardStep?
+    /// An import link's draft, pre-filled into the sheet (#5428); nil: the sheet starts empty.
+    @State private var importWizard: ProviderWizardModel?
+    /// Why an import link could not be opened (a refusal, a read failure, a hub that can't read links), shown once.
+    @State private var importNote: String?
     @State private var query = ""
     /// Hidden starts folded (2026-11-01): they are hidden for a reason. A search shows them anyway.
     @State private var showHidden = false
@@ -27,6 +47,11 @@ struct ModelLaunchersView: View {
     #endif
 
     /// Name, model, gateway host, or a machine's name.
+    private var importOwner: ProviderImportOwner { ProviderImportOwner(group: requestScope.group, manager: requestScope.manager) }
+    /// Only the route created for a request may read or clear it; a replaced page cannot cancel its replacement.
+    private var importRequest: ProviderImportRequest? {
+        model.providerImport.flatMap { $0.id == route?.id ? $0 : nil }
+    }
     private func matches(_ l: LauncherView) -> Bool {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return true }
@@ -129,9 +154,11 @@ struct ModelLaunchersView: View {
             }
         }
         #endif
-        .sheet(item: $adding) { step in
+        .sheet(item: $adding, onDismiss: { importWizard = nil }) { step in
             // Saving moves `launchersRevision`, which reloads this list below.
-            if debugOldEditor { LauncherEditor(existing: nil) {} } else { ProviderWizard(start: step) }
+            if debugOldEditor { LauncherEditor(existing: nil) {} } else {
+                ProviderWizard(start: step, wizard: importWizard, launchers: listOwner == importOwner ? launchers ?? [] : [])
+            }
         }
         #if os(macOS) && DEBUG
         .onAppear { if UserDefaults.standard.bool(forKey: "macLauncherEditor") { adding = .pick } } // `-macLauncherEditor YES`: Add Launcher
@@ -139,7 +166,8 @@ struct ModelLaunchersView: View {
         #if DEBUG
         // `-openLauncherEditor YES` opens the form Other Connection Types leads to, `-openLauncherEditor preset` on From Extension;
         // `-openProviderWizard pick|connect|models|import` the provider sheet at that step; `-openProviderComputers
-        // all|selected|none|legacy|keys|api` a made-up provider's Computers page (`new` goes with `-openProviderWizard models`).
+        // all|selected|none|legacy|keys|api` a made-up provider's Computers page (`new` goes with `-openProviderWizard models`);
+        // `via` an API connection sending through a computer, at Connect.
         .onAppear {
             if UserDefaults.standard.string(forKey: "openLauncherEditor") != nil { adding = .pick }
             if let s = UserDefaults.standard.string(forKey: "openProviderWizard") { adding = ProviderWizardStep(rawValue: s) ?? .pick }
@@ -148,20 +176,26 @@ struct ModelLaunchersView: View {
             guard let s = ProviderComputersDemo.state, s != "new", UserDefaults.standard.string(forKey: "openProviderWizard") == nil else { return }
             // The made-up provider runs on the hub's computers: wait (3 s at most) for their list.
             var waited = 0
-            while model.hubMachines.isEmpty, waited < 30 {
+            while requestScope.machines(model).isEmpty, waited < 30 {
                 try? await Task.sleep(for: .milliseconds(100))
                 waited += 1
             }
-            computersDemo = ProviderComputersDemo.launcher(s, machines: model.hubMachines)
+            computersDemo = ProviderComputersDemo.launcher(s, machines: requestScope.machines(model))
         }
-        .sheet(item: $computersDemo) { l in ProviderWizard(existing: l, start: .models, showComputers: true) }
+        .sheet(item: $computersDemo) { l in ProviderWizard(existing: l, start: ProviderComputersDemo.state == "via" ? .connect : .models, showComputers: ProviderComputersDemo.state != "via") }
         #endif
-        .confirmationDialog("Delete Launcher “\(pendingDelete?.name ?? "")”?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+        .accessibleConfirmationDialog("Delete Launcher “\(pendingDelete?.name ?? "")”?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                             titleVisibility: .visible, presenting: pendingDelete) { l in
             Button("Delete", role: .destructive) { Task { await delete(l) } }
         } message: { _ in Text("The key stored on the hub is deleted too. This can't be undone.") }
         // Again whenever a launcher changes anywhere, its own page included (hide, restore, delete): this page stays
         // built under the one pushed on it, so without this it showed the old list when you came back (#1433).
+        .task(id: ProviderImportTask(request: importRequest, apiReady: requestScope.api(model) != nil, owner: importOwner)) { await openImport() }
+        .onChange(of: importOwner) { _, _ in if importRequest != nil { model.providerImport = nil } }
+        .onDisappear { if importRequest != nil { model.providerImport = nil } }
+        .alert(String(localized: "Can't Open Import Link"), isPresented: Binding(get: { importNote != nil }, set: { if !$0 { importNote = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(importNote ?? "") }
         .task(id: model.launchersRevision) { await load() }
         .refreshable { await load() }
         #if DEBUG
@@ -306,7 +340,7 @@ struct ModelLaunchersView: View {
 
     /// Takes the row out at once, then asks the hub; a failure puts it back and says why.
     private func delete(_ l: LauncherView) async {
-        guard let api = model.api, let i = launchers?.firstIndex(where: { $0.name == l.name }) else { return }
+        guard let api = requestScope.api(model), let i = launchers?.firstIndex(where: { $0.name == l.name }) else { return }
         _ = withAnimation(Theme.Motion.standard) { launchers?.remove(at: i) }
         do {
             try await api.deleteLauncher(l.name)
@@ -320,7 +354,7 @@ struct ModelLaunchersView: View {
 
     /// Moves the row at once, then asks the hub; a failure puts it back and says why.
     private func setHidden(_ l: LauncherView, _ hide: Bool) async {
-        guard let api = model.api, let i = launchers?.firstIndex(where: { $0.name == l.name }) else { return }
+        guard let api = requestScope.api(model), let i = launchers?.firstIndex(where: { $0.name == l.name }) else { return }
         withAnimation(Theme.Motion.standard) { launchers?[i].hidden = hide }
         do {
             if hide { try await api.deleteLauncher(l.name) } else { try await api.restoreLauncher(l.name) }
@@ -337,10 +371,51 @@ struct ModelLaunchersView: View {
         return ids.map { model.machine(model.hubRef($0))?.name ?? $0 }.joined(separator: String(localized: "、", comment: "Separator between computer names in a list"))
     }
 
-    private func load() async {
-        guard let api = model.api else { return }
+    /// An import link opened from outside (#5428): read it through the hub's parse route and open the wizard with the
+    /// draft, or say why it can't be opened. The link is dropped here, never shown or kept.
+    private func openImport() async {
+        guard let request = importRequest else { return }
+        // A cold start or an unfinished pairing has no client yet. Keep the request pending; the API-ready id retries it.
+        guard let api = requestScope.api(model) else { return }
+        // A newer request supersedes this task. Only this request's own route may clear it or show its result.
+        defer { if model.providerImport?.id == request.id { model.providerImport = nil } }
+        // The hello may not have arrived yet when a link opens the app. The parse route is the authority here;
+        // an older hub answers 404 or another paste format, which is the same "can't open import links yet" the web shows.
         do {
-            (launchers, sync) = try await api.launcherList()
+            let result = try await api.parseProviderImport(text: request.link)
+            guard model.providerImport?.id == request.id else { return }
+            guard result.isProviderLink else {
+                importNote = String(localized: "This hub can't open import links yet. Update the hub to open them.")
+                return
+            }
+            if let draft = result.drafts?.first {
+                let wizard = ProviderWizardModel()
+                wizard.applyImport(draft.provider)
+                importWizard = wizard
+                adding = .connect
+            } else {
+                importNote = result.notes?.first?.text ?? String(localized: "This import link has no provider to add.")
+            }
+        } catch is CancellationError {
+            return
+        } catch let error as APIError where error.status == 404 {
+            guard model.providerImport?.id == request.id else { return }
+            importNote = String(localized: "This hub can't open import links yet. Update the hub to open them.")
+        } catch {
+            guard model.providerImport?.id == request.id else { return }
+            // A request error can contain the secret-bearing link or body; show only the fixed, localized refusal.
+            importNote = String(localized: "This import link couldn't be read.")
+        }
+    }
+
+    private func load() async {
+        guard let api = requestScope.api(model) else { return }
+        do {
+            let owner = importOwner
+            let result = try await api.launcherList()
+            guard !Task.isCancelled else { return }
+            (launchers, sync) = result
+            listOwner = owner
             error = nil
         } catch {
             self.error = error.shown
@@ -389,6 +464,7 @@ struct LauncherRow: View {
 /// masked) on each machine and can be hidden or brought back.
 struct ModelLauncherDetailView: View {
     @Environment(AppModel.self) private var model
+    private let requestScope = AssistantSettingsRequestScope(AppModel.shared)
     @Environment(\.dismiss) private var dismiss
     var name: String
     @State private var launcher: LauncherView?
@@ -443,7 +519,10 @@ struct ModelLauncherDetailView: View {
                     if let o = l.origin, o.hasPrefix("zshrc:") { mono("Imported From", "~/.zshrc · " + o.dropFirst("zshrc:".count)) }
                     if let ms = l.models, ms.count > 1 { mono("Available Models", ms.map(\.id).joined(separator: String(localized: "、", comment: "Separator between computer names in a list"))) }
                     if l.hasHeaders == true { LabeledContent("Headers", value: String(localized: "Set (hidden)")) }
-                    if l.managed { LabeledContent("API Key", value: l.hasKey == true ? String(localized: "Set (hidden)") : String(localized: "Not set")) }
+                    if l.managed {
+                        LabeledContent("API Key", value: l.keyReference.map(ExtensionText.referenceState)
+                                       ?? (l.hasKey == true ? String(localized: "Set (hidden)") : String(localized: "Not set")))
+                    }
                     if l.managed, l.api != "responses" { LabeledContent("Authentication [Model Launchers View d1ff8f]", value: l.bearerAuth ? "Bearer" : "x-api-key") }
                     if let a = l.args, !a.isEmpty { mono("Extra Arguments", a.joined(separator: " ")) }
                     if let ids = l.machines, !ids.isEmpty {
@@ -515,6 +594,7 @@ struct ModelLauncherDetailView: View {
                 Section { ProgressView().frame(maxWidth: .infinity).padding(.vertical, Theme.Space.xl) }.listRowBackground(Color.clear)
             }
         }
+        .accessibilityIdentifier("launcher.detail")
         .detailTitle(name)
         .navigationBarTitleDisplayMode(.inline)
         .pageToolbar {
@@ -534,7 +614,10 @@ struct ModelLauncherDetailView: View {
         .extensionPushes(pluginSections.map { Array($0.models.values) } ?? [])
         .task(id: model.hubFeatures.hasExtensionFeature("manager")) {
             guard model.hubFeatures.hasExtensionFeature("manager") else { return }
-            let sections = pluginSections ?? ExtensionLauncherModel(launcher: name)
+            let scope = requestScope
+            let api = scope.api(model)
+            let sections = pluginSections ?? ExtensionLauncherModel(launcher: name, deps: .init(
+                api: { api }, connection: { model.socket(scope.group) }))
             pluginSections = sections
             await sections.load()
         }
@@ -583,7 +666,7 @@ struct ModelLauncherDetailView: View {
     }
 
     private func check(_ machines: [String]) async {
-        guard let api = model.api else { return }
+        guard let api = requestScope.api(model) else { return }
         for id in machines { checks[id] = .some(nil) }
         await withTaskGroup(of: (String, LauncherCheck).self) { group in
             for id in machines {
@@ -599,7 +682,7 @@ struct ModelLauncherDetailView: View {
     }
 
     private func load() async {
-        guard let api = model.api else { return }
+        guard let api = requestScope.api(model) else { return }
         do {
             launcher = try await api.launcher(name)
             error = nil
@@ -609,7 +692,7 @@ struct ModelLauncherDetailView: View {
     }
 
     private func delete() async {
-        guard let api = model.api else { return }
+        guard let api = requestScope.api(model) else { return }
         do {
             try await api.deleteLauncher(name)
             model.launchersChanged()
@@ -619,7 +702,7 @@ struct ModelLauncherDetailView: View {
     }
 
     private func restore() async {
-        guard let api = model.api else { return }
+        guard let api = requestScope.api(model) else { return }
         do {
             try await api.restoreLauncher(name)
             model.launchersChanged()
@@ -632,12 +715,15 @@ struct ModelLauncherDetailView: View {
 /// Add a launcher, or change one Persona keeps.
 struct LauncherEditor: View {
     @Environment(AppModel.self) private var model
+    private let requestScope = AssistantSettingsRequestScope(AppModel.shared)
     @Environment(\.dismiss) private var dismiss
     var existing: LauncherView?
     var saved: () async -> Void
     @State private var name = ""
     @State private var baseURL = ""
     @State private var apiKey = ""
+    /// The key field takes a secret provider's reference (docs/extensions/secret-providers.md "Launcher keys").
+    @State private var keyByReference = false
     @State private var modelName = ""
     @State private var smallModel = ""
     @State private var subagentModel = ""
@@ -693,11 +779,11 @@ struct LauncherEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .sheetCancel(unsaved: opened.map { $0 != fields } ?? false) { dismiss() }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { usesPreset ? await savePreset() : await save() } }.lineLimit(1)
-                        .disabled(usesPreset ? !presets.canSave
-                                  : saving || name.isEmpty || baseURL.isEmpty || modelName.isEmpty || (isNew && apiKey.isEmpty)
-                                    || (scopeShown && scope.problem != nil))
+                SheetConfirm(id: "launcher-save",
+                             disabled: usesPreset ? !presets.canSave
+                                 : saving || name.isEmpty || baseURL.isEmpty || modelName.isEmpty || (isNew && apiKey.isEmpty)
+                                   || (scopeShown && scope.problem != nil)) {
+                    Task { usesPreset ? await savePreset() : await save() }
                 }
             }
             .task {
@@ -722,6 +808,7 @@ struct LauncherEditor: View {
                 kind = e.kind ?? "launcher"
                 protocolName = e.api ?? "messages"
                 auth = e.bearerAuth ? "bearer" : "api_key"
+                keyByReference = e.keyReference != nil
                 if let s = ProviderScopeForm(view: e) { scope = s }
             }
         }
@@ -755,8 +842,10 @@ struct LauncherEditor: View {
         Section {
             TextField("https://…", text: $baseURL)
                 .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-            SecretField(isNew || existing?.hasKey != true ? "API Key" : String(localized: "API Key (leave empty to keep)"), filled: String(localized: "Filled in; tap Save [Extension Market Views 94348c]"),
-                        text: $apiKey, identifier: "launcher.editor.key")
+            ProviderKeyField(title: isNew || existing?.hasKey != true ? "API Key" : String(localized: "API Key (leave empty to keep)"),
+                             filled: String(localized: "Filled in; tap Save [Extension Market Views 94348c]"), text: $apiKey,
+                             byReference: $keyByReference, references: model.hubFeatures.contains("launcher_secret_references"),
+                             stored: existing?.keyReference, identifier: "launcher.editor.key", explainedBelow: true)
             if !usesResponses {
                 Picker("Authentication [Model Launchers View d1ff8f]", selection: $auth) {
                     Text("x-api-key").tag("api_key")
@@ -764,8 +853,12 @@ struct LauncherEditor: View {
                 }
             }
         } header: { Text("Gateway") } footer: {
-            Text(usesResponses ? String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients.")
-                : String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients. Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN)."))
+            switch (usesResponses, keyByReference) {
+            case (true, false): Text(String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients."))
+            case (true, true): Text(String(localized: "Enter an address compatible with the selected protocol. The hub keeps only the reference and fetches the key from its provider when it's needed."))
+            case (false, false): Text(String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients. Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN)."))
+            case (false, true): Text(String(localized: "Enter an address compatible with the selected protocol. The hub keeps only the reference and fetches the key from its provider when it's needed. Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN)."))
+            }
         }
         Section {
             TextField(String(localized: "Default Model"), text: $modelName).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -811,7 +904,7 @@ struct LauncherEditor: View {
     }
 
     private func save() async {
-        guard let api = model.api else { return }
+        guard let api = requestScope.api(model) else { return }
         saving = true
         defer { saving = false }
         var input = LauncherInput(name: name.trimmingCharacters(in: .whitespaces), baseURL: baseURL.trimmingCharacters(in: .whitespaces),
@@ -822,9 +915,10 @@ struct LauncherEditor: View {
                                   customModelName: kind == "api" ? "" : customModelName.trimmingCharacters(in: .whitespaces),
                                   customModelDescription: kind == "api" ? "" : customModelDescription.trimmingCharacters(in: .whitespaces),
                                   args: kind == "api" ? [] : args.split(whereSeparator: \.isWhitespace).map(String.init),
-                                  apiKey: apiKey.isEmpty ? nil : apiKey, kind: kind,
-                                  api: kind == "api" ? protocolName : "messages", auth: usesResponses ? "api_key" : auth)
-        if scopeShown { scope.apply(to: &input, old: existing, machines: model.hubMachines, kind: kind) }
+                                  apiKey: apiKey.isEmpty || keyByReference ? nil : apiKey, kind: kind,
+                                  api: kind == "api" ? protocolName : "messages",
+                                  apiKeyReference: keyByReference && !apiKey.isEmpty ? apiKey : nil, auth: usesResponses ? "api_key" : auth)
+        if scopeShown { scope.apply(to: &input, old: existing, machines: requestScope.machines(model), kind: kind) }
         do {
             try await api.saveLauncher(input, isNew: isNew)
             model.launchersChanged()

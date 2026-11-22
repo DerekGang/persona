@@ -53,6 +53,8 @@ type ExtensionDetail struct {
 	SecretsCleared []string `json:"secrets_cleared,omitempty"`
 	// SecretUsers: for a secret provider, the other extensions' secrets that hold its references (secret_refs.go).
 	SecretUsers []SecretUserView `json:"secret_users,omitempty"`
+	// HandoffRules: for a secret provider, the Always rules of hand-offs of its values (secret_handoff_rules.go).
+	HandoffRules []HandoffRuleView `json:"handoff_rules,omitempty"`
 	// DataDir is its data directory on the manager's machine, the one its program is given there (an attached package
 	// keeps it): for the master token over loopback and the admin UI only, never a device; none for one installed from
 	// remote:, one from hub.json or manager.json, or one with no program on the manager.
@@ -66,6 +68,9 @@ type ExtensionSecretView struct {
 	Description string `json:"description,omitempty"`
 	Required    bool   `json:"required,omitempty"`
 	Set         bool   `json:"set"`
+	// List and EntryTitle associate a live entry secret with its list; Name is its stable entry/storage ID.
+	List       string `json:"list,omitempty"`
+	EntryTitle string `json:"entry_title,omitempty"`
 	// Hint is a set secret's last four characters, when its spec asks (hint "last4", #5906); never more of it.
 	Hint string `json:"hint,omitempty"`
 	// Reference: the secret holds a reference, not a value (secret_refs.go); never a hint then.
@@ -74,11 +79,39 @@ type ExtensionSecretView struct {
 
 // switched is the detail a switch answers, with what did not follow it (switchExtension).
 func (ps *extensions) switched(ctx context.Context, id string, warnings []string) ExtensionDetail {
-	d := ps.detail(ctx, ps.reg.Get(id))
+	d := ps.detail(ctx, ps.reg.Snapshot(id))
 	if len(warnings) > 0 {
 		d.Warnings = append(slices.Clone(d.Warnings), warnings...)
 	}
 	return d
+}
+
+func entryNetworkForm(form *extension.Schema, m *extension.Manifest) *extension.Schema {
+	if form == nil {
+		return nil
+	}
+	out := *form
+	out.Fields = slices.Clone(form.Fields)
+	for i := range out.Fields {
+		list := &out.Fields[i]
+		if !list.EntryList() || list.Items == nil {
+			continue
+		}
+		item := *list.Items
+		item.Fields = slices.Clone(list.Items.Fields)
+		list.Items = &item
+		for _, network := range m.Permissions.ConfiguredNetworks() {
+			if network.Malformed || network.List != list.Name {
+				continue
+			}
+			for j := range list.Items.Fields {
+				if list.Items.Fields[j].Name == network.Field {
+					list.Items.Fields[j].ClearsSecret = true
+				}
+			}
+		}
+	}
+	return &out
 }
 
 func (ps *extensions) detail(ctx context.Context, p *extension.Extension) ExtensionDetail {
@@ -86,6 +119,7 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 	l := ps.h.contextLang(ctx)
 	form := p.L10n.Schema(l, p.Schema)  // the form's text in the request's language (#897); p.Schema is shared
 	form = withoutIPhonePhones(p, form) // each iPhone's own consent, never set from a form (iphone.go)
+	form = entryNetworkForm(form, m)
 	d := ExtensionDetail{ExtensionView: ps.view(ctx, p), Publisher: m.Publisher, Homepage: m.Homepage, Origin: p.Record.Origin,
 		PreviousVersion: p.Record.PreviousVersion, ReadOnly: p.ReadOnly(), Form: form, Permissions: extension.ExplainWith(l, m, ps.reg.Config(p)),
 		Contributions: ps.contributionViews(p), Depends: ps.reg.DependenciesContext(ctx, m), ExtensionPack: m.ExtensionPack}
@@ -107,7 +141,7 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 		d.NodeMachines = m.Node.Machines
 		d.Form = nodeConfirmForm(l, form, m, d.Name)
 	}
-	for _, u := range ps.uiPlaces("", "") {
+	for _, u := range ps.localizeUI(l, ps.uiPlaces("", "")) {
 		if u.Extension == p.Record.ID && extension.FullPage(u.Placement) {
 			d.UI = append(d.UI, u)
 		}
@@ -119,9 +153,14 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 		}
 		set := ps.reg.SecretsSet(ctx, p)
 		var plain map[string]string // read when a secret is set: shown by its end, or a reference
-		for _, s := range m.Secrets {
-			if set[s.Name] && plain == nil {
+		loadPlain := func() {
+			if plain == nil {
 				plain, _ = ps.reg.Secrets(ctx, p.Record.ID)
+			}
+		}
+		for _, s := range m.Secrets {
+			if set[s.Name] {
+				loadPlain()
 			}
 			shown := p.L10n.Secret(l, s)
 			view := ExtensionSecretView{Name: s.Name, Title: shown.Title, Description: shown.Description, Required: s.Required, Set: set[s.Name]}
@@ -132,9 +171,54 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 			}
 			d.Secrets = append(d.Secrets, view)
 		}
+		if form != nil {
+			var config map[string]json.RawMessage
+			_ = json.Unmarshal(d.Config, &config)
+			for _, f := range form.EntryListFields() {
+				var entries []map[string]json.RawMessage
+				_ = json.Unmarshal(config[f.Name], &entries)
+				for _, entry := range entries {
+					var id string
+					if json.Unmarshal(entry["_id"], &id) != nil || id == "" {
+						continue
+					}
+					if set[id] {
+						loadPlain()
+					}
+					spec := *f.Secret
+					view := ExtensionSecretView{Name: id, Title: spec.Title, Description: spec.Description, Required: spec.Required,
+						Set: set[id], List: f.Name, EntryTitle: extensionEntryTitle(f, entry)}
+					if ref, ok := extension.ReferenceOf(plain[id]); ok {
+						view.Reference = ps.secretReferenceView(ctx, ref)
+					} else {
+						view.Hint = extension.SecretHint(spec, plain[id])
+					}
+					d.Secrets = append(d.Secrets, view)
+				}
+			}
+		}
 		d.SecretUsers = ps.secretUsers(ctx, p, l)
+		ps.h.volcDetail(ctx, p, &d) // its meetings switch is the assistant's choice (volc_extension.go)
+	}
+	if p.Full != nil && len(p.Full.SecretProviders()) > 0 { // a read-only provider's rules apply all the same
+		d.HandoffRules = ps.h.handoffRulesOf(ctx, p.Record.ID)
 	}
 	return d
+}
+
+func extensionEntryTitle(list extension.Field, entry map[string]json.RawMessage) string {
+	for pass := range 2 {
+		for _, field := range list.Items.Fields {
+			if pass == 0 && field.Name != "name" {
+				continue
+			}
+			var value string
+			if json.Unmarshal(entry[field.Name], &value) == nil && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
 }
 
 // actorOr is actor, or def for the master token over loopback.
@@ -170,6 +254,7 @@ func readExtensionJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 func (h *Manager) extensionRoutes(api *http.ServeMux) {
 	h.extensionUIRoutes(api)
 	h.extensionImageRoutes(api)
+	h.extensionLogoRoutes(api)
 	h.extensionSystemRoutes(api)
 	h.marketRoutes(api)
 	h.operationRoutes(api)
@@ -210,6 +295,7 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 		}
 	}
 	h.authRoutes(api, full)
+	h.assistantDataRoutes(api, full)
 	// Installing, upgrading and removing run or delete code on this machine: the master token over loopback only.
 	owner := func(f http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -279,9 +365,26 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 			return
 		}
 		in.Config = kept
-		// Secrets bound to the old configuration go first (the voice extension's key, moved to another host:
-		// voice_extension.go); said in the answer, an error's too.
-		cleared, err := ps().reg.SetConfigClearing(r.Context(), p.Record.ID, in.Config, actor(r))
+		if isVolc(p) { // its meetings switch sets the assistant's choice and is not saved with it (volc_extension.go)
+			rest, changed, err := h.volcConfigWrite(r.Context(), p, in.Config)
+			if err != nil {
+				writeExtensionResponseError(w, r, http.StatusServiceUnavailable, "assistant_offline", err)
+				return
+			}
+			if !changed {
+				writeExtensionJSON(w, r, detailOut(r, ps().detail(r.Context(), ps().reg.Get(p.Record.ID))))
+				return
+			}
+			in.Config = rest
+		}
+		// Only an opted-in full editor may change entry lists. An immediate save can explicitly preserve them while
+		// still receiving the opted-in detail; older full-config drafts always preserve the hub's current arrays.
+		var cleared []string
+		if r.URL.Query().Get("entry_lists") == "1" && r.URL.Query().Get("preserve_entries") != "1" {
+			cleared, err = ps().reg.SetConfigClearing(r.Context(), p.Record.ID, in.Config, actor(r))
+		} else {
+			cleared, err = ps().reg.SetConfigPreservingEntries(r.Context(), p.Record.ID, in.Config, actor(r))
+		}
 		if err != nil {
 			var fe *extension.FieldError
 			if errors.As(err, &fe) {
@@ -354,6 +457,20 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 			writeExtensionResponseError(w, r, http.StatusBadRequest, code, err)
 			return
 		}
+		writeExtensionJSON(w, r, detailOut(r, ps().detail(r.Context(), ps().reg.Get(p.Record.ID))))
+	}))
+	// An Always rule of a hand-off of the provider's values (secret_handoff_rules.go): removed, the next hand-off asks.
+	api.HandleFunc("DELETE /api/v1/extensions/{id}/-/handoff-rules/{rule}", full(func(w http.ResponseWriter, r *http.Request, p *extension.Extension) {
+		n, err := h.removeHandoffRules(r.Context(), p.Record.ID, r.PathValue("rule"))
+		if err != nil {
+			writeExtensionResponseError(w, r, http.StatusServiceUnavailable, "rules_unavailable", err)
+			return
+		}
+		if n == 0 {
+			writeExtensionResponseError(w, r, http.StatusNotFound, "no_rule", i18n.Err("hub-extension_routes.no_handoff_rule"))
+			return
+		}
+		h.logf("plugin %s: hand-off rule %s removed by %s", p.Record.ID, r.PathValue("rule"), actor(r)) // a rule's id: hex
 		writeExtensionJSON(w, r, detailOut(r, ps().detail(r.Context(), ps().reg.Get(p.Record.ID))))
 	}))
 	api.HandleFunc("DELETE /api/v1/extensions/{id}/-/secrets/{name}", full(func(w http.ResponseWriter, r *http.Request, p *extension.Extension) {
@@ -493,7 +610,8 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 			hp = ps().get(id)
 		}
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/extensions/"+id)
-		if hp == nil || hp.proxy == nil || hp.proc == nil || strings.HasPrefix(rest, "/-/") {
+		// /transcription/ is the manager's only (transcription.go): a meeting's audio never comes from an app.
+		if hp == nil || hp.proxy == nil || hp.proc == nil || strings.HasPrefix(rest, "/-/") || transcriptionPath(rest) {
 			writeExtensionResponseError(w, r, http.StatusNotFound, "not_found", errNoExtension)
 			return
 		}

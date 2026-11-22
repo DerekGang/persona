@@ -72,7 +72,7 @@ func TestPlacesThatSealAreKnown(t *testing.T) {
 		"internal/assistant/service.go":                1, // its box
 		"internal/assistant/models_launchers.go":       2, // sealKey: launchers.managed
 		"internal/assistant/models_launchers_save.go":  3, // its calls: launchers.managed
-		"internal/assistant/models_import.go":          2, // launchers.managed
+		"internal/assistant/models_import.go":          1, // launchers.managed: key, headers and env
 		"internal/assistant/models_launchers_scope.go": 1, // launchers.machine_keys
 		"internal/assistant/launcher_secrets.go":       1, // sealKey: a reference in key_sealed, launchers.managed / launchers.machine_keys
 		"internal/assistant/keyrotate.go":              1, // the rotation itself
@@ -94,8 +94,11 @@ func TestPlacesThatSealAreKnown(t *testing.T) {
 		"internal/hub/devices_service.go":   1, // the hub's key: the computers' connector credentials
 		"internal/hub/push_transport.go":    1, // a phone's push key (pushcrypto)
 		"internal/pushcrypto/pushcrypto.go": 1, // HPKE to a phone
+		"internal/webpush/webpush.go":       1, // RFC 8291 to a browser's subscription keys: a message, never stored
 		"internal/proto/secretenv.go":       1, // HPKE to a node's one-time stage key: a hand-off, never stored
+		"internal/proto/secretstore.go":     1, // HPKE to the provider node's one-time key: write values, never stored by Persona
 		"internal/relay/relay.go":           1, // the push relay's grants
+		"internal/screenlink/udp_wire.go":   1, // a live screen's UDP packets: keys from the direct route's TLS exporter, never stored
 	}
 	lineComment := regexp.MustCompile(`(?m)^\s*//.*$`) // comments may name them freely
 	seal := regexp.MustCompile(`\.Seal\(|sealKey\(|\.encrypt\(|SealWith\(|secretkey\.New`)

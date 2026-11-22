@@ -19,6 +19,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -157,8 +159,8 @@ class PairingFlowTest {
             }
         }
         val cases = listOf<Pair<() -> Unit, () -> Unit>>(
-            // Welcome › Connect hub, back: the welcome page again.
-            { tap(R.string.settings_pairing_welcome_connect) } to {
+            // Welcome › Other ways, back: the welcome page again.
+            { tap(R.string.settings_pairing_other_ways) } to {
                 rule.onNodeWithText(text(R.string.settings_pairing_welcome_title)).assertExists()
             },
             // Manual entry › Confirm › failure, back: the form with the address still in it; back again: the connect choices.
@@ -231,12 +233,17 @@ class PairingFlowTest {
         rule.onAllNodesWithText(text(R.string.settings_ready_title)).onFirst().assertExists()
     }
 
-    @Test fun systemBackOnTheFirstChecklistEntersTheApp() {
+    @Test fun backAndSetUpLaterEnterTheAppAndKeepTheChecklistPending() {
         var ready = 0
         firstChecklist { ready++ }
+        rule.onNodeWithContentDescription(text(persona.core.designsystem.R.string.designsystem_back)).assertDoesNotExist()
         back()
         assertEquals(1, ready)
         assertFalse(rule.activity.isFinishing)
+        assertTrue(needsOnboardingReadiness(rule.activity))
+        tap(R.string.settings_ready_set_up_later)
+        assertEquals(2, ready)
+        assertTrue(needsOnboardingReadiness(rule.activity))
     }
 
     /**

@@ -19,11 +19,16 @@ class HubSessionsRepository(
     private val connection: HubConnection,
     scope: CoroutineScope,
     private val snapshots: ListSnapshotStore? = null,
+    private val reconcileHeldRetries: (suspend (Session, Session) -> Unit)? = null,
 ) : SessionsRepository, VerifiedSessionsRepository {
     private val mutableMachines = MutableStateFlow<List<Machine>>(emptyList())
     override val machines = mutableMachines.asStateFlow()
     private val mutableSessions = MutableStateFlow<List<Session>>(emptyList())
     override val sessions = mutableSessions.asStateFlow()
+    private val mutableAdoptedSessions = MutableStateFlow<List<Session>>(emptyList())
+    override val adoptedSessions = mutableAdoptedSessions.asStateFlow()
+    private val mutableStartedThreads = MutableStateFlow(emptyMap<SessionKey, Session>())
+    override val startedThreads = mutableStartedThreads.asStateFlow()
     private val mutableListStatus = MutableStateFlow(SessionListStatus())
     override val listStatus = mutableListStatus.asStateFlow()
     internal val verifiedLists = MutableStateFlow(VerifiedSessionLists())
@@ -68,8 +73,9 @@ class HubSessionsRepository(
 
     private suspend fun persist() {
         snapshots.save("machines", mutableMachines.value)
-        // A cache is a first-paint hint, not a row checkpoint or a complete verified baseline.
-        snapshots.save("sessions", if (mode.holdsAll) mutableSessions.value else mutableSessions.value.take(WINDOW_SIZE))
+        // A cache is a first-paint hint, not a row checkpoint or a complete verified baseline. Keep folded rows' parents
+        // inside the bounded window so first paint never draws a side/child session as an orphan root (#12101).
+        snapshots.save("sessions", firstPaintSnapshot(mutableSessions.value, WINDOW_SIZE))
     }
 
     /**
@@ -83,7 +89,7 @@ class HubSessionsRepository(
     init {
         scope.launch {
             for (request in persistRequests) {
-                runCatching { lock.withLock { persist() } }
+                val _ = runCatching { lock.withLock { persist() } }
                 delay(PERSIST_MILLIS)
             }
         }
@@ -134,14 +140,22 @@ class HubSessionsRepository(
                             revisionChanges.keys.removeAll { it.machineId == event.machineId }
                             val remaining = mutableSessions.value.filterNot { it.machineId == event.machineId }
                             val incoming = if (mode == Mode.Legacy) event.sessions else event.sessions.take(WINDOW_SIZE)
-                            mutableSessions.value = (remaining + incoming.map { it.copy(machineId = event.machineId) })
+                            val machineRows = incoming.map { it.copy(machineId = event.machineId) }
+                            for (row in machineRows) if (!row.undelivered.isNullOrEmpty()) reconcileHeldRow(row)
+                            mutableSessions.value = (remaining + machineRows)
                                 .let { if (mode == Mode.Legacy) it else it.take(WINDOW_SIZE) }
                             if (mode == Mode.Legacy && connection.state.value == ConnectionState.Online) verifiedLists.update {
                                 it.copy(sessions = if (it.machines?.firstOrNull { machine -> machine.id == event.machineId }?.online == false)
                                     it.sessions - event.machineId
-                                else it.sessions + (event.machineId to incoming.map { session -> session.copy(machineId = event.machineId) }))
+                                else it.sessions + (event.machineId to machineRows))
                             }
                             if (mode == Mode.Legacy) mutableListStatus.update { it.copy(total = mutableSessions.value.size) }
+                        }
+                        is SessionRowEvent -> {
+                            val row = event.session
+                            if (row.waiting != null && row.undelivered == null) return@withLock
+                            reconcileHeldRow(row)
+                            updateHeld(row.key) { row.undelivered.orEmpty() }
                         }
                         is RevsEvent -> {
                             revision++
@@ -273,25 +287,34 @@ class HubSessionsRepository(
     }
 
     override suspend fun setListFilter(filter: SessionListFilter) {
-        val changed = lock.withLock {
-            if (mutableListStatus.value.filter == filter) return
+        val filterGeneration = lock.withLock {
+            val status = mutableListStatus.value
+            if (status.filter == filter) return
             // The complete collection is the same for every filter (the view projects it locally): keep the baseline.
-            if (mode == Mode.Complete && filter.requiresCompleteMembership &&
-                mutableListStatus.value.filter.requiresCompleteMembership) {
-                mutableListStatus.update { it.copy(filter = filter) }
+            if (mode == Mode.Complete && filter.requiresCompleteMembership && status.filter.requiresCompleteMembership) {
+                mutableListStatus.value = status.copy(filter = filter)
                 return
             }
+            // The first complete view can project the restored rows locally while its authoritative list loads.
+            val keepFirstPaint = mode == Mode.Unknown && !status.loaded && status.filter == SessionListFilter() &&
+                filter.requiresCompleteMembership
             // A view policy is not a server capability failure. Reprobe pagination when leaving that view.
-            if (mutableListStatus.value.filter.requiresCompleteMembership != filter.requiresCompleteMembership) mode = Mode.Unknown
+            if (status.filter.requiresCompleteMembership != filter.requiresCompleteMembership) mode = Mode.Unknown
             generation++
             activeRequest?.cancel()
             resetPages()
-            if (mode != Mode.Legacy) mutableSessions.value = emptyList()
+            if (mode != Mode.Legacy && !keepFirstPaint) mutableSessions.value = emptyList()
             verifiedLists.value = VerifiedSessionLists()
             mutableListStatus.value = SessionListStatus(paged = mode == Mode.Paged, filter = filter)
-            true
+            generation
         }
-        if (changed) refresh()
+        try {
+            refresh()
+        } catch (cancelled: CancellationException) {
+            // A replacement request in this repository must not cancel the caller's work on other Hubs.
+            currentCoroutineContext().ensureActive()
+            if (lock.withLock { generation == filterGeneration }) throw cancelled
+        }
     }
 
     override suspend fun loadMore() = loadPage(previous = false)
@@ -397,7 +420,9 @@ class HubSessionsRepository(
                 }.toSet()
                 val loaded = mutableSessions.value.mapTo(mutableSetOf()) { it.key }
                 val kept = mutableSessions.value.mapNotNull { row ->
-                    if (row.key in removals) null else changes[row.key] ?: row
+                    if (row.key in removals) null else changes[row.key]?.also { changed ->
+                        if (!changed.undelivered.isNullOrEmpty()) reconcileHeldRow(changed, row)
+                    } ?: row
                 }
                 val unloaded = changes.values.filter { it.key !in loaded }
                 // The complete collection takes every new row; a bounded window only those that belong in it.
@@ -531,7 +556,7 @@ class HubSessionsRepository(
 
     /** A partial filtered window is NEVER evidence that a machine's other sessions were removed. */
     private fun verifyHeld() {
-        if (connection.state.value != ConnectionState.Online) return
+        if (connection.state.value != ConnectionState.Online || !mutableListStatus.value.loaded) return
         if (mode == Mode.Paged) {
             verifiedLists.value = VerifiedSessionLists(machines = mutableMachines.value)
             return
@@ -543,16 +568,77 @@ class HubSessionsRepository(
         )
     }
 
+    /** Only transitions that the manager pushed or exposed in a changes-only read can rearm an identical failure. */
+    private suspend fun reconcileHeldRow(row: Session, previousRow: Session? = null) {
+        val reconcile = reconcileHeldRetries ?: return
+        val previous = previousRow ?: mutableSessions.value.firstOrNull { it.key == row.key }
+            ?: mutableAdoptedSessions.value.firstOrNull { it.key == row.key } ?: return
+        if (!previous.undelivered.isNullOrEmpty() && previous.undelivered != row.undelivered) {
+            quietly { reconcile(previous, row) }
+        }
+    }
+
+    /** Patch only the held queue of an existing row, leaving filtered-list membership to the list protocol. */
+    private fun updateHeld(key: SessionKey, transform: (List<HeldAgentMessage>) -> List<HeldAgentMessage>) {
+        fun patch(rows: List<Session>) = rows.map { row ->
+            if (row.key != key) row else row.copy(undelivered = transform(row.undelivered.orEmpty()).ifEmpty { null })
+        }
+        sessionChanges[key.machineId] = ++revision
+        mutableSessions.value = patch(mutableSessions.value)
+        mutableAdoptedSessions.value = patch(mutableAdoptedSessions.value)
+        verifiedLists.update { known ->
+            val sameMachine = known.sessions[key.machineId] ?: return@update known
+            known.copy(sessions = known.sessions + (key.machineId to patch(sameMachine)))
+        }
+    }
+
+    suspend fun showHeld(key: SessionKey, message: HeldAgentMessage) {
+        restored.await()
+        lock.withLock {
+            updateHeld(key) { list -> if (list.any { it.id == message.id }) list else list + message }
+            persistLater()
+        }
+    }
+
+    suspend fun heldActionCompleted(key: SessionKey, id: String, retry: Boolean) {
+        if (retry) {
+            // Only the manager knows whether Retry will send, check for an earlier delivery, or need another decision.
+            // A new socket row can already have arrived while the action was in flight.
+            invalidations.trySend("")
+            return
+        }
+        restored.await()
+        lock.withLock {
+            updateHeld(key) { it.filterNot { m -> m.id == id } }
+            persistLater()
+        }
+    }
+
     override suspend fun adopt(session: Session) {
         if (session.machineId.isBlank() || session.sessionId.isBlank()) return
         restored.await()
         lock.withLock {
+            mutableAdoptedSessions.value = (mutableAdoptedSessions.value.filterNot { it.key == session.key } + session).takeLast(WINDOW_SIZE)
             if (mutableSessions.value.any { it.key == session.key }) return@withLock
             // A single start response isn't authoritative filtered membership. Reconcile the bounded list instead.
             if (mode == Mode.Paged) { invalidations.trySend(""); return@withLock }
             sessionChanges[session.machineId] = ++revision
             mutableSessions.value = (mutableSessions.value + session).let { if (mode.holdsAll) it else it.take(WINDOW_SIZE) }
             persist()
+        }
+    }
+
+    override suspend fun adoptThread(previous: SessionKey, session: Session) {
+        if (previous.machineId != session.machineId || previous == session.key) return
+        restored.await()
+        val waiting = lock.withLock {
+            (mutableAdoptedSessions.value.lastOrNull { it.key == previous }
+                ?: mutableSessions.value.firstOrNull { it.key == previous })?.awaitingFirstMessage == true
+        }
+        if (!waiting) return
+        adopt(session)
+        lock.withLock {
+            mutableStartedThreads.value = (mutableStartedThreads.value + (previous to session)).toList().takeLast(WINDOW_SIZE).toMap()
         }
     }
 
@@ -581,6 +667,27 @@ internal suspend inline fun quietly(block: () -> Unit) {
     try { block() }
     catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) { /* A later refresh or reconnect reconciles state. */ }
+}
+
+/**
+ * Picks up to [limit] rows for the first-paint cache, pulling in the listed parent of any folded side/child row it keeps
+ * so cold open never briefly renders a folded side/child row as Row #1 before the full baseline loads (#12101).
+ */
+internal fun firstPaintSnapshot(rows: List<Session>, limit: Int): List<Session> {
+    if (rows.size <= limit) return rows
+    val byKey = rows.associateBy { it.key }
+    val picked = LinkedHashMap<SessionKey, Session>(limit)
+    for (row in rows) {
+        if (picked.size >= limit) break
+        if (row.key in picked) continue
+        val parent = row.foldedUnder?.takeIf(String::isNotBlank)?.let { byKey[SessionKey(row.machineId, it)] }
+        if (parent != null && parent.key !in picked) {
+            if (picked.size + 2 > limit) continue
+            picked[parent.key] = parent
+        }
+        picked[row.key] = row
+    }
+    return picked.values.toList()
 }
 
 /** How often pushed session events write the first-paint snapshot at most. */

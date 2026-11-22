@@ -16,7 +16,20 @@ import org.junit.rules.TemporaryFolder
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatRepositoriesTest {
+    @get:Rule val shadowParity = ShadowParityRule()
     @get:Rule val temporary = TemporaryFolder()
+
+    @Test fun restoredHistoryRetainsItsOldestBoundaryBeforeTheLatestItemsAreVerified() = runTest {
+        for (more in listOf(null, true, false)) {
+            val cache = FakeItemsCache(CachedChat(listOf(item(3)), "h", 3, more))
+            val transport = FakeChatTransport().apply { fetch = { awaitCancellation() } }
+            val repo = HubChatRepository(transport, FakeConnection(), cache, FakeSessions(), backgroundScope)
+            val restored = repo.observe(key).first { it.items.isNotEmpty() }
+            assertFalse(restored.verified)
+            assertEquals(more != null, restored.olderBoundaryKnown)
+            assertEquals(more == true, restored.hasOlder)
+        }
+    }
 
     @Test fun unobservedSessionRevisionsNeverReadBodiesAndReopeningStillVerifiesTheLatestPage() = runTest {
         val sessions = FakeSessions()
@@ -290,7 +303,7 @@ class ChatRepositoriesTest {
         capped = true
         connection.events.emit(ItemsEvent(key.machineId, key.sessionId, listOf(item(20)), "h", 19, 20))
         runCurrent()
-        assertFalse(snapshot.verified)
+        // Filled at once since #7102 (no settling delay): the capped pages have already ended in the latest page.
         advanceTimeBy(1500)
         runCurrent()
         assertEquals(8, queries.count { it.afterSeq != null })
@@ -424,7 +437,7 @@ class ChatRepositoriesTest {
         assertNull(transport.resolved)
     }
 
-    @Test fun cardsThatEndedHereStayGoneFromLaterSnapshotsUntilAnEventBringsThemBack() = runTest {
+    @Test fun cardsThatEndedHereStayGoneFromLaterSnapshotsAndFrames() = runTest {
         val connection = FakeConnection()
         val transport = FakeChatTransport()
         val center = HubInteractionCenter(transport, connection, backgroundScope)
@@ -446,12 +459,13 @@ class ChatRepositoriesTest {
         center.refresh()
         assertEquals(listOf(other), center.pending.value)
 
-        // The hub asking again (a live event for the id) is authoritative.
+        // Nor does an `interaction` frame for one: the snapshot after a resumed hello, before the node ended it (#2767).
         connection.events.emit(InteractionEvent(answered))
+        connection.events.emit(InteractionEvent(gone))
         runCurrent()
-        assertEquals(setOf("other", "answered"), center.pending.value.map { it.id }.toSet())
+        assertEquals(listOf(other), center.pending.value)
         center.refresh()
-        assertEquals(setOf("other", "answered"), center.pending.value.map { it.id }.toSet())
+        assertEquals(listOf(other), center.pending.value)
     }
 
     @Test fun listUsesBroadcastRevsAndInteractionsReconcileWithoutResurrectingResolvedCards() = runTest {
@@ -518,6 +532,9 @@ class ChatRepositoriesTest {
         assertTrue(connection.sent.none { it.type() == "seen" })
         event(DeltaEvent(key.machineId, key.sessionId, "示例回复"))
         assertEquals(draftId, snapshot.items.last().id)
+        // Within the stream's publish window the chunk waits for the window's end (ChatDeltaPublishTest).
+        assertEquals("示例", snapshot.items.last().text)
+        advanceTimeBy(50); runCurrent()
         assertEquals("示例回复", snapshot.items.last().text)
         event(DeltaEvent(key.machineId, key.sessionId))
         assertEquals(draftId, snapshot.items.last().id)

@@ -49,6 +49,7 @@ import persona.core.domain.tasks.reviewVerdictStage
 private fun ReviewStage.label(round: Int): String = when (this) {
     ReviewStage.Ongoing -> stringResource(R.string.chat_review_ongoing)
     ReviewStage.Pending -> stringResource(R.string.chat_review_pending)
+    ReviewStage.UserCheck -> stringResource(R.string.chat_review_user_check)
     ReviewStage.Rework -> stringResource(R.string.chat_review_rework, maxOf(round, 1))
     ReviewStage.NeedsUser -> stringResource(R.string.chat_review_needs_user)
     ReviewStage.Accepted -> stringResource(R.string.chat_review_accepted)
@@ -56,7 +57,7 @@ private fun ReviewStage.label(round: Int): String = when (this) {
 }
 
 internal val ReviewStage.tone: Tone get() = when (this) {
-    ReviewStage.Pending, ReviewStage.Rework -> Tone.Caution
+    ReviewStage.Pending, ReviewStage.UserCheck, ReviewStage.Rework -> Tone.Caution
     ReviewStage.NeedsUser -> Tone.Caution
     ReviewStage.Accepted -> Tone.Positive
     ReviewStage.Ongoing, ReviewStage.Cancelled -> Tone.Neutral
@@ -144,11 +145,13 @@ internal fun ReviewLine(item: FeedItem, title: String, onOpenTask: (() -> Unit)?
     val stage = reviewVerdictStage(item.field("verdict").orEmpty())
     val round = ((item.body as? JsonObject)?.get("round") as? JsonPrimitive)?.intOrNull ?: 0
     val note = item.field("note").orEmpty()
-    Row(Modifier.clip(CircleShape).background(PersonaTheme.palette.surfaceStrong).padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.xs)
+    // The whole line opens the task (#5084), not its name alone: it is the line's only action.
+    Row(Modifier.clip(CircleShape).background(PersonaTheme.palette.surfaceStrong)
+        .then(if (onOpenTask != null) Modifier.clickable(onClickLabel = stringResource(R.string.chat_tasks_open_task), onClick = onOpenTask) else Modifier)
+        .padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.xs)
         .testTag("review-line"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
         JIcon(PhIcons.CheckCircle, decorative = true, size = Tokens.Space.m, tint = PersonaTheme.palette.ink2)
-        Text(title, (if (onOpenTask != null) Modifier.clickable(onClickLabel = stringResource(R.string.chat_tasks_open_task), onClick = onOpenTask) else Modifier)
-            .weight(1f, fill = false), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(title, Modifier.weight(1f, fill = false), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("· " + (stage?.label(round) ?: stringResource(R.string.chat_review_line)), style = PersonaTheme.type.caption,
             color = PersonaTheme.palette.ink, maxLines = 1)
         if (note.isNotBlank()) Text(note, Modifier.weight(1f, fill = false), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2,

@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 
 /** One status, three uses: the dot or holder, text in that colour, and a soft tint behind it. */
 @Immutable
@@ -51,6 +52,15 @@ data class PersonaPalette(
     val scrim: Color,
     val dark: Boolean,
     val ai: Color = accent,
+    /**
+     * An added / removed line's tint behind its code, and the words that changed in it, deeper still (iOS `Theme.Diff.addFill` /
+     * `addEmphasis`, `delFill` / `delEmphasis`: `Tokens.Common.<Light|Dark>.Diff`). Glass takes the tokens' own colours; Brief and
+     * Board keep their own diff hue at the tokens' strength ([DiffTintAlpha]).
+     */
+    val diffAddFill: Color = diffAdd.copy(alpha = DiffTintAlpha.addFill),
+    val diffDelFill: Color = diffDel.copy(alpha = DiffTintAlpha.delFill),
+    val diffAddEmphasis: Color = diffAdd.copy(alpha = DiffTintAlpha.addEmphasis),
+    val diffDelEmphasis: Color = diffDel.copy(alpha = DiffTintAlpha.delEmphasis),
     val positiveRole: StatusColors? = null,
     val cautionRole: StatusColors? = null,
     val customRoles: Boolean = false,
@@ -63,12 +73,21 @@ data class PersonaPalette(
         else StatusColors(Color(0xFF1D5FD6), Color(0xFF1C52BA), Color(0x1A1D5FD6)),
     val sourceTerminal: StatusColors = if (dark) StatusColors(Color(0xFFBEA3FF), Color(0xFFBEA3FF), Color(0x29BEA3FF))
         else StatusColors(Color(0xFF6A46C2), Color(0xFF6A46C2), Color(0x1A6A46C2)),
+    /**
+     * Waiting in the background (#4338 A5, A11; iOS `StatusPalette.backgroundWaiting`): an agent that works but only waits on
+     * background commands. Glass draws it lighter than Working (the generated `Tokens.Status.*.BackgroundWaiting`: Working's
+     * dot at 0.6, its words the secondary gray); Brief and Board keep Working's colors.
+     */
+    val backgroundWaiting: StatusColors = working,
     /** A fixed colour for [codeString] / [codeNumber] in place of the role (only the default look keeps its original ones). */
     val codeStringOverride: Color? = null,
     val codeNumberOverride: Color? = null,
     /** Words on the accent are white, as on iOS (Glass); otherwise whichever of black and white reads better. */
     val whiteOnAccent: Boolean = false,
 ) {
+    /** The reply's inline code ink, at the same step toward secondary text as on the web. */
+    val replyCodeInk: Color get() = lerp(ink, ink2, 0.45f)
+
     /** Strings in a Lark code block (#934): the style's added-line green, so it follows light / dark and the style. */
     val codeString: Color get() = codeStringOverride ?: diffAdd
     /** Numbers in a Lark code block (#934): the style's caution text, so it follows light / dark, the style and theme packages. */
@@ -86,6 +105,8 @@ data class PersonaPalette(
     /** Media overlays stay readable over a photograph/video, independent of the page's appearance. */
     val mediaBackdrop: Color get() = Color.Black
     val onMediaBackdrop: Color get() = Color.White
+    /** Transparent third-party logos keep their brand colors on a neutral light backing in either appearance. */
+    val catalogLogoBackground: Color get() = Tokens.System.Light.page
     /** Outside the circle an avatar crop keeps (New from photo, #2407): dimmed in every style and appearance, as iOS `Theme.Crop.outside`. */
     val cropOutside: Color get() = mediaBackdrop.copy(alpha = 0.5f)
     /** The crop circle's edge, as iOS `Theme.Crop.edge`. */
@@ -111,6 +132,10 @@ data class PersonaPalette(
         Status.Unknown, Status.Muted -> idle
         Status.Waiting -> working.copy(dot = working.dot.copy(alpha = 0.55f))
     }
+
+    /** An agent's colors (iOS `Session.stateTone`): [backgroundWaiting] for a working one that [waitsInBackground], else [status]'s. */
+    fun status(status: Status, waitsInBackground: Boolean): StatusColors =
+        if (waitsInBackground && status == Status.Working) backgroundWaiting else status(status)
 }
 
 internal object Palettes {
@@ -142,12 +167,15 @@ internal object Palettes {
         marker = Tokens.Semantic.Glass.Dark.accent.copy(alpha = 0.16f), onMarker = Tokens.Semantic.Glass.Dark.text,
         needsYou = StatusColors(Tokens.Status.Dark.NeedsYou.dot, Tokens.Status.Dark.NeedsYou.text, Tokens.Status.Dark.Offline.tint, Color.Black),
         working = StatusColors(Tokens.Status.Dark.Working.dot, Tokens.Status.Dark.Working.text, Tokens.Status.Dark.Offline.tint, Color.Black),
+        backgroundWaiting = StatusColors(Tokens.Status.Dark.BackgroundWaiting.dot, Tokens.Status.Dark.BackgroundWaiting.text, Tokens.Status.Dark.BackgroundWaiting.tint),
         done = StatusColors(Tokens.Status.Dark.Unread.dot, Tokens.Status.Dark.Unread.text, Tokens.Status.Dark.Offline.tint, Color.Black),
         idle = StatusColors(Tokens.Status.Dark.Idle.dot, Tokens.Status.Dark.Idle.text, Tokens.Status.Dark.Idle.tint),
         offline = StatusColors(Tokens.Status.Dark.Offline.dot, Tokens.Status.Dark.Offline.text, Tokens.Status.Dark.Offline.tint),
         danger = StatusColors(Tokens.Common.Dark.danger, Tokens.Common.Dark.danger, Tokens.Common.Dark.danger.copy(alpha = 0.12f), Color.Black),
         positive = Tokens.Common.Dark.positive, caution = Tokens.Common.Dark.caution, cautionText = Tokens.Common.Dark.cautionText,
         diffAdd = Tokens.Common.Dark.Diff.add, diffDel = Tokens.Common.Dark.Diff.del,
+        diffAddFill = Tokens.Common.Dark.Diff.addFill, diffDelFill = Tokens.Common.Dark.Diff.delFill,
+        diffAddEmphasis = Tokens.Common.Dark.Diff.addEmphasis, diffDelEmphasis = Tokens.Common.Dark.Diff.delEmphasis,
         terminalBackground = Tokens.Common.Dark.terminalBackground, terminalText = Tokens.Common.Dark.terminalText,
         scrim = Color.Black.copy(alpha = 0.45f), dark = true, ai = Tokens.Common.Dark.ai,
         positiveRole = StatusColors(Tokens.Common.Dark.positive, Tokens.Common.Dark.positive, Tokens.Common.Dark.positive.copy(alpha = 0.12f), Color.Black),
@@ -167,12 +195,15 @@ internal object Palettes {
         marker = Tokens.Semantic.Glass.Light.accent.copy(alpha = 0.12f), onMarker = Tokens.Semantic.Glass.Light.text,
         needsYou = StatusColors(Tokens.Status.Light.NeedsYou.dot, Tokens.Status.Light.NeedsYou.text, Tokens.Status.Light.Offline.tint, Color.Black),
         working = StatusColors(Tokens.Status.Light.Working.dot, Tokens.Status.Light.Working.text, Tokens.Status.Light.Offline.tint, Color.Black),
+        backgroundWaiting = StatusColors(Tokens.Status.Light.BackgroundWaiting.dot, Tokens.Status.Light.BackgroundWaiting.text, Tokens.Status.Light.BackgroundWaiting.tint),
         done = StatusColors(Tokens.Status.Light.Unread.dot, Tokens.Status.Light.Unread.text, Tokens.Status.Light.Offline.tint, Color.Black),
         idle = StatusColors(Tokens.Status.Light.Idle.dot, Tokens.Status.Light.Idle.text, Tokens.Status.Light.Idle.tint),
         offline = StatusColors(Tokens.Status.Light.Offline.dot, Tokens.Status.Light.Offline.text, Tokens.Status.Light.Offline.tint),
         danger = StatusColors(Tokens.Common.Light.danger, Tokens.Common.Light.danger, Tokens.Common.Light.danger.copy(alpha = 0.12f)),
         positive = Tokens.Common.Light.positive, caution = Tokens.Common.Light.caution, cautionText = Tokens.Common.Light.cautionText,
         diffAdd = Tokens.Common.Light.Diff.add, diffDel = Tokens.Common.Light.Diff.del,
+        diffAddFill = Tokens.Common.Light.Diff.addFill, diffDelFill = Tokens.Common.Light.Diff.delFill,
+        diffAddEmphasis = Tokens.Common.Light.Diff.addEmphasis, diffDelEmphasis = Tokens.Common.Light.Diff.delEmphasis,
         terminalBackground = Tokens.Common.Light.terminalBackground, terminalText = Tokens.Common.Light.terminalText,
         scrim = Color.Black.copy(alpha = 0.2f), dark = false, ai = Tokens.Common.Light.ai,
         positiveRole = StatusColors(Tokens.Common.Light.positive, Tokens.Common.Light.positive, Tokens.Common.Light.positive.copy(alpha = 0.12f)),
@@ -337,3 +368,11 @@ fun statusTone(status: Status, darkTheme: Boolean): StatusTone =
 /** A diff's words that changed in a line (UI version 5, #3136): the add / delete colour, deeper than the line's own tint. */
 val PersonaPalette.diffAddWord: Color get() = diffAdd.copy(alpha = 0.30f)
 val PersonaPalette.diffDelWord: Color get() = diffDel.copy(alpha = 0.30f)
+
+/** The strength of a diff line's tint and of its changed words' (the tokens' alpha, the same in light and dark), for the styles with a diff hue of their own. */
+internal object DiffTintAlpha {
+    val addFill: Float get() = Tokens.Common.Light.Diff.addFill.alpha
+    val delFill: Float get() = Tokens.Common.Light.Diff.delFill.alpha
+    val addEmphasis: Float get() = Tokens.Common.Light.Diff.addEmphasis.alpha
+    val delEmphasis: Float get() = Tokens.Common.Light.Diff.delEmphasis.alpha
+}

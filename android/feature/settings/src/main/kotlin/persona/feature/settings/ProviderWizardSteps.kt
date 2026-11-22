@@ -20,7 +20,10 @@ import persona.core.designsystem.icons.PhIcons
 // ① the providers to pick from, ② the key, ③ what now runs on it. The state is NewProviderModel.
 
 /** ①: the hub's providers in its order (a built-in one says who it is for; an extension's its kind and host), the gateway typed in last. */
-internal fun LazyListScope.pickStep(res: Resources, state: NewProviderState, onPick: (String?) -> Unit) {
+internal fun LazyListScope.pickStep(
+    res: Resources, state: NewProviderState, onPick: (String?) -> Unit,
+    onPaste: () -> Unit = {}, onAlias: (FoundAlias) -> Unit = {},
+) {
     item("pick-intro") { SettingsCaption(stringResource(R.string.settings_onb_pick_intro), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m)) }
     val rows = state.presets.size + 1
     itemsIndexed(state.presets, key = { _, it -> "pick-${it.id}" }) { index, p ->
@@ -36,6 +39,7 @@ internal fun LazyListScope.pickStep(res: Resources, state: NewProviderState, onP
                 subtitleLines = 3, onClick = { onPick(null) })
         }
     }
+    otherProviderWays(state, onPaste, onAlias)
     state.presetsError?.let { error -> item("pick-error") { JInlineStatus(error.text(), Modifier.padding(top = Tokens.Space.m), tone = InlineTone.Caution) } }
 }
 
@@ -45,6 +49,7 @@ internal fun LazyListScope.keyStep(
     onRetest: () -> Unit, onModel: () -> Unit, more: Boolean, onMore: () -> Unit,
     /** "Computers" under "More options", on a hub with device scopes. */
     onComputers: () -> Unit = {},
+    referencesAvailable: Boolean = false,
 ) {
     val draft = state.draft
     item("key-preset") {
@@ -55,16 +60,21 @@ internal fun LazyListScope.keyStep(
     }
     if (!state.hubNames) nameStepField(state, editable, onEdit)
     item("key") {
-        JTextField(draft.apiKey, { onEdit(draft.copy(apiKey = it)) }, Modifier.fillMaxWidth().padding(top = Tokens.Space.m), label = "API Key", // i18n-ignore: the field name providers' docs use, same on iOS / web
-            placeholder = stringResource(R.string.settings_onb_key_paste), singleLine = true, enabled = editable,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            supportingText = preset.keyHint?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.settings_onb_key_hint_with, it) }
+        ProviderKeyField(draft.apiKey, { onEdit(draft.copy(apiKey = it)) }, draft.apiKeyByReference,
+            onByReferenceChange = if (referencesAvailable) ({ on ->
+                onEdit(draft.copy(apiKey = "", apiKeyByReference = on))
+            }) else null,
+            stored = null, label = "API Key", // i18n-ignore: providers' own field name
+            modifier = Modifier.fillMaxWidth().padding(top = Tokens.Space.m), enabled = editable && (referencesAvailable || !draft.apiKeyByReference),
+            placeholder = stringResource(R.string.settings_onb_key_paste),
+            supportingText = if (state.referencePending) stringResource(R.string.settings_provider_reference_saved)
+            else preset.keyHint?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.settings_onb_key_hint_with, it) }
                 ?: stringResource(R.string.settings_src_provider_key_hint))
     }
     preset.signupLink?.let { link ->
         item("key-where") {
             val uri = LocalUriHandler.current
-            JTextButton(stringResource(R.string.settings_onb_where_key), { runCatching { uri.openUri(link) } }, icon = PhIcons.ArrowSquareOut)
+            JTextButton(stringResource(R.string.settings_onb_where_key), { val _ = runCatching { uri.openUri(link) } }, icon = PhIcons.ArrowSquareOut)
         }
     }
     item("key-test") { KeyTestStatus(state, preset, onRetest) }
@@ -128,6 +138,9 @@ private fun LazyListScope.nameStepField(state: NewProviderState, editable: Boole
 @Composable
 private fun KeyTestStatus(state: NewProviderState, preset: ProviderPreset, onRetest: () -> Unit) {
     val modifier = Modifier.padding(top = Tokens.Space.m)
+    if (state.referencePending) {
+        SettingsCaption(stringResource(R.string.settings_provider_reference_saved), modifier.padding(horizontal = rowPadding)); return
+    }
     if (!state.hubNames) return
     if (!preset.testable) { SettingsCaption(stringResource(R.string.settings_onb_key_test_responses), modifier.padding(horizontal = rowPadding)); return }
     val test = state.keyTest

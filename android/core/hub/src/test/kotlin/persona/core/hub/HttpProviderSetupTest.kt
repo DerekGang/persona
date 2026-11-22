@@ -46,6 +46,40 @@ class HttpProviderSetupTest {
         assertEquals("/api/v1/launchers/presets", (server.takeRequest().path).zhAny())
     }
 
+    @Test fun pastedConfigurationIsSentOnlyInTheBodyAndEveryDraftFieldIsRead() = withHub { server, providers ->
+        server.enqueue(MockResponse().setBody("""{"format":"shell","drafts":[{"label":"cc_work","aliases":["cc_work"],
+            "provider":{"name":"cc_work","display_name":"Work gateway","kind":"launcher","base_url":"https://gateway.example.com",
+            "api_key":"eg-secret","model":"gw-pro","models":[{"id":"gw-pro","context_window":1000000}],"sonnet_model":"gw-mid",
+            "headers":"X-Team: demo","env":"CLAUDE_CODE_MAX_OUTPUT_TOKENS=8000","timeout_ms":600000,"args":["--verbose"],"unknown":1},
+            "env_names":["CLAUDE_CODE_MAX_OUTPUT_TOKENS"],"skipped_env":[{"name":"OTHER_TOKEN","reason":"credential"}],
+            "skipped_headers":[{"name":"X-Api-Key","reason":"credential"}],
+            "matches":[{"name":"work","display_name":"Work","same_key":true}],"notes":[{"code":"no_key","line":2}]}],
+            "notes":[{"code":"not_claude","line":3,"name":"other"},{"code":"future_note","name":"future"}]}"""))
+        val text = "alias cc_work='ANTHROPIC_AUTH_TOKEN=eg-secret claude'"
+        val answer = providers.parse(text)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/launchers/import/parse", request.path)
+        assertEquals(text, JsonCodec.parseToJsonElement(request.body.readUtf8()).jsonObject["text"]!!.jsonPrimitive.content)
+        assertFalse("the configuration is never a URL parameter", request.requestUrl.toString().contains("eg-secret"))
+        assertEquals("shell", answer.format)
+        val draft = answer.drafts.single()
+        assertEquals("cc_work", draft.label)
+        assertEquals("eg-secret", draft.provider.apiKey)
+        assertEquals("Work gateway", draft.provider.displayName)
+        assertEquals(1000000, draft.provider.models.single().contextWindow)
+        assertEquals("gw-mid", draft.provider.sonnetModel)
+        assertEquals("X-Team: demo", draft.provider.headers)
+        assertEquals(600000, draft.provider.timeoutMs)
+        assertEquals(listOf("--verbose"), draft.provider.args)
+        assertEquals("OTHER_TOKEN", draft.skippedEnv.single().name)
+        assertEquals("X-Api-Key", draft.skippedHeaders.single().name)
+        assertTrue(draft.matches.single().sameKey)
+        assertEquals(2, draft.notes.single().line)
+        assertEquals(listOf("not_claude", "future_note"), answer.notes.map { it.code })
+        assertEquals("other", answer.notes.first().name)
+    }
+
     @Test fun addingSendsOnlyWhatWasFilledIn() = withHub { server, providers ->
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
         providers.add(NewProvider("jv_team", "eg-secret", preset = "example-gateway/team"))
@@ -125,6 +159,51 @@ class HttpProviderSetupTest {
         assertEquals(PresetModel("gw-pro", contextWindow = 1000000, efforts = listOf("high"), defaultEffort = "high"), l.models.single())
         assertEquals(600000, l.timeoutMs)
         assertEquals("http://127.0.0.1:7890", l.proxy)
+    }
+
+    @Test fun referencesAreExplicitOnCreateAndUpdateAndNeverInAProbe() = withHub { server, providers ->
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        providers.add(NewProvider("work", null, apiKeyReference = "op://Dev/Work/token",
+            machineKeyReferences = mapOf("m-1" to "op://Dev/Work/laptop")))
+        var body = JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("op://Dev/Work/token", body["api_key_reference"]!!.jsonPrimitive.content)
+        assertEquals("op://Dev/Work/laptop", body["machine_key_references"]!!.jsonObject["m-1"]!!.jsonPrimitive.content)
+        assertFalse("api_key" in body)
+        assertFalse("machine_keys" in body)
+
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        providers.add(NewProvider("literal", "op://looks-like/a/reference"))
+        body = JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("op://looks-like/a/reference", body["api_key"]!!.jsonPrimitive.content)
+        assertFalse("api_key_reference" in body)
+
+        server.enqueue(MockResponse().setBody("""{"launcher":{"name":"work"}}"""))
+        providers.update("work", ProviderUpdate("work", "launcher", "messages", "https://gw.example.com", "m", "", "", "", "", "",
+            emptyList(), apiKeyReference = "op://Dev/Work/new", machineKeyReferences = mapOf("m-2" to "op://Dev/Work/other")))
+        body = JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("op://Dev/Work/new", body["api_key_reference"]!!.jsonPrimitive.content)
+        assertEquals("op://Dev/Work/other", body["machine_key_references"]!!.jsonObject["m-2"]!!.jsonPrimitive.content)
+        assertFalse("api_key" in body)
+        assertFalse("machine_keys" in body)
+
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        providers.test(ProviderProbe(name = "work", baseUrl = "https://gw.example.com"))
+        body = JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertFalse("api_key_reference" in body)
+        assertFalse("machine_key_references" in body)
+    }
+
+    @Test fun storedKeyReferencesDecodeAndOldHubsStayEmpty() = withHub { server, providers ->
+        server.enqueue(MockResponse().setBody("""{"launchers":[
+            {"name":"work","source":"persona","has_key":true,"key_reference":{"provider":"example-vault","provider_name":"Example Vault","reference":"op://Dev/Work/token","title":"Work token"},"machine_key_references":{"m-1":{"provider":"example-vault","provider_name":"Example Vault","reference":"op://Dev/Work/laptop","title":"Laptop token"}}},
+            {"name":"old","source":"persona","has_key":true}
+        ]}"""))
+        val list = providers.launchers()
+        assertEquals("Example Vault", list[0].keyReference!!.providerLabel)
+        assertEquals("Work token", list[0].keyReference!!.title)
+        assertEquals("op://Dev/Work/laptop", list[0].machineKeyReferences["m-1"]!!.reference)
+        assertNull(list[1].keyReference)
+        assertTrue(list[1].machineKeyReferences.isEmpty())
     }
 
     @Test fun aProbeOfAStoredProviderGoesByName() = withHub { server, providers ->

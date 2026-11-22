@@ -8,6 +8,7 @@ import persona.core.contracts.api.MessageEvidence
 import persona.core.contracts.api.MessageTransport
 import persona.core.contracts.api.MessageTransportResult
 import persona.core.contracts.api.MainConversationResolver
+import persona.core.contracts.api.MessageVia
 import persona.core.contracts.api.PendingMainConversation
 import persona.core.contracts.api.ChatComposerService
 import persona.core.contracts.api.ComposerDelivery
@@ -18,7 +19,14 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -100,6 +108,57 @@ class OutboxMessageSenderTest {
         assertTrue(store.entries.value.all { it.state == OutboxState.Sent })
         assertEquals(listOf("main-a", "main-a", "main-b"), transport.requests.map { it.clientMessageId })
         assertTrue(transport.requests.all { it.session == session })
+        restarted.close()
+    }
+
+    @Test fun preparingAMainForAShareMarksCreationAndTheFollowingMessage() = runTest {
+        val transport = FakeTransport(online = true)
+        transport.answers += MessageTransportResult.Accepted
+        val creations = mutableListOf<String?>()
+        val resolver = object : MainConversationResolver {
+            override suspend fun findMainConversation(): SessionKey? = null
+            override suspend fun createMainConversation(): SessionKey = error("A marked creation must use its marked overload")
+            override suspend fun createMainConversation(via: String?): SessionKey {
+                creations += via
+                return session
+            }
+        }
+        val sender = OutboxMessageSender(scope, MemoryOutboxStore(), transport, backgroundScope)
+        sender.connectMainConversation(resolver)
+        assertEquals(session, sender.prepareMainConversation(MessageVia.Share))
+        sender.sendToMain("Shared words", "share-main", null, MessageVia.Share)
+        runCurrent()
+        assertEquals(listOf(MessageVia.Share), creations)
+        assertEquals(listOf(MessageVia.Share), transport.requests.map { it.via })
+        sender.close()
+    }
+
+    @Test fun anOfflineShareRestoresProvenanceIntoCreationAndMessage() = runTest {
+        val store = MemoryOutboxStore()
+        val transport = FakeTransport(online = false)
+        val first = OutboxMessageSender(scope, store, transport, backgroundScope)
+        first.sendToMain("Shared words", "share-main", null, MessageVia.Share)
+        runCurrent()
+        assertEquals(MessageVia.Share, store.entries.value.single().via)
+        assertTrue(transport.requests.isEmpty())
+        first.close()
+
+        val creations = mutableListOf<String?>()
+        val resolver = object : MainConversationResolver {
+            override suspend fun findMainConversation(): SessionKey? = null
+            override suspend fun createMainConversation(): SessionKey = error("A marked creation must use its marked overload")
+            override suspend fun createMainConversation(via: String?): SessionKey {
+                creations += via
+                return session
+            }
+        }
+        val restarted = OutboxMessageSender(scope, store, transport, backgroundScope)
+        restarted.connectMainConversation(resolver)
+        transport.answers += MessageTransportResult.Accepted
+        transport.readyToSend.value = true
+        runCurrent()
+        assertEquals(listOf(MessageVia.Share), creations)
+        assertEquals(listOf(MessageVia.Share), transport.requests.map { it.via })
         restarted.close()
     }
 
@@ -345,6 +404,33 @@ class OutboxMessageSenderTest {
         sender.close()
     }
 
+    @Test fun managerCustodySurvivesRestartWithoutSendingAgainAndRequiresAnIdentifiedEcho() = runTest {
+        val store = MemoryOutboxStore()
+        val transport = FakeTransport(online = true, supportsClientOps = true)
+        transport.answers += MessageTransportResult.Held
+        val at = java.time.Instant.parse("2026-11-01T10:00:00Z")
+        val first = OutboxMessageSender(scope, store, transport, backgroundScope) { at.toEpochMilli() }
+        first.send(session, "Held text", "held-a")
+        runCurrent()
+        assertEquals(OutboxState.Held, store.state("held-a"))
+        assertTrue(first.outbox.value.isEmpty())
+        first.close()
+
+        val resumed = OutboxMessageSender(scope, store, transport, backgroundScope) { at.toEpochMilli() }
+        transport.evidence["held-a"] = MessageEvidence.Receipt(MessageTransportResult.Held)
+        runCurrent()
+        resumed.onReady()
+        assertFalse(resumed.retry("held-a"))
+        assertFalse(resumed.cancel("held-a"))
+        val sameWords = Item("other", 3, role = "user", kind = "text", text = "Held text", ts = at.toString())
+        resumed.observeTranscript(session, listOf(sameWords))
+        assertEquals(OutboxState.Held, store.state("held-a"))
+        resumed.observeTranscript(session, listOf(sameWords.copy(id = "landed", clientMsgId = "held-a")))
+        assertEquals(OutboxState.Shown, store.state("held-a"))
+        assertEquals(1, transport.requests.size)
+        resumed.close()
+    }
+
     @Test fun durableQueueWaitsForNetworkAndDistinguishesRefusalFromUncertainDelivery() = runTest {
         val store = MemoryOutboxStore()
         val transport = FakeTransport(online = false)
@@ -376,6 +462,124 @@ class OutboxMessageSenderTest {
         assertEquals(OutboxState.Shown, store.state("message-b"))
         assertEquals(OutboxState.Unknown, OutboxMessageSender.classify(MessageTransportResult.HubError()))
         sender.close()
+    }
+
+    @Test fun keptMessageLeavesTheLocalOutboxForTheSessionRow() = runTest {
+        val store = MemoryOutboxStore()
+        val transport = FakeTransport(online = true)
+        transport.answers += MessageTransportResult.Kept
+        val sender = OutboxMessageSender(scope, store, transport, backgroundScope)
+        sender.send(session, "keep this for the assistant", "kept")
+        runCurrent()
+
+        assertEquals(1, transport.requests.size)
+        assertTrue("the authoritative session row draws a kept message instead",
+            sender.outbox.value.none { it.clientMessageId == "kept" })
+        assertEquals("kept", sender.sendReceipts.value.single().state)
+        assertFalse(sender.sendReceipts.value.single().processing)
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals("kept is not delivered and must not be sent again", 1, transport.requests.size)
+        assertTrue(sender.outbox.value.none { it.clientMessageId == "kept" })
+        sender.close()
+    }
+
+    @Test fun keptComposerRetryLeavesTheSendingOutboxForTheSessionRow() = runTest {
+        val store = MemoryOutboxStore()
+        store.enqueue(OutboxEntry("kept-retry", session, "keep this", state = OutboxState.Refused, createdAt = 100))
+        val sender = OutboxMessageSender(scope, store, FakeTransport(online = false), backgroundScope)
+        sender.recordComposerDelivery("kept-retry", ComposerDelivery(DeliveryState.Sending), "retry-op", null)
+        assertEquals(OutboxState.Sending, store.state("kept-retry"))
+
+        sender.recordComposerDelivery("kept-retry", ComposerDelivery(DeliveryState.Sending), "retry-op", MessageTransportResult.Kept)
+        assertEquals(OutboxState.Kept, store.state("kept-retry"))
+        assertTrue(sender.outbox.value.none { it.clientMessageId == "kept-retry" })
+        sender.close()
+    }
+
+    @Test fun aLateComposerReplyKeepsANewerRetryAndAnOwnerDiscard() = runTest {
+        val store = MemoryOutboxStore()
+        val sender = OutboxMessageSender(scope, store, FakeTransport(online = false), backgroundScope)
+        runCurrent()
+        store.enqueue(OutboxEntry("visible", session, "hello", state = OutboxState.Refused, createdAt = 100))
+        val sending = ComposerDelivery(DeliveryState.Sending)
+        val sent = ComposerDelivery(DeliveryState.Sent)
+        sender.recordComposerDelivery("visible", sending, "first")
+        assertEquals("the live attempt is bound to its own operation", "first", store.entries.value.single().operationId)
+        sender.recordComposerDelivery("visible", ComposerDelivery(DeliveryState.Refused), "first", MessageTransportResult.NotSent)
+        sender.recordComposerDelivery("visible", sending, "second")
+        sender.recordComposerDelivery("visible", sent, "first", MessageTransportResult.Accepted)
+        assertEquals(OutboxState.Sending, store.state("visible"))
+        assertEquals("second", store.entries.value.single().operationId)
+
+        sender.recordComposerDelivery("visible", ComposerDelivery(DeliveryState.Unknown), "second", MessageTransportResult.NoReceipt)
+        assertTrue(sender.discard("visible"))
+        sender.recordComposerDelivery("visible", sent, "second", MessageTransportResult.Accepted)
+        assertEquals(OutboxState.Cancelled, store.state("visible"))
+        sender.close()
+    }
+
+    @Test fun automaticRetryDoesNotAdoptAnActiveComposerAttempt() = runTest {
+        val store = InterleavedOutboxStore()
+        val automaticStarted = CompletableDeferred<Unit>()
+        val automaticFinished = CompletableDeferred<Unit>()
+        val transport = object : MessageTransport {
+            override val readyToSend = MutableStateFlow(true)
+            override val supportsClientOps = true
+            override suspend fun send(request: MessageRequest): MessageTransportResult {
+                automaticStarted.complete(Unit)
+                automaticFinished.await()
+                return MessageTransportResult.NoReceipt
+            }
+        }
+        val sender = OutboxMessageSender(scope, store, transport, backgroundScope)
+        runCurrent()
+        store.enqueue(OutboxEntry("visible", session, "hello", state = OutboxState.Refused, createdAt = 100))
+
+        val automatic = async { sender.retry("visible") }
+        val manual = withContext(Dispatchers.Default) {
+            withTimeoutOrNull(10_000) { automaticStarted.await() } ?: error("Automatic send did not start")
+            // The automatic retry passed its active-composer check. Its durable retry write suspends until the
+            // composer owns the message, reproducing the interleaving of two independent store operations.
+            store.interleaveManual = true
+            withTimeoutOrNull(10_000) { store.automaticStateWritten.await() } ?: error("Automatic transition did not start")
+            async(start = CoroutineStart.UNDISPATCHED) { sender.beginComposerRetry("visible", "manual-operation") }.also {
+                store.continueAutomatic.complete(Unit)
+                automaticFinished.complete(Unit)
+            }
+        }
+        withTimeoutOrNull(10_000) { manual.join() } ?: error("Manual retry did not finish")
+        withTimeoutOrNull(10_000) { automatic.join() } ?: error("Automatic retry did not finish")
+        runCurrent()
+
+        assertEquals(OutboxState.Sending, store.entries.value.single { it.clientMessageId == "visible" }.state)
+        assertEquals("manual-operation", store.entries.value.single().operationId)
+        sender.recordComposerDelivery("visible", ComposerDelivery(DeliveryState.Sent), "manual-operation", MessageTransportResult.Accepted)
+        assertEquals(OutboxState.Sent, store.entries.value.single().state)
+        sender.close()
+        runCurrent()
+    }
+
+    private class InterleavedOutboxStore : OutboxStore {
+        val automaticStateWritten = CompletableDeferred<Unit>()
+        val continueAutomatic = CompletableDeferred<Unit>()
+        @Volatile var interleaveManual = false
+        private val delegate = MemoryOutboxStore()
+        override val entries = delegate.entries
+        override suspend fun enqueue(entry: OutboxEntry) = delegate.enqueue(entry)
+        override suspend fun recoverInterrupted() = delegate.recoverInterrupted()
+
+        override suspend fun transition(id: String, from: Set<OutboxState>, to: OutboxState, error: String?): Boolean {
+            if (interleaveManual && to == OutboxState.Unknown) {
+                interleaveManual = false
+                automaticStateWritten.complete(Unit)
+                continueAutomatic.await()
+            }
+            return delegate.transition(id, from, to, error)
+        }
+
+        override suspend fun transition(id: String, from: Set<OutboxState>, to: OutboxState, error: String?, opId: String): Boolean =
+            delegate.transition(id, from, to, error, opId)
     }
 
     @Test fun catchUpChecksAllUncertainStatesBeforeSendingAndUsesTheSameOperationId() = runTest {
@@ -484,6 +688,45 @@ class OutboxMessageSenderTest {
         runCurrent()
         assertTrue(sender.outbox.value.none { it.clientMessageId == "refused" })
         assertEquals(listOf("refused", "sent"), transport.requests.map { it.clientMessageId })
+        sender.close()
+    }
+
+    @Test fun undoPutsADeletedMessageBackAsItWas() = runTest {
+        val store = MemoryOutboxStore()
+        val transport = FakeTransport(online = true)
+        val sender = OutboxMessageSender(scope, store, transport, backgroundScope)
+        transport.answers += MessageTransportResult.HubError(code = "input_draft", delivered = "none")
+        sender.send(session, "refused", "refused")
+        runCurrent()
+        val refused = sender.outbox.value.single { it.clientMessageId == "refused" }
+        assertEquals("input_draft", refused.error)
+        assertTrue(sender.cancel("refused"))
+        runCurrent()
+        assertTrue(sender.outbox.value.none { it.clientMessageId == "refused" })
+        // Back as it was, its refusal too, and nothing sent for it.
+        sender.restore(refused)
+        runCurrent()
+        assertEquals(refused, sender.outbox.value.single { it.clientMessageId == "refused" })
+        // A second Undo, or one for a message no longer deleted, changes nothing.
+        sender.restore(refused.copy(state = DeliveryState.Queued))
+        runCurrent()
+        assertEquals(OutboxState.Refused, store.state("refused"))
+        assertEquals(listOf("refused"), transport.requests.map { it.clientMessageId })
+
+        // One still waiting comes back waiting and goes once the link is up.
+        transport.readyToSend.value = false
+        sender.send(session, "waiting", "waiting")
+        runCurrent()
+        val waiting = sender.outbox.value.single { it.clientMessageId == "waiting" }
+        assertEquals(DeliveryState.WaitingForNetwork, waiting.state)
+        assertTrue(sender.cancel("waiting"))
+        sender.restore(waiting)
+        runCurrent()
+        assertEquals(OutboxState.WaitingForNetwork, store.state("waiting"))
+        transport.answers += MessageTransportResult.Accepted
+        transport.readyToSend.value = true
+        runCurrent()
+        assertEquals(listOf("refused", "waiting"), transport.requests.map { it.clientMessageId })
         sender.close()
     }
 
@@ -699,6 +942,39 @@ class OutboxMessageSenderTest {
         }
     }
 
+    /**
+     * Retry now on a message still on its way (iOS's Retry Now on a waiting one): the queue looks again at once rather than at
+     * its next wake; with the link down it stays waiting. The outbox says when each was written, for where a failed one sits.
+     */
+    @Test fun retryNowOnAWaitingMessageTriesAtOnce() = runTest {
+        val restarting = MessageTransportResult.HubError("assistant_offline", "none", retryable = true)
+        val store = MemoryOutboxStore()
+        val transport = FakeTransport(online = true)
+        val sender = OutboxMessageSender(scope, store, transport, backgroundScope) { 1_700_000_000_000L }
+        runCurrent()
+        transport.answers += listOf(restarting, MessageTransportResult.Accepted)
+        sender.send(session, "written while the assistant restarts", "restart")
+        runCurrent()
+        assertEquals(OutboxState.WaitingForNetwork, store.state("restart"))
+        assertEquals(1_700_000_000_000L, sender.outbox.value.single().createdAt)
+        assertTrue(sender.retry("restart"))
+        runCurrent()
+        assertEquals(OutboxState.Sent, store.state("restart"))
+        assertEquals(2, transport.requests.size)
+
+        transport.readyToSend.value = false
+        sender.send(session, "written offline", "offline")
+        runCurrent()
+        assertTrue(sender.retry("offline"))
+        runCurrent()
+        assertEquals(OutboxState.WaitingForNetwork, store.state("offline"))
+        assertEquals(2, transport.requests.size)
+        // One already delivered is past retrying.
+        assertFalse(sender.retry("restart"))
+        assertEquals(OutboxState.Sent, store.state("restart"))
+        sender.close()
+    }
+
     /** A main conversation that cannot start gets a minute on a link that is up; the link dropping starts it again. */
     @Test fun aMainConversationThatCannotStartIsRefusedWithTheHubsReason() = runTest {
         val store = MemoryOutboxStore()
@@ -739,6 +1015,31 @@ class OutboxMessageSenderTest {
         assertEquals(OutboxState.Sent, store.state("draft"))
         // Still the same message under its first id for the pages.
         assertEquals("draft", sender.outbox.value.single().clientMessageId)
+        sender.close()
+    }
+
+    @Test fun launcherAndModelStayOnEverySendAndRetry() = runTest {
+        val store = MemoryOutboxStore()
+        val hub = ReplayingHub()
+        val sender = OutboxMessageSender(scope, store, hub, backgroundScope)
+        hub.answers += MessageTransportResult.Accepted
+        hub.answers += MessageTransportResult.Accepted
+        sender.send(session, "first", "first", null, "runtime", "model-id")
+        sender.send(session, "second", "second", null, "runtime", "model-id")
+        runCurrent()
+        assertEquals(listOf("first", "second"), hub.requests.map { it.clientMessageId })
+        assertTrue(hub.requests.all { it.launcher == "runtime" && it.model == "model-id" })
+
+        hub.answers += MessageTransportResult.HubError("input_draft", "none", retryable = false)
+        sender.send(session, "retry", "retry", null, "runtime", "model-id")
+        runCurrent()
+        assertEquals(OutboxState.Refused, store.state("retry"))
+        hub.answers += MessageTransportResult.Accepted
+        assertTrue(sender.retry("retry"))
+        runCurrent()
+        assertEquals("runtime", hub.requests.last().launcher)
+        assertEquals("model-id", hub.requests.last().model)
+        assertTrue(hub.requests.last().opId != "retry")
         sender.close()
     }
 

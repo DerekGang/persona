@@ -7,9 +7,11 @@
 - **Settings › Server** has a new "hub" row (present even with one group: this is where users add a second hub; **this is the only pixel change when there is one group**). It opens a list of paired hubs organized by group:
   add a hub, rename a group, set the current hub, disconnect one hub (if others remain in the group), or disconnect an entire group.
 - Agents, Machines, interactions that need you, and Agent requests in the Inbox display all groups together. With multiple groups, machine names include the group name ("MacBook · Company").
-  The Machines page has separate sections by group, with a connection-status dot in each header. The menu at the top left of Agents gains a "hub" selector to show just one group.
+  The Machines page has separate sections by group, with a connection-status dot in each header. The menu at the top left of Agents gains a "hub" selector to show just one group. The group it shows is always the current hub (#11657):
+  picking a group there makes it the current hub, and making another hub current anywhere moves a list narrowed to one group along with it, so Agents and the
+  hub-level pages (Persona and its sidebar, the Inbox) never show two different hubs. "All Hubs" leaves the current hub as it is.
 - The Persona assistant, Inbox, the avatar (#2406, [persona.md](../apple/persona.md) "On the phone": each hub keeps its own choice), and hub-related settings (models, connectors, devices, notifications…) belong to each hub and are **not merged**. They display the "current hub":
-  switch it in the Persona top-bar menu, at the top left of the Inbox, or at the top of the Settings home page.
+  switch it in the sidebar's assistant switcher (on Apple its first group lists the hubs, then the current hub's assistants under its name, #12594; a hub without a roster keeps a hub menu under the sidebar's title), at the top left of the Inbox, at the top of the Settings home page, or by showing one group in the Agents menu. The conversation's own menu (the Persona face or name in its top bar) has no hub section: it holds only that conversation's actions.
 - With only one group, none of these additions appear, and the UI is exactly as before (screenshots compared pixel by pixel; see "Tests").
 
 ## Terminology
@@ -18,7 +20,7 @@
 | --- | --- |
 | Group | Paired hubs grouped by their linked-hub relationships; one connection per group |
 | Default group | The group whose id is the empty string `""`: migrated from the old single pairing, or the first group paired. When it is the only group, every key and path is byte-for-byte identical to before. |
-| Current hub (`AppModel.hubGroup`) | The group used by hub-level pages. **Controls only hub-level pages**, not session keys, machine ids, drafts, pins, or caches. |
+| Current hub (`AppModel.hubGroup`) | The group used by hub-level pages. **Controls only hub-level pages** (and which group an Agents list narrowed to one group shows), not session keys, machine ids, drafts, pins, or caches. |
 
 ## Storage
 
@@ -48,11 +50,11 @@
 ## Connections and routing (`HubLink`, `HubRoute`)
 
 - One `HubLink` per group: one `LiveConnection`, that hub's hello (features, name), Fleet state, desktop-client list, and pins / mutes (`PinsStore`).
-- Candidate addresses: every paired hub in the group (each with its own credentials), plus `endpoints` of hubs listed in mesh that this device has not paired with (using the group's first hub's credentials: contract 2.6 makes credentials valid throughout the group).
+- Candidate addresses: every paired hub in the group (each with its own credentials; a hub's added addresses follow its paired one, [network.md](../operations/network.md#client-added-candidates)), plus `endpoints` of hubs listed in mesh that this device has not paired with (using the group's first hub's credentials: contract 2.6 makes credentials valid throughout the group).
   iOS previously had no routing rules for candidate addresses (one address per hub), so "existing rules" here means: do nothing with only one candidate, exactly as before;
   with multiple candidates, request `GET /api/v1/health` from all of them concurrently before each connection (3 seconds), and use the first to respond. If none responds, use the first and leave retries to the socket's backoff.
-- **Prefer the primary hub** ([plan-hub-center.md](../archive/operations/plan-hub-center.md), section 5, #586): hello's `mesh.hubs[].center` marks the group's primary hub, which goes first among candidates. In concurrent probes, use the primary hub if it responds. If a member responds first, wait up to another 1.5 seconds for the primary hub (`HubRoute.centerGrace`); do not wait if its probe has failed. If none responds, use the primary hub. Without a primary hub in the group (hubs from before primary-hub support), behavior is unchanged: use whoever responds first.
-- **Switch back when the primary hub recovers**: while connected to a member, probe the primary hub every 5 minutes (`HubRoute.centerRecheck`, not while the App is in the background). If it responds, reroute the connection (`LiveConnection.reroute()`), causing just this one disconnect/reconnect. A member connection still works, with one extra hop: the member forwards requests unchanged to the primary hub.
+- **Prefer the primary hub** ([plan-hub-center.md](../archive/operations/plan-hub-center.md), section 5, #586): hello's `mesh.hubs[].center` marks the group's primary hub, which goes first among candidates. In concurrent probes, use the primary hub if it responds. If a member responds first, wait up to another 1.5 seconds for the primary hub (`HubRoute.centerGrace`); do not wait if its probe has failed. If none responds, use the primary hub. Without a primary hub in the group (hubs from before primary-hub support), behavior is unchanged: use whoever responds first. The same preference ranks a hub's own addresses: an earlier address wins over a later one that answered first within the same grace (`Candidate.rank`: the primary hub first, then each hub's address order).
+- **Switch back when the primary hub recovers**: while connected to a member (or to a hub's later address), probe the preferred candidates every 5 minutes (`HubRoute.centerRecheck`, not while the App is in the background) and on every network change. If it responds, reroute the connection (`LiveConnection.reroute()`), causing just this one disconnect/reconnect. A member connection still works, with one extra hop: the member forwards requests unchanged to the primary hub.
 - If the connected hub goes down: socket failure → reroute on reconnect → switch to another hub in the group (verified by `MultiHubTests.testGroupMovesToItsOtherHub`). Different groups connect independently and do not affect each other.
 - Requests (`APIClient`) use the hub to which the socket is currently connected (`HubLink.config`). A session, machine, or interaction's requests always go to its own group (`model.api(group)`);
   hub-level pages use the current hub (`model.api`).

@@ -1,32 +1,36 @@
-// What the sidebar's files share: the row and menu types, a row's key, the section heading and count, the badge and
-// dot colors, the pages hook and navigation. It imports none of them (Sidebar, SidebarRows, SidebarTree, SidebarRail).
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+// What the sidebar's files share: the row and menu types, a row's key, the section heading and count (SidebarSection,
+// passed on from here), the badge and dot colors, the pages hook and navigation. It imports none of them (Sidebar,
+// SidebarRows, SidebarTree, SidebarRail).
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { resolveTab } from "../lib/herdr-tree";
 import { useInboxBadge } from "../lib/inbox";
 import { useLarkHome } from "../lib/lark-chats";
 import { agentKey } from "../lib/pins";
-import { NAV_PAGES, extensionNavKey, sidebarActiveKey } from "../lib/persona-nav";
-import { arrangePages, useSidebarPrefs } from "../lib/sidebar-pages";
+import { NAV_PAGES, extensionNavKey, sidebarActiveKey, sidebarRoute } from "../lib/persona-nav";
+import { handoffFrom, sidebarPageOf } from "../lib/handoff";
+import { arrangeSections, useSidebarPrefs } from "../lib/sidebar-pages";
+import { useStartPageCheck } from "../lib/start-page";
 import { useExtensionSlot } from "../lib/extension-slots";
 import { toneOf } from "../lib/extension-ui";
+import { colorOf, hue, type UIColor } from "../lib/extension-ui-v6";
+import { BUILTIN_PAGE_COLORS, useSidebarIconMode } from "../lib/sidebar-icons";
 import { BADGE_TONE, navIcon, pageRoute } from "./extensions/ExtensionSlots";
 import { href, inWorkView, navigate, type Route } from "../lib/router";
 import { useAgentSessions } from "../lib/sessions";
-import { scoped, useScope, useScopedCounts, useScopedTodos } from "../lib/current-assistant";
-import { triageTodos } from "../lib/todo-triage";
-import { makeSessionLookup } from "../lib/todos";
-import { useRestoredTodos } from "../lib/todo-restore";
+import { scoped, useScope, useScopedCounts } from "../lib/current-assistant";
+import { useOwnerNeeds } from "../lib/todo-owner-needs";
 import { useLarkOn, useStore } from "../lib/store";
 import { connPhase } from "../lib/connection";
+import { useStarredCount } from "../lib/starred-summary";
 import { useWorkspaceBoardSetting } from "../lib/workspace-board-setting";
 import type { Session } from "../lib/types";
-import { Collapse, cx, sidebarFoldMotion, type MenuItem } from "../ui/atoms";
-import { AGENTS_FOLD, onFoldAll, setAgentsFolded } from "../lib/sidebar-api";
+import type { MenuItem } from "../ui/atoms";
+import { agentsFoldAction, setAgentsFolded } from "../lib/sidebar-api";
 import { SESSION_LIST_STYLE } from "../ui/list-metrics";
-import { Icon, type IconName } from "../ui/icons";
+import { FoldAllButton } from "../ui/FoldAllButton";
+import type { IconName } from "../ui/icons";
 import type { MenuNode } from "../lib/node-actions";
-import { contextMenuProps } from "../ui/context-menu";
 import type { MenuAt } from "../ui/menu-model";
 
 /** The open row's own fill (#2283): it stays while the pointer is elsewhere in the list, a step darker than hover. */
@@ -34,14 +38,17 @@ export const CURRENT_ROW = "bg-hover-2";
 /** The least an agent row's title gets behind a prefix (styles.css `--row-title-min`, about 4.5 characters). */
 export const ROW_TITLE_MIN = "min-w-(--row-title-min)";
 
-/** The row a route lights up in the sidebar: a tab's page is the pane it shows (its row in the tree is the tab's). */
+/** The row a route lights up in the sidebar: a tab's page is the pane it shows (its row in the tree is the tab's). An
+ *  Agent's page opened from inside another page lights that page's row (#12055): its history entry names it, and every
+ *  move to another entry draws the sidebar again with the route. */
 export function useActiveKey(route: Route): string {
   const all = useAgentSessions();
   const assistant = useStore((s) => s.assistant);
-  const tabPath = route.name === "tab" ? href(route) : "";
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `route` is parsed anew each render; its path says it all
-  const tabPane = useMemo(() => (route.name === "tab" ? resolveTab(all, route) : undefined), [all, tabPath]);
-  return inWorkView(route) ? "terminal" : route.name === "tab" ? (tabPane ? rowKey(tabPane) : "") : sidebarActiveKey(route, assistant?.main);
+  const shown = inWorkView(route) ? route : sidebarRoute(route, sidebarPageOf(handoffFrom()));
+  const tabPath = shown.name === "tab" ? href(shown) : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `shown` is parsed anew each render; its path says it all
+  const tabPane = useMemo(() => (shown.name === "tab" ? resolveTab(all, shown) : undefined), [all, tabPath]);
+  return inWorkView(route) ? "terminal" : shown.name === "tab" ? (tabPane ? rowKey(tabPane) : "") : sidebarActiveKey(shown, assistant?.main);
 }
 
 // One function for the component's life, so the rows given it skip a re-render (memo); a click still calls the
@@ -55,15 +62,29 @@ export function useGo(onNavigate?: () => void): GoFn {
     (to: Route) => (e: React.MouseEvent) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
       e.preventDefault();
-      navigate(to);
+      // Reselecting the open Agent makes it a root: replace its drill-down entry even though the URL is unchanged.
+      const root = handoffFrom() !== undefined && href(to) === location.pathname + location.search;
+      navigate(to, root, root ? {} : null);
       latest.current?.();
     },
     [],
   );
 }
 
-/** One entry of the pages under Persona ("Overview", "Inbox" … "Settings", and the extensions' pages). */
-export type NavPage = { k: string; to: Route; icon: IconName; label: string; short?: string; badge?: number | string; badgeTone?: keyof typeof BADGE_CLASS; hint?: string; title?: string };
+/** One entry of the pages under Persona ("Overview", "Inbox" … "Settings", and the extensions' pages). `badgeLabel`:
+ *  what a screen reader hears for the badge in place of its digits, when the number alone does not say what it counts.
+ *  `color`: its icon's, only with Settings › Appearance › Sidebar icons on Colored (#10822, lib/sidebar-icons.ts). */
+export type NavPage = { k: string; to: Route; icon: IconName; label: string; short?: string; badge?: number | string; badgeTone?: keyof typeof BADGE_CLASS; badgeLabel?: string; hint?: string; title?: string; group?: { id: string; title: string }; color?: UIColor };
+
+/** A page's icon in its color (#10822), unless it is the open page, whose icon keeps the open row's ink; none without a
+ *  color, so Monochrome draws what it always drew. */
+export const pageIconStyle = (color: UIColor | undefined, active: boolean) => (color && !active ? { color: hue(color) } : undefined);
+
+/** A page's spoken name with its badge ("Inbox 3", "To-dos 2 to-dos need you"): the phone's grid, the rail and the folded
+ *  titles say what the list's row says. */
+export function pageLabel(p: NavPage): string {
+  return p.badge === undefined ? p.label : `${p.label} ${p.badgeLabel ?? p.badge}`;
+}
 
 /** The sidebar's pages ("Overview" … "Settings", the extensions' pages) and the connection, shared by the sidebar and its rail. */
 export function useNavPages() {
@@ -75,13 +96,12 @@ export function useNavPages() {
   const online = useStore((s) => scoped(s.machines, scope).filter((m) => m.online).length);
   const total = useStore((s) => scoped(s.machines, scope).length);
   const assistant = useStore((s) => s.assistant);
-  const todos = useScopedTodos();
   const todosSupported = useStore((s) => s.todosSupported);
-  // The To-dos page's open count (#3156): not shelved, not finished; quiet tasks (#1731) are told about in the main
-  // conversation, not counted here.
-  const agentSessions = useAgentSessions();
-  const [restored] = useRestoredTodos();
-  const uncompletedTodosCount = useMemo(() => triageTodos(todos, makeSessionLookup(agentSessions), Date.now(), restored, { quiet: false }).open, [todos, agentSessions, restored]);
+  // The open to-dos that need the owner, not those Agents are on (#11085, lib/todo-triage ownerNeeds); quiet tasks
+  // (#1731) are told about in the main conversation, not counted here. The To-dos page's "Not done" counts every open one,
+  // and the page marks the rows counted here from the same hook (#11838), so the number and the marks agree.
+  const todosBadge = useOwnerNeeds().size;
+  const todosBadgeLabel = todosBadge ? t("sidebar.todos_badge_title", { count: todosBadge }) : undefined;
   const counts = useScopedCounts();
   const inbox = useInboxBadge();
   const larkSwitch = useLarkHome();
@@ -89,8 +109,13 @@ export function useNavPages() {
   // "Messages" needs the hub to read Feishu (feature `lark`) as well as this browser's switch
   const larkHome = larkSwitch && lark;
   const extensionPages = useExtensionSlot("nav_page");
-  // off unless turned on in Settings › General › Agent (#2475)
-  const boardOn = useWorkspaceBoardSetting().enabled === true;
+  // Colored sidebar icons (#10822): a built-in page's color, an extension's page the one its manifest names; none otherwise
+  const colored = useSidebarIconMode() === "colored";
+  const tint = (p: NavPage, color: UIColor | undefined): NavPage => (colored && color ? { ...p, color } : p);
+  // off unless turned on in Settings › General › Agent (#2475); null until the hub answered
+  const board = useWorkspaceBoardSetting().enabled;
+  const boardOn = board === true;
+  const stars = useStarredCount(useStore((s) => s.features.includes("starred_messages")));
 
   const main = assistant?.main ? assistant.conversations.find((c) => c.session_id === assistant.main) : undefined;
   const page: Record<(typeof NAV_PAGES)[number], NavPage | false> = {
@@ -98,12 +123,13 @@ export function useNavPages() {
     inbox: { k: "inbox", to: { name: "inbox" }, icon: "inbox", label: t("sidebar.nav_inbox"), short: t("sidebar.nav_inbox_short"), badge: inbox || undefined, badgeTone: "attention", title: inbox ? t("sidebar.inbox_badge_title", { count: inbox }) : undefined },
     health: { k: "health", to: { name: "health" }, icon: "heart", label: t("sidebar.nav_health"), short: t("sidebar.nav_health_short") },
     messages: larkHome && { k: "messages", to: { name: "messages" }, icon: "chat", label: t("sidebar.nav_messages") },
+    starred: stars != null && { k: "starred", to: { name: "starred" }, icon: "star", label: t("starred.title"), badge: stars || undefined, badgeLabel: t("starred.count", { count: stars }) },
     "workspace-board": boardOn && { k: "workspace-board", to: { name: "workspace-board" }, icon: "layers", label: t("sidebar.nav_board"), short: t("sidebar.nav_board_short") },
-    todos: todosSupported !== false && { k: "todos", to: { name: "todos" }, icon: "todo", label: t("sidebar.nav_todos"), badge: uncompletedTodosCount || undefined },
+    todos: todosSupported !== false && { k: "todos", to: { name: "todos" }, icon: "todo", label: t("sidebar.nav_todos"), badge: todosBadge || undefined, badgeLabel: todosBadgeLabel, title: todosBadgeLabel },
     routines: { k: "routines", to: { name: "routines" }, icon: "clock", label: t("sidebar.nav_routines"), short: t("sidebar.nav_routines_short") },
     kb: { k: "kb", to: { name: "kb" }, icon: "book", label: t("sidebar.nav_kb"), short: t("sidebar.nav_kb_short") },
     machines: { k: "machines", to: { name: "machines" }, icon: "machine", label: t("sidebar.nav_machines"), short: t("sidebar.nav_machines_short"), hint: total ? `${online}/${total}` : undefined },
-    terminal: { k: "terminal", to: { name: "terminal" }, icon: "terminal", label: t("work-entry.title"), short: t("work-entry.short") },
+    terminal: false, // History belongs to Agents, not the general Pages grid (#10240).
     settings: { k: "settings", to: { name: "settings" }, icon: "gear", label: t("sidebar.nav_settings") },
   };
   const all = NAV_PAGES.flatMap((k): NavPage[] => [
@@ -111,16 +137,21 @@ export function useNavPages() {
     ...(k === "settings"
       ? extensionPages.map((u) => {
           const key = extensionNavKey(u.extension, u.id);
-          return { k: key, to: pageRoute(u.extension, u.id), icon: navIcon(u.icon), label: u.title, badge: u.badge?.text || undefined, badgeTone: BADGE_TONE[toneOf(u.badge?.tone)], title: u.extension_name ? `${u.title} · ${u.extension_name}` : u.title };
+          return tint({ k: key, to: pageRoute(u.extension, u.id), icon: navIcon(u.icon), label: u.title, badge: u.badge?.text || undefined, badgeTone: BADGE_TONE[toneOf(u.badge?.tone)], title: u.extension_name ? `${u.title} · ${u.extension_name}` : u.title, group: u.group }, colorOf(u.icon_color));
         })
       : []),
-    ...(page[k] ? [page[k]] : []),
+    ...(page[k] ? [tint(page[k], k === "terminal" || k === "starred" ? undefined : BUILTIN_PAGE_COLORS[k])] : []),
   ]);
 
   // as arranged in Settings › General › Sidebar pages: the list, and the pages that wait under More (docs/web/web.md "The sidebar's pages")
-  const { shown: pages, more } = arrangePages(all, useSidebarPrefs());
+  // and in their groups (#9071): `pages` is every group's in order, for the rail, the drawer and ⌘K
+  const { sections, more } = arrangeSections(all, useSidebarPrefs());
+  const pages = sections.flatMap((s) => s.pages);
+  // the start page this load opened on, if it is not there after all, gives way to the main chat (lib/start-page.ts)
+  const starredKnown = stars !== undefined;
+  useStartPageCheck((k) => all.some((p) => p.k === k), extensionPages, board !== null, starredKnown);
 
-  return { phase, online, total, main, pages, more, all };
+  return { phase, online, total, main, pages, sections, more, all, starredKnown };
 }
 
 /** The pages under "More" as menu rows (the phone's grid, the rail): a choice opens the page, then `onNavigate`
@@ -136,83 +167,41 @@ export function morePagesMenu(more: NavPage[], activeKey: string, onNavigate?: (
   ];
 }
 
-const GroupHeadingOffset = createContext({ offset: 0, depth: 0 });
+export { GroupCount, Section, SidebarGroup } from "./SidebarSection";
 
-/** Real headings stay interactive while pinned; each nested group reserves its parent's measured height. */
-export function SidebarGroup({ heading, children, className }: { heading: React.ReactNode; children: React.ReactNode; className?: string }) {
-  const { offset: above, depth } = useContext(GroupHeadingOffset);
-  const ref = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const scroller = el.closest<HTMLElement>("[data-sidebar-rows]");
-    const controls = el.querySelector("[data-sidebar-agents-controls]");
-    const measure = () => {
-      const height = el.getBoundingClientRect().height;
-      setHeight(height);
-      if (controls) scroller?.style.setProperty("--sidebar-controls-height", `${height}px`);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => { observer.disconnect(); if (controls) scroller?.style.removeProperty("--sidebar-controls-height"); };
-  }, []);
-  return <div className={className} data-sidebar-group>
-    <div ref={ref} data-sidebar-group-heading className="sidebar-group-heading" style={{ top: `calc(var(--sidebar-sticky-top, 0px) + ${above}px)`, zIndex: 24 - depth }}>{heading}</div>
-    <GroupHeadingOffset.Provider value={{ offset: above + height, depth: depth + 1 }}>{children}</GroupHeadingOffset.Provider>
-  </div>;
-}
+const FOLD_LABEL = { "open-block": "sidebar.open_all", "fold-groups": "sidebar.fold_all", "open-groups": "sidebar.open_all" } as const;
 
-/** One action reflects the visible groups, including manual folds and keyboard/menu actions. */
-export function GroupFoldButton({ groups, onAction }: { groups: React.RefObject<HTMLElement | null>; onAction: () => void }) {
-  const [collapse, setCollapse] = useState(true);
+/** The Agents title row's one fold control (#3222): it acts on the list under the controls, never on the grouping
+ *  tabs, quick filters, search or Filter. Its action follows the group headings on screen, folded by hand, by the
+ *  keyboard shortcut or by it, and the block's own fold under the Agents title (`block`, absent where the list cannot
+ *  fold), so a click always changes something; a list without groups shows no button (#6447, lib/sidebar-api.ts
+ *  `agentsFoldAction`). The row around it is its tooltip's box. */
+export function GroupFoldButton({ groups, onAction, block, flat }: { groups: React.RefObject<HTMLElement | null>; onAction: () => void; block?: { folded: boolean; toggle: () => void }; flat?: boolean }) {
+  const [seen, setSeen] = useState({ groups: 0, open: false });
   useEffect(() => {
     const root = groups.current;
     if (!root) return;
-    const read = () => setCollapse([...root.querySelectorAll<HTMLButtonElement>("[data-sidebar-group-heading] button[aria-expanded]")]
-      .some((button) => !button.closest("[data-sidebar-agents-controls], [inert]") && button.getAttribute("aria-expanded") === "true"));
+    const read = () => {
+      const shown = [...root.querySelectorAll<HTMLButtonElement>("[data-sidebar-group-heading] button[aria-expanded]")]
+        .filter((button) => !button.closest("[data-sidebar-agents-controls], [inert]"));
+      const open = shown.some((button) => button.getAttribute("aria-expanded") === "true");
+      setSeen((s) => (s.groups === shown.length && s.open === open ? s : { groups: shown.length, open }));
+    };
     read();
     const observer = new MutationObserver(read);
     observer.observe(root, { attributes: true, attributeFilter: ["aria-expanded", "inert"], childList: true, subtree: true });
-    const off = onFoldAll((folded) => setCollapse(!folded), AGENTS_FOLD);
-    return () => { observer.disconnect(); off(); };
+    return () => observer.disconnect();
   }, [groups]);
-  const label = t(collapse ? "sidebar.fold_all" : "sidebar.open_all");
-  return <button type="button" title={label} aria-label={label} onClick={() => { setAgentsFolded(collapse); onAction(); }} className={SESSION_LIST_STYLE.foldButton}>
-    <Icon name="foldToggle" size={12} stroke={2}  />
-  </button>;
+  const action = agentsFoldAction({ blockFolded: Boolean(block?.folded), flat, groups: seen.groups, open: seen.open });
+  if (!action) return null;
+  const run = () => {
+    if (action === "open-block") block?.toggle();
+    setAgentsFolded(action === "fold-groups");
+    onAction();
+  };
+  return <FoldAllButton label={t(FOLD_LABEL[action])} expand={action !== "fold-groups"} onClick={run} className={SESSION_LIST_STYLE.foldButton} testId="agents-fold-all" />;
 }
 
-export function Section({ title, children, folded, onToggle, right, onMenu, first, hint }: { title: React.ReactNode; children: React.ReactNode; folded: boolean; onToggle: () => void; right?: React.ReactNode; onMenu?: (at: MenuAt, el: HTMLElement) => void; first?: boolean; hint?: string }) {
-  return (
-    <SidebarGroup className={first ? "mt-1" : "mt-3"} heading={
-      <div className="group/sec relative flex items-center gap-1 px-2 pb-1" {...(onMenu ? contextMenuProps(onMenu) : {})}>
-        <button type="button" aria-expanded={!folded} onClick={onToggle} title={hint} className="touch-hit relative z-10 flex min-w-0 flex-1 items-center gap-1 whitespace-nowrap text-left text-[11px] font-semibold text-ink-3 hover:text-ink-2">
-          <span className="min-w-0 truncate">{title}</span>
-          <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 transition-transform" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
-        </button>
-        {right}
-      </div>
-    }>
-      {/* a group whose name does not say why its agents are here ("Not on a to-do", "Opened in the terminal") says it in one line, folded too */}
-      {hint && <p className="px-2 pb-1 text-[11px] leading-[1.45] text-ink-3">{hint}</p>}
-      <Collapse open={!folded} sidebarFold unclipped>
-        <div className="flex flex-col gap-px" inert={folded || undefined}>{children}</div>
-      </Collapse>
-    </SidebarGroup>
-  );
-}
-
-/** A group title's count with what it counts: a tooltip, and the same words for a screen reader. */
-export function GroupCount({ n, label, className }: { n: number; label: string; className?: string }) {
-  return (
-    <span title={label} className={cx("text-[10.5px] text-ink-3 tabular-nums", className)}>
-      <span aria-hidden>{n}</span>
-      <span className="sr-only">{label}</span>
-    </span>
-  );
-}
 
 export type RegFn = (k: string) => (el: HTMLElement | null) => void;
 /** An agent row's key in the sidebar (highlight, active): sidebarActiveKey's for a session. */

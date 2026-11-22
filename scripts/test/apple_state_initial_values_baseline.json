@@ -11,9 +11,6 @@
   "ChatFullPage": 1,
   "ChatScratch": 1
  },
- "apple/Persona/Views/Chat/MessageMenu.swift": {
-  "LiftPlace": 1
- },
  "apple/Persona/Views/Chat/PromptComposer.swift": {
   "Dictation": 1
  },
@@ -43,9 +40,6 @@
  },
  "apple/Persona/Views/Settings/SavedPlacesView.swift": {
   "PlaceSuggestions": 1
- },
- "apple/Persona/Views/Settings/SettingsView.swift": {
-  "IPhoneConsentModel": 1
  },
  "apple/Persona/Views/Shell/ShellView.swift": {
   "ShellState": 1

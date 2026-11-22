@@ -15,6 +15,34 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+type a2aIdleKey struct{}
+
+func a2aBusy() error {
+	return refusal("a2a_session_busy", "A2A delivery is waiting for a live, idle session", nil)
+}
+
+func (n *Node) a2aIdleSession(ctx context.Context, id string, wake, refresh bool) bool {
+	for _, sess := range n.sessionList(ctx, refresh) {
+		if sess.SessionID != id || sess.Archived || sess.Starting || len(sess.Queued) != 0 {
+			continue
+		}
+		if sess.Status == proto.StatusIdle || sess.Status == proto.StatusDone {
+			return true
+		}
+		caps := sess.Capabilities
+		return wake && sess.Status == proto.StatusOffline && sess.SourceKind == proto.SourceRuntime && caps != nil &&
+			caps.Send && caps.A2AWakeOnSend && (caps.StopCause == "" || caps.StopCause == proto.StopIdle || caps.StopCause == proto.StopRestart)
+	}
+	return false
+}
+
+func (n *Node) a2aSendReady(ctx context.Context, id string) error {
+	if wake, a2a := ctx.Value(a2aIdleKey{}).(bool); a2a && !n.a2aIdleSession(ctx, id, wake, false) {
+		return a2aBusy()
+	}
+	return nil
+}
+
 // paneFor returns the pane hosting a live session, refreshing herdr state once if needed.
 func (n *Node) paneFor(ctx context.Context, id string) (string, error) {
 	if a, ok := n.agent(id); ok {
@@ -40,6 +68,10 @@ func (n *Node) paneFor(ctx context.Context, id string) (string, error) {
 }
 
 func (n *Node) send(ctx context.Context, id, text string, images []proto.Image, opts sendOpts) error {
+	if exitCommand(text) {
+		release := n.recovery.lock(id)
+		defer release()
+	}
 	// Two sends at once (quick taps, two phones) would both find the box empty and type into each other, or the second
 	// would see the first still in the box and be refused as a draft: one at a time, in the order they came.
 	unlock, err := n.inputTurn(ctx, id)
@@ -47,11 +79,42 @@ func (n *Node) send(ctx context.Context, id, text string, images []proto.Image, 
 		return err
 	}
 	defer unlock()
+	return n.sendLocked(ctx, id, text, images, opts)
+}
+
+// sendLocked sends to the agent with its input lock held.
+func (n *Node) sendLocked(ctx context.Context, id, text string, images []proto.Image, opts sendOpts) error {
+	if err := n.a2aSendReady(ctx, id); err != nil {
+		return err
+	}
+	if opts.WaitForEffort {
+		if change := n.switches().effortChange(id); change.target != "" {
+			if n.effortPaneStillLive(ctx, id, change.pane) {
+				return change.refusal()
+			}
+			n.switches().setEffortChange(id, effortChange{})
+			n.notifySessionsSoon()
+		}
+	}
+	selectionText := text
+	if opts.SwitchNow {
+		// The assistant's agent_switch (#5973): the switch it picked goes with this message now, or nothing does
+		// (launcher_switch.go switchNowRefusal). Anything but a running Claude Code agent with that switch waiting is
+		// refused here, before a path below could type the message on the launcher the agent runs on.
+		if err := n.switchNowReady(ctx, id); err != nil {
+			return err
+		}
+		opts.ApplySwitch = true
+	}
 	if n.externalCodex(id) {
-		if n.codexResumable(id) { // nothing runs it: resumed in a new tab with the message (codex_resume.go)
-			return n.resumeCodexThread(ctx, id, opts.Launcher, text, images, "") // a refusal says nothing was sent
+		if n.codexResumable(ctx, id) { // nothing runs it: a stopped agent takes no messages (stopped.go, #4754)
+			return n.stoppedRefusal(id)
 		}
 		return n.sendCodex(ctx, id, text, images)
+	}
+	selected, err := n.sessionSelectedSkills(ctx, id, text)
+	if err != nil {
+		return err
 	}
 	if r := n.agentsListRefusal(id); r != nil { // claudebg.go
 		return r
@@ -68,40 +131,100 @@ func (n *Node) send(ctx context.Context, id, text string, images []proto.Image, 
 		return n.exitAgent(ctx, id)
 	}
 	pane, err := n.paneFor(ctx, id)
+	if err != nil {
+		ctx = n.withResumeHost(ctx, id)
+	}
 	if err != nil && (n.codexPath(id) != "" || n.traexPath(id) != "") {
-		return n.resumeOther(ctx, id, text, images) // retire.go
+		return n.stoppedRefusal(id) // a stopped Codex or TRAE CLI takes no messages (stopped.go, #4754)
 	}
 	kind := "claude"
 	if err == nil {
 		if a, ok := n.agent(id); ok && a.Agent != "" {
 			kind = a.Agent
 		}
+		// The switch the user picked, which their own message carries out (launcher_switch.go, engine_switch.go), read
+		// once for the turn. One kept with the record waits for the hub's copy of it after a node restart.
+		var ps *proto.PendingSwitch
+		if opts.ApplySwitch && (kind == "claude" || kind == "codex") {
+			_ = n.state.loaded(ctx)
+			ps = n.pendingSwitch(id)
+		}
+		if ps != nil && ps.Agent != "" {
+			// The user's own message carries out the switch to the other engine they picked (engine_switch.go): the
+			// agent is quit and the other engine started in the same terminal with the message behind a handoff, before
+			// a Codex's app-server would take the message. While the agent is busy the message goes to it as always and
+			// the switch waits; a failed switch is dropped with nothing typed.
+			if handled, err := n.applyEngineSwitch(ctx, id, pane, kind, *ps, text, images, opts); handled {
+				return err
+			}
+		}
 		if kind == "codex" && n.codexJoined(id) {
 			// On its app-server (codex_daemon.go): a turn or a steer, nothing typed — a draft in its box stays as it is.
 			return n.sendCodex(ctx, id, text, images)
 		}
+		if kind == "claude" && ps != nil && ps.Agent == "" {
+			n.leaveLimitQuestion(ctx, id, pane) // the switch moves it off its usage limit: Claude Code's question about it goes
+		}
+		if kind == "claude" && host.ParsePane(pane).Kind == host.Tmux && ownerDeliveryOf(ctx) != nil {
+			// An outside Claude's unseen dialog must never take the owner's go-ahead: unlike an ordinary pane's legacy
+			// best-effort read, this route may type only after a successful screen read (#5965).
+			opts.readBox = true
+		}
 		if err := n.checkPaneFor(ctx, pane, kind, opts); err != nil { // sendsafe.go
+			if opts.SwitchNow {
+				n.dropSwitchNow(id, err) // a draft or a dialog: nothing typed, and no switch left waiting for the user
+			}
 			return err
 		}
+		if kind == "claude" && ps != nil && ps.Agent == "" { // one to the other engine waits, above
+			// The user's own message carries out the switch to another launcher they picked (launcher_switch.go): the
+			// agent is quit and resumed there, in the same terminal, and the message goes to it. While the agent is busy
+			// the message goes on the launcher it runs on and the switch waits; a failed switch is dropped with nothing
+			// typed. The assistant's (switch_now) is refused then instead, and dropped.
+			switched := false
+			if pane, switched, err = n.applySwitch(ctx, id, pane, *ps, opts.SwitchNow); err != nil {
+				return err
+			}
+			// The new claude came up behind a dialog of its own (start returns early then): the text would answer it.
+			if switched {
+				if err := n.checkPane(ctx, pane, "claude", ""); err != nil {
+					return err
+				}
+			}
+		}
 	} else {
+		if opts.SwitchNow { // gone since switchNowReady: nothing below would carry the switch out
+			return n.switchNowDropped(id, refusal(proto.CodeSwitchUnsupported, fmt.Sprintf("session %s is not running in one of Persona's terminals: there is no agent to switch (%v)", id, err), nil))
+		}
 		// A session of the desktop app's sidebar that nothing runs: the app opens it, and the message goes to its inbox,
 		// not to a claude --resume of ours (claudedesktop_open.go).
 		if handled, err := n.sendThroughDesktopApp(ctx, id, text, images); handled {
 			return err
 		}
-		// On a machine whose default host is a runtime (Paseo) the session is continued there (runtimecontrol.go).
-		if _, ok := engineRuntimes[n.defaultKind()]; ok {
+		// A session continuing in a runtime is taken over there (runtimecontrol.go).
+		if _, ok := engineRuntimes[n.startKind(ctx)]; ok {
 			return n.continueInRuntime(ctx, id, text, images, opts.ClientMsgID)
 		}
 		if r := n.notRunningRefusal(ctx, id); r != nil {
 			return r
 		}
-		// Offline: resume (with the launcher that started it, see resumeLauncher) and then send.
+		// A claude outside Persona's panes that has it open (Claude's desktop app, another terminal, a background run)
+		// is no stopped agent: refused as open elsewhere, as before (openelsewhere.go).
+		if r := n.openElsewhereRefusal(id); r != nil {
+			return r
+		}
+		// A stopped agent takes no messages; its terminal page's Resume brings it back (stopped.go, #4754). Only a
+		// branch nothing has started yet (fork.go) is started by its first message, with the launcher it came from,
+		// and a session of Claude's desktop app the app could not take is resumed as before.
+		if !n.freshFork(id) && !n.desktopSession(id) {
+			return n.stoppedRefusal(id)
+		}
 		r := n.resumeWith(id, opts)
-		s, err := n.start(ctx, r.cwd, r.launcher, "", id, "", r.mode, r.effort, r.tab, "", "", r.execution)
+		s, err := n.start(ctx, r.cwd, r.launcher, "", id, r.workspaceID, r.mode, r.effort, r.tab, "", "", r.execution)
 		if err != nil {
 			return err
 		}
+		n.forkStarted(id)
 		pane = s.PaneID
 		// start returns early when Claude comes up blocked (a dialog of its own): the text would answer it.
 		if err := n.checkPane(ctx, pane, "claude", ""); err != nil {
@@ -118,6 +241,30 @@ func (n *Node) send(ctx context.Context, id, text string, images []proto.Image, 
 				return err
 			}
 		}
+	}
+	// A switch to Claude Code whose first message a dialog held back (engine_switch.go): its handoff goes in front of
+	// this message, whoever sends it, and is cleared once the message is in. One the session got a message since (typed
+	// at the computer, or one sent with it whose arrival was not confirmed) or that it works without is dropped instead:
+	// put in front again, it would come twice or after the conversation went on.
+	var handoff *pendingHandoff
+	if kind == "claude" {
+		if st, ok := n.state.get(id); ok && st.PendingHandoff != nil {
+			handoff = st.PendingHandoff
+			if a, _ := n.agent(id); a.AgentStatus == proto.StatusWorking || n.promptedSince(id, handoff.At) {
+				n.logf("session %s: its pending handoff is dropped: the session got a message since", id)
+				n.dropHandoff(id, handoff)
+				handoff = nil
+			} else {
+				text = handoff.message(text)
+			}
+		}
+	}
+	if len(selected) > 0 {
+		// Recheck after pane readiness work; do not carry a selection across a changed environment.
+		if _, err := n.sessionSelectedSkills(ctx, id, selectionText); err != nil {
+			return err
+		}
+		text = selectedSkillInstructions(selected) + "\n\n" + text
 	}
 	paths, err := n.saveImages(images)
 	if err != nil {
@@ -144,10 +291,27 @@ func (n *Node) send(ctx context.Context, id, text string, images []proto.Image, 
 		return r
 	}
 	if err == nil {
+		if (kind == "codex" || kind == traexAgent) && host.ParsePane(pane).Kind != host.Botmux {
+			if err := n.codexSubmitted(ctx, pane); err != nil {
+				return err
+			}
+		}
 		n.typing.typed(pane, text)
 		n.lostFirst.clear(id) // the message the start could not deliver went in now, or another one
 		if kind == "claude" {
-			return n.afterPrompt(ctx, id, pane, text, typedAt, watch) // sendsafe_submit.go
+			confirmed, err := n.afterPrompt(ctx, id, pane, text, typedAt, watch) // sendsafe_submit.go
+			if owner := ownerDeliveryOf(ctx); owner != nil && host.ParsePane(pane).Kind == host.Tmux {
+				if err == nil && !confirmed {
+					err = uncertain(errors.New("消息已经打进电脑上的 tmux，但会话记录里没有看到它：先在电脑上看一眼再决定要不要重发。"))
+				}
+				if err == nil {
+					owner.as, owner.reason = deliveredUserInput, "" // typed and confirmed in the outside Claude's tmux pane (#5965)
+				}
+			}
+			if handoff != nil && err == nil {
+				n.dropHandoff(id, handoff) // in with this message (not when that is not known: promptedSince tells then)
+			}
+			return err
 		}
 	}
 	return uncertain(err)
@@ -269,6 +433,9 @@ func keepImagePaths(text string) string {
 }
 
 func (n *Node) keys(ctx context.Context, id string, keys []string, text string) error {
+	if err := n.switchingRefusal(id); err != nil { // a launcher switch, maybe on the last connection's Node
+		return err
+	}
 	n.dropSuggestion(id) // whatever goes in replaces or sends it
 	pane, err := n.paneFor(ctx, id)
 	if err != nil {

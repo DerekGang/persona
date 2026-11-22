@@ -71,8 +71,15 @@ import persona.core.designsystem.icons.PhIcons
  * Loads pictures the extension serves through the hub ([ExtensionHubPicture]) with [fetch] (the device's credentials go
  * to the hub's own signed path, nowhere else); https urls are left to the app's ordinary loader, without credentials.
  */
-internal fun extensionPictureLoader(context: android.content.Context, fetch: suspend (String) -> ByteArray): ImageLoader =
-    ImageLoader.Builder(context).components {
+internal fun extensionPictureLoader(context: android.content.Context, fetch: suspend (String) -> ByteArray, maxMemoryBytes: Long? = null): ImageLoader =
+    ImageLoader.Builder(context).apply {
+        if (maxMemoryBytes != null) {
+            memoryCache { coil3.memory.MemoryCache.Builder().maxSizeBytes(maxMemoryBytes).build() }
+            diskCache(null)
+        }
+    }.components {
+        // Catalog PNGs use the platform decoder (also available to Native JVM screenshot tests).
+        if (maxMemoryBytes != null) add(coil3.decode.BitmapFactoryDecoder.Factory())
         add(Keyer<ExtensionHubPicture> { data, _ -> data.path })
         add(object : Fetcher.Factory<ExtensionHubPicture> {
             override fun create(data: ExtensionHubPicture, options: Options, imageLoader: ImageLoader): Fetcher = object : Fetcher {
@@ -273,7 +280,7 @@ internal fun RowSlider(control: ExtensionRowControl, label: String, state: Exten
  * tapping does its action, a long press (or right click) opens its extra actions.
  */
 @Composable
-internal fun ExtensionTileView(tile: ExtensionTile, state: ExtensionViewState, handle: ExtensionViewHandle, modifier: Modifier = Modifier) {
+internal fun ExtensionTileView(tile: ExtensionTile, state: ExtensionViewState, handle: ExtensionViewHandle, modifier: Modifier = Modifier, compact: Boolean = false) {
     val actions = ExtensionViewText.rowActions(tile.actions)
     var menu by remember(tile.key, tile.title) { mutableStateOf(false) }
     val action = tile.action?.takeIf { it.id.isNotEmpty() || it.push != null }
@@ -291,12 +298,15 @@ internal fun ExtensionTileView(tile: ExtensionTile, state: ExtensionViewState, h
     Box(modifier) {
         JTile(tile.title, Modifier.fillMaxSize().rowActionSemantics(actions, handle), subtitle = tile.subtitle?.takeIf { it.isNotBlank() },
             value = tile.value?.takeIf { it.isNotBlank() },
-            icon = if (picture == null) tile.icon?.takeIf { it.isNotBlank() }?.let(ExtensionIcons::of) else null,
+            gauge = tile.gauge?.let { { ExtensionGaugeRing(tile, compact) } },
+            gaugePercent = tile.gauge?.let { gaugePercent(it.ratio).toFloat() },
+            accessibilityLabel = tile.gauge?.let { gaugeReadout(tile) },
+            icon = if (picture == null && tile.gauge == null) tile.icon?.takeIf { it.isNotBlank() }?.let(ExtensionIcons::of) else null,
             picture = picture?.let { p -> { ExtensionPicture(p, tile.title, handle, Modifier.fillMaxSize(), showAlt = false) } },
             hue = ExtensionViewText.hue(tile.color), active = tile.active == true || (control != null && ExtensionViewText.controlValue(control, state.controls) == "true"),
             badge = tile.badge?.takeIf { it.text.isNotBlank() }?.let { b -> { ExtensionBadge(b) } },
             trailing = control?.let { c -> { RowControlEnd(c, state, handle) } },
-            spark = ExtensionViewText.spark(tile.spark),
+            spark = if (tile.gauge == null) ExtensionViewText.spark(tile.spark) else null,
             enabled = action == null || !state.busy,
             state = if (tile.active == true) on else null,
             onClick = press, onLongClick = if (actions.isNotEmpty()) ({ menu = true }) else null)
@@ -309,7 +319,7 @@ internal fun ExtensionTileView(tile: ExtensionTile, state: ExtensionViewState, h
  * `max_columns` (4 when none); the tiles of a row are as tall as its tallest. [limit] cuts a card's.
  */
 @Composable
-internal fun ExtensionGrid(item: ExtensionViewItem, state: ExtensionViewState, handle: ExtensionViewHandle, modifier: Modifier = Modifier, limit: Int = 60) {
+internal fun ExtensionGrid(item: ExtensionViewItem, state: ExtensionViewState, handle: ExtensionViewHandle, modifier: Modifier = Modifier, limit: Int = 60, compact: Boolean = false) {
     val tiles = item.tiles.orEmpty().filter { it.title.isNotBlank() }.take(limit)
     if (tiles.isEmpty()) return
     BoxWithConstraints(modifier.fillMaxWidth()) {
@@ -317,7 +327,7 @@ internal fun ExtensionGrid(item: ExtensionViewItem, state: ExtensionViewState, h
         Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
             tiles.chunked(columns).forEach { row ->
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
-                    row.forEach { ExtensionTileView(it, state, handle, Modifier.weight(1f).fillMaxHeight()) }
+                    row.forEach { ExtensionTileView(it, state, handle, Modifier.weight(1f).fillMaxHeight(), compact = compact) }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
@@ -330,7 +340,7 @@ internal fun ExtensionGrid(item: ExtensionViewItem, state: ExtensionViewState, h
  * or `wide` (80% of the width, so the next one peeks in). Its title above.
  */
 @Composable
-internal fun ExtensionCarousel(item: ExtensionViewItem, state: ExtensionViewState, handle: ExtensionViewHandle, modifier: Modifier = Modifier, limit: Int = 20) {
+internal fun ExtensionCarousel(item: ExtensionViewItem, state: ExtensionViewState, handle: ExtensionViewHandle, modifier: Modifier = Modifier, limit: Int = 20, compact: Boolean = false) {
     val tiles = item.tiles.orEmpty().filter { it.title.isNotBlank() }.take(limit)
     if (tiles.isEmpty()) return
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
@@ -341,7 +351,7 @@ internal fun ExtensionCarousel(item: ExtensionViewItem, state: ExtensionViewStat
             LazyRow(Modifier.fillMaxWidth(), state = list, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.m),
                 flingBehavior = rememberSnapFlingBehavior(list)) {
                 itemsIndexed(tiles, key = { i, t -> t.key?.takeIf { it.isNotBlank() } ?: "t$i" }) { _, tile ->
-                    ExtensionTileView(tile, state, handle, Modifier.width(width))
+                    ExtensionTileView(tile, state, handle, Modifier.width(width), compact = compact)
                 }
             }
         }

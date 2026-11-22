@@ -11,14 +11,18 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"time"
 
+	"github.com/nwverse/persona/server/internal/extension/sandbox"
 	"github.com/nwverse/persona/server/internal/iphone"
+	"github.com/nwverse/persona/server/internal/machineops"
 	"github.com/nwverse/persona/server/internal/mcpserver"
 	"github.com/nwverse/persona/server/internal/node"
 	"github.com/nwverse/persona/server/internal/nodeclient"
 	"github.com/nwverse/persona/server/internal/nodeupdate"
 	"github.com/nwverse/persona/server/internal/office"
 	"github.com/nwverse/persona/server/internal/osproc"
+	"github.com/nwverse/persona/server/internal/procs"
 	"github.com/nwverse/persona/server/internal/scriptcli"
 	"github.com/nwverse/persona/server/internal/toolcli"
 )
@@ -37,15 +41,22 @@ const Usage = `  personad hook             Claude Code hook entry (reads hook JS
                            1 denied, 2 usage, 3 timeout, 4 phone unreachable (docs/integrations/script-cli.md)
   personad notify "title" [body] [--silent] [--error] [--strict]
                            one notification to the phone; exit 0 whatever happens unless --strict (docs/integrations/script-cli.md)
+  personad decision raise --file decision.json | get <id> | withdraw <id>
+                           raise a rich owner decision without waiting, then poll or withdraw it (docs/integrations/script-cli.md)
   personad tool <tool> [<json args> | -] | --cli <connector> [--format json|text] <words…>
-                           a connector's tools and command line from the assistant's shell, through the hub
+                           a connector's tools from the assistant's shell, or an Agent's own tools from its pane
                            (docs/protocol/connector-protocol.md "Command line"; personad tool --help)
   personad office docx|pptx|xlsx|check …
                            write a Word document or a deck from Markdown, a workbook from JSON / CSV, or say what is in
                            one (the office skill): personad office --help
+  personad ops storage|hotspots|toolchain|network|ports|processes|services|service-logs|mcp|skill …
+                           on-demand read-only machine diagnostics CLI, stdio MCP server, and opt-in skill manager: personad ops --help
+  personad claude-plugin status|install|uninstall|on|off
+                           the Persona plugin for Claude Code on this computer, as JSON (persona-link plugin says it in
+                           words; docs/operations/link.md "Claude Code plugin")
   personad codex-start <file>
                            run the Codex launcher in file (written by the node, removed once read) with the first
-                           message as its last argument, no shell in between (docs/integrations/codex.md「Starting from the phone」)
+                           message as its last argument, no shell in between (docs/integrations/codex.md "Starting from the phone")
 ` + iphone.Usage
 
 // SysmonUsage is `sysmon`'s line in the usage text.
@@ -53,7 +64,7 @@ const SysmonUsage = `  personad sysmon [n]       print this machine's system inf
                            every 10 s), with what they cost`
 
 // LaunchUsage is `launch`'s line in the usage text.
-const LaunchUsage = `  personad launch <name> …   run claude with a launcher kept in 设置 › 模型 (from the local node)`
+const LaunchUsage = `  personad launch <name> …   run claude with a launcher kept in Settings › Models (from the local node)`
 
 // Run runs args (args[0] is the command) when it is a device command, and says whether it was. stop undoes the caller's
 // signal handling (launch execs claude and leaves signals as they came). A command that has an exit code of its own
@@ -64,6 +75,9 @@ func Run(ctx context.Context, stop func(), args []string, b Build) (handled bool
 	}
 	rest := args[1:]
 	switch args[0] {
+	case sandbox.AgentExecCommand:
+		stop()
+		return true, sandbox.RunAgentExec(rest)
 	case "node":
 		return true, runNode(ctx, rest, b)
 	case "hook":
@@ -75,6 +89,8 @@ func Run(ctx context.Context, stop func(), args []string, b Build) (handled bool
 				CommandName() + " launch --ticket <ticket> -- claude [claude args…]")
 		}
 		return true, runLaunch(stop, ticket, rest[0], rest[1:]) // launch.go: bounded wait for the node, Ctrl-C ends it
+	case "assistant-tui": // an assistant conversation's interactive Claude Code, as claude -p to the node (node/assistant_tui.go)
+		os.Exit(node.AssistantTUI(rest, os.Stdin, os.Stdout, os.Stderr))
 	case "codex-start": // a Codex launcher with the phone's first message, read from a file (node/codex_start.go)
 		return true, node.CodexStart(rest)
 	case "tab-start": // a command a runtime gave to resume its session in a new tab (`pi --session …`, node/pi.go)
@@ -87,8 +103,14 @@ func Run(ctx context.Context, stop func(), args []string, b Build) (handled bool
 		os.Exit(scriptcli.Ask(ctx, rest, os.Stdin, os.Stdout, os.Stderr))
 	case "notify":
 		os.Exit(scriptcli.Notify(ctx, rest, os.Stdout, os.Stderr))
+	case "decision":
+		os.Exit(scriptcli.Decision(ctx, rest, os.Stdin, os.Stdout, os.Stderr))
 	case "office":
 		os.Exit(office.Main(rest, os.Stdout, os.Stderr))
+	case "ops":
+		os.Exit(machineops.Main(ctx, b.Version, rest, os.Stdin, os.Stdout, os.Stderr))
+	case "claude-plugin": // the Persona plugin for Claude Code here, as JSON (node/claudeplugin.go; persona-link plugin)
+		os.Exit(node.ClaudePluginCommand(ctx, rest, os.Stdout, os.Stderr))
 	case "iphone": // this computer's paired iPhones for phone control (internal/iphone)
 		os.Exit(iphone.Command(ctx, rest, os.Stdout, os.Stderr))
 	case "sysmon":
@@ -98,7 +120,7 @@ func Run(ctx context.Context, stop func(), args []string, b Build) (handled bool
 		}
 		runSysmon(ctx, n)
 	case "node-update-check":
-		return true, json.NewEncoder(os.Stdout).Encode(nodeupdate.Check{Version: b.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, Program: b.Program})
+		return true, json.NewEncoder(os.Stdout).Encode(nodeupdate.Check{Version: b.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, Program: b.Program, ResidentHandover: node.ResidentHandoverSupported})
 	case "node-update-watch":
 		return true, runNodeUpdateWatch(ctx, rest)
 	default:
@@ -125,7 +147,7 @@ func runNode(ctx context.Context, args []string, b Build) error {
 			// runResident replaces itself on a restart or update (syscall.Exec): what the previous image started (the
 			// update watchdog, the herdr server, bridges) is this one's child now, and only this reaps it.
 			osproc.ReapInherited()
-			capProcs()
+			procs.AtStart()
 			return runResident(ctx, b, supervised)
 		case "tailcat":
 			return runNodeTailcat(ctx, args[1:])
@@ -148,7 +170,7 @@ func runNode(ctx context.Context, args []string, b Build) error {
 	// What a parent left inheritable (an older hub's listening socket, through its manager) stops here, not in every
 	// agent and program the node starts. Here, not in main: other commands of this binary hand descriptors on by exec.
 	osproc.SealInherited()
-	capProcs() // the resident node's too, above
+	procs.AtStart() // the resident node's too, above
 	relayed, err := node.Relay(ctx, os.Stdin, os.Stdout)
 	if relayed {
 		if errors.Is(err, io.EOF) {
@@ -167,5 +189,8 @@ func runNode(ctx context.Context, args []string, b Build) error {
 	if err = n.ServeStdio(ctx); errors.Is(err, io.EOF) {
 		err = nil
 	}
+	stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	n.StopUnusedHerdr(stop) // a herdr it started and nobody used does not outlive it (#10114)
 	return err
 }

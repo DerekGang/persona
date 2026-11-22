@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/nwverse/persona/server/internal/compat"
 	"slices"
 	"strings"
@@ -80,7 +81,15 @@ func (s *Service) guestsLocked(ctx context.Context) error {
 	return nil
 }
 
-// guestSet notes that a conversation the hub just started is a guest with tools.
+// newGuestSessionID is the id the manager registers before asking the node to start. Claude Code lists the
+// conversation's tools while it starts, which can be before assistant.send answers, so a node-generated id would leave
+// its first list empty.
+func newGuestSessionID() string {
+	id := randomHex(16)
+	return fmt.Sprintf("%s-%s-%s-%s-%s", id[:8], id[8:12], id[12:16], id[16:20], id[20:])
+}
+
+// guestSet notes that a conversation the hub is about to start is a guest with tools.
 func (s *Service) guestSet(ctx context.Context, machine, id string, tools []string) error {
 	return s.guestPut(ctx, id, &guestConv{MachineID: machine, Tools: slices.Clone(tools)})
 }
@@ -189,7 +198,7 @@ func (s *Service) guestOf(ctx context.Context, machine, session string) ([]strin
 }
 
 // isGuest is guestOf's answer alone, for what the node enforces for a guest by itself (no snapshot, the launcher and
-// runtime it started on): a conversation that cannot be told about counts as an ordinary one, so the user's own
+// model it started on): a conversation that cannot be told about counts as an ordinary one, so the user's own
 // conversations keep their snapshot and picks while the store is unreadable. Tools are refused instead
 // (sessionMCPTools, guestRefuses).
 func (s *Service) isGuest(ctx context.Context, machine, session string) bool {

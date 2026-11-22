@@ -325,7 +325,12 @@ func TestHerdrTraexPanesAreMergedIntoTheList(t *testing.T) {
 	f.reply("session.snapshot", snapshot(
 		[]any{map[string]any{"workspace_id": "w3", "label": "tools", "number": 3}},
 		[]any{map[string]any{"tab_id": "w3:t2", "workspace_id": "w3", "label": "traex", "number": 2}},
-		[]any{claudeAgent(sidA, proto.StatusIdle, "w3:p1", "w3:t1", "w3", "/tmp/tools", "claude here")},
+		[]any{
+			claudeAgent(sidA, proto.StatusIdle, "w3:p1", "w3:t1", "w3", "/tmp/tools", "claude here"),
+			// PaneReportResume's fallback claims the pane as traex without a session id (#4657): traexAgents still
+			// supplies its session id and screen/title status instead of dropping the pane.
+			agentOf(traexAgent, "", proto.StatusIdle, "w3:p2", "w3:t2", "w3", "/tmp/tools/sub", "build the thing"),
+		},
 		[]any{
 			map[string]any{"pane_id": "w3:p1", "tab_id": "w3:t1", "workspace_id": "w3", "cwd": "/tmp/tools"},
 			map[string]any{"pane_id": "w3:p2", "tab_id": "w3:t2", "workspace_id": "w3", "cwd": "/tmp/tools/sub",
@@ -338,15 +343,16 @@ func TestHerdrTraexPanesAreMergedIntoTheList(t *testing.T) {
 	}
 	tr, ok := m[thread1]
 	if !ok {
-		t.Fatalf("no TRAEX session: %v", ids(list))
+		t.Fatalf("no TRAE CLI session: %v", ids(list))
 	}
-	// No rollout: the title falls back to the directory's name (decorate).
+	// No rollout, and its herdr tab has a name: the title stays empty rather than the directory's name, so the apps
+	// name it by its tab (slot_name; decorate, #11631, docs/protocol/protocol.md).
 	if tr.Agent != traexAgent || tr.Status != proto.StatusWorking || tr.PaneID != "w3:p2" || tr.SpaceName != "tools" ||
-		tr.SlotName != "traex" || tr.SlotIndex != 2 || tr.Title != "sub" || tr.Cwd != "/tmp/tools/sub" {
-		t.Errorf("TRAEX session %+v", tr)
+		tr.SlotName != "traex" || tr.SlotIndex != 2 || tr.Title != "" || tr.Cwd != "/tmp/tools/sub" {
+		t.Errorf("TRAE CLI session %+v", tr)
 	}
 	if _, ok := m[thread2]; ok {
-		t.Error("a claude pane was taken for TRAEX")
+		t.Error("a claude pane was taken for TRAE CLI")
 	}
 	assertTrace(t, f.trace(), []string{call("session.snapshot", nil)})
 }

@@ -70,8 +70,9 @@ func (h *Manager) extensionAPIs(next http.Handler, mux *http.ServeMux) http.Hand
 		p := principalOf(r.Context())
 		r.Header.Set("X-Persona-Device", p.ID)
 		r.Header.Set("X-Persona-Role", p.Role)
-		// A send it declared a receipt for is kept by the hub, which relayed it (the report's APIs).
-		_ = item
+		if item.Prefix == "lark" && p.Role == roleFull && p.Extension == "" {
+			r = withLarkAvatars(r, hp)
+		}
 		hp.serveExtensionHTTP(w, r)
 	})
 }
@@ -86,7 +87,10 @@ func (h *Manager) features() []string {
 	// Client opt-in, native context and authorization remain separate gates.
 	out = append(out, extwire.FeatureUIStream)
 	if h.subscriptionsShown() {
-		out = append(out, subscriptionsFeature) // /api/v1/subscriptions, once they deliver (subscriptions.go)
+		out = append(out, subscriptionsFeature)     // /api/v1/subscriptions, once they deliver (subscriptions.go)
+		out = append(out, subscriptionPushFeature)  // and a device's own push source (#3848)
+		out = append(out, inboxSourcesFeature)      // and the pages as Inbox Sources (#5278)
+		out = append(out, inboxSourcesGraphFeature) // and their relationship view (#5741)
 	}
 	if len(h.extensions.messagingSources()) > 0 && !slices.Contains(out, messagingFeature) {
 		out = append(out, messagingFeature)

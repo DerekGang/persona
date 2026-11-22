@@ -19,7 +19,10 @@ class InboxSuggestionStale(val item: JsonObject?) : IllegalStateException("sugge
 /** One immutable pairing owns a transport and all its requests, including media. */
 interface InboxAssistantTransport {
     val scope: String
+    val replyImages: ReplyImageSource? get() = null
     suspend fun inbox(): JsonObject
+    /** One item by its hub id, including a done item the list no longer carries; 404 means it does not exist. */
+    suspend fun item(itemId: String): JsonObject = throw UnsupportedOperationException("Inbox item lookup unavailable")
     suspend fun larkConversations(cursor: String? = null): JsonObject = throw UnsupportedOperationException("Conversation metadata unavailable")
     suspend fun larkConversationsForAccount(account: Int?, cursor: String? = null): JsonObject {
         require(account == null) { "Account-specific conversation metadata unavailable" }
@@ -51,9 +54,20 @@ interface InboxAssistantTransport {
      */
     suspend fun doneDays(manager: String?, tz: String): JsonObject = throw UnsupportedOperationException("Done days unavailable")
     suspend fun reply(itemId: String?, feedId: String?, text: String, clientId: String): JsonObject
+    /** A direct Feishu send carries picked recipients; other reply transports keep their text-only contract. */
+    suspend fun reply(itemId: String?, feedId: String?, text: String, clientId: String, mentions: List<LarkMention>): JsonObject {
+        require(mentions.isEmpty()) { "Lark mentions unavailable" }
+        return reply(itemId, feedId, text, clientId)
+    }
     /** Hands an item to its manager's main chat (`POST /api/v1/inbox/{id}/handoff`), answering `{item, session}`. */
     suspend fun handOff(itemId: String, text: String, clientId: String): JsonObject =
         throw UnsupportedOperationException("Inbox hand-off route unavailable")
+    /**
+     * Records an item's hand-off to the Agent [session] that accepted its existing outbox message
+     * (`POST /api/v1/inbox/{id}/handoff` with `kind=agent` and no text), answering the hub's object. A blank [title] is omitted.
+     */
+    suspend fun recordAgentHandOff(itemId: String, session: SessionKey, title: String, clientId: String): JsonObject =
+        throw UnsupportedOperationException("Inbox Agent hand-off route unavailable")
     /**
      * Acts on an item's suggestion (`POST /api/v1/inbox/{id}/suggestion`, inbox phase 1): [action] is confirm, reject or
      * instruct, [version] the suggestion's as shown, [text] the edited text (confirm) or the words (instruct). Answers
@@ -61,9 +75,19 @@ interface InboxAssistantTransport {
      */
     suspend fun suggestion(itemId: String, version: Long, action: String, text: String?, clientId: String): JsonObject =
         throw UnsupportedOperationException("Inbox suggestions unavailable")
+    /** An item's ancestors and direct children (`GET /api/v1/inbox/tree/{kind}/{id...}`). */
+    suspend fun tree(kind: String, id: String): JsonObject = throw UnsupportedOperationException("Inbox tree unavailable")
+    /** Sets [itemId]'s parent, or clears it when [parent] is null (`PUT /api/v1/inbox/{id}/parent`). */
+    suspend fun setParent(itemId: String, parent: InboxParentRef?): JsonObject =
+        throw UnsupportedOperationException("Inbox parent route unavailable")
     suspend fun replyMail(itemId: String, text: String, clientId: String, target: MailReplyTarget): JsonObject =
         throw UnsupportedOperationException("Checked mail replies unavailable")
     suspend fun messages(feedId: String, around: Long? = null, before: String? = null, after: String? = null): JsonObject
+    /**
+     * A Feishu topic group's topics (`…/messages?topic=1`, #576 G134), newest page or [before] a cursor (backward paging
+     * only); a transport without the parameter reads the chat as it is.
+     */
+    suspend fun topics(feedId: String, before: String? = null): JsonObject = messages(feedId, before = before)
     /** One Feishu message (`GET /api/v1/lark/messages/{id}`, `{account?, message}`): the outbox confirms delivery with it. */
     suspend fun larkMessage(messageId: String): JsonObject = throw UnsupportedOperationException("Message lookup unavailable")
     suspend fun assistant(): JsonObject
@@ -91,9 +115,28 @@ interface InboxAssistantTransport {
      * (#3519, #3695). A transport without it answers none, and the drawer shows the leaders' titles.
      */
     suspend fun assistantLeadersOf(manager: String?): JsonObject = JsonObject(emptyMap())
+    /**
+     * The direction tree of the default manager (`GET /api/v1/assistant/directions/tree`, #4352): `{directions: [{id,
+     * name, secretary?, counts: {working, needs_you, stuck, review}}]}`, the current directions in the leaders' order.
+     * The hub answers it for the default manager alone. A transport without it says so (as an older hub's 404 does), and
+     * the drawer keeps the flat direction rows.
+     */
+    suspend fun directionsTreeOf(manager: String?): JsonObject =
+        throw UnsupportedOperationException("Direction tree unavailable")
     /** [createConversation] for one manager (null: the default), as [assistantOf]. */
     suspend fun createConversationOf(manager: String?, main: Boolean, launcher: String? = null): JsonObject =
         if (launcher == null) createConversation(main) else createConversation(main, launcher)
+    /** A marked creation must be explicit; legacy transports reject it instead of losing provenance. */
+    suspend fun createConversationOf(manager: String?, main: Boolean, launcher: String?, via: String?): JsonObject {
+        require(via == null) { "Message provenance is not supported" }
+        return createConversationOf(manager, main, launcher)
+    }
+    /**
+     * [createConversationOf] with the model and effort picked on the new-chat page (`POST /api/v1/assistant/conversations`
+     * `{launcher, model?, effort?}`), which a hub with `assistant_model_pick` keeps as the chat's `model_pick` (#5033).
+     */
+    suspend fun createConversationOf(manager: String?, main: Boolean, pick: persona.core.contracts.ModelPick): JsonObject =
+        createConversationOf(manager, main, pick.launcher)
     suspend fun pins(): JsonObject
     suspend fun mutes(): JsonObject
     suspend fun media(ref: String): ByteArray
@@ -123,6 +166,9 @@ interface InboxAssistantTransport {
         throw UnsupportedOperationException("Document comments unavailable")
     /** People to @ in a document's comment, by name (`GET /api/v1/lark/documents/people?url=&q=`, `{members:[…]}`). */
     suspend fun documentPeople(url: String, query: String): JsonObject = throw UnsupportedOperationException("Document people unavailable")
+    /** Group members to @, searched by name (`GET /api/v1/lark/conversations/{feed}/members?q=&limit=`). */
+    suspend fun larkMembers(feedId: String, query: String, limit: Int = 30): JsonObject =
+        throw UnsupportedOperationException("Conversation members unavailable")
     suspend fun momentsPost(postId: String): JsonObject = throw UnsupportedOperationException("Moments post unavailable")
     suspend fun momentsComments(postId: String): JsonObject = throw UnsupportedOperationException("Moments comments unavailable")
     suspend fun urlPreview(messageId: String, url: String): JsonObject = throw UnsupportedOperationException("URL preview unavailable")
@@ -176,6 +222,8 @@ interface AssistantConversations : AssistantRepository {
     suspend fun startConversation(): SessionKey
     /** A new conversation that runs on [launcher], for it alone (iOS StarterComposer's model menu): the default stays. */
     suspend fun startConversation(launcher: String): SessionKey = throw UnsupportedOperationException("Picking a launcher unavailable")
+    /** A new conversation on the setup picked for it on the new-chat page's model panel (#5055): its launcher, model and effort. */
+    suspend fun startConversation(pick: persona.core.contracts.ModelPick): SessionKey = startConversation(pick.launcher)
     /**
      * The chats of the assistant's [space] ([AssistantSpace]), read from the hub each time: they are never in [assistant]'s
      * list. Each carries [space] even from a hub that leaves it out of this list.

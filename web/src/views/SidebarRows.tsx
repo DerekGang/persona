@@ -2,9 +2,10 @@
 // agents. Imports only SidebarParts among the sidebar's files.
 import { memo, useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { t } from "../i18n";
-import { awaitsReply, sessionSource, sourceName } from "../lib/agent-groups";
+import { awaitsReply, justFinished, sessionSource, sourceName } from "../lib/agent-groups";
 import { addSection, arrangeSessions, assignSection, GROUP_LABEL, isDefaultView, providerLabel, refreshAgentSessions, removeSection, resetView, setView, SHOW_LABEL, SORT_LABEL, toggleProvider, togglePin, totalUnread, updateAgentPrefs, useAgentList, useAgentPrefs, viewOf, type AgentPrefs, type AgentSession, type GroupBy, type ShowMode, type SortBy } from "../lib/agents";
-import { ago, backgroundWaiting, sessionCan, sessionPreview, sourceSubtitle, sessionTitle, stateOf, tabLabel } from "../lib/format";
+import { ago, backgroundWaiting, sessionCan, sessionDisplayTab, sessionPreview, sourceSubtitle, sessionTitle, sessionTitleDetail, stateOf, tabLabel } from "../lib/format";
+import { useHerdrTabName } from "../lib/agents-display";
 import { firstAndCurrent } from "../lib/persona-nav";
 import { href, navigate, routePath, type Route } from "../lib/router";
 import { rememberSessionRow, useStore } from "../lib/store";
@@ -14,33 +15,40 @@ import { useLeftDraft } from "../lib/drafts";
 import { planInRow, planLabel, planLine } from "../lib/plan";
 import { answeredSession, answerPending, lastAnsweredAt } from "./assistant/answered-lookup";
 import type { AgentState, Session } from "../lib/types";
-import { cx, EASE, Kbd, Menu, useMenu, useNow, type MenuItem } from "../ui/atoms";
+import { cx, EASE, Kbd, Menu, sidebarFoldMotion, useMenu, useNow, type MenuItem } from "../ui/atoms";
 import { StatusMark } from "../ui/StatusMark";
 import { runningWorkflows, workflowLine, workflowShortLine } from "../lib/workflows";
 import { ultracodeMarkShown } from "../lib/ultracode";
 import { Rolling } from "../ui/Rolling";
-import { AppMark } from "../ui/AppMark";
 import { BrandMark } from "../ui/BrandMark";
+import { OriginMark } from "../ui/ChannelMark";
+import { autoOrigin, openerFrom } from "../lib/conversation-origins";
+import { InfoTip } from "../ui/InfoTip";
 import { Icon, type IconName } from "../ui/icons";
 import { UltraMark } from "./chat/Ultracode";
 import { contextMenuProps } from "../ui/context-menu";
 import type { MenuAt } from "../ui/menu-model";
-import { rowDetail, useAgentDetails, useContextAsUsed } from "../lib/context-usage";
-import { SessionMark } from "../ui/AgentMark";
+import { rowDetail, useAgentDetails } from "../lib/context-usage";
+import { AgentMark, SessionMark } from "../ui/AgentMark";
 import { AgentAvatar } from "./agents/AgentAvatar";
 import { useFolded } from "../lib/use-folded";
 import { ariaKeyshortcuts, formatChord } from "../lib/shortcuts";
 import { PagedSessionList } from "./agents/PagedSessionList";
 import { runtimeIdentity } from "../lib/runtime-list";
 import { heldSeen } from "../lib/seen-outbox";
+import { heldLaunchWorking, launchForSession } from "../lib/launch-handoff";
+import { runningChildren } from "../lib/child-sessions";
+import { childCards, foldedRow } from "../lib/folded-rows";
+import { countSides } from "../lib/side-fold";
+import { useHeldSides } from "../lib/use-child-sessions";
+import { backgroundWork } from "../lib/background-work";
 import { SESSIONS_LIST_FEATURE } from "../lib/session-list";
 import { personalHideDeps, personalOrder, personalSessions, removeAgentSession, useGoingIds } from "../lib/agents";
-import { BADGE_CLASS, CURRENT_ROW, type GoFn, GroupCount, type RegFn, ROW_TITLE_MIN, type RowMenuFn, Section } from "./SidebarParts";
+import { BADGE_CLASS, CURRENT_ROW, type GoFn, GroupCount, pageIconStyle, type RegFn, ROW_TITLE_MIN, type RowMenuFn, Section } from "./SidebarParts";
+import type { UIColor } from "../lib/extension-ui-v6";
 
-// Persona's main conversation: the column's first and strongest entry (the app's mark, always in ink, #2004), with the
-// conversation's state when it is working or wants you. A line under it parts it from the pages.
-// The small "Main chat" under the name keeps the brand row readable as a conversation, not a heading (#6293); a draft
-// waiting in the box takes that line (#5568).
+// The main conversation uses the home symbol (Back to main chat's) and one Main conversation line.
+// The assistant's identity belongs to the sidebar head; a left draft keeps its existing second line.
 // Its menu (Copy session ID, End…: iOS's long press on the main row) opens on a right click, the menu key or its ⋯.
 // Memoized like SessionRow: a push that leaves the main conversation as it was does not render it again.
 export const PersonaRow = memo(function PersonaRow({ reg, hover, active, go, main, chord, onMenu: menuOf }: { reg: RegFn; hover: (k: string | null) => void; active: boolean; go: GoFn; main?: Session; /** The "Open Persona" shortcut as bound now ("": none). */ chord?: string; /** The conversation rows' menu, opened on `main`: none without it. */ onMenu?: RowMenuFn }) {
@@ -68,10 +76,10 @@ export const PersonaRow = memo(function PersonaRow({ reg, hover, active, go, mai
       // pinned over the list (#5581), its own hover fill: the gliding highlight passes under the pinned box
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-[background-color,transform] duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active ? CURRENT_ROW : "hover:bg-hover focus-visible:bg-hover", onMenu && active && "pr-8", onMenu && "[@media(hover:none)]:pr-11")}
     >
-      <AppMark size={18} radius={5} className="shadow-hairline" />
+      <Icon name="home" size={14} stroke={1.8} className="shrink-0 text-ink" />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13.5px] font-semibold text-ink">Persona</span>
-        {draft ? <SecondLine line={draft} draft /> : <SecondLine line={{ text: t("sidebar.main_chat") }} draft={false} />}
+        <span className="truncate text-[13.5px] font-semibold text-ink">{t("sidebar.main_chat")}</span>
+        {draft && <SecondLine line={draft} draft />}
       </span>
       {chord && <span aria-hidden data-persona-chord className={cx("hidden sm:inline-flex [@media(hover:none)]:hidden", aside)}><Kbd>{formatChord(chord)}</Kbd></span>}
       {pending > 0 ? (
@@ -100,41 +108,29 @@ export const PersonaRow = memo(function PersonaRow({ reg, hover, active, go, mai
   );
 });
 
-// The "Pinned" heading above the pinned conversations (iOS's pinned heading, Android's pinned section): its ⋯ and a right
-// click on it give "Unpin all", which a touch screen reaches through the ⋯.
-/** `onMenu` absent: nothing here is this browser's to unpin (only leader conversations), so no ⋯. */
-export function PinnedHeading({ onMenu }: { onMenu?: (at: MenuAt) => void }) {
-  return <SubHeading icon="pin" label={t("sidebar.pinned_section")} onMenu={onMenu} menuLabel={t("conversation-menu.unpin_all")} />;
-}
-
-/** A group's small title inside a sidebar section (Persona chats' "Directions", "Pinned", "Other chats"): the same type
- *  as the section's own title, optionally with an icon before it and a ⋯ for the group's actions. */
-export function SubHeading({ label, icon, onMenu, menuLabel }: { label: string; icon?: IconName; onMenu?: (at: MenuAt) => void; menuLabel?: string }) {
+/** A subgroup title. Its disclosure and help are separate controls. */
+const SUB_HEADING_TYPE = "text-[11px] font-semibold text-ink-3";
+export function SubHeading({ label, folded, onToggle, help }: { label: string; folded?: boolean; onToggle?: () => void; help?: string }) {
   return (
-    <div role="heading" aria-level={3} className="flex items-center gap-1 px-2 pt-0.5 pb-0.5" {...(onMenu ? contextMenuProps((at) => onMenu(at)) : {})}>
-      <span className="flex min-w-0 flex-1 items-center gap-1 truncate whitespace-nowrap text-[11px] font-semibold text-ink-3">
-        {icon && <Icon name={icon} size={10} stroke={2.2} className="shrink-0" />}
-        {label}
-      </span>
-      {onMenu && <button
-        type="button"
-        aria-label={menuLabel}
-        aria-haspopup="menu"
-        title={t("sidebar.more")}
-        onClick={(e) => onMenu({ anchor: e.currentTarget })}
-        className="touch-hit relative z-10 flex size-5 shrink-0 items-center justify-center rounded-[5px] text-ink-3 hover:bg-hover hover:text-ink-2"
-      >
-        <Icon name="more" size={12} />
-      </button>}
+    <div className="flex items-center gap-1 px-2 py-0.5">
+      <div role="heading" aria-level={3} className={cx("min-w-0 flex-1", !onToggle && "truncate", SUB_HEADING_TYPE)}>
+        {onToggle ? (
+          <button type="button" aria-expanded={!folded} onClick={onToggle} className="touch-hit relative flex w-full min-w-0 items-center gap-1 whitespace-nowrap rounded-[5px] text-left hover:text-ink-2 [@media(pointer:coarse)]:min-h-11">
+            <span className="min-w-0 truncate">{label}</span>
+            <Icon name="chevron" size={10} stroke={2.4} className="shrink-0 transition-transform" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
+          </button>
+        ) : label}
+      </div>
+      {help && <InfoTip name={label} text={help} className="[@media(pointer:coarse)]:size-11" />}
     </div>
   );
 }
 
-type NavRowProps = { onMenu?: (at: MenuAt, el: HTMLElement, button: boolean) => void; menuLabel?: string; k: string; reg: RegFn; hover: (k: string | null) => void; active: boolean; to: Route; go: GoFn; icon: IconName; label: string; badge?: number | string; badgeTone?: keyof typeof BADGE_CLASS; hint?: string; title?: string; /** A state shown as a dot before the hint ("Automatic"'s rows: some run). */ dot?: AgentState };
+type NavRowProps = { onMenu?: (at: MenuAt, el: HTMLElement, button: boolean) => void; menuLabel?: string; k: string; reg: RegFn; hover: (k: string | null) => void; active: boolean; to: Route; go: GoFn; icon: IconName; /** Engine mark ID shown in place of `icon` (e.g. a starting agent placeholder's resolved engine). */ agent?: string; label: string; badge?: number | string; badgeTone?: keyof typeof BADGE_CLASS; /** Spoken for the badge in place of its digits (NavPage). */ badgeLabel?: string; hint?: string; hintCount?: { n: number; label: string }; title?: string; /** A state shown as a dot before the hint ("Automatic"'s rows: some run). */ dot?: AgentState; /** A page's icon color (NavPage.color, #10822). */ color?: UIColor };
 
 // The pages take nothing from the sessions, yet every sessions push re-renders the sidebar: memoized like SessionRow
 // (sameProps), a page row renders again only when its own props change (a badge, the highlight).
-export const NavRow = memo(function NavRow({ k, reg, hover, active, to, go, icon, label, badge, badgeTone, hint, title, onMenu, menuLabel, dot }: NavRowProps) {
+export const NavRow = memo(function NavRow({ k, reg, hover, active, to, go, icon, agent, label, badge, badgeTone, badgeLabel, hint, hintCount, title, onMenu, menuLabel, dot, color }: NavRowProps) {
   // one ref for the row's life, so a re-render does not let go of it and register it again (useGlide's reg)
   const ref = useMemo(() => reg(k), [reg, k]);
   const link = (
@@ -150,15 +146,16 @@ export const NavRow = memo(function NavRow({ k, reg, hover, active, to, go, icon
       aria-current={active ? "page" : undefined}
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-transform duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active && CURRENT_ROW)}
     >
-      <span className={active ? "text-ink" : "text-ink-3"}>
-        <Icon name={icon} size={14} stroke={1.8} />
+      <span className={active ? "text-ink" : "text-ink-3"} style={pageIconStyle(color, active)}>
+        {agent ? <AgentMark agent={agent} size={14} decorative /> : <Icon name={icon} size={14} stroke={1.8} />}
       </span>
       <span className={cx("min-w-0 flex-1 truncate text-[13px]", active ? "font-medium text-ink" : "text-ink-2")}>{label}</span>
       {dot && <StatusMark state={dot} size="sm" />}
-      {hint && <span className="text-[11px] text-ink-3 tabular-nums">{hint}</span>}
+      {hintCount ? <GroupCount {...hintCount} className="shrink-0" />
+        : hint && <span className="text-[11px] text-ink-3 tabular-nums">{hint}</span>}
       {badge !== undefined && (
         <span className={cx("flex h-4.5 min-w-4.5 shrink-0 items-center justify-center whitespace-nowrap rounded-full px-1 text-[10.5px] font-semibold tabular-nums", BADGE_CLASS[badgeTone ?? "accent"])} style={{ animation: `pop-in 250ms ${EASE} both` }} key={badge}>
-          {badge}
+          {badgeLabel ? <><span aria-hidden>{badge}</span><span className="sr-only">{badgeLabel}</span></> : badge}
         </span>
       )}
     </a>
@@ -185,6 +182,9 @@ export const NavRow = memo(function NavRow({ k, reg, hover, active, to, go, icon
     </div>
   );
 }, sameProps);
+
+// The list's one-line notes (loading, no match), as each writes it.
+const NOTE = "px-2 py-1 text-[12px] text-ink-3";
 
 // two shapes as well as two colors, so they tell apart without color: a bare prompt (no frame) and a window with a title bar
 const SOURCE_ICON = { terminal: { name: "run", tone: "text-source-terminal" }, desktop: { name: "appWindow", tone: "text-source-desktop" } } as const;
@@ -226,7 +226,10 @@ function SecondLine({ line, draft }: { line: { lead?: string; text: string; tone
 }
 
 // `prefix`: a word before the title (a tab's name, a pane's agent), in `prefixClass`
-type SessionRowProps = { menuLabel?: string; /** The mark at the start when the state is not shown (a Persona conversation's; pinned: the pin). */ icon?: IconName; s: Session; k: string; reg: RegFn; hover: (k: string | null) => void; active: boolean; to: Route; go: GoFn; tab?: boolean; label?: string; prefix?: string; prefixClass?: string; hint?: string; host?: string; showState?: boolean; showTodoTag?: boolean; onMenu?: RowMenuFn; endRoom?: boolean };
+type SessionRowProps = { menuLabel?: string; /** The mark at the start when the state is not shown (a Persona conversation's; pinned: the pin). */ icon?: IconName; s: Session; k: string; reg: RegFn; hover: (k: string | null) => void; active: boolean; to: Route; go: GoFn; tab?: boolean; label?: string; prefix?: string; prefixClass?: string; hint?: string; /** The hint is whole, never cut (a lead's counts). */ hintFull?: boolean; host?: string; showState?: boolean; showTodoTag?: boolean; onMenu?: RowMenuFn; endRoom?: boolean; /** A lead row whose own conversation is idle while something under it runs (the direction tree's `running`, #6626): draw the working arc anyway (#6230). An own needs-you / unread state still takes precedence. */ workingMark?: boolean;
+  /** 常驻 rows (#6214): the "在做 N · 等你 N" counts never fade on hover and the ⋯ sits in a reserved end slot instead
+   * of covering them, so hovering removes no information. */
+  keepTrailing?: boolean };
 
 // Every sessions push re-renders the sidebar and the Agents list, while lib/sessions-delta.ts keeps the object of each
 // session that did not change: a row renders again only when one of its props did. The props compare by identity
@@ -237,51 +240,87 @@ function sameProps<P extends { to: Route }>(a: P, b: P): boolean {
   return keys.every((key) => (key === "to" ? routePath(a.to) === routePath(b.to) : Object.is(a[key], b[key])));
 }
 
-export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, active, to, go, tab, label, prefix, prefixClass, hint, host, showState = true, showTodoTag, onMenu, menuLabel = t("sidebar.agent_actions"), endRoom, icon = "chat" }: SessionRowProps) {
-  // what it asks you, or what it did, under its title (#3195): no hover or click needed to see why it is red or green
-  const ix = useStore((st) => st.interactions.find((i) => i.machine_id === given.machine_id && i.session_id === given.session_id));
+export const SessionRow = memo(function SessionRow({ s: row, k, reg, hover, active, to, go, tab, label, prefix, prefixClass, hint, hintFull, host, showState = true, showTodoTag, onMenu, menuLabel = t("sidebar.agent_actions"), endRoom, icon = "chat", workingMark = false, keepTrailing = false }: SessionRowProps) {
+  // a parent of child sessions in its folded state (#5120): one of them waiting makes it need you, one working makes it
+  // work; the rows of the paged list come as the hub sends them, the other lists' folded already (lib/folded-rows.ts)
+  // its side sessions' part from their rows when an open chat holds them (#7944): a side seen here shows at once
+  const sides = useHeldSides(row.machine_id, row.session_id, Boolean(row.children?.sides));
+  const given = foldedRow(row, sides && countSides(sides));
+  // what it asks you, or what it did, under its title (#3195): no hover or click needed to see why it is red or green;
+  // its own card first, else what one of its child sessions asks (the card's home is this row's page)
+  const own = useStore((st) => st.interactions.find((i) => i.machine_id === given.machine_id && i.session_id === given.session_id));
+  // its child sessions' cards wait here too: the row's count holds them (one count per session, DESIGN_SYSTEM 4.8)
+  const kidCards = useStore((st) => childCards(st.interactions, given.machine_id, given.session_id));
+  const ix = own ?? kidCards[0];
+  const pendingCount = (given.pending_interactions ?? 0) + kidCards.length;
   // a card answered here takes its red dot and "Has a question" line away at once, not at the hub's next push (#4286)
   const justAnswered = useStore((st) => lastAnsweredAt(st.answered, given.machine_id, given.session_id));
   const pending = useStore((st) => answerPending(st.answered, given.machine_id, given.session_id));
   // seen on this page and not yet recorded by the hub (lib/seen-outbox.ts): the paged list's rows come from the list
-  // itself, not the store, so the row holds it seen too
+  // itself, not the store, so the row holds it seen too; newly launched first-turn sessions stay working across handoff (#12380)
   const seenMark = useStore((st) => st.seen[runtimeIdentity(given)]);
-  const s = heldSeen(answeredSession(given, Boolean(ix), justAnswered, pending), seenMark, Date.now());
+  const launch = useStore((st) => launchForSession(st.launches, given));
+  const nowHandoff = Date.now();
+  const s = heldLaunchWorking(heldSeen(answeredSession(given, Boolean(ix), justAnswered, pending), seenMark, nowHandoff), launch, nowHandoff);
+  const preferTab = useHerdrTabName();
+  const title = sessionTitle(s, preferTab);
+  const titleDetail = sessionTitleDetail(s, preferTab);
   const st = stateOf(s);
+  // A lead row whose own conversation is idle while something under it runs (the tree's `running`: an Agent at work,
+  // #6626) carries the working arc anyway (#6230). An own needs-you / unread / working state still wins, and Agent rows
+  // (showState) keep their own state.
+  const leadActive = workingMark && !showState && st !== "working" && st !== "needs_you" && st !== "unread";
   // Awaiting Reply (#5096): seen, but it asked you something you have not answered
   const awaiting = useStore((x) => awaitsReply(s, x.mutes));
+  // Just finished (#9751): done before you looked, less than three hours ago
+  const finished = useStore((x) => justFinished(s, x.mutes));
   // where it was opened, marked at the row's end: not on a tab with several panes (endRoom), where a herdr tab is a
   // terminal by definition, each pane's row under it says so, and the mark's room is the title's
   const source = showState && !s.assistant && !endRoom ? sessionSource(s) : undefined;
+  // a Persona conversation the hub opened by itself (#3758, #5195): what opened it, in the source mark's place
+  const origin = source ? undefined : autoOrigin(s);
+  // the extension whose own icon that mark draws, which the row's tooltip names too (#10358)
+  const [openerName, setOpenerName] = useState<string>();
   // a desktop app's runtime that can be written to: its mark says where it is and the agent's mark which agent, so the
   // runtime's name at the end only repeats them (it stays in the tooltip); a read-only one still says why
   const sameAsMarks = source === "desktop" && s.source_kind === "runtime" && sessionCan(s, "send");
-  const tail = [sameAsMarks ? "" : sourceSubtitle(s), hint ?? (tab ? tabLabel(s) : "")].filter(Boolean).join(" · ");
+  const hasTabAssociation = !!(s.slot_id?.trim() || s.tab_id?.trim());
+  const primaryTab = sessionDisplayTab(s, preferTab);
+  const associatedTab = hasTabAssociation && !primaryTab ? tabLabel(s) : "";
+  const tabIdentity = associatedTab ? t("sidebar.tab_named", { label: associatedTab }) : "";
+  // A structural tab row keeps its old plain-text fallback, but only a real association earns the localized identity.
+  const structuralTabHint = tab && !tabIdentity && !primaryTab ? tabLabel(s) : "";
+  const tail = [sameAsMarks ? "" : sourceSubtitle(s), hint ?? structuralTabHint, tabIdentity].filter(Boolean).join(" · ");
   const preview = sessionPreview(s);
   // Settings › Appearance › show details on agent rows (#2430): a second line under an agent's title — folder · model · context · age
   const details = useAgentDetails();
-  const contextUsed = useContextAsUsed();
   const withDetail = details && showState && !s.assistant;
   // when it was last active, at the row's end after its hint (#4236; the work-item row, DESIGN_SYSTEM 3.4): not twice
   // when the details line shows it; a tab's row, whose end is the room for "N agents", keeps it to offline and
   // stateless rows without a hint, as before
   const ageAtEnd = !withDetail && !!s.updated_at && (!endRoom || (!tail && (st === "offline" || !showState)));
-  // beside the age, a row that already carries its marks (where it was opened, its to-do) drops the hint from its end,
-  // where it would only squeeze the title; the hint stays in the row's tooltip
-  const tailShown = !!tail && !(ageAtEnd && (source || (showTodoTag && s.todo)));
+  // beside the age, a row that already carries its marks (where it was opened, its to-do) drops an ordinary hint from
+  // its end, where it would only squeeze the title; an associated tab name stays visible as the Agent's terminal identity.
+  const tailShown = !!tail && (!(ageAtEnd && (source || (showTodoTag && s.todo))) || !!tabIdentity);
   // the age at the row's end, in the details line, or a background workflow's progress
   // (#2935) moves on with the clock: the memo keeps an unchanged row from re-rendering on a push, so a minute tick
   // does it, and only in a row that shows one of them. The ages read the clock when the row renders: `now` is the
   // mount time until the first tick, and a row may only start showing an age long after it mounted
   const showsAge = ageAtEnd || (withDetail && !!s.updated_at);
   const now = useNow(60_000, showsAge || runningWorkflows(s).length > 0 || s.turn_error_kind === "usage_limit");
-  const detail = withDetail ? rowDetail(s, contextUsed) : [];
+  const detail = withDetail ? rowDetail(s, now) : [];
   const workflow = showState && !s.assistant && st !== "offline" ? workflowShortLine(s) : "";
   const workflowTitle = workflow ? workflowLine(s, now) : "";
   // its own task list (#5302): 3/5 · the step in progress
   const plan = showState && !s.assistant && st !== "offline" && planInRow(s, st === "working") ? planLine(s) : "";
+  // its child sessions at work (#5120): how many subagents run, counted as the assistant's In progress counts them
+  // (lib/background-work.ts, so the ones a parent also lists as its own background agents count once)
+  const children = showState && !s.assistant ? runningChildren(s) : 0;
+  const childLine = children ? t("assistant-tasks.subagents_count_running", { count: backgroundWork(s)?.subagents ?? children }) : "";
   // what sits at the row's end steps aside for the hover ⋯; the open row leaves room for its ⋯ instead
   const aside = active ? undefined : "group-hover/row:invisible";
+  // A 常驻 row's counts stay on screen while the ⋯ fades in beside them (#6214): only its date can yield.
+  const hintAside = keepTrailing ? undefined : aside;
   // behind a prefix (a tab's name, a pane's agent) the title keeps room for a few characters: the prefix shrinks first
   const titleMin = prefix ? ROW_TITLE_MIN : "min-w-0";
   // with words at the end (where it came from, a hint) the title keeps its own width first: those words give way before it does
@@ -290,7 +329,7 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
   const regRow = useMemo(() => reg(k), [reg, k]);
   // words left unsent in its box, once you are not in it (#5568): in place of what it asks or did
   const draft = draftLine(useLeftDraft(`${given.machine_id}/${given.session_id}`));
-  const line = draft ?? (showState && !s.assistant ? rowLine(s, ix, awaiting) : undefined);
+  const line = draft ?? (showState && !s.assistant ? rowLine(s, ix, awaiting, finished) : undefined);
   // ultracode on (#3428): the workflow mark in the AI colour right after the title; a row without it is drawn as before.
   // Not on an offline row: the node keeps the last value it saw after the process is gone, and a resume starts it off.
   const ultra = showState && ultracodeMarkShown(s);
@@ -298,7 +337,7 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
     <a
       ref={regRow}
       href={href(to)}
-      onClick={(event) => { rememberSessionRow(given); go(to)(event); }}
+      onClick={(event) => { rememberSessionRow(row); go(to)(event); }}
       // right click (at the pointer), the menu key and Shift+F10 (beside the row): the row's menu, the same as its ⋯
       {...(onMenu ? contextMenuProps((at, el) => onMenu(s, el, at)) : {})}
       onMouseEnter={() => hover(k)}
@@ -306,33 +345,42 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
       onBlur={() => hover(null)}
       aria-current={active ? "page" : undefined}
       // its mark's name is in the row's tooltip too: the mark steps aside while the row is hovered
-      title={`${sessionTitle(s)}${source ? `\n${sourceName(source)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
+      title={`${title}${titleDetail ? `\n${titleDetail}` : ""}${source ? `\n${sourceName(source)}` : ""}${origin ? `\n${openerFrom(origin, openerName)}` : ""}${sourceSubtitle(s) ? `\n${sourceSubtitle(s)}` : ""}${hint ? `\n${hint}` : ""}${tabIdentity ? `\n${tabIdentity}` : ""}${s.todo ? `\n${t("sidebar.todo_tag", { title: s.todo.title })}` : ""}${preview ? `\n${preview}` : ""}`}
       // a touch screen: rows a finger can hit (44), and room at the end for the ⋯ that is always there; the open row
       // keeps its ⋯ too, so it has room for it
       className={cx("relative z-10 flex w-full items-center gap-2 rounded-[7px] px-2 sidebar-row transition-transform duration-150 active:scale-[0.98] [@media(pointer:coarse)]:min-h-11", active && CURRENT_ROW, // room for "N agents" and the ⋯ beside it (instead of the ⋯'s own)
-        endRoom ? "pr-[108px] [@media(hover:none)]:pr-[120px]" : cx(onMenu && active && "pr-8", onMenu && "[@media(hover:none)]:pr-11"))}
+        endRoom ? "pr-[108px] [@media(hover:none)]:pr-[120px]" : keepTrailing
+          // the ⋯ is an in-flow slot of its own, so the anchor itself leaves no room for an overlay
+          ? "pr-1 [@media(hover:none)]:pr-1"
+          : cx(onMenu && active && "pr-8", onMenu && "[@media(hover:none)]:pr-11"))}
     >
       {/* the agent's mark before its state (#6390): what runs there, then how it is doing */}
       {showState && !s.assistant && <SessionMark s={s} size={14} />}
-      <span className="flex size-3.5 shrink-0 items-center justify-center">{showState || st === "working" ? <StatusMark state={usageLimitLabel(s) && st === "unread" ? "idle" : st} awaiting={awaiting} waiting={backgroundWaiting(s)} /> : <Icon name={icon} size={12} className="text-ink-3" />}</span>
+      <span className="flex size-3.5 shrink-0 items-center justify-center">{showState || st === "working" || leadActive ? <StatusMark state={leadActive ? "working" : usageLimitLabel(s) && st === "unread" ? "idle" : st} awaiting={awaiting} finished={finished} waiting={backgroundWaiting(s)} /> : <Icon name={icon} size={12} className="text-ink-3" />}</span>
       {prefix && <span className={prefixClass}>{prefix}</span>}
       {/* with the mark, the title sits in the column whether a second line shows or not: the same element through a
           workflow's start and end, so the mark does not fade in again */}
-      {ultra || detail.length > 0 || workflow || line || plan ? (
-        <span className={cx("flex flex-1 flex-col", titleMin, titleFirst)}>
+      {ultra || detail.length > 0 || workflow || line || childLine || plan ? (
+        <span className={cx("flex min-w-0 flex-1 flex-col", titleMin, titleFirst)}>
           {ultra ? (
             <span className="flex min-w-0 items-center gap-1">
               <span className={cx("min-w-0 truncate text-[13px]", active ? "font-medium text-ink" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
-                {label ?? sessionTitle(s)}
+                {label ?? title}
               </span>
               <UltraMark size={10} />
             </span>
           ) : (
             <span className={cx("truncate text-[13px]", active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && !usageLimitLabel(s) && "font-medium text-ink")}>
-              {label ?? sessionTitle(s)}
+              {label ?? title}
             </span>
           )}
           {line && <SecondLine line={line} draft={!!draft} />}
+          {childLine && (
+            <span data-children-line title={childLine} className="flex h-4 min-w-0 items-center gap-1 text-[11px] leading-4 text-ink-3">
+              <Icon name="agent" size={10} stroke={2.2} className="shrink-0" />
+              <span className="truncate tabular-nums">{childLine}</span>
+            </span>
+          )}
           {plan && (
             <span data-plan-line title={planLabel(s)} aria-label={planLabel(s)} className="flex h-4 min-w-0 items-center gap-1 text-[11px] leading-4 text-ink-3">
               <Icon name="list" size={10} stroke={2.2} className="shrink-0" />
@@ -356,9 +404,15 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
             ))}
           </span>}
         </span>
+      ) : keepTrailing ? (
+        // a lead's name reads as a row, even with nothing second to say: the ⋯'s reserved slot must not take the title's
+        // place. Drawn here, in place of the plain title, so the name shows once (it was drawn twice, "Per… Per…")
+        <span className={cx("flex-1 truncate text-meta", titleMin, titleFirst, active ? "font-medium text-ink" : "text-ink-2")}>
+          {label ?? title}
+        </span>
       ) : (
-        <span className={cx("flex-1 truncate text-[13px]", titleMin, titleFirst, active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && "font-medium text-ink")}>
-          {label ?? sessionTitle(s)}
+        <span className={cx("flex-1 truncate text-meta", titleMin, titleFirst, active ? "font-medium text-ink" : st === "offline" ? "text-ink-3" : "text-ink-2", st === "unread" && !active && "font-medium text-ink")}>
+          {label ?? title}
         </span>
       )}
       {host && <span className={cx("shrink-0 rounded bg-hover px-1 text-[10px] leading-4 text-ink-3", aside)}>{host}</span>}
@@ -372,29 +426,44 @@ export const SessionRow = memo(function SessionRow({ s: given, k, reg, hover, ac
         </span>
       )}
       {source && <SourceTag s={s} className={aside} />}
+      {origin && <OriginMark origin={origin} size={16} className={aside} session={s} onName={setOpenerName} />}
       {/* the row's ⋯ takes the end on hover: what is there steps aside instead of showing half under it */}
-      {tailShown && <span className={cx("max-w-[72px] min-w-6 shrink-[20] truncate text-[11px] text-ink-3", aside)}>{tail}</span>}
+      {tailShown && <span className={cx(hintFull ? "shrink-0 whitespace-nowrap tabular-nums" : "max-w-[72px] min-w-6 shrink-[20] truncate", "text-[11px] text-ink-3", hintAside)}>{tail}</span>}
       {ageAtEnd && <span data-row-age className={cx("shrink-0 text-[11px] text-ink-3", aside)}>{ago(s.updated_at, Date.now(), "narrow")}</span>}
-      {(s.pending_interactions ?? 0) > 0 && <span className={cx("flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-attention tabular-nums", aside)}>{s.pending_interactions}</span>}
+      {pendingCount > 0 && <span className={cx("flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-attention tabular-nums", aside)}>{pendingCount}</span>}
     </a>
   );
   if (!onMenu) return link;
-  // the ⋯ shows over the row's end on hover (a pointer); on the open row and on a touch screen it stays, in the room
-  // the row leaves for it
+  // 常驻 rows keep their counts on hover (#6214): the ⋯ lives in a reserved end slot that fades in instead of an
+  // absolute button covering the row's words. Other rows keep the overlay they always had.
+  const menuButton = (inFlow: boolean) => (
+    <button
+      type="button"
+      aria-label={menuLabel}
+      aria-haspopup="menu"
+      title={t("sidebar.more")}
+      tabIndex={-1}
+      onClick={(e) => onMenu(s, e.currentTarget.parentElement ?? e.currentTarget)}
+      className={inFlow
+        ? cx("relative z-20 my-1 flex size-6 shrink-0 items-center justify-center self-center rounded-[6px] text-ink-3 transition-opacity hover:bg-hover hover:text-ink [@media(hover:none)]:size-11",
+          active ? "opacity-100" : "opacity-0 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100")
+        : cx("absolute top-1/2 right-1 z-20 size-6 -translate-y-1/2 items-center justify-center rounded-[6px] text-ink-3 hover:text-ink group-hover/row:flex [@media(hover:none)]:right-0 [@media(hover:none)]:flex [@media(hover:none)]:size-11 [@media(hover:none)]:bg-transparent", active ? "flex hover:bg-hover" : "hidden bg-hover hover:bg-hover-2")}
+    >
+      <Icon name="more" size={14} />
+    </button>
+  );
+  if (keepTrailing) {
+    return (
+      <div className="group/row relative flex items-center">
+        <span className="min-w-0 flex-1">{link}</span>
+        {menuButton(true)}
+      </div>
+    );
+  }
   return (
     <div className="group/row relative">
       {link}
-      <button
-        type="button"
-        aria-label={menuLabel}
-        aria-haspopup="menu"
-        title={t("sidebar.more")}
-        tabIndex={-1}
-        onClick={(e) => onMenu(s, e.currentTarget.parentElement ?? e.currentTarget)}
-        className={cx("absolute top-1/2 right-1 z-20 size-6 -translate-y-1/2 items-center justify-center rounded-[6px] text-ink-3 hover:text-ink group-hover/row:flex [@media(hover:none)]:right-0 [@media(hover:none)]:flex [@media(hover:none)]:size-11 [@media(hover:none)]:bg-transparent", active ? "flex hover:bg-hover" : "hidden bg-hover hover:bg-hover-2")}
-      >
-        <Icon name="more" size={14} />
-      </button>
+      {menuButton(false)}
     </div>
   );
 }, sameProps);
@@ -467,7 +536,7 @@ function BoundedPersonalAgents({ reg, hover, activeKey, go }: { reg: RegFn; hove
   const page = useSyncExternalStore(personalSessions.subscribe, personalSessions.getSnapshot, personalSessions.getSnapshot);
   const going = useGoingIds();
   if (!page.loaded || !page.rows.some((s) => !going.has(s.id))) return null;
-  return <Section title={t("sidebar.personal_agents")} folded={folded} onToggle={toggle} right={<GroupCount n={page.total} label={t("sidebar.agent_count", { count: page.total })} />}>
+  return <Section top title={t("sidebar.personal_agents")} folded={folded} onToggle={toggle} right={<GroupCount n={page.total} label={t("sidebar.agent_count", { count: page.total })} />}>
     {!folded && <PagedSessionList root={personalSessions} path="/agents/sessions" identity={personalIdentity} compare={personalOrder} event="agents" personal
       renderRow={(s) => (going.has(s.id) ? null : <AgentRow s={s} reg={reg} hover={hover} active={activeKey === `a:${s.id}`} go={go} pinned={prefs.pins.includes(s.id)} onMenu={onMenu} />)} />}
     {rowMenu && <Menu anchor={rowMenu.el} onClose={() => setRowMenu(null)} align="right" width={200} items={agentRowItems(rowMenu.s, prefs)} />}
@@ -507,6 +576,7 @@ const LegacyPersonalAgents = memo(function LegacyPersonalAgents({ reg, hover, ac
   const sectionOf = (key: string) => (key.startsWith("sec:") ? key.slice(4) : "");
   return (
     <Section
+      top
       title={t("sidebar.personal_agents")}
       folded={folded}
       onToggle={toggle}
@@ -533,7 +603,7 @@ const LegacyPersonalAgents = memo(function LegacyPersonalAgents({ reg, hover, ac
         </>
       }
     >
-      {!loaded && <p className="px-2 py-1 text-[12px] text-ink-3">{t("sidebar.loading")}</p>}
+      {!loaded && <p className={NOTE}>{t("sidebar.loading")}</p>}
       {error && <div className="relative z-10 px-2 py-1">
         <p role="alert" className="text-[12px] break-words text-red">{t("sidebar.personal_failed", { reason: error })}</p>
         <button type="button" disabled={retrying} onClick={() => void retry()} className="touch-hit mt-1 rounded-control px-2 py-1 text-xs leading-normal whitespace-nowrap text-accent-ink hover:bg-hover disabled:cursor-wait disabled:opacity-50">
@@ -555,7 +625,7 @@ const LegacyPersonalAgents = memo(function LegacyPersonalAgents({ reg, hover, ac
           className="relative z-10 mx-1 mb-1 h-7 rounded-control bg-inset px-2 text-[12px] text-ink shadow-hairline outline-none placeholder:text-ink-3"
         />
       )}
-      {loaded && !error && !groups.length && <p className="px-2 py-1 text-[12px] text-ink-3">{t("sidebar.no_match")}</p>}
+      {loaded && !error && !groups.length && <p className={NOTE}>{t("sidebar.no_match")}</p>}
       {groups.map((g) => {
         const more = !q && !all[g.key] && g.key !== "pinned" && g.sessions.length > 5;
         const isOpen = (s: AgentSession) => activeKey === `a:${s.id}`;

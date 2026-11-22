@@ -1,17 +1,19 @@
 // One compact execution summary per exchange on every conversation style (#2602).
 // The latest assistant text occupies one replace-in-place slot while running; the final text stays there when done.
-// Older text and every tool/thinking step remain available inside the manually opened summary.
-// Compaction boundaries and unloaded history gaps retain their behavior.
+// Older text and every tool/thinking step remain available inside the manually opened summary: opened, it is cindy's
+// timeline (#5155, messageWorkGroups.ts createCompletedWorkGroup): the narration in order, each run of work between two
+// pieces of it an inner summary of its own. Compaction boundaries and unloaded history gaps retain their behavior.
 
 import { t } from "../i18n";
-import type { Step } from "./turns";
+import { isChildSessionStep } from "./child-cards";
+import { toolLabel, type Step } from "./turns";
 import type { Item } from "./types";
 
 export type ToolStep = Extract<Step, { kind: "tool" }>;
 
 export type AgentStatus = "running" | "completed" | "failed" | "stopped";
 
-/** A group of steps (`children` hold steps and, in a finished timeline, inner groups), or a step left in the open. */
+/** A group of steps (`children` hold steps, or in a timeline the narration and inner groups), or a step left in the open. */
 export type WorkNode = WorkGroupNode | { kind: "step"; step: Step };
 
 export interface WorkGroupNode {
@@ -20,8 +22,10 @@ export interface WorkGroupNode {
   id: string;
   /** Its first step's seq: a group inside a fold the reader opened starts open. */
   seq?: number;
+  /** Inner work clock; the outer summary measures the whole exchange. */
+  clock?: "run" | "exchange";
   children: WorkNode[];
-  /** The run still going at the end of a live exchange. */
+  /** The run still going at the end of a live exchange (in a timeline: its last run, with no words after it). */
   live: boolean;
   durationMs?: number;
   /** Where its clock starts (ms): the live timer counts from here. */
@@ -52,6 +56,9 @@ export const isWorkflowStep = (s: Step): s is ToolStep => s.kind === "tool" && s
 /** A tool call drawn as an action row (not a subagent card, not a plan card, not a workflow's call). */
 export const isRowStep = (s: Step): s is ToolStep => s.kind === "tool" && !isAgentStep(s) && !isPlanStep(s) && !isWorkflowStep(s);
 const isCompactStep = (s: Step) => s.kind === "notice" && Boolean(s.item.compact);
+/** A Codex visualize fragment is response content, like the answer: Codex promotes it to a first-class
+ *  InlineVisualization timeline entry instead of a tool-trace row, so it stands in the open, never in the summary. */
+const isVisualizationStep = (s: Step) => s.kind === "visualization";
 
 /** The item a step stands for (a tool: its call). */
 function stepItem(s: Step): Item {
@@ -83,8 +90,9 @@ const boundaryTs = (s: Step | undefined): number | null => (s && (s.kind === "te
 const isAnswer = (s: Step) => s.kind === "text" && Boolean(s.item.text?.trim());
 
 /** The step a group is known by: its first real one (cindy keys a group by its first activity, so a live group keeps
- *  its key as it grows and once it is done). */
-const anchorStep = (run: Step[]) => run.find((s) => s.kind !== "text") ?? run[0];
+ *  its key as it grows and once it is done). A child session's card is not one: it comes in with the child's row, and
+ *  the group keeps the key (and the reader's open state) it had without it. */
+const anchorStep = (run: Step[]) => run.find((s) => s.kind !== "text" && !isChildSessionStep(s)) ?? run.find((s) => s.kind !== "text") ?? run[0];
 
 /** A group's key: its anchor's seq and block (a fold's is the seq of the first step it stands for, block 0). */
 function anchorKey(run: Step[]): string {
@@ -118,29 +126,81 @@ function createGroup(run: Step[], next: Step | undefined, live: boolean, prevBou
   };
 }
 
+/** cindy's createCompletedWorkGroup: a summary whose steps hold intermediate narration opens to that narration in order,
+ *  each maximal run of other steps between two pieces of it an inner group (its clock from the narration before it, or
+ *  the turn's start, to the narration after it, else its latest end). Null without narration: the steps stay direct.
+ *  A trailing answer stays in the slot and ends the last run. Interleaved progress also appears here at its original
+ *  position as a clock boundary, but stays only in the latest-text slot until newer words supersede it. */
+function timeline(work: Step[], answer: Step | undefined, turnStart: number | null, live: boolean, latestText?: Step): WorkNode[] | null {
+  if (!work.some(isAnswer)) return null;
+  const out: WorkNode[] = [];
+  let run: Step[] = [];
+  let prev = turnStart;
+  // a text without words is no boundary: it goes with the run around it, and alone it is drawn as before (as nothing)
+  const flush = (next: Step | undefined, live: boolean) => {
+    if (run.some((s) => s.kind !== "text")) out.push({ ...createGroup(run, next, live, prev), clock: "run" });
+    else out.push(...run.map((step) => ({ kind: "step" as const, step })));
+    run = [];
+  };
+  for (const s of work) {
+    if (!isAnswer(s)) {
+      run.push(s);
+      continue;
+    }
+    flush(s, false);
+    if (s !== latestText) out.push({ kind: "step", step: s });
+    prev = stepStart(s);
+  }
+  flush(answer, live && !answer);
+  return out;
+}
+
 /** One summary plus one text slot, irrespective of tool kind, text length or Markdown shape.
  *  A streamed text segment supersedes the persisted text, but the persisted words remain inspectable in the summary. */
 function groupTurn(items: Step[], turnStart: number | null, live: boolean, streaming: boolean, identity?: string): WorkNode[] {
   let latest = -1;
-  if (!streaming) items.forEach((s, i) => isAnswer(s) && (latest = i));
+  items.forEach((s, i) => isAnswer(s) && (latest = i));
+  // a visualization after the words is the response itself, not work that came after it
+  const interleaved = latest >= 0 && items.slice(latest + 1).some((s) => s.kind !== "text" && !isVisualizationStep(s));
   const work: Step[] = [];
   const kept: WorkNode[] = [];
   for (let i = 0; i < items.length; i++) {
     const s = items[i];
-    if (i === latest) continue;
-    if (!isCompactStep(s)) work.push(s);
-    else kept.push({ kind: "step", step: s });
+    if (i === latest && !interleaved) continue;
+    if (isCompactStep(s) || isVisualizationStep(s)) kept.push({ kind: "step", step: s });
+    else work.push(s);
   }
   const answer = latest >= 0 ? items[latest] : undefined;
-  const group = work.length ? createGroup(work, answer, live, turnStart) : undefined;
-  if (group && identity) group.id = `work-turn-${identity}`;
-  // A text before the last tool result is still the newest text, not the group's duration endpoint.
+  const retired = streaming && !interleaved ? answer : undefined;
+  const group = work.length ? createGroup(work, answer, live, turnStart) : retired ? createGroup([retired], undefined, live, turnStart) : undefined;
+  if (group) {
+    // the latest text ends the last run when nothing but words came after it
+    const answered = interleaved ? undefined : answer;
+    const children = timeline(work, answered, turnStart, live, streaming ? undefined : answer);
+    if (identity) group.id = `work-turn-${identity}`;
+    if (children) {
+      group.children = children;
+      group.clock = "exchange";
+      // an outer line without the exchange's key (a part before a compaction or a gap) is known by its first step, as
+      // its first inner group is: that one gets a key of its own, so each keeps its own open / closed state
+      for (const c of children) if (c.kind === "group" && c.id === group.id) c.id = c.id.replace(/^work-/, "work-run-");
+    }
+  }
+  // New live words retire the previous text into this same summary. Its existing work rows keep their shape.
+  if (group && retired && work.length) group.children.push({ kind: "step", step: retired });
+  // The time runs to the latest end of every step of the exchange, its answer included (#5119): the span the live
+  // clock was counting, so it carries on from what that showed (iOS ChatLines.workEnd counts the same). A text written
+  // before the last tool result is still the newest text, not where the time stops.
   if (group && group.startedAt !== undefined) {
     const end = items.reduce((latest, s) => Math.max(latest, stepEnd(s) ?? latest), group.startedAt);
     group.durationMs = Math.max(0, end - group.startedAt);
   }
-  return [...(group ? [group] : []), ...kept, ...(answer ? [{ kind: "step" as const, step: answer }] : [])];
+  return [...(group ? [group] : []), ...kept, ...(answer && !streaming ? [{ kind: "step" as const, step: answer }] : [])];
 }
+
+/** A thought without words (Claude Code writes most of them so) says nothing: it is no step of the work, as in cindy
+ *  (thinkingActivityForMessage), so a turn of nothing else has no summary and it never splits a run of rows (#5155). */
+const isWordlessThought = (s: Step) => s.kind === "thinking" && !s.item.text?.trim();
 
 /** One exchange's steps (the answer among them, in order) as what the chat draws. */
 export function workBlocks(steps: Step[], opts: WorkGroupOptions): WorkNode[] {
@@ -150,10 +210,11 @@ export function workBlocks(steps: Step[], opts: WorkGroupOptions): WorkNode[] {
   let prevEnd = turnStart;
   const flush = (activeTail: boolean) => {
     if (!turn.length) return;
-    out.push(...groupTurn(turn, turnStart, activeTail && opts.live, activeTail && opts.live && Boolean(opts.streaming), activeTail ? opts.identity : undefined));
+    out.push(...groupTurn(turn, turnStart, activeTail && opts.live, activeTail && Boolean(opts.streaming), activeTail ? opts.identity : undefined));
     turn = [];
   };
   for (const s of steps) {
+    if (isWordlessThought(s)) continue;
     if (isCompactStep(s)) {
       flush(false);
       out.push({ kind: "step", step: s });
@@ -174,13 +235,16 @@ export function workBlocks(steps: Step[], opts: WorkGroupOptions): WorkNode[] {
   return out;
 }
 
-/** The plan of an exchange: only its latest TodoWrite of two or more items (that the tool took) draws a card; the
- *  others are not drawn. */
-export function planSteps(steps: Step[]): Step[] {
-  let latest = -1;
-  // a TodoWrite the tool refused did not change the plan (#5602)
-  steps.forEach((s, i) => isPlanStep(s) && !(s as ToolStep).result?.is_error && planTodos(s as ToolStep).length >= 2 && (latest = i));
-  return steps.filter((s, i) => !isPlanStep(s) || i === latest);
+/** A TodoWrite that can be its exchange's plan card: the tool took it (a refused one did not change the plan, #5602)
+ *  and it lists two or more items (cindy draws no card for a list of one). The one rule for the card and the pill. */
+export const isPlanList = (s: Step): s is ToolStep => isPlanStep(s) && !(s as ToolStep).result?.is_error && planTodos(s as ToolStep).length >= 2;
+
+/** The step of an exchange that draws its plan card: its latest plan list, "" for none (cindy draws one card per plan,
+ *  where its latest list was written). Its other plan updates stay in the summary as ordinary rows, each inspectable
+ *  (super rule 2; cindy drops them). */
+export function planCardStep(steps: Step[]): string {
+  for (let i = steps.length - 1; i >= 0; i--) if (isPlanList(steps[i])) return steps[i].id;
+  return "";
 }
 
 export interface Todo {
@@ -226,8 +290,10 @@ function explorationOf(s: ToolStep): { kind: ExplorationKind; key?: string } | u
   return undefined;
 }
 
-// a workflow's call counts too: a group that launched one did more than read
-const directTools = (g: WorkGroupNode): ToolStep[] => g.children.flatMap((c) => (c.kind === "step" && (isRowStep(c.step) || isWorkflowStep(c.step)) ? [c.step] : []));
+// a workflow's call counts too: a group that launched one did more than read; so does a plan update (cindy's verb
+// "updated" is no reading), drawn as a row or as the card
+const directTools = (g: WorkGroupNode): ToolStep[] =>
+  g.children.flatMap((c) => (c.kind === "step" && (isRowStep(c.step) || isWorkflowStep(c.step) || isPlanStep(c.step)) ? [c.step as ToolStep] : []));
 
 /** "Read 3 files · searched 2 times" when a group did nothing but read and search (a file read twice counts once). */
 export function explorationSummary(g: WorkGroupNode): string {
@@ -281,44 +347,74 @@ export interface WorkLineState {
 export const workLineOpen = (s: WorkLineState): boolean => s.turnLive ? (s.liveOverride ?? false) : s.remembered;
 export const togglesLiveOverride = (_style: WorkLineStyle, turnLive: boolean): boolean => turnLive;
 export const workLineOpens = (g: WorkGroupNode, _style: WorkLineStyle, _turnLive: boolean): boolean => groupOpens(g);
-/** Opening a summary must reveal every tool call, including legacy nested history groups. */
+/** Completed action groups initially open inside the manually opened summary; live groups use their run state. */
 export const nestedLineDefault = (_style: WorkLineStyle): boolean => true;
 
-/** How long each thought took: from the step before it (or the exchange's start) to when it was written. */
-export function thinkingDurations(steps: Step[], turnStart?: string): Map<string, number> {
-  const out = new Map<string, number>();
-  let prev = tsMs(turnStart);
-  for (const s of steps) {
-    const st = stepStart(s);
-    if (s.kind === "thinking" && st !== null && prev !== null && st >= prev) out.set(s.id, st - prev);
-    const e = stepEnd(s);
-    if (e !== null) prev = prev === null ? e : Math.max(prev, e);
-  }
-  return out;
-}
+/** How a duration reads where it ticks (cindy's status bar options): from `0s`, and `1m 0s` rather than `1m`. */
+export const TICKING_DURATION = { minimumSeconds: 0, alwaysShowRemainder: true } as const;
 
-/** cindy's formatDuration in the page's language: Chinese "6 s", "1 min 5 s", "2 min", "1 h 05 min", 6s, 1m 5s in English (at least a second). */
-export function workDuration(msValue: number): string {
-  const total = Math.max(1, Math.round((Number.isFinite(msValue) ? msValue : 0) / 1000));
-  // Units come from the catalog (#3592): "1 min 5 s" in Chinese, 1m 5s in English.
+/** cindy's formatSessionDuration: under an hour `6s`, `1m 5s`, `2m` (the same in every language's catalog; at least a
+ *  second); from an hour the language's form, always with the minutes ("1h 0m", "1 小时 0 分", "1時間0分"; "1d 2h 5m").
+ *  `opts` are cindy's formatDuration options, so the running bar (TICKING_DURATION) and the summaries share one format. */
+export function workDuration(msValue: number, opts: { minimumSeconds?: number; alwaysShowRemainder?: boolean } = {}): string {
+  const total = Math.max(opts.minimumSeconds ?? 1, Math.round((Number.isFinite(msValue) ? msValue : 0) / 1000));
   if (total < 60) return t("lib-work-groups.dur_seconds", { s: total });
   if (total >= 3600) {
     const d = Math.floor(total / 86_400);
     const h = Math.floor((total % 86_400) / 3600);
     const m = Math.floor((total % 3600) / 60);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    if (d > 0) return t("lib-work-groups.dur_days_hours_minutes", { d, h: pad(h), m: pad(m) });
-    return m ? t("lib-work-groups.dur_hours_minutes", { h, m: pad(m) }) : t("lib-work-groups.dur_hours", { h });
+    return d > 0 ? t("lib-work-groups.dur_days_hours_minutes", { d, h, m }) : t("lib-work-groups.dur_hours_minutes", { h, m });
   }
   const m = Math.floor(total / 60);
   const s = total % 60;
-  return s ? t("lib-work-groups.dur_minutes_seconds", { m, s }) : t("lib-work-groups.dur_minutes", { m });
+  return s || opts.alwaysShowRemainder ? t("lib-work-groups.dur_minutes_seconds", { m, s }) : t("lib-work-groups.dur_minutes", { m });
 }
 
-/** A finished group's title: "Worked 1m 5s", and what it read when that is all it did. */
+/** A tool call's own elapsed time, from its call timestamp to its result's (#8163). Both are transcript timestamps
+ *  rather than provider-recorded timing; null when either is missing or unparseable, or the result predates the call. */
+export function toolDurationMs(s: ToolStep): number | null {
+  const start = tsMs(s.use.ts);
+  const end = tsMs(s.result?.ts);
+  return start !== null && end !== null && end >= start ? end - start : null;
+}
+
+/** Only reliable spans of at least 30 seconds warrant an action-row duration; unfinished calls do not guess. */
+export function toolDurationLabel(s: ToolStep): string | null {
+  const ms = toolDurationMs(s);
+  return ms !== null && ms >= 30_000 ? workDuration(ms) : null;
+}
+
+/** A finished group's title: "Worked for 1m 5s" ("Work details" without its times), and what it read when that is all
+ *  it did directly (an outer timeline's tools are in its inner groups, so it says only how long). */
 export function groupTitle(g: WorkGroupNode): string {
   if (g.live) return t("lib-work-groups.working");
   const base = g.durationMs !== undefined ? t("lib-work-groups.worked_for", { duration: workDuration(g.durationMs) }) : t("lib-work-groups.work");
   const ex = explorationSummary(g);
   return ex ? `${base} · ${ex}` : base;
+}
+
+/** Action kinds in first-seen order; file actions count distinct known paths, other kinds count calls.
+ * Unknown tools keep their existing localized label. Only the first three kinds enter the compact header. */
+export function actionSummary(g: WorkGroupNode): { text: string; icon: string } {
+  const kinds = new Map<string, { count: number; paths: Set<string>; icon: string; key?: string; label?: string }>();
+  for (const child of g.children) {
+    if (child.kind !== "step" || child.step.kind !== "tool") continue;
+    const use = child.step.use;
+    const name = use.tool_name ?? "";
+    const kind = name === "Read" ? "read" : ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(name) ? "edit" : ["Bash", "exec_command", "shell", "PowerShell"].includes(name) ? "run" : ["Grep", "Glob", "WebSearch"].includes(name) ? "search" : name;
+    let entry = kinds.get(kind);
+    if (!entry) {
+      const known = ["read", "edit", "run", "search"].includes(kind);
+      entry = { count: 0, paths: new Set(), icon: known ? kind === "edit" ? "write" : kind : "tool", ...(known ? { key: `lib-work-groups.actions_${kind}` } : { label: toolLabel(name) }) };
+      kinds.set(kind, entry);
+    }
+    const path = (use.tool_input as Record<string, unknown> | undefined)?.file_path;
+    if ((kind === "read" || kind === "edit") && typeof path === "string" && path) {
+      if (entry.paths.has(path)) continue;
+      entry.paths.add(path);
+    }
+    entry.count++;
+  }
+  const shown = [...kinds.values()].slice(0, 3);
+  return { text: shown.map((k) => k.key ? t(k.key, { count: k.count }) : k.label).join(" · "), icon: shown[0]?.icon ?? "layers" };
 }
