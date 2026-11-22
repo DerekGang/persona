@@ -411,3 +411,23 @@ test('the phone More button follows the restored session when Files or Git retur
   shell.phoneParam='B';assert.equal(ready.call(shell),false);
   shell.activeChild='session/B';shell.restored='session/B';assert.equal(ready.call(shell),true);
 });
+
+test('the compact meeting, knowledge and inbox header replaces its native button and actions with the active route owner',()=>{
+  const shell=readFileSync(new URL('../entry/src/main/ets/pages/Index.ets',import.meta.url),'utf8');
+  const source=shell.slice(shell.indexOf('  private rootModuleMenuKind()'),shell.indexOf('  @Builder rootModuleMenu()'))+
+    shell.slice(shell.indexOf('  private openModuleMenu('),shell.indexOf('  @Builder phoneModuleMore('));
+  const Nav=new Function('return '+stripTypeScriptTypes('class NativeMenu {'+source+'}'))();
+  const n=new Nav();let generation=1,refreshes=0;
+  Object.assign(n,{model:{section:0,scope:()=> 'fixture',connectionGeneration:()=>generation},meetingOptions:{available:true,prepare:()=>refreshes++},
+    spacesShown:false,navigationIntent:1,phoneTop:'recordings',phoneParam:''});
+  const old=n.menuOwner('recordings');n.openModuleMenu('recordings',old);assert.equal(refreshes,1);assert.ok(n.menuCurrent('recordings'));
+  for(const [top,param,kind] of [['resources','knowledge','knowledge'],['resources','inbox','inbox'],['resources','knowledge','knowledge'],['recordings','','recordings']]){
+    const before=n.moduleMenuOwner;n.phoneTop=top;n.phoneParam=param;n.navigationIntent++;const active=n.menuOwner(kind);
+    assert.notEqual(before,active);
+    n.openModuleMenu('recordings',old);assert.notEqual(n.moduleMenuOwner,active);
+    n.openModuleMenu(kind,active);assert.ok(n.menuCurrent(kind));n.closeModuleMenu(before);assert.equal(n.moduleMenuShown,true);
+  }
+  generation++;assert.equal(n.menuCurrent('recordings'),false);const next=n.menuOwner('recordings');n.openModuleMenu('recordings',next);
+  n.closeModuleMenu(next);assert.equal(n.moduleMenuShown,false);
+  assert.match(shell,/ForEach\(\[this\.rootModuleMenuKind\(\)\],\(kind:string\) => \{\s*this\.phoneModuleMore\(kind,this\.menuOwner\(kind\)\)\s*\},\(kind:string\) => this\.menuOwner\(kind\)\)/);
+});

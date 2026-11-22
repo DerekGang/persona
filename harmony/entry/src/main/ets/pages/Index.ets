@@ -94,8 +94,8 @@ struct Index {
   @Local meetingOptions:PhoneMeetingOptions=new PhoneMeetingOptions();
   @Local knowledgeMenu:KnowledgeLandingMenu=new KnowledgeLandingMenu();
   @Local moduleMenuShown:boolean=false;
-  private moduleMenuOwner:string='';
-  private moduleMenuKind:string='';
+  @Local moduleMenuOwner:string='';
+  @Local moduleMenuKind:string='';
   @Local recordingEditRevision: number = 0;
   @Local extensionTitle: string = '';
   @Local todoTitle: string = '';
@@ -573,7 +573,16 @@ struct Index {
       }
     }
   }
-  @Builder phoneModuleMore(kind:string) {
+  private openModuleMenu(kind:string,owner:string):void {
+    if (this.spacesShown || this.rootModuleMenuKind()!==kind || this.menuOwner(kind)!==owner) return;
+    this.moduleMenuKind=kind;this.moduleMenuOwner=owner;
+    if (kind==='recordings') this.meetingOptions.prepare();
+    this.moduleMenuShown=true;
+  }
+  private closeModuleMenu(owner:string):void {
+    if (this.moduleMenuOwner===owner) this.moduleMenuShown=false;
+  }
+  @Builder phoneModuleMore(kind:string,owner:string) {
     Button({type:ButtonType.Circle}) {
       Stack() {
         Circle().width(20).height(20).stroke(Colors.link).strokeWidth(1.4).fill(Color.Transparent)
@@ -582,8 +591,9 @@ struct Index {
     }.width(44).height(44).padding(0).backgroundColor(Colors.surface)
       .border({width:0.5,color:Colors.divider,radius:22}).accessibilityText(tr(kind==='recordings' ? 'meeting_start_options' : 'more'))
       .id(kind==='recordings' ? 'recordings.options' : kind==='knowledge' ? 'knowledge.filters' : 'inbox.more')
-      .onClick(()=>{if(this.rootModuleMenuKind()===kind){if(kind==='recordings')this.meetingOptions.prepare();this.moduleMenuKind=kind;this.moduleMenuOwner=this.menuOwner(kind);this.moduleMenuShown=true;}})
-      .bindMenu(this.moduleMenuShown && this.moduleMenuKind===kind,this.rootModuleMenu,{placement:Placement.BottomRight,onDisappear:()=>this.moduleMenuShown=false})
+      .onClick(()=>this.openModuleMenu(kind,owner))
+      .bindMenu(this.moduleMenuShown && this.moduleMenuKind===kind && this.moduleMenuOwner===owner,this.rootModuleMenu,
+        {placement:Placement.BottomRight,onDisappear:()=>this.closeModuleMenu(owner)})
   }
   @Builder compactPlaces() {
     Column() {
@@ -653,7 +663,9 @@ struct Index {
         } else if (this.compactChatMenu(this.phoneTop) && !this.mainDestination(this.phoneTop,this.phoneParam)) {
           this.compactSessionMore()
         } else if (this.rootModuleMenuKind()) {
-          this.phoneModuleMore(this.rootModuleMenuKind())
+          ForEach([this.rootModuleMenuKind()],(kind:string) => {
+            this.phoneModuleMore(kind,this.menuOwner(kind))
+          },(kind:string) => this.menuOwner(kind))
         } else if (this.activeChild && this.destinationMenuItems(this.shownName, this.shownParam).length) {
           this.destinationMenus(this.shownName, this.shownParam)
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
