@@ -158,13 +158,13 @@ package fleetcount
 
 | Layer | What it is | Where | May import |
 | --- | --- | --- | --- |
-| `kit` | the building blocks every core uses | `server/internal/domainkit` only | the standard library and the kit |
+| `kit` | the building blocks every core uses | `server/internal/domainkit` only | the standard library a core may import, the other kit packages, and `time` in `instant` |
 | `core` | one bounded context: values, entities, deciders, failures, events, domain services and its visitors | the context's home (`assistant/<domain>`, `node/<domain>`), and the legacy top-level packages | `bytes`, `cmp`, `iter`, `maps`, `math`, `math/bits`, `slices`, `sort`, `strconv`, `strings`, `unicode`, `unicode/utf8`; the kit's `outcome`, `fail`, `instant`, `opt`, `defect` and `slot`; shared kernels |
 | `core shared` | a shared kernel: value objects and closed sets only | directly under `server/internal`, outside the managers', the node's and the hub's trees | as a core |
 | `adapter` | the only code that converts between a core and contracts, rows, prompt inputs or log text | `<core>/<core>adapt`, and the edge adapters such as the HTTP failure writer | its core, shared kernels and their adapters, the kit, contracts, libraries, the standard library, third-party code |
 | `application` | orchestration: the clock, ids, IO, locks, goroutines, routes, retries and model calls | package `assistant`, the hub, the node, `cmd/*`, the managers, `domainkit/clock` | every layer but `testkit` |
 | `application seam` | a typed registration seam between application modules | `assistant/kernel` and later seams | as application |
-| `library` | technical code with no domain concept | `lazyre`, `osproc`, `db`, `prompts`, `apierr`, `i18n` and the like | the standard library, third-party code, libraries, contracts |
+| `library` | technical code with no domain concept; its records and named primitives are counted as application code's | `lazyre`, `osproc`, `db`, `prompts`, `apierr`, `i18n` and the like | the standard library, third-party code, libraries, contracts |
 | `contract` | plain wire data | exactly the packages `server/internal/archguard/testdata/contracts.txt` lists | the standard library and contracts |
 | `testkit` | test support | `domainkit/domaintest`, `domainkit/clock/clocktest`, `*test` packages | anything; imported only by tests and other testkit |
 
@@ -173,7 +173,8 @@ A declaration is checked, or it would be a way around the rules: `application` m
 application package, a clock call, a goroutine, a channel, a select, or a field or parameter typed from `net/http`,
 `database/sql`, `net`, `os`, `os/exec` or `sync`; a `context.Context` parameter or an adapter import alone is none),
 `kit` lives only under `server/internal/domainkit`, `contract` if and only if `contracts.txt` lists the package,
-`core shared` holds only values, a library imports no core, kit or adapter, and testkit is imported only by tests. A
+`core shared` holds only values, a library imports no core, kit or adapter and is counted like application code (so
+declaring `library` holds no domain concept either), and testkit is imported only by tests. A
 core is imported only by application code, adapters, testkit and tests (a shared kernel by cores too). The hub
 (`internal/hub`, `internal/hubedge`, `cmd/persona-hub`) relays contracts and imports no core, kit or adapter, and
 neither do `db` and `prompts`, libraries the hub links. A manager is application plus adapters, with its cores in its
@@ -227,9 +228,11 @@ func StateNeedsYou() State { return State{state: 2} }
 
 Code outside a core never reads or writes its state. A core has no exported fields, package variables or exported
 constants, and every exported method returns nothing, a bool, the receiver's own type or an outcome of it, whatever
-its parameters. The exceptions are `ID()` (the package's identity type, or a shared kernel's, which other aggregates
-and stores refer to it by), `Wire()`, `Build()` on a builder, a builder stage's next stage and `Accept`. A computation
-that yields another type is a domain service, a package-level function taking core values, never a method. Receivers
+its parameters. The exceptions are `ID()` (the package's own `<X>ID` type, or a shared kernel's, which other
+aggregates and stores refer to it by), `Wire()`, `Build()` on a builder (an outcome of the package's type), a builder
+stage's next stage and `Accept`. A computation that yields another type is a domain service, a package-level function
+taking core values, never a method. No exported function or method but `ID` and `Wire` hands a field out as it is: a
+body that is only `return n.title` is a getter whatever it is named, a `NewX` or a domain service included. Receivers
 are values, and a method writes no slice or map it shares with the receiver: it clones first. Ask ahead of an action
 with a `CanX` beside `X`. A change that removes a getter adds, in the same change, the behaviour that answers the
 caller's question.
@@ -251,13 +254,14 @@ func (a Agent) Counts(on Surface) bool {
 ### Building always-valid objects
 
 A value exists only in a valid state, from birth and from storage. `ParseX` is the only way in from raw input and the
-only exported function that takes primitives; `NewX` builds from domain values; `RestoreX` rebuilds stored state and
-always returns an outcome; a closed set's values are `<Type><Value>`. Make, Create, Build, Init, From, To, Get, Set,
-Reconstruct and Must are refused as prefixes. No exported function takes more than four parameters: more inputs make
-a staged builder, whose stages are distinct types named for themselves (so they cannot convert into each other) and
-whose last stage, `XBuilder`, has `Build`. `Build` refuses a zero value in every part and reports every one, in
-order (`fail.Invalids`): Go cannot stop a stage from being declared zero, so a skipped stage fails at `Build`, never
-silently. Nothing fills in a default the caller did not pass.
+only exported function that takes primitives; `NewX` builds from domain values; both make a type of their own package
+(or an outcome of one); `RestoreX` rebuilds stored state and always returns an outcome; a closed set's values are
+`<Type><Value>`. Make, Create, Build, Init, From, To, Get, Set, Reconstruct and Must are refused as prefixes. No
+exported function takes more than four parameters: more inputs make a staged builder, whose stages are distinct types
+named for themselves (so they cannot convert into each other) and whose last stage, `XBuilder`, has `Build`. `Build`
+refuses a zero value in every part and reports every one, in order (`fail.Invalids`): Go cannot stop a stage from
+being declared zero, so a skipped stage fails at `Build`, never silently. Nothing fills in a default the caller did
+not pass.
 
 ```go
 // ParseRef is the session a machine id and a session id name; either one empty is invalid.
@@ -575,13 +579,22 @@ func TestDomainRules(t *testing.T) { domainrules.Check(t) }
 ```
 
 Every finding is one line, `RULE <id> <what>. WHY <why>. FIX <the change>. GOOD <code that does it right>. see
-docs/server/architecture.md "Domain model"`. There is no ignore marker and no allowlist. Code that predates the rules
-is held by three lists under `server/internal/archguard/testdata/domain_layers`: `undeclared.txt` (the packages
-frozen without a layer), `legacy_edges.txt` (imports frozen by name, `<pkg> imports <path>`) and `baseline.txt`
-(shrink-only counts, `<key> <rule> <count>`). A count may not rise above its baseline, nor, given a base
-(`CI_BASE_SHA`), above its count at the merge base; one that falls prints a notice, and
-`python3 scripts/ci/lower_baselines.py --only domain-rules` lowers the lines ("Count ratchets" in
-`docs/operations/testing.md`). A rule marked "fails at once" takes no count.
+docs/server/architecture.md "Domain model"`. There is no ignore marker, and no list a later change can add itself
+to. Code that predates the rules is held by three lists under `server/internal/archguard/testdata/domain_layers`:
+`undeclared.txt` (the packages frozen without a layer), `legacy_edges.txt` (imports frozen by name, `<pkg> imports
+<path>`) and `baseline.txt` (shrink-only counts, `<key> <rule> <count>`). A count may not rise above its line, nor,
+given a base, above its count at the merge base: `TestDomainLayers` reads the base from `CI_BASE_SHA`, which
+check-fast's diff mode sets to its merge base (the server lane runs without one, so there only the line holds). One
+that falls prints a notice, and `python3 scripts/ci/lower_baselines.py --only domain-rules` lowers the lines ("Count
+ratchets" in `docs/operations/testing.md`). A rule marked "fails at once" takes no count.
+
+The day the rules landed, the open PRs' additions to the record and named-primitive counts became allowances,
+`<key> <rule> <Type> #PR ...`, each naming the type a PR adds. An allowance adds one to its count's limit only while
+its type is in the package, so the room is that PR's and no other change can spend it; with a base, the merge base's
+count already holds the allowed types it has. Allowances only leave: once the type is on main, `lower_baselines.py`
+takes it into the count and removes the line (`TestDomainLayers` says so in a notice), and once its PRs have all closed
+without it, `python3 scripts/test/name_freezes.py pending --write --only domain_layers_baseline`, run on a checkout of
+main, drops it. That script also wrote them, the day the baseline landed; it adds none to a baseline main has.
 
 | Rule | Checks | Counted against |
 | --- | --- | --- |
@@ -597,13 +610,13 @@ frozen without a layer), `legacy_edges.txt` (imports frozen by name, `<pkg> impo
 | `adapter-no-application` | an adapter imports no application package | fails at once |
 | `adapter-import` | an adapter imports another adapter only if it is a shared kernel's | fails at once |
 | `path-no-core` | the hub, `hubedge`, `db`, `prompts` and `cmd/persona-hub` import no core, kit or adapter | frozen names |
-| `core-import` | a core imports only what the layer table lists | frozen names |
-| `core-effect` | no goroutine, channel, select, `panic`, `recover`, `print`, `println` or `init` in a core | the package |
-| `core-clock-call` | no clock function of `time` and no `math/rand` in a core, called or not | the package |
+| `core-import` | a core or the kit imports only what the layer table lists | frozen names |
+| `core-effect` | no goroutine, channel, select, `panic`, `recover`, `print`, `println` or `init` in a core or the kit (`defect`'s `Raise` and `Catch` aside) | the package |
+| `core-clock-call` | no clock function of `time` and no `math/rand` in a core or the kit, called or not | the package |
 | `core-package-var` | no package-level variable in a core or the kit | the package |
 | `core-exported-const` | no exported constant in a core | the package |
 | `core-type-param` | no type parameter in a core (the kit's documented generics aside) | the package |
-| `core-any` | no `any` or `interface{}` in a core | the package |
+| `core-any` | no `any` or `interface{}` in a core or the kit (the kit's type parameter constraints and `outcome`'s nil check aside) | the package |
 | `core-exported-field` | no exported field, and no embedded field but a fail base | the package |
 | `core-tag` | no struct tags in a core | the package |
 | `core-bare-type` | no exported type over a basic, slice, map, array, func or chan type | the package |
@@ -614,14 +627,14 @@ frozen without a layer), `legacy_edges.txt` (imports frozen by name, `<pkg> impo
 | `core-primitive-signature` | primitives only as `ParseX` parameters, `bool` results and `Wire`'s result | the package |
 | `core-collection` | slices and maps in exported signatures only as `NewX` and `RestoreX` parameters | the package |
 | `core-interface-param` | no func or interface parameter but the package's own visitors and sealed interfaces | the package |
-| `core-accessor` | every exported method returns nothing, a bool, its receiver's type or an outcome of it | the package |
+| `core-accessor` | every exported method returns nothing, a bool, its receiver's type or an outcome of it, and no exported function or method but `ID` and `Wire` returns a field as it is | the package |
 | `core-pointer-receiver` | no pointer receivers | the package |
 | `core-receiver-write` | no write through a receiver's slice or map | the package |
 | `core-codec-method` | no codec method | the package |
 | `core-wire-method` | `Wire` only on a one-field struct, returning the field | the package |
-| `core-constructor` | exported functions are Parse, New, Restore, builder entries, `<Type><Value>` or domain services | the package |
+| `core-constructor` | exported functions are Parse, New, Restore, builder entries, `<Type><Value>` or domain services; Parse and New make their package's type | the package |
 | `core-params` | four parameters at most | the package |
-| `core-outcome-return` | every return sets the outcome, no outcome literal, no discarded call result | the package |
+| `core-outcome-return` | every return sets the outcome, no outcome literal, no discarded call result, in a core or the kit | the package |
 | `core-fail-family` | one sealed `Fail` family, and every failure type in it | the package |
 | `core-part-name` | a `fail.NewPart` name has no underscore | the package |
 | `core-visitor-name` | every visitor method starts with `Visit` | the package |
@@ -649,22 +662,27 @@ frozen without a layer), `legacy_edges.txt` (imports frozen by name, `<pkg> impo
 | `out-log-use` | an adapter's `Log` result only as an argument of a logging call | the package it is in |
 | `adapter-name` | an adapter exports no type named like one of its core's | the adapter |
 | `adapter-exported-result` | an adapter returns only what the section above lists | the adapter |
-| `app-exported-record` | exported structs with an exported field, in undeclared and application packages (contracts, `db` and `prompts` aside) | the package |
-| `app-named-primitive` | named basic types, in undeclared and application packages | the package |
-| `app-lifecycle-write` | assignments to a `DoneAt` or `DoneBy` field, in undeclared and application packages | the package |
+| `app-exported-record` | exported structs with an exported field, in undeclared, application and library packages (contracts, `db` and `prompts` aside) | the package |
+| `app-named-primitive` | named basic types, in undeclared, application and library packages | the package |
+| `app-lifecycle-write` | assignments to a `DoneAt` or `DoneBy` field, in undeclared, application and library packages | the package |
 
-The `app-*` counts hold the habits this model replaces from spreading in code that has not moved yet; they run only
-in `TestDomainLayers`, as does `layer-declared`.
+The `app-*` counts hold the habits this model replaces from spreading in code that has not moved yet, and a new
+package starts at zero; they run only in `TestDomainLayers`, as does `layer-declared`.
 
 ### The domain kit
 
-`server/internal/domainkit` imports only the standard library, and the hub links none of it.
+`server/internal/domainkit` is held to a core's purity, since every core imports it: it imports only the standard
+library a core may import, the other kit packages and, in `instant`, `time` (`At` and `ReadClock` take a `time.Time`),
+and `core-effect`, `core-clock-call`, `core-any` and `core-outcome-return` run over it too, its listed API aside
+(`kitAPI` in `server/internal/archguard/domainrules/core.go`). The hub links none of it.
 
 - `outcome`: `Of[T, F]`, a value or a failure of family `F`; producers write `return out.Ok(v)` or `out.Err(f)`, and
   `IsOk`, `Unpack`, `Fold`, `Map`, `Widen`, `Then` and `Must` raise a defect on an outcome nobody set. `Widen` and
   `Then` let an adapter return two families as `fail.Fail`; `Must` is for input the program made itself.
 - `fail`: `Fail`, sealed to the kit's bases `Invalid` (a code and the part that was wrong), `Refusal`, `Absence`,
-  `Conflict` and `Invalids`; `FailVisitor`; `Code` and `Part`, made by `NewCode` and `NewPart` and not comparable.
+  `Conflict` and `Invalids`; `FailVisitor`; `Code` and `Part`, made by `NewCode` and `NewPart` and not comparable. A
+  base's zero value is no failure: visiting it raises a defect, and `outcome`'s `Err` visits what it is given, so a
+  family type built empty fails where it is made.
 - `instant`: `Instant` (UTC nanoseconds; the zero is unknown), `Span`, and `Now`, the application's reading of the
   clock, which only `domainkit/clock` and its testkit make (`ReadClock`); `At`, `ParseMinutes`, `ParseSeconds`,
   `Elapsed`, and `Wire` for adapters.
