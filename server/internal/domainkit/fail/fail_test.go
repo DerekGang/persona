@@ -54,6 +54,19 @@ func TestTheBasesRefuseZeroCodesAndParts(t *testing.T) {
 	raises(t, "fail.Invalids.Accept", func() { domaintest.Describe(none) })
 }
 
+// A base's zero value is no failure: visiting it is a defect, so a family type built empty (notFound{} over a
+// fail.Absence) never reaches a caller as a failure with no code.
+func TestTheZeroBasesRefuseToBeVisited(t *testing.T) {
+	var invalid fail.Invalid
+	var refusal fail.Refusal
+	var absence fail.Absence
+	var conflict fail.Conflict
+	raises(t, "fail.Invalid.Accept", func() { domaintest.Describe(invalid) })
+	raises(t, "fail.Refusal.Accept", func() { domaintest.Describe(refusal) })
+	raises(t, "fail.Absence.Accept", func() { domaintest.Describe(absence) })
+	raises(t, "fail.Conflict.Accept", func() { domaintest.Describe(conflict) })
+}
+
 // Each base sends its own visitor call, so a Refusal is never read as an Absence.
 func TestEachBaseVisitsItsOwnKind(t *testing.T) {
 	code := fail.NewCode("x.y")

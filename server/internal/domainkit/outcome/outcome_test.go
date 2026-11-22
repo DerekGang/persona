@@ -80,6 +80,18 @@ func TestErrRefusesANilFailure(t *testing.T) {
 	})
 }
 
+// A family type built empty is no failure: Err visits what it is given, so it raises where the failure is made.
+func TestErrRefusesAZeroFailure(t *testing.T) {
+	raises(t, "fail.Refusal.Accept", func() {
+		var out outcome.Of[int, alphaFail]
+		out.Err(alphaRefused{})
+	})
+	raises(t, "fail.Absence.Accept", func() {
+		var out outcome.Of[string, betaFail]
+		out.Err(betaMissing{})
+	})
+}
+
 func TestValueAndFailure(t *testing.T) {
 	ok := parseAlpha("abc")
 	if !ok.IsOk() || domaintest.Ok(t, ok) != 3 {

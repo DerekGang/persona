@@ -32,13 +32,22 @@ type Of[T any, F fail.Fail] struct {
 func (o *Of[T, F]) Ok(v T) Of[T, F] { return Of[T, F]{set: value, value: v} }
 
 // Err is the outcome holding f. Producers call it on their named result: return out.Err(f). A nil failure is a
-// defect.
+// defect, and so is a zero one: Err visits f, and a base's Accept raises on its zero value.
 func (o *Of[T, F]) Err(f F) Of[T, F] {
 	if any(f) == nil {
 		defect.Raise("outcome.Err", "a nil failure")
 	}
+	f.Accept(checked{})
 	return Of[T, F]{set: failure, failure: f}
 }
+
+// checked is the visitor Err hands a failure to: visiting is the check, so it does nothing.
+type checked struct{}
+
+func (checked) VisitInvalid(fail.Code, fail.Part) {}
+func (checked) VisitRefused(fail.Code)            {}
+func (checked) VisitMissing(fail.Code)            {}
+func (checked) VisitConflict(fail.Code)           {}
 
 // IsOk says whether o holds a value.
 func (o Of[T, F]) IsOk() bool { return o.held("outcome.IsOk") == value }

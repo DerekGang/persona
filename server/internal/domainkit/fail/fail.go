@@ -14,7 +14,9 @@ import (
 )
 
 // Fail is an expected failure, read only through Accept. Only the bases in this package implement it; a core's
-// family embeds one of them. The zero Fail is nil, which no operation returns as its failure.
+// family embeds one of them. The zero Fail is nil, which no operation returns as its failure, and a base's zero value
+// is no failure either: its Accept raises a defect, and so does outcome's Err, which visits the failure it is given.
+// A core's family type built empty (notFound{} over a fail.Absence) is therefore a defect where it is made.
 type Fail interface {
 	Accept(v FailVisitor)
 	fail()
@@ -84,8 +86,14 @@ func NewInvalid(c Code, p Part) Invalid {
 	return Invalid{code: c, part: p}
 }
 
-// Accept tells v the code and the part.
-func (i Invalid) Accept(v FailVisitor) { v.VisitInvalid(i.code, i.part) }
+// Accept tells v the code and the part; the zero Invalid is a defect.
+func (i Invalid) Accept(v FailVisitor) {
+	known(i.code, "fail.Invalid.Accept")
+	if i.part.part == "" {
+		defect.Raise("fail.Invalid.Accept", "the zero Part")
+	}
+	v.VisitInvalid(i.code, i.part)
+}
 
 func (Invalid) fail() {}
 
@@ -95,8 +103,11 @@ type Refusal struct{ refusal Code }
 // NewRefusal is the failure for a refused request; a zero code is a defect.
 func NewRefusal(c Code) Refusal { known(c, "fail.NewRefusal"); return Refusal{refusal: c} }
 
-// Accept tells v the code.
-func (r Refusal) Accept(v FailVisitor) { v.VisitRefused(r.refusal) }
+// Accept tells v the code; the zero Refusal is a defect.
+func (r Refusal) Accept(v FailVisitor) {
+	known(r.refusal, "fail.Refusal.Accept")
+	v.VisitRefused(r.refusal)
+}
 
 func (Refusal) fail() {}
 
@@ -107,8 +118,11 @@ type Absence struct{ absence Code }
 // NewAbsence is the failure for something missing; a zero code is a defect.
 func NewAbsence(c Code) Absence { known(c, "fail.NewAbsence"); return Absence{absence: c} }
 
-// Accept tells v the code.
-func (a Absence) Accept(v FailVisitor) { v.VisitMissing(a.absence) }
+// Accept tells v the code; the zero Absence is a defect.
+func (a Absence) Accept(v FailVisitor) {
+	known(a.absence, "fail.Absence.Accept")
+	v.VisitMissing(a.absence)
+}
 
 func (Absence) fail() {}
 
@@ -119,8 +133,11 @@ type Conflict struct{ conflict Code }
 // NewConflict is the failure for a conflicting request; a zero code is a defect.
 func NewConflict(c Code) Conflict { known(c, "fail.NewConflict"); return Conflict{conflict: c} }
 
-// Accept tells v the code.
-func (c Conflict) Accept(v FailVisitor) { v.VisitConflict(c.conflict) }
+// Accept tells v the code; the zero Conflict is a defect.
+func (c Conflict) Accept(v FailVisitor) {
+	known(c.conflict, "fail.Conflict.Accept")
+	v.VisitConflict(c.conflict)
+}
 
 func (Conflict) fail() {}
 
