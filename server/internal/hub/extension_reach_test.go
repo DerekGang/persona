@@ -357,6 +357,7 @@ func TestEveryExtensionRouteIsBounded(t *testing.T) {
 		"POST /api/v1/interactions/{id}/reanswer":          "path", // pending: its card; no longer pending: its manager
 		"POST /api/v1/agents/sessions/{id}/messages":       "manager",
 		"POST /api/v1/agents/sessions/{id}/read":           "manager",
+		"POST /api/v1/agents/sessions/{id}/action":         "manager",
 		"GET /api/v1/machines":                             "own",
 		"GET /api/v1/machines/{id}/metrics":                "path",
 		"GET /api/v1/machines/{id}/usage":                  "path",
