@@ -7353,6 +7353,90 @@
       "value": "定期タスクとバックグラウンド監督が始めたチャットも、時間順にサイドバーの「最近」に並びます。すべてのデバイスに反映されます。"
     },
     {
+      "name": "phone_chat_pin",
+      "value": "常駐にする"
+    },
+    {
+      "name": "phone_chat_unpin",
+      "value": "常駐をやめる"
+    },
+    {
+      "name": "phone_chat_pin_title",
+      "value": "常駐にしますか？"
+    },
+    {
+      "name": "phone_chat_pin_message",
+      "value": "このチャットは常駐に移り、「最近」には出なくなります。"
+    },
+    {
+      "name": "phone_chat_unpin_title",
+      "value": "常駐をやめますか？"
+    },
+    {
+      "name": "phone_chat_unpin_message",
+      "value": "「{name}」は「最近」に戻ります。進行中のタスクはメインチャットの監督に戻り、終了や削除はされません。"
+    },
+    {
+      "name": "phone_chat_unpin_filing",
+      "value": "追加したものはそのまま残ります。"
+    },
+    {
+      "name": "phone_chat_pinned",
+      "value": "常駐にしました"
+    },
+    {
+      "name": "phone_chat_unpinned",
+      "value": "常駐をやめました"
+    },
+    {
+      "name": "phone_chat_archived",
+      "value": "アーカイブ済み"
+    },
+    {
+      "name": "phone_chat_move",
+      "value": "移動…"
+    },
+    {
+      "name": "phone_chat_own",
+      "value": "単独にする"
+    },
+    {
+      "name": "phone_chat_moved",
+      "value": "「{name}」に移動しました"
+    },
+    {
+      "name": "phone_chat_already_moved",
+      "value": "すでに「{name}」にあります"
+    },
+    {
+      "name": "phone_chat_own_set",
+      "value": "単独にしました"
+    },
+    {
+      "name": "phone_chat_own_already",
+      "value": "すでに単独です"
+    },
+    {
+      "name": "phone_chat_direction_unavailable",
+      "value": "このハブでは使えません"
+    },
+    {
+      "name": "phone_chat_undo",
+      "value": "取り消す"
+    },
+    {
+      "name": "phone_chat_move_undone",
+      "value": "移動を取り消しました"
+    },
+    {
+      "name": "phone_chat_direction_full",
+      "value": "この方向はいっぱいです。"
+    },
+    {
+      "name": "phone_chat_direction_supervised",
+      "value": "このチャットは監督対象のタスクに従います。"
+    },
+    {
       "name": "phone_all_chats_lark",
       "value": "Lark /agent"
     },

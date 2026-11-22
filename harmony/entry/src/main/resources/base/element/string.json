@@ -7353,6 +7353,90 @@
       "value": "Chats your scheduled tasks and the background supervisor start also appear in the sidebar's Recent, by time. All your devices follow."
     },
     {
+      "name": "phone_chat_pin",
+      "value": "Pin"
+    },
+    {
+      "name": "phone_chat_unpin",
+      "value": "Unpin"
+    },
+    {
+      "name": "phone_chat_pin_title",
+      "value": "Pin this chat?"
+    },
+    {
+      "name": "phone_chat_pin_message",
+      "value": "The chat moves to Pinned and no longer appears in Recent."
+    },
+    {
+      "name": "phone_chat_unpin_title",
+      "value": "Unpin this chat?"
+    },
+    {
+      "name": "phone_chat_unpin_message",
+      "value": "“{name}” returns to Recent. Its open tasks go back to the main chat's supervision; nothing is closed or deleted."
+    },
+    {
+      "name": "phone_chat_unpin_filing",
+      "value": "What you added to it stays."
+    },
+    {
+      "name": "phone_chat_pinned",
+      "value": "Pinned"
+    },
+    {
+      "name": "phone_chat_unpinned",
+      "value": "Unpinned"
+    },
+    {
+      "name": "phone_chat_archived",
+      "value": "Archived"
+    },
+    {
+      "name": "phone_chat_move",
+      "value": "Move To…"
+    },
+    {
+      "name": "phone_chat_own",
+      "value": "On Its Own"
+    },
+    {
+      "name": "phone_chat_moved",
+      "value": "Moved to “{name}”"
+    },
+    {
+      "name": "phone_chat_already_moved",
+      "value": "Already in “{name}”"
+    },
+    {
+      "name": "phone_chat_own_set",
+      "value": "Set on its own"
+    },
+    {
+      "name": "phone_chat_own_already",
+      "value": "Already on its own"
+    },
+    {
+      "name": "phone_chat_direction_unavailable",
+      "value": "Not available on this hub"
+    },
+    {
+      "name": "phone_chat_undo",
+      "value": "Undo"
+    },
+    {
+      "name": "phone_chat_move_undone",
+      "value": "Move undone"
+    },
+    {
+      "name": "phone_chat_direction_full",
+      "value": "This direction is full."
+    },
+    {
+      "name": "phone_chat_direction_supervised",
+      "value": "This chat follows a supervised task."
+    },
+    {
       "name": "phone_all_chats_lark",
       "value": "Lark /agent"
     },

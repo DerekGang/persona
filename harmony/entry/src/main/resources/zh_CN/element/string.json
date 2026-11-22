@@ -7353,6 +7353,90 @@
       "value": "定时任务和后台督办开的对话，也按时间排进侧边栏的「最近」。你的所有设备都会跟着变。"
     },
     {
+      "name": "phone_chat_pin",
+      "value": "设为常驻"
+    },
+    {
+      "name": "phone_chat_unpin",
+      "value": "取消常驻"
+    },
+    {
+      "name": "phone_chat_pin_title",
+      "value": "设为常驻？"
+    },
+    {
+      "name": "phone_chat_pin_message",
+      "value": "这个对话会移到常驻区，不再出现在「最近」。"
+    },
+    {
+      "name": "phone_chat_unpin_title",
+      "value": "取消常驻？"
+    },
+    {
+      "name": "phone_chat_unpin_message",
+      "value": "「{name}」会回到「最近」；还在办的任务交还主对话督办，不会关闭或删除。"
+    },
+    {
+      "name": "phone_chat_unpin_filing",
+      "value": "放进来的会话会留着。"
+    },
+    {
+      "name": "phone_chat_pinned",
+      "value": "已设为常驻"
+    },
+    {
+      "name": "phone_chat_unpinned",
+      "value": "已取消常驻"
+    },
+    {
+      "name": "phone_chat_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "phone_chat_move",
+      "value": "移到…"
+    },
+    {
+      "name": "phone_chat_own",
+      "value": "单独放着"
+    },
+    {
+      "name": "phone_chat_moved",
+      "value": "已移到「{name}」下"
+    },
+    {
+      "name": "phone_chat_already_moved",
+      "value": "已经在「{name}」下"
+    },
+    {
+      "name": "phone_chat_own_set",
+      "value": "已单独放着"
+    },
+    {
+      "name": "phone_chat_own_already",
+      "value": "本来就单独放着"
+    },
+    {
+      "name": "phone_chat_direction_unavailable",
+      "value": "这台 hub 用不了"
+    },
+    {
+      "name": "phone_chat_undo",
+      "value": "撤销"
+    },
+    {
+      "name": "phone_chat_move_undone",
+      "value": "已撤销移动"
+    },
+    {
+      "name": "phone_chat_direction_full",
+      "value": "这个方向已满。"
+    },
+    {
+      "name": "phone_chat_direction_supervised",
+      "value": "这个对话跟随已有督办任务。"
+    },
+    {
       "name": "phone_all_chats_lark",
       "value": "飞书 /agent"
     },

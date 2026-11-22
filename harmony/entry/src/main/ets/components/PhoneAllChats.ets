@@ -1,5 +1,6 @@
 import { AssistantChatStateMark, AssistantChatTitle, assistantSourceSymbol } from './AssistantChatMarks';
-import { LengthMetrics } from '@kit.ArkUI';
+import { AllChatActions, ChatActionTarget, ChatDirection } from '../models/AllChatActions';
+import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { Colors } from '../design/Colors';
 import { PhoneStyle } from '../design/PhoneStyle';
@@ -19,6 +20,8 @@ export struct PhoneAllChats {
   @Require @Param history: SidebarTaskHistory;
   @Event onClose: () => void = () => {};
   @Event onOpen: (row: ResourceRow) => void = () => {};
+  @Local actions: AllChatActions = new AllChatActions();
+  private noticeTimer: number = -1;
   @Local filter: string = 'all';
   @Local groups: AllChatGroup[] = [];
   @Local rows: BoundRow<ResourceRow>[] = [];
@@ -34,17 +37,19 @@ export struct PhoneAllChats {
     this.synchronize();
     this.timer = setInterval(() => { this.clock = Date.now(); }, 60000);
   }
-  aboutToDisappear(): void { clearInterval(this.timer); this.options.hide(); }
+  aboutToDisappear(): void { clearInterval(this.timer);clearTimeout(this.noticeTimer);this.actions.close();this.options.hide(); }
   @Monitor('model', 'model.profile', 'model.connected', 'model.conversations', 'model.features', 'model.mainId',
-    'model.mainMachineId', 'history.revision') synchronize(): void {
+    'model.mainMachineId', 'model.sidebarConfig', 'actions.hidden', 'history.revision') synchronize(): void {
     const scope = this.model.scope(), generation = this.model.connectionGeneration();
     const rebound = this.owner !== this.model || this.scope !== scope || this.generation !== generation;
     if (rebound) { this.filter = 'all'; this.options.hide(); }
     const previous = this.owner, previousScope = this.scope;
     this.owner = this.model; this.scope = scope; this.generation = generation;
-    this.groups = allAssistantChatGroups(this.model.conversations, this.model.mainId, this.model.mainMachineId,
+    this.actions.bind(this.model);
+    const conversations=this.actions.hidden.length ? this.model.conversations.filter((r:ResourceRow) =>
+      !this.actions.hidden.includes(new ChatActionTarget(this.model,r).key)) : this.model.conversations;
+    this.groups = allAssistantChatGroups(conversations, this.model.mainId, this.model.mainMachineId,
       this.model.profile.id, this.model.profile.manager, this.model.features.includes('conversation_origin'), this.history.known(scope));
-    if (!this.groups.some((group: AllChatGroup) => group.id === this.filter)) this.filter = 'all';
     this.bindRows(previous, previousScope);
     if (this.model.connected && !this.model.demo && !this.options.showsConversationOptions(this.model)) {
       this.options.open(this.model, 'conversation_options', true).catch(() => undefined);
@@ -141,7 +146,73 @@ export struct PhoneAllChats {
         if (this.model.owns(this.generation,this.scope) && this.model.conversations.includes(row)) this.onOpen(row);
       }).id('all_chats.row.'+(binding.value.session || binding.value.id))
   }
+  @Monitor('actions.notice') noticeChanged(): void {
+    clearTimeout(this.noticeTimer);
+    if (this.actions.notice) this.noticeTimer=setTimeout(() => this.actions.clearNotice(),7500);
+  }
+  private confirmPin(target: ChatActionTarget): void {
+    const row=this.actions.row(target);
+    if (!row || !this.actions.canChangeChat(target)) return;
+    const lead=this.actions.pinned(target);
+    const message=lead ? tr('phone_chat_unpin_message').replace('{name}',sidebarConversationTitle(row,tr))+
+      (this.actions.hasFiling() ? '\n'+tr('phone_chat_unpin_filing') : '') : tr('phone_chat_pin_message');
+    this.getUIContext().showAlertDialog({title:tr(lead ? 'phone_chat_unpin_title' : 'phone_chat_pin_title'),message:message,
+      primaryButton:{value:tr('cancel'),action:() => {}},secondaryButton:{value:tr(lead ? 'phone_chat_unpin' : 'phone_chat_pin'),
+        action:() => { this.actions.pin(target,!lead).catch(() => {}); }}});
+  }
+  @Builder moveMenu(target: ChatActionTarget) {
+    Menu() {
+      ForEach(this.actions.choices(target),(choice:ChatDirection) => {
+        MenuItem({content:choice.name || tr('phone_new_chat_title')}).onClick(() => { this.actions.file(target,choice).catch(() => {}); })
+          .id('all_chats.move.'+choice.id)
+      },(choice:ChatDirection) => choice.id)
+      MenuItem({content:tr('phone_chat_own')}).onClick(() => { this.actions.file(target,undefined).catch(() => {}); }).id('all_chats.move.own')
+    }
+  }
+  @Builder rowMenu(target: ChatActionTarget) {
+    Menu() {
+      if (this.actions.canChangeChat(target)) MenuItem({content:tr(this.actions.pinned(target) ? 'phone_chat_unpin' : 'phone_chat_pin'),
+        symbolStartIcon:new SymbolGlyphModifier($r('sys.symbol.pin'))}).onClick(() => this.confirmPin(target)).id('all_chats.action.pin')
+      if (this.actions.choices(target).length) MenuItem({content:tr('phone_chat_move'),builder:() => {this.moveMenu(target);}})
+        .id('all_chats.action.move')
+      if (this.actions.canChangeChat(target)) MenuItem({content:tr('archive'),symbolStartIcon:new SymbolGlyphModifier($r('sys.symbol.archivebox'))})
+        .onClick(() => {this.actions.archive(target).catch(() => {});}).id('all_chats.action.archive')
+    }
+  }
+  @Builder swipeArchive(target: ChatActionTarget) {
+    Button({type:ButtonType.Normal}) {
+      Column({space:4}) {
+        SymbolGlyph($r('sys.symbol.archivebox')).fontSize('20vp').fontColor([Colors.onAction])
+        Text(tr('archive')).fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.onAction)
+      }
+    }.width(78).height('100%').padding(0).backgroundColor(Colors.action).accessibilityText(tr('archive'))
+      .onClick(() => { this.actions.archive(target).catch(() => {}); }).id('all_chats.swipe.archive')
+  }
+  @Builder itemBody(binding: BoundRow<ResourceRow>) {
+    Column() { this.chat(binding); Divider().strokeWidth(Tokens.divider).color(Colors.divider).margin({left:20,right:16}) }.width('100%')
+  }
+  @Builder listItem(binding: BoundRow<ResourceRow>,target: ChatActionTarget) {
+    if (this.actions.canChangeChat(target)) {
+      ListItem() { this.itemBody(binding) }
+        .swipeAction({end:{builder:() => {this.swipeArchive(target);},actionAreaDistance:80,onAction:() => {this.actions.archive(target).catch(() => {});}}})
+        .bindContextMenu(this.rowMenu(target),ResponseType.LongPress)
+    } else if (this.actions.choices(target).length) {
+      ListItem() { this.itemBody(binding) }.bindContextMenu(this.rowMenu(target),ResponseType.LongPress)
+    } else {
+      ListItem() { this.itemBody(binding) }
+    }
+  }
+  @Builder notice() {
+    Row({space:8}) {
+      Text(tr(this.actions.notice).replace('{name}',this.actions.detail)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
+        .fontColor(this.actions.failure ? Colors.danger : Colors.ink).flexShrink(1).id('all_chats.feedback')
+      if (this.actions.undo) Button(tr('phone_chat_undo')).height(38).fontColor(Colors.link).backgroundColor(Color.Transparent)
+        .onClick(() => { this.actions.undoMove().catch(() => {}); }).id('all_chats.action.undo')
+    }.padding({left:16,right:16,top:9,bottom:9}).margin({left:16,right:16,bottom:16})
+      .backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:18}).borderRadius(18)
+  }
   build() {
+    Stack({alignContent:Alignment.Bottom}) {
     Column() {
       this.heading()
       List({scroller:this.list}) {
@@ -151,9 +222,7 @@ export struct PhoneAllChats {
         }
         ListItem() { this.filters() }
         ForEach(this.rows,(binding:BoundRow<ResourceRow>) => {
-          ListItem() {
-            Column() { this.chat(binding); Divider().strokeWidth(Tokens.divider).color(Colors.divider).margin({left:20,right:16}) }.width('100%')
-          }
+          this.listItem(binding,new ChatActionTarget(this.model,binding.value))
         },(binding:BoundRow<ResourceRow>) => binding.key)
         if (!this.rows.length) ListItem() {
           Column({space:Tokens.gap}) {
@@ -162,6 +231,8 @@ export struct PhoneAllChats {
           }.width('100%').padding(Tokens.section)
         }
       }.width('100%').layoutWeight(1)
-    }.width('100%').height('100%').backgroundColor(Colors.canvas).id('shell.all_chats')
+    }.width('100%').height('100%').backgroundColor(Colors.canvas)
+      if (this.actions.notice) this.notice()
+    }.width('100%').height('100%').id('shell.all_chats')
   }
 }
