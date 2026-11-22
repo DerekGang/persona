@@ -235,7 +235,7 @@ func (s *Service) toolHubSend(ctx context.Context, machine, self string, args js
 	}
 	if asks {
 		go s.partnerAsk(m)
-		return fmt.Sprintf("Waiting for your OK on your phone; it goes to %q after you allow it, and its reply arrives here (message_id %s). Don't send it again.%s",
+		return fmt.Sprintf("Waiting for the user's OK on their phone; it goes to %q once they allow it, and its reply arrives here (message_id %s). Don't send it again.%s",
 			hub.Name, m.MessageID, note), nil
 	}
 	s.partnerWakeUp()

@@ -293,7 +293,7 @@ func TestHubSendAsksAndSendsOnAllow(t *testing.T) {
 	r := newPartnerRig(t)
 	r.loop(t)
 	out, isErr := r.tool(pMain, "hub_send", `{"hub":"Hub B","text":"周六上午 10 点可以吗？"}`)
-	if isErr || !strings.Contains(out, "Waiting for your OK on your phone") || !strings.Contains(out, `"Hub B"`) {
+	if isErr || !strings.Contains(out, "Waiting for the user's OK on their phone") || !strings.Contains(out, `"Hub B"`) {
 		t.Fatalf("hub_send: %q", out)
 	}
 	id := messageIDOf(t, out)

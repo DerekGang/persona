@@ -302,7 +302,7 @@ func TestPartnerE2E(t *testing.T) {
 	// shows what goes (the credential gone), and nothing has gone yet.
 	const secret = "abcdef0123456789abcdef"
 	question := "Can you check whether the nightly build passed?"
-	id1, result := a.hubSend(t, map[string]string{"hub": "Office", "text": question + " token: Bearer " + secret}, "Waiting for your OK on your phone")
+	id1, result := a.hubSend(t, map[string]string{"hub": "Office", "text": question + " token: Bearer " + secret}, "Waiting for the user's OK on their phone")
 	if !strings.Contains(result, "Credentials were removed") || strings.Contains(result, secret) {
 		t.Fatalf("hub_send's answer: %s", result)
 	}
@@ -446,7 +446,7 @@ func TestPartnerE2E(t *testing.T) {
 	// 8. Asking again, the owner declines: A's conversation is told, B gets nothing.
 	a.confirm(t, hubB, true)
 	fourth := "May I see the deploy log?"
-	id4, _ := a.hubSend(t, map[string]string{"hub": "Office", "text": fourth}, "Waiting for your OK on your phone")
+	id4, _ := a.hubSend(t, map[string]string{"hub": "Office", "text": fourth}, "Waiting for the user's OK on their phone")
 	a.answer(t, a.card(t, id4), false)
 	eventually(t, 10*time.Second, "A's message declined", func() bool {
 		row, ok := a.store.partnerMessage("out", hubB, id4)
