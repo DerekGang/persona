@@ -454,3 +454,40 @@ func TestAcceptedWorkersRearmOrphanedLeader(t *testing.T) {
 		t.Fatal("completed parent generated a wake")
 	}
 }
+
+func TestOrphanedLeaderReceivesAcceptedWorkerGeneration(t *testing.T) {
+	s, f := newQuietService(t)
+	root := startTaskLeader(t, s, f)
+	child := planWorker(t, s, f, nil)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	leader := proto.Session{SessionID: root.Agents[0].SessionID, MachineID: "box", Host: "herdr", Agent: "claude",
+		Status: proto.StatusInterrupted, UpdatedAt: now.Add(-time.Hour),
+		Capabilities: &proto.SessionCapabilities{Read: true, Terminal: true}}
+	f.setSessions("box", leader)
+	s.orphanWatch(ctx, now)
+	before, ok := s.orphanSignal(root)
+	if !ok || before.WorkerSet != "" {
+		t.Fatalf("open worker: %+v", before)
+	}
+	if _, _, err := s.updateSupervision(ctx, child.ID, func(v *Supervision) bool { v.State = reviewAccepted; return true }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.reviewDoneTodo(ctx, child.ID, "accepted", true); err != nil {
+		t.Fatal(err)
+	}
+	s.orphanWatch(ctx, now.Add(time.Minute))
+	after, ok := s.orphanSignal(root)
+	if !ok || after.WorkerSet == "" || after.Key == before.Key {
+		t.Fatalf("last worker did not rearm supervision: %+v", after)
+	}
+	if _, ok := s.digestEntry(ctx, after, ""); !ok {
+		t.Fatal("completed generation cannot reach the supervisor")
+	}
+	if _, _, err := s.updateSupervision(ctx, root.ID, func(v *Supervision) bool { v.State = reviewNeedsUser; return true }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.digestEntry(ctx, after, ""); ok {
+		t.Fatal("wake overrode an owner decision")
+	}
+}

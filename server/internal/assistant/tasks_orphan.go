@@ -59,6 +59,15 @@ type orphanAgent struct {
 	connected         time.Time
 }
 
+// A stopped read-only node session may retain the name of its host after its
+// foreground Agent disappears. A live pane or an unsupported status is not
+// evidence that the Agent stopped.
+func orphanSessionClosed(c proto.Session) bool {
+	return sessionClosed(c) || c.PaneID == "" && !c.Starting &&
+		(c.Status == proto.StatusInterrupted || c.Status == proto.StatusOffline) &&
+		c.Capabilities != nil && c.Capabilities.Read && c.Capabilities.Terminal && !c.Capabilities.Send
+}
+
 // agentGone says why a is not working and will not by itself ("": it works, or something pending brings it back).
 func agentGone(a orphanAgent, now time.Time) string {
 	if !a.reachable {
@@ -74,7 +83,7 @@ func agentGone(a orphanAgent, now time.Time) string {
 	switch {
 	case c.Assistant || c.Starting:
 		return ""
-	case !sessionClosed(c) && !stoppedAgent(c):
+	case !orphanSessionClosed(c):
 		return "" // in a host (stopped or working, the task's other states say which), or working
 	case c.State == proto.StateNeedsYou || c.PendingInteractions > 0 || len(c.Queued) > 0:
 		return "" // a card waits for the user, or input waits to go in
@@ -296,7 +305,7 @@ func (s *Service) orphanWatch(ctx context.Context, now time.Time) {
 		active := false
 		prevTodo := b.progress[id]
 		for _, a := range agents {
-			if !a.listed || !sessionClosed(a.c) && !stoppedAgent(a.c) {
+			if !a.listed || !orphanSessionClosed(a.c) {
 				continue
 			}
 			k := [2]string{a.machine, a.session}
