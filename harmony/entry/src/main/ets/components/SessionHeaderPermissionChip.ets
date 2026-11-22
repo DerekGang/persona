@@ -33,8 +33,8 @@ export struct SessionHeaderPermissionChip {
     if (id==='plan') return $r('sys.symbol.list_bullet');
     if (id==='acceptEdits') return Symbols.edit;
     if (id==='auto') return $r('sys.symbol.wand_and_stars');
-    if (id==='bypassPermissions') return $r('sys.symbol.exclamationmark_shield');
-    return $r('sys.symbol.lock');
+    if (id==='bypassPermissions') return $r('sys.symbol.security_shield');
+    return $r('sys.symbol.lock_shield');
   }
   private tint(): ResourceColor {
     const id=this.permission.current;

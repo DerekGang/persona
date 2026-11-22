@@ -691,7 +691,7 @@ struct Index {
         } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
       }.width('100%').constraintSize({minHeight:50}).padding({left:16,right:16,top:this.phonePeer() || this.phoneTop === 'session' || this.phoneToolParent ? 2 : 3,bottom:3}).alignItems(VerticalAlign.Center)
       if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild && this.targetReady(this.phoneTop,this.phoneParam) && this.detailModel.selected.machine) {
-        SessionSpaceTabs({model:this.detailModel,space:this.phoneSessionSpace,
+        SessionSpaceTabs({space:this.phoneSessionSpace,model:this.detailModel,
           onOpenSpace:(key:string) => this.openSessionSpace(key),onPick:(key:string,from:string,id:string) => this.switchSessionTab(key,from,id)})
       }
       if (this.phoneLargeTitle()) Text(this.phonePageName()).fontSize(PhoneStyle.title).maxFontScale(Tokens.chromeFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
