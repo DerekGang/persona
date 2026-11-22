@@ -376,20 +376,27 @@ extension AlarmsTool {
     /// Real timers use the unchanged `attributes(label:timer:)` below, with both states for AlarmKit to choose.
     static func sampleAttributes(label: String, paused: Bool) -> AlarmAttributes<PersonaAlarmData> {
         let real = attributes(label: label, timer: true)
-        let presentation: AlarmPresentation
-        if paused, let existing = real.presentation.paused {
-            let marker = AlarmButton(text: existing.resumeButton.text, textColor: real.tintColor,
-                                     systemImageName: existing.resumeButton.systemImageName)
-            presentation = .init(alert: real.presentation.alert, paused: .init(title: existing.title, resumeButton: marker))
-        } else {
-            let countdown = real.presentation.countdown.map {
-                AlarmPresentation.Countdown(title: $0.title, pauseButton: $0.pauseButton.map { button in
-                    AlarmButton(text: button.text, textColor: real.tintColor, systemImageName: button.systemImageName)
-                })
-            }
-            presentation = .init(alert: real.presentation.alert, countdown: countdown)
-        }
+        // These resources are display-only for the sample and need no app localization lookup. Avoid repeating its
+        // bundle path and sandbox token in every title; the label is unchanged (#12248).
+        let title = sampleTitle(defaultValue: label)
+        let symbol = paused ? Theme.Icon.run : Theme.Icon.pause
+        let button = AlarmButton(text: title, textColor: real.tintColor, systemImageName: symbol)
+        let stop = sampleStopButton(title: title, tintColor: real.tintColor)
+        let alert = AlarmPresentation.Alert(title: title, stopButton: stop)
+        let presentation = paused
+            ? AlarmPresentation(alert: alert, paused: .init(title: title, resumeButton: button))
+            : AlarmPresentation(alert: alert, countdown: .init(title: title, pauseButton: button))
         return AlarmAttributes(presentation: presentation, metadata: real.metadata, tintColor: real.tintColor)
+    }
+
+    /// The label as the resource's fallback, not a localization key, for the custom sample (#12248).
+    static func sampleTitle(key: StaticString = "sample.title", defaultValue: String) -> LocalizedStringResource {
+        .init(key, defaultValue: .init(defaultValue), bundle: .atURL(URL(fileURLWithPath: "")))
+    }
+
+    /// The required Alert Stop configuration's actual input, before AlarmKit normalizes its unused getter.
+    static func sampleStopButton(title: LocalizedStringResource, tintColor: Color) -> AlarmButton {
+        alarmButton(text: title, textColor: tintColor, systemImageName: Theme.Icon.interrupt)
     }
 
     /// An id Persona's own alarms have; anything else is refused (the Clock app's alarms are out of reach).
@@ -411,7 +418,7 @@ extension AlarmsTool {
         let accent = Color(Theme.accent.resolve(in: EnvironmentValues()))
         let title = LocalizedStringResource(stringLiteral: label)
         func button(_ text: String, _ symbol: String) -> AlarmButton {
-            AlarmButton(text: LocalizedStringResource(stringLiteral: text), textColor: accent, systemImageName: symbol)
+            alarmButton(text: LocalizedStringResource(stringLiteral: text), textColor: accent, systemImageName: symbol)
         }
         let alert = AlarmPresentation.Alert(title: title, stopButton: button(String(localized: "Stop [Persona Alarm]"), Theme.Icon.interrupt))
         let presentation: AlarmPresentation
@@ -424,6 +431,10 @@ extension AlarmsTool {
             presentation = AlarmPresentation(alert: alert)
         }
         return AlarmAttributes(presentation: presentation, metadata: PersonaAlarmData(label: label), tintColor: accent)
+    }
+
+    static func alarmButton(text: LocalizedStringResource, textColor: Color, systemImageName: String) -> AlarmButton {
+        .init(text: text, textColor: textColor, systemImageName: systemImageName)
     }
 
     /// `mon`…`sun` as AlarmKit names the day (the Alarms and Timers page reads its schedules back with it).

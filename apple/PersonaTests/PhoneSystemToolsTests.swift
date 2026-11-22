@@ -332,21 +332,47 @@ struct PhoneSystemToolsTests {
         }
     }
 
-    /// An app-requested ActivityKit activity takes at most 4 KB of attributes. AlarmPresentation encodes both timer
-    /// states, so each sample keeps only its own Pause or Resume marker. The widget supplies the words and colours.
+    /// An app-requested ActivityKit activity takes at most 4 KB of attributes. The sample's resources carry no app
+    /// bundle lookup data, while the title, action marker, icon and tint stay complete for the custom widget.
     @Test func theTimerSampleFitsInsideActivityKitsLimit() throws {
         guard #available(iOS 26.0, *) else { return }
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
         let runningAttributes = AlarmsTool.sampleAttributes(label: "Focus", paused: false)
         let pausedAttributes = AlarmsTool.sampleAttributes(label: "Focus", paused: true)
+        let resource = AlarmsTool.sampleTitle(key: "sample.unused.key", defaultValue: "Different visible label")
+        let resourceData = try encoder.encode(resource)
+        let decodedResource = try decoder.decode(LocalizedStringResource.self, from: resourceData)
+        #expect(decodedResource.key == "sample.unused.key")
+        #expect(decodedResource.defaultValue == String.LocalizationValue("Different visible label"))
+        #expect(String(localized: decodedResource) == "Different visible label")
+        print("timer resource sentinel: key=\(decodedResource.key), defaultValue=\(String(localized: decodedResource))")
+        #expect(decodedResource.key != String(localized: decodedResource))
         for sample in [runningAttributes, pausedAttributes] {
             let data = try encoder.encode(sample)
-            #expect(data.count < 4096, "sample attributes bytes: \(data.count)")
+            let state = sample.presentation.countdown == nil ? "paused" : "running"
+            #expect(data.count < 4096, "\(state) sample attributes bytes: \(data.count)")
+            print("timer sample \(state): attributes=\(data.count) bytes")
             let decoded = try decoder.decode(AlarmAttributes<PersonaAlarmData>.self, from: data)
             #expect(decoded.metadata?.label == "Focus")
             #expect(decoded.presentation.countdown != nil || decoded.presentation.paused != nil)
+            #expect(decoded.presentation.alert.title.key == "sample.title")
+            #expect(decoded.presentation.alert.title.defaultValue == String.LocalizationValue("Focus"))
+            #expect(String(localized: decoded.presentation.alert.title) == "Focus")
+            print("timer sample \(state): title=\(decoded.presentation.alert.title.key), defaultValue=\(String(localized: decoded.presentation.alert.title))")
+            // AlarmKit may normalize the Alert getter or omit its unused Stop when encoding. Verify the actual input
+            // directly instead of inferring it from that getter; the required configuration still decodes.
+            let stop = AlarmsTool.sampleStopButton(title: sample.presentation.alert.title, tintColor: sample.tintColor)
+            #expect(stop.systemImageName == Theme.Icon.interrupt)
+            #expect(stop.textColor == sample.tintColor)
+            #expect(stop.text == sample.presentation.alert.title)
             let encoded = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            if let alert = encoded["presentation"] as? [String: Any],
+               let alertValue = alert["alert"] as? [String: Any],
+               let stop = alertValue["stopButton"] as? [String: Any],
+               let icon = stop["systemImageName"] as? String {
+                #expect(icon == Theme.Icon.interrupt)
+            }
             let archived = try #require(encoded["tintColor"] as? String)
             let original = try #require(JSONSerialization.jsonObject(with: encoder.encode(sample)) as? [String: Any])["tintColor"] as? String
             #expect(archived == original)
@@ -355,8 +381,10 @@ struct PhoneSystemToolsTests {
             #expect(decodedColor != nil)
         }
         #expect(runningAttributes.presentation.countdown?.pauseButton != nil)
+        #expect(runningAttributes.presentation.countdown?.pauseButton?.systemImageName == Theme.Icon.pause)
         #expect(runningAttributes.presentation.paused == nil)
         #expect(pausedAttributes.presentation.paused?.resumeButton != nil)
+        #expect(pausedAttributes.presentation.paused?.resumeButton.systemImageName == Theme.Icon.run)
         #expect(pausedAttributes.presentation.countdown == nil)
 
         // These are the exact ActivityContent values requested with the sample, including the wrapper's staleDate.
@@ -387,9 +415,15 @@ struct PhoneSystemToolsTests {
         } else {
             Issue.record("paused must expose Resume")
         }
-        // Stop is unconditional in AlarmButtons, with each sample's existing tint.
+        // Stop is unconditional in AlarmButtons, with each sample's existing tint. Each action targets this timer's ID.
         #expect(runningAttributes.tintColor == AlarmsTool.attributes(label: "Focus", timer: true).tintColor)
         #expect(pausedAttributes.tintColor == AlarmsTool.attributes(label: "Focus", timer: true).tintColor)
+        // AlarmButtons owns its Stop symbol; the app target maps the same meaning to Theme.Icon.interrupt.
+        #expect(Theme.Icon.interrupt == "stop.fill")
+        #expect(PauseAlarmIntent(alarmID: runningContent.state.alarmID).alarmID == runningContent.state.alarmID.uuidString)
+        #expect(ResumeAlarmIntent(alarmID: pausedContent.state.alarmID).alarmID == pausedContent.state.alarmID.uuidString)
+        #expect(StopAlarmIntent(alarmID: runningContent.state.alarmID).alarmID == runningContent.state.alarmID.uuidString)
+        #expect(StopAlarmIntent(alarmID: pausedContent.state.alarmID).alarmID == pausedContent.state.alarmID.uuidString)
 
         guard case .countdown(let countdown) = runningContent.state.mode else {
             Issue.record("the running sample must count down")
@@ -408,6 +442,13 @@ struct PhoneSystemToolsTests {
         #expect(timer.countdown?.pauseButton != nil && timer.paused?.resumeButton != nil)
         #expect(timer.countdown?.pauseButton?.systemImageName == Theme.Icon.pause)
         #expect(timer.paused?.resumeButton.systemImageName == Theme.Icon.run)
+        let accent = AlarmsTool.attributes(label: "Focus", timer: true).tintColor
+        let title = AlarmsTool.sampleTitle(defaultValue: "Focus")
+        // The unused Alert getter normalizes its values on newer SDKs. The shared constructor pins the actual inputs.
+        let stop = AlarmsTool.alarmButton(text: title, textColor: accent, systemImageName: Theme.Icon.interrupt)
+        #expect(stop.systemImageName == Theme.Icon.interrupt)
+        #expect(stop.textColor == accent)
+        #expect(stop.text == title)
     }
     #endif
 
