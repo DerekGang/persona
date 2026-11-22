@@ -230,8 +230,8 @@ func TestScopedDeviceAgentRouteScopes(t *testing.T) {
 		}
 		checked++
 	}
-	if checked != 7 {
-		t.Fatalf("checked %d Agent routes, want all 7", checked)
+	if checked != 8 {
+		t.Fatalf("checked %d Agent routes, want all 8", checked)
 	}
 }
 
