@@ -11,7 +11,7 @@ import {
   InteractionChoice, InteractionSchemaField, InteractionValidation,
   recordedPlanMode, interactionCanDefer, interactionCanSubmit, interactionToolName, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
-  interactionPermissionFieldPlaceholder, interactionQuestionOptions,
+  interactionPermissionFieldPlaceholder, interactionPlanTitle, interactionQuestionOptions,
   interactionSchemaFields, interactionScreenCanCancel, interactionScreenMulti, interactionScreenOptions,
   interactionScreenQuestion, interactionScreenSubmitLabel, validateInteractionElicitation
 } from '../models/InteractionDecision';
@@ -55,7 +55,7 @@ export struct InteractionDecisionForm {
   @Local formValues: Record<string, Object> = Wire.payload([], []);
 
   aboutToAppear(): void { this.resetForm(); if (this.draft && this.draft.id === this.request.id && this.draft.raw === this.request.raw && this.draft.owns(this.draftSession)) { const text: Record<string, string> = {}, picks: Record<string, string[]> = {}; Object.keys(this.draft.text).forEach((key: string) => text[key] = this.draft!.text[key]); Object.keys(this.draft.picks).forEach((key: string) => picks[key] = this.draft!.picks[key].slice()); this.textValues = text; this.questionPicks = picks; } }
-  aboutToDisappear(): void { if (this.draft && this.draft.id === this.request.id && this.draft.raw === this.request.raw) this.draft.save(this.textValues, this.questionPicks, this.draftSession); }
+  aboutToDisappear(): void { this.fullPlan=false; if (this.draft && this.draft.id === this.request.id && this.draft.raw === this.request.raw) this.draft.save(this.textValues, this.questionPicks, this.draftSession); }
   @Monitor('request.id', 'request.raw') requestChanged(): void { this.resetForm(); }
   @Monitor('request.revision') revisionChanged(): void {
     this.selectedScreen = '';
@@ -548,11 +548,13 @@ export struct InteractionDecisionForm {
   @Builder planReader() {
     Column() {
       Row() {
-        Text(tr('phone_agent_plan_approval')).layoutWeight(1).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
-          .fontWeight(FontWeight.Medium).fontColor(Colors.ink)
         Button({type:ButtonType.Circle}) { SymbolGlyph(IconActions.symbol('close')).fontSize('19vp').fontColor([Colors.ink]) }
           .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('close')).onClick(() => this.fullPlan=false).id('interaction.task.reader.close')
-      }.width('100%').padding({left:16,right:12,top:6,bottom:6})
+        Text(interactionPlanTitle(this.taskPlanSource(),tr('plan'))).layoutWeight(1).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
+          .fontWeight(FontWeight.Medium).fontColor(Colors.ink).textAlign(TextAlign.Center).maxLines(1)
+          .textOverflow({overflow:TextOverflow.Ellipsis}).id('interaction.task.reader.title')
+        Blank().width(Tokens.touch).accessibilityLevel('no')
+      }.width('100%').padding({left:12,right:12,top:6,bottom:6})
       Scroll() {
         Column() { MarkdownText({text:this.taskPlanSource(),chatReply:true,onLink:this.onLink}) }
           .width('100%').alignItems(HorizontalAlign.Start).padding(16)
@@ -576,7 +578,6 @@ export struct InteractionDecisionForm {
         SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('13vp').fontColor([Colors.secondary])
       }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_plan_fullscreen'))
         .onClick(() => { if (this.admission()) this.fullPlan=true; }).id('interaction.task.expand_plan')
-        .bindContentCover($$this.fullPlan,this.planReader())
       if (interactionToolName(this.request)!=='ask_user') Button({type:ButtonType.Circle}) {
         Row({space:2}) {
           ForEach([0,1,2],(_dot:number) => { Circle().width(2.5).height(2.5).fill(Colors.secondary) },(dot:number) => String(dot))
@@ -717,6 +718,7 @@ export struct InteractionDecisionForm {
       })
     }.width('100%').padding({left:12,right:12,top:8,bottom:8}).alignItems(HorizontalAlign.Start)
       .backgroundColor(Colors.surface).border({width:0.6,color:Colors.divider,radius:16}).borderRadius(16).id('interaction.card')
+      .bindSheet($$this.fullPlan,this.planReader(),{height:SheetSize.LARGE,showClose:false,dragBar:false,preferType:SheetType.BOTTOM})
     else if (this.fillAvailable && !this.pinFooter && this.request.kind !== 'question') Scroll() {
       Column({ space: Tokens.gap }) { this.formBody(); this.responseFooter() }
         .width('100%').padding({ top: Tokens.page }).alignItems(HorizontalAlign.Start)

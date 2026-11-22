@@ -10,6 +10,14 @@ export class InteractionChoice {
   recommended: boolean = false;
 }
 
+export function interactionPlanTitle(plan: string, fallback: string): string {
+  for (const line of plan.split('\n')) {
+    const title = line.trim().replace(/^[#* ]+|[#* ]+$/g, '');
+    if (title) return title;
+  }
+  return fallback;
+}
+
 /** One field in the deliberately bounded MCP elicitation JSON Schema subset. */
 export class InteractionSchemaField {
   key: string = '';

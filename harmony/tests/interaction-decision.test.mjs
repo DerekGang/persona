@@ -21,7 +21,7 @@ registerHooks({
 const {
   decodeInteractionDecision, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
-  interactionPermissionFieldPlaceholder, interactionQuestionOptions, interactionResolution, interactionScreenOptions,
+  interactionPermissionFieldPlaceholder, interactionPlanTitle, interactionQuestionOptions, interactionResolution, interactionScreenOptions,
   validateInteractionElicitation
 } = await import('../entry/src/main/ets/models/InteractionDecision.ets');
 
@@ -158,4 +158,18 @@ test('plan controls send exactly the mode selected on this request and preserve 
   const pinned=decision({id:'pinned',kind:'plan',plan_then:'default',plan:'Review'});
   assert.throws(()=>interactionResolution(pinned,'approve',{mode:'bypassPermissions'}),/request_updated/);
   assert.deepEqual(interactionResolution(pinned,'approve',{mode:'default'}),{approve:true,mode:'default'});
+});
+
+test('plan reading uses the first meaningful Markdown line for the sheet title', () => {
+  assert.equal(interactionPlanTitle('\n ### **支持 HEIC** ##\n1. 检查图像','计划'), '支持 HEIC');
+  assert.equal(interactionPlanTitle('##\n* ** #\n  1. Preserve EXIF  \n- Continue','Plan'), '1. Preserve EXIF');
+  assert.equal(interactionPlanTitle('\n###   **\n','計画'), '計画');
+});
+
+test('the inline approval opens its native plan sheet from a stable card and closes to the pending request', () => {
+  const form=readFileSync(new URL('../entry/src/main/ets/components/InteractionDecisionForm.ets',import.meta.url),'utf8');
+  assert.match(form,/if \(this\.admission\(\)\) this\.fullPlan=true;[\s\S]*?id\('interaction.task.expand_plan'\)/);
+  assert.match(form,/id\('interaction.card'\)\s*\.bindSheet\(\$\$this\.fullPlan,this\.planReader\(\),\{height:SheetSize\.LARGE/);
+  assert.match(form,/this\.fullPlan=false\)\.id\('interaction.task.reader.close'\)/);
+  assert.match(form,/aboutToDisappear\(\): void \{ this\.fullPlan=false;/);
 });
