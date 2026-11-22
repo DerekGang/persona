@@ -399,6 +399,26 @@ export struct Conversation {
     return this.fieldFocused || this.modeMenuOpen || this.model.draft.length > 0 || this.attachments.attachments.length > 0 ||
       !!this.model.sourceContext || available < Tokens.minimumInput;
   }
+  private restingComposer(): boolean {
+    return this.environment.keyboardHeightPx === 0 && !this.expandedComposer() && this.composerAvailable();
+  }
+  private readonly composerStroke: number = 0.7;
+  private restingStrokePx(): number {
+    return Math.max(1, Math.round(this.getUIContext().vp2px(this.composerStroke)));
+  }
+  private composerPadding(): Padding {
+    if (!this.restingComposer()) return { left: 5, right: 5, top: 3, bottom: 3 };
+    // ArkUI lays out the border and padding separately. Round their combined
+    // 4vp / 2vp insets once so the stroke cannot cost either edge a device pixel.
+    const ui = this.getUIContext(), stroke = this.restingStrokePx();
+    const side = String(Math.max(0, Math.round(ui.vp2px(Tokens.fine)) - stroke)) + 'px';
+    const end = String(Math.max(0, Math.round(ui.vp2px(2)) - stroke)) + 'px';
+    return { left: side, right: side, top: end, bottom: end };
+  }
+  private controlsPadding(): Padding {
+    const resting = this.restingComposer(), side = resting ? Tokens.inset : Tokens.page;
+    return { left: side, right: side, top: Tokens.gap, bottom: resting ? Tokens.gap : Tokens.footer };
+  }
   private verticalActions(): boolean {
     // The tools are icon buttons with vp touch targets. Only wrap when their actual slots cannot fit.
     if (this.composerWidth < Tokens.composerNarrowActions) return true;
@@ -1253,17 +1273,20 @@ export struct Conversation {
             .backgroundColor(Color.Transparent)
             .enabled(this.primaryEnabled())
             .onClick(() => { if (!this.sendCurrent()) return; if (this.primaryStop()) this.model.stop(() => this.sendCurrent()); else this.sendDraft(); }).id('chat.send')
-          }.width('100%').height(Tokens.touch).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End).padding({right:3})
+          }.width('100%').height(Tokens.touch).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End)
+            .padding({ right: this.restingComposer() ? 0 : 3 })
         }
       }.width('100%').onAreaChange((_old: Area, area: Area) => { const width = Number(area.width); if (Number.isFinite(width) && width > 0) this.composerWidth = width; })
-    }.padding({left:5,right:5,top:3,bottom:3}).backgroundColor(this.model.style==='system' ? this.environment.dark ? '#1F1F21' : '#FFFFFF' : Colors.surface)
-      .border({width:0.7,color:this.model.style==='system' ? this.environment.dark ? '#3A3A3C' : '#E3E3E3' : Colors.divider,radius:25}).borderRadius(25).width('100%').id('chat.composer')
+    }.padding(this.composerPadding()).backgroundColor(this.model.style==='system' ? this.environment.dark ? '#1F1F21' : '#FFFFFF' : Colors.surface)
+      .border({width:this.restingComposer() ? String(this.restingStrokePx()) + 'px' : this.composerStroke,
+        color:this.model.style==='system' ? this.environment.dark ? '#3A3A3C' : '#E3E3E3' : Colors.divider,radius:25}).borderRadius(25).width('100%').id('chat.composer')
   }
 
-  @Builder taskDock() {
+  @Builder taskDock(horizontalInset: number = 0) {
     if (this.model.selected.kind === 'conversation' && this.model.connected) {
           AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, dockRoom:this.availableHeight, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
             onOpenTodo: (row: ResourceRow) => this.onOpenResource(row), onOpenInbox: (row: ResourceRow) => this.onOpenResource(row), onLink: (address: string) => this.onLink(address) })
+            .width('100%').padding({ left: horizontalInset, right: horizontalInset })
     }
   }
   @Builder blockingContent() {
@@ -1294,7 +1317,7 @@ export struct Conversation {
       if (this.showContextMenu && (this.model.decision || !this.model.canCompose())) Button({ type: ButtonType.Circle }) { Image(Symbols.more).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink) }
         .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick(() => this.openFallbackActions())
         .bindMenu(this.actionsVisible, this.actionsMenu, this.actionMenuOptions(this.actionsRequest)).id('chat.more.fallback')
-      this.taskDock()
+      this.taskDock(this.restingComposer() ? Tokens.page - Tokens.inset : 0)
       if (this.model.canCompose() && !this.model.decision) {
         if (this.attachments.busy && !this.sending && (this.attachments.errorKey === 'chat_attachment_storage_unavailable' || this.model.error === 'cache_unavailable')) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry')).bindTips(tr('retry')).onClick(() => { this.attachmentKey = ''; this.syncAttachments(); })
         this.composer()
@@ -1302,7 +1325,7 @@ export struct Conversation {
         if (this.model.canAttach()) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('attach_live')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('attach_live', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('attach_live')).bindTips(tr('attach_live')).onClick(() => this.model.attach())
         Text(this.model.agentInputNotice() ? this.agentNotice() : tr('read_only')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page)
       }
-      }.width('100%').constraintSize({ maxWidth: Tokens.readingMax }).padding({ left: Tokens.page, right: Tokens.page, bottom: Tokens.footer, top: Tokens.gap }).onAreaChange((_before: Area, area: Area): void => {
+      }.width('100%').constraintSize({ maxWidth: Tokens.readingMax }).padding(this.controlsPadding()).onAreaChange((_before: Area, area: Area): void => {
         const height = Number(area.height);
         if (Number.isFinite(height) && height > 0 && Math.abs(height - this.controlsHeight) > 1) {
           this.controlsHeight = height;

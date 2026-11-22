@@ -20,15 +20,51 @@ function method(name) {
 }
 const Composer = new Function('Tokens', 'Edge', 'return ' + stripTypeScriptTypes('class Composer {' +
   ['hasComposerAction', 'trailingActionWidth', 'leftActionWidth', 'expandedComposer', 'composerColumns', 'sendColumns',
+    'restingComposer', 'restingStrokePx', 'composerPadding', 'controlsPadding', 'composerAvailable',
     'leftColumns', 'verticalActions', 'maxControlsHeight', 'inlineEditorMaxHeight', 'revealOverflowingActions'].map(method).join('\n') + '}'))(Tokens, { Bottom: 'bottom' });
 function fixture(density = 3, width = 372) {
   return Object.assign(new Composer(), {
-    composerWidth: width, fieldFocused: false, primaryStop: () => false, sending: false, model: { demo: false, draft: '' },
+    composerWidth: width, fieldFocused: false, primaryStop: () => false, sending: false, active: true,
+    composerStroke: Number(source.match(/private readonly composerStroke: number = ([\d.]+);/)[1]),
+    model: { demo: false, draft: '', canCompose: () => true },
     attachments: { attachments: [] }, environment: { fontScale: 1, keyboardHeightPx: 0 }, showContextMenu: true,
     availableHeight: 800, editorHeight: 0, controlsHeight: 80,
     getUIContext: () => ({ vp2px: value => value * density })
   });
 }
+
+test('resting touch targets sit 16vp from the sides and 10vp above the native safe bottom at every font scale', () => {
+  for (const density of [1, 2, 2.75, 3, 3.125]) for (const scale of [1, 1.5, 3.2]) {
+    const v = fixture(density);
+    v.environment.fontScale = scale;
+    const outside = v.controlsPadding(), inside = v.composerPadding(), stroke = v.restingStrokePx();
+    const actual = edge => {
+      assert.match(inside[edge], /^\d+px$/);
+      return Math.round(outside[edge] * density) + parseInt(inside[edge], 10) + stroke;
+    };
+    assert.equal(v.restingComposer(), true);
+    assert.ok(Math.abs(actual('left') - 16 * density) <= 1);
+    assert.ok(Math.abs(actual('right') - 16 * density) <= 1);
+    assert.ok(Math.abs(actual('bottom') - 10 * density) <= 1);
+    if (density === 3) assert.deepEqual([actual('left'), actual('right'), actual('bottom')], [48, 48, 30]);
+  }
+});
+
+test('focus, keyboard dismissal, draft, menu, narrow viewport and unavailable input keep the editing or dock insets', () => {
+  for (const change of [
+    v => { v.fieldFocused = true; }, v => { v.environment.keyboardHeightPx = 600; },
+    v => { v.modeMenuOpen = true; }, v => { v.model.draft = 'Review'; },
+    v => { v.composerWidth = 220; }, v => { v.active = false; },
+    v => { v.model.decision = { id: 'pending' }; }, v => { v.model.canCompose = () => false; },
+    v => { v.model.sourceContext = { title: 'Context' }; }, v => { v.attachments.attachments.push({ id: 'file' }); }
+  ]) {
+    const v = fixture();
+    change(v);
+    assert.equal(v.restingComposer(), false);
+    assert.deepEqual(v.controlsPadding(), {left:16,right:16,top:8,bottom:4});
+    assert.deepEqual(v.composerPadding(), {left:5,right:5,top:3,bottom:3});
+  }
+});
 
 test('compact Persona and Agent editors get the remaining width after fixed actions and equal gaps', () => {
   const v = fixture();
