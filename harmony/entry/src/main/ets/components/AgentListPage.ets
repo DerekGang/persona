@@ -111,6 +111,7 @@ export struct AgentListPage {
   private pullX: number = 0;
   private revealedDuringPull: boolean = false;
   private focusSearch: boolean = false;
+  private focusTimer: number = -1;
   private rowBindingOwner: Object | undefined;
   private rowBindingScope: string = '';
   private groupBindingSequence: number = 0;
@@ -591,7 +592,7 @@ export struct AgentListPage {
 
   private searchVisible(): boolean { return !this.compactRoot || this.searchOpen || !!this.workspace.search; }
   private resetSearchReveal(): void {
-    this.searchOpen = false; this.setSearchEditing(false); this.focusSearch = false; this.pullY = -1; this.revealedDuringPull = false;
+    clearTimeout(this.focusTimer); this.searchOpen = false; this.setSearchEditing(false); this.focusSearch = false; this.pullY = -1; this.revealedDuringPull = false;
   }
   private trackPull(event: TouchEvent): void {
     if (event.type === TouchType.Down) this.revealedDuringPull = false;
@@ -631,14 +632,21 @@ export struct AgentListPage {
   }
   private activateSearch(): void {
     this.focusSearch = true; this.searchOpen = true;
-    if (this.searchVisible()) {
-      setTimeout(() => {
-        if (this.active && this.searchOpen && this.focusSearch) {
-          this.focusSearch = false;
-          this.getUIContext().getFocusController().requestFocus('agents.search');
-        }
-      }, 0);
-    }
+    this.focusMountedSearch();
+  }
+  private focusMountedSearch(attempt:number=0): void {
+    clearTimeout(this.focusTimer);
+    if (!this.active || !this.searchOpen || !this.focusSearch) return;
+    // ArkUI's native menu can still own focus while the new search field enters the page.
+    this.focusTimer = setTimeout(() => {
+      if (!this.active || !this.searchOpen || !this.focusSearch) return;
+      const ui=this.getUIContext(), field=ui.getFrameNodeById('agents.search');
+      if (field && field.getMeasuredSize().width > 0) {
+        try { ui.getFocusController().requestFocus('agents.search'); } catch (_) { /* The outgoing menu may cover this frame. */ }
+      }
+      if (this.focusSearch && attempt < 8) this.focusMountedSearch(attempt + 1);
+      else this.focusSearch = false;
+    },45);
   }
   private headerTopInset(): number {
     if (!this.compactRoot || this.pageOriginY < 0 || !this.environment.isFullScreen) return 6;
@@ -656,14 +664,10 @@ export struct AgentListPage {
     Search({value:this.workspace.search,placeholder:tr('agents_search_prompt'),controller:this.searchField})
       .maxFontScale(Tokens.interfaceFontMaxScale).height(44).margin(0)
       .textFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).caretStyle({color:Colors.action})
-      .onFocus(() => { if (this.compactRoot) { this.searchOpen = true; this.setSearchEditing(true); } })
+      .onFocus(() => { if (this.compactRoot) { this.focusSearch = false; this.searchOpen = true; this.setSearchEditing(true); } })
       .onBlur(() => { if (!this.workspace.search) this.setSearchEditing(false); })
       .onChange((value: string) => { if (this.compactRoot) this.searchOpen = true; this.workspace.setSearch(value); })
-      .onAppear(() => {
-        if (!this.focusSearch) return;
-        this.focusSearch = false;
-        setTimeout(() => { if (this.active && this.searchOpen) this.getUIContext().getFocusController().requestFocus('agents.search'); }, 0);
-      }).id('agents.search')
+      .onAppear(() => this.focusMountedSearch()).id('agents.search')
   }
   @Builder groupingMenu() {
     Menu() {
@@ -737,7 +741,7 @@ export struct AgentListPage {
         this.filterControl()
       }.width('100%').height(this.quickHeight()).borderRadius(this.compactRoot ? 44 : 0).clip(this.compactRoot)
         .backgroundColor(this.compactRoot ? Colors.grouped : Color.Transparent)
-        .border({width:this.compactRoot ? 0.5 : 0,color:Colors.divider,radius:44})
+        .outlineWidth(this.compactRoot ? 0.5 : 0).outlineColor(Colors.divider).outlineRadius(44)
       if (this.workspace.machineFilter) {
         Button({ type: ButtonType.Capsule }) {
           Row({ space: 5 }) {
