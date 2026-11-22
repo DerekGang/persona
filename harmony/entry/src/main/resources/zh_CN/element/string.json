@@ -4933,6 +4933,14 @@
       "value": "同时删除 Git 分支"
     },
     {
+      "name": "tree_cleanup_present",
+      "value": "上次检查时，工作树仍在。可以稍后再检查清理结果。"
+    },
+    {
+      "name": "tree_cleanup_removing",
+      "value": "正在清理工作树，可以稍后检查结果。"
+    },
+    {
       "name": "tree_check_result",
       "value": "核对清理结果"
     },

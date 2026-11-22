@@ -554,8 +554,15 @@ export class WorktreeActions {
       if (this.action === 'rename') return await this.recoverRename(rev,replay);
       const body = this.body(); body['preview_token'] = this.token; body['reconcile'] = true;
       const result = await this.query('delete', body);
-      if (this.current(rev) && this.removed(result)) return await this.completed(rev, result);
-      if (this.current(rev)) this.error = 'result_unknown';
+      if (!this.current(rev)) return undefined;
+      if (this.removed(result)) return await this.completed(rev, result);
+      this.error = 'result_unknown';
+      // Reconciliation observes the workspace. A still-present checkout does not settle the original request.
+      if (Wire.text(result, 'workspace_id') === this.tree!.sourceId && result['removed'] === false) {
+        const state = Wire.text(result, 'state');
+        if (state === 'present') this.error = 'tree_cleanup_present';
+        if (state === 'removing') this.error = 'tree_cleanup_removing';
+      }
       return undefined;
     } catch (error) {
       if (this.current(rev)) this.error = this.failure(error as Error);

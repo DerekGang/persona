@@ -4933,6 +4933,14 @@
       "value": "Also delete the Git branch"
     },
     {
+      "name": "tree_cleanup_present",
+      "value": "The worktree was still present at the last check. Check again for the cleanup result."
+    },
+    {
+      "name": "tree_cleanup_removing",
+      "value": "Cleanup is in progress. Check again for the result."
+    },
+    {
       "name": "tree_check_result",
       "value": "Check removal status"
     },

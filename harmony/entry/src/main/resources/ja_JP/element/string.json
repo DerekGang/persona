@@ -4933,6 +4933,14 @@
       "value": "Git ブランチも削除"
     },
     {
+      "name": "tree_cleanup_present",
+      "value": "前回の確認時にはワークツリーが残っていました。しばらくしてから削除結果を再度確認してください。"
+    },
+    {
+      "name": "tree_cleanup_removing",
+      "value": "ワークツリーを削除しています。しばらくしてから結果を確認してください。"
+    },
+    {
       "name": "tree_check_result",
       "value": "削除結果を確認"
     },

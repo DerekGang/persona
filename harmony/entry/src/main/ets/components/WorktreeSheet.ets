@@ -161,7 +161,7 @@ export struct WorktreeSheet {
             }
           }
           if (this.form.error) {
-            Text(tr(this.form.error)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(this.form.renameCurrent ? Colors.secondary : Colors.danger).padding(12).id('tree.form.error')
+            Text(tr(this.form.error)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(this.form.renameCurrent || this.form.error === 'tree_cleanup_present' || this.form.error === 'tree_cleanup_removing' ? Colors.secondary : Colors.danger).padding(12).id('tree.form.error')
             if (!this.form.ready && !this.form.unknown) Button(tr('retry'), { buttonStyle: ButtonStyleMode.TEXTUAL }).onClick(() => this.onRetry()).id('tree.form.retry')
             if (this.form.unknown && (this.form.requestCheckAvailable || this.form.busy)) {
               Button(tr(this.form.action === 'clean' ? 'tree_check_result' : 'tree_check_worktree_result'), { buttonStyle: ButtonStyleMode.TEXTUAL })

@@ -528,3 +528,27 @@ test('a connection change during read backoff cancels the second attempt before 
   const check=f.form.reconcile();await first.promise;f.owner.epoch++;await check;
   assert.equal(count,1);assert.equal(f.replayed.length,0);assert.equal(f.form.canCheck,false);
 });
+
+
+test('read-only cleanup reconciliation reports the matching workspace state and keeps the original request unresolved', async () => {
+  const f = fixture();
+  f.behavior.unknown = true;
+  await f.form.open(f.root,f.tree,'clean');
+  await f.form.submit();
+  const request = f.writes[0];
+  for (const [workspace,state,removed,expected] of [
+    ['child','present',false,'tree_cleanup_present'], ['child','removing',false,'tree_cleanup_removing'],
+    ['child','unknown',false,'result_unknown'], ['other','present',false,'result_unknown'],
+    ['child','present',undefined,'result_unknown'], ['child','present',true,'result_unknown']
+  ]) {
+    Object.assign(f.cleanupResult,{workspace_id:workspace,state,removed});
+    assert.equal(await f.form.reconcile(true),undefined);
+    assert.equal(f.form.error,expected);
+    assert.equal(f.form.unknown,true);
+    assert.equal(f.form.canSubmit,false);
+    assert.equal(f.form.canRetrySame,false);
+    assert.deepEqual(f.queries.at(-1).body,{workspace_id:'child',kind:'herdr',preview_token:'this-preview',reconcile:true});
+  }
+  assert.deepEqual(f.writes,[request]);
+  assert.deepEqual(f.finished,[]);
+});
