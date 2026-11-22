@@ -34,6 +34,9 @@ func init() {
 		if c.managerID() != h.defaultOwner(ctx) { // partner hubs are the default manager's: another has none to offer
 			return assistantwire.PartnerHubs{Hubs: []assistantwire.PartnerHub{}}, nil
 		}
+		if h.partnersOn() && !h.partnersLoaded() { // not "none": partner.changed brings the list once it is read
+			return nil, &rpc.Error{Code: bus.CodeStoreUnavailable, Message: assistantwire.MethodPartnerHubs + ": the partner hubs are not read yet"}
+		}
 		return h.partnerHubsWire(), nil
 	})
 }
@@ -65,7 +68,12 @@ func (h *Hub) busPartnerSend(ctx context.Context, c *busConn, params json.RawMes
 	if code := partnerEnvelopeCode(p.Envelope); code != "" {
 		return nil, &rpc.Error{Code: bus.CodeInvalidParams, Message: assistantwire.MethodPartnerSend + ": the envelope does not read (" + code + ")"}
 	}
-	if _, paired := h.partnerRow(p.To); !paired || !h.partnersOn() {
+	switch _, paired := h.partnerRow(p.To); {
+	case !h.partnersOn():
+		return nil, &rpc.Error{Code: assistantwire.CodePartnerUnknown, Message: "partner hubs are off on this hub"}
+	case !h.partnersLoaded(): // not "not paired": it may well be, the pairings are not read yet
+		return nil, &rpc.Error{Code: assistantwire.CodePartnerOffline, Message: "this hub has not read its partner hubs yet"}
+	case !paired:
 		return nil, &rpc.Error{Code: assistantwire.CodePartnerUnknown, Message: "not a partner hub of this hub"}
 	}
 	l := h.partnerLinkTo(p.To)
@@ -76,17 +84,25 @@ func (h *Hub) busPartnerSend(ctx context.Context, c *busConn, params json.RawMes
 	defer cancel()
 	var res assistantwire.PartnerResult
 	if err := l.rpc.Call(cctx, "msg", p.Envelope, &res); err != nil {
-		var re *rpc.Error
-		if errors.As(err, &re) && (re.Code == assistantwire.CodePartnerUnavailable || re.Code == assistantwire.CodePartnerUnknown) {
-			return nil, &rpc.Error{Code: re.Code, Message: re.Message} // the partner hub's word
-		}
-		if errors.As(err, &re) {
-			return nil, &rpc.Error{Code: assistantwire.CodePartnerUnavailable, Message: "the partner hub could not take it: " + re.Message}
-		}
-		// Dropped, timed out, or never written: in doubt, the manager sends it again (the partner deduplicates).
-		return nil, &rpc.Error{Code: assistantwire.CodePartnerOffline, Message: "the link to that partner hub dropped: " + err.Error()}
+		return nil, partnerSendError(err)
 	}
 	return res, nil
+}
+
+// partnerSendError is how a msg call over the link failed, as the manager gets it (and logs it): the partner's own
+// error keeps its code when it is one the manager acts on (else partner_unavailable) and its words only cleaned and
+// bounded (partnerText), as they come from the other hub. Dropped, timed out, or never written: in doubt, the manager
+// sends it again (the partner deduplicates).
+func partnerSendError(err error) *rpc.Error {
+	var re *rpc.Error
+	if !errors.As(err, &re) {
+		return &rpc.Error{Code: assistantwire.CodePartnerOffline, Message: "the link to that partner hub dropped: " + partnerText(err.Error(), 200)}
+	}
+	code := assistantwire.CodePartnerUnavailable
+	if re.Code == assistantwire.CodePartnerUnknown {
+		code = re.Code
+	}
+	return &rpc.Error{Code: code, Message: "the partner hub could not take it: " + partnerText(re.Message, 200)}
 }
 
 // partnerInbound is a partner's msg: to this hub's default manager when it takes them, as partner.receive.
@@ -110,7 +126,9 @@ func (h *Hub) partnerInbound(ctx context.Context, l *partnerLink, params json.Ra
 	var res assistantwire.PartnerResult
 	err := h.asst().call(cctx, assistantwire.MethodPartnerReceive, assistantwire.PartnerReceive{FromHub: l.hubID, FromName: row.Name, Envelope: env}, &res)
 	if err != nil {
-		return nil, &rpc.Error{Code: assistantwire.CodePartnerUnavailable, Message: "this hub's assistant did not take it: " + err.Error()}
+		// Why stays here: the manager's error may name this hub's database or files, none of the partner's business.
+		h.logf("partners: a message from %s not taken by the assistant: %v", l.hubID, err)
+		return nil, &rpc.Error{Code: assistantwire.CodePartnerUnavailable, Message: "this hub's assistant did not take it now"}
 	}
 	return res, nil
 }

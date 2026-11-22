@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,9 +21,11 @@ type PartnerHub struct {
 	// CredentialID is the device token this hub issued to the partner.
 	CredentialID string
 	Dial         string // "auto" (this hub dials it) or "never" (it waits for the partner to)
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	SeenAt       *time.Time // when a link with it was last up
+	// CreatedAt is when this pairing was made (the managers' PairedAt): a pairing is never replaced, so a hub paired
+	// again after an unpair has a later one. Saved as given (zero: now), to the microsecond Postgres keeps.
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	SeenAt    *time.Time // when a link with it was last up
 }
 
 const partnerHubColumns = `hub_id, name, fp, endpoints, token, credential_id, dial, created_at, updated_at, seen_at`
@@ -43,12 +46,20 @@ func (d *DB) PartnerHubs(ctx context.Context) ([]PartnerHub, error) {
 	})
 }
 
-// SavePartnerHub adds or replaces a partner (pairing again replaces the credentials both ways).
+// ErrPartnerPaired: that hub is a partner already. A pairing never replaces another (whoever holds a code names its
+// own hub_id, so it must not take over a partner's place): the owner unpairs first.
+var ErrPartnerPaired = errors.New("that hub is a partner already")
+
+// insertPartnerHub is a new pairing's row; nothing (no row affected) when the hub has one.
+const insertPartnerHub = `INSERT INTO partner_hubs (hub_id, name, fp, endpoints, token, credential_id, dial, created_at, updated_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) ON CONFLICT (hub_id) DO NOTHING`
+
+// SavePartnerHub adds a new partner (the pasting side's save); ErrPartnerPaired when that hub is one already.
 func (d *DB) SavePartnerHub(ctx context.Context, p PartnerHub) error {
-	_, err := d.pool.Exec(ctx, `INSERT INTO partner_hubs (hub_id, name, fp, endpoints, token, credential_id, dial)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (hub_id) DO UPDATE SET name = $2, fp = $3, endpoints = $4, token = $5, credential_id = $6, dial = $7,
-			updated_at = now()`, partnerHubArgs(p)...)
+	tag, err := d.pool.Exec(ctx, insertPartnerHub, partnerHubArgs(p)...)
+	if err == nil && tag.RowsAffected() == 0 {
+		err = ErrPartnerPaired
+	}
 	return err
 }
 
@@ -58,7 +69,11 @@ func partnerHubArgs(p PartnerHub) []any {
 	if dial == "" {
 		dial = "auto"
 	}
-	return []any{p.HubID, p.Name, p.FP, eps, p.Token, p.CredentialID, dial}
+	created := p.CreatedAt
+	if created.IsZero() {
+		created = time.Now()
+	}
+	return []any{p.HubID, p.Name, p.FP, eps, p.Token, p.CredentialID, dial, created.UTC().Truncate(time.Microsecond)}
 }
 
 // SetPartnerDial sets whether this hub dials a partner; it reports whether there was one.
@@ -95,9 +110,10 @@ func (d *DB) PartnerCodeValid(ctx context.Context, hash string) (bool, error) {
 	return ok, err
 }
 
-// RedeemPartnerCode pairs with the hub that brought a code, in one transaction: the code is used up, any credential
-// issued to that hub as a partner before revoked, the new one created (its hash) and the partner saved. False, and
-// nothing changed, when the code is unknown, used or expired.
+// RedeemPartnerCode pairs with the hub that brought a code, in one transaction: the code is used up, the partner
+// saved, any partner credential issued to that hub before (one left over: unpairing revokes them) revoked and the new
+// one created (its hash). False, and nothing changed, when the code is unknown, used or expired; ErrPartnerPaired, and
+// nothing changed (the code still good), when that hub is a partner already.
 func (d *DB) RedeemPartnerCode(ctx context.Context, codeHash string, p PartnerHub, cred DeviceToken, credHash string) (bool, error) {
 	var redeemed bool
 	err := pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
@@ -106,18 +122,17 @@ func (d *DB) RedeemPartnerCode(ctx context.Context, codeHash string, p PartnerHu
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
+		if tag, err := tx.Exec(ctx, insertPartnerHub, partnerHubArgs(p)...); err != nil {
+			return err
+		} else if tag.RowsAffected() == 0 {
+			return ErrPartnerPaired
+		}
 		if _, err := tx.Exec(ctx, `UPDATE device_tokens SET revoked_at = now() WHERE kind = 'partner' AND machine_id = $1 AND revoked_at IS NULL`,
 			p.HubID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_tokens (id, name, kind, role, token_hash, machine_id) VALUES ($1, $2, $3, $4, $5, $6)`,
 			cred.ID, cred.Name, cred.Kind, cred.Role, credHash, cred.MachineID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO partner_hubs (hub_id, name, fp, endpoints, token, credential_id, dial)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (hub_id) DO UPDATE SET name = $2, fp = $3, endpoints = $4, token = $5, credential_id = $6, dial = $7,
-				updated_at = now()`, partnerHubArgs(p)...); err != nil {
 			return err
 		}
 		redeemed = true

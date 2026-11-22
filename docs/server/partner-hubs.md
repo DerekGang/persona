@@ -52,7 +52,8 @@ is green"); pairing and the per-hub switches live in Settings › This hub › P
   The page shows the name and fingerprint read from the code before pairing. The pasting hub issues a credential for the
   code's hub, reaches it at the code's addresses pinned to the code's fingerprint (through the proxy when one is set,
   "Proxies") and posts `POST /api/v1/partner/pair` with `Authorization: Bearer jh_…`. In one transaction the code's hub
-  uses the code up, revokes any older partner credential for that hub, issues a credential back and stores the pair. Both
+  uses the code up, stores the pair (never over one it has: "Refused"), revokes any partner credential left over for that
+  hub and issues a credential back. Both
   sides end up with the other's pin, addresses and a credential the other issued (sealed with `~/.persona/secret.key`);
   each keeps only the hash of the one it issued. The pasting hub checks that the answer comes from the code's hub_id
   (`502 wrong_hub`) and revokes its own credential again on any failure.
@@ -62,14 +63,23 @@ is green"); pairing and the per-hub switches live in Settings › This hub › P
   dialing on once it can be reached. The pasting hub always stores the code's hub with dial on.
 - Refused: your own code (`409 own_code`); a used, expired or unknown code (the code's hub answers 401, this hub
   `401 code_refused`); this hub is a linked-hubs member (`409 member_hub`), or the other hub is already its linked-hubs
-  peer (`409 already_linked`); a known partner presenting another key (`409 pin_changed`); partner hubs switched off
-  (`403 partners_off`). The other hub's own refusal comes back as a 409 with its code, from a fixed list ("Security
+  peer (`409 already_linked`); a hub already paired, on either side (`409 already_paired`, or `409 pin_changed` when it
+  names another key than the one kept); partner hubs switched off (`403 partners_off`); the pairings not read yet at
+  start (`503 not_ready`). **A pairing is never replaced**: whoever holds a code names its own hub_id and pin (it never
+  shows it holds that key, and a hub's pin is no secret), so pairing with a hub this one is paired with (or claiming to
+  be one) is refused, with that pin or without one; the code is not used up. To pair the same two hubs again, unpair
+  first, on both sides. The other hub's own refusal comes back as a 409 with its code, from a fixed list ("Security
   boundaries"); anything else it answered is `502 refused`; no address worked, `502 unreachable`. "Routes" lists them.
 - **Unpair** (either side, Settings or `personad hub partner remove <hub_id>`): tell the other hub over the link (when it
   is up), delete the pair, close the link (4012), stop dialing, revoke the credential this hub issued. The other hub does
   the same on receipt. A hub that was not linked then learns at its next dial: the partner answers 401, its page shows
   **Couldn't connect** ("refused"), and it waits 5 minutes between tries; one that never dials keeps the pairing until
-  its owner unpairs there too. Revoking the partner's credential under Settings › Devices is the same as unpairing.
+  its owner unpairs there too (until then it refuses a new code from that hub, `409 already_paired`). Revoking the
+  partner's credential under Settings › Devices is the same as unpairing.
+- The hub reads the pairings at start; a read that fails (the database not answering yet) is tried again, from 1 s
+  doubling to a minute, until it works. Until then the apps' list is empty, codes, pairing, unpairing and the dial
+  setting answer `503 not_ready`, no link is taken (`503 not_ready`) or dialed, a send waits (`partner_offline`) and the
+  manager gets no list ("Bus"); once read, it is told and the apps reload.
 
 ## The link
 
@@ -78,7 +88,8 @@ is green"); pairing and the per-hub switches live in Settings › This hub › P
   The `partner` role opens only this path, the `partner_pair` role (a `jh_` code) only `POST /api/v1/partner/pair`;
   every other route answers them 403. A valid credential whose pairing this hub has not saved yet (the code's hub may
   dial right after redeeming the code, before the pasting hub stored the pair) is `404 not_paired`, which the dialer
-  retries with its usual backoff; partner hubs off here is `403 partners_off`, a member `409 member_hub`.
+  retries with its usual backoff; partner hubs off here is `403 partners_off`, a member `409 member_hub`, the pairings
+  not read yet `503 not_ready` (retried the same way).
 - JSON-line RPC (`internal/rpc`) with its own dispatcher and three calls, nothing else (no records, no streams, no HTTP,
   no relay; another method is an error): `hello` (each side once, within 10 s: `{hub_id, name, version, proto: 1, fp,
   endpoints}`; a hub_id other than the pairing's closes the link 1008; the name, pin when none was known, and https
@@ -180,10 +191,10 @@ Errors are JSON `{"error": <text in the request's language>, "code": …}` like 
 | Method | Path | Body → answer |
 | --- | --- | --- |
 | GET | `/api/v1/partner-hubs` | → `{enabled, member, can_issue, hubs:[view]}`; `enabled`: partner hubs are on here; `can_issue`: this hub can show a code (a TLS key and an https address) |
-| POST | `/api/v1/partner-hubs/code` | → `{code, expires_at}` (`Cache-Control: no-store`); `409 no_tls`, `409 member_hub`, `403 partners_off`, `503 no_database` |
-| POST | `/api/v1/partner-hubs` | `{code}` → view, once the link is up (at most 5 s later); `400 bad_code`, `401 code_refused`, `403 partners_off`, `409 own_code` / `member_hub` / `already_linked` / `pin_changed`, a 409 with the other hub's code, `502 unreachable` / `wrong_hub` / `no_credentials` / `refused`, `503 no_database` |
-| PATCH | `/api/v1/partner-hubs/{hub_id}` | `{dial: "auto" \| "never"}` → view; `404 not_found` |
-| DELETE | `/api/v1/partner-hubs/{hub_id}` | → `{ok: true}`; `404 not_found` |
+| POST | `/api/v1/partner-hubs/code` | → `{code, expires_at}` (`Cache-Control: no-store`); `409 no_tls`, `409 member_hub`, `403 partners_off`, `503 no_database` / `not_ready` |
+| POST | `/api/v1/partner-hubs` | `{code}` → view, once the link is up (at most 5 s later); `400 bad_code`, `401 code_refused`, `403 partners_off`, `409 own_code` / `member_hub` / `already_linked` / `already_paired` / `pin_changed`, a 409 with the other hub's code, `502 unreachable` / `wrong_hub` / `no_credentials` / `refused`, `503 no_database` / `not_ready` |
+| PATCH | `/api/v1/partner-hubs/{hub_id}` | `{dial: "auto" \| "never"}` → view; `404 not_found`, `503 not_ready` |
+| DELETE | `/api/v1/partner-hubs/{hub_id}` | → `{ok: true}`; `404 not_found`, `503 not_ready` |
 
 - A view is `{hub_id, name, fp, state, dial, since?, last_seen?, error?, dialed_by, rtt_ms?, created_at}`. `state`:
   `connected` (a link is up; `since`, `rtt_ms`, `dialed_by` `us` or `them`), `refused` (the partner refused this hub's
@@ -199,7 +210,8 @@ Errors are JSON `{"error": <text in the request's language>, "code": …}` like 
 - `POST /api/v1/partner/pair`, `Authorization: Bearer jh_…` (the code's secret), body at most 64 KiB:
   `{hub_id, name, version?, fp?, tls_port?, endpoints?, token}` (`token`: the credential the pasting hub issued, `jd_…`)
   → the same fields of the code's hub, with the credential it issued. A used, expired or unknown code is 401; a bad
-  hub_id or token 400; `403 partners_off`; `409 member_hub` / `already_linked` / `pin_changed`; `503 no_database`.
+  hub_id or token 400; `403 partners_off`; `409 member_hub` / `already_linked` / `already_paired` (that hub_id is a
+  partner here already, whatever pin it names) / `pin_changed`; `503 no_database` / `not_ready`.
 - `GET /api/v1/partner/link`: "The link". A linked-hubs member answers both itself (`409 member_hub`), never forwarding
   them to its primary.
 
@@ -227,17 +239,25 @@ Types in `server/internal/assistantwire/partners.go`.
   `other_manager`): hands one envelope to the paired hub over the live link and returns that hub's manager's answer.
   Errors: `invalid_params` (an envelope that does not read: `message_id` not `pm_` and 32 hex digits, an unknown kind, a
   bad `reply_to`, `state` or `code` over 32 bytes, text over 64 KiB), `partner_unknown` (not paired, or partner hubs off
-  here: stop), `partner_offline` (no link now, or the call dropped or found no answer within 30 s: send it again, the
-  partner deduplicates), `partner_unavailable` (the partner hub has no manager that takes it now: send it again).
-- `partner.hubs {}` → `{enabled, hubs:[{hub_id, name, online, dial}]}` (manager → hub): the default manager's list;
-  any other manager gets `{enabled: false, hubs: []}`.
+  here: stop), `partner_offline` (no link now, the call dropped or found no answer within 30 s, or the pairings not read
+  yet at start: send it again, the partner deduplicates), `partner_unavailable` (the partner hub has no manager that
+  takes it now: send it again). What the partner answered comes with its code only when it is `partner_unknown` or
+  `partner_unavailable` (anything else is `partner_unavailable`), and its words cleaned and cut to one line of 200
+  characters: they reach this hub's manager's log.
+- `partner.hubs {}` → `{enabled, hubs:[{hub_id, name, online, dial, paired_at}]}` (manager → hub): the default manager's
+  list; any other manager gets `{enabled: false, hubs: []}`; before the pairings are read, `store_unavailable` (not an
+  empty list). `paired_at` is when the pairing was made (the hub's `created_at`): a hub paired again after an unpair has
+  a later one, and what the manager kept for the pairing before is not this one's.
 - `partner.receive {from_hub, from_name, envelope}` → `{status, code?}` (hub → its default manager, 20 s): `from_hub`
   comes from the link's credential and `from_name` from this hub's pairing record, never from the envelope. The hub
   answers an envelope that does not read itself (`refused`, `invalid` or `too_long`); with no manager that takes it, or
-  a call that fails, the partner gets `partner_unavailable`.
+  a call that fails, the partner gets `partner_unavailable` in fixed words (why stays in this hub's log: the manager's
+  error may name its database).
 - `partner.changed` (hub → its default manager, one way, the shape of `partner.hubs`'s answer): right after the
-  manager's hello and on every change. With partner hubs off, `enabled` is false and the list empty; the manager lists
-  its tools only while it holds a list with `enabled` and a hub.
+  manager's hello, on every change, and to a manager made the default; never before the pairings are read (then once
+  they are). The manager the default was before, and one that says its hello while it is not the default, get
+  `{enabled: false, hubs: []}`, so only the default offers the tools. With partner hubs off, `enabled` is false and the
+  list empty; the manager lists its tools only while it holds a list with `enabled` and a hub.
 - **Envelope** `{message_id, kind: "message" | "reply" | "status", reply_to?, hop?, text?, state?: "delivered" | "failed",
   code?, sent_at}`; **result** `status` `accepted` | `duplicate` | `refused` with `code` `invalid`, `too_long`,
   `hop_limit`, `rate_limited` (or, in a failed status, `no_main`, `unpaired`, `undelivered`). Text is at most 12,000
@@ -264,11 +284,19 @@ Types in `server/internal/assistantwire/partners.go`.
   hub and 12,000 characters at the manager, keeps no control characters but line breaks and tabs, is scrubbed again, and
   goes into the conversation inside a quoted-message context block, with the partner's name inline only after its angle
   brackets and quote marks were replaced by look-alikes. Hub ids must match `^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`;
-  addresses are cut to 8 https ones without `user:pass@`.
+  addresses are cut to 8 https ones without `user:pass@`. A partner's error answer to a message reaches this hub's
+  manager as one line of at most 200 characters, cleaned the same way.
+- **Errors stay on their hub**: when this hub's manager does not take a partner's message, the partner gets
+  `partner_unavailable` in fixed words; the manager's own error (which may name the database) goes only to this hub's
+  log.
+- **A pairing is a hub's own word, so it is never replaced**: the hub_id and pin a pairing hub names are not proven
+  (it never shows it holds the key, and pins are public), so a code's holder claiming a partner's hub_id is refused
+  (`already_paired`, `pin_changed`) on both sides, and the partner's pairing, credential and link stay as they were. A
+  new pairing's hub_id is whatever the code's holder names: the code is what the owner handed out.
 - **Refusal codes from a partner are mapped to known ones**: a pairing refusal is passed on only for `partners_off`,
-  `member_hub`, `already_linked`, `pin_changed`, `tls_required` and `no_database` (anything else is `refused`); the
-  manager keeps only the contract's codes (anything else is `invalid` for a refusal, `undelivered` for a failed status),
-  so a partner's words never go into Persona's own notices.
+  `member_hub`, `already_linked`, `already_paired`, `pin_changed`, `tls_required` and `no_database` (anything else is
+  `refused`); the manager keeps only the contract's codes (anything else is `invalid` for a refusal, `undelivered` for
+  a failed status), so a partner's words never go into Persona's own notices.
 - **Credentials**: codes single use, 10 minutes, hash only; issued credentials (device tokens of kind and role
   `partner`, `machine_id` the partner's hub_id) stored as hashes, received ones sealed; TLS pinned both ways, inside any
   proxy. Unpairing or revoking the credential ends the link at once.
@@ -341,13 +369,20 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
 ## Verification
 
 - **Hub, in process** (no database: the test store `meshStore` keeps partners in memory; TLS hubs on 127.0.0.1 from
-  `server/internal/hub/partner_harness_test.go`, scripted managers on each bus):
-  - `TestPartnerPairAndLink`, `TestPartnerPairingCode`, `TestPartnerPairingRefusals`, `TestPartnerPairBounds`,
-    `TestPartnerName`, `TestPartnerAnswered` (`partner_test.go`): pairing both ways, the code's rules, every refusal,
-    bounds on what the other hub sends, cleaned names, refusal codes passed on only from the list.
-  - `TestPartnerOneSideDialsAndReconnects`, `TestPartnerDuplicateLink`, `TestPartnerUnpair`, `TestPartnerDialSetting`,
-    `TestPartnerLinksStopWithTheHub`, `TestPartnerDialRefusalsSaid` (`partner_link_test.go`).
-  - `TestPartnerEnvelopeRoundTrip`, `TestPartnerSendWhenItCannotGo`, `TestPartnerTooManyCalls` (`partner_bus_test.go`).
+  `server/internal/hub/partner_harness_test.go`, each with a key of its own where pins matter (`partnerCert`),
+  scripted managers on each bus; `waitPartnerLink` waits for the link the duplicate rule keeps):
+  - `TestPartnerPairAndLink`, `TestPartnerPairingCode`, `TestPartnerPairingRefusals`,
+    `TestPartnerPairingNeverReplacesAPartner`, `TestPartnerPairBounds`, `TestPartnerName`, `TestPartnerAnswered`
+    (`partner_test.go`): pairing both ways, the code's rules, every refusal, a code's holder claiming a partner's
+    hub_id refused on both sides (`pin_changed`, `already_paired`) with the partner untouched, bounds on what the other
+    hub sends, cleaned names, refusal codes passed on only from the list.
+  - `TestPartnerOneSideDialsAndReconnects`, `TestPartnerDuplicateLink`, `TestPartnerHelloMustNameThePairedHub`,
+    `TestPartnerUnpair`, `TestPartnerDialSetting`, `TestPartnerLinksStopWithTheHub`, `TestPartnerDialRefusalsSaid`
+    (`partner_link_test.go`).
+  - `TestPartnerEnvelopeRoundTrip`, `TestPartnerSendWhenItCannotGo`, `TestPartnerTooManyCalls`, `TestPartnerErrorsStayHome`,
+    `TestPartnerLoadRetried`, `TestPartnerListFollowsTheDefaultManager`, `TestPartnerListSaysWhenPaired`
+    (`partner_bus_test.go`): errors kept on their hub and a partner's bounded, a failed read of the pairings at start
+    retried (sends wait, no empty list told), the list following the default manager, `paired_at`.
   - `TestPartnerThroughConnectProxy`, `TestPartnerThroughSocksProxy` (credentials, an impostor behind the proxy),
     `TestPartnerBadProxyNeverGoesDirect`, `TestPartnerNoProxy`, `TestPartnerCandidates`, `TestParsePartnerProxy`
     (`partner_proxy_test.go`); the hub's `TestMain` clears the proxy variables.

@@ -82,9 +82,11 @@ def pair_route(h, req):
         return h.send_json({"error": "这是这台 hub 自己的配对码", "code": "own_code"}, 409)
     if q["code"].endswith("dead"):
         return h.send_json({"error": "对方 hub 拒绝了这个配对码", "code": "code_refused"}, 401)
+    if _find(q["hub"]):  # a pairing is never replaced: unpair first
+        return h.send_json({"error": "这台 hub 已经和那台 hub 配对过了：先解除配对，再重新配对", "code": "already_paired"}, 409)
     view = {"hub_id": q["hub"], "name": q.get("name") or q["hub"], "fp": q["fp"], "state": "connecting", "dial": "auto",
             "dialed_by": "", "created_at": _iso(datetime.now(timezone.utc))}
-    STATE["hubs"] = [x for x in STATE["hubs"] if x["hub_id"] != view["hub_id"]] + [view]
+    STATE["hubs"] = STATE["hubs"] + [view]
     changed()
     return h.send_json(view)
 

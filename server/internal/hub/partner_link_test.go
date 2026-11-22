@@ -15,6 +15,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/link"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // A hub without TLS pairs with one that has it: only it dials (the other waits, dial never), the link comes up, and
@@ -74,7 +75,7 @@ func TestPartnerOneSideDialsAndReconnects(t *testing.T) {
 	})
 	// Cut from A's side: back again, same ports.
 	second := b.h.partnerLinkTo(hubA)
-	_ = a.h.partnerLinkTo(hubB).conn.CloseNow()
+	cutPartnerLink(t, a, b)
 	eventually(t, 20*time.Second, "the link back after A's end was cut", func() bool {
 		l := b.h.partnerLinkTo(hubA)
 		return l != nil && l != second && a.h.partnerLinkTo(hubB) != nil
@@ -119,6 +120,57 @@ func TestPartnerDuplicateLink(t *testing.T) {
 	})
 }
 
+// A link whose hello names another hub than the one its credential was issued to is refused (1008) right after the
+// hello and never kept: the partner's own link stays. Each hub has its own TLS key.
+func TestPartnerHelloMustNameThePairedHub(t *testing.T) {
+	certA, _ := partnerCert(t)
+	certB, _ := partnerCert(t)
+	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{cert: certA})
+	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{cert: certB})
+	pairPartners(t, a, b)
+	_, kept := waitPartnerLink(t, a, b)
+	_, held := partnerCredOf(t, a, b) // the credential B issued A, as A holds it
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, peerWSURL(b.srv.URL, partnerLinkPath), &websocket.DialOptions{HTTPClient: insecureClient,
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + held}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	nc := websocket.NetConn(ctx, ws, websocket.MessageBinary)
+	peer := rpc.New("t", nc)
+	asked := make(chan struct{}, 1)
+	peer.OnRequest = func(_ context.Context, method string, _ json.RawMessage) (any, error) {
+		if method != "hello" {
+			return nil, errors.New("not served here")
+		}
+		select {
+		case asked <- struct{}{}:
+		default:
+		}
+		return partnerHello{HubID: hubC, Name: "Lab", Version: "test", Proto: partnerProto}, nil
+	}
+	served := make(chan error, 1)
+	go func() { served <- peer.Serve(ctx, nc) }()
+	select {
+	case err := <-served:
+		if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+			t.Fatalf("the link ended with %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("B kept a link whose hello named another hub")
+	}
+	select {
+	case <-asked:
+	default:
+		t.Fatal("B closed the link before its hello")
+	}
+	if b.h.partnerLinkTo(hubA) != kept || b.h.partnerLinkTo(hubC) != nil {
+		t.Fatal("the link named another hub replaced the partner's, or was kept")
+	}
+}
+
 // Unpairing from either side ends it on both: the pairing forgotten, the link closed, the credentials revoked (the
 // one the other held no longer opens the link), no dialer left; revoking the credential from Settings › Devices is
 // unpairing too. Pairing again works after.
@@ -137,7 +189,7 @@ func TestPartnerUnpair(t *testing.T) {
 			db := len(b.h.partners.dialers)
 			b.h.partners.mu.Unlock()
 			return !ra && !rb && a.h.partnerLinkTo(hubB) == nil && b.h.partnerLinkTo(hubA) == nil && da == 0 && db == 0 &&
-				len(a.store.partners) == 0 && len(b.store.partners) == 0
+				a.store.partnerCount() == 0 && b.store.partnerCount() == 0
 		})
 	}
 	// From A, over the apps' route.
@@ -207,10 +259,13 @@ func TestPartnerDialSetting(t *testing.T) {
 			t.Fatalf("dial never: %d %s", code, body)
 		}
 	}
-	if row, _ := a.h.partnerRow(hubB); row.Dial != "never" || a.store.partners[hubB].Dial != "never" {
+	if row, _ := a.h.partnerRow(hubB); row.Dial != "never" {
 		t.Fatalf("A's pairing after never: %+v", row)
 	}
-	_ = a.h.partnerLinkTo(hubB).conn.CloseNow()
+	if row, _ := a.store.partnerRowOf(hubB); row.Dial != "never" {
+		t.Fatalf("A's stored pairing after never: %+v", row)
+	}
+	cutPartnerLink(t, a, b)
 	eventually(t, 10*time.Second, "no link, and both offline", func() bool {
 		return a.h.partnerLinkTo(hubB) == nil && b.h.partnerLinkTo(hubA) == nil
 	})
