@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -12,7 +13,6 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/db"
-	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -28,7 +28,18 @@ import (
 // errPartnerRefused: the conversation refused a partner's envelope for good, and relayRefused told the partner.
 var errPartnerRefused = errors.New("the conversation refused it for good")
 
-var partnerCodeRe = lazyre.New(`^[a-z_]{1,32}$`)
+// partnerCodeOf is code, a partner's (a refusal's, a failed status's), when it is one of the codes the contract has, else
+// fallback: what a partner says goes into this hub's notices and lists only as one of those words, never as text of its
+// own.
+func partnerCodeOf(code, fallback string) string {
+	switch code {
+	case assistantwire.PartnerCodeInvalid, assistantwire.PartnerCodeTooLong, assistantwire.PartnerCodeHopLimit,
+		assistantwire.PartnerCodeRateLimited, assistantwire.PartnerCodeNoMain, assistantwire.PartnerCodeUnpaired,
+		assistantwire.PartnerCodeUndelivered:
+		return code
+	}
+	return fallback
+}
 
 // partnerRequest answers partner.receive; false for any other method.
 func (s *Service) partnerRequest(ctx context.Context, method string, params json.RawMessage) (any, bool, error) {
@@ -57,7 +68,7 @@ func (s *Service) partnerReceive(ctx context.Context, p assistantwire.PartnerRec
 	}
 	e, peer := p.Envelope, strings.TrimSpace(p.FromHub)
 	refused := func(code string) (assistantwire.PartnerResult, error) {
-		s.logf("partner %s: refused %s %s: %s", short(peer), e.Kind, e.MessageID, code)
+		s.logf("partner %q: refused %q %q: %s", clip(peer, 64), clip(e.Kind, 16), clip(e.MessageID, 40), code) // the partner's words, quoted
 		return assistantwire.PartnerResult{Status: assistantwire.PartnerRefused, Code: code}, nil
 	}
 	if !partnerHubIDRe.MatchString(peer) || !partnerMessageIDRe.MatchString(e.MessageID) {
@@ -111,10 +122,7 @@ func (s *Service) partnerReceive(ctx context.Context, p assistantwire.PartnerRec
 		}
 		m.ReplyTo, m.Hop, m.Text, status = e.ReplyTo, out.Hop, e.State, true
 		if e.State == assistantwire.PartnerStateFailed {
-			m.Code = assistantwire.PartnerCodeUndelivered
-			if partnerCodeRe.MatchString(e.Code) {
-				m.Code = e.Code
-			}
+			m.Code = partnerCodeOf(e.Code, assistantwire.PartnerCodeUndelivered)
 		}
 	default:
 		return refused(assistantwire.PartnerCodeInvalid)
@@ -406,6 +414,33 @@ func (s *Service) partnerRelayRefused(to string, msg relayMsg) (string, func(con
 		}
 	}
 	return "the partner hub is told", func(ctx context.Context) { s.partnerUndelivered(ctx, msg) }
+}
+
+// partnerMainNow is what becomes of msg, a partner's message queued for conversation id, as it is about to go in
+// (drainRelays): it goes to the main conversation as it is now. Queued for a main conversation put away since (New
+// chat, Clear), it moves to the one now (moved: it leaves id's queue), or, with none yet, waits there (hold: look again
+// after it) until the owner's next message starts one. Any other goes as it is.
+func (s *Service) partnerMainNow(ctx context.Context, id string, msg relayMsg) (moved bool, hold time.Duration) {
+	cfg := s.settings(ctx)
+	if id == cfg.Main || !slices.ContainsFunc(cfg.Former, func(f FormerMain) bool { return f.SessionID == id }) {
+		return false, 0
+	}
+	if cfg.Main == "" {
+		return false, max(relayRetryGap, time.Second)
+	}
+	if !s.moveRelay(cfg.Main, msg) {
+		return false, max(relayRetryGap, time.Second) // the main conversation's queue could not be saved: tried again
+	}
+	s.logf("partner %s: %s moved from the former main conversation %s to %s", short(strings.TrimPrefix(msg.From, partnerFrom)),
+		msg.Partner, short(id), short(cfg.Main))
+	go func() {
+		ctx := context.Background()
+		s.publish(ctx)
+		if c, ok := s.session(ctx, cfg.mainRouteMachine(), cfg.Main); ok && c.Status != proto.StatusWorking && !c.Starting {
+			s.drainRelays(cfg.mainRouteMachine(), []proto.Session{c})
+		}
+	}()
+	return true, 0
 }
 
 // partnerRelayGone: drainRelays dropped msg, its conversation gone; a partner's envelope goes as when refused.

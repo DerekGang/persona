@@ -312,16 +312,16 @@ func (s *Service) partnerAsk(m db.PartnerMessage) {
 }
 
 // partnerAnswered acts on the owner's answer r to message m's card: only their own allow lets it go (and an Always
-// with it lets every later message to that hub go without a card); no is declined, a card that ended unanswered
-// expired. The sending conversation is told when it does not go.
+// with it lets every later message to that hub go without a card); a no is declined; a card that ended unanswered, or
+// with a yes that was not the owner's, expired. The sending conversation is told when it does not go.
 func (s *Service) partnerAnswered(ctx context.Context, st partnerStore, m db.PartnerMessage, r proto.Resolution) {
 	allowed := r.UserAllowed()
-	next := partnerDeclined
+	next := partnerExpired
 	switch {
 	case allowed:
 		next = partnerQueued
-	case r.Dismiss || r.Cancel || r.Allow == nil:
-		next = partnerExpired
+	case r.Allow != nil && !*r.Allow && !r.Dismiss && !r.Cancel:
+		next = partnerDeclined
 	}
 	now := time.Now().UTC()
 	_, ok, err := partnerMutate(ctx, st, m, func(row *db.PartnerMessage) bool {

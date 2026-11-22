@@ -118,6 +118,10 @@ type partnerBook struct {
 	asking map[string]bool // the rows whose card this process waits on, by id
 	once   sync.Once
 	wake   chan struct{}
+	// restored closes once the fleet took back what the manager before this one left (fleetStart,
+	// restoreInteractions): a card raised before that would be cancelled with the stale ones.
+	restoredOnce, restoredClose sync.Once
+	restored                    chan struct{}
 	// tick and retry replace partnerTick and partnerRetryFirst when set (tests).
 	tick, retry time.Duration
 }
@@ -125,6 +129,18 @@ type partnerBook struct {
 func (b *partnerBook) wakeC() chan struct{} {
 	b.once.Do(func() { b.wake = make(chan struct{}, 1) })
 	return b.wake
+}
+
+func (b *partnerBook) restoredC() chan struct{} {
+	b.restoredOnce.Do(func() { b.restored = make(chan struct{}) })
+	return b.restored
+}
+
+// partnerFleetRestored: the stale cards are gone (fleetStart); the partner messages' cards may go up again.
+func (s *Service) partnerFleetRestored() {
+	b := &s.partners
+	c := b.restoredC()
+	b.restoredClose.Do(func() { close(c) })
 }
 
 // pairedLocked: at least one hub is paired and partner hubs are on.
@@ -213,10 +229,13 @@ func (s *Service) partnerList(ctx context.Context) (assistantwire.PartnerHubs, e
 }
 
 // partnerInline is s as a prompt quotes it outside a context block (a partner's name, how a message began): one line of
-// at most n characters, its angle brackets made look-alikes, so it can neither open nor close a block.
+// at most n characters, its angle brackets made look-alikes, so it can neither open nor close a block, and its quote
+// marks too, so it cannot end the quotes the prompts put it in and go on as their own words.
 func partnerInline(s string, n int) string {
-	return strings.NewReplacer("<", "‹", ">", "›").Replace(clip(oneLine(s), n))
+	return partnerInlineMarks.Replace(clip(oneLine(s), n))
 }
+
+var partnerInlineMarks = strings.NewReplacer("<", "‹", ">", "›", `"`, "'", "「", "『", "」", "』", "“", "‘", "”", "’") // i18n-ignore: the prompts' quote marks, not words
 
 // partnerOnceID is the once_id a partner's envelope goes into a conversation under, on every try and after restarts.
 func partnerOnceID(peer, messageID string) string {

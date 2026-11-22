@@ -1132,6 +1132,13 @@ func (s *Service) drainRelays(machine string, list []proto.Session) {
 			// reported blocked (#4332): ask the task once more right before it would interrupt. A node that cannot
 			// be reached is not an answer, so its notice stays queued for a later drain.
 			stale, keep := msg.Withdrawn, false
+			var hold time.Duration
+			if !stale && msg.Tool == partnerMessageTool {
+				// A partner hub's message goes to the main conversation as it is now, not one put away since it queued
+				// (partner_receive.go).
+				stale, hold = s.partnerMainNow(ctx, id, msg)
+				keep = hold > 0
+			}
 			if !stale && msg.Tool == noticeTool && msg.State == "needs" {
 				// The loading read covers a hub restart whose first drain runs before the todos were read in:
 				// an unreadable todo is unknown, so the notice is delivered as without the recheck.
@@ -1144,7 +1151,7 @@ func (s *Service) drainRelays(machine string, list []proto.Session) {
 				}
 			}
 			var err error
-			var retry time.Duration
+			retry := hold
 			landed := false
 			if !stale && !keep && !msg.TriedAt.IsZero() {
 				landed = s.lookForRelay(machine, id, &msg)
