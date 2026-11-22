@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -135,5 +138,18 @@ func TestNodeUpdateRelayWaitsForCommit(t *testing.T) {
 	}
 	if got := nodeUpdateRelayLimit("node.update.chunk"); got != 45*time.Second {
 		t.Fatalf("a chunk waits %s, want 45s as before", got)
+	}
+	// The relay's one client has to read the commit at least as long, or it takes the slow answer for a lost one.
+	raw, err := os.ReadFile("../../../scripts/release/promote_node_release.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^COMMIT_WAIT = (\d+)$`).FindSubmatch(raw)
+	if m == nil {
+		t.Fatal("promote_node_release.py no longer sets COMMIT_WAIT")
+	}
+	read, _ := strconv.Atoi(string(m[1]))
+	if got := nodeUpdateRelayLimit("node.update.commit"); time.Duration(read)*time.Second < got {
+		t.Fatalf("promote_node_release.py reads the commit for %ds, the relay holds it for %s", read, got)
 	}
 }
