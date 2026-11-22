@@ -1040,25 +1040,33 @@ export class SessionWorkspace {
   }
 
   private async gitMutation(operation: string, body: Record<string, Object>): Promise<boolean> {
-    if (operation==='pull' ? !this.canPullGit() :
-        !['stage','commit','push','switch','stash','pr'].includes(operation) || !this.canWriteGit()) return false;
-    const revision = this.revision, target = this.ownerTarget, generation = this.ownerGeneration, path = this.requestPath('/git/' + operation);
-    this.gitWriteBusy = true; this.gitWriteState = 'busy'; this.gitWriteError = '';
+    if (!['stage','commit','push','switch','stash','pr','pull'].includes(operation)) return false;
+    if (!(operation==='pull' ? this.canPullGit() : this.canWriteGit())) return false;
+    const revision=this.revision, target=this.ownerTarget, generation=this.ownerGeneration;
+    const path=this.requestPath('/git/'+operation), branch=Wire.text(this.gitStatus,'branch');
+    const upstream=Wire.text(this.gitStatus,'upstream'), root=Wire.text(this.gitStatus,'root');
+    const samePullTarget=():boolean => branch===Wire.text(this.gitStatus,'branch') && root===Wire.text(this.gitStatus,'root') &&
+      upstream===Wire.text(this.gitStatus,'upstream') && !Wire.bool(this.gitStatus,'gone');
+    this.gitWriteBusy=true; this.gitWriteState='busy'; this.gitWriteError='';
     this.gitPullState=operation==='pull' ? 'pulling' : '';
-    const branch=Wire.text(this.gitStatus,'branch'), upstream=Wire.text(this.gitStatus,'upstream');
-    const samePullTarget=():boolean => branch===Wire.text(this.gitStatus,'branch') && upstream===Wire.text(this.gitStatus,'upstream') && !Wire.bool(this.gitStatus,'gone');
     try {
-      const result=operation==='pull' ? await this.request(path,'POST',body,
-        () => samePullTarget() && this.machineTrustedOnline() && this.sessionWritable(),
-        (value:Record<string,Object>) => typeof value['updated']==='boolean' && Wire.bool(Wire.object(value,'status'),'is_repo')
-          && Wire.text(Wire.object(value,'status'),'branch')===branch)
-        : operation==='pr' ? await this.request(path,'POST',body,
-        () => this.branchPushedForPr() && Wire.text(this.gitStatus,'branch')===branch,
-        (value:Record<string,Object>) => Wire.text(value,'branch')===branch && Wire.number(Wire.object(value,'pr'),'number')>0)
-        : await this.request(path,'POST',body);
+      let result:Record<string,Object>;
+      if (operation==='pull') {
+        result=await this.request(path,'POST',body,() => samePullTarget() && this.machineTrustedOnline() && this.sessionWritable(),
+          (value:Record<string,Object>) => {
+            const status=Wire.object(value,'status');
+            return typeof value['updated']==='boolean' && Wire.bool(status,'is_repo') && Wire.text(status,'branch')===branch &&
+              (!root || Wire.text(status,'root')===root);
+          });
+      } else if (operation==='pr') {
+        result=await this.request(path,'POST',body,() => this.branchPushedForPr() && Wire.text(this.gitStatus,'branch')===branch,
+          (value:Record<string,Object>) => Wire.text(value,'branch')===branch && Wire.number(Wire.object(value,'pr'),'number')>0);
+      } else {
+        result=await this.request(path,'POST',body);
+      }
       const returned=Wire.object(result,'status');
       if (operation==='pull' && this.activeRevision(revision,target,1) && samePullTarget()) {
-        this.gitStatusEpoch++; this.gitBusy=false;
+        this.gitStatusEpoch++; this.gitBusy=false; this.gitError='';
         this.applyGitStatus(returned,true);
         this.gitPullState=Wire.bool(result,'updated') ? 'updated' : 'current';
       }
