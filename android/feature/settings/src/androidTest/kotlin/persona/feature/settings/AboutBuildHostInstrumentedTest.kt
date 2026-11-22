@@ -29,16 +29,21 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyChild
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -82,11 +87,13 @@ class AboutBuildHostInstrumentedTest {
                 Box {
                     JToastHost(rememberToastState())
                     CompositionLocalProvider(LocalAppFeedback provides feedback) {
-                        AboutSettingsPage(commit, buildRow = if (generated) {
-                            { AboutBuildRow(snapshot.buildNumber, Modifier.testTag("generated-build")) }
-                        } else {
-                            null
-                        })
+                        Column {
+                            AboutSettingsPage(commit, buildRow = if (generated) {
+                                { AboutBuildRow(snapshot.buildNumber, Modifier.testTag("generated-build")) }
+                            } else {
+                                null
+                            })
+                        }
                     }
                 }
             }
@@ -99,16 +106,32 @@ class AboutBuildHostInstrumentedTest {
         assertHost(build, native = false)
         capture("generated-light", "English light; the same real package value through the generated Build slot")
         assertEquals("Switching only the test Build slot must not copy", emptyList<String>(), notices)
-        rule.onNodeWithText(build, useUnmergedTree = true).onParent().performClick()
+        rule.onAllNodes(nativeBuildRow(build)).assertCountEquals(1).onFirst().performClick()
         rule.onNodeWithTag("generated-build", useUnmergedTree = true).performClick()
         rule.waitForIdle()
         assertEquals("Read-only Build clicks must not copy", emptyList<String>(), notices)
 
-        rule.onNodeWithText("Commit").assertHasClickAction().performClick()
         rule.waitForIdle()
-        assertEquals(listOf("Build commit copied"), notices)
-        assertEquals(commit!!.full, clipboardText())
-        assertTrue(rule.activity.isFinishing.not())
+        instrumentation.runOnMainSync { rule.activity.window.decorView.requestFocus() }
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val copied = AtomicReference<String?>(null)
+        val latch = CountDownLatch(1)
+        val listener = ClipboardManager.OnPrimaryClipChangedListener {
+            copied.set(clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString())
+            latch.countDown()
+        }
+        instrumentation.runOnMainSync { clipboard.addPrimaryClipChangedListener(listener) }
+        try {
+            rule.onNodeWithText("Commit").assertHasClickAction().performClick()
+            rule.waitForIdle()
+            assertTrue("Native Commit click must reach the system clipboard listener",
+                latch.await(60, TimeUnit.SECONDS))
+            assertEquals(listOf("Build commit copied"), notices)
+            assertEquals(commit!!.full, copied.get())
+            assertTrue(rule.activity.isFinishing.not())
+        } finally {
+            instrumentation.runOnMainSync { clipboard.removePrimaryClipChangedListener(listener) }
+        }
         capture("generated-commit-click-light", "Native Commit click; full-value copy and localized confirmation")
 
         dark = true
@@ -151,7 +174,7 @@ class AboutBuildHostInstrumentedTest {
                 val row = if (useGenerated) {
                     rule.onNodeWithTag("generated-build", useUnmergedTree = true)
                 } else {
-                    rule.onNodeWithText(realBuild, useUnmergedTree = true).onParent()
+                    rule.onAllNodes(nativeBuildRow(realBuild)).assertCountEquals(1).onFirst()
                 }
                 row.assertIsDisplayed().assertHasNoClickAction()
                 row.assertMinimumTouchTarget("$tag generated=$useGenerated")
@@ -165,7 +188,7 @@ class AboutBuildHostInstrumentedTest {
                 assertTrue("$tag read-only click labels", semantics.clickLabels.isEmpty())
                 assertTrue("$tag read-only custom actions", semantics.customActions.isEmpty())
                 if (useGenerated) {
-                    assertRealClickLeavesBuildUnchanged(title)
+                    assertRealClickLeavesBuildUnchanged()
                     capture("$tag-generated-fallback", "$tag localized generated optional-input fallback; no TalkBack enabled")
                 }
             }
@@ -176,7 +199,7 @@ class AboutBuildHostInstrumentedTest {
         rule.onAllNodesWithText("Build").assertCountEquals(1)
         rule.onNodeWithText(build, useUnmergedTree = true).assertIsDisplayed()
         val title = if (native) {
-            rule.onNodeWithText(build, useUnmergedTree = true).onParent()
+            rule.onAllNodes(nativeBuildRow(build)).assertCountEquals(1).onFirst()
         } else {
             rule.onNodeWithTag("generated-build", useUnmergedTree = true)
         }
@@ -196,13 +219,16 @@ class AboutBuildHostInstrumentedTest {
         rule.onNodeWithText("Commit").assertIsDisplayed()
     }
 
-    private fun assertRealClickLeavesBuildUnchanged(title: String) {
+    private fun nativeBuildRow(value: String) =
+        hasAnyChild(hasText("Build", substring = false)) and
+            hasAnyChild(hasText(value, substring = false))
+
+    private fun assertRealClickLeavesBuildUnchanged() {
         val before = clipboardText()
         val row = rule.onNodeWithTag("generated-build", useUnmergedTree = true)
         row.performClick()
-        rule.onNodeWithText(title, useUnmergedTree = true).performClick()
         rule.waitForIdle()
-        rule.onNodeWithText(title, useUnmergedTree = true).assertIsDisplayed()
+        rule.onNodeWithTag("generated-build", useUnmergedTree = true).assertIsDisplayed()
         assertEquals("Read-only Build must not change the clipboard", before, clipboardText())
         assertFalse(rule.activity.isFinishing)
     }
@@ -251,8 +277,10 @@ class AboutBuildHostInstrumentedTest {
         assertTrue("$label must be visible on the real target", node.boundsInRoot.height > 0)
     }
 
-    private fun SemanticsNodeInteraction.readRowSemantics(): RowSemantics {
-        val descendants = fetchSemanticsNode().descendants()
+    private fun SemanticsNodeInteraction.readRowSemantics(): RowSemantics = fetchSemanticsNode().readRowSemantics()
+
+    private fun SemanticsNode.readRowSemantics(): RowSemantics {
+        val descendants = descendants()
         return RowSemantics(
             text = descendants.flatMap { it.config.getOrNull(SemanticsProperties.Text).orEmpty() }.map { it.text },
             descriptions = descendants.flatMap { it.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() },

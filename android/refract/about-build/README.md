@@ -105,11 +105,20 @@ The initial #13282 target is a dedicated x86_64 Android 15 / API 35 AOSP emulato
 `Android SDK built for x86_64`, build `AE3A.240806.019`, userdebug/test-keys), not a physical device. It runs
 without hardware acceleration; a separate `System UI isn't responding` capture is environment diagnostics, not an
 application screenshot. Standard `:feature:settings:connectedDebugAndroidTest` reached the actual assertions:
-the localized en/zh-Hans/ja generated/native read-only and 48 dp test passed, but the full rollback test failed its
-read-only click assertion with unexpected native Commit copy notices and therefore is not a completed rollback or
-light/dark screenshot result. Direct `am instrument` startup failed separately and is not substituted for the
-standard channel. There is no TalkBack, full device-matrix, performance or Gate A–D claim. Keep this limitation
-with any PR using the host rather than treating a successful JVM or build result as device acceptance.
+the localized en/zh-Hans/ja generated/native read-only and 48 dp test passed in an earlier bounded run, but that
+run's full rollback test failed its read-only click assertion because the test host stacked the native rows in a
+`Box`. The corrected host keeps the About siblings in a vertical `Column`, and a subsequent standard-channel run
+passed the complete handwritten → generated → handwritten rollback, native Commit copy and light/dark captures;
+its localized test instead failed the handwritten-row matcher before the localized assertions, so this is **not**
+a complete two-test pass or an accepted screenshot set. That test used the unmerged tree for a native merged-text
+row; the final test source uses the default merged tree for that row, but has not been rerun on a device and must
+not be reported as a passed final-localized result. The installed test package supplies real zero `longVersionCode`;
+nonzero adapter cases remain Native JVM evidence, not a device claim. System-service traces contain SQLite
+configuration and PackageManager binder waits unrelated to the About test and block further reliable runs on this
+emulator.
+Direct `am instrument` startup failed separately and is not substituted for the standard channel. There is no
+TalkBack, full device-matrix, performance or Gate A–D claim. Keep this limitation with any PR using the host
+rather than treating a successful JVM or build result as device acceptance.
 
 These are Native JVM Compose comparisons, not a physical device,
 TalkBack, accessibility-service or performance result. This local generation, Kotlin compilation and JVM comparison
