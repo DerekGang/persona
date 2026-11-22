@@ -1965,6 +1965,11 @@ struct Index {
   }
   @Monitor('environment.fontScale','environment.keyboardHeightPx') agentDraftEnvironmentChanged():void { this.revealFocusedAgentDraft(); }
 
+  private machineSymbolScale(row: ResourceRow): number {
+    if (Wire.text(row.data(),'icon') !== 'laptop') return 1;
+    // The laptop uses Swift's title2 symbol (22 to 28 pt). Keep the allocated card slot fixed.
+    return this.agentSize(0.97,0.97*28/22)/this.agentSize(1,1.35);
+  }
   private machineCardHeight(row: ResourceRow): number {
     return Wire.text(row.data(),'icon') === 'desktop' ? this.agentSize(99,120.67) : this.agentSize(96.67,117.67);
   }
@@ -1974,6 +1979,7 @@ struct Index {
         Row() {
           if (['server','laptop','desktop'].includes(Wire.text(row.data(),'icon'))) {
             PhoneOutlineIcon({name:Wire.text(row.data(),'icon'),iconScale:this.agentSize(1,1.35),color:Colors.ink})
+              .scale({x:this.machineSymbolScale(row),y:this.machineSymbolScale(row),centerX:0,centerY:0})
               .id('agent.machine_icon.'+row.id)
           } else {
             SymbolGlyph(Symbols.device).fontSize(Tokens.interfaceFontVp(22,this.environment.fontScale)).fontColor([Colors.ink])
