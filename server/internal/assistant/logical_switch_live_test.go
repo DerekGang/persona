@@ -36,7 +36,7 @@ func TestLogicalSwitchAdoptsANativeClaudeRowWithoutAnAgent(t *testing.T) {
 // An adopted conversation's row is still read from the manager's fleet, not sent to a node as session.get (which
 // no node knows): otherwise the conversation looks gone and its segments state and every later switch refuse it.
 func TestLogicalAdoptedConversationRowIsReadFromTheFleet(t *testing.T) {
-	s, _, _, _ := logicalPair(t, "codex")
+	s, _, st, _ := logicalPair(t, "codex")
 	ctx := t.Context()
 	raw := newFleetDevs()
 	raw.add("server", "Computer")
@@ -55,5 +55,21 @@ func TestLogicalAdoptedConversationRowIsReadFromTheFleet(t *testing.T) {
 	}
 	if !s.keepsPickOn(ctx, "side-chat", "server") {
 		t.Fatal("adopted conversation lost its pick (segments state refuses it)")
+	}
+	// Switched: the public root reads as its active segment, and the private segment stays hidden.
+	activatePair(t, st)
+	s.logicalChanged()
+	row, ok = s.session(ctx, "server", "side-chat")
+	if !ok || row.SessionID != "side-chat" || row.Agent != "codex" {
+		t.Fatalf("switched conversation row: %+v %v", row, ok)
+	}
+	if !s.keepsPickOn(ctx, "side-chat", "server") {
+		t.Fatal("switched conversation lost its pick (a switch back is refused)")
+	}
+	if _, ok := s.session(ctx, "server", "target-chat"); ok {
+		t.Fatal("private segment readable as a session")
+	}
+	if calls := raw.callsTo("server", DeviceSessionGet); len(calls) != 0 {
+		t.Fatalf("session.get reached the node: %s", calls)
 	}
 }
