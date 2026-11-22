@@ -77,7 +77,8 @@ func (d *DB) HealthIntakeUndo(ctx context.Context, id string) (saved *HealthInta
 // to the manager, which uses the user's time zone and calendar days rather than 24-hour durations.
 func (d *DB) HealthIntakeRange(ctx context.Context, from, until time.Time) ([]HealthIntakeRow, error) {
 	return d.healthIntakeRows(ctx, `SELECT `+healthIntakeColumns+` FROM health_intake
-		WHERE deleted_at IS NULL AND at >= $1 AND at < $2 ORDER BY at DESC, id`, from, until)
+		WHERE deleted_at IS NULL AND kind = ANY($3::text[]) AND at >= $1 AND at < $2
+		ORDER BY at DESC, id`, from, until, []string{"water", "protein"})
 }
 
 // HealthIntakeChanges lists the latest state of each changed row after a cursor, including tombstones.

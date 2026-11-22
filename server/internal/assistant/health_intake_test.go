@@ -171,12 +171,12 @@ func TestHealthIntakeEntryValidation(t *testing.T) {
 		t.Fatalf("default cup/time: %+v %v", v, err)
 	}
 	for _, kind := range []string{"water", "protein"} {
-		for _, amount := range []float64{-1, 0, 0.01, 200.1, 3000.1, math.NaN(), math.Inf(1), 0.1, 1, 30.5, 200, 3000} {
+		for _, amount := range []float64{-1, 0, 1e-300, 1e-9, 1e-8, 0.01, 0.09, 200.1, 3000.1, math.NaN(), math.Inf(1), 0.1, 1, 30.5, 200, 3000} {
 			v := valid
 			v.Kind, v.Amount = kind, &amount
 			_, err := v.entry(settings, now)
 			want := !math.IsNaN(amount) && !math.IsInf(amount, 0) && amount > 0 && math.Abs(amount*10-math.Round(amount*10)) < 1e-7
-			want = want && (kind == "water" && amount >= 1 && amount <= 3000 || kind == "protein" && amount <= 200)
+			want = want && (kind == "water" && amount >= 1 && amount <= 3000 || kind == "protein" && amount >= 0.1 && amount <= 200)
 			if (err == nil) != want {
 				t.Errorf("%s %v: %v", kind, amount, err)
 			}

@@ -107,6 +107,50 @@ func TestHealthIntakeChangesPagingAndRange(t *testing.T) {
 	}
 }
 
+func TestHealthIntakeRangeIncludesBothKinds(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	water, protein := intakeRow(1), intakeRow(2)
+	protein.Kind, protein.Amount, protein.At = "protein", 0.1, water.At.Add(time.Minute)
+	for _, row := range []HealthIntakeRow{water, protein} {
+		if _, _, err := d.HealthIntakeAdd(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := d.HealthIntakeRange(ctx, water.At, protein.At.Add(time.Second))
+	if err != nil || len(rows) != 2 || rows[0].Kind != "protein" || rows[1].Kind != "water" {
+		t.Fatalf("both kinds in range: %+v %v", rows, err)
+	}
+	if _, _, err := d.HealthIntakeUndo(ctx, protein.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = d.HealthIntakeRange(ctx, water.At, protein.At.Add(time.Second))
+	if err != nil || len(rows) != 1 || rows[0].ID != water.ID {
+		t.Fatalf("undone kind leaked into range: %+v %v", rows, err)
+	}
+}
+
+func TestHealthIntakeTruncateForTest(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	for i := 1; i <= 2; i++ {
+		if _, _, err := d.HealthIntakeAdd(ctx, intakeRow(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := d.HealthIntakeUndo(ctx, intakeRow(1).ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.TruncateForTest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.HealthIntakeChanges(ctx, 0, 10)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("test reset left active rows or tombstones: %+v %v", rows, err)
+	}
+	if _, changed, err := d.HealthIntakeAdd(ctx, intakeRow(1)); err != nil || !changed {
+		t.Fatalf("test reset did not empty intake: changed=%v, %v", changed, err)
+	}
+}
+
 // Hold the writers' lock before starting both an add and an undo. Neither may consume a sequence
 // before acquiring it. After releasing it, a cursor advanced while writes run must see every row.
 func TestHealthIntakeConcurrentCommitOrder(t *testing.T) {

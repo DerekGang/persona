@@ -75,7 +75,10 @@ func (s *Service) addHealthIntakeLocked(ctx context.Context, st healthIntakeStor
 		r.Last, r.Snooze, r.Reason = saved.CreatedAt, time.Time{}, ""
 		err = s.putIntakeSetting(ctx, waterReminderKey, r)
 	}
-	return saved, changed, err
+	if err != nil {
+		s.logf("health intake: water reminder state reset: %v", err)
+	}
+	return saved, changed, nil
 }
 
 const waterReminderEvery = 30 * time.Second
@@ -97,40 +100,41 @@ func (s *Service) waterReminderLoop(ctx context.Context) {
 	}
 }
 
-func (s *Service) waterReminderTick(ctx context.Context, now time.Time) error {
-	if s.store() == nil || s.hello(ctx).Assistant.Standby {
-		return nil
-	}
-	s.intakeMu.Lock()
-	defer s.intakeMu.Unlock()
+type waterReminderAttempt struct {
+	Notification Notification
+	State        waterReminderState
+}
+
+// The caller holds intakeMu through planning and claiming the occurrence, but not delivery.
+func (s *Service) prepareWaterReminderLocked(ctx context.Context, now time.Time) (*waterReminderAttempt, error) {
 	c, err := s.healthIntakeSettings(ctx)
 	if err != nil || !c.Water.Remind {
-		return err
+		return nil, err
 	}
 	st, ok := s.store().(healthIntakeStore)
 	if !ok {
-		return i18n.Err("assistant-health_intake.unavailable")
+		return nil, i18n.Err("assistant-health_intake.unavailable")
 	}
 	r, err := s.waterReminderState(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	loc := s.location(ctx)
+	loc := s.healthIntakeLocation(ctx)
 	local := now.In(loc)
 	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
 	rows, err := st.HealthIntakeRange(ctx, day, day.AddDate(0, 0, 1))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	plan := scheduleWater(c.Water, r, rows, now, loc)
 	if plan.Next.IsZero() || plan.Next.After(now) {
-		return nil
+		return nil, nil
 	}
 	// Persist the occurrence before sending: one catch-up, including after a restart. The
 	// existing notify.request outbox owns delivery while the hub is away; no extension retries.
 	r.Last, r.Snooze, r.Reason = now, time.Time{}, ""
 	if err := s.putIntakeSetting(ctx, waterReminderKey, r); err != nil {
-		return err
+		return nil, err
 	}
 	v := sumHealthIntake(rows, c, now, loc, 1)
 	l := s.lang(ctx)
@@ -140,29 +144,55 @@ func (s *Service) waterReminderTick(ctx context.Context, now time.Time) error {
 			"cups": int(math.Ceil(max(0, float64(c.Water.Goal)-v.Water.Today) / float64(c.Water.Cup)))})
 	}
 	id := "water-" + strconv.FormatInt(now.UnixMilli(), 10) + "-" + randomHex(8)
-	res, err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: Notification{
+	return &waterReminderAttempt{State: r, Notification: Notification{
 		ID: id, Kind: assistantwire.NotifyHealthWater, Title: intakeText(l, "reminder.title"), Body: body,
 		Level: assistantwire.LevelP1, Health: &assistantwire.NotifyHealth{Reminder: id},
-	}})
+	}}, nil
+}
+
+func (s *Service) waterReminderTick(ctx context.Context, now time.Time) error {
+	if s.store() == nil || s.hello(ctx).Assistant.Standby {
+		return nil
+	}
+	s.intakeMu.Lock()
+	attempt, err := s.prepareWaterReminderLocked(ctx, now)
+	s.intakeMu.Unlock()
+	if err != nil || attempt == nil {
+		return err
+	}
+	res, err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: attempt.Notification})
+	reason := ""
 	switch {
 	case err != nil:
-		r.Reason = "unreachable"
+		reason = "unreachable"
 	case res.Queued:
-		r.Reason = "queued"
+		reason = "queued"
 	case res.Held:
-		r.Reason = "held"
+		reason = "held"
 	case !res.OK:
-		r.Reason = "rejected"
+		reason = "rejected"
 	case res.Devices == nil:
-		r.Reason = "unconfirmed"
+		reason = "unconfirmed"
 	case *res.Devices == 0 && res.Kept > 0:
-		r.Reason = "kept"
+		reason = "kept"
 	case *res.Devices == 0:
-		r.Reason = res.Reason
-		if r.Reason == "" {
-			r.Reason = "unconfirmed"
+		reason = res.Reason
+		if reason == "" {
+			reason = "unconfirmed"
 		}
 	}
+	s.intakeMu.Lock()
+	defer s.intakeMu.Unlock()
+	r, readErr := s.waterReminderState(ctx)
+	if readErr != nil {
+		return readErr
+	}
+	// A drink, snooze or a later occurrence may have changed the state while delivery waited.
+	// An old delivery result must not overwrite the new timer or reintroduce its warning.
+	if !r.Last.Equal(attempt.State.Last) || !r.Snooze.Equal(attempt.State.Snooze) {
+		return err
+	}
+	r.Reason = reason
 	if saveErr := s.putIntakeSetting(ctx, waterReminderKey, r); saveErr != nil {
 		return saveErr
 	}
@@ -250,10 +280,10 @@ func (s *Service) waterReminderAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		toast = intakeText(l, "toast.snooze")
-		plan := scheduleWater(c.Water, state, v.Water.Entries, now, s.location(r.Context()))
+		plan := scheduleWater(c.Water, state, v.Water.Entries, now, s.healthIntakeLocation(r.Context()))
 		if plan.Reason == "off" {
 			toast = intakeText(l, "status.off")
-		} else if !plan.Next.IsZero() && plan.Next.In(s.location(r.Context())).Format(time.DateOnly) != now.In(s.location(r.Context())).Format(time.DateOnly) {
+		} else if !plan.Next.IsZero() && plan.Next.In(s.healthIntakeLocation(r.Context())).Format(time.DateOnly) != now.In(s.healthIntakeLocation(r.Context())).Format(time.DateOnly) {
 			toast = intakeText(l, "toast.next_day")
 		}
 	} else {

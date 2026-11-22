@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
@@ -57,7 +59,17 @@ func (s *Service) healthIntakeSettings(ctx context.Context) (healthIntakeSetting
 		return v, i18n.Err("assistant-health_intake.unavailable")
 	}
 	if _, err := st.Setting(ctx, healthIntakeKey, &v); err != nil {
-		return v, err
+		var syntax *json.SyntaxError
+		var valueType *json.UnmarshalTypeError
+		if !errors.As(err, &syntax) && !errors.As(err, &valueType) {
+			return v, err
+		}
+		s.logf("health intake: invalid stored settings; using defaults")
+		return defaultHealthIntakeSettings(), nil
 	}
-	return v, v.validate()
+	if v.validate() != nil {
+		s.logf("health intake: invalid stored settings; using defaults")
+		return defaultHealthIntakeSettings(), nil
+	}
+	return v, nil
 }

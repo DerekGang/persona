@@ -108,7 +108,7 @@ Explicit reminders created with `phone_reminders_create` keep the user-requested
 
 Known limit: a gate proxy address does not know who calls it. A process in a health conversation could in principle learn the address of another conversation (another process of the same user has an environment that can be read), the same kind of gap as the Bash one under "How directories and memory are isolated": closing it needs the sandbox or OS-level isolation (see "Later").
 
-## Entering Health (#4385)
+## Entering Health (#4329)
 
 Entering Health goes straight back to the latest health chat, with its context, as Codex does; **New** starts another. One rule on every client:
 
@@ -132,7 +132,8 @@ An entry has a UUID, kind, amount (ml or g), measurement time and optional food 
 the same UUID again returns the original. Delete marks an entry as undone; it never revives on
 a retry. Each add or first undo receives a new change number. Rows and undo markers are kept.
 Today and calendar-day totals use the phone's last reported assistant time zone, including
-23- and 25-hour days.
+23- and 25-hour days. Without one, intake resolves the machine's IANA zone from `TZ` or its
+localtime link, falling back to `UTC` for both calculation and the returned identifier.
 
 The hub forwards the manager's routes under `/api/v1/assistant/health/`:
 
@@ -145,7 +146,9 @@ The hub forwards the manager's routes under `/api/v1/assistant/health/`:
 | `POST intake/ui` | Draw a detail page or handle its actions with the extension-page UI envelope |
 | `POST water/reminder` | Handle a water notification's buttons and return a localized toast |
 
-Send `space=health` without a selected manager header/query. Full-access devices may call
+Omit the selected manager header and `manager` query so the hub uses the default manager.
+`space=health` may be sent for context, but the hub does not use it to select a manager.
+Full-access devices may call
 these routes; the watch's answer credential may only GET or POST `intake`. Extension,
 scoped and read-only credentials cannot access the data. The manager owns measurements,
 settings, pages and scheduling; the hub only authenticates, forwards and delivers pushes.
@@ -159,10 +162,11 @@ or `kind:"protein"`. The pages show today's entries with Delete (protein include
 eaten), 7/30-day bar charts and how many dates met the current goal. Today's entries are
 paged in groups of 40. Settings open from the page: water goal, cup size, reminders on/off,
 start/end, interval, weekends, stop when done; protein goal. Changes are validated before
-saving to `health.intake`. Defaults: water 2000 ml, cup 250 ml, reminders off; protein 60 g.
+saving to `health.intake`. Invalid stored settings fall back to defaults and are logged, so
+records and the settings form remain usable; a valid save repairs the stored setting. Defaults: water 2000 ml, cup 250 ml, reminders off; protein 60 g.
 Water goal is 500–6000 ml, cup 50–1000 ml, interval 15–240 minutes; protein goal 10–300 g.
 Start and end are exact `HH:mm`, with start before end. Each water entry is 1–3000 ml;
-protein is positive, at most 200 g. Records support one decimal place. The water page and
+protein is 0.1–200 g and remains positive after rounding. Records support one decimal place. The water page and
 notification text input use whole ml, as the water extension does.
 
 **Reminders.** Water alone can remind, off by default. In the chosen time window it reminds

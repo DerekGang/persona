@@ -156,8 +156,8 @@ func TestHealthWaterReminderAccessAndFailures(t *testing.T) {
 	if w := waterActionHTTP(s, "synthetic", "snooze", "", "full"); w.Code != 503 {
 		t.Fatalf("failed snooze: %d %s", w.Code, w.Body)
 	}
-	if w := waterActionHTTP(s, "synthetic", "drink", "", "full"); w.Code != 503 {
-		t.Fatalf("failed reset save: %d %s", w.Code, w.Body)
+	if w := waterActionHTTP(s, "synthetic", "drink", "", "full"); w.Code != 200 {
+		t.Fatalf("committed entry despite failed reminder reset: %d %s", w.Code, w.Body)
 	}
 	st.setFailPut(nil)
 	if w := waterActionHTTP(s, "synthetic", "drink", "", "full"); w.Code != 200 || len(st.rows) != 1 {

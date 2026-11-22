@@ -41,14 +41,16 @@ func (v healthIntakeRequest) entry(settings healthIntakeSettings, now time.Time)
 	} else if v.Kind == "water" {
 		r.Amount = float64(settings.Water.Cup)
 	}
+	rounded := math.Round(r.Amount*10) / 10
 	if !workoutUUID.MatchString(r.ID) ||
 		len(r.Note) > 4096 || strings.ContainsRune(r.Note, '\x00') ||
-		math.IsNaN(r.Amount) || math.IsInf(r.Amount, 0) || r.Amount <= 0 ||
+		math.IsNaN(r.Amount) || math.IsInf(r.Amount, 0) || rounded <= 0 ||
 		math.Abs(r.Amount*10-math.Round(r.Amount*10)) > 1e-7 ||
 		(r.Kind != "water" && r.Kind != "protein") ||
-		(r.Kind == "water" && (r.Amount < 1 || r.Amount > 3000)) || (r.Kind == "protein" && r.Amount > 200) {
+		(r.Kind == "water" && (r.Amount < 1 || r.Amount > 3000)) || (r.Kind == "protein" && (r.Amount < 0.1 || r.Amount > 200)) {
 		return r, i18n.Err("assistant-health_intake.invalid_entry")
 	}
+	r.Amount = rounded
 	return r, nil
 }
 
@@ -125,7 +127,7 @@ func sumHealthIntake(rows []db.HealthIntakeRow, settings healthIntakeSettings, n
 }
 
 func (s *Service) healthIntakeView(ctx context.Context, st healthIntakeStore, settings healthIntakeSettings, days int) (healthIntakeView, error) {
-	loc, now := s.location(ctx), time.Now()
+	loc, now := s.healthIntakeLocation(ctx), time.Now()
 	local := now.In(loc)
 	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
 	rows, err := st.HealthIntakeRange(ctx, today.AddDate(0, 0, 1-days), today.AddDate(0, 0, 1))

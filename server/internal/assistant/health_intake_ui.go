@@ -188,7 +188,7 @@ func (s *Service) healthIntakeUI(w http.ResponseWriter, r *http.Request) {
 		intakeUnavailable(w)
 		return
 	}
-	view := drawIntakePage(p, c, v, reminder, now, s.location(r.Context()), l, version, s.hello(r.Context()).QuietPush)
+	view := drawIntakePage(p, c, v, reminder, now, s.healthIntakeLocation(r.Context()), l, version, s.hello(r.Context()).QuietPush)
 	slot, _ := extension.Slot("extension_page")
 	if _, err := extension.Fit(&view, slot, version, l); err != nil {
 		s.logf("health intake page: %v", err)
