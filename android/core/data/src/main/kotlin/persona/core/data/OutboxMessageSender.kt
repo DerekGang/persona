@@ -620,6 +620,7 @@ class OutboxMessageSender(
         }
         val state = classify(result)
         val error = (result as? MessageTransportResult.HubError)?.let { it.code ?: it.error }
+        println("outbox-settle: id=$id entryState=${entry.state} nextState=$state result=$result")
         val moved = if ((result as? MessageTransportResult.HubError)?.delivered == "none") {
             store.transition(id, from, state, error, newOperationId())
         } else store.transition(id, from, state, error)
