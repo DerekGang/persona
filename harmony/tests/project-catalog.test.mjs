@@ -34,6 +34,31 @@ function session(id, extra = {}) {
 }
 const machine = row('machine', { id: 'mac', name: 'Studio', online: true });
 
+test('space card headers reserve the status slot and omit the optional runtime before truncating the tab', () => {
+  const src=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const methods=src.slice(src.indexOf('  private spaceSlotTitle('),src.indexOf('  @Builder spaceSlot('));
+  const environment={windowWidthPx:1206,fontScale:1},style={page:16},tokens={interfaceScaleFor:()=>1.5};
+  const Page=new Function('nativeEnvironment','PhoneStyle','Tokens','FontWeight',
+    'return '+stripTypeScriptTypes('class Page {'+methods+'}'))(environment,style,tokens,{Medium:500});
+  const page=Object.assign(new Page(),{narrowOutline:()=>false,spaceCardScale:()=>1,getUIContext:()=>({
+    px2vp:px=>px/3,getMeasureUtils:()=>({measureText:({textContent,fontSize})=>3*parseFloat(fontSize)*textContent.length*.58})
+  })});
+  const session={tabTitle:'widget',tab:'',runtime:'Claude',state:'working'};
+  assert.ok(page.fitsRuntimeChip(session,''));
+  environment.fontScale=3.2;
+  assert.equal(page.fitsRuntimeChip(session,''),false);
+  assert.equal(page.fitsRuntimeChip(session,'Claude 1'),false);
+  assert.equal(page.spaceSlotTitle(session,'Claude 1'),'widget · Claude 1');
+  environment.fontScale=1;
+  assert.equal(page.fitsRuntimeChip({...session,tabTitle:'An exceptionally long terminal tab label'},''),false);
+  page.narrowOutline=()=>true;
+  assert.equal(page.fitsRuntimeChip(session,''),false);
+  const grid=src.slice(src.indexOf('  @Builder spaceSlot('),src.indexOf('  @Builder spaceBar('));
+  assert.match(grid,/\.alignItems\(ItemAlign\.Stretch\)\.id\('projects\.session_grid'\)/);
+  assert.match(grid,/GridCol\(\{span:1\}\)\s*\{[\s\S]+?\.backgroundColor\(Colors\.surface\)[\s\S]+?\.id\('projects\.session'\)/);
+  assert.match(grid,/\.layoutWeight\(1\)\.clip\(true\)\s*this\.spaceStatus\(agent\)/);
+});
+
 test('space cards fit their actual bordered grid columns and retain the natural style at 402 points or in one column', () => {
   const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
   const methods=source.slice(source.indexOf('  private narrowOutline()'),source.indexOf('  private treeInset('));

@@ -647,15 +647,20 @@ export struct ProjectsPage {
     const home = machine ? Wire.text(machine.data(),'home').replace(/\/+$/,'') : '';
     return home && (tree.cwd === home || tree.cwd.startsWith(home+'/')) ? '~'+tree.cwd.slice(home.length) : tree.cwd;
   }
+  private spaceCaptionScale(points:number): number {
+    return Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(points));
+  }
   @Builder detailHeader(tree: ProjectWorktree) {
     ListItem() {
       Column({space:9}) {
         Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center,space:{main:LengthMetrics.vp(8),cross:LengthMetrics.vp(5)}}) {
           Button({type:ButtonType.Capsule}) {
             Row({space:6}) {
-              SymbolGlyph(Symbols.device).fontSize('15vp').fontColor([Colors.link])
-              Text(tree.machineTitle).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.link).maxLines(2)
-              SymbolGlyph(Symbols.expand).fontSize('10vp').fontColor([Colors.link])
+              SymbolGlyph(Symbols.device).fontSize(String(19*this.spaceCaptionScale(13))+'vp').fontColor([Colors.link])
+                .width(22.5*this.spaceCaptionScale(13)).height(15.5*this.spaceCaptionScale(13))
+              Text(tree.machineTitle).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(600).fontColor(Colors.link).maxLines(2)
+              SymbolGlyph(Symbols.expand).fontSize(String(11*this.spaceCaptionScale(12))+'vp').fontColor([Colors.link])
+                .width(9.5*this.spaceCaptionScale(12)).height(12*this.spaceCaptionScale(12))
             }
           }.padding({left:12,right:12,top:6,bottom:6}).backgroundColor(Colors.selection)
             .responseRegion({x:0,y:-6,width:'100%',height:'150%'}).accessibilityGroup(true).accessibilityText(tree.machineTitle)
@@ -692,32 +697,67 @@ export struct ProjectsPage {
         }
         Circle().width(9).height(9).fill(this.tint(agent))
       }
-    }.width(16).height(16).accessibilityLevel('no')
+    }.width(16).height(16).flexShrink(0).accessibilityLevel('no').id('projects.space_status.'+agent.row.id)
   }
-  @Builder spaceCard(agent:ProjectAgent,paneName:string,starter:boolean,treeKey:string) {
-    Column({space:8*this.spaceCardScale()}) {
+  private spaceSlotTitle(agent:ProjectAgent,paneName:string): string {
+    return [agent.tabTitle || agent.tab || agent.runtime,paneName].filter((s:string) => !!s).join(' · ') || '—';
+  }
+  private fitsRuntimeChip(agent:ProjectAgent,paneName:string): boolean {
+    if (paneName || !agent.runtime || this.narrowOutline() || !nativeEnvironment.windowWidthPx) return false;
+    const ui=this.getUIContext(), scale=this.spaceCardScale();
+    const column=(ui.px2vp(nativeEnvironment.windowWidthPx)-2*PhoneStyle.page-12)/2;
+    const inside=column-2*(12*scale+(agent.state==='needs_you' ? 1.5 : 0.5));
+    const font=String(12*scale*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(12)))+'vp';
+    const metrics=ui.getMeasureUtils();
+    const tab=metrics.measureText({textContent:this.spaceSlotTitle(agent,paneName),fontSize:font,fontWeight:FontWeight.Medium});
+    const runtime=metrics.measureText({textContent:agent.runtime,fontSize:font});
+    // Two chip insets, an outline, two gaps and the dedicated status slot must fit together.
+    return ui.px2vp(Math.ceil(tab)+Math.ceil(runtime))+14+13+2*5+16<=inside;
+  }
+  @Builder spaceSlot(agent:ProjectAgent,paneName:string) {
+    Row({space:5}) {
       Row({space:5}) {
-        Text([agent.tabTitle || agent.tab || agent.runtime,paneName].filter((s:string) => !!s).join(' · ') || '—')
+        Text(this.spaceSlotTitle(agent,paneName))
           .fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(agent.active ? this.tint(agent) : $r('app.color.project_card_secondary'))
           .padding({left:7,right:7,top:2,bottom:2}).backgroundColor(Colors.subtle).borderRadius(12)
-          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
-        if (!paneName && agent.runtime && !this.narrowOutline()) Text(agent.runtime)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1).constraintSize({maxWidth:'100%'})
+        if (this.fitsRuntimeChip(agent,paneName)) Text(agent.runtime)
           .fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor($r('app.color.project_card_secondary')).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
           .padding({left:6,right:6,top:1,bottom:1}).border({width:0.5,color:Colors.divider,radius:12}).flexShrink(1)
+      }.layoutWeight(1).clip(true)
+      this.spaceStatus(agent)
+    }.width('100%').id('projects.space_slot.'+agent.row.id)
+  }
+  @Builder spaceModel(agent:ProjectAgent,measureOnly:boolean) {
+    Text(agent.model).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12))
+      .fontColor($r('app.color.project_card_tertiary')).maxLines(this.narrowOutline() ? 3 : 1)
+      .textOverflow({overflow:TextOverflow.Ellipsis}).visibility(measureOnly ? Visibility.Hidden : Visibility.Visible)
+      .accessibilityLevel('no').id(measureOnly ? '' : 'projects.space_model.'+agent.row.id)
+  }
+  @Builder spaceFooter(agent:ProjectAgent) {
+    if (agent.model) {
+      Row() { this.spaceModel(agent,false) }.width('100%')
+        .padding({left:12*this.spaceCardScale(),right:12*this.spaceCardScale(),bottom:12*this.spaceCardScale()})
+        .hitTestBehavior(HitTestMode.None)
+    }
+  }
+  @Builder spaceCard(agent:ProjectAgent,paneName:string,starter:boolean,treeKey:string) {
+    GridCol({span:1}) {
+      Column({space:8*this.spaceCardScale()}) {
+        this.spaceSlot(agent,paneName)
+        Text(agent.row.title || tr('agent_untitled')).fontSize(15*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(600)
+          .fontColor(Colors.ink).maxLines(this.narrowOutline() ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).id('projects.space_title.'+agent.row.id)
+        Text([tr(agent.stateLabel),starter ? tr('session_space_starter') : '',this.pendingDescription(agent)]
+          .filter((part:string) => !!part).join(' · ')).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(agent.active ? this.tint(agent) : $r('app.color.project_card_secondary'))
+        if (agent.preview) Text(agent.preview).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor($r('app.color.project_card_secondary')).maxLines(this.narrowOutline() ? 5 : 3).textOverflow({overflow:TextOverflow.Ellipsis})
         Blank().layoutWeight(1)
-        this.spaceStatus(agent)
-      }.width('100%').id('projects.space_slot.'+agent.row.id)
-      Text(agent.row.title || tr('agent_untitled')).fontSize(15*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(600)
-        .fontColor(Colors.ink).maxLines(this.narrowOutline() ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).id('projects.space_title.'+agent.row.id)
-      Text([tr(agent.stateLabel),starter ? tr('session_space_starter') : '',this.pendingDescription(agent)]
-        .filter((part:string) => !!part).join(' · ')).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(agent.active ? this.tint(agent) : $r('app.color.project_card_secondary'))
-      if (agent.preview) Text(agent.preview).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor($r('app.color.project_card_secondary')).maxLines(this.narrowOutline() ? 5 : 3).textOverflow({overflow:TextOverflow.Ellipsis})
-      Blank().layoutWeight(1)
-      if (agent.model) Text(agent.model).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor($r('app.color.project_card_tertiary')).maxLines(this.narrowOutline() ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
-    }.width('100%').constraintSize({minHeight:174*this.spaceCardScale()}).padding(12*this.spaceCardScale()).alignItems(HorizontalAlign.Start)
-      .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+        // The intrinsic footer reserves room during measurement. Its visible copy follows the stretched grid row below.
+        if (agent.model) this.spaceModel(agent,true)
+      }.width('100%').constraintSize({minHeight:174*this.spaceCardScale()}).padding(12*this.spaceCardScale()).alignItems(HorizontalAlign.Start)
+    }.backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
       .border({width:agent.state === 'needs_you' ? 1.5 : 0.5,color:agent.state === 'needs_you' ? $r('app.color.project_card_needs_border') : Colors.divider,radius:PhoneStyle.cardRadius})
-      .accessibilityGroup(true).onClick(() => this.openSpaceCard(treeKey,agent.row.key())).id('projects.session')
+      .overlay(this.spaceFooter(agent),{align:Alignment.BottomStart})
+      .accessibilityGroup(true).accessibilityDescription(agent.model).onClick(() => this.openSpaceCard(treeKey,agent.row.key())).id('projects.session')
   }
   @Builder sessions() {
     List() {
@@ -727,17 +767,16 @@ export struct ProjectsPage {
       ListItem() {
         GridRow({columns:this.narrowOutline() ? 1 : 2,gutter:{x:12,y:12}}) {
           ForEach(this.detailSessions,(line:ProjectLine) => {
-            GridCol({span:1}) { this.spaceCard(line.agent!,line.paneName,line.starter,this.target) }
+            this.spaceCard(line.agent!,line.paneName,line.starter,this.target)
           },(line:ProjectLine) => JSON.stringify([line.key,line.agent?.row.raw,line.agent?.state,line.paneName,line.starter]))
           if (this.detailTree?.canStart) GridCol({span:1}) {
             Column({space:8}) {
               SymbolGlyph(Symbols.plus).fontSize('22vp').fontColor([Colors.link])
               Text(tr('new_agent')).fontSize(15*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(600).fontColor(Colors.link)
             }.width('100%').constraintSize({minHeight:174*this.spaceCardScale()}).justifyContent(FlexAlign.Center)
-              .backgroundColor(Colors.selection).border({width:1,style:BorderStyle.Dashed,color:Colors.link,radius:PhoneStyle.cardRadius})
-              .accessibilityGroup(true).onClick(() => this.startFromTree(this.target)).id('projects.start')
-          }
-        }.width('100%').id('projects.session_grid')
+          }.align(Alignment.Center).backgroundColor(Colors.selection).border({width:1,style:BorderStyle.Dashed,color:Colors.link,radius:PhoneStyle.cardRadius})
+            .accessibilityGroup(true).onClick(() => this.startFromTree(this.target)).id('projects.start')
+        }.width('100%').alignItems(ItemAlign.Stretch).id('projects.session_grid')
       }
       if (!this.detailSessions.length) ListItem() { this.message(tr('project_no_sessions')) }
       if (this.detailTree && this.detailTree!.children.length) {
