@@ -6,6 +6,9 @@ import { useState } from "react";
 import { errorText } from "../../lib/api";
 import { currentLanguage, t } from "../../i18n";
 import { Button, Dialog, Loading, toast } from "../../ui/atoms";
+import { healthIntakePath } from "../../lib/health-intake-ui";
+import { BASE } from "../../lib/base";
+import { navigate } from "../../lib/router";
 import { GaugeFace } from "../../ui/GaugeFace";
 import { inputClass, SectionTitle } from "../assistant/parts";
 import { INTAKE_MAX, newDraft, parseAmount, type IntakeDraft, type IntakeEntry, type IntakeKind } from "./intake";
@@ -116,25 +119,35 @@ function RingCard({ kind, ring, children }: { kind: IntakeKind; ring: Ring; chil
   const percent = Math.round(ring.ratio * 100);
   return (
     <div className="flex min-w-0 flex-col items-center rounded-card bg-surface pb-3 shadow-card" data-testid={`health-today-${kind}`}>
-      <div
-        role="meter"
-        aria-label={title}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        aria-valuetext={t("health.today_read", { amount: num(ring.today), goal: num(ring.goal), unit, percent })}
-        className="min-w-0 max-w-full"
+      <a
+        href={BASE + healthIntakePath(kind)}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          navigate(healthIntakePath(kind));
+        }}
+        data-testid={`health-today-${kind}-open`}
+        className="min-w-0 max-w-full rounded-card transition-colors hover:bg-hover"
       >
-        <GaugeFace
-          percent={percent}
-          color={COLOR[kind]}
-          track={`color-mix(in srgb, ${COLOR[kind]} 14%, transparent)`}
-          centre={num(ring.today)}
-          unit={unit}
-          title={title}
-          subtitle={t("health.today_goal", { goal: num(ring.goal), unit })}
-        />
-      </div>
+        <div
+          role="meter"
+          aria-label={title}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          aria-valuetext={t("health.today_read", { amount: num(ring.today), goal: num(ring.goal), unit, percent })}
+        >
+          <GaugeFace
+            percent={percent}
+            color={COLOR[kind]}
+            track={`color-mix(in srgb, ${COLOR[kind]} 14%, transparent)`}
+            centre={num(ring.today)}
+            unit={unit}
+            title={title}
+            subtitle={t("health.today_goal", { goal: num(ring.goal), unit })}
+          />
+        </div>
+      </a>
       <div className="flex flex-wrap justify-center gap-1.5 px-3">{children}</div>
     </div>
   );

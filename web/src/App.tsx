@@ -56,6 +56,7 @@ import { Sidebar, SidebarRail } from "./views/Sidebar";
 import { SidebarResize } from "./views/SidebarResize";
 import { SidePanel } from "./views/SidePanel";
 import { ExtensionNavPage } from "./views/extensions/ExtensionSlots";
+import { HEALTH_INTAKE_UI } from "./lib/health-intake-ui";
 import { useExtensionPlace } from "./lib/extension-slots";
 import { AttentionSignals } from "./lib/attention-signals";
 import { clearDesktopIsland, DesktopIslandSignals } from "./lib/desktop-island";
@@ -79,6 +80,8 @@ const MachineDetail = lazyPage(() => import("./views/machines/MachineDetail").th
 const SpacePage = lazyPage(() => import("./views/SpacePage").then((m) => m.SpacePage), { routes: ["space"] });
 const Settings = lazyPage(() => import("./views/Settings").then((m) => m.Settings), { routes: ["settings"] });
 const Health = lazyPage(() => import("./views/health/Health").then((m) => m.Health), { routes: ["health"] });
+// The water and protein pages (#13176) open on the extension pages' route under a reserved id, and are the health chunk's.
+const HealthIntakePage = lazyPage(() => import("./views/health/HealthIntakePage").then((m) => m.HealthIntakePage));
 const History = lazyPage(() => import("./views/assistant/History").then((m) => m.History), { routes: ["history"] });
 const Profile = lazyPage(() => import("./views/assistant/Profile").then((m) => m.Profile), { routes: ["profile"] });
 const Routines = lazyPage(() => import("./views/assistant/Routines").then((m) => m.Routines), { routes: ["routines"] });
@@ -588,7 +591,9 @@ function Shell() {
       main = <SubscriptionsPage onToggleSidebar={toggle} />;
       break;
     case "extension":
-      main = <ExtensionNavPage key={`${route.extension}/${route.ui}`} extension={route.extension} ui={route.ui} onToggleSidebar={toggle} />;
+      main = route.extension === HEALTH_INTAKE_UI
+        ? <HealthIntakePage key={`${route.extension}/${route.ui}${location.search}`} onToggleSidebar={toggle} />
+        : <ExtensionNavPage key={`${route.extension}/${route.ui}`} extension={route.extension} ui={route.ui} onToggleSidebar={toggle} />;
       break;
     case "not-found":
       main = <NotFound onToggleSidebar={toggle} />;

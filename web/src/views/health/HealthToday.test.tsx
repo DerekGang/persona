@@ -383,3 +383,32 @@ describe("Today: the hub's message", () => {
     expect(ring("water").textContent).toContain("250");
   });
 });
+
+describe("Today: opening a ring's page", () => {
+  const open = (kind: "water" | "protein") => host.querySelector<HTMLAnchorElement>(`[data-testid="health-today-${kind}-open"]`)!;
+
+  it("a ring is a link to its page: the extension pages' route, the reserved id, the state in ?state=", async () => {
+    await render();
+    expect(open("water").getAttribute("href")).toBe("/extension/-health-intake/pages?state=%7B%22kind%22%3A%22water%22%7D");
+    expect(open("protein").getAttribute("href")).toBe("/extension/-health-intake/pages?state=%7B%22kind%22%3A%22protein%22%7D");
+    expect(open("water").querySelector('[role="meter"]')).not.toBeNull();
+    // the buttons under a ring are not inside its link
+    expect(open("water").querySelector("button")).toBeNull();
+  });
+
+  it("a plain click on a ring opens that page in the app; a modified click is left to the browser", async () => {
+    history.replaceState(null, "", "/health/new");
+    await render();
+    const before = location.pathname + location.search;
+    const modified = new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
+    act(() => void open("protein").dispatchEvent(modified));
+    expect(modified.defaultPrevented).toBe(false);
+    expect(location.pathname + location.search).toBe(before);
+    act(() => open("protein").click());
+    expect(location.pathname).toBe("/extension/-health-intake/pages");
+    expect(new URLSearchParams(location.search).get("state")).toBe('{"kind":"protein"}');
+    history.replaceState(null, "", "/health/new");
+    act(() => open("water").click());
+    expect(new URLSearchParams(location.search).get("state")).toBe('{"kind":"water"}');
+  });
+});
