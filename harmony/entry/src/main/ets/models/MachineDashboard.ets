@@ -96,12 +96,19 @@ export function machineConcern(data: Record<string,Object>, online: boolean, ale
   return Wire.bool(data,'node_mismatch') || Wire.bool(data,'deploying') ? 5 : 6;
 }
 
+// Match the iPhone session row: short words can keep the time beside them at any size.
+export function machineAgentTimeBeside(room: number, words: number, aside: number): boolean {
+  return room <= 0 || aside <= 0 || room - aside - 6 >= Math.min(words, room * 0.7);
+}
+
 export class MachineAgent {
   readonly row: ResourceRow;
   readonly state: string;
   readonly counted: string;
   readonly sourceLabel: string;
   readonly note: string;
+  readonly stateLabel: string;
+  readonly todoTitle: string;
   readonly context: string;
   readonly updated: number;
   readonly submillisecond: number;
@@ -118,7 +125,13 @@ export class MachineAgent {
     const background = Wire.bool(data,'background_waiting') && !Wire.number(children,'working') && !Wire.number(children,'needs_you');
     this.counted = this.state === 'working' && background ? 'idle' : this.state;
     this.rank = this.state === 'needs_you' ? 0 : this.state === 'working' ? 1 : 2;
-    this.note = Wire.text(data,'last_text') || Wire.text(work,'detail') || row.detail;
+    const attention = this.state === 'needs_you' ? Wire.text(data,'attention_reason') : '';
+    const replyLine = reply && this.state !== 'working' ?
+      (Wire.text(work,'phase') === 'blocked' && Wire.text(work,'on') === 'user' ? Wire.text(work,'line') : '') || Wire.text(data,'asks') : '';
+    this.note = attention || replyLine || Wire.text(data,'last_text') || Wire.text(work,'detail') || row.detail;
+    this.stateLabel = this.state === 'needs_you' ? 'needs_you' : reply && this.state !== 'working' ? 'agent_group_awaiting' :
+      background ? 'agent_group_background' : Wire.bool(work,'just_finished') ? 'agent_group_just_finished' : '';
+    this.todoTitle = Wire.text(Wire.object(data,'todo'),'title');
     const provider = Wire.text(data,'agent'), slot = Wire.text(data,'slot_name') || Wire.text(data,'workspace_name');
     this.context = [provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : provider, slot].filter((s:string) => !!s).join(' · ');
     const pane = Wire.text(data,'pane_id'), prefix = pane.split(':')[0];

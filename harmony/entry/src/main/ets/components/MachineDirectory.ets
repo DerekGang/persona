@@ -9,7 +9,7 @@ import { Tokens } from '../design/Tokens';
 import { ClientModel } from '../models/ClientModel';
 import { HubProfile, ResourceRow, Wire } from '../models/Wire';
 import { DashboardPoint, MachineAgent, MachineAlert, MachineReading, machineAgents, machineAlerts, machineBytes,
-  machineConcern, machineKey, machineOnline, machinePending, machinePercent, machineTokens, machineTokenTotal,
+  machineConcern, machineAgentTimeBeside, machineKey, machineOnline, machinePending, machinePercent, machineTokens, machineTokenTotal,
   dashboardLabelTicks, dashboardTickLeft, machineTrace, osFamily, percentOf } from '../models/MachineDashboard';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { MachineChart } from './MachineChart';
@@ -133,6 +133,7 @@ struct MachineTimeAxis {
 @ComponentV2
 export struct MachineDirectory {
   @Local liveGridWidth:number=0;
+  @Local private agentContentWidth: number = 0;
   @Require @Param model: ClientModel;
   @Param active: boolean = true;
   @Param settingsScope: boolean = false;
@@ -501,27 +502,70 @@ export struct MachineDirectory {
   private agentInk(a:MachineAgent):ResourceColor {
     return a.state === 'needs_you' ? Colors.needs : a.state === 'working' ? Colors.working : a.state === 'unread' ? Colors.unread : Colors.secondary;
   }
+  private agentTextWidth(text: string, size: number, weight: FontWeight = FontWeight.Normal): number {
+    const ui = this.getUIContext();
+    return ui.px2vp(ui.getMeasureUtils().measureText({ textContent: text, fontSize: Tokens.interfaceFontVp(size,nativeEnvironment.fontScale), fontWeight: weight }));
+  }
+  private agentTimeFits(a: MachineAgent): boolean {
+    const metadata = [a.stateLabel ? tr(a.stateLabel) : '', a.context, a.todoTitle].filter((v:string) => !!v).join(' · ');
+    const words = Math.max(this.agentTextWidth(a.row.title || tr('agent_untitled'),17,FontWeight.Medium), this.agentTextWidth(a.note,15), this.agentTextWidth(metadata,13));
+    const aside = Math.max(Number.isFinite(a.updated) ? this.agentTextWidth(this.ageLabel(a.updated),12) : 0,
+      a.sourceLabel ? this.agentTextWidth(tr(a.sourceLabel),12) + 12 : 0);
+    return machineAgentTimeBeside(this.agentContentWidth,words,aside);
+  }
+  @Builder agentWords(a: MachineAgent) {
+    Column({space:4}) {
+      Text(a.row.title || tr('agent_untitled')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
+        .fontWeight(a.state === 'unread' ? FontWeight.Bold : FontWeight.Medium).fontColor(Colors.ink)
+        .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).id('machines.agent.title')
+      if (a.note) Text(a.note).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+        .lineSpacing(LengthMetrics.vp(3), {onlyBetweenLines:true}).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).id('machines.agent.preview')
+      Row({space:4}) {
+        Text() {
+          if (a.stateLabel) Span(tr(a.stateLabel)).fontWeight(FontWeight.Medium).fontColor(this.agentInk(a))
+          if (a.context) Span((a.stateLabel ? ' · ' : '')+a.context)
+        }.fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
+        if (a.todoTitle) SymbolGlyph($r('sys.symbol.list_checkmark')).fontSize('13vp').fontColor([Colors.secondary]).accessibilityText(a.todoTitle)
+      }.width('100%').padding({top:1}).id('machines.agent.metadata')
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+  @Builder agentTime(a: MachineAgent) {
+    Column({space:4}) {
+      if (Number.isFinite(a.updated)) Text(this.ageLabel(a.updated)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
+        .fontColor(Colors.secondary).maxLines(1).id('machines.agent.time')
+      if (a.sourceLabel) Text(tr(a.sourceLabel)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
+        .fontColor(Colors.link).borderRadius(8).padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.control).id('machines.agent.source')
+    }.alignItems(HorizontalAlign.End)
+  }
   @Builder agentRow(a:MachineAgent) {
-    Row({space:9}) {
-      Stack() {
-        Rect().width(34).height(34).radius(8).fill(this.agentInk(a)).opacity(0.10)
-        SymbolGlyph(Symbols.agent).fontSize('18vp').fontColor([this.agentInk(a)])
-      }.width(34).height(34)
-      Column({space:3}) {
-        Text(a.row.title || tr('agent_untitled')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
-        if (a.note) Text(a.note).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-        Row({space:4}) {
-          Text(tr(a.state)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(this.agentInk(a))
-          if (a.context) Text('· '+a.context).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
-        }.width('100%')
-      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      Column({space:6}) {
-        if (Number.isFinite(a.updated)) Text(this.ageLabel(a.updated)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
-        if (a.sourceLabel) Text(tr(a.sourceLabel)).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale)
-          .fontColor(Colors.secondary).borderRadius(8).padding({left:6,right:6,top:2,bottom:2}).backgroundColor(Colors.control)
-      }.alignItems(HorizontalAlign.End)
-      SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-    }.width('100%').padding({left:13,right:13,top:10,bottom:10}).onClick(() => this.onSession(a.row)).id('machines.agent')
+    Row({space:8}) {
+      Row({space:12}) {
+        Stack() {
+          Rect().width(44).height(44).radius(13).fill(Colors.control)
+          SymbolGlyph(Symbols.agent).fontSize('18.5vp').fontColor([this.agentInk(a)])
+        }.width(44).height(44)
+        Column() {
+          if (this.agentTimeFits(a)) {
+            Row({space:6}) {
+              Column() { this.agentWords(a) }.layoutWeight(1)
+              this.agentTime(a)
+            }.width('100%').alignItems(VerticalAlign.Top)
+          } else {
+            Column({space:4}) {
+              this.agentWords(a)
+              this.agentTime(a)
+            }.width('100%').alignItems(HorizontalAlign.Start)
+          }
+        }.layoutWeight(1).padding({top:4,bottom:4}).onAreaChange((_:Area,area:Area) => {
+          const width=Number(area.width);
+          if (Number.isFinite(width) && width>0 && Math.abs(width-this.agentContentWidth)>0.5) this.agentContentWidth=width;
+        })
+      }.layoutWeight(1).alignItems(VerticalAlign.Top)
+      SymbolGlyph(Symbols.expand).fontSize('12vp').width(8).fontColor([Colors.secondary])
+    }.width('100%').padding({left:16,right:16,top:12,bottom:12}).onClick(() => this.onSession(a.row))
+      .accessibilityGroup(true).accessibilityText([a.row.title || tr('agent_untitled'),a.note,tr(a.state),a.context,
+        a.todoTitle,Number.isFinite(a.updated) ? this.ageLabel(a.updated) : '',a.sourceLabel ? tr(a.sourceLabel) : ''].filter((v:string) => !!v).join('、')).id('machines.agent')
   }
   @Builder agentsCard(c:ComputerCard) {
     Column() {

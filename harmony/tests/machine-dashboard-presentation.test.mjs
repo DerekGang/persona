@@ -17,7 +17,7 @@ registerHooks({
   }
 });
 const {ResourceRow}=await import('../entry/src/main/ets/models/Wire.ets');
-const {MachineReading,machineKey,machineAgents,machineAlerts,machineConcern,machineTrace,
+const {MachineReading,machineKey,machineAgents,machineAgentTimeBeside,machineAlerts,machineConcern,machineTrace,
   machineBytes,machinePercent,machineTokens,machineTokenTotal,osFamily}=await import('../entry/src/main/ets/models/MachineDashboard.ets');
 
 test('the dashboard orders concerns exactly as the iPhone and keeps the Hub order for equal priorities',()=>{
@@ -53,6 +53,23 @@ test('agent totals and detail rows fold only matching parents, preserve waiting 
   assert.equal(agents.find(a=>a.row.id==='local-bg').counted,'idle');
   assert.equal(agents.find(a=>a.row.id==='with-working-child').counted,'working');
   assert.equal(agents.find(a=>a.row.id==='unread').counted,'unread');
+});
+
+test('machine session rows keep short text beside the time and move a wide time below long text',()=>{
+  assert.equal(machineAgentTimeBeside(265,380,47),true);
+  assert.equal(machineAgentTimeBeside(255,380,77),false);
+  assert.equal(machineAgentTimeBeside(255,70,77),true);
+  assert.equal(machineAgentTimeBeside(116,160,0),true);
+});
+
+test('a machine session shows its live waiting reason and task without repeating an ordinary working state',()=>{
+  const agent=(state,extra)=>machineAgents([ResourceRow.from({session_id:'agent',machine_id:'computer',state,
+    agent:'claude',slot_name:'reports',last_text:'Latest result',...extra},'session')])[0];
+  const waiting=agent('needs_you',{attention_reason:'Choose a report',todo:{title:'Prepare report'}});
+  assert.deepEqual([waiting.note,waiting.stateLabel,waiting.context,waiting.todoTitle],['Choose a report','needs_you','Claude · reports','Prepare report']);
+  assert.equal(agent('working',{attention_reason:'Earlier question'}).note,'Latest result');
+  assert.equal(agent('working',{}).stateLabel,'');
+  assert.equal(agent('idle',{awaits_reply:true,asks:'Which report?'}).note,'Which report?');
 });
 
 test('machine previews use the paged Hub order within each priority and preserve legacy order for older owners',()=>{
