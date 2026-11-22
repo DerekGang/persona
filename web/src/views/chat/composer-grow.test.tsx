@@ -144,8 +144,7 @@ describe("the phone composer", () => {
     act(() => document.querySelector<HTMLButtonElement>('[data-testid="composer-collapse"]')!.click());
     expect(editor()).toBeNull();
     // back-close's 0 ms timer, then the Back it causes
-    await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
-    expect(onOverlayEntry()).toBe(false);
+    await act(async () => void (await vi.waitFor(() => expect(onOverlayEntry()).toBe(false), { timeout: 1000, interval: 10 })));
     expect(location.href).toBe(at);
   });
 
