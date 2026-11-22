@@ -737,6 +737,8 @@ export class AgentWorkspace {
     this.freezeSuppressed = true; this.frozenGroups = undefined;
   }
 
+  quickCountsKnown(): boolean { return this.sourceReady() && !this.loading && Object.keys(this.filterCounts).length > 0; }
+
   private sourceReady(): boolean { return !this.openingView && (this.history ? this.historyLoaded : !!this.client && (this.client.directoryReady || this.client.sessionsReady) && !this.client.directoryLoading); }
 
   private refreezeAfterFilter(): void {

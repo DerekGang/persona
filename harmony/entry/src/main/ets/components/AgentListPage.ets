@@ -621,7 +621,7 @@ export struct AgentListPage {
   }
   @Computed get shownQuickFilters(): string[] {
     const counts = this.workspace.filterCounts;
-    const known = !this.workspace.loading && Object.keys(counts).length > 0;
+    const known = this.workspace.quickCountsKnown();
     return QUICK_FILTERS.filter((key: string) => !known || key === 'all' || key === this.workspace.quickFilter || Wire.number(counts,key)>0);
   }
   private quickHeight(): number { return PhoneStyle.formSize(44,57.7,this.environment.fontScale); }
@@ -648,7 +648,7 @@ export struct AgentListPage {
     const top=Math.max(Tokens.compactStatusInset,ui.px2vp(this.environment.safeTopPx));
     // The phone shell leaves 34 points of room under its 44-point navigation bar.
     // A folded search band is 54 points shorter than its revealed field and filters.
-    const firstRow=this.searchEditing ? top+4 : top+44+34+(this.searchVisible() ? 10 : 20);
+    const firstRow=this.searchEditing ? top : top+44+34+(this.searchVisible() ? 10 : 20);
     return Math.max(0,firstRow-this.pageOriginY);
   }
 
@@ -657,7 +657,7 @@ export struct AgentListPage {
       .maxFontScale(Tokens.interfaceFontMaxScale).height(44).margin(0)
       .textFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).caretStyle({color:Colors.action})
       .onFocus(() => { if (this.compactRoot) { this.searchOpen = true; this.setSearchEditing(true); } })
-      .onBlur(() => this.setSearchEditing(false))
+      .onBlur(() => { if (!this.workspace.search) this.setSearchEditing(false); })
       .onChange((value: string) => { if (this.compactRoot) this.searchOpen = true; this.workspace.setSearch(value); })
       .onAppear(() => {
         if (!this.focusSearch) return;
@@ -696,10 +696,13 @@ export struct AgentListPage {
   @Builder filters() {
     if (!this.rail) Column({ space: this.compactRoot && this.searchVisible() ? 20 : 6 }) {
       if (this.searchVisible()) {
-        if (this.compactRoot) Row({space: 6}) {
+        if (this.compactRoot) Row({space: 11}) {
           Column() { this.searchControl() }.layoutWeight(1)
-          if (this.searchEditing) Button(tr('cancel'), {type:ButtonType.Normal}).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).backgroundColor(Color.Transparent)
-            .padding({left:4,right:4}).onClick(() => { this.searchField.stopEditing(); this.workspace.setSearch(''); this.resetSearchReveal(); }).id('agents.search_cancel')
+          if (this.searchEditing) {
+            Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('16vp').fontColor([Colors.ink]) }
+              .width(44).height(44).padding(0).backgroundColor(Colors.control).accessibilityText(tr('cancel'))
+              .onClick(() => { this.searchField.stopEditing(); this.workspace.setSearch(''); this.resetSearchReveal(); }).id('agents.search_cancel')
+          }
         }.width('100%')
         else this.searchControl()
       }
