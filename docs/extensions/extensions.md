@@ -1400,6 +1400,8 @@ sent only as `Authorization: Bearer` to the marketplace's own origin (for a GitH
 
 **Upstream proxy**: manager.json's `extension_market.proxy` accepts `http://[user:password@]host:port` or `socks5://[user:password@]host:port` for catalog reads, package downloads and HTTPS git clones. The explicit proxy covers GitHub and its CDNs, ordinary HTTPS markets, OCI registries and mirrors, overrides `github.proxy` and the process proxy environment, and does not honor `NO_PROXY` or fall back to a direct connection when invalid. SSH clones do not use it. With no marketplace proxy, the existing routing is unchanged: GitHub hosts use `github.proxy` when configured, and other requests follow the manager's `HTTPS_PROXY` / `NO_PROXY`. Restart the manager after changing this advanced setting (`docs/operations/config.md`, "manager.json").
 
+**Private certificate authorities**: an HTTPS marketplace signed by a private CA can set manager.json's advanced `extension_market.ca_file` to the path of a PEM CA bundle; use an absolute path so lookup does not depend on the manager's working directory. Its certificates are appended to the system roots for the marketplace HTTP client only, covering catalog reads and package downloads without changing other HTTP clients, process-wide trust or git clones. Unset keeps the previous TLS behavior. A file that cannot be read or contains no parseable PEM certificates fails the read with a clear error; there is no fallback to the system-only pool. Certificate and hostname verification remains enabled, and the HTTPS-or-GitHub address requirement is unchanged. Restart the manager after changing the setting or bundle (`docs/operations/config.md`, "manager.json").
+
 **GitHub rate limits**: without a token the GitHub API gives each egress address only 60 requests per hour. All devices at home share one public address, and once it is used up you get 403. So:
 
 - **Public repos can take a token too** (a fine-grained token with Public repositories selected and no permissions checked), which raises the quota to 5000 per hour. When the app / web cannot read a GitHub marketplace and has no token,
@@ -3105,8 +3107,10 @@ its state, and a light in the model for each lamp that is on. The app sends `11`
 `hub.extension_points.ui` is `11`; there is no new `features` entry (an older hub holds the app's version to its own, and the
 extension sees that). One new component, `scene`, authoritative in `schema/extension/view.schema.json` (`SceneComponent` and
 its `Scene*` definitions, `x-since: 11`); the example is `schema/extension/examples/View.v11-scene-flat.json`. **An app sends
-11 only when it draws all of the below** (and all of 10). No app sends 11 yet: the iPhone and iPad are first
-(nwverse/persona#12544); until then every app gets the downgrade below.
+11 only when it draws all of the below** (and all of 10). **iOS** (#12544) draws `scene` in
+`apple/Persona/Views/Settings/ExtensionScene.swift` (`ExtensionSceneGeometry.swift`, `ExtensionSceneModel.swift`) and sends `11`
+for pages and cards (`pageVersion` and `cardVersion`, including Share as Image's direct still snapshot); **web** (#12641) and
+**Android** (#12642) stay on `10` and get the downgrade below until their renderers land.
 
 Extensions still run no code in the app and send no model file: they say what the shapes are, and each app builds them with
 its own engine. A list of simple shapes is the contract because no 3D file format is drawn by every client (SceneKit reads
@@ -3124,7 +3128,7 @@ angles in degrees, counter-clockwise from +x seen from above. A box at `yaw` 0 h
 | `labels` (0–32) | `{text, at, height?}`: quiet names on the floor, a room's. Not tappable, not components of the page; read out after `alt` |
 | `pins` (0–100) | `{id, at, height?, label, state?, icon?, tone? \| color?, light?, action?}`: a device in the model. Each pin counts as one of the page's 300 components. `tone` or a named `color`, never both, colors the pin's dot; `state` is plain words (On, Off, 26 °C) and is **required** whenever the tone is not neutral, a color is set or the light is on, so a state never rides on color or light alone. `light` (`{on?, warmth?: warm \| cool}`, off and warm when left out) lights the model around the pin when on; at most 16 pins of a scene have their light on (a phone lights so many at once). Tapping a pin does its `action`, as a tile's |
 | `camera` | Where the model is first seen from, orthographic, around the centre of the shapes' bounding box (pins and labels left out): `yaw`, the camera's direction from the centre (225, the default, stands south-west looking north-east), `pitch` above the floor plane (10–90, 35 by default, 90 straight down), `zoom` (0.5–4; 1, the default, fits the bounding box) |
-| `poster` | An `ImageSource` (version 6's rules: `ref` only from an extension, never in an assistant card): a picture of the model for an older app and for share as image |
+| `poster` | An `ImageSource` (version 6's rules: `ref` only from an extension, never in an assistant card): a picture of the model for an older app and for surfaces that export a downgraded card as an image (iOS renders the scene snapshot directly) |
 | `key` | As every component's: keeps the person's camera across redraws |
 
 **Colors.** A scene's shapes are content, like the pixels of an `image`, so their colors are the extension's own: walls, floors
