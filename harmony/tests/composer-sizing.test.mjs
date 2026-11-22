@@ -148,12 +148,12 @@ test('a blurred empty composer returns to one line, with enough space for the ke
 test('a draft can expand above the keyboard, while a short unfocused draft keeps its quiet shape', () => {
   const Editor = new Function('Tokens','return '+stripTypeScriptTypes('class Editor {'+
     ['offersDraftEditor','rememberSelection','parkSelection','restoreSelection','draftEditorCurrent'].map(method).join('\n')+'}'))(Tokens);
-  const v = Object.assign(new Editor(), {fieldFocused:false, model:{draft:'Review PR 42'}, composerWidth:370, nativeDraftLines:()=>1,
+  const v = Object.assign(new Editor(), {fieldFocused:false, model:{draft:'Review PR 42'}, composerWidth:370, unreservedDraftLines:1,
     environment:{fontScale:1}, draftEditorOwner:'hubA/review', sendCurrent:()=>true,composerAvailable:()=>true,
     composerOwnerKey:()=>'hubA/review'});
   assert.equal(v.offersDraftEditor(),false);v.fieldFocused=true;assert.equal(v.offersDraftEditor(),true);
   v.fieldFocused=false;v.model.draft='a\nb';assert.equal(v.offersDraftEditor(),true);
-  v.model.draft='wrapped';v.nativeDraftLines=width=>{assert.equal(width,346);return 6;};assert.equal(v.offersDraftEditor(),true);
+  v.model.draft='wrapped';v.unreservedDraftLines=6;assert.equal(v.offersDraftEditor(),true);
   v.rememberSelection(1,6);v.parkSelection();v.rememberSelection(0,0);
   v.model.draft='abc';let restored;
   v.restoreSelection({setTextSelection:(...range)=>{restored=range;}});
@@ -186,6 +186,14 @@ test('resized phone viewport leaves a full keyboard and send target at both text
     assert.ok(v.inlineEditorMaxHeight() >= height);
     assert.equal(v.model.draft, 'Review PR 42\n'.repeat(20));
   }
+});
+
+test('three scrollable Agent requests yield room to the active editor', () => {
+  const v=fixture();
+  Object.assign(v,{fieldFocused:true,availableHeight:460,agentComposerHeight:130,controlsHeight:415,editorHeight:64});
+  Object.assign(v.model,{selected:{kind:'session'},decision:{kind:'question'}});
+  Object.assign(v.environment,{fontScale:3.2,keyboardHeightPx:1000});
+  assert.ok(v.inlineEditorMaxHeight()>=v.readingSize.height(2));
 });
 
 test('quotes, attachments and the dock reserve their measured space before growing the editor', () => {
@@ -260,7 +268,9 @@ test('pending Agent cards derive the half page from the compact portrait window 
 });
 
 test('draft wrapping uses the full text width and measures before reserving the corner button', () => {
-  const methods = ['offersDraftEditor','expandedFieldHeight','nativeDraftLines'].map(method).join('\n');
+  const methods = ['offersDraftEditor','expandedFieldHeight','nativeDraftLines'].map(method).join('\n')+
+    source.match(/@Computed (get unreservedDraftLines\(\): number \{[^}]+\})/)[1]+
+    source.match(/@Computed (get visibleDraftLines\(\): number \{[\s\S]*?\n  \})/)[1];
   const Editor = new Function('Tokens', 'WordBreak', 'return '+stripTypeScriptTypes('class Editor {'+methods+'}'))(Tokens,{BREAK_WORD:'break-word'});
   const calls = [];
   const state = Object.assign(new Editor(), {composerWidth:370, model:{draft:'Review note 42'}, fieldFocused:false,

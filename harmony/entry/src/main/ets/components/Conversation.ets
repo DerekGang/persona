@@ -531,8 +531,10 @@ export struct Conversation {
     const actions = Tokens.touch * (this.verticalActions() ? 2 : 1);
     // Include the outer spacing and both borders before the first native measurement.
     // After layout this also reserves the measured quote, attachment strip and Persona task dock.
-    const chrome = Math.max(actions + Tokens.gap + Tokens.footer + 8,
-      this.editorHeight > 0 ? this.controlsHeight - this.editorHeight : 0);
+    // Session requests have a separate scroll viewport that yields room to the composer.
+    // Counting the cards in its own overhead makes an oversized editor shrink and grow on successive layouts.
+    const height = this.model.decision && this.model.selected.kind === 'session' ? this.agentComposerHeight : this.controlsHeight;
+    const chrome = Math.max(actions + Tokens.gap + Tokens.footer + 8, this.editorHeight > 0 ? height - this.editorHeight : 0);
     const room = Math.max(this.readingSize.height(1), this.maxControlsHeight() - chrome - Tokens.page);
     const lines = Math.max(1, Math.min(6, Math.floor(room / line)));
     return this.readingSize.height(lines);
@@ -774,21 +776,30 @@ export struct Conversation {
   }
   private nativeDraftLines(width: number): number {
     const ui = this.getUIContext(), text = this.model.draft;
+    let offset = -1;
+    for (let breaks = 0; breaks < 6; breaks++) {
+      offset = text.indexOf('\n', offset + 1);
+      if (offset < 0) break;
+      if (breaks === 5) return 7;
+    }
     const value = !text || text.endsWith('\n') ? text + ' ' : text;
     const metrics = ui.getMeasureUtils().measureTextSize({ textContent: value, constraintWidth: String(Math.max(1, width)) + 'vp',
       fontSize: String(this.readingSize.points) + 'vp', lineHeight: String(this.readingSize.line) + 'vp',
       letterSpacing: String(this.draftTracking) + 'vp', maxLines: 7, wordBreak: WordBreak.BREAK_WORD });
     return Math.max(1, Math.min(7, Math.round(ui.px2vp(Number(metrics.height)) / this.readingSize.line)));
   }
+  @Computed get unreservedDraftLines(): number { return this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset); }
   private offersDraftEditor(): boolean {
     if (this.fieldFocused) return true;
     const text = this.model.draft;
-    return !!text && (text.includes('\n') || this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset) >= 6);
+    return !!text && (text.includes('\n') || this.unreservedDraftLines >= 6);
+  }
+  @Computed get visibleDraftLines(): number {
+    if (!this.offersDraftEditor()) return this.unreservedDraftLines;
+    return this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset - this.restingSize.target);
   }
   private expandedFieldHeight(): number {
-    const reserved = this.offersDraftEditor() ? this.restingSize.target : 0;
-    const lines = this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset - reserved);
-    return Math.min(this.inlineEditorMaxHeight(), this.readingSize.height(lines));
+    return Math.min(this.inlineEditorMaxHeight(), this.readingSize.height(this.visibleDraftLines));
   }
   private draftEditorCurrent(): boolean {
     return !!this.draftEditorOwner && this.sendCurrent() && this.composerAvailable() &&
