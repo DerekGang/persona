@@ -6189,6 +6189,30 @@
       "value": "月"
     },
     {
+      "name": "phone_inbox_search",
+      "value": "タイトル、差出人、内容を検索"
+    },
+    {
+      "name": "phone_inbox_waiting_agents",
+      "value": "あなたを待っている Agent"
+    },
+    {
+      "name": "phone_inbox_mention",
+      "value": "@自分"
+    },
+    {
+      "name": "phone_inbox_dm",
+      "value": "DM"
+    },
+    {
+      "name": "phone_inbox_group",
+      "value": "グループチャット"
+    },
+    {
+      "name": "phone_inbox_done",
+      "value": "対応済み"
+    },
+    {
       "name": "phone_new_chat_title",
       "value": "新しいチャット"
     },

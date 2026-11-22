@@ -92,7 +92,7 @@ test('magnified Inbox filters can grow and row icons keep their layout slots', (
   assert.doesNotMatch(list, /SymbolGlyph\([^\n]*?\)\.fontSize\(\d+\)/);
   assert.match(list, /Flex\(\{wrap:FlexWrap.Wrap,space:\{main:LengthMetrics.vp\(5\)/);
   assert.ok(list.indexOf('this.sourceBar()') < list.indexOf('this.inboxSearch(true)'));
-  assert.match(filters, /this.workspace.sourceFilter=account \? 'all' : value/);
-  assert.match(filters, /this.workspace.accountFilter=account \? value : 'all'/);
-  assert.match(list, /\.constraintSize\(\{ minHeight: 38 \}\)/);
+  assert.match(filters, /this.workspace.sourceFilter=account \|\| clear \? 'all' : value/);
+  assert.match(filters, /this.workspace.accountFilter=account && !clear \? value : 'all'/);
+  assert.match(list, /minHeight:section.sourceGroup \? 42 : 52/);
 });

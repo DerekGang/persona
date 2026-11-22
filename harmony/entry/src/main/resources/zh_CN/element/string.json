@@ -5402,7 +5402,7 @@
     },
     {
       "name": "flow_inbox_fyi",
-      "value": "知会"
+      "value": "知悉即可"
     },
     {
       "name": "flow_inbox_collapsed",
@@ -6187,6 +6187,30 @@
     {
       "name": "phone_calendar_month",
       "value": "月"
+    },
+    {
+      "name": "phone_inbox_search",
+      "value": "搜索标题、发件人、内容"
+    },
+    {
+      "name": "phone_inbox_waiting_agents",
+      "value": "Agent 在等你"
+    },
+    {
+      "name": "phone_inbox_mention",
+      "value": "@我"
+    },
+    {
+      "name": "phone_inbox_dm",
+      "value": "私聊"
+    },
+    {
+      "name": "phone_inbox_group",
+      "value": "群聊"
+    },
+    {
+      "name": "phone_inbox_done",
+      "value": "已处理"
     },
     {
       "name": "phone_new_chat_title",

@@ -183,7 +183,7 @@ function genericConversation(detail: Record<string, Object>, row: ResourceRow): 
 
 function itemSource(row: ResourceRow, detail: Record<string, Object> = row.data()): string {
   const source = Wire.text(detail, 'source', Wire.text(row.data(), 'source'));
-  if (source) return source;
+  if (source) return source==='feishu' ? 'lark' : source;
   if (Object.keys(Wire.object(detail, 'mail')).length) return 'mail';
   if (Object.keys(Wire.object(detail, 'lark')).length) return 'lark';
   return Object.keys(Wire.object(detail, 'connector')).length ? 'connector' : '';
@@ -226,6 +226,7 @@ export function inboxTierLabel(key:string):string {
   if (key === 'action') return 'needs_you';
   if (key === 'working') return 'flow_inbox_progress';
   if (key === 'fyi') return 'flow_inbox_fyi';
+  if (key === 'done') return 'phone_inbox_done';
   return key === 'noise' ? 'flow_inbox_collapsed' : key;
 }
 
@@ -233,9 +234,37 @@ export function inboxLineKey(row:ResourceRow):string {
   return row.kind === 'session' ? JSON.stringify([row.key(),Wire.text(row.data(),'inbox_interaction')]) : row.key();
 }
 
+function inboxQuestionPreview(request:Record<string,Object>):string {
+  const summary=Wire.text(request,'summary').trim(), tool=Wire.text(request,'tool_name');
+  switch (Wire.text(request,'kind')) {
+    case 'question': return Wire.text(Wire.rows(request,'questions')[0] || {},'question') || summary;
+    case 'plan': return Wire.text(request,'plan').split('\n').map((line:string) => line.trim().replace(/^[#* ]+|[#* ]+$/g,''))
+      .find((line:string) => !!line) || summary;
+    case 'permission': {
+      if (summary || tool==='secret_run' || tool==='secret_handoff') return summary;
+      const input=Wire.object(request,'tool_input');
+      for (const key of ['command','file_path','notebook_path','description','path','url','query','prompt']) {
+        const target=Wire.text(input,key).trim(); if (target) return target;
+      }
+      return tool;
+    }
+    case 'screen': return Wire.text(Wire.object(request,'dialog'),'question') || summary;
+    case 'elicitation': return Wire.text(Wire.object(request,'elicitation'),'message') || summary;
+    default: return summary;
+  }
+}
+
+function inboxSourceGroup(row:ResourceRow):string {
+  if (row.kind==='session') return 'agents';
+  const data=row.data(), source=itemSource(row,data), account=Wire.text(data,'account');
+  if (Object.keys(Wire.object(data,'connector')).length) return 'c:'+account;
+  return source==='mail' ? 'mail:'+account : source || 'inbox';
+}
+
 export class InboxListSection {
   key:string;
   rows:ResourceRow[] = [];
+  groups:InboxListSection[] = [];
   constructor(key:string) { this.key=key; }
 }
 
@@ -257,6 +286,8 @@ export class InboxWorkspace {
   @Trace detail: Record<string, Object> = {};
   @Trace sourceFilter: string = 'all';
   @Trace accountFilter: string = 'all';
+  @Trace kindFilter:string = '';
+  @Trace filterAddresses:Record<string,string> = {};
   @Trace statusFilter: string = 'action';
   private beforeSearch: string = '';
   @Trace doneItems: ResourceRow[] = [];
@@ -351,12 +382,22 @@ export class InboxWorkspace {
     this.search = value;
   }
 
-  listView():InboxListView {
+  private kindMatches(data:Record<string,Object>,mentionLabel:string):boolean {
+    if (!this.kindFilter) return true;
+    const kind=Wire.text(data,'kind');
+    if (this.kindFilter==='agent') return false;
+    if (kind===this.kindFilter) return true;
+    if (this.kindFilter==='group') return kind==='bot';
+    return this.kindFilter==='mention' && (kind==='doc' || kind==='moment' &&
+      (Wire.bool(data,'mentioned') || !!mentionLabel && Wire.text(data,'kind_label')===mentionLabel));
+  }
+
+  listView(mentionLabel:string='',requestLabel:(row:ResourceRow)=>string=() => ''):InboxListView {
     const buckets = new Map<string,InboxListSection>(), seen = new Set<string>(), query = this.search.trim().toLocaleLowerCase();
     for (const key of INBOX_TIERS) buckets.set(key,new InboxListSection(key));
-    if (this.sourceFilter === 'all' && this.accountFilter === 'all') {
+    if (this.sourceFilter === 'all' && this.accountFilter === 'all' && (!this.kindFilter || this.kindFilter==='agent')) {
       for (const session of this.waitingAgents) {
-        if (!query || [session.title,session.detail].join(' ').toLocaleLowerCase().includes(query)) buckets.get('action')!.rows.push(session);
+        if (!query || [session.title,session.detail,requestLabel(session)].join(' ').toLocaleLowerCase().includes(query)) buckets.get('action')!.rows.push(session);
       }
     }
     for (const row of this.items.concat(this.doneItems)) {
@@ -364,6 +405,7 @@ export class InboxWorkspace {
       if (seen.has(identity)) continue;
       seen.add(identity);
       const data = row.data(), source = itemSource(row,data), account = Wire.text(data,'account');
+      if (!this.kindMatches(data,mentionLabel)) continue;
       if (this.sourceFilter !== 'all' && source !== this.sourceFilter &&
         !(this.sourceFilter === 'connector' && Object.keys(Wire.object(data,'connector')).length > 0)) continue;
       if (this.accountFilter !== 'all' && account !== this.accountFilter) continue;
@@ -375,16 +417,35 @@ export class InboxWorkspace {
     for (const key of INBOX_TIERS) {
       const section = buckets.get(key)!;
       if (key === 'action' || key !== 'noise' && (section.rows.length || chosen === key ||
-        key === 'done' && this.haveDoneDays && !query && this.sourceFilter === 'all' && this.accountFilter === 'all')) {
+        key === 'done' && this.haveDoneDays && !query && !this.kindFilter && this.sourceFilter === 'all' && this.accountFilter === 'all')) {
         result.choices.push(new InboxQuickFilter(key,section.rows.length));
       }
       if (chosen === 'all' || chosen === key || chosen === 'open' && key !== 'done') {
         if (key === 'done') section.rows.sort((a:ResourceRow,b:ResourceRow) => Wire.text(b.data(),'done_at').localeCompare(Wire.text(a.data(),'done_at')));
-        if (section.rows.length) result.sections.push(section);
+        if (section.rows.length) {
+          if (key!=='working' && key!=='done') {
+            const bySource=new Map<string,InboxListSection>();
+            for (const row of section.rows) {
+              const groupKey=inboxSourceGroup(row);
+              let group=bySource.get(groupKey);
+              if (!group) { group=new InboxListSection(groupKey); bySource.set(groupKey,group); }
+              group.rows.push(row);
+            }
+            if (bySource.size>1) section.groups=Array.from(bySource.values()).sort((a:InboxListSection,b:InboxListSection) =>
+              this.sourceGroupOrder(a.key)-this.sourceGroupOrder(b.key));
+          }
+          result.sections.push(section);
+        }
       }
     }
     result.choices.push(new InboxQuickFilter('all',0));
     return result;
+  }
+  private sourceGroupOrder(key:string):number {
+    if (key==='agents') return 0;
+    if (key==='lark' || key==='feishu') return 1;
+    if (key.startsWith('mail:')) return 2;
+    return 3;
   }
   get filteredItems():ResourceRow[] {
     // Legacy callers may explicitly request every open row in the Hub's list order.
@@ -436,19 +497,25 @@ export class InboxWorkspace {
       for (const item of requests) {
         const nested=Wire.object(item,'interaction'), id=Wire.text(item,'id') || Wire.text(nested,'id');
         const machine=Wire.text(item,'machine_id') || Wire.text(nested,'machine_id'), session=Wire.text(item,'session_id') || Wire.text(nested,'session_id');
-        const manager=Wire.text(item,'manager') || Wire.text(item,'manager_id') || owner.managerId;
+        const manager=Wire.text(item,'manager') || Wire.text(item,'manager_id') || Wire.text(nested,'manager') || owner.managerId;
         const identity=JSON.stringify([manager,machine,session,id]);
-        if (!id || !session || !machine || ids.has(identity) || manager !== owner.managerId || Wire.bool(item,'muted')) continue;
+        if (!id || !session || !machine || ids.has(identity) || manager !== owner.managerId || Wire.bool(item,'muted') || Wire.bool(nested,'muted')) continue;
         const origin=owner.client.sessions.find((row:ResourceRow) => row.machine === machine && (row.session || row.id) === session &&
           (!row.group || row.group === owner.groupId) && (!row.manager || row.manager === manager));
         if (!origin || Wire.bool(origin.data(),'muted')) continue;
         ids.add(identity);
-        const body=origin.data(); body['inbox_interaction']=id;
+        const request=Object.keys(nested).length ? nested : item, body=origin.data();
+        body['inbox_interaction']=id;
+        body['inbox_request_kind']=Wire.text(request,'kind');
+        body['inbox_request_tool']=Wire.text(request,'tool_name');
+        body['inbox_asked_at']=Wire.text(request,'created_at') || Wire.text(item,'created_at');
         const target=ResourceRow.from(body,'session'); target.group=owner.groupId; target.manager=manager;
-        target.detail=Wire.text(item,'summary') || Wire.text(item,'title') || Wire.text(nested,'summary') || Wire.text(nested,'title');
+        target.title=Wire.text(request,'session_title') || Wire.text(item,'session_title') || origin.title;
+        target.detail=inboxQuestionPreview(request);
         found.push(target);
       }
-      this.waitingAgents=found;
+      this.waitingAgents=found.sort((a:ResourceRow,b:ResourceRow) =>
+        (Date.parse(Wire.text(a.data(),'inbox_asked_at')) || 0)-(Date.parse(Wire.text(b.data(),'inbox_asked_at')) || 0));
     } catch (_) { if (current()) this.waitingAgents=[]; }
   }
   private async readDoneDays(owner:OwnerSnapshot,current:() => boolean):Promise<void> {
@@ -468,6 +535,32 @@ export class InboxWorkspace {
     const values = this.items.map((row: ResourceRow) => Wire.text(row.data(), 'account')).filter((value: string, index: number, all: string[]) => value && all.indexOf(value) === index);
     return ['all'].concat(values);
   }
+  get sourceAccounts():string[] {
+    return this.accountOptions.filter((key:string) => key!=='all' && this.items.some((row:ResourceRow) => {
+      const data=row.data();
+      return Wire.text(data,'account')===key && (itemSource(row,data)==='mail' || Object.keys(Wire.object(data,'connector')).length>0);
+    }));
+  }
+  get channelOptions():string[] {
+    return this.sourceOptions.filter((key:string) => key==='all' || key==='lark' || this.items.some((row:ResourceRow) => {
+      const data=row.data();
+      return itemSource(row,data)===key && (!Wire.text(data,'account') || key!=='mail' && !Object.keys(Wire.object(data,'connector')).length);
+    }));
+  }
+  filterAccountName(key:string):string { return this.filterAddresses[key] || this.accountName(key); }
+  private async readFilterAccounts(owner:OwnerSnapshot,current:() => boolean):Promise<void> {
+    try {
+      const result=await owner.repo.call('/api/v1/mail/accounts'+managerQuery(owner.managerId));
+      if (!current()) return;
+      const names:Record<string,string>={};
+      for (const value of Wire.rows(result,'accounts')) {
+        const key=Wire.text(value,'id'), address=Wire.text(value,'email');
+        if (key) names[key]=address || Wire.text(value,'name') || key;
+      }
+      this.filterAddresses=names;
+    } catch (_) { if (current()) this.filterAddresses={}; }
+  }
+  canComposeMail():boolean { return this.active && !!this.client?.connected && Object.keys(this.filterAddresses).length>0 && this.canWrite(); }
   sourceName(value: string): string {
     if (value === 'all') return 'all';
     if (value === 'mail') return 'mail';
@@ -566,7 +659,7 @@ export class InboxWorkspace {
     this.revision++; this.active = true; this.client = client; this.boundRepo = undefined;
     this.pendingRow = row ? this.cloneRow(row) : undefined;
     this.selected = new ResourceRow(); this.selectedKey = ''; this.detail = {}; this.items = [];
-    this.error = ''; this.writeState = ''; this.sourceFilter = 'all'; this.accountFilter = 'all'; this.statusFilter = 'action'; this.search = ''; this.beforeSearch = '';
+    this.error = ''; this.writeState = ''; this.sourceFilter = 'all'; this.accountFilter = 'all'; this.kindFilter=''; this.filterAddresses={}; this.statusFilter = 'action'; this.search = ''; this.beforeSearch = '';
     this.historyRevision++; this.historyBusy=false; this.historyEnded=false; this.historyBefore=''; this.historyBeforeID=''; this.doneItems=[]; this.waitingAgents=[]; this.haveDoneDays=false;
     this.clearDetailState();
     try { this.boundRepo = client.repo(); } catch (_) { this.error = client.demo ? 'demo_unavailable' : 'offline'; return; }
@@ -731,6 +824,7 @@ export class InboxWorkspace {
       this.doneItems=this.doneItems.filter((row:ResourceRow) => !recentIds.has(row.key()));
       if (!this.selectedKey) {
         this.readDoneDays(owner,current); this.readWaitingAgents(owner,current);
+        this.readFilterAccounts(owner,current);
       }
       try {
         const sources = await owner.repo.call('/api/v1/messaging' + managerQuery(owner.managerId));

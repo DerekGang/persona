@@ -1042,6 +1042,35 @@ test('the phone Inbox bar honors Hub status, legacy triage, Done and the stored 
   assert.deepEqual(view().choices.map(x=>x.key),['action','working','all']);
 });
 
+test('Inbox groups each open card under its source, orders Agent requests by their own time and searches their own text',async()=>{
+  const rows=[{id:'dm',source:'lark',account:'chat',kind:'dm',title:'A message',tier:'action'},
+    {id:'thread',source:'mail',account:'box',kind:'mail',title:'A thread',tier:'action'},
+    {id:'topic',source:'lark',account:'chat',kind:'bot',title:'A group discussion',tier:'action'}];
+  const q=(id,kind,time,extra={})=>({id,kind,manager:'work',machine_id:'machine',session_id:'session',session_title:'Review',created_at:time,...extra});
+  const asks=[q('q','question','2026-01-02T11:00Z',{questions:[{question:'Which format?'}]}),
+    q('p','plan','2026-01-02T10:00Z',{plan:'\n ## Support photos\n\n1. Details'}),
+    q('cmd','permission','2026-01-02T12:00Z',{tool_name:'Bash',tool_input:{command:'swift test'}}),
+    q('muted','plan','2026-01-02T09:00Z',{muted:true})];
+  const f=makeHarness({rows,handle:async call=>{
+    if (pathOnly(call.path)==='/api/v1/interactions') return {interactions:asks};
+    if (pathOnly(call.path)==='/api/v1/mail/accounts') return {accounts:[{id:'box',email:'me@example.com'}]};
+  }});
+  const session=ResourceRow.from({session_id:'session',machine_id:'machine',manager:'work',title:'Recent chat title',last_text:'Last chat text'},'session');
+  session.group=f.client.profile.id; f.client.sessions=[session];
+  const workspace=new InboxWorkspace();await workspace.open(f.client);await waitFor(()=>workspace.waitingAgents.length===3 && workspace.filterAddresses.box);
+  const section=workspace.listView().sections[0];
+  assert.deepEqual(section.groups.map(g=>[g.key,g.rows.length]),[['agents',3],['lark',2],['mail:box',1]]);
+  assert.deepEqual(section.groups[0].rows.map(row=>row.detail),['Support photos','Which format?','swift test']);
+  assert.deepEqual(section.groups[0].rows.map(row=>row.title),['Review','Review','Review']);
+  assert.equal(workspace.filterAccountName('box'),'me@example.com');assert.deepEqual(workspace.sourceAccounts,['box']);
+  workspace.setSearch('Which format');assert.deepEqual(workspace.filteredItems.map(row=>row.detail),['Which format?']);
+  workspace.setSearch('');workspace.kindFilter='agent';assert.equal(workspace.filteredItems.length,3);
+  workspace.kindFilter='group';assert.deepEqual(workspace.filteredItems.map(row=>row.id),['topic']);
+  workspace.kindFilter='dm';assert.deepEqual(workspace.filteredItems.map(row=>row.id),['dm']);
+  workspace.kindFilter='';workspace.accountFilter='box';assert.deepEqual(workspace.filteredItems.map(row=>row.id),['thread']);
+  await workspace.close();
+});
+
 test('server done cursors are read in order, overlapping recent rows win, and duplicate history pages stop',async()=>{
   const seen=[];
   const old={id:'old',title:'Earlier',source:'mail',account:'a',done_at:'2026-11-11T06:00:00Z'};

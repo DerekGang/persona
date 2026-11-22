@@ -6189,6 +6189,30 @@
       "value": "Month"
     },
     {
+      "name": "phone_inbox_search",
+      "value": "Search Titles, Senders, and Content"
+    },
+    {
+      "name": "phone_inbox_waiting_agents",
+      "value": "Agents Waiting on You"
+    },
+    {
+      "name": "phone_inbox_mention",
+      "value": "@Me"
+    },
+    {
+      "name": "phone_inbox_dm",
+      "value": "DMs"
+    },
+    {
+      "name": "phone_inbox_group",
+      "value": "Group chat"
+    },
+    {
+      "name": "phone_inbox_done",
+      "value": "Done"
+    },
+    {
       "name": "phone_new_chat_title",
       "value": "New Chat"
     },
