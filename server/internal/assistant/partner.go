@@ -92,7 +92,7 @@ func (s *Service) partnerStore() partnerStore {
 // partnerBus is the hub's partner.send and partner.hubs (BusHub); a hub without it sends nothing.
 type partnerBus interface {
 	PartnerSend(ctx context.Context, p assistantwire.PartnerSend) (assistantwire.PartnerResult, error)
-	PartnerHubs(ctx context.Context) (assistantwire.PartnerHubs, error)
+	ListPartnerHubs(ctx context.Context) (assistantwire.PartnerHubs, error)
 }
 
 // PartnerSend is partner.send: the hub hands one envelope to a paired hub over its link.
@@ -102,8 +102,8 @@ func (b *BusHub) PartnerSend(ctx context.Context, p assistantwire.PartnerSend) (
 	return res, err
 }
 
-// PartnerHubs is partner.hubs: the paired hubs now.
-func (b *BusHub) PartnerHubs(ctx context.Context) (assistantwire.PartnerHubs, error) {
+// ListPartnerHubs is partner.hubs: the paired hubs now (not PartnerHubs: the store guard reads that name as the hub table).
+func (b *BusHub) ListPartnerHubs(ctx context.Context) (assistantwire.PartnerHubs, error) {
 	var res assistantwire.PartnerHubs
 	err := busError(b.client.Call(ctx, assistantwire.MethodPartnerHubs, map[string]any{}, &res))
 	return res, err
@@ -220,7 +220,7 @@ func (s *Service) partnerList(ctx context.Context) (assistantwire.PartnerHubs, e
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	list, err := pb.PartnerHubs(cctx)
+	list, err := pb.ListPartnerHubs(cctx)
 	if err != nil {
 		return assistantwire.PartnerHubs{}, err
 	}

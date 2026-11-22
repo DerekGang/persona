@@ -41,7 +41,7 @@ func (h *partnerHub) PartnerSend(_ context.Context, p assistantwire.PartnerSend)
 	return assistantwire.PartnerResult{Status: assistantwire.PartnerAccepted}, nil
 }
 
-func (h *partnerHub) PartnerHubs(context.Context) (assistantwire.PartnerHubs, error) {
+func (h *partnerHub) ListPartnerHubs(context.Context) (assistantwire.PartnerHubs, error) {
 	h.pmu.Lock()
 	defer h.pmu.Unlock()
 	return h.list, nil
