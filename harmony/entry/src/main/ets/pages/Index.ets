@@ -1543,11 +1543,19 @@ struct Index {
     this.openSettings(page);
   }
   private compactFormHeight(): number | SheetSize {
+    if (!this.fullHeightPhone()) return SheetSize.LARGE;
+    const ui = this.getUIContext(), env = this.environment;
+    // Leave the status area visible and retain a margin above a taller native cutout.
+    return ui.px2vp(env.windowHeightPx) - Math.max(Tokens.compactStatusInset, ui.px2vp(env.safeTopPx) + 8);
+  }
+  private fullHeightPhone(): boolean {
     const ui = this.getUIContext(), env = this.environment;
     const width = ui.px2vp(env.windowWidthPx), height = ui.px2vp(env.windowHeightPx);
-    if (!env.isFullScreen || env.nativeHoverAvailable || width <= 0 || width >= 600 || height <= width) return SheetSize.LARGE;
-    // Leave the status area visible and retain a margin above a taller native cutout.
-    return height - Math.max(62, ui.px2vp(env.safeTopPx) + 8);
+    return env.isFullScreen && !env.nativeHoverAvailable && width > 0 && width < 600 && height >= 600 && height > width;
+  }
+  private compactNavigationInset(): number {
+    if (!this.model.profile.id || !this.fullHeightPhone() || this.environment.safeTopPx <= 0) return 0;
+    return Math.max(0, Tokens.compactStatusInset - this.getUIContext().px2vp(this.environment.safeTopPx));
   }
   @Builder phoneSettings() {
     Column() {
@@ -2419,7 +2427,7 @@ struct Index {
       if (this.chatSearchShown) Column() {
         this.phoneSearch()
       }.width('100%').height('100%').backgroundColor(Colors.grouped).zIndex(2).id('shell.all_chats')
-    }.width('100%').height('100%').clip(true)
+    }.width('100%').height('100%').padding({top:this.compactNavigationInset()}).clip(true)
       .onAreaChange((_old:Area,now:Area) => { this.phoneWidth = Number(now.width); this.phoneHeight = Number(now.height); })
       .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:12}).tag('phone.shell.pan')
         .onActionStart((event:GestureEvent) => this.startPhonePan(event))

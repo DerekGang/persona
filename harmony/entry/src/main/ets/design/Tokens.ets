@@ -6,6 +6,7 @@ export class Tokens {
   static readonly divider: number = 0.5;
   static readonly card: number = 20;
   static readonly header: number = 56;
+  static readonly compactStatusInset: number = 62;
   static readonly chrome: number = 40;
   static readonly symbol: number = 22;
   static readonly symbolFont: string = String(Tokens.symbol) + 'vp';

@@ -95,12 +95,13 @@ test('phone form sheets follow the attached portrait window and retain native si
   };
   const source = readFileSync(new URL('../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
   const declaration = source.slice(source.indexOf('  private compactFormHeight()'), source.indexOf('  @Builder phoneSettings()'));
-  const Form = new Function('SheetSize', 'return '+stripTypeScriptTypes('class Form {'+declaration+'}'))({ LARGE:'native' });
-  const form = Object.assign(new Form(), { environment:env, getUIContext:() => ({ px2vp:px => px/3 }) });
-  env.bindWindow(owner); assert.equal(form.compactFormHeight(), 812);
-  inset = 270; handlers.get('avoidAreaChange')({}); assert.equal(form.compactFormHeight(), 776);
+  const Form = new Function('SheetSize', 'Tokens', 'return '+stripTypeScriptTypes('class Form {'+declaration+'}'))({ LARGE:'native' }, { compactStatusInset:62 });
+  const form = Object.assign(new Form(), { environment:env, model:{profile:{id:'paired'}}, getUIContext:() => ({ px2vp:px => px/3 }) });
+  env.bindWindow(owner); assert.equal(form.compactFormHeight(), 812); assert.equal(form.compactNavigationInset(), 23);
+  inset = 270; handlers.get('avoidAreaChange')({}); assert.equal(form.compactFormHeight(), 776); assert.equal(form.compactNavigationInset(), 0);
   status = 2; handlers.get('windowRectChange')({}); assert.equal(form.compactFormHeight(), 'native');
   status = 1; [width,height] = [height,width]; handlers.get('windowSizeChange')({}); assert.equal(form.compactFormHeight(), 'native');
   [width,height] = [1206,2622]; handlers.get('windowSizeChange')({}); env.nativeHoverAvailable = true; assert.equal(form.compactFormHeight(), 'native');
+  env.nativeHoverAvailable=false; inset=0; handlers.get('avoidAreaChange')({}); assert.equal(form.compactNavigationInset(), 0);
   env.unbindWindow(); assert.equal(env.windowHeightPx, 0); assert.equal(env.isFullScreen, false);
 });

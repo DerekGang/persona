@@ -256,10 +256,10 @@ test('pending Agent cards derive the half page from the compact portrait window 
   insets();assert.equal(view.agentCardsRoom(),389);
   height=974;view.availableHeight+=100;insets();assert.equal(view.agentCardsRoom(),439);
   height=874;view.availableHeight=741;insetTop=92;insetBottom=46;insets();assert.equal(view.agentCardsRoom(),368);
-  insetTop=39;insetBottom=28;insets();view.availableHeight=427;view.agentComposerHeight=115.33;view.environment.keyboardHeightPx=314*3;
+  insetTop=39;insetBottom=28;insets();view.availableHeight=404;view.contentTop=156;view.agentComposerHeight=115.33;view.environment.keyboardHeightPx=314*3;
   assert.ok(Math.abs(view.agentCardsRoom()-248.34)<.02);
   view.agentComposerHeight=223;assert.ok(view.agentCardsRoom()<150);
-  view.availableHeight=741;view.agentComposerHeight=68.33;insets();view.environment.nativeHoverAvailable=true;
+  view.availableHeight=741;view.contentTop=133;view.agentComposerHeight=68.33;insets();view.environment.nativeHoverAvailable=true;
   assert.equal(view.agentCardsRoom(),(846-133)/2);
   insets();mode=5;assert.equal(view.agentCardsRoom(),(846-133)/2);
   mode=1;width=874;height=402;insetTop=20;insetBottom=15;view.contentTop=90;view.availableWidth=874;view.availableHeight=312;insets();

@@ -508,7 +508,7 @@ export struct Conversation {
   @Local agentCountHeight: number = 0;
   private agentCardsRoom(): number {
     const ui=this.getUIContext(), keyboard=this.environment.keyboardHeightPx>0;
-    let visibleBody=this.availableHeight, page=this.availableHeight, topAllowance=0;
+    let visibleBody=this.availableHeight, page=this.availableHeight;
     const windowName=ui.getWindowName();
     if (windowName) {
       try {
@@ -524,8 +524,7 @@ export struct Conversation {
         if (compact) {
           // The compact phone chat's half-page budget includes its header and excludes its safe areas.
           // Larger native cutouts and navigation indicators still take precedence.
-          topAllowance=Math.max(0,62-topInset);
-          page=height-Math.max(62,topInset)-Math.max(34,bottomInset);
+          page=height-Math.max(Tokens.compactStatusInset,topInset)-Math.max(34,bottomInset);
         } else page=visibleBody;
       } catch (_) { /* Before the window attaches, use the measured conversation pane. */ }
     }
@@ -534,7 +533,7 @@ export struct Conversation {
     const countRoom=cards.length>1 ? this.agentCountHeight+Tokens.gap : 0;
     const remaining=visibleBody-composer-Tokens.gap-countRoom;
     const floor=Tokens.gap+1, half=page/2;
-    const cap=keyboard ? remaining-topAllowance-floor : loneQuestion ? Math.max(half,remaining-72-floor) : half;
+    const cap=keyboard ? remaining-floor : loneQuestion ? Math.max(half,remaining-72-floor) : half;
     return Math.max(0,Math.min(remaining,Math.max(44,cap)));
   }
   private inlineEditorMaxHeight(): number {
