@@ -324,13 +324,14 @@ test('full-height shared footer reserves a half-page of requests or one accessib
 });
 
 test('the full draft uses capped navigation controls, shell-sized send and the native sheet safe area', () => {
-  const style=new Function('Tokens','return '+stripTypeScriptTypes('class Style {static formSize(regular:number,largest:number,scale:number):number {'+
-    readFileSync(new URL('../entry/src/main/ets/design/PhoneStyle.ets',import.meta.url),'utf8').split('static formSize(')[1].split('{')[1].split('}')[0]+'}}'))(Tokens);
+  const source=readFileSync(new URL('../entry/src/main/ets/design/PhoneStyle.ets',import.meta.url),'utf8');
+  const styleClass=source.slice(source.indexOf('export class PhoneStyle'),source.indexOf('@ComponentV2')).replace('export class','class');
+  const style=new Function('Tokens','return ('+stripTypeScriptTypes(styleClass)+')')(Tokens);
   const Page=new Function('PhoneStyle','SheetSize','Tokens','return '+stripTypeScriptTypes('class Page {'+
     ['pageToolbarSize','pageSendSize','pageSheetHeight','measurePageSheet'].map(method).join('\n')+'}'))(style,{LARGE:'large'},Tokens);
   for (const [scale,top] of [[1,44],[3.2,57.7]]) {
-    const page=Object.assign(new Page(),{compactDraftSpace:{},environment:{fontScale:scale,windowHeightPx:2622,safeTopPx:117},restingSize:restingComposerSize(scale),getUIContext:()=>({px2vp:v=>v/3})});
-    assert.equal(page.pageToolbarSize(),top);assert.equal(page.pageSendSize(),restingComposerSize(scale).target);
+    const page=Object.assign(new Page(),{compactDraftSpace:{},environment:{fontScale:scale,windowHeightPx:2622,safeTopPx:117},restingSize:restingComposerSize(scale),getUIContext:()=>({px2vp:v=>v/3,vp2px:v=>v*3})});
+    assert.equal(page.pageToolbarSize(),top);assert.equal(page.pageSendSize(),Math.round(restingComposerSize(scale).target*3)/3);
     assert.equal(page.pageSheetHeight(),812);page.environment.safeTopPx=216;assert.equal(page.pageSheetHeight(),794);
     page.compactDraftSpace=undefined;assert.equal(page.pageSheetHeight(),'large');assert.equal(page.pageToolbarSize(),44);assert.equal(page.pageSendSize(),44);
   }

@@ -1321,7 +1321,12 @@ export struct Conversation {
   private pageToolbarSize(): number {
     return this.compactDraftSpace ? PhoneStyle.formSize(44,57.7,this.environment.fontScale) : 44;
   }
-  private pageSendSize(): number { return this.compactDraftSpace ? this.restingSize.target : 44; }
+  private pageSendSize(): number {
+    if (!this.compactDraftSpace) return 44;
+    // Round the shared row and its button together; independent rounding costs a pixel from the editor.
+    const ui=this.getUIContext();
+    return ui.px2vp(Math.round(ui.vp2px(this.restingSize.target)));
+  }
   private pageSymbolSize(): number { return PhoneStyle.formSize(15,21,this.environment.fontScale); }
   private pageSheetHeight(): number | SheetSize {
     if (!this.compactDraftSpace) return SheetSize.LARGE;
