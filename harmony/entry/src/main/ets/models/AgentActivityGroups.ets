@@ -151,6 +151,7 @@ export function phoneAgentGroups(input: AgentListInput, projection: CoreAgentLis
     const machines = new Set(children.map((child:Bucket)=>child.machine).filter((name:string)=>!!name));
     for (const child of children) {
       const item=section(child,'app-project',input,true); item.parent=app.id;
+      item.firstProject=child===children[0]; item.lastProject=child===children[children.length-1];
       if (child.machine && machines.size>1) item.subtitle=input.machineName(child.rows[0].row);
       groups.push(item);
     }

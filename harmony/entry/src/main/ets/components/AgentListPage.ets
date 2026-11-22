@@ -441,7 +441,7 @@ export struct AgentListPage {
   @Builder groupHeader(binding: BoundAgentGroup) {
     if (binding.value.presentation) Column() {
       if (binding.value.presentation === 'recent') Row({space:6}) {
-        Text(this.groupTitle(binding.value)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(600).fontColor(Colors.ink)
+        Text(this.groupTitle(binding.value)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(600).fontColor(Colors.secondary)
         this.activityTotal(binding.value.totalRowCount)
       }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(40.3,48,this.environment.fontScale)})
         .padding({left:20,right:20}).accessibilityGroup(true).id('agents.recent.heading')
@@ -464,7 +464,10 @@ export struct AgentListPage {
         }.width('100%')
       }.width('100%').constraintSize({minHeight:binding.value.presentation==='app-project' ?
         PhoneStyle.formSize(56.3,64,this.environment.fontScale) : PhoneStyle.formSize(64,78,this.environment.fontScale)})
-       .padding({left:20,right:20,top:binding.value.presentation==='app-project' ? 0 : 18}).backgroundColor(Colors.surface)
+       .padding({left:20,right:20,top:binding.value.presentation==='app-project' ? 0 : 18})
+       .backgroundColor(binding.value.presentation==='app-project' ? Colors.surface : Color.Transparent)
+       .borderRadius({topLeft:binding.value.firstProject ? 26:0,topRight:binding.value.firstProject ? 26:0,
+         bottomLeft:binding.value.lastProject && binding.value.folded ? 26:0,bottomRight:binding.value.lastProject && binding.value.folded ? 26:0})
        .accessibilityText([this.groupTitle(binding.value),binding.value.subtitle,tr(binding.value.folded ? 'agent_expand' : 'agent_collapse'),
          ...this.appCountKeys(binding.value).map((key:string)=>this.appCountLabel(binding.value,key)),String(binding.value.totalRowCount)]
          .filter((part:string)=>!!part).join(' · '))
@@ -614,11 +617,11 @@ export struct AgentListPage {
     return group.rows.slice().sort((a:BoundAgentRow,b:BoundAgentRow) =>
       this.decisions.waitingSince(this.model,a.bound.value)-this.decisions.waitingSince(this.model,b.bound.value));
   }
-  @Builder groupRow(binding:BoundAgentRow,groupId:string) {
+  @Builder groupRow(binding:BoundAgentRow,groupId:string,endOfSurface:boolean=true) {
     if (this.compactRoot && !this.rail && groupId==='state/needs' && this.decisions.forSession(this.model,binding.bound.value).length)
       this.needsYouCards(binding)
     else if (this.compactRoot && binding.presentation.activity && (groupId==='recent' || groupId.startsWith('app/')))
-      this.activityRow(binding,groupId)
+      this.activityRow(binding,groupId,endOfSurface)
     else this.agentRow(binding,groupId)
   }
   private activityPlace(binding:BoundAgentRow,groupId:string):string {
@@ -628,14 +631,17 @@ export struct AgentListPage {
     const place=[value.spaceName,agent.tab !== value.spaceName ? agent.tab : ''].filter((part:string)=>!!part).join(' › ');
     return [place,this.mixedMachines ? value.metadata[1] : ''].filter((part:string)=>!!part).join(' · ');
   }
-  @Builder activityRow(binding:BoundAgentRow,groupId:string) {
+  @Builder activityRow(binding:BoundAgentRow,groupId:string,endOfSurface:boolean) {
     ListItem() {
       Column() {
         AgentDirectoryRowContent({agent:binding.presentation.activity!,age:this.rowTime(binding.presentation),place:this.activityPlace(binding,groupId),
           showsSource:!!binding.presentation.activitySource,sourceTitle:binding.presentation.activitySource ? tr(binding.presentation.activitySource) : '',
           narrow:this.listWidth>0 && this.listWidth<296,leftInset:groupId.includes('/project/') ? 36 : 20,
-          controlScale:Math.max(1,Math.min(this.environment.fontScale,67/51)),fontScale:this.environment.fontScale,tint:this.rowStatusColor(binding.presentation)})
+          controlScale:Math.max(1,Math.min(this.environment.fontScale,67/51)),fontScale:this.environment.fontScale,
+          tint:this.rowStatusColor(binding.presentation),activityList:true})
       }.width('100%').backgroundColor(this.isRowSelected(binding) ? Colors.selection : Colors.surface)
+       .borderRadius({topLeft:binding.first && !groupId.includes('/project/') ? 26:0,topRight:binding.first && !groupId.includes('/project/') ? 26:0,
+         bottomLeft:binding.last && endOfSurface ? 26:0,bottomRight:binding.last && endOfSurface ? 26:0})
     }.margin({left:4,right:4}).accessibilityGroup(true)
       .accessibilityText([binding.presentation.provider,this.rowStatus(binding.presentation),binding.bound.value.title,
         this.rowTime(binding.presentation),binding.presentation.recentContent,binding.presentation.activitySource ? tr(binding.presentation.activitySource) : '',
@@ -924,7 +930,8 @@ export struct AgentListPage {
         if (this.workspace.loading && !this.workspace.hasRows()) ListItem() { LoadingProgress().height(Tokens.touch).width(Tokens.touch).padding(Tokens.page) }
         ForEach(this.groupBindings, (binding: BoundAgentGroup) => {
             ListItemGroup({ header: () => this.groupHeader(binding) }) {
-              ForEach(this.displayRows(binding), (rowBinding: BoundAgentRow) => this.groupRow(rowBinding, binding.value.id), (rowBinding: BoundAgentRow) =>
+              ForEach(this.displayRows(binding), (rowBinding: BoundAgentRow) => this.groupRow(rowBinding, binding.value.id,
+                binding.value.presentation !== 'app-project' || binding.value.lastProject), (rowBinding: BoundAgentRow) =>
                 rowBinding.key)
             }.id('agents.group.' + binding.value.id)
             if (binding.value.presentation !== 'app-parent' && !binding.value.folded &&

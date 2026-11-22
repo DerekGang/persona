@@ -39,6 +39,8 @@ export interface CoreAgentListGroup {
   presentation?: string;
   titleKey?: string;
   subtitle?: string;
+  firstProject?: boolean;
+  lastProject?: boolean;
   capped?: boolean;
 }
 export interface CoreAgentListProjection {

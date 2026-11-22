@@ -19,6 +19,7 @@ export struct AgentDirectoryRowContent {
   @Param controlScale: number = 1;
   @Param fontScale: number = 1;
   @Param tint: ResourceColor = Colors.secondary;
+  @Param activityList: boolean = false;
 
   @Builder agentMark(agent:ProjectAgent) {
     Stack({ alignContent: Alignment.BottomEnd }) {
@@ -29,7 +30,13 @@ export struct AgentDirectoryRowContent {
         else if (agent.runtime) Text(agent.runtime.slice(0,1).toUpperCase()).fontSize('16vp').fontWeight(FontWeight.Medium).fontColor(Colors.ink)
         else SymbolGlyph(Symbols.agent).fontSize('17vp').fontColor([Colors.secondary])
       }.width(36*this.controlScale).height(36*this.controlScale).backgroundColor(Colors.subtle).borderRadius(18*this.controlScale)
-      if (agent.state && agent.state !== 'unknown') Circle().width(12).height(12).fill(this.tint)
+      if (this.activityList && agent.state==='working' && agent.rank!==4) Stack() {
+        Circle().width(17).height(17).fill(Color.Transparent).stroke(this.tint).strokeWidth(2.55).opacity(0.45)
+        Circle().width(10).height(10).fill(this.tint)
+      }.width(19.5).height(19.5).backgroundColor(Colors.surface).borderRadius(10).offset({x:4.75,y:4.75})
+      else if (this.activityList && agent.state==='working' && agent.rank===4)
+        SymbolGlyph($r('sys.symbol.clock')).fontSize('17vp').fontColor([this.tint]).backgroundColor(Colors.surface).borderRadius(9)
+      else if (agent.state && agent.state !== 'unknown') Circle().width(12).height(12).fill(this.tint)
         .stroke(Colors.surface).strokeWidth(2)
     }.width(36*this.controlScale).height(36*this.controlScale)
   }
