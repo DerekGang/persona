@@ -106,6 +106,10 @@ class WithPartners(PartnerHubsMockTests):
         paired = self.request("/api/v1/partner-hubs", "POST", {"code": OTHER})
         self.assertEqual((paired["name"], paired["state"]), ("Studio", "connecting"))
         self.assertEqual(len(self.request("/api/v1/partner-hubs")["hubs"]), 3)
+        # A pairing is never replaced: the same hub again is refused until it is unpaired.
+        code, body = self.refused("/api/v1/partner-hubs", "POST", {"code": OTHER})
+        self.assertEqual((code, body["code"]), (409, "already_paired"))
+        self.assertEqual(len(self.request("/api/v1/partner-hubs")["hubs"]), 3)
 
 
 class WithoutPartners(PartnerHubsMockTests):

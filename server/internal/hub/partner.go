@@ -3,6 +3,7 @@ package hub
 import (
 	"cmp"
 	"context"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -35,6 +36,10 @@ const (
 type partnerState struct {
 	mu      sync.Mutex
 	running bool // initPartners ran and the hub is not stopping
+	// loaded: the pairings were read (loadPartners). Until then nothing pairs or links, a send waits (partner_offline)
+	// and no manager gets a list: none is not "no partners".
+	loaded  bool
+	started bool // startPartners ran: the dialers may start
 	ctx     context.Context
 	rows    map[string]db.PartnerHub   // hub id -> its pairing
 	links   map[string]*partnerLink    // hub id -> its live link
@@ -43,10 +48,15 @@ type partnerState struct {
 	heard   map[string][]string        // hub id -> the https addresses its last hello named
 	// changed is closed and replaced on every change (waiters: the dialers).
 	changed chan struct{}
-	// kick wakes tellLoop, which tells the default manager (manager) and the apps (apps) the list as it is then.
-	kick          chan struct{}
-	manager, apps bool
-	ping          [2]time.Duration // tests: heartbeat interval and timeout
+	// kick wakes tellLoop, which tells the default manager (manager) and the apps (apps) the list as it is then, and
+	// the managers that are not the default an empty one: those that said their hello since (hellos), and the default
+	// the list last went to or was meant for (told) once the default may have changed (recheck).
+	kick                   chan struct{}
+	manager, apps, recheck bool
+	hellos                 map[string]bool
+	told                   string
+	ping                   [2]time.Duration // tests: heartbeat interval and timeout
+	retry                  [2]time.Duration // tests: the first and the longest wait before reading the pairings again
 }
 
 // partnerDialFail is how the last dial of a partner went: nil err after a success.
@@ -62,31 +72,102 @@ func (h *Hub) partnersOn() bool {
 	return h.cfg != nil && h.cfg.Partners.enabled() && h.partnerStore() != nil && !h.isMember()
 }
 
-// initPartners loads the pairings, next to initMesh.
+// Waiting before reading the pairings again after a read failed: from partnerLoadWait, doubling to partnerLoadWaitMax.
+// Settings, not measurements.
+const (
+	partnerLoadWait    = time.Second
+	partnerLoadWaitMax = time.Minute
+)
+
+// initPartners loads the pairings, next to initMesh. A read that fails is tried again until it works
+// (retryPartnerLoad): a database that did not answer once must not make every pairing look gone.
 func (h *Hub) initPartners(ctx context.Context) {
 	ps := &h.partners
 	ps.mu.Lock()
-	ps.running, ps.ctx = true, ctx
+	ps.running, ps.ctx, ps.loaded, ps.started = true, ctx, false, false
 	ps.rows, ps.links, ps.dialers = map[string]db.PartnerHub{}, map[string]*partnerLink{}, map[string]*peerDialer{}
 	ps.dial, ps.heard = map[string]partnerDialFail{}, map[string][]string{}
 	ps.changed, ps.kick = make(chan struct{}), make(chan struct{}, 1)
+	ps.hellos, ps.told = map[string]bool{}, ""
 	ps.mu.Unlock()
-	if st := h.partnerStore(); st != nil {
-		list, err := st.PartnerHubs(ctx)
-		if err != nil {
-			h.logf("partners: load: %v", err)
-		}
-		ps.mu.Lock()
-		for _, p := range list {
-			ps.rows[p.HubID] = p
-		}
-		ps.mu.Unlock()
-	}
 	go h.tellLoop(ctx)
+	if !h.loadPartners(ctx) {
+		go h.retryPartnerLoad(ctx)
+	}
+}
+
+// loadPartners reads the pairings (none without a store); false when the read failed.
+func (h *Hub) loadPartners(ctx context.Context) bool {
+	var list []db.PartnerHub
+	if st := h.partnerStore(); st != nil {
+		var err error
+		if list, err = st.PartnerHubs(ctx); err != nil {
+			h.logf("partners: load: %v (trying again)", err)
+			return false
+		}
+	}
+	ps := &h.partners
+	ps.mu.Lock()
+	for _, p := range list {
+		ps.rows[p.HubID] = p
+	}
+	ps.loaded = true
+	ps.mu.Unlock()
+	return true
+}
+
+// retryPartnerLoad reads the pairings until that works, then has them dialed (once startPartners ran) and told.
+func (h *Hub) retryPartnerLoad(ctx context.Context) {
+	ps := &h.partners
+	ps.mu.Lock()
+	wait, longest := cmp.Or(ps.retry[0], partnerLoadWait), cmp.Or(ps.retry[1], partnerLoadWaitMax)
+	ps.mu.Unlock()
+	for {
+		if !sleepCtx(ctx, wait) {
+			return
+		}
+		if h.loadPartners(ctx) {
+			break
+		}
+		wait = min(2*wait, longest)
+	}
+	h.logf("partners: loaded")
+	ps.mu.Lock()
+	started := ps.started
+	ps.mu.Unlock()
+	if started {
+		h.dialPartners()
+	}
+	h.partnersChanged()
+}
+
+// partnersLoaded: the pairings were read.
+func (h *Hub) partnersLoaded() bool {
+	ps := &h.partners
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.loaded
 }
 
 // startPartners starts dialing the partners this hub dials, next to startMesh: it needs the TLS identity.
 func (h *Hub) startPartners(context.Context) {
+	ps := &h.partners
+	ps.mu.Lock()
+	ps.started = true
+	n := len(ps.rows)
+	ps.mu.Unlock()
+	if !h.partnersOn() {
+		if n > 0 {
+			h.logf("partners: off here (partners.enabled, or a mesh member): %d pairing(s) kept, not linked", n)
+		}
+		return
+	}
+	h.sayPartnerProxy()
+	h.dialPartners()
+}
+
+// dialPartners starts a dialer for each partner this hub dials (startPartnerDialer: the others it leaves).
+func (h *Hub) dialPartners() {
 	ps := &h.partners
 	ps.mu.Lock()
 	ids := make([]string, 0, len(ps.rows))
@@ -94,13 +175,6 @@ func (h *Hub) startPartners(context.Context) {
 		ids = append(ids, id)
 	}
 	ps.mu.Unlock()
-	if !h.partnersOn() {
-		if len(ids) > 0 {
-			h.logf("partners: off here (partners.enabled, or a mesh member): %d pairing(s) kept, not linked", len(ids))
-		}
-		return
-	}
-	h.sayPartnerProxy()
 	for _, id := range ids {
 		h.startPartnerDialer(id)
 	}
@@ -170,33 +244,47 @@ func (h *Hub) partnersChanged() {
 		ps.changed = make(chan struct{})
 	}
 	ps.manager, ps.apps = true, true
-	kick := ps.kick
+	ps.wakeLocked()
 	ps.mu.Unlock()
-	if kick != nil {
+}
+
+// wakeLocked wakes tellLoop (ps.mu held; the kick is buffered, never waited on).
+func (ps *partnerState) wakeLocked() {
+	if ps.kick != nil {
 		select {
-		case kick <- struct{}{}:
+		case ps.kick <- struct{}{}:
 		default:
 		}
 	}
 }
 
-// partnersToManager has the list told to the default manager alone (it just said its hello).
-func (h *Hub) partnersToManager() {
+// partnersToManager has the list told to the default manager, manager id having said its hello (one that is not
+// the default gets the empty list: a list it kept from when it was is not its any more).
+func (h *Hub) partnersToManager(id string) {
 	ps := &h.partners
 	ps.mu.Lock()
 	ps.manager = true
-	kick := ps.kick
-	ps.mu.Unlock()
-	if kick != nil {
-		select {
-		case kick <- struct{}{}:
-		default:
-		}
+	if ps.hellos != nil {
+		ps.hellos[id] = true
 	}
+	ps.wakeLocked()
+	ps.mu.Unlock()
+}
+
+// partnersRecheck: the default manager may be another one now (managersChanged). The new one gets the list, the one
+// told before the empty list.
+func (h *Hub) partnersRecheck() {
+	ps := &h.partners
+	ps.mu.Lock()
+	ps.recheck = true
+	ps.wakeLocked()
+	ps.mu.Unlock()
 }
 
 // tellLoop sends what partnersChanged asked for, one at a time and as the list is when it goes (a burst of changes
-// goes out as one, never an older list after a newer one).
+// goes out as one, never an older list after a newer one). The list goes to the default manager alone, once the
+// pairings were read; a manager that is not the default (one that said its hello, or the default told before) gets
+// the empty list, so it offers no hub tools.
 func (h *Hub) tellLoop(ctx context.Context) {
 	ps := &h.partners
 	for {
@@ -206,24 +294,53 @@ func (h *Hub) tellLoop(ctx context.Context) {
 		case <-ps.kick:
 		}
 		ps.mu.Lock()
-		manager, apps := ps.manager, ps.apps
-		ps.manager, ps.apps = false, false
+		manager, apps, recheck, hellos, told, loaded := ps.manager, ps.apps, ps.recheck, ps.hellos, ps.told, ps.loaded
+		ps.manager, ps.apps, ps.recheck, ps.hellos = false, false, false, map[string]bool{}
 		ps.mu.Unlock()
 		if apps {
 			h.broadcast(map[string]any{"type": "partner_hubs"})
 		}
-		if manager && h.defaultManagerNames(assistantwire.CapabilityPartnerHubs) {
-			cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			to := h.defaultOwner(cctx)
-			cancel()
-			if err := h.notifyBus(to, assistantwire.EventPartnerHubs, h.partnerHubsWire()); err != nil {
-				h.logf("partners: tell %s: %v", to, err)
+		if !manager && !recheck && len(hellos) == 0 {
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		to, err := h.defaultOwnerOrErr(cctx)
+		cancel()
+		if err != nil && told != "" { // the roster did not answer: not a change of the default
+			to = told
+		}
+		if told != "" && told != to { // the default changed: the new one gets the list
+			hellos[told], manager = true, true
+		}
+		for id := range hellos {
+			if id != to {
+				h.tellPartners(id, assistantwire.PartnerHubs{Hubs: []assistantwire.PartnerHub{}})
 			}
 		}
+		if !manager || !loaded { // not read yet: told once it is (retryPartnerLoad)
+			continue
+		}
+		h.tellPartners(to, h.partnerHubsWire())
+		// The default the list went to, or would have (one not connected hears it at its hello): told, whether it went
+		// or not, so that a later default tells it the empty list and itself made the default again hears the list.
+		ps.mu.Lock()
+		ps.told = to
+		ps.mu.Unlock()
+	}
+}
+
+// tellPartners sends manager id partner.changed with list when it takes partner messages.
+func (h *Hub) tellPartners(id string, list assistantwire.PartnerHubs) {
+	if h.archiveManagerHas(id, assistantwire.CapabilityPartnerHubs) != http.StatusOK {
+		return
+	}
+	if err := h.notifyBus(id, assistantwire.EventPartnerHubs, list); err != nil {
+		h.logf("partners: tell %s: %v", id, err)
 	}
 }
 
 // partnerHubsWire is the list as the managers get it (partner.hubs, partner.changed): none while partner hubs are off.
+// Callers check partnersLoaded first: before the pairings were read, there is no list to give.
 func (h *Hub) partnerHubsWire() assistantwire.PartnerHubs {
 	out := assistantwire.PartnerHubs{Enabled: h.partnersOn(), Hubs: []assistantwire.PartnerHub{}}
 	if !out.Enabled {
@@ -234,7 +351,7 @@ func (h *Hub) partnerHubsWire() assistantwire.PartnerHubs {
 	for id, p := range ps.rows {
 		l := ps.links[id]
 		out.Hubs = append(out.Hubs, assistantwire.PartnerHub{HubID: id, Name: p.Name, Online: l != nil && l.ctx.Err() == nil,
-			Dial: partnerDialOf(p)})
+			Dial: partnerDialOf(p), PairedAt: p.CreatedAt})
 	}
 	ps.mu.Unlock()
 	slices.SortFunc(out.Hubs, func(a, b assistantwire.PartnerHub) int {

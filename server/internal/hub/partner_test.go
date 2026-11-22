@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // partnerCredOf is the credential hub issued to the partner other (its pairing's), and the one other issued it (in
@@ -37,11 +39,16 @@ func partnerCredOf(t *testing.T, hub, other *testHub) (issued db.DeviceToken, he
 }
 
 // Two hubs pair as partners and link: the pairing is kept on both sides with a credential of kind and role partner
-// that opens the partner link alone, the link is the one the smaller hub_id dialed, and the mesh never hears of it
-// (no peer, nothing in the hello's mesh.hubs).
+// that opens the partner link alone, each side has the other's pin (each hub its own key), the link is the one the
+// smaller hub_id dialed, and the mesh never hears of it (no peer, nothing in the hello's mesh.hubs).
 func TestPartnerPairAndLink(t *testing.T) {
-	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{})
-	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{})
+	certA, fpA := partnerCert(t)
+	certB, fpB := partnerCert(t)
+	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{cert: certA})
+	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{cert: certB})
+	if a.h.public.fp != fpA || b.h.public.fp != fpB || fpA == fpB {
+		t.Fatalf("the hubs' pins: %q %q", a.h.public.fp, b.h.public.fp)
+	}
 	appTok, _ := a.deviceToken(t, roleFull)
 	app := dialApp(t, a, appTok)
 	pairPartners(t, a, b)
@@ -55,14 +62,14 @@ func TestPartnerPairAndLink(t *testing.T) {
 		peers, links := len(mh.h.mesh.peers), len(mh.h.mesh.links)
 		mh.h.mesh.mu.Unlock()
 		hubs := mh.h.meshHubs() // this hub alone
-		if peers != 0 || links != 0 || len(hubs) != 1 || !hubs[0].Self || len(mh.store.peers) != 0 {
+		if stored, _ := mh.store.Peers(context.Background()); peers != 0 || links != 0 || len(hubs) != 1 || !hubs[0].Self || len(stored) != 0 {
 			t.Fatalf("%s: the mesh heard of a partner: %d peers, %d links, hubs %v", mh.h.cfg.Name, peers, links, mh.h.meshHubs())
 		}
 	}
 	ra, _ := a.h.partnerRow(hubB)
 	rb, _ := b.h.partnerRow(hubA)
 	if ra.Dial != assistantwire.PartnerDialAuto || rb.Dial != assistantwire.PartnerDialAuto || ra.Name != "Office" || rb.Name != "家里" ||
-		ra.FP != b.h.public.fp || rb.FP != a.h.public.fp {
+		ra.FP != fpB || rb.FP != fpA {
 		t.Fatalf("pairings: %+v / %+v", ra, rb)
 	}
 	issued, held := partnerCredOf(t, b, a) // held: the one A issued B
@@ -134,7 +141,7 @@ func TestPartnerPairingCode(t *testing.T) {
 	}
 	toks, _ := c.store.DeviceTokens(ctx)
 	for _, tk := range toks {
-		if tk.Kind == rolePartner && !c.store.revoked[tk.ID] {
+		if tk.Kind == rolePartner && !c.store.isRevoked(tk.ID) {
 			t.Fatalf("a failed pairing left a live credential: %+v", tk)
 		}
 	}
@@ -251,6 +258,141 @@ func TestPartnerPairingRefusals(t *testing.T) {
 	}
 	if d.h.partnersOn() || len(d.h.partnerFeatures()) != 0 {
 		t.Fatal("partner hubs on on a mesh member")
+	}
+}
+
+// partnerCodeFor is code (one of some hub's) made to name hub_id id: what a code's maker may write into it.
+func partnerCodeFor(t *testing.T, code, id string) string {
+	t.Helper()
+	u, err := url.Parse(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("hub", id)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// A pairing never replaces another (a code's holder names its own hub_id and pin, and pins are no secret). On the
+// code's hub, someone with a fresh code claiming a partner's hub_id is refused: with another pin (pin_changed), with
+// the partner's own pin or none (already_paired), and where the partner has no pin with any (already_paired). The
+// partner's pairing, credential and link stay as they were, and the code is not used up. The pasting hub refuses a
+// code for a hub it is paired with the same way, before it sends anything. Each hub has its own TLS key.
+func TestPartnerPairingNeverReplacesAPartner(t *testing.T) {
+	certA, fpA := partnerCert(t)
+	certB, fpB := partnerCert(t)
+	certC, fpC := partnerCert(t)
+	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{cert: certA})
+	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{cert: certB})
+	c := startPartnerHub(t, hubC, "Lab", partnerHubOpts{cert: certC}) // the one with a code of B's
+	const hubD = "dddddddd-0000-4000-8000-000000000004"
+	d := startPartnerHub(t, hubD, "Laptop", partnerHubOpts{noTLS: true}) // B keeps it without a pin
+	pairPartners(t, a, b)
+	pairPartners(t, d, b)
+	ctx := context.Background()
+	rowA, _ := b.h.partnerRow(hubA)
+	rowD, _ := b.h.partnerRow(hubD)
+	linkA, linkD := b.h.partnerLinkTo(hubA), b.h.partnerLinkTo(hubD)
+	if rowA.FP != fpA || rowD.FP != "" || linkA == nil || linkD == nil {
+		t.Fatalf("B's pairings: %+v / %+v", rowA, rowD)
+	}
+	untouched := func(what string) {
+		t.Helper()
+		for _, want := range []db.PartnerHub{rowA, rowD} {
+			got, _ := b.h.partnerRow(want.HubID)
+			stored, _ := b.store.partnerRowOf(want.HubID)
+			if got.CredentialID != want.CredentialID || got.Token != want.Token || got.FP != want.FP || got.Name != want.Name ||
+				!got.CreatedAt.Equal(want.CreatedAt) || stored.CredentialID != want.CredentialID || stored.Token != want.Token {
+				t.Fatalf("%s: B's pairing with %s now %+v, was %+v", what, want.HubID, got, want)
+			}
+			if b.store.isRevoked(want.CredentialID) {
+				t.Fatalf("%s: the credential B issued %s was revoked", what, want.HubID)
+			}
+		}
+		if b.h.partnerLinkTo(hubA) != linkA || b.h.partnerLinkTo(hubD) != linkD {
+			t.Fatalf("%s: a partner's link was cut", what)
+		}
+	}
+	for _, tc := range []struct {
+		hub, fp, code string
+	}{
+		{hubA, fpC, "pin_changed"},
+		{hubA, "", "pin_changed"},
+		{hubA, fpA, "already_paired"},
+		{hubD, "", "already_paired"},
+		{hubD, fpC, "already_paired"},
+	} {
+		code, err := b.h.newPartnerCode(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parsePartnerCode(code.Code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(partnerInfo{HubID: tc.hub, Name: "Lab", FP: tc.fp, Endpoints: []string{c.srv.URL}, Token: "jd_" + randomHex(24)})
+		st, out := b.do(t, "POST", partnerPairPath, parsed.secret, string(body))
+		var refusal struct {
+			Code string `json:"code"`
+		}
+		_ = json.Unmarshal(out, &refusal)
+		if st != http.StatusConflict || refusal.Code != tc.code {
+			t.Fatalf("claiming %s with pin %q: %d %s", tc.hub, tc.fp, st, out)
+		}
+		untouched("claiming " + tc.hub)
+		if ok, _ := b.store.PartnerCodeValid(ctx, hashToken(parsed.secret)); !ok {
+			t.Fatalf("claiming %s used the code up", tc.hub)
+		}
+	}
+	// The pasting side: a new code of its partner's, or someone's code naming it (with the partner's pin or another),
+	// refused before it is sent anywhere; the pasting hub issues no credential for it.
+	partnerCreds := func(mh *testHub) int {
+		toks, _ := mh.store.DeviceTokens(ctx)
+		n := 0
+		for _, tk := range toks {
+			if tk.Kind == rolePartner && !mh.store.isRevoked(tk.ID) {
+				n++
+			}
+		}
+		return n
+	}
+	beforeA, beforeB := partnerCreds(a), partnerCreds(b)
+	again, _ := b.h.newPartnerCode(ctx)
+	if _, err := a.h.joinPartner(ctx, again.Code); partnerErrCode(err) != "already_paired" || partnerErrStatus(err) != http.StatusConflict {
+		t.Fatalf("A pasting a new code of its partner's: %v", err)
+	}
+	ofC, _ := c.h.newPartnerCode(ctx)
+	if _, err := a.h.joinPartner(ctx, partnerCodeFor(t, ofC.Code, hubB)); partnerErrCode(err) != "pin_changed" {
+		t.Fatalf("A pasting a code naming B with another pin: %v", err)
+	}
+	if _, err := b.h.joinPartner(ctx, partnerCodeFor(t, ofC.Code, hubD)); partnerErrCode(err) != "already_paired" {
+		t.Fatalf("B pasting a code naming D, which has no pin: %v", err)
+	}
+	parsedC, _ := parsePartnerCode(ofC.Code)
+	if ok, _ := c.store.PartnerCodeValid(ctx, hashToken(parsedC.secret)); !ok {
+		t.Fatal("a refused code was sent to its hub")
+	}
+	if got, _ := a.h.partnerRow(hubB); got.FP != fpB || partnerCreds(a) != beforeA || partnerCreds(b) != beforeB {
+		t.Fatalf("a refused paste changed something: %+v, %d/%d credentials, were %d/%d", got, partnerCreds(a), partnerCreds(b), beforeA, beforeB)
+	}
+	untouched("the pasting side's refusals")
+	// The code's hub refusing (it kept a pairing the pasting hub ended alone): passed on with its code and its words,
+	// in the pasting hub's language.
+	if _, err := c.h.joinPartner(ctx, again.Code); err != nil { // not used by the refusals above
+		t.Fatalf("C pairing with B: %v", err)
+	}
+	if _, err := c.h.unpairPartner(ctx, hubB, false); err != nil {
+		t.Fatal(err)
+	}
+	code, _ := b.h.newPartnerCode(ctx)
+	_, err := c.h.joinPartner(i18n.With(ctx, i18n.En), code.Code)
+	if partnerErrCode(err) != "already_paired" || partnerErrStatus(err) != http.StatusConflict ||
+		!strings.Contains(i18n.Localize(err, i18n.En), i18n.T(i18n.En, "hub-partner_pair.already_paired_here")) {
+		t.Fatalf("C pairing again while B kept it: %v", err)
+	}
+	if row, ok := b.h.partnerRow(hubC); !ok || row.FP != fpC {
+		t.Fatalf("B's pairing with C: %+v", row)
 	}
 }
 

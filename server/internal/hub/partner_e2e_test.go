@@ -398,7 +398,7 @@ func TestPartnerE2E(t *testing.T) {
 	a.dial(t, hubB, assistantwire.PartnerDialNever)
 	b.dial(t, hubA, assistantwire.PartnerDialNever)
 	a.confirm(t, hubB, false)
-	_ = a.h.partnerLinkTo(hubB).conn.CloseNow()
+	cutPartnerLink(t, a.testHub, b.testHub)
 	eventually(t, 10*time.Second, "no link either way", func() bool {
 		return a.h.partnerLinkTo(hubB) == nil && b.h.partnerLinkTo(hubA) == nil
 	})

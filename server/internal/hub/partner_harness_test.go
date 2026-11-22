@@ -15,6 +15,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/bus"
+	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/link"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -28,7 +29,8 @@ import (
 // partnerHubOpts: store (a restart: the one it had), cert (a TLS key of its own: every httptest server otherwise has
 // the same one, so the same pin), noTLS (served without TLS: no key, no https address), partners (hub.json's
 // partners), endpoints (the https addresses it hands out instead of its server's), machines (hub.json's machines,
-// for a manager a test starts on it: partner_e2e_test.go).
+// for a manager a test starts on it: partner_e2e_test.go), managers (a roster that keeps which manager is the
+// default: partnerManagers).
 type partnerHubOpts struct {
 	store     *meshStore
 	cert      *tls.Certificate
@@ -36,6 +38,7 @@ type partnerHubOpts struct {
 	partners  PartnersConfig
 	endpoints []string
 	machines  []MachineConfig
+	managers  bool
 }
 
 func startPartnerHub(t *testing.T, id, name string, o partnerHubOpts) *testHub {
@@ -59,6 +62,10 @@ func startPartnerHub(t *testing.T, id, name string, o partnerHubOpts) *testHub {
 	h.store = st
 	h.public.id = id
 	h.bus.idents = &memIdents{} // a scripted manager's bus token (connectPartnerManager)
+	if o.managers {
+		h.bus.idents = &partnerManagers{ids: &memIdents{}, settings: map[string][]byte{}}
+	}
+	h.partners.retry = [2]time.Duration{10 * time.Millisecond, 50 * time.Millisecond} // a pairings' read failed: again soon
 	srv := httptest.NewUnstartedServer(h.routes())
 	if o.cert != nil {
 		srv.TLS = &tls.Config{Certificates: []tls.Certificate{*o.cert}}
@@ -114,15 +121,102 @@ func pairPartners(t *testing.T, a, b *testHub) {
 	waitPartnerLink(t, a, b)
 }
 
-// waitPartnerLink waits until a and b both have their link up, the same one (the duplicate rule settled).
+// waitPartnerLink waits until a and b both have their link up, the one the duplicate rule keeps: with both dialing,
+// the smaller hub_id's (a link the other dialed first is replaced by it once that one's dial is through), else the one
+// that dials. That link stays: a link the other hub dials now is refused.
 func waitPartnerLink(t *testing.T, a, b *testHub) (*partnerLink, *partnerLink) {
 	t.Helper()
 	var la, lb *partnerLink
 	eventually(t, 20*time.Second, "the partner link between "+a.h.cfg.Name+" and "+b.h.cfg.Name, func() bool {
+		kept := keptPartnerDialer(a, b)
 		la, lb = a.h.partnerLinkTo(b.id()), b.h.partnerLinkTo(a.id())
-		return la != nil && lb != nil && la.dialer == lb.dialer
+		return kept != "" && la != nil && lb != nil && la.dialer == kept && lb.dialer == kept
 	})
 	return la, lb
+}
+
+// cutPartnerLink closes a's end of its link to b (its WebSocket, as a network would).
+func cutPartnerLink(t *testing.T, a, b *testHub) {
+	t.Helper()
+	l := a.h.partnerLinkTo(b.id())
+	if l == nil {
+		t.Fatalf("%s has no link to %s", a.h.cfg.Name, b.h.cfg.Name)
+	}
+	_ = l.conn.CloseNow()
+}
+
+// keptPartnerDialer is the hub whose dialed link the duplicate rule keeps between a and b ("" when neither dials).
+func keptPartnerDialer(a, b *testHub) string {
+	ra, _ := a.h.partnerRow(b.id())
+	rb, _ := b.h.partnerRow(a.id())
+	aDials, bDials := partnerDialable(ra) && a.h.partnersOn(), partnerDialable(rb) && b.h.partnersOn()
+	switch {
+	case aDials && bDials:
+		return min(a.id(), b.id())
+	case aDials:
+		return a.id()
+	case bDials:
+		return b.id()
+	}
+	return ""
+}
+
+// partnerManagers is memIdents and the setting of which manager is the default (a managerStore), for a test that makes
+// another manager the default.
+type partnerManagers struct {
+	managerStore // the rest: not used by these tests
+	ids          *memIdents
+	mu           sync.Mutex
+	settings     map[string][]byte
+}
+
+func (s *partnerManagers) SaveBusIdentity(ctx context.Context, b db.BusIdentity, hash string) error {
+	return s.ids.SaveBusIdentity(ctx, b, hash)
+}
+
+func (s *partnerManagers) BusIdentityByHash(ctx context.Context, hash string) (*db.BusIdentity, error) {
+	return s.ids.BusIdentityByHash(ctx, hash)
+}
+
+func (s *partnerManagers) BusIdentities(ctx context.Context) ([]db.BusIdentity, error) {
+	return s.ids.BusIdentities(ctx)
+}
+
+func (s *partnerManagers) DeleteBusIdentity(ctx context.Context, id string) (bool, error) {
+	return s.ids.DeleteBusIdentity(ctx, id)
+}
+
+func (s *partnerManagers) BusIdentityByID(ctx context.Context, id string) (*db.BusIdentity, error) {
+	list, _ := s.ids.BusIdentities(ctx)
+	for _, b := range list {
+		if b.ID == id {
+			return &b, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *partnerManagers) SeeBusIdentity(context.Context, string, *db.BusIdentity) error { return nil }
+
+func (s *partnerManagers) Setting(_ context.Context, key string, out any) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.settings[key]
+	if !ok {
+		return false, nil
+	}
+	return true, json.Unmarshal(b, out)
+}
+
+func (s *partnerManagers) PutSetting(_ context.Context, key string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.settings[key] = b
+	return nil
 }
 
 // partnerManager is a scripted manager on a hub's bus: it says capabilities in its hello, answers partner.receive with
@@ -204,6 +298,25 @@ func (f *partnerManager) lastChanged() (assistantwire.PartnerHubs, int) {
 		return assistantwire.PartnerHubs{}, 0
 	}
 	return f.changed[len(f.changed)-1], len(f.changed)
+}
+
+// allChanged is every partner.changed heard, oldest first.
+func (f *partnerManager) allChanged() []assistantwire.PartnerHubs {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]assistantwire.PartnerHubs(nil), f.changed...)
+}
+
+// listed: the newest partner.changed is enabled and names hub alone.
+func (f *partnerManager) listed(hub string) bool {
+	l, _ := f.lastChanged()
+	return l.Enabled && len(l.Hubs) == 1 && l.Hubs[0].HubID == hub
+}
+
+// unlisted: a partner.changed came, and the newest is the empty list of a manager that is not the default.
+func (f *partnerManager) unlisted() bool {
+	l, n := f.lastChanged()
+	return n > 0 && !l.Enabled && len(l.Hubs) == 0
 }
 
 // partnerCert is a TLS key of the hub's own kind for a test hub (loadOrCreateTLS), and its pin.

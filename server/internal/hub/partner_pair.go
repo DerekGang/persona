@@ -92,9 +92,16 @@ var (
 	errPartnerPin      = partnerRefusal(http.StatusConflict, "pin_changed", "hub-partner_pair.pin_changed")
 	errPartnerNoStore  = partnerRefusal(http.StatusServiceUnavailable, "no_database", "hub-partner_pair.no_database")
 	errPartnerNotFound = partnerRefusal(http.StatusNotFound, "not_found", "hub-partner_pair.not_found")
+	errPartnerLoading  = partnerRefusal(http.StatusServiceUnavailable, "not_ready", "hub-partner_pair.not_ready")
+	// A pairing never replaces another: a code's holder names its own hub_id (and pin), so it would take a partner's
+	// place. The owner unpairs first. Said by the pasting hub (the code's hub is its partner), and by the code's hub
+	// to the one that brought the code (in that hub's owner's words).
+	errPartnerPaired     = partnerRefusal(http.StatusConflict, "already_paired", "hub-partner_pair.already_paired")
+	errPartnerPairedHere = partnerRefusal(http.StatusConflict, "already_paired", "hub-partner_pair.already_paired_here")
 )
 
-// partnersReady refuses what this hub cannot pair as now: partner hubs off, no store, a mesh member.
+// partnersReady refuses what this hub cannot pair as now: partner hubs off, no store, a mesh member, the pairings
+// not read yet.
 func (h *Hub) partnersReady() error {
 	switch {
 	case h.cfg == nil || !h.cfg.Partners.enabled():
@@ -103,9 +110,15 @@ func (h *Hub) partnersReady() error {
 		return errPartnerNoStore
 	case h.isMember():
 		return errPartnerMember
+	case !h.partnersLoaded():
+		return errPartnerLoading
 	}
 	return nil
 }
+
+// partnerNow is when a pairing is made, as Postgres keeps it (to the microsecond): the hub's copy and the database's
+// say the same PairedAt.
+func partnerNow() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
 // partnerSecret is a code's secret: jh_ and 64 lowercase hex digits.
 var partnerSecret = lazyre.New(`^jh_[0-9a-f]{64}$`)
@@ -222,6 +235,8 @@ func (h *Hub) joinPartner(ctx context.Context, raw string) (*db.PartnerHub, erro
 		return nil, errPartnerLinked
 	case had && old.FP != "" && old.FP != code.fp:
 		return nil, errPartnerPin
+	case had: // a code (anyone's) never replaces a pairing, not even with its pin: the owner unpairs first
+		return nil, errPartnerPaired
 	}
 	tok := "jd_" + randomHex(24)
 	cred := db.DeviceToken{ID: "dev_" + randomHex(6), Name: h.partnerCredName(code.name, code.hubID), Kind: rolePartner, Role: rolePartner,
@@ -248,7 +263,7 @@ func (h *Hub) joinPartner(ctx context.Context, raw string) (*db.PartnerHub, erro
 	}
 	name := cmp.Or(partnerName(got.Name), partnerName(code.name))
 	p := db.PartnerHub{HubID: got.HubID, Name: name, FP: code.fp, Endpoints: partnerHTTPS(slices.Concat(code.endpoints, got.Endpoints)),
-		Token: sealed, CredentialID: cred.ID, Dial: assistantwire.PartnerDialAuto, CreatedAt: time.Now().UTC()}
+		Token: sealed, CredentialID: cred.ID, Dial: assistantwire.PartnerDialAuto, CreatedAt: partnerNow()}
 	if err := h.savePartner(ctx, p); err != nil {
 		_, _ = h.store.RevokeDeviceToken(context.WithoutCancel(ctx), cred.ID)
 		return nil, err
@@ -306,7 +321,7 @@ func (h *Hub) partnerPost(ctx context.Context, fp string, eps []string, secret s
 // partnerPassedCodes are the other hub's refusal codes passed on as they are (the apps act on them); any other is
 // "refused".
 var partnerPassedCodes = map[string]bool{"partners_off": true, "member_hub": true, "already_linked": true, "pin_changed": true,
-	"tls_required": true, "no_database": true}
+	"already_paired": true, "tls_required": true, "no_database": true}
 
 // partnerAnswered is the code's hub refusing: 401 is the code (in this hub's words), a 4xx its own code and words,
 // anything else that it could not pair.
@@ -329,19 +344,13 @@ func partnerAnswered(status int, b []byte) error {
 	return &partnerError{status: http.StatusBadGateway, code: "refused", err: i18n.Err("hub-partner_pair.refused", i18n.Args{"err": why})}
 }
 
-// savePartner keeps a new pairing (replacing an earlier one with the same hub, whose credential is revoked) and starts
-// dialing it.
+// savePartner keeps a new pairing and starts dialing it; errPartnerPaired, nothing changed, when that hub is a
+// partner already (a pairing is never replaced).
 func (h *Hub) savePartner(ctx context.Context, p db.PartnerHub) error {
-	old, had := h.partnerRow(p.HubID)
-	if err := h.partnerStore().SavePartnerHub(ctx, p); err != nil {
+	if err := h.partnerStore().SavePartnerHub(ctx, p); errors.Is(err, db.ErrPartnerPaired) {
+		return errPartnerPaired
+	} else if err != nil {
 		return err
-	}
-	if had && old.CredentialID != "" && old.CredentialID != p.CredentialID {
-		if _, err := h.store.RevokeDeviceToken(ctx, old.CredentialID); err != nil {
-			h.logf("partners: revoke the old credential of %s: %v", p.HubID, err)
-		}
-		h.forgetToken(old.CredentialID)
-		h.closePartnerLinksOf(old.CredentialID)
 	}
 	h.partnerSaved(p)
 	return nil
@@ -401,14 +410,19 @@ func (h *Hub) servePartnerPair(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("hub_id and token are required, and the hub_id must be another hub's"))
 		return
 	}
+	// Whoever holds a code must not take over a partner's place by claiming its hub_id: the hub_id and pin are its own
+	// word (it never shows it holds that key, and a hub's pin is no secret), so a pairing is never replaced, with that
+	// pin or without one. The owner unpairs first.
 	old, had := h.partnerRow(req.HubID)
 	switch {
 	case h.meshPeer(req.HubID):
 		writePartnerErr(w, errPartnerLinked)
 		return
 	case had && old.FP != "" && old.FP != req.FP:
-		// Whoever holds a code must not take over a partner's place by claiming its hub_id.
 		writePartnerErr(w, errPartnerPin)
+		return
+	case had:
+		writePartnerErr(w, errPartnerPairedHere)
 		return
 	}
 	sealed, err := h.sealKey(req.Token)
@@ -425,8 +439,12 @@ func (h *Hub) servePartnerPair(w http.ResponseWriter, r *http.Request) {
 	cred := db.DeviceToken{ID: "dev_" + randomHex(6), Name: h.partnerCredName(req.Name, req.HubID), Kind: rolePartner, Role: rolePartner,
 		MachineID: req.HubID}
 	row := db.PartnerHub{HubID: req.HubID, Name: partnerName(req.Name), FP: req.FP, Endpoints: eps, Token: sealed,
-		CredentialID: cred.ID, Dial: dial, CreatedAt: time.Now().UTC()}
+		CredentialID: cred.ID, Dial: dial, CreatedAt: partnerNow()}
 	ok, err := h.partnerStore().RedeemPartnerCode(r.Context(), p.PairHash, row, cred, hashToken(tok))
+	if errors.Is(err, db.ErrPartnerPaired) { // paired meanwhile (another code): the database has the last word
+		writePartnerErr(w, errPartnerPairedHere)
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -434,10 +452,6 @@ func (h *Hub) servePartnerPair(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		h.securityError(w, r, http.StatusUnauthorized, "", 0)
 		return
-	}
-	if had && old.CredentialID != cred.ID { // revoked with the redemption
-		h.forgetToken(old.CredentialID)
-		h.closePartnerLinksOf(old.CredentialID)
 	}
 	h.partnerSaved(row)
 	h.logf("partners: paired with %q (%s), dial %s", row.Name, row.HubID, dial)

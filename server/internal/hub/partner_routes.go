@@ -188,6 +188,10 @@ func (h *Hub) servePartnerDial(w http.ResponseWriter, r *http.Request) {
 		writePartnerErr(w, errPartnerNoStore)
 		return
 	}
+	if !h.partnersLoaded() { // not "not found": the pairings are not read yet
+		writePartnerErr(w, errPartnerLoading)
+		return
+	}
 	ok, err := st.SetPartnerDial(r.Context(), id, req.Dial)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -217,6 +221,10 @@ func (h *Hub) servePartnerRemove(w http.ResponseWriter, r *http.Request) {
 	// than one that finishes after the app went away.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
+	if h.partnerStore() != nil && !h.partnersLoaded() {
+		writePartnerErr(w, errPartnerLoading)
+		return
+	}
 	ok, err := h.unpairPartner(ctx, r.PathValue("hub_id"), true)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
