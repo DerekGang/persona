@@ -67,18 +67,18 @@ export function RecoverySettings({ onBack }: { onBack: () => void }) {
     <div data-recovery-page>
       <div className="mb-4 flex items-center gap-2 px-1">
         <IconButton icon="chevronLeft" label={t("settings-recovery.back")} onClick={onBack} />
-        <h2 className="min-w-0 truncate text-[15px] font-semibold text-ink">{t("settings-recovery.title")}</h2>
+        <h2 className="min-w-0 truncate text-card-title font-semibold text-ink">{t("settings-recovery.title")}</h2>
       </div>
 
       <Group title={t("settings-recovery.overview")} anchor="recovery-overview" footer={t("settings-recovery.boundary_footer")}>
         <div className="px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 text-[13px] font-medium text-ink">{t("settings-recovery.readiness")}</span>
+            <span className="min-w-0 flex-1 text-meta font-medium text-ink">{t("settings-recovery.readiness")}</span>
             <Pill tone={limited || unsupported || error ? "orange" : overview ? "green" : undefined}>
               {t(unsupported || error ? "settings-recovery.unavailable" : limited ? "settings-recovery.limited" : overview ? "settings-recovery.read_only" : "settings-recovery.not_read")}
             </Pill>
           </div>
-          <p className="mt-1 text-[12px] leading-relaxed text-ink-3">{t("settings-recovery.overview_hint")}</p>
+          <p className="mt-1 text-label leading-relaxed text-ink-3">{t("settings-recovery.overview_hint")}</p>
         </div>
         <Row label={t("settings-recovery.inspect_capability")}>{capabilityState(overview?.capabilities.inspect)}</Row>
         <Row label={t("settings-recovery.verify_capability")} hint={overview?.capabilities.verify.reason ? reasonText(overview.capabilities.verify.reason) : undefined} wrapHint>
@@ -92,7 +92,7 @@ export function RecoverySettings({ onBack }: { onBack: () => void }) {
       <Group title={t("settings-recovery.protect_title")} footer={t("settings-recovery.protect_footer")}>
         <div className="grid gap-2 px-4 py-3 sm:grid-cols-2">
           {(["databases", "kb", "runtime", "keys", "tls"] as const).map(item => (
-            <div key={item} className="flex items-start gap-2 text-[12.5px] leading-relaxed text-ink-2">
+            <div key={item} className="flex items-start gap-2 text-meta leading-relaxed text-ink-2">
               <Icon name="check" size={13} className="mt-0.5 shrink-0 text-green" />
               <span>{t(`settings-recovery.protect_${item}`)}</span>
             </div>
@@ -120,7 +120,7 @@ export function RecoverySettings({ onBack }: { onBack: () => void }) {
       </Group>
 
       <Group title={t("settings-recovery.create_title")} footer={t("settings-recovery.create_footer")}>
-        <div className="space-y-2 px-4 py-3 text-[12.5px] leading-relaxed text-ink-2">
+        <div className="space-y-2 px-4 py-3 text-meta leading-relaxed text-ink-2">
           <p>{t("settings-recovery.create_stop")}</p>
           <p>{t("settings-recovery.create_run")}</p>
           <Command command={RECOVERY_CREATE_COMMAND} />
@@ -148,10 +148,10 @@ function BundleRow({ bundle, check, verify, busy, disabled, onRun }: {
   return (
     <div className="px-4 py-3" data-recovery-bundle={bundle.id}>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{bundle.name}</span>
-        <span className="shrink-0 text-[11.5px] text-ink-3">{bytes(bundle.archive_bytes)} · {ago(bundle.modified_at)}</span>
+        <span className="min-w-0 flex-1 truncate text-meta font-medium text-ink">{bundle.name}</span>
+        <span className="shrink-0 text-submeta text-ink-3">{bytes(bundle.archive_bytes)} · {ago(bundle.modified_at)}</span>
       </div>
-      {!check?.inspect && !check?.verify && <p className="mt-1 text-[11.5px] text-ink-3">{t("settings-recovery.not_checked")}</p>}
+      {!check?.inspect && !check?.verify && <p className="mt-1 text-submeta text-ink-3">{t("settings-recovery.not_checked")}</p>}
       {check?.inspect && <CheckResult check={check.inspect} />}
       {check?.verify && <CheckResult check={check.verify} />}
       <div className="mt-2.5 flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -162,7 +162,7 @@ function BundleRow({ bundle, check, verify, busy, disabled, onRun }: {
           {verifyBusy ? t("settings-recovery.verifying_databases") : t("settings-recovery.verify_databases")}
         </Button>
       </div>
-      {verify.state === "unsupported" && <p className="mt-2 text-[11.5px] leading-relaxed text-orange">{reasonText(verify.reason)}</p>}
+      {verify.state === "unsupported" && <p className="mt-2 text-submeta leading-relaxed text-orange">{reasonText(verify.reason)}</p>}
     </div>
   );
 }
@@ -179,13 +179,13 @@ function CheckResult({ check }: { check: RecoveryCheck }) {
       <div className="flex items-start gap-2">
         <Icon name={passed ? "check" : "info"} size={13} className={cx("mt-0.5 shrink-0", passed ? "text-green" : "text-orange")} />
         <div className="min-w-0 flex-1">
-          <p className={cx("text-[12px] font-medium", passed ? "text-green" : "text-orange")}>{title}</p>
-          {!passed && <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-3">{reasonText(check.reason)}</p>}
-          {passed && <p className="mt-0.5 text-[11.5px] text-ink-3">{t(inspection ? "settings-recovery.database_not_verified" : "settings-recovery.not_drill")}</p>}
+          <p className={cx("text-label font-medium", passed ? "text-green" : "text-orange")}>{title}</p>
+          {!passed && <p className="mt-0.5 text-submeta leading-relaxed text-ink-3">{reasonText(check.reason)}</p>}
+          {passed && <p className="mt-0.5 text-submeta text-ink-3">{t(inspection ? "settings-recovery.database_not_verified" : "settings-recovery.not_drill")}</p>}
         </div>
       </div>
       {check.report && (
-        <details className="mt-1.5 text-[11.5px] text-ink-3">
+        <details className="mt-1.5 text-submeta text-ink-3">
           <summary className="cursor-pointer text-accent-ink">{t("settings-recovery.inspection_details")}</summary>
           <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
             <dt>{t("settings-recovery.created")}</dt><dd>{ago(check.report.created_at)}</dd>
@@ -201,7 +201,7 @@ function CheckResult({ check }: { check: RecoveryCheck }) {
 function Command({ command }: { command: string }) {
   return (
     <div className="flex items-center gap-2 rounded-control bg-inset px-2.5 py-1.5 shadow-hairline">
-      <code className="min-w-0 flex-1 break-all font-mono text-[11.5px] text-ink select-all">{command}</code>
+      <code className="min-w-0 flex-1 break-all font-mono text-submeta text-ink select-all">{command}</code>
       <IconButton icon="copy" label={t("settings-recovery.copy_command")} size={24} iconSize={12}
         onClick={() => void copyText(command).then(() => toast(t("settings-recovery.copied"), "ok"))} />
     </div>
