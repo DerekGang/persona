@@ -11,7 +11,9 @@ export class CoreAgentListAdapter implements AgentListAdapter {
   project(input: AgentListInput): CoreAgentListProjection {
     if (!input.includeSourceFilters) return this.sort(coreAgentSortInput(input));
     const sourceFilter = input.quick === 'feishu' || input.quick === 'terminal';
-    const baseInput = coreAgentSortInput(sourceFilter ? { ...input, quick: 'all' } : input);
+    // The companion phone layouts consume the core's same filtered, unpinned inventory.
+    const grouping = ['repo','todo','direction','app','recent'].includes(input.grouping) ? 'state' : input.grouping;
+    const baseInput = coreAgentSortInput({ ...input, grouping, quick: sourceFilter ? 'all' : input.quick });
     const selectedQuick = baseInput.settings['quick'];
     baseInput.settings['quick'] = 'all';
     baseInput.settings['inventory'] = true;

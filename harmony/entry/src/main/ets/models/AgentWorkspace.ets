@@ -3,6 +3,9 @@ import { ResourceRow, Wire } from './Wire';
 import type { AgentListAdapter } from '../core/AgentListAdapter';
 import type { AgentListInput, AgentListRow, AgentListPreferences, CoreAgentListGroup } from '../core/AgentListProjection';
 import { CoreAgentListAdapter } from '../core/AgentListAdapter';
+import { phoneAgentGroups } from './AgentActivityGroups';
+
+const AGENT_GROUPINGS: string[] = ['repo','space','todo','state','machine','app','recent','direction'];
 
 interface AgentRepository {
   call(path: string, method?: string, body?: Record<string, Object>, operationId?: string, admit?: () => boolean): Promise<Record<string, Object>>;
@@ -44,6 +47,9 @@ export class AgentWorkspaceGroup {
   totalRowCount: number = 0;
   memberIds: string[] = [];
   rows: ResourceRow[] = [];
+  presentation: string = '';
+  titleKey: string = '';
+  capped: boolean = false;
 
   constructor(id: string, machineId: string, machineName: string, repositoryPath: string, repositoryName: string,
     worktreePath: string, worktreeName: string, branch: string, rows: ResourceRow[] = []) {
@@ -92,6 +98,7 @@ class AgentPreferences {
 @ObservedV2
 export class AgentWorkspace {
   @Trace groups: AgentWorkspaceGroup[] = [];
+  @Trace unpinnedRows: ResourceRow[] = [];
   @Trace quickFilter: string = 'all';
   @Trace filterCounts:Record<string,Object> = {};
   @Trace groupingMode: string = 'state';
@@ -130,8 +137,16 @@ export class AgentWorkspace {
   private persistTimer: number = -1;
   private hubModeLoaded: boolean = false;
   private adapter: AgentListAdapter;
-  constructor(adapter?: AgentListAdapter) { this.adapter = adapter || new CoreAgentListAdapter(); }
-  private folded: string[] = [];
+  private defaultGrouping: string;
+  private preferredGrouping: string;
+  @Trace private supportsTodos: boolean = false;
+  @Trace private supportsDirections: boolean = false;
+  constructor(adapter?: AgentListAdapter, defaultGrouping: string = 'state') {
+    this.adapter = adapter || new CoreAgentListAdapter();
+    this.defaultGrouping = defaultGrouping;
+    this.preferredGrouping = defaultGrouping;
+  }
+  @Trace private folded: string[] = [];
   private expandedIdle: string[] = [];
   private expandedQuiet: string[] = [];
   private heldSession: string = '';
@@ -181,7 +196,10 @@ export class AgentWorkspace {
     this.viewScope = JSON.stringify([this.scope, this.owner]);
     this.openingView = true; this.loading = true; this.busy = false; this.error = '';
     this.externalSelection = undefined; this.groups = []; this.sourceRows = []; this.latestSourceRows = []; this.historyRows = []; this.historyLoaded = false; this.frozenGroups = undefined;
-    this.quickFilter = 'all'; this.filterCounts = {}; this.groupingMode = 'state'; this.machineFilter = ''; this.search = ''; this.history = false; this.selectedKey = '';
+    this.quickFilter = 'all'; this.filterCounts = {}; this.unpinnedRows = [];
+    this.preferredGrouping = this.defaultGrouping; this.groupingMode = this.defaultGrouping;
+    this.supportsTodos = false; this.supportsDirections = false;
+    this.machineFilter = ''; this.search = ''; this.history = false; this.selectedKey = '';
     this.readingDetail = false; this.freezeSuppressed = false;
     this.preferences = new Map<string, AgentPreferences>(); this.pinsSpaces = []; this.pinsSessions = []; this.mutesSpaces = []; this.mutesSessions = []; this.mutesAllowed = [];
     try {
@@ -191,7 +209,9 @@ export class AgentWorkspace {
       if (!this.hubModeLoaded) { this.currentHubOnly = values[1] === 'current'; this.hubModeLoaded = true; }
       this.quickFilter = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting', 'feishu', 'terminal'].includes(Wire.text(saved, 'quick')) ? Wire.text(saved, 'quick') :
         (Wire.text(saved, 'quick') === 'needs_you' ? 'needsYou' : 'all');
-      this.groupingMode = ['state', 'machine', 'space'].includes(Wire.text(saved, 'grouping')) ? Wire.text(saved, 'grouping') : 'state';
+      const storedGrouping = Wire.text(saved,'grouping');
+      this.preferredGrouping = AGENT_GROUPINGS.includes(storedGrouping) ? storedGrouping : this.defaultGrouping;
+      this.groupingMode = this.resolvedGrouping();
       const savedMachine = Wire.text(saved, 'machine');
       this.machineFilter = this.machineForShownHub(savedMachine); this.search = Wire.text(saved, 'search');
       this.history = Wire.bool(saved, 'history');
@@ -220,7 +240,7 @@ export class AgentWorkspace {
   }
 
   hide(): void {
-    this.filterCounts = {};
+    this.filterCounts = {}; this.unpinnedRows = [];
     this.revision++; this.openingView = false; this.client = undefined; this.groups = []; this.sourceRows = []; this.latestSourceRows = []; this.historyRows = []; this.historyLoaded = false;
     this.frozenGroups = undefined; this.readingDetail = false;
     if (this.persistTimer !== -1) clearTimeout(this.persistTimer);
@@ -285,9 +305,30 @@ export class AgentWorkspace {
     this.releaseFreeze(); this.quickFilter = value; this.rebuild(); this.refreezeAfterFilter(); this.saveViewLater();
   }
 
+  groupingOptions(): string[] {
+    return AGENT_GROUPINGS.filter((key:string)=>(key !== 'todo' || this.supportsTodos) && (key !== 'direction' || this.supportsDirections));
+  }
+  private resolvedGrouping(): string {
+    if (this.preferredGrouping === 'direction' && !this.supportsDirections) return this.supportsTodos ? 'todo' : 'space';
+    return this.preferredGrouping === 'todo' && !this.supportsTodos ? 'space' : this.preferredGrouping;
+  }
+  updateGroupingSupport(todos: boolean, directions: boolean): void {
+    this.supportsTodos=todos; this.supportsDirections=directions;
+    const resolved = this.resolvedGrouping();
+    if (resolved === this.groupingMode) return;
+    this.releaseFreeze(); this.groupingMode = resolved; this.rebuild(); this.refreezeAfterFilter();
+  }
   setGroupingMode(value: string): void {
-    if (!['state', 'machine', 'space'].includes(value) || value === this.groupingMode) return;
-    this.releaseFreeze(); this.groupingMode = value; this.rebuild(); this.refreezeAfterFilter(); this.saveViewLater();
+    if (!this.groupingOptions().includes(value) || value === this.preferredGrouping) return;
+    this.releaseFreeze(); this.preferredGrouping = value; this.groupingMode = value; this.rebuild(); this.refreezeAfterFilter(); this.saveViewLater();
+  }
+
+  groupingFolded(id: string, fallback: boolean): boolean {
+    return this.folded.includes('!'+id) ? false : this.folded.includes(id) || fallback;
+  }
+  toggleGroupingFold(id: string, folded: boolean): void {
+    this.folded=this.folded.filter((entry:string)=>entry !== id && entry !== '!'+id).concat([folded ? '!'+id : id]);
+    this.saveViewLater();
   }
 
   toggleFold(id: string): void {
@@ -749,9 +790,12 @@ export class AgentWorkspace {
 
   private rebuild(): void {
     let groups: CoreAgentListGroup[];
+    let unpinned: string[];
     try {
-      const projection = this.adapter.project(this.makeListInput());
-      groups = projection.groups;
+      const input = this.makeListInput();
+      const projection = this.adapter.project(input);
+      groups = phoneAgentGroups(input,projection);
+      unpinned = projection.unpinned || [];
       this.filterCounts = projection.filter_counts || {};
     } catch (_) {
       // Preserve both rows and action authority from the same successful snapshot.
@@ -774,15 +818,20 @@ export class AgentWorkspace {
         const projected = groups.find((entry) => entry.id === group.id);
         if (projected) copy.folded = projected.folded;
         copy.rows = [];
-        group.memberIds.forEach((id: string) => { const row = rowsById.get(id); if (row) copy.rows.push(row); });
+        if (group.presentation !== 'app-parent' && !copy.folded) {
+          const previous = group.presentation ? group.rows.map((row:ResourceRow)=>coreRowId(row)) : group.memberIds;
+          previous.forEach((id: string) => { const row = rowsById.get(id); if (row) copy.rows.push(row); });
+        }
         return copy;
       }).filter((group) => group.rows.length > 0 || group.totalRowCount > 0);
       return;
     }
+    this.unpinnedRows = unpinned.flatMap((id:string):ResourceRow[]=>{ const row=byId.get(id); return row ? [row] : []; });
     this.groups = groups.map((group) => {
       const native = new AgentWorkspaceGroup(group.id, '', group.title, '', '', '', '', '');
       native.folded = group.folded; native.parent = group.parent || ''; native.stateCounts = group.state_counts || {};      native.spoken = group.spoken || ''; native.totalRowCount = group.rows.length;
       native.memberIds = group.rows.slice();
+      native.presentation = group.presentation || ''; native.titleKey = group.titleKey || ''; native.capped = !!group.capped;
       native.showMachine = group.id.startsWith('machine/');
       native.rows = [];
       group.visible_rows.forEach((id: string) => { const row = byId.get(id); if (row) native.rows.push(row); });
@@ -828,6 +877,7 @@ export class AgentWorkspace {
     const copy = new AgentWorkspaceGroup(group.id, group.machineId, group.machineName, group.repositoryPath, group.repositoryName,
       group.worktreePath, group.worktreeName, group.branch, group.rows.slice());
     copy.showMachine = group.showMachine; copy.showRepository = group.showRepository; copy.showWorktree = group.showWorktree;
+    copy.presentation = group.presentation; copy.titleKey = group.titleKey; copy.capped = group.capped;
     copy.folded = group.folded; copy.parent = group.parent; copy.stateCounts = group.stateCounts;
     copy.spoken = group.spoken; copy.totalRowCount = group.totalRowCount; copy.memberIds = group.memberIds.slice(); return copy;
   }
@@ -846,7 +896,7 @@ export class AgentWorkspace {
     this.persistTimer = setTimeout(() => {
       this.persistTimer = -1;
       if (!client || !this.loadCurrent(client, revision) || this.viewScope !== viewScope) return;
-      const values: Object[] = [this.quickFilter, this.groupingMode, this.machineFilter, this.search, this.history, this.selectedKey,
+      const values: Object[] = [this.quickFilter, this.preferredGrouping, this.machineFilter, this.search, this.history, this.selectedKey,
         this.folded, this.expandedIdle, this.expandedQuiet];
       client.saveView('agent-workspace', JSON.stringify(Wire.payload(['quick', 'grouping', 'machine', 'search', 'history', 'selected',
         'folded', 'expanded_idle', 'expanded_quiet'], values)))

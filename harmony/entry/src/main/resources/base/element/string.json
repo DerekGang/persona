@@ -4653,6 +4653,42 @@
       "value": "Cancel question"
     },
     {
+      "name": "agent_group_repo",
+      "value": "By Repository"
+    },
+    {
+      "name": "agent_group_todo",
+      "value": "By To-do"
+    },
+    {
+      "name": "agent_group_app",
+      "value": "By App"
+    },
+    {
+      "name": "agent_group_recent",
+      "value": "Recently Used"
+    },
+    {
+      "name": "agent_group_direction",
+      "value": "By Pinned"
+    },
+    {
+      "name": "agent_app_claude",
+      "value": "Claude desktop app"
+    },
+    {
+      "name": "agent_app_codex",
+      "value": "Codex App"
+    },
+    {
+      "name": "agent_app_desktop",
+      "value": "{agent} desktop app"
+    },
+    {
+      "name": "agent_show_all_count",
+      "value": "Show All {count}"
+    },
+    {
       "name": "agent_group_machine",
       "value": "By Machine"
     },

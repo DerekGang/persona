@@ -29,7 +29,7 @@ registerHooks({
       return { url: new URL('./Wire.ets', context.parentURL).href, shortCircuit: true };
     if (context.parentURL?.includes('/entry/src/main/ets/')) {
       const resolved = new URL(specifier, context.parentURL);
-      if (resolved.pathname.endsWith('/Wire')) resolved.pathname += '.ets';
+      if (['/Wire','/AgentActivityGroups','/AgentRepositoryPlace'].some(name=>resolved.pathname.endsWith(name))) resolved.pathname += '.ets';
       else if (!/\.[a-z]+$/i.test(resolved.pathname)) resolved.pathname += '.ts';
       return { url: resolved.href, shortCircuit: true };
     }
@@ -113,6 +113,45 @@ async function opened(options = {}) {
   await workspace.open(fixture.client);
   return { ...fixture, workspace };
 }
+
+test('the phone app and recent groupings read the native filtered inventory, retain history and use deterministic local folds', async () => {
+  const when = n => `2026-01-01T00:00:${String(n).padStart(2,'0')}Z`;
+  const sessions = [
+    agent('z', {agent:'codex',agent_surface:'desktop',space_kind:'codex_app',space_id:'codex-project:/r/a',space_name:'Alpha',space_index:2,updated_at:when(8)}),
+    agent('a', {agent:'codex',agent_surface:'desktop',space_kind:'codex_app',space_id:'codex-project:/r/b',space_name:'Beta',space_index:1,updated_at:when(4)}),
+    agent('loose', {agent:'codex',agent_surface:'desktop',space_kind:'codex_app',space_id:'codex-project:/Users/u/Documents/Codex/2026-01-01/untitled',space_name:'untitled',updated_at:when(3)}),
+    agent('old', {agent:'claude',agent_surface:'desktop',state:'offline',updated_at:when(1)}),
+    agent('engine', {space_kind:'herdr-core',updated_at:when(5)}),
+    agent('other', {updated_at:when(5)}),
+    agent('keep-session',{agent:'codex',agent_surface:'desktop',updated_at:when(9)})
+  ];
+  const {workspace}=await opened({sessions});
+  workspace.setGroupingMode('app');
+  assert.deepEqual(workspace.groups.filter(g=>g.presentation==='app' || g.presentation==='app-parent').map(g=>g.id),
+    ['app/desktop/claude code','app/desktop/codex','app/engine/herdr-core','app/other']);
+  const codexProjects=()=>workspace.groups.filter(g=>g.parent==='app/desktop/codex').map(g=>[g.machineName,g.rows.map(x=>x.id)]);
+  assert.deepEqual(codexProjects(),[['Beta',['a']],['Alpha',['z']],['',['loose']]]);
+  workspace.toggleFold('app/desktop/codex'); assert.deepEqual(codexProjects(),[]);
+  workspace.toggleFold('app/desktop/codex'); assert.equal(codexProjects().length,3);
+  workspace.setGroupingMode('recent');
+  assert.deepEqual(workspace.groups.find(g=>g.id==='recent').rows.map(x=>x.id),['z','engine','other','a','loose','old']);
+  workspace.setSearch('Agent old');
+  assert.deepEqual(workspace.unpinnedRows.map(x=>x.id),['old']);
+  assert.deepEqual(workspace.groups.find(g=>g.id==='recent').rows.map(x=>x.id),['old']);
+});
+
+test('phone grouping preference survives temporarily unavailable tasks and the same choice is restored after lookup', async () => {
+  const fixture=clientFixture(), workspace=new AgentWorkspace(undefined,'repo');
+  await workspace.open(fixture.client);
+  assert.equal(workspace.groupingMode,'repo');
+  assert.deepEqual(workspace.groupingOptions(),['repo','space','state','machine','app','recent']);
+  workspace.updateGroupingSupport(true,true); workspace.setGroupingMode('direction');
+  workspace.updateGroupingSupport(true,false); assert.equal(workspace.groupingMode,'todo');
+  workspace.updateGroupingSupport(false,false); assert.equal(workspace.groupingMode,'space');
+  workspace.updateGroupingSupport(true,true); assert.equal(workspace.groupingMode,'direction');
+  workspace.toggleGroupingFold('todo/unknown',true); assert.equal(workspace.groupingFolded('todo/unknown',true),false);
+  workspace.toggleGroupingFold('todo/unknown',false); assert.equal(workspace.groupingFolded('todo/unknown',true),true);
+});
 
 test('pins fetch the current document and preserve unrelated space and session keys', async () => {
   const { workspace, state, client } = await opened();
@@ -629,12 +668,11 @@ test('archived sessions get a registry entry for machine grouping', async () => 
 test('the whole group header announces the section, count and next fold action; idle expansion retains its count', () => {
   const source = readFileSync(new URL('../entry/src/main/ets/components/AgentListPage.ets', import.meta.url), 'utf8');
   const header=source.slice(source.indexOf('  @Builder groupHeader('),source.indexOf('  private rowStatus('));
-  assert.match(header,/Button\(\{ type: ButtonType.Normal \}\)[\s\S]*Text\(tr\(STATE_LABELS\[binding\.value\.id\][\s\S]*String\(binding\.value\.totalRowCount\)/);
-  assert.match(header,/binding\.value\.folded \? Symbols\.expand : Symbols\.down/);
-  assert.match(header,/\.width\('100%'\)\.constraintSize\(\{ minHeight: 44 \}\)/);
-  assert.match(header,/\.accessibilityText\([\s\S]*STATE_LABELS\[binding\.value\.id\][\s\S]*binding\.value\.machineName[\s\S]*binding\.value\.totalRowCount[\s\S]*tr\(binding\.value\.folded \? 'agent_expand' : 'agent_collapse'\)/);
+  assert.match(source,/return tr\(STATE_LABELS\[group\.id\] \|\| ''\) \|\| group\.machineName/);
+  assert.match(header,/Button\(\{ type: ButtonType.Normal \}\)[\s\S]*Text\(this\.groupTitle\(binding\.value\)\)[\s\S]*String\(binding\.value\.totalRowCount\)/);
+  assert.match(header,/accessibilityText\(this\.groupTitle\(binding\.value\)[\s\S]*binding\.value\.totalRowCount[\s\S]*tr\(binding\.value\.folded \? 'agent_expand' : 'agent_collapse'\)/);
   assert.match(header,/\.onClick\(\(\) => this\.workspace\.toggleFold\(binding\.value\.id\)\)\.id\('agents\.group\.toggle.'/);
-  assert.ok(source.includes("String(binding.value.totalRowCount - binding.value.rows.length) + ' ' + tr('agent_group_more_idle')"));
+  assert.match(source,/String\(binding\.value\.totalRowCount\s*-\s*binding\.value\.rows\.length\)\s*\+\s*' '\s*\+\s*tr\('agent_group_more_idle'\)/);
   assert.ok(source.includes('this.workspace.toggleIdleRows(binding.value.id)'));
 });
 

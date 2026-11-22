@@ -1,6 +1,7 @@
 import type { ClientModel } from './ClientModel';
 import { ResourceRow, Wire } from './Wire';
 import { SessionSpaceTab } from './SessionSpace';
+import { agentRepositoryPlace, AgentRepositoryPlace } from './AgentRepositoryPlace';
 
 function leaf(path: string): string {
   const parts = path.replace(/\\/g, '/').split('/').filter((part: string) => !!part);
@@ -89,28 +90,8 @@ export class ProjectAgent {
   get active(): boolean { return this.rank < 8; }
 }
 
-class SessionPlace {
-  repo: string;
-  checkout: string;
-  main: boolean;
-  constructor(repo: string, checkout: string, main: boolean) { this.repo = repo; this.checkout = checkout; this.main = main; }
-}
-
-function sessionPlace(row: ResourceRow, data: Record<string, Object>): SessionPlace {
-  const cwd = cleanPath(row.path), worktree = cleanPath(Wire.text(data, 'worktree')), repo = cleanPath(Wire.text(data, 'repo_root'));
-  if (worktree) return new SessionPlace(repo || worktree, worktree, !repo || repo === worktree);
-  if (repo) {
-    const main = !cwd || cwd === repo || cwd.startsWith(repo + '/');
-    return new SessionPlace(repo, main ? repo : cwd, main);
-  }
-  for (const marker of ['/.worktrees/', '/.claude/worktrees/', '/.herdr/worktrees/']) {
-    const at = cwd.indexOf(marker);
-    if (at <= 0) continue;
-    const parts = cwd.slice(at + marker.length).split('/').filter((v: string) => !!v);
-    const root = parts.length > 1 ? cwd.slice(0, at) + marker + parts[0] : cwd.slice(0, at);
-    return new SessionPlace(root,cwd,false);
-  }
-  return new SessionPlace(cwd,cwd,true);
+function sessionPlace(row: ResourceRow, data: Record<string, Object>): AgentRepositoryPlace {
+  return agentRepositoryPlace(row.path, Wire.text(data, 'worktree'), Wire.text(data, 'repo_root'));
 }
 
 export class ProjectWorktree {
@@ -192,7 +173,7 @@ class WorkspaceIndex {
     const key = JSON.stringify([tree.group,tree.manager,tree.machine,value]), bucket = index.get(key);
     if (bucket) bucket.push(tree); else index.set(key,[tree]);
   }
-  match(row: ResourceRow,data: Record<string,Object>,place: SessionPlace): ProjectWorktree | undefined {
+  match(row: ResourceRow,data: Record<string,Object>,place: AgentRepositoryPlace): ProjectWorktree | undefined {
     const kind = Wire.text(data,'space_kind'), bound = Wire.text(data,'workspace_id'), space = Wire.text(data,'space_id');
     const key = (id:string):string => JSON.stringify([row.group,row.manager,row.machine,id]);
     if (bound) {

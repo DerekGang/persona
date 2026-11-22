@@ -36,6 +36,9 @@ export interface CoreAgentListGroup {
   parent?: string;
   state_counts?: Record<string, Object>;
   spoken?: string;
+  presentation?: string;
+  titleKey?: string;
+  capped?: boolean;
 }
 export interface CoreAgentListProjection {
   counts: Record<string, Object>;
@@ -43,6 +46,7 @@ export interface CoreAgentListProjection {
   groups: CoreAgentListGroup[];
   unread_shown: string[];
   filtered?: string[];
+  unpinned?: string[];
   quiet_title?: string | null;
 }
 export interface CoreSortInput {

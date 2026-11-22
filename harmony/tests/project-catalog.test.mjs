@@ -5,7 +5,7 @@ import test from 'node:test';
 
 registerHooks({
   resolve(specifier, context, next) {
-    if (context.parentURL?.endsWith('.ets') && ['./Wire','./ProjectCatalog','./SessionSpace'].includes(specifier)) {
+    if (context.parentURL?.endsWith('.ets') && ['./Wire','./ProjectCatalog','./SessionSpace','./AgentRepositoryPlace'].includes(specifier)) {
       return { url: new URL(specifier + '.ets', context.parentURL).href, shortCircuit: true };
     }
     return next(specifier, context);

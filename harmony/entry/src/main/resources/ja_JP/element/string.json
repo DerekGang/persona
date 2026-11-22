@@ -4653,6 +4653,42 @@
       "value": "質問を取り消す"
     },
     {
+      "name": "agent_group_repo",
+      "value": "リポジトリ別"
+    },
+    {
+      "name": "agent_group_todo",
+      "value": "ToDo別"
+    },
+    {
+      "name": "agent_group_app",
+      "value": "アプリ別"
+    },
+    {
+      "name": "agent_group_recent",
+      "value": "最近使用した項目"
+    },
+    {
+      "name": "agent_group_direction",
+      "value": "常駐別"
+    },
+    {
+      "name": "agent_app_claude",
+      "value": "Claude デスクトップアプリ"
+    },
+    {
+      "name": "agent_app_codex",
+      "value": "Codex App"
+    },
+    {
+      "name": "agent_app_desktop",
+      "value": "{agent}デスクトップ版"
+    },
+    {
+      "name": "agent_show_all_count",
+      "value": "すべて表示（{count}件）"
+    },
+    {
       "name": "agent_group_machine",
       "value": "マシン別"
     },
