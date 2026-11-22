@@ -1,0 +1,443 @@
+package assistant
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/bus"
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/lazyre"
+	"github.com/nwverse/persona/server/internal/prompts"
+	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
+)
+
+// partner.receive: an envelope a paired hub sent, as this hub hands it over (FromHub from the link's credential,
+// FromName from its own pairing record). It is kept once per message_id and answered at once; delivery comes after: a
+// message into the main conversation, a reply into the conversation that asked, a status onto the message it is about.
+// A partner's words go in through the relay queue as another assistant's request (prompts/assistant/partner_message.md)
+// with a message source of kind hub, never as the owner's: no client_msg_id, no quote or hand-over of their words, and
+// none of the provenance the hub attests for a person's own request.
+
+// errPartnerRefused: the conversation refused a partner's envelope for good, and relayRefused told the partner.
+var errPartnerRefused = errors.New("the conversation refused it for good")
+
+var partnerCodeRe = lazyre.New(`^[a-z_]{1,32}$`)
+
+// partnerRequest answers partner.receive; false for any other method.
+func (s *Service) partnerRequest(ctx context.Context, method string, params json.RawMessage) (any, bool, error) {
+	if method != assistantwire.MethodPartnerReceive {
+		return nil, false, nil
+	}
+	var p assistantwire.PartnerReceive
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, true, &rpc.Error{Code: bus.CodeInvalidParams, Message: method + ": " + err.Error()}
+	}
+	res, err := s.partnerReceive(ctx, p)
+	return res, true, err
+}
+
+func partnerUnavailable(err error) error {
+	return &rpc.Error{Code: assistantwire.CodePartnerUnavailable, Message: "partner messages can't be kept now: " + err.Error()}
+}
+
+// partnerReceive keeps envelope p and says so (accepted), or that it has it (duplicate), or why it will not take it
+// (refused): an envelope that does not read, too long, past the hop limit, about no message this hub sent, or one too
+// many from that hub in a while. A store that cannot keep it answers partner_unavailable: the partner sends it again.
+func (s *Service) partnerReceive(ctx context.Context, p assistantwire.PartnerReceive) (assistantwire.PartnerResult, error) {
+	st := s.partnerStore()
+	if st == nil {
+		return assistantwire.PartnerResult{}, partnerUnavailable(errPartnersOff)
+	}
+	e, peer := p.Envelope, strings.TrimSpace(p.FromHub)
+	refused := func(code string) (assistantwire.PartnerResult, error) {
+		s.logf("partner %s: refused %s %s: %s", short(peer), e.Kind, e.MessageID, code)
+		return assistantwire.PartnerResult{Status: assistantwire.PartnerRefused, Code: code}, nil
+	}
+	if !partnerHubIDRe.MatchString(peer) || !partnerMessageIDRe.MatchString(e.MessageID) {
+		return refused(assistantwire.PartnerCodeInvalid)
+	}
+	if had, err := st.PartnerMessageOf(ctx, partnerIn, peer, e.MessageID); err != nil {
+		return assistantwire.PartnerResult{}, partnerUnavailable(err)
+	} else if had != nil {
+		return assistantwire.PartnerResult{Status: assistantwire.PartnerDuplicate}, nil
+	}
+	now := time.Now().UTC()
+	m := db.PartnerMessage{ID: "pr_" + randomHex(12), Direction: partnerIn, PeerHub: peer, PeerName: partnerInline(p.FromName, 64),
+		MessageID: e.MessageID, Kind: e.Kind, Hop: 1, State: partnerReceived, CreatedAt: now}
+	if m.PeerName == "" {
+		m.PeerName = peer
+	}
+	status := false
+	switch e.Kind {
+	case assistantwire.PartnerKindMessage, assistantwire.PartnerKindReply:
+		text, _, err := partnerScrub(partnerPlain(e.Text))
+		if err != nil || text == "" {
+			return refused(assistantwire.PartnerCodeInvalid)
+		}
+		if utf8.RuneCountInString(text) > assistantwire.PartnerTextMax {
+			return refused(assistantwire.PartnerCodeTooLong)
+		}
+		m.Text = text
+		if e.Kind == assistantwire.PartnerKindReply {
+			out, err := st.PartnerMessageOf(ctx, partnerOut, peer, e.ReplyTo)
+			if err != nil {
+				return assistantwire.PartnerResult{}, partnerUnavailable(err)
+			}
+			if out == nil || out.Kind == assistantwire.PartnerKindStatus {
+				return refused(assistantwire.PartnerCodeInvalid)
+			}
+			m.ReplyTo, m.Hop = e.ReplyTo, out.Hop+1
+		}
+		if m.Hop > assistantwire.PartnerHopMax {
+			return refused(assistantwire.PartnerCodeHopLimit)
+		}
+	case assistantwire.PartnerKindStatus:
+		if e.State != assistantwire.PartnerStateDelivered && e.State != assistantwire.PartnerStateFailed {
+			return refused(assistantwire.PartnerCodeInvalid)
+		}
+		out, err := st.PartnerMessageOf(ctx, partnerOut, peer, e.ReplyTo)
+		if err != nil {
+			return assistantwire.PartnerResult{}, partnerUnavailable(err)
+		}
+		if out == nil {
+			return refused(assistantwire.PartnerCodeInvalid)
+		}
+		m.ReplyTo, m.Hop, m.Text, status = e.ReplyTo, out.Hop, e.State, true
+		if e.State == assistantwire.PartnerStateFailed {
+			m.Code = assistantwire.PartnerCodeUndelivered
+			if partnerCodeRe.MatchString(e.Code) {
+				m.Code = e.Code
+			}
+		}
+	default:
+		return refused(assistantwire.PartnerCodeInvalid)
+	}
+	most := partnerInRate
+	if status {
+		most = partnerStatusRate
+	}
+	if n, err := st.CountPartnerMessages(ctx, partnerIn, peer, status, now.Add(-partnerRateWindow)); err != nil {
+		return assistantwire.PartnerResult{}, partnerUnavailable(err)
+	} else if n >= most {
+		return refused(assistantwire.PartnerCodeRateLimited)
+	}
+	again := now.Add(partnerReconcile) // the loop takes it up then, if what follows did not get it in
+	m.NextTry = &again
+	m, created, err := st.InsertPartnerMessage(ctx, m)
+	if err != nil {
+		return assistantwire.PartnerResult{}, partnerUnavailable(err)
+	}
+	if !created {
+		return assistantwire.PartnerResult{Status: assistantwire.PartnerDuplicate}, nil
+	}
+	go s.partnerDeliverIn(s.runCtx(), st, m, false)
+	return assistantwire.PartnerResult{Status: assistantwire.PartnerAccepted}, nil
+}
+
+// partnerPlain is a partner's text without control characters but line breaks and tabs.
+func partnerPlain(text string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, text)
+}
+
+// partnerDeliverIn delivers incoming envelope m: a message into the main conversation (as it is now), a reply into
+// the conversation that sent what it answers (the main one when that is gone), a status onto that message. In went
+// means in the conversation or durably queued for it, and the partner is told; a refusal for good tells it too
+// (partnerRelayRefused). Anything else leaves m received, for the loop (again: a try before this one may have gone in).
+func (s *Service) partnerDeliverIn(ctx context.Context, st partnerStore, m db.PartnerMessage, again bool) {
+	if m.Kind == assistantwire.PartnerKindStatus {
+		s.partnerStatusIn(ctx, st, m)
+		return
+	}
+	var machine, to string
+	var out *db.PartnerMessage
+	language := answerLanguage(s.hello(ctx).Locale)
+	// The exchange's own hops are the envelopes' (PartnerHopMax); among this hub's conversations it is one hop from
+	// elsewhere, so a long exchange does not use up the conversation's relays (relayMaxHops).
+	msg := relayMsg{OnceID: partnerOnceID(m.PeerHub, m.MessageID), From: partnerFrom + m.PeerHub, FromTitle: m.PeerName,
+		Text: m.Text, Hop: 1, At: m.CreatedAt.UTC(), Partner: m.MessageID}
+	switch m.Kind {
+	case assistantwire.PartnerKindMessage:
+		cfg := s.settings(ctx)
+		if cfg.Main == "" {
+			s.partnerInEnded(ctx, st, m, partnerFailed, assistantwire.PartnerCodeNoMain, "", "")
+			return
+		}
+		machine, to = cfg.mainRouteMachine(), cfg.Main
+		if s.isWorkMachine(machine) {
+			s.partnerInEnded(ctx, st, m, partnerFailed, assistantwire.PartnerCodeUndelivered, "", "")
+			return
+		}
+		msg.Tool = partnerMessageTool
+		msg.PartnerText = prompts.RenderPartnerMessage(prompts.PartnerMessage{Language: language, Hub: m.PeerName, HubID: m.PeerHub,
+			MessageID: m.MessageID, Text: m.Text})
+	case assistantwire.PartnerKindReply:
+		var err error
+		if out, err = st.PartnerMessageOf(ctx, partnerOut, m.PeerHub, m.ReplyTo); err != nil {
+			s.logf("partner %s: reply %s: %v", short(m.PeerHub), m.MessageID, err)
+			return
+		}
+		if out == nil {
+			s.partnerInEnded(ctx, st, m, partnerFailed, assistantwire.PartnerCodeInvalid, "", "")
+			return
+		}
+		if machine, to = s.partnerConversation(ctx, out.MachineID, out.SessionID); to == "" {
+			s.partnerInEnded(ctx, st, m, partnerFailed, assistantwire.PartnerCodeNoMain, "", "")
+			return
+		}
+		msg.Tool, msg.Answer = partnerReplyTool, true
+		msg.PartnerText = prompts.RenderPartnerReply(prompts.PartnerReply{Language: language, Hub: m.PeerName, HubID: m.PeerHub,
+			MessageID: m.MessageID, Sent: partnerInline(out.Text, 200), Text: m.Text})
+	default:
+		s.partnerInEnded(ctx, st, m, partnerFailed, assistantwire.PartnerCodeInvalid, "", "")
+		return
+	}
+	if again {
+		msg.TriedAt = m.CreatedAt
+		if landed, _ := s.relayArrived(machine, to, msg); landed {
+			s.partnerInWent(ctx, st, m, out, machine, to)
+			return
+		}
+	}
+	err := s.partnerRelay(ctx, machine, to, msg)
+	switch {
+	case err == nil:
+		s.partnerInWent(ctx, st, m, out, machine, to)
+	case errors.Is(err, errPartnerRefused):
+	default:
+		s.logf("partner %s: %s %s into %s: %v; tried again later", short(m.PeerHub), m.Kind, m.MessageID, short(to), err)
+	}
+}
+
+// partnerInWent notes incoming m delivered into conversation to (a reply's out: the message it answers, answered now)
+// and tells the partner.
+func (s *Service) partnerInWent(ctx context.Context, st partnerStore, m db.PartnerMessage, out *db.PartnerMessage, machine, to string) {
+	s.partnerInEnded(ctx, st, m, partnerDelivered, "", machine, to)
+	if out == nil {
+		return
+	}
+	if _, _, err := partnerMutate(ctx, st, *out, func(r *db.PartnerMessage) bool {
+		if r.State != partnerQueued && r.State != partnerSent && r.State != partnerDelivered {
+			return false
+		}
+		r.State, r.NextTry = partnerAnswered, nil
+		return true
+	}); err != nil {
+		s.logf("partner %s: answered: %v", out.MessageID, err)
+	}
+}
+
+// partnerInEnded notes what became of incoming m (delivered into machine's conversation to, or failed with code) and
+// tells the partner with a status; once: an envelope past received is left as it is.
+func (s *Service) partnerInEnded(ctx context.Context, st partnerStore, m db.PartnerMessage, state, code, machine, to string) {
+	title := ""
+	if to != "" {
+		title = s.partnerTitle(ctx, machine, to)
+	}
+	_, ok, err := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
+		if r.State != partnerReceived {
+			return false
+		}
+		r.State, r.Code, r.NextTry = state, code, nil
+		if to != "" {
+			r.MachineID, r.SessionID, r.Title = machine, to, title
+		}
+		return true
+	})
+	if err != nil {
+		s.logf("partner %s: %s %s: %v", short(m.PeerHub), m.MessageID, state, err)
+	}
+	if !ok {
+		return
+	}
+	report := assistantwire.PartnerStateDelivered
+	if state == partnerFailed {
+		report = assistantwire.PartnerStateFailed
+	}
+	s.partnerStatusOut(ctx, st, m, report, code)
+}
+
+// partnerStatusOut queues the status of incoming m for its partner: what became of it (state: delivered or failed with
+// code). Its message_id comes from m and the state, so a second try adds nothing.
+func (s *Service) partnerStatusOut(ctx context.Context, st partnerStore, m db.PartnerMessage, state, code string) {
+	now := time.Now().UTC()
+	row := db.PartnerMessage{ID: "pr_" + randomHex(12), Direction: partnerOut, PeerHub: m.PeerHub, PeerName: m.PeerName,
+		MessageID: "pm_" + partnerHash("status", m.ID, state)[:32], Kind: assistantwire.PartnerKindStatus, ReplyTo: m.MessageID,
+		Hop: m.Hop, Text: state, Code: code, State: partnerQueued, NextTry: &now, CreatedAt: now}
+	if _, _, err := st.InsertPartnerMessage(ctx, row); err != nil {
+		s.logf("partner %s: status of %s: %v", short(m.PeerHub), m.MessageID, err)
+		return
+	}
+	s.partnerWakeUp()
+}
+
+// partnerStatusIn applies a partner's status m to the message it is about: in its conversation now, or not delivered
+// (the sending conversation is told).
+func (s *Service) partnerStatusIn(ctx context.Context, st partnerStore, m db.PartnerMessage) {
+	out, err := st.PartnerMessageOf(ctx, partnerOut, m.PeerHub, m.ReplyTo)
+	if err != nil {
+		s.logf("partner %s: status %s: %v", short(m.PeerHub), m.MessageID, err)
+		return
+	}
+	if out != nil {
+		failed := m.Text == assistantwire.PartnerStateFailed
+		_, changed, err := partnerMutate(ctx, st, *out, func(r *db.PartnerMessage) bool {
+			switch {
+			case failed && (r.State == partnerQueued || r.State == partnerSent || r.State == partnerDelivered):
+				r.State, r.Code, r.NextTry = partnerFailed, m.Code, nil
+			case !failed && (r.State == partnerQueued || r.State == partnerSent):
+				r.State, r.NextTry = partnerDelivered, nil
+			default:
+				return false
+			}
+			return true
+		})
+		if err != nil {
+			s.logf("partner %s: status of %s: %v", short(m.PeerHub), out.MessageID, err)
+			return
+		}
+		if changed && failed && out.Kind != assistantwire.PartnerKindStatus {
+			s.partnerTell(ctx, *out, "undelivered", m.Code)
+		}
+	}
+	if _, _, err := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
+		if r.State != partnerReceived {
+			return false
+		}
+		r.State, r.NextTry = partnerDelivered, nil
+		return true
+	}); err != nil {
+		s.logf("partner %s: status %s: %v", short(m.PeerHub), m.MessageID, err)
+	}
+}
+
+// partnerConversation is where to tell or answer machine's conversation session: there while it is there (or its
+// computer cannot say), else the main conversation; "" when there is neither.
+func (s *Service) partnerConversation(ctx context.Context, machine, session string) (string, string) {
+	if machine != "" && session != "" {
+		var res struct {
+			Session proto.Session `json:"session"`
+			OK      bool          `json:"ok"`
+		}
+		err := s.call(ctx, machine, DeviceSessionGet, map[string]any{"session_id": session}, &res)
+		if err != nil || res.OK && !res.Session.IsDeleted() {
+			return machine, session
+		}
+	}
+	if cfg := s.settings(ctx); cfg.Main != "" {
+		return cfg.mainRouteMachine(), cfg.Main
+	}
+	return "", ""
+}
+
+// partnerRelay puts msg into machine's conversation to: now, or durably queued behind its turn (a copy waiting
+// already counts). nil once it went in or waits there; errPartnerRefused when the conversation refused it for good,
+// which relayRefused handled.
+func (s *Service) partnerRelay(ctx context.Context, machine, to string, msg relayMsg) error {
+	c, ok := s.session(ctx, machine, to)
+	if !ok || c.Status == proto.StatusWorking || c.Starting || s.relayWaits(to, msg) {
+		if err := s.queuePartnerRelay(to, msg); err != nil {
+			return err
+		}
+		s.publish(ctx) // shown waiting above its composer
+		if ok && c.Status != proto.StatusWorking && !c.Starting {
+			s.drainRelays(machine, []proto.Session{c})
+		}
+		return nil
+	}
+	err := s.tryDirectRelay(ctx, machine, to, &msg)
+	if err == nil {
+		return nil
+	}
+	if s.refusedDirect(ctx, machine, to, msg, err) {
+		return errPartnerRefused
+	}
+	if qerr := s.queuePartnerRelay(to, msg); qerr != nil {
+		return qerr
+	}
+	s.publish(ctx)
+	if !relayInDoubt(err) {
+		s.drainAfter(machine, to, relayRetryGap)
+	}
+	return nil
+}
+
+// queuePartnerRelay queues msg for conversation to, saved before it returns, unless a copy waits there already.
+func (s *Service) queuePartnerRelay(to string, msg relayMsg) error {
+	b := &s.relays
+	id := relayMsgID(to, msg)
+	b.mu.Lock()
+	if !s.relayLocked(context.Background()) {
+		b.mu.Unlock()
+		return errors.New("the relay queue cannot be read")
+	}
+	for _, q := range b.st.Queue[to] {
+		if relayMsgID(to, q) == id {
+			b.mu.Unlock()
+			return nil
+		}
+	}
+	b.mu.Unlock()
+	_, err := s.queueRelayDurable(to, msg)
+	return err
+}
+
+// partnerRelayRefused is what follows conversation to refusing a partner's msg for good (relayRefused): a reply goes to
+// the main conversation instead when that is another; otherwise the partner hears it was not delivered.
+func (s *Service) partnerRelayRefused(to string, msg relayMsg) (string, func(context.Context)) {
+	cfg := s.settings(context.Background())
+	if msg.Tool == partnerReplyTool && cfg.Main != "" && cfg.Main != to && s.moveRelay(cfg.Main, msg) {
+		return "a partner hub's reply moved to the main conversation", func(ctx context.Context) {
+			s.publish(ctx)
+			if c, ok := s.session(ctx, cfg.mainRouteMachine(), cfg.Main); ok && c.Status != proto.StatusWorking && !c.Starting {
+				s.drainRelays(cfg.mainRouteMachine(), []proto.Session{c})
+			}
+		}
+	}
+	return "the partner hub is told", func(ctx context.Context) { s.partnerUndelivered(ctx, msg) }
+}
+
+// partnerRelayGone: drainRelays dropped msg, its conversation gone; a partner's envelope goes as when refused.
+func (s *Service) partnerRelayGone(to string, msg relayMsg) {
+	if msg.Tool != partnerMessageTool && msg.Tool != partnerReplyTool {
+		return
+	}
+	_, then := s.partnerRelayRefused(to, msg)
+	go then(context.Background())
+}
+
+// partnerUndelivered notes the partner's envelope msg carried as not delivered, and tells the partner.
+func (s *Service) partnerUndelivered(ctx context.Context, msg relayMsg) {
+	st := s.partnerStore()
+	if st == nil || msg.Partner == "" {
+		return
+	}
+	m, err := st.PartnerMessageOf(ctx, partnerIn, strings.TrimPrefix(msg.From, partnerFrom), msg.Partner)
+	if err != nil || m == nil {
+		return
+	}
+	_, ok, err := partnerMutate(ctx, st, *m, func(r *db.PartnerMessage) bool {
+		if r.State != partnerReceived && r.State != partnerDelivered {
+			return false
+		}
+		r.State, r.Code, r.NextTry = partnerFailed, assistantwire.PartnerCodeUndelivered, nil
+		return true
+	})
+	if err != nil {
+		s.logf("partner %s: undelivered: %v", m.MessageID, err)
+	}
+	if ok {
+		s.partnerStatusOut(ctx, st, *m, assistantwire.PartnerStateFailed, assistantwire.PartnerCodeUndelivered)
+	}
+}
