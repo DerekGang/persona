@@ -144,6 +144,17 @@ test('todo create, edit, complete, reopen, and deletion return real-shaped envel
   assert.equal(globalThis.__demoTransportCalls, 0);
 });
 
+test('the local to-do detail applies and clears the same plan fields without reaching a transport',async()=>{
+  const repo=new DemoRepository();
+  const available=await repo.call('/api/v1/todos?manager=demo','GET');const id=available.todos[0].id;
+  const path='/api/v1/todos/'+id+'?manager=demo';
+  let r=await repo.call(path,'PATCH',{due_date:'2026-11-25',remind_at:'2026-11-24T10:00:00Z',priority:'high',project:'demo-project-release'});
+  assert.equal(r.todo.due_date,'2026-11-25');assert.equal(r.todo.priority,'high');assert.equal(r.todo.project,'demo-project-release');
+  r=await repo.call(path,'PATCH',{due_at:null,remind_at:null,priority:'',project:''});
+  assert.ok(!r.todo.due_at&&!r.todo.due_date&&!r.todo.remind_at&&!r.todo.project);assert.equal(r.todo.priority,'');
+  await assert.rejects(repo.call(path,'PATCH',{project:'missing-project'}));assert.equal(globalThis.__demoTransportCalls,0);
+});
+
 test('knowledge detail, tags, search, and related moments mutate only sample entries', async () => {
   const repo = new DemoRepository();
   const projects = await repo.knowledge('projects');

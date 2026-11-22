@@ -958,3 +958,44 @@ test('every live, legacy and unknown linked Agent state resolves to a localized 
     for (const [state,key] of Object.entries(expected)) {assert.equal(todoAgentStateLabel(state),key);assert.ok(strings.get(key));}
   }
 });
+
+const {PhoneTodoDetailEditor,PhoneTodoPlan,todoDetailPatchAccepted}=await import('../entry/src/main/ets/models/PhoneTodoDetailEditor.ets');
+test('the detail title commits once on submit/blur/back, discards an empty edit and keeps another device’s untouched rename', async()=>{
+  const env=await opened({todos:[todo('entry',{notes:'preserve me'})]});await env.workspace.openRow(env.workspace.items[0]);
+  const edit=new PhoneTodoDetailEditor();edit.sync(env.workspace);
+  edit.focus(env.workspace);edit.type('  ');edit.commitTitle(env.workspace);await edit.flush(env.workspace);
+  assert.equal(edit.title,'Todo entry');assert.equal(env.state.calls.filter(c=>c.method==='PATCH').length,0);
+  edit.focus(env.workspace);env.workspace.selected.title='Changed elsewhere';edit.commitTitle(env.workspace);await edit.flush(env.workspace);assert.equal(edit.title,'Changed elsewhere');
+  edit.focus(env.workspace);edit.type('  New title  ');edit.commitTitle(env.workspace);edit.commitTitle(env.workspace);await edit.finish(env.workspace);
+  const patches=env.state.calls.filter(c=>c.method==='PATCH');assert.deepEqual(patches,[{method:'PATCH',path:'/api/v1/todos/entry?manager=work',body:{title:'New title'}}]);
+  assert.equal(env.workspace.selected.notes,'preserve me');assert.equal(env.workspace.selected.title,'New title');
+});
+test('the native plan coalesces edits, clears a due date or reminder with null and saves the KB project separately',async()=>{
+  const env=await opened({todos:[todo('one',{due_at:'2026-11-25T10:00:00Z'})]});await env.workspace.openRow(env.workspace.items[0]);
+  const edit=new PhoneTodoDetailEditor();edit.sync(env.workspace);
+  env.state.request=({path,method,body},state)=>{
+    assert.equal(method,'PATCH');assert.equal(path,'/api/v1/todos/one?manager=work');const x=state.todos[0];
+    if ('due_date' in body) delete x.due_at;if ('due_at' in body) delete x.due_date;Object.assign(x,body);return {todo:structuredClone(x)};
+  };
+  const date=edit.plan.copy();date.allDay=true;edit.change(env.workspace,date,'due');const p=edit.plan.copy();p.hasReminder=true;p.priority='high';edit.change(env.workspace,p,'remind');edit.change(env.workspace,p,'priority');
+  const kb=edit.plan.copy();kb.project='release';edit.change(env.workspace,kb,'project');await edit.flush(env.workspace);
+  let writes=env.state.calls.filter(c=>c.method==='PATCH');assert.equal(writes.length,2);assert.deepEqual(Object.keys(writes[0].body).sort(),['due_date','priority','remind_at']);
+  assert.deepEqual(writes[1].body,{project:'release'});assert.equal(env.workspace.selected.dueAt,'');assert.equal(env.workspace.selected.project,'release');
+  const clear=edit.plan.copy();clear.hasDue=false;clear.hasReminder=false;edit.change(env.workspace,clear,'due');edit.change(env.workspace,clear,'remind');await edit.finish(env.workspace);
+  writes=env.state.calls.filter(c=>c.method==='PATCH');assert.deepEqual(writes[2].body,{due_at:null,remind_at:null});
+  const unchanged=PhoneTodoPlan.from(env.workspace.selected);assert.deepEqual(unchanged.changeFrom(edit.plan,['due','remind','priority','project']),{});
+  assert.ok(todoDetailPatchAccepted({remind_at:'2026-11-25T10:00:00.000Z'},{remind_at:'2026-11-25T18:00:00+08:00'}));
+});
+test('an older Hub ignoring a plan field rolls it back, a read-only or retired owner cannot write, and wrong-task responses never replace the open card',async()=>{
+  const env=await opened({todos:[todo('first'),todo('other')]});await env.workspace.openRow(env.workspace.items[0]);
+  const e=new PhoneTodoDetailEditor();e.sync(env.workspace);
+  env.state.request=()=>({todo:structuredClone(env.state.todos[0])});
+  let p=e.plan.copy();p.priority='high';e.change(env.workspace,p,'priority');await e.flush(env.workspace);
+  assert.equal(e.plan.priority,'');assert.equal(env.workspace.error,'todo_detail_unsupported');assert.deepEqual(e.unavailable,['priority']);
+  env.state.request=()=>({todo:structuredClone(env.state.todos[1])});
+  e.focus(env.workspace);e.type('new');await e.finish(env.workspace);assert.equal(env.workspace.error,'request_updated');assert.equal(env.workspace.selected.id,'first');
+  env.state.request=()=>{throw new HttpFailure(403,'forbidden')};p=e.plan.copy();p.project='test';e.change(env.workspace,p,'project');await e.flush(env.workspace);
+  assert.equal(env.workspace.error,'permission_denied');let n=env.state.calls.length;assert.equal(env.workspace.detailEditable(),false);
+  p=e.plan.copy();p.hasDue=true;e.change(env.workspace,p,'due');await e.flush(env.workspace);assert.equal(env.state.calls.length,n);
+  env.state.generation++;env.workspace.detailReadOnly=false;e.focus(env.workspace);e.type('late');await e.finish(env.workspace);assert.equal(env.state.calls.length,n);
+});

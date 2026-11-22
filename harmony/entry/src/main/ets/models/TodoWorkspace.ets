@@ -857,6 +857,7 @@ export class TodoWorkspace {
     const owner = this.capture(undefined);
     if (!owner || !todo.id || todo.manager && todo.manager !== owner.managerId) { this.error = 'offline'; return; }
     this.revision++;
+    if (this.selected.id!==todo.id || this.selected.manager!==todo.manager) this.detailReadOnly=false;
     this.selected = todo;
     this.targetGone = false;
     this.titleDraft = todo.title;
@@ -962,7 +963,9 @@ export class TodoWorkspace {
       if (!this.owns(owner, !!todo && !listRow)) return undefined;
       this.writeState = failure instanceof HttpFailure && failure.resultPending ? 'pending' :
         failure instanceof HttpFailure && failure.resultUnknown ? 'unknown' : 'failed';
-      this.error = this.errorCode(failure as Error);
+      const unsupported = !!extraCheck && !listRow && failure instanceof HttpFailure &&
+        ([405,501].includes(failure.status) || ['unsupported_field','unknown_field','not_implemented'].includes(failure.code));
+      this.error = unsupported ? 'todo_detail_unsupported' : this.errorCode(failure as Error);
       return undefined;
     } finally { if (this.owns(owner, !!todo && !listRow)) this.saving = false; }
   }

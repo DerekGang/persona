@@ -62,8 +62,10 @@ export struct PhoneTodoDetailForm {
   }
   private projectRows(): ResourceRow[] {
     const rows=this.workspace.detailProjects.length ? this.workspace.detailProjects.slice() : this.workspace.projects.slice();
+    rows.sort((a:ResourceRow,b:ResourceRow) => Number(Wire.text(b.data(),'extra').startsWith('long'))-Number(Wire.text(a.data(),'extra').startsWith('long')) ||
+      (a.title||a.id).localeCompare(b.title||b.id));
     const current=this.editor.plan.project;
-    if (current && !rows.some((row:ResourceRow)=>row.id===current)) rows.push(new ResourceRow(current,current,'knowledge'));
+    if (current && !rows.some((row:ResourceRow)=>row.id===current)) rows.unshift(new ResourceRow(current,current,'knowledge'));
     return rows;
   }
   private projectName(): string {
@@ -96,7 +98,7 @@ export struct PhoneTodoDetailForm {
       }.width('100%')
       if (this.workspace.selected.startError) Text(this.workspace.selected.startError).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger)
       if (this.workspace.selected.doneReason) Text(this.workspace.selected.doneReason).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
-    }.alignItems(HorizontalAlign.Start).width('100%').constraintSize({minHeight:this.metric(94.3,109)}).padding({left:20,right:20,top:15,bottom:15})
+    }.alignItems(HorizontalAlign.Start).width('100%').constraintSize({minHeight:this.metric(94.3,109)}).padding({left:20,right:20,top:19,bottom:15})
       .backgroundColor(Colors.surface).borderRadius(13).id('todo.detail')
   }
   @Builder words(value: string) {
@@ -110,9 +112,11 @@ export struct PhoneTodoDetailForm {
     Row({space:12}) {
       if (field!=='allDay') this.mark(field==='due' ? $r('sys.symbol.calendar') : $r('sys.symbol.bell'))
       this.words(tr(label))
-      Toggle({type:ToggleType.Switch,isOn:value}).selectedColor(Colors.positive).enabled(this.canChange(field==='allDay'?'due':field))
-        .accessibilityText(tr(label)).onChange((checked:boolean) => this.toggle(field,checked)).id('todo.plan.'+field)
+      Toggle({type:ToggleType.Switch,isOn:value}).selectedColor(Colors.positive).width(63).height(28)
+        .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
     }.padding({left:20,right:20}).width('100%').constraintSize({minHeight:this.metric(51.8,58.8)})
+      .accessibilityGroup(true).accessibilityRole(AccessibilityRoleType.SWITCH).accessibilityText(tr(label)).accessibilityChecked(value)
+      .enabled(this.canChange(field==='allDay'?'due':field)).onClick(() => this.toggle(field,!value)).id('todo.plan.'+field)
   }
   @Builder dateButtons(field: string, value: number, timed: boolean) {
     Row({space:6}) {

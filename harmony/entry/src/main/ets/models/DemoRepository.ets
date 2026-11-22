@@ -579,11 +579,30 @@ export class DemoRepository extends HubRepository {
     if (!todo) throw new HttpFailure(404, 'demo_todo_not_found');
     if (parts.length === 2 && method === 'GET') return demoRecord(['todo'], [cloneRecord(todo)]);
     if (parts.length === 2 && method === 'PATCH') {
-      const allowed = ['title', 'notes', 'done'];
+      const allowed = ['title','notes','done','due_at','due_date','remind_at','priority','project'];
       if (Object.keys(body).some((key: string) => !allowed.includes(key))) throw new HttpFailure(400, 'demo_invalid_input');
       let updated = cloneRecord(todo);
       if (Wire.has(body, 'title')) updated['title'] = nonEmpty(Wire.text(body, 'title'));
       if (Wire.has(body, 'notes')) updated['notes'] = textWithin(Wire.text(body, 'notes'), 20000);
+      if (Wire.has(body,'due_at') || Wire.has(body,'due_date')) {
+        const at=Wire.text(body,'due_at'), day=Wire.text(body,'due_date');
+        if (at && day || at && !Number.isFinite(Date.parse(at)) || day && !/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new HttpFailure(400,'demo_invalid_input');
+        updated=omitFields(updated,['due_at','due_date']); if (at) updated['due_at']=at; if (day) updated['due_date']=day;
+      }
+      if (Wire.has(body,'remind_at')) {
+        const at=Wire.text(body,'remind_at'); if (at && !Number.isFinite(Date.parse(at))) throw new HttpFailure(400,'demo_invalid_input');
+        updated=omitFields(updated,['remind_at','reminded_at']); if (at) updated['remind_at']=at;
+      }
+      if (Wire.has(body,'priority')) {
+        const priority=Wire.text(body,'priority'); if (!['','normal','low','high'].includes(priority)) throw new HttpFailure(400,'demo_invalid_input');
+        updated['priority']=priority==='normal' ? '' : priority;
+      }
+      if (Wire.has(body,'project')) {
+        const slug=Wire.text(body,'project');
+        if (slug && !this.knowledgeData.some((row:DemoRecord)=>Wire.text(row,'kind')==='projects' && Wire.text(row,'id')===slug))
+          throw new HttpFailure(400,'demo_invalid_input');
+        if (slug) updated['project']=slug; else updated=omitFields(updated,['project']);
+      }
       if (Wire.has(body, 'done')) {
         if (typeof body['done'] !== 'boolean') throw new HttpFailure(400, 'demo_invalid_input');
         if (body['done']) { updated['done_at'] = '2026-11-11T09:30:00Z'; updated['done_by'] = 'demo'; updated['state'] = 'done'; updated['status'] = 'done'; }
