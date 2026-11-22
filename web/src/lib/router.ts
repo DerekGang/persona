@@ -29,8 +29,8 @@ export type Route =
   | { name: "persona"; sid?: string; mid?: string; manager?: string; at?: string }
   // "All chats"; `origin` filters it (lib/conversation-origins.ts): the sidebar's "Automatic" rows open it so
   | { name: "history"; origin?: string }
-  // the health space (docs/assistant/health.md): `/health` opens its latest conversation (#4329), `/health/new` its new
-  // conversation page (with its past ones), `/health/<id>` one of them
+  // the health space (docs/assistant/health.md): `/health` opens its home (#13273), `/health/new` is an alias for it;
+  // both list past conversations, and `/health/<id>` opens one of them
   | { name: "health"; sid?: string; fresh?: boolean }
   | { name: "profile" }
   // `manager`: whose item it is when that is another manager than the default (`?manager=`, docs/assistant/managers.md

@@ -320,8 +320,6 @@ fun AssistantScreen(
     var healthChats by healthChatsState
     val healthKeysState = remember(managerChoice.hubId) { mutableStateOf(emptySet<SessionKey>()) }
     var healthKeys by healthKeysState
-    val healthBusyState = remember { mutableStateOf(false) }
-    var healthBusy by healthBusyState
     val healthPage = active == null && newChat?.space == persona.core.contracts.api.AssistantSpace.HEALTH
     // New chat's page takes @ (iOS: the shell's starter composer; Health's has none). Its picked sessions go with its message.
     val mentionsHere = active == null && !viewingMainQueue && !healthPage && mentionSessions != null
@@ -494,25 +492,8 @@ fun AssistantScreen(
         healthKeys = healthKeys + chats.map { it.key }
         return chats
     }
-    // The sidebar's Health: the newest health chat, else the health space's new-chat page.
-    fun openHealth() {
-        if (sending || healthBusy || conversationsOf == null) return
-        healthBusy = true
-        scope.launch {
-            try {
-                when (val target = HealthEntry.resolve(loadHealth())) {
-                    is HealthEntry.Target.Open -> openConversation(target.key)
-                    HealthEntry.Target.New -> startHealthConversation()
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                assistantFailure(error, feedback, toast, resources)
-            } finally {
-                healthBusy = false
-            }
-        }
-    }
+    // The sidebar's Health opens its home immediately; the page loads its past chats in the background (#13273).
+    fun openHealth() = startHealthConversation()
     /** Why a new conversation did not start: what is missing for a coded refusal, else "Can't start a chat right now". */
     suspend fun newChatRefused(error: Exception): String {
         return assistantNewChatRefused(error, readinessOn, mainReadiness, resources)
