@@ -19,6 +19,12 @@ const REQUEST_TIMEOUT_MS: number = 15000;
 const NEXT_ADDRESS_TIMEOUT_MS: number = 2500;
 const WS_GUID: string = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+export interface StreamNetworkRule {
+  readonly directOnly:boolean;
+  current():boolean;
+  bind(tcp:socket.TCPSocket):Promise<void>;
+}
+
 export interface TransportProxy {
   readonly host: string;
   readonly port: number;
@@ -277,11 +283,25 @@ export class HubTransport {
     if (this.pin && this.endpoint.scheme !== 'https') throw new Error('pin_requires_https');
   }
 
-  stream(path: string): HubTransport {
+  private streamNetwork:StreamNetworkRule|undefined;
+  private outgoingLimit(opcode:number):number {
+    if(opcode===1 && this.streamNetwork && /^\/api\/v1\/recordings\/[a-f0-9-]{36}\/audio$/.test(this.streamPath))return 8704*1024;
+    return MAX_FRAME_BYTES;
+  }
+  /** Local equality witness for a recording consent across app restarts. No device credential enters its manifest. */
+  meetingCredentialKey():string {
+    this.assertLive(this.generation);
+    if(!this.token)throw new Error('missing_credential');
+    const md=cryptoFramework.createMd('SHA256');
+    md.updateSync({data:utf8('persona.meeting.consent.v1\u0000'+this.token)});
+    return new util.Base64Helper().encodeToStringSync(md.digestSync().data,util.Type.BASIC_URL_SAFE).replace(/=+$/,'');
+  }
+  stream(path: string, network?:StreamNetworkRule): HubTransport {
     this.assertLive(this.generation); this.children = this.children.filter((child: HubTransport) => !child.closed);
     if (this.children.length >= 4) throw new Error('stream_limit');
     const config = new EndpointConfig(this.endpoint.origin + this.endpoint.basePath, this.hubId, this.token, this.pin, this.managerId, [], this.proxy);
-    const child = new HubTransport(config, path); this.children.push(child); return child;
+    if (network && (!network.current() || this.proxy && network.directOnly)) throw new Error('audio_network_unverified');
+    const child = new HubTransport(config, path); child.streamNetwork=network; this.children.push(child); return child;
   }
   private assertLive(generation: number): void {
     if (this.closed || this.closing || generation !== this.generation || this.proxy && !this.proxy.isCurrent()) throw new HttpFailure(0, 'connection_closed');
@@ -361,6 +381,7 @@ export class HubTransport {
       received += chunk.byteLength; chunks.push(new Uint8Array(chunk).slice());
     };
     try {
+      if(this.streamNetwork && (!this.streamNetwork.current() || this.streamNetwork.directOnly))throw new HttpFailure(0,'audio_network_unverified');
       this.assertLive(generation); dispatched = true; const response = await session.fetch(request); this.assertLive(generation);
       if (overLimit) throw new HttpFailure(0, 'response_too_large');
       if (response.statusCode >= 300 && response.statusCode < 400) throw new HttpFailure(response.statusCode, 'redirect_refused');
@@ -398,6 +419,12 @@ export class HubTransport {
   async requestBytes(path: string, method: string = 'GET', body?: ArrayBuffer, contentType: string = 'application/octet-stream', opId: string = ''): Promise<BytesResponse> {
     if (body && body.byteLength > MAX_BINARY_BYTES) throw new HttpFailure(0, 'request_too_large');
     return this.requestData(path, method, body, contentType, MAX_BINARY_BYTES, opId);
+  }
+  async putMeetingGap(path:string,data:ArrayBuffer):Promise<string>{
+    if(!this.streamNetwork || !/^\/api\/v1\/recordings\/[0-9a-f-]{36}\/audio\?at=\d+(?:\.\d+)?$/.test(path) || !data.byteLength || data.byteLength%2 || data.byteLength>64000)
+      throw new Error('invalid_audio_gap');
+    const result=await this.requestData(path,'PUT',data,'application/octet-stream',MAX_HTTP_BYTES,'');
+    return utf8String(new Uint8Array(result.data),true);
   }
 
   private async withTimeout<T>(promise: Promise<T>, timeout: number, code: string): Promise<T> {
@@ -485,6 +512,8 @@ export class HubTransport {
       const peer = peers[index], tcp = socket.constructTCPSocketInstance();
       this.tcpSocket = tcp;
       try {
+        if(this.streamNetwork?.directOnly)await tcp.bind({address:peer.family===2 ? '::':'0.0.0.0',port:0,family:peer.family});
+        if (this.streamNetwork) await this.streamNetwork.bind(tcp);
         await this.withTimeout(tcp.connect({ address: peer, timeout: timeout }), timeout, 'connect_timeout');
         this.assertLive(generation);
         return { tcp: tcp, family: peer.family || 1 };
@@ -735,14 +764,15 @@ export class HubTransport {
   }
 
   private enqueueFrame(opcode: number, payload: Uint8Array): Promise<void> {
-    if (payload.length > MAX_FRAME_BYTES || this.closed || this.closing && opcode !== 8) return Promise.reject(new Error('connection_closed'));
-    if (this.queuedFrames >= 64 || this.queuedBytes + payload.length > MAX_FRAME_BYTES * 2) { this.failSocket(new Error('send_queue_full')); return Promise.reject(new Error('send_queue_full')); }
+    const limit=this.outgoingLimit(opcode);
+    if (payload.length > limit || this.closed || this.closing && opcode !== 8) return Promise.reject(new Error('connection_closed'));
+    if (this.queuedFrames >= 64 || this.queuedBytes + payload.length > Math.max(MAX_FRAME_BYTES*2,limit)) { this.failSocket(new Error('send_queue_full')); return Promise.reject(new Error('send_queue_full')); }
     const tls = this.tlsSocket, tcp = this.tcpSocket, copied = payload.slice(), generation = this.generation;
     this.queuedFrames++; this.queuedBytes += copied.length;
     const send = async (): Promise<void> => {
       if (this.closed || this.closing && opcode !== 8 || this.proxy && !this.proxy.isCurrent()) throw new Error('connection_closed');
       const random = await cryptoFramework.createRandom().generateRandom(4);
-      if (this.closed || this.closing && opcode !== 8 || generation !== this.generation || tls !== this.tlsSocket || tcp !== this.tcpSocket || this.proxy && !this.proxy.isCurrent()) throw new Error('connection_closed');
+      if (this.closed || this.streamNetwork && !this.streamNetwork.current() && opcode!==8 || this.closing && opcode !== 8 || generation !== this.generation || tls !== this.tlsSocket || tcp !== this.tcpSocket || this.proxy && !this.proxy.isCurrent()) throw new Error('connection_closed');
       const mask = random.data;
       const maskBit = 0x80;
       let header: Uint8Array;
@@ -757,7 +787,7 @@ export class HubTransport {
       const masked = new Uint8Array(payload.length);
       for (let i = 0; i < payload.length; i++) masked[i] = copied[i] ^ mask[i & 3];
       const data = toArrayBuffer(concatArrays([header, mask, masked]));
-      if (this.closed || this.closing && opcode !== 8 || generation !== this.generation || tls !== this.tlsSocket || tcp !== this.tcpSocket || this.proxy && !this.proxy.isCurrent()) throw new Error('connection_closed');
+      if (this.closed || this.streamNetwork && !this.streamNetwork.current() && opcode!==8 || this.closing && opcode !== 8 || generation !== this.generation || tls !== this.tlsSocket || tcp !== this.tcpSocket || this.proxy && !this.proxy.isCurrent()) throw new Error('connection_closed');
       if (tls) await this.withTimeout(tls.send(data), 5000, 'socket_write_timeout');
       else if (tcp) await this.withTimeout(tcp.send({ data: data }), 5000, 'socket_write_timeout');
       else throw new Error('connection_closed');
@@ -768,9 +798,15 @@ export class HubTransport {
   }
 
   send(payload: string): boolean {
-    const bytes = utf8(payload); if (!this.upgraded || this.closed || this.closing || bytes.length > MAX_FRAME_BYTES || this.proxy && !this.proxy.isCurrent()) return false;
+    const bytes = utf8(payload); if (!this.upgraded || this.closed || this.closing || bytes.length > this.outgoingLimit(1) || this.proxy && !this.proxy.isCurrent()) return false;
     this.enqueueFrame(1, bytes).catch(() => { if (!this.closing) this.failSocket(new Error('socket_write_failed')); });
     return !this.closed;
+  }
+
+  async sendBinaryAsync(payload:ArrayBuffer):Promise<void> {
+    if (!this.upgraded || this.closed || this.closing || payload.byteLength>MAX_FRAME_BYTES ||
+      this.streamNetwork && !this.streamNetwork.current() || this.proxy && !this.proxy.isCurrent()) throw new Error('connection_closed');
+    await this.enqueueFrame(2,new Uint8Array(payload));
   }
 
   sendBinary(payload: ArrayBuffer): boolean {

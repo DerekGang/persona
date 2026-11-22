@@ -5,7 +5,8 @@ import {readFileSync} from 'node:fs';
 let sdk;
 globalThis.__nativeAsr=()=>sdk;
 registerHooks({
- resolve(specifier,context,next){if(specifier.startsWith('@kit.'))return{url:'native-asr:'+specifier,shortCircuit:true};return next(specifier,context);},
+ resolve(specifier,context,next){
+  if (specifier==='./MeetingAudioNetwork') return {url:'data:text/javascript,export const meetingAudioNetwork = {}',shortCircuit:true};if(specifier.startsWith('@kit.'))return{url:'native-asr:'+specifier,shortCircuit:true};return next(specifier,context);},
  load(url,context,next){if(url.startsWith('native-asr:')){
   const source={
    '@kit.AbilityKit':'export const abilityAccessCtrl={};export const common={};export const Permissions={};',

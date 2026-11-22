@@ -29,6 +29,7 @@ const modules = {
 };
 registerHooks({
   resolve(specifier, context, next) {
+  if (specifier==='./MeetingAudioNetwork') return {url:'data:text/javascript,export const meetingAudioNetwork = {}',shortCircuit:true};
     return Object.hasOwn(modules, specifier) ? {url: 'recording-playback:' + specifier, shortCircuit: true} : next(specifier, context);
   },
   load(url, context, next) {

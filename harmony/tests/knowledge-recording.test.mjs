@@ -27,6 +27,8 @@ globalThis.__recordingNativeTest = { fileIo: recordingFileIo };
 
 registerHooks({
   resolve(specifier, context, next) {
+    if (specifier === './MeetingAudioNetwork') return {url:'data:text/javascript,export const meetingAudioNetwork = {}',shortCircuit:true};
+    if (specifier === './MeetingHubAudio' || specifier === './Wire' && context.parentURL?.endsWith('/MeetingHubAudio.ets')) return {url:new URL(specifier+'.ets',context.parentURL).href,shortCircuit:true};
     if (context.parentURL?.endsWith('/KnowledgeRecording.ets') && specifier === './MeetingRoom')
       return { url: new URL('./MeetingRoom.ets', context.parentURL).href, shortCircuit: true };
     if ((context.parentURL?.endsWith('/MeetingRoom.ets') || context.parentURL?.endsWith('/KnowledgeRecording.ets')) && specifier === './Wire')

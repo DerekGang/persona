@@ -1,14 +1,20 @@
 import { Wire } from './Wire';
 
+export interface MeetingRoleChange {at:number;attendance:string;}
 export interface MeetingLine { start:number; end:number; text:string; }
 export interface MeetingAsk { id:string; question:string; at:number; liveNext:number; state:string; answer:string; spoken?:boolean; speechStart?:number; speechEnd?:number; }
 export interface MeetingJournal {
   id:string; profileId:string; hubId:string; managerId:string; startedAt:string; title:string; language:string;
   role:string; privateMark:boolean; revision:number; opened:boolean; endedAt:string; endRevision:number; ended:boolean;
   next:number; lines:MeetingLine[]; asks:MeetingAsk[];
+  transcription?:string;effectiveTranscription?:string;roles?:MeetingRoleChange[];syncedLines?:number;
 }
 export interface MeetingRoomIO {
   current:()=>boolean;
+  audioMode?:(ack:Record<string,Object>)=>void;
+  audioRole?:(role:string)=>void;
+  audioSpeaking?:(on:boolean,text:string)=>void;
+  audioClock?:()=>number;
   speak?:(id:string,text:string,lang:string)=>Promise<void>;
   save:(journal:MeetingJournal)=>Promise<void>;
   request:(path:string,method:string,body?:Record<string,Object>)=>Promise<Record<string,Object>>;
@@ -25,10 +31,12 @@ function boundedText(raw:string,maxBytes:number):string {
 }
 
 export function newMeetingJournal(id:string,profile:string,hub:string,manager:string,started:string,title:string,
-  language:string,role:string,privateMark:boolean):MeetingJournal {
-  return {id:id,profileId:profile,hubId:hub,managerId:manager,startedAt:started,title:title,language:language,
+  language:string,role:string,privateMark:boolean,transcription:string=''):MeetingJournal {
+  const value:MeetingJournal={id:id,profileId:profile,hubId:hub,managerId:manager,startedAt:started,title:title,language:language,
     role:role,privateMark:privateMark,revision:Math.max(1,Date.parse(started)),opened:false,endedAt:'',endRevision:0,
     ended:false,next:0,lines:[],asks:[]};
+  if(transcription==='hub'){value.transcription='hub';value.roles=[{at:0,attendance:role}];}
+  return value;
 }
 
 /** The room transcript advances only with the Hub's acknowledged offset. A retry reuses exactly the same slot and ask ID. */
@@ -101,7 +109,7 @@ export class MeetingRoom {
     const s=this.journal,io=this.io,n=this.generation,value=boundedText(question,4000);
     if (!s || !io || !this.owns(io,n) || s.endedAt || !value || !id || s.asks.some((a:MeetingAsk) => a.id===id)) return false;
     this.localAsks.add(id);
-    s.asks.push({id:id,question:value,at:Math.max(0,at),liveNext:s.lines.length,state:'queued',answer:''}); this.show();
+    s.asks.push({id:id,question:value,at:Math.max(0,at),liveNext:s.effectiveTranscription==='hub' ? s.next:s.lines.length,state:'queued',answer:''}); this.show();
     try { await this.persist(io,n); } catch (_) { if (this.owns(io,n)) this.problem='knowledge_storage_unavailable'; return false; }
     await this.sync(); return this.owns(io,n);
   }
@@ -109,7 +117,8 @@ export class MeetingRoom {
     const s=this.journal,io=this.io,n=this.generation,role=on ? 'participant' : 'listener';
     if (!s || !io || !this.owns(io,n) || s.endedAt || !['listener','participant'].includes(s.role)) return false;
     if (s.role!==role) {
-      s.role=role; s.revision=Math.max(Date.now(),s.revision+1); s.opened=false;
+      s.role=role; if(s.transcription==='hub' && s.roles && s.roles.length<100){s.roles.push({at:io.audioClock?.() || 0,attendance:role});io.audioRole?.(role);}
+      s.revision=Math.max(Date.now(),s.revision+1); s.opened=false;
     }
     await this.sync();
     return this.owns(io,n) && s.role===role && s.opened;
@@ -125,10 +134,24 @@ export class MeetingRoom {
     const room=Wire.payload(['attendance'],[s.role]);
     const body=Wire.payload(['revision','started_at','duration','language','device','title','bookmarks','segments','complete','kind','room','private'],
       [ending ? s.endRevision : s.revision,s.startedAt,ending ? Math.max(0,(Date.parse(s.endedAt)-Date.parse(s.startedAt))/1000) : 0,
-       s.language,'phone',s.title,[],ending ? s.lines : [],ending,'meeting',room,s.privateMark]);
+       s.language,'phone',s.title,[],ending || s.effectiveTranscription==='hub' ? s.lines : [],ending,'meeting',room,s.privateMark]);
+    if(s.transcription==='hub'){
+      body['transcription']=s.effectiveTranscription==='device' ? 'device':'hub';body['timeline']=this.audioTimeline();
+      body['duration']=Math.max(Wire.number(body,'duration'),this.io?.audioClock?.() || 0);
+    }
     if (ending) body['ended_at']=s.endedAt;
     const spoken=this.spokenLines(); if (spoken.length) body['spoken']=spoken;
     return body;
+  }
+  audioTimeline():Record<string,Object> {
+    const s=this.journal;
+    return Wire.payload(['roles','speaking'],[s?.roles || [],this.spokenLines().slice(0,1000)]);
+  }
+  private modeAck(s:MeetingJournal,io:MeetingRoomIO,ack:Record<string,Object>):void {
+    if(s.transcription!=='hub')return;
+    if(s.effectiveTranscription!=='device')s.effectiveTranscription=Wire.text(ack,'transcription')==='hub' ? 'hub':'device';
+    if(s.effectiveTranscription==='device')io.audioMode?.(Wire.payload(['transcription','transcription_problem'],['device',Wire.text(ack,'transcription_problem')||'device']));
+    else io.audioMode?.(ack);
   }
   spokenLines():MeetingLine[] {
     const list=this.journal?.asks || [];
@@ -144,11 +167,17 @@ export class MeetingRoom {
     ask.spoken=true;
     await this.persist(io,n);
     if (!this.owns(io,n) || s.endedAt) return;
-    ask.speechStart=Math.max(0,(Date.now()-Date.parse(s.startedAt))/1000);
+    ask.speechStart=io.audioClock ? io.audioClock() : Math.max(0,(Date.now()-Date.parse(s.startedAt))/1000);
+    io.audioSpeaking?.(true,ask.answer);
     try {
       await io.speak(ask.id,ask.answer,Wire.text(result,'lang',s.language));
-      if (this.owns(io,n)) ask.speechEnd=Math.max(ask.speechStart,(Date.now()-Date.parse(s.startedAt))/1000);
     } catch (_) { if (this.owns(io,n)) this.problem='phone_meeting_voice_unavailable'; }
+    finally {
+      if (this.owns(io,n)) {
+        ask.speechEnd=Math.max(ask.speechStart,io.audioClock ? io.audioClock() : (Date.now()-Date.parse(s.startedAt))/1000);
+        io.audioSpeaking?.(false,'');
+      }
+    }
   }
   async sync():Promise<void> {
     const s=this.journal,io=this.io,n=this.generation;
@@ -181,12 +210,20 @@ export class MeetingRoom {
             Wire.text(ack,'attendance')!==s.role || !Object.keys(Wire.object(ack,'room')).length) {
             this.problem='phone_meeting_unavailable'; this.state='unavailable'; return;
           }
-          this.state=Wire.text(Wire.object(ack,'room'),'state','starting'); s.opened=true;
+          this.modeAck(s,io,ack);this.state=Wire.text(Wire.object(ack,'room'),'state','starting'); s.opened=true;
           await this.persist(io,n);
         }
         if (!this.owns(io,n)) return;
         if (!s.opened) { this.wake=true; continue; }
-        const next=s.next, batch=s.lines.slice(next,next+64);
+        // In hub mode the manager owns live-log indices. Local recognition fills the recording upload's segments.
+        if(s.effectiveTranscription==='hub' && !s.endedAt && (s.syncedLines || 0)<s.lines.length){
+          const count=s.lines.length;s.revision=Math.max(Date.now(),s.revision+1);
+          const ack=await io.request(path,'PUT',this.upload(s,false));
+          if(!this.owns(io,n))return;
+          if(Wire.text(ack,'id')!==s.id)throw new Error('request_updated');
+          this.modeAck(s,io,ack);s.syncedLines=count;await this.persist(io,n);
+        }
+        const next=s.next, batch=s.effectiveTranscription==='hub' ? []:s.lines.slice(next,next+64);
         if (batch.length && !s.ended) {
           const ack=await io.request(path+'/live','POST',Wire.payload(['from','segments'],[next,batch]));
           if (!this.owns(io,n)) return;
@@ -213,14 +250,14 @@ export class MeetingRoom {
           if (Wire.text(ack,'id')!==s.id || !Object.keys(Wire.object(ack,'room')).length) {
             this.state='unavailable'; this.problem='phone_meeting_unavailable'; return;
           }
-          s.ended=true; this.state='ended'; await this.persist(io,n);
+          this.modeAck(s,io,ack);s.ended=true; this.state='ended'; await this.persist(io,n);
         }
         if (!this.owns(io,n)) return;
         const live=await io.request(path+'/live','GET');
         if (!this.owns(io,n)) return;
         const remoteNext=Wire.number(live,'next',-1);
-        if (remoteNext<0 || remoteNext>s.lines.length) throw new Error('request_updated');
-        if (!s.ended && remoteNext!==s.next) { s.next=remoteNext; this.wake=true; }
+        if (remoteNext<0 || s.effectiveTranscription!=='hub' && remoteNext>s.lines.length) throw new Error('request_updated');
+        if (!s.ended && remoteNext!==s.next) { s.next=remoteNext; this.wake=s.effectiveTranscription!=='hub'; }
         const remoteAsks=Wire.rows(live,'asks');
         for (const ask of s.asks) {
           const result=remoteAsks.find((v:Record<string,Object>) => Wire.text(v,'id')===ask.id);

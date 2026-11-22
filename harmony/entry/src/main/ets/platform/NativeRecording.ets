@@ -1,3 +1,6 @@
+import { meetingAudioNetwork } from './MeetingAudioNetwork';
+import type {MeetingAudioConsent} from '../models/MeetingHubAudio';
+import type { StreamNetworkRule } from './HubTransport';
 import type { MeetingJournal } from '../models/MeetingRoom';
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
@@ -281,11 +284,12 @@ export class NativeRecording {
     this.context = host;
     this.directory = host.filesDir + '/knowledge-recordings';
     try { fileIo.statSync(this.directory); } catch (_) { fileIo.mkdirSync(this.directory, true); }
+    try {await meetingAudioNetwork.initialize(host);}catch(_){}
   }
 
   async ensureMicrophonePermission(context: Object): Promise<void> { await requestRecordingMicrophone(context); }
 
-  async start(context: Object, id: string, onLimit: (reason: string) => void,participant:boolean=false): Promise<string> {
+  async start(context: Object, id: string, onLimit: (reason: string) => void,participant:boolean=false,onSamples?:((samples:number)=>void)): Promise<string> {
     if (this.capturer || this.fileDescriptor >= 0 || !this.directory) throw new Error('recording_busy');
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error('invalid_recording_id');
     const generation = ++this.generation;
@@ -315,6 +319,7 @@ export class NativeRecording {
           const written = fileIo.writeSync(this.fileDescriptor, data);
           if (written !== bytes) { this.readFailed = true; onLimit('recording_write_failed'); return; }
           this.activeBytes += written;
+          if (onSamples) { try { onSamples(Math.floor(this.activeBytes/2)); } catch (_) {} }
           if (this.roomSpeech) {
             try { this.roomSpeech.feed(this.voiceStop || Date.now()<this.silenceUntil ? new ArrayBuffer(data.byteLength) : data); }
             catch (_) { this.roomSpeech.release(); this.roomSpeech=undefined; this.speechFailed?.(); }
@@ -384,11 +389,28 @@ export class NativeRecording {
     if (!fileIo.accessSync(path)) return undefined;
     const journal=JSON.parse(fileIo.readTextSync(path)) as MeetingJournal;
     if (journal.id!==id || journal.profileId!==profile || journal.hubId!==hub || journal.managerId!==manager ||
-      !['listener','participant'].includes(journal.role) || !Array.isArray(journal.lines) || !Array.isArray(journal.asks) ||
-      !Number.isInteger(journal.next) || journal.next<0 || journal.next>journal.lines.length) throw new Error('request_updated');
+      !(journal.transcription==='hub' && journal.role==='off') && !['listener','participant'].includes(journal.role) ||
+      !Array.isArray(journal.lines) || !Array.isArray(journal.asks) || !Number.isSafeInteger(journal.next) || journal.next<0 ||
+      journal.effectiveTranscription!=='hub' && journal.next>journal.lines.length) throw new Error('request_updated');
     return journal;
   }
   private roomPath(id:string):string { return this.manifestPath(id).replace(/\.json$/,'.room.json'); }
+  private consentPath(id:string):string {return this.manifestPath(id).replace(/\.json$/,'.consent.json');}
+  saveMeetingConsent(grant:MeetingAudioConsent):void {this.writeDocument(this.consentPath(grant.id),JSON.stringify(grant));}
+  meetingConsent(id:string):MeetingAudioConsent|undefined {
+    const path=this.consentPath(id);
+    if(!fileIo.accessSync(path))return undefined;
+    const data=JSON.parse(fileIo.readTextSync(path)) as MeetingAudioConsent;
+    if(data.id!==id || typeof data.wifiOnly!=='boolean' || typeof data.serviceRef!=='string' || typeof data.serviceName!=='string' ||
+      typeof data.credentialKey!=='string' || !/^[A-Za-z0-9_-]{43}$/.test(data.credentialKey))return undefined;
+    return data;
+  }
+  clearMeetingConsent(id:string):void {
+    const path=this.consentPath(id);
+    if(fileIo.accessSync(path)){
+      try{fileIo.unlinkSync(path);}catch(_){this.writeDocument(path,'{}');}
+    }
+  }
   private writeDocument(destination:string,content:string):void {
     const temporary = destination + '.tmp';
     const file = fileIo.openSync(temporary, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
@@ -431,6 +453,20 @@ export class NativeRecording {
       entries.push(entry);
     }
     return entries.sort((left: KnowledgeRecordingEntry, right: KnowledgeRecordingEntry) => right.startedAt.localeCompare(left.startedAt));
+  }
+
+  meetingNetworkKey(wifiOnly:boolean):string {return meetingAudioNetwork.key(wifiOnly);}
+  meetingNetworkBinding(key:string,wifiOnly:boolean,admit:()=>boolean=()=>true):StreamNetworkRule {return meetingAudioNetwork.binding(key,wifiOnly,admit);}
+  async readMeetingPCM(id:string,from:number,samples:number):Promise<ArrayBuffer> {
+    if(!this.validId(id) || !Number.isSafeInteger(from) || !Number.isSafeInteger(samples) || from<0 || samples<1 || samples>32000) throw new Error('recording_file_read_failed');
+    const file=fileIo.openSync(this.audioPath(id),fileIo.OpenMode.READ_ONLY);
+    try{
+      const length=samples*2,offset=from*2;
+      if(offset+length>fileIo.statSync(file.fd).size)throw new Error('recording_file_read_failed');
+      const buffer=new ArrayBuffer(length);
+      if(fileIo.readSync(file.fd,buffer,{offset:offset,length:length})!==length)throw new Error('recording_file_read_failed');
+      return buffer;
+    }finally{fileIo.closeSync(file);}
   }
 
   /** Plays an already captured app-private PCM file. No URL, microphone or Hub credential is involved. */
@@ -533,7 +569,7 @@ export class NativeRecording {
   async remove(id: string): Promise<void> {
     this.requireReady();
     if (!this.validId(id) || id === this.activeId) throw new Error('recording_busy');
-    for (const path of [this.audioPath(id), this.manifestPath(id),this.roomPath(id),this.roomPath(id)+'.tmp']) {
+    for (const path of [this.audioPath(id),this.manifestPath(id),this.roomPath(id),this.roomPath(id)+'.tmp',this.consentPath(id),this.consentPath(id)+'.tmp']) {
       try { fileIo.unlinkSync(path); } catch (_) { }
     }
   }
@@ -544,14 +580,14 @@ export class NativeRecording {
     for (const name of fileIo.listFileSync(this.directory)) {
       const temporary = name.endsWith('.json.tmp');
       const manifestName = temporary ? name.slice(0, -4) : name;
-      if (!/^[0-9a-f-]{36}(?:\.room)?\.json$/i.test(manifestName)) continue;
+      if (!/^[0-9a-f-]{36}(?:\.(?:room|consent))?\.json$/i.test(manifestName)) continue;
       const path = this.directory + '/' + name;
       let entry: KnowledgeRecordingEntry;
       try { entry = JSON.parse(fileIo.readTextSync(path)) as KnowledgeRecordingEntry; } catch (_) { continue; }
       const id = manifestName.slice(0,36);
       if (!this.validId(id) || !entry || typeof entry.id !== 'string' || entry.id.toLowerCase() !== id.toLowerCase() || entry.profileId !== profileId) continue;
       if (this.activeId.toLowerCase() === id.toLowerCase()) await this.stop();
-      for (const ownedPath of [this.audioPath(id), this.manifestPath(id), this.manifestPath(id) + '.tmp',this.roomPath(id),this.roomPath(id)+'.tmp']) {
+      for (const ownedPath of [this.audioPath(id),this.manifestPath(id),this.manifestPath(id)+'.tmp',this.roomPath(id),this.roomPath(id)+'.tmp',this.consentPath(id),this.consentPath(id)+'.tmp']) {
         try { fileIo.unlinkSync(ownedPath); } catch (_) { }
       }
     }

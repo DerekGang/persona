@@ -1,3 +1,6 @@
+import {MeetingHubAudio,MeetingHubChoice} from './MeetingHubAudio';
+import type {MeetingAudioConsent,MeetingAudioIO,MeetingAudioPipe} from './MeetingHubAudio';
+import type {HubTransport} from '../platform/HubTransport';
 import type { ClientModel } from './ClientModel';
 import { ResourceRow, Wire } from './Wire';
 import type { MeetingJournal, MeetingRoomIO } from './MeetingRoom';
@@ -19,6 +22,8 @@ export interface MeetingUploadRole { attendance:string; }
 export interface KnowledgeRecordingUpload {
   room?:MeetingUploadRole;
   private?:boolean;
+  transcription?:string;
+  timeline?:Record<string,Object>;
   spoken?:KnowledgeRecordingSegment[];
   revision: number;
   started_at: string;
@@ -48,6 +53,8 @@ export interface KnowledgeRecordingEntry {
   kind?: string;
   roomRole?: string;
   privateMark?: boolean;
+  askedTranscription?:string;
+  effectiveTranscription?:string;
   transcript: string;
   revision: number;
   captureState: string;
@@ -147,7 +154,7 @@ function copyEntry(entry: KnowledgeRecordingEntry): KnowledgeRecordingEntry {
     language: entry.language,
     title: entry.title,
     kind: entry.kind === 'meeting' ? 'meeting' : 'note',
-    roomRole:entry.roomRole,privateMark:entry.privateMark,
+    roomRole:entry.roomRole,privateMark:entry.privateMark,askedTranscription:entry.askedTranscription,effectiveTranscription:entry.effectiveTranscription,
     transcript: entry.transcript,
     revision: entry.revision,
     captureState: entry.captureState,
@@ -183,6 +190,8 @@ function copyUploadBody(body: KnowledgeRecordingUpload | undefined): KnowledgeRe
   };
   if (body.room) { copied.room={attendance:body.room.attendance}; copied.private=body.private===true; }
   if (body.spoken) copied.spoken=body.spoken.slice();
+  if (body.transcription) copied.transcription=body.transcription;
+  if (body.timeline) copied.timeline=Wire.parse(JSON.stringify(body.timeline));
   return copied;
 }
 
@@ -220,6 +229,8 @@ export class KnowledgeRecording {
   private root: ClientModel | undefined;
   private platform: NativeRecording;
   private context: Object | undefined;
+  @Trace hubAudio:MeetingHubAudio=new MeetingHubAudio();
+  private audioEvents:(()=>void)|undefined;
   private ownerManager: string = '';
   private openRevision: number = 0;
   private local: RecordingLocalSnapshot | undefined;
@@ -239,7 +250,7 @@ export class KnowledgeRecording {
 
   async dispose(): Promise<void> {
     try { await this.stopForBackground(); } catch (_) { }
-    this.room.detach(); this.speakerRevision++; this.speakerChanging=false; this.openRevision++; this.activeTask++;
+    this.clearAudio(); this.room.detach(); this.speakerRevision++; this.speakerChanging=false; this.openRevision++; this.activeTask++;
     this.local = undefined; this.root = undefined; this.context = undefined; this.ownerManager = '';
     this.activeTranscriptionId = '';
     this.entries = []; this.entry = undefined; this.transcript = '';
@@ -312,7 +323,7 @@ export class KnowledgeRecording {
   }
 
   private async removeLocal(recordingId: string): Promise<void> {
-    if (this.entry?.id===recordingId) this.room.detach();
+    if (this.entry?.id===recordingId) { this.clearAudio(); this.room.detach(); }
     const operation = this.localWrite.then(async (): Promise<void> => { await this.platform.remove(recordingId); });
     this.localWrite = operation.catch(() => undefined);
     await operation;
@@ -337,7 +348,7 @@ export class KnowledgeRecording {
       await this.platform.stop().catch(() => undefined);
     }
     if (this.activeTranscriptionId || this.transcriptionState === 'transcribing') await this.cancelTranscription().catch(() => undefined);
-    this.room.detach(); this.roomSpeechProblem=''; this.speakerRevision++; this.speakerChanging=false;
+    this.clearAudio(); this.room.detach(); this.roomSpeechProblem=''; this.speakerRevision++; this.speakerChanging=false;
     const revision = ++this.openRevision;
     this.root = client; this.context = context; this.ownerManager = ownerManager || client.profile.manager;
     this.local = undefined;
@@ -418,10 +429,11 @@ export class KnowledgeRecording {
     this.entry = selected; this.transcript = selected.transcript; this.captureState = selected.captureState;
     this.transcriptionState = selected.transcriptionState; this.uploadState = selected.uploadState;
     this.error = selected.error || selected.uploadError;
-    this.room.detach(); this.roomSpeechProblem='';
+    this.clearAudio(); this.room.detach(); this.roomSpeechProblem='';
     if (selected.roomRole && this.local) {
       try {
         this.attachRoom(selected,this.local);
+        if(selected.askedTranscription==='hub' && selected.endedAt)this.resumeMeetingAudio(selected,this.local);
         if (selected.endedAt) this.room.finish(selected.endedAt).then(() => this.room.sync()).catch(() => {});
         else this.room.sync().catch(() => {});
       } catch (_) { this.roomSpeechProblem='knowledge_storage_unavailable'; }
@@ -436,7 +448,7 @@ export class KnowledgeRecording {
 
   async setRoomSpeaker(on:boolean,echo:boolean):Promise<boolean> {
     const entry=this.entry,local=this.local;
-    if (!entry || !local || !this.isLocalCurrent(local) || this.captureState!=='recording' || !entry.roomRole || !this.room.active || this.speakerChanging) return false;
+    if (!entry || !local || !this.isLocalCurrent(local) || this.captureState!=='recording' || !['listener','participant'].includes(entry.roomRole || '') || !this.room.active || this.speakerChanging) return false;
     const run=++this.speakerRevision;
     const current=():boolean => this.speakerRevision===run && this.isLocalCurrent(local) && this.entry?.id===entry.id && this.captureState==='recording';
     const copy=copyEntry(entry); copy.roomRole=on ? 'participant' : 'listener';
@@ -459,10 +471,72 @@ export class KnowledgeRecording {
   canRetryUpload(): boolean { return !!this.entry && !!this.entry.uploadBody && ['unknown', 'failed'].includes(this.entry.uploadState); }
   canDeleteLocal(): boolean { return !!this.entry && this.entry.captureState !== 'recording' && this.entry.transcriptionState !== 'transcribing' && this.entry.uploadState !== 'uploading'; }
 
+  private clearAudio():void { this.audioEvents?.();this.audioEvents=undefined;this.hubAudio.clear(); }
+  withdrawHubAudio():void { this.hubAudio.withdraw();this.audioEvents?.();this.audioEvents=undefined; }
+  private async choiceReady(choice:MeetingHubChoice,client:ClientModel):Promise<boolean> {
+    if(!choice.matches(client)) return false;
+    const repo=client.repo(),value=await repo.call('/api/v1/assistant');
+    return choice.matches(client) && repo===client.repo() && Wire.text(value,'manager',client.profile.manager)===choice.manager &&
+      ['device','hub'].includes(Wire.text(value,'meeting_transcription_default')) && Wire.bool(value,'meeting_transcription_ready') &&
+      Wire.text(value,'meeting_transcription_extension')===choice.serviceRef;
+  }
+  private resumeMeetingAudio(entry:KnowledgeRecordingEntry,local:RecordingLocalSnapshot):void {
+    const owner=this.root,grant=this.platform.meetingConsent(entry.id);
+    if(!owner || !grant || !owner.connected || !this.isLocalCurrent(local))return;
+    const expired=Date.now()-Date.parse(entry.endedAt)>30*60*1000;
+    const choice=new MeetingHubChoice(owner,grant.serviceRef,grant.serviceName,grant.wifiOnly);
+    if(expired || entry.effectiveTranscription==='device' || grant.profileId!==choice.profile || grant.hubId!==choice.hub ||
+      grant.managerId!==choice.manager || grant.pin!==choice.pin || grant.endpoint!==choice.endpoint ||
+      owner.repo().transport.meetingCredentialKey()!==grant.credentialKey || !choice.matches(owner)){
+      this.platform.clearMeetingConsent(entry.id);return;
+    }
+    const journal=this.platform.loadRoom(entry.id,entry.profileId,entry.hubId,entry.managerId);
+    if(journal?.effectiveTranscription!=='hub')return;
+    this.attachAudio(entry,local,choice,owner,grant);
+    this.hubAudio.resumeStopped(Math.floor(entry.audioBytes/2),Date.parse(entry.endedAt));
+  }
+  private attachAudio(entry:KnowledgeRecordingEntry,local:RecordingLocalSnapshot,choice:MeetingHubChoice,owner:ClientModel,grant:MeetingAudioConsent):void {
+    const repo=owner.repo(),path='/api/v1/recordings/'+encodeURIComponent(entry.id), api=repo.transport;
+    let repairing:HubTransport|undefined;
+    const current=():boolean => {
+      if(!this.isLocalCurrent(local) || this.entry?.id!==entry.id || this.locallyDeletedIds.has(entry.id) || !choice.sameOwner(owner) || choice.manager!==entry.managerId)return false;
+      if(!owner.connected)return true;
+      try{return choice.matches(owner) && owner.repo()===repo;}catch(_){return false;}
+    };
+    const io:MeetingAudioIO={
+      current:current,network:():string=>current() && owner.connected ? this.platform.meetingNetworkKey(choice.wifiOnly):'',
+      authorize:async ():Promise<boolean>=>current() && api.meetingCredentialKey()===grant.credentialKey && await this.choiceReady(choice,owner) && current(),
+      pipe:(network:string):MeetingAudioPipe=>{if(!current())throw new Error('request_updated');return api.stream(path+'/audio',this.platform.meetingNetworkBinding(network,choice.wifiOnly,current));},
+      pcm:(from:number,samples:number):Promise<ArrayBuffer>=>this.platform.readMeetingPCM(entry.id,from,samples),
+      live:async (from:number):Promise<Record<string,Object>>=>{
+        if(!current() || !owner.connected)throw new Error('request_updated');
+        const result=await repo.call(path+'/live?from='+String(from));if(!current())throw new Error('request_updated');return result;
+      },timeline:():Record<string,Object>=>this.room.audioTimeline(),
+      uploadGap:async (key:string,from:number,data:ArrayBuffer,admit:()=>boolean):Promise<Record<string,Object>>=>{
+        if(!current() || !admit() || !key.startsWith('any:'))throw new Error('request_updated');
+        const route=path+'/audio?at='+String(from/16000);
+        const child=api.stream(route,this.platform.meetingNetworkBinding(key,choice.wifiOnly,admit));repairing=child;
+        try{
+          if(!admit())throw new Error('request_updated');
+          const response=await child.putMeetingGap(route,data);
+          if(!current() || !admit())throw new Error('request_updated');
+          return Wire.parse(response);
+        }finally{child.close();if(repairing===child)repairing=undefined;}
+      },stopGap:():void=>{repairing?.close();repairing=undefined;},
+      retire:():void=>{try{this.platform.clearMeetingConsent(entry.id);}catch(_){this.error='knowledge_storage_unavailable';}}
+    };
+    this.hubAudio.begin(io,entry.roomRole || 'off');
+    this.audioEvents=owner.observeEvents((raw:string):void=>{
+      if(!current()) {this.withdrawHubAudio();return;}
+      if(raw.length>2*1024*1024)return;
+      const kind=Wire.text(Wire.parse(raw),'type');
+      if(['assistant','assistant_config','assistant_settings','plugin','plugins','extensions','features'].includes(kind)) this.hubAudio.recheck();
+    });
+  }
   private attachRoom(entry:KnowledgeRecordingEntry, local:RecordingLocalSnapshot):void {
     if (!entry.roomRole || !this.isLocalCurrent(local) || this.entry?.id!==entry.id) return;
     const state=this.platform.loadRoom(entry.id,entry.profileId,entry.hubId,entry.managerId) ||
-      newMeetingJournal(entry.id,entry.profileId,entry.hubId,entry.managerId,entry.startedAt,entry.title,entry.language,entry.roomRole,entry.privateMark===true);
+      newMeetingJournal(entry.id,entry.profileId,entry.hubId,entry.managerId,entry.startedAt,entry.title,entry.language,entry.roomRole,entry.privateMark===true,entry.askedTranscription || '');
     this.platform.saveRoom(state);
     const current=():boolean => this.isLocalCurrent(local) && this.entry?.id===entry.id && !this.locallyDeletedIds.has(entry.id);
     const io:MeetingRoomIO={
@@ -480,16 +554,22 @@ export class KnowledgeRecording {
         return Wire.parse(raw);
       }
     };
+    if(entry.askedTranscription==='hub'){
+      io.audioMode=(ack:Record<string,Object>):void=>{if(current()){entry.effectiveTranscription=Wire.text(ack,'transcription')==='hub' ? 'hub':'device';this.hubAudio.effective(ack);}};
+      io.audioClock=():number=>this.hubAudio.seconds();
+      io.audioRole=(role:string):void=>this.hubAudio.roleChanged(role);
+      io.audioSpeaking=(on:boolean,text:string):void=>this.hubAudio.voice(on,text);
+    }
     this.room.attach(state,io);
   }
 
   async askRoom(question:string):Promise<boolean> {
     const entry=this.entry;
-    if (!entry || this.captureState!=='recording' || !entry.roomRole || !this.room.active) return false;
+    if (!entry || this.captureState!=='recording' || !['participant','listener'].includes(entry.roomRole || '') || !this.room.active) return false;
     return this.room.ask(id(),question,Math.max(0,(Date.now()-Date.parse(entry.startedAt))/1000));
   }
 
-  async start(kind: string = 'note', title: string = '', invitedRole:string = 'off', privateMark:boolean = false): Promise<boolean> {
+  async start(kind: string = 'note', title: string = '', invitedRole:string = 'off', privateMark:boolean = false, hubChoice?:MeetingHubChoice): Promise<boolean> {
     if (this.playingId) {
       const before = this.entry, owner = this.local;
       await this.stopPlayback();
@@ -498,10 +578,11 @@ export class KnowledgeRecording {
     const snapshot = this.local, context = this.context, client = this.root;
     if (!snapshot || !context || !client || !this.canStart() || !this.isLocalCurrent(snapshot)) return false;
     const invited=kind==='meeting' && ['listener','participant'].includes(invitedRole);
+    if(hubChoice && (kind!=='meeting' || !hubChoice.sameOwner(client) || hubChoice.manager!==snapshot.ownerManager)){ this.error='request_updated';return false; }
     if (invited && (!client.features.includes('meeting_conversation') || !client.features.includes('meeting_attendance'))) {
       this.error='phone_meeting_unavailable'; return false;
     }
-    this.room.detach(); this.roomSpeechProblem='';
+    this.clearAudio(); this.room.detach(); this.roomSpeechProblem='';
     const task = ++this.activeTask;
     this.pendingStartTask = task;
     this.error = ''; this.captureState = 'requesting';
@@ -511,6 +592,10 @@ export class KnowledgeRecording {
         if (task === this.activeTask && this.captureState === 'requesting') this.captureState = 'idle';
         return false;
       }
+      let hub=false;
+      if(hubChoice){ try{hub=await this.choiceReady(hubChoice,client);}catch(_){}
+        if(task!==this.activeTask || !this.isLocalCurrent(snapshot) || !hubChoice.sameOwner(client)){this.captureState='idle';this.error='request_updated';return false;}
+      }
       const startedAt = new Date().toISOString(), recordingId = id().toLowerCase();
       const entry: KnowledgeRecordingEntry = {
         id: recordingId, profileId: snapshot.profileId, hubId: snapshot.hubId, managerId: snapshot.ownerManager,
@@ -518,7 +603,14 @@ export class KnowledgeRecording {
         captureState: 'recording', transcriptionState: 'idle', uploadState: 'idle', uploadBody: undefined,
         serverStatus: '', serverRevision: 0, interrupted: false, error: '', uploadError: ''
       };
-      if (invited) { entry.roomRole=invitedRole; entry.privateMark=privateMark; }
+      if (invited || hub) { entry.roomRole=invited ? invitedRole:'off'; entry.privateMark=privateMark; }
+      let grant:MeetingAudioConsent|undefined;
+      if(hub && hubChoice){
+        entry.askedTranscription='hub';
+        grant={id:entry.id,profileId:hubChoice.profile,hubId:hubChoice.hub,managerId:hubChoice.manager,endpoint:hubChoice.endpoint,pin:hubChoice.pin,
+          serviceRef:hubChoice.serviceRef,serviceName:hubChoice.serviceName,wifiOnly:hubChoice.wifiOnly,credentialKey:client.repo().transport.meetingCredentialKey()};
+        this.platform.saveMeetingConsent(grant);
+      }
       await this.saveLocal(entry, snapshot);
       if (task !== this.activeTask || !this.isLocalCurrent(snapshot)) {
         await this.platform.remove(entry.id);
@@ -526,16 +618,18 @@ export class KnowledgeRecording {
         return false;
       }
       this.entry = entry; this.entries = [entry, ...this.entries]; this.transcript = '';
-      if (invited) {
+      if(hub && hubChoice && grant)this.attachAudio(entry,snapshot,hubChoice,client,grant);
+      else if(hubChoice)this.hubAudio.useDevice('unavailable');
+      if (invited || hub) {
         this.attachRoom(entry,snapshot);
         await this.platform.startRoomSpeech((from:number,to:number,text:string) => {
           if (this.isLocalCurrent(snapshot) && this.entry?.id===entry.id) this.room.line(from,to,text).catch(() => {});
         },() => { if (this.isLocalCurrent(snapshot) && this.entry?.id===entry.id) this.roomSpeechProblem='phone_meeting_speech_unavailable'; });
         if (task!==this.activeTask || !this.isLocalCurrent(snapshot)) { await this.platform.stop(); return false; }
       }
-      await this.platform.start(context, recordingId, (reason: string) => { this.stopForCaptureFailure(reason).catch(() => undefined); },invitedRole==='participant' && invited);
+      await this.platform.start(context, recordingId, (reason: string) => { this.stopForCaptureFailure(reason).catch(() => undefined); },invitedRole==='participant' && invited,hub ? (samples:number):void=>this.hubAudio.captured(samples) : undefined);
       if (task !== this.activeTask || !this.isLocalCurrent(snapshot)) { await this.stopEntry(entry, true); return false; }
-      this.captureState = 'recording'; if (invited) this.room.sync().catch(() => {}); return true;
+      this.captureState = 'recording'; if (invited || hub) this.room.sync().catch(() => {}); return true;
     } catch (failure) {
       const current = this.entry, failureFields = failure as Object as Record<string, Object>;
       let stopped = failureFields['recordingStop'] ? failureFields['recordingStop'] as Object as NativeRecordingStop : undefined;
@@ -618,6 +712,7 @@ export class KnowledgeRecording {
       }
       this.captureState = 'stopped'; this.transcriptionState = stopped.transcriptionState; this.uploadState = stopped.uploadState;
       this.error = saved ? stopped.error : 'knowledge_storage_unavailable';
+      if(stopped.askedTranscription==='hub')this.hubAudio.finish(Math.floor(stopped.audioBytes/2));
       if (stopped.roomRole && this.room.active) this.room.finish(stopped.endedAt).catch(() => {});
     }
     return stopped.audioBytes > 0 && saved;
@@ -790,6 +885,7 @@ export class KnowledgeRecording {
       revision: current.revision, started_at: current.startedAt, ended_at: current.endedAt, duration: current.duration,
       language: current.language, device: 'phone', title: current.title, bookmarks: [], segments: [segment], complete: true, kind: current.kind === 'meeting' ? 'meeting' : 'note'
     };
+    if(current.askedTranscription==='hub'){body.transcription=current.effectiveTranscription==='device' ? 'device':'hub';body.timeline=this.room.audioTimeline();}
     if (current.roomRole) {
       body.room={attendance:current.roomRole}; body.private=current.privateMark===true;
       const spoken=this.room.spokenLines();
