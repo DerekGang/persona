@@ -402,19 +402,36 @@ func (c *outsideChecks) adapterResult(fd *funcDecl, r ast.Expr) bool {
 		return true
 	case "string":
 		return fd.recv == "" && fd.decl.Name.Name == "Log" && len(params(fd.decl.Type.Results)) == 1
-	case "Record":
+	}
+	return c.handedOut(fd.file, t)
+}
+
+// handedOut says whether an adapter may hand a type out, in a result or as a kit type's argument: its own Record, or
+// a type of a core, shared kernel, contract, db or prompts, or of the kit when every type argument is one of these
+// too. So outcome.Of[agentref.Ref, agentref.Fail] and opt.Option[[]fleetcount.Agent] pass, and outcome.Of[string,
+// fail.Fail] and opt.Option[[]string] are raw values one layer out.
+func (c *outsideChecks) handedOut(f *File, t ast.Expr) bool {
+	t = unwrapParam(t)
+	if exprString(t) == "Record" {
 		return true
 	}
 	pkg, _ := baseType(t)
 	if pkg == "" {
 		return false
 	}
-	imp, ok := c.idx.imports(fd.file)[pkg]
+	imp, ok := c.idx.imports(f)[pkg]
 	if !ok {
 		return false
 	}
 	switch c.idx.layer(imp.Path) {
-	case layerCore, layerShared, layerKit, layerContract:
+	case layerKit:
+		for _, a := range typeArgs(t) {
+			if !c.handedOut(f, a) {
+				return false
+			}
+		}
+		return true
+	case layerCore, layerShared, layerContract:
 		return true
 	}
 	rel := c.idx.rel(imp.Path)

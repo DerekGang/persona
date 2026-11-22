@@ -11,19 +11,26 @@ import (
 // takes raw input, callbacks and type parameters where its documented API needs them (docs/server/architecture.md
 // "Domain model", "The domain kit"). Nothing else in the kit is exempt.
 var kitAPI = map[string][]string{
-	"internal/domainkit/defect.Raise":        {"core-primitive-signature"}, // a defect's operation and cause are text for the panic
-	"internal/domainkit/defect.Catch":        {"core-interface-param"},     // the listed sites report a defect through it
+	"internal/domainkit/defect.Raise":        {"core-primitive-signature", "core-effect"}, // panics with the Defect: text for its message
+	"internal/domainkit/defect.Catch":        {"core-interface-param", "core-effect"},     // recovers for the listed sites, re-panics the rest
 	"internal/domainkit/defect.Defect.Error": {"core-accessor", "core-primitive-signature"},
 	"internal/domainkit/outcome.Fold":        {"core-interface-param"},
 	"internal/domainkit/outcome.Then":        {"core-interface-param"},
 	"internal/domainkit/outcome.Map":         {"core-interface-param"},
 	"internal/domainkit/outcome.Must":        {"core-primitive-signature"}, // op names the caller in the defect
+	"internal/domainkit/outcome.Of.Err":      {"core-any"},                 // any(f) == nil: a nil failure is a defect
 	"internal/domainkit/opt.Option.Match":    {"core-interface-param"},
 	"internal/domainkit/opt.Fold":            {"core-interface-param"},
 	"internal/domainkit/fail.NewCode":        {"core-primitive-signature"}, // the raw-input functions
 	"internal/domainkit/fail.NewPart":        {"core-primitive-signature"},
 	"internal/domainkit/slot.NewSlot":        {"core-primitive-signature"},
 	"internal/domainkit/instant.Now.Stamp":   {"core-accessor"}, // hands a core the instant the clock was read at
+}
+
+// kitImports is what a kit package may import besides the computing standard library and the kit: instant's At and
+// ReadClock take the time.Time an adapter or the application's clock has. Nothing else in the kit imports more.
+var kitImports = map[string][]string{
+	"internal/domainkit/instant": {"time"},
 }
 
 // coreChecks is one pass of the core rules over a package.
@@ -124,14 +131,13 @@ func (c *coreChecks) coreRules() {
 			}
 			continue
 		}
-		if full {
-			c.imports(f)
-			c.effects(f)
-			c.clockCalls(f)
-			c.anyUses(f)
-			c.outcomes(f)
-			c.partNames(f)
-		}
+		// A core's purity holds for the kit too, which every core imports: its listed API aside (kitAPI, kitImports).
+		c.imports(f)
+		c.effects(f)
+		c.clockCalls(f)
+		c.anyUses(f)
+		c.outcomes(f)
+		c.partNames(f)
 	}
 	for _, v := range d.values {
 		switch {
@@ -295,15 +301,29 @@ func (c *coreChecks) funcRules(fd *funcDecl, full bool) {
 			c.at(f, decl.Name, "core-wire-method", fd.recv+".Wire is not the field")
 		}
 		if isExported && !c.exempt(name, "core-accessor") && !c.accessorOK(fd) {
-			c.at(f, decl.Name, "core-accessor", name+"() hands state out")
+			why := ""
+			switch {
+			case decl.Name.Name == "ID":
+				why = ": an ID returns the package's own <X>ID type or a shared kernel's"
+			case decl.Name.Name == "Build" && strings.HasSuffix(fd.recv, "Builder"):
+				why = ": a builder's Build returns an outcome of its package's type"
+			}
+			c.at(f, decl.Name, "core-accessor", name+"() hands state out"+why)
+		} else if isExported && !c.exempt(name, "core-accessor") {
+			c.fieldReturn(fd)
 		}
 		if full {
 			c.receiverWrites(fd)
 		}
-	} else if full && isExported {
-		c.constructor(fd)
+	} else if isExported {
+		if full {
+			c.constructor(fd)
+		}
+		if !c.exempt(name, "core-accessor") {
+			c.fieldReturn(fd)
+		}
 	}
-	if full && decl.Recv == nil && decl.Name.Name == "init" {
+	if decl.Recv == nil && decl.Name.Name == "init" {
 		c.at(f, decl.Name, "core-effect", f.Rel+":"+itoa(f.pos(decl).Line)+" uses init")
 	}
 	if isExported && full && (strings.HasPrefix(decl.Name.Name, "Evolve") || strings.HasPrefix(decl.Name.Name, "Apply")) &&
@@ -456,9 +476,9 @@ func (c *coreChecks) accessorOK(fd *funcDecl) bool {
 	case pkg == "" && base == recv:
 		return true
 	case name == "ID":
-		return c.coreType(fd.file, r)
+		return c.identity(fd.file, r)
 	case name == "Build" && strings.HasSuffix(recv, "Builder"):
-		return true
+		return c.outcomeOfOwn(fd.file, r)
 	case strings.HasSuffix(recv, "Step") && pkg == "" && c.p.decls.types[base] != nil &&
 		(strings.HasSuffix(base, "Step") || strings.HasSuffix(base, "Builder")):
 		return true
@@ -471,6 +491,80 @@ func (c *coreChecks) accessorOK(fd *funcDecl) bool {
 		}
 	}
 	return false
+}
+
+// fieldReturn is core-accessor on an exported function or method whose whole body returns state as it is: a field of
+// a parameter or of the receiver (`return n.title`), whatever the function is named. ID and Wire are the exceptions;
+// a constructor or a domain service that only hands a field out is a getter all the same.
+func (c *coreChecks) fieldReturn(fd *funcDecl) {
+	decl := fd.decl
+	if n := decl.Name.Name; n == "ID" || n == "Wire" || decl.Body == nil || len(decl.Body.List) != 1 {
+		return
+	}
+	ret, ok := decl.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) == 0 {
+		return
+	}
+	inputs := map[string]bool{}
+	if r := receiverIdent(decl); r != "" {
+		inputs[r] = true
+	}
+	for _, fl := range decl.Type.Params.List {
+		for _, n := range fl.Names {
+			inputs[n.Name] = true
+		}
+	}
+	for _, r := range ret.Results {
+		if !fieldOf(r, inputs) {
+			return
+		}
+	}
+	c.at(fd.file, decl.Name, "core-accessor", fd.name()+"() hands state out, returning "+exprString(ret.Results[0]))
+}
+
+// fieldOf says whether e is a field reached from one of inputs (n.title, b.noteBuilder.title), parentheses and
+// dereferences aside.
+func fieldOf(e ast.Expr, inputs map[string]bool) bool {
+	sel := false
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e = x.X
+		case *ast.SelectorExpr:
+			e, sel = x.X, true
+		case *ast.Ident:
+			return sel && inputs[x.Name]
+		default:
+			return false
+		}
+	}
+}
+
+// identity says whether ID's result is an identity: the package's own type named <X>ID, or a shared kernel's type.
+func (c *coreChecks) identity(f *File, e ast.Expr) bool {
+	pkg, base := baseType(e)
+	if pkg == "" {
+		return c.p.decls.types[base] != nil && strings.HasSuffix(base, "ID") && len(base) > 2
+	}
+	imp, ok := c.idx.imports(f)[pkg]
+	return ok && c.idx.layer(imp.Path) == layerShared
+}
+
+// own says whether a type expression names a type this package declares.
+func (c *coreChecks) own(e ast.Expr) bool {
+	pkg, base := baseType(e)
+	return pkg == "" && c.p.decls.types[base] != nil
+}
+
+// outcomeOfOwn says whether a type expression is outcome.Of of a type this package declares: what Build returns.
+func (c *coreChecks) outcomeOfOwn(f *File, e ast.Expr) bool {
+	if !c.isOutcome(f, e) {
+		return false
+	}
+	args := typeArgs(e)
+	return len(args) > 0 && c.own(args[0])
 }
 
 // isOutcome says whether a type expression is the kit's outcome.Of.
@@ -529,6 +623,12 @@ func (c *coreChecks) constructor(fd *funcDecl) {
 	rs := params(decl.Type.Results)
 	switch {
 	case wordPrefix(name, "Parse") || wordPrefix(name, "New"):
+		// What the name says it makes: a type of this package, or an outcome of one.
+		if len(rs) == 1 && (c.own(rs[0]) || c.outcomeOfOwn(f, rs[0])) {
+			return
+		}
+		c.at(f, decl.Name, "core-constructor", name+" is not a constructor or domain service: a Parse or New makes "+
+			"a type of its own package")
 		return
 	case wordPrefix(name, "Restore"):
 		if len(rs) == 1 && c.isOutcome(f, rs[0]) {
@@ -571,7 +671,8 @@ func wordPrefix(name, prefix string) bool {
 	return rest == "" || rest[0] >= 'A' && rest[0] <= 'Z' || rest[0] >= '0' && rest[0] <= '9'
 }
 
-// imports is core-import on one file.
+// imports is core-import on one file: the computing standard library, the kit a core may use and shared kernels; for
+// the kit, the computing standard library, the other kit packages and what kitImports lists.
 func (c *coreChecks) imports(f *File) {
 	for _, imp := range f.Imports {
 		path := imp.Path
@@ -579,16 +680,30 @@ func (c *coreChecks) imports(f *File) {
 			continue
 		}
 		rel := c.idx.rel(path)
-		if l := c.idx.layer(path); l == layerShared || l == layerKit && kitForCores[rel] {
+		l := c.idx.layer(path)
+		switch {
+		case c.kit && (l == layerKit || contains(kitImports[c.p.Rel], path)):
+			continue
+		case !c.kit && (l == layerShared || l == layerKit && kitForCores[rel]):
 			continue
 		}
 		c.edge(imp.Pos, "core-import", c.p.Rel, display(c.p)+" imports "+rel, f.Rel+" imports "+rel)
 	}
 }
 
-// effects is core-effect on one file: no go statement, channel, select, panic, recover, print or println.
+// effects is core-effect on one file: no go statement, channel, select, panic, recover, print or println, the kit's
+// listed API aside.
 func (c *coreChecks) effects(f *File) {
-	ast.Inspect(f.ast, func(n ast.Node) bool {
+	for _, d := range f.ast.Decls {
+		if !c.exempt(declName(d), "core-effect") {
+			c.effectsIn(f, d)
+		}
+	}
+}
+
+// effectsIn is core-effect on one declaration.
+func (c *coreChecks) effectsIn(f *File, d ast.Decl) {
+	ast.Inspect(d, func(n ast.Node) bool {
 		what := ""
 		switch x := n.(type) {
 		case *ast.GoStmt:
@@ -654,30 +769,51 @@ func (c *coreChecks) clockCalls(f *File) {
 	})
 }
 
-// anyUses is core-any on one file: no any and no interface{}, once per declaration.
+// anyUses is core-any on one file: no any and no interface{}, once per declaration. In the kit, a type parameter's
+// constraint may be any (kitConstraints says which), and its listed API may use any where kitAPI says.
 func (c *coreChecks) anyUses(f *File) {
 	for _, d := range f.ast.Decls {
-		var found ast.Node
-		ast.Inspect(d, func(n ast.Node) bool {
-			if found != nil {
-				return false
-			}
-			switch x := n.(type) {
-			case *ast.Ident:
-				if x.Name == "any" {
-					found = x
-				}
-			case *ast.InterfaceType:
-				if len(x.Methods.List) == 0 {
-					found = x
-				}
-			}
-			return found == nil
-		})
-		if found != nil {
+		if c.exempt(declName(d), "core-any") {
+			continue
+		}
+		if found := c.firstAny(d); found != nil {
 			c.at(f, found, "core-any", declName(d)+" uses any")
 		}
 	}
+}
+
+// firstAny is the first any or interface{} in d, nil when there is none; the kit's type parameter lists are left
+// out, since kitConstraints checks them.
+func (c *coreChecks) firstAny(d ast.Decl) ast.Node {
+	constraints := map[*ast.FieldList]bool{}
+	if c.kit {
+		ast.Inspect(d, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FuncType:
+				constraints[x.TypeParams] = x.TypeParams != nil
+			case *ast.TypeSpec:
+				constraints[x.TypeParams] = x.TypeParams != nil
+			}
+			return true
+		})
+	}
+	var found ast.Node
+	ast.Inspect(d, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FieldList:
+			return !constraints[x] && found == nil
+		case *ast.Ident:
+			if x.Name == "any" {
+				found = x
+			}
+		case *ast.InterfaceType:
+			if len(x.Methods.List) == 0 {
+				found = x
+			}
+		}
+		return found == nil
+	})
+	return found
 }
 
 // declName is a top-level declaration's name for messages.

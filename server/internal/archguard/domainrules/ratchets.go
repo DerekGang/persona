@@ -19,16 +19,17 @@ type Count struct {
 // writes of an item's done state.
 var counted = []string{"app-exported-record", "app-named-primitive", "app-lifecycle-write"}
 
-// Ratchets is the app-* counts of every undeclared or application package (contracts, db and prompts left out for
-// records): it parses their production files in full.
+// Ratchets is the app-* counts of every undeclared, application or library package (contracts, db and prompts left
+// out for records): it parses their production files in full. A library is counted as application code is, so
+// declaring library is no way around them: technical code holds no domain concept, and a new library starts at zero.
 func Ratchets(pkgs []*Pkg, idx Index) ([]Count, error) {
 	var out []Count
 	for _, p := range pkgs {
 		l := idx.layer(p.Path)
-		if l != undeclared && l != layerApp && l != layerSeam {
+		if l != undeclared && l != layerApp && l != layerSeam && l != layerLibrary {
 			continue
 		}
-		records := !under(p.Rel, "internal/db") && !under(p.Rel, "internal/prompts")
+		records := !under(p.Rel, "internal/db") && !under(p.Rel, "internal/prompts") && !idx.contracts[p.Path]
 		cs := map[string]*Count{}
 		for _, rule := range counted {
 			cs[rule] = &Count{Key: p.Rel, Rule: rule, Pos: first(p)}

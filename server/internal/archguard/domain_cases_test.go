@@ -84,6 +84,12 @@ func TestDomainRuleCases(t *testing.T) {
 			"import \"context\"\n\n// Run stops when ctx does.\nfunc Run(ctx context.Context) error { return ctx.Err() }\n"),
 			[]string{"layer-application"}},
 		{"kit outside domainkit", pkgFiles("internal/words", "kit", ""), []string{"layer-kit"}},
+		// The kit is every core's import, so its own code is held to a core's purity: no import beyond the computing
+		// standard library and the kit (instant's time aside), no effect and no clock call.
+		{"impure code in the kit", pkgFiles("internal/domainkit/extra", "kit", "import (\n\t\"os\"\n\t\"time\"\n\n"+
+			"\t\"github.com/nwverse/persona/server/internal/proto\"\n)\n\nfunc read() bool {\n\tgo func() {}()\n"+
+			"\treturn os.Getenv(\"X\") == \"\" && time.Now().IsZero() && proto.Version == \"\"\n}\n"),
+			[]string{"core-clock-call", "core-effect", "core-import", "core-import", "core-import"}},
 		{"two layers in one package", merged(pkgFiles("internal/two", "library", ""), map[string]string{
 			"internal/two/b.go": "// Package two again.\n//\n//persona:layer contract\npackage two\n"}),
 			[]string{"layer-contract", "layer-one"}},

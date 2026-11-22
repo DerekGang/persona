@@ -105,6 +105,16 @@ func lowerCamel(name string) string {
 	return string(r)
 }
 
+// contains says whether list holds s.
+func contains(list []string, s string) bool {
+	for _, l := range list {
+		if l == s {
+			return true
+		}
+	}
+	return false
+}
+
 // exported says whether a Go name is exported.
 func exported(name string) bool { return name != "" && name[0] >= 'A' && name[0] <= 'Z' }
 

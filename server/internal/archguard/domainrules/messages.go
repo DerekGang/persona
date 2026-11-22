@@ -163,7 +163,7 @@ var rules = map[string]ruleText{
 	},
 	"core-accessor": {
 		"a caller that reads state decides outside the domain",
-		"answer the question with a predicate or a transition, or move the computation to a domain service; adapters read through Accept",
+		"answer the question with a predicate or a transition, or compute the answer in a domain service (a function that returns a field as it is hands state out too); adapters read through Accept",
 		planted + "internal/assistant/fleetcount/agent.go (Counts)",
 	},
 	"core-pointer-receiver": {
@@ -337,7 +337,7 @@ var rules = map[string]ruleText{
 		planted + "internal/assistant/fleetcount/fleetcountadapt",
 	},
 	"app-exported-record": {
-		"new concepts in application packages keep the habit the domain model replaces",
+		"new concepts in application and library packages keep the habit the domain model replaces",
 		"put the concept in a core or a wire shape in a contract",
 		planted + "internal/assistant/fleetcount",
 	},
