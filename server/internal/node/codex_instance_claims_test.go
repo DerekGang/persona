@@ -53,6 +53,13 @@ func (f *remoteFixture) threadCalls() int {
 	return calls
 }
 
+// conns is how many connections the fake app-server is serving now, and how many it accepted in all.
+func (f *remoteFixture) conns() (open, accepted int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.open, f.accepted
+}
+
 // runtimeConns is how many runtime connections the node has.
 func runtimeConns(n *Node) int {
 	n.runtimes.mu.Lock()
@@ -77,6 +84,7 @@ func TestCodexClaimLeavesTheInstanceToTheRuntime(t *testing.T) {
 		return a && b
 	})
 
+	_, dials := f.conns()
 	// The home as the runtime knows it: macOS's TempDir is under /var -> /private/var, the node's is resolved.
 	rt := dialRuntime(t, n, claimHello(map[string]any{"home": home}))
 	if features, _ := json.Marshal(rt.helloR["features"]); !strings.Contains(string(features), `"codex_claims"`) {
@@ -91,17 +99,21 @@ func TestCodexClaimLeavesTheInstanceToTheRuntime(t *testing.T) {
 		t.Fatal("the connection to the claimed instance is still open")
 	}
 
-	time.Sleep(200 * time.Millisecond) // a request already on the wire when the connection closed lands meanwhile
+	// A request already on the wire when the connection closed is in got once the app-server saw the connection end.
+	waitFor(t, "the app-server saw the connection end", func() bool { open, _ := f.conns(); return open == 0 })
 	calls := f.threadCalls()
 	for range 3 {
+		// attachCodexServers is synchronous, and a dial stores its connection before it runs: one shows at once.
 		n.attachCodexServers(context.Background(), []proto.CodexServer{spec})
 		if remoteOf(n, "daemon") != nil {
 			t.Fatal("the node dialled the claimed instance again")
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 	if got := f.threadCalls(); got != calls {
 		t.Fatalf("the claimed app-server got %d thread/* calls after the claim", got-calls)
+	}
+	if _, accepted := f.conns(); accepted != dials {
+		t.Fatalf("the claimed app-server was dialled %d more time(s)", accepted-dials)
 	}
 
 	_ = rt.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "codexd-1", "status": "idle", "codex_thread": remoteRaw}}})
@@ -115,14 +127,12 @@ func TestCodexClaimLeavesTheInstanceToTheRuntime(t *testing.T) {
 	}
 }
 
-// A claim outlives its runtime's last connection for the keep, so a runtime that restarts does not take its chats off
-// the list and bring them back; once the keep passes with no new connection, the node attaches to the instance again,
-// with no restart of its own.
+// A claim outlives its runtime's last connection for the keep, so a runtime that restarts does not have the node attach
+// to the instance, list its threads under the node's own rows and drop those again once the runtime is back (its own
+// rows leave the list meanwhile, as any runtime's do); once the keep passes with no new connection, the node attaches
+// to the instance again, with no restart of its own.
 func TestCodexClaimOutlivesAShortDisconnect(t *testing.T) {
 	n := claimsTestNode(t)
-	n.runtimes.mu.Lock()
-	n.runtimes.claimKeep = 300 * time.Millisecond
-	n.runtimes.mu.Unlock()
 	home := t.TempDir()
 	f, c := connectRemoteFixture(t, n, home, "daemon", remoteRaw)
 	spec := c.spec
@@ -132,6 +142,12 @@ func TestCodexClaimOutlivesAShortDisconnect(t *testing.T) {
 		n.attachCodexServers(ctx, []proto.CodexServer{spec})
 		return remoteOf(n, "daemon")
 	}
+	// left is when the runtime's last connection left, as its claims count it; zero while it is connected.
+	left := func() time.Time {
+		n.runtimes.mu.Lock()
+		defer n.runtimes.mu.Unlock()
+		return n.runtimes.codexClaims["codexd"].gone
+	}
 	hello := claimHello(map[string]any{"endpoint": spec.Endpoint}) // by its endpoint this time
 
 	rt := dialRuntime(t, n, hello)
@@ -140,11 +156,16 @@ func TestCodexClaimOutlivesAShortDisconnect(t *testing.T) {
 	}
 	_ = rt.conn.Close()
 	waitFor(t, "the runtime gone", func() bool { return runtimeConns(n) == 0 })
+	if left().IsZero() {
+		t.Fatal("the claims of a runtime that left do not count its keep")
+	}
 	if attach() != nil {
 		t.Fatal("the claim ended with its runtime's connection")
 	}
 	rt = dialRuntime(t, n, hello) // back within the keep
-	time.Sleep(600 * time.Millisecond)
+	if !left().IsZero() {
+		t.Fatal("the claims of a runtime that came back still count the keep of its last connection")
+	}
 	if attach() != nil {
 		t.Fatal("the claim of a runtime that came back ended")
 	}
@@ -154,7 +175,12 @@ func TestCodexClaimOutlivesAShortDisconnect(t *testing.T) {
 	if attach() != nil {
 		t.Fatal("the claim ended before the keep passed")
 	}
-	time.Sleep(600 * time.Millisecond)
+	// The keep passes: the runtime left longer ago than codexClaimKeep.
+	n.runtimes.mu.Lock()
+	claims := n.runtimes.codexClaims["codexd"]
+	claims.gone = time.Now().Add(-codexClaimKeep - time.Second)
+	n.runtimes.codexClaims["codexd"] = claims
+	n.runtimes.mu.Unlock()
 	lists := f.count("thread/loaded/list")
 	attach()
 	waitFor(t, "the node attached again", func() bool {
@@ -227,8 +253,8 @@ func TestCodexClaimIsNotADaemons(t *testing.T) {
 	}
 }
 
-// The node logs when a runtime claims an instance, once, and when that claim ends; a hello without claims ends the
-// runtime's claims at once, with no keep.
+// The node logs when a runtime claims an instance, once while the instance stays in the inventory, and when that claim
+// ends; a hello without claims ends the runtime's claims at once, with no keep.
 func TestCodexClaimIsLoggedAndEndsWithAHelloWithoutClaims(t *testing.T) {
 	n := remoteTestNode(t)
 	logs := &syncBuffer{}
@@ -251,6 +277,18 @@ func TestCodexClaimIsLoggedAndEndsWithAHelloWithoutClaims(t *testing.T) {
 	}
 	if remoteOf(n, "daemon") != nil {
 		t.Fatal("a claimed instance was dialled")
+	}
+	// The instance leaves the inventory while claimed: it is no longer noted, and is logged again once it is back.
+	n.attachCodexServers(ctx, nil)
+	n.codices.mu.Lock()
+	_, noted := n.codices.claimed["daemon"]
+	n.codices.mu.Unlock()
+	if noted {
+		t.Fatal("an instance that left the inventory is still noted as claimed")
+	}
+	n.attachCodexServers(ctx, []proto.CodexServer{spec})
+	if got := strings.Count(logs.String(), "codex daemon: runtime codexd serves it and claims it"); got != 2 {
+		t.Fatalf("claim logged %d times, want once more after the instance came back:\n%s", got, logs)
 	}
 	n.runtimes.setCodexClaims(h, nil) // its next hello claims nothing
 	n.attachCodexServers(ctx, []proto.CodexServer{spec})
@@ -279,10 +317,14 @@ func TestCodexClaimOfAConnectionAlreadyGoneOnlyKeeps(t *testing.T) {
 	if !l.gone.IsZero() || g.gone.IsZero() {
 		t.Fatalf("live %+v, gone %+v", l, g)
 	}
+	if held := b.heldCodexClaims(); len(held) != 2 {
+		t.Fatalf("within the keep, held %v", held)
+	}
+	// The keep passes: the connection went longer ago than codexClaimKeep.
 	b.mu.Lock()
-	b.claimKeep = time.Nanosecond
+	g.gone = time.Now().Add(-codexClaimKeep - time.Second)
+	b.codexClaims["gone"] = g
 	b.mu.Unlock()
-	time.Sleep(time.Millisecond)
 	if held := b.heldCodexClaims(); len(held) != 1 || held[0].runtime != "live" {
 		t.Fatalf("held %v", held)
 	}

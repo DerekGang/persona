@@ -300,17 +300,19 @@ that serves an app-server-compatible daemon's chats itself (a companion that shi
 endpoint a second time: node keeps reading the threads the runtime already lists, and lists the threads the runtime's rows do not name (`codex_thread` hides only those they
 name). So the runtime claims the instance in hello (#12571):
 
-- hello carries `codex_claims: [{home?, endpoint?}]`; with the SDK, the `createRuntime` option `codexClaims` is a list, or a function asked at every hello. An entry names the
-  instances with that Codex home, the instance at that endpoint (`unix://<absolute path>` or `ws://<loopback IP>:<port>`), or, with both, only the instance that has both. node
+- hello carries `codex_claims: [{home?, endpoint?}]`; with the SDK, the `createRuntime` option `codexClaims` is a list, or a function that returns the list synchronously,
+  asked at every hello. An entry names the instances with that Codex home, the instance at that endpoint (`unix://<absolute path>` or `ws://<loopback IP>:<port>`), or, with
+  both, only the instance that has both. If other app-servers (the desktop App, for one) use the same home, claim by endpoint, or by home and endpoint together. node
   compares them as it resolves its own instances: a home absolute with its links followed (`~/` is node's home), a socket alias as its target. At most 16 entries count.
 - node answers with the feature `codex_claims` (`rt.nodeHas('codex_claims')`); an older node ignores the field. Only a runtime on the local socket can claim: a daemon's
   app-servers are another computer's, and the link passes no claims on.
 - While a claim holds, node closes its connection to a matching instance before it answers the hello, makes no `thread/*` call to it, and does not dial a matching instance it
   discovers later. The instance's live chats are then listed only as the runtime's rows. The home's rollouts are still read as history, and `codex_thread` keeps hiding the
   history row of each thread the runtime names.
-- A claim holds for 60 seconds after the runtime's last connection leaves, so a runtime that restarts does not take its chats off the list and bring them back; after that node
-  attaches again within 5 seconds, with no restart. A hello without `codex_claims` ends that runtime's claims at once. node logs when an instance becomes claimed, by which
-  runtime, and when the claim ends.
+- A claim holds for 60 seconds after the runtime's last connection leaves, so a runtime that restarts does not have node attach to the instance, list its threads under node's
+  own rows and drop them again once the runtime is back. The runtime's own rows still leave the list while it is gone: as for any runtime, only rows whose conversation is a
+  Claude transcript on this computer stay. After the 60 seconds node attaches again within 5 seconds, with no restart. A hello without `codex_claims` ends that runtime's
+  claims at once. node logs when an instance becomes claimed, by which runtime, and when the claim ends.
 
 A claim removes a duplicate reader; it is not a write lock. The daemon still orders the writes of all its clients, and the phone, the web app, the desktop App and the terminal
 can all still write. Unlike `codex_discovery: false` (every discovered instance, `docs/operations/config.md`), a claim leaves out only the instances the runtime

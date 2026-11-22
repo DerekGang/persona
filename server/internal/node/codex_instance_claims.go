@@ -1,7 +1,6 @@
 package node
 
 import (
-	"cmp"
 	"context"
 	"net"
 	"net/url"
@@ -21,8 +20,11 @@ import (
 // codex_claims): while the claim holds, the node keeps no connection to a matching instance, one it finds later too,
 // and calls nothing on it. It is deduplication, not a lock: the daemon still orders the writes of all its clients, and
 // every client can still write. The claim stands for codexClaimKeep after the runtime's last connection left, so a
-// runtime that restarts does not take its chats off the list and bring them back; a hello without claims ends them at
-// once. Only a runtime on this machine's socket claims: a daemon's (daemons.go) app-servers are another machine's.
+// runtime that restarts does not have the node attach to the instance, list its threads under the node's own rows and
+// drop those again once the runtime is back. The runtime's own rows still leave the list while it is gone: as for any
+// runtime, only rows whose conversation is a Claude transcript here stay (runtimeaway.go). A hello without claims ends
+// them at once. Only a runtime on this machine's socket claims: a daemon's (daemons.go) app-servers are another
+// machine's.
 // docs/integrations/runtimes.md ("Claiming a Codex app-server instance (optional)").
 
 // codexClaimKeep is how long a runtime's claims stand once its last connection left.
@@ -134,10 +136,9 @@ func (b *runtimeRegistry) heldCodexClaims() []heldCodexClaim {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	keep := cmp.Or(b.claimKeep, codexClaimKeep)
 	var out []heldCodexClaim
 	for id, c := range b.codexClaims {
-		if !c.gone.IsZero() && time.Since(c.gone) > keep {
+		if !c.gone.IsZero() && time.Since(c.gone) > codexClaimKeep {
 			delete(b.codexClaims, id)
 			continue
 		}
@@ -208,7 +209,8 @@ func (n *Node) codexClaimant(s proto.CodexServer, claims []heldCodexClaim) strin
 }
 
 // attachCodexServers keeps a connection to each of servers that no runtime claims (ensureCodexRemote) and none to one a
-// runtime does.
+// runtime does. servers is the whole inventory: an instance that left it is no longer noted as claimed, and is logged
+// as claimed again if it comes back while a runtime still claims it.
 func (n *Node) attachCodexServers(ctx context.Context, servers []proto.CodexServer) {
 	r := n.codices
 	if r == nil {
@@ -224,6 +226,13 @@ func (n *Node) attachCodexServers(ctx context.Context, servers []proto.CodexServ
 		}
 		n.codexClaimEnded(s)
 		n.ensureCodexRemote(ctx, s)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id := range r.claimed {
+		if !slices.ContainsFunc(servers, func(s proto.CodexServer) bool { return s.ID == id }) {
+			delete(r.claimed, id)
+		}
 	}
 }
 

@@ -39,8 +39,9 @@ type codexRegistry struct {
 	// list, taken as complete.
 	checked func() ([]codexProcess, bool)
 	// claimed: server id -> the runtime that claims the instance, which the node keeps no connection to
-	// (codex_instance_claims.go). attach serializes checking the claims with attaching, so an instance a runtime
-	// claims meanwhile is not dialled after the claim took it.
+	// (codex_instance_claims.go); kept per Node, so a new hub connection logs each claim once more. attach serializes
+	// checking the claims with attaching, so an instance a runtime claims meanwhile is not dialled after the claim
+	// took it.
 	claimed map[string]string
 	attach  sync.Mutex
 }
