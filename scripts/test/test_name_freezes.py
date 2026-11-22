@@ -219,21 +219,29 @@ class TreeTests(unittest.TestCase):
         prs = [name_freezes.read_pr(n, paths) for n in (node(1, ["server/internal/new/new.go"]),
                                                          node(2, ["server/internal/declared/d.go"]),
                                                          node(3, ["server/internal/x/x.go"], draft=True, days_old=30))]
-        seen = {}
 
         def files(revision, dirs=None):
             return trees[revision]
 
-        def names(work, given):
-            seen.update(given)
-            return {key: undeclared[key] for key in given}
+        # Read in one batch, or a PR's two trees at a time (the base's with the first), each batch removed after.
+        for batch, reads in ((8, [["base", "head1", "head2", "mb1", "mb2"]]),
+                             (1, [["base", "head1", "mb1"], ["head2", "mb2"]])):
+            with self.subTest(batch=batch), tempfile.TemporaryDirectory() as work:
+                seen = []
 
-        with mock.patch.multiple(name_freezes, tree_files=files, merge_base=lambda head, base: "mb" + head[4:],
-                                 fetch=lambda prs: None, changed_dirs=lambda old, new: ["dir"], layer_names=names):
-            today, found = name_freezes.tree_pending("base", prs, 14, "unused", log=io.StringIO())
-        self.assertEqual(today, {"internal/old"})
-        self.assertEqual(found, {"internal/new": [1]})
-        self.assertEqual(sorted(seen), ["base", "head1", "head2", "mb1", "mb2"])
+                def names(at, given):
+                    seen.append(sorted(given))
+                    Path(at).mkdir()
+                    return {key: undeclared[key] for key in given}
+
+                with mock.patch.multiple(name_freezes, tree_files=files, merge_base=lambda head, base: "mb" + head[4:],
+                                         fetch=lambda prs: None, changed_dirs=lambda old, new: ["dir"],
+                                         layer_names=names, BATCH=batch):
+                    today, found = name_freezes.tree_pending("base", prs, 14, work, log=io.StringIO())
+                self.assertEqual(today, {"internal/old"})
+                self.assertEqual(found, {"internal/new": [1]})
+                self.assertEqual(seen, reads)
+                self.assertEqual(list(Path(work).iterdir()), [], "a batch's trees stay on disk")
 
     def test_the_land_day_write_takes_the_base_and_the_pending_packages(self):
         with tempfile.TemporaryDirectory() as root:
@@ -334,11 +342,14 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("check out origin/main first", err.getvalue())
 
-    def test_a_landed_baseline_is_left_out_of_a_run_that_does_not_name_it(self):
-        # A seam's branch writes its new list after merging main, which has the baseline: the run neither reads the open
-        # PRs' trees for it nor asks for a checkout of the base, and says how to tidy it.
+    def test_landed_domain_lists_are_left_out_of_a_run_that_does_not_name_them(self):
+        # A seam's branch writes its new list after merging main, which has both domain lists: the run neither reads the
+        # open PRs' trees for them nor asks for a checkout of the base, and says how to run each.
         def baseline_pending(*args, **kwargs):
             raise AssertionError("the open PRs' trees were read for a landed baseline")
+
+        def tree_pending(*args, **kwargs):
+            raise AssertionError("the open PRs' trees were read for a landed undeclared list")
 
         with tempfile.TemporaryDirectory() as root:
             undeclared = Path(root, name_freezes.UNDECLARED.file)
@@ -347,15 +358,16 @@ class BaselineTests(unittest.TestCase):
             with mock.patch.multiple(name_freezes, ROOT=Path(root), run=lambda args, timeout, **kw: "elsewhere\n"
                                      if args[-1] == "HEAD" else "base\n",
                                      central_names=lambda work, sources=None: ([], {}), on_base=lambda base, p: True,
-                                     open_prs=lambda paths: [], tree_pending=lambda *args: ({"internal/old"}, {}),
+                                     open_prs=lambda paths: [], tree_pending=tree_pending,
                                      baseline_pending=baseline_pending), \
                     mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", io.StringIO()) as err:
                 for argv in (["pending"], ["pending", "--write"]):
                     self.assertEqual(name_freezes.main(argv), 0, err.getvalue())
             self.assertEqual(undeclared.read_text(), "# a header\ninternal/old\n")
-        self.assertEqual(err.getvalue().count(
-            "%s: on origin/main already, so left out: tidy it with `pending --write --only %s` on a checkout of "
-            "origin/main" % (name_freezes.BASELINE.id, name_freezes.BASELINE.id)), 2)
+        for l, how in ((name_freezes.UNDECLARED, "prunes it"),
+                       (name_freezes.BASELINE, "tidies it on a checkout of origin/main")):
+            self.assertEqual(err.getvalue().count("%s: on origin/main already, so left out: `pending --write --only %s` "
+                                                  "%s" % (l.id, l.id, how)), 2, err.getvalue())
         self.assertNotIn("check out", err.getvalue())
 
     def test_the_open_prs_trees_are_read_a_batch_at_a_time(self):

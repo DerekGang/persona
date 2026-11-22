@@ -597,7 +597,7 @@ count already holds the allowed types it has. Allowances only leave: once the ty
 takes it into the count and removes the line (`TestDomainLayers` says so in a notice), and once its PRs have all closed
 without it, `python3 scripts/test/name_freezes.py pending --write --only domain_layers_baseline`, run on a checkout of
 main, drops it. That script also wrote them, the day the baseline landed; it adds none to a baseline main has, and a
-run that does not name the baseline with `--only` leaves it out once main has it.
+run that does not name the baseline with `--only` leaves it out once main has it, as it does `undeclared.txt`.
 
 | Rule | Checks | Counted against |
 | --- | --- | --- |
@@ -820,8 +820,8 @@ A central list with a seam takes no new name. `server/internal/archguard/central
   heads. A draft whose head commit is more than 14 days old does not count. The script asks the archguard test for the
   names (`-central-list-names`), so they are in the form the freeze compares.
 - **Writing the list**: on the day a row lands, `pending --write --only <the row's id>` rewrites the list's file, after
-  `origin/main` is merged in; without `--only` the run also prunes every list `main` has, and leaves out the domain
-  rules' baseline, which only a checkout of `main` tidies ("The rules and their checks"). Once the list is on `main`,
+  `origin/main` is merged in; without `--only` the run also prunes every central list `main` has, and leaves out the
+  domain lists (`undeclared.txt` and the baseline, "Domain model") once `main` has them. Once the list is on `main`,
   `--write` only prunes it: it keeps the listed names `main` still has, a pending one whose PR merged among them, and
   drops the names that have left and the pending ones whose PRs closed. It adds no name: one that `main` has and the
   list lacks is reported as an error, and the freeze keeps failing on it. So it is not how a later PR gets a name on a
