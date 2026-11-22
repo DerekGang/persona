@@ -22,7 +22,7 @@ registerHooks({
       if (specifier==='../core/StorageOwnership') return {url:new URL(specifier+'.ts',context.parentURL).href,shortCircuit:true};
       return {url:'client-boundary:'+specifier,shortCircuit:true};
     }
-    if (context.parentURL?.endsWith('/InboxWorkspace.ets') || context.parentURL?.endsWith('/TodoWorkspace.ets') || context.parentURL?.endsWith('/TodoHubView.ets') ||
+    if (context.parentURL?.endsWith('/InboxWorkspace.ets') || context.parentURL?.endsWith('/TodoWorkspace.ets') || context.parentURL?.endsWith('/TodoHubView.ets') || context.parentURL?.endsWith('/TodoPhoneSections.ets') ||
       context.parentURL?.endsWith('/MessageImage.ets') || context.parentURL?.endsWith('/RemoteDocument.ets')) {
       if (specifier === '@kit.ArkTS' || specifier === '../platform/HubTransport') return {url:'client-boundary:'+specifier,shortCircuit:true};
       if (specifier.startsWith('.')) return {url:new URL(specifier.endsWith('.ets') || specifier.endsWith('.ts') ? specifier : specifier + '.ets',context.parentURL).href,shortCircuit:true};

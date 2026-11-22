@@ -5989,6 +5989,34 @@
       "value": "会議を開始"
     },
     {
+      "name": "phone_todo_section_needs",
+      "value": "要対応"
+    },
+    {
+      "name": "phone_todo_section_working",
+      "value": "作業中"
+    },
+    {
+      "name": "phone_todo_section_pr",
+      "value": "マージ待ちのPR"
+    },
+    {
+      "name": "phone_todo_section_open",
+      "value": "その他の未完了"
+    },
+    {
+      "name": "phone_todo_section_recent",
+      "value": "完了したばかり"
+    },
+    {
+      "name": "phone_todo_section_shelved",
+      "value": "保留"
+    },
+    {
+      "name": "phone_todo_section_done",
+      "value": "完了"
+    },
+    {
       "name": "phone_todo_list",
       "value": "リスト"
     },

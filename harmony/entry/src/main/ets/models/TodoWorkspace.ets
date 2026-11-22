@@ -3,6 +3,8 @@ import { HubRepository, segment } from './HubRepository';
 import { HttpFailure } from '../platform/HubTransport';
 import { ResourceRow, Wire } from './Wire';
 import { TODO_HUB_CHOICES, TODO_HUB_SECTIONS, TodoHubCounts, TodoHubRow, todoHubChoiceIncludes, todoHubLabel } from './TodoHubView';
+import type { TodoPhonePlacement } from './TodoPhoneSections';
+import { TODO_PHONE_SECTIONS, TodoPhoneSections, phoneTodoTitle } from './TodoPhoneSections';
 
 const TODO_STATES: string[] = ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
 const TODO_STATUS_ORDER: string[] = ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
@@ -338,7 +340,8 @@ function relationKeys(todo: TodoWorkspaceItem): string[] {
 }
 
 function related(left: TodoWorkspaceItem, right: TodoWorkspaceItem): boolean {
-  if (left.id === right.id || left.isDone() !== right.isDone()) return false;
+  if (left.manager!==right.manager || left.id===right.id || left.isDone()!==right.isDone() ||
+    !left.isDone() && (left.kind==='concern' || right.kind==='concern')) return false;
   const rightKeys = relationKeys(right);
   return relationKeys(left).some((key: string) => rightKeys.includes(key));
 }
@@ -1186,14 +1189,27 @@ export class TodoWorkspace {
     return values.some((value: string) => value.toLocaleLowerCase().includes(needle));
   }
 
-  private groupsFor(visible: TodoWorkspaceItem[]): TodoWorkspaceGroup[] {
-    const remaining: Set<string> = new Set(visible.map((item: TodoWorkspaceItem) => item.id));
+  private phonePlacements(now:number):Map<TodoWorkspaceItem,TodoPhonePlacement> {
+    const triage=new TodoPhoneSections(this.sessions,now), placed=new Map<TodoWorkspaceItem,TodoPhonePlacement>();
+    this.items.forEach((item:TodoWorkspaceItem)=>{
+      const superseded=!!item.startError && item.isDone() && relatedTodoMembers(this.items,item).some((other:TodoWorkspaceItem)=>other.isDone() && !other.startError);
+      placed.set(item,triage.place(item,superseded));
+    });
+    return placed;
+  }
+
+  private groupsFor(visible: TodoWorkspaceItem[],phone?:Map<TodoWorkspaceItem,TodoPhonePlacement>): TodoWorkspaceGroup[] {
+    const remaining: Set<TodoWorkspaceItem> = new Set(visible);
     const groups: TodoWorkspaceGroup[] = [];
     for (const todo of visible) {
-      if (!remaining.has(todo.id)) continue;
-      const members = relatedTodoMembers(visible, todo).filter((item: TodoWorkspaceItem) => remaining.has(item.id));
-      const sorted = groupLead(members, this.sessions);
-      sorted.forEach((item: TodoWorkspaceItem) => remaining.delete(item.id));
+      if (!remaining.has(todo)) continue;
+      const members = relatedTodoMembers(visible,todo).filter((item:TodoWorkspaceItem)=>remaining.has(item));
+      const sorted = phone ? members.slice().sort((a:TodoWorkspaceItem,b:TodoWorkspaceItem)=>{
+        const left=phone.get(a)!,right=phone.get(b)!;
+        return TODO_PHONE_SECTIONS.indexOf(left.section)-TODO_PHONE_SECTIONS.indexOf(right.section) ||
+          Number(left.superseded)-Number(right.superseded) || right.last-left.last || a.id.localeCompare(b.id);
+      }) : groupLead(members,this.sessions);
+      sorted.forEach((item:TodoWorkspaceItem)=>remaining.delete(item));
       groups.push(new TodoWorkspaceGroup(sorted.map((item: TodoWorkspaceItem) => item.id).sort().join('|'), '',
         this.state(sorted[0] || todo), sorted));
     }
@@ -1262,10 +1278,11 @@ export class TodoWorkspace {
 
   hiddenWaiting(now:number, firstWeekday:number): number {
     if (this.dueFilter === 'all') return 0;
+    const phone=this.effectiveGroup()==='hub' ? undefined : this.phonePlacements(now);
     const hidden = new Set<string>();
     this.items.forEach((item: TodoWorkspaceItem) => {
       if (this.searchMatches(item,this.search) && !todoMatchesDue(item,this.dueFilter,now,firstWeekday) &&
-        this.hubSection(item,now) === 'needs_you') hidden.add(JSON.stringify([item.manager,item.id]));
+        (phone ? phone.get(item)!.section : this.hubSection(item,now))==='needs_you') hidden.add(JSON.stringify([item.manager,item.id]));
     });
     return hidden.size;
   }
@@ -1274,12 +1291,14 @@ export class TodoWorkspace {
     let visible = this.items.filter((item: TodoWorkspaceItem) => this.searchMatches(item,this.search) && todoMatchesDue(item,this.dueFilter,now,firstWeekday));
     if (this.effectiveGroup() === 'hub') return this.hubSections(visible, now);
     if (this.statusFilter !== 'all') visible = visible.filter((item: TodoWorkspaceItem) => this.state(item) === this.statusFilter);
-    const groups = this.groupsFor(visible);
+    const phone=this.effectiveGroup()==='status' ? this.phonePlacements(now) : undefined;
+    const groups = this.groupsFor(visible,phone);
     const grouped: Map<string, TodoWorkspaceGroup[]> = new Map();
     const titles: Map<string, string> = new Map();
     for (const group of groups) {
       let key = this.state(group.lead), title = this.stateLabelKey(group.lead);
-      if (this.groupBy === 'project') {
+      if (phone) { key=phone.get(group.lead)!.section; title=phoneTodoTitle(key); }
+      else if (this.groupBy === 'project') {
         key = group.lead.project || 'unsorted'; title = group.lead.project ? this.projectTitle(group.lead) : 'todo_unsorted';
       } else if (this.groupBy === 'thread') {
         const chatId = Wire.text(group.lead.thread, 'chat_id'), threadId = Wire.text(group.lead.thread, 'thread_id');
@@ -1291,14 +1310,15 @@ export class TodoWorkspace {
       titles.set(key, title);
     }
     const order: string[] = Array.from(grouped.keys());
-    if (this.effectiveGroup() === 'status') order.sort((left: string, right: string) => statusRank(left) - statusRank(right));
+    if (phone) order.sort((left:string,right:string)=>TODO_PHONE_SECTIONS.indexOf(left)-TODO_PHONE_SECTIONS.indexOf(right));
     else order.sort((left: string, right: string) => (titles.get(left) || left).localeCompare(titles.get(right) || right));
     return order.map((key: string) => {
       const rows = grouped.get(key) || [];
       const priority=(g:TodoWorkspaceGroup):number => g.members.reduce((best:number,item:TodoWorkspaceItem) => Math.min(best,item.priority === 'high' ? 0 : item.priority === 'low' ? 2 : 1),2);
       const due=(g:TodoWorkspaceGroup):number => g.members.reduce((earliest:number,item:TodoWorkspaceItem) => Number.isFinite(item.dueBy) ? Math.min(earliest,item.dueBy) : earliest,Number.MAX_SAFE_INTEGER);
+      const last=(g:TodoWorkspaceGroup):number=>g.members.reduce((max:number,item:TodoWorkspaceItem)=>Math.max(max,phone?.get(item)?.last ?? Number.NEGATIVE_INFINITY),Number.NEGATIVE_INFINITY);
       rows.sort((left:TodoWorkspaceGroup,right:TodoWorkspaceGroup) => (this.order === 'priority' ? priority(left)-priority(right) : 0) ||
-        (this.order !== 'recent' ? due(left)-due(right) : 0) || compareTodoRecent(left.lead,right.lead));
+        (this.order !== 'recent' ? due(left)-due(right) : 0) || (phone ? last(right)-last(left) : 0) || compareTodoRecent(left.lead,right.lead));
       return new TodoWorkspaceSection(key, titles.get(key) || key, rows);
     });
   }

@@ -44,6 +44,7 @@ export struct TodoWorkspacePage {
   @Local sectionBindings: BoundTodoSection[] = [];
   @Local expandedGroups:string[] = [];
   @Local showDone:boolean = false;
+  @Local showShelved:boolean = false;
   @Local liftedId:string = '';
   @Local landing:TodoCalendarDrop | undefined = undefined;
   private dragged:TodoWorkspaceItem | undefined;
@@ -95,7 +96,7 @@ export struct TodoWorkspacePage {
   @Monitor('row', 'list') routeChanged(): void { this.syncRowBindings(); if (this.pageAvailable) this.openWorkspace(); }
 
   @Monitor('model.profile') profileChanged(): void {
-    this.expandedGroups=[]; this.showDone=false; this.clearDrag();
+    this.expandedGroups=[]; this.showDone=false; this.showShelved=false; this.clearDrag();
     this.previousAgentsOpen = false;
     this.syncRowBindings();
     if (this.pageAvailable) this.openWorkspace();
@@ -504,27 +505,35 @@ export struct TodoWorkspacePage {
   }
   private sectionOpen(section:TodoWorkspaceSection):boolean {
     if (this.hubMode()) return !this.foldable(section) || !!this.workspace.search.trim() || this.workspace.hubUnfolded.includes(section.key);
-    return this.workspace.effectiveGroup() !== 'status' || section.key !== 'done' || this.showDone || !!this.workspace.search.trim() || this.workspace.statusFilter === 'done';
+    if (!this.foldable(section) || this.workspace.search.trim()) return true;
+    return section.key==='shelved' ? this.showShelved : this.showDone || this.workspace.statusFilter==='done';
   }
   private foldable(section: TodoWorkspaceSection): boolean {
-    if (!this.hubMode()) return this.workspace.effectiveGroup() === 'status' && section.key === 'done';
+    if (!this.hubMode()) return this.workspace.effectiveGroup()==='status' && (section.key==='done' || section.key==='shelved');
     return section.key === 'someday' || section.key === 'can_wait' || (section.key === 'done' && this.workspace.hubChoice !== 'done');
   }
   private sectionCount(binding: BoundTodoSection): number {
     if (this.hubMode() && binding.value.key === 'needs_you') return this.workspace.hubCounts?.needsYou || 0;
     return binding.rows.reduce((n: number, r: BoundRow<TodoWorkspaceGroup>) => n + r.value.members.length, 0);
   }
+  private sectionTint(key:string):ResourceColor {
+    if (key==='needs_you') return Colors.needs;
+    if (key==='working') return Colors.working;
+    if (key==='just_done' || key==='just_finished') return Colors.unread;
+    return key==='pr' ? Colors.link : Colors.secondary;
+  }
   @Builder sectionHeader(binding:BoundTodoSection) {
     if (!this.hubMode() || !this.workspace.hubCalm()) Row({space:6}) {
       Text(this.sectionTitle(binding.value)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
       Text(String(this.sectionCount(binding))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
-        .fontColor(binding.value.key === 'needs_you' ? Colors.needs : Colors.secondary).layoutWeight(1)
+        .fontColor(this.sectionTint(binding.value.key)).layoutWeight(1)
       if (this.foldable(binding.value)) SymbolGlyph(this.sectionOpen(binding.value) ? Symbols.down : Symbols.expand)
         .fontSize(12).fontColor([Colors.secondary])
     }.width('100%').height(40).padding({left:5,right:8}).accessibilityGroup(true)
       .onClick(() => {
         if (!this.foldable(binding.value)) return;
         if (this.hubMode()) this.workspace.toggleHubFold(binding.value.key);
+        else if (binding.value.key==='shelved') this.showShelved=!this.showShelved;
         else this.showDone = !this.showDone;
       })
       .id('todos.section.'+binding.value.key)

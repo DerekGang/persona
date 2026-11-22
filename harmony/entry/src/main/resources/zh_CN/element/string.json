@@ -5989,6 +5989,34 @@
       "value": "开始会议"
     },
     {
+      "name": "phone_todo_section_needs",
+      "value": "需要你"
+    },
+    {
+      "name": "phone_todo_section_working",
+      "value": "工作中"
+    },
+    {
+      "name": "phone_todo_section_pr",
+      "value": "PR 待合并"
+    },
+    {
+      "name": "phone_todo_section_open",
+      "value": "其余没完成"
+    },
+    {
+      "name": "phone_todo_section_recent",
+      "value": "刚做完待看"
+    },
+    {
+      "name": "phone_todo_section_shelved",
+      "value": "搁置"
+    },
+    {
+      "name": "phone_todo_section_done",
+      "value": "已完成"
+    },
+    {
       "name": "phone_todo_list",
       "value": "列表"
     },

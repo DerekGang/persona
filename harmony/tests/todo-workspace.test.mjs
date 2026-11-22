@@ -307,7 +307,7 @@ test('old servers and malformed snapshots restore the existing list and never re
   await stale;
   assert.equal(workspace.hubCounts, undefined);
   assert.equal(workspace.effectiveGroup(), 'status');
-  assert.deepEqual(workspace.sections().map(s => s.key), ['not_started']);
+  assert.deepEqual(workspace.sections().map(s => s.key), ['other']);
   legacy.client.features.push('todo_view');
   legacy.state.request = () => ({ todos: [todo('x')], counts: { needs_you: 0 } });
   await workspace.refresh();
@@ -880,13 +880,38 @@ test('the due warning counts hidden owner actions once per manager and respects 
   const due = new TodoWorkspace();
   const now = new Date(2026,10,21,12).getTime();
   const item = (id, manager, dates = {}) => new TodoWorkspaceItem(todo(id,{manager,title:'Widget '+manager,
-    view:{section:'needs_you',phase:'open',rank:1},...dates}),manager);
+    delivery:{state:'pr',unblock:'user'},...dates}),manager);
   due.items = [
     item('same','home'), item('same','home'), item('same','office'),
-    item('today','home',{due_date:'2026-11-21'}), item('later','office',{view:{section:'working',phase:'open',rank:1}})
+    item('today','home',{due_date:'2026-11-21'}), item('later','office',{delivery:{state:'pr',unblock:'agent'}})
   ];
   due.dueFilter='today';
   assert.equal(due.hiddenWaiting(now,1),2);
   due.search='Widget home';assert.equal(due.hiddenWaiting(now,1),1);
   due.dueFilter='all';assert.equal(due.hiddenWaiting(now,1),0);
+});
+
+test('the phone status list uses the seven iPhone sections; owner-gated delivery, unseen turns and shelved work file independently',()=>{
+  const ws=new TodoWorkspace(), now=Date.parse('2026-11-22T12:00:00Z'), recent='2026-11-22T10:00:00Z', older='2026-11-17T10:00:00Z';
+  const item=(id,fields={})=>new TodoWorkspaceItem(todo(id,{title:id,created_at:recent,updated_at:recent,...fields}),'work');
+  const link=id=>[{machine_id:'m1',session_id:id}];
+  ws.sessions=[session('reading','unread'),session('doing','working'),session('needs','needs_you')];
+  ws.items=[item('need',{agents:link('needs'),due_date:'2026-11-22'}),item('deployment-gate',{delivery:{state:'merged',unblock:'user'}}),
+    item('running',{agents:link('doing'),due_date:'2026-11-22'}),item('pr',{pr_url:'https://example.test/pull/456'}),
+    item('plain',{due_date:'2026-11-22'}),item('finished-turn',{agents:link('reading'),due_date:'2026-11-22'}),
+    item('shelved',{origin:'c1',created_at:older,updated_at:older}),item('closed',{done_at:older})];
+  assert.deepEqual(ws.sections(now,1).map(s=>s.key),['needs_you','working','pr','other','just_done','shelved','done']);
+  ws.setDueFilter('today');
+  assert.equal(ws.hiddenWaiting(now,1),1);
+  assert.deepEqual(ws.sections(now,1).map(s=>[s.key,s.rows[0].lead.id]),[['needs_you','need'],['working','running'],['other','plain'],['just_done','finished-turn']]);
+});
+
+test('a failed start whose finished sibling is filtered out never re-enters Needs You, and open concerns remain separate rows',()=>{
+  const ws=new TodoWorkspace(),recent='2026-11-22T10:00:00Z',now=Date.parse('2026-11-22T11:00:00Z');
+  const make=(id,fields)=>new TodoWorkspaceItem(todo(id,{title:id,updated_at:recent,...fields}),'work');
+  ws.items=[make('failed',{start_error:'unavailable',done_at:recent,plan_id:'p'}),make('completed',{done_at:recent,plan_id:'p',due_date:'2026-11-22'}),
+    make('open-concern',{kind:'concern',plan_id:'shared'}),make('unrelated',{plan_id:'shared'})];
+  assert.equal(ws.sections(now).find(s=>s.key==='other').rows.length,2);
+  ws.setDueFilter('today'); assert.equal(ws.hiddenWaiting(now,1),0);
+  assert.deepEqual(ws.sections(now).map(s=>s.key),['just_done']);
 });

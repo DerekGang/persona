@@ -5989,6 +5989,34 @@
       "value": "Start Meeting"
     },
     {
+      "name": "phone_todo_section_needs",
+      "value": "Needs You"
+    },
+    {
+      "name": "phone_todo_section_working",
+      "value": "Working"
+    },
+    {
+      "name": "phone_todo_section_pr",
+      "value": "PR to merge"
+    },
+    {
+      "name": "phone_todo_section_open",
+      "value": "Other open"
+    },
+    {
+      "name": "phone_todo_section_recent",
+      "value": "Just finished"
+    },
+    {
+      "name": "phone_todo_section_shelved",
+      "value": "Shelved"
+    },
+    {
+      "name": "phone_todo_section_done",
+      "value": "Done"
+    },
+    {
       "name": "phone_todo_list",
       "value": "List"
     },
