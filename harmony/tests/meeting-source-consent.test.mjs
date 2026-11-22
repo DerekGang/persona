@@ -137,3 +137,10 @@ test('an idle meeting menu only offers the offline language and physical inputs 
   active=false;form.selectInput(21);assert.equal(form.selectedInput,-1);
   form.clear(next);assert.equal(form.available,false);assert.equal(form.languageAvailable,false);
 });
+
+test('the native recording header uses interface body type while its full profile remains a reading surface',()=>{
+  const detail=source.slice(source.indexOf('  @Builder recordingDetail()'),source.indexOf(".id('knowledge.recording.detail')"));
+  assert.match(detail,/Text\(this\.workspace\.selected\.detail\)\.fontSize\(Tokens\.body\)\s*\.maxFontScale\(Tokens\.interfaceScaleFor\(Tokens\.body\)\)/);
+  assert.match(detail,/MarkdownText\(\{text:Wire\.text\(this\.workspace\.detail,'summary'\)/);
+  assert.match(detail,/\.id\('knowledge.recording.intro'\)/);
+});

@@ -871,7 +871,8 @@ export struct KnowledgeWorkspacePage {
             .width(36).height(36).backgroundColor(Colors.control).borderRadius(10)
           Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
         }.width('100%')
-        if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(16).fontColor(Colors.ink).width('100%')
+        if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(Tokens.body)
+          .maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).opacity(0.85).width('100%').id('knowledge.recording.intro')
         Button({type:ButtonType.Capsule}) {
           Row({space:7}) {
             SymbolGlyph(IconActions.symbol('knowledge_ask_persona')).fontSize('18vp').fontColor([Colors.onAction])
