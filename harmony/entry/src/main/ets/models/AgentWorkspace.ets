@@ -49,6 +49,7 @@ export class AgentWorkspaceGroup {
   rows: ResourceRow[] = [];
   presentation: string = '';
   titleKey: string = '';
+  subtitle: string = '';
   capped: boolean = false;
 
   constructor(id: string, machineId: string, machineName: string, repositoryPath: string, repositoryName: string,
@@ -831,7 +832,7 @@ export class AgentWorkspace {
       const native = new AgentWorkspaceGroup(group.id, '', group.title, '', '', '', '', '');
       native.folded = group.folded; native.parent = group.parent || ''; native.stateCounts = group.state_counts || {};      native.spoken = group.spoken || ''; native.totalRowCount = group.rows.length;
       native.memberIds = group.rows.slice();
-      native.presentation = group.presentation || ''; native.titleKey = group.titleKey || ''; native.capped = !!group.capped;
+      native.presentation = group.presentation || ''; native.titleKey = group.titleKey || ''; native.capped = !!group.capped; native.subtitle=group.subtitle || '';
       native.showMachine = group.id.startsWith('machine/');
       native.rows = [];
       group.visible_rows.forEach((id: string) => { const row = byId.get(id); if (row) native.rows.push(row); });
@@ -877,7 +878,7 @@ export class AgentWorkspace {
     const copy = new AgentWorkspaceGroup(group.id, group.machineId, group.machineName, group.repositoryPath, group.repositoryName,
       group.worktreePath, group.worktreeName, group.branch, group.rows.slice());
     copy.showMachine = group.showMachine; copy.showRepository = group.showRepository; copy.showWorktree = group.showWorktree;
-    copy.presentation = group.presentation; copy.titleKey = group.titleKey; copy.capped = group.capped;
+    copy.presentation = group.presentation; copy.titleKey = group.titleKey; copy.capped = group.capped; copy.subtitle=group.subtitle;
     copy.folded = group.folded; copy.parent = group.parent; copy.stateCounts = group.stateCounts;
     copy.spoken = group.spoken; copy.totalRowCount = group.totalRowCount; copy.memberIds = group.memberIds.slice(); return copy;
   }

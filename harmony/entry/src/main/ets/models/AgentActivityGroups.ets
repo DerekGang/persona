@@ -1,6 +1,7 @@
 import type { AgentListInput, AgentListRow, CoreAgentListGroup, CoreAgentListProjection } from '../core/AgentListProjection';
 import { agentRepositoryPlace } from './AgentRepositoryPlace';
-import { Wire } from './Wire';
+import { ResourceRow, Wire } from './Wire';
+import { MachineAgent } from './MachineDashboard';
 
 const ENGINES: string[] = ['herdr','herdr-core','orca','tern','rex'];
 const ENGINE_NAMES: string[] = ['herdr','Herdr App','Orca','Tern','Rex'];
@@ -21,6 +22,7 @@ class Bucket {
   titleKey: string;
   rows: ActivityRow[] = [];
   order: number = Number.MAX_SAFE_INTEGER;
+  machine: string = '';
   constructor(id: string, title: string, titleKey: string = '') {
     this.id = id; this.title = title; this.titleKey = titleKey;
   }
@@ -79,6 +81,7 @@ function projectFor(app: Bucket, row: AgentListRow): Bucket {
     name = parts[parts.length-1];
   }
   const project = new Bucket(app.id+'/project/'+machine+'/'+key+'#',name);
+  project.machine=machine;
   const index = Wire.number(raw,'space_index');
   if (Wire.text(raw,'space_kind') === 'codex_app' && index > 0) project.order = index;
   return project;
@@ -128,14 +131,28 @@ export function phoneAgentGroups(input: AgentListInput, projection: CoreAgentLis
   const ordered = Array.from(apps.values()).sort((a:Bucket,b:Bucket)=>a.order-b.order || compareId(a.id,b.id));
   for (const app of ordered) {
     const header = section(app,'app',input); groups.push(header);
+    const counts:Record<string,Object> = {};
+    for (const row of app.rows) {
+      if (row.row.raw['nested_subtask'] === true) continue;
+      const agent = new MachineAgent(row.row.source as ResourceRow);
+      let status = agent.counted;
+      if (status === 'offline') continue;
+      if (agent.state === 'working' && status === 'idle') status='backgroundWaiting';
+      if (status === 'unknown') status = 'idle';
+      counts[status]=Wire.number(counts,status)+1;
+    }
+    header.state_counts=counts;
     if (header.folded || app.id === 'app/other') continue;
     const projects = new Map<string,Bucket>();
     for (const row of app.rows) collect(projects,projectFor(app,row.row),row);
     const children = Array.from(projects.values()).sort((a:Bucket,b:Bucket)=>Number(!a.title)-Number(!b.title) || a.order-b.order);
     if (children.length === 1 && !children[0].title) continue;
     header.presentation = 'app-parent'; header.visible_rows = []; header.capped = false;
+    const machines = new Set(children.map((child:Bucket)=>child.machine).filter((name:string)=>!!name));
     for (const child of children) {
-      const item=section(child,'app-project',input,true); item.parent=app.id; groups.push(item);
+      const item=section(child,'app-project',input,true); item.parent=app.id;
+      if (child.machine && machines.size>1) item.subtitle=input.machineName(child.rows[0].row);
+      groups.push(item);
     }
   }
   return groups;

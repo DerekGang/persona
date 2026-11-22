@@ -38,6 +38,7 @@ export interface CoreAgentListGroup {
   spoken?: string;
   presentation?: string;
   titleKey?: string;
+  subtitle?: string;
   capped?: boolean;
 }
 export interface CoreAgentListProjection {

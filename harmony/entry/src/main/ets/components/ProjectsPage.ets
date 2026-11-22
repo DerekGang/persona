@@ -13,7 +13,7 @@ import { ResourceRow, Wire } from '../models/Wire';
 import { ProjectLine, ProjectHost, projectOutline, projectHosts, projectQuickKind, projectSearchAgents, worktreeSpaceCards } from '../models/ProjectOutline';
 import { WorktreeActions, WorktreeChange } from '../models/WorktreeActions';
 import { WorktreeSheet } from './WorktreeSheet';
-import { ProjectAgentPlaceLine } from './ProjectAgentPlaceLine';
+import { AgentDirectoryRowContent } from './AgentDirectoryRowContent';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 
 @ComponentV2
@@ -442,57 +442,17 @@ export struct ProjectsPage {
       }, (tree: ProjectWorktree) => this.headerIdentity(tree))
     }
   }
-  @Builder agentMark(agent:ProjectAgent) {
-    Stack({ alignContent: Alignment.BottomEnd }) {
-      Stack() {
-        if (agent.runtime.toLowerCase().includes('claude')) Image($r('app.media.project_agent_claude')).width(17*this.outlineControlScale()).height(17*this.outlineControlScale()).objectFit(ImageFit.Contain)
-        else if (agent.runtime.toLowerCase().includes('codex') || agent.runtime.toLowerCase().includes('openai'))
-          Image($r('app.media.project_agent_openai')).width(17*this.outlineControlScale()).height(17*this.outlineControlScale()).fillColor(Colors.ink).objectFit(ImageFit.Contain)
-        else if (agent.runtime) Text(agent.runtime.slice(0,1).toUpperCase()).fontSize('16vp').fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        else SymbolGlyph(Symbols.agent).fontSize('17vp').fontColor([Colors.secondary])
-      }.width(36*this.outlineControlScale()).height(36*this.outlineControlScale()).backgroundColor(Colors.subtle).borderRadius(18*this.outlineControlScale())
-      if (agent.state && agent.state !== 'unknown') Circle().width(12).height(12).fill(this.tint(agent))
-        .stroke(Colors.surface).strokeWidth(2)
-    }.width(36*this.outlineControlScale()).height(36*this.outlineControlScale())
-  }
   private agentContext(agent: ProjectAgent, paneName: string = '', starter: boolean = false): string {
     const special = [2, 4, 5, 6].includes(agent.rank) || agent.state === 'offline';
     return [special ? tr(agent.stateLabel) : '', paneName || agent.tab, starter ? tr('session_space_starter') : '', agent.model || agent.runtime]
       .filter((value: string) => !!value).join(' · ');
   }
-  @Builder needsReply() {
-    Text(tr('needs_you')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(Colors.needs)
-      .padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.selection).borderRadius(6)
-      .constraintSize({maxWidth:this.narrowOutline() ? '100%' : '41%'}).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-  }
-  private previewLeading(): LengthMetrics {
-    // The two-line iPhone subtitle adds leading between baselines; a single line keeps its intrinsic height.
-    const pointSize = 15*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(15));
-    return LengthMetrics.vp(5+(pointSize-15)/6);
-  }
   @Builder agentCell(agent:ProjectAgent, treeKey:string, level:number, paneName:string = '', starter:boolean = false) {
-    Row({space:12}) {
-      this.agentMark(agent)
-      Column({space:2}) {
-        Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Baseline,space:{main:LengthMetrics.vp(8),cross:LengthMetrics.vp(4)}}) {
-          Text(agent.row.title || tr('agent_untitled')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
-            .fontWeight(agent.state === 'unread' ? FontWeight.Bold : 600).fontColor(Colors.ink)
-            .constraintSize({maxWidth:'100%'}).flexGrow(1).maxLines(this.narrowOutline() ? 4 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
-          if (this.age(agent)) Text(this.age(agent)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
-        }.width('100%')
-        if (agent.preview) Row({space:8}) {
-          Text(agent.preview).maxLines(this.narrowOutline() ? 4 : 2).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
-            .lineSpacing(this.previewLeading(),{onlyBetweenLines:true})
-            .layoutWeight(1).textOverflow({overflow:TextOverflow.Ellipsis})
-          if (agent.state === 'needs_you' && !this.narrowOutline()) this.needsReply()
-        }.width('100%').alignItems(VerticalAlign.Top)
-        if (agent.state === 'needs_you' && (!agent.preview || this.narrowOutline())) this.needsReply()
-        ProjectAgentPlaceLine({place:paneName || agent.tab,modelName:agent.model,showsSource:!!(agent.tab || agent.runtime),
-          todoTitle:agent.todoTitle,sessionId:agent.row.id,starter:starter,fontScale:nativeEnvironment.fontScale})
-      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-    }.width('100%').alignItems(VerticalAlign.Top).constraintSize({minHeight:58}).padding({
-      left:this.treeInset(level)+6,right:20,top:19,bottom:19
-    })
+    Row() {
+      AgentDirectoryRowContent({agent:agent, age:this.age(agent), place:paneName || agent.tab, showsSource:!!(agent.tab || agent.runtime),
+        starter:starter,narrow:this.narrowOutline(),leftInset:this.treeInset(level)+6,controlScale:this.outlineControlScale(),
+        fontScale:nativeEnvironment.fontScale,tint:this.tint(agent)})
+    }.width('100%')
       .accessibilityGroup(true).accessibilityText([agent.row.title,agent.preview,tr(agent.stateLabel),this.agentContext(agent,paneName,starter),agent.todoTitle,this.age(agent)].filter((v:string) => !!v).join(' · '))
       .accessibilitySelected(this.adjacentItem === 'session:' + agent.row.key())
       .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id(this.agentRepositories ? 'agents.repo.session' : 'projects.inline_session')

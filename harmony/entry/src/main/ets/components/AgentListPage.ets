@@ -4,7 +4,9 @@ import { util } from '@kit.ArkTS';
 import { ClientModel } from '../models/ClientModel';
 import { AgentDecisionCard, AgentDecisionQueue } from '../models/AgentDecisionQueue';
 import { AgentWorkspace, AgentWorkspaceGroup } from '../models/AgentWorkspace';
-import { ProjectCatalog, ProjectWorktree } from '../models/ProjectCatalog';
+import { ProjectAgent, ProjectCatalog, ProjectWorktree } from '../models/ProjectCatalog';
+import { AgentDirectoryRowContent } from './AgentDirectoryRowContent';
+import { agentPaneSource } from '../core/AgentListAdapter';
 import { WorktreeChange } from '../models/WorktreeActions';
 import { AgentRepositoryRows } from './AgentRepositoryRows';
 import { AgentTaskGrouping } from '../models/AgentTaskGrouping';
@@ -49,6 +51,16 @@ class AgentRowPresentation {
   @Trace status: string = '';
   @Trace metadata: string[] = [];
   @Trace selectionKey: string = '';
+  @Trace activity: ProjectAgent | undefined = undefined;
+  @Trace activitySource: string = '';
+  private activityRaw: string = '';
+  prepareActivity(row:ResourceRow): void {
+    if (this.activity && this.activityRaw === row.raw && this.activity.row === row) return;
+    const data = row.data(), source=agentPaneSource(Wire.text(data,'pane_id'));
+    this.activity = new ProjectAgent(row,data);
+    this.activitySource = source === 'feishu' ? 'agent_source_lark_group' : source === 'terminal' ? 'terminal' : '';
+    this.activityRaw = row.raw;
+  }
 }
 
 @ObservedV2
@@ -274,6 +286,7 @@ export struct AgentListPage {
       presentation.sessionId = Wire.text(data, 'session_id');
       presentation.spaceName = Wire.text(data, 'space_name');
     }
+    if (this.workspace?.groupingMode === 'app' || this.workspace?.groupingMode === 'recent') presentation.prepareActivity(row);
     const state = row.state || presentation.rawStatus;
     const content = presentation.lastText || row.detail;
     const machineId = row.machine || presentation.machineId;
@@ -402,6 +415,16 @@ export struct AgentListPage {
     if (group.titleKey) return tr(group.titleKey).replace('{agent}',group.machineName);
     return tr(STATE_LABELS[group.id] || '') || group.machineName;
   }
+  private appCountKeys(group:AgentWorkspaceGroup):string[] {
+    return ['needs_you','working','unread','backgroundWaiting','idle'].filter((key:string)=>Wire.number(group.stateCounts,key)>0);
+  }
+  private appCountColor(key:string):ResourceColor {
+    return key === 'needs_you' ? Colors.needs : key === 'working' || key === 'backgroundWaiting' ? Colors.working : key === 'unread' ? Colors.unread : Colors.tertiary;
+  }
+  private appCountLabel(group:AgentWorkspaceGroup,key:string):string {
+    const name = key === 'unread' ? 'agent_group_unread' : key === 'backgroundWaiting' ? 'agent_group_background' : key;
+    return String(Wire.number(group.stateCounts,key)) + ' ' + tr(name);
+  }
   @Builder activityMark(group:AgentWorkspaceGroup) {
     if (group.id === 'app/desktop/claude code') Image($r('app.media.project_agent_claude')).width(18).height(18).objectFit(ImageFit.Contain)
     else if (group.id === 'app/desktop/codex') Image($r('app.media.project_agent_openai')).width(18).height(18).objectFit(ImageFit.Contain).fillColor(Colors.ink)
@@ -412,28 +435,58 @@ export struct AgentListPage {
       .width(18).height(14).textAlign(TextAlign.Center).border({width:1,color:Colors.secondary,radius:3}).accessibilityLevel('no')
   }
   @Builder groupHeader(binding: BoundAgentGroup) {
-    Column({ space: 4 }) {
+    if (binding.value.presentation) Column() {
+      if (binding.value.presentation === 'recent') Row({space:6}) {
+        Text(this.groupTitle(binding.value)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(600).fontColor(Colors.ink)
+        this.activityTotal(binding.value.totalRowCount)
+      }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(40.3,48,this.environment.fontScale)})
+        .padding({left:20,right:20}).accessibilityGroup(true).id('agents.recent.heading')
+      else Button({type:ButtonType.Normal}) {
+        Row({space:6}) {
+          this.activityMark(binding.value)
+          Text(this.groupTitle(binding.value)).fontSize(binding.value.presentation==='app-project' ? 15 : 13)
+            .maxFontScale(Tokens.interfaceScaleFor(binding.value.presentation==='app-project' ? 15 : 13))
+            .fontWeight(600).fontColor(Colors.secondary).flexShrink(1).maxLines(2)
+          if (binding.value.subtitle) Text(binding.value.subtitle).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.tertiary).maxLines(1)
+          Blank().layoutWeight(1)
+          ForEach(this.appCountKeys(binding.value),(key:string)=>{
+            Row({space:4}) {
+              Circle().width(6).height(6).fill(this.appCountColor(key))
+              Text(String(Wire.number(binding.value.stateCounts,key))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(Colors.secondary)
+            }.accessibilityGroup(true).accessibilityText(this.appCountLabel(binding.value,key)).id('agents.app.count.'+key)
+          },(key:string)=>key)
+          this.activityTotal(binding.value.totalRowCount)
+          SymbolGlyph(binding.value.folded ? Symbols.expand : Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
+        }.width('100%')
+      }.width('100%').constraintSize({minHeight:binding.value.presentation==='app-project' ?
+        PhoneStyle.formSize(56.3,64,this.environment.fontScale) : PhoneStyle.formSize(64,78,this.environment.fontScale)})
+       .padding({left:20,right:20,top:binding.value.presentation==='app-project' ? 0 : 18}).backgroundColor(Colors.surface)
+       .accessibilityText([this.groupTitle(binding.value),binding.value.subtitle,tr(binding.value.folded ? 'agent_expand' : 'agent_collapse'),
+         ...this.appCountKeys(binding.value).map((key:string)=>this.appCountLabel(binding.value,key)),String(binding.value.totalRowCount)]
+         .filter((part:string)=>!!part).join(' · '))
+       .onClick(()=>this.workspace.toggleFold(binding.value.id)).id('agents.group.toggle.'+binding.value.id)
+    }.width('100%').padding({left:4,right:4})
+    else Column({ space: 4 }) {
       if (binding.value.parent === 'quiet') {
         Text(tr('agent_group_quiet_spaces')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).width('100%')
       }
-      if (binding.value.presentation === 'recent') Row({space:6}) {
-        Text(this.groupTitle(binding.value)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        Text(String(binding.value.totalRowCount)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
-      }.width('100%').constraintSize({minHeight:40}).padding({left:4}).accessibilityGroup(true).id('agents.recent.heading')
-      else Button({ type: ButtonType.Normal }) {
+      Button({ type: ButtonType.Normal }) {
         Row({ space: 6 }) {
-          if (binding.value.presentation.startsWith('app')) this.activityMark(binding.value)
           Text(this.groupTitle(binding.value))
             .fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).flexShrink(1).maxLines(this.narrowRow() ? 4 : 2)
           Text(String(binding.value.totalRowCount)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
           Blank().layoutWeight(1)
           SymbolGlyph(binding.value.folded ? Symbols.expand : Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
         }.width('100%').constraintSize({ minHeight: 44 })
-      }.width('100%').padding({ left: binding.value.presentation==='app-project' ? 18 : 4, right: 5 }).backgroundColor(Color.Transparent)
+      }.width('100%').padding({ left: 4, right: 5 }).backgroundColor(Color.Transparent)
         .accessibilityText(this.groupTitle(binding.value) + ' · ' +
           String(binding.value.totalRowCount) + ' · ' + tr(binding.value.folded ? 'agent_expand' : 'agent_collapse'))
         .onClick(() => this.workspace.toggleFold(binding.value.id)).id('agents.group.toggle.' + binding.value.id)
     }.width('100%').padding({ top: 6 }).alignItems(HorizontalAlign.Start)
+  }
+  @Builder activityTotal(value:number) {
+    Text(String(value)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(600).fontColor(Colors.secondary)
+      .padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.control).borderRadius(9)
   }
 
   private rowStatus(presentation: AgentRowPresentation): string {
@@ -560,7 +613,33 @@ export struct AgentListPage {
   @Builder groupRow(binding:BoundAgentRow,groupId:string) {
     if (this.compactRoot && !this.rail && groupId==='state/needs' && this.decisions.forSession(this.model,binding.bound.value).length)
       this.needsYouCards(binding)
+    else if (this.compactRoot && binding.presentation.activity && (groupId==='recent' || groupId.startsWith('app/')))
+      this.activityRow(binding,groupId)
     else this.agentRow(binding,groupId)
+  }
+  private activityPlace(binding:BoundAgentRow,groupId:string):string {
+    const value=binding.presentation, agent=value.activity;
+    if (!agent) return '';
+    if (groupId.includes('/project/') && !groupId.endsWith('/other#')) return agent.tab;
+    const place=[value.spaceName,agent.tab !== value.spaceName ? agent.tab : ''].filter((part:string)=>!!part).join(' › ');
+    return [place,this.mixedMachines ? value.metadata[1] : ''].filter((part:string)=>!!part).join(' · ');
+  }
+  @Builder activityRow(binding:BoundAgentRow,groupId:string) {
+    ListItem() {
+      Column() {
+        AgentDirectoryRowContent({agent:binding.presentation.activity!,age:this.rowTime(binding.presentation),place:this.activityPlace(binding,groupId),
+          showsSource:!!binding.presentation.activitySource,sourceTitle:binding.presentation.activitySource ? tr(binding.presentation.activitySource) : '',
+          narrow:this.listWidth>0 && this.listWidth<296,leftInset:groupId.includes('/project/') ? 36 : 20,
+          controlScale:Math.max(1,Math.min(this.environment.fontScale,67/51)),fontScale:this.environment.fontScale,tint:this.rowStatusColor(binding.presentation)})
+      }.width('100%').backgroundColor(this.isRowSelected(binding) ? Colors.selection : Colors.surface)
+    }.margin({left:4,right:4}).accessibilityGroup(true)
+      .accessibilityText([binding.presentation.provider,this.rowStatus(binding.presentation),binding.bound.value.title,
+        this.rowTime(binding.presentation),binding.presentation.recentContent,binding.presentation.activitySource ? tr(binding.presentation.activitySource) : '',
+        this.activityPlace(binding,groupId),binding.presentation.activity?.model || '',binding.presentation.activity?.todoTitle || ''].filter((part:string)=>!!part).join(' · '))
+      .selectable(true).selected(this.isRowSelected(binding)).onClick(()=>this.openRow(binding.bound.value))
+      .onVisibleAreaChange([0,1],(visible:boolean,ratio:number)=>this.onVisible(binding.bound.value,visible ? ratio : 0))
+      .onDisAppear(()=>this.onVisible(binding.bound.value,0)).bindContextMenu(this.rowMenu(binding),ResponseType.LongPress)
+      .id('agent.'+binding.bound.value.group+'.'+binding.bound.value.manager+'.'+binding.bound.value.machine+'.'+binding.bound.value.id)
   }
 
   @Builder taskRow(row:ResourceRow,depth:number) {

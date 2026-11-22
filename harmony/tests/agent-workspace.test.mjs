@@ -29,7 +29,7 @@ registerHooks({
       return { url: new URL('./Wire.ets', context.parentURL).href, shortCircuit: true };
     if (context.parentURL?.includes('/entry/src/main/ets/')) {
       const resolved = new URL(specifier, context.parentURL);
-      if (['/Wire','/AgentActivityGroups','/AgentRepositoryPlace'].some(name=>resolved.pathname.endsWith(name))) resolved.pathname += '.ets';
+      if (['/Wire','/AgentActivityGroups','/AgentRepositoryPlace','/MachineDashboard'].some(name=>resolved.pathname.endsWith(name))) resolved.pathname += '.ets';
       else if (!/\.[a-z]+$/i.test(resolved.pathname)) resolved.pathname += '.ts';
       return { url: resolved.href, shortCircuit: true };
     }

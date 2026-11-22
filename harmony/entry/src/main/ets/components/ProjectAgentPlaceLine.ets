@@ -8,6 +8,7 @@ export struct ProjectAgentPlaceLine {
   @Param place: string = '';
   @Param modelName: string = '';
   @Param showsSource: boolean = false;
+  @Param sourceTitle: string = '';
   @Param todoTitle: string = '';
   @Param sessionId: string = '';
   @Param starter: boolean = false;
@@ -18,7 +19,7 @@ export struct ProjectAgentPlaceLine {
     const ui = this.getUIContext(), scale = this.fontScale;
     const width = (text:string, size:number): number => !text ? 0 :
       ui.px2vp(Math.ceil(ui.getMeasureUtils().measureText({textContent:text,fontSize:Tokens.interfaceFontVp(size,scale)})));
-    const source = this.showsSource ? width(tr('terminal'),13)+10 : 0;
+    const source = this.showsSource ? width(this.sourceTitle || tr('terminal'),13)+10 : 0;
     const model = this.modelName ? width(this.modelName,12)+12 : 0;
     const icon = this.todoTitle ? 13*Math.min(scale,Tokens.interfaceScaleFor(13)) : 0;
     const todo = icon ? icon+4+width(this.todoTitle,13)+14 : 0;
@@ -34,7 +35,7 @@ export struct ProjectAgentPlaceLine {
   }
   build() {
     Row({space:4}) {
-      if (this.showsSource) Text(tr('terminal')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ai)
+      if (this.showsSource) Text(this.sourceTitle || tr('terminal')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ai)
         .maxLines(1).padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.subtle).borderRadius(7)
       if (this.place) Text(this.place).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
         .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
