@@ -31,13 +31,13 @@ export function restingComposerSize(fontScale: number): ComposerSize {
 }
 
 // UIKit body advances change with optical size. Measure the platform's default
-// font against the same mixed alphabet, spaces, punctuation and numerals.
+// font against the same lowercase alphabet and its word separator.
 // The user's draft always goes through the actual platform paragraph shaper.
-export const composerTypeSample = 'The quick brown fox jumps over the lazy dog. 0123456789';
+export const composerTypeSample = 'abcdefghijklmnopqrstuvwxyz ';
 const bodyMetrics: number[][] = [
-  [14,15,378.984], [15,16,402.026], [16,17,425.391], [17,19,446.499],
-  [19,21,495.604], [21,23,535.766], [23,28,581.675], [28,28,706.945],
-  [33,28,829.641], [40,28,1000.254], [47,28,1170.25], [53,28,1315.373]
+  [14,15,192.541], [15,16,204.316], [16,17,216.25], [17,19,227.076],
+  [19,21,252.046], [21,23,272.456], [23,28,295.645], [28,28,358.996],
+  [33,28,421.362], [40,28,508.105], [47,28,594.545], [53,28,668.349]
 ];
 
 export class ComposerReadingSize {

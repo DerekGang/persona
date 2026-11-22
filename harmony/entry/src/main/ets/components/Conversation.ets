@@ -776,13 +776,14 @@ export struct Conversation {
   }
   private nativeDraftLines(width: number): number {
     const ui = this.getUIContext(), text = this.model.draft;
+    if (!text) return 1;
     let offset = -1;
     for (let breaks = 0; breaks < 6; breaks++) {
       offset = text.indexOf('\n', offset + 1);
       if (offset < 0) break;
       if (breaks === 5) return 7;
     }
-    const value = !text || text.endsWith('\n') ? text + ' ' : text;
+    const value = text.endsWith('\n') ? text + ' ' : text;
     const metrics = ui.getMeasureUtils().measureTextSize({ textContent: value, constraintWidth: String(Math.max(1, width)) + 'vp',
       fontSize: String(this.readingSize.points) + 'vp', lineHeight: String(this.readingSize.line) + 'vp',
       letterSpacing: String(this.draftTracking) + 'vp', maxLines: 7, wordBreak: WordBreak.BREAK_WORD });
