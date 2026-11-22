@@ -7631,6 +7631,18 @@
     {
       "name": "header_space_open",
       "value": "All agents in space {space}"
+    },
+    {
+      "name": "header_space_needs",
+      "value": "{count} agents in this space, one needs you"
+    },
+    {
+      "name": "header_space_count",
+      "value": "{count} agents in this space"
+    },
+    {
+      "name": "header_space_one",
+      "value": "{count} agent in this space"
     }
   ]
 }

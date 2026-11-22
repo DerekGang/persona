@@ -9,6 +9,7 @@ export class SessionHeaderPermissions {
   unavailable: boolean = false;
   restarts: boolean = false;
   pending: boolean = false;
+  running: boolean = false;
   current: string = '';
   choices: string[] = [];
   private reversible: boolean = false;
@@ -21,6 +22,7 @@ export class SessionHeaderPermissions {
     const agent=Wire.text(data,'agent'), source=Wire.text(data,'source_kind');
     const claude=(!agent || agent==='claude') && source!=='codex_app_server' && source!=='codex_history';
     const live=Wire.text(data,'status',row.state)!=='offline' && row.state!=='offline';
+    this.running=live;
     const send=Wire.has(data,'capabilities') ? Wire.bool(caps,'send') : !source;
     const declared=Wire.has(caps,'modes');
     const modes=send && live && (declared ? Wire.bool(caps,'modes') : claude);

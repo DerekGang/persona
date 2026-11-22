@@ -59,7 +59,7 @@ export struct SessionHeaderPermissionChip {
   }
   @Builder menu() {
     Menu() {
-      MenuItemGroup({header:this.label()+(this.permission.pending ? '\n'+tr('header_permission_pending') : '')}) {
+      MenuItemGroup({header:this.label()+(!this.permission.running ? '\n'+tr('offline') : '')+(this.permission.pending ? '\n'+tr('header_permission_pending') : '')}) {
         ForEach(this.permission.choices,(value:string) => {
           MenuItem({content:this.name(value),labelInfo:this.detail(value)})
             .selectIcon(true).selected(this.permission.current===value).enabled(this.allows() && !this.command.saving)
@@ -73,11 +73,14 @@ export struct SessionHeaderPermissionChip {
   }
   build() {
     Button({type:ButtonType.Capsule}) {
-      Row() {
+      Stack() {
+        if (['plan','auto','acceptEdits','bypassPermissions'].includes(this.permission.current)) {
+          Rect().width('100%').height('100%').radius(28).fill(this.tint()).opacity(0.12)
+        } else Rect().width('100%').height('100%').radius(28).fill(Colors.control)
         if (this.command.saving) LoadingProgress().width(16).height(16)
         else SymbolGlyph(this.icon(this.permission.current)).fontSize(Tokens.interfaceFontVp(15,nativeEnvironment.fontScale)).fontColor([this.tint()])
-      }.justifyContent(FlexAlign.Center).height(30*Math.min(nativeEnvironment.fontScale,1.32))
-        .width(Math.max(35,35*Math.min(nativeEnvironment.fontScale,1.32))).borderRadius(28).backgroundColor(Colors.control)
+      }.height(30*Math.min(nativeEnvironment.fontScale,1.32))
+        .width(Math.max(35,35*Math.min(nativeEnvironment.fontScale,1.32)))
     }.width(Math.max(44,35*Math.min(nativeEnvironment.fontScale,1.32))).height(44).padding(0).backgroundColor(Color.Transparent)
       .accessibilityText(this.label()).accessibilityDescription(this.permission.pending ? tr('header_permission_pending') : '')
       .enabled(!this.command.saving).onClick(() => {

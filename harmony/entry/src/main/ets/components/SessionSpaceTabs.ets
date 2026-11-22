@@ -24,6 +24,9 @@ export struct SessionSpaceTabs {
   @Computed get permission():SessionHeaderPermissions {
     return new SessionHeaderPermissions(headerPermissionRow(this.model.selected,this.model.sessions,this.model.profile.id,this.model.profile.manager));
   }
+  @Computed get waiting():boolean {
+    return this.space.tabs.some((tab:SessionSpaceTab)=>tab.id!==this.space.current && (tab.state==='needs_you' || tab.state==='blocked'));
+  }
   private stamp():string { return JSON.stringify([this.model.scope(),this.model.connectionGeneration(),this.space.key,this.space.current]); }
   private pickTab(id:string):void {
     if (!this.pickerShown || this.stamp()!==this.pickerOwner || !this.space.tabs.some((tab:SessionSpaceTab)=>tab.id===id)) return;
@@ -118,7 +121,7 @@ export struct SessionSpaceTabs {
     }.width('100%').height('100%').backgroundColor(Colors.surface).padding({top:12}).id('session.siblings.picker')
   }
   build() {
-    if (this.space.tabs.length || this.permission.visible) Row({space:12}) {
+    if (this.space.tabs.length || this.space.key || this.permission.visible) Row({space:12}) {
       if (this.space.tabs.length) {
         List({space:6,scroller:this.scroller}) {
           ForEach(this.space.tabs,(tab:SessionSpaceTab) => {
@@ -131,16 +134,23 @@ export struct SessionSpaceTabs {
             Row({space:4}) {
               SymbolGlyph($r('sys.symbol.square_stack_3d')).fontSize(Tokens.interfaceFontVp(14,nativeEnvironment.fontScale)).fontColor([Colors.secondary])
               Text(String(this.space.tabs.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-            }.padding({left:8,right:8}).height(30*Math.min(nativeEnvironment.fontScale,1.32)).backgroundColor(Colors.control).borderRadius(22)
-            if (this.space.tabs.some((tab:SessionSpaceTab)=>tab.state==='needs_you' || tab.state==='blocked')) {
+            }.padding({left:8*Math.min(nativeEnvironment.fontScale,1.16),right:8*Math.min(nativeEnvironment.fontScale,1.16)}).height(30*Math.min(nativeEnvironment.fontScale,1.32)).backgroundColor(Colors.control).borderRadius(22)
+            if (this.waiting) {
               Circle().width(6).height(6).fill(Colors.needs)
             }
           }
         }.height(44).constraintSize({minWidth:44}).padding(0).backgroundColor(Color.Transparent).flexShrink(0)
-          .accessibilityText(tr('session_space_agents').replace('{count}',String(this.space.tabs.length)))
+          .accessibilityText(tr(this.waiting ? 'header_space_needs' : this.space.tabs.length===1 ? 'header_space_one' : 'header_space_count').replace('{count}',String(this.space.tabs.length)))
           .onClick(()=>{this.pickerOwner=this.stamp();this.pickerShown=true;}).id('session.siblings.all')
           .bindSheet($$this.pickerShown,this.picker(),{height:SheetSize.MEDIUM,detents:[SheetSize.MEDIUM,SheetSize.LARGE],dragBar:true,showClose:false})
-      } else Blank().layoutWeight(1)
+      } else {
+        Blank().layoutWeight(1)
+        if (this.space.key) Button({type:ButtonType.Circle}) {
+          SymbolGlyph(Symbols.folder).fontSize('15vp').fontColor([Colors.secondary])
+        }.width(44).height(44).padding(0).backgroundColor(Color.Transparent)
+          .accessibilityText(tr('phone_session_workspace').replace('{space}',this.space.title))
+          .onClick(()=>this.onOpenSpace(this.space.key)).id('session.space.open')
+      }
       if (this.permission.visible) SessionHeaderPermissionChip({model:this.model,permission:this.permission}).flexShrink(0)
     }.width('100%').padding({left:16,right:16})
   }

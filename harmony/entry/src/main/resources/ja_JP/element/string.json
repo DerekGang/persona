@@ -7631,6 +7631,18 @@
     {
       "name": "header_space_open",
       "value": "スペース{space}のすべてのエージェント"
+    },
+    {
+      "name": "header_space_needs",
+      "value": "同じスペースの{count}個のエージェント、要対応のエージェントあり"
+    },
+    {
+      "name": "header_space_count",
+      "value": "同じスペースの{count}個のエージェント"
+    },
+    {
+      "name": "header_space_one",
+      "value": "同じスペースの{count}個のエージェント"
     }
   ]
 }
