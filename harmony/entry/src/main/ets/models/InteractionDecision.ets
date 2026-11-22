@@ -416,6 +416,10 @@ export function interactionCanSubmit(request: Decision, readOnly: boolean = fals
 export function interactionResolution(request: Decision, action: string, values: Record<string, Object>, expectedRevision: string = request.revision): Record<string, Object> {
   if (!interactionCanSubmit(request)) throw new Error('not_pending');
   const data = rawInteraction(request);
+  if (action === 'dismiss') {
+    if (interactionToolName(request) === 'ask_user') throw new Error('unsupported');
+    return Wire.payload(['dismiss'], [true]);
+  }
   if (request.kind === 'question') {
     if (action === 'cancel') {
       if (!Wire.bool(data, 'can_cancel')) throw new Error('unsupported');

@@ -74,24 +74,31 @@ export struct AssistantCards {
   }
 
   @Computed get taskQuestions():TaskQuestionRow[] {
-    const questions:TaskQuestionRow[]=[], seen=new Set<string>();
-    if (!this.dockOnly || !this.active || !this.feed.todosReady) return questions;
-    for (const task of this.feed.taskCardsForConversation()) {
-      const todo=this.taskTodo(task), todoId=this.todoId(task);
+    const questions:TaskQuestionRow[]=[];
+    if (!this.dockOnly || !this.active || !this.feed.todosReady || this.feed.owner!==this.model.profile.manager) return questions;
+    const tasks=this.feed.todos.filter((todo:Record<string,Object>) =>
+      Wire.text(todo,'origin')===this.feed.conversationId && Wire.text(todo,'manager',this.feed.owner)===this.feed.owner);
+    tasks.sort((a:Record<string,Object>,b:Record<string,Object>) =>
+      (Date.parse(Wire.text(b,'created_at')) || 0) - (Date.parse(Wire.text(a,'created_at')) || 0));
+    for (const todo of tasks) {
+      const todoId=Wire.text(todo,'id');
       if (!todoId) continue;
-      for (const agent of this.activeAgents(task)) {
-        const row=this.feed.openAgent(todoId,agent);
+      // Each supervising task gets its own turn in the queue. Repeated links inside one task do not.
+      const seen=new Set<string>();
+      for (const agent of Wire.rows(todo,'agents')) {
+        if (Wire.text(agent,'released_at') || Wire.text(agent,'dismissed_at')) continue;
+        const machine=Wire.text(agent,'machine_id'), session=Wire.text(agent,'session_id');
+        const row=this.model.sessions.find((candidate:ResourceRow) => candidate.manager===this.feed.owner &&
+          (!candidate.group || candidate.group===this.model.profile.id) && candidate.machine===machine && (candidate.session || candidate.id)===session);
         if (!row) continue;
         for (const card of this.requests.forSession(this.model,row)) {
           if (seen.has(card.key) || card.owner!==this.model) continue;
           seen.add(card.key);
-          const raw=Wire.parse(card.request.raw), nested=Wire.object(raw,'interaction');
-          const at=Date.parse(Wire.text(raw,'created_at') || Wire.text(nested,'created_at')) || 0;
-          questions.push(new TaskQuestionRow(todoId,Wire.text(todo,'title'),row,card,at));
+          questions.push(new TaskQuestionRow(todoId,Wire.text(todo,'title'),row,card,card.since));
         }
       }
     }
-    return questions.sort((a:TaskQuestionRow,b:TaskQuestionRow) => a.at-b.at || a.card.key.localeCompare(b.card.key));
+    return questions.sort((a:TaskQuestionRow,b:TaskQuestionRow) => a.at-b.at);
   }
 
   private questionCurrent(row:TaskQuestionRow):boolean {
@@ -446,7 +453,7 @@ export struct AssistantCards {
         if (this.taskQuestions.length>1) Text(tr('session_task_more').replace('{count}',String(this.taskQuestions.length-1))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
       }.width('100%')
       InteractionDecisionForm({model:this.model,request:row.card.request,taskAgent:row.agent,taskCard:row.card,taskQueue:this.requests,
-        heightLimit:Math.max(116,Math.min(this.dockRoom*(this.trayOpen ? 0.35 : 0.46),360)),admission:():boolean => this.questionCurrent(row),
+        heightLimit:Math.max(116,this.dockRoom*(this.trayOpen || this.model.decision ? 0.35 : 0.52)),admission:():boolean => this.questionCurrent(row),
         onLink:(address:string) => { if (this.questionCurrent(row)) this.onLink(address); }})
     }.width('100%').id('chat.tasks.question.'+row.card.request.id)
   }
@@ -462,10 +469,12 @@ export struct AssistantCards {
           ForEach(['needs','progress','done'],(bucket:string) => {
             if (bucket!=='done' || this.trayBucket==='done' && this.trayOpen || this.trayRows.some((r:TaskTrayRow) => r.bucket===bucket)) Button({type:ButtonType.Capsule}) {
               Row({space:4}) {
-                Text(this.trayLabel(bucket)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(this.trayOpen && this.trayBucket===bucket ? Colors.link : Colors.ink)
-                Text(String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+                Text(this.trayLabel(bucket)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
+                  .fontColor(this.trayOpen && this.trayBucket===bucket ? Colors.onAction : bucket==='needs' ? Colors.link : Colors.secondary)
+                Text(String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+                  .fontColor(this.trayOpen && this.trayBucket===bucket ? Colors.onAction : bucket==='needs' ? Colors.link : Colors.secondary)
               }
-            }.height(29).padding({left:9,right:9}).backgroundColor(this.trayOpen && this.trayBucket===bucket ? Colors.selection : Colors.control)
+            }.constraintSize({minHeight:28}).padding({left:12,right:12,top:5,bottom:5}).backgroundColor(this.trayOpen && this.trayBucket===bucket ? Colors.action : Colors.subtle)
               .responseRegion({x:0,y:-7,width:'100%',height:44}).accessibilitySelected(this.trayOpen && this.trayBucket===bucket)
               .accessibilityText(this.trayLabel(bucket)+'、'+String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length))
               .onClick(() => this.openTray(bucket)).id('chat.tasks.'+bucket)

@@ -1704,7 +1704,7 @@ struct Index {
           Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('20vp').fontColor([Colors.ink]) }
             .width(42).height(42).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:21})
             .accessibilityText(tr('cancel')).onClick(() => this.showSheet = false).enabled(!this.creatingAgent).id('agent.cancel')
-          Text(tr('new_chat')).fontSize(18).maxFontScale(Tokens.navigationTextMaxScale).maxLines(2).fontWeight(FontWeight.Bold).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
+          Text(tr('phone_new_chat_title')).fontSize(17).maxFontScale(1.12).maxLines(2).fontWeight(600).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
           Blank().width(42)
         }.width('100%').constraintSize({minHeight:52}).padding({left:14,right:14,top:4,bottom:4})
         Scroll(this.agentFormScroll) {
@@ -1786,7 +1786,8 @@ struct Index {
           .onAreaChange((before:Area,after:Area) => {
             if (this.agentMessageFocused && Number(after.height) < Number(before.height)) this.agentFormScroll.scrollEdge(Edge.Bottom);
           })
-        Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start_chat')).height(Math.max(54, 23 * Math.min(this.environment.fontScale,Tokens.interfaceFontMaxScale) + 16))
+        Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start_chat'),{type:ButtonType.Capsule})
+          .height(Math.max(50, 33 * Math.min(this.environment.fontScale,Tokens.interfaceFontMaxScale) + 17))
           .width('89%').margin({top:7,bottom:12}).backgroundColor(Colors.action).fontColor(Colors.onAction).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
           .enabled(this.canStartAgent()).onClick(() => this.createAgent()).id('agent.create')
       }.width('100%').height('100%').backgroundColor(Colors.grouped)

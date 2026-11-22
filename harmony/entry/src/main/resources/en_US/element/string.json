@@ -6161,6 +6161,18 @@
       "value": "Month"
     },
     {
+      "name": "phone_new_chat_title",
+      "value": "New Chat"
+    },
+    {
+      "name": "phone_plan_fullscreen",
+      "value": "View plan full screen"
+    },
+    {
+      "name": "phone_interaction_terminal",
+      "value": "Handle in Terminal on Computer"
+    },
+    {
       "name": "phone_agent_plan_approval",
       "value": "Plan ready for review"
     },

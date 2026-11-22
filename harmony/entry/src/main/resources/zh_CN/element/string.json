@@ -6161,6 +6161,18 @@
       "value": "月"
     },
     {
+      "name": "phone_new_chat_title",
+      "value": "新对话"
+    },
+    {
+      "name": "phone_plan_fullscreen",
+      "value": "全屏查看计划"
+    },
+    {
+      "name": "phone_interaction_terminal",
+      "value": "交给电脑上的终端处理"
+    },
+    {
       "name": "phone_agent_plan_approval",
       "value": "计划等你审批"
     },

@@ -6161,6 +6161,18 @@
       "value": "月"
     },
     {
+      "name": "phone_new_chat_title",
+      "value": "新しいチャット"
+    },
+    {
+      "name": "phone_plan_fullscreen",
+      "value": "プランを全画面で表示"
+    },
+    {
+      "name": "phone_interaction_terminal",
+      "value": "コンピューターのターミナルで対応"
+    },
+    {
       "name": "phone_agent_plan_approval",
       "value": "プランの承認待ち"
     },

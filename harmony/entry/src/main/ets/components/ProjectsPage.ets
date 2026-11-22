@@ -655,7 +655,7 @@ export struct ProjectsPage {
               Text(tree.machineTitle).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.link).maxLines(2)
               SymbolGlyph(Symbols.expand).fontSize('10vp').fontColor([Colors.link])
             }
-          }.padding({left:10,right:10,top:4,bottom:4}).backgroundColor(Colors.selection)
+          }.padding({left:12,right:12,top:6,bottom:6}).backgroundColor(Colors.selection)
             .responseRegion({x:0,y:-6,width:'100%',height:'150%'}).accessibilityGroup(true).accessibilityText(tree.machineTitle)
             .onClick(() => this.onMachine(tree)).id('projects.machine_spaces')
           if (tree.cwd) Text(this.pathLabel(tree)).fontColor(Colors.secondary).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
@@ -672,7 +672,7 @@ export struct ProjectsPage {
         }.constraintSize({minHeight:44}).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('project_open_parent') + ' · ' + tree.breadcrumb)
           .onClick(() => this.chooseParent(tree.key)).id('projects.parent')
         if (!tree.online) Text(tr('offline')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
-      }.alignItems(HorizontalAlign.Start).padding({top:8,bottom:14}).width('100%')
+      }.alignItems(HorizontalAlign.Start).padding({top:8,bottom:16}).width('100%')
     }
   }
   private openSpaceCard(treeKey:string,sessionKey:string):void {
@@ -748,7 +748,7 @@ export struct ProjectsPage {
           .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
       }
     }.width('100%').layoutWeight(1).maintainVisibleContentPosition(true)
-      .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:4,bottom:12}).id('projects.sessions')
+      .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:8,bottom:12}).id('projects.sessions')
   }
   @Builder spaceBar(tree: ProjectWorktree) {
     Row() {
@@ -761,7 +761,7 @@ export struct ProjectsPage {
     }.width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:3,bottom:3})
     Text(tree.title).fontSize(PhoneStyle.title).fontWeight(FontWeight.Bold).maxFontScale(Tokens.interfaceScaleFor(34))
       .fontColor(Colors.ink).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%').textAlign(TextAlign.Start)
-      .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:7,bottom:6}).id('shell.page_title')
+      .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:15,bottom:6}).id('shell.page_title')
   }
   build() {
     Column() {

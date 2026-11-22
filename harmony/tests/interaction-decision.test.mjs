@@ -40,6 +40,17 @@ test('question answers keep exact labels, custom text takes precedence, and canc
   assert.throws(() => interactionResolution(request, 'cancel', {}), /unsupported/);
 });
 
+test('handing a pending card to the terminal sends only dismiss and is unavailable for assistant ask_user', () => {
+  for (const kind of ['plan','permission','question','screen','elicitation']) {
+    const card=decision({id:'terminal',kind,tool_name:'other',questions:[{question:'Which?'}]});
+    assert.deepEqual(interactionResolution(card,'dismiss',{mode:'bypassPermissions',feedback:'private draft'}),{dismiss:true});
+    card.status='resolved';
+    assert.throws(()=>interactionResolution(card,'dismiss',{}),/not_pending/);
+  }
+  const ask=decision({id:'ask',kind:'question',tool_name:'ask_user',questions:[{question:'Which?'}]});
+  assert.throws(()=>interactionResolution(ask,'dismiss',{}),/unsupported/);
+});
+
 test('Later is eligible only for an open ask_user question in an editable Persona conversation', () => {
   const request = decision({ id: 'ask-later', kind: 'question', tool_name: 'ask_user', questions: [{question: 'Which?'}] });
   assert.equal(interactionCanDefer(request, 'conversation', false, false), true);

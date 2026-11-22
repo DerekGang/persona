@@ -102,6 +102,10 @@ export function projectOutline(projects:PersonaProject[], state:ProjectBrowserSt
   for (const host of groups) {
     if (hostKey ? hostKey !== host.key : !focus && state.machine && state.machine !== host.key) continue;
     const visible = host.projects.filter((p:PersonaProject) => {
+      // The Agent tree admits empty repositories supplied by Orca or Paseo. Other engines expose
+      // their directories for explicit searches and management, and enter the tree through a session.
+      if (!focus && !hostKey && !filtering && !p.sessionCount &&
+        !p.trees.some((tree:ProjectWorktree) => tree.source === 'orca' || tree.source === 'paseo')) return false;
       const match = new ProjectMatch(p,query,quick,muted); matches.set(p.key,match);
       return match.all || !!match.visible.size;
     });

@@ -17,7 +17,7 @@ registerHooks({
 });
 const { AgentDecisionQueue }=await import('../entry/src/main/ets/models/AgentDecisionQueue.ets');
 const { interactionResolution }=await import('../entry/src/main/ets/models/InteractionDecision.ets');
-const { ResourceRow }=await import('../entry/src/main/ets/models/Wire.ets');
+const { ResourceRow, Wire }=await import('../entry/src/main/ets/models/Wire.ets');
 
 function pair(id) {
   const row=ResourceRow.from({id:'s',session_id:'s',manager:'assistant',machine_id:'machine'},'session');
@@ -89,4 +89,27 @@ test('navigation or owner changes while validating a response prevent the mutati
   queue.clear(); finish.resolve(p.state.rows);
   await answer;
   assert.equal(p.state.writes.length,0);
+});
+
+test('each supervising task displays the shared Agent question once, while one answer clears every occurrence',async()=>{
+  const {owner,row,state}=pair('one'), other=pair('two');
+  Object.assign(owner,{directoryOwners:()=>[owner,other.owner],directoryOwnerFor:agent=>agent.group==='one' ? owner : other.owner,
+    sessions:[other.row,row]});
+  const requests=new AgentDecisionQueue(); await requests.reload(owner,owner);
+  const source=readFileSync(new URL('../entry/src/main/ets/components/AssistantCards.ets',import.meta.url),'utf8');
+  const question=source.match(/^class TaskQuestionRow \{[\s\S]*?^\}/m)[0];
+  const getter=source.match(/  @Computed (get taskQuestions\(\)[\s\S]*?^  \})/m)[1];
+  const Panel=new Function('Wire',stripTypeScriptTypes(question+'\nclass Panel {'+getter+'}')+'\nreturn Panel;')(Wire);
+  const linked={machine_id:'machine',session_id:'s'};
+  const todo=(id,day,agents,extra={})=>({id,title:id,origin:'chat',created_at:'2026-06-'+day+'T08:00:00Z',agents,...extra});
+  const feed={owner:'assistant',conversationId:'chat',todosReady:true,todos:[
+    todo('older','01',[linked]),todo('newer','02',[linked,linked]),todo('elsewhere','03',[linked],{origin:'another'}),
+    todo('released','03',[{...linked,released_at:'2026-06-02'}]),todo('foreign','03',[linked],{manager:'foreign'}),
+    todo('missing','03',[{...linked,session_id:'gone'}])]};
+  const panel=Object.assign(new Panel(),{model:owner,feed,requests,active:true,dockOnly:true});
+  assert.deepEqual(panel.taskQuestions.map(q=>q.todoId),['newer','older']);
+  assert.ok(panel.taskQuestions.every(q=>q.agent===row));
+  const card=panel.taskQuestions[0].card;
+  await requests.answerForm(owner,row,card,'answer',{'Which color?':'Green'},'once',()=>true);
+  assert.equal(state.writes.length,1);assert.deepEqual(panel.taskQuestions,[]);
 });

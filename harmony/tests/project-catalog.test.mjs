@@ -464,6 +464,22 @@ test('the machine’s first repository precedes an unnamed project’s named Orc
   browser.query='notes';assert.ok(projectOutline(projects,browser).some(line=>line.kind==='tree' && line.tree.sourceId==='notes'));
 });
 
+test('only Orca and Paseo catalog entries appear without a session in the root Agent tree', () => {
+  const catalog = ['herdr', 'orca', 'paseo'].map(source => workspace(source, { source, cwd: '/code/' + source }));
+  const browser = new ProjectBrowserState();
+  const projects = projectDirectory(catalog, [], [machine]);
+  const titles = (lines) => lines.filter(line => line.kind === 'project').map(line => line.project.title).sort();
+  assert.deepEqual(titles(projectOutline(projects, browser)), ['orca', 'paseo']);
+  const empty = projects.find(project => project.title === 'herdr');
+  assert.ok(projectOutline(projects, browser, empty.key).some(line => line.tree?.sourceId === 'herdr'));
+  assert.ok(titles(projectOutline(projects, browser, '', empty.hostKey)).includes('herdr'));
+  browser.query = 'herdr';
+  assert.deepEqual(titles(projectOutline(projects, browser)), ['herdr']);
+  browser.query = '';
+  const linked = session('attached', { cwd: '/code/herdr', workspace_id: 'herdr', space_kind: 'herdr' });
+  assert.deepEqual(titles(projectOutline(projectDirectory(catalog, [linked], [machine]), browser)), ['herdr', 'orca', 'paseo']);
+});
+
 test('typing a repository name or a distinct Agent title narrows the status counts to the same Agent rows', () => {
   const rows=[session('one',{title:'a special issue',cwd:'/repo/weather',state:'needs_you'}),
     session('two',{title:'General',cwd:'/repo/weather',state:'unread'}),

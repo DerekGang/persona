@@ -9,7 +9,7 @@ import { AgentDecisionQueue, AgentDecisionCard } from '../models/AgentDecisionQu
 import { util } from '@kit.ArkTS';
 import {
   InteractionChoice, InteractionSchemaField, InteractionValidation,
-  recordedPlanMode, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
+  recordedPlanMode, interactionCanDefer, interactionCanSubmit, interactionToolName, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
   interactionPermissionFieldPlaceholder, interactionQuestionOptions,
   interactionSchemaFields, interactionScreenCanCancel, interactionScreenMulti, interactionScreenOptions,
@@ -33,6 +33,9 @@ export struct InteractionDecisionForm {
   @Param heightLimit: number = 0;
   @Local inlineBodyHeight: number = 0;
   @Local inlineFooterHeight: number = 44;
+  @Local inlineHeaderHeight: number = 28;
+  @Local cardFolded: boolean = false;
+  @Local fullPlan: boolean = false;
   @Param draft: QuestionDraft | undefined = undefined;
   @Param draftSession: string = '';
   @Event admission: () => boolean = (): boolean => true;
@@ -62,6 +65,8 @@ export struct InteractionDecisionForm {
   }
 
   private resetForm(): void {
+    this.cardFolded = false;
+    this.fullPlan = false;
     this.selected = '';
     this.selectedScreen = '';
     this.screenOptions = [];
@@ -279,19 +284,23 @@ export struct InteractionDecisionForm {
 
   private submit(option: string): void {
     if (!this.canRespond()) return;
-    if (this.request.kind === 'question' && option === 'cancel') {
+    if (option === 'dismiss') {
+      if (!this.taskQueue || interactionToolName(this.request) === 'ask_user') return;
+    } else if (this.request.kind === 'question' && option === 'cancel') {
       if (!interactionScreenCanCancel(this.request)) return;
     } else if (this.request.kind === 'elicitation' && (option === 'decline' || option === 'cancel')) {
       // Decline and cancel remain available when a form is unsupported or incomplete.
     } else if (!this.canSubmit()) return;
-    const values = this.request.kind === 'question' && option === 'cancel' || this.request.kind === 'elicitation' && option !== 'accept' ?
+    const values = option === 'dismiss' || this.request.kind === 'question' && option === 'cancel' || this.request.kind === 'elicitation' && option !== 'accept' ?
       Wire.payload([], []) : this.answerValues();
     this.busy = true;
     this.clearSecrets();
     const request=this.request, agent=this.taskAgent, card=this.taskCard;
     const answer=this.taskQueue && agent && card ? this.taskQueue.answerForm(this.model,agent,card,option,values,util.generateRandomUUID(),this.admission) :
       this.model.answer(option,values,request,this.admission);
-    answer.then(() => { this.busy=false; if (request.status==='resolved') this.onResolved(); });
+    answer.then(() => { if (request===this.request && request.status==='resolved') this.onResolved(); })
+      .catch(() => { if (request===this.request && this.admission()) this.model.error='failed'; })
+      .finally(() => { if (request===this.request) this.busy=false; });
   }
 
   private historySummary(): string {
@@ -522,6 +531,66 @@ export struct InteractionDecisionForm {
     return Wire.text(Object.keys(details).length ? details : envelope,'plan') || this.request.prompt;
   }
 
+  private cardHeading():string {
+    if (this.request.kind==='plan') return tr('phone_agent_plan_approval');
+    if (this.request.kind==='permission') return tr('phone_agent_needs_approval');
+    if (this.request.kind==='question') {
+      const provider=interactionToolName(this.request)==='ask_user' ? 'Persona' : Wire.text(this.taskAgent?.data() || {},'agent_label') || Wire.text(this.taskAgent?.data() || {},'agent');
+      return tr('phone_agent_asks').replace('{agent}',provider==='claude' ? 'Claude' : provider==='codex' ? 'Codex' : provider || tr('agent'));
+    }
+    return tr('needs_you');
+  }
+
+  private toggleCard():void {
+    if (this.admission()) this.cardFolded=!this.cardFolded;
+  }
+
+  @Builder planReader() {
+    Column() {
+      Row() {
+        Text(tr('phone_agent_plan_approval')).layoutWeight(1).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
+          .fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        Button({type:ButtonType.Circle}) { SymbolGlyph(IconActions.symbol('close')).fontSize('19vp').fontColor([Colors.ink]) }
+          .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('close')).onClick(() => this.fullPlan=false).id('interaction.task.reader.close')
+      }.width('100%').padding({left:16,right:12,top:6,bottom:6})
+      Scroll() {
+        Column() { MarkdownText({text:this.taskPlanSource(),chatReply:true,onLink:this.onLink}) }
+          .width('100%').alignItems(HorizontalAlign.Start).padding(16)
+      }.width('100%').layoutWeight(1).align(Alignment.TopStart).id('interaction.task.reader')
+    }.width('100%').height('100%').backgroundColor(Colors.surface)
+  }
+
+  @Builder taskHeader() {
+    Row({space:5}) {
+      Button({type:ButtonType.Normal}) {
+        Row({space:5}) {
+          SymbolGlyph(this.request.kind==='plan' ? Symbols.document : $r('sys.symbol.hand_raised_fingers_spread'))
+            .fontSize('13vp').fontColor([Colors.link])
+          Text(this.cardHeading()).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(Colors.link).maxLines(1)
+          if (this.cardFolded && this.taskCard?.preview) Text(this.taskCard.preview).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+            .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
+        }.align(Alignment.Start).width('100%')
+      }.layoutWeight(1).height(28).backgroundColor(Color.Transparent).padding(0)
+        .onClick(() => this.toggleCard()).accessibilityText(this.cardHeading()).accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded'))
+      if (!this.cardFolded && this.request.kind==='plan') Button({type:ButtonType.Circle}) {
+        SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('13vp').fontColor([Colors.secondary])
+      }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_plan_fullscreen'))
+        .onClick(() => { if (this.admission()) this.fullPlan=true; }).id('interaction.task.expand_plan')
+        .bindContentCover($$this.fullPlan,this.planReader())
+      if (interactionToolName(this.request)!=='ask_user') Button({type:ButtonType.Circle}) {
+        Image(Symbols.more).width(16).height(16).fillColor(Colors.secondary)
+      }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).enabled(this.canRespond()).accessibilityText(tr('more'))
+        .bindMenu([{value:tr('phone_interaction_terminal'),action:() => this.submit('dismiss')}]).id('interaction.task.menu')
+      Button({type:ButtonType.Circle}) {
+        SymbolGlyph(this.cardFolded ? Symbols.up : Symbols.down).fontSize('13vp').fontColor([Colors.secondary])
+      }.width(27).height(27).padding(0).backgroundColor(Colors.control).accessibilityText(tr(this.cardFolded ? 'agent_expand' : 'agent_collapse'))
+        .accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded')).onClick(() => this.toggleCard()).id('interaction.task.fold')
+    }.width('100%').onAreaChange((_before:Area,area:Area) => {
+      const height=Number(area.height);
+      if (height>0 && Math.abs(this.inlineHeaderHeight-height)>0.5) this.inlineHeaderHeight=height;
+    })
+  }
+
   private approveTaskPlan(mode:string):void {
     if (!this.canRespond()) return;
     this.selected='approve'; this.setText('mode',mode); this.submit('approve');
@@ -537,8 +606,13 @@ export struct InteractionDecisionForm {
           Button(tr('session_task_return')).layoutWeight(1).fontSize(13).enabled(this.canRespond()).onClick(() => this.submit('deny'))
         }.width('100%')
       } else {
-        Button(tr(recordedPlanMode(this.request) ? 'approve' : 'session_task_approve_run')).width('100%').constraintSize({minHeight:40})
-          .fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).backgroundColor(Colors.action).fontColor(Colors.onAction).enabled(this.canRespond())
+        Button({type:ButtonType.Capsule}) {
+          Row({space:6}) {
+            SymbolGlyph($r('sys.symbol.play_fill')).fontSize('14vp').fontColor([Colors.onAction])
+            Text(tr(recordedPlanMode(this.request) ? 'approve' : 'session_task_approve_run')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.onAction)
+          }
+        }.width('100%').constraintSize({minHeight:44}).accessibilityText(tr(recordedPlanMode(this.request) ? 'approve' : 'session_task_approve_run'))
+          .backgroundColor(Colors.action).enabled(this.canRespond())
           .onClick(() => this.approveTaskPlan(recordedPlanMode(this.request) || 'bypassPermissions')).id('interaction.task.approve')
         Row({space:6}) {
           if (!recordedPlanMode(this.request)) Button(tr('session_task_auto_edits')).layoutWeight(1).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale)
@@ -612,13 +686,14 @@ export struct InteractionDecisionForm {
   }
 
   private inlineSpace(): number {
-    return Math.max(1, this.heightLimit - this.inlineFooterHeight - 22);
+    return Math.max(1, this.heightLimit - this.inlineFooterHeight - (this.taskQueue ? this.inlineHeaderHeight + 28 : 22));
   }
   build() {
     if (this.heightLimit > 0) Column({space: 6}) {
-      Scroll() {
+      if (this.taskQueue) this.taskHeader()
+      if (!this.cardFolded) Scroll() {
         Column({space: Tokens.gap}) {
-          Row({space: 6}) {
+          if (!this.taskQueue) Row({space: 6}) {
             Circle().width(7).height(7).fill(Colors.needs)
             Text(tr(this.request.kind === 'question' ? 'question' : this.request.kind === 'plan' ? 'plan' : 'needs_you'))
               .fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
@@ -631,7 +706,7 @@ export struct InteractionDecisionForm {
         })
       }.width('100%').height(this.inlineBodyHeight > 0 ? Math.min(this.inlineBodyHeight, this.inlineSpace()) : undefined)
         .constraintSize({maxHeight: this.inlineSpace()}).scrollBar(BarState.Auto).align(Alignment.TopStart).id('interaction.body')
-      Column() {
+      if (!this.cardFolded) Column() {
         if (this.taskQueue && this.request.kind==='plan') this.taskPlanActions()
         else this.responseFooter()
       }.width('100%').onAreaChange((_before: Area, area: Area) => {
