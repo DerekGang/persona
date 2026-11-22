@@ -119,6 +119,8 @@ struct KnowledgeLibraryRow {
 export struct KnowledgeWorkspacePage {
   @Local dispatchExpanded: boolean = false;
   @Local facts: RecordingFactsDraft = new RecordingFactsDraft();
+  @Local removedFacts: string = '';
+  private removedFactsOwner: string = '';
   @Local recordingTools: boolean = false;
   @Require @Param model: ClientModel;
   @Param row: ResourceRow | undefined = undefined;
@@ -290,11 +292,11 @@ export struct KnowledgeWorkspacePage {
     this.metadataSheet=this.workspace.editOpen;
   }
   @Monitor('workspace.editOpen') metadataChanged():void { if (!this.workspace.editOpen) this.metadataSheet=false; }
-  @Monitor('row') rowChanged(): void { this.metadataSheet=false; this.facts.close(); this.recordingTools=false; this.syncRowBindings(); this.openWorkspace(); }
+  @Monitor('row') rowChanged(): void { this.metadataSheet=false; this.facts.close(); this.removedFacts=''; this.removedFactsOwner=''; this.recordingTools=false; this.syncRowBindings(); this.openWorkspace(); }
 
   @Monitor('model.profile') profileChanged(): void {
     this.options().clear(this.recording);
-    this.metadataSheet=false; this.facts.close(); this.recordingTools=false; this.showIgnored=false; this.recordingOpen = false;
+    this.metadataSheet=false; this.facts.close(); this.removedFacts=''; this.removedFactsOwner=''; this.recordingTools=false; this.showIgnored=false; this.recordingOpen = false;
     this.selectedCalendarEvent=''; this.calendarRequest++; this.calendarEvents=[]; this.calendarState=''; this.meetingTitle=''; this.meetingKind='meeting';
     this.privateMeeting=false; this.invitationOverride='';this.syncMeetingOptions();this.meetingFeaturesChanged(); this.localMeetings = false; this.localOwner = ''; this.localOpening = undefined;
     this.recording.stopForBackground().catch(() => undefined); this.syncRowBindings(); this.openWorkspace();
@@ -907,6 +909,68 @@ export struct KnowledgeWorkspacePage {
     }
   }
 
+  private factsChanged():boolean { return this.facts.text.trim()!==this.facts.baseline.trim(); }
+  private factsOwner():string { return JSON.stringify([this.model.scope(),this.model.connectionGeneration(),this.workspace.selected.key()]); }
+  private focusEmptyFacts():void {
+    if (this.facts.baseline || !this.facts.open) return;
+    const owner=this.factsOwner();
+    setTimeout(() => {
+      if (this.facts.open && !this.facts.baseline && this.factsOwner()===owner) {
+        try { this.getUIContext().getFocusController().requestFocus('knowledge.facts.text'); } catch (_) { }
+      }
+    },150);
+  }
+  private async deleteFacts():Promise<void> {
+    const owner=this.factsOwner(), previous=this.facts.baseline;
+    if (!previous || this.workspace.busy) return;
+    this.facts.edit(''); await this.facts.save(this.workspace);
+    if (owner===this.factsOwner() && !this.facts.open && !this.workspace.error) {
+      this.removedFacts=previous; this.removedFactsOwner=owner;
+    }
+  }
+  private async undoFacts():Promise<void> {
+    const value=this.removedFacts,owner=this.factsOwner();
+    if (!value || this.removedFactsOwner!==owner || this.workspace.busy) return;
+    if (await this.workspace.saveFacts(value,'') && this.factsOwner()===owner) this.removedFacts='';
+  }
+
+  @Builder recordingFactsEditor() {
+    Column() {
+      Row({space:8}) {
+        Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('16vp').fontColor([Colors.ink]) }
+          .height(44).width(44).padding(0).backgroundColor(Colors.control)
+          .accessibilityText(tr('close')).enabled(!this.workspace.busy).onClick(() => this.facts.close()).id('knowledge.facts.cancel')
+        Text(tr('phone_kb_confirmed')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600)
+          .fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1).maxLines(2)
+        Button({type:ButtonType.Capsule}) {
+          if (this.workspace.busy) LoadingProgress().width(19).height(19).color(Colors.link)
+          else Text(tr('save')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600).fontColor(Colors.link)
+        }.height(44).constraintSize({minWidth:50}).padding({left:9,right:9}).backgroundColor(Colors.control)
+          .enabled(this.workspace.supportsExpectedPinned && !this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) && this.factsChanged())
+          .onClick(() => this.facts.save(this.workspace)).id('knowledge.facts.save')
+      }.width('100%').constraintSize({minHeight:56}).padding({left:16,right:16,top:4,bottom:4})
+      Scroll() {
+        Column({space:8}) {
+          TextArea({text:this.facts.text,placeholder:tr('phone_kb_confirmed')}).accessibilityText(tr('phone_kb_confirmed'))
+            .width('100%').height(this.recordingMetric(170,214)).padding({left:20,right:20,top:15,bottom:15})
+            .fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(25)
+            .enabled(!this.workspace.busy).onChange((v:string) => this.facts.edit(v)).id('knowledge.facts.text').onAppear(() => this.focusEmptyFacts())
+          Text(tr('recording_facts_instruction').replace('{name}',this.workspace.selected.title || this.workspace.selected.id))
+            .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%')
+            .padding({left:20,right:20,bottom:9}).id('knowledge.facts.instruction')
+          if (this.facts.conflict) {
+            Text(tr('phone_facts_changed')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.needs).width('100%')
+            Text(this.facts.baseline || tr('empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink)
+              .width('100%').padding(16).backgroundColor(Colors.surface).borderRadius(16).copyOption(CopyOptions.LocalDevice).id('knowledge.facts.latest')
+          } else if (this.workspace.error) Text(tr(this.workspace.error)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).width('100%')
+          if (this.facts.baseline) Button(tr('recording_facts_delete'),{type:ButtonType.Capsule})
+            .width('100%').constraintSize({minHeight:52}).fontColor(Colors.danger).backgroundColor(Colors.surface)
+            .enabled(!this.workspace.busy).onClick(() => { this.deleteFacts().catch(() => {}); }).id('knowledge.facts.delete')
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:22,bottom:32})
+      }.layoutWeight(1).width('100%')
+    }.width('100%').height('100%').backgroundColor(Colors.grouped).id('knowledge.facts.sheet')
+  }
+
   private recordingMetric(regular:number,largest:number):number {
     return PhoneStyle.formSize(regular,largest,nativeEnvironment.fontScale);
   }
@@ -927,51 +991,41 @@ export struct KnowledgeWorkspacePage {
         Column() {
           Row({space:12}) {
             Stack() { SymbolGlyph($r('sys.symbol.waveform_circle')).fontSize('22vp').fontColor([Colors.secondary]) }
-            .width(48).height(48).backgroundColor(Colors.control).borderRadius(13).id('knowledge.recording.avatar')
-          Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).fontWeight(600).fontColor(Colors.ink).layoutWeight(1).maxLines(3)
-        }.width('100%')
-        if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(Tokens.body)
-          .maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).opacity(0.85).lineHeight(String(this.recordingMetric(20.3,28.35))+'vp').width('100%').margin({top:12}).id('knowledge.recording.intro')
-        Button({type:ButtonType.Capsule}) {
-          Row({space:12}) {
-            PhoneOutlineIcon({name:'sparkles',iconScale:this.recordingMetric(1,1.33),color:Colors.onAction})
-            Text(tr('recording_detail_ask')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.onAction).textAlign(TextAlign.Center)
-              .flexShrink(1).id('knowledge.ask.label')
-          }.width('100%').justifyContent(FlexAlign.Center)
-        }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(50.3,57.7,nativeEnvironment.fontScale)}).margin({top:14})
-          .padding({left:14,right:14}).backgroundColor(Colors.action).accessibilityText(tr('recording_detail_ask'))
-          .onClick(() => this.askPersona()).id('knowledge.ask')
+              .width(48).height(48).backgroundColor(Colors.control).borderRadius(13).id('knowledge.recording.avatar')
+            Text(this.workspace.selected.title || this.workspace.selected.id).fontSize(22).maxFontScale(Tokens.interfaceScaleFor(22)).fontWeight(600).fontColor(Colors.ink).layoutWeight(1).maxLines(3)
+          }.width('100%')
+          if (this.workspace.selected.detail) Text(this.workspace.selected.detail).fontSize(Tokens.body)
+            .maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).fontColor(Colors.ink).opacity(0.85).lineHeight(String(this.recordingMetric(20.3,28.35))+'vp').width('100%').margin({top:12}).id('knowledge.recording.intro')
+          Button({type:ButtonType.Capsule}) {
+            Row({space:12}) {
+              PhoneOutlineIcon({name:'sparkles',iconScale:this.recordingMetric(1,1.33),color:Colors.onAction})
+              Text(tr('recording_detail_ask')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.onAction).textAlign(TextAlign.Center)
+                .flexShrink(1).id('knowledge.ask.label')
+            }.width('100%').justifyContent(FlexAlign.Center)
+          }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(50.3,57.7,nativeEnvironment.fontScale)}).margin({top:14})
+            .padding({left:14,right:14}).backgroundColor(Colors.action).accessibilityText(tr('recording_detail_ask'))
+            .onClick(() => this.askPersona()).id('knowledge.ask')
         }.width('100%').alignItems(HorizontalAlign.Start).padding({left:4,right:4,bottom:25.7})
         this.entryEvidence()
         this.recordingHeading('phone_kb_confirmed')
         Column({space:6}) {
-          if (this.facts.open) {
-            if (this.facts.conflict) {
-              Text(tr('phone_facts_changed')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.needs).width('100%')
-              Text(this.facts.baseline || tr('empty')).fontSize(15).fontColor(Colors.ink).width('100%').copyOption(CopyOptions.LocalDevice).id('knowledge.facts.latest')
-            }
-            TextArea({text:this.facts.text,placeholder:tr('phone_kb_confirmed')}).width('100%').height(100)
-              .onChange((v:string) => this.facts.edit(v)).id('knowledge.facts.text')
-            Row() {
-              Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).onClick(() => this.facts.close())
-              Button(tr('save'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale)
-                .enabled(this.workspace.supportsExpectedPinned && !this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) &&
-                  this.facts.text.trim()!==Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned').trim())
-                .onClick(() => this.facts.save(this.workspace)).id('knowledge.facts.save')
-            }
-          } else {
-            if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
-              .fontSize(16).fontColor(Colors.ink).width('100%')
-            if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
-              .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
-            if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
-              Row({space:12}) {
-                SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
-                Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link)
-              }.width('100%')
-            }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
-          }
-        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20,top:this.facts.open ? 10 : 0,bottom:this.facts.open ? 10 : 0}).backgroundColor(Colors.surface).borderRadius(29)
+          if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
+            .fontSize(16).fontColor(Colors.ink).width('100%')
+          if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
+            .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
+          if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
+            Row({space:12}) {
+              SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
+              Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link)
+            }.width('100%')
+          }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20}).backgroundColor(Colors.surface).borderRadius(29)
+          .bindSheet(this.facts.open,this.recordingFactsEditor(),{height:this.facts.baseline ? SheetSize.MEDIUM : SheetSize.LARGE,
+            detents:[SheetSize.MEDIUM,SheetSize.LARGE],dragBar:true,showClose:false,backgroundColor:Colors.grouped,keyboardAvoidMode:SheetKeyboardAvoidMode.RESIZE_ONLY,
+            onWillDismiss:(action:DismissSheetAction) => { if (!this.workspace.busy && !this.factsChanged()) { this.facts.close(); action.dismiss(); } }})
+        if (this.removedFacts && this.removedFactsOwner===this.factsOwner() && !Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) {
+          Button(tr('ks_undo'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => { this.undoFacts().catch(() => {}); }).id('knowledge.facts.undo')
+        }
         this.recordingFootnote('phone_kb_fact_note')
         if (Wire.text(this.workspace.detail,'summary')) {
           this.recordingHeading('phone_kb_profile')

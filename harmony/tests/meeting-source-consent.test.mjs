@@ -162,3 +162,11 @@ test('the recording detail keeps its actual path explanation and its minutes ent
   const messages=['base','en_US','ja_JP','zh_CN'].map(locale=>JSON.parse(readFileSync(new URL('../entry/src/main/resources/'+locale+'/element/recording_detail.json',import.meta.url),'utf8')).string);
   for (const entries of messages) assert.ok(entries.find(item=>item.name==='recording_detail_folder_access')?.value.length>16);
 });
+
+test('the recording facts sheet returns to its own entry and permits an explicit dirty close without a write',()=>{
+  const body=source.slice(source.indexOf('  @Builder recordingFactsEditor()'),source.indexOf('  private recordingMetric('));
+  assert.match(body,/onClick\(\(\) => this\.facts\.close\(\)\)\.id\('knowledge\.facts\.cancel'\)/);
+  assert.match(body,/onClick\(\(\) => this\.facts\.save\(this\.workspace\)\)\.id\('knowledge\.facts\.save'\)/);
+  assert.match(source,/\.bindSheet\(this\.facts\.open,this\.recordingFactsEditor\(\)/);
+  assert.match(source,/onWillDismiss:\(action:DismissSheetAction\) => \{ if \(!this\.workspace\.busy && !this\.factsChanged\(\)\)/);
+});
