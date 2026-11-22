@@ -9,7 +9,7 @@ import { Symbols } from '../design/Symbols';
 import { tr } from '../design/Strings';
 import { ClientModel } from '../models/ClientModel';
 import { ResourceRow, Wire } from '../models/Wire';
-import { MeetingPreferences, meetingRoleLabel } from '../models/MeetingPreferences';
+import { MeetingPreferences, settingsMeetingRoleLabel } from '../models/MeetingPreferences';
 import { machineOnline } from '../models/MachineDashboard';
 
 const AGENT_OPTIONS:string[] = ['phone_agent_folders','phone_claude_config','phone_codex_config','phone_agy_config','triage'];
@@ -127,7 +127,7 @@ export struct SettingsDirectory {
   }
   private account():string { return this.currentManager()?.title || this.ownerName || tr('persona'); }
   private subtitle(id:string):string {
-    if (id==='phone_meeting_options') return this.meeting.ready ? tr(meetingRoleLabel(this.meeting.role)) : '';
+    if (id==='phone_meeting_options') return this.meeting.ready ? tr(settingsMeetingRoleLabel(this.meeting.role)) : '';
     if (id === 'phone_language_options') return currentLanguage(this.model);
     if (id === 'machines') {
       const profile = this.model.profile;

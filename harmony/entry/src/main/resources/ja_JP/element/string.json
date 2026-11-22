@@ -6337,8 +6337,48 @@
       "value": "Persona のデフォルトの役割"
     },
     {
+      "name": "phone_meeting_role_listener",
+      "value": "聞くだけ"
+    },
+    {
+      "name": "phone_meeting_role_participant",
+      "value": "参加"
+    },
+    {
+      "name": "phone_meeting_role_note_off",
+      "value": "Persona はこの会議に加わりません。議事録は会議のあとに作られます。"
+    },
+    {
+      "name": "phone_meeting_role_note_listener",
+      "value": "Persona が会議を聞きます。このスマートフォンから質問すると画面で答え、声には出しません。"
+    },
+    {
+      "name": "phone_meeting_role_note_participant",
+      "value": "Persona が会議を聞き、「Personaに聞く」をタップすると声で答えます。"
+    },
+    {
+      "name": "phone_meeting_in_front",
+      "value": "ほかの人の前で"
+    },
+    {
+      "name": "phone_meeting_material",
+      "value": "会議に関わる内容だけで答えます：過去の議事録、プロジェクトの進み具合、To-Do の担当者。"
+    },
+    {
+      "name": "phone_meeting_privacy",
+      "value": "個人的なチャット、メール、健康、その他の個人データには触れません。"
+    },
+    {
+      "name": "phone_meeting_explicit_voice",
+      "value": "声に出すのは「Personaに聞く」をタップしたときだけで、参加しているときに限ります。"
+    },
+    {
+      "name": "phone_meeting_limits_note",
+      "value": "会議中は何を聞かれても、hub が Persona にこの制限を守らせます。"
+    },
+    {
       "name": "phone_meeting_default_note",
-      "value": "Persona を招待したときの役割を選びます。会議ごとに変更できます。"
+      "value": "会議の録音はこの設定で始まります。1 回だけ変えるときは、開始前に「録音」ページで選び直します。"
     },
     {
       "name": "phone_meeting_speech_unavailable",

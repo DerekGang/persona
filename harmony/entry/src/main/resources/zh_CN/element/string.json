@@ -6337,8 +6337,48 @@
       "value": "Persona 的默认角色"
     },
     {
+      "name": "phone_meeting_role_listener",
+      "value": "旁听"
+    },
+    {
+      "name": "phone_meeting_role_participant",
+      "value": "参会"
+    },
+    {
+      "name": "phone_meeting_role_note_off",
+      "value": "Persona 不参与这场会议，会后照常出纪要。"
+    },
+    {
+      "name": "phone_meeting_role_note_listener",
+      "value": "Persona 跟着会议听。在这台手机上提问，它只在屏幕上回答，不出声。"
+    },
+    {
+      "name": "phone_meeting_role_note_participant",
+      "value": "Persona 跟着会议听，点「问 Persona」时出声回答。"
+    },
+    {
+      "name": "phone_meeting_in_front",
+      "value": "当着别人的面"
+    },
+    {
+      "name": "phone_meeting_material",
+      "value": "只用会议相关的内容回答：以前的会议纪要、项目进展、待办归谁。"
+    },
+    {
+      "name": "phone_meeting_privacy",
+      "value": "不会提私人聊天、邮件、健康或其他个人数据。"
+    },
+    {
+      "name": "phone_meeting_explicit_voice",
+      "value": "只在你点「问 Persona」时出声，而且只在参会时。"
+    },
+    {
+      "name": "phone_meeting_limits_note",
+      "value": "会议中不管被问什么，hub 都让 Persona 守住这些限制。"
+    },
+    {
       "name": "phone_meeting_default_note",
-      "value": "选择 Persona 受邀时的参与方式，也可在每次开会前调整。"
+      "value": "每次会议录音都按这里开始。只想改一场，开始前在「录音」页上另选。"
     },
     {
       "name": "phone_meeting_speech_unavailable",

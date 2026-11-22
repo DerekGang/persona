@@ -6337,8 +6337,48 @@
       "value": "Persona’s default role"
     },
     {
+      "name": "phone_meeting_role_listener",
+      "value": "Listen"
+    },
+    {
+      "name": "phone_meeting_role_participant",
+      "value": "Take Part"
+    },
+    {
+      "name": "phone_meeting_role_note_off",
+      "value": "Persona stays out of the meeting. The minutes come after it ends."
+    },
+    {
+      "name": "phone_meeting_role_note_listener",
+      "value": "Persona follows the meeting. Ask it from this phone; it answers on screen and never speaks."
+    },
+    {
+      "name": "phone_meeting_role_note_participant",
+      "value": "Persona follows the meeting and answers out loud when you tap Ask Persona."
+    },
+    {
+      "name": "phone_meeting_in_front",
+      "value": "In Front of Others"
+    },
+    {
+      "name": "phone_meeting_material",
+      "value": "Answers only from meeting material: earlier minutes, project progress and who owns a to-do."
+    },
+    {
+      "name": "phone_meeting_privacy",
+      "value": "Never brings up private chats, mail, health or other personal data."
+    },
+    {
+      "name": "phone_meeting_explicit_voice",
+      "value": "Speaks only when you tap Ask Persona, and only when it takes part."
+    },
+    {
+      "name": "phone_meeting_limits_note",
+      "value": "The hub holds Persona to these limits in a meeting, whatever it is asked."
+    },
+    {
       "name": "phone_meeting_default_note",
-      "value": "Choose what Persona does when invited. You can change it before each meeting."
+      "value": "Each meeting recording starts with this. To change it for one meeting, pick another on the Recordings page before you start."
     },
     {
       "name": "phone_meeting_speech_unavailable",

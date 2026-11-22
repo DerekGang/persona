@@ -5,6 +5,9 @@ export const MEETING_ROLES:string[]=['off','listener','participant'];
 export function meetingRoleLabel(role:string):string {
   return role==='participant' ? 'phone_meeting_aloud' : role==='listener' ? 'phone_meeting_onscreen' : 'phone_meeting_off';
 }
+export function settingsMeetingRoleLabel(role:string):string {
+  return role==='participant' ? 'phone_meeting_role_participant' : role==='listener' ? 'phone_meeting_role_listener' : 'phone_meeting_off';
+}
 
 /** The current assistant owns the default, just as it owns the meeting room. */
 @ObservedV2
