@@ -511,3 +511,26 @@ func TestLarkPersonHistoryScopeAndProactiveFailClosed(t *testing.T) {
 		t.Fatalf("source history deletion unexpectedly supported: %v", err)
 	}
 }
+
+func TestLarkPersonFollowUpRecordsAnEarlierUnreadReplyFirst(t *testing.T) {
+	f := newConversationFixture(t)
+	source := f.source(t)
+	service := agents.NewService(f.settings, nil, nil, source)
+	ctx := context.Background()
+	id := "bot_external_task:endpoint"
+	if _, err := service.Send(ctx, id, "11111111-1111-4111-8111-111111111111", "First synthetic assignment", "test"); err != nil {
+		t.Fatal(err)
+	}
+	// The person answers, and the follow-up is sent before anything reads the conversation. The assistant matches a
+	// reply only to the current park, so the earlier reply must be recorded before the follow-up parks again.
+	f.transport.addReply("om_reply_1", "Exact synthetic reply")
+	if _, err := service.Send(ctx, id, "22222222-2222-4222-8222-222222222222", "Same-task follow-up", "test"); err != nil {
+		t.Fatal(err)
+	}
+	f.review.mu.Lock()
+	records, parks := f.review.records, len(f.review.parks)
+	f.review.mu.Unlock()
+	if records != 1 || parks != 2 {
+		t.Fatalf("follow-up parked before the earlier reply was recorded: records=%d parks=%d", records, parks)
+	}
+}

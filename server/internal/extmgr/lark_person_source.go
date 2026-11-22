@@ -272,6 +272,13 @@ func (s *larkPersonSource) Send(ctx context.Context, key, clientID, text string)
 	if state.Lifecycle != "" && state.Lifecycle != "active" {
 		return nil, &agents.Error{Status: http.StatusConflict, Msg: "agents: external bot task is already closed"}
 	}
+	// Record any reply that already answers an earlier delivery before this one parks the task again: the assistant
+	// matches a reply only to the current park, so a reply left unrecorded here would never reach pending_review or
+	// Bots history. Messages() correlates too, but a send can come without a read (another client, an extension, or a
+	// reply that arrived since the last poll).
+	if err := s.correlate(ctx); err != nil {
+		return nil, err
+	}
 	scope := s.endpoint.Conversation
 	parkInstance := "park_" + strings.ReplaceAll(clientID, "-", "_")
 	reservation, err := s.service.Deliver(ctx, larkperson.DeliveryRequest{ClientID: clientID, TaskID: s.taskID(), ParkInstance: parkInstance,
