@@ -44,7 +44,7 @@ func (s *Service) ParkLarkPersonTask(ctx context.Context, request assistantwire.
 	if todo.DoneAt != nil {
 		return assistantwire.LarkPersonTask{}, errors.New("external bot task is already closed")
 	}
-	evidence := &ParkEvidence{Kind: "person_reply", Target: request.DisplayName,
+	evidence := &ParkEvidence{Kind: "person_reply", Target: request.DisplayName, NextActor: "external",
 		Wake: "The external collaborator replies in the exact bound topic", ParkInstance: request.ParkInstance,
 		Contact: &ParkContact{Channel: "Feishu topic", URL: request.URL, Sender: "Feishu bot", SentAt: request.SentAt.UTC(),
 			Request: "External task assignment", Status: "sent"}, Reply: &request.Watch}
