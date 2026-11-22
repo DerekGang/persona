@@ -21,7 +21,8 @@ export function PanelHeader({
   onBack?: () => void;
   onClose: () => void;
 }) {
-  const back = onBack ?? useSidePanelBack();
+  const contextBack = useSidePanelBack();
+  const back = onBack ?? contextBack;
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3">
       {back && <IconButton icon="arrowLeft" label={t("sidepanel.back")} onClick={back} />}
