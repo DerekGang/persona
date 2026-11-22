@@ -84,6 +84,13 @@ struct HealthView: View {
     /// Starts a health conversation with the message (`AssistantView.start(…, space:)`).
     var send: (String, [ImagePayload]) -> Void
     @State private var page = HealthModel()
+    #if os(iOS)
+    #if DEBUG
+    @State private var trends = HealthHomeSamples.trendsModel()
+    #else
+    @State private var trends = HealthTrendsModel()
+    #endif
+    #endif
     // Upload a Checkup Report (docs/assistant/health.md「Checkup reports」): the picked files go to reports/; once they are up the conversation starts.
     @State private var showReports = false
     /// Kept by the app, not the page (#2836): built again with the whole tree when iPhone Duo folds or opens, the page
@@ -152,14 +159,32 @@ struct HealthView: View {
         #endif
         .task { await page.load(machine: machine.id) }
         .refreshable { await page.load(machine: machine.id) }
+        #if os(iOS)
+        // Load outside the conditional List row: a hidden empty section has no row to run its task.
+        .tabActiveTask(id: trends.range) { await trends.load() }
+        #endif
     }
 
     private func sections(_ list: [Session]) -> some View {
         ScrollViewReader { proxy in
             List {
-                Section { hero }
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets())
+                #if os(iOS)
+                #if DEBUG
+                if HealthHomeSamples.showToday {
+                    Section { HealthTodayExample() } header: { Text("Today") }
+                }
+                #endif
+                if UIDevice.current.userInterfaceIdiom == .phone {
+                    #if DEBUG
+                    HealthActivitySection(model: HealthHomeSamples.activityModel())
+                    #else
+                    HealthActivitySection()
+                    #endif
+                }
+                if trends.hasData {
+                    HealthTrendsSection(model: trends, automaticallyLoads: false)
+                }
+                #endif
                 Section {
                     Button { showReports = true } label: {
                         Label { Text("Upload a Checkup Report").foregroundStyle(Theme.Hue.pink).lineLimit(1) } icon: {
@@ -227,7 +252,7 @@ struct HealthView: View {
                 }
                 Section {
                     source(Theme.Icon.health, "Apple Health", String(localized: "Reads summaries of steps, sleep, heart rate, weight and more through your iPhone. Persona needs to be open on the phone with access granted."))
-                    source(Theme.Icon.edit, String(localized: "Log Data"), String(localized: "Say “log my weight” or “I drank 300 ml of water”; after you confirm on the phone it's saved to Health."))
+                    source(Theme.Icon.edit, String(localized: "Log Data"), String(localized: "Say “I drank 300 ml of water”, or take a photo of a meal in the field below, to log it in Health."))
                     source(Theme.Icon.document, String(localized: "Checkup Reports and Lab Results"), String(localized: "Choose Upload a checkup report and pick a PDF or a photo: each item is read out and the ones outside the reference range are marked. The original and its record stay in Health, so years can be compared."))
                 } header: {
                     Text("Data Sources")
@@ -241,6 +266,8 @@ struct HealthView: View {
                     }
                     .padding(.vertical, Theme.Space.xs)
                     .id("health-privacy")
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("health-privacy")
                 }
             }
             #if DEBUG
@@ -259,24 +286,6 @@ struct HealthView: View {
         String(localized: "Chats and memory stay on the hub machine and never go into Knowledge."),
         String(localized: "This offers explanations and suggestions, not a substitute for a doctor's diagnosis or treatment."),
     ]
-
-    private var hero: some View {
-        VStack(spacing: Theme.Space.s) {
-            ThemedIcon(Theme.Icon.healthFilled)
-                .font(Theme.Font.title)
-                .foregroundStyle(Theme.Hue.pink)
-                .scaledFrame(width: Theme.Size.box56, height: Theme.Size.box56)
-                .background(Theme.Hue.pink.opacity(0.14), in: .circle)
-                .accessibilityHidden(true)
-            Text("Ask About Your Health").font(Theme.Font.title).lineLimit(1)
-            Text("Sleep, steps, heart rate, weight and diet, answered from the health data on your phone. Chats and memory here are kept apart from Persona's other chats.")
-                .font(Theme.Font.secondary)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, Theme.Space.l)
-    }
 
     private func row(_ s: Session) -> some View {
         let title = s.title.isEmpty || s.title == "Claude Code" ? String(localized: "New Chat [Quick Actions ea4b29]") : s.title

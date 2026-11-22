@@ -22,6 +22,14 @@ struct HealthTrendsTests {
         #expect(HealthTrends.dayKeys(0, now: Self.now, calendar: Self.utc) == ["2026-11-05"])
     }
 
+    @Test func homeHidesTrendsUntilThereIsDataAndWeightHasItsOwnTitle() async {
+        let model = HealthTrendsModel(deps: .init(access: { .granted }, requestAccess: { false }, daily: { _, _ in [:] }, now: { Self.now }))
+        #expect(!model.hasData)
+        await model.load()
+        #expect(model.state == .loaded([:]) && !model.hasData)
+        #expect(HealthTrendMetric.weight.title == "体重")
+    }
+
     @Test func labels() {
         #expect(HealthTrends.label("2026-11-05", range: .week) == "周四")
         #expect(HealthTrends.label("2026-11-01", range: .week) == "周日")

@@ -26,13 +26,18 @@ import PersonaWire
         case loading
         /// Health was never asked for on this phone.
         case needsAccess
-        /// This device has no Health data (iPad without Health, Mac, Vision).
+        /// HealthKit is unavailable on this device. Vision Pro is excluded by the home at compile time;
+        /// its HealthKit availability alone is not evidence that this app has the required entitlements.
         case unavailable
         /// The cards in metric order; empty when no metric has data (or reading was not allowed).
         case loaded([HealthTrendMetric: ExtensionPersonaCard])
     }
 
     private(set) var state: State = .loading
+    var hasData: Bool {
+        if case .loaded(let cards) = state { return !cards.isEmpty }
+        return false
+    }
     var range: HealthTrendRange = .week
     /// The range the cards on screen are for.
     @ObservationIgnored private var loadedRange: HealthTrendRange?

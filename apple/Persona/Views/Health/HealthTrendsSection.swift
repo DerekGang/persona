@@ -6,10 +6,18 @@ import SwiftUI
 /// reading was allowed, so no data and no permission look the same).
 struct HealthTrendsSection: View {
     @State var model: HealthTrendsModel
+    var automaticallyLoads = true
 
-    init(model: HealthTrendsModel = HealthTrendsModel()) { _model = State(initialValue: model) }
+    init(model: HealthTrendsModel = HealthTrendsModel(), automaticallyLoads: Bool = true) {
+        _model = State(initialValue: model)
+        self.automaticallyLoads = automaticallyLoads
+    }
 
     var body: some View {
+        section.tabActiveTask(id: model.range) { if automaticallyLoads { await model.load() } }
+    }
+
+    private var section: some View {
         VStack(alignment: .leading, spacing: Theme.Space.titleToContent) {
             HStack {
                 Text("Health Trends").font(Theme.Font.heading)
@@ -26,7 +34,6 @@ struct HealthTrendsSection: View {
                 .font(Theme.Font.caption)
                 .foregroundStyle(.secondary)
         }
-        .task(id: model.range) { await model.load() }
         // A container: without it the id would land on every element inside and hide the cards' own ids.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("health-trends")

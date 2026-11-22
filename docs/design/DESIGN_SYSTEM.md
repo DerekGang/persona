@@ -1628,6 +1628,19 @@ The widget extension doesn't build `Theme`: Persona's widgets take their colors,
 
 ### 3.15 Charts (iOS)
 
+- `GaugeRing` (`apple/Persona/DesignSystem/GaugeRing.swift`) draws one progress value, unit, title and optional
+  subtitle. The caller supplies its color and accessibility description. It keeps the extension tile's ring sizes,
+  stroke, layout and Reduce Motion behavior; extension tiles retain their own badges, controls and actions.
+- Health intake uses `Theme.Health.water` (blue) and `Theme.Health.protein` (amber), shared under
+  `apple/Shared/Design/HealthTokens.swift` for future widgets. These hues stay apart from Apple's Activity colors.
+  Values remain in the primary ink; the colors identify the rings rather than replacing readable text.
+- `ActivityRings` is iPhone-only: Apple's `HKActivityRingView`, with an outer black margin inside a rounded black
+  surface. Move, Exercise and Stand labels use Apple's fixed colors on that same black surface. Missing Exercise
+  and Stand goals leave Move alone. At accessibility text sizes the values sit below the rings; VoiceOver reads the
+  whole tile as one element. It has no navigation action. Other rings sit in the preceding Today section, separated
+  by the Activity heading and list spacing. Only the foreground Allow Reading button asks for Activity summary
+  access; an empty read never claims the user denied permission.
+
 - `DataChart` (`apple/Persona/DesignSystem/DataChart.swift`): bars, lines and areas over categories, a few series in the data hues, holding a category reads it; a card's is compact (no axis text).
 - `RingChart`: a donut (its total in the hole) or a pie, one series of a few parts.
 - `CandleChart`: candlesticks with an optional volume chart under them; rising and falling colors come from the caller (the diff's green and red); holding a candle reads its prices, else the last one's.
