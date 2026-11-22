@@ -15,6 +15,8 @@ import { ResourceRow, Wire } from '../models/Wire';
 import { Tokens } from '../design/Tokens';
 import { tr, trError } from '../design/Strings';
 import { MarkdownText } from './MarkdownText';
+import { PhoneTodoDetailForm } from './PhoneTodoDetailForm';
+import { PhoneTodoDetailEditor } from '../models/PhoneTodoDetailEditor';
 import { markdownVisibleText, parseMarkdown } from '../core/Markdown';
 import { composerModelName } from '../models/SessionComposerModes';
 import { launchModelName } from '../models/AgentLaunchChoices';
@@ -45,6 +47,8 @@ export struct TodoWorkspacePage {
   @Event onCreateAgent: (todo: ResourceRow) => void = (_todo: ResourceRow) => {};
   @Event onTitle: (title: string) => void = (_title: string) => {};
   @Local workspace: TodoWorkspace = new TodoWorkspace();
+  @Local detailEditor: PhoneTodoDetailEditor = new PhoneTodoDetailEditor();
+  private detailPlanKey: string = '';
   @Local sectionBindings: BoundTodoSection[] = [];
   @Local expandedGroups:string[] = [];
   @Local showDone:boolean = false;
@@ -94,12 +98,17 @@ export struct TodoWorkspacePage {
     this.workspaceOpening = false;
     this.workspaceInitialized = false;
     this.queuedRefresh = false;
-    this.workspace.close();
+    if (this.list) this.workspace.close();
+    else {
+      const serial=this.openSerial;
+      this.detailEditor.finish(this.workspace).finally(() => { if (!this.pageAvailable && this.openSerial===serial) this.workspace.close(); });
+    }
   }
 
   @Monitor('row', 'list') routeChanged(): void { this.syncRowBindings(); if (this.pageAvailable) this.openWorkspace(); }
 
   @Monitor('model.profile') profileChanged(): void {
+    this.detailEditor.reset(); this.detailPlanKey='';
     this.expandedGroups=[]; this.showDone=false; this.showShelved=false; this.clearDrag();
     this.previousAgentsOpen = false;
     this.syncRowBindings();
@@ -122,7 +131,14 @@ export struct TodoWorkspacePage {
   @Monitor('model.sessions') sessionsChanged(): void { this.workspace.update(this.model); }
   @Monitor('model.machines') machinesChanged(): void { this.workspace.update(this.model); }
   @Monitor('model.knowledge') projectsChanged(): void { this.workspace.update(this.model); }
-  @Monitor('workspace.selected') selectedChanged(): void { this.syncRowBindings(); this.publishTitle(); }
+  @Monitor('workspace.selected') selectedChanged(): void {
+    this.syncRowBindings(); this.publishTitle();
+    if (!this.list) {
+      this.detailEditor.sync(this.workspace);
+      const row=this.workspace.selected, key=JSON.stringify([this.model.scope(),row.manager,row.id]);
+      if (row.id && key!==this.detailPlanKey) { this.detailPlanKey=key; this.workspace.loadDetailProjects().catch(() => {}); }
+    }
+  }
   @Monitor('workspace.items', 'workspace.search', 'workspace.statusFilter', 'workspace.groupBy','workspace.dueFilter','workspace.order','clock',
     'workspace.hubCounts', 'workspace.hubChoice',
     'workspace.projects', 'workspace.sessions', 'workspace.machines') rowsChanged(): void { this.syncRowBindings(); }
@@ -926,20 +942,13 @@ export struct TodoWorkspacePage {
     Column() {
       Scroll() {
         if (this.workspace.selected.id) Column({ space: Tokens.page }) {
-          Column({space:8}) {
-            Text(tr(this.hubMode() ? todoHubLabel(this.workspace.hubSection(this.workspace.selected, this.clock)) :
-              this.workspace.stateLabelKey(this.workspace.selected))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.link)
-              .padding({left:8,right:8,top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(9)
-              .bindContextMenu(this.todoMenu(this.workspace.selected), ResponseType.LongPress)
-            Text(this.workspace.selected.title).fontSize(21).maxFontScale(Tokens.interfaceScaleFor(21)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(4)
-            this.metadata(this.workspace.selected)
-            if (this.hubMode() && this.workspace.selected.hubView?.line && this.workspace.selected.hubView?.line !== this.workspace.selected.startError &&
-              this.workspace.selected.hubView?.line !== this.workspace.selected.doneReason && this.workspace.selected.hubView?.line !== this.workspace.selected.notes)
-              Text(this.workspace.selected.hubView?.line || '').fontSize(14).fontColor(Colors.secondary)
-            if (this.workspace.selected.startError) Text(trError(this.workspace.selected.startError)).fontSize(14).fontColor(Colors.danger)
-            if (this.workspace.selected.doneReason) Text(this.workspace.selected.doneReason).fontSize(14).fontColor(Colors.secondary)
-            if (this.workspace.selected.notes) MarkdownText({text:this.workspace.selected.notes,onLink:(address:string) => this.onLink(address)})
-          }.width('100%').alignItems(HorizontalAlign.Start).padding(15).backgroundColor(Colors.surface).borderRadius(14).id('todo.detail')
+          PhoneTodoDetailForm({workspace:this.workspace, editor:this.detailEditor,locale:this.dateLocale(),now:this.clock,
+            status:tr(this.hubMode() ? todoHubLabel(this.workspace.hubSection(this.workspace.selected,this.clock)) : this.workspace.stateLabelKey(this.workspace.selected)),
+            tone:Colors.link})
+          if (this.workspace.selected.notes) Column({space:6}) {
+            Text(tr('todo_detail_notes')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+            MarkdownText({text:this.workspace.selected.notes,onLink:(address:string) => this.onLink(address)})
+          }.alignItems(HorizontalAlign.Start).width('100%').padding(16).backgroundColor(Colors.surface).borderRadius(13)
           if (this.workspace.selected.project) {
             Row() { ComposeListItemV2({ contentItemV2: new ContentItemV2({ primaryText: this.workspace.projectTitle(this.workspace.selected) }) }) }
               .onClick(() => this.openProject())

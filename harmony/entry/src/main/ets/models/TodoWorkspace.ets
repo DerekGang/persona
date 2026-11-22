@@ -1,6 +1,7 @@
 import { ClientModel } from './ClientModel';
 import { HubRepository, segment } from './HubRepository';
 import { HttpFailure } from '../platform/HubTransport';
+import { todoDetailPatchAccepted } from './PhoneTodoDetailEditor';
 import { ResourceRow, Wire } from './Wire';
 import { TODO_HUB_CHOICES, TODO_HUB_SECTIONS, TodoHubCounts, TodoHubRow, todoHubChoiceIncludes, todoHubLabel } from './TodoHubView';
 import type { TodoPhonePlacement } from './TodoPhoneSections';
@@ -439,6 +440,8 @@ export class TodoWorkspace {
   @Trace draftReady: boolean = false;
   @Trace targetGone: boolean = false;
   @Trace editorOpen: boolean = false;
+  @Trace detailReadOnly: boolean = false;
+  @Trace detailProjects: ResourceRow[] = [];
   @Trace selectedAgentKey: string = '';
   @Trace selectedSpaceKey: string = '';
   @Trace projects: ResourceRow[] = [];
@@ -463,7 +466,7 @@ export class TodoWorkspace {
 
   async open(client: ClientModel, row?: ResourceRow, list: boolean = true): Promise<void> {
     const revision = ++this.revision, openListRevision = ++this.listRequestRevision;
-    this.active = true; this.initialRow = row; this.listMode = list;
+    this.active = true; this.initialRow = row; this.listMode = list; this.detailReadOnly=false; this.detailProjects=[];
     this.rootClient = client;
     this.ownerClient = undefined;
     this.boundRepo = undefined;
@@ -947,7 +950,7 @@ export class TodoWorkspace {
     this.writeState = 'sending';
     this.error = '';
     try {
-      const result = listRow ? await owner.repo.call(path,method,body,'',admit) : await owner.repo.call(path,method,body);
+      const result = listRow || extraCheck ? await owner.repo.call(path,method,body,'',admit) : await owner.repo.call(path,method,body);
       if (!this.owns(owner, !!todo && !listRow)) return undefined;
       if (listRow && todo && !this.items.some((item:TodoWorkspaceItem) => item.id === todo.id && (item.manager || owner.managerId) === owner.todoManagerId)) {
         this.writeState=''; return undefined;
@@ -1016,6 +1019,39 @@ export class TodoWorkspace {
     this.notesDraft = updated.notes;
     this.draftReady = true;
     try { await this.clearDraft(owner, todo, title, this.notesDraft); } catch (_) { this.error = 'draft_save_failed'; }
+    return true;
+  }
+
+  detailEditable(): boolean {
+    const todo=this.selected, data=todo.data();
+    return !!todo.id && !!this.capture(todo) && !this.targetGone && !this.detailReadOnly &&
+      !Wire.bool(data,'read_only',Wire.bool(data,'readonly')) && (!Wire.has(data,'can_write') || Wire.bool(data,'can_write'));
+  }
+
+  async loadDetailProjects(): Promise<void> {
+    const todo=this.selected, owner=this.capture(todo);
+    if (!todo.id || !owner) return;
+    try {
+      const rows=await owner.repo.knowledge('projects');
+      if (!this.owns(owner)) return;
+      this.detailProjects=rows.filter((row: ResourceRow) => (!row.manager || row.manager===owner.managerId) &&
+        !Wire.text(row.data(),'extra').endsWith('ignored'));
+    } catch (_) { if (this.owns(owner)) this.detailProjects=this.projects; }
+  }
+
+  async updateInlineDetail(todo: TodoWorkspaceItem, body: Record<string,Object>): Promise<boolean> {
+    const owner=this.capture(todo), keys=Object.keys(body);
+    if (!owner || !this.owns(owner) || !this.detailEditable() || this.saving || !keys.length ||
+      !keys.every((key:string) => ['title','due_at','due_date','remind_at','priority','project'].includes(key))) return false;
+    const path='/api/v1/todos/'+pathPart(todo.id)+managerQuery(owner.managerId);
+    const result=await this.write(path,'PATCH',body,todo,false,():boolean => this.detailEditable());
+    if (!this.owns(owner)) return false;
+    if (!result) { if (this.error==='permission_denied') this.detailReadOnly=true; return false; }
+    const data=Wire.object(result,'todo');
+    if (Wire.text(data,'id')!==todo.id || Wire.text(data,'manager',owner.managerId)!==owner.managerId) { this.error='request_updated'; return false; }
+    const updated=this.upsert(data,owner.managerId);
+    if (!this.editorOpen && this.titleDraft===todo.title) this.titleDraft=updated.title;
+    if (!todoDetailPatchAccepted(body,data)) { this.error='todo_detail_unsupported'; return false; }
     return true;
   }
 
