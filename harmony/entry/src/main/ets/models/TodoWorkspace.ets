@@ -205,6 +205,13 @@ export class TodoWorkspaceItem {
   data(): Record<string, Object> { return Wire.parse(this.raw); }
 }
 
+export function todoAgentStateLabel(state: string): string {
+  if (state === 'blocked') return 'agent_task_state_needs_you';
+  if (state === 'done') return 'agent_task_state_unread';
+  if (state === 'followup') return 'todo_state_followup';
+  return 'agent_task_state_' + (['needs_you','unread','working','idle','offline'].includes(state) ? state : 'unknown');
+}
+
 export const TODO_DUE_FILTERS:string[] = ['all','no_due','today','week','month'];
 export const TODO_LIST_ORDERS:string[] = ['recent','due','priority'];
 

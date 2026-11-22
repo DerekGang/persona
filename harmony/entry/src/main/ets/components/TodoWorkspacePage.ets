@@ -8,7 +8,7 @@ import { ButtonStyles, SelectStyles } from '../design/Controls';
 import { ComposeListItemV2, ContentItemV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
 import { TodoWorkspace, TodoWorkspaceAgent, TodoWorkspaceGroup, TodoWorkspaceItem, TodoWorkspaceSection,
-  TodoWorkspaceSpace, TodoWorkspaceSpaceChoice, TodoCalendarBand, TodoCalendarDrop, todoCalendarDrop, todoDropDue, todoCalendarDays, todoDayKey, TODO_DUE_FILTERS, TODO_LIST_ORDERS } from '../models/TodoWorkspace';
+  TodoWorkspaceSpace, TodoWorkspaceSpaceChoice, TodoCalendarBand, TodoCalendarDrop, todoCalendarDrop, todoDropDue, todoCalendarDays, todoDayKey, todoAgentStateLabel, TODO_DUE_FILTERS, TODO_LIST_ORDERS } from '../models/TodoWorkspace';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { todoHubLabel } from '../models/TodoHubView';
 import { ResourceRow, Wire } from '../models/Wire';
@@ -901,7 +901,7 @@ export struct TodoWorkspacePage {
   @Builder agentContent(binding: BoundRow<TodoWorkspaceAgent>) {
     ComposeListItemV2({ contentItemV2: new ContentItemV2({ primaryText: binding.value.title || tr('agent'),
       secondaryText: this.workspace.machineName(binding.value.machineId) + ' · ' +
-        tr('todo_state_' + this.workspace.agentState(binding.value)) }) })
+        tr(todoAgentStateLabel(this.workspace.agentState(binding.value))) }) })
   }
 
   @Builder agentMenu(binding: BoundRow<TodoWorkspaceAgent>) {

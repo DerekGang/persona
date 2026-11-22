@@ -36,7 +36,7 @@ registerHooks({
   }
 });
 
-const { todoDayKey, todoCalendarDays, todoCalendarDrop, todoDropDue, TodoWorkspace, TodoWorkspaceItem, TodoWorkspaceSpace, TodoWorkspaceSpaceChoice,
+const { todoAgentStateLabel, todoDayKey, todoCalendarDays, todoCalendarDrop, todoDropDue, TodoWorkspace, TodoWorkspaceItem, TodoWorkspaceSpace, TodoWorkspaceSpaceChoice,
   todoWorkspaceStatus, relatedTodoMembers, todoMatchesDue } = await import('../entry/src/main/ets/models/TodoWorkspace.ets');
 const { reconcileBoundRows } = await import('../entry/src/main/ets/models/RowBinding.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
@@ -946,4 +946,15 @@ test('a failed start whose finished sibling is filtered out never re-enters Need
   assert.equal(ws.sections(now).find(s=>s.key==='other').rows.length,2);
   ws.setDueFilter('today'); assert.equal(ws.hiddenWaiting(now,1),0);
   assert.deepEqual(ws.sections(now).map(s=>s.key),['just_done']);
+});
+
+
+test('every live, legacy and unknown linked Agent state resolves to a localized detail label',()=>{
+  const expected={unread:'agent_task_state_unread',blocked:'agent_task_state_needs_you',done:'agent_task_state_unread',
+    idle:'agent_task_state_idle',offline:'agent_task_state_offline',working:'agent_task_state_working',needs_you:'agent_task_state_needs_you',followup:'todo_state_followup',future:'agent_task_state_unknown'};
+  for (const locale of ['base','en_US','zh_CN','ja_JP']) {
+    const folder=new URL('../entry/src/main/resources/'+locale+'/element/',import.meta.url);
+    const strings=new Map(['string.json','agent_task_groups.json'].flatMap(file=>JSON.parse(readFileSync(new URL(file,folder),'utf8')).string.map(e=>[e.name,e.value])));
+    for (const [state,key] of Object.entries(expected)) {assert.equal(todoAgentStateLabel(state),key);assert.ok(strings.get(key));}
+  }
 });
