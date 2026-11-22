@@ -5353,8 +5353,12 @@
       "value": "Its assistant “{name}” is offline."
     },
     {
+      "name": "machine_agent_idle",
+      "value": "Idle"
+    },
+    {
       "name": "machine_problem_timeout",
-      "value": "Connection timed out. Check its network or wake the computer."
+      "value": "Connection timed out. The network may be unstable or the computer may be asleep. Wait for it to wake up or switch networks, then reconnect."
     },
     {
       "name": "machine_os",

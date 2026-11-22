@@ -5353,8 +5353,12 @@
       "value": "所属助手“{name}”已离线。"
     },
     {
+      "name": "machine_agent_idle",
+      "value": "空闲"
+    },
+    {
       "name": "machine_problem_timeout",
-      "value": "连接超时。请检查网络，或唤醒这台电脑。"
+      "value": "连接超时：网络不稳或电脑在休眠。等它醒来或换个网络，然后重新连接。"
     },
     {
       "name": "machine_os",

@@ -314,29 +314,30 @@ export struct MachineDirectory {
   }
   @Builder osMark(c:ComputerCard) {
     Stack() {
-      Rect().width(36).height(36).radius(9).fill(this.osColor(c)).opacity(0.13)
-      if (MARKS[c.family]) Image(MARKS[c.family]).width(21).height(21).objectFit(ImageFit.Contain)
-        .renderMode(ImageRenderMode.Template).fillColor(this.osColor(c))
-      else SymbolGlyph(Symbols.device).fontSize('20vp').fontColor([this.osColor(c)])
-    }.width(36).height(36).accessibilityLevel('no')
+      Rect().width(42).height(42).radius(11).fill(this.osColor(c)).opacity(0.13)
+      if (MARKS[c.family]) Image(MARKS[c.family]).width(23.5).height(23.5).objectFit(ImageFit.Contain)
+        .supportSvg2(true).colorFilter(this.osColor(c))
+      else SymbolGlyph(Symbols.device).fontSize('23vp').fontColor([this.osColor(c)])
+    }.width(42).height(42).accessibilityLevel('no')
   }
-  @Builder count(label:string,n:number,tint:ResourceColor) {
-    Row({space:4}) {
-      Circle().width(6).height(6).fill(n ? tint : Colors.secondary).opacity(n ? 1 : 0.45)
-      Text(String(n)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Bold).fontColor(n ? tint : Colors.secondary)
+  @Builder count(label:string,n:number,tint:ResourceColor,dot:ResourceColor) {
+    Row({space:6}) {
+      Circle().width(PhoneStyle.sidebarMetric(7,nativeEnvironment.fontScale)).height(PhoneStyle.sidebarMetric(7,nativeEnvironment.fontScale))
+        .fill(n ? dot : Colors.tertiary)
+      Text(String(n)).fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Medium).fontColor(n ? tint : Colors.secondary)
       Text(label).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
-    }.flexShrink(0)
+    }.constraintSize({minWidth:'30%'}).flexGrow(1).flexShrink(0)
   }
   @Builder tag(a:MachineAlert) {
     Row({space:4}) {
       SymbolGlyph(a.severity === 2 ? $r('sys.symbol.exclamationmark_circle_fill') : $r('sys.symbol.exclamationmark_triangle_fill')).fontSize('12vp').fontColor([a.severity === 2 ? Colors.danger : Colors.working])
       Text(tr(a.key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-    }.padding({left:7,right:7,top:3,bottom:3}).borderRadius(9)
+    }.padding({left:8,right:8,top:4,bottom:4}).borderRadius(16)
       .backgroundColor(a.severity === 2 ? '#21FF3B30' : '#24FFAA22')
   }
   @Builder summary(c:ComputerCard, selected:boolean) {
-    Column({space:9}) {
-      Row({space:10}) {
+    Column({space:Tokens.inset}) {
+      Row({space:Tokens.inset}) {
         this.osMark(c)
         Column({space:2}) {
           if (!selected) Text(c.row.title || c.row.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
@@ -354,15 +355,15 @@ export struct MachineDirectory {
       if (c.alerts.length > 0) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(3)}}) {
         ForEach(c.alerts,(a:MachineAlert) => { this.tag(a) },(a:MachineAlert) => a.key+String(a.severity))
       }.width('100%')
-      if (c.online) Flex({wrap:FlexWrap.Wrap,justifyContent:FlexAlign.SpaceBetween,space:{main:LengthMetrics.vp(7),cross:LengthMetrics.vp(4)}}) {
-        this.count(tr('needs_you'),c.needs,Colors.needs)
-        this.count(tr('working'),c.working,Colors.working)
-        this.count(tr('idle'),c.idle,Colors.secondary)
-      }.width('100%').padding({left:9,right:9,top:7,bottom:7}).borderRadius(8).backgroundColor(Colors.grouped)
+      if (c.online) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(8),cross:LengthMetrics.vp(4)}}) {
+        this.count(tr('needs_you'),c.needs,Colors.needs,Colors.needsMark)
+        this.count(tr('working'),c.working,Colors.working,Colors.workingMark)
+        this.count(tr('machine_agent_idle'),c.idle,Colors.ink,Colors.tertiary)
+      }.width('100%').padding({left:12,right:12,top:8,bottom:8}).borderRadius(10).backgroundColor(Colors.grouped)
       else if (this.reason(c)) Column({space:4}) {
-        Text(this.reason(c)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
+        Text(this.reason(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
         if (Wire.text(c.raw,'error') && Wire.text(c.raw,'error') !== this.reason(c))
-          Text(Wire.text(c.raw,'error')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(selected ? 7 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
+          Text(Wire.text(c.raw,'error')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.tertiary).maxLines(selected ? 7 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
       }.width('100%').alignItems(HorizontalAlign.Start)
       if (Wire.bool(c.raw,'node_mismatch') || Wire.bool(c.raw,'deploying')) Text(tr(Wire.bool(c.raw,'deploying') ? 'admin_node_deploying' : 'machine_update_needed'))
         .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.working)
@@ -370,7 +371,7 @@ export struct MachineDirectory {
     }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
       .border({width:c.alerts.length ? 0.7 : 0,color:c.alerts[0]?.severity === 2 ? Colors.danger : Colors.working,radius:PhoneStyle.cardRadius})
       .onClick(() => { if (selected) this.onDetails(c.row); else this.onMachine(c.row); })
-      .accessibilityGroup(true).accessibilityText([c.row.title,this.status(c),this.hardware(c),c.online ? [c.needs+' '+tr('needs_you'),c.working+' '+tr('working'),c.idle+' '+tr('idle')].join(' · ') : this.reason(c),
+      .accessibilityGroup(true).accessibilityText([c.row.title,this.status(c),this.hardware(c),c.online ? [c.needs+' '+tr('needs_you'),c.working+' '+tr('working'),c.idle+' '+tr('machine_agent_idle')].join(' · ') : this.reason(c),
         ...c.alerts.map((a:MachineAlert) => tr(a.key))].filter((v:string) => !!v).join(' · ')).id(selected ? 'machines.selected' : 'machines.row')
   }
 
@@ -407,17 +408,20 @@ export struct MachineDirectory {
     return Object.keys(Wire.object(m.usage,'today')).length ? tr('machine_today')+' '+machineTokens(machineTokenTotal(Wire.object(m.usage,'today'))) : '';
   }
   @Builder metricCell(m:MachineReading,key:string) {
-    Column({space:2}) {
+    Column({space:4}) {
       Row({space:3}) {
-        Text(this.label(key)).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary).maxLines(1)
+        Text(this.label(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
         if (key === 'cpu' && this.latest(m,key) >= 75 || key === 'mem' && this.latest(m,key) >= 80)
           SymbolGlyph($r('sys.symbol.exclamationmark_circle')).fontSize('10vp').fontColor([this.latest(m,key) >= 90 ? Colors.danger : Colors.working])
       }
-      Text((key === 'network' ? '↓ ' : '') + this.present(key,this.latest(m,key))).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).minFontSize(10).maxFontSize(15)
+      Text((key === 'network' ? '↓ ' : '') + this.present(key,this.latest(m,key))).fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale)
+        .minFontSize(Tokens.interfaceFontVp(12,nativeEnvironment.fontScale)).maxFontSize(Tokens.interfaceFontVp(Tokens.body,nativeEnvironment.fontScale))
         .fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-      Text(this.metricDetail(m,key) || ' ').fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).minFontSize(8).maxFontSize(11).fontColor(Colors.secondary).maxLines(1)
+      Text(this.metricDetail(m,key) || ' ').fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
+        .minFontSize(Tokens.interfaceFontVp(9,nativeEnvironment.fontScale)).maxFontSize(Tokens.interfaceFontVp(12,nativeEnvironment.fontScale)).fontColor(Colors.secondary).maxLines(1)
       MachineChart({points:machineTrace(m,key,3600,this.chartEnd),end:this.chartEnd,tint:this.tint(key),
-        ceiling:key === 'cpu' || key === 'mem' ? 100 : 0,alternateTint:key === 'network' ? this.tint('upload') : '',dark:nativeEnvironment.dark})
+        ceiling:key === 'cpu' || key === 'mem' ? 100 : 0,alternateTint:key === 'network' ? this.tint('upload') : '',dark:nativeEnvironment.dark,
+        chartHeight:PhoneStyle.sidebarMetric(30,nativeEnvironment.fontScale)}).margin({top:2})
     }.layoutWeight(1).alignItems(HorizontalAlign.Start)
   }
   @Builder metrics(m:MachineReading) {
@@ -443,7 +447,7 @@ export struct MachineDirectory {
     }.alignItems(HorizontalAlign.Start).layoutWeight(1)
   }
   @Builder tokensCard() {
-    Column({space:9}) {
+    Column({space:Tokens.inset}) {
       Text(tr('phone_today_tokens')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       Row({space:8}) {
         this.stat('phone_total',machineTokens(this.total))
@@ -453,14 +457,15 @@ export struct MachineDirectory {
       if (this.total > 0) {
         Row({space:2}) {
           ForEach(this.shares.filter((c:ComputerCard) => c.tokens>0),(c:ComputerCard,i:number) => {
-            Blank().height(6).layoutWeight(c.tokens).backgroundColor(Colors.ink).borderRadius(3).opacity(NEUTRAL_SHADES[Math.min(i,4)])
+            Blank().height(PhoneStyle.sidebarMetric(7,nativeEnvironment.fontScale)).layoutWeight(c.tokens).backgroundColor(Colors.ink).borderRadius(5).opacity(NEUTRAL_SHADES[Math.min(i,4)])
           },(c:ComputerCard,i:number) => c.key+String(c.tokens)+String(i))
         }.width('100%')
-        Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(3)}}) {
+        Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(4)}}) {
           ForEach(this.shares.filter((c:ComputerCard) => c.tokens>0),(c:ComputerCard,i:number) => {
             Row({space:4}) {
               Circle().width(6).height(6).fill(Colors.ink).opacity(NEUTRAL_SHADES[Math.min(i,4)])
-              Text(c.row.title+' '+machineTokens(c.tokens)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+              Text(c.row.title).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.ink).maxLines(1)
+              Text(machineTokens(c.tokens)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
             }
           },(c:ComputerCard,i:number) => c.key+String(c.tokens)+String(i))
         }.width('100%')
@@ -475,13 +480,13 @@ export struct MachineDirectory {
     }
   }
   @Builder homeStatus() {
-    Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(11),cross:LengthMetrics.vp(4)}}) {
+    Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(16),cross:LengthMetrics.vp(4)}}) {
       this.statusBadge(tr('machine_online_ratio').replace('{online}',String(this.cards.filter((c:ComputerCard) => c.online).length)).replace('{total}',String(this.cards.length)),
         this.cards.every((c:ComputerCard) => c.online) ? Colors.positive : Colors.secondary)
       if (this.cards.some((c:ComputerCard) => c.alerts.length > 0)) this.statusBadge(tr('machine_running_high').replace('{count}',String(this.cards.filter((c:ComputerCard) => c.alerts.length>0).length)),
         this.cards.some((c:ComputerCard) => c.alerts[0]?.severity === 2) ? Colors.danger : Colors.working,true)
       if (this.cards.some((c:ComputerCard) => c.needs>0)) this.statusBadge(tr('machine_waiting_agents').replace('{count}',String(this.cards.reduce((v:number,c:ComputerCard) => v+c.needs,0))),Colors.needs)
-    }.width('100%').padding({left:4,right:4,top:5,bottom:3})
+    }.width('100%').padding({left:4,right:4})
   }
 
   @Builder groupHeader(group:string) {
@@ -754,7 +759,7 @@ export struct MachineDirectory {
   }
   build() {
     Refresh({refreshing:$$this.refreshing}) {
-      List({space:9}) {
+      List({space:Tokens.inset}) {
         if (this.selected) {
           if (this.cards.length) {
             ListItem() { this.summary(this.cards[0],true) }
@@ -788,7 +793,7 @@ export struct MachineDirectory {
           ListItem() { Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
             .onClick(() => this.onManage()).id('machines.manage') }
         }
-      }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,bottom:24}).id('machines.list')
+      }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:PhoneStyle.page,bottom:24}).id('machines.list')
     }.onRefreshing(() => {
       this.sync(true); this.refreshing=this.active && this.model.connected;
     }).width('100%').height('100%').backgroundColor(Colors.grouped)
