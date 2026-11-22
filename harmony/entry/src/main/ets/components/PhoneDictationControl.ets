@@ -10,6 +10,7 @@ export struct PhoneDictationControl {
   @Param ink:ResourceColor=Colors.ink;
   @Require @Param target: number;
   @Require @Param symbolSize: number;
+  @Param resting: boolean = false;
   @Require @Param owner: string;
   @Param active: boolean = true;
   @Param language: string = 'default';
@@ -119,7 +120,12 @@ export struct PhoneDictationControl {
   }
 
   build() {
-    Button({type: ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.mic')).fontSize(String(this.symbolSize) + 'vp').fontWeight(FontWeight.Medium).fontColor([this.ink]) }
+    Button({type: ButtonType.Circle}) {
+      SymbolGlyph($r('sys.symbol.mic')).fontSize(String(this.symbolSize) + 'vp')
+        .fontWeight(FontWeight.Medium).fontColor([this.ink])
+        // The two native microphone outlines have the same height. The iPhone outline is 7% narrower.
+        .scale({ x: this.resting && !this.shown ? 0.93 : 1, y: 1 })
+    }
       .attributeModifier(ButtonStyles.quiet).width(this.target).height(this.target).padding(0)
       .responseRegion(ButtonStyles.touchRegion(this.target))
       .accessibilityText(tr('phone_chat_dictation')).bindTips(tr('phone_chat_dictation')).enabled(this.active)

@@ -1270,7 +1270,7 @@ export struct Conversation {
           Row() {
           if (this.verticalActions()) SessionComposerModeChip({model:this.model,active:this.active && !this.draftEditorOpen,onMenu:(open:boolean) => this.modeMenuOpen=open}).layoutWeight(1)
           PhoneDictationControl({owner: this.dictationOwner(),ink:this.toolInk(), target:this.composerActionSize(),
-            symbolSize:this.restingComposer() ? this.restingSize.microphone : 22,
+            resting:this.restingComposer(), symbolSize:this.restingComposer() ? this.restingSize.microphone : 22,
             active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
             chooseLanguage: () => this.model.dictationLocaleForChat(), onListeningIn: (locale: string) => this.model.rememberDictationLocale(locale),
             allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.model.canCompose() && !this.model.decision,
