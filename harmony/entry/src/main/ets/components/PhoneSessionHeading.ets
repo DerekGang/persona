@@ -11,7 +11,7 @@ import { SessionSpace } from '../models/SessionSpace';
 import { Wire } from '../models/Wire';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 
-const cubeOutline: string = 'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z M3 7 L12 12 L21 7 M12 12 L12 22';
+const cubeOutline: string = 'M12 1.2 L21.5 6.6 L21.5 17.4 L12 22.8 L2.5 17.4 L2.5 6.6 Z M2.5 6.6 L12 12 L21.5 6.6 M12 12 L12 22.8';
 
 class InfoLine {
   readonly id: string;
@@ -123,10 +123,10 @@ export struct PhoneSessionHeading {
           SymbolGlyph(line.icon).fontSize(String(22*this.infoScale)+'vp').fontColor([Colors.link])
         } else {
           Shape() {
-            Path().commands(line.id === 'version' ? cubeOutline+' M7.5 4.5 L16.5 9.5' : cubeOutline)
-              .fill(Color.Transparent).stroke(Colors.link).strokeWidth(1.5)
+            Path().commands(line.id === 'version' ? cubeOutline+' M7.2 4 L16.8 9.4' : cubeOutline)
+              .fill(Color.Transparent).stroke(Colors.link).strokeWidth('1.5px')
               .strokeLineCap(LineCapStyle.Round).strokeLineJoin(LineJoinStyle.Round)
-          }.viewPort({x:0,y:0,width:24,height:24}).width(24*this.infoScale).height(24*this.infoScale)
+          }.viewPort({x:0,y:0,width:'24px',height:'24px'}).width(24*this.infoScale).height(24*this.infoScale)
         }
       }.width(this.iconColumn()).accessibilityLevel('no').id('session.info.icon.'+line.id)
       Text(line.label).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink)
