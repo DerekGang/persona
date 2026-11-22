@@ -9,9 +9,11 @@ export interface AgentListAdapter {
 /** The production adapter has one sorter: the shared Rust core. */
 export class CoreAgentListAdapter implements AgentListAdapter {
   project(input: AgentListInput): CoreAgentListProjection {
-    if (!input.coreSettings['include_source_filters']) return this.sort(coreAgentSortInput(input));
+    if (!input.includeSourceFilters) return this.sort(coreAgentSortInput(input));
     const sourceFilter = input.quick === 'feishu' || input.quick === 'terminal';
-    const baseInput = coreAgentSortInput({ ...input, quick: 'all' });
+    const baseInput = coreAgentSortInput(sourceFilter ? { ...input, quick: 'all' } : input);
+    const selectedQuick = baseInput.settings['quick'];
+    baseInput.settings['quick'] = 'all';
     baseInput.settings['inventory'] = true;
     const base = this.sort(baseInput);
     if (!base.filtered) throw new Error('missing_core_inventory');
@@ -19,18 +21,17 @@ export class CoreAgentListAdapter implements AgentListAdapter {
     const counts: Record<string, Object> = { ...base.filter_counts, feishu: 0, terminal: 0 };
     const selected: Record<string, Object>[] = [];
     for (const row of input.rows) {
-      const id = ['app_hub_group', 'manager', 'machine_id', 'session_id'].map((field) => rowText(row.raw, field)).filter(Boolean).join('|');
-      if (!included.has(id)) continue;
+      if (!included.has(row.id)) continue;
       const origin = agentPaneSource(rowText(row.raw, 'pane_id'));
       if (origin && row.raw['nested_subtask'] !== true) counts[origin] = Number(counts[origin]) + 1;
-      if (sourceFilter && (origin === input.quick || kept.has(id))) selected.push(row.raw);
+      if (sourceFilter && (origin === input.quick || kept.has(row.id))) selected.push(row.raw);
     }
     let shown = base;
     if (sourceFilter) {
       baseInput.sessions = selected;
       shown = this.sort(baseInput);
     } else if (input.quick !== 'all') {
-      baseInput.settings['quick'] = input.quick === 'needs_you' ? 'needsYou' : input.quick;
+      baseInput.settings['quick'] = selectedQuick;
       shown = this.sort(baseInput);
     }
     shown.filter_counts = counts;

@@ -1,4 +1,5 @@
 export interface AgentListRow {
+  // The core key includes the owning Hub and manager when source filters are enabled.
   id: string;
   raw: Record<string, Object>;
   source: Object;
@@ -12,6 +13,7 @@ export interface AgentListPreferences {
 }
 export interface AgentListInput {
   rows: AgentListRow[];
+  includeSourceFilters?: boolean;
   history: boolean;
   grouping: string;
   quick: string;

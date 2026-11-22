@@ -796,9 +796,9 @@ export class AgentWorkspace {
       const raw = row.data();
       raw['machine_id'] = rowMachine(row); raw['session_id'] = rowSession(row); raw['title'] = row.title;
       raw['cwd'] = row.path; raw['state'] = row.state; raw['manager'] = row.manager; raw['app_hub_group'] = row.group;
-      return {id: row.id, raw, source: row};
+      return {id: coreRowId(row), raw, source: row};
     });
-    return {rows, history: this.history, grouping: this.groupingMode, quick: this.quickFilter,
+    return {rows, includeSourceFilters:true, history: this.history, grouping: this.groupingMode, quick: this.quickFilter,
       machineFilter: this.machineFilter, query: this.search, reading: this.readingDetail,
       kept: this.frozenGroups?.flatMap((group) => group.memberIds) || [],
       machines: (this.client ? this.shownOwners(this.client) : []).flatMap((owner: ClientModel): Record<string, Object>[] => {
@@ -814,7 +814,7 @@ export class AgentWorkspace {
         return current;
       }),
       coreSettings: { 'sort': 'state', 'folded': this.folded, 'expanded_idle': this.expandedIdle, 'expanded_quiet': this.expandedQuiet,
-        'compact': false, 'history': this.history, 'include_filter_counts': true, 'include_source_filters': true, 'now': new Date().toISOString(), 'held': this.heldSession },
+        'compact': false, 'history': this.history, 'include_filter_counts': true, 'now': new Date().toISOString(), 'held': this.heldSession },
       preferencesFor: (row: AgentListRow): AgentListPreferences => this.preferencesFor(row.source as ResourceRow),
       machineIdentity: (row: AgentListRow): string => this.machineIdentity(row.source as ResourceRow),
       machineName: (row: AgentListRow): string => {

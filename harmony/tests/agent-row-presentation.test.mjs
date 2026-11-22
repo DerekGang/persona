@@ -274,7 +274,10 @@ test('phone search starts folded, reveals only from a downward top pull, and a s
  gesture(0,30);assert.equal(page.searchVisible(),false);
  gesture(1,60);assert.equal(page.searchVisible(),true);page.refreshAgents();assert.equal(refreshes,0);
  page.trackPull({type:0,touches:[{windowX:0,windowY:10}]});page.refreshAgents();assert.equal(refreshes,1);
+ page.searchOpen=true;gesture(0,-60);assert.equal(page.searchVisible(),false,'scrolling the empty resting field folds it');
+ page.searchOpen=true;page.searchEditing=true;gesture(0,-60);assert.equal(page.searchVisible(),true,'the active editor stays available');
  page.workspace.search='login';page.resetSearchReveal();assert.equal(page.searchVisible(),true);
+ gesture(0,-100);assert.equal(page.searchVisible(),true,'an unfocused query remains visible while scrolling');
  page.workspace.search='';page.compactRoot=false;assert.equal(page.searchVisible(),true);
  assert.match(source,/accessibilityCustomActions\(\[\{name:tr\('search_sessions'\),onAction:\(\)=>this.activateSearch\(\)\}\]\)/);
  assert.match(source,/MenuItem\(\{content:tr\('search_sessions'\)\}\).*id\('agents.search_reveal'\)/);
