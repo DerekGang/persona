@@ -6683,6 +6683,82 @@
     {
       "name": "phone_drawer_health",
       "value": "Health"
+    },
+    {
+      "name": "meeting_reminders",
+      "value": "Remind me before meetings"
+    },
+    {
+      "name": "meeting_reminder_body",
+      "value": "Starts at {time}. Record it?"
+    },
+    {
+      "name": "meeting_calendar_allow",
+      "value": "Allow calendar access"
+    },
+    {
+      "name": "meeting_notifications_allow",
+      "value": "Allow notifications"
+    },
+    {
+      "name": "meeting_reminder_footer",
+      "value": "A minute before a meeting on your calendar, this phone asks whether to record it."
+    },
+    {
+      "name": "meeting_calendar_needed",
+      "value": "Reminders need access to this phone’s calendar."
+    },
+    {
+      "name": "meeting_reminder_unavailable",
+      "value": "Couldn’t update meeting reminders on this phone."
+    },
+    {
+      "name": "meeting_transcription",
+      "value": "Meeting transcription"
+    },
+    {
+      "name": "meeting_mode_device",
+      "value": "On device"
+    },
+    {
+      "name": "meeting_mode_hub",
+      "value": "On the hub"
+    },
+    {
+      "name": "meeting_service",
+      "value": "Speech service"
+    },
+    {
+      "name": "meeting_service_builtin",
+      "value": "Built-in service"
+    },
+    {
+      "name": "meeting_glossary",
+      "value": "Glossary"
+    },
+    {
+      "name": "meeting_glossary_hint",
+      "value": "Enter one term per line, up to 200 terms and 40 characters per term."
+    },
+    {
+      "name": "meeting_glossary_limit",
+      "value": "Use up to 200 terms of 40 characters each."
+    },
+    {
+      "name": "meeting_privacy_device",
+      "value": "On-device transcription keeps audio on the device. Confirm before syncing the transcript to the hub."
+    },
+    {
+      "name": "meeting_privacy_hub",
+      "value": "Devices that support hub transcription send meeting audio to the hub and {service}."
+    },
+    {
+      "name": "meeting_speech_not_ready",
+      "value": "The hub’s speech service isn’t ready. Use on-device transcription."
+    },
+    {
+      "name": "meeting_privacy_this_phone",
+      "value": "Recordings on this phone keep their audio on the device. Only a transcript you confirm is synced to the hub."
     }
   ]
 }

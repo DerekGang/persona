@@ -6683,6 +6683,82 @@
     {
       "name": "phone_drawer_health",
       "value": "ヘルスケア"
+    },
+    {
+      "name": "meeting_reminders",
+      "value": "会議の前に通知"
+    },
+    {
+      "name": "meeting_reminder_body",
+      "value": "{time} に開始します。録音しますか？"
+    },
+    {
+      "name": "meeting_calendar_allow",
+      "value": "カレンダーへのアクセスを許可"
+    },
+    {
+      "name": "meeting_notifications_allow",
+      "value": "通知を許可"
+    },
+    {
+      "name": "meeting_reminder_footer",
+      "value": "カレンダーの会議が始まる1分前に、録音するかどうかをこの端末で通知します。"
+    },
+    {
+      "name": "meeting_calendar_needed",
+      "value": "通知にはこの端末のカレンダーへのアクセスが必要です。"
+    },
+    {
+      "name": "meeting_reminder_unavailable",
+      "value": "この端末の会議通知を更新できませんでした。"
+    },
+    {
+      "name": "meeting_transcription",
+      "value": "会議の文字起こし"
+    },
+    {
+      "name": "meeting_mode_device",
+      "value": "デバイス上"
+    },
+    {
+      "name": "meeting_mode_hub",
+      "value": "Hub 上"
+    },
+    {
+      "name": "meeting_service",
+      "value": "音声サービス"
+    },
+    {
+      "name": "meeting_service_builtin",
+      "value": "内蔵サービス"
+    },
+    {
+      "name": "meeting_glossary",
+      "value": "用語集"
+    },
+    {
+      "name": "meeting_glossary_hint",
+      "value": "1行に1語ずつ入力してください。最大200語、1語につき40文字です。"
+    },
+    {
+      "name": "meeting_glossary_limit",
+      "value": "各40文字以内で200語まで入力できます。"
+    },
+    {
+      "name": "meeting_privacy_device",
+      "value": "デバイス上で文字起こしすると音声は端末に残ります。確認後にテキストをHubに同期します。"
+    },
+    {
+      "name": "meeting_privacy_hub",
+      "value": "Hub文字起こし対応端末は会議の音声をHubと「{service}」に送信します。"
+    },
+    {
+      "name": "meeting_speech_not_ready",
+      "value": "Hubの音声サービスの準備ができていないため、デバイス上で文字起こしします。"
+    },
+    {
+      "name": "meeting_privacy_this_phone",
+      "value": "この端末の録音は端末内に保存されます。確認した文字起こしだけがHubに同期されます。"
     }
   ]
 }

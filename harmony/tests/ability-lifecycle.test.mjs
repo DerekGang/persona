@@ -18,6 +18,8 @@ registerHooks({
    export const AbilityConstant={},ConfigurationConstant={ColorMode:{COLOR_MODE_LIGHT:1,COLOR_MODE_DARK:2,COLOR_MODE_NOT_SET:0}},Want={};
    export class UIAbility {context={resourceManager:{},getApplicationContext:()=>({setColorMode(){}})}}
    export const window={};export const Strings={bind(){},refresh(){}};
+   export const nativeMeetingServices={async initialize(){s.meetingRefreshes=(s.meetingRefreshes||0)+1},setRecordingEvent(){},
+     receive(parameters){if(parameters.personaMeetingType==='persona.meeting.reminder' && parameters.occurrence)s.meetingOpens=(s.meetingOpens||0)+1}};
    export const NOTIFICATION_ACTION='persona.notification.OPEN';export const nativeNotifications={refresh:()=>s.query};
    export const deviceFeatures={async background(){},async foreground(){}};
    export const NativeDictation={cancelActive(){s.dictationStops++;}};
@@ -47,3 +49,11 @@ test('a notification arriving during cold initialization is retained and dispatc
 });
 
 test('matching system language reannounces live Hub locale after a configuration change',()=>{reset();const ability=new EntryAbility();ability.onConfigurationUpdate({});assert.equal(state.localeAnnouncements,1);state.language='ja-JP';ability.onConfigurationUpdate({});assert.equal(state.localeAnnouncements,1);});
+
+test('a meeting reminder opens the recording page intent without starting a microphone or publishing a transcript',()=>{
+ const a=new EntryAbility();state.meetingOpens=0;
+ a.onNewWant({parameters:{personaMeetingType:'persona.meeting.reminder',occurrence:'synthetic-1'}},{});
+ assert.equal(state.meetingOpens,1);
+ a.onNewWant({parameters:{personaMeetingType:'not-a-reminder',occurrence:'synthetic-2'}},{});
+ assert.equal(state.meetingOpens,1);
+});

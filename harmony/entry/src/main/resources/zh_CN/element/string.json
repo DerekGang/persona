@@ -6683,6 +6683,82 @@
     {
       "name": "phone_drawer_health",
       "value": "健康"
+    },
+    {
+      "name": "meeting_reminders",
+      "value": "会前提醒我"
+    },
+    {
+      "name": "meeting_reminder_body",
+      "value": "{time} 开始。要录制吗？"
+    },
+    {
+      "name": "meeting_calendar_allow",
+      "value": "允许访问日历"
+    },
+    {
+      "name": "meeting_notifications_allow",
+      "value": "允许通知"
+    },
+    {
+      "name": "meeting_reminder_footer",
+      "value": "日历里的会议开始前一分钟，本机会发通知，询问是否录音。"
+    },
+    {
+      "name": "meeting_calendar_needed",
+      "value": "提醒需要访问本机日历。"
+    },
+    {
+      "name": "meeting_reminder_unavailable",
+      "value": "未能更新本机会前提醒。"
+    },
+    {
+      "name": "meeting_transcription",
+      "value": "会议转写"
+    },
+    {
+      "name": "meeting_mode_device",
+      "value": "在设备上转写"
+    },
+    {
+      "name": "meeting_mode_hub",
+      "value": "通过 Hub 转写"
+    },
+    {
+      "name": "meeting_service",
+      "value": "语音服务"
+    },
+    {
+      "name": "meeting_service_builtin",
+      "value": "内置服务"
+    },
+    {
+      "name": "meeting_glossary",
+      "value": "术语表"
+    },
+    {
+      "name": "meeting_glossary_hint",
+      "value": "每行一个词条，最多 200 项，每项最多 40 个字符。"
+    },
+    {
+      "name": "meeting_glossary_limit",
+      "value": "最多 200 个词条，每项不超过 40 个字符。"
+    },
+    {
+      "name": "meeting_privacy_device",
+      "value": "设备在本机转写，音频留在本机。你确认后才会把文字同步到 Hub。"
+    },
+    {
+      "name": "meeting_privacy_hub",
+      "value": "支持 Hub 转写的设备可把会议音频发送给 Hub 和「{service}」。"
+    },
+    {
+      "name": "meeting_speech_not_ready",
+      "value": "Hub 的语音服务尚未就绪，使用设备端转写。"
+    },
+    {
+      "name": "meeting_privacy_this_phone",
+      "value": "这台手机的录音保留在本机，只有经你确认的文字才会同步到 Hub。"
     }
   ]
 }

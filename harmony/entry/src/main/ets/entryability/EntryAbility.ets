@@ -1,3 +1,4 @@
+import { nativeMeetingServices } from '../platform/NativeMeetingServices';
 import { isPairingLink } from '../core/WireCompatibility';
 import { deviceFeatures } from '../models/DeviceFeatures';
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
@@ -30,6 +31,7 @@ export default class EntryAbility extends UIAbility {
     }).catch(() => { client.error = 'failed'; client.ready = true; });
   }
   private receiveWant(want: Want): void {
+    nativeMeetingServices.receive(Wire.record(want.parameters));
     const uri = want.uri || '';
     if (uri.length <= 16384 && isPairingLink(uri)) client.pairingLink = uri;
     else if (!uri && want.action !== NOTIFICATION_ACTION && want.parameters?.['personaPage'] === 'projects') client.projectsRequested = true;
@@ -53,8 +55,9 @@ export default class EntryAbility extends UIAbility {
     stage.loadContent('pages/Index', (error) => { if (error.code) client.error = 'failed'; });
   }
   onWindowStageDestroy(): void { nativeEnvironment.unbindWindow(); }
-  onBackground(): void { NativeDictation.cancelActive(); this.visible = false; this.lifecycle++; deviceLook.bind(undefined).catch(() => {}); Promise.all([KnowledgeRecording.backgroundAll(), deviceFeatures.background(), client.background()]).catch(() => {}); }
+  onBackground(): void { NativeDictation.cancelActive(); this.visible = false; this.lifecycle++; deviceLook.bind(undefined).catch(() => {}); Promise.all([KnowledgeRecording.backgroundAll().then(() => nativeMeetingServices.setRecordingEvent('')), deviceFeatures.background(), client.background()]).catch(() => {}); }
   onForeground(): void {
+    nativeMeetingServices.initialize(this.context).catch(() => {});
     nativeEnvironment.update(this.context.config);
     const epoch = ++this.lifecycle; this.visible = true; client.activateForeground();
     if (!client.ready) return;

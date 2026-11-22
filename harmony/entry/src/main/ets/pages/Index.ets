@@ -1,3 +1,4 @@
+import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { AgentStartPicker } from '../components/AgentStartPicker';
 import { AgentLaunchChoices, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
 import { WorktreeSheet } from '../components/WorktreeSheet';
@@ -239,6 +240,14 @@ struct Index {
   }
   private projectPlace(): boolean {
     return this.model.section === 4;
+  }
+  @Local meetingServices:NativeMeetingServices=nativeMeetingServices;
+  @Monitor('meetingServices.pendingOpen','model.ready')
+  meetingReminderRequested():void { this.consumeMeetingReminder(); }
+  private consumeMeetingReminder():void {
+    if (!this.meetingServices.pendingOpen || !this.model.ready || !this.model.profile.id || this.navigationRestoredScope!==this.model.scope()) return;
+    this.meetingServices.pendingOpen=false; this.spacesShown=false;
+    if (this.stack.getAllPathName().slice(-1)[0]!=='recordings') this.pushPlace('recordings','');
   }
   @Monitor('model.projectsRequested', 'model.ready')
   projectLaunchChanged(): void { this.consumeProjectLaunch(); }
@@ -719,6 +728,7 @@ struct Index {
     this.stack = this.paths.get(scope + ':' + this.model.section) || new NavPathStack();
     this.paths.set(scope + ':' + this.model.section, this.stack); this.syncPhonePath();
     this.navigationRestoredScope = scope;
+    if (this.meetingServices.pendingOpen && this.model.ready) { this.consumeMeetingReminder(); return; }
     if (this.model.projectsRequested && this.model.ready) { this.consumeProjectLaunch(); return; }
     if (intent !== this.navigationIntent) this.savePath();
     if (this.model.section === 2 && !this.stack.size()) this.openResources('inbox');

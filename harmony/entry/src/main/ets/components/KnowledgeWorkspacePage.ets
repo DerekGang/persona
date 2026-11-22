@@ -11,8 +11,9 @@ import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { MarkdownText } from './MarkdownText';
 import { Tokens } from '../design/Tokens';
 import { tr } from '../design/Strings';
-import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
-import { calendarManager } from '@kit.CalendarKit';
+import { common } from '@kit.AbilityKit';
+import { nativeMeetingServices } from '../platform/NativeMeetingServices';
+import { MeetingOccurrence } from '../models/MeetingCalendarReminders';
 import { MeetingPreferences, meetingRoleLabel } from '../models/MeetingPreferences';
 import { KnowledgeRecording } from '../models/KnowledgeRecording';
 import { NativeRecording } from '../platform/NativeRecording';
@@ -107,7 +108,12 @@ export struct KnowledgeWorkspacePage {
   }
 
   @Local meetingTitle: string = '';
-  @Local calendarEvents: calendarManager.Event[] = [];
+  @Local calendarEvents:MeetingOccurrence[]=[];
+  private selectedCalendarEvent:string='';
+  private recordingCalendarEvent:string='';
+  @Monitor('recording.captureState') meetingCaptureChanged():void {
+    if (this.recordingCalendarEvent && this.recording.captureState!=='recording') { this.recordingCalendarEvent='';nativeMeetingServices.setRecordingEvent(''); }
+  }
   @Local calendarState: string = '';
   private calendarRequest: number = 0;
   @Local showIgnored: boolean = false;
@@ -160,7 +166,7 @@ export struct KnowledgeWorkspacePage {
   }
   @Monitor('model.profile') profileChanged(): void {
     this.metadataSheet=false; this.facts.close(); this.recordingTools=false; this.showIgnored=false; this.recordingOpen = false;
-    this.calendarRequest++; this.calendarEvents=[]; this.calendarState=''; this.meetingTitle=''; this.meetingKind='meeting';
+    this.selectedCalendarEvent=''; this.calendarRequest++; this.calendarEvents=[]; this.calendarState=''; this.meetingTitle=''; this.meetingKind='meeting';
     this.privateMeeting=false; this.invitationOverride=''; this.meetingFeaturesChanged(); this.localMeetings = false; this.localOwner = ''; this.localOpening = undefined;
     this.recording.stopForBackground().catch(() => undefined); this.syncRowBindings(); this.openWorkspace();
     if (this.initialKind === 'recordings' && !this.row) this.loadRecordings().catch(() => undefined);
@@ -224,7 +230,9 @@ export struct KnowledgeWorkspacePage {
     if (!await this.loadRecordings()) return;
     if (id) this.recording.selectEntry(id);
     this.recordingOpen = true;
+    const event=kind==='meeting' ? this.selectedCalendarEvent : '';
     if (start && this.recording.canStart() && await this.recording.start(kind,title,role,privateMark)) {
+      this.recordingCalendarEvent=event;nativeMeetingServices.setRecordingEvent(event);this.selectedCalendarEvent='';
       this.meetingTitle=''; this.calendarEvents=[]; this.calendarState=''; this.invitationOverride=''; this.privateMeeting=false;
     }
   }
@@ -236,20 +244,9 @@ export struct KnowledgeWorkspacePage {
     const revision=++this.calendarRequest;
     this.calendarState='loading'; this.calendarEvents=[];
     try {
-      const access=abilityAccessCtrl.createAtManager(), permission:Permissions='ohos.permission.READ_CALENDAR';
-      if (access.getSelfPermissionStatus(permission)===abilityAccessCtrl.PermissionStatus.NOT_DETERMINED)
-        await access.requestPermissionsFromUser(context,[permission]);
-      if (access.getSelfPermissionStatus(permission)!==abilityAccessCtrl.PermissionStatus.GRANTED)
-        throw new Error('permission_denied');
-      const now=Date.now(), end=new Date(now);
-      end.setHours(24,0,0,0);
-      const filter=calendarManager.EventFilter.filterByTime(now,end.getTime()), events:calendarManager.Event[]=[];
-      for (const calendar of await calendarManager.getCalendarManager(context).getAllCalendars()) {
-        const rows=await calendar.getEvents(filter,['id','title','startTime','endTime','isAllDay']);
-        events.push(...rows.filter((event:calendarManager.Event) => !!event.title && !event.isAllDay && event.endTime>now && event.startTime<end.getTime()));
-      }
+      const events=await nativeMeetingServices.today(context);
       if (!this.pageAvailable || revision!==this.calendarRequest || owner!==this.recordingScope()) return;
-      this.calendarEvents=events.sort((a:calendarManager.Event,b:calendarManager.Event) => a.startTime-b.startTime);
+      this.calendarEvents=events;
       this.calendarState=this.calendarEvents.length ? 'ready' : 'phone_meeting_calendar_empty';
     } catch (error) {
       if (this.pageAvailable && revision===this.calendarRequest && owner===this.recordingScope())
@@ -473,19 +470,19 @@ export struct KnowledgeWorkspacePage {
               .backgroundColor(Color.Transparent).onClick(() => this.readMeetingCalendar()).id('recordings.calendar')
             if (this.calendarState && !['loading','ready'].includes(this.calendarState))
               Text(tr(this.calendarState)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({left:15,right:15,bottom:9})
-            ForEach(this.calendarEvents,(event:calendarManager.Event) => {
+            ForEach(this.calendarEvents,(event:MeetingOccurrence) => {
               Button({type:ButtonType.Normal}) {
-                Text(this.clockTime(event.startTime)+'  '+event.title).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).width('100%')
+                Text(this.clockTime(event.start)+'  '+event.title).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).width('100%')
               }.width('100%').constraintSize({minHeight:44}).padding({left:15,right:15}).backgroundColor(Color.Transparent)
-                .onClick(() => { this.meetingKind='meeting'; this.meetingTitle=event.title || ''; this.calendarEvents=[]; this.calendarState=''; })
-            },(event:calendarManager.Event,index:number) => String(index)+'/'+String(event.id)+'/'+String(event.startTime))
+                .onClick(() => { this.meetingKind='meeting'; this.meetingTitle=event.title; this.selectedCalendarEvent=event.id; this.calendarEvents=[]; this.calendarState=''; })
+            },(event:MeetingOccurrence) => event.key())
           }.width('100%').borderRadius(16).backgroundColor(Colors.surface)
         }
         ListItem() {
           Column({space:12}) {
             TextInput({text:this.meetingTitle,placeholder:tr(this.meetingKind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')+' · '+new Date().toLocaleDateString()})
               .height(Math.max(42,Math.ceil(24*nativeEnvironment.fontScale)+8)).padding(0).borderRadius(0)
-              .backgroundColor(Color.Transparent).onChange((v:string) => this.meetingTitle=v).id('recordings.title')
+              .backgroundColor(Color.Transparent).onChange((v:string) => { this.meetingTitle=v; this.selectedCalendarEvent=''; }).id('recordings.title')
             Divider().strokeWidth(0.5).color(Colors.divider)
             Row() {
               ForEach(['meeting','note'],(kind:string) => {
