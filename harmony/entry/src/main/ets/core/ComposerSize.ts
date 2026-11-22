@@ -51,8 +51,12 @@ export class ComposerReadingSize {
   }
   // The measured body face has the same 2444 / 2048 line advance at every category.
   get line(): number { return this.points * 2444 / 2048; }
+  // The shell provides a minimum line box at the default reading size. The native
+  // text field uses that pitch between lines and the reading face for the last line.
+  get advance(): number { return Math.max(this.line, Math.round(this.shellPoints * 2444 / 2048) - 1); }
   height(lines: number): number {
     if (lines === 1) return Math.ceil(Math.max(this.line, this.shellPoints * 2444 / 2048));
+    if (this.advance > this.line) return this.line + (lines - 1) * this.advance;
     return Math.round(lines * this.line);
   }
 }
@@ -64,4 +68,29 @@ export function composerReadingSize(fontScale: number): ComposerReadingSize {
   const a = bodyMetrics[upper - 1], b = bodyMetrics[upper];
   const t = (points - a[0]) / (b[0] - a[0]);
   return new ComposerReadingSize(points, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+}
+
+export class CompactDraftRoom {
+  readonly page: number;
+  readonly visible: number;
+  readonly bottomLift: number;
+  constructor(page: number, visible: number, bottomLift: number) {
+    this.page = page;
+    this.visible = visible;
+    this.bottomLift = bottomLift;
+  }
+}
+
+// The reference full-height phone has 62pt above its page and 34pt below. Its docked
+// keyboard, including the candidate strip, occupies 329pt. Larger occlusions win.
+// Only a docked keyboard within one standard inset of that measured height gets
+// the difference. Floating keyboards, compact windows and short phones keep their own room.
+export function compactDraftRoom(width: number, height: number, pane: number, top: number, bottom: number,
+  keyboard: number, fullScreen: boolean, hover: boolean): CompactDraftRoom | undefined {
+  if (!fullScreen || hover || !(width > 0 && width < 600 && height >= 600 && height > width && Math.abs(width - pane) < 2)) return undefined;
+  const safeTop = Math.max(62, top), safeBottom = Math.max(34, bottom);
+  const keyboardLift = keyboard >= 313 && keyboard < 329 ? 329 - keyboard : 0;
+  const visible = height - safeTop - (keyboard > 0 ? Math.max(keyboard + keyboardLift, safeBottom) : safeBottom);
+  if (visible < 160) return undefined;
+  return new CompactDraftRoom(height - safeTop - safeBottom, visible, keyboard > 0 ? keyboardLift : safeBottom - bottom);
 }

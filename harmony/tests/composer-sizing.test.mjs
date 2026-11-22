@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
-import { composerReadingSize, restingComposerSize } from '../entry/src/main/ets/core/ComposerSize.ts';
+import { compactDraftRoom, composerReadingSize, restingComposerSize } from '../entry/src/main/ets/core/ComposerSize.ts';
 
 const source = readFileSync(new URL('../entry/src/main/ets/components/Conversation.ets', import.meta.url), 'utf8');
 const tokens = readFileSync(new URL('../entry/src/main/ets/design/Tokens.ets', import.meta.url), 'utf8');
@@ -301,4 +301,24 @@ test('expanded native toolbar places its scaled controls between the two eight-u
     assert.equal(v.verticalActions(),false);
     v.fieldFocused=false;assert.ok(Math.abs(v.leftColumns()*unit-(4+size))<=1/3);
   }
+});
+
+test('full-height shared footer reserves a half-page of requests or one accessible card above the genuine keyboard', () => {
+  const light=compactDraftRoom(402,874,402,39,28,0,true,false);
+  const ime=compactDraftRoom(402,874,402,39,28,314,true,false);
+  assert.deepEqual([light.page,light.visible,light.bottomLift],[778,778,6]);
+  assert.deepEqual([ime.page,ime.visible,ime.bottomLift],[778,483,15]);
+  const Frame=new Function('Tokens','return '+stripTypeScriptTypes('class Frame {'+
+    ['preferredCardSpace','sharedDraftLimit'].map(method).join('\n')+'}'))(Tokens);
+  const v=Object.assign(new Frame(),{environment:{keyboardHeightPx:0},agentCountHeight:23,composerActionSize:()=>68,readingSize:composerReadingSize(3.2)});
+  assert.equal(v.preferredCardSpace(light),389);assert.equal(v.sharedDraftLimit(light),245);
+  v.environment.keyboardHeightPx=942;
+  assert.equal(v.preferredCardSpace(ime),44);assert.equal(v.sharedDraftLimit(ime),295);
+  assert.equal(compactDraftRoom(402,500,402,39,28,180,true,false),undefined);
+  assert.equal(compactDraftRoom(402,874,300,39,28,200,true,false),undefined);
+  assert.equal(compactDraftRoom(402,874,402,39,28,314,false,false),undefined);
+  assert.equal(compactDraftRoom(402,874,402,39,28,314,true,true),undefined);
+  assert.equal(compactDraftRoom(402,874,402,70,44,410,true,false).bottomLift,0);
+  assert.equal(compactDraftRoom(402,874,402,39,28,150,true,false).bottomLift,0);
+  assert.ok(Math.abs(composerReadingSize(1).height(6)-130.3)<.02);
 });

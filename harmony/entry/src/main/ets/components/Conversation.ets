@@ -1,5 +1,5 @@
 import { SessionComposerModeChip } from './SessionComposerModeChip';
-import { ComposerSize, restingComposerSize, ComposerReadingSize, composerReadingSize, composerTypeSample } from '../core/ComposerSize';
+import { ComposerSize, restingComposerSize, ComposerReadingSize, composerReadingSize, composerTypeSample, CompactDraftRoom, compactDraftRoom } from '../core/ComposerSize';
 import { PhoneDictationControl } from './PhoneDictationControl';
 import { ConversationRecap } from './ConversationRecap';
 import { AssistantWelcome } from './AssistantWelcome';
@@ -136,6 +136,7 @@ export struct Conversation {
   @Event onHideActions: (request: number) => void = () => {};
   @Event admission: () => boolean = (): boolean => true;
   @Event onOpenCard: (itemId: string, kind: string) => void = () => {};
+  @Event onLongDraftHeader: (floating: boolean) => void = () => {};
   @Event onPrimaryStop: (shown: boolean) => void = () => {};
   @Event onOpenFile: (path: string) => void = () => {};
   @Event onLink: (address: string) => void = () => {};
@@ -468,9 +469,43 @@ export struct Conversation {
     const end = String(Math.max(0, Math.round(ui.vp2px(this.expandedComposer() ? Tokens.gap : 2)) - stroke)) + 'px';
     return { left: side, right: side, top: this.expandedComposer() ? 0 : end, bottom: end };
   }
+  @Computed get compactDraftSpace(): CompactDraftRoom | undefined {
+    const env = this.environment;
+    if (!env.isFullScreen || !env.windowWidthPx || !env.windowHeightPx || !env.safeBottomPx) return undefined;
+    const ui = this.getUIContext(), height = ui.px2vp(env.windowHeightPx);
+    return compactDraftRoom(ui.px2vp(env.windowWidthPx),height,this.availableWidth,ui.px2vp(env.safeTopPx),
+      Math.max(0,height-ui.px2vp(env.safeBottomPx)),ui.px2vp(env.keyboardHeightPx),env.isFullScreen,env.nativeHoverAvailable);
+  }
+  private stackedAgentDraft(): boolean {
+    return this.active && !!this.model.draft && !!this.model.decision && this.model.selected.kind === 'session' &&
+      this.model.pendingDecisions.length > 1 && !this.attachments.attachments.length && !this.model.sourceContext;
+  }
+  private preferredCardSpace(room: CompactDraftRoom): number {
+    return this.environment.keyboardHeightPx > 0 ? 44 : room.page / 2;
+  }
+  private sharedDraftLimit(room: CompactDraftRoom): number {
+    // One unit of list remains. The count has an 8vp gap below it. From the
+    // card viewport to the field are 12vp of group spacing and 16vp of text inset.
+    const fixed = 1 + this.agentCountHeight + Tokens.gap + Tokens.inset + Tokens.page + this.composerActionSize() + Tokens.page;
+    return Math.max(this.readingSize.height(1), room.visible - fixed - this.preferredCardSpace(room));
+  }
+  @Computed get floatsDraftHeader(): boolean {
+    if (!this.stackedAgentDraft() || !this.compactDraftSpace) return false;
+    return this.readingSize.height(Math.min(6,this.visibleDraftLines)) > this.sharedDraftLimit(this.compactDraftSpace);
+  }
+  private announcedFloatingHeader: boolean = false;
+  @Monitor('floatsDraftHeader') publishDraftHeader(): void {
+    const next = this.floatsDraftHeader;
+    if (next !== this.announcedFloatingHeader) { this.announcedFloatingHeader = next; this.onLongDraftHeader(next); }
+  }
   private controlsPadding(): Padding {
     const resting = this.restingComposer(), side = resting || this.expandedComposer() ? Tokens.inset : Tokens.page;
-    return { left: side, right: side, top: Tokens.gap, bottom: resting || this.expandedComposer() ? Tokens.gap : Tokens.footer };
+    const space = this.expandedComposer() ? this.compactDraftSpace : undefined;
+    const stack = space && this.stackedAgentDraft();
+    // The native Agent tray has two units of bottom padding when its keyboard is closed.
+    const top = stack ? Math.max(0, Tokens.fine - (this.environment.keyboardHeightPx > 0 ? 0 : 2) -
+      this.getUIContext().px2vp(this.restingStrokePx())) : Tokens.gap;
+    return { left: side, right: side, top: top, bottom: (resting || this.expandedComposer() ? Tokens.gap : Tokens.footer) + (space?.bottomLift ?? 0) };
   }
   private verticalActions(): boolean {
     // The tools are icon buttons with vp touch targets. Only wrap when their actual slots cannot fit.
@@ -507,6 +542,7 @@ export struct Conversation {
   @Local agentComposerHeight: number = 0;
   @Local agentCountHeight: number = 0;
   private agentCardsRoom(): number {
+    if (this.floatsDraftHeader && this.compactDraftSpace) return this.preferredCardSpace(this.compactDraftSpace);
     const ui=this.getUIContext(), keyboard=this.environment.keyboardHeightPx>0;
     let visibleBody=this.availableHeight, page=this.availableHeight;
     const windowName=ui.getWindowName();
@@ -538,7 +574,8 @@ export struct Conversation {
   }
   private inlineEditorMaxHeight(): number {
     if (!this.expandedComposer()) return this.composerActionSize();
-    const line = this.readingSize.line;
+    if (this.floatsDraftHeader && this.compactDraftSpace) return this.sharedDraftLimit(this.compactDraftSpace);
+    const line = this.readingSize.advance;
     const actions = this.composerActionSize() * (this.verticalActions() ? 2 : 1);
     // Include the outer spacing and both borders before the first native measurement.
     // After layout this also reserves the measured quote, attachment strip and Persona task dock.
@@ -796,9 +833,9 @@ export struct Conversation {
     }
     const value = text.endsWith('\n') ? text + ' ' : text;
     const metrics = ui.getMeasureUtils().measureTextSize({ textContent: value, constraintWidth: String(Math.max(1, width)) + 'vp',
-      fontSize: String(this.readingSize.points) + 'vp', lineHeight: String(this.readingSize.line) + 'vp',
+      fontSize: String(this.readingSize.points) + 'vp', lineHeight: String(this.readingSize.advance) + 'vp',
       letterSpacing: String(this.draftTracking) + 'vp', maxLines: 7, wordBreak: WordBreak.BREAK_WORD });
-    return Math.max(1, Math.min(7, Math.round(ui.px2vp(Number(metrics.height)) / this.readingSize.line)));
+    return Math.max(1, Math.min(7, Math.round(ui.px2vp(Number(metrics.height)) / this.readingSize.advance)));
   }
   @Computed get unreservedDraftLines(): number { return this.nativeDraftLines(this.composerWidth - 2 * Tokens.inset); }
   private offersDraftEditor(): boolean {
@@ -1021,6 +1058,7 @@ export struct Conversation {
     reconcileTimelineRows(this.lines, lines);
   }
   aboutToAppear(): void {
+    this.onLongDraftHeader(this.floatsDraftHeader);
     this.mounted = true;
     this.questions.sync(this.model, this.active); this.chooser.sync(this.model, this.active);
     this.syncReading(); this.syncFeed(); this.syncAttachments(); this.syncTimeline(); this.syncRevision(); this.primaryStopChanged();
@@ -1032,7 +1070,7 @@ export struct Conversation {
     this.seekingHit = ''; this.clearSearchHighlight();
     this.mounted = false;
     this.questions.retire(); this.actionIntent = undefined; this.chooser.retire();
-    this.onPrimaryStop(false); this.saveReading(); this.readingEpoch++;
+    this.onLongDraftHeader(false); this.onPrimaryStop(false); this.saveReading(); this.readingEpoch++;
     if (this.feedTimer !== -1) clearTimeout(this.feedTimer); this.feedTimer = -1; this.feed.close(); this.feedKey = '';
     this.attachmentKey = ''; this.attachments.close(); this.invalidateRevisionMenuContext(); this.revisionContextKey = '';
     this.revisions.hide(); this.revisionKey = '';
@@ -1354,7 +1392,7 @@ export struct Conversation {
                 .fontSize(this.expandedComposer() ? String(this.readingSize.points) + 'vp' : Tokens.body)
                 .placeholderFont({ size: this.expandedComposer() ? String(this.readingSize.shellPoints) + 'vp' : Tokens.body })
                 .fontColor(Colors.ink).placeholderColor(Colors.secondary).caretColor(Colors.action).backgroundColor(Color.Transparent)
-                .lineHeight(this.expandedComposer() ? String(this.readingSize.line) + 'vp' : String(Tokens.lineHeight) + 'fp')
+                .lineHeight(this.expandedComposer() ? String(this.readingSize.advance) + 'vp' : String(Tokens.lineHeight) + 'fp')
                 .letterSpacing(this.expandedComposer() ? String(this.draftTracking) + 'vp' : 0).wordBreak(WordBreak.BREAK_WORD)
                 .padding(this.expandedComposer() ? 0 : { left: Tokens.gap, right: Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
                 .height(this.expandedComposer() ? this.expandedFieldHeight() : this.composerActionSize())
