@@ -53,6 +53,25 @@ function rawInteraction(request: Decision): Record<string, Object> {
 
 function rawRecord(request: Decision): Record<string, Object> { return Wire.parse(request.raw); }
 
+/** Permission prompts hold a tool call open. Other pending cards follow in reverse creation order. */
+export function agentPendingCards(requests: Decision[], fallback?: Decision): Decision[] {
+  const visible = (requests.length ? requests : fallback ? [fallback] : [])
+    .filter((r: Decision) => !['resolved', 'closed', 'dismissed', 'expired', 'cancelled', 'ended'].includes(r.status));
+  const dates = new Map<Decision, number>();
+  for (const r of visible) {
+    const outer = rawRecord(r), inner = Wire.object(outer, 'interaction');
+    const time = Wire.text(inner, 'created_at', Wire.text(outer, 'created_at'));
+    const stamp = Date.parse(time), fraction = time.match(/:\d{2}\.\d{3}(\d+)/);
+    dates.set(r, Number.isFinite(stamp) ? stamp + (fraction ? Number('0.' + fraction[1]) : 0) : Number.NEGATIVE_INFINITY);
+  }
+  // Stable sorting after reversal puts the later entry first when dates are absent or identical.
+  return visible.reverse().sort((a: Decision, b: Decision): number => {
+    if ((a.kind === 'permission') !== (b.kind === 'permission')) return a.kind === 'permission' ? -1 : 1;
+    const left = dates.get(a)!, right = dates.get(b)!;
+    return left === right ? 0 : right > left ? 1 : -1;
+  });
+}
+
 /** The exact tool name is protocol data; it does not use the localized card title. */
 export function interactionToolName(request: Decision): string {
   return Wire.text(rawInteraction(request), 'tool_name');

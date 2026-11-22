@@ -101,6 +101,30 @@ test('only an identity-matched hello on the current live scope and connection ge
 function decision(model,id='request-one') { const value=new Decision(); value.id=id; value.kind='permission'; value.raw=JSON.stringify({id}); model.decision=value; return value; }
 function deferred() { let resolve,reject; const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}); return {promise,resolve,reject}; }
 
+test('a follow-up during Agent approvals sends once to the active session and leaves every request unanswered', async () => {
+  const { model, writes } = fixture();
+  delete model.canSend;
+  model.canCompose = () => true;
+  model.sourceContext = '';
+  model.selected.raw = JSON.stringify({ status: 'blocked' });
+  const request = id => ({ id, kind: 'permission', machine_id: model.selected.machine, session_id: model.selected.session });
+  const raw = [request('approve-build'), request('approve-format')];
+  model.repository.resolve = () => { throw new Error('A note must never resolve a permission'); };
+  model.decisionRefreshSequence = 1;
+  model.replacePendingDecisions(raw, model.selected, model.target(), model.connectionGeneration(), model.scope(), 1);
+  assert.equal(model.agentQueuesMessages(), true);
+  assert.equal(model.decisionBlocksMessage(), false);
+  model.draft = 'Please keep both originals';
+  assert.equal(await model.send(), true);
+  assert.deepEqual(writes.map(([row, text]) => [row.machine, row.session, text]), [['machine-one', 'chat-one', 'Please keep both originals']]);
+  assert.deepEqual(model.pendingDecisions.map(r => [r.id, r.status]), [['approve-build', 'open'], ['approve-format', 'open']]);
+  model.draft = 'A later draft';
+  model.selected = new ResourceRow('other', 'Other', 'session');
+  assert.equal(model.decisionBlocksMessage(), true);
+  assert.equal(await model.send(), false);
+  assert.equal(writes.length, 1);
+});
+
 test('the global Agent badge keeps the newest owned snapshot across out-of-order reads and assistant switches', async () => {
   const {model} = fixture();
   const old = deferred(), replaced = deferred();

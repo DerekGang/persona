@@ -7171,6 +7171,14 @@
     {
       "name": "phone_sidebar_unread",
       "value": "未確認"
+    },
+    {
+      "name": "chat_queued_followup",
+      "value": "補足（後で送信）"
+    },
+    {
+      "name": "chat_pending_cards_count",
+      "value": "保留中{count}件"
     }
   ]
 }

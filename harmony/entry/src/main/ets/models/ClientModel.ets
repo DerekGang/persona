@@ -1126,7 +1126,7 @@ export class ClientModel {
     if (admit && !admit()) return false;
     const text = this.draft;
     if (utf8Bytes(text) > 100000) { this.error = 'chat_attachment_text_too_large'; return false; }
-    if (this.draftLoading || this.decision || !this.canSend() || !text.trim() || ['pending', 'unknown'].includes(this.operationState)) return false;
+    if (this.draftLoading || !this.canSend() || !text.trim() || ['pending', 'unknown'].includes(this.operationState)) return false;
     if (this.demo && this.demoRepository) {
       const prepared = this.prepareMessageText(text); if (utf8Bytes(prepared) > 100000) { this.error = 'chat_attachment_request_too_large'; return false; }
       try { this.demoRepository.sendLocal(this.selected, prepared); this.sourceContext = ''; this.updateDraft(''); await this.loadChat(this.selected); return true; }
@@ -1136,7 +1136,7 @@ export class ClientModel {
     return this.dispatchMessage(this.repo(), this.selected, preparedText, [], this.generation, this.scope(), this.target(), text, this.sourceContext, '', admit);
   }
   async sendPrepared(prepared: PreparedAttachmentSend, draft: string, context: string, admit?: () => boolean): Promise<boolean> {
-    if (admit && !admit() || !prepared.repository || this.draftLoading || this.decision || !this.canSend() || ['pending', 'unknown'].includes(this.operationState) ||
+    if (admit && !admit() || !prepared.repository || this.draftLoading || !this.canSend() || ['pending', 'unknown'].includes(this.operationState) ||
       !this.owns(prepared.generation, prepared.scope) || this.target() !== prepared.modelTarget || this.repository !== prepared.repository ||
       this.target(prepared.row) !== prepared.modelTarget || (!prepared.text.trim() && !prepared.images.length)) return false;
     if (this.draft !== draft || this.sourceContext !== context) { this.error = 'chat_attachment_selection_changed'; return false; }
@@ -1154,10 +1154,10 @@ export class ClientModel {
       await store.save(target, captured);
       if (admit && !admit() || !this.owns(generation, scope) || this.target() !== target || this.repository !== repo) { this.activeMessages.delete(entry.id); if (this.owns(generation, scope) && this.target() === target) { this.operationState = 'failed'; this.error = 'request_updated'; } return false; }
       await store.stage(scope, entry); staged = true;
-      if (admit && !admit() || !this.owns(generation, scope) || this.target() !== target || this.repository !== repo || this.draftRevision !== entry.revision || this.decision || !this.canSend()) { await store.settle(scope, entry.id, 'failed'); this.activeMessages.delete(entry.id); entry.state = 'failed'; if (this.owns(generation, scope) && this.target() === target) { this.operationState = 'failed'; this.error = 'request_updated'; this.publishMessages(); } return false; }
+      if (admit && !admit() || !this.owns(generation, scope) || this.target() !== target || this.repository !== repo || this.draftRevision !== entry.revision || !this.canSend()) { await store.settle(scope, entry.id, 'failed'); this.activeMessages.delete(entry.id); entry.state = 'failed'; if (this.owns(generation, scope) && this.target() === target) { this.operationState = 'failed'; this.error = 'request_updated'; this.publishMessages(); } return false; }
       this.localMessages = this.localMessages.concat([entry]); this.publishMessages();
       dispatched = true;
-      const reply = await repo.send(row, text, entry.id, '', images, (): boolean => (!admit || admit()) && this.owns(generation, scope) && this.target() === target && this.repository === repo && this.draftRevision === entry.revision && !this.decision && this.canSend());
+      const reply = await repo.send(row, text, entry.id, '', images, (): boolean => (!admit || admit()) && this.owns(generation, scope) && this.target() === target && this.repository === repo && this.draftRevision === entry.revision && this.canSend());
       if (reply && row.kind === 'session' && Wire.text(reply, 'delivered') === 'later') {
         const raw = Wire.object(reply, 'undelivered'), held = HeldAgentMessage.from(raw);
         if (held?.id === entry.id) {
@@ -1221,9 +1221,12 @@ export class ClientModel {
   @Trace interruptPendingKey: string = '';
   private interruptIdentity(): string { return JSON.stringify([this.generation, this.target()]); }
   private turnWorking(): boolean {
-    const row = this.sessions.find((item: ResourceRow) => item.machine === this.selected.machine && (item.session || item.id) === (this.selected.session || this.selected.id)) || this.selected;
-    return row.state === 'working' || Wire.text(row.data(), 'status') === 'working' || Wire.bool(row.data(), 'working');
+    const row = this.sessionRow();
+    const data = row.data(), status = Wire.text(data, 'status', row.state);
+    return row.state === 'working' || status === 'working' || Wire.bool(data, 'working') ||
+      this.selected.kind === 'session' && status === 'blocked';
   }
+  agentQueuesMessages(): boolean { return this.selected.kind === 'session' && this.turnWorking(); }
   stopPending(): boolean { return this.interruptPendingKey === this.interruptIdentity(); }
   canStop(): boolean {
     const path = '/api/v1/sessions/' + encodeURIComponent(this.selected.machine) + '/' + encodeURIComponent(this.selected.session || this.selected.id) + '/interrupt';
@@ -1412,7 +1415,14 @@ export class ClientModel {
     }
     return '';
   }
-  canSend(): boolean { return this.connected && this.canCompose() && this.decisionsReady(); }
+  // A follow-up while an Agent waits is a message to that session. It never resolves an interaction.
+  // A legacy caller with only a blocking decision has no verified snapshot for this route.
+  decisionBlocksMessage(): boolean {
+    if (!this.decision) return false;
+    return this.selected.kind !== 'session' || this.pendingDecisionTarget !== this.target() ||
+      this.decisionReadyTarget !== this.pendingDecisionTarget || !this.pendingDecisions.includes(this.decision);
+  }
+  canSend(): boolean { return this.connected && this.canCompose() && this.decisionsReady() && !this.decisionBlocksMessage(); }
   canCompose(): boolean {
     const notice = this.agentInputNotice();
     return this.isChat() && this.capabilities().canSend && (!notice || notice === 'agent_computer_holds');

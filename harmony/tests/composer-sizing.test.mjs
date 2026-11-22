@@ -27,7 +27,7 @@ function fixture(density = 3, width = 372) {
   return Object.assign(new Composer(), {
     composerWidth: width, fieldFocused: false, primaryStop: () => false, sending: false, active: true,
     composerStroke: Number(source.match(/private readonly composerStroke: number = ([\d.]+);/)[1]),
-    model: { demo: false, draft: '', canCompose: () => true },
+    model: { demo: false, draft: '', selected: {kind:'session'}, canCompose: () => true, decisionBlocksMessage: () => true },
     attachments: { attachments: [] }, environment: { fontScale: 1, keyboardHeightPx: 0 }, showContextMenu: true,
     availableHeight: 800, editorHeight: 0, controlsHeight: 80,
     getUIContext: () => ({ vp2px: value => value * density })

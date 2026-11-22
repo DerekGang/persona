@@ -7171,6 +7171,14 @@
     {
       "name": "phone_sidebar_unread",
       "value": "完成未看"
+    },
+    {
+      "name": "chat_queued_followup",
+      "value": "补充说明（会排队发送）"
+    },
+    {
+      "name": "chat_pending_cards_count",
+      "value": "{count} 个待处理"
     }
   ]
 }

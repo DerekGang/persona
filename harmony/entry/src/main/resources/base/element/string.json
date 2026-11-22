@@ -7171,6 +7171,14 @@
     {
       "name": "phone_sidebar_unread",
       "value": "Unread"
+    },
+    {
+      "name": "chat_queued_followup",
+      "value": "Add a note (queued)"
+    },
+    {
+      "name": "chat_pending_cards_count",
+      "value": "{count} pending"
     }
   ]
 }

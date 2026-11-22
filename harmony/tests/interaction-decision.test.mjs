@@ -19,13 +19,23 @@ registerHooks({
 });
 
 const {
-  decodeInteractionDecision, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
+  agentPendingCards, decodeInteractionDecision, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
   interactionPermissionFieldPlaceholder, interactionPlanTitle, interactionQuestionOptions, interactionResolution, interactionScreenOptions,
   validateInteractionElicitation
 } = await import('../entry/src/main/ets/models/InteractionDecision.ets');
 
 function decision(interaction, extra = {}) { return decodeInteractionDecision({ interaction, ...extra }); }
+
+test('Agent cards show permissions first, followed by the newest questions and plans without changing Hub order', () => {
+  const card = (id, kind, created_at) => decision({ id, kind, created_at });
+  const cards = [card('plan', 'plan', '2026-01-01T10:00:00.000100Z'), card('choice', 'question', '2026-01-01T10:00:00.000900Z'),
+    card('first', 'permission'), card('second', 'permission'), card('answered', 'question')];
+  cards[4].status = 'resolved';
+  assert.deepEqual(agentPendingCards(cards).map(card => card.id), ['second', 'first', 'choice', 'plan']);
+  assert.equal(cards[0].id, 'plan');
+  assert.deepEqual(agentPendingCards([], cards[0]), [cards[0]]);
+});
 
 test('question answers keep exact labels, custom text takes precedence, and cancel is gated', () => {
   const request = decision({ id: 'question-1', kind: 'question', can_cancel: true, questions: [

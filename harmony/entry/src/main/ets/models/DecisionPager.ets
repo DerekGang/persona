@@ -1,5 +1,5 @@
 import { Decision } from './Wire';
-import { QuestionDraft } from './QuestionWorkspace';
+import { DecisionDrafts, QuestionDraft } from './QuestionWorkspace';
 
 /** The assistant shows an interaction once, even when two supervising tasks refer to the same Agent. */
 export function orderedDecisions(own: Decision[], supervised: Decision[]): Decision[] {
@@ -19,7 +19,7 @@ export class DecisionPager {
   @Trace index: number = 0;
   @Trace private foldedIds: string[] = [];
   private scope: string = '';
-  private drafts: Map<string, QuestionDraft> = new Map();
+  private drafts: DecisionDrafts = new DecisionDrafts();
 
   bind(scope: string): void {
     if (scope === this.scope) return;
@@ -27,7 +27,7 @@ export class DecisionPager {
     this.current = '';
     this.index = 0;
     this.foldedIds = [];
-    this.drafts.clear();
+    this.drafts.bind(scope);
   }
 
   position(ids: string[]): number {
@@ -43,7 +43,7 @@ export class DecisionPager {
 
   reconcile(ids: string[]): void {
     this.select(ids, this.position(ids));
-    for (const id of Array.from(this.drafts.keys())) if (!ids.includes(id)) this.drafts.delete(id);
+    this.drafts.retain(ids);
     if (!this.collapsed(ids) && this.foldedIds.length) this.show();
   }
 
@@ -57,12 +57,6 @@ export class DecisionPager {
   }
 
   draft(request: Decision): QuestionDraft | undefined {
-    if (request.kind !== 'question') return undefined;
-    const previous = this.drafts.get(request.id);
-    if (previous?.raw === request.raw) return previous;
-    const draft = new QuestionDraft(this.scope, request);
-    draft.begin(this.scope);
-    this.drafts.set(request.id, draft);
-    return draft;
+    return this.drafts.draft(request);
   }
 }

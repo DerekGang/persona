@@ -26,6 +26,7 @@ import { AssistantCards } from './AssistantCards';
 import { DecisionPager } from '../models/DecisionPager';
 import { QuestionWorkspace, QuestionSheet, questionPrompt } from '../models/QuestionWorkspace';
 import { InteractionDecisionForm } from './InteractionDecisionForm';
+import { AgentPendingCards } from './AgentPendingCards';
 import { AssistantFeedModel } from '../models/AssistantFeed';
 import { ChatAttachments, ChatAttachment } from '../models/ChatAttachments';
 import { AttachmentStrip } from './AttachmentStrip';
@@ -441,15 +442,23 @@ export struct Conversation {
   private composerColumns(): number { return this.expandedComposer() ? 12 : Math.max(1, Math.round(this.getUIContext().vp2px(this.composerWidth))); }
   private sendColumns(): number { const width = this.trailingActionWidth(this.composerActionSize()) + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
   private leftColumns(): number { const width = this.leftActionWidth(this.composerActionSize()); return Math.ceil((width + (width && !this.expandedComposer() ? Tokens.gap : 0)) * this.composerColumns() / this.composerWidth); }
-  private primaryStop(): boolean { return !this.model.decision && this.model.canCompose() && this.model.canStop() && !this.model.draft.trim() && !this.attachments.attachments.length; }
+  private primaryStop(): boolean { return this.composerAvailable() && this.model.canStop() && !this.model.draft.trim() && !this.attachments.attachments.length; }
   @Monitor('active', 'model.selected', 'model.sessions', 'model.connected', 'model.draft', 'model.decision', 'attachments.attachments', 'model.interruptPendingKey')
   primaryStopChanged(): void { this.onPrimaryStop(this.active && this.primaryStop()); }
   private maxControlsHeight(): number {
     // The shell already resizes this view to the top of the IME.
     if (this.environment.keyboardHeightPx > 0) return this.availableHeight;
     if (!this.model.decision) return this.availableHeight * 0.8;
+    if (this.model.selected.kind === 'session') return this.availableHeight;
     const half = this.availableHeight * Tokens.decisionFraction;
     return this.model.decision.kind === 'question' ? Math.max(half, this.availableHeight - 72) : half;
+  }
+  @Local agentComposerHeight: number = 0;
+  private agentCardsRoom(): number {
+    const remaining = this.availableHeight - Math.max(this.agentComposerHeight, this.restingSize.target + Tokens.footer) - Tokens.gap;
+    const loneQuestion = this.model.pendingDecisions.length <= 1 && this.model.decision?.kind === 'question';
+    const cap = this.environment.keyboardHeightPx > 0 || loneQuestion ? remaining - Tokens.touch : this.availableHeight * 0.5;
+    return Math.max(Tokens.touch, Math.min(remaining, cap));
   }
   private inlineEditorMaxHeight(): number {
     if (!this.expandedComposer()) return this.composerActionSize();
@@ -468,9 +477,6 @@ export struct Conversation {
     // A long attachment error or a short split window can be taller than even a one-line editor.
     if (this.active && this.fieldFocused && !this.draftEditorOpen && this.environment.keyboardHeightPx > 0 &&
       this.controlsHeight > this.maxControlsHeight() + 1) this.controlsScroller.scrollEdge(Edge.Bottom);
-  }
-  private decisionToolsHeight(): number {
-    return this.showContextMenu ? Tokens.touch + Tokens.gap : 0;
   }
   private measureAttachment(): void {
     if (!this.attachmentLayoutReady) return;
@@ -516,7 +522,9 @@ export struct Conversation {
     if (session) this.assignChooser(session);
   }
   private composerOwnerKey(): string { return JSON.stringify([this.model.scope(), this.model.connectionGeneration(), this.model.target()]); }
-  private composerAvailable(): boolean { return this.active && !this.model.decision && this.model.canCompose(); }
+  private composerAvailable(): boolean {
+    return this.active && (!this.model.decision || this.model.selected.kind === 'session' && !this.model.decisionBlocksMessage()) && this.model.canCompose();
+  }
   private openComposerActions(event: ClickEvent): void {
     this.requestComposerActions(this.preserveInput(event));
   }
@@ -1166,6 +1174,7 @@ export struct Conversation {
   private composerPlaceholder():string {
     if (this.model.agentInputNotice()==='agent_computer_holds') return this.agentNotice();
     if (this.model.selected.kind==='conversation') return tr('knowledge_ask_persona');
+    if (this.model.agentQueuesMessages()) return tr('chat_queued_followup');
     const data=this.model.selected.data(), raw=Wire.text(data,'agent_label') || Wire.text(data,'launcher') || Wire.text(data,'agent') || Wire.text(data,'agent_type');
     const agent=raw.toLowerCase();
     const label=agent==='codex' ? 'Codex' : !agent || ['claude','claude-code','claude code'].includes(agent) ? 'Claude' : raw;
@@ -1273,10 +1282,10 @@ export struct Conversation {
             resting:this.restingComposer(), symbolSize:this.restingComposer() ? this.restingSize.microphone : 22,
             active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
             chooseLanguage: () => this.model.dictationLocaleForChat(), onListeningIn: (locale: string) => this.model.rememberDictationLocale(locale),
-            allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.model.canCompose() && !this.model.decision,
+            allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.composerAvailable(),
             keyboard: () => this.getUIContext().getFocusController().requestFocus('chat.input'),
             insert: (text: string, owner: string): boolean => {
-              if (owner !== this.dictationOwner() || !this.sendCurrent() || !this.model.canCompose() || this.model.decision || this.model.draftLoading || this.sending) return false;
+              if (owner !== this.dictationOwner() || !this.sendCurrent() || !this.composerAvailable() || this.model.draftLoading || this.sending) return false;
               const draft = this.model.draft, separator = /[a-zA-Z0-9]$/.test(draft) ? ' ' : '';
               if (draft.length + separator.length + text.length > Tokens.maxMessage) return false;
               this.model.updateDraft(draft + separator + text);
@@ -1306,17 +1315,23 @@ export struct Conversation {
   }
   @Builder blockingContent() {
     Column({ space: Tokens.gap }) {
-      this.taskDock()
-      ForEach(this.model.selected.kind !== 'conversation' && this.model.decision ? [this.model.decision] : [], (request: Decision) => {
-        InteractionDecisionForm({ model: this.model, request: request, fillAvailable: true,
-          heightLimit: Math.max(Tokens.touch, this.maxControlsHeight() - this.decisionToolsHeight() - Tokens.gap - Tokens.footer),
-          onLink: (address: string) => this.onLink(address) })
-      }, (request: Decision) => request.id)
-      if (this.showContextMenu) Button({ type: ButtonType.Circle }) { Image(Symbols.more).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink) }
+      if (this.model.selected.kind === 'session') {
+        AgentPendingCards({ model: this.model, room: this.agentCardsRoom(), keyboard: this.environment.keyboardHeightPx > 0,
+          admission: () => this.sendCurrent(), onLink: (address: string) => this.onLink(address) })
+          .padding({ left: 12, right: 12 })
+        if (this.composerAvailable()) Column() { this.composer() }.width('100%').padding(this.controlsPadding())
+          .onAreaChange((_old: Area, area: Area) => {
+            const h = Number(area.height);
+            if (Number.isFinite(h) && Math.abs(h - this.agentComposerHeight) > 0.5) this.agentComposerHeight = h;
+          })
+      } else {
+        this.taskDock()
+      }
+      if (this.showContextMenu && !this.composerAvailable()) Button({ type: ButtonType.Circle }) { Image(Symbols.more).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink) }
         .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick(() => this.openFallbackActions())
         .bindMenu(this.actionsVisible, this.actionsMenu, this.actionMenuOptions(this.actionsRequest)).id('chat.more.fallback')
     }.width('100%').constraintSize({ maxWidth: Tokens.readingMax, maxHeight: this.maxControlsHeight() })
-      .padding({ left: Tokens.page, right: Tokens.page, bottom: Tokens.footer, top: Tokens.gap })
+      .padding(this.model.selected.kind === 'session' ? 0 : { left: Tokens.page, right: Tokens.page, bottom: Tokens.footer, top: Tokens.gap })
       .onAreaChange((_before: Area, area: Area) => {
         const height = Number(area.height);
         if (this.model.decision && Number.isFinite(height) && height > 0) {
