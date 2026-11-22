@@ -17,6 +17,25 @@ registerHooks({
 });
 const {phonePlaceAtRoot,phonePanIntent,finishesPhonePan}=await import('../entry/src/main/ets/models/PhoneNavigation.ets');
 const {PhoneSearchIndex,PhoneChatMatch,mergeChatMatches,localChatMatches}=await import('../entry/src/main/ets/models/PhoneChatSearch.ets');
+const {Tokens}=await import('../entry/src/main/ets/design/Tokens.ets');
+
+test('native phone search sizes the entered text and placeholder together and preserves the iPhone interface limit at maximum type',()=>{
+  for (const [scale,vp] of [[0.85,13.6],[1,16],[1.2,19.2],[1.5,22],[3.2,22]]) {
+    assert.equal(Tokens.interfaceFontVp(16,scale),String(vp)+'vp');
+  }
+  const read=name=>readFileSync(new URL('../entry/src/main/ets/'+name+'.ets',import.meta.url),'utf8');
+  const query=[read('components/PhoneConversationSearch'),read('components/SettingsDirectory')];
+  for(const source of query) {
+    assert.match(source,/TextInput\(\{text:this\.query,[^]*?\.fontSize\(Tokens\.interfaceFontVp\(16,nativeEnvironment\.fontScale\)\)\.placeholderFont\(\{size:Tokens\.interfaceFontVp\(16,nativeEnvironment\.fontScale\)\}\)/);
+  }
+  assert.match(query[0],/phone_search_conversation_count[^]*?\.fontSize\(13\)\.maxFontScale\(Tokens\.interfaceScaleFor\(13\)\)[^]*?id\('phone_search.count'\)/);
+  const shell=read('pages/Index');
+  for(const key of ['phone_new_assistant','phone_manage_assistants']) {
+    const start=shell.indexOf("MenuItem({ content: tr('"+key+"')");
+    assert.ok(start>=0);
+    assert.match(shell.slice(start,start+250),/contentFont\(\{size:Tokens\.interfaceFontVp\(16,this\.environment\.fontScale\)\}\)/);
+  }
+});
 const {AgentLaunchChoices,launchModelName,recentLaunchDirectories,LaunchChoice,RecentAgentSetup,rememberAgentSetup,loadAgentSetups}=await import('../entry/src/main/ets/models/AgentLaunchChoices.ets');
 const {ProjectWorktree}=await import('../entry/src/main/ets/models/ProjectCatalog.ets');
 const {ResourceRow,Wire}=await import('../entry/src/main/ets/models/Wire.ets');

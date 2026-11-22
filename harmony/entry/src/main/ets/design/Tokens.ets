@@ -18,6 +18,10 @@ export class Tokens {
     const standard = Math.max(11, Math.min(34, points));
     return (standard + 6) / standard;
   }
+  // Native text-field placeholders and menu item content accept lengths in vp.
+  static interfaceFontVp(points:number,systemScale:number):string {
+    return String(points*Math.min(systemScale,Tokens.interfaceScaleFor(points)))+'vp';
+  }
   static readonly avatar: number = 40;
   static readonly avatarChoice: number = 56;
   static readonly caption: number = 13;

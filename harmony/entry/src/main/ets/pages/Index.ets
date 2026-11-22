@@ -1142,11 +1142,13 @@ struct Index {
           .selected(row.id === this.model.profile.manager).selectIcon(false).accessibilitySelected(row.id === this.model.profile.manager).enabled(!row.isInstallingManager())
           .onClick(() => { if (this.drawerAcceptsTap()) this.model.selectListedManager(row.id, scope); }).id('spaces.assistant.' + row.id)
       }, (row: ResourceRow) => row.key())
-      MenuItem({ content: tr('phone_new_assistant'), symbolStartIcon: new SymbolGlyphModifier(Symbols.plus) }).onClick(() => {
+      MenuItem({ content: tr('phone_new_assistant'), symbolStartIcon: new SymbolGlyphModifier(Symbols.plus) })
+        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('phone_new_assistant');
       }).id('spaces.new_assistant')
-      MenuItem({ content: tr('phone_manage_assistants'), symbolStartIcon: new SymbolGlyphModifier(Symbols.gear) }).onClick(() => {
+      MenuItem({ content: tr('phone_manage_assistants'), symbolStartIcon: new SymbolGlyphModifier(Symbols.gear) })
+        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('managers');
       }).id('spaces.manage_assistants')
@@ -1478,7 +1480,7 @@ struct Index {
         else PhoneIconButton({symbol:IconActions.symbol('close'),label:tr('close'),identity:'settings.close',
           action:() => { this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; }})
         Text(this.phoneSettingsPage === 'phone_language_options' ? tr('language') : this.phoneSettingsPage ? tr(this.settingsLabel(this.phoneSettingsPage)) : tr('settings'))
-          .layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+          .layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).maxFontScale(Tokens.interfaceScaleFor(18)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
         Blank().width(PhoneStyle.bar)
       }.width('100%').padding({left:14,right:14,top:7,bottom:5})
       if (this.phoneSettingsPage === 'phone_knowledge_selection') {

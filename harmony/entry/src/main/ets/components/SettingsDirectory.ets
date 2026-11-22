@@ -198,8 +198,9 @@ export struct SettingsDirectory {
         Row({space:8}) {
           Row({space:7}) {
           SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize('16vp').fontColor([Colors.secondary])
-          TextInput({text:this.query,placeholder:tr('phone_settings_search'),controller:this.field}).fontSize(16)
-            .height(Math.max(36,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+8)).padding(0)
+          TextInput({text:this.query,placeholder:tr('phone_settings_search'),controller:this.field})
+            .fontSize(Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)).placeholderFont({size:Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)})
+            .height(Math.max(36,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(16)))+8)).padding(0)
             .layoutWeight(1).backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
             .enterKeyType(EnterKeyType.Search).onSubmit(() => this.field.stopEditing())
             .onChange((v:string) => { this.query = v; this.onQueryChange(v); }).id('settings.search')

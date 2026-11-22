@@ -31,21 +31,23 @@ export struct PhoneConversationSearch {
     return !this.agents && !!this.model.mainId && hit.row.id===this.model.mainId &&
       (!this.model.mainMachineId || hit.row.machine===this.model.mainMachineId);
   }
+  private fieldHeight():number { return Math.max(38,Math.ceil(24*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(16)))+8); }
   @Builder fieldBar() {
     Row({space:8}) {
       Row({space:5}) {
         SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize('16vp').fontColor([Colors.secondary])
         TextInput({text:this.query,placeholder:tr(this.agents ? 'search_sessions' : 'flow_search_chats'),controller:this.field})
-          .height(Math.max(38,Math.ceil(24*nativeEnvironment.fontScale)+8)).padding({left:2,right:1}).layoutWeight(1).fontSize(16).fontColor(Colors.ink)
+          .height(this.fieldHeight()).padding({left:2,right:1}).layoutWeight(1).fontColor(Colors.ink)
+          .fontSize(Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)).placeholderFont({size:Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)})
           .backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
           .onChange((v:string) => this.query = v).enterKeyType(EnterKeyType.Search).defaultFocus(true).id('phone_search.field')
       }.layoutWeight(1).alignItems(VerticalAlign.Center).padding({left:10,right:5}).backgroundColor(Colors.control).borderRadius(12)
-      Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).height(Math.max(38,Math.ceil(22*nativeEnvironment.fontScale)+10)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).padding({left:3,right:2})
+      Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).height(this.fieldHeight()).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).padding({left:3,right:2})
         .onClick(() => this.onCancel()).id('phone_search.cancel')
     }.width('100%').padding({left:12,right:12,top:6,bottom:6})
   }
   @Builder scopeButton(isAgent:boolean,label:string) {
-    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(Math.max(31,Math.ceil(21*nativeEnvironment.fontScale)+8)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
+    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(Math.max(31,Math.ceil(21*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(14)))+8)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
       .fontWeight(this.agents === isAgent ? FontWeight.Bold : FontWeight.Normal)
       .fontColor(this.agents === isAgent ? Colors.ink : Colors.secondary)
       .backgroundColor(this.agents === isAgent ? Colors.surface : Color.Transparent)
@@ -62,7 +64,7 @@ export struct PhoneConversationSearch {
       List() {
         if (this.rows.length && this.query.trim()) ListItem() {
           Text(tr(this.agents ? 'project_agent_count' : 'phone_search_conversation_count').replace('{count}',String(this.rows.length)))
-            .fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:15,right:12,top:7,bottom:5})
+            .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:15,right:12,top:7,bottom:5}).id('phone_search.count')
         }
         if (this.search.busy) ListItem() { LoadingProgress().width(23).height(23).margin(10) }
         if (!this.rows.length && !this.search.busy) ListItem() { Text(tr(this.query ? 'no_results' : 'empty')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).padding(16) }
