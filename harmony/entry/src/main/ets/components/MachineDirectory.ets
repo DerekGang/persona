@@ -530,13 +530,16 @@ export struct MachineDirectory {
       }.width('100%').padding({top:1}).id('machines.agent.metadata')
     }.width('100%').alignItems(HorizontalAlign.Start)
   }
-  @Builder agentTime(a: MachineAgent) {
+  @Builder agentTime(a: MachineAgent, beside: boolean) {
     Column({space:4}) {
       if (Number.isFinite(a.updated)) Text(this.ageLabel(a.updated)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
         .fontColor(Colors.secondary).maxLines(1).id('machines.agent.time')
       if (a.sourceLabel) Text(tr(a.sourceLabel)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
         .fontColor(Colors.link).borderRadius(8).padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.control).id('machines.agent.source')
     }.alignItems(HorizontalAlign.End)
+      // Align the time label to the title’s first baseline when they share a line.
+      .padding({top:beside && Number.isFinite(a.updated) ?
+        17*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)) - 12*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(12)) : 0})
   }
   @Builder agentRow(a:MachineAgent) {
     Row({space:8}) {
@@ -549,12 +552,12 @@ export struct MachineDirectory {
           if (this.agentTimeFits(a)) {
             Row({space:6}) {
               Column() { this.agentWords(a) }.layoutWeight(1)
-              this.agentTime(a)
+              this.agentTime(a,true)
             }.width('100%').alignItems(VerticalAlign.Top)
           } else {
             Column({space:4}) {
               this.agentWords(a)
-              this.agentTime(a)
+              this.agentTime(a,false)
             }.width('100%').alignItems(HorizontalAlign.Start)
           }
         }.layoutWeight(1).padding({top:4,bottom:4}).onAreaChange((_:Area,area:Area) => {
