@@ -120,7 +120,7 @@ export struct ConversationRecap {
         ForEach(this.sheetItems, (item: ConversationRecapItem, index: number) => {
           if (index > 0) Divider().strokeWidth(Tokens.divider).color(Colors.divider)
           if (this.relative(item.at)) Text(tr('chat_recap_written').replace('{time}',this.relative(item.at))).fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary)
-          MarkdownText({ text: item.text, chatReply: true, onLink: (url: string) => { if (this.current()) this.onLink(url); } })
+          MarkdownText({ text: item.text, chatReply: true, recapReading: true, onLink: (url: string) => { if (this.current()) this.onLink(url); } })
         }, (item: ConversationRecapItem) => item.id)
       }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.page)
     }.width('100%').layoutWeight(1).align(Alignment.TopStart)
@@ -138,6 +138,6 @@ export struct ConversationRecap {
       }
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left: Tokens.page, right: Tokens.page})
       .bindSheet($$this.shown, this.details(), { backgroundColor:Colors.canvas,
-        height: SheetSize.MEDIUM, detents: [SheetSize.MEDIUM, SheetSize.LARGE], showClose: false })
+        width: '96%', height: '56%', detents: ['56%', SheetSize.LARGE], showClose: false })
   }
 }

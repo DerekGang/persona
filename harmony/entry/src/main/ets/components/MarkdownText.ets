@@ -1,15 +1,17 @@
-import { Theme } from '@kit.ArkUI';
+import { LengthMetrics, Theme } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { tr } from '../design/Strings';
 import { IconActions } from '../design/IconActions';
 import { MarkdownBlock, MarkdownInline, MarkdownTableRow, parseMarkdown } from '../core/Markdown';
 import { Tokens } from '../design/Tokens';
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 
 @ComponentV2
 export struct MarkdownText {
   @Require @Param text: string;
   @Param fitContent: boolean = false;
   @Param chatReply: boolean = false;
+  @Param recapReading: boolean = false;
   @Event onLink: (url: string) => void = (_url: string) => {};
   @Local blocks: MarkdownBlock[] = [];
   @Local foreground: ResourceColor = $r('sys.color.font_primary');
@@ -24,6 +26,15 @@ export struct MarkdownText {
   aboutToAppear(): void { this.blocks = parseMarkdown(this.text); }
   @Monitor('text') textChanged(): void { this.blocks = parseMarkdown(this.text); }
 
+  private readingPoints(size: number): number {
+    const scale = nativeEnvironment.fontScale;
+    // MarkdownUI uses a metric relative to body: 17 points at standard type and 48 at AX5.
+    const readingScale = scale <= 1 ? scale : 1 + (scale - 1) * (48 / 17 - 1) / (3.2 - 1);
+    return size * readingScale;
+  }
+  private readingFont(size: number): number | string {
+    return this.recapReading ? String(this.readingPoints(size)) + 'vp' : size;
+  }
   private headingSize(level: number): number {
     if (this.chatReply) {
       if (level === 1) return Math.round(Tokens.body * 1.3);
@@ -59,8 +70,9 @@ export struct MarkdownText {
       ForEach(nodes, (node: MarkdownInline) => this.inlineNode(node, weight, false, '', quiet),
         (node: MarkdownInline, index: number) => String(index))
     }
-      .fontSize(size).fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight)
-      .lineHeight(this.chatReply ? String(Math.ceil(size * 1.45)) + 'fp' : undefined)
+      .fontSize(this.readingFont(size)).fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight)
+      .lineHeight(this.chatReply && !this.recapReading ? String(Math.ceil(size * 1.45)) + 'fp' : undefined)
+      .lineSpacing(LengthMetrics.vp(this.recapReading ? this.readingPoints(size) * 0.26 : 0), { onlyBetweenLines: true })
       .textAlign(alignment).wordBreak(breakAll ? WordBreak.BREAK_ALL : WordBreak.BREAK_WORD)
       .copyOption(CopyOptions.LocalDevice).width(this.fitContent ? undefined : '100%')
   }
@@ -73,12 +85,12 @@ export struct MarkdownText {
         (child: MarkdownInline, index: number) => String(index))
     } else if (url) {
       Span(node.text).fontFamily(node.kind === 'code' ? 'monospace' : undefined)
-        .fontSize(node.kind === 'code' ? (this.chatReply ? 16 : Tokens.meta) : undefined)
+        .fontSize(node.kind === 'code' ? this.readingFont(this.chatReply ? 16 : Tokens.meta) : undefined)
         .fontWeight(weight).fontStyle(italic ? FontStyle.Italic : FontStyle.Normal).fontColor(this.emphasize)
         .textBackgroundStyle({ color: node.kind === 'code' && !this.chatReply ? this.codeFill : Color.Transparent, radius: Tokens.fine })
         .decoration({ type: TextDecorationType.Underline, color: this.emphasize }).onClick(() => this.onLink(url))
     } else if (node.kind === 'code') {
-      Span(node.text).fontFamily('monospace').fontSize(this.chatReply ? 16 : Tokens.meta)
+      Span(node.text).fontFamily('monospace').fontSize(this.readingFont(this.chatReply ? 16 : Tokens.meta))
         .fontWeight(weight).fontStyle(italic ? FontStyle.Italic : FontStyle.Normal)
         .fontColor(this.chatReply ? this.foreground : this.secondary)
         .textBackgroundStyle({ color: this.chatReply ? Color.Transparent : this.codeFill, radius: Tokens.fine })

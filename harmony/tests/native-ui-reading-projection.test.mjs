@@ -143,6 +143,24 @@ test('real recap entries retain original answers, time ordering and all consecut
   assert.ok(project([{ id: 'pretend', seq: 1, role: 'user', kind: 'recap', text: '文档' }]).every(item => item.role !== 'recap'));
 });
 
+test('full recap Markdown grows past interface type, with the body-relative reading metric and spacing between lines', () => {
+  const markdown = readFileSync(new URL('../entry/src/main/ets/components/MarkdownText.ets', import.meta.url), 'utf8');
+  const environment = {fontScale: 1};
+  const Renderer = new Function('nativeEnvironment', 'return ' + stripTypeScriptTypes(
+    'class Renderer {' + method('readingPoints', markdown) + method('readingFont', markdown) + '}',
+  ))(environment);
+  const renderer = Object.assign(new Renderer(), {recapReading: true});
+  assert.equal(renderer.readingFont(17), '17vp');
+  environment.fontScale = 2;
+  const intermediate = renderer.readingPoints(17);
+  assert.ok(intermediate > 23 && intermediate < 48);
+  environment.fontScale = 3.2;
+  assert.equal(renderer.readingFont(17), '48vp');
+  renderer.recapReading = false;
+  assert.equal(renderer.readingFont(17), 17);
+  assert.match(markdown, /\.lineSpacing\(LengthMetrics\.vp\(this\.recapReading[^\n]+onlyBetweenLines: true/);
+});
+
 test('a recap dismissal belongs to its hub and session and an older storage read cannot close a new recap', async () => {
   const recapSource = readFileSync(new URL('../entry/src/main/ets/components/ConversationRecap.ets', import.meta.url), 'utf8');
   const Recap = new Function('return ' + stripTypeScriptTypes('class Recap {' +
