@@ -1091,3 +1091,26 @@ func TestStopReportingDropsPersistedPending(t *testing.T) {
 		t.Fatalf("the stopped task's persisted signal survived: %+v", got)
 	}
 }
+
+func TestOwnerChoiceSurvivesIdleAndRestart(t *testing.T) {
+	st := planUpdateStore{&planMemStore{memStore: &memStore{}, plans: map[string]db.TaskPlanRow{}}}
+	s, f, todo := newSupervisedServiceOn(t, st)
+	s.superviseTimes = superviseTimings{gather: time.Hour, every: time.Hour, urgent: time.Hour}
+	round := time.Now().UTC()
+	s.decisionNotDelivered(t.Context(), todo.ID, round, "Start a replacement", errors.New("Agent stopped"))
+	idle := superviseSignal{Todo: todo.ID, Kind: sigIdle, Key: "later-agent-turn", Detail: "Agent stopped"}
+	s.signal(idle)
+	choiceID := superviseSignal{Todo: todo.ID, Kind: sigOwnerChoice}.id()
+	if got := storedSupervisePending(t, s)[choiceID]; !strings.Contains(got.Detail, "Start a replacement") {
+		t.Fatalf("the later idle replaced the owner's handoff: %+v", got)
+	}
+	simulateSupervisionRestart(t, s)
+	s.superviseTimes = superviseTimings{gather: 1, every: 1, urgent: 1}
+	s.sendDigest(t.Context())
+	if got := strings.Join(f.noticesTo("conv1"), "\n"); strings.Count(got, "Start a replacement") != 1 {
+		t.Fatalf("restored supervisor delivery: %s", got)
+	}
+	if _, pending := storedSupervisePending(t, s)[choiceID]; pending {
+		t.Fatal("already delivered choice stayed in the outbox")
+	}
+}

@@ -28,7 +28,7 @@ type superviseFingerprint struct {
 }
 
 func digestFingerprint(e prompts.SuperviseEntry, g superviseSignal) (string, string) {
-	if g.Kind == sigTodoReady {
+	if g.Kind == sigTodoReady || g.Kind == sigOwnerChoice {
 		// One durable wake per dependent to-do and canonical after-prerequisite set, independent of restarts or sweeps.
 		key, _ := json.Marshal([]string{g.Todo, g.Kind})
 		sum := sha256.Sum256([]byte(g.Key))
@@ -196,7 +196,7 @@ func (s *Service) reserveSupervisionDelivery(ctx context.Context, entries []prom
 		if signals[i].Kind == sigAllStopped || signals[i].Kind == sigParkedSummary || signals[i].Kind == sigPREvent || keptUntilChange(signals[i]) {
 			fingerprint.Todo = signals[i].Todo
 		}
-		if g := signals[i]; g.Kind == sigTodoReady || g.externalPRReview() || g.Kind == sigInbox && g.Inbox != nil && g.Inbox.ToAgent == "unhandled" {
+		if g := signals[i]; g.Kind == sigOwnerChoice || g.Kind == sigTodoReady || g.externalPRReview() || g.Kind == sigInbox && g.Inbox != nil && g.Inbox.ToAgent == "unhandled" {
 			fingerprint.Todo = g.Todo
 		}
 		next[key] = fingerprint

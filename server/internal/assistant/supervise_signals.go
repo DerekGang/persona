@@ -17,6 +17,7 @@ import (
 
 const (
 	sigReview        = "review"         // the work looks finished: review it
+	sigOwnerChoice   = "owner_choice"   // an explicit owner decision that no Agent could receive
 	sigIdle          = "idle"           // its agents stopped, and the work is not finished
 	sigUnjudged      = "unjudged"       // its agents stopped, and the judge could not say whether the work is finished
 	sigNeedsYou      = "needs_you"      // an agent waits for an answer
@@ -200,7 +201,7 @@ func (g superviseSignal) id() string {
 // urgent: a signal that waits on a decision goes out sooner than the rest.
 func (g superviseSignal) urgent() bool {
 	switch g.Kind {
-	case sigNeedsYou, sigIdle, sigUnjudged, sigAllStopped, sigFailed, sigInterrupted, sigStarted, sigPRConflict, sigDraftPR, sigPREvent, sigEscalated, sigAsk, sigOrphaned, sigDecide, // started: the user waits to hear it
+	case sigOwnerChoice, sigNeedsYou, sigIdle, sigUnjudged, sigAllStopped, sigFailed, sigInterrupted, sigStarted, sigPRConflict, sigDraftPR, sigPREvent, sigEscalated, sigAsk, sigOrphaned, sigDecide, // started: the user waits to hear it
 		sigRecheck, sigUndecidable, sigOwnerCannot, sigEstimateDue, sigTimedOut, // the owner, an automatic deadline or a stopped task waits
 		sigParkedDue, sigParkDecided, sigDecisionReply, sigHandoffResult, sigTodoReady:
 		return true

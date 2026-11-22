@@ -861,6 +861,10 @@ func (s *Service) digestEntry(ctx context.Context, g superviseSignal, web string
 		if st != "" || !s.noProgressHolds(g) {
 			return prompts.SuperviseEntry{}, false // progress came, or it was parked or reviewed, meanwhile
 		}
+	case sigOwnerChoice:
+		if a, ok := s.askCopy(t.ID); ok && ("undelivered|"+a.AskedAt.UTC().Format(time.RFC3339Nano) != g.Key || acceptAskStale(&a, t)) {
+			return prompts.SuperviseEntry{}, false // a newer decision or reopened task superseded the answer
+		}
 	case sigIdle, sigUnjudged, sigStalled:
 		if st == reviewParked || st == reviewClosing || st == reviewTimedOut || v.handoffResult() != nil {
 			return prompts.SuperviseEntry{}, false // a hold or its handoff result superseded the old stop
