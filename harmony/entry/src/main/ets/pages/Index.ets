@@ -14,6 +14,7 @@ import { PhoneSessionHeading } from '../components/PhoneSessionHeading';
 import { SessionSpace, SessionSpaceTab, sessionSpace, worktreeForSessionSpace } from '../models/SessionSpace';
 import { MachineDirectory } from '../components/MachineDirectory';
 import { PhoneIconButton, PhoneStyle } from '../design/PhoneStyle';
+import { PhoneOutlineIcon } from '../design/PhoneOutlineIcon';
 import { SettingsDirectory, PhoneSettingsOptions } from '../components/SettingsDirectory';
 import { WorktreeChange, WorktreeActions } from '../models/WorktreeActions';
 import { ProjectCatalog, ProjectWorktree, PersonaProject } from '../models/ProjectCatalog';
@@ -1870,7 +1871,7 @@ struct Index {
         .layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
       Text(this.launchRowDetail('workspace')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
         .constraintSize({maxWidth:'60%'}).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-      if (!this.agentWorktree) SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12,this.environment.fontScale)).fontColor([Colors.secondary])
+      if (!this.agentWorktree) PhoneOutlineIcon({name:'forward',iconScale:this.agentSize(1,1.35),color:Colors.secondary}).opacity(0.55).id('agent.chevron.workspace')
     }.width('100%').constraintSize({minHeight:this.agentSize(52.33,59.33)}).padding({left:20,right:20})
       .onClick(() => { if (!this.agentWorktree) this.openAgentPicker('workspace'); }).accessibilityGroup(true).id('agent.workspace')
   }
@@ -1880,17 +1881,21 @@ struct Index {
   }
   @Builder agentOptionRow(key:string) {
     Row({space:10}) {
-      SymbolGlyph(key === 'folder' ? $r('sys.symbol.folder_fill') : key === 'launcher' ? Symbols.agent :
-        key === 'effort' ? Symbols.health : Symbols.apps)
-        .fontSize(Tokens.interfaceFontVp(key==='preset' ? 22 : 18,this.environment.fontScale))
-        .fontColor([Colors.link]).width(this.agentSize(key==='preset' ? 30 : 21,key==='preset' ? 38 : 29))
+      Stack() {
+        if (key === 'preset' || key === 'launcher') {
+          PhoneOutlineIcon({name:'cube',iconScale:(key === 'preset' ? 1 : 0.82)*this.agentSize(1,1.35)})
+        } else {
+          SymbolGlyph(key === 'folder' ? $r('sys.symbol.folder_fill') : key === 'effort' ? Symbols.health : Symbols.apps)
+            .fontSize(Tokens.interfaceFontVp(18,this.environment.fontScale)).fontColor([Colors.link])
+        }
+      }.width(this.agentSize(key==='preset' ? 30 : 21,key==='preset' ? 38 : 29)).id('agent.row_icon.'+key)
       Column({space:2}) {
         Text(this.launchRowTitle(key)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
           .fontWeight(key==='folder' ? 600 : 400).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         if (this.launchRowDetail(key)) Text(this.launchRowDetail(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
           .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(key==='folder' ? EllipsisMode.START : EllipsisMode.END)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12,this.environment.fontScale)).fontColor([Colors.secondary])
+      PhoneOutlineIcon({name:'forward',iconScale:this.agentSize(1,1.35),color:Colors.secondary}).opacity(0.55).id('agent.chevron.'+key)
     }.width('100%').constraintSize({minHeight:this.launchRowDetail(key) ? this.agentSize(66.67,81.33) : this.agentSize(52.33,59.33)})
       .padding({left:20,right:20,top:12,bottom:12}).onClick(() => this.openAgentPicker(key)).accessibilityGroup(true).id('agent.'+key)
   }
@@ -1951,8 +1956,12 @@ struct Index {
     Button({type:ButtonType.Normal}) {
       Column({space:8}) {
         Row() {
-          SymbolGlyph(Wire.text(row.data(),'icon') === 'server' ? $r('sys.symbol.externaldrive') :
-            Wire.text(row.data(),'icon') === 'desktop' ? $r('sys.symbol.desktop') : Symbols.device).fontSize(Tokens.interfaceFontVp(22,this.environment.fontScale)).fontColor([Colors.ink])
+          if (['server','laptop','desktop'].includes(Wire.text(row.data(),'icon'))) {
+            PhoneOutlineIcon({name:Wire.text(row.data(),'icon'),iconScale:this.agentSize(1,1.35),color:Colors.ink})
+              .id('agent.machine_icon.'+row.id)
+          } else {
+            SymbolGlyph(Symbols.device).fontSize(Tokens.interfaceFontVp(22,this.environment.fontScale)).fontColor([Colors.ink])
+          }
           Blank().layoutWeight(1)
           Circle().width(7).height(7).fill(this.agentMachineOnline(row) ? Colors.positive : Colors.secondary)
         }.width('100%')
