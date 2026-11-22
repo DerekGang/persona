@@ -7571,6 +7571,66 @@
     {
       "name": "phone_inbox_grouping_mode",
       "value": "分组：{name}"
+    },
+    {
+      "name": "header_permission_title",
+      "value": "权限模式：{mode}"
+    },
+    {
+      "name": "header_permission_detail_default",
+      "value": "改文件、跑命令前都先问你"
+    },
+    {
+      "name": "header_permission_detail_acceptEdits",
+      "value": "改文件不问，跑命令还会问"
+    },
+    {
+      "name": "header_permission_detail_plan",
+      "value": "只读代码、写计划，批准后才动手"
+    },
+    {
+      "name": "header_permission_detail_auto",
+      "value": "自己判断风险，安全的直接做"
+    },
+    {
+      "name": "header_permission_launcher",
+      "value": "跟随启动器"
+    },
+    {
+      "name": "header_permission_launcher_detail",
+      "value": "问不问你由它自己的审批设置决定，可能本来就全部放行"
+    },
+    {
+      "name": "header_permission_full_detail",
+      "value": "改文件、跑命令都不问你"
+    },
+    {
+      "name": "header_permission_start_only",
+      "value": "什么都不问；只能在新开时选"
+    },
+    {
+      "name": "header_permission_restart",
+      "value": "这一轮结束后将重启会话以生效，对话接着进行"
+    },
+    {
+      "name": "header_permission_pending",
+      "value": "这一轮结束后会重启会话，切到完全访问"
+    },
+    {
+      "name": "header_permission_enter",
+      "value": "完全访问？"
+    },
+    {
+      "name": "header_permission_leave",
+      "value": "退出完全访问？"
+    },
+    {
+      "name": "header_permission_leave_detail",
+      "value": "这个 Agent 不是以完全访问启动的，切走后在这里切不回来。"
+    },
+    {
+      "name": "header_space_open",
+      "value": "空间 {space} 的所有 Agent"
     }
   ]
 }

@@ -7571,6 +7571,66 @@
     {
       "name": "phone_inbox_grouping_mode",
       "value": "グループ：{name}"
+    },
+    {
+      "name": "header_permission_title",
+      "value": "権限モード：{mode}"
+    },
+    {
+      "name": "header_permission_detail_default",
+      "value": "ファイルの編集やコマンドの実行前に毎回確認します"
+    },
+    {
+      "name": "header_permission_detail_acceptEdits",
+      "value": "ファイルは確認なしで編集し、コマンドは確認します"
+    },
+    {
+      "name": "header_permission_detail_plan",
+      "value": "コードを読んでプランを書き、承認後に作業します"
+    },
+    {
+      "name": "header_permission_detail_auto",
+      "value": "リスクを自分で判断し、安全なものはそのまま実行します"
+    },
+    {
+      "name": "header_permission_launcher",
+      "value": "ランチャーに従う"
+    },
+    {
+      "name": "header_permission_launcher_detail",
+      "value": "何を確認するかは自身の承認設定で決まります。すでにすべて許可している場合もあります"
+    },
+    {
+      "name": "header_permission_full_detail",
+      "value": "ファイルの編集もコマンドの実行も確認しません"
+    },
+    {
+      "name": "header_permission_start_only",
+      "value": "何も確認しません。新規作成時のみ選択できます"
+    },
+    {
+      "name": "header_permission_restart",
+      "value": "このターンが終わるとセッションを再起動して適用します。会話はそのまま続きます"
+    },
+    {
+      "name": "header_permission_pending",
+      "value": "このターンが終わるとセッションを再起動してフルアクセスに切り替えます"
+    },
+    {
+      "name": "header_permission_enter",
+      "value": "フルアクセスにしますか？"
+    },
+    {
+      "name": "header_permission_leave",
+      "value": "フルアクセスをやめますか？"
+    },
+    {
+      "name": "header_permission_leave_detail",
+      "value": "このエージェントはフルアクセスで起動していないため、切り替えるとここからは戻せません。"
+    },
+    {
+      "name": "header_space_open",
+      "value": "スペース{space}のすべてのエージェント"
     }
   ]
 }

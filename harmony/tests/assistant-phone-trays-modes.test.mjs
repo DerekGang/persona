@@ -128,3 +128,26 @@ test('typed launcher models accept the Hub ID grammar, never send the typed stri
   assert.equal(await model.change(client,'custom_model','vendor/other',()=>true),false);
   assert.equal(calls.filter(c=>c.method==='POST').length,1);assert.equal(client.draft,'untouched draft');
 });
+
+test('the Agent header distinguishes a shown permission mode from an allowed switch on the exact session',async()=>{
+  const {SessionHeaderPermissions:Permissions,headerPermissionRow}=await import('../entry/src/main/ets/models/SessionHeaderPermissions.ets');
+  const {ResourceRow}=await import('../entry/src/main/ets/models/Wire.ets');
+  const row=(fields={})=>{const r=ResourceRow.from({machine_id:'same-host',session_id:'same-id',manager:'m',state:'idle',...fields},'session');r.group='g';return r;};
+  const old=new Permissions(row({agent:'claude',permission_mode:'default',pane_id:'p1'}));
+  assert.equal(old.visible,true);assert.equal(old.restarts,true);assert.equal(old.confirmation('bypassPermissions'),'enter');
+  const noMode=new Permissions(row({agent:'codex',capabilities:{send:true,modes:false}}));assert.equal(noMode.visible,false);
+  const readOnly=new Permissions(row({agent:'codex',state:'offline',permission_mode:'plan',capabilities:{send:false,modes:false}}));
+  assert.equal(readOnly.visible,true);assert.equal(readOnly.permits('default'),false);
+  const listed=new Permissions(row({agent:'codex',capabilities:{send:true,modes:false,permission_modes:['default','bypassPermissions']}}));
+  assert.deepEqual(listed.choices,['default','bypassPermissions']);assert.equal(listed.current,'default');
+  assert.equal(listed.nameKey('default'),'header_permission_launcher');assert.equal(listed.confirmation('bypassPermissions'),'enter');
+  assert.equal(listed.permits('plan'),false);
+  const trusted=new Permissions(row({agent:'agy',permission_mode:'default',capabilities:{send:true,modes:true}}));
+  assert.equal(trusted.permits('bypassPermissions'),true);assert.equal(trusted.confirmation('bypassPermissions'),'');
+  const legacy=new Permissions(row({permission_mode:'bypassPermissions',agent:'claude',capabilities:{send:true,modes:true}}));
+  assert.equal(legacy.confirmation('plan'),'leave');
+  const pending=new Permissions(row({permission_mode:'default',agent:'claude',bypass_pending:true}));assert.equal(pending.permits('default'),true);
+  assert.equal(new Permissions(row({assistant:true,permission_mode:'default'})).visible,false);
+  const source=row({permission_mode:'default'}),other=row({permission_mode:'plan'});other.group='other';
+  assert.equal(headerPermissionRow(source,[other],'g','m'),source);assert.equal(headerPermissionRow(other,[source],'g','m').kind,'');
+});

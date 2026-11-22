@@ -3,6 +3,7 @@ import type { MutationRecord } from './MutationStore';
 import type { ClientModel } from './ClientModel';
 import type { HubRepository } from './HubRepository';
 import { ResourceRow, Wire } from './Wire';
+import { SessionHeaderPermissions } from './SessionHeaderPermissions';
 
 type Fields = Record<string,Object>;
 const claudeEfforts:string[]=['auto','low','medium','high','xhigh','max'];
@@ -104,14 +105,14 @@ export class SessionComposerModes {
     const resolved=this.catalog.find((c:Fields) => !Wire.bool(c,'default') && Wire.text(c,'resolved')===id);
     return Wire.text(exact || resolved || {},'id') || id;
   }
-  async load(client:ClientModel,retry:boolean=false):Promise<void> {
+  async load(client:ClientModel,retry:boolean=false,models:boolean=true):Promise<void> {
     const row=liveRow(client);
     if (!row) { this.clear(); return; }
     const key=this.identity(client,row);
     if (!retry && this.key===key && this.owner===client) return;
     if (this.saving && this.key===key) return;
     this.clear(); this.owner=client; this.key=key; this.repo=client.repo();
-    if (!modelCapable(row.data()) || !launcher(row)) return;
+    if (!models || !modelCapable(row.data()) || !launcher(row)) return;
     const seq=this.sequence; this.loading=true;
     try {
       const path='/api/v1/machines/'+encodeURIComponent(row.machine)+'/launchers/'+encodeURIComponent(launcher(row))+'/models';
@@ -128,6 +129,7 @@ export class SessionComposerModes {
     const path=modePath(actual);
     if (!ownOp && client.operationBlocked(path) || this.repo?.mutations?.blocked().some((r:MutationRecord) => r.path===path && r.id!==ownOp)) return false;
     if (field==='effort') return this.efforts(client).includes(value) && (value!==this.currentEffort(client) || !!this.pendingEffort(client));
+    if (field==='header_permission') return new SessionHeaderPermissions(actual).permits(value);
     if (field==='permission_mode') return this.modeValues(client).includes(value) && Wire.text(actual.data(),'permission_mode')!==value;
     if (field==='custom_model') return this.allowsTypedModel(client) && validComposerModelID(value) && this.currentModel(client)!==value && this.chosenModel(client)!==value;
     return field==='model' && this.acceptsModel(client) && this.chosenModel(client)!==value && this.catalog.some((entry:Fields) => Wire.text(entry,'id')===value);
@@ -135,7 +137,7 @@ export class SessionComposerModes {
   async change(client:ClientModel,field:string,value:string,showing:()=>boolean):Promise<boolean> {
     const row=this.current(client), repo=this.repo;
     if (!row || !repo || this.saving || !showing() || !this.allowed(client,field,value)) return false;
-    const seq=this.sequence, op=util.generateRandomUUID(), path=modePath(row), body=Wire.payload([field==='custom_model' ? 'model' : field],[value]);
+    const seq=this.sequence, op=util.generateRandomUUID(), path=modePath(row), body=Wire.payload([field==='custom_model' ? 'model' : field==='header_permission' ? 'permission_mode' : field],[value]);
     if (field==='effort') body['queue_effort']=true;
     this.saving=true; this.error='';
     const admit=():boolean => this.sequence===seq && showing() && this.allowed(client,field,value,op);

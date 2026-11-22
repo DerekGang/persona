@@ -7571,6 +7571,66 @@
     {
       "name": "phone_inbox_grouping_mode",
       "value": "Grouping: {name}"
+    },
+    {
+      "name": "header_permission_title",
+      "value": "Permission Mode: {mode}"
+    },
+    {
+      "name": "header_permission_detail_default",
+      "value": "Asks you before editing files or running commands"
+    },
+    {
+      "name": "header_permission_detail_acceptEdits",
+      "value": "Edits files without asking, still asks before commands"
+    },
+    {
+      "name": "header_permission_detail_plan",
+      "value": "Reads code and writes a plan, acts only once you approve"
+    },
+    {
+      "name": "header_permission_detail_auto",
+      "value": "Judges the risk itself and does safe things right away"
+    },
+    {
+      "name": "header_permission_launcher",
+      "value": "Use Launcher's"
+    },
+    {
+      "name": "header_permission_launcher_detail",
+      "value": "Its own approval settings decide what it asks, and may already allow everything"
+    },
+    {
+      "name": "header_permission_full_detail",
+      "value": "Edits files and runs commands without asking"
+    },
+    {
+      "name": "header_permission_start_only",
+      "value": "Never asks. Only available when starting"
+    },
+    {
+      "name": "header_permission_restart",
+      "value": "Restarts the session to apply it once this turn ends; the conversation carries on"
+    },
+    {
+      "name": "header_permission_pending",
+      "value": "The session restarts in Full access once this turn ends"
+    },
+    {
+      "name": "header_permission_enter",
+      "value": "Full access?"
+    },
+    {
+      "name": "header_permission_leave",
+      "value": "Leave Full access?"
+    },
+    {
+      "name": "header_permission_leave_detail",
+      "value": "This agent wasn't started with Full access, so it can't be switched back to it from here."
+    },
+    {
+      "name": "header_space_open",
+      "value": "All agents in space {space}"
     }
   ]
 }
