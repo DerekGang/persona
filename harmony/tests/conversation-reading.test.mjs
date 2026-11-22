@@ -7,6 +7,19 @@ test('reading returns to the same message after older and newer messages are ins
  assert.equal(readingAnchorIndex(['older','before','read-message','after','newest'],anchor),2);
  assert.equal(anchor.offset,-18);assert.equal(anchor.atEnd,false);
 });
+
+test('a footer resize while navigating away cannot replace a manually settled reading position',async()=>{
+ const Anchor=new Function('return '+stripTypeScriptTypes('class Anchor {'+['finishReadingMotion','saveReading'].map(method).join('\n')+'}'))();
+ const v=new Anchor(),writes=[];
+ Object.assign(v,{active:true,readingRestoring:false,scrollingByHand:true,scroller:{isAtEnd:()=>false},
+   visibleReadingAnchor:()=>({id:'earlier',offset:-17,atEnd:false}),
+   readingLease:{valid:()=>true,write:async v=>{writes.push(JSON.parse(v));}}});
+ v.finishReadingMotion();v.anchor={id:'during-pop',offset:80,atEnd:false};v.saveReading();
+ assert.deepEqual(writes,[{id:'earlier',offset:-17,atEnd:false}]);
+ v.scroller.isAtEnd=()=>true;v.finishReadingMotion();v.saveReading();
+ assert.equal(writes.at(-1).id,'earlier');
+ v.scrollingByHand=true;v.finishReadingMotion();assert.equal(v.lastManualAnchor,undefined);
+});
 test('missing history does not silently turn a saved reading position into newest',()=>{
  const anchor=parseReadingAnchor('{"id":"older-message","offset":0,"atEnd":false}');
  assert.equal(readingAnchorIndex(['recent'],anchor),-1);assert.equal(anchor.atEnd,false);

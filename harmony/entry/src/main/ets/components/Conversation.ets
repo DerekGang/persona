@@ -168,6 +168,8 @@ export struct Conversation {
   private readingFetching: boolean = false;
   @Local readingLoading: boolean = false;
   private readingMotion: number = 0;
+  private scrollingByHand: boolean = false;
+  private lastManualAnchor: ReadingAnchor | undefined = undefined;
   private readingCursors: Set<string> = new Set();
   @Local readingFailed: boolean = false;
   private firstVisibleIndex: number = 0;
@@ -200,6 +202,7 @@ export struct Conversation {
   }
   private async seekSearchHit(key:string): Promise<void> {
     if (this.seekingHit === key) return;
+    this.lastManualAnchor = undefined;
     const owner = this.model, source = this.decisionTool, epoch = this.readingEpoch, motion = this.readingMotion;
     let hit = this.searchHitId;
     const current = (): boolean => this.active && this.model === owner && this.seekingHit === key &&
@@ -249,17 +252,18 @@ export struct Conversation {
     return (this.readingFailed ? 1 : 0) + (this.feed.error && this.feed.error !== this.model.error ? 1 : 0) + (this.showWelcome() ? 1 : 0) + (this.model.hasMoreMessages || this.feed.nextCursor ? 1 : 0);
   }
   private saveReading(): void {
-    if (!this.readingRestoring && this.readingLease?.valid()) this.readingLease.write(JSON.stringify(this.anchor)).catch(() => {});
+    if (!this.readingRestoring && this.readingLease?.valid()) this.readingLease.write(JSON.stringify(this.lastManualAnchor || this.anchor)).catch(() => {});
   }
   private syncReading(): void {
     const key = JSON.stringify([this.model.scope(), this.model.target()]);
     if (this.readingKey === key) return;
-    this.saveReading(); this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
+    this.saveReading(); this.lastManualAnchor = undefined; this.scrollingByHand = false; this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
     const epoch = ++this.readingEpoch, lease = this.model.captureView('reading:' + this.model.target());
     this.readingLease = lease; this.readingCursors.clear(); this.readingFetching = false; this.readingRestoring = true; this.readingAnchorReady = false; this.readingFailed = false;
     lease.read().then((value: string) => {
       if (epoch !== this.readingEpoch || key !== this.readingKey || !lease.valid()) return;
       this.anchor = parseReadingAnchor(value); this.atEnd = this.anchor.atEnd; this.readingAnchorReady = true;
+      if (this.anchor.id && !this.atEnd) this.lastManualAnchor = { id: this.anchor.id, offset: this.anchor.offset, atEnd: false };
       this.scheduleReading();
     }).catch(() => {
       if (epoch !== this.readingEpoch || key !== this.readingKey || !lease.valid()) return;
@@ -340,12 +344,23 @@ export struct Conversation {
     this.updateJumpAvailability();
     const prefix = this.readingPrefix(), index = Math.max(prefix, start), line = this.lines[index - prefix];
     if (!line) return;
-    try { const rectangle = this.scroller.getItemRect(index); this.anchor = { id: line.readingId, offset: rectangle.y, atEnd: this.atEnd }; } catch (_) {}
+    try {
+      const rectangle = this.scroller.getItemRect(index);
+      this.anchor = { id: line.readingId, offset: rectangle.y, atEnd: this.atEnd };
+      if (this.scrollingByHand) this.lastManualAnchor = this.atEnd ? undefined : { id: line.readingId, offset: rectangle.y, atEnd: false };
+    } catch (_) {}
   }
   private trackScrollMotion(offset: number, source: ScrollSource): void {
     if (!offset || source === ScrollSource.SCROLLER || source === ScrollSource.SCROLLER_ANIMATION || source === ScrollSource.EDGE_EFFECT) return;
-    this.readingMotion++;
+    this.readingMotion++; this.scrollingByHand = true;
     if (this.searchHitId && this.seekingHit) this.readingRestoring = false;
+  }
+  private finishReadingMotion(): void {
+    if (!this.scrollingByHand) return;
+    this.scrollingByHand = false;
+    if (!this.active || this.readingRestoring) return;
+    // The disappearing composer can resize the list during navigation. Persist the last position the reader chose.
+    this.lastManualAnchor = this.scroller.isAtEnd() ? undefined : this.visibleReadingAnchor();
   }
   @Local atEnd: boolean = true;
   @Local jumpAvailable: boolean = false;
@@ -373,7 +388,7 @@ export struct Conversation {
     } catch (_) { /* The row can leave the viewport between the index and geometry callbacks. */ }
   }
   private jumpToLatest(): void {
-    this.readingMotion++;
+    this.readingMotion++; this.scrollingByHand = false; this.lastManualAnchor = undefined;
     this.atEnd = true;
     this.anchor.atEnd = true;
     this.jumpAvailable = false;
@@ -1142,6 +1157,7 @@ export struct Conversation {
       .bindSheet(this.questions.shown, this.questionContent(), { title: { title: tr('interaction_question_reopen') }, height: SheetSize.LARGE, keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY, showClose: true, onWillAppear: () => this.presentedQuestion = this.questions.beginPresentation(), onAppear: () => { this.questionLayoutReady = true; this.measureQuestion(); }, onWillDismiss: (action: DismissSheetAction) => this.questions.dismiss(this.presentedQuestion, () => action.dismiss()), onDisappear: () => { this.questionLayoutReady = false; this.questions.endPresentation(this.presentedQuestion); this.presentedQuestion = undefined; } })
       .maintainVisibleContentPosition(true)
       .onWillScroll((offset: number, _state: ScrollState, source: ScrollSource) => this.trackScrollMotion(offset, source))
+      .onScrollStop(() => this.finishReadingMotion())
       .onScrollIndex((start: number, end: number) => {
         this.firstVisibleIndex = start; this.lastVisibleIndex = end; this.recordReading(start);
       })
