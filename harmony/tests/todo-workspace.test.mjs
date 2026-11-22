@@ -36,7 +36,7 @@ registerHooks({
   }
 });
 
-const { TodoWorkspace, TodoWorkspaceItem, TodoWorkspaceSpace, TodoWorkspaceSpaceChoice,
+const { todoDayKey, todoCalendarDays, TodoWorkspace, TodoWorkspaceItem, TodoWorkspaceSpace, TodoWorkspaceSpaceChoice,
   todoWorkspaceStatus, relatedTodoMembers, todoMatchesDue } = await import('../entry/src/main/ets/models/TodoWorkspace.ets');
 const { reconcileBoundRows } = await import('../entry/src/main/ets/models/RowBinding.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
@@ -369,6 +369,16 @@ test('create, edit, done, reopen, existing-Agent link, project link, and delete 
   workspace.close();
 });
 
+test('calendar periods honor local month boundaries and the configured first weekday', () => {
+  const today=new Date(2026, 1, 1, 12).getTime();
+  const sunday=todoCalendarDays('month',today,0);
+  assert.equal(sunday.length,28);
+  assert.deepEqual([todoDayKey(new Date(sunday[0])),todoDayKey(new Date(sunday.at(-1)))],['2026-02-01','2026-02-28']);
+  const week=todoCalendarDays('week',today,1);
+  assert.deepEqual([new Date(week[0]).getDay(), week.length, todoDayKey(new Date(week.at(-1)))],[1,7,'2026-02-01']);
+  assert.equal(todoDayKey(new Date(todoCalendarDays('day',today,1)[0])),'2026-02-01');
+});
+
 test('new drafts are scoped to group and manager, and successful create needs no follow-up read', async () => {
   const { workspace, state } = await opened({ todos: [] });
   const key = 'hub:work:todo:draft:["profile-1","work","new"]';
@@ -381,6 +391,20 @@ test('new drafts are scoped to group and manager, and successful create needs no
   assert.equal(await workspace.save(), true);
   assert.deepEqual(state.calls, [{ path: '/api/v1/todos?manager=work', method: 'POST', body: { title: 'Recovered task', notes: 'Recovered notes' } }]);
   workspace.close();
+});
+
+test('a to-do created in a calendar slot is due on that local date or at that time and does not reuse the undated draft', async () => {
+  for (const [date,time,key] of [['2027-03-14','','due_date'], ['','2027-03-14T18:30:00Z','due_at']]) {
+    const { workspace,state }=await opened({todos:[]});
+    state.views.set('hub:work:todo:draft:["profile-1","work","new"]',JSON.stringify({title:'Unrelated list draft'}));
+    workspace.startCreate(date,time);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(workspace.titleDraft,'');
+    workspace.setTitleDraft('Review'); state.calls.length=0;
+    assert.equal(await workspace.save(),true);
+    assert.deepEqual(state.calls[0].body,{title:'Review',notes:'',[key]:date || time});
+    workspace.close();
+  }
 });
 
 test('existing edits restore and persist only the matching group, manager, and Todo draft', async () => {

@@ -1,4 +1,5 @@
 import { nativeEnvironment } from '../platform/NativeEnvironment';
+import { DictationPreference, dictationPreference } from '../platform/DictationPreference';
 import { inputMethod } from '@kit.IMEKit';
 import { i18n } from '@kit.LocalizationKit';
 import { PhoneStyle, PhoneSectionTitle, PhoneSettingsRow } from '../design/PhoneStyle';
@@ -11,9 +12,9 @@ import { machineOnline } from '../models/MachineDashboard';
 
 const AGENT_OPTIONS:string[] = ['phone_agent_folders','phone_claude_config','phone_codex_config','phone_agy_config','triage'];
 const SEARCH_ROUTES:string[] = ['phone_agent_followup','phone_agent_layout','launchers','engine','schedules'];
-const ASSISTANT_OPTIONS:string[] = ['models','assistant','channels','connectors','extensions','memory','phone_agent_options','machines'];
+const ASSISTANT_OPTIONS:string[] = ['models','assistant','channels','connectors','phone_knowledge_selection','phone_meeting_options','phone_agent_options','machines'];
 const DEVICE_OPTIONS:string[] = ['appearance','phone_language_options','notifications','translation','phone','privacy'];
-const HUB_OPTIONS:string[] = ['managers','ssh','hub_update','node_update','ledger','diagnostics'];
+const HUB_OPTIONS:string[] = ['managers','extensions','memory','ssh','hub_update','node_update','ledger','diagnostics'];
 const LANGUAGES:string[] = ['default','zh-CN','en-US','ja-JP'];
 
 function languageName(tag:string):string {
@@ -35,7 +36,9 @@ function settingIcon(id:string):Resource {
     case 'channels': return Symbols.inbox;
     case 'connectors': return $r('sys.symbol.link');
     case 'extensions': return Symbols.apps;
+    case 'phone_knowledge_selection':
     case 'memory': return $r('sys.symbol.book');
+    case 'phone_meeting_options': return Symbols.calendar;
     case 'phone_agent_folders':
     case 'phone_claude_config':
     case 'phone_codex_config':
@@ -68,6 +71,7 @@ function settingLabel(id:string, label:(page:string)=>string):string {
   if (id === 'phone_agent_options') return tr('settings_agent_options_title');
   if (id === 'phone_language_options') return tr('settings_language_options_title');
   if (id === 'machines') return tr('phone_machines');
+  if (id==='phone_knowledge_selection' || id==='phone_meeting_options') return tr(id);
   if (AGENT_OPTIONS.includes(id) && id!=='triage' || id==='phone_agent_followup' || id==='phone_agent_layout') return tr(id);
   return tr(label(id));
 }
@@ -83,6 +87,8 @@ export struct SettingsDirectory {
   @Param ownerName: string = '';
   @Param avatar: string = '';
   @Param initialQuery: string = '';
+  @Param showDismissSearch: boolean = false;
+  @Event onDismissSearch: () => void = () => {};
   @Local query: string = '';
   @Require @Param label: (page: string) => string;
   @Event onOpen: (page: string) => void = () => {};
@@ -135,22 +141,24 @@ export struct SettingsDirectory {
     }
   }
   @Builder identity() {
-    Row({space:9}) {
-      Image(this.avatar || $r('app.media.foreground')).width(31).height(31).objectFit(ImageFit.Contain).borderRadius(8)
-      if (this.currentManager()) Button({type:ButtonType.Normal}) {
-        Row({space:5}) {
-          Text(this.account()).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-          SymbolGlyph(Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
-        }
-      }.padding(0).constraintSize({minHeight:44}).backgroundColor(Color.Transparent).accessibilityText(tr('settings_this_assistant')+' · '+this.account())
-        .bindMenu(this.managerMenu(this.model.scope())).id('settings.assistant_switch')
-      else Text(this.account()).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-    }.width('100%').padding({left:5,right:5,top:13,bottom:0})
+    Button({type:ButtonType.Normal}) { Row({space:9}) {
+      Stack({alignContent:Alignment.BottomEnd}) {
+        Text(this.account().slice(0,1)).fontSize('16vp').fontWeight(FontWeight.Bold).fontColor(Color.White)
+          .width(32).height(32).textAlign(TextAlign.Center).backgroundColor(Colors.ai).borderRadius(16)
+        Circle().width(9).height(9).fill(this.model.connected ? Colors.positive : Colors.secondary)
+          .stroke(Colors.grouped).strokeWidth(1.5)
+      }.width(32).height(32)
+      Text(this.currentManager() ? tr('settings_assistant_named').replace('{name}',this.account()) : tr('phone_settings_assistant'))
+        .fontSize(14).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
+      if (this.currentManager()) Text(tr('phone_switch_assistant')).fontSize(13).fontColor(Colors.secondary)
+    }.width('100%').padding({left:15,right:13,top:13,bottom:10})
+      }.width('100%').padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('settings_this_assistant')+' · '+this.account())
+      .bindMenu(this.managerMenu(this.model.scope())).id('settings.assistant_switch')
   }
   @Builder section(title:string, entries?:string[]) {
     ListItem() {
       Column() {
-        PhoneSectionTitle({text:title})
+        if (title) PhoneSectionTitle({text:title})
         Column() {
           ForEach(entries ?? this.results,(id:string,ix:number) => {
             PhoneSettingsRow({label:settingLabel(id,this.label),detail:this.subtitle(id),symbol:settingIcon(id),tint:Colors.link,
@@ -164,20 +172,26 @@ export struct SettingsDirectory {
   build() {
     List() {
       ListItem() {
-        Row({space:7}) {
+        Row({space:8}) {
+          Row({space:7}) {
           SymbolGlyph($r('sys.symbol.magnifyingglass')).fontSize('16vp').fontColor([Colors.secondary])
           TextInput({text:this.query,placeholder:tr('phone_settings_search'),controller:this.field}).fontSize(16)
             .height(Math.max(36,Math.ceil(24*nativeEnvironment.fontScale)+8)).padding(0)
             .layoutWeight(1).backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
             .enterKeyType(EnterKeyType.Search).onSubmit(() => this.field.stopEditing())
             .onChange((v:string) => { this.query = v; this.onQueryChange(v); }).id('settings.search')
-        }.constraintSize({minHeight:38}).padding({left:12,right:8,top:1,bottom:1}).width('100%').borderRadius(17).backgroundColor(Colors.control)
+        }.constraintSize({minHeight:38}).padding({left:12,right:8,top:1,bottom:1}).layoutWeight(1).borderRadius(19).backgroundColor(Colors.control)
+          if (this.showDismissSearch && this.query.trim()) Button({type:ButtonType.Circle}) {
+            SymbolGlyph($r('sys.symbol.xmark')).fontSize('18vp').fontColor([Colors.ink])
+          }.width(40).height(40).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('close'))
+            .onClick(() => { this.field.stopEditing(); this.onDismissSearch(); }).id('settings.close')
+        }.width('100%')
       }
       if (this.query.trim()) {
         this.section(tr('settings_search_results'))
       } else {
         ListItem() { this.identity() }
-        this.section(this.currentManager() ? tr('settings_assistant_named').replace('{name}',this.account()) : tr('phone_settings_assistant'),ASSISTANT_OPTIONS)
+        this.section('',ASSISTANT_OPTIONS)
         this.section(tr('phone_settings_device'),DEVICE_OPTIONS)
         this.section(tr('phone_settings_hub'),HUB_OPTIONS)
       }
@@ -187,12 +201,33 @@ export struct SettingsDirectory {
 
 @ComponentV2
 export struct PhoneSettingsOptions {
+  @Local dictation: DictationPreference = dictationPreference;
   @Require @Param model:ClientModel;
   @Require @Param page:string;
   @Require @Param label:(page:string)=>string;
   @Event onOpen:(page:string)=>void = () => {};
   private mounted:boolean = false;
-  aboutToAppear():void { this.mounted = true; }
+  aboutToAppear():void { this.mounted = true; this.dictation.load(this.getUIContext().getHostContext()); }
+  private dictationLabel(choice: string): string {
+    return choice === 'zh-CN' ? languageName(choice) : tr(choice === 'keyboard' ? 'phone_system_input' : 'auto');
+  }
+  @Builder dictationMenu() {
+    Menu() {
+      ForEach(['auto','zh-CN','keyboard'], (choice: string) => {
+        MenuItem({content: this.dictationLabel(choice)}).selected(this.dictation.choice === choice).selectIcon(true)
+          .enabled(!this.dictation.saving).onClick(() => {
+            this.dictation.choose(choice).then((saved: boolean) => {
+              if (!saved && this.mounted) this.getUIContext().getPromptAction().showToast({message:tr('cache_unavailable')});
+            });
+          }).id('settings.dictation.' + choice)
+      }, (choice: string) => choice)
+      MenuItem({content: tr('phone_keyboard_settings')}).onClick(() => {
+        inputMethod.getSetting().showOptionalInputMethods().catch(() => {
+          if (this.mounted) this.getUIContext().getPromptAction().showToast({message:tr('failed')});
+        });
+      }).id('settings.dictation.system')
+    }
+  }
   aboutToDisappear():void { this.mounted = false; }
   private choose(language:string):void {
     const owner=this.model;
@@ -239,21 +274,19 @@ export struct PhoneSettingsOptions {
           Row({space:8}) {
             if (nativeEnvironment.fontScale>=1.4) Column({space:2}) {
               Text(tr('phone_dictation')).fontSize(16).fontColor(Colors.ink)
-              Text(tr('phone_system_input')).fontSize(15).fontColor(Colors.link)
+              Text(this.dictationLabel(this.dictation.choice)).fontSize(15).fontColor(Colors.link)
             }.layoutWeight(1).alignItems(HorizontalAlign.Start)
             else {
               Text(tr('phone_dictation')).fontSize(16).fontColor(Colors.ink).layoutWeight(1)
-              Text(tr('phone_system_input')).fontSize(15).fontColor(Colors.link)
+              Text(this.dictationLabel(this.dictation.choice)).fontSize(15).fontColor(Colors.link)
             }
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.constraintSize({minHeight:48}).width('100%').padding({left:15,right:15,top:7,bottom:7})
             .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
-            .onClick(() => inputMethod.getSetting().showOptionalInputMethods().catch(() => {
-              if (this.mounted) this.getUIContext().getPromptAction().showToast({message:tr('failed')});
-            })).id('settings.dictation.system')
+            .bindMenu(this.dictationMenu()).accessibilityRole(AccessibilityRoleType.BUTTON).id('settings.dictation.choice')
         }
-        ListItem() { Text(tr('phone_dictation_os_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
+        ListItem() { Text(tr('phone_dictation_automatic_note')).fontSize(13).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
       }
-    }.width('100%').height('100%').padding({left:16,right:16,top:12,bottom:24}).backgroundColor(Colors.grouped)
+    }.width('100%').height('100%').padding({left:16,right:16,top:32,bottom:24}).backgroundColor(Colors.grouped)
   }
 }

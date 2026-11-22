@@ -7,7 +7,7 @@ import { ButtonStyles, SelectStyles } from '../design/Controls';
 import { ComposeListItemV2, ContentItemV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
 import { TodoWorkspace, TodoWorkspaceAgent, TodoWorkspaceGroup, TodoWorkspaceItem, TodoWorkspaceSection,
-  TodoWorkspaceSpace, TodoWorkspaceSpaceChoice, TODO_DUE_FILTERS, TODO_LIST_ORDERS } from '../models/TodoWorkspace';
+  TodoWorkspaceSpace, TodoWorkspaceSpaceChoice, todoCalendarDays, todoDayKey, TODO_DUE_FILTERS, TODO_LIST_ORDERS } from '../models/TodoWorkspace';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { todoHubLabel } from '../models/TodoHubView';
 import { ResourceRow, Wire } from '../models/Wire';
@@ -44,6 +44,9 @@ export struct TodoWorkspacePage {
   @Local sectionBindings: BoundTodoSection[] = [];
   @Local expandedGroups:string[] = [];
   @Local showDone:boolean = false;
+  @Local calendarOpen:boolean = false;
+  @Local calendarMode:string = 'day';
+  @Local calendarAnchor:number = Date.now();
   @Local clock:number = Date.now();
   private clockTimer:number = -1;
   private weekStart:number = 1;
@@ -85,7 +88,7 @@ export struct TodoWorkspacePage {
   @Monitor('row', 'list') routeChanged(): void { this.syncRowBindings(); if (this.pageAvailable) this.openWorkspace(); }
 
   @Monitor('model.profile') profileChanged(): void {
-    this.expandedGroups=[]; this.showDone=false;
+    this.expandedGroups=[]; this.showDone=false; this.calendarAnchor=Date.now();
     this.previousAgentsOpen = false;
     this.syncRowBindings();
     if (this.pageAvailable) this.openWorkspace();
@@ -424,6 +427,13 @@ export struct TodoWorkspacePage {
         .fontColor(todo.priority === 'high' ? Colors.needs : Colors.secondary).padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.control).borderRadius(5)
     }.width('100%')
   }
+  private since(todo:TodoWorkspaceItem):string {
+    const delta=Math.floor((this.clock-Date.parse(todo.updatedAt || todo.createdAt))/60000);
+    if (!Number.isFinite(delta) || delta<0) return '';
+    if (delta<1) return tr('agent_time_just_now');
+    return delta<60 ? String(delta)+tr('agent_time_minute_suffix') : delta<1440 ? String(Math.floor(delta/60))+tr('agent_time_hour_suffix') :
+      new Date(Date.parse(todo.updatedAt || todo.createdAt)).toLocaleDateString(this.dateLocale());
+  }
   @Builder todoRow(binding:BoundRow<TodoWorkspaceGroup>) {
     ListItem() {
       Column() {
@@ -444,12 +454,22 @@ export struct TodoWorkspacePage {
             .onClick(() => this.setRowDone(binding.value.lead)).id('todos.toggle.'+binding.value.lead.id)
           Row({space:7}) {
             Column({space:4}) {
-              Text(binding.value.lead.title).fontSize(17).fontWeight(FontWeight.Medium)
-                .fontColor(this.rowClosed(binding.value.lead) ? Colors.secondary : Colors.ink)
-                .decoration({type:this.rowClosed(binding.value.lead) ? TextDecorationType.LineThrough : TextDecorationType.None}).maxLines(2)
-              if (this.rowLine(binding.value)) Text(this.rowLine(binding.value)).fontSize(14).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
+              Row({space:5}) {
+                Text(binding.value.lead.title).fontSize(17).fontWeight(FontWeight.Medium).layoutWeight(1)
+                  .fontColor(this.rowClosed(binding.value.lead) ? Colors.secondary : Colors.ink)
+                  .decoration({type:this.rowClosed(binding.value.lead) ? TextDecorationType.LineThrough : TextDecorationType.None}).maxLines(2)
+                if (nativeEnvironment.fontScale<1.5 && this.since(binding.value.lead))
+                  Text(this.since(binding.value.lead)).fontSize(11).fontColor(Colors.secondary)
+              }.width('100%').alignItems(VerticalAlign.Top)
+              if (!this.hubMode()) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(4),cross:LengthMetrics.vp(2)}}) {
+                Text(tr('todo_state_'+binding.value.state)).fontSize(12).fontColor(binding.value.state==='needs_you' ? Colors.needs : Colors.secondary)
+                if (binding.value.lead.activeAgents().length)
+                  Text('· '+tr('project_agent_count').replace('{count}',String(binding.value.lead.activeAgents().length)))
+                    .fontSize(12).fontColor(Colors.secondary)
+              }.width('100%')
               this.metadata(binding.value.lead)
-              if (['project','thread'].includes(this.workspace.effectiveGroup())) Text(tr('todo_state_'+binding.value.state)).fontSize(12).fontColor(Colors.secondary)
+              if (this.rowLine(binding.value)) Text(this.rowLine(binding.value)).fontSize(14)
+                .fontColor(binding.value.state==='needs_you' ? Colors.link : Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
             }.alignItems(HorizontalAlign.Start).layoutWeight(1)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.layoutWeight(1).constraintSize({minHeight:44}).accessibilityGroup(true)
@@ -550,9 +570,119 @@ export struct TodoWorkspacePage {
 
   @Computed get hiddenWaitingCount(): number { return this.workspace.hiddenWaiting(this.clock,this.weekStart); }
 
+  @Builder modePicker() {
+    Row() {
+      ForEach(['list','calendar'],(mode:string) => {
+        Button({type:ButtonType.Capsule}) {
+          Text(tr(mode==='list' ? 'phone_todo_list' : 'calendar')).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale)
+            .fontWeight(this.calendarOpen===(mode==='calendar') ? FontWeight.Bold : FontWeight.Normal).fontColor(Colors.ink)
+        }.constraintSize({minHeight:32}).padding({left:9,right:9,top:3,bottom:3})
+          .backgroundColor(this.calendarOpen===(mode==='calendar') ? Colors.surface : Color.Transparent)
+          .accessibilitySelected(this.calendarOpen===(mode==='calendar')).onClick(() => this.calendarOpen=mode==='calendar').id('todos.mode.'+mode)
+      },(mode:string) => mode)
+    }.borderRadius(17).backgroundColor(Colors.control).padding(2)
+  }
+  private dateLocale():string {
+    return this.model.language && this.model.language!=='default' ? this.model.language : i18n.getSystemLanguage();
+  }
+  private agendaItems(day:number):TodoWorkspaceItem[] {
+    const key=todoDayKey(new Date(day));
+    return this.workspace.items.filter((item:TodoWorkspaceItem) => Number.isFinite(item.due) && todoDayKey(new Date(item.due))===key)
+      .sort((a:TodoWorkspaceItem,b:TodoWorkspaceItem) => a.due-b.due || a.title.localeCompare(b.title));
+  }
+  private moveCalendar(delta:number):void {
+    const date=new Date(this.calendarAnchor);
+    if (this.calendarMode==='month') { date.setDate(1); date.setMonth(date.getMonth()+delta); }
+    else date.setDate(date.getDate()+delta*(this.calendarMode==='week' ? 7 : 1));
+    this.calendarAnchor=date.getTime();
+  }
+  private calendarCreate(hour:number = -1):void {
+    const date=new Date(this.calendarAnchor);
+    if (hour<0) this.workspace.startCreate(todoDayKey(date));
+    else { date.setHours(hour,0,0,0); this.workspace.startCreate('',date.toISOString()); }
+  }
+  @Builder calendarItem(item:TodoWorkspaceItem) {
+    Button({type:ButtonType.Normal}) {
+      Row({space:6}) {
+        Circle().width(7).height(7).fill(item.isDone() ? Colors.secondary : Colors.link)
+        Text(item.title).fontSize(15).fontColor(Colors.ink).layoutWeight(1).maxLines(2)
+        SymbolGlyph(Symbols.expand).fontSize('11vp').fontColor([Colors.secondary])
+      }.width('100%')
+    }.width('100%').constraintSize({minHeight:42}).padding({left:10,right:10,top:4,bottom:4}).backgroundColor(Colors.surface)
+      .onClick(() => this.onOpenResource(this.workspace.todoResource(item))).id('todos.calendar.item.'+item.id)
+  }
+  @Builder calendarDay() {
+    ForEach(this.agendaItems(this.calendarAnchor).filter((item:TodoWorkspaceItem) => !item.dueAt),(item:TodoWorkspaceItem) => {
+      this.calendarItem(item)
+    },(item:TodoWorkspaceItem) => item.id+item.raw)
+    ForEach(Array.from({length:24},(_:Object,i:number) => i),(hour:number) => {
+      Row({space:6}) {
+        Text(String(hour).padStart(2,'0')+':00').width(51).fontSize(12).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
+        Column() {
+          ForEach(this.agendaItems(this.calendarAnchor).filter((item:TodoWorkspaceItem) => !!item.dueAt && new Date(item.due).getHours()===hour),
+            (item:TodoWorkspaceItem) => { this.calendarItem(item) },(item:TodoWorkspaceItem) => item.id+item.raw)
+          Divider().strokeWidth(0.5).color(Colors.divider)
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      }.width('100%').constraintSize({minHeight:44}).alignItems(VerticalAlign.Top).padding({top:3,bottom:3})
+        .onClick(() => this.calendarCreate(hour)).id('todos.calendar.hour.'+String(hour))
+    },(hour:number) => String(hour))
+  }
+  @Builder calendarGrid() {
+    Flex({wrap:FlexWrap.Wrap}) {
+      ForEach(todoCalendarDays(this.calendarMode,this.calendarAnchor,this.weekStart),(day:number) => {
+        Column({space:4}) {
+          Text(new Date(day).toLocaleDateString(this.dateLocale(),{weekday:'short'})).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
+          Text(String(new Date(day).getDate())).fontSize(16).fontColor(Colors.ink)
+          if (this.agendaItems(day).length) Text(String(this.agendaItems(day).length)).fontSize(11).fontColor(Colors.link)
+        }.width('14.28%').constraintSize({minHeight:62}).padding({top:4,bottom:4}).borderRadius(8)
+          .backgroundColor(todoDayKey(new Date(day))===todoDayKey(new Date(this.calendarAnchor)) ? Colors.selection : Color.Transparent)
+          .accessibilityText(new Date(day).toLocaleDateString(this.dateLocale())+' · '+String(this.agendaItems(day).length))
+          .onClick(() => { this.calendarAnchor=day; this.calendarMode='day'; }).id('todos.calendar.day.'+todoDayKey(new Date(day)))
+      },(day:number) => String(day))
+    }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
+    if (this.calendarMode==='week') {
+      ForEach(todoCalendarDays('week',this.calendarAnchor,this.weekStart),(day:number) => {
+        if (this.agendaItems(day).length) {
+          Text(new Date(day).toLocaleDateString(this.dateLocale())).fontSize(14).fontColor(Colors.secondary).width('100%').padding(8)
+          ForEach(this.agendaItems(day),(item:TodoWorkspaceItem) => { this.calendarItem(item) },(item:TodoWorkspaceItem) => item.id+item.raw)
+        }
+      },(day:number) => String(day))
+    }
+  }
+  @Builder calendarContent() {
+    Column({space:7}) {
+      Row({space:5}) {
+        this.modePicker()
+        Blank().layoutWeight(1)
+        ForEach(['day','week','month'],(mode:string) => {
+          Button(tr('phone_calendar_'+mode),{type:ButtonType.Capsule}).constraintSize({minHeight:32}).fontSize(13)
+            .maxFontScale(Tokens.navigationTextMaxScale).fontColor(this.calendarMode===mode ? Colors.link : Colors.secondary)
+            .padding({left:6,right:6}).backgroundColor(this.calendarMode===mode ? Colors.selection : Color.Transparent)
+            .accessibilitySelected(this.calendarMode===mode).onClick(() => this.calendarMode=mode).id('todos.calendar.mode.'+mode)
+        },(mode:string) => mode)
+      }.width('100%')
+      Row({space:5}) {
+        Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.collapse).fontSize('16vp').fontColor([Colors.link]) }
+          .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('back')).onClick(() => this.moveCalendar(-1)).id('todos.calendar.prev')
+        Button(new Date(this.calendarAnchor).toLocaleDateString(this.dateLocale()),{buttonStyle:ButtonStyleMode.TEXTUAL}).layoutWeight(1)
+          .fontSize(16).fontColor(Colors.ink).accessibilityText(tr('flow_todo_today')).onClick(() => this.calendarAnchor=Date.now()).id('todos.calendar.today')
+        Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.expand).fontSize('16vp').fontColor([Colors.link]) }
+          .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('phone_calendar_'+this.calendarMode)+' +1').onClick(() => this.moveCalendar(1)).id('todos.calendar.next')
+        Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.plus).fontSize('18vp').fontColor([Colors.link]) }
+          .attributeModifier(ButtonStyles.chrome).accessibilityText(tr('add')).onClick(() => this.calendarCreate()).id('todos.calendar.add')
+      }.width('100%')
+      Scroll() { Column() {
+        if (this.calendarMode==='day') this.calendarDay()
+        else this.calendarGrid()
+        Button(tr('flow_todo_no_due')+' '+String(this.workspace.items.filter((i:TodoWorkspaceItem)=>!Number.isFinite(i.due)).length),{buttonStyle:ButtonStyleMode.TEXTUAL})
+          .fontColor(Colors.link).onClick(() => this.calendarOpen=false)
+      }.width('100%').alignItems(HorizontalAlign.Start) }.layoutWeight(1).width('100%')
+    }.width('100%').height('100%').padding({left:16,right:16,top:7,bottom:8}).backgroundColor(Colors.grouped).id('todos.calendar')
+  }
   @Builder listContent() {
     Column() {
       Row({ space: Tokens.gap }) {
+        this.modePicker()
         Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(5),cross:LengthMetrics.vp(5)}}) {
           Button({type:ButtonType.Capsule}) {
             Row({space:5}) {
@@ -729,6 +859,8 @@ export struct TodoWorkspacePage {
 
   @Builder editor() {
     Column({ space: Tokens.page }) {
+      if (!this.workspace.selected.id && Number.isFinite(this.workspace.selected.due))
+        Text(tr('flow_todo_due')+' · '+this.dueTitle(this.workspace.selected)).fontSize(15).fontColor(Colors.secondary).width('100%').id('todos.calendar.create_due')
       TextInput({ text: this.workspace.titleDraft, placeholder: tr('title') }).onChange((value: string) => this.workspace.setTitleDraft(value))
         .id('todos.title')
       TextArea({ text: this.workspace.notesDraft, placeholder: tr('todo_notes') }).onChange((value: string) => this.workspace.setNotesDraft(value))
@@ -744,7 +876,8 @@ export struct TodoWorkspacePage {
 
   build() {
     Column() {
-      if (this.list) this.listContent()
+      if (this.list && this.calendarOpen) this.calendarContent()
+      else if (this.list) this.listContent()
       else this.detailContent()
     }.width('100%').height('100%')
       .bindSheet($$this.workspace.editorOpen, this.editor(), { title: { title: tr(this.workspace.selected.id ? 'edit' : 'create') }, height: SheetSize.LARGE, showClose: true })

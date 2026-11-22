@@ -1,9 +1,12 @@
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
+import { AgentDecisionQueue, AgentDecisionCard } from '../models/AgentDecisionQueue';
+import { InteractionDecisionForm } from './InteractionDecisionForm';
 import { util } from '@kit.ArkTS';
 import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironment';
 import { nativeSheetInset } from '../platform/NativeInsets';
 import { AssistantViewCard } from './AssistantViewCard';
+import { AssistantBriefCard } from './AssistantBriefCard';
 import { assistantCardResource } from '../models/AssistantCardLinks';
 import { ComposeListItemV2, ContentItemV2, OperateItemV2, OperateCheckV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
@@ -30,12 +33,24 @@ class TaskTrayRow {
   }
 }
 
+class TaskQuestionRow {
+  readonly todoId:string;
+  readonly title:string;
+  readonly agent:ResourceRow;
+  readonly card:AgentDecisionCard;
+  readonly at:number;
+  constructor(todoId:string,title:string,agent:ResourceRow,card:AgentDecisionCard,at:number) {
+    this.todoId=todoId; this.title=title; this.agent=agent; this.card=card; this.at=at;
+  }
+}
+
 @ComponentV2
 export struct AssistantCards {
   @Require @Param model: ClientModel;
   @Require @Param feed: AssistantFeedModel;
   @Param item: Record<string, Object> | undefined = undefined;
   @Param dockOnly: boolean = false;
+  @Param dockRoom: number = 400;
   @Param detailOnly: boolean = false;
   @Param active: boolean = false;
   @Event onOpenResource: (row: ResourceRow) => void = () => {};
@@ -50,12 +65,57 @@ export struct AssistantCards {
   @Local trayOpen: boolean = false;
   @Local trayBucket: string = '';
   private trayOwner: string = '';
+  @Local private requests: AgentDecisionQueue = new AgentDecisionQueue();
+  private offRequests: (() => void) | undefined;
+  private subscribedOwner: string = '';
+  private requestModel: ClientModel | undefined;
+  private syncRequests():void {
+    const key=this.dockOnly && this.active && this.model.connected && this.feed.conversationId && this.model.selected.kind==='conversation' ? this.trayScope() : '';
+    if (key===this.subscribedOwner && (!key || this.requestModel===this.model)) return;
+    this.offRequests?.(); this.offRequests=undefined; this.requests.clear(); this.subscribedOwner=key; this.requestModel=this.model;
+    if (!key) return;
+    this.requests.reload(this.model,this.model);
+    this.offRequests=this.model.observeEvents((event:string) => {
+      if (this.subscribedOwner!==key || !this.active || event.length>2*1024*1024) return;
+      const frame=Wire.parse(event), type=Wire.text(frame,'type');
+      if (['interaction','interactions','interaction_resolved'].includes(type)) this.requests.reload(this.model,this.model);
+    });
+  }
+
+  @Computed get taskQuestions():TaskQuestionRow[] {
+    const questions:TaskQuestionRow[]=[], seen=new Set<string>();
+    if (!this.dockOnly || !this.active || !this.feed.todosReady) return questions;
+    for (const entry of this.trayRows) {
+      const todo=this.taskTodo(entry.card), todoId=this.todoId(entry.card);
+      if (!todoId) continue;
+      for (const agent of this.activeAgents(entry.card)) {
+        const row=this.feed.openAgent(todoId,agent);
+        if (!row) continue;
+        for (const card of this.requests.forSession(this.model,row)) {
+          if (seen.has(card.key) || card.owner!==this.model) continue;
+          seen.add(card.key);
+          const raw=Wire.parse(card.request.raw), nested=Wire.object(raw,'interaction');
+          const at=Date.parse(Wire.text(raw,'created_at') || Wire.text(nested,'created_at')) || 0;
+          questions.push(new TaskQuestionRow(todoId,Wire.text(todo,'title'),row,card,at));
+        }
+      }
+    }
+    return questions.sort((a:TaskQuestionRow,b:TaskQuestionRow) => a.at-b.at || a.card.key.localeCompare(b.card.key));
+  }
+
+  private questionCurrent(row:TaskQuestionRow):boolean {
+    if (!this.active || !this.model.connected || this.subscribedOwner!==this.trayScope() || this.model.selected.kind!=='conversation') return false;
+    return this.taskQuestions.some((value:TaskQuestionRow) => value.todoId===row.todoId && value.agent.key()===row.agent.key() &&
+      value.card.key===row.card.key && value.card.request.raw===row.card.request.raw);
+  }
+
   private trayScope(): string { return JSON.stringify([this.model.scope(), this.model.connectionGeneration(), this.model.target()]); }
   @Monitor('active', 'model.selected', 'model.profile', 'model.connected', 'feed.conversationId')
-  trayOwnerChanged(): void { if (this.trayOpen && (!this.active || this.trayOwner !== this.trayScope())) this.trayOpen = false; }
+  trayOwnerChanged(): void { if (this.trayOpen && (!this.active || this.trayOwner !== this.trayScope())) this.trayOpen = false; this.syncRequests(); }
   private openTray(bucket: string): void {
-    if (!this.active || !this.trayRows.some((r: TaskTrayRow) => r.bucket === bucket)) return;
-    this.trayBucket = bucket; this.trayOwner = this.trayScope(); this.trayOpen = true;
+    if (!this.active) return;
+    if (this.trayOpen && this.trayBucket===bucket) { this.trayOpen=false; return; }
+    this.trayBucket=bucket; this.trayOwner=this.trayScope(); this.trayOpen=true;
   }
   @Computed get trayRows(): TaskTrayRow[] {
     if (!this.dockOnly) return [];
@@ -85,7 +145,8 @@ export struct AssistantCards {
   }
   @Local receiptView: AssistantReceiptProjection = projectAssistantReceipt({}, {}, false);
   @Local receiptViewStamp: string = '';
-  aboutToAppear(): void { this.updateReceiptView(); }
+  aboutToAppear(): void { this.updateReceiptView(); this.syncRequests(); }
+  aboutToDisappear():void { this.offRequests?.(); this.offRequests=undefined; this.requests.clear(); this.subscribedOwner=''; this.requestModel=undefined; }
   @Monitor('item', 'feed.items', 'feed.todos', 'feed.todosReady', 'feed.todoError', 'feed.busyKeys', 'feed.uncertainKeys', 'model.sessions', 'model.machines', 'model.unresolvedWrites', 'model.selected', 'model.profile', 'model.pendingDecisions', 'model.decision', 'model.connected')
   receiptFactsChanged(): void { this.updateReceiptView(); }
   private updateReceiptView(): void {
@@ -350,31 +411,60 @@ export struct AssistantCards {
   }
 
   @Builder trayList() {
-    List({space:6}) {
-      ForEach(this.trayRows.filter((row:TaskTrayRow) => row.bucket === this.trayBucket), (row:TaskTrayRow) => {
-        ListItem() { this.taskRow(row) }
-      }, (row:TaskTrayRow) => JSON.stringify([Wire.text(row.card,'id'),row.state,this.taskTodo(row.card)]))
-      if (!this.trayRows.some((row:TaskTrayRow) => row.bucket === this.trayBucket)) ListItem() {
-        Text(tr('empty')).fontSize(15).fontColor(Colors.secondary).padding(12)
-      }
-      if (this.feed.todoError) ListItem() { Text(tr(this.feed.todoError)).fontSize(14).fontColor(Colors.secondary) }
-    }.width('100%').height('100%').padding({left:16,right:16,top:6,bottom:8}).backgroundColor(Colors.grouped).id('chat.tasks.tray')
+    Column({space:4}) {
+      Row() {
+        Text(this.trayLabel(this.trayBucket)+' ('+this.trayRows.filter((row:TaskTrayRow) => row.bucket===this.trayBucket).length+')')
+          .fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
+        Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.down).fontSize('13vp').fontColor([Colors.secondary]) }
+          .width(32).height(28).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('close')).onClick(() => this.trayOpen=false)
+      }.width('100%')
+      Scroll() {
+        Column({space:2}) {
+          ForEach(this.trayRows.filter((row:TaskTrayRow) => row.bucket===this.trayBucket),(row:TaskTrayRow) => {
+            this.taskRow(row)
+          },(row:TaskTrayRow) => JSON.stringify([this.todoId(row.card),row.state,this.taskTodo(row.card)]))
+          if (!this.trayRows.some((row:TaskTrayRow) => row.bucket===this.trayBucket)) Text(tr('empty')).fontSize(13).fontColor(Colors.secondary)
+          if (this.feed.todoError) Text(tr(this.feed.todoError)).fontSize(13).fontColor(Colors.danger)
+        }.width('100%')
+      }.width('100%').constraintSize({maxHeight:Math.max(48,Math.min(this.dockRoom*(this.taskQuestions.length ? 0.21 : 0.45),260))}).align(Alignment.TopStart)
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({left:10,right:10,top:3,bottom:7})
+      .backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:14}).borderRadius(14).id('chat.tasks.tray')
+  }
+
+  @Builder questionCard(row:TaskQuestionRow) {
+    Column({space:3}) {
+      Row({space:5}) {
+        SymbolGlyph($r('sys.symbol.hand_raised_fingers_spread')).fontSize('12vp').fontColor([Colors.link])
+        Text(row.title).fontSize(12).fontColor(Colors.link).layoutWeight(1).maxLines(2)
+        if (this.taskQuestions.length>1) Text(tr('session_task_more').replace('{count}',String(this.taskQuestions.length-1))).fontSize(12).fontColor(Colors.link)
+      }.width('100%')
+      InteractionDecisionForm({model:this.model,request:row.card.request,taskAgent:row.agent,taskCard:row.card,taskQueue:this.requests,
+        heightLimit:Math.max(116,Math.min(this.dockRoom*(this.trayOpen ? 0.35 : 0.46),360)),admission:():boolean => this.questionCurrent(row),
+        onLink:(address:string) => { if (this.questionCurrent(row)) this.onLink(address); }})
+    }.width('100%').id('chat.tasks.question.'+row.card.request.id)
   }
 
   @Builder taskDock() {
-    if (this.trayRows.length) Row({space:6}) {
-      ForEach(['needs','progress','done'], (bucket:string) => {
-        if (this.trayRows.some((r:TaskTrayRow) => r.bucket === bucket)) Button({type: ButtonType.Capsule}) {
-          Row({space:4}) {
-            Circle().width(6).height(6).fill(this.trayColor(bucket))
-            Text(this.trayLabel(bucket)).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-            Text(String(this.trayRows.filter((r:TaskTrayRow) => r.bucket === bucket).length)).fontSize(12).fontColor(Colors.secondary)
-          }
-        }.height(30).padding({left:9,right:9}).backgroundColor(Colors.control)
-          .responseRegion({x:0,y:-6,width:'100%',height:42}).onClick(() => this.openTray(bucket)).id('chat.tasks.' + bucket)
-      }, (bucket:string) => bucket)
-    }.width('100%').padding({top:5,bottom:4}).justifyContent(FlexAlign.Start)
-      .bindSheet($$this.trayOpen,this.trayList(),{title:{title:this.trayLabel(this.trayBucket)},height:SheetSize.MEDIUM,showClose:true})
+    Column({space:4}) {
+      if (this.trayOpen) this.trayList()
+      if (this.taskQuestions.length) ForEach([this.taskQuestions[0]],(row:TaskQuestionRow) => {
+        this.questionCard(row)
+      },(row:TaskQuestionRow) => JSON.stringify([row.todoId,row.card.key,row.card.request.raw]))
+      Scroll() {
+        Row({space:6}) {
+          ForEach(['needs','progress','done'],(bucket:string) => {
+            if (bucket!=='done' || this.trayBucket==='done' && this.trayOpen || this.trayRows.some((r:TaskTrayRow) => r.bucket===bucket)) Button({type:ButtonType.Capsule}) {
+              Row({space:4}) {
+                Text(this.trayLabel(bucket)).fontSize(12).fontWeight(FontWeight.Medium).fontColor(this.trayOpen && this.trayBucket===bucket ? Colors.link : Colors.ink)
+                Text(String(this.trayRows.filter((r:TaskTrayRow) => r.bucket===bucket).length)).fontSize(12).fontColor(Colors.secondary)
+              }
+            }.height(29).padding({left:9,right:9}).backgroundColor(this.trayOpen && this.trayBucket===bucket ? Colors.selection : Colors.control)
+              .responseRegion({x:0,y:-7,width:'100%',height:44}).accessibilitySelected(this.trayOpen && this.trayBucket===bucket)
+              .onClick(() => this.openTray(bucket)).id('chat.tasks.'+bucket)
+          },(bucket:string) => bucket)
+        }
+      }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).width('100%').align(Alignment.Start)
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({top:3,bottom:4})
   }
 
   private receiptTodo(item: Record<string, Object>): Record<string, Object> { return this.feed.todo(Wire.text(item, 'ref')); }
@@ -606,6 +696,7 @@ export struct AssistantCards {
     if (Wire.text(item, 'kind') === 'view') AssistantViewCard({ model: this.model, feed: this.feed, item: item, cardKey: this.cardKey(item), active: this.active, onLink: (address: string) => this.onLink(address), onOpenResource: (address: string) => this.openCardResource(address) })
     else if (Wire.text(item, 'kind') === 'plan') { if (this.detailOnly) this.planCard(item); else this.planSummary(item) }
     else if (Wire.text(item, 'kind') === 'receipt') { if (this.detailOnly) this.receipt(item); else this.receiptSummary(item) }
+    else if (Wire.text(item,'kind')==='brief') AssistantBriefCard({model:this.model,item:item,active:this.active,onOpen:(row:ResourceRow) => this.onOpenResource(row)})
     else if (Wire.text(item, 'kind') === 'answered') this.answered(item)
     else if (Wire.text(item, 'kind') === 'review') this.review(item)
     else if (Wire.text(item, 'kind') === 'routed') this.routed(item)

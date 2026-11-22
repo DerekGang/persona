@@ -17,7 +17,7 @@ registerHooks({
 });
 const {phonePlaceAtRoot,phonePanIntent,finishesPhonePan}=await import('../entry/src/main/ets/models/PhoneNavigation.ets');
 const {PhoneSearchIndex,PhoneChatMatch,mergeChatMatches,localChatMatches}=await import('../entry/src/main/ets/models/PhoneChatSearch.ets');
-const {AgentLaunchChoices,LaunchChoice,RecentAgentSetup,rememberAgentSetup,loadAgentSetups}=await import('../entry/src/main/ets/models/AgentLaunchChoices.ets');
+const {AgentLaunchChoices,launchModelName,recentLaunchDirectories,LaunchChoice,RecentAgentSetup,rememberAgentSetup,loadAgentSetups}=await import('../entry/src/main/ets/models/AgentLaunchChoices.ets');
 const {ProjectWorktree}=await import('../entry/src/main/ets/models/ProjectCatalog.ets');
 const {ResourceRow,Wire}=await import('../entry/src/main/ets/models/Wire.ets');
 
@@ -33,10 +33,15 @@ test('horizontal drawer and peer gestures leave pushed pages, vertical scroll an
   const pan=(section,root,open,x,y,dx,dy)=>phonePanIntent(section,root,open,x,y,390,840,dx,dy);
   assert.equal(pan(0,true,false,25,200,14,2),'open');assert.equal(pan(4,true,true,240,150,-15,2),'close');
   assert.equal(pan(0,true,false,280,200,-18,0),'agents');assert.equal(pan(1,true,false,130,210,18,0),'persona');
-  for(const args of [[1,false,false,7,80,18,0],[0,true,false,280,800,-18,0],[0,true,false,280,180,-18,20],[0,true,false,150,150,-18,0]])
+  assert.equal(pan(0,true,false,150,150,-18,0),'agents');
+  assert.equal(pan(1,true,false,7,150,18,0),'persona');
+  assert.equal(pan(0,true,false,200,160,18,14),'open');
+  for(const args of [[1,false,false,7,80,18,0],[0,true,false,280,800,-18,0],[0,true,false,280,180,-18,20]])
     assert.equal(pan(...args),'');
   assert.equal(finishesPhonePan(31,800,390),true);assert.equal(finishesPhonePan(32,-900,390),false);
-  assert.equal(finishesPhonePan(18,0,390),false);assert.equal(finishesPhonePan(-110,0,390),true);
+  assert.equal(finishesPhonePan(18,0,390),false);assert.equal(finishesPhonePan(-110,0,390),false);
+  assert.equal(finishesPhonePan(-210,0,390),true);assert.equal(finishesPhonePan(-160,-240,390),true);
+  assert.equal(finishesPhonePan(-240,425,390),false);
 });
 function makeOwner(call) {
   return {generation:1,connected:true,profile:{id:'home',manager:'agent'},features:['assistant_search'],conversations:[],
@@ -54,6 +59,14 @@ test('folder choices retain only resolved directories from the current machine a
   const c=choices.folder(owner,'new','/unknown');owner.generation++;
   [...pending.values()].at(-1).resolve({path:'/old-scope'});await c;assert.equal(choices.path,'');
 });
+test('model aliases keep the host title while raw GPT model IDs match the iPhone display label', () => {
+  assert.equal(launchModelName('gpt-5.5-codex','GPT-5.5-Codex'),'5.5 Codex');
+  assert.equal(launchModelName('gpt-5.5-mini','Team review'),'Team review');
+  assert.equal(launchModelName('gateway/glm-5.3','glm-5.3'),'glm-5.3');
+  assert.equal(launchModelName('foo/gpt-5.6-fast',''),'5.6 Fast');
+  assert.equal(launchModelName('gpt--mini',''),'gpt--mini');
+});
+
 test('available models, compatible efforts and launcher-supplied model locks follow the node',async()=>{
   const replies=[{agent:'codex',models:[{id:'m1',name:'Model one',default:true,efforts:['medium','high']},{id:'m2',efforts:['low']}]},
     {agent:'claude',locked:'configured by launcher',models:[]}];
@@ -92,7 +105,7 @@ for (const match of formSource.matchAll(/^  private (?:async )?(\w+)\(/gm)) {
 }
 const externalEffects = new Set(['saveAgentDraft', 'loadRecentSetups', 'closeAgentPanel']);
 const required = new Set(['pickerOptions', 'chooseAgentOption', 'selectedAgentTree', 'openAgentPicker', 'pickAgentMachine',
-  'canStartAgent', 'browseAgentFolder', 'loadAgentLaunchers']);
+  'canStartAgent', 'browseAgentFolder', 'loadAgentLaunchers', 'loadInitialAgentDirectory']);
 for (const name of required) {
   const body = formMethods.get(name);
   assert.ok(body, name);
@@ -100,8 +113,8 @@ for (const name of required) {
     if (formMethods.has(callee) && !externalEffects.has(callee)) required.add(callee);
   }
 }
-const NativeAgentForm = new Function('Wire', 'LaunchChoice', 'tr', 'return ' + stripTypeScriptTypes(
-  'class NativeAgentForm {\n' + [...required].map(name => formMethods.get(name)).join('\n') + '\n}'))(Wire, LaunchChoice, key => key);
+const NativeAgentForm = new Function('Wire', 'LaunchChoice', 'tr', 'recentLaunchDirectories', 'return ' + stripTypeScriptTypes(
+  'class NativeAgentForm {\n' + [...required].map(name => formMethods.get(name)).join('\n') + '\n}'))(Wire, LaunchChoice, key => key, recentLaunchDirectories);
 
 function clientForForm(group, manager, calls) {
   const owner = makeOwner(async path => {
@@ -137,6 +150,37 @@ function phoneForm(root, selectedMachine, machines, trees) {
   form.agentMachineKey = form.machineKey(selectedMachine);
   return form;
 }
+
+test('opening the phone form offers a recent directory and a promptless Claude start while an older Codex still needs a first message', () => {
+  const owner=clientForForm('A','work',[]),machine=formMachine(owner,'laptop');
+  const form=phoneForm(owner,machine,[machine],[]);
+  form.newTask='';form.directory='/chosen';form.launchListReady=true;form.agentLauncherOptions=['claude','codex','codex-plus'];
+  form.launcherData=[{name:'claude',agent:'claude'},{name:'codex',agent:'codex'},{name:'codex-plus',agent:'codex',prompt_optional:true}];
+  form.launcher='';form.defaultLauncherName='claude';
+  assert.equal(form.canStartAgent(),true);
+  form.launcher='codex';assert.equal(form.canStartAgent(),false);
+  form.launcher='codex-plus';assert.equal(form.canStartAgent(),true);
+  const dirs=recentLaunchDirectories({recent:[{path:'/data/apps/weather',last_used:'2026-01-01T10:00:00Z'},{path:''}]});
+  assert.deepEqual(dirs.map(d=>[d.id,d.title,d.description]),[['/data/apps/weather','weather','2026-01-01T10:00:00Z']]);
+});
+
+test('a delayed machine directory lookup cannot replace the new machine or a directory chosen while opening the form', async () => {
+  const owner=clientForForm('A','work',[]),machine=formMachine(owner,'mac'),other=formMachine(owner,'server');
+  const form=phoneForm(owner,machine,[machine,other],[]),pending=new Map();
+  owner.repo=()=>({call:path=>{const reply=gate();pending.set(path,reply);return reply.promise}});
+  const old=form.loadInitialAgentDirectory();
+  form.machineIntent++;form.agentMachineKey=form.machineKey(other);
+  const fresh=form.loadInitialAgentDirectory();
+  pending.get('/api/v1/machines/server/dirs?path=').resolve({path:'/home',recent:[{path:'/home/weather'}]});
+  await fresh;assert.equal(form.directory,'/home/weather');
+  pending.get('/api/v1/machines/mac/dirs?path=').resolve({path:'/foreign',recent:[{path:'/foreign/app'}]});
+  await old;assert.deepEqual(form.recentAgentDirectories.map(item=>item.id),['/home/weather']);
+  assert.equal(form.directory,'/home/weather');
+  const manual=form.loadInitialAgentDirectory();
+  form.directory='/chosen';
+  pending.get('/api/v1/machines/server/dirs?path=').resolve({path:'/home',recent:[{path:'/home/recent'}]});
+  await manual;assert.equal(form.directory,'/chosen');
+});
 
 test('opening the workspace picker refreshes an occupied catalog and accepts only this machine’s bound worktrees', async () => {
   const owner = clientForForm('group-A', 'manager-A', []), foreign = clientForForm('group-B', 'manager-A', []);
@@ -235,7 +279,7 @@ test('closing the compact drawer with a row under the finger keeps the current p
     'class NativeDrawer {\n' + methods.join('\n') + '\n}'))(finishesPhonePan);
   const drawer = new Drawer();
   Object.assign(drawer, {wide: () => false, spacesShown: true, gestureKind: 'close',
-    gestureScope: 'paired', gesturePlace: 4, phoneWidth: 360, drawerTapBlockedUntil: 0,
+    gestureScope: 'paired', gesturePlace: 4, phoneWidth: 360, drawerWidth: () => 295, drawerTapBlockedUntil: 0,
     model: {scope: () => 'paired', section: 4}});
   assert.equal(drawer.drawerAcceptsTap(), false);
   drawer.endPhonePan(-170, -620);
@@ -309,7 +353,13 @@ test('a foreground appearance change recreates just the retained session header 
   assert.match(header,/this\.phoneTop === 'session' \|\| this\.phoneToolParent/);
   assert.match(header,/ForEach\(\[this\.environment\.dark\],\s*\(dark:boolean\) => \{\s*WithTheme\(\{[^}]*colorMode:dark \? ThemeColorMode\.DARK : ThemeColorMode\.LIGHT[^}]*\}\) \{\s*this\.compactPlaces\(\)\s*\}\s*\},\s*\(dark:boolean\) => String\(dark\)\)/);
   // The Navigation owns Files/search/Git, the selected session, and its mounted conversation draft.
-  assert.match(formSource,/if \(!this\.wide\(\)\) this\.phoneHeader\(\)\s*Navigation\(this\.stack\)/);
+  assert.match(formSource,/if \(!this\.wide\(\) && this\.phoneTop !== 'project_tree' && \(this\.phoneTop \|\| !this\.projectPlace\(\) \|\| !this\.projectSearching\)\) this\.phoneHeader\(\)\s*Navigation\(this\.stack\)/);
+  const visibility=formSource.match(/if \((!this\.wide\(\).*?this\.projectSearching\))\) this\.phoneHeader\(\)/)[1];
+  const shows=new Function('return '+visibility);
+  const at=(top,search,wide=false,projects=true)=>Boolean(shows.call({phoneTop:top,projectSearching:search,wide:()=>wide,projectPlace:()=>projects}));
+  assert.equal(at('',true),false); assert.equal(at('project_tree',false),false);
+  assert.equal(at('session',true),true); assert.equal(at('',false),true);
+  assert.equal(at('',true,false,false),true); assert.equal(at('session',false,true),false);
   const chrome = formSource.slice(formSource.indexOf('  @Builder compactPlaces()'), formSource.indexOf('  private parentIndexes()'));
   assert.match(chrome,/SessionSpaceTabs\(\{space:this\.phoneSessionSpace/);
 });

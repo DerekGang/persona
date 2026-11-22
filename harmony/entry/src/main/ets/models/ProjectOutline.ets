@@ -9,6 +9,7 @@ export class ProjectLine {
   tabLead?: ProjectAgent;
   tabTitle: string = '';
   paneName: string = '';
+  preview: string = '';
   starter: boolean = false;
   level: number;
   open: boolean = false;
@@ -48,17 +49,23 @@ class ProjectMatch {
   own: Set<string> = new Set();
   visible: Set<string> = new Set();
   agents: Map<string,ProjectAgent[]> = new Map();
-  constructor(p:PersonaProject,query:string) {
-    this.all = !query || [p.title,p.machine].join(' ').toLocaleLowerCase().includes(query);
+  constructor(p:PersonaProject,query:string,quick:string,muted:(agent:ProjectAgent) => boolean) {
+    const projectMatches = !query || [p.title,p.machine].join(' ').toLocaleLowerCase().includes(query);
+    this.all = projectMatches && !quick;
     if (this.all) return;
-    const byKey = new Map<string,ProjectWorktree>();
-    for (const tree of p.trees) byKey.set(tree.key,tree);
+    const byKey = new Map<string,ProjectWorktree>(), ownText = new Set<string>();
+    for (const tree of p.trees) {
+      byKey.set(tree.key,tree);
+      if (projectMatches || [tree.title,tree.branch,tree.cwd,tree.projectTitle].join(' ').toLocaleLowerCase().includes(query)) ownText.add(tree.key);
+    }
     for (const t of p.trees) {
-      const own = [t.title,t.branch,t.cwd,t.projectTitle].join(' ').toLocaleLowerCase().includes(query);
-      if (own) this.own.add(t.key);
-      const matching = t.agents.filter((a:ProjectAgent) => a.search.includes(query));
+      let parent: ProjectWorktree | undefined = t;
+      let own = false;
+      while (parent && !own) { own = ownText.has(parent.key); parent = byKey.get(parent.parentKey); }
+      if (own && !quick) this.own.add(t.key);
+      const matching = t.agents.filter((a:ProjectAgent) => (own || a.search.includes(query)) && (!quick || projectQuickKind(a,muted(a)) === quick));
       this.agents.set(t.key,matching);
-      if (own || matching.length) {
+      if (own && !quick || matching.length) {
         let current: ProjectWorktree | undefined = t;
         while (current && !this.visible.has(current.key)) {
           this.visible.add(current.key); current = byKey.get(current.parentKey);
@@ -68,30 +75,49 @@ class ProjectMatch {
   }
 }
 
-export function projectOutline(projects:PersonaProject[], state:ProjectBrowserState, focus:string = ''): ProjectLine[] {
+/** Mirrors the phone's Agent quick filters: a muted permission request still needs the user,
+ * while work waiting in the background does not count as actively working. */
+export function projectQuickKind(agent: ProjectAgent, muted: boolean): string {
+  if (agent.archived || agent.state === 'offline') return '';
+  if (agent.state === 'needs_you') return 'needs_you';
+  if (muted) return '';
+  if (agent.rank === 4) return 'agent_group_background';
+  if (agent.state === 'unread') return 'agent_group_unread';
+  return agent.state === 'working' ? 'working' : '';
+}
+
+export function projectSearchAgents(project:PersonaProject,query:string): ProjectAgent[] {
+  const match = new ProjectMatch(project,query.trim().toLocaleLowerCase(),'',() => false), result:ProjectAgent[] = [];
+  for (const tree of project.trees) result.push(...(match.all ? tree.agents : match.agents.get(tree.key) || []));
+  return result;
+}
+
+export function projectOutline(projects:PersonaProject[], state:ProjectBrowserState, focus:string = '', hostKey:string = '',
+  quick:string = '', muted:(agent:ProjectAgent) => boolean = () => false): ProjectLine[] {
   const result:ProjectLine[] = [];
-  const query = focus ? '' : state.query.trim().toLocaleLowerCase();
+  const query = focus || hostKey ? '' : state.query.trim().toLocaleLowerCase();
+  const filtering = !!query || !!quick;
   const groups = projectHosts(focus ? projects.filter((p:PersonaProject) => p.key === focus) : projects);
   const matches = new Map<string,ProjectMatch>();
   for (const host of groups) {
-    if (!focus && state.machine && state.machine !== host.key) continue;
+    if (hostKey ? hostKey !== host.key : !focus && state.machine && state.machine !== host.key) continue;
     const visible = host.projects.filter((p:PersonaProject) => {
-      const match = new ProjectMatch(p,query); matches.set(p.key,match);
+      const match = new ProjectMatch(p,query,quick,muted); matches.set(p.key,match);
       return match.all || !!match.visible.size;
     });
     if (!visible.length) continue;
-    if (!focus && !state.machine && groups.length > 1) {
+    if (!focus && !hostKey && !state.machine && groups.length > 1) {
       const header = new ProjectLine('host',host.key,visible[0]);
-      header.open = !!query || state.open(header.key,true);
+      header.open = filtering ? state.searchOpen(header.key) : state.open(header.key,true);
       header.count = visible.reduce((n:number,p:PersonaProject) => n + p.sessionCount,0);
       result.push(header);
       if (!header.open) continue;
     }
     const active = visible.filter((p:PersonaProject) => !unstructuredIdle(p));
     const idle = visible.filter(unstructuredIdle);
-    for (const p of (focus || query ? visible : active.concat(idle))) {
-      if (!focus && !query && idle[0] === p) result.push(new ProjectLine('idle-projects',host.key,p));
-      appendProject(result,p,state,matches.get(p.key)!,!!query,!!focus);
+    for (const p of (focus || filtering ? visible : active.concat(idle))) {
+      if (!focus && !filtering && idle[0] === p) result.push(new ProjectLine('idle-projects',host.key,p));
+      appendProject(result,p,state,matches.get(p.key)!,filtering,!!focus);
     }
   }
   return result;
@@ -102,7 +128,7 @@ function appendProject(out:ProjectLine[], p:PersonaProject, state:ProjectBrowser
   const quiet = unstructuredIdle(p);
   if (!focus) {
     const header = new ProjectLine('project',p.key,p);
-    header.open = search || state.open(header.key,!quiet); header.count = p.sessionCount;
+    header.open = search ? state.searchOpen(header.key) : state.open(header.key,!quiet); header.count = p.sessionCount;
     out.push(header);
     if (!header.open) { header.first = true; header.last = true; return; }
   }
@@ -156,7 +182,7 @@ const tabUrgency: Map<string, number> = new Map<string, number>([
   ['needs_you', 0], ['unread', 1], ['working', 2], ['idle', 3], ['unknown', 4], ['offline', 5]
 ]);
 
-function appendEntry(out: ProjectLine[], p: PersonaProject, tree: ProjectWorktree, state: ProjectBrowserState,
+function appendEntry(out: ProjectLine[], p: PersonaProject, tree: ProjectWorktree, state: ProjectBrowserState | undefined,
   members: ProjectAgent[], level: number, search: boolean, matches?: Set<ProjectAgent>): void {
   const first = members[0];
   if (members.length === 1) {
@@ -167,8 +193,8 @@ function appendEntry(out: ProjectLine[], p: PersonaProject, tree: ProjectWorktre
   header.tabTitle = first.tabTitle;
   header.tabLead = members.reduce((best: ProjectAgent, next: ProjectAgent) =>
     (tabUrgency.get(next.state) ?? 4) < (tabUrgency.get(best.state) ?? 4) ? next : best);
-  header.count = members.length;
-  header.open = search || state.open(header.key, true);
+  header.count = matches ? members.filter((a:ProjectAgent) => matches.has(a)).length : members.length;
+  header.open = search || state?.open(header.key, true) !== false;
   out.push(header);
   if (!header.open) return;
   const starter = members.find((agent: ProjectAgent) => agent.pane!.paneIndex === 0);
@@ -195,7 +221,7 @@ function appendAgents(out:ProjectLine[],p:PersonaProject,t:ProjectWorktree,state
   const entries = tabEntries(t.agents).filter((entry: ProjectAgent[]) => !matches || entry.some((a: ProjectAgent) => matches.has(a)));
   // Keep idle panes next to active tab mates. A shared tab can appear in only one section.
   const active = search || includeIdle ? entries : entries.filter((entry: ProjectAgent[]) => entry.some((a: ProjectAgent) => a.active));
-  const limit = active.length > 25 && !state.unlimited.includes(t.key) ? 20 : active.length;
+  const limit = !search && active.length > 25 && !state.unlimited.includes(t.key) ? 20 : active.length;
   for (const entry of active.slice(0,limit)) appendEntry(out,p,t,state,entry,level,search,matches);
   if (limit < active.length) {
     const more = new ProjectLine('more',t.key,p,level,t);
@@ -206,12 +232,34 @@ function appendAgents(out:ProjectLine[],p:PersonaProject,t:ProjectWorktree,state
   const idle = entries.filter((entry: ProjectAgent[]) => !entry.some((a: ProjectAgent) => a.active));
   const header = new ProjectLine('idle-agents',t.key,p,level,t);
   header.count = idle.reduce((n: number, entry: ProjectAgent[]) => n + entry.length, 0);
+  header.preview = idle.flat().slice(0,3).map((a: ProjectAgent) => a.tabTitle || a.tab || a.row.title).filter((v: string) => !!v).join(' · ');
   header.open = state.open(header.key,false); out.push(header);
   if (header.open) for (const entry of idle) appendEntry(out,p,t,state,entry,level,false);
 }
 
-export function worktreeSessionLines(project: PersonaProject, tree: ProjectWorktree, state: ProjectBrowserState): ProjectLine[] {
+/** SpaceView lists the live members of the host's space, even when their Git checkouts differ.
+ * A directory containing unrelated spaces still owns its local sessions. A similar display name
+ * on another machine, manager or Hub never joins this grid. Outline folds do not hide its cards. */
+export function worktreeSpaceCards(projects: PersonaProject[], tree: ProjectWorktree): ProjectLine[] {
+  const owner = projects.find((project: PersonaProject) => project.trees.includes(tree));
+  if (!owner) return [];
+  const first = tree.agents.find((agent: ProjectAgent) => !!agent.spaceId);
+  const oneSpace = !!first && tree.agents.every((agent: ProjectAgent) =>
+    agent.spaceId === first.spaceId && agent.spaceKind === first.spaceKind);
+  const agents: ProjectAgent[] = [];
+  for (const project of projects) {
+    if (project.hostKey !== owner.hostKey) continue;
+    for (const checkout of project.trees) {
+      if (checkout !== tree && !oneSpace) continue;
+      for (const agent of checkout.agents) {
+        if (agent.state === 'offline' || agent.archived) continue;
+        if (checkout === tree || first && agent.spaceId === first.spaceId && agent.spaceKind === first.spaceKind) agents.push(agent);
+      }
+    }
+  }
+  agents.sort((a: ProjectAgent, b: ProjectAgent) => (tabUrgency.get(a.state) ?? 4) - (tabUrgency.get(b.state) ?? 4) ||
+    (a.pane?.slotIndex || 0) - (b.pane?.slotIndex || 0) || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0));
   const rows: ProjectLine[] = [];
-  for (const entry of tabEntries(tree.agents)) appendEntry(rows,project,tree,state,entry,0,false);
-  return rows;
+  for (const entry of tabEntries(agents)) appendEntry(rows,owner,tree,undefined,entry,0,true);
+  return rows.filter((line: ProjectLine) => line.kind === 'session');
 }

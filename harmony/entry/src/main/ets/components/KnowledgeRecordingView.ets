@@ -1,3 +1,4 @@
+import type { MeetingAsk } from '../models/MeetingRoom';
 import { Symbols } from '../design/Symbols';
 import { Colors } from '../design/Colors';
 import { KnowledgeRecording } from '../models/KnowledgeRecording';
@@ -8,6 +9,11 @@ import { tr, trError } from '../design/Strings';
 /** Capture controls for the local recording owned by the current Knowledge Hub/manager. */
 @ComponentV2
 export struct KnowledgeRecordingView {
+  @Param startKind: string = 'note';
+  @Param startTitle: string = '';
+  @Param roomRole:string='off';
+  @Param privateMark:boolean=false;
+  @Local roomQuestion:string='';
   @Require @Param model: KnowledgeRecording;
   @Event onDeleteLocal: () => void = () => {};
 
@@ -78,6 +84,32 @@ export struct KnowledgeRecordingView {
     return index >= 0 ? index : 0;
   }
 
+  @Builder meetingRoom() {
+    Column({space:8}) {
+      Text(tr('phone_meeting_room')).fontSize(18).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+      Text(tr(this.model.room.state==='ended' ? 'phone_meeting_closed' : this.model.room.state==='unavailable' ? 'phone_meeting_unavailable' :
+        this.model.room.state==='ready' ? 'phone_meeting_live_ready' : 'phone_meeting_live_starting')).fontSize(14).fontColor(Colors.secondary)
+      if (this.model.roomSpeechProblem) Text(tr(this.model.roomSpeechProblem)).fontSize(14).fontColor(Colors.secondary)
+      if (this.model.room.problem) Row({space:8}) {
+        Text(tr(this.model.room.problem)).fontSize(14).fontColor(Colors.secondary).layoutWeight(1)
+        Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => this.model.room.sync())
+      }.width('100%')
+      if (this.model.room.latest) Text(this.model.room.latest).fontSize(16).fontColor(Colors.ink).width('100%').id('recordings.room.line')
+      ForEach(this.model.room.shownAsks,(ask:MeetingAsk) => {
+        Column({space:4}) {
+          Text(ask.question).fontSize(15).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          Text(ask.answer || tr(ask.state==='failed' ? 'phone_meeting_no_answer' : 'pending')).fontSize(15).fontColor(Colors.secondary)
+        }.width('100%').alignItems(HorizontalAlign.Start).id('recordings.room.answer.'+ask.id)
+      },(ask:MeetingAsk)=>JSON.stringify([ask.id,ask.state,ask.answer]))
+      if (this.model.captureState==='recording') Row({space:6}) {
+        TextInput({text:this.roomQuestion,placeholder:tr('phone_meeting_question')}).layoutWeight(1)
+          .onChange((v:string)=>this.roomQuestion=v).id('recordings.room.question')
+        Button(tr('send'),{buttonStyle:ButtonStyleMode.TEXTUAL}).enabled(!!this.roomQuestion.trim()).fontColor(Colors.link)
+          .onClick(() => { const value=this.roomQuestion; this.roomQuestion=''; this.model.askRoom(value).then((ok:boolean) => { if (!ok && !this.roomQuestion) this.roomQuestion=value; }); })
+          .id('recordings.room.ask')
+      }.width('100%')
+    }.width('100%').alignItems(HorizontalAlign.Start).padding(15).backgroundColor(Colors.surface).borderRadius(15).id('recordings.room')
+  }
   build() {
     Column({space:10}) {
       Column({space:8}) {
@@ -95,9 +127,10 @@ export struct KnowledgeRecordingView {
         if (this.model.canStop()) Button(tr('knowledge_recording_stop')).width('100%').height(43).fontColor(Color.White).backgroundColor(Colors.danger)
           .onClick(() => this.model.stop().catch(() => false)).id('knowledge.recording.stop')
         else Button(tr('phone_record_start')).width('100%').height(43).fontColor(Color.White).backgroundColor(Colors.danger)
-          .enabled(this.model.canStart()).onClick(() => this.model.start().catch(() => false)).id('knowledge.recording.start')
+          .enabled(this.model.canStart()).onClick(() => this.model.start(this.startKind,this.startTitle,this.roomRole,this.privateMark).catch(() => false)).id('knowledge.recording.start')
         Text(tr('phone_record_audio_local')).fontSize(13).fontColor(Colors.secondary).width('100%')
       }.width('100%').alignItems(HorizontalAlign.Start).padding(15).backgroundColor(Colors.surface).borderRadius(15)
+      if (this.model.room.active) this.meetingRoom()
       if (this.model.entries.length > 1) Select(this.recordingOptions()).selected(this.recordingIndex())
         .enabled(this.model.canSelectEntry()).onSelect((i:number) => {
           const selected = this.model.entries[i]; if (selected) this.model.selectEntry(selected.id);

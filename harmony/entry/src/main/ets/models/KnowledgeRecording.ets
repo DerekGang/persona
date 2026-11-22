@@ -1,5 +1,7 @@
 import type { ClientModel } from './ClientModel';
-import { ResourceRow } from './Wire';
+import { ResourceRow, Wire } from './Wire';
+import type { MeetingJournal, MeetingRoomIO } from './MeetingRoom';
+import { MeetingRoom, newMeetingJournal } from './MeetingRoom';
 import { NativeRecording } from '../platform/NativeRecording';
 import type { NativeRecordingStop } from '../platform/NativeRecording';
 
@@ -12,7 +14,12 @@ export interface KnowledgeRecordingSegment {
   text: string;
 }
 
+export interface MeetingUploadRole { attendance:string; }
+
 export interface KnowledgeRecordingUpload {
+  room?:MeetingUploadRole;
+  private?:boolean;
+  spoken?:KnowledgeRecordingSegment[];
   revision: number;
   started_at: string;
   ended_at: string;
@@ -38,6 +45,9 @@ export interface KnowledgeRecordingEntry {
   audioBytes: number;
   language: string;
   title: string;
+  kind?: string;
+  roomRole?: string;
+  privateMark?: boolean;
   transcript: string;
   revision: number;
   captureState: string;
@@ -136,6 +146,8 @@ function copyEntry(entry: KnowledgeRecordingEntry): KnowledgeRecordingEntry {
     audioBytes: entry.audioBytes,
     language: entry.language,
     title: entry.title,
+    kind: entry.kind === 'meeting' ? 'meeting' : 'note',
+    roomRole:entry.roomRole,privateMark:entry.privateMark,
     transcript: entry.transcript,
     revision: entry.revision,
     captureState: entry.captureState,
@@ -169,6 +181,8 @@ function copyUploadBody(body: KnowledgeRecordingUpload | undefined): KnowledgeRe
     complete: body.complete,
     kind: body.kind
   };
+  if (body.room) { copied.room={attendance:body.room.attendance}; copied.private=body.private===true; }
+  if (body.spoken) copied.spoken=body.spoken.slice();
   return copied;
 }
 
@@ -199,6 +213,8 @@ export class KnowledgeRecording {
   @Trace error: string = '';
   @Trace transcript: string = '';
   @Trace playingId: string = '';
+  @Trace roomSpeechProblem:string='';
+  readonly room:MeetingRoom=new MeetingRoom();
   private playbackRevision: number = 0;
 
   private root: ClientModel | undefined;
@@ -223,7 +239,7 @@ export class KnowledgeRecording {
 
   async dispose(): Promise<void> {
     try { await this.stopForBackground(); } catch (_) { }
-    this.openRevision++; this.activeTask++;
+    this.room.detach(); this.openRevision++; this.activeTask++;
     this.local = undefined; this.root = undefined; this.context = undefined; this.ownerManager = '';
     this.activeTranscriptionId = '';
     this.entries = []; this.entry = undefined; this.transcript = '';
@@ -296,6 +312,7 @@ export class KnowledgeRecording {
   }
 
   private async removeLocal(recordingId: string): Promise<void> {
+    if (this.entry?.id===recordingId) this.room.detach();
     const operation = this.localWrite.then(async (): Promise<void> => { await this.platform.remove(recordingId); });
     this.localWrite = operation.catch(() => undefined);
     await operation;
@@ -320,6 +337,7 @@ export class KnowledgeRecording {
       await this.platform.stop().catch(() => undefined);
     }
     if (this.activeTranscriptionId || this.transcriptionState === 'transcribing') await this.cancelTranscription().catch(() => undefined);
+    this.room.detach(); this.roomSpeechProblem='';
     const revision = ++this.openRevision;
     this.root = client; this.context = context; this.ownerManager = ownerManager || client.profile.manager;
     this.local = undefined;
@@ -400,6 +418,14 @@ export class KnowledgeRecording {
     this.entry = selected; this.transcript = selected.transcript; this.captureState = selected.captureState;
     this.transcriptionState = selected.transcriptionState; this.uploadState = selected.uploadState;
     this.error = selected.error || selected.uploadError;
+    this.room.detach(); this.roomSpeechProblem='';
+    if (selected.roomRole && this.local) {
+      try {
+        this.attachRoom(selected,this.local);
+        if (selected.endedAt) this.room.finish(selected.endedAt).then(() => this.room.sync()).catch(() => {});
+        else this.room.sync().catch(() => {});
+      } catch (_) { this.roomSpeechProblem='knowledge_storage_unavailable'; }
+    }
   }
 
   canStart(): boolean { return !!this.local && !!this.context && this.pendingStartTask === 0 && this.activeEntryTasks.size === 0 &&
@@ -409,7 +435,37 @@ export class KnowledgeRecording {
   canRetryUpload(): boolean { return !!this.entry && !!this.entry.uploadBody && ['unknown', 'failed'].includes(this.entry.uploadState); }
   canDeleteLocal(): boolean { return !!this.entry && this.entry.captureState !== 'recording' && this.entry.transcriptionState !== 'transcribing' && this.entry.uploadState !== 'uploading'; }
 
-  async start(): Promise<boolean> {
+  private attachRoom(entry:KnowledgeRecordingEntry, local:RecordingLocalSnapshot):void {
+    if (!entry.roomRole || !this.isLocalCurrent(local) || this.entry?.id!==entry.id) return;
+    const state=this.platform.loadRoom(entry.id,entry.profileId,entry.hubId,entry.managerId) ||
+      newMeetingJournal(entry.id,entry.profileId,entry.hubId,entry.managerId,entry.startedAt,entry.title,entry.language,entry.roomRole,entry.privateMark===true);
+    this.platform.saveRoom(state);
+    const current=():boolean => this.isLocalCurrent(local) && this.entry?.id===entry.id && !this.locallyDeletedIds.has(entry.id);
+    const io:MeetingRoomIO={
+      current:current,
+      speak:async (requestId:string,text:string,language:string):Promise<void> => {
+        const admitted=():boolean => current() && this.captureState==='recording' && this.entry?.roomRole==='participant';
+        if (admitted()) await this.platform.speakRoom(requestId,text,language,admitted);
+      },
+      save:async (journal:MeetingJournal):Promise<void> => { if (!current()) throw new Error('request_updated'); this.platform.saveRoom(journal); },
+      request:async (path:string,method:string,body?:Record<string,Object>):Promise<Record<string,Object>> => {
+        const owner=await this.captureRemote(local);
+        if (!current() || !this.isRemoteCurrent(owner) || !this.recordMatches(entry,owner)) throw new Error('request_updated');
+        const raw=await owner.repository.transport.request(path,method,body ? JSON.stringify(body) : '');
+        if (!current() || !this.isRemoteCurrent(owner)) throw new Error('request_updated');
+        return Wire.parse(raw);
+      }
+    };
+    this.room.attach(state,io);
+  }
+
+  async askRoom(question:string):Promise<boolean> {
+    const entry=this.entry;
+    if (!entry || this.captureState!=='recording' || !entry.roomRole || !this.room.active) return false;
+    return this.room.ask(id(),question,Math.max(0,(Date.now()-Date.parse(entry.startedAt))/1000));
+  }
+
+  async start(kind: string = 'note', title: string = '', invitedRole:string = 'off', privateMark:boolean = false): Promise<boolean> {
     if (this.playingId) {
       const before = this.entry, owner = this.local;
       await this.stopPlayback();
@@ -417,6 +473,11 @@ export class KnowledgeRecording {
     }
     const snapshot = this.local, context = this.context, client = this.root;
     if (!snapshot || !context || !client || !this.canStart() || !this.isLocalCurrent(snapshot)) return false;
+    const invited=kind==='meeting' && ['listener','participant'].includes(invitedRole);
+    if (invited && (!client.features.includes('meeting_conversation') || !client.features.includes('meeting_attendance'))) {
+      this.error='phone_meeting_unavailable'; return false;
+    }
+    this.room.detach(); this.roomSpeechProblem='';
     const task = ++this.activeTask;
     this.pendingStartTask = task;
     this.error = ''; this.captureState = 'requesting';
@@ -429,10 +490,11 @@ export class KnowledgeRecording {
       const startedAt = new Date().toISOString(), recordingId = id().toLowerCase();
       const entry: KnowledgeRecordingEntry = {
         id: recordingId, profileId: snapshot.profileId, hubId: snapshot.hubId, managerId: snapshot.ownerManager,
-        startedAt, endedAt: '', duration: 0, audioBytes: 0, language: 'zh-CN', title: '', transcript: '', revision: 0,
+        startedAt, endedAt: '', duration: 0, audioBytes: 0, language: 'zh-CN', title: title.trim().slice(0,256), kind: kind === 'meeting' ? 'meeting' : 'note', transcript: '', revision: 0,
         captureState: 'recording', transcriptionState: 'idle', uploadState: 'idle', uploadBody: undefined,
         serverStatus: '', serverRevision: 0, interrupted: false, error: '', uploadError: ''
       };
+      if (invited) { entry.roomRole=invitedRole; entry.privateMark=privateMark; }
       await this.saveLocal(entry, snapshot);
       if (task !== this.activeTask || !this.isLocalCurrent(snapshot)) {
         await this.platform.remove(entry.id);
@@ -440,9 +502,16 @@ export class KnowledgeRecording {
         return false;
       }
       this.entry = entry; this.entries = [entry, ...this.entries]; this.transcript = '';
+      if (invited) {
+        this.attachRoom(entry,snapshot);
+        await this.platform.startRoomSpeech((from:number,to:number,text:string) => {
+          if (this.isLocalCurrent(snapshot) && this.entry?.id===entry.id) this.room.line(from,to,text).catch(() => {});
+        },() => { if (this.isLocalCurrent(snapshot) && this.entry?.id===entry.id) this.roomSpeechProblem='phone_meeting_speech_unavailable'; });
+        if (task!==this.activeTask || !this.isLocalCurrent(snapshot)) { await this.platform.stop(); return false; }
+      }
       await this.platform.start(context, recordingId, (reason: string) => { this.stopForCaptureFailure(reason).catch(() => undefined); });
       if (task !== this.activeTask || !this.isLocalCurrent(snapshot)) { await this.stopEntry(entry, true); return false; }
-      this.captureState = 'recording'; return true;
+      this.captureState = 'recording'; if (invited) this.room.sync().catch(() => {}); return true;
     } catch (failure) {
       const current = this.entry, failureFields = failure as Object as Record<string, Object>;
       let stopped = failureFields['recordingStop'] ? failureFields['recordingStop'] as Object as NativeRecordingStop : undefined;
@@ -525,6 +594,7 @@ export class KnowledgeRecording {
       }
       this.captureState = 'stopped'; this.transcriptionState = stopped.transcriptionState; this.uploadState = stopped.uploadState;
       this.error = saved ? stopped.error : 'knowledge_storage_unavailable';
+      if (stopped.roomRole && this.room.active) this.room.finish(stopped.endedAt).catch(() => {});
     }
     return stopped.audioBytes > 0 && saved;
   }
@@ -574,7 +644,7 @@ export class KnowledgeRecording {
       const changed = text !== result.transcript || !result.uploadBody;
       result.transcript = text; result.transcriptionState = 'complete'; result.error = '';
       if (changed) {
-        result.revision = Math.max(Date.now(), result.revision + 1);
+        result.revision = Math.max(Date.now(), result.revision + 1, result.roomRole ? Date.parse(result.endedAt)+1 : 0);
         result.uploadBody = this.makeUpload(result);
         result.uploadState = 'idle'; result.serverStatus = ''; result.serverRevision = 0; result.uploadError = '';
       }
@@ -692,10 +762,16 @@ export class KnowledgeRecording {
 
   private makeUpload(current: KnowledgeRecordingEntry): KnowledgeRecordingUpload {
     const segment: KnowledgeRecordingSegment = { start: 0, end: current.duration, text: current.transcript };
-    return {
+    const body:KnowledgeRecordingUpload = {
       revision: current.revision, started_at: current.startedAt, ended_at: current.endedAt, duration: current.duration,
-      language: current.language, device: 'phone', title: current.title, bookmarks: [], segments: [segment], complete: true, kind: 'note'
+      language: current.language, device: 'phone', title: current.title, bookmarks: [], segments: [segment], complete: true, kind: current.kind === 'meeting' ? 'meeting' : 'note'
     };
+    if (current.roomRole) {
+      body.room={attendance:current.roomRole}; body.private=current.privateMark===true;
+      const spoken=this.room.spokenLines();
+      if (spoken.length && this.root?.features.includes('meeting_echo')) body.spoken=spoken;
+    }
+    return body;
   }
 
   private async captureRemote(local: RecordingLocalSnapshot): Promise<RecordingRemoteSnapshot> {

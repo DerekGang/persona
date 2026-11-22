@@ -512,8 +512,10 @@ export struct MachineDirectory {
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       Column({space:6}) {
         if (Number.isFinite(a.updated)) Text(ageLabel(a.updated,this.chartEnd)).fontSize(11).fontColor(Colors.secondary).maxLines(1)
-        SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
+        if (a.sourceLabel) Text(tr(a.sourceLabel)).fontSize(11).maxFontScale(Tokens.navigationTextMaxScale)
+          .fontColor(Colors.secondary).borderRadius(8).padding({left:6,right:6,top:2,bottom:2}).backgroundColor(Colors.control)
       }.alignItems(HorizontalAlign.End)
+      SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').padding({left:13,right:13,top:10,bottom:10}).onClick(() => this.onSession(a.row)).id('machines.agent')
   }
   @Builder agentsCard(c:ComputerCard) {
@@ -659,7 +661,7 @@ export struct MachineDirectory {
         },(key:string) => key)
       }.width('100%').padding(3).backgroundColor(Colors.control).borderRadius(10)
       if (this.detailSample) {
-        Row() {
+        if (this.inspected || (this.loading && this.shownRange !== this.range)) Row() {
           if (this.loading && this.shownRange !== this.range) LoadingProgress().width(18).height(18).margin({right:6})
           Text(this.inspected ? clockLabel(this.inspected) : tr(RANGE_LABELS[this.shownRange]))
             .fontSize(13).fontColor(Colors.secondary).layoutWeight(1)

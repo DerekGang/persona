@@ -136,3 +136,15 @@ test('history entries expose safe outcomes and cannot be submitted', () => {
   assert.deepEqual(interactionHistoryResolution(resolved), { allow: true });
   assert.equal(JSON.stringify(interactionHistoryResolution(resolved)).includes('secret-value'), false);
 });
+
+test('plan controls send exactly the mode selected on this request and preserve a recorded follow-up mode', () => {
+  const original=decision({id:'plan',kind:'plan',plan:'Review'});
+  assert.deepEqual(interactionResolution(original,'approve',{mode:'acceptEdits'}),{approve:true,mode:'acceptEdits'});
+  assert.deepEqual(interactionResolution(original,'approve',{mode:'bypassPermissions'}),{approve:true,mode:'bypassPermissions'});
+  assert.deepEqual(interactionResolution(original,'approve',{}),{approve:true});
+  assert.deepEqual(interactionResolution(original,'deny',{mode:'bypassPermissions',feedback:'Revise it'}),{approve:false,feedback:'Revise it'});
+  assert.throws(()=>interactionResolution(original,'approve',{mode:'unexpected'}),/request_updated/);
+  const pinned=decision({id:'pinned',kind:'plan',plan_then:'default',plan:'Review'});
+  assert.throws(()=>interactionResolution(pinned,'approve',{mode:'bypassPermissions'}),/request_updated/);
+  assert.deepEqual(interactionResolution(pinned,'approve',{mode:'default'}),{approve:true,mode:'default'});
+});

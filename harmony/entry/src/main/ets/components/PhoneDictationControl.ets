@@ -10,6 +10,8 @@ export struct PhoneDictationControl {
   @Require @Param owner: string;
   @Param active: boolean = true;
   @Param language: string = 'default';
+  @Event chooseLanguage: () => string = () => '';
+  @Event onListeningIn: (locale: string) => void = (_locale: string) => {};
   @Event allowed: (owner: string) => boolean = (_owner: string) => false;
   @Event insert: (text: string, owner: string) => boolean = (_text: string, _owner: string) => false;
   @Event keyboard: () => void = () => {};
@@ -46,9 +48,10 @@ export struct PhoneDictationControl {
     this.message = '';
     this.keyboardOwner = '';
     this.shown = true;
-    const language = this.language === 'default' ? i18n.getSystemLanguage() : this.language;
+    const selectedLanguage = this.chooseLanguage() || this.language;
+    const language = selectedLanguage === 'default' ? i18n.getSystemLanguage() : selectedLanguage;
     const context = this.getUIContext().getHostContext();
-    if (!context || !language.toLowerCase().startsWith('zh')) {
+    if (!context || !/^zh(?:-hans|-cn|-sg|$)/i.test(language)) {
       this.phase = 'error';
       this.message = 'phone_dictation_keyboard_language';
       return;
@@ -58,7 +61,7 @@ export struct PhoneDictationControl {
     let run: NativeDictation;
     const valid = (): boolean => this.shown && this.active && this.owner === owner && this.run === run && this.allowed(owner);
     const listener: DictationListener = {
-      listening: (): void => { if (valid()) this.phase = 'listening'; },
+      listening: (): void => { if (valid()) { this.phase = 'listening'; this.onListeningIn('zh-CN'); } },
       preview: (text: string): void => { if (valid()) this.transcript = text; },
       completed: (text: string): void => {
         if (valid()) { this.transcript = text; this.phase = 'complete'; }

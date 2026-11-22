@@ -14,16 +14,17 @@ export function phonePlaceAtRoot(section: number, routes: string[], assistantCon
 // The exposed side of a closed peer also works when the header's buttons are off screen.
 export function phonePanIntent(section: number, atRoot: boolean, drawerOpen: boolean, x: number,
   y: number, width: number, height: number, dx: number, dy: number): string {
-  if (width <= 0 || height <= 0 || Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.6) return '';
+  if (width <= 0 || height <= 0 || x < 0 || x > width || Math.abs(dx) < 12 || Math.abs(dx) <= Math.abs(dy)) return '';
   if (drawerOpen) return dx < 0 ? 'close' : '';
   if (!atRoot || y > height - 88) return '';
-  const header = y <= 54, edge = x <= Math.min(48, width * 0.14);
-  if (dx > 0 && edge) return 'open';
-  if (section === 0 && dx < 0 && (header || x >= width * 0.60)) return 'agents';
-  if (section === 1 && dx > 0 && (header || x <= width * 0.40)) return 'persona';
-  return '';
+  if (section === 0 && dx < 0) return 'agents';
+  if ((section === 1 || section === 4) && dx > 0) return 'persona';
+  return dx > 0 ? 'open' : '';
 }
 
 export function finishesPhonePan(dx: number, vx: number, width: number): boolean {
-  return Math.abs(dx) >= Math.min(94, width * 0.21) || Math.abs(dx) >= 22 && Math.abs(vx) >= 580 && dx * vx > 0;
+  if (!dx || width <= 0) return false;
+  const velocity = dx < 0 ? -vx : vx;
+  if (Math.abs(velocity) > 300) return velocity > 0;
+  return Math.abs(dx) + velocity * 0.2 > width / 2;
 }

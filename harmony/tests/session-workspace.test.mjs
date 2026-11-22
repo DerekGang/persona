@@ -413,3 +413,83 @@ test('commit file navigation selects the matching immutable patch, including mis
   assert.equal(patchLines('Binary files differ', true)[0].text,'Binary files differ');
   assert.equal(patchLines(added)[0].kind,'meta');
 });
+
+test('file and folder marks use the first changed descendant in this repository and expire with its owner', async () => {
+  const files = [
+    {path: 'Sources/Sub/App.swift', index: '.', worktree: 'M'},
+    {path: 'Sources/Other.swift', index: 'A', worktree: '.'},
+    {path: 'Readme.md', index: '?', worktree: '?'}
+  ];
+  const {workspace, state} = fixture({handle: ({path}) => path.includes('/git/status') ? {is_repo:true, root:'/repo', files} : undefined});
+  await waitForTurn();
+  assert.equal(workspace.fileGitMark({path:'/repo/Sources'}), 'M');
+  assert.equal(workspace.fileGitMark({path:'/repo/Sources/Sub'}), 'M');
+  assert.equal(workspace.fileGitMark({path:'/repo/Sources/Other.swift'}), 'A');
+  assert.equal(workspace.fileGitMark({path:'/repo/Readme.md'}), 'U');
+  assert.equal(workspace.fileGitMark({path:'/repo/Source'}), '');
+  const pending = Promise.withResolvers();
+  state.handle = ({path}) => path.includes('/git/status') ? pending.promise : undefined;
+  const refresh = workspace.loadFileGitMarks();
+  workspace.selectTab(1);
+  pending.resolve({is_repo:true, root:'/repo', files:[{path:'Sources',index:'D',worktree:'.'}]});
+  await refresh;
+  assert.equal(workspace.fileGitMark({path:'/repo/Sources'}), 'M');
+  workspace.hide();
+});
+
+test('a branch pull request is owner-scoped, cached by pushed head and creatable only from a confirmed pushed branch', async () => {
+  let branch = 'feature', ahead = 1, currentPR = null;
+  const {workspace, state} = fixture({handle: (call) => {
+    if (call.path.includes('/git/status')) return {is_repo:true, root:'/repo', branch, upstream:'origin/'+branch, ahead, head:{hash:branch}, files:[], commits:[]};
+    if (call.path.includes('/git/pr?')) return {branch, pr:currentPR};
+    if (call.path.endsWith('/git/pr') && call.method==='POST') {
+      currentPR={number:7, title:call.body.title}; return {branch,pr:currentPR};
+    }
+  }});
+  workspace.selectTab(1);
+  await waitForTurn();
+  assert.equal(workspace.branchPushedForPr(),false);
+  assert.equal(await workspace.createPullRequest(branch,'Reviewed','Body','main',true),false);
+  await workspace.loadGit();
+  assert.equal(state.calls.filter(c=>c.path.includes('/git/pr?')).length,1);
+  ahead=0;
+  await workspace.loadGit();
+  await waitForTurn();
+  assert.equal(workspace.branchPushedForPr(),true);
+  assert.equal(await workspace.createPullRequest('other','Reviewed','Body','main',true),false);
+  assert.equal(await workspace.createPullRequest(branch,'  Reviewed  ','Body','main',true),true);
+  await waitForTurn();
+  assert.equal(workspace.gitPrAnswer.pr.number,7);
+  assert.equal(await workspace.createPullRequest(branch,'Duplicate','Body','main',true),false);
+  const writes=state.calls.filter(c=>c.method==='POST' && c.path.endsWith('/git/pr'));
+  assert.equal(writes.length,1);
+  assert.deepEqual(writes[0].body,{cwd:'/repo',title:'Reviewed',body:'Body',base:'main',draft:true});
+  const delayed=Promise.withResolvers();
+  state.handle=({path})=> path.includes('/git/pr?') ? delayed.promise : undefined;
+  const refresh=workspace.loadGitPullRequest(true);
+  workspace.selectTab(0);
+  delayed.resolve({branch,pr:{number:42}});
+  await refresh;
+  assert.equal(workspace.gitPrAnswer.pr.number,7);
+  workspace.hide();
+});
+
+test('the Git footer stages every reported path once and unstages only when all changes were already staged',async()=>{
+  let files=[{path:'a',index:'M',worktree:'.'},{path:'b',index:'M',worktree:'M'}];
+  const status=()=>({is_repo:true,root:'/repo',branch:'main',files,commits:[]});
+  const {workspace,state}=fixture({handle(call){
+    if (call.method==='POST' && call.path.endsWith('/git/stage')) {
+      files=files.map(file=>({...file,index:call.body.unstage ? '.' : 'M',worktree:call.body.unstage ? 'M' : '.'}));
+      return {status:status()};
+    }
+    if (call.path.includes('/git/status')) return status();
+  }});
+  workspace.selectTab(1); await waitForTurn();
+  assert.equal(workspace.allFilesStaged(),false);
+  assert.equal(await workspace.toggleAllGitFiles(),true); await waitForTurn();
+  assert.equal(workspace.allFilesStaged(),true);
+  assert.equal(await workspace.toggleAllGitFiles(),true);
+  assert.deepEqual(state.calls.filter(c=>c.method==='POST').map(c=>c.body),[
+    {cwd:'/repo',paths:['a','b']},{cwd:'/repo',paths:['a','b'],unstage:true}]);
+  workspace.hide();
+});

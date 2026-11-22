@@ -7,7 +7,7 @@ registerHooks({
   resolve(specifier, context, next) {
     if (specifier === '@kit.ArkTS') return { url: 'persona-question-test:arkts', shortCircuit: true };
     if (context.parentURL?.endsWith('/ClientModel.ets')) {
-      if (['./Wire', './InteractionDecision', './ChatDraftStore', '../core/Domain'].includes(specifier)) {
+      if (['../core/DictationLanguage', './Wire', './InteractionDecision', './ChatDraftStore', '../core/Domain'].includes(specifier)) {
         const base = new URL(specifier, context.parentURL);
         return { url: base.href + (existsSync(new URL(base.href + '.ts')) ? '.ts' : '.ets'), shortCircuit: true };
       }
@@ -47,7 +47,8 @@ registerHooks({
         export class HubTransport { async request(){return '{}';} close(){} }
         export class EndpointConfig {}
         export class CredentialVault {}
-        export class LocalStore { data=new Map(); revision(){return 0;} accepts(){return true;} async put(key,value){this.data.set(key,value);} async get(key){return this.data.get(key)||'';} async remove(key){this.data.delete(key);} allowHub(){} async purgeHub(){} async open(){} async close(){} }
+        export const dictationPreference = {choice:"auto",last:"",load(){},remember(){}};
+      export class LocalStore { data=new Map(); revision(){return 0;} accepts(){return true;} async put(key,value){this.data.set(key,value);} async get(key){return this.data.get(key)||'';} async remove(key){this.data.delete(key);} allowHub(){} async purgeHub(){} async open(){} async close(){} }
         export class HubRepository {}
         export function segment(value){return encodeURIComponent(value);}
         export const tr=key=>key; export const Strings={refresh(){}};

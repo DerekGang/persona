@@ -7,7 +7,7 @@ let sdk;
 globalThis.__playbackSdk = () => sdk;
 const modules = {
   '@kit.AbilityKit': 'export const abilityAccessCtrl = {}, common = {}, Permissions = {};',
-  '@kit.CoreSpeechKit': 'export const speechRecognizer = {};',
+  '@kit.CoreSpeechKit': 'export const speechRecognizer = {}; export const textToSpeech={createEngine(){throw new Error("unexpected meeting speech output");}};',
   '@kit.ArkTS': 'export const util = {};',
   '@kit.CoreFileKit': `export const fileIo = {
     OpenMode: {READ_ONLY: 0},

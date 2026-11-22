@@ -102,15 +102,26 @@ export struct ConversationRecap {
       .id('chat.recap.open').onClick(() => this.dismiss())
   }
   @Builder details() {
-    Scroll() {
+    Column() {
+      Stack({alignContent:Alignment.Center}) {
+        Text(tr('chat_away_recap')).fontSize(16).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+          .maxLines(2).textAlign(TextAlign.Center).width('100%').padding({left:54,right:54})
+        Row() {
+          Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('18vp').fontColor([Colors.ink]) }
+            .width(40).height(40).padding(0).backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:20})
+            .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('close')).onClick(() => this.shown=false).id('chat.recap.close')
+        }.width('100%').padding({left:Tokens.page})
+      }.width('100%').height(56)
+      Scroll() {
       Column({ space: 16 }) {
         ForEach(this.sheetItems, (item: ConversationRecapItem, index: number) => {
           if (index > 0) Divider().strokeWidth(Tokens.divider).color(Colors.divider)
-          if (this.relative(item.at)) Text(this.relative(item.at)).fontSize(Tokens.caption).fontColor(Colors.secondary)
+          if (this.relative(item.at)) Text(tr('chat_recap_written').replace('{time}',this.relative(item.at))).fontSize(Tokens.caption).fontColor(Colors.secondary)
           MarkdownText({ text: item.text, chatReply: true, onLink: (url: string) => { if (this.current()) this.onLink(url); } })
         }, (item: ConversationRecapItem) => item.id)
       }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.page)
-    }.width('100%').height('100%').align(Alignment.TopStart).id('chat.recap.detail')
+    }.width('100%').layoutWeight(1).align(Alignment.TopStart)
+    }.width('100%').height('100%').backgroundColor(Colors.canvas).id('chat.recap.detail')
   }
   build() {
     Column({ space: Tokens.gap }) {
@@ -123,7 +134,7 @@ export struct ConversationRecap {
         }
       }
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left: Tokens.page, right: Tokens.page})
-      .bindSheet($$this.shown, this.details(), { title: { title: tr('chat_away_recap') },
-        height: SheetSize.MEDIUM, detents: [SheetSize.MEDIUM, SheetSize.LARGE], showClose: true })
+      .bindSheet($$this.shown, this.details(), { backgroundColor:Colors.canvas,
+        height: SheetSize.MEDIUM, detents: [SheetSize.MEDIUM, SheetSize.LARGE], showClose: false })
   }
 }

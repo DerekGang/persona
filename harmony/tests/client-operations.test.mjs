@@ -7,7 +7,7 @@ registerHooks({
   resolve(specifier, context, next) {
     if (specifier === '@kit.ArkTS') return {url:'client-boundary:'+specifier,shortCircuit:true};
     if (context.parentURL?.endsWith('/ClientModel.ets')) {
-      if (['./Wire', './AssistantView', './DemoRepository', './NavigationContext', './ChatDraftStore', './HubRepository', './MutationStore', './Compatibility', './InteractionDecision', '../core/ClientLocale', '../core/ClientLocale', '../core/Domain', '../core/ScopePolicy', '../core/StorageOwnership', '../core/MessageContent', '../core/TranscriptCache'].includes(specifier)) {
+      if (['../core/DictationLanguage', './Wire', './AssistantView', './DemoRepository', './NavigationContext', './ChatDraftStore', './HubRepository', './MutationStore', './Compatibility', './InteractionDecision', '../core/ClientLocale', '../core/ClientLocale', '../core/Domain', '../core/ScopePolicy', '../core/StorageOwnership', '../core/MessageContent', '../core/TranscriptCache'].includes(specifier)) {
         const base = new URL(specifier, context.parentURL);
         return {url: base.href + (existsSync(new URL(base.href + '.ts')) ? '.ts' : '.ets'), shortCircuit: true};
       }
@@ -40,6 +40,7 @@ registerHooks({
       export class HubRepository {} export class TranscriptModel {} export class SessionWorkspace {}
       export class SshTunnel { initialize(){} stop(){} async bind(client){this.client=client;} async acquire(){if(globalThis.clientSshAcquire)return globalThis.clientSshAcquire(this.client);return undefined;} async forget(){} }
       export class KnowledgeRecording { static async forgetProfile(){} }
+      export const dictationPreference = {choice:"auto",last:"",load(){},remember(){}};
       export const deviceLook = {async forgetHub(){}};
       export class Pairing {static async reachable(primary,...args){return globalThis.clientPairingAddress ? globalThis.clientPairingAddress(primary,...args) : primary;}} export class PairingTarget {} export class MutationRecord {} export class MutationStore { static forgetHub() {} }
       export class ChatAttachments { static allowHub() {} static async forgetHub() {} static suppressStoredSnapshot(...args) {globalThis.clientAttachmentSuppressed?.push(args);} static async commitStoredSnapshot(...args) {globalThis.clientAttachmentCommits?.push(args);if(globalThis.clientAttachmentCommitGate)await globalThis.clientAttachmentCommitGate();} }

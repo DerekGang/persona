@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 1024 1024">
+  <!-- Mochi's shared color and geometry come from apple/Shared/Design/PersonaFace.swift. -->
+  <defs>
+    <linearGradient id="disc" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#332A26"/>
+      <stop offset="1" stop-color="#1D1816"/>
+    </linearGradient>
+    <linearGradient id="body" gradientUnits="userSpaceOnUse" x1="400" y1="300" x2="500" y2="820">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E9E3DE"/>
+    </linearGradient>
+  </defs>
+  <circle cx="512" cy="512" r="512" fill="url(#disc)"/>
+  <g transform="translate(512 512) scale(1.16) translate(-545 -548)">
+    <ellipse cx="490" cy="786" rx="244" ry="23" fill="#000000" opacity="0.14"/>
+    <path d="M262 778C420 792 600 790 702 772C742 764 752 700 760 640C800 598 828 562 826 502C825 446 795 418 764 428C736 440 722 468 712 494C690 440 650 350 560 304C470 260 330 288 254 382C184 462 158 582 168 672C176 742 206 772 262 778Z" fill="url(#body)" stroke="#0E0B0A" stroke-width="30" stroke-linejoin="round"/>
+    <circle cx="312" cy="556" r="37" fill="#F2703C"/>
+    <path d="M312 380Q352 346 412 334M288 414L290 411" fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round"/>
+    <path d="M792 352L818 298 M838 384L884 340 M864 428L924 408" stroke="#D6D1CD" stroke-width="25.5" stroke-linecap="round"/>
+    <g fill="#1D1816">
+      <circle cx="397" cy="497" r="29"/>
+      <circle cx="553" cy="480" r="29"/>
+    </g>
+  </g>
+</svg>

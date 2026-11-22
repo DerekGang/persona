@@ -23,9 +23,8 @@ export struct PhoneIconButton {
   build() {
     Button({ type: ButtonType.Circle }) {
       SymbolGlyph(this.symbol).fontSize('19vp').fontColor([this.tint])
-    }.width(36).height(36).padding(0).backgroundColor(Colors.surface)
-      .border({ width: 0.5, color: Colors.divider, radius: 18 })
-      .responseRegion({ x: -4, y: -4, width: 44, height: 44 })
+    }.width(PhoneStyle.bar).height(PhoneStyle.bar).padding(0).backgroundColor(Colors.surface)
+      .border({ width: 0.5, color: Colors.divider, radius: PhoneStyle.bar / 2 })
       .accessibilityText(this.label).bindTips(this.label).enabled(this.active).onClick(() => this.action()).id(this.identity)
   }
 }

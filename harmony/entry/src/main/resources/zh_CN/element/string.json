@@ -5951,6 +5951,674 @@
     {
       "name": "phone_new_assistant",
       "value": "新建助手"
+    },
+    {
+      "name": "phone_assistant_title",
+      "value": "助手"
+    },
+    {
+      "name": "session_back_to_chat",
+      "value": "返回对话"
+    },
+    {
+      "name": "knowledge_focus",
+      "value": "重点"
+    },
+    {
+      "name": "knowledge_other_active",
+      "value": "其他进行中"
+    },
+    {
+      "name": "knowledge_not_project",
+      "value": "非项目"
+    },
+    {
+      "name": "phone_meeting_start",
+      "value": "开始会议"
+    },
+    {
+      "name": "phone_todo_list",
+      "value": "列表"
+    },
+    {
+      "name": "session_find_in_folder",
+      "value": "在「{folder}」里查找"
+    },
+    {
+      "name": "session_message_to_agent",
+      "value": "给 {agent} 发消息"
+    },
+    {
+      "name": "session_git_pull_request",
+      "value": "拉取请求"
+    },
+    {
+      "name": "session_git_push_before_pr",
+      "value": "先推送分支，再创建拉取请求"
+    },
+    {
+      "name": "session_git_create_pr",
+      "value": "创建拉取请求"
+    },
+    {
+      "name": "project_idle_named",
+      "value": "{count} 个空闲"
+    },
+    {
+      "name": "flow_start_chat",
+      "value": "开始对话"
+    },
+    {
+      "name": "flow_launcher_model_once",
+      "value": "启动器与模型（只换这一次）"
+    },
+    {
+      "name": "flow_directory_address_hint",
+      "value": "可以直接改上面的路径，回车前往。~ 是主目录。"
+    },
+    {
+      "name": "flow_model_default_hint",
+      "value": "不指定模型时，按启动器自己的设置运行。"
+    },
+    {
+      "name": "flow_model_count",
+      "value": "{count} 个模型"
+    },
+    {
+      "name": "flow_model_id_search",
+      "value": "搜索，或输入模型 ID"
+    },
+    {
+      "name": "project_pending_count",
+      "value": "{count} 件待处理"
+    },
+    {
+      "name": "flow_model_manual_hint",
+      "value": "列表里没有的模型可以直接输入 ID，比如网关提供的模型。"
+    },
+    {
+      "name": "session_git_no_pr",
+      "value": "这个分支还没有拉取请求"
+    },
+    {
+      "name": "session_git_pr_read_failed",
+      "value": "读不到拉取请求"
+    },
+    {
+      "name": "session_git_pr_body",
+      "value": "描述"
+    },
+    {
+      "name": "session_git_pr_draft",
+      "value": "草稿"
+    },
+    {
+      "name": "chat_recap_written",
+      "value": "写于 {time}"
+    },
+    {
+      "name": "session_git_partly_staged",
+      "value": "部分已暂存"
+    },
+    {
+      "name": "session_git_file_count",
+      "value": "{count} 个文件"
+    },
+    {
+      "name": "session_git_base_branch",
+      "value": "目标分支"
+    },
+    {
+      "name": "phone_record_meeting",
+      "value": "会议"
+    },
+    {
+      "name": "phone_record_note",
+      "value": "笔记"
+    },
+    {
+      "name": "phone_start_note",
+      "value": "开始笔记"
+    },
+    {
+      "name": "phone_meeting_calendar",
+      "value": "用日历里的会议命名"
+    },
+    {
+      "name": "phone_meeting_calendar_empty",
+      "value": "今天没有其他会议"
+    },
+    {
+      "name": "phone_meeting_local_transcription",
+      "value": "在本机转写"
+    },
+    {
+      "name": "phone_calendar_day",
+      "value": "日"
+    },
+    {
+      "name": "phone_calendar_week",
+      "value": "周"
+    },
+    {
+      "name": "phone_calendar_month",
+      "value": "月"
+    },
+    {
+      "name": "phone_agent_plan_approval",
+      "value": "计划等你审批"
+    },
+    {
+      "name": "phone_agent_asks",
+      "value": "{agent} 在问你"
+    },
+    {
+      "name": "phone_agent_needs_approval",
+      "value": "在等你批准"
+    },
+    {
+      "name": "session_task_more",
+      "value": "还有 {count} 件"
+    },
+    {
+      "name": "session_task_approve_run",
+      "value": "批准并自动执行"
+    },
+    {
+      "name": "session_task_auto_edits",
+      "value": "自动接受编辑"
+    },
+    {
+      "name": "session_task_return",
+      "value": "打回"
+    },
+    {
+      "name": "session_brief_stage_plan",
+      "value": "方案"
+    },
+    {
+      "name": "session_brief_stage_develop",
+      "value": "开发"
+    },
+    {
+      "name": "session_brief_stage_review",
+      "value": "审查"
+    },
+    {
+      "name": "session_brief_stage_merge",
+      "value": "合入"
+    },
+    {
+      "name": "session_brief_stage_deploy",
+      "value": "部署"
+    },
+    {
+      "name": "session_brief_stage_verify",
+      "value": "已验证"
+    },
+    {
+      "name": "session_brief_past",
+      "value": "过去 {hours} 小时：做完 {done} · 没成 {failed}"
+    },
+    {
+      "name": "session_git_stage_all",
+      "value": "全部暂存"
+    },
+    {
+      "name": "session_git_unstage_all",
+      "value": "全部取消暂存"
+    },
+    {
+      "name": "phone_keyboard_settings",
+      "value": "键盘设置"
+    },
+    {
+      "name": "phone_dictation_automatic_note",
+      "value": "自动会参考你的草稿和最近发言，选择本机中文识别或键盘听写。判断不了时使用上次识别的语言，再使用应用语言。"
+    },
+    {
+      "name": "phone_meeting_invite",
+      "value": "邀请 Persona"
+    },
+    {
+      "name": "phone_meeting_remove",
+      "value": "从会议中移除"
+    },
+    {
+      "name": "phone_meeting_onscreen",
+      "value": "在屏幕上回答"
+    },
+    {
+      "name": "phone_meeting_aloud",
+      "value": "朗读回答"
+    },
+    {
+      "name": "phone_meeting_private",
+      "value": "私密会议"
+    },
+    {
+      "name": "phone_meeting_room",
+      "value": "会中对话"
+    },
+    {
+      "name": "phone_meeting_live_note",
+      "value": "邀请 Persona 后，已转写的语句会同步到本次会议的对话。音频保留在本机。"
+    },
+    {
+      "name": "phone_meeting_live_ready",
+      "value": "Persona 正在跟进会议"
+    },
+    {
+      "name": "phone_meeting_live_starting",
+      "value": "正在连接会议对话…"
+    },
+    {
+      "name": "phone_meeting_unavailable",
+      "value": "Persona 暂时无法加入本次会议。"
+    },
+    {
+      "name": "phone_meeting_retry",
+      "value": "连接中断。会议语句已保存在本机。"
+    },
+    {
+      "name": "phone_meeting_full",
+      "value": "实时转写已达到上限。"
+    },
+    {
+      "name": "phone_meeting_ask",
+      "value": "在本次会议中提问"
+    },
+    {
+      "name": "phone_meeting_question",
+      "value": "对本次会议提问"
+    },
+    {
+      "name": "phone_meeting_closed",
+      "value": "会议已结束"
+    },
+    {
+      "name": "phone_meeting_role",
+      "value": "Persona 的默认角色"
+    },
+    {
+      "name": "phone_meeting_default_note",
+      "value": "选择 Persona 受邀时的参与方式，也可在每次开会前调整。"
+    },
+    {
+      "name": "phone_meeting_speech_unavailable",
+      "value": "实时识别暂不可用。仍可本机录音，也可输入问题。"
+    },
+    {
+      "name": "phone_meeting_off",
+      "value": "关"
+    },
+    {
+      "name": "phone_meeting_topics",
+      "value": "议题"
+    },
+    {
+      "name": "phone_meeting_no_answer",
+      "value": "本次会议暂时无法回答这个问题。"
+    },
+    {
+      "name": "phone_knowledge_selection",
+      "value": "知识库选择"
+    },
+    {
+      "name": "ks_individual",
+      "value": "单独设置的聊天和文档"
+    },
+    {
+      "name": "ks_individual_hint",
+      "value": "这里的设置优先于下面所有规则。移除后，该聊天或文档重新按规则处理。"
+    },
+    {
+      "name": "ks_add_chat",
+      "value": "添加聊天…"
+    },
+    {
+      "name": "ks_add_doc",
+      "value": "添加文档…"
+    },
+    {
+      "name": "ks_remove",
+      "value": "移除设置"
+    },
+    {
+      "name": "ks_priority",
+      "value": "优先级 {level}"
+    },
+    {
+      "name": "ks_messages",
+      "value": "聊天规则 · 优先级 1"
+    },
+    {
+      "name": "ks_docs",
+      "value": "文档规则 · 优先级 1"
+    },
+    {
+      "name": "ks_up",
+      "value": "上移"
+    },
+    {
+      "name": "ks_down",
+      "value": "下移"
+    },
+    {
+      "name": "ks_join",
+      "value": "把“{name}”并入优先级 {level}"
+    },
+    {
+      "name": "ks_split",
+      "value": "让“{name}”单独成一级"
+    },
+    {
+      "name": "ks_store",
+      "value": "保存匹配的内容"
+    },
+    {
+      "name": "ks_text_days",
+      "value": "文本保留天数"
+    },
+    {
+      "name": "ks_attachment_days",
+      "value": "附件保留天数"
+    },
+    {
+      "name": "ks_include_all",
+      "value": "@所有人也算提及"
+    },
+    {
+      "name": "ks_context",
+      "value": "前后保留的消息数"
+    },
+    {
+      "name": "ks_context_hint",
+      "value": "你每条消息前后各保留 0 到 200 条，方便以后看懂上下文。留空为 50。"
+    },
+    {
+      "name": "ks_days_hint",
+      "value": "1 到 36500 天。留空则用 hub 的保留设置。附件的保留期不会超过所属文本。"
+    },
+    {
+      "name": "ks_doc_days_hint",
+      "value": "1 到 36500 天。留空则不设删除期限。"
+    },
+    {
+      "name": "ks_invalid",
+      "value": "请填上面范围内的整数，或者留空。"
+    },
+    {
+      "name": "ks_source",
+      "value": "来源"
+    },
+    {
+      "name": "ks_mode",
+      "value": "保存什么"
+    },
+    {
+      "name": "ks_days",
+      "value": "保留天数"
+    },
+    {
+      "name": "ks_chat_editor",
+      "value": "聊天设置"
+    },
+    {
+      "name": "ks_doc_editor",
+      "value": "文档设置"
+    },
+    {
+      "name": "ks_list_chats",
+      "value": "这里列出知识库里已有内容的聊天。邮件、issue 和 pull request 始终保存。"
+    },
+    {
+      "name": "ks_list_docs",
+      "value": "这里列出知识库里已有的文档。"
+    },
+    {
+      "name": "ks_empty_chat",
+      "value": "还没有聊天"
+    },
+    {
+      "name": "ks_empty_doc",
+      "value": "还没有文档"
+    },
+    {
+      "name": "ks_empty_hint",
+      "value": "知识库保存过它的内容后，就能在这里给它单独设置。"
+    },
+    {
+      "name": "ks_off",
+      "value": "关"
+    },
+    {
+      "name": "ks_on",
+      "value": "开"
+    },
+    {
+      "name": "ks_day_count",
+      "value": "{days} 天"
+    },
+    {
+      "name": "ks_skip",
+      "value": "不读取"
+    },
+    {
+      "name": "ks_rules_chat",
+      "value": "只存提及我和我发的"
+    },
+    {
+      "name": "ks_rules_doc",
+      "value": "按规则"
+    },
+    {
+      "name": "ks_all",
+      "value": "全部保存"
+    },
+    {
+      "name": "ks_skip_hint",
+      "value": "不再读取或保存它的新内容，提及你的也不例外。已保存的内容保留。"
+    },
+    {
+      "name": "ks_rules_chat_hint",
+      "value": "只保存“提及你”和“你发出的消息”两条规则留下的内容，不管其他规则怎么设。"
+    },
+    {
+      "name": "ks_rules_doc_hint",
+      "value": "按文档规则读取和保存。"
+    },
+    {
+      "name": "ks_all_chat_hint",
+      "value": "保存每条消息。天数留空时，按决定它的规则或 hub 的文本保留期保存。"
+    },
+    {
+      "name": "ks_all_doc_hint",
+      "value": "不管规则怎么设都保存这篇文档。天数留空则不设删除期限。"
+    },
+    {
+      "name": "ks_not_read",
+      "value": "不读取"
+    },
+    {
+      "name": "ks_personal",
+      "value": "提及和我发的"
+    },
+    {
+      "name": "ks_by_rules",
+      "value": "按规则"
+    },
+    {
+      "name": "ks_everything",
+      "value": "全部"
+    },
+    {
+      "name": "ks_old_hub",
+      "value": "这个 hub 还不支持知识库选择。更新 hub 后，就能在这里选择保存哪些内容。"
+    },
+    {
+      "name": "ks_future",
+      "value": "这个 hub 的选择设置里有当前版本 App 不认识的内容。更新 App 后才能在这里修改，现在没有改动任何设置。"
+    },
+    {
+      "name": "ks_changed",
+      "value": "选择设置已在另一台设备上改过。核对后再试一次。"
+    },
+    {
+      "name": "ks_no_id",
+      "value": "知识库没有记录它的来源，没法给它单独设置。"
+    },
+    {
+      "name": "ks_not_selectable",
+      "value": "邮件、issue 和 pull request 始终保存，不受选择设置影响。"
+    },
+    {
+      "name": "ks_topics",
+      "value": "按主题整理知识点"
+    },
+    {
+      "name": "ks_map",
+      "value": "打开知识导图"
+    },
+    {
+      "name": "ks_map_title",
+      "value": "知识导图"
+    },
+    {
+      "name": "ks_topic",
+      "value": "主题"
+    },
+    {
+      "name": "ks_removed",
+      "value": "已移除设置"
+    },
+    {
+      "name": "ks_undo",
+      "value": "撤销"
+    },
+    {
+      "name": "ks_priority_hint",
+      "value": "从上往下依次检查各级。第一个有规则匹配的级别说了算：其中匹配的规则只要有一条开着就保存，全关着就不保存，不再往下看。关掉规则只是不再保存新消息，已保存的会留到保留天数用完。"
+    },
+    {
+      "name": "ks_docs_hint",
+      "value": "文档按同样的顺序判断。只有在这里填了天数才会设删除期限；不填则和以前一样一直保留。"
+    },
+    {
+      "name": "ks_rule_mentions",
+      "value": "提及你"
+    },
+    {
+      "name": "ks_rule_mine",
+      "value": "你发出的消息"
+    },
+    {
+      "name": "ks_rule_dm",
+      "value": "私聊"
+    },
+    {
+      "name": "ks_rule_group",
+      "value": "群聊"
+    },
+    {
+      "name": "ks_rule_bot",
+      "value": "机器人和应用"
+    },
+    {
+      "name": "ks_rule_official",
+      "value": "官方账号"
+    },
+    {
+      "name": "ks_rule_muted",
+      "value": "已静音的聊天"
+    },
+    {
+      "name": "ks_rule_collapsed",
+      "value": "已折叠的聊天"
+    },
+    {
+      "name": "ks_rule_done",
+      "value": "已完成的聊天"
+    },
+    {
+      "name": "ks_rule_comment_mentions",
+      "value": "评论中提及你"
+    },
+    {
+      "name": "ks_rule_authored",
+      "value": "你创建的文档"
+    },
+    {
+      "name": "ks_rule_viewed",
+      "value": "你看过的文档"
+    },
+    {
+      "name": "ks_detail_mentions",
+      "value": "任何聊天里 @ 你的消息"
+    },
+    {
+      "name": "ks_detail_mine",
+      "value": "你发出的消息，连同前后的消息"
+    },
+    {
+      "name": "ks_detail_dm",
+      "value": "和某个人的一对一聊天"
+    },
+    {
+      "name": "ks_detail_group",
+      "value": "没有静音、折叠或标为完成的群"
+    },
+    {
+      "name": "ks_detail_bot",
+      "value": "和机器人、应用或 AI Agent 的聊天"
+    },
+    {
+      "name": "ks_detail_official",
+      "value": "官方号、服务号和系统账号"
+    },
+    {
+      "name": "ks_detail_muted",
+      "value": "你静音的聊天"
+    },
+    {
+      "name": "ks_detail_collapsed",
+      "value": "你折叠起来的聊天"
+    },
+    {
+      "name": "ks_detail_done",
+      "value": "你标为完成的聊天"
+    },
+    {
+      "name": "ks_detail_comment_mentions",
+      "value": "评论里 @ 你的文档"
+    },
+    {
+      "name": "ks_detail_authored",
+      "value": "你创建的文档"
+    },
+    {
+      "name": "ks_detail_viewed",
+      "value": "你打开过的文档"
+    },
+    {
+      "name": "ks_detail_doc_mentions",
+      "value": "@ 你的文档"
+    },
+    {
+      "name": "ks_load_error",
+      "value": "无法读取知识库选择"
+    },
+    {
+      "name": "ks_save_error",
+      "value": "无法保存知识库选择"
+    },
+    {
+      "name": "ks_discard",
+      "value": "放弃更改"
+    },
+    {
+      "name": "phone_meeting_voice_unavailable",
+      "value": "回答已显示，本机暂时无法朗读。"
     }
   ]
 }

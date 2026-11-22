@@ -1,6 +1,7 @@
+import type { MeetingJournal } from '../models/MeetingRoom';
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { audio } from '@kit.AudioKit';
-import { speechRecognizer } from '@kit.CoreSpeechKit';
+import { speechRecognizer, textToSpeech } from '@kit.CoreSpeechKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import type { KnowledgeRecordingEntry } from '../models/KnowledgeRecording';
@@ -47,6 +48,74 @@ export interface NativeRecordingStop {
   duration: number;
 }
 
+// Recognize from the same PCM frames saved by the recorder. Only completed utterances leave this recognizer.
+export class NativeMeetingSpeech {
+  private engine:speechRecognizer.SpeechRecognitionEngine|undefined;
+  private session:string=util.generateRandomUUID();
+  private ready:boolean=false;
+  private closed:boolean=false;
+  private frame:Uint8Array=new Uint8Array(640);
+  private filled:number=0;
+  private bytes:number=0;
+  private lastEnd:number=0;
+  private complete:()=>void=()=>{};
+  private readonly done:Promise<void>;
+  constructor() { this.done=new Promise<void>((resolve) => { this.complete=resolve; }); }
+
+  async open(line:(start:number,end:number,text:string)=>void, unavailable:()=>void):Promise<void> {
+    const engine=await speechRecognizer.createEngine({language:'zh-CN',online:1,extraParams:{locate:'CN',recognizerMode:'long'}});
+    if (this.closed) { engine.shutdown(); return; }
+    this.engine=engine;
+    let started:()=>void=()=>{};
+    const start=new Promise<void>((resolve) => { started=resolve; });
+    engine.setListener({
+      onStart:(id:string):void => { if (id===this.session && !this.closed) { this.ready=true; started(); } },
+      onEvent:(_id:string,_code:number,_message:string):void => {},
+      onResult:(id:string,result:speechRecognizer.SpeechRecognitionResult):void => {
+        if (id!==this.session || this.closed || !result.isFinal || !result.result.trim()) return;
+        const end=this.bytes/BYTES_PER_SECOND; line(this.lastEnd,end,result.result.trim()); this.lastEnd=end;
+      },
+      onComplete:(id:string):void => { if (id===this.session) this.complete(); },
+      onError:(id:string,_code:number,_message:string):void => {
+        if (id!==this.session || this.closed) return;
+        this.ready=false; started(); this.complete(); unavailable();
+      }
+    });
+    engine.startListening({sessionId:this.session,audioInfo:{audioType:'pcm',sampleRate:SAMPLE_RATE,soundChannel:1,sampleBit:16},
+      extraParams:{recognitionMode:1,maxAudioDuration:3600040}});
+    let timer:number=-1;
+    try { await Promise.race([start,new Promise<void>((resolve)=>{timer=setTimeout(resolve,8000);})]); }
+    finally { clearTimeout(timer); }
+    if (!this.ready && !this.closed) { this.release(); throw new Error('phone_dictation_unavailable'); }
+  }
+  feed(buffer:ArrayBuffer):void {
+    if (!this.ready || !this.engine || this.closed) return;
+    const input=new Uint8Array(buffer);
+    let offset=0;
+    while (offset<input.length) {
+      const count=Math.min(this.frame.length-this.filled,input.length-offset);
+      this.frame.set(input.subarray(offset,offset+count),this.filled); this.filled+=count; offset+=count;
+      if (this.filled===this.frame.length) {
+        this.engine.writeAudio(this.session,this.frame); this.bytes+=this.filled; this.frame=new Uint8Array(640); this.filled=0;
+      }
+    }
+  }
+  async finish():Promise<void> {
+    if (!this.engine || this.closed) { this.release(); return; }
+    let timer:number=-1;
+    try {
+      if (this.ready && this.filled) { this.engine.writeAudio(this.session,this.frame); this.bytes+=this.filled; this.filled=0; }
+      this.engine.finish(this.session);
+      await Promise.race([this.done,new Promise<void>((resolve)=>{timer=setTimeout(resolve,1800);})]);
+    } catch (_) {} finally { clearTimeout(timer); this.release(); }
+  }
+  release():void {
+    this.closed=true; this.ready=false; this.complete();
+    const engine=this.engine; this.engine=undefined;
+    if (engine) { try { engine.cancel(this.session); } catch (_) {} try { engine.shutdown(); } catch (_) {} }
+  }
+}
+
 /** App-private bounded PCM storage and foreground-only native audio / offline ASR. */
 export class NativeRecording {
   private context: common.UIAbilityContext | undefined;
@@ -58,6 +127,47 @@ export class NativeRecording {
   private activePath: string = '';
   private activeBytes: number = 0;
   private readFailed: boolean = false;
+  private roomSpeech: NativeMeetingSpeech | undefined;
+  private speechFailed: (()=>void) | undefined;
+  private voiceStop: (()=>void) | undefined;
+  private silenceUntil:number=0;
+  private voiceEpoch:number=0;
+  async speakRoom(id:string,text:string,language:string,admit:()=>boolean):Promise<void> {
+    this.voiceStop?.();
+    const generation=++this.voiceEpoch;
+    if (!admit()) return;
+    const english=language.toLowerCase().startsWith('en');
+    if (!english && !language.toLowerCase().startsWith('zh')) throw new Error('phone_meeting_voice_unavailable');
+    const engine=await textToSpeech.createEngine({language:english?'en-US':'zh-CN',person:english?8:13,online:1});
+    if (!admit() || generation!==this.voiceEpoch) { engine.shutdown(); return; }
+    let done:()=>void=()=>{}, failed=false, timer:number=-1;
+    const complete=new Promise<void>((resolve)=>{done=resolve;});
+    const stop=():void=>{try{engine.stop();}catch(_){} done();};
+    try {
+      engine.setListener({
+        onStart:(requestId:string,_response:textToSpeech.StartResponse):void => {},
+        onComplete:(requestId:string,_response:textToSpeech.CompleteResponse):void => { if(requestId===id)done(); },
+        onStop:(requestId:string,_response:textToSpeech.StopResponse):void => { if(requestId===id)done(); },
+        onError:(requestId:string,_code:number,_message:string):void=>{if(requestId===id){failed=true;done();}}
+      });
+      this.voiceStop=stop; this.silenceUntil=Number.MAX_SAFE_INTEGER;
+      engine.speak(text.slice(0,4096),{requestId:id});
+      await Promise.race([complete,new Promise<void>((resolve)=>{timer=setTimeout(()=>{failed=true;resolve();},90000);})]);
+    } finally {
+      clearTimeout(timer);
+      if (this.voiceStop===stop) {this.voiceStop=undefined;this.silenceUntil=Date.now()+350;}
+      try {engine.stop();} catch (_) {} try {engine.shutdown();} catch (_) {}
+    }
+    if (failed) throw new Error('phone_meeting_voice_unavailable');
+  }
+
+  async startRoomSpeech(line:(from:number,to:number,text:string)=>void,failed:()=>void):Promise<void> {
+    this.roomSpeech?.release();
+    const speech=new NativeMeetingSpeech(); this.roomSpeech=speech; this.speechFailed=failed;
+    try { await speech.open(line,failed); }
+    catch (_) { if (this.roomSpeech===speech) { speech.release(); this.roomSpeech=undefined; failed(); } }
+  }
+
   private generation: number = 0;
   private stopping: Promise<NativeRecordingStop> | undefined;
   private asr: speechRecognizer.SpeechRecognitionEngine | undefined;
@@ -117,6 +227,10 @@ export class NativeRecording {
           const written = fileIo.writeSync(this.fileDescriptor, data);
           if (written !== bytes) { this.readFailed = true; onLimit('recording_write_failed'); return; }
           this.activeBytes += written;
+          if (this.roomSpeech) {
+            try { this.roomSpeech.feed(this.voiceStop || Date.now()<this.silenceUntil ? new ArrayBuffer(data.byteLength) : data); }
+            catch (_) { this.roomSpeech.release(); this.roomSpeech=undefined; this.speechFailed?.(); }
+          }
         } catch (_) { this.readFailed = true; onLimit('recording_write_failed'); }
       };
       this.readListener = listener;
@@ -143,9 +257,11 @@ export class NativeRecording {
   }
 
   async stop(): Promise<NativeRecordingStop> {
+    this.voiceEpoch++; this.voiceStop?.();
     if (this.stopping) return this.stopping;
     const path = this.activePath, fd = this.fileDescriptor, bytes = this.activeBytes;
-    const capturer = this.capturer, listener = this.readListener;
+    const capturer = this.capturer, listener = this.readListener, speech=this.roomSpeech;
+    this.roomSpeech=undefined; this.speechFailed=undefined;
     this.generation++;
     this.capturer = undefined; this.readListener = undefined; this.fileDescriptor = -1;
     this.activeId = ''; this.activePath = ''; this.activeBytes = 0;
@@ -156,6 +272,7 @@ export class NativeRecording {
         try { if (capturer.state === audio.AudioState.STATE_RUNNING) await capturer.stop(); } catch (_) { }
         try { await capturer.release(); } catch (_) { }
       }
+      if (speech) await speech.finish();
       if (fd >= 0) {
         try { fileIo.fsyncSync(fd); } catch (_) { }
         try { fileIo.closeSync(fd); } catch (_) { }
@@ -168,11 +285,29 @@ export class NativeRecording {
   async save(entry: KnowledgeRecordingEntry): Promise<void> {
     this.requireReady();
     if (!this.validId(entry.id) || JSON.stringify(entry).length > 5 * 1024 * 1024) throw new Error('storage_unavailable');
-    const destination = this.manifestPath(entry.id), temporary = destination + '.tmp';
+    this.writeDocument(this.manifestPath(entry.id),JSON.stringify(entry));
+  }
+
+  saveRoom(journal:MeetingJournal):void {
+    const raw=JSON.stringify(journal);
+    if (raw.length>6*1024*1024) throw new Error('storage_unavailable');
+    this.writeDocument(this.roomPath(journal.id),raw);
+  }
+  loadRoom(id:string,profile:string,hub:string,manager:string):MeetingJournal|undefined {
+    const path=this.roomPath(id);
+    if (!fileIo.accessSync(path)) return undefined;
+    const journal=JSON.parse(fileIo.readTextSync(path)) as MeetingJournal;
+    if (journal.id!==id || journal.profileId!==profile || journal.hubId!==hub || journal.managerId!==manager ||
+      !['listener','participant'].includes(journal.role) || !Array.isArray(journal.lines) || !Array.isArray(journal.asks) ||
+      !Number.isInteger(journal.next) || journal.next<0 || journal.next>journal.lines.length) throw new Error('request_updated');
+    return journal;
+  }
+  private roomPath(id:string):string { return this.manifestPath(id).replace(/\.json$/,'.room.json'); }
+  private writeDocument(destination:string,content:string):void {
+    const temporary = destination + '.tmp';
     const file = fileIo.openSync(temporary, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
     let open = true;
     try {
-      const content = JSON.stringify(entry);
       if (fileIo.writeSync(file.fd, content) !== utf8Length(content)) throw new Error('storage_unavailable');
       fileIo.fsyncSync(file.fd);
       fileIo.closeSync(file.fd); open = false;
@@ -312,7 +447,7 @@ export class NativeRecording {
   async remove(id: string): Promise<void> {
     this.requireReady();
     if (!this.validId(id) || id === this.activeId) throw new Error('recording_busy');
-    for (const path of [this.audioPath(id), this.manifestPath(id)]) {
+    for (const path of [this.audioPath(id), this.manifestPath(id),this.roomPath(id),this.roomPath(id)+'.tmp']) {
       try { fileIo.unlinkSync(path); } catch (_) { }
     }
   }
@@ -323,14 +458,14 @@ export class NativeRecording {
     for (const name of fileIo.listFileSync(this.directory)) {
       const temporary = name.endsWith('.json.tmp');
       const manifestName = temporary ? name.slice(0, -4) : name;
-      if (!/^[0-9a-f-]{36}\.json$/i.test(manifestName)) continue;
+      if (!/^[0-9a-f-]{36}(?:\.room)?\.json$/i.test(manifestName)) continue;
       const path = this.directory + '/' + name;
       let entry: KnowledgeRecordingEntry;
       try { entry = JSON.parse(fileIo.readTextSync(path)) as KnowledgeRecordingEntry; } catch (_) { continue; }
-      const id = manifestName.slice(0, -5);
+      const id = manifestName.slice(0,36);
       if (!this.validId(id) || !entry || typeof entry.id !== 'string' || entry.id.toLowerCase() !== id.toLowerCase() || entry.profileId !== profileId) continue;
       if (this.activeId.toLowerCase() === id.toLowerCase()) await this.stop();
-      for (const ownedPath of [this.audioPath(id), this.manifestPath(id), this.manifestPath(id) + '.tmp']) {
+      for (const ownedPath of [this.audioPath(id), this.manifestPath(id), this.manifestPath(id) + '.tmp',this.roomPath(id),this.roomPath(id)+'.tmp']) {
         try { fileIo.unlinkSync(ownedPath); } catch (_) { }
       }
     }

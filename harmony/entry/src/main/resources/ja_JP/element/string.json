@@ -5951,6 +5951,674 @@
     {
       "name": "phone_new_assistant",
       "value": "新しいアシスタント"
+    },
+    {
+      "name": "phone_assistant_title",
+      "value": "アシスタント"
+    },
+    {
+      "name": "session_back_to_chat",
+      "value": "チャットに戻る"
+    },
+    {
+      "name": "knowledge_focus",
+      "value": "注目"
+    },
+    {
+      "name": "knowledge_other_active",
+      "value": "進行中のその他の項目"
+    },
+    {
+      "name": "knowledge_not_project",
+      "value": "プロジェクトではない項目"
+    },
+    {
+      "name": "phone_meeting_start",
+      "value": "会議を開始"
+    },
+    {
+      "name": "phone_todo_list",
+      "value": "リスト"
+    },
+    {
+      "name": "session_find_in_folder",
+      "value": "「{folder}」内を検索"
+    },
+    {
+      "name": "session_message_to_agent",
+      "value": "{agent} にメッセージ"
+    },
+    {
+      "name": "session_git_pull_request",
+      "value": "プルリクエスト"
+    },
+    {
+      "name": "session_git_push_before_pr",
+      "value": "先にブランチをプッシュしてからプルリクエストを作成します"
+    },
+    {
+      "name": "session_git_create_pr",
+      "value": "プルリクエストを作成"
+    },
+    {
+      "name": "project_idle_named",
+      "value": "{count} 件の待機中"
+    },
+    {
+      "name": "flow_start_chat",
+      "value": "チャットを開始"
+    },
+    {
+      "name": "flow_launcher_model_once",
+      "value": "ランチャーとモデル（今回のみ）"
+    },
+    {
+      "name": "flow_directory_address_hint",
+      "value": "上のパスを編集し、Return で移動できます。~ はホームフォルダです。"
+    },
+    {
+      "name": "flow_model_default_hint",
+      "value": "モデルを指定しない場合、ランチャーの既定値を使います。"
+    },
+    {
+      "name": "flow_model_count",
+      "value": "{count} 個のモデル"
+    },
+    {
+      "name": "flow_model_id_search",
+      "value": "検索またはモデル ID を入力"
+    },
+    {
+      "name": "project_pending_count",
+      "value": "保留中 {count} 件"
+    },
+    {
+      "name": "flow_model_manual_hint",
+      "value": "一覧にないモデルは、ゲートウェイのモデルを含め、ID を入力して使用できます。"
+    },
+    {
+      "name": "session_git_no_pr",
+      "value": "このブランチにはまだプルリクエストがありません"
+    },
+    {
+      "name": "session_git_pr_read_failed",
+      "value": "プルリクエストを読み込めませんでした"
+    },
+    {
+      "name": "session_git_pr_body",
+      "value": "説明"
+    },
+    {
+      "name": "session_git_pr_draft",
+      "value": "下書き"
+    },
+    {
+      "name": "chat_recap_written",
+      "value": "{time}に作成"
+    },
+    {
+      "name": "session_git_partly_staged",
+      "value": "一部をステージ済み"
+    },
+    {
+      "name": "session_git_file_count",
+      "value": "{count} 件のファイル"
+    },
+    {
+      "name": "session_git_base_branch",
+      "value": "ベースブランチ"
+    },
+    {
+      "name": "phone_record_meeting",
+      "value": "会議"
+    },
+    {
+      "name": "phone_record_note",
+      "value": "メモ"
+    },
+    {
+      "name": "phone_start_note",
+      "value": "メモを開始"
+    },
+    {
+      "name": "phone_meeting_calendar",
+      "value": "カレンダーの予定名を使う"
+    },
+    {
+      "name": "phone_meeting_calendar_empty",
+      "value": "今日の予定はありません"
+    },
+    {
+      "name": "phone_meeting_local_transcription",
+      "value": "この端末で文字起こし"
+    },
+    {
+      "name": "phone_calendar_day",
+      "value": "日"
+    },
+    {
+      "name": "phone_calendar_week",
+      "value": "週"
+    },
+    {
+      "name": "phone_calendar_month",
+      "value": "月"
+    },
+    {
+      "name": "phone_agent_plan_approval",
+      "value": "プランの承認待ち"
+    },
+    {
+      "name": "phone_agent_asks",
+      "value": "{agent} からの質問"
+    },
+    {
+      "name": "phone_agent_needs_approval",
+      "value": "承認待ち"
+    },
+    {
+      "name": "session_task_more",
+      "value": "ほか {count} 件"
+    },
+    {
+      "name": "session_task_approve_run",
+      "value": "承認して自動実行"
+    },
+    {
+      "name": "session_task_auto_edits",
+      "value": "編集を自動承認"
+    },
+    {
+      "name": "session_task_return",
+      "value": "差し戻す"
+    },
+    {
+      "name": "session_brief_stage_plan",
+      "value": "プラン"
+    },
+    {
+      "name": "session_brief_stage_develop",
+      "value": "開発"
+    },
+    {
+      "name": "session_brief_stage_review",
+      "value": "レビュー"
+    },
+    {
+      "name": "session_brief_stage_merge",
+      "value": "マージ"
+    },
+    {
+      "name": "session_brief_stage_deploy",
+      "value": "デプロイ"
+    },
+    {
+      "name": "session_brief_stage_verify",
+      "value": "検証済み"
+    },
+    {
+      "name": "session_brief_past",
+      "value": "過去{hours}時間：完了 {done} 件・未達 {failed} 件"
+    },
+    {
+      "name": "session_git_stage_all",
+      "value": "すべてステージ"
+    },
+    {
+      "name": "session_git_unstage_all",
+      "value": "すべてステージ解除"
+    },
+    {
+      "name": "phone_keyboard_settings",
+      "value": "キーボード設定"
+    },
+    {
+      "name": "phone_dictation_automatic_note",
+      "value": "自動では下書きと最近の発言から、端末内の中国語認識かキーボード入力を選びます。判定できない場合は前回の認識言語、その次にアプリの言語を使用します。"
+    },
+    {
+      "name": "phone_meeting_invite",
+      "value": "Persona を招待"
+    },
+    {
+      "name": "phone_meeting_remove",
+      "value": "会議から外す"
+    },
+    {
+      "name": "phone_meeting_onscreen",
+      "value": "画面上で回答"
+    },
+    {
+      "name": "phone_meeting_aloud",
+      "value": "声で回答"
+    },
+    {
+      "name": "phone_meeting_private",
+      "value": "非公開の会議"
+    },
+    {
+      "name": "phone_meeting_room",
+      "value": "会議中の会話"
+    },
+    {
+      "name": "phone_meeting_live_note",
+      "value": "Persona を招待すると、確定した文字起こしをこの会議の会話に共有します。音声は端末に残ります。"
+    },
+    {
+      "name": "phone_meeting_live_ready",
+      "value": "Persona は会議に参加しています"
+    },
+    {
+      "name": "phone_meeting_live_starting",
+      "value": "会議の会話に接続中…"
+    },
+    {
+      "name": "phone_meeting_unavailable",
+      "value": "現在 Persona はこの会議に参加できません。"
+    },
+    {
+      "name": "phone_meeting_retry",
+      "value": "接続が中断しました。会議の文字起こしは端末に保存されています。"
+    },
+    {
+      "name": "phone_meeting_full",
+      "value": "ライブ文字起こしが上限に達しました。"
+    },
+    {
+      "name": "phone_meeting_ask",
+      "value": "この会議で質問"
+    },
+    {
+      "name": "phone_meeting_question",
+      "value": "この会議について質問"
+    },
+    {
+      "name": "phone_meeting_closed",
+      "value": "会議が終了しました"
+    },
+    {
+      "name": "phone_meeting_role",
+      "value": "Persona のデフォルトの役割"
+    },
+    {
+      "name": "phone_meeting_default_note",
+      "value": "Persona を招待したときの役割を選びます。会議ごとに変更できます。"
+    },
+    {
+      "name": "phone_meeting_speech_unavailable",
+      "value": "ライブ認識を使用できません。端末への録音と質問の入力はできます。"
+    },
+    {
+      "name": "phone_meeting_off",
+      "value": "オフ"
+    },
+    {
+      "name": "phone_meeting_topics",
+      "value": "トピック"
+    },
+    {
+      "name": "phone_meeting_no_answer",
+      "value": "この会議では質問に回答できませんでした。"
+    },
+    {
+      "name": "phone_knowledge_selection",
+      "value": "ナレッジの選択"
+    },
+    {
+      "name": "ks_individual",
+      "value": "個別設定のチャットとドキュメント"
+    },
+    {
+      "name": "ks_individual_hint",
+      "value": "ここでの設定は下のすべてのルールより優先されます。削除すると、そのチャットやドキュメントは再びルールに従います。"
+    },
+    {
+      "name": "ks_add_chat",
+      "value": "チャットを追加…"
+    },
+    {
+      "name": "ks_add_doc",
+      "value": "ドキュメントを追加…"
+    },
+    {
+      "name": "ks_remove",
+      "value": "設定を削除"
+    },
+    {
+      "name": "ks_priority",
+      "value": "優先度 {level}"
+    },
+    {
+      "name": "ks_messages",
+      "value": "チャットのルール · 優先度 1"
+    },
+    {
+      "name": "ks_docs",
+      "value": "ドキュメントのルール · 優先度 1"
+    },
+    {
+      "name": "ks_up",
+      "value": "上へ移動"
+    },
+    {
+      "name": "ks_down",
+      "value": "下へ移動"
+    },
+    {
+      "name": "ks_join",
+      "value": "「{name}」を優先度 {level} に結合"
+    },
+    {
+      "name": "ks_split",
+      "value": "「{name}」を別の優先度に分ける"
+    },
+    {
+      "name": "ks_store",
+      "value": "一致した内容を保存"
+    },
+    {
+      "name": "ks_text_days",
+      "value": "テキストの保持日数"
+    },
+    {
+      "name": "ks_attachment_days",
+      "value": "添付ファイルの保持日数"
+    },
+    {
+      "name": "ks_include_all",
+      "value": "@all もメンションとして扱う"
+    },
+    {
+      "name": "ks_context",
+      "value": "前後に残すメッセージ数"
+    },
+    {
+      "name": "ks_context_hint",
+      "value": "自分の各メッセージの前後 0〜200 件を残し、後から文脈がわかるようにします。空欄は 50 件です。"
+    },
+    {
+      "name": "ks_days_hint",
+      "value": "1〜36500 日。空欄の場合はハブの保持設定を使います。添付ファイルがテキストより長く保持されることはありません。"
+    },
+    {
+      "name": "ks_doc_days_hint",
+      "value": "1〜36500 日。空欄の場合、削除期限は設定されません。"
+    },
+    {
+      "name": "ks_invalid",
+      "value": "上記の範囲の整数を入力するか、空欄にしてください。"
+    },
+    {
+      "name": "ks_source",
+      "value": "提供元"
+    },
+    {
+      "name": "ks_mode",
+      "value": "保存する内容"
+    },
+    {
+      "name": "ks_days",
+      "value": "保持日数"
+    },
+    {
+      "name": "ks_chat_editor",
+      "value": "チャットの設定"
+    },
+    {
+      "name": "ks_doc_editor",
+      "value": "ドキュメントの設定"
+    },
+    {
+      "name": "ks_list_chats",
+      "value": "ナレッジにすでに内容があるチャットです。メール、Issue、プルリクエストは常に保存されます。"
+    },
+    {
+      "name": "ks_list_docs",
+      "value": "ナレッジにすでにあるドキュメントです。"
+    },
+    {
+      "name": "ks_empty_chat",
+      "value": "チャットはまだありません"
+    },
+    {
+      "name": "ks_empty_doc",
+      "value": "ドキュメントはまだありません"
+    },
+    {
+      "name": "ks_empty_hint",
+      "value": "ナレッジに内容が保存されると、ここで個別に設定できます。"
+    },
+    {
+      "name": "ks_off",
+      "value": "オフ"
+    },
+    {
+      "name": "ks_on",
+      "value": "オン"
+    },
+    {
+      "name": "ks_day_count",
+      "value": "{days}日"
+    },
+    {
+      "name": "ks_skip",
+      "value": "読み取らない"
+    },
+    {
+      "name": "ks_rules_chat",
+      "value": "メンションと自分の発言のみ"
+    },
+    {
+      "name": "ks_rules_doc",
+      "value": "ルールに従う"
+    },
+    {
+      "name": "ks_all",
+      "value": "すべて保存"
+    },
+    {
+      "name": "ks_skip_hint",
+      "value": "新しい内容は、自分へのメンションも含めて読み取りも保存もしません。保存済みの内容は残ります。"
+    },
+    {
+      "name": "ks_rules_chat_hint",
+      "value": "他のルールにかかわらず、「自分へのメンション」と「自分の発言」のルールで残る内容だけを保存します。"
+    },
+    {
+      "name": "ks_rules_doc_hint",
+      "value": "ドキュメントのルールに従って読み取り、保存します。"
+    },
+    {
+      "name": "ks_all_chat_hint",
+      "value": "すべてのメッセージを保存します。日数を空欄にすると、適用されるルールまたはハブのテキスト保持期間に従います。"
+    },
+    {
+      "name": "ks_all_doc_hint",
+      "value": "ルールにかかわらずこのドキュメントを保存します。日数を空欄にすると削除期限は設定されません。"
+    },
+    {
+      "name": "ks_not_read",
+      "value": "読み取らない"
+    },
+    {
+      "name": "ks_personal",
+      "value": "メンションと自分の発言"
+    },
+    {
+      "name": "ks_by_rules",
+      "value": "ルールに従う"
+    },
+    {
+      "name": "ks_everything",
+      "value": "すべて"
+    },
+    {
+      "name": "ks_old_hub",
+      "value": "このハブはまだナレッジの選択に対応していません。ハブを更新すると、ここで保存する内容を選べます。"
+    },
+    {
+      "name": "ks_future",
+      "value": "このハブの選択には、このバージョンのアプリが認識できない設定が含まれています。ここで変更するにはアプリを更新してください。何も変更していません。"
+    },
+    {
+      "name": "ks_changed",
+      "value": "選択の設定が別のデバイスで変更されました。確認してからもう一度お試しください。"
+    },
+    {
+      "name": "ks_no_id",
+      "value": "ナレッジにこの項目の取得元が記録されていないため、個別設定を追加できません。"
+    },
+    {
+      "name": "ks_not_selectable",
+      "value": "メール、Issue、プルリクエストは常に保存され、選択の設定は適用されません。"
+    },
+    {
+      "name": "ks_topics",
+      "value": "ナレッジポイントをトピックごとに整理"
+    },
+    {
+      "name": "ks_map",
+      "value": "ナレッジマップを開く"
+    },
+    {
+      "name": "ks_map_title",
+      "value": "ナレッジマップ"
+    },
+    {
+      "name": "ks_topic",
+      "value": "トピック"
+    },
+    {
+      "name": "ks_removed",
+      "value": "設定を削除しました"
+    },
+    {
+      "name": "ks_undo",
+      "value": "取り消す"
+    },
+    {
+      "name": "ks_priority_hint",
+      "value": "上の優先度から順に確認します。一致するルールがある最初の優先度で決まり、一致したルールが 1 つでもオンなら保存、すべてオフなら保存しません。それより下は確認しません。ルールをオフにしても新しいメッセージの保存が止まるだけで、保存済みの内容は保持日数が過ぎるまで残ります。"
+    },
+    {
+      "name": "ks_docs_hint",
+      "value": "ドキュメントも同じ順序で判定します。ここで日数を設定した場合だけ削除期限が付き、設定しなければ従来どおり保持されます。"
+    },
+    {
+      "name": "ks_rule_mentions",
+      "value": "自分へのメンション"
+    },
+    {
+      "name": "ks_rule_mine",
+      "value": "自分の発言"
+    },
+    {
+      "name": "ks_rule_dm",
+      "value": "個人チャット"
+    },
+    {
+      "name": "ks_rule_group",
+      "value": "グループチャット"
+    },
+    {
+      "name": "ks_rule_bot",
+      "value": "ボットとアプリ"
+    },
+    {
+      "name": "ks_rule_official",
+      "value": "公式アカウント"
+    },
+    {
+      "name": "ks_rule_muted",
+      "value": "ミュートしたチャット"
+    },
+    {
+      "name": "ks_rule_collapsed",
+      "value": "折りたたんだチャット"
+    },
+    {
+      "name": "ks_rule_done",
+      "value": "完了したチャット"
+    },
+    {
+      "name": "ks_rule_comment_mentions",
+      "value": "コメントでのメンション"
+    },
+    {
+      "name": "ks_rule_authored",
+      "value": "自分が作成したドキュメント"
+    },
+    {
+      "name": "ks_rule_viewed",
+      "value": "自分が閲覧したドキュメント"
+    },
+    {
+      "name": "ks_detail_mentions",
+      "value": "どのチャットでも、自分宛ての @メンションを含むメッセージ"
+    },
+    {
+      "name": "ks_detail_mine",
+      "value": "自分が送ったメッセージと、その前後のメッセージ"
+    },
+    {
+      "name": "ks_detail_dm",
+      "value": "相手との 1 対 1 のチャット"
+    },
+    {
+      "name": "ks_detail_group",
+      "value": "ミュート、折りたたみ、完了のいずれもしていないグループ"
+    },
+    {
+      "name": "ks_detail_bot",
+      "value": "ボット、アプリ、AI エージェントとのチャット"
+    },
+    {
+      "name": "ks_detail_official",
+      "value": "公式・サービス・システムのアカウント"
+    },
+    {
+      "name": "ks_detail_muted",
+      "value": "ミュートしたチャット"
+    },
+    {
+      "name": "ks_detail_collapsed",
+      "value": "折りたたんだチャット"
+    },
+    {
+      "name": "ks_detail_done",
+      "value": "完了にしたチャット"
+    },
+    {
+      "name": "ks_detail_comment_mentions",
+      "value": "コメントに自分宛ての @メンションがあるドキュメント"
+    },
+    {
+      "name": "ks_detail_authored",
+      "value": "自分が作成したドキュメント"
+    },
+    {
+      "name": "ks_detail_viewed",
+      "value": "自分が開いたドキュメント"
+    },
+    {
+      "name": "ks_detail_doc_mentions",
+      "value": "自分宛ての @メンションがあるドキュメント"
+    },
+    {
+      "name": "ks_load_error",
+      "value": "ナレッジの選択を読み込めませんでした"
+    },
+    {
+      "name": "ks_save_error",
+      "value": "ナレッジの選択を保存できませんでした"
+    },
+    {
+      "name": "ks_discard",
+      "value": "変更を破棄"
+    },
+    {
+      "name": "phone_meeting_voice_unavailable",
+      "value": "回答を表示しました。この端末では読み上げられませんでした。"
     }
   ]
 }

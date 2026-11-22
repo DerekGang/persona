@@ -69,9 +69,9 @@ test('magnified project and Agent views keep symbols inside their slots and give
  assert.match(projects, /GridRow\(\{columns:nativeEnvironment\.fontScale >= 1\.5 \? 1 : 2/);
  assert.match(agents, /Text\(tr\(QUICK_LABELS\[index\]\)\)\.fontSize\(14\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
  assert.match(picker, /TextInput\(\{text:this\.address[^\n]+\.height\(Math\.max\(46, 22 \* nativeEnvironment\.fontScale \+ 14\)\)/);
- assert.match(launch, /width\(this\.environment\.fontScale >= 1\.5 \? Math\.min\(250,130 \* this\.environment\.fontScale\) : 122\)/);
+ assert.match(launch, /width\(this\.environment\.fontScale >= 1\.5 \? Math\.min\(250,130 \* this\.environment\.fontScale\) : 138\)/);
  assert.match(launch, /this\.machineChoice\(m\)[\s\S]{0,160}scrollable\(ScrollDirection\.Horizontal\)/);
- assert.match(launch, /Text\(tr\('new_agent'\)\)\.fontSize\(18\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
+ assert.match(launch, /Text\(tr\('new_chat'\)\)\.fontSize\(18\)\.maxFontScale\(Tokens\.navigationTextMaxScale\)/);
 });
 
 test('magnified Inbox filters can grow and row icons keep their layout slots', () => {
@@ -84,6 +84,9 @@ test('magnified Inbox filters can grow and row icons keep their layout slots', (
   assert.doesNotMatch(filters, /\.height\(34\)/);
   assert.match(filters, /\.scrollable\(ScrollDirection.Horizontal\)/);
   assert.doesNotMatch(list, /SymbolGlyph\([^\n]*?\)\.fontSize\(\d+\)/);
-  assert.match(list, /Flex\(\{ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween/);
+  assert.match(list, /Flex\(\{wrap:FlexWrap.Wrap,space:\{main:LengthMetrics.vp\(5\)/);
+  assert.ok(list.indexOf('this.sourceBar()') < list.indexOf('this.inboxSearch(true)'));
+  assert.match(filters, /this.workspace.sourceFilter=account \? 'all' : value/);
+  assert.match(filters, /this.workspace.accountFilter=account \? value : 'all'/);
   assert.match(list, /\.constraintSize\(\{ minHeight: 38 \}\)/);
 });

@@ -24,6 +24,31 @@ class KnowledgeOwner {
   }
 }
 
+// The list encodes project duration and status as “short · active”; detail responses put those fields under meta.
+export class KnowledgeListEntry {
+  readonly priority: string;
+  readonly relevance: number;
+  readonly duration: string;
+  readonly section: string;
+  readonly tags: string[];
+  readonly summary: string;
+  readonly updated: string;
+
+  constructor(row: ResourceRow) {
+    const data = row.data(), meta = Wire.object(data, 'meta');
+    const extra = Wire.text(data, 'extra').split('·').map((part: string) => part.trim());
+    this.priority = Wire.text(data, 'importance') || Wire.text(meta, 'importance');
+    this.relevance = Wire.number(data, 'relevance', Wire.number(meta, 'relevance'));
+    this.tags = Wire.strings(data, 'tags').length ? Wire.strings(data, 'tags') : Wire.strings(meta, 'tags');
+    this.summary = Wire.text(data, 'one_line') || row.detail;
+    this.updated = Wire.text(data, 'updated') || Wire.text(data, 'started_at');
+    this.duration = row.path === 'projects' ? extra[0] || Wire.text(meta, 'kind') : '';
+    const status = extra[1] || Wire.text(meta, 'status') || row.state;
+    this.section = row.path !== 'projects' ? 'all' : status === 'ignored' ? 'ignored' : status === 'done' ? 'done' :
+      this.priority === 'P0' || this.priority === 'P1' ? 'focus' : 'active';
+  }
+}
+
 export class KnowledgeSearchHit {
   entry: ResourceRow = new ResourceRow();
   count: number = 0;

@@ -403,6 +403,11 @@ export function interactionElicitationUrl(request: Decision): string {
   return hostname ? raw : '';
 }
 
+export function recordedPlanMode(request:Decision):string {
+  const mode=Wire.text(rawInteraction(request),'plan_then');
+  return ['default','acceptEdits','auto','bypassPermissions'].includes(mode) ? mode : '';
+}
+
 export function interactionCanSubmit(request: Decision, readOnly: boolean = false): boolean {
   return !readOnly && !!request.id && request.status === 'open' && requestStatus(request) === 'open';
 }
@@ -430,6 +435,11 @@ export function interactionResolution(request: Decision, action: string, values:
     if (action !== 'approve' && action !== 'deny' && action !== 'reject') throw new Error('unsupported');
     const approved = action === 'approve';
     const body = Wire.payload(['approve'], [approved]);
+    const mode=Wire.text(values,'mode'), recorded=recordedPlanMode(request);
+    if (approved && mode) {
+      if (recorded ? mode!==recorded : !['bypassPermissions','acceptEdits'].includes(mode)) throw new Error('request_updated');
+      body['mode']=mode;
+    }
     if (!approved) body['feedback'] = Wire.text(values, 'feedback');
     return body;
   }

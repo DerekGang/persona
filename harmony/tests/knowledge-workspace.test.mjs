@@ -18,7 +18,7 @@ registerHooks({
   }
 });
 
-const { KnowledgeWorkspace, RecordingFactsDraft } = await import('../entry/src/main/ets/models/KnowledgeWorkspace.ets');
+const { KnowledgeWorkspace, KnowledgeListEntry, RecordingFactsDraft } = await import('../entry/src/main/ets/models/KnowledgeWorkspace.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
 
 function clone(value) { return structuredClone(value); }
@@ -47,6 +47,16 @@ function entry(kind, id, manager = 'work', fields = {}) {
   row.path = kind; row.manager = manager;
   return row;
 }
+
+test('phone project sections match the list wire format and cached detail metadata', () => {
+  const fromList = new KnowledgeListEntry(entry('projects','focus','work',{extra:'short · active',importance:'P0',relevance:92,tags:['mobile']}));
+  assert.deepEqual([fromList.section,fromList.duration,fromList.priority,fromList.relevance,fromList.tags], ['focus','short','P0',92,['mobile']]);
+  for (const [extra,importance,section] of [['long · paused','P2','active'],['short · done','P0','done'],['long · ignored','P1','ignored']])
+    assert.equal(new KnowledgeListEntry(entry('projects','id','work',{extra,importance})).section,section);
+  const cached = new KnowledgeListEntry(entry('projects','old','work',{meta:{kind:'long',status:'active',importance:'P1',relevance:80,tags:['old']}}));
+  assert.deepEqual([cached.section,cached.duration,cached.relevance,cached.tags], ['focus','long',80,['old']]);
+  assert.equal(new KnowledgeListEntry(entry('recordings','id','work',{importance:'P0'})).section,'all');
+});
 
 function fixture(options = {}) {
   const shared = { calls: [], views: new Map(), request: options.request, handoffs: [], createdAgents: [], blocked: new Set() };

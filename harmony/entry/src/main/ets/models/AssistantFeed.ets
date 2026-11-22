@@ -469,24 +469,8 @@ export class AssistantFeedModel {
     return this.itemLookupStatus;
   }
 
-  private todoIds(): string[] {
-    const ids: string[] = [];
-    this.taskCards.forEach((card: Record<string, Object>) => { const id = Wire.text(card, 'todo_id'); if (id && !ids.includes(id)) ids.push(id); });
-    Object.keys(this.plans).forEach((planId: string) => Wire.rows(Wire.record(this.plans[planId]), 'tasks').forEach((task: Record<string, Object>) => {
-      const id = Wire.text(task, 'todo_id'); if (id && !ids.includes(id)) ids.push(id);
-    }));
-    this.items.forEach((item: Record<string, Object>) => {
-      if (['task', 'receipt', 'report', 'review', 'answered', 'routed'].includes(Wire.text(item, 'kind'))) {
-        const id = Wire.text(item, 'ref'); if (id && !ids.includes(id)) ids.push(id);
-      }
-    });
-    return ids;
-  }
-
   private async refreshTodos(run: number): Promise<void> {
     if (!this.current(run) || !this.repository) return;
-    const ids = this.todoIds();
-    if (!ids.length) { this.todos = []; this.todoError = ''; this.todosReady = true; return; }
     let path = '/api/v1/todos';
     if (this.owner) path += '?manager=' + segment(this.owner);
     this.todosReady = false;
@@ -497,7 +481,7 @@ export class AssistantFeedModel {
       this.todos = Wire.rows(result, 'todos').filter((todo: Record<string, Object>) => {
         const id = Wire.text(todo, 'id');
         const manager = Wire.text(todo, 'manager', this.owner);
-        return ids.includes(id) && manager === this.owner && Wire.text(todo, 'origin') === this.conversationId;
+        return !!id && manager === this.owner && Wire.text(todo, 'origin') === this.conversationId;
       });
       this.todoError = '';
       this.todosReady = true;
@@ -1109,14 +1093,14 @@ export class AssistantFeedModel {
     const seen: string[] = [];
     this.taskCards.forEach((card: Record<string, Object>) => {
       const id = Wire.text(card, 'todo_id');
-      if (id && this.todo(id) && !seen.includes(id)) { rows.push(card); seen.push(id); }
+      if (id && Object.keys(this.todo(id)).length && !seen.includes(id)) { rows.push(card); seen.push(id); }
     });
     // Legacy servers may omit task_cards; feed refs and started plan todo ids still identify real tasks.
     this.items.forEach((item: Record<string, Object>) => {
       const kind = Wire.text(item, 'kind');
       if (['task', 'receipt', 'report', 'review'].includes(kind)) {
         const id = Wire.text(item, 'ref');
-        if (id && this.todo(id) && !seen.includes(id)) {
+        if (id && Object.keys(this.todo(id)).length && !seen.includes(id)) {
           rows.push(Wire.payload(['id', 'todo_id', 'state'], ['todo:' + id, id, 'unknown'])); seen.push(id);
         }
       }
@@ -1125,12 +1109,20 @@ export class AssistantFeedModel {
       const plan = Wire.record(this.plans[planId]);
       Wire.rows(plan, 'tasks').forEach((task: Record<string, Object>, index: number) => {
         const id = Wire.text(task, 'todo_id');
-        if (id && this.todo(id) && !seen.includes(id)) {
+        if (id && Object.keys(this.todo(id)).length && !seen.includes(id)) {
           rows.push(Wire.payload(['id', 'plan_id', 'index', 'todo_id', 'at', 'updated_at', 'state'],
             ['plan:' + planId + ':' + String(index), planId, index, id, Wire.text(plan, 'created_at'), Wire.text(plan, 'updated_at'), 'unknown']));
           seen.push(id);
         }
       });
+    });
+    // A task remains in its supervising conversation after its original feed entry is paged out.
+    this.todos.forEach((todo:Record<string,Object>) => {
+      const id=Wire.text(todo,'id');
+      if (id && !seen.includes(id) && Wire.text(todo,'origin')===this.conversationId && Wire.text(todo,'manager',this.owner)===this.owner) {
+        rows.push(Wire.payload(['id','todo_id','state','at'],['todo:'+id,id,'unknown',Wire.text(todo,'created_at')]));
+        seen.push(id);
+      }
     });
     return rows.sort((left: Record<string, Object>, right: Record<string, Object>) => timestamp(Wire.text(left, 'at')) - timestamp(Wire.text(right, 'at')));
   }

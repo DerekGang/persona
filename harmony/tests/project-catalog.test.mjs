@@ -17,9 +17,9 @@ registerHooks({
   }
 });
 const { ProjectCatalog, ProjectBrowserState, projectDirectory } = await import('../entry/src/main/ets/models/ProjectCatalog.ets');
-const { projectOutline, projectHosts, worktreeSessionLines } = await import('../entry/src/main/ets/models/ProjectOutline.ets');
+const { projectOutline, projectHosts, projectSearchAgents, worktreeSpaceCards } = await import('../entry/src/main/ets/models/ProjectOutline.ets');
 const { ResourceRow } = await import('../entry/src/main/ets/models/Wire.ets');
-const { SessionSpace, sessionSpace } = await import('../entry/src/main/ets/models/SessionSpace.ets');
+const { SessionSpace, sessionSpace, worktreeForSessionSpace } = await import('../entry/src/main/ets/models/SessionSpace.ets');
 function row(kind, value, group = 'home', manager = 'work') {
   const item = ResourceRow.from(value, kind);
   item.group = group;
@@ -33,6 +33,22 @@ function session(id, extra = {}) {
   return row('session', { session_id: id, machine_id: 'mac', cwd: '/repo/feature', title: id, ...extra });
 }
 const machine = row('machine', { id: 'mac', name: 'Studio', online: true });
+
+test('opening a terminal space resolves its owning checkout even when the two IDs differ', () => {
+  const selected = session('selected', {space_kind: 'herdr', space_id: 'w1'});
+  const space = sessionSpace(selected, [selected], [], 'home', 'work');
+  const tree = (checkout, id, main, group = 'home') => ({
+    key: JSON.stringify([group, 'work', 'mac', 'session-directory', checkout]), group, manager: 'work', machine: 'mac', main,
+    agents: [{ row: {id}, spaceKind: 'herdr', spaceId: 'w1' }]
+  });
+  const primary = tree('/repo', 'lead', true);
+  const branch = tree('/repo/review', 'selected', false);
+  const elsewhere = tree('/repo', 'selected', true, 'elsewhere');
+  assert.notEqual(space.key, primary.key);
+  assert.equal(worktreeForSessionSpace(space, [{trees: [elsewhere]}, {trees: [branch, primary]}]), primary);
+  assert.equal(worktreeForSessionSpace(space, [{trees: [branch]}]), branch);
+  assert.equal(worktreeForSessionSpace(space, [{trees: [elsewhere]}]), undefined);
+});
 
 test('repository scroll anchors keep the same worktree when the summary scrolls with the list', () => {
   const source = readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets', import.meta.url), 'utf8');
@@ -73,7 +89,8 @@ test('a mounted worktree card opens the newest scoped row and rejects cards remo
   const Page=new Function('return '+stripTypeScriptTypes('class Page {'+method+'}'))();
   const live=session('same'),foreign=session('same');foreign.group='elsewhere';
   const current={row:live};let agents=[current];const opened=[];
-  const page=Object.assign(new Page(),{page:'project_tree',target:'checkout',catalog:{tree:key=>key==='checkout'?{agents}:undefined},chooseAgent:agent=>opened.push(agent)});
+  const page=Object.assign(new Page(),{page:'project_tree',target:'checkout',chooseAgent:agent=>opened.push(agent)});
+  Object.defineProperty(page,'detailSessions',{get:()=>agents.map(agent=>({agent}))});
   page.openSpaceCard('checkout',foreign.key());page.openSpaceCard('another',live.key());assert.deepEqual(opened,[]);
   page.openSpaceCard('checkout',live.key());assert.deepEqual(opened,[current]);
   agents=[];page.openSpaceCard('checkout',live.key());assert.deepEqual(opened,[current]);
@@ -367,7 +384,7 @@ test('large projects expose a reachable Show All without clipping downstream wor
   assert.equal(lines.filter(l => l.kind==='session').length,29);assert.ok(!lines.find(l=>l.kind==='more'));
 });
 
-test('a host tab groups real pane sessions in pane order, shares the fold with worktree detail, and reveals a searched child', () => {
+test('a host tab groups real pane sessions in pane order, keeps its space cards available when folded, and reveals a searched child', () => {
   const pane = (id, overrides) => session(id, {
     cwd:'/repo/weather', space_kind:'herdr', space_id:'w1', space_name:'weather', slot_id:'w1:t4', slot_index:4,
     slot_name:'release', agent:'claude', ...overrides
@@ -380,7 +397,7 @@ test('a host tab groups real pane sessions in pane order, shares the fold with w
     pane('no-slot',{ slot_id:null, state:'working', title:'Loose terminal' })
   ];
   const projects=projectDirectory([],rows,[machine]), state=new ProjectBrowserState(), tree=projects[0].roots[0];
-  const visible=()=>projectOutline(projects,state), detail=()=>worktreeSessionLines(projects[0],tree,state);
+  const visible=()=>projectOutline(projects,state), detail=()=>worktreeSpaceCards(projects,tree);
   const group=visible().find(line=>line.kind==='tab');
   assert.equal(group.tabTitle,'release');assert.equal(group.count,3);assert.equal(group.tabLead.row.id,'child-z');
   const members=visible().filter(line=>line.paneName);
@@ -391,11 +408,78 @@ test('a host tab groups real pane sessions in pane order, shares the fold with w
   assert.deepEqual(visible().filter(line=>line.kind==='session').map(line=>line.agent.row.id).sort(),rows.map(row=>row.id).sort());
   state.toggle(group.key,true);
   assert.deepEqual(visible().filter(line=>line.kind==='session').map(line=>line.agent.row.id).sort(),['no-slot','single']);
-  assert.equal(detail().find(line=>line.kind==='tab').open,false);
+  assert.deepEqual(detail().filter(line=>line.paneName).map(line=>line.agent.row.id), ['first','child-a','child-z']);
   state.query='deployment';
   const hit=visible().filter(line=>line.kind==='session');assert.equal(hit.length,1);
   assert.equal(hit[0].agent.row,rows[0]);assert.equal(hit[0].paneName,'Claude 2');assert.equal(visible().find(line=>line.kind==='tab').open,true);
   state.query='';assert.equal(visible().find(line=>line.kind==='tab').open,false);
+});
+
+test('the space grid collects live members across Git checkouts and rejects other hosts, owners and ambiguous local spaces', () => {
+  const card=(id,path,space='s',extra={},group='home',manager='work')=>row('session',{session_id:id,title:id,machine_id:'mac',
+    cwd:path,state:'working',repo_root:'/repo',worktree:path,space_id:space,space_kind:'herdr',slot_id:'t'+id,...extra},group,manager);
+  const rows=[
+    card('last','/repo', 's',{state:'idle',slot_index:9}),card('first','/repo','s',{state:'needs_you',slot_index:6,pending_interactions:2}),
+    card('child','/repo/widget','s',{slot_index:5}),card('unread','/other','s',{state:'unread',slot_index:5}),
+    card('other-space','/repo/fix','else'),card('other-engine','/other-engine','s',{space_kind:'orca'}),
+    card('other-host','/repo','s',{machine_id:'second'}),card('other-hub','/repo','s',{},'other'),card('other-manager','/repo','s',{},'home','other'),
+    card('offline','/repo/widget','s',{state:'offline'}),card('archived','/repo/widget','s',{archived:true})
+  ];
+  const grid=rows=>{
+    const projects=projectDirectory([],rows,[machine]),owner=projects.flatMap(p=>p.trees).find(t=>t.agents.some(a=>a.row.id==='first'));
+    return worktreeSpaceCards(projects,owner).map(line=>line.agent);
+  };
+  assert.deepEqual(grid(rows).map(a=>a.row.id),['first','unread','child','last']);
+  assert.equal(grid(rows)[0].pending,2);
+  assert.deepEqual(grid([...rows,card('unrelated-on-same-path','/repo','r')]).map(a=>a.row.id),['first','unrelated-on-same-path','last']);
+});
+
+test('project quick filters retain matching panes and disclose repositories inline without changing saved browsing folds', () => {
+  const make=(id,state,extra={})=>session(id,{cwd:'/repo/weather',repo_root:'/repo/weather',title:'weather '+id,state,...extra});
+  const muted=make('muted-work','working'), projects=projectDirectory([],[
+    muted,make('need','needs_you'),make('read','unread'),make('active','working'),
+    make('watch','working',{background_waiting:true}),make('archived','unread',{archived:true})
+  ],[machine]);
+  const browser=new ProjectBrowserState();browser.query='weather';
+  const query=kind=>projectOutline(projects,browser,'','',kind,a=>a.row.id==='muted-work'||a.row.id==='need');
+  const ids=kind=>query(kind).filter(l=>l.kind==='session').map(l=>l.agent.row.id);
+  assert.deepEqual(ids('working'),['active']);assert.deepEqual(ids('agent_group_unread'),['read']);
+  assert.deepEqual(ids('needs_you'),['need']);assert.deepEqual(ids('agent_group_background'),['watch']);
+  const repo=query('working').find(l=>l.kind==='project');
+  browser.toggleSearch(repo.key);assert.deepEqual(ids('working'),[]);assert.ok(query('working').find(l=>l.key===repo.key));
+  assert.equal(browser.open(repo.key,true),true);browser.resetSearchFolds();assert.deepEqual(ids('working'),['active']);
+});
+
+test('typing a repository name or a distinct Agent title narrows the status counts to the same Agent rows', () => {
+  const rows=[session('one',{title:'a special issue',cwd:'/repo/weather',state:'needs_you'}),
+    session('two',{title:'General',cwd:'/repo/weather',state:'unread'}),
+    session('three',{title:'Outside',cwd:'/repo/other',state:'working'})];
+  const projects=projectDirectory([],rows,[machine]);
+  const matches=q=>projects.flatMap(p=>projectSearchAgents(p,q)).map(a=>a.row.id).sort();
+  assert.deepEqual(matches('weather'),['one','two']);assert.deepEqual(matches('special'),['one']);
+  assert.deepEqual(matches('never-matches'),[]);assert.deepEqual(matches(''),['one','three','two']);
+});
+
+test('a mounted repository header reads the current fold on every tap of its original callback', () => {
+  const body=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8')
+    .match(/^  private toggle\(line:[\s\S]+?^  \}/m)[0];
+  const Page=new Function('return '+stripTypeScriptTypes('class Page {'+body+'}'))(),state=new ProjectBrowserState();
+  const projects=projectDirectory([],[session('one',{state:'working'})],[machine]),received=[];
+  const page=Object.assign(new Page(),{model:{},catalog:{toggleBrowserFold(_m,key,open){received.push(open);state.toggle(key,open)}}});
+  Object.defineProperty(page,'lines',{get:()=>projectOutline(projects,state)});
+  const first=page.lines.find(row=>row.kind==='project');const click=()=>page.toggle(first);
+  assert.equal(first.open,true);click();assert.equal(page.lines.find(l=>l.key===first.key).open,false);
+  click();assert.equal(page.lines.find(l=>l.key===first.key).open,true);assert.deepEqual(received,[true,false]);
+});
+
+test('a machine link owns its scope and ignores the root search and another Hub’s saved machine filter', () => {
+  const a=session('A',{cwd:'/repo/weather',state:'working'}),other=row('session',{session_id:'B',machine_id:'mac',cwd:'/other',state:'working'},'other');
+  const projects=projectDirectory([],[a,other],[machine]),state=new ProjectBrowserState();
+  const selected=projects.find(p=>p.trees.some(t=>t.agents.some(a=>a.row.id==='A')));
+  const foreign=projects.find(p=>p!==selected);state.query='cannot-match';state.machine=foreign.hostKey;
+  assert.deepEqual(projectOutline(projects,state,'',selected.hostKey).filter(l=>l.kind==='session').map(l=>l.agent.row.id),['A']);
+  assert.equal(state.query,'cannot-match');assert.equal(state.machine,foreign.hostKey);
+  assert.deepEqual(projectOutline(projects,state,'','missing-host'),[]);
 });
 
 test('tab identity is scoped to checkouts, hosts, managers and source spaces, and two sessions sharing a pane identifier stay accessible', () => {
@@ -434,7 +518,7 @@ test('one mounted tab header keeps its arrow, spoken action and handler in sync 
     assert.equal(model,page.model);received.push(open);state.toggle(key,open);
   }}});
   Object.defineProperty(page,'lines',{get:()=>projectOutline(projects,state)});
-  Object.defineProperty(page,'detailSessions',{get:()=>worktreeSessionLines(projects[0],projects[0].roots[0],state)});
+  Object.defineProperty(page,'detailSessions',{get:()=>worktreeSpaceCards(projects,projects[0].roots[0])});
   const original=page.lines.find(row=>row.kind==='tab'), key=original.key;
   // Hold on to this one callback as ArkUI does for the reusable native row. Rebuilding it on each tap hides the bug.
   const click=()=>page.toggleTab(key);
@@ -450,8 +534,8 @@ test('one mounted tab header keeps its arrow, spoken action and handler in sync 
   state.query='release';assert.equal(page.tabOpen(key),true);assert.equal(page.lines.filter(row=>row.kind==='session').length,2);
   click();assert.equal(received.length,5);assert.ok(!page.tabDescription(key).includes('agent_collapse'));
   state.query='';verify(false,0);click();verify(true,2);
-  page.page='project_tree';click();assert.equal(page.detailSessions.filter(row=>row.kind==='session').length,0);
-  page.page='projects';projects=[];click();assert.equal(received.length,7);assert.equal(page.tabDescription(key),'');
+  page.page='project_tree';click();assert.equal(page.detailSessions.length,2);
+  page.page='projects';projects=[];click();assert.equal(received.length,6);assert.equal(page.tabDescription(key),'');
   const builder=source.slice(source.indexOf('  @Builder tabLine('),source.indexOf('  @Builder counts('));
   assert.equal((builder.match(/\.id\('projects\.tab'\)/g)||[]).length,1);
   assert.match(builder,/onClick\(\(\) => this\.toggleTab\(key\)\)/);

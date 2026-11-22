@@ -1,6 +1,8 @@
+import { LengthMetrics } from '@kit.ArkUI';
 import { IconActions } from '../design/IconActions';
 import { util } from '@kit.ArkTS';
 import { ClientModel } from '../models/ClientModel';
+import { AgentDecisionCard, AgentDecisionQueue } from '../models/AgentDecisionQueue';
 import { AgentWorkspace, AgentWorkspaceGroup } from '../models/AgentWorkspace';
 import { ResourceRow, Wire } from '../models/Wire';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
@@ -86,6 +88,16 @@ export struct AgentListPage {
   @Local look: DeviceLook = deviceLook;
   @Local groupBindings: BoundAgentGroup[] = [];
   @Local mixedMachines: boolean = false;
+  @Local decisions: AgentDecisionQueue = new AgentDecisionQueue();
+  private stopDecisionEvents: (()=>void) | undefined;
+  private decisionQueued: number = -1;
+  private reloadDecisions(): void {
+    clearTimeout(this.decisionQueued);
+    if (!this.active || this.rail || !this.compactRoot) return;
+    this.decisionQueued=setTimeout(() => this.decisions.reload(this.model).catch(() => {}),50);
+  }
+  private retireDecisions(): void { clearTimeout(this.decisionQueued); this.decisions.clear(); }
+
   @Local searchOpen: boolean = false;
   private agentScroller: Scroller = new Scroller();
   private pullY: number = -1;
@@ -111,14 +123,18 @@ export struct AgentListPage {
     if (Math.abs(value - this.filterInset) > 0.1) this.filterInset = value;
   }
 
-  aboutToAppear(): void { this.syncRowBindings(); if (this.active) this.activateWorkspace(); }
-  aboutToDisappear(): void { this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); }
+  aboutToAppear(): void {
+    this.stopDecisionEvents=this.model.observeEvents((payload:string) => {
+      if (['interaction','interactions','interaction_resolved'].includes(Wire.text(Wire.parse(payload),'type'))) this.reloadDecisions();
+    });
+    this.reloadDecisions(); this.syncRowBindings(); if (this.active) this.activateWorkspace(); }
+  aboutToDisappear(): void { this.stopDecisionEvents?.(); this.retireDecisions(); this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); }
 
-  @Monitor('active') visibleChanged(): void { if (!this.active) { this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingRow = undefined; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); } else this.activateWorkspace(); }
-  @Monitor('model.forgottenEpoch') forgottenChanged(): void { this.workspace.forgetHub(this.model.forgottenProfile); if (this.editingRow?.group === this.model.forgottenProfile) { this.editorOpen = false; this.editingRow = undefined; this.editingAdmission = undefined; } }
-  @Monitor('model.profile') profileChanged(): void { this.resetSearchReveal(); this.editorOpen = false; this.editingAdmission = undefined; this.syncRowBindings(); if (!this.active) return; this.activateWorkspace(); }
+  @Monitor('active') visibleChanged(): void { if (this.active) this.reloadDecisions(); else this.retireDecisions(); if (!this.active) { this.resetSearchReveal(); this.editorOpen = false; this.filterSheetOpen = false; this.editingRow = undefined; this.editingAdmission = undefined; this.workspace.revokeRowActions(); if (!this.retainWorkspace) this.workspace.hide(); } else this.activateWorkspace(); }
+  @Monitor('model.forgottenEpoch') forgottenChanged(): void { this.retireDecisions(); this.reloadDecisions(); this.workspace.forgetHub(this.model.forgottenProfile); if (this.editingRow?.group === this.model.forgottenProfile) { this.editorOpen = false; this.editingRow = undefined; this.editingAdmission = undefined; } }
+  @Monitor('model.profile') profileChanged(): void { this.retireDecisions(); this.reloadDecisions(); this.resetSearchReveal(); this.editorOpen = false; this.editingAdmission = undefined; this.syncRowBindings(); if (!this.active) return; this.activateWorkspace(); }
   @Monitor('selectedRow') externalSelectionChanged(): void { this.workspace.selectExternal(this.selectedRow); }
-  @Monitor('model.directorySessions', 'model.directoryReady') directoryChanged(): void { if (!this.active) return; this.workspace.update(this.model, this.readingDetail); this.workspace.selectExternal(this.selectedRow); }
+  @Monitor('model.directorySessions', 'model.directoryReady') directoryChanged(): void { if (!this.active) return; this.reloadDecisions(); this.workspace.update(this.model, this.readingDetail); this.workspace.selectExternal(this.selectedRow); }
   @Monitor('model.sessionsReady') catalogChanged(): void { if (!this.active) return; this.workspace.update(this.model, this.readingDetail); }
   @Monitor('model.sessions') sessionsChanged(): void { if (!this.active) return; this.workspace.update(this.model, this.readingDetail); }
   @Monitor('model.selected') selectionChanged(): void { if (!this.active) return; this.workspace.update(this.model, this.readingDetail); }
@@ -128,7 +144,7 @@ export struct AgentListPage {
     this.workspace.refresh(this.model).catch(() => undefined);
   }
   @Monitor('model.connected') connectionChanged(): void {
-    if (!this.active) return; this.workspace.update(this.model, this.readingDetail);
+    this.reloadDecisions(); if (!this.active) return; this.workspace.update(this.model, this.readingDetail);
     if (this.model.connected) this.workspace.refresh(this.model).catch(() => undefined);
   }
   @Monitor('workspace.groups', 'workspace.groupingMode') rowsChanged(): void { this.syncRowBindings(); }
@@ -424,6 +440,67 @@ export struct AgentListPage {
   private isRowSelected(binding: BoundAgentRow): boolean {
     return this.selectionVisible && this.workspace.selectedKey === binding.presentation.selectionKey;
   }
+  private cardTitle(card:AgentDecisionCard,binding:BoundAgentRow):string {
+    if (card.request.kind==='plan') return tr('phone_agent_plan_approval');
+    if (card.request.kind==='permission') return tr('phone_agent_needs_approval');
+    if (card.request.kind==='question') return tr('phone_agent_asks').replace('{agent}',binding.presentation.provider || tr('agent'));
+    return tr('needs_you');
+  }
+
+  @Builder needsYouCards(binding:BoundAgentRow) {
+    ListItem() {
+      Column({space:0}) {
+        ForEach(this.decisions.forSession(this.model,binding.bound.value),(card:AgentDecisionCard,index:number) => {
+          Column({space:8}) {
+            Button({type:ButtonType.Normal}) {
+              Row({space:9}) {
+                SymbolGlyph(card.request.kind==='plan' ? Symbols.document : card.request.kind==='permission' ?
+                  IconActions.symbol('approve') : $r('sys.symbol.questionmark_circle')).fontSize('18vp').fontColor([Colors.link])
+                Column({space:2}) {
+                  Text(this.cardTitle(card,binding)).fontSize(17).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+                  if (!index) Text([binding.bound.value.title,this.model.machineName(card.machine)].filter((v:string)=>!!v).join(' · '))
+                    .fontSize(13).fontColor(Colors.secondary).maxLines(2)
+                }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+                SymbolGlyph(Symbols.expand).fontSize('13vp').fontColor([Colors.secondary])
+              }.width('100%')
+            }.width('100%').constraintSize({minHeight:40}).padding(0).backgroundColor(Color.Transparent)
+              .onClick(() => this.openRow(binding.bound.value)).id('agents.request.'+card.request.id)
+            if (card.preview) Text(card.preview).fontSize(16).fontColor(Colors.ink).maxLines(3)
+              .width('100%').onClick(() => this.openRow(binding.bound.value))
+            if (card.quickOptions().length) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(7),cross:LengthMetrics.vp(6)}}) {
+              ForEach(card.quickOptions(),(choice:string) => {
+                Button({type:ButtonType.Capsule}) {
+                  Text(card.request.kind==='permission' ? tr(choice) : choice).fontSize(15)
+                    .fontColor(card.request.kind==='permission' && choice==='allow' ? Colors.onAction : Colors.link)
+                }.constraintSize({minHeight:35}).padding({left:12,right:12,top:4,bottom:4})
+                  .backgroundColor(card.request.kind==='permission' && choice==='allow' ? Colors.action : Colors.surface)
+                  .border({width:0.5,color:Colors.divider,radius:18})
+                  .enabled(this.active && this.decisions.enabled(this.model,binding.bound.value,card))
+                  .onClick(() => this.decisions.answer(this.model,binding.bound.value,card,choice,util.generateRandomUUID(),this.workspace.actionTicket(binding.bound.value)))
+                  .id('agents.answer.'+card.request.id+'.'+choice)
+              },(choice:string)=>choice)
+            }.width('100%')
+          }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:10,bottom:10})
+        },(card:AgentDecisionCard) => card.key+card.request.raw)
+        if (!binding.last) Divider().strokeWidth(0.5).color(Colors.divider).margin({left:16})
+      }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface)
+        .borderRadius({topLeft:binding.first?16:0,topRight:binding.first?16:0,bottomLeft:binding.last?16:0,bottomRight:binding.last?16:0})
+    }.onVisibleAreaChange([0,1],(visible:boolean,ratio:number) => this.onVisible(binding.bound.value,visible ? ratio : 0))
+      .onDisAppear(() => this.onVisible(binding.bound.value,0)).bindContextMenu(this.rowMenu(binding),ResponseType.LongPress)
+      .id('agent.'+binding.bound.value.group+'.'+binding.bound.value.manager+'.'+binding.bound.value.machine+'.'+binding.bound.value.id)
+  }
+
+  private displayRows(group:BoundAgentGroup):BoundAgentRow[] {
+    if (!this.compactRoot || this.rail || group.value.id!=='state/needs') return group.rows;
+    return group.rows.slice().sort((a:BoundAgentRow,b:BoundAgentRow) =>
+      this.decisions.waitingSince(this.model,a.bound.value)-this.decisions.waitingSince(this.model,b.bound.value));
+  }
+  @Builder groupRow(binding:BoundAgentRow,groupId:string) {
+    if (this.compactRoot && !this.rail && groupId==='state/needs' && this.decisions.forSession(this.model,binding.bound.value).length)
+      this.needsYouCards(binding)
+    else this.agentRow(binding,groupId)
+  }
+
   @Builder agentRow(binding: BoundAgentRow, groupId: string) {
     ListItem() {
       Column() {
@@ -524,7 +601,7 @@ export struct AgentListPage {
   }
   private refreshAgents(): void {
     if (this.revealedDuringPull) { this.revealedDuringPull = false; this.refreshing = false; return; }
-    this.workspace.setReadingDetail(false);
+    this.reloadDecisions(); this.workspace.setReadingDetail(false);
     this.workspace.refresh(this.model).finally(() => {
       if (this.active && this.workspace.isBoundTo(this.model)) this.workspace.setReadingDetail(this.readingDetail);
       this.refreshing = false;
@@ -620,6 +697,7 @@ export struct AgentListPage {
     Column() {
       this.filters()
       if (this.model.directoryUnavailable > 0) Text(tr('directory_partly_unavailable')).fontSize(Tokens.meta).fontColor($r('sys.color.font_secondary')).padding(Tokens.inset).width('100%')
+      if (this.decisions.error) Text(tr(this.decisions.error)).fontSize(Tokens.meta).fontColor(Colors.danger).padding(Tokens.inset).width('100%')
       if (this.workspace.error && !this.editorOpen) Text(tr(this.workspace.error)).fontSize(Tokens.meta)
         .fontColor($r('app.color.persona_danger')).padding(Tokens.inset).width('100%')
       Refresh({ refreshing: $$this.refreshing }) {
@@ -627,7 +705,7 @@ export struct AgentListPage {
         if (this.workspace.loading && !this.workspace.hasRows()) ListItem() { LoadingProgress().height(Tokens.touch).width(Tokens.touch).padding(Tokens.page) }
         ForEach(this.groupBindings, (binding: BoundAgentGroup) => {
             ListItemGroup({ header: () => this.groupHeader(binding) }) {
-              ForEach(binding.rows, (rowBinding: BoundAgentRow) => this.agentRow(rowBinding, binding.value.id), (rowBinding: BoundAgentRow) =>
+              ForEach(this.displayRows(binding), (rowBinding: BoundAgentRow) => this.groupRow(rowBinding, binding.value.id), (rowBinding: BoundAgentRow) =>
                 rowBinding.key)
             }.id('agents.group.' + binding.value.id)
             if (binding.value.totalRowCount > binding.value.rows.length && !binding.value.folded) ListItem() {

@@ -5,6 +5,8 @@ import type { SshProxyLease } from './SshTunnel';
 import { KnowledgeRecording } from './KnowledgeRecording';
 import { deviceLook } from './DeviceLook';
 import { clientLocale, initializeClientLanguage, setClientLanguage } from '../core/ClientLocale';
+import { dictationLocale, dictationTexts } from '../core/DictationLanguage';
+import { dictationPreference } from '../platform/DictationPreference';
 import { i18n } from '@kit.LocalizationKit';
 import { DemoRepository } from './DemoRepository';
 import { NavigationContext } from './NavigationContext';
@@ -147,6 +149,7 @@ export class ClientModel {
   setDeviceEvents(handler: ((payload: string) => void) | undefined): void { this.deviceEvent = handler; }
   private workspace: SessionWorkspace | undefined;
   setWorkspace(workspace: SessionWorkspace | undefined): void { if (this.workspace && this.workspace !== workspace) this.workspace.hide(); this.workspace = workspace; }
+  selectWorkspaceTab(index: number): void { this.workspace?.selectTab(index); }
   @Trace transcriptHistoryReady: boolean = false;
   private transcript: TranscriptModel | undefined;
   private transcriptKey: string = '';
@@ -367,6 +370,7 @@ export class ClientModel {
 
   async initialize(context: common.UIAbilityContext): Promise<void> {
     this.context = context;
+    dictationPreference.load(context);
     this.ssh.initialize(context);
     this.vault = new CredentialVault(context);
     await this.local.open(context);
@@ -886,6 +890,11 @@ export class ClientModel {
     });
     this.messages = this.renderedMessages.concat(heldBubbles, messages);
   }
+  dictationLocaleForChat(): string {
+    const language = this.language === 'default' ? i18n.System.getSystemLanguage() : this.language;
+    return dictationLocale(dictationPreference.choice, dictationTexts(this.draft, this.revisionItems), dictationPreference.last, language);
+  }
+  rememberDictationLocale(locale: string): void { dictationPreference.remember(locale); }
   private publishTranscript(items: readonly TranscriptItem[], running: boolean): void {
     this.revisionItems = items.slice(); this.renderedMessages = this.projectMessages(items, running);
     this.echoedMessages = new Set(items.filter((item: TranscriptItem) => item.role === 'user').map((item: TranscriptItem) => Wire.text(Wire.record(item as Object), 'client_msg_id')).filter((id: string) => !!id));
@@ -1284,8 +1293,8 @@ export class ClientModel {
     if (!current()) throw new Error('request_updated');
     await this.useEndpoint(config, target.name, current);
   }
-  private capabilities(): EffectiveSessionCapabilities {
-    const data = this.sessionRow().data(), caps = Wire.object(data, 'capabilities');
+  private capabilities(row: ResourceRow = this.sessionRow()): EffectiveSessionCapabilities {
+    const data = row.data(), caps = Wire.object(data, 'capabilities');
     const input: SessionCapabilityInput = { sourceKind: Wire.text(data, 'source_kind'),
       readOnly: Wire.bool(data, 'read_only', Wire.bool(data, 'readonly')), readOnlyReason: Wire.text(data, 'read_only_reason'),
       capabilities: { read: Wire.bool(caps, 'read'), send: Wire.bool(caps, 'send'), interrupt: Wire.bool(caps, 'interrupt'),
@@ -1405,6 +1414,11 @@ export class ClientModel {
     }
   }
   canApprove(): boolean { return this.connected && this.capabilities().canApprove && this.decisionsReady(); }
+  canApproveSession(row: ResourceRow): boolean {
+    const session=this.sessions.find((item: ResourceRow) => item.machine===row.machine && (item.session || item.id)===(row.session || row.id));
+    return this.connected && row.manager===this.profile.manager && (!row.group || row.group===this.profile.id) &&
+      !!session && this.capabilities(session).canApprove;
+  }
   canInterrupt(): boolean { return this.connected && this.capabilities().canInterrupt; }
   contextTitle(): string {
     if (!this.sourceContext) return ''; const data = Wire.parse(this.sourceContext);

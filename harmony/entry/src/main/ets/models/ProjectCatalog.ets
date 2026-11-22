@@ -29,6 +29,10 @@ export class ProjectAgent {
   model: string;
   preview: string;
   tab: string;
+  spaceId: string;
+  spaceKind: string;
+  archived: boolean;
+  pending: number;
   tabKey: string = '';
   tabTitle: string = '';
   pane?: SessionSpaceTab;
@@ -55,11 +59,14 @@ export class ProjectAgent {
     }
     this.updated = parsedTime(Wire.text(data, 'updated_at'));
     this.activity = this.state === 'working' ? parsedTime(Wire.text(data,'state_since')) || this.updated : this.updated;
-    this.runtime = Wire.text(data,'agent_label') || Wire.text(data,'launcher') || Wire.text(data,'agent_type');
+    const runtime = Wire.text(data,'agent_label') || Wire.text(data,'agent') || Wire.text(data,'agent_type') || Wire.text(data,'launcher');
+    this.runtime = runtime === 'claude' ? 'Claude' : runtime === 'codex' ? 'Codex' : runtime;
     this.model = Wire.text(data,'model');
     this.preview = (Wire.text(data,'last_text') || row.detail).trim();
     this.tab = Wire.text(data,'slot_name') || Wire.text(data,'space_name');
-    const space = Wire.text(data,'space_id'), slot = Wire.text(data,'slot_id');
+    this.spaceId = Wire.text(data,'space_id'); this.spaceKind = Wire.text(data,'space_kind');
+    this.archived = Wire.bool(data,'archived'); this.pending = Wire.number(data,'pending_interactions');
+    const space = this.spaceId, slot = Wire.text(data,'slot_id');
     if (space && slot) {
       this.pane = new SessionSpaceTab(row, data);
       this.tabKey = JSON.stringify([row.group, row.manager, row.machine, Wire.text(data,'space_kind'), space, slot]);
@@ -340,6 +347,7 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
 @ObservedV2
 export class ProjectBrowserState {
   @Trace query: string = '';
+  @Trace private searchClosed: string[] = [];
   @Trace machine: string = '';
   @Trace preferences: string[] = [];
   @Trace unlimited: string[] = [];
@@ -349,8 +357,13 @@ export class ProjectBrowserState {
   edits: number = 0;
 
   clear(): void {
-    this.query = ''; this.machine = ''; this.preferences = []; this.unlimited = []; this.selectedTree = ''; this.selectedSession = ''; this.anchors.clear(); this.edits++;
+    this.query = ''; this.machine = ''; this.preferences = []; this.unlimited = []; this.selectedTree = ''; this.selectedSession = ''; this.anchors.clear(); this.searchClosed = []; this.edits++;
   }
+  searchOpen(id:string): boolean { return !this.searchClosed.includes(id); }
+  toggleSearch(id:string): void {
+    this.searchClosed = this.searchOpen(id) ? this.searchClosed.concat([id]) : this.searchClosed.filter((key:string) => key !== id);
+  }
+  resetSearchFolds(): void { this.searchClosed = []; }
   open(id: string, fallback: boolean): boolean {
     if (this.preferences.includes('+' + id)) return true;
     return this.preferences.includes('-' + id) ? false : fallback;

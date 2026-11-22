@@ -11,6 +11,20 @@ export class LaunchChoice {
     this.id = id; this.title = title; this.detail = detail; this.disabled = disabled; this.description = description;
   }
 }
+export function launchModelName(id: string, name: string): string {
+  const raw = name.trim(), bare = id.split('/').pop() || id;
+  if (raw && raw.toLowerCase() !== id.toLowerCase() && raw.toLowerCase() !== bare.toLowerCase()) return raw;
+  if (!/^gpt-[a-z0-9.]+(?:-[a-z0-9.]+)*$/i.test(bare)) return raw || bare;
+  return bare.slice(4).split('-').map((part:string) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(' ');
+}
+
+export function recentLaunchDirectories(value: Record<string,Object>): LaunchChoice[] {
+  return Wire.rows(value,'recent').filter((item:Record<string,Object>) => !!Wire.text(item,'path'))
+    .map((item:Record<string,Object>) => new LaunchChoice(Wire.text(item,'path'),
+      Wire.text(item,'name') || Wire.text(item,'path').split('/').pop() || Wire.text(item,'path'),
+      Wire.text(item,'path'),false,Wire.text(item,'last_used')));
+}
+
 export class RecentAgentSetup {
   machine: string = '';
   cwd: string = '';
@@ -67,8 +81,7 @@ export class AgentLaunchChoices {
       this.path = resolved; this.parent = Wire.text(value,'parent');
       this.directories = Wire.rows(value,'entries').filter((v:Record<string,Object>) => !!Wire.text(v,'path'))
         .map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'path'),Wire.text(v,'name') || Wire.text(v,'path'),Wire.bool(v,'is_git') ? 'Git' : ''));
-      this.recentDirectories = Wire.rows(value,'recent').filter((v:Record<string,Object>) => !!Wire.text(v,'path'))
-        .map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'path'), Wire.text(v,'name') || Wire.text(v,'path'), Wire.text(v,'path')));
+      this.recentDirectories = recentLaunchDirectories(value);
     } catch (_) { if (valid()) this.error = 'phone_directory_read_failed'; }
     finally { if (valid()) this.loading = false; }
   }
@@ -88,8 +101,12 @@ export class AgentLaunchChoices {
       // The host default is already represented by the first, empty-ID choice in the phone form.
       // Choosing the default keeps that semantic even after a launcher changes its default model.
       this.models = this.modelData.filter((v:Record<string,Object>) => !Wire.bool(v,'default') && !Wire.bool(v,'is_default'))
-        .map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'id'),Wire.text(v,'name') || Wire.text(v,'id'),
-          launcher+' · '+Wire.text(v,'id'),false,Wire.text(v,'description')));
+        .map((v:Record<string,Object>) => {
+          const id = Wire.text(v,'id'), title = launchModelName(id,Wire.text(v,'name')), resolved = Wire.text(v,'resolved');
+          const detail = [launcher, title !== id ? id : '', resolved && resolved !== id && resolved !== title ? '→ '+resolved : '']
+            .filter((part:string) => !!part).join(' · ');
+          return new LaunchChoice(id,title,detail,false,Wire.text(v,'description'));
+        });
       this.updateEfforts('');
     } catch (_) { if (valid()) this.error = 'flow_models_offline'; }
     finally { if (valid()) this.loading = false; }
@@ -100,7 +117,7 @@ export class AgentLaunchChoices {
   }
   defaultModelName():string {
     const model = this.modelData.find((m:Record<string,Object>) => Wire.bool(m,'is_default') || Wire.bool(m,'default'));
-    return model ? Wire.text(model,'name') || Wire.text(model,'id') : '';
+    return model ? launchModelName(Wire.text(model,'id'),Wire.text(model,'name')) : '';
   }
   updateEfforts(id:string): void {
     const model = id ? this.modelData.find((m:Record<string,Object>) => Wire.text(m,'id') === id) :

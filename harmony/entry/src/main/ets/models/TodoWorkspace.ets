@@ -66,6 +66,24 @@ export class TodoWorkspaceSpace {
   }
 }
 
+export function todoDayKey(date:Date):string {
+  return String(date.getFullYear())+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
+}
+
+export function todoCalendarDays(mode:string, anchor:number, weekStart:number):number[] {
+  const first=new Date(anchor);
+  first.setHours(0,0,0,0);
+  if (mode==='day') return [first.getTime()];
+  if (mode==='month') first.setDate(1);
+  const month=first.getMonth();
+  first.setDate(first.getDate()-(first.getDay()-weekStart+7)%7);
+  const days:number[]=[];
+  do {
+    for (let i=0;i<7;i++) { days.push(first.getTime()); first.setDate(first.getDate()+1); }
+  } while (mode==='month' && first.getMonth()===month);
+  return days;
+}
+
 export class TodoWorkspaceItem {
   id: string = '';
   title: string = '';
@@ -718,13 +736,13 @@ export class TodoWorkspace {
     } catch (_) { if (this.owns(snapshot)) { this.draftReady = true; this.error = 'draft_restore_failed'; } }
   }
 
-  startCreate(): void {
+  startCreate(dueDate:string = '', dueAt:string = ''): void {
     const current = this.capture(undefined);
     if (!current) { this.error = 'offline'; return; }
     this.revision++;
     const snapshot = this.capture(undefined);
     if (!snapshot) { this.error = 'offline'; return; }
-    this.selected = new TodoWorkspaceItem(Wire.payload(['manager'], [snapshot.managerId]), snapshot.managerId);
+    this.selected = new TodoWorkspaceItem(Wire.payload(['manager','due_date','due_at'], [snapshot.managerId,dueDate,dueAt]),snapshot.managerId);
     this.targetGone = false;
     this.titleDraft = '';
     this.notesDraft = '';
@@ -743,8 +761,14 @@ export class TodoWorkspace {
   setTitleDraft(value: string): void { this.titleDraft = value; this.persistSelectedDraft(); }
   setNotesDraft(value: string): void { this.notesDraft = value; this.persistSelectedDraft(); }
 
+  private draftIdentity(group:string,manager:string,todo:TodoWorkspaceItem):string[] {
+    const key=[group,manager,todo.id || 'new'];
+    if (!todo.id && (todo.dueAt || todo.dueDate)) key.push(todo.dueAt || todo.dueDate);
+    return key;
+  }
+
   private draftStorageKey(owner: TodoOwnerSnapshot, todo: TodoWorkspaceItem): string {
-    return 'todo:draft:' + JSON.stringify([owner.groupId, owner.managerId, todo.id || 'new']);
+    return 'todo:draft:' + JSON.stringify(this.draftIdentity(owner.groupId,owner.managerId,todo));
   }
 
   private async restoreDraft(owner: TodoOwnerSnapshot, todo: TodoWorkspaceItem): Promise<void> {
@@ -760,7 +784,7 @@ export class TodoWorkspace {
   private persistSelectedDraft(): void {
     const root = this.rootClient, client = this.ownerClient;
     if (!this.draftReady || !this.active || !root || !client || root.scope() !== this.rootScope || client.scope() !== this.ownerScope) return;
-    const rootScope = this.rootScope, scope = this.ownerScope, group = this.groupId, key = 'todo:draft:' + JSON.stringify([this.groupId, this.managerId, this.selected.id || 'new']);
+    const rootScope = this.rootScope, scope = this.ownerScope, group = this.groupId, key = 'todo:draft:' + JSON.stringify(this.draftIdentity(this.groupId,this.managerId,this.selected));
     const value = JSON.stringify(Wire.payload(['title', 'notes'], [this.titleDraft, this.notesDraft])), epoch = client.viewRevision(key);
     const current = (): boolean => root.scope() === rootScope && client.scope() === scope && root.profile.id === group;
     this.draftWrites = this.draftWrites.catch(() => {}).then(async () => { if (current()) await client.saveView(key, value, epoch); })
@@ -841,6 +865,10 @@ export class TodoWorkspace {
     if (!owner) { this.error = 'offline'; return false; }
     const path = '/api/v1/todos' + (creating ? '' : '/' + pathPart(todo.id)) + managerQuery(manager);
     const body = Wire.payload(['title', 'notes'], [title, this.notesDraft]);
+    if (creating && Number.isFinite(todo.due)) {
+      if (todo.dueAt) body['due_at']=todo.dueAt;
+      else if (todo.dueDate) body['due_date']=todo.dueDate;
+    }
     const result = await this.write(path, creating ? 'POST' : 'PATCH', body, creating ? undefined : todo);
     if (!result || !this.owns(owner, !creating)) return false;
     const data = Wire.object(result, 'todo');

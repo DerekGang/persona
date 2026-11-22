@@ -741,3 +741,19 @@ test('a failed or denied activity-feed read remains visible and retryable', asyn
   assert.equal(feed.feedUnavailable, false);
   assert.equal(feed.error, 'failed');
 });
+
+test('the task dock includes linked work from this supervising conversation even when its activity scrolled out of the feed', async () => {
+  const {feed}=await opened(({path})=>{
+    if (path.includes('/feed?')) return {items:[],task_cards:[]};
+    if (path.startsWith('/api/v1/todos?')) return {todos:[
+      {id:'local-task',title:'Owned work',origin:conversationId,manager:managerId,created_at:timestamp},
+      {id:'other-chat',origin:'another-conversation',manager:managerId},
+      {id:'other-manager',origin:conversationId,manager:'other-manager'}
+    ]};
+    return {};
+  });
+  assert.deepEqual(feed.taskCardsForConversation().map(card=>card.todo_id),['local-task']);
+  assert.equal(feed.openTodo('local-task').title,'Owned work');
+  assert.equal(feed.openTodo('other-chat'),undefined);
+  assert.equal(feed.openTodo('other-manager'),undefined);
+});

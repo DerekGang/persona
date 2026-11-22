@@ -1,11 +1,11 @@
 import { AgentStartPicker } from '../components/AgentStartPicker';
-import { AgentLaunchChoices, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup } from '../models/AgentLaunchChoices';
+import { AgentLaunchChoices, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
 import { WorktreeSheet } from '../components/WorktreeSheet';
 import { phonePlaceAtRoot, phonePanIntent, finishesPhonePan } from '../models/PhoneNavigation';
 import { PhoneConversationSearch } from '../components/PhoneConversationSearch';
 import { SessionSpaceTabs } from '../components/SessionSpaceTabs';
-import { SessionSpace, SessionSpaceTab, sessionSpace } from '../models/SessionSpace';
-import { MachineDirectory, machineBrandMark } from '../components/MachineDirectory';
+import { SessionSpace, SessionSpaceTab, sessionSpace, worktreeForSessionSpace } from '../models/SessionSpace';
+import { MachineDirectory } from '../components/MachineDirectory';
 import { PhoneIconButton, PhoneStyle, PhoneSectionTitle } from '../design/PhoneStyle';
 import { SettingsDirectory, PhoneSettingsOptions } from '../components/SettingsDirectory';
 import { WorktreeChange, WorktreeActions } from '../models/WorktreeActions';
@@ -15,6 +15,8 @@ import { IconActions } from '../design/IconActions';
 import { ThemeScope } from '../design/ThemeScope';
 import { util } from '@kit.ArkTS';
 import { PhoneAgentSettingsPage } from '../components/PhoneAgentSettingsPage';
+import { PhoneMeetingSettings } from '../components/PhoneMeetingSettings';
+import { PhoneKnowledgeSelection } from '../components/PhoneKnowledgeSelection';
 import { AdminWorkspacePage } from '../components/AdminWorkspacePage';
 import { ExtensionPage } from '../components/ExtensionPage';
 import { ExtensionNavigationPage } from '../components/ExtensionNavigationPage';
@@ -66,6 +68,10 @@ import { AssistantDetailPage } from '../components/AssistantDetailPage';
 import { tr, trError } from '../design/Strings';
 import { isHubStateKey } from '../core/StorageOwnership';
 
+interface ChatActionEntry extends SheetInfo {
+  identity?: string;
+}
+
 @Entry
 @ComponentV2
 struct Index {
@@ -78,6 +84,7 @@ struct Index {
   private detailOwner: ClientModel | undefined;
   @Local adminRefreshRevision: number = 0;
   @Local inboxRefreshRevision: number = 0;
+  @Local recordingEditRevision: number = 0;
   @Local extensionTitle: string = '';
   @Local todoTitle: string = '';
   @Local extensionRefreshRevision: number = 0;
@@ -86,7 +93,7 @@ struct Index {
   @Local phonePath: string[] = [];
   @Local phoneParam: string = '';
   @Local shownParam: string = '';
-  @Local chatMenuActions: SheetInfo[] = [];
+  @Local chatMenuActions: ChatActionEntry[] = [];
   @Local chatTitleMenuVisible: boolean = false;
   @Local chatBodyMenuVisible: boolean = false;
   @Local chatMenuRevision: number = 0;
@@ -96,6 +103,7 @@ struct Index {
   @Local collapsed: boolean = false;
   @Local drawerSearch: string = '';
   @Local drawerSearching: boolean = false;
+  @Local projectSearching: boolean = false;
   @Local recentExpanded: boolean = true;
   @Local chatSearchShown: boolean = false;
   @Local startSearchInAgents: boolean = false;
@@ -158,11 +166,13 @@ struct Index {
   @Local blockedLaunchers: LaunchChoice[] = [];
   @Local launchListReady: boolean = false;
   @Local recentSetups: RecentAgentSetup[] = [];
+  @Local recentAgentDirectories: LaunchChoice[] = [];
   @Local startFailure: string = '';
   @Local startWorktree: WorktreeActions = new WorktreeActions();
   private startTreeSource: ProjectWorktree | undefined;
   private machineIntent: number = 0;
   @Local agentPresets: Record<string,Object>[] = [];
+  @Local agentTierProfile: string = '';
   @Local agentPreset: string = '';
   @Local machineDefaultLabel: string = '';
   private launcherRevision: number = 0;
@@ -170,6 +180,7 @@ struct Index {
   @Local environment: NativeEnvironment = nativeEnvironment;
   @Local spacesShown: boolean = false;
   @Local phoneSettingsShown: boolean = false;
+  @Local phoneSettingsPage: string = '';
   @Local phoneSettingsQuery: string = '';
   private phoneSettingsDepth: number = -1;
   private phoneSettingsOwner: string = '';
@@ -347,7 +358,7 @@ struct Index {
     const finger = event.fingerList[0];
     if (!finger) return;
     const x = finger.localX - event.offsetX, y = finger.localY - event.offsetY;
-    this.gestureKind = phonePanIntent(this.phonePeer() ? this.compactPeerIndex() : this.model.section,this.phoneAtRoot,this.spacesShown,x,y,this.phoneWidth,this.phoneHeight,event.offsetX,event.offsetY);
+    this.gestureKind = phonePanIntent(this.mergedPhone() ? -1 : this.compactPeerIndex(),this.phoneAtRoot,this.spacesShown,x,y,this.phoneWidth,this.phoneHeight,event.offsetX,event.offsetY);
     this.gestureScope = this.model.scope(); this.gesturePlace = this.model.section;
     this.drawerFrom = this.drawerFraction;
     if (this.mergedPhone() && (this.gestureKind === 'persona' || this.gestureKind === 'agents')) this.gestureKind = '';
@@ -369,13 +380,25 @@ struct Index {
     if (this.gestureScope !== this.model.scope() || this.model.section !== this.gesturePlace) {
       this.settlePhoneDrawer(this.spacesShown); return;
     }
-    const done = finishesPhonePan(dx,vx,this.phoneWidth);
+    const done = finishesPhonePan(dx,vx,kind === 'open' || kind === 'close' ? this.drawerWidth() : this.phoneWidth);
     if (kind === 'close') this.drawerTapBlockedUntil = Date.now() + 200;
     if (kind === 'open' || kind === 'close') {
       const open = done ? kind === 'open' && dx > 0 || kind === 'close' && dx >= 0 : this.spacesShown;
       if (open !== this.spacesShown) { this.drawerSearching = false; this.spacesShown = open; }
       else this.settlePhoneDrawer(open);
-    } else if (done && this.phonePeer()) this.browsePeer(kind === 'agents' ? 1 : 0);
+    } else if (done && this.phonePeer() && (kind === 'agents' && dx < 0 || kind === 'persona' && dx > 0)) {
+      this.browsePeer(kind === 'agents' ? 1 : 0);
+    }
+  }
+  private judgePhonePan(event: BaseGestureEvent, current: GestureRecognizer, peers: GestureRecognizer[]): GestureJudgeResult {
+    if (current.getTag() !== 'phone.shell.pan') return GestureJudgeResult.CONTINUE;
+    const dx = (event as PanGestureEvent).offsetX;
+    for (const peer of peers) {
+      if (!peer.isBuiltIn() || !(peer instanceof PanRecognizer) || peer.getDirection() !== PanDirection.Horizontal) continue;
+      const target = peer.getEventTargetInfo();
+      if (target instanceof ScrollableTargetInfo && (dx < 0 && !target.isEnd() || dx > 0 && !target.isBegin())) return GestureJudgeResult.REJECT;
+    }
+    return GestureJudgeResult.CONTINUE;
   }
   @Computed get phoneToolParent(): string {
     const parent = this.phonePath.length - 2;
@@ -411,6 +434,17 @@ struct Index {
     if (parent) this.stack.pop(false);
     this.stack.replacePath({name:'session',param:JSON.stringify(target)},false);
     this.savePath();
+  }
+  private async openSessionSpace(key: string): Promise<void> {
+    if (!key || key !== this.phoneSessionSpace.key) return;
+    const origin = this.childKey(this.phoneTop, this.phoneParam);
+    const selected = this.phoneSessionSpace.current;
+    const owner = this.model, scope = owner.scope(), generation = owner.connectionGeneration();
+    if (!worktreeForSessionSpace(this.phoneSessionSpace, this.projectCatalog.projects)) await this.projectCatalog.refresh(owner);
+    const live = this.phoneSessionSpace;
+    if (!owner.owns(generation, scope) || this.activeChild !== origin || key !== live.key || live.current !== selected) return;
+    const tree = worktreeForSessionSpace(live, this.projectCatalog.projects);
+    if (tree) this.pushPlace('project_tree', tree.key);
   }
   private phoneLargeTitle():boolean {
     if (!this.phoneTop) return this.mergedPhone() && (this.model.section === 1 || this.model.section === 4);
@@ -456,9 +490,9 @@ struct Index {
           if (role === 'root') {
             if (this.phonePeer()) {
               Button({type:ButtonType.Circle}) {
-                Image(this.look.avatarUri || $r('app.media.foreground')).width(29).height(29).objectFit(ImageFit.Contain).borderRadius(15)
-              }.width(36).height(36).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:18})
-                .responseRegion({x:-4,y:-4,width:44,height:44}).accessibilityText(tr('conversation_spaces'))
+                Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(20)
+              }.width(PhoneStyle.bar).height(PhoneStyle.bar).padding(0).backgroundColor(Color.Transparent)
+                .accessibilityText(tr('conversation_spaces'))
                 .onClick(() => { this.drawerSearching = false; this.spacesShown = true; }).id('shell.spaces')
             } else {
               PhoneIconButton({symbol:Symbols.spaces,label:tr('conversation_spaces'),identity:'shell.spaces',
@@ -472,8 +506,17 @@ struct Index {
         if (this.phonePeer()) {
           Blank().layoutWeight(1)
           Row({space: 1}) {
-            this.placeButton('persona', 0, 'shell.persona', () => this.browsePeer(0))
-            this.placeButton('agents', 1, 'shell.agents', () => this.browsePeer(1))
+            this.placeButton('phone_assistant_title', 0, 'shell.persona', () => this.browsePeer(0))
+            Stack({alignContent: Alignment.TopEnd}) {
+              this.placeButton('agents', 1, 'shell.agents', () => this.browsePeer(1))
+              if (Wire.number(this.agentWorkspace.filterCounts,'needsYou') > 0 && this.agentWorkspace.isBoundTo(this.model)) {
+                Text(String(Wire.number(this.agentWorkspace.filterCounts,'needsYou'))).fontSize(11).maxFontScale(1.2)
+                  .fontWeight(FontWeight.Bold).fontColor(Colors.link).textAlign(TextAlign.Center)
+                  .constraintSize({minWidth:17,minHeight:17}).padding({left:3,right:3}).borderRadius(9)
+                  .backgroundColor(Colors.selection).offset({x:3,y:-6}).hitTestBehavior(HitTestMode.None)
+                  .accessibilityLevel('no')
+              }
+            }
           }.padding(3).borderRadius(18).backgroundColor(Colors.control)
           Blank().layoutWeight(1)
         } else if ((this.phoneTop === 'session' || this.phoneToolParent) && this.phoneSessionSpace.title) {
@@ -486,6 +529,8 @@ struct Index {
                 .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
             }.id('session.space.title')
           }.layoutWeight(1).alignItems(HorizontalAlign.Center)
+            .onClick(() => this.openSessionSpace(this.phoneSessionSpace.key))
+            .accessibilityRole(AccessibilityRoleType.BUTTON).id('session.space.open')
         } else if (this.phoneTop && !this.phoneLargeTitle()) {
           Text(this.phonePageName()).layoutWeight(1).fontSize(17).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
             .textAlign(TextAlign.Center).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
@@ -494,21 +539,15 @@ struct Index {
           PhoneIconButton({symbol: this.phonePeer() || this.model.section === 0 ? Symbols.edit : Symbols.plus, label: tr(this.model.section === 0 ? 'new_chat' : 'new_agent'), identity:'shell.new', action:() => this.startFromPlace()})
         } else if (this.activeChild && this.destinationMenuItems(this.shownName, this.shownParam).length) {
           this.destinationMenus(this.shownName, this.shownParam)
-        } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(36)
-      }.width('100%').constraintSize({minHeight:46}).padding({left:12,right:12,top:3,bottom:3}).alignItems(VerticalAlign.Center)
+        } else if (this.phoneTop && !this.phoneLargeTitle()) Blank().width(PhoneStyle.bar)
+      }.width('100%').constraintSize({minHeight:50}).padding({left:16,right:16,top:3,bottom:3}).alignItems(VerticalAlign.Center)
       if ((this.phoneTop === 'session' || this.phoneToolParent) && this.activeChild && this.targetReady(this.phoneTop,this.phoneParam) && this.detailModel.selected.machine) {
         if (this.phoneSessionSpace.tabs.length) SessionSpaceTabs({space:this.phoneSessionSpace,
           onPick:(key:string,from:string,id:string) => this.switchSessionTab(key,from,id)})
-        if (this.phoneTop === 'session') Row({space:3}) {
-          this.sessionMode(tr('chat'),Symbols.persona,-1)
-          this.sessionMode(tr('terminal'),Symbols.device,2)
-          this.sessionMode(tr('git'),Symbols.apps,1)
-          this.sessionMode(tr('files'),Symbols.folder,0)
-        }.width('100%').padding({left:12,right:12,top:1,bottom:5})
       }
       if (this.phoneLargeTitle()) Text(this.phonePageName()).fontSize(PhoneStyle.title).maxFontScale(Tokens.chromeFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
         .width('100%').maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:4,bottom:8}).id('shell.page_title')
-    }.width('100%').backgroundColor(this.phonePeer() && this.model.section === 0 ? Colors.canvas : Colors.grouped)
+    }.width('100%').backgroundColor((this.phonePeer() && this.model.section === 0) || this.phoneTop === 'session' || !!this.phoneToolParent ? Colors.canvas : Colors.grouped)
   }
   private parentIndexes():number[] {
     const levels:number[] = [];
@@ -524,16 +563,6 @@ struct Index {
       if (this.model.section === 1 || this.model.section === 4) MenuItem({content:tr(this.model.section === 4 ? 'projects' : 'agents')})
         .onClick(() => { this.stack.clear(); this.savePath(); }).id('shell.back.root')
     }
-  }
-  @Builder sessionMode(label:string,symbol:Resource,index:number) {
-    Button({type:ButtonType.Capsule}) {
-      Row({space:4}) {
-        SymbolGlyph(symbol).fontSize('14vp').fontColor([index < 0 ? Colors.link : Colors.secondary])
-        Text(label).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1).fontWeight(index < 0 ? FontWeight.Bold : FontWeight.Normal).fontColor(index < 0 ? Colors.link : Colors.secondary)
-      }
-    }.layoutWeight(1).constraintSize({minHeight:Tokens.touch}).padding({left:2,right:2}).backgroundColor(index < 0 ? Colors.surface : Color.Transparent)
-      .accessibilityText(label).bindTips(label).accessibilitySelected(index < 0).onClick(() => { if (index >= 0 && this.phoneTop === 'session' && this.targetReady(this.phoneTop,this.phoneParam)) this.openTools('',index); })
-      .id(index < 0 ? 'session.mode.chat' : index === 2 ? 'session.mode.terminal' : index === 1 ? 'session.mode.git' : 'session.mode.files')
   }
   private selectPeer(index: number): void {
     if (index === this.model.section) return;
@@ -773,7 +802,9 @@ struct Index {
   private openSettings(page: string, contextual: boolean = false): void { if (page === 'appearance' || page === 'phone_agent_layout') this.ensureAgentWorkspace(); this.settingsPage = page; this.stack.pushPath({ name: 'settings', param: NavigationContext.settings(page, contextual ? this.detailModel.selected : undefined) }); this.savePath(); }
   private settingsFamily(page: string): string { return ['extension_detail', 'extension_catalog'].includes(page) ? 'extensions' : page === 'connector_detail' ? 'connectors' : page === 'channel_detail' ? 'channels' : page; }
   private isAdminPage(page: string): boolean { return ['assistant', 'memory', 'managers', 'phone_new_assistant', 'launchers', 'engine', 'hub_update', 'node_update'].includes(page); }
-  private settingsLabel(page: string): string { return page === 'phone_new_assistant' ? 'phone_new_assistant' : page === 'phone_agent_options' ? 'agent' : page === 'phone_language_options' ? 'settings_language_options_title' : page === 'ssh' ? 'ssh_settings' : page === 'assistant' ? 'admin_identity' : page === 'memory' ? 'admin_memory' : page === 'managers' ? 'admin_managers' : page === 'launchers' ? 'admin_launchers' : page === 'engine' ? 'admin_machine_engine' : page === 'hub_update' ? 'admin_hub_update' : page === 'node_update' ? 'admin_node_update' : page; }
+  private settingsLabel(page: string): string {
+    if (page === 'phone_meeting_options') return 'meetings';
+    return page === 'phone_new_assistant' ? 'phone_new_assistant' : page === 'phone_agent_options' ? 'agent' : page === 'phone_language_options' ? 'settings_language_options_title' : page === 'ssh' ? 'ssh_settings' : page === 'assistant' ? 'admin_identity' : page === 'memory' ? 'admin_memory' : page === 'managers' ? 'admin_managers' : page === 'launchers' ? 'admin_launchers' : page === 'engine' ? 'admin_machine_engine' : page === 'hub_update' ? 'admin_hub_update' : page === 'node_update' ? 'admin_node_update' : page; }
   private adminMenus(name: string, param: Object): NavigationMenuItem[] { return [{ value: tr('refresh'), symbolIcon: new SymbolGlyphModifier($r('sys.symbol.arrow_clockwise')), action: () => { if (this.activeChild === this.childKey(name, param)) this.adminRefreshRevision++; } }]; }
   private settingsTitle(param: Object): string { const descriptor = NavigationContext.from('settings', param as string); return descriptor.scoped && ['extension_detail', 'connector_detail', 'channel_detail', 'extension_catalog'].includes(descriptor.page) ? descriptor.row.title : tr(this.settingsLabel(descriptor.page)); }
   private openSettingsDetail(page: string, row: ResourceRow): void { this.stack.pushPath({ name: 'settings', param: NavigationContext.settings(page, row) }); this.savePath(); }
@@ -861,6 +892,9 @@ struct Index {
       })
     }.height(this.headerHeight()).alignItems(VerticalAlign.Center).padding({ right: Tokens.page })
   }
+  @Builder navigationMenus(name: string, param: Object) {
+    if (this.wide()) this.destinationMenus(name, param)
+  }
   @Builder destinationMenus(name: string, param: Object) {
     if (!this.mainDestination(name, param)) Row({ space: Tokens.gap }) {
       ForEach(this.destinationMenuItems(name, param), (item: NavigationMenuItem, index: number) => {
@@ -868,8 +902,8 @@ struct Index {
           if (item.symbolIcon) SymbolGlyph().attributeModifier(item.symbolIcon).fontSize(Tokens.symbolFont)
           else Image(item.icon).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink)
         }.attributeModifier(ButtonStyles.chrome).accessibilityText(item.value as string).enabled(item.isEnabled !== false).onClick(() => item.action?.())
-          .id(name === 'session' || name === 'conversation' ? 'chat.title.more' : 'destination.action.' + String(index))
-          .bindMenu((name === 'session' || name === 'conversation') && this.chatTitleMenuVisible && this.activeChild === this.childKey(name, param),
+          .id(name === 'session' || name === 'conversation' || name === 'tools' ? 'chat.title.more' : 'destination.action.' + String(index))
+          .bindMenu((name === 'session' || name === 'conversation' || name === 'tools') && this.chatTitleMenuVisible && this.activeChild === this.childKey(name, param),
             this.chatActionsMenu, this.chatMenuOptions(this.chatMenuRevision))
       })
     }.height(this.headerHeight()).alignItems(VerticalAlign.Center).padding({ right: this.wide() ? Tokens.page : 0 })
@@ -879,6 +913,7 @@ struct Index {
     this.phoneSettingsDepth = -1;
     if (kind === 'settings' && !this.wide() && this.spacesShown) {
       this.phoneSettingsQuery = '';
+      this.phoneSettingsPage = '';
       this.phoneSettingsShown = true; return;
     }
     this.spacesShown = false;
@@ -912,6 +947,7 @@ struct Index {
     else if (index === 11) this.openApplications();
   }
   private spaceSymbol(kind: string): Resource {
+    if (kind === 'persona') return $r('sys.symbol.house');
     if (kind === 'schedules') return Symbols.calendar;
     if (kind === 'recordings') return $r('sys.symbol.mic');
     if (kind === 'projects') return Symbols.folder;
@@ -961,15 +997,15 @@ struct Index {
   @Builder drawerManagerMenu(scope: string) {
     Menu() {
       ForEach(this.drawerManagers, (row: ResourceRow) => {
-        MenuItem({ content: row.title || row.id, labelInfo: this.managerLine(row) })
+        MenuItem({ content: row.title || row.id, labelInfo: this.managerLine(row), startIcon: $r('app.media.phone_persona_face') })
           .selected(row.id === this.model.profile.manager).selectIcon(true).enabled(!row.isInstallingManager())
           .onClick(() => { if (this.drawerAcceptsTap()) this.model.selectListedManager(row.id, scope); }).id('spaces.assistant.' + row.id)
       }, (row: ResourceRow) => row.key())
-      MenuItem({ content: tr('phone_new_assistant') }).onClick(() => {
+      MenuItem({ content: tr('phone_new_assistant'), symbolStartIcon: new SymbolGlyphModifier(Symbols.plus) }).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('phone_new_assistant');
       }).id('spaces.new_assistant')
-      MenuItem({ content: tr('phone_manage_assistants') }).onClick(() => {
+      MenuItem({ content: tr('phone_manage_assistants'), symbolStartIcon: new SymbolGlyphModifier(Symbols.gear) }).onClick(() => {
         if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
         this.spacesShown = false; this.openSettings('managers');
       }).id('spaces.manage_assistants')
@@ -979,7 +1015,7 @@ struct Index {
     Button({ type: ButtonType.Normal }) {
       Row({ space: 10 }) {
         Stack({ alignContent: Alignment.BottomEnd }) {
-          Image(this.look.avatarUri || $r('app.media.foreground')).width(36).height(36).objectFit(ImageFit.Contain).borderRadius(18)
+          Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(20)
           if (Wire.has(row.data(), 'online')) Circle().width(10).height(10)
             .fill(Wire.bool(row.data(), 'online') ? Colors.positive : Colors.secondary)
             .stroke(Colors.surface).strokeWidth(2)
@@ -1010,12 +1046,8 @@ struct Index {
   @Builder spaceRow(kind: string) {
     if (this.matchesDrawer(this.spaceTitle(kind))) ListItem() {
       Row({ space: 16 }) {
-        if (kind === 'persona') Image(this.look.avatarUri || $r('app.media.foreground')).width(24).height(24).objectFit(ImageFit.Contain).borderRadius(12)
-        else SymbolGlyph(this.spaceSymbol(kind)).fontSize('22vp').fontColor([Colors.ink]).width(24)
-        Column({space:1}) {
-          Text(kind === 'persona' ? tr('persona') : this.spaceTitle(kind)).fontSize(17).fontWeight(kind === 'persona' ? FontWeight.Medium : FontWeight.Regular).fontColor(Colors.ink)
-          if (kind === 'persona') Text(tr('main_chat')).fontSize(12).fontColor(Colors.secondary)
-        }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+        SymbolGlyph(this.spaceSymbol(kind)).fontSize('20vp').fontColor([Colors.ink]).width(24)
+        Text(this.spaceTitle(kind)).fontSize(17).fontColor(Colors.ink).layoutWeight(1)
         if ((kind === 'inbox' || kind === 'todo') && this.placeCount(kind) > 0) Text(String(this.placeCount(kind))).fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.link)
       }.padding({left:12,right:12,top:5,bottom:5}).constraintSize({minHeight:44}).width('100%')
     }.borderRadius(10).backgroundColor(this.activeModule() === kind ? Colors.control : Color.Transparent)
@@ -1023,12 +1055,12 @@ struct Index {
   }
   @Builder spacesContent() {
     Column() {
-      if (!this.wide()) {
+      if (!this.wide() && !this.drawerSearching) {
         Row({ space: 8 }) {
           if (this.drawerManager) this.assistantHeading(this.drawerManager)
           else Text(tr('persona')).fontSize(27).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
           PhoneIconButton({symbol: $r('sys.symbol.magnifyingglass'), label:tr('search'), identity:'spaces.search_toggle',
-            action:() => { if (!this.drawerAcceptsTap()) return; if (this.mergedPhone()) this.showAllChats(this.model.section === 1); else this.drawerSearching = !this.drawerSearching; this.drawerSearch = ''; }})
+            action:() => { if (this.drawerAcceptsTap()) { this.drawerSearch = ''; this.drawerSearching = true; } }})
         }.width('100%').constraintSize({minHeight:56}).padding({left:16,right:12,top:6,bottom:4})
       }
       if (!this.wide() && this.drawerSearching) {
@@ -1038,8 +1070,10 @@ struct Index {
       List() {
         this.spaceRow('persona')
         ListItem() { Divider().color(Colors.divider).strokeWidth(0.5).margin({left:12,right:12,top:4,bottom:6}) }
-        this.spaceRow('agents')
-        this.spaceRow('projects')
+        if (this.wide() || this.mergedPhone()) {
+          this.spaceRow('agents')
+          this.spaceRow('projects')
+        }
         this.spaceRow('recordings')
         this.spaceRow('inbox')
         this.spaceRow('todo')
@@ -1056,7 +1090,12 @@ struct Index {
           }.width('100%').constraintSize({minHeight:44}).padding({left:13,right:14,top:6,bottom:4}).onClick(() => { if (this.drawerAcceptsTap()) this.recentExpanded = !this.recentExpanded; }).id('spaces.recent')
         }
         if (this.recentExpanded || this.drawerSearch) ForEach(this.conversationRowBindings, (binding: BoundRow<ResourceRow>) => {
-          if (this.matchesDrawer(binding.value.title)) ListItem() { this.conversationRow(binding, true) }
+          if (this.matchesDrawer(binding.value.title)) ListItem() {
+            if (this.wide()) this.conversationRow(binding, true)
+            else Text(binding.value.title || tr('new_chat')).fontSize(16).fontColor(Colors.ink).maxLines(1)
+              .textOverflow({overflow:TextOverflow.Ellipsis}).width('100%').constraintSize({minHeight:44})
+              .padding({left:13,right:14})
+          }
             .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); })
         }, (binding: BoundRow<ResourceRow>) => binding.key)
         ListItem() {
@@ -1083,7 +1122,7 @@ struct Index {
             }.onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(r); }).accessibilityGroup(true).id('spaces.agent')
           },(r:ResourceRow) => JSON.stringify([r.key(),r.title,r.state,Wire.text(r.data(),'last_text')]))
         }
-        this.spaceRow('hub')
+        if (this.wide() || this.mergedPhone()) this.spaceRow('hub')
         if (this.wide() && !this.rail()) this.spaceRow('collapse')
       }.width('100%').layoutWeight(1).padding({left:5,right:5})
       }
@@ -1114,10 +1153,14 @@ struct Index {
   private openHistory(): void { this.stack.pushPath({ name: 'history', param: JSON.stringify(this.detailModel.selected) }); this.savePath(); }
   private openTools(path: string = '', tab: number = 0): void { const data = Wire.record(JSON.parse(JSON.stringify(this.detailModel.selected)) as Object); if (path) data['open_file'] = path; if (tab) data['entry_tab'] = tab; this.stack.pushPath({ name: 'tools', param: JSON.stringify(data) }); this.savePath(); }
   private destinationMenuItems(name: string, param: Object): NavigationMenuItem[] {
+    if (name === 'knowledge' && this.routeRow(param).path === 'recordings') {
+      return [{ value: tr('tags'), symbolIcon: new SymbolGlyphModifier($r('sys.symbol.label')), isEnabled: this.targetReady(name, param),
+        action: () => { if (this.activeChild === this.childKey(name, param)) this.recordingEditRevision++; } }];
+    }
     if (name === 'settings' && this.isAdminPage(this.settingsKind(param))) return this.adminMenus(name, param);
     if (name === 'extension' && this.applicationAllowed(param)) return this.extensionMenus(name, param);
     if (this.mainDestination(name, param)) return [];
-    if (name === 'session' || name === 'conversation') return [{ value: tr('more'), icon: $r('sys.media.ohos_ic_public_more'), isEnabled: this.targetReady(name, param), action: () => this.showChatActions(name, param) }];
+    if (name === 'session' || name === 'conversation' || name === 'tools' && !this.wide()) return [{ value: tr('more'), icon: $r('sys.media.ohos_ic_public_more'), isEnabled: this.targetReady(name, param), action: () => this.showChatActions(name, param) }];
     return [];
   }
   private chatMenuOptions(revision: number): MenuOptions {
@@ -1125,9 +1168,10 @@ struct Index {
   }
   @Builder chatActionsMenu() {
     Menu() {
-      ForEach(this.chatMenuActions, (item: SheetInfo) => {
-        MenuItem({ content: item.title }).constraintSize({ minHeight: Tokens.touch }).onClick(() => item.action())
-      }, (_item: SheetInfo, index: number) => String(this.chatMenuRevision) + ':' + String(index))
+      ForEach(this.chatMenuActions, (item: ChatActionEntry) => {
+        MenuItem({ content: item.title, startIcon: item.icon }).constraintSize({ minHeight: Tokens.touch })
+          .onClick(() => item.action()).id(item.identity || '')
+      }, (_item: ChatActionEntry, index: number) => String(this.chatMenuRevision) + ':' + String(index))
     }
   }
   private closeChatActions(revision: number): void {
@@ -1142,11 +1186,24 @@ struct Index {
     const valid = (): boolean => this.activeChild === this.childKey(name, param) && this.targetReady(name, param) &&
       this.detailModel === owner && owner.owns(generation, scope) && owner.selected.key() === key;
     if (!valid()) { this.dismissChatActions(); return; }
-    const sheets: SheetInfo[] = [];
+    const sheets: ChatActionEntry[] = [];
+    if (!this.wide() && owner.selected.machine && (name === 'session' || name === 'tools')) {
+      if (name === 'tools') sheets.push({title: tr('session_back_to_chat'), identity: 'session.mode.chat',
+        action: () => { if (valid()) this.phoneBack(); }});
+      const labels = ['files', 'git', 'terminal', 'session_tools_terminal_screen', 'preview'];
+      const identities = ['files', 'git', 'terminal', 'terminal_screen', 'preview'];
+      for (const pick of [2, 1, 0, 3, 4]) {
+        sheets.push({title: tr(labels[pick]), identity:'session.mode.' + identities[pick], action: () => {
+          if (!valid()) return;
+          if (name === 'tools') owner.selectWorkspaceTab(pick);
+          else this.openTools('', pick);
+        }});
+      }
+    }
     if (owner.isChat() && owner.selected.machine) sheets.push({ title: tr('interaction_history'), action: () => { if (valid()) this.openHistory(); } });
     const computer = this.selectedComputer();
     if (computer) sheets.push({ title: tr('computer_screen_open'), action: () => { if (valid()) this.openComputer(computer); } });
-    if (owner.selected.machine) sheets.push({ title: tr('workspace'), action: () => { if (valid()) this.openTools(); } });
+    if (owner.selected.machine && (this.wide() || name === 'conversation')) sheets.push({ title: tr('workspace'), action: () => { if (valid()) this.openTools(); } });
     for (const page of ['permissions', 'voice']) sheets.push({ title: tr(page), action: () => {
       if (valid()) this.openSettings(page === 'permissions' ? 'session_permissions' : page, true);
     } });
@@ -1253,20 +1310,39 @@ struct Index {
     InboxWorkspacePage({ model: this.model, visible: this.model.section === 2, refreshRevision: this.inboxRefreshRevision, onChanged: () => this.inboxRefreshRevision++, onOpen: (row: ResourceRow) => this.openRow(row), onLink: (address: string) => this.openReader(address),
       onHandoff: (row: ResourceRow) => this.openLinkedResource(row) })
   }
+  private openFromPhoneSettings(page: string): void {
+    if (['phone_agent_options','phone_language_options','phone_meeting_options','phone_knowledge_selection'].includes(page)) {
+      this.phoneSettingsPage = page;
+      return;
+    }
+    this.phoneSettingsDepth = this.stack.size();
+    this.phoneSettingsOwner = this.model.scope();
+    this.phoneSettingsShown = false;
+    this.spacesShown = false;
+    this.openSettings(page);
+  }
   @Builder phoneSettings() {
     Column() {
-      Row() {
-        Blank().width(36)
-        Text(tr('settings')).layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-        PhoneIconButton({symbol:IconActions.symbol('close'),label:tr('close'),identity:'settings.close',tint:Colors.link,
+      if (this.phoneSettingsPage || !this.phoneSettingsQuery.trim()) Row() {
+        if (this.phoneSettingsPage) PhoneIconButton({symbol:Symbols.collapse,label:tr('back'),identity:'settings.back',
+          action:() => { this.phoneSettingsPage = ''; }})
+        else PhoneIconButton({symbol:IconActions.symbol('close'),label:tr('close'),identity:'settings.close',
           action:() => { this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; }})
+        Text(this.phoneSettingsPage === 'phone_language_options' ? tr('language') : this.phoneSettingsPage ? tr(this.settingsLabel(this.phoneSettingsPage)) : tr('settings'))
+          .layoutWeight(1).textAlign(TextAlign.Center).fontSize(18).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+        Blank().width(PhoneStyle.bar)
       }.width('100%').padding({left:14,right:14,top:7,bottom:5})
-      SettingsDirectory({model:this.model,ownerName:this.model.profile.name || tr('persona'),avatar:this.look.avatarUri,
+      if (this.phoneSettingsPage === 'phone_knowledge_selection') {
+        PhoneKnowledgeSelection({model:this.model}).layoutWeight(1)
+      } else if (this.phoneSettingsPage === 'phone_meeting_options') {
+        PhoneMeetingSettings({model:this.model}).layoutWeight(1)
+      } else if (this.phoneSettingsPage) {
+        PhoneSettingsOptions({model:this.model,page:this.phoneSettingsPage,label:(key:string):string => this.settingsLabel(key),
+          onOpen:(key:string) => this.openFromPhoneSettings(key)}).layoutWeight(1)
+      } else SettingsDirectory({model:this.model,ownerName:this.model.profile.name || tr('persona'),avatar:this.look.avatarUri,
         initialQuery:this.phoneSettingsQuery,onQueryChange:(value:string) => this.phoneSettingsQuery = value,
-        label:(key:string):string => this.settingsLabel(key),onOpen:(key:string) => {
-          this.phoneSettingsDepth = this.stack.size(); this.phoneSettingsOwner = this.model.scope();
-          this.phoneSettingsShown = false; this.spacesShown = false; this.openSettings(key);
-        }}).layoutWeight(1)
+        showDismissSearch:true,onDismissSearch:() => { this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; },
+        label:(key:string):string => this.settingsLabel(key),onOpen:(key:string) => this.openFromPhoneSettings(key)}).layoutWeight(1)
     }.width('100%').height('100%').backgroundColor(Colors.grouped).id('settings.sheet')
   }
   @Builder settingsList() {
@@ -1299,6 +1375,9 @@ struct Index {
   }
   @Builder projectPage(name: string, param: string) {
     ProjectsPage({ model: this.model, catalog: this.projectCatalog, page: name, target: param as string,
+          compact: !this.wide(), onBack: () => this.phoneBack(), onSearchMode: (active: boolean) => { this.projectSearching = active; },
+          isMuted: (row: ResourceRow): boolean => this.agentWorkspace.isMuted(row),
+          onMachine: (tree: ProjectWorktree) => this.pushPlace('machine_projects', JSON.stringify([tree.group,tree.manager,tree.machine])),
           onProject: (key: string) => this.pushPlace('project', key),
           onTree: (key: string) => this.pushPlace('project_tree', key),
           onSession: (row: ResourceRow) => this.openLinkedResource(row),
@@ -1359,7 +1438,13 @@ struct Index {
   private chosenLauncher(): Record<string,Object> {
     return this.launcherData.find((v:Record<string,Object>) => Wire.text(v,'name') === this.effectiveLauncher()) || {};
   }
-  private promptOptional(): boolean { return Wire.bool(this.chosenLauncher(),'prompt_optional'); }
+  private promptOptional(): boolean {
+    const choice = this.chosenLauncher();
+    if (Wire.bool(choice,'prompt_optional')) return true;
+    // Only known Codex launchers without the optional-prompt capability need a first message.
+    const agent = Wire.text(choice,'agent') || Wire.text(choice,'agent_type') || Wire.text(choice,'name');
+    return !!agent && agent !== 'codex';
+  }
   private canStartAgent(): boolean {
     const machine = this.chosenAgentMachine(), tree = this.selectedAgentTree();
     return !!machine && this.agentOwnsMachine(machine) && this.agentMachineOnline(machine) && !this.creatingAgent && !this.switchingAgentMachine &&
@@ -1377,7 +1462,7 @@ struct Index {
     if (this.agentPanel === 'preset') return [new LaunchChoice('',tr('phone_default_preset'))].concat(
       this.agentPresets.map((v:Record<string,Object>) => new LaunchChoice(Wire.text(v,'name'),Wire.text(v,'name'),
         [Wire.text(v,'launcher'),Wire.text(v,'model'),Wire.text(v,'effort')].filter((label:string) => !!label).join(' · '))));
-    if (this.agentPanel === 'model') return [new LaunchChoice('',tr('flow_use_default'))].concat(this.launchChoices.locked ? [] : this.launchChoices.models);
+    if (this.agentPanel === 'model') return [new LaunchChoice('',tr('admin_default'),[this.effectiveLauncher(),this.launchChoices.defaultModelName()].filter((v:string) => !!v).join(' · '))].concat(this.launchChoices.locked ? [] : this.launchChoices.models);
     if (this.agentPanel === 'effort') return [new LaunchChoice('',tr('flow_use_default'))].concat(
       this.launchChoices.effortNames.map((v:string) => new LaunchChoice(v,v)));
     return [];
@@ -1453,37 +1538,74 @@ struct Index {
     this.pickedAgentTree = key; this.directory = change.path; this.closeAgentPanel(); this.saveAgentDraft();
     if (!this.projectCatalog.tree(key)) this.startFailure = 'project_gone';
   }
-  @Builder agentOptionRow(label:string,value:string,symbol:Resource,key:string,disclose:boolean = true) {
+  private launchRowTitle(key:string): string {
+    if (key === 'workspace') return tr('workspace');
+    if (key === 'folder') return this.directory ? this.directory.split('/').filter((part:string) => !!part).pop() || '/' : tr('directory');
+    if (key === 'preset') return tr('phone_preset');
+    if (key === 'launcher') return this.launcher || (this.machineDefaultLabel ? tr('admin_default')+' · '+this.machineDefaultLabel : tr('launcher'));
+    if (key === 'model') return this.agentModelId ? this.launchChoices.models.find((option:LaunchChoice) => option.id === this.agentModelId)?.title || this.agentModelId : tr('flow_model');
+    return tr('flow_effort');
+  }
+  private launchRowDetail(key:string): string {
+    if (key === 'workspace') return this.selectedAgentTree()?.title || tr('flow_choose_folder');
+    if (key === 'folder') return this.agentPathLabel(this.directory || Wire.text(this.chosenAgentMachine()?.data() || {},'home') || '~');
+    if (key === 'preset') return this.agentPreset || this.agentTierProfile || tr('phone_default_preset');
+    if (key === 'launcher') return this.launcher ? Wire.text(this.chosenLauncher(),'model') : '';
+    if (key === 'model') return this.agentModelId || this.launchChoices.defaultModelName() || tr('flow_use_default');
+    return this.agentEffort || tr('flow_use_default');
+  }
+  @Builder agentOptionRow(key:string) {
     Row({space:11}) {
-      SymbolGlyph(symbol).fontSize('18vp').fontColor([Colors.link]).width(24)
+      SymbolGlyph(key === 'folder' || key === 'workspace' ? Symbols.folder : key === 'launcher' ? Symbols.agent : key === 'effort' ? Symbols.gear : Symbols.apps)
+        .fontSize('18vp').fontColor([Colors.link]).width(24)
       Column({space:2}) {
-        Text(label).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        if (value) Text(value).fontSize(13).fontColor(Colors.secondary).maxLines(this.environment.fontScale >= 1.5 ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
+        Text(this.launchRowTitle(key)).fontSize(16).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        if (this.launchRowDetail(key)) Text(this.launchRowDetail(key)).fontSize(13).fontColor(Colors.secondary)
+          .maxLines(this.environment.fontScale >= 1.5 ? 4 : 2).textOverflow({overflow:TextOverflow.Ellipsis})
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      if (disclose) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-    }.width('100%').constraintSize({minHeight:47}).padding({left:13,right:12,top:7,bottom:7})
-      .onClick(() => { if (disclose) this.openAgentPicker(key); }).accessibilityGroup(true).id('agent.' + key)
+      if (key !== 'workspace' || !this.agentWorktree) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
+    }.width('100%').constraintSize({minHeight:49}).padding({left:13,right:12,top:7,bottom:7})
+      .onClick(() => { if (key !== 'workspace' || !this.agentWorktree) this.openAgentPicker(key); }).accessibilityGroup(true).id('agent.'+key)
   }
   @Builder launchDivider() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:48}) }
+  private agentPathLabel(path:string): string {
+    const machine = this.chosenAgentMachine(), home = machine ? Wire.text(machine.data(),'home').replace(/\/+$/,'') : '';
+    return home && (path === home || path.startsWith(home + '/')) ? '~' + path.slice(home.length) : path;
+  }
+  private selectRecentDirectory(choice: LaunchChoice): void {
+    if (this.agentWorktree || !this.recentAgentDirectories.some((row:LaunchChoice) => row.id === choice.id)) return;
+    this.pickedAgentTree = ''; this.directory = choice.id; this.saveAgentDraft();
+  }
+  @Builder recentDirectory(choice: LaunchChoice) {
+    Row({space:11}) {
+      SymbolGlyph(this.directory === choice.id ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.clock'))
+        .fontSize('18vp').fontColor([this.directory === choice.id ? Colors.link : Colors.secondary]).width(24)
+      Column({space:2}) {
+        Text(choice.title).fontSize(16).fontColor(Colors.ink)
+        Text(this.agentPathLabel(choice.id.substring(0,choice.id.lastIndexOf('/')) || '/')).fontSize(13).fontColor(Colors.secondary)
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+    }.width('100%').constraintSize({minHeight:56}).padding({left:14,right:14,top:7,bottom:7})
+      .accessibilityGroup(true).accessibilityText(choice.title+' · '+choice.id).accessibilitySelected(this.directory === choice.id)
+      .onClick(() => this.selectRecentDirectory(choice)).id('agent.recent_directory')
+  }
   @Builder machineChoice(row:ResourceRow) {
     Button({type:ButtonType.Normal}) {
       Column({space:5}) {
         Row() {
-          if (machineBrandMark(row)) Image(machineBrandMark(row)!).width(19).height(19).objectFit(ImageFit.Contain).fillColor(Colors.ink)
-          else SymbolGlyph(Symbols.device).fontSize('19vp').fontColor([Colors.ink])
+          SymbolGlyph(Wire.text(row.data(),'icon') === 'server' ? $r('sys.symbol.externaldrive') :
+            Wire.text(row.data(),'icon') === 'desktop' ? $r('sys.symbol.desktop') : Symbols.device).fontSize('22vp').fontColor([Colors.ink])
           Blank().layoutWeight(1)
-          if (this.sameMachine(row,this.chosenAgentMachine())) SymbolGlyph(Symbols.check).fontSize('13vp').fontColor([Colors.link])
+          Circle().width(7).height(7).fill(this.agentMachineOnline(row) ? Colors.positive : Colors.secondary)
         }.width('100%')
         Text(row.title || row.id).fontSize(15).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(this.environment.fontScale >= 1.5 ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
-        Row({space:4}) {
-          Circle().width(5).height(5).fill(this.agentMachineOnline(row) ? Colors.positive : Colors.secondary)
-          Text(tr(this.agentMachineOnline(row) ? 'online' : 'offline')).fontSize(12).fontColor(Colors.secondary)
-        }
-      }.width('100%').alignItems(HorizontalAlign.Start).padding(10)
-    }.width(this.environment.fontScale >= 1.5 ? Math.min(250,130 * this.environment.fontScale) : 122).padding(0).borderRadius(12).backgroundColor(Colors.surface)
-      .border({width:this.sameMachine(row,this.chosenAgentMachine()) ? 1.5 : 0.5,color:this.sameMachine(row,this.chosenAgentMachine()) ? Colors.link : Colors.divider,radius:12})
+        Text(row.id).fontSize(12).fontColor(Colors.secondary).maxLines(this.environment.fontScale >= 1.5 ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
+      }.width('100%').alignItems(HorizontalAlign.Start).padding(11)
+    }.width(this.environment.fontScale >= 1.5 ? Math.min(250,130 * this.environment.fontScale) : 138).padding(0).borderRadius(14)
+      .backgroundColor(this.sameMachine(row,this.chosenAgentMachine()) ? Colors.selection : Colors.subtle)
+      .border({width:this.sameMachine(row,this.chosenAgentMachine()) ? 1.5 : 0,color:Colors.link,radius:14})
       .enabled(this.agentMachineOnline(row) && (!this.agentWorktree || this.sameMachine(row,this.chosenAgentMachine())))
-      .accessibilityGroup(true).accessibilityText(row.title || row.id).accessibilitySelected(this.sameMachine(row,this.chosenAgentMachine())).onClick(() => this.pickAgentMachine(row)).id('agent.machine')
+      .accessibilityGroup(true).accessibilityText((row.title || row.id)+' · '+tr(this.agentMachineOnline(row) ? 'online' : 'offline'))
+      .accessibilitySelected(this.sameMachine(row,this.chosenAgentMachine())).onClick(() => this.pickAgentMachine(row)).id('agent.machine')
   }
   @Builder newAgentForm() {
     if (this.agentPanel === 'worktree') {
@@ -1495,12 +1617,12 @@ struct Index {
     } else {
       Column() {
         Row() {
-          Button(tr('cancel'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(16).maxFontScale(Tokens.navigationTextMaxScale)
-            .padding({left:6,right:6}).constraintSize({minHeight:44,maxWidth:'34%'}).fontColor(Colors.link).onClick(() => this.showSheet = false)
-            .enabled(!this.creatingAgent).id('agent.cancel')
-          Text(tr('new_agent')).fontSize(18).maxFontScale(Tokens.navigationTextMaxScale).maxLines(2).fontWeight(FontWeight.Bold).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
-          Blank().width(48)
-        }.width('100%').constraintSize({minHeight:48}).padding({left:4,right:4})
+          Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('20vp').fontColor([Colors.ink]) }
+            .width(42).height(42).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:21})
+            .accessibilityText(tr('cancel')).onClick(() => this.showSheet = false).enabled(!this.creatingAgent).id('agent.cancel')
+          Text(tr('new_chat')).fontSize(18).maxFontScale(Tokens.navigationTextMaxScale).maxLines(2).fontWeight(FontWeight.Bold).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
+          Blank().width(42)
+        }.width('100%').constraintSize({minHeight:52}).padding({left:14,right:14,top:4,bottom:4})
         Scroll() {
           Column() {
             if (!this.agentWorktree && !this.agentTodo && this.recentSetups.length) {
@@ -1516,57 +1638,69 @@ struct Index {
                 }.width('100%').padding(12).onClick(() => this.reuseSetup(r)).accessibilityGroup(true).id('agent.recent')
               },(r:RecentAgentSetup) => r.key) }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
             }
-            PhoneSectionTitle({text:tr('machines')})
-            Scroll() { Row({space:7}) {
-              ForEach(this.agentMachines(),(m:ResourceRow) => this.machineChoice(m),(m:ResourceRow) => JSON.stringify([m.group,m.manager,m.id,m.title,m.state]))
-            } }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).width('100%')
-            PhoneSectionTitle({text:tr('workspace')})
-            Column() {
-              this.agentOptionRow(tr('workspace'),this.selectedAgentTree()?.title || tr('flow_choose_folder'),Symbols.folder,'workspace',!this.agentWorktree)
-              if (this.selectedAgentTree()) {
-                Text(this.selectedAgentTree()!.cwd).fontSize(13).fontColor(Colors.secondary).padding({left:48,right:13,bottom:6}).width('100%').id('agent.worktree')
-                if (this.selectedAgentTree()!.permits('create')) {
-                  this.launchDivider()
-                  Button(tr('tree_create'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link).onClick(() => this.makeChildFromAgent()).id('agent.child')
+            if (!this.agentWorktree) {
+              PhoneSectionTitle({text:tr('phone_machines')})
+              Scroll() { Row({space:8}) {
+                ForEach(this.agentMachines(),(m:ResourceRow) => this.machineChoice(m),(m:ResourceRow) => JSON.stringify([m.group,m.manager,m.id,m.title,m.state]))
+              } }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).width('100%')
+                .padding(12).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+            }
+            if (this.agentWorktree || this.selectedAgentTree() || this.availableAgentTrees().some((t:ProjectWorktree) => t.boundStart)) {
+              PhoneSectionTitle({text:tr('workspace')})
+              Column() {
+                this.agentOptionRow('workspace')
+                if (this.selectedAgentTree()) {
+                  Text(this.agentPathLabel(this.selectedAgentTree()!.cwd)).fontSize(13).fontColor(Colors.secondary).padding({left:48,right:13,bottom:6}).width('100%').id('agent.worktree')
+                  if (this.selectedAgentTree()!.permits('create')) {
+                    this.launchDivider()
+                    Button(tr('tree_create'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).fontColor(Colors.link).onClick(() => this.makeChildFromAgent()).id('agent.child')
+                  }
                 }
-              } else {
-                this.launchDivider()
-                this.agentOptionRow(tr('directory'),this.directory || Wire.text(this.chosenAgentMachine()?.data() || {},'home') || '~',Symbols.folder,'folder')
-              }
-            }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(14)
-            PhoneSectionTitle({text:tr('flow_start_options')})
+              }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+            }
+            if (!this.selectedAgentTree() && !this.agentWorktree) {
+              PhoneSectionTitle({text:tr('directory')})
+              Column() {
+                this.agentOptionRow('folder')
+                ForEach(this.recentAgentDirectories.slice(0,6),(row:LaunchChoice) => {
+                  this.launchDivider()
+                  this.recentDirectory(row)
+                },(row:LaunchChoice) => row.id)
+              }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+            }
+            PhoneSectionTitle({text:tr('flow_launcher_model_once')})
             Column() {
               if (this.agentPresets.length) {
-                this.agentOptionRow(tr('phone_preset'),this.agentPreset || tr('phone_default_preset'),Symbols.apps,'preset')
+                this.agentOptionRow('preset')
                 this.launchDivider()
               }
-              this.agentOptionRow(tr('launcher'),this.launcher || this.machineDefaultLabel || tr('phone_launcher_default'),Symbols.agent,'launcher')
+              this.agentOptionRow('launcher')
               if (this.effectiveLauncher()) {
                 this.launchDivider()
-                this.agentOptionRow(tr('flow_model'),this.agentModelId || tr('flow_use_default'),Symbols.apps,'model')
+                this.agentOptionRow('model')
               }
               if (this.launchChoices.effortNames.length || this.agentEffort) {
                 this.launchDivider()
-                this.agentOptionRow(tr('flow_effort'),this.agentEffort || tr('flow_use_default'),Symbols.gear,'effort')
+                this.agentOptionRow('effort')
               }
             }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
             PhoneSectionTitle({text:tr('flow_first_message')})
             TextArea({text:this.newTask,placeholder:tr(this.promptOptional() ? 'flow_draft_optional' : 'task')}).minLines(2).height(Math.max(91, 46 * this.environment.fontScale + 24))
-              .fontSize(16).padding(12).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(14)
+              .fontSize(16).padding(14).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
               .onChange((v:string) => { this.newTask = v; this.saveAgentDraft(); }).id('agent.task')
             if ((this.agentWorktree || this.pickedAgentTree) && !this.selectedAgentTree()) Text(tr('project_gone')).fontSize(14).fontColor(Colors.danger).padding(8)
             if (this.startFailure) Text(trError(this.startFailure)).fontSize(14).fontColor(Colors.danger).padding(8).id('agent.error')
           }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,bottom:14})
         }.width('100%').layoutWeight(1).align(Alignment.TopStart)
-        Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start')).height(Math.max(46, 23 * this.environment.fontScale + 16))
-          .width('91%').margin({top:7,bottom:12}).backgroundColor(Colors.action).fontColor(Colors.onAction).fontSize(17)
+        Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start_chat')).height(Math.max(54, 23 * this.environment.fontScale + 16))
+          .width('89%').margin({top:7,bottom:12}).backgroundColor(Colors.action).fontColor(Colors.onAction).fontSize(17)
           .enabled(this.canStartAgent()).onClick(() => this.createAgent()).id('agent.create')
       }.width('100%').height('100%').backgroundColor(Colors.grouped)
     }
   }
   private async loadAgentLaunchers(): Promise<void> {
     const rev = ++this.launcherRevision, form = this.agentFormRevision, owner = this.agentModel, machine = this.chosenAgentMachine()?.id;
-    this.agentLauncherOptions = []; this.agentLauncherLabels = []; this.agentPresets = []; this.machineDefaultLabel = ''; this.launchListReady = false; this.launcherData = []; this.blockedLaunchers = []; this.defaultLauncherName = '';
+    this.agentLauncherOptions = []; this.agentLauncherLabels = []; this.agentPresets = []; this.agentTierProfile = ''; this.machineDefaultLabel = ''; this.launchListReady = false; this.launcherData = []; this.blockedLaunchers = []; this.defaultLauncherName = '';
     if (!machine || !owner.connected) return;
     const scope = owner.scope(), epoch = owner.connectionGeneration();
     try {
@@ -1584,15 +1718,23 @@ struct Index {
         return new LaunchChoice(Wire.text(v,'name'),Wire.text(v,'display_name') || Wire.text(v,'name'),reason,true);
       });
       this.agentLauncherOptions = allowed.map((item: Record<string,Object>) => Wire.text(item,'name'));
+      this.agentTierProfile = Wire.text(Wire.object(reply,'tiers_profile'),'name');
       this.agentPresets = Wire.rows(reply,'tiers').filter((v:Record<string,Object>) => !!Wire.text(v,'name') && this.agentLauncherOptions.includes(Wire.text(v,'launcher')));
       this.agentLauncherLabels = allowed.map((item: Record<string,Object>) => Wire.text(item,'display_name') || Wire.text(item,'name'));
+      if (!this.agentPanel && this.effectiveLauncher()) {
+        const launcher = this.effectiveLauncher();
+        this.launchChoices.loadModels(owner,machine,launcher).then(() => {
+          if (rev === this.launcherRevision && form === this.agentFormRevision && this.agentModel === owner &&
+            this.effectiveLauncher() === launcher) this.launchChoices.updateEfforts(this.agentModelId);
+        });
+      }
     } catch (_) { /* Older nodes support entering the existing launcher name directly. */ }
   }
   private agentDraftKey(): string { return 'new-agent:' + (this.agentWorktree?.key || this.agentTodo?.id || 'standalone'); }
   private async prepareAgent(todo?: ResourceRow, tree?: ProjectWorktree): Promise<void> {
     const revision = ++this.agentFormRevision, generation = this.model.connectionGeneration(), scope = this.model.scope();
     this.startTreeSource = undefined; this.startWorktree.close(); this.startFailure = ''; this.agentPanel = '';
-    this.launchChoices.clear(); this.recentSetups = []; this.agentModelId = ''; this.agentEffort = '';
+    this.launchChoices.clear(); this.recentSetups = []; this.recentAgentDirectories = []; this.agentModelId = ''; this.agentEffort = '';
     this.machineIntent++; this.switchingAgentMachine = false; this.agentMachineKey = ''; this.agentPreset = ''; this.projectCatalog.startError = false; this.readerShown = false; this.creatingAgent = false; this.newTask = ''; this.directory = ''; this.launcher = ''; this.agentTodo = todo; this.agentWorktree = undefined; this.pickedAgentTree = '';
     try {
       let owner = todo ? await this.model.viewFor(todo) : this.model;
@@ -1659,7 +1801,7 @@ struct Index {
     if (!this.agentMachineOnline(row) || !force && this.sameMachine(row,this.chosenAgentMachine()) && this.agentOwnsMachine(row) && this.agentModel.connected || this.agentWorktree && row.id !== this.agentWorktree.machine) return;
     const intent = ++this.machineIntent, form = this.agentFormRevision, root = this.model, epoch = root.connectionGeneration(), scope = root.scope();
     this.agentMachineKey = this.machineKey(row); this.switchingAgentMachine = true; this.startFailure = ''; this.launcherRevision++;
-    this.launchChoices.clear(); this.recentSetups = []; this.pickedAgentTree = ''; this.directory = ''; this.launcher = ''; this.agentPreset = ''; this.agentModelId = ''; this.agentEffort = '';
+    this.launchChoices.clear(); this.recentSetups = []; this.recentAgentDirectories = []; this.pickedAgentTree = ''; this.directory = ''; this.launcher = ''; this.agentPreset = ''; this.agentModelId = ''; this.agentEffort = '';
     try {
       const owner = await root.viewFor(row);
       if (intent !== this.machineIntent || form !== this.agentFormRevision || !root.owns(epoch,scope)) return;
@@ -1668,7 +1810,22 @@ struct Index {
     } catch (error) { if (intent === this.machineIntent && form === this.agentFormRevision) this.startFailure = (error as Error).message || 'offline'; }
     finally { if (intent === this.machineIntent && form === this.agentFormRevision) this.switchingAgentMachine = false; }
   }
+  private async loadInitialAgentDirectory(): Promise<void> {
+    const machine = this.chosenAgentMachine(), owner = this.agentModel, revision = this.agentFormRevision, intent = this.machineIntent;
+    if (!machine || this.agentWorktree || !this.agentOwnsMachine(machine)) return;
+    const epoch = owner.connectionGeneration(), scope = owner.scope();
+    try {
+      const result = await owner.repo().call('/api/v1/machines/'+encodeURIComponent(machine.id)+'/dirs?path=');
+      if (owner !== this.agentModel || !owner.owns(epoch,scope) || this.agentFormRevision !== revision || this.machineIntent !== intent ||
+        !this.showSheet || this.sheetKind !== 'newagent' || !this.sameMachine(machine,this.chosenAgentMachine())) return;
+      this.recentAgentDirectories = recentLaunchDirectories(result);
+      if (!this.directory && !this.pickedAgentTree && !this.agentPanel) {
+        this.directory = this.recentAgentDirectories[0]?.id || Wire.text(result,'path');
+      }
+    } catch (_) { /* The folder picker can retry an unavailable directory. */ }
+  }
   private async loadRecentSetups():Promise<void> {
+    this.loadInitialAgentDirectory();
     const owner = this.agentModel, form = this.agentFormRevision, epoch = owner.connectionGeneration(), scope = owner.scope();
     try {
       const list = loadAgentSetups(await owner.loadView('recent-agent-setups'));
@@ -1765,7 +1922,7 @@ struct Index {
     this.detailModel.watchDecisions(false);
     if (!['session', 'conversation'].includes(name)) this.detailModel.hideConversation(name !== 'tools');
     if (name === 'applications') this.applications.refresh();
-    if ((name === 'projects' || name === 'project' || name === 'project_tree') && !this.projectCatalog.projects.length && !this.projectCatalog.loading) this.projectCatalog.refresh(this.model);
+    if (['projects','project','project_tree','machine_projects'].includes(name) && !this.projectCatalog.projects.length && !this.projectCatalog.loading) this.projectCatalog.refresh(this.model);
     if (name === 'settings' && this.settingsKind(param) === 'appearance') this.ensureAgentWorkspace();
     const descriptor = NavigationContext.from(name, param as string);
     if (descriptor.scoped) this.restoreTarget(name, param);
@@ -1796,6 +1953,7 @@ struct Index {
     if (name === 'knowledge_meetings') return tr('knowledge');
     if (name === 'knowledge' && this.routeRow(param).path === 'recordings') return tr('knowledge_kind_recordings');
     if (name === 'projects') return tr('projects');
+    if (name === 'machine_projects') return this.projectCatalog.projects.find((row: PersonaProject) => row.hostKey === param)?.machine || tr('phone_machines');
     if (name === 'project') return this.projectCatalog.projects.find((row: PersonaProject) => row.key === param)?.title || tr('projects');
     if (name === 'project_tree') return this.projectCatalog.tree(param as string)?.title || tr('project_worktree');
     if (name === 'settings_root') return tr('settings');
@@ -1804,7 +1962,7 @@ struct Index {
   }
   @Builder destination(name: string, param: Object) {
     NavDestination() {
-      if (name === 'projects' || name === 'project' || name === 'project_tree') {
+      if (['projects','project','project_tree','machine_projects'].includes(name)) {
         this.projectPage(name, param as string)
       } else if (name === 'session' || name === 'conversation') {
         if (this.targetReady(name, param)) Conversation({ searchHitId:this.searchHitFor(param), model: this.detailModel, onPlace: (kind: string) => { if (this.activeChild === this.childKey(name, param)) this.openSpace(kind); }, admission: (): boolean => this.activeChild === this.childKey(name, param) && this.targetReady(name, param), onOpenFile: (path: string) => this.openTools(path), active: this.activeChild === this.childKey(name, param), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), showContextMenu: this.mainDestination(name, param) || this.hideChatTitle(name, param), onOpenCard: (itemId: string, kind: string) => { if (this.activeChild === this.childKey(name, param) && this.targetReady(name, param)) this.openAssistantCard(itemId, kind); }, onPrimaryStop: (shown: boolean) => { if (this.activeChild === this.childKey(name, param) && this.targetReady(name, param)) this.inlineStopIdentity = shown ? JSON.stringify([this.detailModel.scope(), this.detailModel.connectionGeneration(), this.detailModel.target()]) : ''; }, onShowActions: () => this.showChatActions(name, param), actionItems: this.chatMenuActions, actionsVisible: this.chatBodyMenuVisible && this.activeChild === this.childKey(name, param), actionsRequest: this.chatMenuRevision, onHideActions: (request: number) => this.closeChatActions(request) })
@@ -1855,7 +2013,7 @@ struct Index {
           onTitle: (title: string) => { if (name === 'todo' && this.activeChild === this.childKey(name, param)) this.todoTitle = title; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), onCreateAgent: (todo: ResourceRow) => this.createAgentFrom(name, param, todo) })
         else this.targetLoading(name, param)
       } else if (name === 'knowledge' || name === 'recordings' || name === 'knowledge_meetings' || name === 'resources' && param === 'knowledge') {
-        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
+        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onChat: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'resources' && param === 'health') {
@@ -1872,6 +2030,10 @@ struct Index {
       } else if (name === 'settings' && (this.settingsKind(param) === 'phone' || this.settingsKind(param) === 'voice')) {
         if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) DevicePage({ model: this.settingsModel(param), page: this.settingsKind(param), active: this.activeChild === this.childKey(name, param), onLeave: (owner: ClientModel) => this.restoreDeviceOwner(owner), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
+      } else if (name === 'settings' && this.settingsKind(param) === 'phone_knowledge_selection') {
+        PhoneKnowledgeSelection({model:this.settingsModel(param)})
+      } else if (name === 'settings' && this.settingsKind(param) === 'phone_meeting_options') {
+        PhoneMeetingSettings({model:this.settingsModel(param)})
       } else if (name === 'settings' && ['phone_agent_options','phone_language_options'].includes(this.settingsKind(param))) {
         PhoneSettingsOptions({model:this.model,page:this.settingsKind(param),label:(k:string):string => this.settingsLabel(k),onOpen:(k:string) => this.openSettings(k)})
       } else if (name === 'settings' && ['phone_agent_folders', 'phone_claude_config', 'phone_codex_config', 'phone_agy_config', 'phone_agent_followup'].includes(this.settingsKind(param))) {
@@ -1890,14 +2052,18 @@ struct Index {
     }.title({ builder: () => this.destinationTitle(name, param), height: this.headerHeight() }, { systemMaterial: this.titleMaterial })
       .hideTitleBar(!this.wide() || this.hideChatTitle(name, param)).hideBackButton(this.destinationBackHidden(name, param))
       .backgroundColor(name === 'resources' && param === 'inbox' ? Colors.grouped : Colors.canvas)
-      .menus(this.destinationMenus(name, param))
+      .menus(this.navigationMenus(name, param))
       .onShown(() => this.routeShown(name, param))
       .onHidden(() => { if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; if (this.activeChild === this.childKey(name, param)) { this.activeChild = ''; this.dismissChatActions(); } if ((name === 'session' || name === 'conversation') && this.routeRow(param).key() === this.detailModel.selected.key()) this.detailModel.hideConversation(false); if (name === 'assistant') this.detailModel.watchDecisions(false); if (name === 'tools') this.detailModel.releaseTerminal(); })
       .onBackPressed((): boolean => { if (!this.spacesShown && this.returnToPhoneSettings()) return true; if (this.spacesShown) { this.spacesShown = false; return true; } if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; this.phoneBack(); return true; })
   }
   onBackPress(): boolean {
     if (this.chatSearchShown) { this.chatSearchShown = false; return true; }
-    if (this.phoneSettingsShown) { this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; return true; }
+    if (this.phoneSettingsShown) {
+      if (this.phoneSettingsPage) this.phoneSettingsPage = '';
+      else { this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; }
+      return true;
+    }
     if (!this.spacesShown) return false;
     this.spacesShown = false; return true;
   }
@@ -1924,9 +2090,9 @@ struct Index {
             .onClick(() => this.model.useDemo()).id('welcome.demo')
           if (this.model.pendingCleanupCount > 0) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry_cleanup')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry_cleanup', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry_cleanup')).bindTips(tr('retry_cleanup')).onClick(() => this.model.retryCleanup())
         }.justifyContent(FlexAlign.Center).width('100%').height('100%').padding({left:32,right:32}).backgroundColor(Colors.grouped)
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       } else {
-        if (!this.wide()) this.phoneHeader()
+        if (!this.wide() && this.phoneTop !== 'project_tree' && (this.phoneTop || !this.projectPlace() || !this.projectSearching)) this.phoneHeader()
         Navigation(this.stack) { this.primaryContent() }.title({ builder: this.peerTitle, height: this.headerHeight() }, { systemMaterial: this.titleMaterial }).titleMode(NavigationTitleMode.Mini)
           .hideBackButton(true).hideTitleBar(this.rail() || !this.wide()).menus([])
           .backgroundColor(Colors.canvas)
@@ -1936,7 +2102,7 @@ struct Index {
           .minContentWidth(Tokens.detailMin).enableDragBar(!this.rail()).navDestination(this.destination)
           .onAreaChange(() => this.updateBreakpoint()).width('100%').layoutWeight(1)
 
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       }
     }.width('100%').height('100%').backgroundColor(Colors.canvas)
       .accessibilityLevel(this.chatSearchShown || this.spacesShown && !this.wide() ? 'no-hide-descendants' : 'auto')
@@ -1953,11 +2119,13 @@ struct Index {
       }.width('100%').height('100%').backgroundColor(Colors.grouped).zIndex(2).id('shell.all_chats')
     }.width('100%').height('100%').clip(true)
       .onAreaChange((_old:Area,now:Area) => { this.phoneWidth = Number(now.width); this.phoneHeight = Number(now.height); })
-      .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:12})
+      .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:12}).tag('phone.shell.pan')
         .onActionStart((event:GestureEvent) => this.startPhonePan(event))
         .onActionUpdate((event:GestureEvent) => this.movePhonePan(event.offsetX))
         .onActionEnd((event:GestureEvent) => this.endPhonePan(event.offsetX,event.velocityX))
         .onActionCancel(() => this.endPhonePan(0,0)))
+      .onGestureRecognizerJudgeBegin((event: BaseGestureEvent, current: GestureRecognizer, peers: GestureRecognizer[]) =>
+        this.judgePhonePan(event, current, peers), true)
       .bindSheet(this.wide() && this.spacesShown, this.spacesContent(), { title: { title: tr('conversation_spaces') }, height: SheetSize.LARGE, showClose: true,
         onAppear: () => { this.spacesLayoutReady = true; this.measureSpaces(); }, onDisappear: () => { this.spacesLayoutReady = false; if (this.wide()) this.spacesShown = false; } })
     }

@@ -862,7 +862,7 @@ export struct Conversation {
     const inputs: TimelineMessage[] = this.model.messages.map((message: ChatMessage): TimelineMessage => {
       messages.set(message.id, message); return { id: message.id, role: message.role, at: message.at };
     });
-    const activities: TimelineCard[] = this.feed.items.filter((item: Record<string, Object>) => !['task', 'today', 'brief'].includes(Wire.text(item, 'kind')))
+    const activities: TimelineCard[] = this.feed.items.filter((item: Record<string, Object>) => !['task', 'today'].includes(Wire.text(item, 'kind')))
       .map((item: Record<string, Object>): TimelineCard => { const id = Wire.text(item, 'id'), stamp = Date.parse(Wire.text(item, 'at')); cards.set(id, item); return { id: id, at: Number.isFinite(stamp) ? stamp : 0 }; });
     const lines = mergeConversationTimeline(inputs, activities).map((entry) => new ConversationLine(entry.id, messages.get(entry.messageId), cards.get(entry.cardId)));
     this.model.personaQuestions.forEach((request: Decision) => lines.push(new ConversationLine('persona-question:' + request.id, undefined, undefined, request)));
@@ -1106,6 +1106,15 @@ export struct Conversation {
       .bindTips(tr('phone_chat_hide_keyboard')).id(page ? 'chat.editor.keyboard' : 'chat.keyboard')
       .onClick(() => { if (page) this.pageField.stopEditing(); else this.inlineField.stopEditing(); })
   }
+  private composerPlaceholder():string {
+    if (this.model.agentInputNotice()==='agent_computer_holds') return this.agentNotice();
+    if (this.model.selected.kind==='conversation') return tr('knowledge_ask_persona');
+    const data=this.model.selected.data(), raw=Wire.text(data,'agent_label') || Wire.text(data,'launcher') || Wire.text(data,'agent') || Wire.text(data,'agent_type');
+    const agent=raw.toLowerCase();
+    const label=agent==='codex' ? 'Codex' : !agent || ['claude','claude-code','claude code'].includes(agent) ? 'Claude' : raw;
+    return tr('session_message_to_agent').replace('{agent}',label);
+  }
+
   @Builder draftPage() {
     Column({space:8}) {
       Row({space:8}) {
@@ -1119,7 +1128,7 @@ export struct Conversation {
       Column({space:8}) {
         if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).fontColor(Colors.secondary)
           .maxLines(this.environment.keyboardHeightPx > 0 ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
-        TextArea({text:this.model.draft,placeholder:tr('message'),controller:this.pageField})
+        TextArea({text:this.model.draft,placeholder:this.composerPlaceholder(),controller:this.pageField})
           .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(Tokens.body).fontColor(Colors.ink)
           .lineHeight(String(Tokens.lineHeight)+'fp').backgroundColor(Color.Transparent).caretColor(Colors.link)
           .padding({left:8,right:8,top:5,bottom:5}).enabled(!this.sending && !this.model.draftLoading)
@@ -1154,7 +1163,7 @@ export struct Conversation {
       GridRow({ columns: this.composerColumns(), gutter: { x: 0, y: 0 } }) {
         GridCol({ span: this.expandedComposer() ? this.composerColumns() : this.composerColumns() - this.leftColumns() - this.sendColumns(), order: this.expandedComposer() ? 0 : 1 }) {
           Stack({alignContent:Alignment.TopEnd}) {
-          TextArea({ text: this.model.draft, controller:this.inlineField, placeholder: this.model.agentInputNotice() === 'agent_computer_holds' ? this.agentNotice() : tr('message') }).maxLength(Tokens.maxMessage).width('100%')
+          TextArea({ text: this.model.draft, controller:this.inlineField, placeholder: this.composerPlaceholder() }).maxLength(Tokens.maxMessage).width('100%')
             .fontSize(Tokens.body).placeholderFont({ size: Tokens.body }).fontColor(Colors.ink).placeholderColor(Colors.secondary)
             .lineHeight(String(Tokens.lineHeight) + 'fp').caretColor(Colors.action).backgroundColor(Color.Transparent)
             .padding({ left: this.expandedComposer() ? Tokens.page : Tokens.gap, right: this.offersDraftEditor() ? Tokens.touch : this.expandedComposer() ? Tokens.page : Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
@@ -1200,6 +1209,7 @@ export struct Conversation {
           Row() {
           PhoneDictationControl({owner: this.dictationOwner(),
             active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
+            chooseLanguage: () => this.model.dictationLocaleForChat(), onListeningIn: (locale: string) => this.model.rememberDictationLocale(locale),
             allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.model.canCompose() && !this.model.decision,
             keyboard: () => this.getUIContext().getFocusController().requestFocus('chat.input'),
             insert: (text: string, owner: string): boolean => {
@@ -1225,7 +1235,7 @@ export struct Conversation {
 
   @Builder taskDock() {
     if (this.model.selected.kind === 'conversation' && this.model.connected) {
-          AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
+          AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, dockRoom:this.availableHeight, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
             onOpenTodo: (row: ResourceRow) => this.onOpenResource(row), onOpenInbox: (row: ResourceRow) => this.onOpenResource(row), onLink: (address: string) => this.onLink(address) })
     }
   }

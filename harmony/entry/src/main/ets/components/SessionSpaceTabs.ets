@@ -76,7 +76,7 @@ export struct SessionSpaceTabs {
         .onAreaChange(() => this.centerCurrent()).id('session.siblings')
       Button({type:ButtonType.Capsule}) {
         Row({space:4}) {
-          SymbolGlyph(Symbols.folder).fontSize('14vp').fontColor([Colors.secondary]).flexShrink(0)
+          SymbolGlyph($r('sys.symbol.square_stack_3d')).fontSize('14vp').fontColor([Colors.secondary]).flexShrink(0)
           Text(String(this.space.tabs.length)).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
         }.padding({left:10,right:10,top:4,bottom:4}).constraintSize({minHeight:30}).backgroundColor(Colors.control).borderRadius(20)
       }.height(44).constraintSize({minWidth:44}).padding(0).backgroundColor(Color.Transparent).flexShrink(0)

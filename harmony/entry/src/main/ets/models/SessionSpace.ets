@@ -39,6 +39,27 @@ export class SessionSpace {
 
 function compareText(a:string,b:string):number { return a < b ? -1 : a > b ? 1 : 0; }
 
+/** A terminal space can span Git checkouts. Resolve its visible session to the owning
+ * project before preferring that project's main checkout for the space overview. */
+export function worktreeForSessionSpace(space: SessionSpace, projects: PersonaProject[]): ProjectWorktree | undefined {
+  if (!space.key || !space.current) return undefined;
+  let owner: PersonaProject | undefined;
+  let opened: ProjectWorktree | undefined;
+  const belongs = (tree: ProjectWorktree, agent: ProjectAgent): boolean =>
+    JSON.stringify([tree.group, tree.manager, tree.machine, agent.spaceKind, agent.spaceId]) === space.key;
+  for (const project of projects) {
+    for (const tree of project.trees) {
+      if (!tree.agents.some((agent: ProjectAgent) => belongs(tree, agent) && (agent.row.session || agent.row.id) === space.current)) continue;
+      if (owner && owner !== project) return undefined;
+      owner = project; opened = tree;
+    }
+  }
+  if (!owner) return undefined;
+  return owner.trees.find((tree: ProjectWorktree) => tree.key === space.key) ||
+    owner.trees.find((tree: ProjectWorktree) => tree.main && tree.agents.length > 0 &&
+      tree.agents.every((agent: ProjectAgent) => belongs(tree, agent))) || opened;
+}
+
 // The roster belongs to the opened detail's Hub and assistant. Display names and local paths can be shared
 // between machines and worktrees, so only the host's space identity joins tabs.
 export function sessionSpace(selected:ResourceRow,roster:ResourceRow[],projects:PersonaProject[],group:string,manager:string):SessionSpace {

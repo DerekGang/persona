@@ -2,11 +2,14 @@ import { IconActions } from '../design/IconActions';
 import { LengthMetrics } from '@kit.ArkUI';
 import { QuestionDraft } from '../models/QuestionWorkspace';
 import { Symbols } from '../design/Symbols';
+import { MarkdownText } from './MarkdownText';
 import { ClientModel } from '../models/ClientModel';
-import { Decision, DecisionField, Wire } from '../models/Wire';
+import { Decision, DecisionField, ResourceRow, Wire } from '../models/Wire';
+import { AgentDecisionQueue, AgentDecisionCard } from '../models/AgentDecisionQueue';
+import { util } from '@kit.ArkTS';
 import {
   InteractionChoice, InteractionSchemaField, InteractionValidation,
-  interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
+  recordedPlanMode, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
   interactionPermissionFieldPlaceholder, interactionQuestionOptions,
   interactionSchemaFields, interactionScreenCanCancel, interactionScreenMulti, interactionScreenOptions,
@@ -22,6 +25,9 @@ export struct InteractionDecisionForm {
   @Require @Param model: ClientModel;
   @Require @Param request: Decision;
   @Param readOnly: boolean = false;
+  @Param taskQueue: AgentDecisionQueue | undefined = undefined;
+  @Param taskCard: AgentDecisionCard | undefined = undefined;
+  @Param taskAgent: ResourceRow | undefined = undefined;
   @Param pinFooter: boolean = false;
   @Param fillAvailable: boolean = false;
   @Param heightLimit: number = 0;
@@ -73,11 +79,14 @@ export struct InteractionDecisionForm {
 
   private persistQuestionDraft(): void { if (this.request.kind === 'question' && this.draft && this.admission()) this.draft.save(this.textValues, this.questionPicks, this.draftSession); }
   private canRespond(): boolean {
-    return this.admission() && !this.busy && this.model.canApprove() && interactionCanSubmit(this.request, this.readOnly);
+    if (!this.admission() || this.busy || !interactionCanSubmit(this.request,this.readOnly)) return false;
+    if (this.taskQueue) return !!this.taskCard && this.taskCard.request===this.request && !!this.taskAgent &&
+      this.taskQueue.enabled(this.model,this.taskAgent,this.taskCard);
+    return this.model.canApprove();
   }
 
   private canDefer(): boolean {
-    return interactionCanDefer(this.request, this.model.selected.kind, this.readOnly, this.busy);
+    return !this.taskQueue && interactionCanDefer(this.request, this.model.selected.kind, this.readOnly, this.busy);
   }
 
   private headerPrompt(): string {
@@ -243,6 +252,7 @@ export struct InteractionDecisionForm {
       });
     } else if (this.request.kind === 'plan') {
       values['feedback'] = this.textValues['feedback'] || '';
+      if (this.selected==='approve' && this.textValues['mode']) values['mode']=this.textValues['mode'];
     } else if (this.request.kind === 'permission') {
       if (this.selected !== 'deny') this.request.fields.forEach((field: DecisionField) => {
         const value = (this.textValues[field.key] || '').trim();
@@ -278,7 +288,10 @@ export struct InteractionDecisionForm {
       Wire.payload([], []) : this.answerValues();
     this.busy = true;
     this.clearSecrets();
-    this.model.answer(option, values, this.request, this.admission).then(() => { this.busy = false; if (this.request.status === 'resolved') this.onResolved(); });
+    const request=this.request, agent=this.taskAgent, card=this.taskCard;
+    const answer=this.taskQueue && agent && card ? this.taskQueue.answerForm(this.model,agent,card,option,values,util.generateRandomUUID(),this.admission) :
+      this.model.answer(option,values,request,this.admission);
+    answer.then(() => { this.busy=false; if (request.status==='resolved') this.onResolved(); });
   }
 
   private historySummary(): string {
@@ -504,6 +517,41 @@ export struct InteractionDecisionForm {
 
   }
 
+  private taskPlanSource():string {
+    const envelope=Wire.parse(this.request.raw), details=Wire.object(envelope,'interaction');
+    return Wire.text(Object.keys(details).length ? details : envelope,'plan') || this.request.prompt;
+  }
+
+  private approveTaskPlan(mode:string):void {
+    if (!this.canRespond()) return;
+    this.selected='approve'; this.setText('mode',mode); this.submit('approve');
+  }
+
+  @Builder taskPlanActions() {
+    Column({space:5}) {
+      if (this.selected==='deny') {
+        TextArea({text:this.textValues['feedback'] || '',placeholder:tr('feedback')}).height(48)
+          .onChange((value:string) => this.setText('feedback',value)).id('interaction.task.feedback')
+        Row({space:6}) {
+          Button(tr('cancel')).layoutWeight(1).fontSize(13).onClick(() => this.selected='')
+          Button(tr('session_task_return')).layoutWeight(1).fontSize(13).enabled(this.canRespond()).onClick(() => this.submit('deny'))
+        }.width('100%')
+      } else {
+        Button(tr(recordedPlanMode(this.request) ? 'approve' : 'session_task_approve_run')).width('100%').constraintSize({minHeight:40})
+          .fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).backgroundColor(Colors.action).fontColor(Colors.onAction).enabled(this.canRespond())
+          .onClick(() => this.approveTaskPlan(recordedPlanMode(this.request) || 'bypassPermissions')).id('interaction.task.approve')
+        Row({space:6}) {
+          if (!recordedPlanMode(this.request)) Button(tr('session_task_auto_edits')).layoutWeight(1).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale)
+            .constraintSize({minHeight:38}).backgroundColor(Colors.control).fontColor(Colors.link).enabled(this.canRespond())
+            .onClick(() => this.approveTaskPlan('acceptEdits')).id('interaction.task.edits')
+          Button(tr('session_task_return')).layoutWeight(1).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).constraintSize({minHeight:38})
+            .backgroundColor(Colors.control).fontColor(Colors.link).enabled(this.canRespond()).onClick(() => this.selected='deny').id('interaction.task.return')
+        }.width('100%')
+      }
+      if (this.taskQueue?.error) Text(tr(this.taskQueue.error)).fontSize(12).fontColor(Colors.danger)
+    }.width('100%')
+  }
+
   @Builder responseFooter() {
     Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.End, alignItems: ItemAlign.Center, space: { main: LengthMetrics.vp(Tokens.gap), cross: LengthMetrics.vp(Tokens.gap) } }) {
       if (this.deferred && !this.readOnly) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('interaction_question_reopen')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('interaction_question_reopen', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('interaction_question_reopen')).bindTips(tr('interaction_question_reopen'))
@@ -550,7 +598,8 @@ export struct InteractionDecisionForm {
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol(this.submitIconKey())).fontSize(Tokens.symbolFont).fontColor([IconActions.color(this.submitIconKey(), this.submitIconKey() !== 'deny')]) }.attributeModifier(this.submitIconKey() === 'deny' ? ButtonStyles.icon : ButtonStyles.iconPrimary).accessibilityText(this.submitIconLabel()).bindTips(this.submitIconLabel()).enabled(this.canSubmit())
           .onClick(() => this.submit(this.submitButtonOption())).id('interaction.submit')
       }
-      if (this.model.error) Text(tr(this.model.error)).fontSize(Tokens.meta).fontColor(Colors.needs).width('100%')
+      if (this.taskQueue ? this.taskQueue.error : this.model.error)
+        Text(tr(this.taskQueue ? this.taskQueue.error : this.model.error)).fontSize(Tokens.meta).fontColor(Colors.needs).width('100%')
     }.width('100%').padding({ top: Tokens.gap })
 
   }
@@ -574,14 +623,18 @@ export struct InteractionDecisionForm {
             Text(tr(this.request.kind === 'question' ? 'question' : this.request.kind === 'plan' ? 'plan' : 'needs_you'))
               .fontSize(13).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
           }.width('100%')
-          this.formBody()
+          if (this.taskQueue && this.request.kind==='plan') MarkdownText({text:this.taskPlanSource(),chatReply:true,onLink:this.onLink})
+          else this.formBody()
         }.width('100%').alignItems(HorizontalAlign.Start).onAreaChange((_before: Area, area: Area) => {
           const h = Number(area.height);
           if (Number.isFinite(h) && h > 0 && Math.abs(this.inlineBodyHeight - h) > 0.5) this.inlineBodyHeight = h;
         })
       }.width('100%').height(this.inlineBodyHeight > 0 ? Math.min(this.inlineBodyHeight, this.inlineSpace()) : undefined)
         .constraintSize({maxHeight: this.inlineSpace()}).scrollBar(BarState.Auto).align(Alignment.TopStart).id('interaction.body')
-      Column() { this.responseFooter() }.width('100%').onAreaChange((_before: Area, area: Area) => {
+      Column() {
+        if (this.taskQueue && this.request.kind==='plan') this.taskPlanActions()
+        else this.responseFooter()
+      }.width('100%').onAreaChange((_before: Area, area: Area) => {
         const h = Number(area.height);
         if (Number.isFinite(h) && h > 0 && Math.abs(this.inlineFooterHeight - h) > 0.5) this.inlineFooterHeight = h;
       })

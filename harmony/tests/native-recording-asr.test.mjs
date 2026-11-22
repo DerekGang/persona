@@ -10,7 +10,7 @@ registerHooks({
   const source={
    '@kit.AbilityKit':'export const abilityAccessCtrl={};export const common={};export const Permissions={};',
    '@kit.AudioKit':'export const audio={};',
-   '@kit.CoreSpeechKit':'export const speechRecognizer={createEngine: (...args)=>globalThis.__nativeAsr().createEngine(...args)};',
+   '@kit.CoreSpeechKit':'export const speechRecognizer={createEngine: (...args)=>globalThis.__nativeAsr().createEngine(...args)}; export const textToSpeech={createEngine(){throw new Error("unexpected meeting speech output");}};',
    '@kit.CoreFileKit':'export const fileIo={OpenMode:{READ_ONLY:0},statSync:(...args)=>globalThis.__nativeAsr().stat(...args),mkdirSync(){},openSync:()=>({fd:1}),readSync:(_fd,_bytes,options)=>options.length,closeSync:()=>globalThis.__nativeAsr().closed++};',
    '@kit.ArkTS':'export const util={generateRandomUUID:()=>"00000000-0000-4000-8000-000000000001"};'
   }[url.slice('native-asr:'.length)];return{format:'module',source,shortCircuit:true};}

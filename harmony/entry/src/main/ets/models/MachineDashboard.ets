@@ -100,6 +100,7 @@ export class MachineAgent {
   readonly row: ResourceRow;
   readonly state: string;
   readonly counted: string;
+  readonly sourceLabel: string;
   readonly note: string;
   readonly context: string;
   readonly updated: number;
@@ -119,6 +120,8 @@ export class MachineAgent {
     this.note = Wire.text(data,'last_text') || Wire.text(work,'detail') || row.detail;
     const provider = Wire.text(data,'agent'), slot = Wire.text(data,'slot_name') || Wire.text(data,'workspace_name');
     this.context = [provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : provider, slot].filter((s:string) => !!s).join(' · ');
+    const pane = Wire.text(data,'pane_id'), prefix = pane.split(':')[0];
+    this.sourceLabel = !pane || prefix==='orca' ? '' : prefix==='botmux' ? 'inbox_source_lark' : 'terminal';
     this.updated = Date.parse(Wire.text(data,'updated_at'));
   }
 }

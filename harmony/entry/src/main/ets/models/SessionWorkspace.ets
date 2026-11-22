@@ -168,6 +168,16 @@ export class SessionWorkspace {
   @Trace gitBusy: boolean = false;
   @Trace gitError: string = '';
   @Trace gitStatus: Record<string, Object> = {};
+  @Trace gitPrAnswer: Record<string,Object> = {};
+  @Trace gitPrError: string = '';
+  @Trace gitPrBusy: boolean = false;
+  private gitPrKey: string = '';
+  private gitPrEpoch: number = 0;
+  @Trace gitStashBusy: boolean = false;
+  @Trace gitStashError: string = '';
+  private gitStashEpoch: number = 0;
+  @Trace private fileGitMarks: Map<string,string> = new Map<string,string>();
+  private fileGitEpoch: number = 0;
   @Trace gitFiles: WorkspaceGitFile[] = [];
   @Trace gitCommits: Record<string,Object>[] = [];
   @Trace gitMoreCommits: boolean = false;
@@ -283,6 +293,8 @@ export class SessionWorkspace {
     this.currentPath = cwd; this.folderBack = []; this.folderForward = []; this.resetFileFind();
     this.entries = [];
     this.fileBusy = false; this.fileReadBusy = false;
+    this.gitPrKey=''; this.gitPrEpoch++; this.gitPrAnswer={}; this.gitPrError=''; this.gitPrBusy=false;
+    this.gitStashEpoch++; this.gitStashError=''; this.gitStashBusy=false; this.fileGitEpoch++; this.fileGitMarks=new Map<string,string>();
     this.gitStatus = {}; this.gitFirst = ''; this.gitSkip = 0; this.gitCommits = []; this.gitMoreCommits = false;
     this.gitHistoryError = ''; this.gitHistoryBusy = false; this.gitHistoryEpoch++; this.closeGitShow(); this.closeGitDiff();
     this.gitFiles = [];
@@ -421,14 +433,15 @@ export class SessionWorkspace {
     return records.some((record) => record.method === 'POST' && record.path.startsWith(prefix));
   }
 
-  private async request(path: string, method: string = 'GET', body: Record<string, Object> = {}): Promise<Record<string, Object>> {
+  private async request(path: string, method: string = 'GET', body: Record<string, Object> = {},
+    extraAdmission?: () => boolean, acknowledged?: (value:Record<string,Object>) => boolean): Promise<Record<string, Object>> {
     if (!this.current()) throw new Error('scope_changed');
     const model = this.model;
     if (!model || !model.connected || !this.connectionReady) throw new Error('offline');
     const revision = this.revision, target = this.ownerTarget, tab = this.tab;
     const admit = (): boolean => revision === this.revision && target === this.ownerTarget && tab === this.tab &&
-      this.visible && this.connectionReady && this.current() && model.connected;
-    return model.repo().call(path, method, body, '', admit);
+      this.visible && this.connectionReady && this.current() && model.connected && (!extraAdmission || extraAdmission());
+    return model.repo().call(path,method,body,'',admit,false,acknowledged);
   }
 
   private requestPath(suffix: string): string { return '/api/v1/machines/' + segment(this.machineId) + suffix; }
@@ -447,6 +460,7 @@ export class SessionWorkspace {
     if (next === this.tab && this.visible) return;
     if (next !== this.tab) {
       this.revision++;
+      this.gitStashEpoch++; this.gitStashBusy=false; this.gitPrEpoch++; if (this.gitPrBusy) this.gitPrKey=''; this.gitPrBusy=false;
       this.fileListEpoch++; if (this.findBusy) this.resetFileFind();
       this.gitStatusEpoch++; this.gitHistoryEpoch++; this.gitHistoryBusy=false; this.closeGitShow(); this.closeGitDiff();
       this.fileBusy = false; this.fileReadBusy = false; this.gitBusy = false; this.gitDiffBusy = false; this.screenBusy = false;
@@ -467,6 +481,7 @@ export class SessionWorkspace {
       this.stopScreen(true); this.closePreview();
       this.sendFsWatch([this.currentPath || this.cwd], false);
       this.loadFiles();
+      this.loadFileGitMarks();
     } else if (value === 1) {
       this.releaseTerminal(true);
       this.stopScreen(true); this.closePreview();
@@ -519,6 +534,35 @@ export class SessionWorkspace {
   crumbs(): FolderCrumb[] {
     const machine=this.model?.machines.find((row:ResourceRow) => row.id === this.machineId);
     return folderCrumbs(this.currentPath,machine ? Wire.text(machine.data(),'home') : '');
+  }
+
+  fileGitMark(entry:WorkspaceEntry):string {
+    return this.fileGitMarks.get(entry.path.replace(/\\/g,'/')) || '';
+  }
+
+  async loadFileGitMarks():Promise<void> {
+    if (!this.current() || !this.visible || this.tab!==0 || !this.connectionReady) return;
+    const rev=this.revision, target=this.ownerTarget, epoch=++this.fileGitEpoch;
+    const live=():boolean => epoch===this.fileGitEpoch && this.activeRevision(rev,target,0);
+    try {
+      const state=await this.request(this.requestPath('/git/status?cwd='+segment(this.cwd)));
+      if (!live()) return;
+      const marks=new Map<string,string>(), root=Wire.text(state,'root').replace(/\\/g,'/').replace(/\/+$/,'');
+      if (root && Wire.bool(state,'is_repo')) {
+        for (const item of Wire.rows(state,'files')) {
+          const file=this.gitFile(item);
+          const components=file.path.replace(/\\/g,'/').split('/').filter((name:string) => !!name);
+          let current=root;
+          for (const name of components) {
+            current+='/'+name;
+            if (!marks.has(current)) marks.set(current,file.mark);
+          }
+        }
+      }
+      this.fileGitMarks=marks;
+    } catch (_) {
+      if (live()) this.fileGitMarks=new Map<string,string>();
+    }
   }
 
   async loadFileIndex(force:boolean=false):Promise<void> {
@@ -844,7 +888,7 @@ export class SessionWorkspace {
     return { data: result.data, name: this.selectedFileName || path.split('/').pop() || 'download', contentType: result.contentType };
   }
 
-  async loadGit(): Promise<void> {
+  async loadGit(forcePr:boolean=false): Promise<void> {
     if (!this.current() || !this.visible || this.tab !== 1) return;
     const revision = this.revision, epoch=++this.gitStatusEpoch;
     const current=():boolean => this.activeRevision(revision,this.ownerTarget,1) && epoch===this.gitStatusEpoch;
@@ -860,18 +904,75 @@ export class SessionWorkspace {
         this.gitCommits=first; this.gitSkip=first.length; this.gitMoreCommits=first.length>=30;
       } else this.gitCommits=first.concat(this.gitCommits.slice(first.length));
       this.gitStatus = result;
-      this.gitFiles = Wire.rows(result, 'files').map((item: Record<string, Object>) => {
-        const file = new WorkspaceGitFile();
-        file.path = Wire.text(item, 'path'); file.originalPath = Wire.text(item, 'orig_path');
-        file.index = Wire.text(item, 'index', '.'); file.worktree = Wire.text(item, 'worktree', '.');
-        file.added = Wire.number(item, 'added'); file.deleted = Wire.number(item, 'deleted'); file.binary = Wire.bool(item, 'binary');
-        return file;
-      });
-      this.gitStashes = Wire.rows(result, 'stashes');
+      this.gitFiles=Wire.rows(result,'files').map((item:Record<string,Object>) => this.gitFile(item));
+      if (Array.isArray(result['stashes'])) this.gitStashes=Wire.rows(result,'stashes');
+      else if (!Wire.number(result,'stashes')) this.gitStashes=[];
+      this.loadGitPullRequest(forcePr);
       this.sendFsWatch([], true);
     } catch (error) {
       if (current()) this.gitError = this.message(error as Error);
     } finally { if (current()) this.gitBusy = false; }
+  }
+
+  private gitFile(item:Record<string,Object>):WorkspaceGitFile {
+    const file=new WorkspaceGitFile();
+    file.path=Wire.text(item,'path'); file.originalPath=Wire.text(item,'orig_path');
+    file.index=Wire.text(item,'index','.'); file.worktree=Wire.text(item,'worktree','.');
+    file.added=Wire.number(item,'added'); file.deleted=Wire.number(item,'deleted'); file.binary=Wire.bool(item,'binary');
+    return file;
+  }
+
+  gitStashCount():number {
+    return typeof this.gitStatus['stashes']==='number' ? Wire.number(this.gitStatus,'stashes') : this.gitStashes.length;
+  }
+
+  async loadGitStashes():Promise<void> {
+    const model=this.model;
+    if (!model || !this.canWriteGit()) return;
+    const rev=this.revision, target=this.ownerTarget, epoch=++this.gitStashEpoch;
+    const live=():boolean => epoch===this.gitStashEpoch && this.activeRevision(rev,target,1);
+    this.gitStashBusy=true; this.gitStashError='';
+    try {
+      // Stash enumeration is a read-only POST. A read timeout must never block later writes in the journal.
+      const data=Wire.parse(await model.repo().transport.request(this.requestPath('/git/stash'),'POST',
+        JSON.stringify(Wire.payload(['cwd','op'],[this.cwd,'list']))));
+      if (live()) this.gitStashes=Wire.rows(data,'stashes');
+    } catch (error) { if (live()) this.gitStashError=this.message(error as Error); }
+    finally { if (live()) this.gitStashBusy=false; }
+  }
+
+  branchPushedForPr():boolean {
+    return !!Wire.text(this.gitStatus,'branch') && !!Wire.text(this.gitStatus,'upstream') &&
+      !Wire.bool(this.gitStatus,'gone') && Wire.number(this.gitStatus,'ahead')===0;
+  }
+
+  async loadGitPullRequest(force:boolean=false):Promise<void> {
+    const branch=Wire.text(this.gitStatus,'branch');
+    if (!this.current() || !this.visible || this.tab!==1 || !this.feature('git_write') || !Wire.bool(this.gitStatus,'is_repo') || !branch) {
+      this.gitPrEpoch++; this.gitPrKey=''; this.gitPrAnswer={}; this.gitPrError=''; this.gitPrBusy=false; return;
+    }
+    const key=JSON.stringify([branch,Wire.text(this.gitStatus,'upstream'),Wire.bool(this.gitStatus,'gone'),
+      Wire.number(this.gitStatus,'ahead'),Wire.text(Wire.object(this.gitStatus,'head'),'hash')]);
+    if (this.gitPrKey===key && !force) return;
+    if (this.gitPrKey!==key) this.gitPrAnswer={};
+    const rev=this.revision, target=this.ownerTarget, epoch=++this.gitPrEpoch;
+    const live=():boolean => this.activeRevision(rev,target,1) && epoch===this.gitPrEpoch && this.gitPrKey===key;
+    this.gitPrKey=key; this.gitPrBusy=true; this.gitPrError='';
+    try {
+      const answer=await this.request(this.requestPath('/git/pr?cwd='+segment(this.cwd)));
+      if (!live()) return;
+      if (Wire.text(answer,'branch')!==branch) { this.gitPrKey=''; this.gitPrError='session_git_pr_read_failed'; }
+      else this.gitPrAnswer=answer;
+    } catch (error) { if (live()) this.gitPrError=this.message(error as Error); }
+    finally { if (live()) this.gitPrBusy=false; }
+  }
+
+  createPullRequest(branch:string,title:string,description:string,base:string,draft:boolean):Promise<boolean> {
+    if (!title.trim() || branch!==Wire.text(this.gitStatus,'branch') || !this.branchPushedForPr() ||
+      Wire.text(this.gitPrAnswer,'branch')!==branch || Wire.number(Wire.object(this.gitPrAnswer,'pr'),'number')>0) return Promise.resolve(false);
+    const body=Wire.payload(['cwd','title','body','draft'],[this.cwd,title.trim(),description,draft]);
+    if (base.trim()) body['base']=base.trim();
+    return this.gitMutation('pr',body);
   }
 
   async olderGitCommits():Promise<void> {
@@ -925,11 +1026,22 @@ export class SessionWorkspace {
   }
 
   private async gitMutation(operation: string, body: Record<string, Object>): Promise<boolean> {
-    if (!['stage', 'commit', 'push', 'switch', 'stash'].includes(operation) || !this.canWriteGit()) return false;
+    if (!['stage', 'commit', 'push', 'switch', 'stash', 'pr'].includes(operation) || !this.canWriteGit()) return false;
     const revision = this.revision, target = this.ownerTarget, generation = this.ownerGeneration, path = this.requestPath('/git/' + operation);
     this.gitWriteBusy = true; this.gitWriteState = 'busy'; this.gitWriteError = '';
     try {
-      await this.request(path, 'POST', body);
+      const branch=Wire.text(this.gitStatus,'branch');
+      const result=operation==='pr' ? await this.request(path,'POST',body,
+        () => this.branchPushedForPr() && Wire.text(this.gitStatus,'branch')===branch,
+        (value:Record<string,Object>) => Wire.text(value,'branch')===branch && Wire.number(Wire.object(value,'pr'),'number')>0)
+        : await this.request(path,'POST',body);
+      const returned=Wire.object(result,'status');
+      if (operation==='stage' && this.activeRevision(revision,target,1) && Wire.bool(returned,'is_repo') && Array.isArray(returned['files'])) {
+        this.gitFiles=Wire.rows(returned,'files').map((file:Record<string,Object>) => this.gitFile(file));
+      }
+      if (operation==='pr' && this.sameOwner(target,generation) && Wire.text(result,'branch')===Wire.text(this.gitStatus,'branch')) {
+        this.gitPrEpoch++; this.gitPrKey=''; this.gitPrBusy=false; this.gitPrAnswer=result;
+      }
       if (this.sameOwner(target, generation)) { this.gitWriteState = 'acknowledged'; this.gitWriteError = ''; }
       // The POST is durably acknowledged before this best-effort read; a read failure cannot make the write retryable.
       this.loadGit().catch(() => {});
@@ -949,6 +1061,18 @@ export class SessionWorkspace {
     const body = Wire.payload(['cwd', 'paths'], [this.cwd, [file.path] as Object]);
     if (unstage) body['unstage'] = true;
     return this.gitMutation('stage', body);
+  }
+
+  allFilesStaged():boolean {
+    return this.gitFiles.length>0 && this.gitFiles.every((file:WorkspaceGitFile) => file.staged && !file.unstaged);
+  }
+
+  toggleAllGitFiles():Promise<boolean> {
+    const paths=this.gitFiles.map((file:WorkspaceGitFile) => file.path).filter((path:string) => !!path);
+    if (!paths.length || paths.length!==this.gitFiles.length) return Promise.resolve(false);
+    const body=Wire.payload(['cwd','paths'],[this.cwd,paths as Object]);
+    if (this.allFilesStaged()) body['unstage']=true;
+    return this.gitMutation('stage',body);
   }
 
   commitGit(message: string): Promise<boolean> {
@@ -1512,7 +1636,8 @@ export class SessionWorkspace {
   }
 
   private resetBusyState(): void {
-    this.fileListEpoch++; this.fileReadEpoch++; this.resetFileFind();
+    this.fileListEpoch++; this.fileReadEpoch++; this.fileGitEpoch++; this.resetFileFind();
+    this.gitStashEpoch++; this.gitStashBusy=false; this.gitPrEpoch++; if (this.gitPrBusy) this.gitPrKey=''; this.gitPrBusy=false;
     this.gitStatusEpoch++; this.gitHistoryEpoch++; this.gitHistoryBusy=false; this.closeGitShow(); this.closeGitDiff();
     this.fileBusy = false; this.fileReadBusy = false; this.fileWriteBusy = false;
     this.gitBusy = false; this.gitDiffBusy = false; this.gitWriteBusy = false;

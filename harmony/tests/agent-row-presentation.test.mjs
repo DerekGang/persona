@@ -263,7 +263,7 @@ test('phone search starts folded, reveals only from a downward top pull, and a s
  const TouchType={Down:0,Move:1,Up:2};
  const Search=new Function('TouchType','return '+stripTypeScriptTypes('class Search {'+
    ['searchVisible','resetSearchReveal','trackPull','refreshAgents'].map(methodCode).join('\n')+'}'))(TouchType);
- const page=new Search();
+ const page=new Search(); page.reloadDecisions=()=>{};
  let top=0,refreshes=0;
  page.workspace={search:'',setReadingDetail(){},refresh(){refreshes++;return Promise.resolve();},isBoundTo(){return true;}};
  page.agentScroller={currentOffset:()=>({yOffset:top})};page.compactRoot=true;page.active=true;page.resetSearchReveal();
