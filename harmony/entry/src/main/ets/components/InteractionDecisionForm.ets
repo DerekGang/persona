@@ -952,7 +952,7 @@ export struct InteractionDecisionForm {
       .accessibilityDescription(tr('phone_decision_height_hint')).accessibilityCustomActions([
         {name:tr('phone_decision_taller'),onAction:() => this.onDockResize('up',0)},
         {name:tr('phone_decision_shorter'),onAction:() => this.onDockResize('down',0)}])
-      .onClick(() => this.onDockResize('toggle',0)).gesture(PanGesture({fingers:1,direction:PanDirection.Vertical,distance:4})
+      .onClick(() => this.onDockResize('toggle',0)).priorityGesture(PanGesture({fingers:1,direction:PanDirection.Vertical,distance:4})
         .onActionStart((e:GestureEvent) => this.onDockResize('begin',e.offsetY))
         .onActionUpdate((e:GestureEvent) => this.onDockResize('move',e.offsetY))
         .onActionEnd((e:GestureEvent) => this.onDockResize('end',e.offsetY))
@@ -982,7 +982,7 @@ export struct InteractionDecisionForm {
       if (!this.cardFolded) Column({space:12}) {
         Scroll() {
           Column() {
-            if (this.taskQueue && this.request.kind==='plan') MarkdownText({text:this.taskPlanSource(),chatReply:true,recapReading:true,onLink:this.onLink})
+            if (this.taskQueue && this.request.kind==='plan') MarkdownText({text:this.taskPlanSource(),chatReply:true,recapReading:true,dockPlan:true,onLink:this.onLink})
             else this.formBody()
           }.width('100%').alignItems(HorizontalAlign.Start).onAreaChange((_before:Area,area:Area):void => {
             const h=Number(area.height);if (h>0 && Math.abs(h-this.inlineBodyHeight)>0.5) this.inlineBodyHeight=h;
@@ -998,14 +998,10 @@ export struct InteractionDecisionForm {
       }.width('100%').padding({top:this.dockHeadingAway() ? 0 : 12})
     }.width('100%').padding({left:16,right:16,top:this.resizeDock && !this.cardFolded ? 0 : 12,bottom:16})
       .alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(22)
-      .overlay(this.dockOutline(),{align:Alignment.Center})
+      .outline({width:Tokens.divider,color:Colors.divider,radius:22})
       .shadow({radius:8,color:nativeEnvironment.dark ? '#36000000' : '#15000000',offsetY:2}).id('interaction.card')
       .bindSheet($$this.fullPlan,this.planReader(),{height:SheetSize.LARGE,showClose:false,dragBar:false,preferType:SheetType.BOTTOM})
   }
-  @Builder dockOutline() {
-    Row().width('100%').height('100%').border({width:Tokens.divider,color:Colors.divider,radius:22}).hitTestBehavior(HitTestMode.None)
-  }
-
   private inlineSpace(): number {
     if (this.agentCard) return Math.max(1,this.heightLimit-this.inlineHeaderHeight-40-(this.agentHasFooter() ? this.inlineFooterHeight+12 : 0));
     return Math.max(1, this.heightLimit - this.inlineFooterHeight - (this.docked || this.taskQueue ? this.inlineHeaderHeight + 28 : 22));

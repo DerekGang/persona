@@ -46,6 +46,7 @@ export struct AssistantCards {
   @Param decisionPager: DecisionPager | undefined = undefined;
   @Param dockRoom: number = 400;
   @Param composerHeight: number = 0;
+  @Event onDockVisibility:(shown:boolean)=>void = (_shown:boolean)=>{};
   @Local private actionBarHeight: number = 28;
   @Local private measuredDockHeight: number = 0;
   @Local private pagerHeight: number = 28;
@@ -118,6 +119,8 @@ export struct AssistantCards {
     return orderedDecisions(own, this.taskQuestions.map((row:TaskQuestionRow) => row.card.request));
   }
   @Computed get decisionIds(): string[] { return this.decisionPages.map((request:Decision) => request.id); }
+  @Computed get visibleDock(): boolean { return this.shownDecisions.length>0; }
+  @Monitor('visibleDock') dockVisibilityChanged():void { if (this.dockOnly) this.onDockVisibility(this.visibleDock); }
   @Computed get shownDecisions(): Decision[] {
     const pager = this.decisionPager;
     if (!pager || this.trayOpen || pager.collapsed(this.decisionIds)) return [];
@@ -222,7 +225,7 @@ export struct AssistantCards {
   @Local receiptView: AssistantReceiptProjection = projectAssistantReceipt({}, {}, false);
   @Local receiptViewStamp: string = '';
   aboutToAppear(): void { this.updateReceiptView(); this.syncRequests(); }
-  aboutToDisappear():void { this.offRequests?.(); this.offRequests=undefined; this.requests.clear(); this.subscribedOwner=''; this.requestModel=undefined; }
+  aboutToDisappear():void { if (this.dockOnly) this.onDockVisibility(false); this.offRequests?.(); this.offRequests=undefined; this.requests.clear(); this.subscribedOwner=''; this.requestModel=undefined; }
   @Monitor('item', 'feed.items', 'feed.todos', 'feed.todosReady', 'feed.todoError', 'feed.busyKeys', 'feed.uncertainKeys', 'model.sessions', 'model.machines', 'model.unresolvedWrites', 'model.selected', 'model.profile', 'model.pendingDecisions', 'model.decision', 'model.connected')
   receiptFactsChanged(): void { this.updateReceiptView(); }
   private updateReceiptView(): void {
@@ -590,13 +593,13 @@ export struct AssistantCards {
   }
   @Builder decisionEntry() {
     Button({type:ButtonType.Capsule}) {
-      Row({space:4}) {
+      Row({space:6}) {
         Text(tr('decision_to_decide')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs)
         Text(String(this.decisionIds.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs)
         SymbolGlyph(this.shownDecisions.length ? Symbols.down : Symbols.up).fontSize('11vp').fontColor([this.shownDecisions.length ? Colors.onAction : Colors.needs])
         if (this.decisionPager!.arrived(this.decisionIds)>0) Text('+'+String(this.decisionPager!.arrived(this.decisionIds))).fontSize(12).fontColor(Colors.needs)
       }
-    }.constraintSize({minHeight:28}).padding({left:10,right:10,top:4,bottom:4})
+    }.constraintSize({minHeight:28}).padding({left:12,right:12,top:6,bottom:6})
       .fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs).backgroundColor(this.shownDecisions.length ? Colors.action : Colors.subtle)
       .responseRegion({x:0,y:-7,width:'100%',height:44}).accessibilitySelected(this.shownDecisions.length>0)
       .accessibilityText(tr('decision_to_decide')+' '+String(this.decisionIds.length)).onClick(() => this.toggleDecisions()).id('chat.decisions.toggle')

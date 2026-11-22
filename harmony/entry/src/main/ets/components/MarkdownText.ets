@@ -12,6 +12,7 @@ export struct MarkdownText {
   @Param fitContent: boolean = false;
   @Param chatReply: boolean = false;
   @Param recapReading: boolean = false;
+  @Param dockPlan: boolean = false;
   @Event onLink: (url: string) => void = (_url: string) => {};
   @Local blocks: MarkdownBlock[] = [];
   @Local foreground: ResourceColor = $r('sys.color.font_primary');
@@ -72,7 +73,7 @@ export struct MarkdownText {
     }
       .fontSize(this.readingFont(size)).fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight)
       .lineHeight(this.chatReply && !this.recapReading ? String(Math.ceil(size * 1.45)) + 'fp' : undefined)
-      .lineSpacing(LengthMetrics.vp(this.recapReading ? this.readingPoints(size) * 0.26 : 0), { onlyBetweenLines: true })
+      .lineSpacing(LengthMetrics.vp(this.recapReading ? this.readingPoints(size) * (this.dockPlan ? 0.37 : 0.26) : 0), { onlyBetweenLines: true })
       .textAlign(alignment).wordBreak(breakAll ? WordBreak.BREAK_ALL : WordBreak.BREAK_WORD)
       .copyOption(CopyOptions.LocalDevice).width(this.fitContent ? undefined : '100%')
   }
@@ -149,7 +150,7 @@ export struct MarkdownText {
         .backgroundColor(this.codeFill)
         .border({ width: Tokens.hairline, color: this.emphasize, radius: Tokens.fine })
     } else if (block.kind === 'list') {
-      Column({ space: Tokens.gap }) {
+      Column({ space: this.dockPlan ? 3 : Tokens.gap }) {
         ForEach(block.items, (item: MarkdownBlock) => this.listItem(item),
           (item: MarkdownBlock, index: number) => 'list.' + String(index))
       }.width('100%').alignItems(HorizontalAlign.Start)
@@ -171,7 +172,7 @@ export struct MarkdownText {
         ForEach(item.children, (child: MarkdownBlock) => this.blockView(child),
           (child: MarkdownBlock, index: number) => 'item.' + String(index))
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-    }.width('100%').alignItems(VerticalAlign.Top)
+    }.width('100%').alignItems(VerticalAlign.Top).padding({left:this.dockPlan ? 9 : 0})
   }
 
   @Builder tableRow(row: MarkdownTableRow, table: MarkdownBlock) {
@@ -191,7 +192,7 @@ export struct MarkdownText {
   }
 
   build() {
-    Column({ space: Tokens.gap }) {
+    Column({ space: this.dockPlan ? 6 : Tokens.gap }) {
       ForEach(this.blocks, (block: MarkdownBlock, index: number) => this.blockView(block, index === 0),
         (block: MarkdownBlock, index: number) => 'block.' + String(index) + ':' + JSON.stringify(block))
     }.width(this.fitContent ? undefined : '100%').alignItems(HorizontalAlign.Start)
