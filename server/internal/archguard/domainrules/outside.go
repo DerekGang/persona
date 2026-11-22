@@ -1,0 +1,422 @@
+package domainrules
+
+import (
+	"go/ast"
+	"strings"
+)
+
+// outsideChecks is one pass of the rules on code that uses a core, the kit or an adapter.
+type outsideChecks struct {
+	findings
+	p   *Pkg
+	idx Index
+}
+
+// Outside is the rules on p's parsed files as users of cores, the kit and adapters (out-*), p's own rules as an
+// adapter (adapter-*), and its imports as a part that takes no core (path-no-core). Files Full or the prefilter did
+// not parse are left alone: they use no domain package.
+func Outside(p *Pkg, idx Index) []Finding {
+	c := &outsideChecks{p: p, idx: idx}
+	c.pathNoCore()
+	if p.Layer == layerAdapter {
+		c.adapterImports()
+		if p.decls != nil {
+			c.adapterDecls()
+		}
+	}
+	for _, f := range p.Files {
+		if f.ast != nil {
+			c.file(f)
+		}
+	}
+	return c.list
+}
+
+// ref is a domain package a file imports: the name it uses, the import and the package.
+type ref struct {
+	name string
+	imp  Import
+	pkg  *Pkg
+}
+
+// refs is the domain packages (cores, shared kernels, kit) a file imports, by name. A file's own package is left
+// out, except for an external test file (package <name>_test), which is outside it.
+func (c *outsideChecks) refs(f *File) map[string]ref {
+	out := map[string]ref{}
+	for name, imp := range c.idx.imports(f) {
+		if p := c.idx.pkg(imp.Path); p != nil && c.foreign(f, p) && c.idx.domain(imp.Path) {
+			out[name] = ref{name, imp, p}
+		}
+	}
+	return out
+}
+
+// foreign says whether p is outside the code of f: another package, or f's own when f is an external test.
+func (c *outsideChecks) foreign(f *File, p *Pkg) bool { return p != c.p || f.External }
+
+// kitDir says whether the file is in a kit package's directory (its own tests included).
+func (c *outsideChecks) kitDir() bool { return c.p.Layer == layerKit }
+
+func (c *outsideChecks) file(f *File) {
+	layer := c.idx.layer(c.p.Path)
+	refs := c.refs(f)
+	adapter, testkit := layer == layerAdapter, layer == layerTestkit
+	inCore := core(layer) || layer == layerKit
+	// Dot imports and aliases hide literals and conversions.
+	for _, imp := range f.Imports {
+		if imp.Name == "." && c.idx.domain(imp.Path) && c.foreign(f, c.idx.pkg(imp.Path)) {
+			c.add(imp.Pos, "out-dot-import", c.idx.rel(imp.Path), f.Rel+" dot-imports "+c.idx.rel(imp.Path))
+		}
+	}
+	key := func(r ref) string { return r.pkg.Rel }
+	// The first domain package the file imports, which file-wide findings count against.
+	firstKey := ""
+	for _, imp := range f.Imports {
+		if c.idx.domain(imp.Path) && c.foreign(f, c.idx.pkg(imp.Path)) {
+			firstKey = c.idx.rel(imp.Path)
+			break
+		}
+	}
+	if firstKey != "" {
+		for _, imp := range f.Imports {
+			if imp.Path == "unsafe" {
+				c.add(imp.Pos, "out-unsafe", firstKey, f.Rel+" uses unsafe")
+			}
+		}
+	}
+	reflectName := c.idx.stdName(f, "reflect")
+	imports := c.idx.imports(f)
+	adapters := map[string]bool{}
+	for name, imp := range imports {
+		if c.idx.layer(imp.Path) == layerAdapter && c.idx.pkg(imp.Path) != c.p {
+			adapters[name] = true
+		}
+	}
+	var stack []ast.Node
+	ast.Inspect(f.ast, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		parent := ast.Node(nil)
+		if len(stack) > 0 {
+			parent = stack[len(stack)-1]
+		}
+		stack = append(stack, n)
+		switch x := n.(type) {
+		case *ast.TypeSpec:
+			if x.Assign != 0 {
+				if r, t, ok := c.domainType(refs, x.Type); ok {
+					c.at(f, x, "out-alias", key(r), f.Rel+" aliases "+r.name+"."+t)
+				}
+			}
+		case *ast.CompositeLit:
+			if r, t, ok := c.domainType(refs, x.Type); ok {
+				c.at(f, x, "out-literal", key(r), f.Rel+" builds "+r.name+"."+t+" by literal")
+			} else if elem := elementType(x.Type); elem != nil {
+				// []core.T{{...}}: the elided element literals are literals of core.T.
+				if r, t, ok := c.domainType(refs, elem); ok {
+					for _, e := range x.Elts {
+						if kv, ok := e.(*ast.KeyValueExpr); ok {
+							e = kv.Value
+						}
+						if lit, ok := e.(*ast.CompositeLit); ok && lit.Type == nil {
+							c.at(f, lit, "out-literal", key(r), f.Rel+" builds "+r.name+"."+t+" by literal")
+						}
+					}
+				}
+			}
+		case *ast.CallExpr:
+			if len(x.Args) == 1 && x.Ellipsis == 0 {
+				if r, t, ok := c.domainType(refs, x.Fun); ok {
+					c.at(f, x, "out-conversion", key(r), f.Rel+" converts to "+r.name+"."+t)
+				}
+			}
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Log" && !adapter {
+				if id, ok := sel.X.(*ast.Ident); ok && adapters[id.Name] && !logArgument(parent, x) {
+					c.at(f, x, "out-log-use", c.p.Rel, f.Rel+" keeps "+id.Name+".Log(...)")
+				}
+			}
+		case *ast.SelectorExpr:
+			id, isIdent := x.X.(*ast.Ident)
+			_, isImport := imports[identName(id)]
+			if x.Sel.Name == "Wire" && !(isIdent && isImport) && !adapter && !testkit && !(c.kitDir() && f.Test) {
+				c.at(f, x, "out-wire-ref", c.p.Rel, f.Rel+" reads "+exprString(x.X)+".Wire")
+			}
+			if !isIdent {
+				break
+			}
+			if id.Name == reflectName && reflectName != "" && x.Sel.Name != "DeepEqual" && firstKey != "" {
+				c.at(f, x, "out-unsafe", firstKey, f.Rel+" uses reflect."+x.Sel.Name)
+			}
+			r, ok := refs[id.Name]
+			if !ok {
+				break
+			}
+			rel := r.pkg.Rel
+			switch {
+			case core(c.idx.layer(r.imp.Path)) && (wordPrefix(x.Sel.Name, "Parse") || wordPrefix(x.Sel.Name, "Restore")) &&
+				!adapter && !testkit && !f.Test && c.declares(r.pkg, x.Sel.Name):
+				c.at(f, x, "out-parse-call", rel, f.Rel+" calls "+id.Name+"."+x.Sel.Name)
+			case rel == "internal/domainkit/instant" && x.Sel.Name == "ReadClock" &&
+				!under(c.p.Rel, "internal/domainkit/clock") && !(c.kitDir() && f.Test):
+				c.at(f, x, "out-clock-read", rel, f.Rel+" reads the clock")
+			case rel == "internal/domainkit/slot" && x.Sel.Name == "NewSlot" && !adapter && !testkit && !(c.kitDir() && f.Test):
+				c.at(f, x, "out-slot-mint", rel, f.Rel+" mints a Slot")
+			case rel == "internal/domainkit/fail" && (x.Sel.Name == "NewCode" || x.Sel.Name == "NewPart") &&
+				!inCore && !testkit:
+				c.at(f, x, "out-code-mint", rel, f.Rel+" makes a failure code")
+			}
+		case *ast.FuncDecl:
+			c.visitorImpl(f, x, refs, adapter || testkit || inCore && !f.Test)
+		}
+		return true
+	})
+}
+
+// identName is an identifier's name, "" for none.
+func identName(id *ast.Ident) string {
+	if id == nil {
+		return ""
+	}
+	return id.Name
+}
+
+// declares says whether p declares a top-level function name.
+func (c *outsideChecks) declares(p *Pkg, name string) bool {
+	if p.decls == nil {
+		return true
+	}
+	for _, fd := range p.decls.funcs {
+		if fd.decl.Name.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// visitorImpl is out-visitor-impl on one method: a Visit* method whose parameters name a type of an imported core
+// or the kit implements a visitor, which only adapters, testkit and a core's own tests do. The finding counts against
+// the first core the parameters name (the kit when they name no core).
+func (c *outsideChecks) visitorImpl(f *File, fd *ast.FuncDecl, refs map[string]ref, allowed bool) {
+	if allowed || fd.Recv == nil || !strings.HasPrefix(fd.Name.Name, "Visit") {
+		return
+	}
+	var named []ref
+	for _, p := range params(fd.Type.Params) {
+		pkg, _ := baseType(unwrapParam(p))
+		if r, ok := refs[pkg]; ok {
+			named = append(named, r)
+		}
+	}
+	if len(named) == 0 {
+		return
+	}
+	pick := named[0]
+	for _, r := range named {
+		if f.Test && r.pkg == c.p {
+			return // the core's own black-box tests visiting it
+		}
+		if core(r.pkg.Layer) && !core(pick.pkg.Layer) {
+			pick = r
+		}
+	}
+	recv, _ := receiverName(fd.Recv.List[0].Type)
+	c.at(f, fd.Name, "out-visitor-impl", pick.pkg.Rel, recv+"."+fd.Name.Name+" implements "+pick.name+"'s visitor")
+}
+
+// domainType is the domain package and type a type expression names (core.T, core.T[X], (core.T)), when it names a
+// type a core, shared kernel or the kit declares.
+func (c *outsideChecks) domainType(refs map[string]ref, e ast.Expr) (ref, string, bool) {
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+			continue
+		case *ast.IndexExpr:
+			e = x.X
+			continue
+		case *ast.IndexListExpr:
+			e = x.X
+			continue
+		case *ast.SelectorExpr:
+			id, ok := x.X.(*ast.Ident)
+			if !ok {
+				return ref{}, "", false
+			}
+			r, ok := refs[id.Name]
+			if !ok || r.pkg.decls == nil || r.pkg.decls.types[x.Sel.Name] == nil {
+				return ref{}, "", false
+			}
+			return r, x.Sel.Name, true
+		}
+		return ref{}, "", false
+	}
+}
+
+// elementType is a slice, array or map literal type's element type, nil for another type.
+func elementType(e ast.Expr) ast.Expr {
+	switch x := e.(type) {
+	case *ast.ArrayType:
+		return x.Elt
+	case *ast.MapType:
+		return x.Value
+	}
+	return nil
+}
+
+// logArgument says whether call is an argument of parent, a call to a logging function.
+func logArgument(parent ast.Node, call *ast.CallExpr) bool {
+	p, ok := parent.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	isArg := false
+	for _, a := range p.Args {
+		if a == ast.Expr(call) {
+			isArg = true
+		}
+	}
+	if !isArg {
+		return false
+	}
+	name := ""
+	switch fn := p.Fun.(type) {
+	case *ast.Ident:
+		name = fn.Name
+	case *ast.SelectorExpr:
+		name = fn.Sel.Name
+	}
+	for _, s := range []string{"logf", "Logf", "Printf", "Info", "Warn", "Error", "Debug"} {
+		if strings.HasSuffix(name, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *outsideChecks) at(f *File, n ast.Node, id, key, what string) { c.add(f.pos(n), id, key, what) }
+
+// pathNoCore is path-no-core: the hub, hubedge, db, prompts and cmd/persona-hub import no core, kit or adapter.
+func (c *outsideChecks) pathNoCore() {
+	inPart := false
+	for _, part := range noCore {
+		if under(c.p.Rel, part) {
+			inPart = true
+		}
+	}
+	if !inPart {
+		return
+	}
+	for _, f := range c.p.Files {
+		for _, imp := range f.Imports {
+			l := c.idx.layer(imp.Path)
+			if !c.idx.domain(imp.Path) && l != layerAdapter {
+				continue
+			}
+			from := display(c.p)
+			if f.Test {
+				from += " (test)"
+			}
+			rel := c.idx.rel(imp.Path)
+			c.edge(imp.Pos, "path-no-core", rel, from+" imports "+rel, from+" imports "+rel)
+		}
+	}
+}
+
+// adapterImports is adapter-no-application and adapter-import on an adapter's non-test imports.
+func (c *outsideChecks) adapterImports() {
+	for _, f := range c.p.Files {
+		if f.Test {
+			continue
+		}
+		for _, imp := range f.Imports {
+			dep := c.idx.pkg(imp.Path)
+			if dep == nil || dep == c.p {
+				continue
+			}
+			switch l := c.idx.layer(imp.Path); l {
+			case layerApp, layerSeam, undeclared:
+				c.add(imp.Pos, "adapter-no-application", c.p.Rel, "adapter "+display(c.p)+" imports application "+dep.Rel)
+			case layerAdapter:
+				// Allowed only for a shared kernel's adapter: one under a core shared package.
+				owner := c.idx.pkg(dep.Path[:strings.LastIndex(dep.Path, "/")])
+				if owner == nil || owner.Layer != layerShared {
+					c.add(imp.Pos, "adapter-import", c.p.Rel, "adapter "+display(c.p)+" imports "+dep.Rel)
+				}
+			}
+		}
+	}
+}
+
+// adapterDecls is adapter-name and adapter-exported-result on an adapter's declarations.
+func (c *outsideChecks) adapterDecls() {
+	d := c.p.decls
+	coreTypes := map[string]string{} // exported type name -> the core declaring it
+	for _, f := range c.p.Files {
+		if f.Test {
+			continue
+		}
+		for _, r := range c.refs(f) {
+			if r.pkg.decls == nil || !core(r.pkg.Layer) {
+				continue
+			}
+			for name := range r.pkg.decls.types {
+				if exported(name) {
+					coreTypes[name] = r.name
+				}
+			}
+		}
+	}
+	for _, t := range d.order {
+		if core, ok := coreTypes[t.name]; ok && exported(t.name) {
+			c.at(t.file, t.spec.Name, "adapter-name", c.p.Rel, c.p.Name+"."+t.name+" shadows "+core+"."+t.name)
+		}
+	}
+	check := func(fd *funcDecl) {
+		if !exported(fd.decl.Name.Name) || fd.recv != "" && !exported(fd.recv) {
+			return
+		}
+		for _, r := range params(fd.decl.Type.Results) {
+			if !c.adapterResult(fd, r) {
+				c.at(fd.file, fd.decl.Name, "adapter-exported-result", c.p.Rel, fd.name()+" returns "+exprString(r))
+			}
+		}
+	}
+	for _, fd := range d.funcs {
+		check(fd)
+	}
+	for _, t := range d.order {
+		for _, fd := range d.methods[t.name] {
+			check(fd)
+		}
+	}
+}
+
+// adapterResult says whether an adapter may return a type: an outcome, a value of a core, shared kernel or the kit,
+// a contract, a db row or prompt input, its own Record, an error, or Log's string.
+func (c *outsideChecks) adapterResult(fd *funcDecl, r ast.Expr) bool {
+	t := unwrapParam(r)
+	switch exprString(t) {
+	case "error":
+		return true
+	case "string":
+		return fd.recv == "" && fd.decl.Name.Name == "Log" && len(params(fd.decl.Type.Results)) == 1
+	case "Record":
+		return true
+	}
+	pkg, _ := baseType(t)
+	if pkg == "" {
+		return false
+	}
+	imp, ok := c.idx.imports(fd.file)[pkg]
+	if !ok {
+		return false
+	}
+	switch c.idx.layer(imp.Path) {
+	case layerCore, layerShared, layerKit, layerContract:
+		return true
+	}
+	rel := c.idx.rel(imp.Path)
+	return under(rel, "internal/db") || under(rel, "internal/prompts")
+}

@@ -166,7 +166,7 @@ class MainTests(unittest.TestCase):
                                      on_base=lambda base, p: landed,
                                      central_pending=lambda *args: central_pending(*args, log=io.StringIO())), \
                     mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", err):
-                code = name_freezes.main(["pending", "--write"])
+                code = name_freezes.main(["pending", "--write", "--only", "routes"])
             return code, path.read_text(), err.getvalue()
 
     def test_a_landed_list_is_pruned_and_a_name_it_lacks_fails(self):
@@ -181,6 +181,99 @@ class MainTests(unittest.TestCase):
         header = name_freezes.PENDING_HEADER.format(day=date.today().isoformat(), idle=14)
         self.assertEqual(text, '# a header\n"A"\n"C"\n"X"\n\n%s\n"D" #8\n"F" #7\n' % header)
         self.assertEqual(code, 0, err)
+
+
+class TreeTests(unittest.TestCase):
+    """The undeclared packages' freeze reads its names from the whole server tree."""
+
+    def test_the_files_the_domain_rules_read(self):
+        for path, read in (("server/internal/a/a.go", True), ("server/cmd/x/main.go", True),
+                           ("server/internal/a/a_test.go", True), ("server/internal/a/testdata/b.go", False),
+                           ("server/vendor/x/x.go", False), ("server/internal/.cache/x.go", False),
+                           ("server/internal/a/_scratch.go", False), ("server/internal/a/README.md", False),
+                           ("web/src/a.go", False)):
+            with self.subTest(path=path):
+                self.assertEqual(name_freezes.server_go(path), read)
+
+    def test_a_pr_touches_the_tree_with_any_go_file_under_it(self):
+        paths = [name_freezes.UNDECLARED.source]
+        self.assertEqual(name_freezes.read_pr(node(1, ["server/internal/new/new.go"]), paths).touches, {"server/"})
+        self.assertEqual(name_freezes.read_pr(node(2, ["server/internal/new/README.md", "web/a.ts"]), paths).touches,
+                         set())
+
+    def test_names_a_pr_adds_less_its_merge_base_and_the_base(self):
+        # The base has "internal/old" undeclared. #1 adds "internal/new" and a file to "internal/old"; #2 adds
+        # "internal/declared", which has its line; #3 is an idle draft.
+        trees = {"base": {"internal/old/old.go": "package old\n"},
+                 "head1": {"internal/new/new.go": "package new\n", "internal/old/more.go": "package old\n"},
+                 "mb1": {"internal/old/old.go": "package old\n"},
+                 "head2": {"internal/declared/d.go": "//persona:layer library\npackage declared\n"}, "mb2": {}}
+        undeclared = {"base": {"internal/old"}, "head1": {"internal/new", "internal/old"}, "mb1": {"internal/old"},
+                      "head2": set(), "mb2": set()}
+        paths = [name_freezes.UNDECLARED.source]
+        prs = [name_freezes.read_pr(n, paths) for n in (node(1, ["server/internal/new/new.go"]),
+                                                         node(2, ["server/internal/declared/d.go"]),
+                                                         node(3, ["server/internal/x/x.go"], draft=True, days_old=30))]
+        seen = {}
+
+        def files(revision, dirs=None):
+            return trees["base"] if revision == "base" else trees[revision]
+
+        def names(work, given):
+            seen.update(given)
+            return {key: undeclared[key] for key in given}
+
+        with mock.patch.multiple(name_freezes, tree_files=files, merge_base=lambda head, base: "mb" + head[4:],
+                                 fetch=lambda prs: None, changed_dirs=lambda old, new: ["dir"], layer_names=names):
+            today, found = name_freezes.tree_pending("base", prs, 14, "unused", log=io.StringIO())
+        self.assertEqual(today, {"internal/old"})
+        self.assertEqual(found, {"internal/new": [1]})
+        self.assertEqual(sorted(seen), ["base", "head1", "head2", "mb1", "mb2"])
+
+    def test_the_land_day_write_takes_the_base_and_the_pending_packages(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, name_freezes.UNDECLARED.file)
+            path.parent.mkdir(parents=True)
+            path.write_text("# a header\ninternal/gone\ninternal/old\n")
+            err = io.StringIO()
+            with mock.patch.multiple(name_freezes, ROOT=Path(root), run=lambda args, timeout, **kw: "base\n",
+                                     central_names=lambda work, sources=None: ([], {}),
+                                     open_prs=lambda paths: [name_freezes.PR(7, False, "head7", NOW, {"server/"})],
+                                     tree_pending=lambda base, prs, idle, work: ({"internal/old"}, {"internal/new": [7]}),
+                                     on_base=lambda base, p: False), \
+                    mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", err):
+                code = name_freezes.main(["pending", "--write", "--only", name_freezes.UNDECLARED.id])
+            header = name_freezes.PENDING_HEADER.format(day=date.today().isoformat(), idle=14)
+            self.assertEqual(code, 0, err.getvalue())
+            self.assertEqual(path.read_text(), "# a header\ninternal/old\n\n%s\ninternal/new #7\n" % header)
+
+    def test_the_committed_list_reads_cleanly(self):
+        text = (ROOT / name_freezes.UNDECLARED.file).read_text()
+        entries, problems = name_freezes.CENTRAL.read(text)
+        self.assertEqual(problems, [])
+        self.assertTrue(text.startswith("# "), "a list starts with what it is")
+        self.assertGreater(len(entries), 100)
+
+
+@unittest.skipUnless(shutil.which("go"), "needs go")
+class GoLayerNamesTests(unittest.TestCase):
+    """The undeclared packages come from the archguard test itself, read as TestDomainLayers reads them."""
+
+    def test_the_names_of_each_tree(self):
+        with tempfile.TemporaryDirectory() as work:
+            names = name_freezes.layer_names(work, {
+                "one": {"internal/a/a.go": "// Package a is plain.\npackage a\n",
+                        "internal/b/b.go": "// Package b is a library.\n//\n//persona:layer library\npackage b\n",
+                        "internal/c/c.go": "// Package c has a typo.\n//\n//persona:layer cor\npackage c\n",
+                        "internal/a/testdata/x.go": "package x\n"},
+                "empty": {}})
+        self.assertEqual(names, {"one": {"internal/a"}, "empty": set()})
+
+    def test_the_files_of_a_directory_at_a_commit(self):
+        files = name_freezes.tree_files("HEAD", ["internal/lazyre"])
+        self.assertTrue(files)
+        self.assertTrue(all(rel.startswith("internal/lazyre/") and rel.count("/") == 2 for rel in files), files)
+        self.assertTrue(all(text.lstrip().startswith(("//", "package")) for text in files.values()))
 
 
 @unittest.skipUnless(shutil.which("go"), "needs go")

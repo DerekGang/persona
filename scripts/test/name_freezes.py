@@ -16,6 +16,13 @@ and reports the names it adds that its merge base with --base did not have, leav
 whose head commit is more than --idle-days old is left out. The archguard test itself reads the names
 (-central-list-names), so they are written in the form the freeze compares.
 
+One freeze reads its names from the whole server tree instead of one file: the package directories under server/
+that declare no layer (server/internal/archguard/testdata/domain_layers/undeclared.txt, which
+server/internal/archguard/domain_test.go's TestDomainLayers checks; docs/server/architecture.md "Domain model"). For
+it, a PR's names are the undeclared packages among the directories whose .go files it changes, read at its head and at
+its merge base by archguard's TestDomainLayerNames. `--only <id>` limits a run to some lists; the day a list lands,
+`--base HEAD` (the branch that adds it, committed) gives the names the branch itself has.
+
 `--write` rewrites each list's file. For a list --base does not have yet, the day its freeze lands, that is its
 leading comment, every name --base has, then the pending ones: a listed pending name --base now has joins the first
 part (its PR merged), one whose PRs have all closed comes off, one whose PR is still open stays, and the names found
@@ -219,12 +226,14 @@ def open_prs(paths):
 
 
 def read_pr(node, paths):
-    """A PR from one of QUERY's nodes."""
+    """A PR from one of QUERY's nodes. A path that ends in "/" stands for every .go file under it."""
     files = node["files"]
     if files["totalCount"] > len(files["nodes"]):
         touches = set(paths)  # more files than one page lists: read its head to see
     else:
-        touches = {f["path"] for f in files["nodes"]} & set(paths)
+        names = [f["path"] for f in files["nodes"]]
+        touches = {p for p in paths if any(n == p or p.endswith("/") and n.startswith(p) and n.endswith(".go")
+                                           for n in names)}
     committed = datetime.fromisoformat(node["commits"]["nodes"][0]["commit"]["committedDate"].replace("Z", "+00:00"))
     return PR(node["number"], node["isDraft"], node["headRefOid"], committed, touches)
 
@@ -329,6 +338,114 @@ def central_pending(base, lists, prs, idle_days, work, log=sys.stderr):
     return today, {i: {n: sorted(p) for n, p in sorted(f.items())} for i, f in found.items()}
 
 
+# ---- the server's undeclared packages: names read from the whole tree ----
+
+
+class TreeList:
+    """A freeze whose names come from the server's whole tree: its id, its list file (from the repository's root) and
+    what one name is."""
+
+    def __init__(self, id, file, what):
+        self.id, self.file, self.what, self.source = id, file, what, "server/"
+
+
+UNDECLARED = TreeList("domain_layers_undeclared", "server/internal/archguard/testdata/domain_layers/undeclared.txt",
+                      "a package directory under server/ with no //persona:layer line")
+
+GO_LAYERS = ["go", "test", "-count=1", "-run", "^TestDomainLayerNames$", "./internal/archguard", "-args"]
+
+SKIPPED_DIRS = ("testdata", "vendor")
+
+
+def server_go(path):
+    """Whether path is a .go file under server/ that the domain rules read: none under testdata, vendor or a hidden
+    directory, and no hidden file (server/internal/archguard/domainrules' Load)."""
+    parts = path.split("/")
+    if parts[0] != "server" or not path.endswith(".go"):
+        return False
+    return not any(p in SKIPPED_DIRS or p[:1] in "._" for p in parts[1:-1]) and parts[-1][:1] not in "._"
+
+
+def tree_files(revision, dirs=None):
+    """{path under server/: text} of the .go files under server/ at revision that the domain rules read; with dirs
+    (directories under server/), only the files directly in them."""
+    if dirs is None:
+        listed = run(["git", "ls-tree", "-r", "--name-only", revision, "--", "server/"], 120).splitlines()
+    else:
+        listed = []
+        for start in range(0, len(dirs), 200):
+            listed += run(["git", "ls-tree", "--name-only", revision, "--"] +
+                          ["server/%s/" % d if d else "server/" for d in dirs[start:start + 200]], 120).splitlines()
+    paths = [p for p in listed if server_go(p)]
+    out = {}
+    for start in range(0, len(paths), 500):
+        chunk = paths[start:start + 500]
+        result = subprocess.run(["git", "cat-file", "--batch"], cwd=ROOT, check=True, capture_output=True, timeout=300,
+                                input="".join("%s:%s\n" % (revision, p) for p in chunk).encode())
+        data, at = result.stdout, 0
+        for path in chunk:
+            header_end = data.index(b"\n", at)
+            header = data[at:header_end].split()
+            if header[-1] == b"missing":
+                at = header_end + 1
+                continue
+            size = int(header[2])
+            out[path[len("server/"):]] = data[header_end + 1:header_end + 1 + size].decode("utf-8", "replace")
+            at = header_end + 1 + size + 1
+    return out
+
+
+def layer_names(work, trees):
+    """{key: names}: the undeclared package directories in each tree ({key: {path under server/: text}}), as archguard's
+    TestDomainLayerNames reads them; a tree it could not read has no entry. work is a directory to use, empty or
+    missing."""
+    os.makedirs(work, exist_ok=True)
+    for key, files in trees.items():
+        for rel, text in files.items():
+            path = Path(work, key, rel)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        Path(work, key).mkdir(exist_ok=True)
+    run(GO_LAYERS + ["-domain-layer-names=" + os.path.abspath(work)], 900, cwd=ROOT / "server")
+    names = {}
+    for key in trees:
+        path = Path(work, key + ".names")
+        if path.exists():
+            names[key] = set(path.read_text().splitlines())
+    return names
+
+
+def changed_dirs(old, new):
+    """The directories under server/ of the .go files the domain rules read that differ between two commits."""
+    paths = run(["git", "diff", "--name-only", "--no-renames", old, new, "--", "server/"], 120).splitlines()
+    return sorted({p[len("server/"):].rpartition("/")[0] for p in paths if server_go(p)})
+
+
+def tree_pending(base, prs, idle_days, work, log=sys.stderr):
+    """(today, found) for the undeclared packages: the ones base has, and the ones each counted PR of prs adds
+    ({name: [PR numbers]}): undeclared at its head among the directories it changes, not at its merge base, not at
+    base."""
+    counted_prs = counted(prs, UNDECLARED.source, idle_days, log=log)
+    fetch(counted_prs)
+    trees, keys = {"base": tree_files(base)}, {}
+    for pr in counted_prs:
+        mb = merge_base(pr.head, base)
+        dirs = changed_dirs(mb, pr.head)
+        if dirs:
+            keys[pr.number] = ("head%d" % pr.number, "mb%d" % pr.number)
+            trees[keys[pr.number][0]] = tree_files(pr.head, dirs)
+            trees[keys[pr.number][1]] = tree_files(mb, dirs)
+    names = layer_names(work, trees)
+    today, found = names.get("base", set()), {}
+    for pr in counted_prs:
+        head, mb = keys.get(pr.number, (None, None))
+        added = names.get(head, set()) - names.get(mb, set()) - today
+        for name in added:
+            found.setdefault(name, []).append(pr.number)
+        print("%s #%d: %s" % (UNDECLARED.id, pr.number, " ".join(sorted(added)) or "no new name"), file=log)
+    return today, {n: sorted(p) for n, p in sorted(found.items())}
+
+
 def on_base(base, path):
     return subprocess.run(["git", "cat-file", "-e", "%s:%s" % (base, path)], cwd=ROOT,
                           capture_output=True).returncode == 0
@@ -341,12 +458,23 @@ def main(argv=None):
     cmd.add_argument("--base", default="origin/main", help="what the names are counted against (default origin/main)")
     cmd.add_argument("--idle-days", type=int, default=14, help="a draft whose head commit is older is left out")
     cmd.add_argument("--write", action="store_true", help="rewrite the lists' files (a list --base has: pruned only)")
+    cmd.add_argument("--only", help="comma-separated list ids (default every list)")
     args = parser.parse_args(argv)
     base = run(["git", "rev-parse", "--verify", args.base + "^{commit}"], 60).strip()
+    wanted = set(args.only.split(",")) if args.only else None
     with tempfile.TemporaryDirectory(prefix="name-freezes-") as work:
         lists, _ = central_names(os.path.join(work, "table"))
+        lists = [l for l in lists + [UNDECLARED] if wanted is None or l.id in wanted]
+        if wanted is not None and wanted - {l.id for l in lists}:
+            print("unknown list id(s): %s" % ", ".join(sorted(wanted - {l.id for l in lists})), file=sys.stderr)
+            return 2
         prs = open_prs([l.source for l in lists])
-        today, found = central_pending(base, lists, prs, args.idle_days, os.path.join(work, "names"))
+        central = [l for l in lists if l is not UNDECLARED]
+        today, found = central_pending(base, central, prs, args.idle_days, os.path.join(work, "names")) if central \
+            else ({}, {})
+        if UNDECLARED in lists:
+            today[UNDECLARED.id], found[UNDECLARED.id] = tree_pending(base, prs, args.idle_days,
+                                                                      os.path.join(work, "trees"))
     for l in lists:
         print("== %s (%s): %d names at %s, %d pending from %d PRs" % (
             l.id, l.source, len(today[l.id]), args.base, len(found[l.id]),
@@ -378,9 +506,11 @@ def main(argv=None):
             print("%s, %s%s" % (l.file, line, note), file=sys.stderr)
         for name in unlisted:
             failed = True
+            fix = ("Give it a //persona:layer line (docs/server/architecture.md \"Domain model\")" if l is UNDECLARED
+                   else "Move its entry to its domain's own file (docs/server/architecture.md \"Registering a domain's "
+                   "entries\")")
             print("%s: %s has %s, which the list does not: --write adds no name to a list that has landed, so the "
-                  "freeze still fails on it. Move its entry to its domain's own file (docs/server/architecture.md "
-                  "\"Registering a domain's entries\")." % (l.file, args.base, name), file=sys.stderr)
+                  "freeze still fails on it. %s." % (l.file, args.base, name, fix), file=sys.stderr)
     return 1 if failed else 0
 
 

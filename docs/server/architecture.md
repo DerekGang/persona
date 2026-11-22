@@ -119,6 +119,562 @@ Where the business type needs fields of its own, it stays a separate type with t
 - **Reap first**: every production `osproc.ReapInherited` call (the hub's `claimInherited`, the manager's `runManager`, `managercli.Assistant`, the node's `runNode`) comes before anything that could start a child, and the hub's `Run`, `Serve` and `RunSlot` call `claimInherited` first (`reap_test.go`).
   Only the calls its list names, each with why it starts no process, may run ahead; a new call site has to be listed.
 
+## Domain model
+
+Domain code on the server is strict, and the rules are code: each one below is a check in
+`server/internal/archguard/domainrules`, with a failing case and a compliant twin under
+`server/internal/archguard/testdata/domainrules/planted`, a tree laid out like `server/`. Every Go example in this
+section is copied from a compliant twin there, and archguard's `TestDomainModelExamples` keeps them the same. New
+domain code follows the rules from its first line. Code that predates them is held by shrink-only counts and frozen
+names in `server/internal/archguard/testdata/domain_layers`, which only fall: copy the domain kit
+(`server/internal/domainkit`) and the planted twins, never the packages those lists hold.
+
+Why the rules exist, in this repository's own code:
+
+- **One type plays three roles.** `InboxItem` (`server/internal/assistant/inbox.go`) is the wire shape, the stored row
+  and the domain type at once, with exported, json-tagged fields (`awk '/^type InboxItem struct/,/^}/'
+  server/internal/assistant/inbox.go`), so callers decide from its fields:
+  `git grep -nE '\.(DoneAt|DoneBy) = ' -- 'server/internal/assistant/*.go' ':!*_test.go'` lists writes of an item's or
+  a to-do's done state, each with its own meaning.
+- **Validating constructors are skipped.** `sessionhistory` validates input in `Parse`, yet
+  `git grep -nE '[^A-Za-z0-9_]sessionhistory\.[A-Z][A-Za-z0-9_]*\{' -- server` lists literals of its types built
+  outside it.
+- **A named primitive is only a name.** `git grep -nE '^type [A-Z][A-Za-z0-9]* (string|int|int64|bool)( |$)' --
+  'server/*.go' ':!*_test.go'` lists the server's named basic types; any package converts into them and `string(x)`
+  unwraps them.
+
+### Layers
+
+Every package under `server/` states its layer on a line of its own in its package comment. go/ast leaves such
+directive lines out of a comment's text, so godoc does not show it:
+
+```go
+// Package fleetcount decides which agents and cards need the owner, and why: the Needs you count every surface
+// shows.
+//
+//persona:layer core
+package fleetcount
+```
+
+| Layer | What it is | Where | May import |
+| --- | --- | --- | --- |
+| `kit` | the building blocks every core uses | `server/internal/domainkit` only | the standard library and the kit |
+| `core` | one bounded context: values, entities, deciders, failures, events, domain services and its visitors | the context's home (`assistant/<domain>`, `node/<domain>`), and the legacy top-level packages | `bytes`, `cmp`, `iter`, `maps`, `math`, `math/bits`, `slices`, `sort`, `strconv`, `strings`, `unicode`, `unicode/utf8`; the kit's `outcome`, `fail`, `instant`, `opt`, `defect` and `slot`; shared kernels |
+| `core shared` | a shared kernel: value objects and closed sets only | directly under `server/internal`, outside the managers', the node's and the hub's trees | as a core |
+| `adapter` | the only code that converts between a core and contracts, rows, prompt inputs or log text | `<core>/<core>adapt`, and the edge adapters such as the HTTP failure writer | its core, shared kernels and their adapters, the kit, contracts, libraries, the standard library, third-party code |
+| `application` | orchestration: the clock, ids, IO, locks, goroutines, routes, retries and model calls | package `assistant`, the hub, the node, `cmd/*`, the managers, `domainkit/clock` | every layer but `testkit` |
+| `application seam` | a typed registration seam between application modules | `assistant/kernel` and later seams | as application |
+| `library` | technical code with no domain concept | `lazyre`, `osproc`, `db`, `prompts`, `apierr`, `i18n` and the like | the standard library, third-party code, libraries, contracts |
+| `contract` | plain wire data | exactly the packages `server/internal/archguard/testdata/contracts.txt` lists | the standard library and contracts |
+| `testkit` | test support | `domainkit/domaintest`, `domainkit/clock/clocktest`, `*test` packages | anything; imported only by tests and other testkit |
+
+A declaration is checked, or it would be a way around the rules: `application` must show an effect use (a call into
+`os`, `net`, `net/http`, `database/sql`, `os/exec`, `log`, `log/slog`, `syscall`, `crypto/rand`, `math/rand` or an
+application package, a clock call, a goroutine, a channel, a select, or a field or parameter typed from `net/http`,
+`database/sql`, `net`, `os`, `os/exec` or `sync`; a `context.Context` parameter or an adapter import alone is none),
+`kit` lives only under `server/internal/domainkit`, `contract` if and only if `contracts.txt` lists the package,
+`core shared` holds only values, a library imports no core, kit or adapter, and testkit is imported only by tests. A
+core is imported only by application code, adapters, testkit and tests (a shared kernel by cores too). The hub
+(`internal/hub`, `internal/hubedge`, `cmd/persona-hub`) relays contracts and imports no core, kit or adapter, and
+neither do `db` and `prompts`, libraries the hub links. A manager is application plus adapters, with its cores in its
+own tree; the node is application plus engine adapters, with any core under `node/<domain>`.
+
+A package that declares nothing counts as application. The packages that declared nothing when the rules landed are
+frozen by name in `server/internal/archguard/testdata/domain_layers/undeclared.txt`; a new package has to declare, and
+a frozen one that gains its line prints a notice, after which its line can go. The packages open PRs were adding come
+from `python3 scripts/test/name_freezes.py pending --write`.
+
+### Values
+
+One value object per concept: a struct whose state is unexported, made only by its own package. A one-field struct
+names its field for its type in lower camel case (an `ID` suffix may go: `MachineID{machine}`), and no two exported
+structs of a package share a field list, so no value converts into a sibling (`fleetcount.Role(state)` does not
+compile). There are no named primitives, aliases or conversions from outside, and a struct with more than one field
+holds no primitive. Every exported struct and sealed interface documents its zero value ("The zero Ref is no
+session"); where the zero is not a valid value, constructors refuse it and functions handed it raise a defect.
+Absence inside a core is `opt.Option`, never a nil pointer or a zero marker.
+
+```go
+// MachineID is one of the owner's computers. The zero MachineID is no machine; ParseRef never makes one.
+type MachineID struct{ machine string }
+
+// SessionID is one session on a machine. The zero SessionID is no session; ParseRef never makes one.
+type SessionID struct{ session string }
+
+// InteractionID is one pending card. The zero InteractionID is no card; ParseInteractionID never makes one.
+type InteractionID struct{ interaction string }
+
+// Ref is one session on one machine. It is comparable, so it keys maps. The zero Ref is no session; ParseRef never
+// makes one.
+type Ref struct {
+	machine MachineID
+	session SessionID
+}
+```
+
+```go
+// State is where an agent's turn stands. The zero State is no state; Build refuses it.
+type State struct{ state uint8 }
+
+// StateWorking is an agent at work.
+func StateWorking() State { return State{state: 1} }
+
+// StateNeedsYou is an agent waiting for the owner.
+func StateNeedsYou() State { return State{state: 2} }
+```
+
+### Tell, don't ask
+
+Code outside a core never reads or writes its state. A core has no exported fields, package variables or exported
+constants, and every exported method returns nothing, a bool, the receiver's own type or an outcome of it, whatever
+its parameters. The exceptions are `ID()` (the package's identity type, or a shared kernel's, which other aggregates
+and stores refer to it by), `Wire()`, `Build()` on a builder, a builder stage's next stage and `Accept`. A computation
+that yields another type is a domain service, a package-level function taking core values, never a method. Receivers
+are values, and a method writes no slice or map it shares with the receiver: it clones first. Ask ahead of an action
+with a `CanX` beside `X`. A change that removes a getter adds, in the same change, the behaviour that answers the
+caller's question.
+
+```go
+// ID is the session the agent is.
+func (a Agent) ID() agentref.Ref { return a.ref }
+
+// Counts says whether the agent counts on a surface: a muted agent never does, and the Live Activity leaves subtasks
+// out.
+func (a Agent) Counts(on Surface) bool {
+	if a.muting == MutingMuted() {
+		return false
+	}
+	return !(on == SurfaceLiveActivity() && a.lineage == LineageSubtask())
+}
+```
+
+### Building always-valid objects
+
+A value exists only in a valid state, from birth and from storage. `ParseX` is the only way in from raw input and the
+only exported function that takes primitives; `NewX` builds from domain values; `RestoreX` rebuilds stored state and
+always returns an outcome; a closed set's values are `<Type><Value>`. Make, Create, Build, Init, From, To, Get, Set,
+Reconstruct and Must are refused as prefixes. No exported function takes more than four parameters: more inputs make
+a staged builder, whose stages are distinct types named for themselves (so they cannot convert into each other) and
+whose last stage, `XBuilder`, has `Build`. `Build` refuses a zero value in every part and reports every one, in
+order (`fail.Invalids`): Go cannot stop a stage from being declared zero, so a skipped stage fails at `Build`, never
+silently. Nothing fills in a default the caller did not pass.
+
+```go
+// ParseRef is the session a machine id and a session id name; either one empty is invalid.
+func ParseRef(machine, session string) (out outcome.Of[Ref, Fail]) {
+	switch {
+	case strings.TrimSpace(machine) == "":
+		return out.Err(wrong("agentref.machine.empty", "machine"))
+	case strings.TrimSpace(session) == "":
+		return out.Err(wrong("agentref.session.empty", "session"))
+	}
+	return out.Ok(Ref{machine: MachineID{machine: machine}, session: SessionID{session: session}})
+}
+```
+
+```go
+// AgentStateStep is the builder's first stage: the agent's state. The zero AgentStateStep is a skipped stage, and
+// Build refuses what it leaves out.
+type AgentStateStep struct{ agentStateStep Agent }
+
+// AgentRoleStep is the builder's second stage: the agent's role. The zero AgentRoleStep is a skipped stage, and Build
+// refuses what it leaves out.
+type AgentRoleStep struct{ agentRoleStep Agent }
+
+// AgentBuilder is the builder's last stage. The zero AgentBuilder is a skipped stage, and Build refuses what it leaves
+// out.
+type AgentBuilder struct{ agentBuilder Agent }
+
+// NewAgentBuilder starts an agent: the session it is and the caller's place for it.
+func NewAgentBuilder(ref agentref.Ref, at slot.Slot) AgentStateStep {
+	return AgentStateStep{agentStateStep: Agent{ref: ref, at: at}}
+}
+```
+
+### Visitors and acting on decisions
+
+Every read of a core's data from outside goes through `Accept(XVisitor)`. Every method of an exported visitor
+interface starts with `Visit` and takes domain values, and only adapters, testkit and the core's own tests implement
+one: application code that wants an answer calls behaviour. A core that renders rows for its caller keeps the
+caller's place per entry as a kit `slot.Slot`, which only adapters mint, and hands it back through the visitor; a core
+declares no type parameters. An adapter keeps nested visitor targets as fields, so nested `Accept` calls do not
+allocate, and offers `Act(decision, effects)` when the application must carry out a decision that holds data.
+
+```go
+// TallyVisitor is told every row of a tally, then the total.
+type TallyVisitor interface {
+	VisitAgent(agent slot.Slot, why Why, since instant.Instant) // an agent that waits with no card
+	VisitCard(card slot.Slot, why Why)                          // a card on no session
+	VisitAgentByCard(agent, card slot.Slot, why Why)            // an agent its oldest card stands for
+	VisitTotal(total RowCount)
+}
+
+// Accept tells v every row, then the total.
+func (t Tally) Accept(v TallyVisitor) {
+	for i := range t.tally {
+		r := &t.tally[i]
+		switch r.kind {
+		case agentRow:
+			v.VisitAgent(r.agent, r.why, r.since)
+		case cardRow:
+			v.VisitCard(r.card, r.why)
+		case agentByCardRow:
+			v.VisitAgentByCard(r.agent, r.card, r.why)
+		}
+	}
+	v.VisitTotal(RowCount{rowCount: len(t.tally)})
+}
+```
+
+```go
+func (r *renderer) VisitAgent(agent slot.Slot, why fleetcount.Why, since instant.Instant) {
+	s := &r.sessions[agent.Wire()]
+	r.list.Rows = append(r.list.Rows, assistantwire.NeedsYouRow{Machine: s.MachineID, Session: s.SessionID,
+		Why: r.word(why), Since: time.Unix(0, since.Wire()).UTC()})
+}
+```
+
+```go
+// Act stores what a decision decided: the item's record after it, written through save.
+func Act(d item.Decided, save func(Record) error) error {
+	var r recorder
+	d.Accept(&r)
+	return save(r.record)
+}
+```
+
+### Closed sets and lifecycles
+
+Every closed set is a closed type: states, roles, reasons, surfaces, commands, events and failures. Without data it is
+a struct over its own field with one constructor per value (`StateWorking()` above) and `Accept` for exhaustive
+mapping; a flag is a two-value closed type (`MutingHeard`, `MutingMuted`), never a `bool` field. With data it is an
+exported sealed interface (one with an unexported method, so only its package implements it) over unexported variants:
+
+```go
+// Package quiethours decides whether a notice is delivered now or held.
+//
+//persona:layer core
+package quiethours
+
+import "github.com/nwverse/persona/server/internal/domainkit/instant"
+
+// Decision is what to do with a notice. The zero Decision is nil; Decide never returns it.
+type Decision interface {
+	Accept(v DecisionVisitor) // only adapters implement DecisionVisitor
+	decision()                // sealed: only this package implements Decision
+}
+
+type DecisionVisitor interface {
+	VisitDeliver()
+	VisitHoldUntil(until instant.Instant)
+}
+
+type deliver struct{}
+type hold struct{ until instant.Instant }
+
+func DecisionDeliver() Decision                        { return deliver{} }
+func DecisionHoldUntil(until instant.Instant) Decision { return hold{until: until} }
+
+func (deliver) Accept(v DecisionVisitor) { v.VisitDeliver() }
+func (h hold) Accept(v DecisionVisitor)  { v.VisitHoldUntil(h.until) }
+func (deliver) decision()                {}
+func (hold) decision()                   {}
+```
+
+A lifecycle keeps each state's data only in that state (an Inbox item's done time exists only while it is done). An
+aggregate whose changes others react to is a decider: commands are sealed values named for the action, `Decide`
+returns the next state with its events, `Decided.Then` decides a further command, and `Decided.Accept` hands both to
+an adapter. Evolving a state by an event stays unexported, so no caller applies an event to the wrong state. A wire
+value a newer peer sends stops in the adapter as its own unknown case and never enters the set.
+
+```go
+// Decide is what a command does to an item at now: the next item with its events, or why the item refuses it.
+func Decide(i Item, c Command, now instant.Now) outcome.Of[Decided, Fail] {
+	if c == nil {
+		defect.Raise("item.Decide", "the zero Command")
+	}
+	return c.decide(i, now)
+}
+```
+
+### The functional core
+
+A core computes only from its arguments. It imports only the packages in the layer table, and has no goroutine,
+channel, select, `panic`, `recover`, `print` or `init`, no clock call (`time.Now`, `Since`, `Until`, `Sleep`, `After`,
+`AfterFunc`, `Tick`, `NewTimer`, `NewTicker`, `LoadLocation`, `math/rand`), no `any`, no func or foreign interface
+parameter, no service object and no range over a map (range over `slices.Sorted(maps.Keys(m))`). It receives now as an
+`instant.Now`, which only the application's clock (`domainkit/clock`) reads, ids as values an adapter made, and the
+owner's wall-clock time as a value an adapter computed in the owner's time zone. The application around it loads
+through adapters, reads the clock once, calls the core and acts on what it decided:
+
+```go
+// MarkDone marks a new item done for the owner: load, read the clock, decide, act.
+func (s *Service) MarkDone(w http.ResponseWriter, id string) {
+	it, f := outcome.Unpack(itemadapt.Open(id))
+	if f != nil {
+		failhttp.Write(w, f)
+		return
+	}
+	decided, f := outcome.Unpack(item.Decide(it, item.CommandMarkDone(item.DoerOwner()), s.clock.Now()))
+	if f != nil {
+		failhttp.Write(w, f)
+		return
+	}
+	if err := itemadapt.Act(decided, s.save); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+```
+
+### Failures
+
+An expected failure is a value: a fallible core API returns `outcome.Of[T, F]` through a named result, `return
+out.Ok(v)` or `return out.Err(f)` on every path, and an outcome nobody set raises a defect wherever it is read. No
+core discards what a call returns. Each core seals one failure family on the kit's bases:
+
+```go
+// Fail is every failure agentref returns. The zero Fail is nil; no Parse returns it as a failure.
+type Fail interface {
+	fail.Fail
+	agentrefFail()
+}
+
+// invalid is input that names no session.
+type invalid struct{ fail.Invalid }
+
+func (invalid) agentrefFail() {}
+```
+
+A failure is read only by visiting it (`fail.FailVisitor`), so nothing decides on a code's text: codes and parts
+cannot be compared, and only cores and the kit make them. A part names the wrong input in the core's own words
+(`machine`, never `machine_id`). An adapter that returns failures of two families widens them (`outcome.Widen`,
+`outcome.Then`). At the HTTP edge one adapter maps failures to answers:
+
+```go
+// Write answers w with f.
+func Write(w http.ResponseWriter, f fail.Fail) {
+	var a answer
+	f.Accept(&a)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(a.status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"code": a.code, "part": a.part})
+}
+```
+
+A programmer error is a defect (`defect.Raise`), never a returned failure, and only listed sites recover one, through
+`defect.Catch`. A stored row that fails to restore is skipped and logged with its code, never rebuilt half-valid.
+
+### Data objects and adapters
+
+Stored rows, wire types, prompt inputs and fixture shapes are plain data and live outside cores: in contracts, in
+`db` or `prompts`, or in the adapter that owns them, named `Record`. A core has no struct tags and no codec method
+(`String`, `Error`, `GoString`, `Format`, `MarshalJSON` and the other marshal and unmarshal methods, `AppendText`,
+`Scan`, `Value`, `LogValue`). A single value leaves through `Wire()`, which returns its field and which only adapters
+and testkit name, called or not; a composite leaves through `Accept`. Outside the core, its tests, adapters and
+testkit, nothing calls its `Parse` or `Restore`; nothing outside it builds its types by literal (the zero literal
+included: `var x pkg.T` names the documented zero), converts into them, aliases them, dot-imports the package, or
+reads them with `unsafe` or `reflect` (`reflect.DeepEqual` aside). An adapter returns nothing, core values (as
+outcomes), contracts, `db` rows, prompt inputs, its `Record`, `error`, or `Log`'s string, which goes straight into a
+log call; it exports no type named like one of its core's.
+
+```go
+// FromWire is the session a wire reference names.
+func FromWire(r assistantwire.SessionRef) outcome.Of[agentref.Ref, agentref.Fail] {
+	return agentref.ParseRef(r.MachineID, r.SessionID)
+}
+
+// Wire is r as the wire carries it.
+func Wire(r agentref.Ref) assistantwire.SessionRef {
+	var w refWire
+	r.Accept(&w)
+	return assistantwire.SessionRef{MachineID: w.machine, SessionID: w.session}
+}
+
+// Log is r for a log line, and only for one: "<machine>/<session>".
+func Log(r agentref.Ref) string {
+	var w refWire
+	r.Accept(&w)
+	return w.machine + "/" + w.session
+}
+```
+
+```go
+// Record is the stored item: plain and tagged, owned by this adapter.
+type Record struct {
+	ID     string     `json:"id"`
+	DoneAt *time.Time `json:"done_at,omitempty"`
+	DoneBy string     `json:"done_by,omitempty"`
+}
+```
+
+### Bounded contexts
+
+One core is one bounded context. Inside it, peer types read each other's unexported state; across contexts, never: a
+core imports no other context's core, and an adapter imports no other context's adapter (a shared kernel's adapter
+aside). A concept another context owns is either this context's own value object or a value of a shared kernel,
+which holds only value objects and closed sets (no entity with an `ID()`, no builder, no `Decide`, no domain service).
+Contexts meet in the application.
+
+### Typed seams
+
+Where application modules meet, the seam is an `application seam` package: it exports no field or variable and takes
+no `any`, `interface{}` or map of them, so a wrong port is a compile error, never a nil branch at run time. Hooks
+receive domain values. The registration rules for the central lists are in "Registering a domain's entries" below.
+
+```go
+// TurnSettled calls fn whenever an agent's turn settles: hooks receive the session as a domain value.
+func (r *Registry) TurnSettled(fn func(ctx context.Context, agent agentref.Ref)) {
+	r.settled = append(r.settled, fn)
+}
+```
+
+### Tests
+
+A core's tests are black-box (`package <name>_test`): they build through Parse, New, Restore and the builders, act
+through behaviour, and assert through predicates, whole-value equality, a test visitor, or the kit's `domaintest`
+(`domaintest.Ok`, and `domaintest.Fails` for a failure's kind and code). Fixtures replay through adapters.
+
+```go
+// rows is the test's own visitor: it keeps each row's reason and the total.
+type rows struct {
+	whys  []fleetcount.Why
+	total fleetcount.RowCount
+}
+
+func (r *rows) VisitAgent(_ slot.Slot, why fleetcount.Why, _ instant.Instant) {
+	r.whys = append(r.whys, why)
+}
+func (r *rows) VisitCard(_ slot.Slot, why fleetcount.Why)           { r.whys = append(r.whys, why) }
+func (r *rows) VisitAgentByCard(_, _ slot.Slot, why fleetcount.Why) { r.whys = append(r.whys, why) }
+func (r *rows) VisitTotal(total fleetcount.RowCount)                { r.total = total }
+```
+
+```go
+func TestBuildListsEveryPartASkippedStageLeftOut(t *testing.T) {
+	var skipped fleetcount.AgentRoleStep // a skipped stage still compiles; Build refuses it
+	got := domaintest.Fails(t, skipped.Role(fleetcount.RoleWorker(), fleetcount.LineageRoot(), fleetcount.MutingHeard()).Build())
+	const want = "invalid fleetcount.agent.no_session agent; invalid fleetcount.agent.no_state state; " +
+		"invalid fleetcount.agent.no_update updated"
+	if got != want {
+		t.Errorf("Build = %q, want %q", got, want)
+	}
+}
+```
+
+### The rules and their checks
+
+The rules run in two places. archguard's `TestDomainLayers` (`server/internal/archguard/domain_test.go`) checks the
+whole server, and check-fast runs `./internal/archguard` for every server change; it prints how many packages of each
+layer it checked and how many files it parsed in full, a count that is its budget, and fails when it inspected
+nothing. Every declared core, shared kernel, kit, adapter and seam package also runs them in its own `go test`
+through a `rules_test.go`, for its own code and for what its importers do to it:
+
+```go
+// The domain rules for this package and the code that imports it (docs/server/architecture.md "Domain model").
+func TestDomainRules(t *testing.T) { domainrules.Check(t) }
+```
+
+Every finding is one line, `RULE <id> <what>. WHY <why>. FIX <the change>. GOOD <code that does it right>. see
+docs/server/architecture.md "Domain model"`. There is no ignore marker and no allowlist. Code that predates the rules
+is held by three lists under `server/internal/archguard/testdata/domain_layers`: `undeclared.txt` (the packages
+frozen without a layer), `legacy_edges.txt` (imports frozen by name, `<pkg> imports <path>`) and `baseline.txt`
+(shrink-only counts, `<key> <rule> <count>`). A count may not rise above its baseline, nor, given a base
+(`CI_BASE_SHA`), above its count at the merge base; one that falls prints a notice, and
+`python3 scripts/ci/lower_baselines.py --only domain-rules` lowers the lines ("Count ratchets" in
+`docs/operations/testing.md`). A rule marked "fails at once" takes no count.
+
+| Rule | Checks | Counted against |
+| --- | --- | --- |
+| `layer-declared` | the package comment declares one known layer, or `undeclared.txt` lists the package | frozen names |
+| `layer-one` | the package's files agree on one layer | fails at once |
+| `layer-kit` | `kit` only under `server/internal/domainkit` | fails at once |
+| `layer-contract` | `contract` if and only if `contracts.txt` lists the package | fails at once |
+| `layer-shared` | a shared kernel's place and that it holds only values | fails at once |
+| `layer-application` | an application or seam package shows an effect use | fails at once |
+| `layer-library` | a library imports no core, kit or adapter | fails at once |
+| `layer-testkit` | testkit is imported only by tests and other testkit | fails at once |
+| `core-importers` | a core is imported only by application code, adapters, testkit and tests | fails at once |
+| `adapter-no-application` | an adapter imports no application package | fails at once |
+| `adapter-import` | an adapter imports another adapter only if it is a shared kernel's | fails at once |
+| `path-no-core` | the hub, `hubedge`, `db`, `prompts` and `cmd/persona-hub` import no core, kit or adapter | frozen names |
+| `core-import` | a core imports only what the layer table lists | frozen names |
+| `core-effect` | no goroutine, channel, select, `panic`, `recover`, `print`, `println` or `init` in a core | the package |
+| `core-clock-call` | no clock function of `time` and no `math/rand` in a core, called or not | the package |
+| `core-package-var` | no package-level variable in a core or the kit | the package |
+| `core-exported-const` | no exported constant in a core | the package |
+| `core-type-param` | no type parameter in a core (the kit's documented generics aside) | the package |
+| `core-any` | no `any` or `interface{}` in a core | the package |
+| `core-exported-field` | no exported field, and no embedded field but a fail base | the package |
+| `core-tag` | no struct tags in a core | the package |
+| `core-bare-type` | no exported type over a basic, slice, map, array, func or chan type | the package |
+| `core-alias` | no exported alias | the package |
+| `core-field-name` | a one-field struct's field is named for its type | the package |
+| `core-distinct-shape` | no two exported structs of a package share a field list | the package |
+| `core-primitive-field` | a struct with more than one field holds no primitive | the package |
+| `core-primitive-signature` | primitives only as `ParseX` parameters, `bool` results and `Wire`'s result | the package |
+| `core-collection` | slices and maps in exported signatures only as `NewX` and `RestoreX` parameters | the package |
+| `core-interface-param` | no func or interface parameter but the package's own visitors and sealed interfaces | the package |
+| `core-accessor` | every exported method returns nothing, a bool, its receiver's type or an outcome of it | the package |
+| `core-pointer-receiver` | no pointer receivers | the package |
+| `core-receiver-write` | no write through a receiver's slice or map | the package |
+| `core-codec-method` | no codec method | the package |
+| `core-wire-method` | `Wire` only on a one-field struct, returning the field | the package |
+| `core-constructor` | exported functions are Parse, New, Restore, builder entries, `<Type><Value>` or domain services | the package |
+| `core-params` | four parameters at most | the package |
+| `core-outcome-return` | every return sets the outcome, no outcome literal, no discarded call result | the package |
+| `core-fail-family` | one sealed `Fail` family, and every failure type in it | the package |
+| `core-part-name` | a `fail.NewPart` name has no underscore | the package |
+| `core-visitor-name` | every visitor method starts with `Visit` | the package |
+| `core-public-evolve` | no exported `Evolve` or `Apply` | the package |
+| `core-service-name` | no exported service, manager, repository, store, port, client, gateway or handler struct | the package |
+| `core-map-range` | no range over a map; `maps.Keys`, `Values` and `All` only inside `slices.Sorted` | the package |
+| `core-zero-doc` | every exported struct and sealed interface says what its zero value is | the package |
+| `core-doc` | a core, kit or adapter package has a package comment starting `Package <name>` | the package |
+| `core-test-package` | a core's tests are black-box | the package |
+| `core-hook` | a declared domain or seam package has the `rules_test.go` hook | fails at once |
+| `seam-exported-field` | a seam exports no field or variable | the package |
+| `seam-any` | a seam's exported signatures take no untyped value | the package |
+| `out-dot-import` | no dot import of a core or the kit | the core |
+| `out-alias` | no alias of a core's or the kit's type | the core |
+| `out-literal` | no literal of a core's or the kit's type outside it, tests and the zero literal included | the core |
+| `out-conversion` | no conversion to a core's or the kit's type outside it | the core |
+| `out-wire-ref` | no `.Wire` outside adapters and testkit, called or not | the package it is in |
+| `out-parse-call` | a core's `Parse` and `Restore` only from it, its tests, adapters and testkit | the core |
+| `out-visitor-impl` | a core's or the kit's visitor only in adapters, testkit and the core's own tests | the core |
+| `out-clock-read` | `instant.ReadClock` only in `domainkit/clock` and its testkit | `domainkit/instant` |
+| `out-slot-mint` | `slot.NewSlot` only in adapters and testkit | `domainkit/slot` |
+| `out-code-mint` | `fail.NewCode` and `fail.NewPart` only in cores, the kit and testkit | `domainkit/fail` |
+| `out-unsafe` | no `unsafe`, and `reflect` only for `DeepEqual`, in a file that imports a core or the kit | the first core it imports |
+| `out-rules-import` | only tests import `domainrules` | fails at once |
+| `out-log-use` | an adapter's `Log` result only as an argument of a logging call | the package it is in |
+| `adapter-name` | an adapter exports no type named like one of its core's | the adapter |
+| `adapter-exported-result` | an adapter returns only what the section above lists | the adapter |
+| `app-exported-record` | exported structs with an exported field, in undeclared and application packages (contracts, `db` and `prompts` aside) | the package |
+| `app-named-primitive` | named basic types, in undeclared and application packages | the package |
+| `app-lifecycle-write` | assignments to a `DoneAt` or `DoneBy` field, in undeclared and application packages | the package |
+
+The `app-*` counts hold the habits this model replaces from spreading in code that has not moved yet; they run only
+in `TestDomainLayers`, as does `layer-declared`.
+
+### The domain kit
+
+`server/internal/domainkit` imports only the standard library, and the hub links none of it.
+
+- `outcome`: `Of[T, F]`, a value or a failure of family `F`; producers write `return out.Ok(v)` or `out.Err(f)`, and
+  `IsOk`, `Unpack`, `Fold`, `Map`, `Widen`, `Then` and `Must` raise a defect on an outcome nobody set. `Widen` and
+  `Then` let an adapter return two families as `fail.Fail`; `Must` is for input the program made itself.
+- `fail`: `Fail`, sealed to the kit's bases `Invalid` (a code and the part that was wrong), `Refusal`, `Absence`,
+  `Conflict` and `Invalids`; `FailVisitor`; `Code` and `Part`, made by `NewCode` and `NewPart` and not comparable.
+- `instant`: `Instant` (UTC nanoseconds; the zero is unknown), `Span`, and `Now`, the application's reading of the
+  clock, which only `domainkit/clock` and its testkit make (`ReadClock`); `At`, `ParseMinutes`, `ParseSeconds`,
+  `Elapsed`, and `Wire` for adapters.
+- `opt`: `Option` with `Some`, `None`, `IsNone`, `Match` and `Fold`; no `Get` and no `Or`.
+- `defect`: `Raise` for programmer errors, `Catch` for the sites that recover one.
+- `slot`: `Slot`, the caller's place for an entry; `NewSlot` for adapters.
+- `clock` (application): `Clock`, read once per operation, and `System`; `clock/clocktest` (testkit) has `Fixed` and
+  `Fake`.
+- `domaintest` (testkit): `Ok`, `Fails` and `Describe`.
+
 ## Registering a domain's entries
 
 Nearly every feature used to add a line to one of a few central lists: the route calls in the assistant's `New`,
