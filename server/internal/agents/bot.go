@@ -6,12 +6,12 @@ import (
 	"errors"
 	"maps"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/orcart"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -72,7 +72,7 @@ func NewBotRegistry(kv KV, caller BotCaller) *BotRegistry {
 	return &BotRegistry{caller: caller, ops: &botOperationBook{kv: kv}}
 }
 
-var botEndpointID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var botEndpointID = lazyre.New(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // ValidBotEndpointID is the stable public ID contract shared by every bot transport projection.
 func ValidBotEndpointID(id string) bool { return botEndpointID.MatchString(id) }
@@ -248,6 +248,7 @@ type botOperationBook struct {
 	kv     KV
 	loaded bool
 	rows   map[string]botOperation
+	now    func() time.Time // tests; nil is time.Now
 }
 
 const botOperationsKey = "agents.bot.operations"
@@ -282,6 +283,9 @@ func (b *botOperationBook) prepare(ctx context.Context, reg BotRegistration, cli
 		return op.OperationID, nil
 	}
 	now := time.Now().UTC()
+	if b.now != nil {
+		now = b.now().UTC()
+	}
 	op := botOperation{ClientID: clientID, EndpointID: reg.ID, MachineID: reg.MachineID, SessionID: reg.SessionID,
 		TextSHA256: fingerprint, OperationID: orcart.OperationID(now, reg.MachineID+"/"+reg.SessionID+"/"+clientID), CreatedAt: now}
 	next := make(map[string]botOperation, len(b.rows)+1)
