@@ -430,6 +430,25 @@ test('Reduce Motion switches a compact drawer directly and retires an older comp
   assert.equal(drawer.drawerFraction, 0);
 });
 
+test('the repository only selects a row for its adjacent live detail, never for a popped phone chat', () => {
+  const from = formSource.indexOf('get adjacentProjectItem()');
+  const end = formSource.indexOf('@Builder projectPage(', from);
+  assert.ok(from >= 0 && end > from);
+  const Shell = new Function('return ' + stripTypeScriptTypes('class Shell {' + formSource.slice(from,end) + '}'))();
+  let split = false, ready = true;
+  const page = Object.assign(new Shell(), {wide:() => split, shownName:'session', shownParam:'route', activeChild:'session:route',
+    childKey:(name,param) => name+':'+param, targetReady:() => ready, detailModel:{selected:{kind:'session',key:() => 'scoped-owner'}}});
+  assert.equal(page.adjacentProjectItem, '');
+  split = true;
+  assert.equal(page.adjacentProjectItem, 'session:scoped-owner');
+  ready = false; assert.equal(page.adjacentProjectItem, '');
+  page.shownName = 'project_tree'; page.activeChild = 'project_tree:route';
+  assert.equal(page.adjacentProjectItem, 'tree:route');
+  page.activeChild = ''; assert.equal(page.adjacentProjectItem, '');
+  split = false; page.shownName = 'projects'; page.activeChild = 'projects:route';
+  assert.equal(page.adjacentProjectItem, '');
+});
+
 test('only a workspace opened over the same owned session inherits its phone header and sibling tabs', () => {
   const start = formSource.indexOf('get phoneToolParent()');
   const end = formSource.indexOf('private phonePageName()', start);

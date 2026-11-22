@@ -1594,9 +1594,17 @@ struct Index {
       if (this.projectCatalog.tree(key)) this.pushPlace('project_tree', key);
     }
   }
+  // Selection marks the detail open beside the repository column. A stack navigation has no adjacent detail.
+  @Computed get adjacentProjectItem(): string {
+    if (!this.wide() || this.activeChild !== this.childKey(this.shownName, this.shownParam)) return '';
+    if (this.shownName === 'project_tree') return 'tree:' + this.shownParam;
+    if ((this.shownName === 'session' || this.shownName === 'tools') && this.targetReady(this.shownName, this.shownParam) &&
+      this.detailModel.selected.kind === 'session') return 'session:' + this.detailModel.selected.key();
+    return '';
+  }
   @Builder projectPage(name: string, param: string) {
     ProjectsPage({ model: this.model, catalog: this.projectCatalog, page: name, target: param as string,
-          compact: !this.wide(), onBack: () => this.phoneBack(), onSearchMode: (active: boolean) => { this.projectSearching = active; },
+          compact: !this.wide(), adjacentItem: this.adjacentProjectItem, onBack: () => this.phoneBack(), onSearchMode: (active: boolean) => { this.projectSearching = active; },
           isMuted: (row: ResourceRow): boolean => this.agentWorkspace.isMuted(row),
           topContentInset: name === 'projects' && this.floatingProjectHeader ? 36*this.peerBarScale() + 14 : 0,
           onMachine: (tree: ProjectWorktree) => this.pushPlace('machine_projects', JSON.stringify([tree.group,tree.manager,tree.machine])),

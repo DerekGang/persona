@@ -21,6 +21,7 @@ export struct ProjectsPage {
   @Require @Param model: ClientModel;
   @Require @Param catalog: ProjectCatalog;
   @Param compact: boolean = false;
+  @Param adjacentItem: string = '';
   @Param topContentInset: number = 0;
   @Event onSearchMode: (active:boolean) => void = () => {};
   @Event isMuted: (row:ResourceRow) => boolean = () => false;
@@ -482,7 +483,7 @@ export struct ProjectsPage {
       left:this.treeInset(level)+6,right:20,top:19,bottom:19
     })
       .accessibilityGroup(true).accessibilityText([agent.row.title,agent.preview,tr(agent.stateLabel),this.agentContext(agent,paneName,starter),agent.todoTitle,this.age(agent)].filter((v:string) => !!v).join(' · '))
-      .accessibilitySelected(this.catalog.browser.selectedSession === agent.row.key())
+      .accessibilitySelected(this.adjacentItem === 'session:' + agent.row.key())
       .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id('projects.inline_session')
   }
   @Builder foldChevron(open:boolean) {
@@ -638,8 +639,8 @@ export struct ProjectsPage {
               this.lineContent(entry.item)
             }.width('100%').alignItems(HorizontalAlign.Start)
               .backgroundColor(entry.item.kind === 'host' || entry.item.kind === 'idle-projects' ? Color.Transparent :
-                entry.item.agent && entry.item.agent!.row.key() === this.catalog.browser.selectedSession ||
-                entry.item.kind === 'tree' && entry.item.tree!.key === this.catalog.browser.selectedTree ? Colors.selection : Colors.surface)
+                entry.item.agent && this.adjacentItem === 'session:' + entry.item.agent!.row.key() ||
+                entry.item.kind === 'tree' && this.adjacentItem === 'tree:' + entry.item.tree!.key ? Colors.selection : Colors.surface)
               .borderRadius({topLeft:entry.item.first ? PhoneStyle.cardRadius : 0,topRight:entry.item.first ? PhoneStyle.cardRadius : 0,
                 bottomLeft:entry.item.last ? PhoneStyle.cardRadius : 0,bottomRight:entry.item.last ? PhoneStyle.cardRadius : 0})
               .margin({bottom:entry.item.last && this.lines[entry.index+1]?.kind !== 'host' ? 12 : 0})
