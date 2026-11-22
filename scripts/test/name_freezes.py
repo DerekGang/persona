@@ -31,9 +31,11 @@ the tree has. An allowance adds one to its count's limit only while its type is 
 PR's alone. `pending` also lists what no allowance covers: a rise in another count, an import or finding that fails at
 once, a package this tree declares that the PR changes. The day the baseline lands (--base lacks it), --write sets a
 count line to every count the tree has and writes the allowances: the listed ones whose type the tree lacks and whose
-PRs are not all closed, and the new ones. Once it has landed, --write only tidies, on a checkout of --base: the counts
-take in the allowances whose types landed (TestDomainLayers' DOMAIN_LAYERS_UPDATE, which
-scripts/ci/lower_baselines.py runs too), and the allowances whose PRs have all closed leave. It adds no allowance.
+PRs are not all closed, and the new ones. Once it has landed, a run leaves it out unless `--only` names it (it adds
+no allowance then, and reading every open PR's tree is costly), and --write only tidies, on a checkout of --base: the
+counts take in the allowances whose types landed (TestDomainLayers' DOMAIN_LAYERS_UPDATE, which
+scripts/ci/lower_baselines.py runs too), and the allowances whose PRs have all closed leave. It adds no allowance. The
+open PRs' trees are read BATCH PRs at a time, so the temporary directory holds a few PRs' directories, not all of them.
 
 `--write` rewrites each list's file. For a list --base does not have yet, the day its freeze lands, that is its
 leading comment, every name --base has, then the pending ones: a listed pending name --base now has joins the first
@@ -49,6 +51,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -514,6 +517,11 @@ EDGES = "server/internal/archguard/testdata/domain_layers/legacy_edges.txt"
 
 GO_UPDATE = ["go", "test", "-count=1", "-run", "^TestDomainLayers$", "./internal/archguard/"]
 
+# How many PRs' trees are on disk at once while the baseline's pending counts are read: each is two copies (its head
+# and its merge base) of the directories it changes, and package assistant alone is over 20 MB, so writing every open
+# PR's trees at once would take gigabytes of the temporary directory.
+BATCH = 8
+
 
 class Pending:
     """What the open PRs add to the domain baseline: the server's own counts now (own, {id: (count, types)}), the types
@@ -545,7 +553,21 @@ def baseline_pending(base, prs, idle_days, work, log=sys.stderr):
     fetch(counted_prs)
     context = declared_dirs("HEAD")
     shared = tree_files("HEAD", context)
-    trees, keys, failing = {}, {}, {}
+    trees, keys, failing, batches = {}, {}, {}, []
+    read = Trees({}, {}, {}, None)
+
+    def flush():
+        """Reads the trees gathered since the last flush, then removes them: at most BATCH PRs' trees are on disk at
+        once. The first read also takes the server's own counts."""
+        batch = os.path.join(work, "batch%d" % len(batches))
+        batches.append(batch)
+        got = domain_trees(batch, trees, own=read.own is None)
+        read.counts.update(got.counts)
+        read.others.update(got.others)
+        read.own = read.own if read.own is not None else got.own
+        shutil.rmtree(batch, ignore_errors=True)
+        trees.clear()
+
     for pr in counted_prs:
         if in_tree(pr.head):
             print("%s #%d: its head is in this tree (the branch that lands the baseline)" % (BASELINE.id, pr.number),
@@ -565,7 +587,10 @@ def baseline_pending(base, prs, idle_days, work, log=sys.stderr):
             files = dict(shared)
             files.update(tree_files(revision, dirs))
             trees[key] = files
-    read = domain_trees(work, trees, own=True)
+        if len(trees) >= 2 * BATCH:
+            flush()
+    if trees or read.own is None:
+        flush()
     frozen = {e.name for e in CENTRAL.read((ROOT / EDGES).read_text())[0]}
     found = {}
     for pr in counted_prs:
@@ -681,6 +706,12 @@ def main(argv=None):
         baseline = BASELINE in lists
         lists = [l for l in lists if l is not BASELINE]
         landed = baseline and on_base(base, BASELINE.file)
+        if landed and wanted is None:
+            # Once on --base it takes no allowance, and its tidy reads the working tree as --base: a run for the other
+            # lists (a seam's new row on its own branch) leaves it out rather than read every open PR's tree.
+            print("%s: on %s already, so left out: tidy it with `pending --write --only %s` on a checkout of %s" % (
+                BASELINE.id, args.base, BASELINE.id, args.base), file=sys.stderr)
+            baseline = landed = False
         if landed and args.write and run(["git", "rev-parse", "HEAD"], 60).strip() != base:
             print("%s is on %s already: --write takes the allowances whose types landed into their counts from the "
                   "working tree, so check out %s first" % (BASELINE.file, args.base, args.base), file=sys.stderr)

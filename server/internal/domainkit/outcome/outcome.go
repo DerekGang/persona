@@ -100,20 +100,22 @@ func Map[A, B any, F fail.Fail](o Of[A, F], f func(A) B) Of[B, F] {
 }
 
 // Must is o's value, for input the program made itself (a constant, an id it generated): a failure there is a
-// programmer error, so it raises a defect naming op.
+// programmer error, so it raises a defect naming op and the failure's kind.
 func Must[T any, F fail.Fail](op string, o Of[T, F]) T {
 	if o.held(op) == failure {
-		var k kind
-		o.failure.Accept(&k)
-		defect.Raise(op, "a "+k.kind+" failure on input the program made")
+		o.failure.Accept(raising{op: op})
 	}
 	return o.value
 }
 
-// kind is a failure's kind, for Must's defect.
-type kind struct{ kind string }
+// raising is the visitor Must hands a failure to: told the failure's kind, it raises the defect.
+type raising struct{ op string }
 
-func (k *kind) VisitInvalid(fail.Code, fail.Part) { k.kind = "invalid" }
-func (k *kind) VisitRefused(fail.Code)            { k.kind = "refused" }
-func (k *kind) VisitMissing(fail.Code)            { k.kind = "missing" }
-func (k *kind) VisitConflict(fail.Code)           { k.kind = "conflict" }
+func (r raising) VisitInvalid(fail.Code, fail.Part) { r.raise("invalid") }
+func (r raising) VisitRefused(fail.Code)            { r.raise("refused") }
+func (r raising) VisitMissing(fail.Code)            { r.raise("missing") }
+func (r raising) VisitConflict(fail.Code)           { r.raise("conflict") }
+
+func (r raising) raise(kind string) {
+	defect.Raise(r.op, "a "+kind+" failure on input the program made")
+}

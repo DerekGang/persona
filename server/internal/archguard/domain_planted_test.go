@@ -144,9 +144,18 @@ func missing(want, got []string) []string {
 // plantedWant is every finding and count the planted tree gives, as "<rule> <file>:<line>" and "<rule> <package>
 // <n>", sorted. The compliant twins appear nowhere in it.
 var plantedWant = []string{
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/badadapt.go:17",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/badadapt.go:18",
 	"adapter-exported-result internal/assistant/fleetcount/badadapt/badadapt.go:22",
 	"adapter-exported-result internal/assistant/fleetcount/badadapt/badadapt.go:30",
 	"adapter-exported-result internal/assistant/fleetcount/badadapt/badadapt.go:35",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:10",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:11",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:15",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:20",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:25",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:33",
+	"adapter-exported-result internal/assistant/fleetcount/badadapt/outparams.go:38",
 	"adapter-import internal/assistant/fleetcount/badadapt/badadapt.go:9",
 	"adapter-name internal/assistant/fleetcount/badadapt/badadapt.go:16",
 	"adapter-no-application internal/assistant/fleetcount/badadapt/badadapt.go:7",

@@ -479,7 +479,9 @@ testkit, nothing calls its `Parse` or `Restore`; nothing outside it builds its t
 included: `var x pkg.T` names the documented zero), converts into them, aliases them, dot-imports the package, or
 reads them with `unsafe` or `reflect` (`reflect.DeepEqual` aside). An adapter returns nothing, core values (as
 outcomes), contracts, `db` rows, prompt inputs, its `Record`, `error`, or `Log`'s string, which goes straight into a
-log call; it exports no type named like one of its core's.
+log call. It hands out nothing else through its parameters either: what it writes through a pointer, slice, map or
+channel, passes to a callback or to an interface it declares is one of those (`Act`'s `save func(Record) error`), and
+no exported struct of its own but `Record` has an exported field. It exports no type named like one of its core's.
 
 ```go
 // FromWire is the session a wire reference names.
@@ -594,7 +596,8 @@ its type is in the package, so the room is that PR's and no other change can spe
 count already holds the allowed types it has. Allowances only leave: once the type is on main, `lower_baselines.py`
 takes it into the count and removes the line (`TestDomainLayers` says so in a notice), and once its PRs have all closed
 without it, `python3 scripts/test/name_freezes.py pending --write --only domain_layers_baseline`, run on a checkout of
-main, drops it. That script also wrote them, the day the baseline landed; it adds none to a baseline main has.
+main, drops it. That script also wrote them, the day the baseline landed; it adds none to a baseline main has, and a
+run that does not name the baseline with `--only` leaves it out once main has it.
 
 | Rule | Checks | Counted against |
 | --- | --- | --- |
@@ -614,11 +617,11 @@ main, drops it. That script also wrote them, the day the baseline landed; it add
 | `core-effect` | no goroutine, channel, select, `panic`, `recover`, `print`, `println` or `init` in a core or the kit (`defect`'s `Raise` and `Catch` aside) | the package |
 | `core-clock-call` | no clock function of `time` and no `math/rand` in a core or the kit, called or not | the package |
 | `core-package-var` | no package-level variable in a core or the kit | the package |
-| `core-exported-const` | no exported constant in a core | the package |
+| `core-exported-const` | no exported constant in a core or the kit | the package |
 | `core-type-param` | no type parameter in a core (the kit's documented generics aside) | the package |
 | `core-any` | no `any` or `interface{}` in a core or the kit (the kit's type parameter constraints and `outcome`'s nil check aside) | the package |
 | `core-exported-field` | no exported field, and no embedded field but a fail base | the package |
-| `core-tag` | no struct tags in a core | the package |
+| `core-tag` | no struct tags in a core or the kit | the package |
 | `core-bare-type` | no exported type over a basic, slice, map, array, func or chan type | the package |
 | `core-alias` | no exported alias | the package |
 | `core-field-name` | a one-field struct's field is named for its type | the package |
@@ -643,7 +646,7 @@ main, drops it. That script also wrote them, the day the baseline landed; it add
 | `core-map-range` | no range over a map; `maps.Keys`, `Values` and `All` only inside `slices.Sorted` | the package |
 | `core-zero-doc` | every exported struct and sealed interface says what its zero value is | the package |
 | `core-doc` | a core, kit or adapter package has a package comment starting `Package <name>` | the package |
-| `core-test-package` | a core's tests are black-box | the package |
+| `core-test-package` | a core's and the kit's tests are black-box | the package |
 | `core-hook` | a declared domain or seam package has the `rules_test.go` hook | fails at once |
 | `seam-exported-field` | a seam exports no field or variable | the package |
 | `seam-any` | a seam's exported signatures take no untyped value | the package |
@@ -661,7 +664,7 @@ main, drops it. That script also wrote them, the day the baseline landed; it add
 | `out-rules-import` | only tests import `domainrules` | fails at once |
 | `out-log-use` | an adapter's `Log` result only as an argument of a logging call | the package it is in |
 | `adapter-name` | an adapter exports no type named like one of its core's | the adapter |
-| `adapter-exported-result` | an adapter returns only what the section above lists | the adapter |
+| `adapter-exported-result` | an adapter hands out only what the section above lists, in results, through parameters and in exported fields | the adapter |
 | `app-exported-record` | exported structs with an exported field, in undeclared, application and library packages (contracts, `db` and `prompts` aside) | the package |
 | `app-named-primitive` | named basic types, in undeclared, application and library packages | the package |
 | `app-lifecycle-write` | assignments to a `DoneAt` or `DoneBy` field, in undeclared, application and library packages | the package |
@@ -671,10 +674,19 @@ package starts at zero; they run only in `TestDomainLayers`, as does `layer-decl
 
 ### The domain kit
 
-`server/internal/domainkit` is held to a core's purity, since every core imports it: it imports only the standard
-library a core may import, the other kit packages and, in `instant`, `time` (`At` and `ReadClock` take a `time.Time`),
-and `core-effect`, `core-clock-call`, `core-any` and `core-outcome-return` run over it too, its listed API aside
-(`kitAPI` in `server/internal/archguard/domainrules/core.go`). The hub links none of it.
+`server/internal/domainkit` is held to every rule a core is, since every core imports it: it imports only the
+standard library a core may import, the other kit packages and, in `instant`, `time` (`At` and `ReadClock` take a
+`time.Time`). Its listed API needs a few exceptions, and `kitAPI` in `server/internal/archguard/domainrules/core.go`
+names each one by package, function, method or field: type parameters constrained by `any` or `fail.Fail`; the
+callbacks of `outcome`'s `Fold`, `Then` and `Map` and `opt`'s `Match` and `Fold`; the functions that are neither a
+constructor nor a domain service in a core's sense (`outcome`'s `Unpack`, `Fold`, `Widen`, `Then`, `Map` and `Must`,
+`opt`'s `Some`, `None` and `Fold`, `instant`'s `At` and `ReadClock`, `defect`'s `Raise` and `Catch`); the raw input
+of `NewCode`, `NewPart`, `NewSlot`, `Raise` and `Must`'s operation name; `Of`'s pointer receivers, so that
+`Of{}.Ok(v)` does not compile and a producer sets its named result; `outcome`, which carries every core's failure
+family and declares none; `Defect`'s text fields and its `Error`; `Option`'s presence flag; and `Now.Stamp`, which
+hands a core the instant the clock was read at. Every other rule runs over the kit, and `TestKitAPIIsNeeded` fails on
+an exception nothing needs, so a new kit type or function meets every rule until a reviewed line says why not.
+The hub links none of it.
 
 - `outcome`: `Of[T, F]`, a value or a failure of family `F`; producers write `return out.Ok(v)` or `out.Err(f)`, and
   `IsOk`, `Unpack`, `Fold`, `Map`, `Widen`, `Then` and `Must` raise a defect on an outcome nobody set. `Widen` and
@@ -807,11 +819,13 @@ A central list with a seam takes no new name. `server/internal/archguard/central
 - **Pending names**: `python3 scripts/test/name_freezes.py pending` lists the names that open PRs add, read from their
   heads. A draft whose head commit is more than 14 days old does not count. The script asks the archguard test for the
   names (`-central-list-names`), so they are in the form the freeze compares.
-- **Writing the list**: on the day a row lands, `pending --write` rewrites the list's file, after `origin/main` is merged
-  in. Once the list is on `main`, `--write` only prunes it: it keeps the listed names `main` still has, a pending one
-  whose PR merged among them, and drops the names that have left and the pending ones whose PRs closed. It adds no
-  name: one that `main` has and the list lacks is reported as an error, and the freeze keeps failing on it. So it is
-  not how a later PR gets a name on a list.
+- **Writing the list**: on the day a row lands, `pending --write --only <the row's id>` rewrites the list's file, after
+  `origin/main` is merged in; without `--only` the run also prunes every list `main` has, and leaves out the domain
+  rules' baseline, which only a checkout of `main` tidies ("The rules and their checks"). Once the list is on `main`,
+  `--write` only prunes it: it keeps the listed names `main` still has, a pending one whose PR merged among them, and
+  drops the names that have left and the pending ones whose PRs closed. It adds no name: one that `main` has and the
+  list lacks is reported as an error, and the freeze keeps failing on it. So it is not how a later PR gets a name on a
+  list.
 - **The mock hub too**: `scripts/mock/mock_hub_switches.py` uses the same module for the mock hub's switch freeze
   (`docs/operations/testing.md` "Mock hub domains").
 

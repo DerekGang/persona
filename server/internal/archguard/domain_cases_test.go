@@ -90,6 +90,15 @@ func TestDomainRuleCases(t *testing.T) {
 			"\t\"github.com/nwverse/persona/server/internal/proto\"\n)\n\nfunc read() bool {\n\tgo func() {}()\n"+
 			"\treturn os.Getenv(\"X\") == \"\" && time.Now().IsZero() && proto.Version == \"\"\n}\n"),
 			[]string{"core-clock-call", "core-effect", "core-import", "core-import", "core-import"}},
+		// Every other core rule runs over the kit too: only kitAPI's lines, each one needed by the kit's listed API,
+		// leave a rule alone.
+		{"a setter, a constant, a tag, a map range and a stray function in the kit", pkgFiles("internal/domainkit/extra",
+			"kit", "// Slot is a place. The zero Slot is the first.\ntype Slot struct{ slot int32 }\n\n"+
+				"// Max is the last place.\nconst Max = 1<<31 - 1\n\n// Advance moves s on.\nfunc (s *Slot) Advance() { s.slot++ }\n\n"+
+				"// Row is a stored place. The zero Row is the first.\ntype Row struct {\n\trow Slot `db:\"first\"`\n}\n\n"+
+				"func count(m map[uint8]bool) int {\n\tn := 0\n\tfor range m {\n\t\tn++\n\t}\n\treturn n\n}\n\n"+
+				"// First is the first place.\nfunc First() Slot { return Slot{} }\n"),
+			[]string{"core-constructor", "core-exported-const", "core-map-range", "core-pointer-receiver", "core-tag"}},
 		{"two layers in one package", merged(pkgFiles("internal/two", "library", ""), map[string]string{
 			"internal/two/b.go": "// Package two again.\n//\n//persona:layer contract\npackage two\n"}),
 			[]string{"layer-contract", "layer-one"}},

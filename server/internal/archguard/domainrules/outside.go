@@ -349,7 +349,8 @@ func (c *outsideChecks) adapterImports() {
 	}
 }
 
-// adapterDecls is adapter-name and adapter-exported-result on an adapter's declarations.
+// adapterDecls is adapter-name and adapter-exported-result on an adapter's declarations: what its exported functions
+// and methods hand out in their results and through their parameters, and its exported structs' exported fields.
 func (c *outsideChecks) adapterDecls() {
 	d := c.p.decls
 	coreTypes := map[string]string{} // exported type name -> the core declaring it
@@ -372,6 +373,7 @@ func (c *outsideChecks) adapterDecls() {
 		if core, ok := coreTypes[t.name]; ok && exported(t.name) {
 			c.at(t.file, t.spec.Name, "adapter-name", c.p.Rel, c.p.Name+"."+t.name+" shadows "+core+"."+t.name)
 		}
+		c.exportedFields(t)
 	}
 	check := func(fd *funcDecl) {
 		if !exported(fd.decl.Name.Name) || fd.recv != "" && !exported(fd.recv) {
@@ -380,6 +382,14 @@ func (c *outsideChecks) adapterDecls() {
 		for _, r := range params(fd.decl.Type.Results) {
 			if !c.adapterResult(fd, r) {
 				c.at(fd.file, fd.decl.Name, "adapter-exported-result", c.p.Rel, fd.name()+" returns "+exprString(r))
+			}
+		}
+		for _, p := range params(fd.decl.Type.Params) {
+			for _, out := range c.handedBack(p) {
+				if exprString(unwrapParam(out)) != "error" && !c.handedOut(fd.file, out) {
+					c.at(fd.file, fd.decl.Name, "adapter-exported-result", c.p.Rel,
+						fd.name()+" hands out "+exprString(out)+" through "+exprString(p))
+				}
 			}
 		}
 	}
@@ -391,6 +401,79 @@ func (c *outsideChecks) adapterDecls() {
 			check(fd)
 		}
 	}
+}
+
+// exportedFields is adapter-exported-result on an adapter's exported struct other than its Record: an exported field
+// hands what it holds to whoever has the struct, as a getter would.
+func (c *outsideChecks) exportedFields(t *typeDecl) {
+	if !exported(t.name) || t.name == "Record" || t.strct == nil {
+		return
+	}
+	for _, fl := range t.strct.Fields.List {
+		if len(fl.Names) == 0 {
+			if _, name := baseType(fl.Type); exported(name) {
+				c.at(t.file, fl, "adapter-exported-result", c.p.Rel, c.p.Name+"."+t.name+"."+name+" is an exported field")
+			}
+		}
+		for _, n := range fl.Names {
+			if exported(n.Name) {
+				c.at(t.file, n, "adapter-exported-result", c.p.Rel, c.p.Name+"."+t.name+"."+n.Name+" is an exported field")
+			}
+		}
+	}
+}
+
+// handedBack is what an adapter can hand its caller through a parameter of type p: what a pointer, slice, map or
+// channel it can send on holds, written into it; what a callback takes; and what the methods of an interface take,
+// called on it. A type the adapter declares counts as the type it is declared as. A value of any other type hands
+// nothing back, and nor does an interface of another package, such as the http.ResponseWriter an HTTP answer is
+// written to.
+func (c *outsideChecks) handedBack(p ast.Expr) []ast.Expr {
+	seen := map[string]bool{}
+	var back func(p ast.Expr) []ast.Expr
+	back = func(p ast.Expr) []ast.Expr {
+		switch x := p.(type) {
+		case *ast.ParenExpr:
+			return back(x.X)
+		case *ast.StarExpr:
+			return []ast.Expr{x.X}
+		case *ast.ArrayType:
+			if x.Len == nil {
+				return []ast.Expr{x.Elt}
+			}
+			return back(x.Elt) // an array is copied, but not what its pointers reach
+		case *ast.Ellipsis:
+			return []ast.Expr{x.Elt}
+		case *ast.MapType:
+			return []ast.Expr{x.Key, x.Value}
+		case *ast.ChanType:
+			if x.Dir != ast.RECV {
+				return []ast.Expr{x.Value}
+			}
+		case *ast.FuncType:
+			return params(x.Params)
+		case *ast.InterfaceType:
+			return methodParams(x)
+		case *ast.Ident:
+			if t := c.p.decls.types[x.Name]; t != nil && t.strct == nil && !seen[x.Name] {
+				seen[x.Name] = true
+				return back(t.spec.Type)
+			}
+		}
+		return nil
+	}
+	return back(p)
+}
+
+// methodParams is the parameters of an interface's methods.
+func methodParams(it *ast.InterfaceType) []ast.Expr {
+	var out []ast.Expr
+	for _, m := range it.Methods.List {
+		if ft, ok := m.Type.(*ast.FuncType); ok {
+			out = append(out, params(ft.Params)...)
+		}
+	}
+	return out
 }
 
 // adapterResult says whether an adapter may return a type: an outcome, a value of a core, shared kernel or the kit,

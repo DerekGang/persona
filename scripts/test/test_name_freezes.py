@@ -334,6 +334,59 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("check out origin/main first", err.getvalue())
 
+    def test_a_landed_baseline_is_left_out_of_a_run_that_does_not_name_it(self):
+        # A seam's branch writes its new list after merging main, which has the baseline: the run neither reads the open
+        # PRs' trees for it nor asks for a checkout of the base, and says how to tidy it.
+        def baseline_pending(*args, **kwargs):
+            raise AssertionError("the open PRs' trees were read for a landed baseline")
+
+        with tempfile.TemporaryDirectory() as root:
+            undeclared = Path(root, name_freezes.UNDECLARED.file)
+            undeclared.parent.mkdir(parents=True)
+            undeclared.write_text("# a header\ninternal/old\n")
+            with mock.patch.multiple(name_freezes, ROOT=Path(root), run=lambda args, timeout, **kw: "elsewhere\n"
+                                     if args[-1] == "HEAD" else "base\n",
+                                     central_names=lambda work, sources=None: ([], {}), on_base=lambda base, p: True,
+                                     open_prs=lambda paths: [], tree_pending=lambda *args: ({"internal/old"}, {}),
+                                     baseline_pending=baseline_pending), \
+                    mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", io.StringIO()) as err:
+                for argv in (["pending"], ["pending", "--write"]):
+                    self.assertEqual(name_freezes.main(argv), 0, err.getvalue())
+            self.assertEqual(undeclared.read_text(), "# a header\ninternal/old\n")
+        self.assertEqual(err.getvalue().count(
+            "%s: on origin/main already, so left out: tidy it with `pending --write --only %s` on a checkout of "
+            "origin/main" % (name_freezes.BASELINE.id, name_freezes.BASELINE.id)), 2)
+        self.assertNotIn("check out", err.getvalue())
+
+    def test_the_open_prs_trees_are_read_a_batch_at_a_time(self):
+        # Each batch is read and removed before the next is written; the first read also takes the server's counts.
+        calls = []
+
+        def domain_trees(work, trees, own=False):
+            calls.append((work, sorted(trees), own))
+            Path(work).mkdir(parents=True)
+            return name_freezes.Trees(names={}, counts={k: {} for k in trees}, others={k: set() for k in trees},
+                                      own={self.ID: (2, set())} if own else None)
+
+        prs = [name_freezes.PR(n, False, "head%d" % n, NOW, {"server/"}) for n in (1, 2, 3)]
+        with tempfile.TemporaryDirectory() as root:
+            edges = Path(root, name_freezes.EDGES)
+            edges.parent.mkdir(parents=True)
+            edges.write_text("# frozen\n")
+            with mock.patch.multiple(name_freezes, ROOT=Path(root), BATCH=1, fetch=lambda prs: None,
+                                     merge_base=lambda head, base: "mb" + head[4:],
+                                     changed_dirs=lambda old, new: ["internal/seats"], in_tree=lambda head: False,
+                                     declared_dirs=lambda revision: [], tree_files=lambda revision, dirs=None: {},
+                                     domain_trees=domain_trees):
+                got = name_freezes.baseline_pending("base", prs, 14, root, log=io.StringIO())
+            left = [work for work, _, _ in calls if Path(work).exists()]
+        self.assertEqual([(Path(w).name, keys, own) for w, keys, own in calls],
+                         [("batch0", ["head1", "mb1"], True), ("batch1", ["head2", "mb2"], False),
+                          ("batch2", ["head3", "mb3"], False)])
+        self.assertEqual(left, [], "a batch's trees stay on disk")
+        self.assertEqual(got.own, {self.ID: (2, set())})
+        self.assertEqual((got.found, got.failing, got.measured), ({}, {}, {1, 2, 3}))
+
     def test_the_committed_baseline_reads_cleanly(self):
         text = (ROOT / name_freezes.BASELINE.file).read_text()
         lead, counts, allowances = name_freezes.baseline_entries(text)

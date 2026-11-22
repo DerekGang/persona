@@ -6,25 +6,49 @@ import (
 	"strings"
 )
 
-// kitAPI is the kit's API the core rules leave alone, by function ("<dir>.<Func>") or method
-// ("<dir>.<Type>.<Method>"), with the rules each may break: the kit is the vocabulary cores are built from, so it
-// takes raw input, callbacks and type parameters where its documented API needs them (docs/server/architecture.md
-// "Domain model", "The domain kit"). Nothing else in the kit is exempt.
+// kitAPI is where the kit's listed API needs a core rule left alone, keyed by package ("<dir>"), function
+// ("<dir>.<Func>"), method or field ("<dir>.<Type>.<Name>"), with the rules each may break. Every other core rule
+// runs over the kit as it runs over a core: the kit is the vocabulary cores are built from, so it takes raw input,
+// callbacks and type parameters only where its documented API needs them (docs/server/architecture.md "Domain
+// model", "The domain kit"). Nothing else in the kit is exempt; a new kit type or function is held to every rule
+// until its own line here says why not.
 var kitAPI = map[string][]string{
-	"internal/domainkit/defect.Raise":        {"core-primitive-signature", "core-effect"}, // panics with the Defect: text for its message
-	"internal/domainkit/defect.Catch":        {"core-interface-param", "core-effect"},     // recovers for the listed sites, re-panics the rest
-	"internal/domainkit/defect.Defect.Error": {"core-accessor", "core-primitive-signature"},
-	"internal/domainkit/outcome.Fold":        {"core-interface-param"},
-	"internal/domainkit/outcome.Then":        {"core-interface-param"},
-	"internal/domainkit/outcome.Map":         {"core-interface-param"},
-	"internal/domainkit/outcome.Must":        {"core-primitive-signature"}, // op names the caller in the defect
-	"internal/domainkit/outcome.Of.Err":      {"core-any"},                 // any(f) == nil: a nil failure is a defect
-	"internal/domainkit/opt.Option.Match":    {"core-interface-param"},
-	"internal/domainkit/opt.Fold":            {"core-interface-param"},
-	"internal/domainkit/fail.NewCode":        {"core-primitive-signature"}, // the raw-input functions
-	"internal/domainkit/fail.NewPart":        {"core-primitive-signature"},
-	"internal/domainkit/slot.NewSlot":        {"core-primitive-signature"},
-	"internal/domainkit/instant.Now.Stamp":   {"core-accessor"}, // hands a core the instant the clock was read at
+	// defect: a programmer error stops the operation, so Raise and Catch are the kit's one panic and one recover;
+	// Raise takes the text of its message, Catch the site's report, and a Defect is what a crash prints.
+	"internal/domainkit/defect.Raise":        {"core-primitive-signature", "core-effect", "core-constructor"},
+	"internal/domainkit/defect.Catch":        {"core-interface-param", "core-effect", "core-constructor"},
+	"internal/domainkit/defect.Defect.Error": {"core-accessor", "core-primitive-signature", "core-codec-method"},
+	"internal/domainkit/defect.Defect.op":    {"core-primitive-field"},
+	"internal/domainkit/defect.Defect.cause": {"core-primitive-field"},
+	// outcome: generic over every core's failure family, so it declares none. Ok and Err have pointer receivers so
+	// that Of{}.Ok(v) does not compile and producers set their named result. Err's any(f) == nil makes a nil failure
+	// a defect. Its readers are combinators, neither constructors nor domain services, and take callbacks; Must's op
+	// names the caller in the defect.
+	"internal/domainkit/outcome":        {"core-fail-family"},
+	"internal/domainkit/outcome.Of.Ok":  {"core-pointer-receiver"},
+	"internal/domainkit/outcome.Of.Err": {"core-pointer-receiver", "core-any"},
+	"internal/domainkit/outcome.Unpack": {"core-constructor"},
+	"internal/domainkit/outcome.Fold":   {"core-interface-param", "core-constructor"},
+	"internal/domainkit/outcome.Widen":  {"core-constructor"},
+	"internal/domainkit/outcome.Then":   {"core-interface-param", "core-constructor"},
+	"internal/domainkit/outcome.Map":    {"core-interface-param", "core-constructor"},
+	"internal/domainkit/outcome.Must":   {"core-primitive-signature", "core-constructor"},
+	// opt: absence for a value of any type, so a presence flag beside it, made by Some and None and read through
+	// callbacks.
+	"internal/domainkit/opt.Some":         {"core-constructor"},
+	"internal/domainkit/opt.None":         {"core-constructor"},
+	"internal/domainkit/opt.Fold":         {"core-interface-param", "core-constructor"},
+	"internal/domainkit/opt.Option.Match": {"core-interface-param"},
+	"internal/domainkit/opt.Option.some":  {"core-primitive-field"},
+	// The raw-input functions, where the standard library's values enter the kit (ParseMinutes and ParseSeconds are
+	// Parse functions, which the rules allow anyway), and Now.Stamp, which hands a core the instant the clock was
+	// read at.
+	"internal/domainkit/fail.NewCode":      {"core-primitive-signature"},
+	"internal/domainkit/fail.NewPart":      {"core-primitive-signature"},
+	"internal/domainkit/slot.NewSlot":      {"core-primitive-signature"},
+	"internal/domainkit/instant.At":        {"core-constructor"},
+	"internal/domainkit/instant.ReadClock": {"core-constructor"},
+	"internal/domainkit/instant.Now.Stamp": {"core-accessor"},
 }
 
 // kitImports is what a kit package may import besides the computing standard library and the kit: instant's At and
@@ -38,11 +62,11 @@ type coreChecks struct {
 	findings
 	p   *Pkg
 	idx Index
-	kit bool // the kit: only the rules that apply to it, with its API left out
+	kit bool // the kit: every core rule, with what kitAPI lists left out
 }
 
-// Core is the rules for p's own code, by its layer: the core rules for cores and shared kernels, the ones that apply
-// to the kit (with its API left out), the seam rules for application seams, and the package comment and the hook for
+// Core is the rules for p's own code, by its layer: the core rules for cores, shared kernels and the kit (with what
+// kitAPI lists left out), the seam rules for application seams, and the package comment and the hook for
 // every domain package. p must be parsed in full (Full).
 func Core(p *Pkg, idx Index) []Finding {
 	c := &coreChecks{p: p, idx: idx, kit: p.Layer == layerKit}
@@ -59,12 +83,17 @@ func Core(p *Pkg, idx Index) []Finding {
 	return c.list
 }
 
-// exempt says whether the kit's API lets name break rule.
+// exempt says whether the kit's API lets name (a function, "<Type>.<Method>", "<Type>.<field>", or "" for the
+// package) break rule.
 func (c *coreChecks) exempt(name, rule string) bool {
 	if !c.kit {
 		return false
 	}
-	for _, r := range kitAPI[c.p.Rel+"."+name] {
+	key := c.p.Rel
+	if name != "" {
+		key += "." + name
+	}
+	for _, r := range kitAPI[key] {
 		if r == rule {
 			return true
 		}
@@ -123,10 +152,9 @@ func (c *coreChecks) hook() {
 // coreRules is the core-* rules for a core, a shared kernel or the kit.
 func (c *coreChecks) coreRules() {
 	d := c.p.decls
-	full := !c.kit // the rules the kit is not held to
 	for _, f := range c.p.Files {
 		if f.Test {
-			if full && !f.External {
+			if !f.External {
 				c.add(f.pos(f.ast.Name), "core-test-package", c.p.Rel, f.Rel+" is a white-box test")
 			}
 			continue
@@ -143,35 +171,35 @@ func (c *coreChecks) coreRules() {
 		switch {
 		case v.tok == token.VAR:
 			c.at(v.file, v.name, "core-package-var", v.name.Name+" is package-level state")
-		case full && exported(v.name.Name):
+		case exported(v.name.Name):
 			c.at(v.file, v.name, "core-exported-const", v.name.Name+" exports a primitive")
 		}
 	}
 	shapes := map[string]*typeDecl{}
 	for _, t := range d.order {
-		c.typeRules(t, full, shapes)
+		c.typeRules(t, shapes)
 	}
 	for _, fd := range d.funcs {
-		c.funcRules(fd, full)
+		c.funcRules(fd)
 	}
 	for _, t := range d.order {
 		for _, fd := range d.methods[t.name] {
-			c.funcRules(fd, full)
+			c.funcRules(fd)
 		}
 	}
-	if full {
+	if !c.exempt("", "core-fail-family") {
 		c.failFamily()
 	}
 }
 
 // typeRules is the rules on one type declaration.
-func (c *coreChecks) typeRules(t *typeDecl, full bool, shapes map[string]*typeDecl) {
+func (c *coreChecks) typeRules(t *typeDecl, shapes map[string]*typeDecl) {
 	s, f := t.spec, t.file
 	if s.TypeParams != nil && len(s.TypeParams.List) > 0 && !c.kitConstraints(s.TypeParams) {
 		c.at(f, s.Name, "core-type-param", t.name+" declares a type parameter")
 	}
 	if t.strct != nil {
-		c.structRules(t, full)
+		c.structRules(t)
 		if exported(t.name) {
 			if name, ok := singleField(t.strct); ok {
 				want := lowerCamel(t.name)
@@ -189,12 +217,10 @@ func (c *coreChecks) typeRules(t *typeDecl, full bool, shapes map[string]*typeDe
 			} else {
 				shapes[sh] = t
 			}
-			if full {
-				for _, suffix := range []string{"Service", "Manager", "Repository", "Store", "Port", "Client", "Gateway", "Handler"} {
-					if strings.HasSuffix(t.name, suffix) {
-						c.at(f, s.Name, "core-service-name", t.name+" is a service object")
-						break
-					}
+			for _, suffix := range []string{"Service", "Manager", "Repository", "Store", "Port", "Client", "Gateway", "Handler"} {
+				if strings.HasSuffix(t.name, suffix) {
+					c.at(f, s.Name, "core-service-name", t.name+" is a service object")
+					break
 				}
 			}
 		}
@@ -218,7 +244,7 @@ func (c *coreChecks) typeRules(t *typeDecl, full bool, shapes map[string]*typeDe
 					c.at(f, n, "core-visitor-name", t.name+"."+n.Name+" does not start with Visit")
 				}
 				if ft, ok := m.Type.(*ast.FuncType); ok && exported(n.Name) {
-					c.signature(f, n, t.name+"."+n.Name, "", ft, full, nil)
+					c.signature(f, n, t.name+"."+n.Name, "", ft, nil)
 				}
 			}
 		}
@@ -246,7 +272,7 @@ func (c *coreChecks) kitConstraints(tp *ast.FieldList) bool {
 }
 
 // structRules is the field rules on one struct type.
-func (c *coreChecks) structRules(t *typeDecl, full bool) {
+func (c *coreChecks) structRules(t *typeDecl) {
 	f := t.file
 	failName := ""
 	for _, imp := range f.Imports {
@@ -273,28 +299,28 @@ func (c *coreChecks) structRules(t *typeDecl, full bool) {
 			if exported(n.Name) {
 				c.at(f, n, "core-exported-field", t.name+"."+n.Name+" is exported")
 			}
-			if full && many && n.Name != "_" && primitive(fl.Type) {
+			if many && n.Name != "_" && primitive(fl.Type) && !c.exempt(t.name+"."+n.Name, "core-primitive-field") {
 				c.at(f, n, "core-primitive-field", t.name+"."+n.Name+" is "+exprString(fl.Type))
 			}
 		}
 	}
-	if full && tagged {
+	if tagged {
 		c.at(f, t.spec.Name, "core-tag", t.name+" has struct tags")
 	}
 }
 
 // funcRules is the rules on one function or method.
-func (c *coreChecks) funcRules(fd *funcDecl, full bool) {
+func (c *coreChecks) funcRules(fd *funcDecl) {
 	decl, f, name := fd.decl, fd.file, fd.name()
 	if decl.Type.TypeParams != nil && len(decl.Type.TypeParams.List) > 0 && !c.kitConstraints(decl.Type.TypeParams) {
 		c.at(f, decl.Name, "core-type-param", name+" declares a type parameter")
 	}
 	isExported := exported(decl.Name.Name)
 	if fd.recv != "" {
-		if full && fd.ptr {
+		if fd.ptr && !c.exempt(name, "core-pointer-receiver") {
 			c.at(f, decl.Name, "core-pointer-receiver", name+" has a pointer receiver")
 		}
-		if full && codecMethod(decl.Name.Name) {
+		if codecMethod(decl.Name.Name) && !c.exempt(name, "core-codec-method") {
 			c.at(f, decl.Name, "core-codec-method", name+" is a codec")
 		}
 		if decl.Name.Name == "Wire" && !c.wireIsField(fd) {
@@ -312,11 +338,9 @@ func (c *coreChecks) funcRules(fd *funcDecl, full bool) {
 		} else if isExported && !c.exempt(name, "core-accessor") {
 			c.fieldReturn(fd)
 		}
-		if full {
-			c.receiverWrites(fd)
-		}
+		c.receiverWrites(fd)
 	} else if isExported {
-		if full {
+		if !c.exempt(name, "core-constructor") {
 			c.constructor(fd)
 		}
 		if !c.exempt(name, "core-accessor") {
@@ -326,15 +350,15 @@ func (c *coreChecks) funcRules(fd *funcDecl, full bool) {
 	if decl.Recv == nil && decl.Name.Name == "init" {
 		c.at(f, decl.Name, "core-effect", f.Rel+":"+itoa(f.pos(decl).Line)+" uses init")
 	}
-	if isExported && full && (strings.HasPrefix(decl.Name.Name, "Evolve") || strings.HasPrefix(decl.Name.Name, "Apply")) &&
+	if isExported && (strings.HasPrefix(decl.Name.Name, "Evolve") || strings.HasPrefix(decl.Name.Name, "Apply")) &&
 		decl.Type.Params != nil && len(decl.Type.Params.List) > 0 {
 		c.at(f, decl.Name, "core-public-evolve", name+" applies events")
 	}
 	c.interfaceParams(fd)
 	if isExported {
-		c.signature(f, decl.Name, name, fd.recv, decl.Type, full, decl)
+		c.signature(f, decl.Name, name, fd.recv, decl.Type, decl)
 	}
-	if full && decl.Body != nil {
+	if decl.Body != nil {
 		c.mapRanges(fd)
 	}
 }
@@ -350,7 +374,7 @@ func codecMethod(name string) bool {
 
 // signature is the rules on an exported function's or method's parameters and results: their number, primitives
 // and collections. decl is nil for an interface method.
-func (c *coreChecks) signature(f *File, n ast.Node, name, recv string, ft *ast.FuncType, full bool, decl *ast.FuncDecl) {
+func (c *coreChecks) signature(f *File, n ast.Node, name, recv string, ft *ast.FuncType, decl *ast.FuncDecl) {
 	ps, rs := params(ft.Params), params(ft.Results)
 	if len(ps) > 4 {
 		c.at(f, n, "core-params", name+" takes "+itoa(len(ps))+" parameters")
@@ -359,20 +383,19 @@ func (c *coreChecks) signature(f *File, n ast.Node, name, recv string, ft *ast.F
 	parse := top && wordPrefix(decl.Name.Name, "Parse")
 	build := top && (wordPrefix(decl.Name.Name, "New") || wordPrefix(decl.Name.Name, "Restore"))
 	wire := recv != "" && strings.HasSuffix(name, ".Wire")
-	sig := full || c.kit
 	for _, p := range ps {
-		if sig && primitive(p) && !parse && !c.exempt(name, "core-primitive-signature") && !c.funcParam(p, decl) {
+		if primitive(p) && !parse && !c.exempt(name, "core-primitive-signature") && !c.funcParam(p, decl) {
 			c.at(f, n, "core-primitive-signature", name+" takes "+exprString(p))
 		}
-		if full && collection(p) && !build {
+		if collection(p) && !build {
 			c.at(f, n, "core-collection", name+" takes "+exprString(p))
 		}
 	}
 	for _, r := range rs {
-		if sig && primitive(r) && exprString(r) != "bool" && !wire && !c.exempt(name, "core-primitive-signature") {
+		if primitive(r) && exprString(r) != "bool" && !wire && !c.exempt(name, "core-primitive-signature") {
 			c.at(f, n, "core-primitive-signature", name+" returns "+exprString(r))
 		}
-		if full && collection(r) {
+		if collection(r) {
 			c.at(f, n, "core-collection", name+" returns "+exprString(r))
 		}
 	}

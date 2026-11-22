@@ -14,8 +14,8 @@ import (
 
 // Agent is a record named like the core's own type.
 type Agent struct { // adapter-name
-	Service *assistant.Service
-	Record  itemadapt.Record
+	Service *assistant.Service // adapter-exported-result
+	Record  itemadapt.Record   // adapter-exported-result
 }
 
 // WhyWord hands the reason out as a word.
