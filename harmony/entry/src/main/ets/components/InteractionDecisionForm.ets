@@ -28,6 +28,9 @@ export struct InteractionDecisionForm {
   @Require @Param request: Decision;
   @Param readOnly: boolean = false;
   @Param docked: boolean = false;
+  @Param resizeDock: boolean = false;
+  @Event onDockResize:(phase:string,delta:number)=>void = (_phase:string,_delta:number)=>{};
+  @Local private dockTitleHeight: number = 0;
   @Param agentCard: boolean = false;
   @Param dockSource: string = '';
   @Event onDockFold: () => void = () => {};
@@ -595,15 +598,15 @@ export struct InteractionDecisionForm {
     return points*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(points));
   }
   private headerControlSide():number {
-    return this.agentCard ? 28*Math.max(1,Math.min(nativeEnvironment.fontScale,67/51)) : 28;
+    return this.agentCard || this.docked ? 28*Math.max(1,Math.min(nativeEnvironment.fontScale,67/51)) : 28;
   }
   private agentActionHeight():number {
     return 30 + this.agentFontSize(17)*1.2;
   }
   @Builder taskHeader() {
-    Row({space:5}) {
+    Row({space:this.docked ? 6 : 5}) {
       Button({type:ButtonType.Normal}) {
-        Row({space:5}) {
+        Row({space:this.docked ? 6 : 5}) {
           SymbolGlyph(this.request.kind==='plan' ? Symbols.document : this.request.kind==='question' ? $r('sys.symbol.ellipsis_bubble') : $r('sys.symbol.hand_raised_fingers_spread'))
             .fontSize(this.agentCard ? Tokens.interfaceFontVp(13,nativeEnvironment.fontScale) : '13vp').fontColor([Colors.link])
           Text(this.cardHeading()).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(Colors.link).maxLines(1)
@@ -613,11 +616,12 @@ export struct InteractionDecisionForm {
       }.layoutWeight(1).height(this.headerControlSide()).backgroundColor(Color.Transparent).padding(0)
         .onClick(() => this.toggleCard()).accessibilityText(this.cardHeading()).accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded'))
       if (this.docked && this.taskAgent) Button(tr('decision_view_in_chat'),{type:ButtonType.Normal})
-        .height(this.headerControlSide()).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
-        .backgroundColor(Color.Transparent).onClick(() => { if (this.admission()) this.onViewTask(); }).id('interaction.task.source')
+        .height(this.headerControlSide()).padding({left:8,right:8}).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link)
+        .responseRegion({x:0,y:-5,width:'100%',height:Math.max(44,this.headerControlSide())}).backgroundColor(Colors.subtle).borderRadius(20)
+        .onClick(() => { if (this.admission()) this.onViewTask(); }).id('interaction.task.source')
       if (this.docked && interactionSkipReason(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
-        .height(this.headerControlSide()).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-        .backgroundColor(Color.Transparent).enabled(false).id('interaction.task.skip_unavailable')
+        .height(this.headerControlSide()).padding({left:5,right:5}).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.tertiary)
+        .responseRegion({x:0,y:-5,width:'100%',height:Math.max(44,this.headerControlSide())}).backgroundColor(Color.Transparent).enabled(false).id('interaction.task.skip_unavailable')
       else if ((this.docked || this.agentCard) && interactionScreenCanCancel(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
         .height(this.headerControlSide()).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
         .backgroundColor(Color.Transparent).enabled(this.canRespond()).onClick(() => this.submit('cancel')).id('interaction.task.skip')
@@ -633,7 +637,7 @@ export struct InteractionDecisionForm {
         .bindMenu(this.dockMenu).id('interaction.task.menu')
       Button({type:ButtonType.Circle}) {
         SymbolGlyph(this.cardFolded ? Symbols.up : Symbols.down).fontSize('13vp').fontColor([Colors.secondary])
-      }.width(this.agentCard ? this.headerControlSide() : 27).height(this.agentCard ? this.headerControlSide() : 27).padding(0).backgroundColor(Colors.control).accessibilityText(tr(this.cardFolded ? 'agent_expand' : 'agent_collapse'))
+      }.width(this.agentCard || this.docked ? this.headerControlSide() : 27).height(this.agentCard || this.docked ? this.headerControlSide() : 27).padding(0).backgroundColor(Colors.control).accessibilityText(tr(this.cardFolded ? 'agent_expand' : 'agent_collapse'))
         .accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded')).onClick(() => this.toggleCard()).id('interaction.task.fold')
     }.width('100%').onAreaChange((_before:Area,area:Area) => {
       const height=Number(area.height);
@@ -646,14 +650,45 @@ export struct InteractionDecisionForm {
     this.selected='approve'; this.setText('mode',mode); this.submit('approve');
   }
 
+  // System control sizes track the control font independently of the uncapped plan body.
+  private dockActionSize(primary:boolean):number {
+    const body=17*Math.max(1,Math.min(nativeEnvironment.fontScale,primary ? 21/17 : 19/17));
+    return (primary ? 30 : 14)+body*1.2;
+  }
+  private dockActionInk(): ResourceColor {
+    return this.model.style==='system' ? Colors.ink : Colors.onAction;
+  }
+  @Builder dockSecondary(label:string,id:string,edits:boolean) {
+    Button(tr(label),{type:ButtonType.Capsule}).layoutWeight(1).height(this.dockActionSize(false)).padding({left:8,right:8})
+      .fontSize(17).maxFontScale(19/17).fontWeight(FontWeight.Normal).fontColor(Colors.ink).backgroundColor(Colors.surface)
+      .border({width:Tokens.divider,color:Colors.divider,radius:this.dockActionSize(false)/2})
+      .shadow({radius:3,color:nativeEnvironment.dark ? '#30000000' : '#16000000',offsetY:1})
+      .responseRegion({x:0,y:(this.dockActionSize(false)-44)/2,width:'100%',height:Math.max(44,this.dockActionSize(false))})
+      .enabled(this.canRespond()).onClick(() => { if (edits) this.approveTaskPlan('acceptEdits'); else this.selected='deny'; }).id(id)
+  }
+
   @Builder taskPlanActions() {
-    Column({space:5}) {
+    Column({space:this.docked ? 12 : 5}) {
       if (this.selected==='deny') {
         TextArea({text:this.textValues['feedback'] || '',placeholder:tr('feedback')}).height(48)
           .onChange((value:string) => this.setText('feedback',value)).id('interaction.task.feedback')
         Row({space:6}) {
           Button(tr('cancel')).layoutWeight(1).fontSize(13).onClick(() => this.selected='')
           Button(tr('session_task_return')).layoutWeight(1).fontSize(13).enabled(this.canRespond()).onClick(() => this.submit('deny'))
+        }.width('100%')
+      } else if (this.docked) {
+        Button({type:ButtonType.Capsule}) {
+          Row({space:6}) {
+            if (!recordedPlanMode(this.request)) SymbolGlyph($r('sys.symbol.play_fill')).fontSize(Tokens.interfaceFontVp(14,nativeEnvironment.fontScale)).fontColor([this.dockActionInk()])
+            Text(tr(recordedPlanMode(this.request) ? 'approve' : 'session_task_approve_run')).fontSize(17).maxFontScale(21/17)
+              .fontColor(this.dockActionInk()).fontWeight(FontWeight.Medium).maxLines(1)
+          }
+        }.width('100%').height(this.dockActionSize(true)).padding({left:8,right:8}).backgroundColor(Colors.action)
+          .accessibilityText(tr(recordedPlanMode(this.request) ? 'approve' : 'session_task_approve_run')).enabled(this.canRespond())
+          .onClick(() => this.approveTaskPlan(recordedPlanMode(this.request) || 'bypassPermissions')).id('interaction.task.approve')
+        Row({space:8}) {
+          if (!recordedPlanMode(this.request)) this.dockSecondary('session_task_auto_edits','interaction.task.edits',true)
+          this.dockSecondary('session_task_return','interaction.task.return',false)
         }.width('100%')
       } else {
         Button({type:ButtonType.Capsule}) {
@@ -906,12 +941,78 @@ export struct InteractionDecisionForm {
     } else if (!this.deferred) this.bodyContent()
   }
 
+  @Builder dockGrip() {
+    Button({type:ButtonType.Normal}) {
+      Row() {
+        Blank().width(38*this.headerControlSide()/28).height(5*this.headerControlSide()/28)
+          .backgroundColor(Colors.tertiary).borderRadius(4)
+      }.width('100%').height(16).justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
+    }.width('100%').height(16).padding(0).backgroundColor(Color.Transparent)
+      .responseRegion({x:-8,y:-8,width:'100%',height:32}).accessibilityText(tr('phone_decision_height'))
+      .accessibilityDescription(tr('phone_decision_height_hint')).accessibilityCustomActions([
+        {name:tr('phone_decision_taller'),onAction:() => this.onDockResize('up',0)},
+        {name:tr('phone_decision_shorter'),onAction:() => this.onDockResize('down',0)}])
+      .onClick(() => this.onDockResize('toggle',0)).gesture(PanGesture({fingers:1,direction:PanDirection.Vertical,distance:4})
+        .onActionStart((e:GestureEvent) => this.onDockResize('begin',e.offsetY))
+        .onActionUpdate((e:GestureEvent) => this.onDockResize('move',e.offsetY))
+        .onActionEnd((e:GestureEvent) => this.onDockResize('end',e.offsetY))
+        .onActionCancel(() => this.onDockResize('cancel',0))).id('interaction.grabber')
+  }
+  private dockHeadingAway():boolean {
+    // On a short keyboard viewport keep the answer interface ahead of the optional title row.
+    return !this.resizeDock && nativeEnvironment.keyboardHeightPx>0 && !this.cardFolded &&
+      this.dockTitleHeight>0 && this.heightLimit-16-this.dockTitleHeight-12-12-16<120;
+  }
+  private dockBodyLimit():number {
+    const header=this.dockHeadingAway() ? 0 : this.dockTitleHeight || this.headerControlSide();
+    return Math.max(44,this.heightLimit-header-this.inlineFooterHeight-(this.resizeDock ? 16 : 12)-16-(header>0 ? 12 : 0)-12);
+  }
+  @Builder dockPanel() {
+    Column() {
+      if (this.resizeDock && !this.cardFolded) this.dockGrip()
+      if (!this.dockHeadingAway()) Column({space:2}) {
+        this.taskHeader()
+        if (!this.cardFolded && this.dockSource) Text(this.dockSource).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+          .fontColor(Colors.secondary).maxLines(2).width('100%').id('interaction.task.origin')
+        if (!this.cardFolded && interactionSkipReason(this.request)) Text(tr(interactionSkipReason(this.request)))
+          .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor($r('app.color.persona_dock_warning')).width('100%').id('interaction.task.skip_reason')
+      }.width('100%').alignItems(HorizontalAlign.Start).onAreaChange((_before:Area,area:Area):void => {
+        const h=Number(area.height);if (h>0 && Math.abs(h-this.dockTitleHeight)>0.5) this.dockTitleHeight=h;
+      })
+      if (!this.cardFolded) Column({space:12}) {
+        Scroll() {
+          Column() {
+            if (this.taskQueue && this.request.kind==='plan') MarkdownText({text:this.taskPlanSource(),chatReply:true,recapReading:true,onLink:this.onLink})
+            else this.formBody()
+          }.width('100%').alignItems(HorizontalAlign.Start).onAreaChange((_before:Area,area:Area):void => {
+            const h=Number(area.height);if (h>0 && Math.abs(h-this.inlineBodyHeight)>0.5) this.inlineBodyHeight=h;
+          })
+        }.width('100%').height(Math.min(this.inlineBodyHeight || this.dockBodyLimit(),this.dockBodyLimit()))
+          .scrollBar(BarState.Auto).align(Alignment.TopStart).id('interaction.body')
+        Column() {
+          if (this.taskQueue && this.request.kind==='plan') this.taskPlanActions()
+          else this.responseFooter()
+        }.width('100%').onAreaChange((_before:Area,area:Area):void => {
+          const h=Number(area.height);if (h>=0 && Math.abs(h-this.inlineFooterHeight)>0.5) this.inlineFooterHeight=h;
+        })
+      }.width('100%').padding({top:this.dockHeadingAway() ? 0 : 12})
+    }.width('100%').padding({left:16,right:16,top:this.resizeDock && !this.cardFolded ? 0 : 12,bottom:16})
+      .alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(22)
+      .overlay(this.dockOutline(),{align:Alignment.Center})
+      .shadow({radius:8,color:nativeEnvironment.dark ? '#36000000' : '#15000000',offsetY:2}).id('interaction.card')
+      .bindSheet($$this.fullPlan,this.planReader(),{height:SheetSize.LARGE,showClose:false,dragBar:false,preferType:SheetType.BOTTOM})
+  }
+  @Builder dockOutline() {
+    Row().width('100%').height('100%').border({width:Tokens.divider,color:Colors.divider,radius:22}).hitTestBehavior(HitTestMode.None)
+  }
+
   private inlineSpace(): number {
     if (this.agentCard) return Math.max(1,this.heightLimit-this.inlineHeaderHeight-40-(this.agentHasFooter() ? this.inlineFooterHeight+12 : 0));
     return Math.max(1, this.heightLimit - this.inlineFooterHeight - (this.docked || this.taskQueue ? this.inlineHeaderHeight + 28 : 22));
   }
   build() {
     if (this.agentCard) this.agentDecisionCard()
+    else if (this.docked) this.dockPanel()
     else if (this.heightLimit > 0) Column({space: 6}) {
       if (this.docked || this.taskQueue) this.taskHeader()
       if (!this.cardFolded) Scroll() {

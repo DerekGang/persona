@@ -541,6 +541,7 @@ export struct Conversation {
     return this.model.decision.kind === 'question' ? Math.max(half, this.availableHeight - 72) : half;
   }
   @Local agentComposerHeight: number = 0;
+  @Local private assistantComposerHeight: number = 0;
   @Local agentCountHeight: number = 0;
   private agentCardsRoom(): number {
     if (this.floatsDraftHeader && this.compactDraftSpace) return this.preferredCardSpace(this.compactDraftSpace);
@@ -1512,7 +1513,7 @@ export struct Conversation {
 
   @Builder taskDock(horizontalInset: number = 0) {
     if (this.model.selected.kind === 'conversation' && this.model.connected) {
-          AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, decisionPager:this.decisionPager, dockRoom:this.availableHeight, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
+          AssistantCards({ model: this.model, feed: this.feed, active: this.active && this.model.connected, onOpenResource: (row: ResourceRow) => this.onOpenResource(row), dockOnly: true, decisionPager:this.decisionPager, dockRoom:this.availableHeight, composerHeight:this.assistantComposerHeight, onOpenCard: (itemId: string, kind: string) => this.onOpenCard(itemId, kind), onOpenSession: (row: ResourceRow) => this.onOpenResource(row),
             onOpenTodo: (row: ResourceRow) => this.onOpenResource(row), onOpenInbox: (row: ResourceRow) => this.onOpenResource(row), onLink: (address: string) => this.onLink(address) })
             .width('100%').padding({ left: horizontalInset, right: horizontalInset })
     }
@@ -1535,7 +1536,7 @@ export struct Conversation {
         .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick(() => this.openFallbackActions())
         .bindMenu(this.actionsVisible, this.actionsMenu, this.actionMenuOptions(this.actionsRequest)).id('chat.more.fallback')
     }.width('100%').constraintSize({ maxWidth: Tokens.readingMax, maxHeight: this.maxControlsHeight() })
-      .padding(this.model.selected.kind === 'session' ? 0 : { left: Tokens.page, right: Tokens.page, bottom: Tokens.footer, top: Tokens.gap })
+      .padding(this.model.selected.kind === 'session' ? 0 : { left: Tokens.inset, right: Tokens.inset, bottom: Tokens.footer, top: Tokens.gap })
       .onAreaChange((_before: Area, area: Area) => {
         const height = Number(area.height);
         if (this.model.decision && Number.isFinite(height) && height > 0) {
@@ -1551,10 +1552,13 @@ export struct Conversation {
       if (this.showContextMenu && (this.model.decision || !this.model.canCompose())) Button({ type: ButtonType.Circle }) { Image(Symbols.more).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink) }
         .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick(() => this.openFallbackActions())
         .bindMenu(this.actionsVisible, this.actionsMenu, this.actionMenuOptions(this.actionsRequest)).id('chat.more.fallback')
-      this.taskDock(this.restingComposer() ? Tokens.page - Tokens.inset : 0)
+      this.taskDock()
       if (this.model.canCompose() && !this.model.decision) {
         if (this.attachments.busy && !this.sending && (this.attachments.errorKey === 'chat_attachment_storage_unavailable' || this.model.error === 'cache_unavailable')) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry')).bindTips(tr('retry')).onClick(() => { this.attachmentKey = ''; this.syncAttachments(); })
-        this.composer()
+        Column() { this.composer() }.width('100%').onAreaChange((_before:Area,area:Area):void => {
+          if (this.model.selected.kind!=='conversation') return;
+          const h=Number(area.height);if (h>0 && Math.abs(h-this.assistantComposerHeight)>0.5) this.assistantComposerHeight=h;
+        })
       } else if (!this.model.canSend() && !this.model.decision) {
         if (this.model.canAttach()) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('attach_live')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('attach_live', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('attach_live')).bindTips(tr('attach_live')).onClick(() => this.model.attach())
         Text(this.model.agentInputNotice() ? this.agentNotice() : tr('read_only')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).padding(Tokens.page)

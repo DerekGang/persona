@@ -143,6 +143,10 @@
     {
       "name": "persona_teal",
       "value": "#63D3DF"
+    },
+    {
+      "name": "persona_dock_warning",
+      "value": "#FF9F0A"
     }
   ]
 }

@@ -7643,6 +7643,22 @@
     {
       "name": "header_space_one",
       "value": "{count} agent in this space"
+    },
+    {
+      "name": "phone_decision_height",
+      "value": "Card Height"
+    },
+    {
+      "name": "phone_decision_height_hint",
+      "value": "Swipe up or down to change the card height. Double-tap to switch between tallest and default."
+    },
+    {
+      "name": "phone_decision_taller",
+      "value": "Make card taller"
+    },
+    {
+      "name": "phone_decision_shorter",
+      "value": "Make card shorter"
     }
   ]
 }

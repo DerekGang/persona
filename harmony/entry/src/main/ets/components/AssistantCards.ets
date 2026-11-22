@@ -45,6 +45,13 @@ export struct AssistantCards {
   @Param dockOnly: boolean = false;
   @Param decisionPager: DecisionPager | undefined = undefined;
   @Param dockRoom: number = 400;
+  @Param composerHeight: number = 0;
+  @Local private actionBarHeight: number = 28;
+  @Local private measuredDockHeight: number = 0;
+  @Local private pagerHeight: number = 28;
+  @Local private dragHeight: number = -1;
+  private dragStart: number = 0;
+  private dragCard: string = '';
   @Param detailOnly: boolean = false;
   @Param active: boolean = false;
   @Event onOpenResource: (row: ResourceRow) => void = () => {};
@@ -496,36 +503,87 @@ export struct AssistantCards {
       .backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:14}).borderRadius(14).id('chat.tasks.tray')
   }
 
-  @Builder decisionArrow(next: boolean) {
-    Button({type:ButtonType.Circle}) { SymbolGlyph(next ? Symbols.expand : Symbols.collapse).fontSize('13vp').fontColor([Colors.ink]) }
-      .width(26).height(26).padding(0).backgroundColor(Colors.control).margin({left:9,right:9,top:9,bottom:9})
-      .responseRegion({x:-9,y:-9,width:44,height:44}).accessibilityText(tr(next ? 'decision_next' : 'decision_previous'))
+  private metric(points:number):number {
+    return points*Math.min(67/51,Math.max(1,this.environment.fontScale));
+  }
+  private dockHeightLimit():number {
+    // The navigation bar sits outside this pane. Leave the other footer controls, list floor,
+    // and a strip of conversation visible as the keyboard and the real window change size.
+    const rest=Math.max(0,this.composerHeight)+this.actionBarHeight+20+Tokens.gap*3;
+    const free=Math.max(44,this.dockRoom-rest-Tokens.gap-1);
+    const fallback=this.environment.keyboardHeightPx>0 ? free : Math.min(free,Math.max(this.dockRoom/2,free-72));
+    if (this.environment.keyboardHeightPx>0) return fallback;
+    const tallest=this.tallestDock(), shortest=Math.min(150,tallest);
+    if (this.dragCard===this.shownDecisions[0]?.id && this.dragHeight>=0) return Math.max(shortest,Math.min(tallest,this.dragHeight));
+    const share=this.model.questionCardHeightShare;
+    return share<0 ? fallback : shortest+share*(tallest-shortest);
+  }
+  private tallestDock():number {
+    const rest=Math.max(0,this.composerHeight)+this.actionBarHeight+20+Tokens.gap*3;
+    return Math.max(44,this.dockRoom-rest-Tokens.gap-1-24);
+  }
+  private resizeCard(request:Decision,progress:string,delta:number):void {
+    if (this.shownDecisions[0]?.id!==request.id || this.environment.keyboardHeightPx>0) return;
+    if (progress==='toggle') {
+      this.model.setQuestionCardHeight(this.model.questionCardHeightShare===1 ? -1 : 1).catch(() => {});
+      return;
+    }
+    const top=this.tallestDock(),low=Math.min(150,top),span=top-low;
+    if (progress==='up' || progress==='down') {
+      const choice=this.model.questionCardHeightShare>=0 ? this.model.questionCardHeightShare :
+        span>0 ? (Math.max(low,Math.min(top,this.measuredDockHeight))-low)/span : 1;
+      this.model.setQuestionCardHeight(Math.max(0,Math.min(1,choice+(progress==='up' ? .25 : -.25)))).catch(() => {});
+      return;
+    }
+    if (progress==='begin') { this.dragStart=this.measuredDockHeight;this.dragCard=request.id; }
+    if (this.dragCard!==request.id) return;
+    if (progress==='cancel') { this.dragCard='';this.dragHeight=-1;return; }
+    this.dragHeight=Math.max(low,Math.min(top,this.dragStart-delta));
+    if (progress==='end') {
+      const chosen=span>0 ? (this.dragHeight-low)/span : 1;
+      this.model.setQuestionCardHeight(chosen).catch(() => {});this.dragCard='';this.dragHeight=-1;
+    }
+  }
+  @Builder decisionArrow(next:boolean) {
+    Button({type:ButtonType.Normal}) {
+      SymbolGlyph(next ? Symbols.expand : Symbols.collapse).fontSize(Tokens.interfaceFontVp(13,this.environment.fontScale)).fontColor([Colors.ink])
+        .width(this.metric(28)).height(this.metric(28)).textAlign(TextAlign.Center).backgroundColor(Colors.control).borderRadius(this.metric(28)/2)
+    }.width(44).height(this.metric(28)).padding(0).backgroundColor(Color.Transparent)
+      .responseRegion({x:0,y:(this.metric(28)-44)/2,width:44,height:Math.max(44,this.metric(28))}).accessibilityText(tr(next ? 'decision_next' : 'decision_previous'))
       .enabled(next ? this.decisionPager!.position(this.decisionIds) < this.decisionIds.length - 1 : this.decisionPager!.position(this.decisionIds) > 0)
       .onClick(() => this.moveDecision(next ? 1 : -1)).id(next ? 'chat.decisions.next' : 'chat.decisions.previous')
   }
   @Builder decisionNavigation() {
-    Row({space:4}) {
-      ForEach(this.decisionPager!.dots(this.decisionIds),(at:number) => {
-        Blank().width(at === this.decisionPager!.position(this.decisionIds) ? 12 : 6).height(6).borderRadius(3)
-          .backgroundColor(at === this.decisionPager!.position(this.decisionIds) ? Colors.link : Colors.control).accessibilityLevel('no')
-      },(at:number) => String(at))
+    Row({space:8}) {
+      Row({space:4}) {
+        ForEach(this.decisionPager!.dots(this.decisionIds),(at:number) => {
+          Blank().width(this.metric(at===this.decisionPager!.position(this.decisionIds) ? 18 : 9)).height(this.metric(9)).borderRadius(this.metric(9)/2)
+            .backgroundColor(at===this.decisionPager!.position(this.decisionIds) ? Colors.link : Colors.control).accessibilityLevel('no')
+        },(at:number) => String(at))
+      }
       Text(String(this.decisionPager!.position(this.decisionIds)+1)+' / '+String(this.decisionIds.length))
-        .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).margin({left:4}).id('chat.decisions.position')
+        .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).id('chat.decisions.position')
       Blank().layoutWeight(1)
       this.decisionArrow(false)
       this.decisionArrow(true)
-    }.width('100%').padding({left:4,right:4})
+    }.width('100%').padding({left:4,right:4}).onAreaChange((_before:Area,area:Area):void => {
+      const h=Number(area.height);if (h>0 && Math.abs(h-this.pagerHeight)>0.5) this.pagerHeight=h;
+    })
   }
   @Builder questionCard(request:Decision, row:TaskQuestionRow | undefined, scope:string) {
-    Column({space:3}) {
+    Column() {
       InteractionDecisionForm({model:this.model,request:request,taskAgent:row?.agent,taskCard:row?.card,taskQueue:row ? this.requests : undefined,
         docked:true, dockSource:row?.title || '', draft:this.decisionPager?.draft(request), draftSession:this.trayScope(),
-        heightLimit:Math.max(116,this.dockRoom*0.52-(this.decisionIds.length > 1 ? 44 : 0)),admission:this.decisionAdmission(request),
+        resizeDock:this.environment.keyboardHeightPx===0 && this.dockRoom>0, onDockResize:(phase:string,delta:number):void => this.resizeCard(request,phase,delta),
+        heightLimit:Math.max(44,this.dockHeightLimit()-(this.decisionIds.length>1 ? this.pagerHeight+4 : 0)),admission:this.decisionAdmission(request),
         onDockFold:() => this.decisionPager?.fold(this.decisionIds), onLater:() => this.decisionPager?.fold(this.decisionIds),
         onViewTask:() => { if (row) this.openQuestionSource(row,scope); },
         onLink:(address:string) => { if (this.decisionVisible(request,scope)) this.onLink(address); }})
     }.width('100%').id('chat.tasks.question.'+request.id)
-      .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:24}).onActionEnd((event:GestureEvent) => {
+      .onAreaChange((_before:Area,area:Area):void => {
+        const h=Number(area.height)+(this.decisionIds.length>1 ? this.pagerHeight+4 : 0);
+        if (h>0 && Math.abs(this.measuredDockHeight-h)>0.5) this.measuredDockHeight=h;
+      }).parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:24}).onActionEnd((event:GestureEvent) => {
         if (Math.abs(event.offsetX)>66 && Math.abs(event.offsetX)>2*Math.abs(event.offsetY)) this.moveDecision(event.offsetX<0 ? 1 : -1);
       }))
   }
@@ -534,7 +592,7 @@ export struct AssistantCards {
       Row({space:4}) {
         Text(tr('decision_to_decide')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs)
         Text(String(this.decisionIds.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.shownDecisions.length ? Colors.onAction : Colors.needs)
-        SymbolGlyph(this.shownDecisions.length ? Symbols.up : Symbols.down).fontSize('11vp').fontColor([this.shownDecisions.length ? Colors.onAction : Colors.needs])
+        SymbolGlyph(this.shownDecisions.length ? Symbols.down : Symbols.up).fontSize('11vp').fontColor([this.shownDecisions.length ? Colors.onAction : Colors.needs])
         if (this.decisionPager!.arrived(this.decisionIds)>0) Text('+'+String(this.decisionPager!.arrived(this.decisionIds))).fontSize(12).fontColor(Colors.needs)
       }
     }.constraintSize({minHeight:28}).padding({left:10,right:10,top:4,bottom:4})
@@ -567,6 +625,10 @@ export struct AssistantCards {
           },(bucket:string) => bucket)
         }
       }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).width('100%').align(Alignment.Start)
+        .padding({left:4,right:4}).margin({top:this.shownDecisions.length ? 16 : 0})
+        .onAreaChange((_before:Area,area:Area):void => {
+          const h=Number(area.height);if (h>0 && Math.abs(h-this.actionBarHeight)>0.5) this.actionBarHeight=h;
+        })
     }.width('100%').alignItems(HorizontalAlign.Start).padding({top:3,bottom:4})
   }
 

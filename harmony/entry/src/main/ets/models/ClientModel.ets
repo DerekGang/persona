@@ -410,12 +410,26 @@ export class ClientModel {
     }
   }
 
+  // A device preference shared by Persona's conversation docks across Hubs and rotations.
+  @Trace questionCardHeightShare: number = -1;
+  async setQuestionCardHeight(share: number): Promise<void> {
+    this.questionCardHeightShare = share < 0 ? -1 : Math.max(0,Math.min(1,share));
+    const stored = this.questionCardHeightShare;
+    await this.changePreferences(async (): Promise<void> => {
+      if (stored < 0) await this.local.remove('ui.questionCardHeight');
+      else await this.local.put('ui.questionCardHeight',String(stored));
+    });
+  }
+
   async initialize(context: common.UIAbilityContext): Promise<void> {
     this.context = context;
     dictationPreference.load(context);
     this.ssh.initialize(context);
     this.vault = new CredentialVault(context);
     await this.local.open(context);
+    const storedCardHeight = await this.local.get('ui.questionCardHeight');
+    const share = Number(storedCardHeight);
+    if (storedCardHeight && Number.isFinite(share)) this.questionCardHeightShare = Math.max(0,Math.min(1,share));
     const preferences = Wire.parse(await this.local.get('preferences'));
     this.appearance = Wire.number(preferences, 'appearance');
     const savedStyle = Wire.text(preferences, 'style', 'system');

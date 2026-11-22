@@ -7643,6 +7643,22 @@
     {
       "name": "header_space_one",
       "value": "同じスペースの{count}個のエージェント"
+    },
+    {
+      "name": "phone_decision_height",
+      "value": "カードの高さ"
+    },
+    {
+      "name": "phone_decision_height_hint",
+      "value": "上下にスワイプしてカードの高さを調整します。ダブルタップで最大と標準の高さを切り替えます。"
+    },
+    {
+      "name": "phone_decision_taller",
+      "value": "カードを高くする"
+    },
+    {
+      "name": "phone_decision_shorter",
+      "value": "カードを低くする"
     }
   ]
 }

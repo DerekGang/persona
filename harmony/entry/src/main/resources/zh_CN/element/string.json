@@ -7643,6 +7643,22 @@
     {
       "name": "header_space_one",
       "value": "同一空间的 {count} 个 Agent"
+    },
+    {
+      "name": "phone_decision_height",
+      "value": "卡片高度"
+    },
+    {
+      "name": "phone_decision_height_hint",
+      "value": "上下滑动可调整卡片高度。轻点两下切换最高或默认高度。"
+    },
+    {
+      "name": "phone_decision_taller",
+      "value": "增高卡片"
+    },
+    {
+      "name": "phone_decision_shorter",
+      "value": "缩短卡片"
     }
   ]
 }
