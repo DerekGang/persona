@@ -1356,7 +1356,7 @@ export struct Conversation {
   }
   private composerPlaceholder():string {
     if (this.model.agentInputNotice()==='agent_computer_holds') return this.agentNotice();
-    if (this.model.selected.kind==='conversation') return tr('knowledge_ask_persona');
+    if (this.model.selected.kind==='conversation') return tr('chat_ask_persona');
     if (this.model.agentQueuesMessages()) return tr('chat_queued_followup');
     const data=this.model.selected.data(), raw=Wire.text(data,'agent_label') || Wire.text(data,'launcher') || Wire.text(data,'agent') || Wire.text(data,'agent_type');
     const agent=raw.toLowerCase();
@@ -1419,12 +1419,12 @@ export struct Conversation {
       GridRow({ columns: this.composerColumns(), gutter: { x: 0, y: 0 } }) {
         GridCol({ span: this.expandedComposer() ? this.composerColumns() : this.composerColumns() - this.leftColumns() - this.sendColumns(), order: this.expandedComposer() ? 0 : 1 }) {
           Stack({alignContent:Alignment.TopEnd}) {
-            Row() {
+            Stack({alignContent:Alignment.Start}) {
               TextArea({ text: this.model.draft, controller:this.inlineField, placeholder:this.composerPlaceholder() })
                 .maxLength(Tokens.maxMessage).width('100%')
                 .fontSize(this.expandedComposer() ? String(this.readingSize.points) + 'vp' : Tokens.body)
-                .placeholderFont({ size: this.expandedComposer() ? String(this.readingSize.shellPoints) + 'vp' : Tokens.body })
-                .fontColor(Colors.ink).placeholderColor(Colors.secondary).caretColor(Colors.action).backgroundColor(Color.Transparent)
+                .placeholderFont({size:String(this.readingSize.shellPoints) + 'vp'})
+                .fontColor(Colors.ink).placeholderColor(Color.Transparent).caretColor(Colors.action).backgroundColor(Color.Transparent)
                 .lineHeight(this.expandedComposer() ? String(this.readingSize.advance) + 'vp' : String(Tokens.lineHeight) + 'fp')
                 .letterSpacing(this.expandedComposer() ? String(this.draftTracking) + 'vp' : 0).wordBreak(WordBreak.BREAK_WORD)
                 .padding(this.expandedComposer() ? 0 : { left: Tokens.gap, right: Tokens.gap, top: Tokens.inset, bottom: Tokens.inset })
@@ -1432,6 +1432,13 @@ export struct Conversation {
                 .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
                 .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
                 .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
+              // The native editor keeps its accessible hint and reading size. Its visible prompt uses the shell's single line.
+              if (!this.model.draft) {
+                Text(this.composerPlaceholder()).width('100%').maxLines(1)
+                  .minFontSize(String(this.readingSize.shellPoints / 2) + 'vp').maxFontSize(String(this.readingSize.shellPoints) + 'vp')
+                  .textOverflow({overflow:TextOverflow.Ellipsis}).fontColor($r('app.color.persona_composer_hint'))
+                  .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
+              }
             }.width('100%').constraintSize({minHeight:this.expandedComposer() ? this.composerActionSize() * (this.offersDraftEditor() ? 48 : 44) / 44 : this.composerActionSize()})
               .padding(this.expandedComposer() ? {left:Tokens.inset, right:Tokens.inset + (this.offersDraftEditor() ? this.restingSize.target : 0), top:Tokens.page} : 0)
             if (this.offersDraftEditor()) {

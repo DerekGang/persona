@@ -53,6 +53,10 @@
       "value": "#19191D"
     },
     {
+      "name": "persona_composer_hint",
+      "value": "#4D3C3C43"
+    },
+    {
       "name": "persona_secondary",
       "value": "#62636C"
     },
