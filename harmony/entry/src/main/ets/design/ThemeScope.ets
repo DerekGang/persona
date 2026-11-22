@@ -9,6 +9,7 @@ export struct ThemeScope {
     Colors.action = theme.colors.compBackgroundEmphasize;
     Colors.onAction = theme.colors.fontOnPrimary;
     Colors.link = theme.colors.fontEmphasize;
+    Colors.iconAccent = theme.colors.iconEmphasize;
   }
   build() { this.content() }
 }

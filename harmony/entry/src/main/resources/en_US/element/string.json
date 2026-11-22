@@ -5934,7 +5934,7 @@
     },
     {
       "name": "phone_language_system_note",
-      "value": "Follow System uses the device’s language. You can also choose a language for Persona here."
+      "value": "When following the system, Persona uses Simplified Chinese for any Chinese language, including Traditional Chinese, Japanese for Japanese, and English for other languages. Your hub also uses this language for notifications and assistant replies."
     },
     {
       "name": "phone_search_conversation_count",

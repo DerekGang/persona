@@ -63,21 +63,26 @@ export struct PhoneSettingsRow {
   @Param detail: string = '';
   @Param last: boolean = false;
   @Event action: () => void = () => {};
+  @Computed get symbolScale():number { return Math.min(nativeEnvironment.fontScale,Tokens.interfaceFontMaxScale); }
   build() {
     Column() {
-      Row({ space: 12 }) {
-        if (this.artwork) Stack() {
-          Image(this.artwork).width(22).height(22).objectFit(ImageFit.Contain).fillColor(this.tint)
-        }.width(27).height(28).accessibilityLevel('no-hide-descendants')
-        else SymbolGlyph(this.symbol).fontSize('20vp').fontColor([this.tint]).width(27).height(28)
+      Row({ space: PhoneStyle.formSize(8,5,nativeEnvironment.fontScale) }) {
+        if (this.artwork) {
+          Image(this.artwork).supportSvg2(true).colorFilter(this.tint)
+            .width(40*this.symbolScale).height(28*this.symbolScale).objectFit(ImageFit.Contain).accessibilityLevel('no')
+        } else {
+          SymbolGlyph(this.symbol).fontSize(String(24*this.symbolScale)+'vp').fontColor([this.tint])
+            .width(40*this.symbolScale).height(28*this.symbolScale).accessibilityLevel('no')
+        }
         Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center}) {
           Text(this.label).fontSize(Tokens.body).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.ink)
             .flexGrow(1).margin({right:4})
           if (this.detail) Text(this.detail).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary)
         }.layoutWeight(1)
         SymbolGlyph($r('sys.symbol.chevron_right')).fontSize('14vp').fontColor([Colors.secondary])
-      }.width('100%').constraintSize({ minHeight: PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale) }).padding({ left: 14, right: 14, top: 5, bottom: 5 })
-      if (!this.last) Divider().color(Colors.divider).strokeWidth(0.5).margin({ left: 54 })
+      }.width('100%').constraintSize({ minHeight: PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale) })
+        .padding({ left: PhoneStyle.formSize(12,9,nativeEnvironment.fontScale), right: 14, top: 5, bottom: 5 })
+      if (!this.last) Divider().color(Colors.divider).strokeWidth(0.5).margin({ left: PhoneStyle.formSize(60,68,nativeEnvironment.fontScale) })
     }.width('100%').backgroundColor(Colors.surface).accessibilityGroup(true)
       .accessibilityText(this.label + (this.detail ? ' · ' + this.detail : '')).onClick(() => this.action()).id(this.identity)
   }

@@ -7,6 +7,7 @@ import { PhoneStyle, PhoneSectionTitle, PhoneSettingsRow } from '../design/Phone
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
 import { tr } from '../design/Strings';
+import { supportedInterfaceLocale } from '../core/ClientLocale';
 import { ClientModel } from '../models/ClientModel';
 import { ResourceRow, Wire } from '../models/Wire';
 import { MeetingPreferences, settingsMeetingRoleLabel } from '../models/MeetingPreferences';
@@ -20,11 +21,8 @@ const HUB_OPTIONS:string[] = ['managers','extensions','memory','ssh','hub_update
 const LANGUAGES:string[] = ['default','zh-CN','en-US','ja-JP'];
 
 function languageName(tag:string):string {
-  const locale = tag.toLowerCase();
-  if (locale.startsWith('zh')) return '简体中文';
-  if (locale.startsWith('ja')) return '日本語';
-  if (locale.startsWith('en')) return 'English';
-  return tag;
+  const locale = supportedInterfaceLocale(tag);
+  return locale === 'zh-Hans' ? '简体中文' : locale === 'ja' ? '日本語' : 'English';
 }
 
 function currentLanguage(model:ClientModel):string {
@@ -73,11 +71,20 @@ function settingArtwork(id:string):Resource|undefined {
   switch (id) {
     case 'models': return $r('app.media.phone_settings_model');
     case 'assistant': return $r('app.media.phone_settings_profile');
+    case 'channels': return $r('app.media.phone_settings_channels');
     case 'connectors': return $r('app.media.phone_settings_connectors');
     case 'phone_knowledge_selection': return $r('app.media.phone_settings_knowledge');
     case 'phone_meeting_options': return $r('app.media.phone_settings_meeting');
     case 'phone_language_options': return $r('app.media.phone_settings_language');
     case 'machines': return $r('app.media.phone_settings_machines');
+    case 'phone_agent_options':
+    case 'phone_agent_folders':
+    case 'phone_claude_config':
+    case 'phone_codex_config':
+    case 'phone_agy_config': return $r('app.media.phone_settings_options');
+    case 'triage': return $r('app.media.phone_settings_triage');
+    case 'phone_agent_followup': return $r('app.media.phone_settings_followup');
+    case 'phone_agent_layout': return $r('app.media.phone_settings_list');
     default: return undefined;
   }
 }
@@ -184,7 +191,7 @@ export struct SettingsDirectory {
         if (title) PhoneSectionTitle({text:title})
         Column() {
           ForEach(entries ?? this.results,(id:string,ix:number) => {
-            PhoneSettingsRow({label:settingLabel(id,this.label),detail:this.subtitle(id),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.link,
+            PhoneSettingsRow({label:settingLabel(id,this.label),detail:this.subtitle(id),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.iconAccent,
               identity:'settings.'+id,last:ix+1===(entries ?? this.results).length,action:() => this.openEntry(id)})
           },(id:string,ix:number) => JSON.stringify([id,ix,this.subtitle(id),(entries ?? this.results).length]))
           if (!(entries ?? this.results).length) Text(tr('no_results')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.secondary).width('100%').padding(15).id('settings.no_results')
@@ -272,7 +279,7 @@ export struct PhoneSettingsOptions {
         ListItem() {
         Column() {
           ForEach(AGENT_OPTIONS,(id:string,ix:number) => {
-            PhoneSettingsRow({label:settingLabel(id,this.label),symbol:settingIcon(id),tint:Colors.link,
+            PhoneSettingsRow({label:settingLabel(id,this.label),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.iconAccent,
               identity:'settings.'+id,last:ix === AGENT_OPTIONS.length-1,action:() => this.onOpen(id)})
           },(id:string) => id)
         }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
@@ -286,24 +293,24 @@ export struct PhoneSettingsOptions {
               Text(lang==='default' ? tr('phone_settings_system_language').replace('{language}',languageName(i18n.getSystemLanguage())) : languageName(lang))
                 .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
               if (this.model.language===lang) SymbolGlyph(Symbols.check).fontSize('17vp').width(21).flexShrink(0).fontColor([Colors.link])
-            }.width('100%').constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).padding({left:15,right:14,top:6,bottom:6})
+            }.width('100%').constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).padding({left:20,right:20,top:6,bottom:6})
               .enabled(!this.model.languageChanging).accessibilitySelected(this.model.language===lang).accessibilityGroup(true)
               .onClick(() => this.choose(lang)).id('settings.language.'+lang)
-            if (ix<LANGUAGES.length-1) Divider().strokeWidth(0.5).color(Colors.divider).margin({left:15})
+            if (ix<LANGUAGES.length-1) Divider().strokeWidth(0.5).color(Colors.divider).margin({left:20})
           },(lang:string) => lang)
         }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
         }
-        ListItem() { Text(tr('phone_language_system_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:20}) }
+        ListItem() { Text(tr('phone_language_system_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:20,right:20,top:7,bottom:20}) }
         ListItem() {
           Row({space:8}) {
             Text(tr('phone_dictation')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
             Text(this.dictationLabel(this.dictation.choice)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-          }.constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).width('100%').padding({left:15,right:15,top:7,bottom:7})
+          }.constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).width('100%').padding({left:20,right:20,top:7,bottom:7})
             .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
             .bindMenu(this.dictationMenu()).accessibilityRole(AccessibilityRoleType.BUTTON).id('settings.dictation.choice')
         }
-        ListItem() { Text(tr('phone_dictation_automatic_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
+        ListItem() { Text(tr('phone_dictation_automatic_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:20,right:20,top:7,bottom:10}) }
       }
     }.width('100%').height('100%').padding({left:16,right:16,top:35,bottom:24}).backgroundColor(Colors.grouped)
   }

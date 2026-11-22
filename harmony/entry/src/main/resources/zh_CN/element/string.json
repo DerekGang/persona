@@ -5934,7 +5934,7 @@
     },
     {
       "name": "phone_language_system_note",
-      "value": "跟随系统时使用设备语言，也可以在这里单独选择 Persona 的界面语言。"
+      "value": "跟随系统时，系统的第一语言是中文（含繁体）就用简体中文，日文用日本語，其他语言用 English。Hub 发来的通知和助手的回复也会使用这个语言。"
     },
     {
       "name": "phone_search_conversation_count",

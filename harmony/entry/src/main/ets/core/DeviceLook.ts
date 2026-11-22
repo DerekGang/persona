@@ -309,6 +309,11 @@ export function deviceLookPalette(accent: string, style: string, avatar: DeviceL
   };
 }
 
+/** Outlined system symbols keep the platform accent. Labels use the contrast-adjusted text color. */
+export function deviceLookIconAccent(accent: string, style: string, dark: boolean, palette: DeviceLookColorSet): string {
+  return accent === 'style' && style === 'system' ? (dark ? PRESETS.blue.dark : PRESETS.blue.light).brand : palette.emphasize;
+}
+
 export function validAccentId(value: string): boolean {
   return value === 'style' || value === 'avatar' || Object.keys(PRESETS).includes(value);
 }
