@@ -18,6 +18,10 @@ export interface AgentSession {
   canSend: boolean;
   unreadCount: number;
   rankTimeMs: number;
+  actions?: string[];
+  lifecycle?: string;
+  reviewState?: string;
+  proactive?: string;
   hasAvatar?: boolean;
   avatarVersion?: string;
 }
@@ -96,6 +100,10 @@ export function sendMessage(id: string, clientId: string, text: string) {
 
 export function markRead(id: string) {
   return api(`${agentPath(id)}/read`, { method: "POST" });
+}
+
+export function sessionAction(id: string, action: "complete" | "abandon") {
+  return api<{ session: AgentSession }>(`${agentPath(id)}/action`, { method: "POST", json: { action } }).then((r) => r.session);
 }
 
 // "Remove from list" (POST …/hide): the conversation stays in its source and comes back by itself when it gets a new
@@ -182,6 +190,7 @@ export async function restoreAgentSession(s: Pick<AgentSession, "id" | "title">,
 const PROVIDER_LABEL: Record<string, string> = { grok_bot: "Grok Bot", muse: "Muse", cue: "Cue", dots: "Dots", claude_duet: "Claude Duet" };
 export function providerLabel(p: string): string {
   if (p === "bot") return t("lib-agents.bot");
+  if (p === "feishu_bot") return t("lib-agents.feishu_bot");
   return PROVIDER_LABEL[p] ?? (p || t("lib-agents.other"));
 }
 

@@ -1,6 +1,6 @@
 // Personal agents: one Lark gateway personal agent session — its messages (older pages on demand), a send box with an
 // idempotent clientId, marked read on open; re-pulled when the hub broadcasts {"type":"agents"}.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AgentAvatar, type AvatarSession } from "./AgentAvatar";
 import {
   blockView,
@@ -15,6 +15,7 @@ import {
   pendingOutgoing,
   providerLabel,
   sendMessage,
+  sessionAction,
   setLocalRead,
   useAgentList,
   type AgentMessage,
@@ -23,7 +24,7 @@ import {
 import { ApiError, errorText } from "../../lib/api";
 import { ago, clock, uuid } from "../../lib/format";
 import { href, navigate, onLinkClick } from "../../lib/router";
-import { Button, Collapse, cx, EASE, IconButton, Loading, Spinner } from "../../ui/atoms";
+import { Button, Collapse, cx, EASE, IconButton, Loading, Menu, Spinner, useMenu, type MenuItem } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
 import { Empty } from "../session/files/parts";
@@ -31,7 +32,7 @@ import { SearchField } from "../../ui/SearchField";
 import { formatDate, t } from "../../i18n";
 import { composing } from "../../lib/send-history";
 import { storedPageDraft, storePageDraft } from "../../lib/drafts";
-import { fetchHiddenSessions, personalHideDeps, personalOrder, personalSessions, restoreAgentSession, type AgentSession } from "../../lib/agents";
+import { fetchHiddenSessions, personalHideDeps, personalOrder, personalSessions, refreshAgentSessions, restoreAgentSession, type AgentSession } from "../../lib/agents";
 import { SESSIONS_LIST_FEATURE } from "../../lib/session-list";
 import { useStore } from "../../lib/store";
 import { PagedSessionList } from "./PagedSessionList";
@@ -41,7 +42,7 @@ export function AgentsView({ id, onToggleSidebar }: { id?: string; onToggleSideb
   return id ? <AgentSessionView id={id} onToggleSidebar={onToggleSidebar} /> : <AgentList onToggleSidebar={onToggleSidebar} />;
 }
 
-function Header({ title, sub, avatar, onToggleSidebar }: { title: string; sub?: string; avatar?: AvatarSession; onToggleSidebar: () => void }) {
+function Header({ title, sub, avatar, actions, onToggleSidebar }: { title: string; sub?: string; avatar?: AvatarSession; actions?: ReactNode; onToggleSidebar: () => void }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-4">
       <IconButton icon="sidebar" label={t("agents-agentsview.sidebar")} onClick={onToggleSidebar} className="lg:hidden" />
@@ -50,6 +51,7 @@ function Header({ title, sub, avatar, onToggleSidebar }: { title: string; sub?: 
         <h1 className="truncate text-[14px] font-semibold text-ink">{title}</h1>
         {sub && <p className="truncate text-[11.5px] text-ink-3">{sub}</p>}
       </div>
+      {actions}
     </header>
   );
 }
@@ -192,7 +194,9 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
   const { sessions } = useAgentList();
   const fromList = sessions.find((s) => s.id === id);
   const [pageSession, setPageSession] = useState(fromList);
-  const session = fromList ?? pageSession;
+  const [actionSession, setActionSession] = useState<AgentSession>();
+  useEffect(() => setActionSession(undefined), [id, fromList]);
+  const session = actionSession ?? fromList ?? pageSession;
   const [messages, setMessages] = useState<AgentMessage[] | null>(null);
   const [cursor, setCursor] = useState<string | undefined>();
   const [hasMore, setHasMore] = useState(false);
@@ -283,7 +287,8 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
   if (missing && !session) return <MissingAgent onToggleSidebar={onToggleSidebar} />;
   return (
     <div className="flex h-full flex-col">
-      <Header title={session?.title || t("lib-format.untitled_session")} sub={session ? providerLabel(session.provider) : undefined} avatar={session ?? undefined} onToggleSidebar={onToggleSidebar} />
+      <Header title={session?.title || t("lib-format.untitled_session")} sub={session ? providerLabel(session.provider) : undefined} avatar={session ?? undefined}
+        actions={session ? <AgentLifecycleMenu session={session} onSession={setActionSession} /> : undefined} onToggleSidebar={onToggleSidebar} />
       <div
         ref={scroller}
         onScroll={(e) => {
@@ -293,6 +298,10 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
         className="min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto flex max-w-[760px] flex-col gap-3 px-5 py-6 sm:px-8">
+          {session?.proactive === "unsupported" && <p className="text-[12px] leading-relaxed text-ink-3">{t("agents-agentsview.proactive_unsupported")}</p>}
+          {session?.reviewState === "pending_review" && <p role="status" className="text-[12px] leading-relaxed text-ink-2">{t("agents-agentsview.pending_review")}</p>}
+          {session?.lifecycle === "completed" && <p role="status" className="text-[12px] text-ink-3">{t("agents-agentsview.lifecycle_completed")}</p>}
+          {session?.lifecycle === "abandoned" && <p role="status" className="text-[12px] text-ink-3">{t("agents-agentsview.lifecycle_abandoned")}</p>}
           {hasMore && (
             <div className="flex justify-center">
               <Button tone="quiet" busy={older} onClick={() => void loadOlder()}>{t("agents-agentsview.load_older")}</Button>
@@ -325,6 +334,34 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
       <AgentComposer id={id} disabled={!canSend} reason={session ? t("agents-agentsview.cannot_send") : t("agents-agentsview.loading")} onSend={(text) => void deliver({ clientId: uuid(), text, at: Date.now(), status: "sending" })} />
     </div>
   );
+}
+
+function AgentLifecycleMenu({ session, onSession }: { session: AgentSession; onSession: (session: AgentSession) => void }) {
+  const menu = useMenu();
+  if (!session.actions?.length) return null;
+  const items: MenuItem[] = session.actions.flatMap((action) => {
+    if (action !== "complete" && action !== "abandon") return [];
+    const complete = action === "complete";
+    return [{
+      key: action,
+      label: t(complete ? "agents-agentsview.complete_task" : "agents-agentsview.abandon_task"),
+      confirm: t(complete ? "agents-agentsview.complete_task_confirm" : "agents-agentsview.abandon_task_confirm"),
+      confirmDetail: t(complete ? "agents-agentsview.complete_task_detail" : "agents-agentsview.abandon_task_detail"),
+      icon: complete ? "check" : "x",
+      danger: !complete,
+      inline: true,
+      onSelect: async () => {
+        const updated = await sessionAction(session.id, action);
+        onSession(updated);
+        await refreshAgentSessions(false);
+      },
+    }];
+  });
+  if (!items.length) return null;
+  return <>
+    <IconButton icon="more" label={t("agents-agentsview.task_actions")} onClick={menu.open} />
+    {menu.anchor && <Menu items={items} anchor={menu.anchor} onClose={menu.close} align="right" width={280} header={t("agents-agentsview.task_actions")} />}
+  </>;
 }
 
 /** A personal agent's link to a conversation the hub doesn't have: what happened in plain words and the way back to the

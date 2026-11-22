@@ -4,6 +4,7 @@
   "setup_no_accounts": "No personal agent accounts connected yet: add Cue or Grok Bot in the Lark gateway's settings",
   "other": "Other",
   "bot": "Bot",
+  "feishu_bot": "Feishu bot",
   "group_date": "Date",
   "group_provider": "Source",
   "group_none": "No grouping",

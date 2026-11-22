@@ -54,6 +54,7 @@ func (h *Manager) Run(ctx context.Context) error {
 	h.extensions.stats.redact = h.redactOwnSecrets
 	h.startTokenRecord(ctx) // before any extension starts with a token (extension_scopes.go)
 	h.startConnectors(ctx)  // the extensions' connectors join here (attachExtensions)
+	h.initLarkPersonSources(ctx)
 	h.startExtensions(ctx)
 	h.startSubscriptions(ctx) // after the connectors it pulls from
 	go h.extensionUpgradeLoop(ctx)

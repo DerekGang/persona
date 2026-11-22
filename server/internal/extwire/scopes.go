@@ -92,6 +92,7 @@ var RouteScopes = map[string]string{
 	"POST /api/v1/interactions/{id}/reanswer":                    ScopeAgentsControl, // "Change answer": a message to the agent
 	"POST /api/v1/agents/sessions/{id}/messages":                 ScopeAgentsControl,
 	"POST /api/v1/agents/sessions/{id}/read":                     ScopeAgentsControl,
+	"POST /api/v1/agents/sessions/{id}/action":                   ScopeAgentsControl,
 	"GET /api/v1/machines":                                       ScopeMachinesRead,
 	"GET /api/v1/machines/{id}/metrics":                          ScopeMachinesRead,
 	"GET /api/v1/machines/{id}/usage":                            ScopeMachinesRead,

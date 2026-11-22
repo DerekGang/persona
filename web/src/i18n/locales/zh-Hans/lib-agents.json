@@ -4,6 +4,7 @@
   "setup_no_accounts": "还没有连接个人 Agent 账号：在飞书网关的设置里添加 Cue 或 Grok Bot",
   "other": "其他",
   "bot": "机器人",
+  "feishu_bot": "飞书机器人",
   "group_date": "日期",
   "group_provider": "来源",
   "group_none": "不分组",

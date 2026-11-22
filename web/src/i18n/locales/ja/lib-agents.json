@@ -4,6 +4,7 @@
   "setup_no_accounts": "個人エージェントのアカウントが未接続です。Lark ゲートウェイ の設定で Cue か Grok Bot を追加してください",
   "other": "その他",
   "bot": "ボット",
+  "feishu_bot": "Feishuボット",
   "group_date": "日付",
   "group_provider": "ソース",
   "group_none": "グループなし",

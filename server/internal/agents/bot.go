@@ -74,9 +74,12 @@ func NewBotRegistry(kv KV, caller BotCaller) *BotRegistry {
 
 var botEndpointID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
+// ValidBotEndpointID is the stable public ID contract shared by every bot transport projection.
+func ValidBotEndpointID(id string) bool { return botEndpointID.MatchString(id) }
+
 // Source constructs one isolated agents.Source for one explicit registration.
 func (r *BotRegistry) Source(reg BotRegistration) (*BotSource, error) {
-	if !botEndpointID.MatchString(reg.ID) {
+	if !ValidBotEndpointID(reg.ID) {
 		return nil, fail(http.StatusBadRequest, "agents: bot endpoint id is invalid")
 	}
 	if reg.Provider != "orca" {
@@ -172,9 +175,9 @@ func (s *BotSource) Send(ctx context.Context, key, clientID, text string) (json.
 	if key != BotSessionKey {
 		return nil, fail(http.StatusNotFound, "agents: unknown bot endpoint")
 	}
-	clientID = strings.ToLower(clientID)
-	if !uuidRe.MatchString(clientID) {
-		return nil, fail(http.StatusBadRequest, "agents: clientId must be a UUID")
+	clientID, err := NormalizeBotClientID(clientID)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(text) == "" || TextLen(text) > AgentMaxText {
 		return nil, fail(http.StatusBadRequest, "agents: invalid bot message")

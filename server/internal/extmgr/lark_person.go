@@ -11,8 +11,8 @@ import (
 var _ larkperson.SettingStore = (*db.DB)(nil)
 var _ larkperson.ReplyReader = (*larkcliconnector.Connector)(nil)
 
-// LarkPersonService composes the Feishu-specific adapter without registering a generic Bots source or adding hub routes.
-// The Orca-owned generic registry/UI can consume this manager boundary during the later integration step.
+// LarkPersonService composes the Feishu-specific adapter for the generic Bots source projection and assistant reply flow.
+// Connector credentials stay in the connector; the source receives only this narrow service boundary.
 func (h *Manager) LarkPersonService() (*larkperson.Service, error) {
 	if h == nil || h.connectors == nil || !h.connectors.Enabled(larkcliconnector.ID) {
 		return nil, errors.New("Lark CLI connector is unavailable")

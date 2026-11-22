@@ -37,6 +37,14 @@ func TestRegisteredBotEndpointKeepsAgentScopesAndDeviceRoles(t *testing.T) {
 			t.Errorf("%s full device lost existing Agents access", tc.method)
 		}
 	}
+	action := "/api/v1/agents/sessions/bot_research%3Aendpoint/action"
+	r := httptest.NewRequest(http.MethodPost, action, nil)
+	if got := h.scopedDeviceRoute(r); got != extwire.ScopeAgentsControl {
+		t.Fatalf("lifecycle action scope %q", got)
+	}
+	if allowed(principal{Role: roleAnswer}, http.MethodPost, action) || !allowed(principal{Role: roleFull}, http.MethodPost, action) {
+		t.Fatal("lifecycle action changed full/answer device behavior")
+	}
 	if src.Name() != "bot_research" {
 		t.Fatalf("source name %q", src.Name())
 	}

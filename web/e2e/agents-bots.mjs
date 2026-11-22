@@ -19,6 +19,7 @@ const watchdog = setTimeout(() => { console.error("FAIL agents-bots browser harn
 let activePage;
 
 const bot = { id: "bot_research:endpoint", source: "bot_research", sessionKey: "endpoint", accountId: "research", provider: "bot", title: "Research bot", kind: "bot", canSend: true, unreadCount: 0, rankTimeMs: 1 };
+const feishuBot = () => ({ id: "bot_external_task:endpoint", source: "bot_external_task", sessionKey: "endpoint", accountId: "external_task", provider: "feishu_bot", title: "Synthetic collaborator", kind: "bot", canSend: true, unreadCount: 0, rankTimeMs: 1, actions: ["complete", "abandon"], proactive: "unsupported" });
 const textBlock = (text) => [{ type: "text", text }];
 
 try {
@@ -34,12 +35,19 @@ try {
     page.on("pageerror", (error) => errors.push(String(error)));
     const sends = [];
     const replies = [];
+    const feishuSends = [];
+    const feishuReplies = [];
+    const feishuActions = [];
+    let feishuSession = feishuBot();
     await page.addInitScript((theme) => {
       localStorage.setItem("persona.language", "en");
       localStorage.setItem("persona.theme", theme);
     }, fixture.theme);
-    await page.route("**/api/v1/agents", (route) => route.fulfill({ json: { sources: [{ source: "bot_research", enabled: true, providers: [{ provider: "bot", available: true }], accounts: [{ accountId: "research", provider: "bot", displayName: "Research bot", sessionCount: 1 }] }] } }));
-    const listBots = (route) => route.fulfill({ json: { sessions: [bot], total: 1, has_more: false, revision: "1", remove: [] } });
+    await page.route("**/api/v1/agents", (route) => route.fulfill({ json: { sources: [
+      { source: "bot_research", enabled: true, providers: [{ provider: "bot", available: true }], accounts: [{ accountId: "research", provider: "bot", displayName: "Research bot", sessionCount: 1 }] },
+      { source: "bot_external_task", enabled: true, providers: [{ provider: "feishu_bot", available: true }], accounts: [{ accountId: "external_task", provider: "feishu_bot", displayName: "Synthetic collaborator", sessionCount: 1 }] },
+    ] } }));
+    const listBots = (route) => route.fulfill({ json: { sessions: [bot, feishuSession], total: 2, has_more: false, revision: "1", remove: [] } });
     await page.route("**/api/v1/agents/sessions", listBots);
     await page.route("**/api/v1/agents/sessions?*", listBots);
     await page.route("**/api/v1/agents/prefs", (route) => route.fulfill({ json: { pins: [], view: {}, sections: [], assign: {}, hidden: {} } }));
@@ -48,10 +56,32 @@ try {
     await page.route("**/api/v1/agents/sessions/**", async (route) => {
       const request = route.request();
       const url = new URL(request.url());
+      const path = decodeURIComponent(url.pathname);
+      if (path.includes("bot_external_task") && path.endsWith("/action")) {
+        const input = request.postDataJSON();
+        feishuActions.push(input.action);
+        feishuSession = { ...feishuSession, canSend: false, actions: [], reviewState: undefined, lifecycle: input.action === "complete" ? "completed" : "abandoned" };
+        return route.fulfill({ json: { session: feishuSession } });
+      }
+      if (path.includes("bot_external_task") && path.endsWith("/messages")) {
+        if (request.method() === "POST") {
+          const input = request.postDataJSON();
+          assert.equal(path, "/api/v1/agents/sessions/bot_external_task:endpoint/messages");
+          feishuSends.push(input);
+          feishuReplies.push(false);
+          return route.fulfill({ json: { duplicate: false, outbox: { clientId: input.clientId, sessionId: feishuSession.id, status: "sent" }, upstream: { accepted: true } } });
+        }
+        const messages = feishuSends.flatMap((send, i) => {
+          const rows = [{ externalId: `lp_public_request_${i + 1}`, sessionKey: "endpoint", role: "user", createTimeMs: Date.now(), position: i * 2 + 1, blocks: textBlock(send.text) }];
+          if (feishuReplies[i]) rows.push({ externalId: `lp_public_reply_${i + 1}`, sessionKey: "endpoint", role: "assistant", createTimeMs: Date.now() + 1, position: i * 2 + 2, blocks: textBlock("Exact Feishu reply") });
+          return rows;
+        });
+        return route.fulfill({ json: { session: feishuSession, messages, hasMore: false } });
+      }
       if (url.pathname.endsWith("/messages")) {
         if (request.method() === "POST") {
           const input = request.postDataJSON();
-          assert.equal(decodeURIComponent(url.pathname), "/api/v1/agents/sessions/bot_research:endpoint/messages");
+          assert.equal(path, "/api/v1/agents/sessions/bot_research:endpoint/messages");
           sends.push(input);
           replies.push(false);
           return route.fulfill({ json: { duplicate: false, outbox: { clientId: input.clientId, sessionId: bot.id, status: "sent" }, upstream: { accepted: true } } });
@@ -64,7 +94,7 @@ try {
         return route.fulfill({ json: { session: bot, messages, hasMore: false } });
       }
       if (url.pathname.endsWith("/read")) return route.fulfill({ json: { ok: true } });
-      return route.fulfill({ json: { session: bot } });
+      return route.fulfill({ json: { session: path.includes("bot_external_task") ? feishuSession : bot } });
     });
 
     await page.goto(`${base}/agents?token=mock`, { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -110,9 +140,49 @@ try {
     await page.screenshot({ path: join(shots, `agents-bots-${fixture.name}.png`), animations: "disabled" });
     assert.deepEqual(errors, [], "no browser page errors");
     console.log(`PASS ${fixture.name}: Agents → Bots → first assignment → reply → follow-up → reply`);
+
+    await page.goto(`${base}/a?token=mock`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.locator("a[href='/a/bot_external_task%3Aendpoint']:visible").last().click();
+    await page.waitForFunction(() => location.pathname.startsWith("/a/bot_external_task"), null, { timeout: 15_000 });
+    const feishuComposer = page.locator("textarea");
+    await feishuComposer.waitFor({ state: "visible", timeout: 15_000 });
+    await page.getByText("Proactive messages aren't ingested for this bot.", { exact: true }).waitFor();
+    await feishuComposer.fill("First Feishu assignment");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.getByText("First Feishu assignment", { exact: true }).last().waitFor();
+    assert.equal(await page.getByText("Completed", { exact: true }).count(), 0, "accepted Feishu delivery is not completion");
+    assert.deepEqual(feishuActions, []);
+    feishuReplies[0] = true;
+    feishuSession = { ...feishuSession, reviewState: "pending_review" };
+    await page.evaluate(async (id) => {
+      const agents = await import("/src/lib/agents.ts");
+      agents.agentsChanged([id]);
+    }, feishuSession.id);
+    await page.getByText("Exact Feishu reply", { exact: true }).waitFor();
+    await page.getByText("Reply is pending review. It isn't owner approval or an Agent instruction.", { exact: true }).waitFor();
+    await feishuComposer.fill("Same-task Feishu follow-up");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.getByText("Same-task Feishu follow-up", { exact: true }).last().waitFor();
+    assert.equal(feishuSends.length, 2);
+    assert.notEqual(feishuSends[0].clientId, feishuSends[1].clientId);
+    await page.screenshot({ path: join(shots, `feishu-bots-pending-${fixture.name}.png`), animations: "disabled" });
+    await page.getByRole("button", { name: "Task actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Complete task…", exact: true }).click();
+    await page.locator("[role='menuitem']").filter({ hasText: "This closes the external task" }).click();
+    await page.getByText("Completed", { exact: true }).waitFor();
+    assert.deepEqual(feishuActions, ["complete"]);
+    assert.equal(await feishuComposer.isDisabled(), true);
+    const feishuText = await page.locator("body").textContent();
+    for (const privateID of ["oc_scoped", "omt_scoped", "om_request", "ou_external", "cli_synthetic", "todo_lark_"]) {
+      assert.equal(feishuText.includes(privateID), false, `private Feishu identity stays out of the page: ${privateID}`);
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, "Feishu conversation has no horizontal overflow");
+    await page.screenshot({ path: join(shots, `feishu-bots-${fixture.name}.png`), animations: "disabled" });
+    assert.deepEqual(errors, [], "no browser page errors in the Feishu flow");
+    console.log(`PASS ${fixture.name}: Feishu assignment → exact reply → pending review → follow-up → completion`);
     await context.close();
   }
-  console.log("PASS agents-bots browser verification (synthetic data; wide/narrow and light/dark)");
+  console.log("PASS agents-bots browser verification (synthetic Orca/Feishu data; wide/narrow and light/dark)");
 } catch (error) {
   console.error("FAIL agents-bots browser verification:", error);
   if (activePage) {

@@ -27,6 +27,8 @@ type ParkEvidence struct {
 	Ready         bool                          `json:"ready,omitempty"`
 	RecordedBy    string                        `json:"recorded_by,omitempty"`
 	Reply         *connectorwire.LarkReplyWatch `json:"reply,omitempty"`
+	// ParkInstance is an opaque delivery-park token for new bot conversations. Legacy parks use TaskReview.At instead.
+	ParkInstance string `json:"park_instance,omitempty"`
 }
 
 // ParkContact names an already sent request, not a draft, a proposed reminder or a send whose outcome is unknown.
@@ -129,6 +131,9 @@ func readParkEvidence(input *ParkEvidence, waitingOn, until string, now time.Tim
 	}
 	if e.Reply != nil && (e.Kind != "person_reply" || !parkReplyBinding(e)) {
 		missing = append(missing, "evidence.reply (person_reply only: larkcli source, brand, app_id, account_open_id, person_open_id, chat_id, thread_id and request_message_id matching the sent topic link)")
+	}
+	if e.ParkInstance != "" && (e.Kind != "person_reply" || !parkReplyID(e.ParkInstance)) {
+		missing = append(missing, "evidence.park_instance (person_reply only: an opaque identifier)")
 	}
 	if e.PREvent != "" && (e.Kind != "external_event" || !externalPREvent(e.PREvent) || githubParkPRURL(e.URL) == "") {
 		missing = append(missing, "evidence.pr_event (external_event with a GitHub PR URL: terminal or terminal_or_review)")

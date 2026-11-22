@@ -1813,6 +1813,15 @@ reads as text until Edit opens it for typing, and **Done** closes it (iOS `Messa
 The original card's not-sent receipt remains inspectable. This deliberately does not reuse Inbox completion, which
 would suppress future progress replies for the same source. The API contract is in `docs/assistant/agent-work.md`.
 
+**External bot task lifecycle** (web, #12793) lives in the existing bot conversation's header **Task actions** menu, not in a
+second chat stack or a new surface. An active external task offers **Complete task…** and **Abandon task…**; both use the
+menu's existing second-choice confirmation and explain that the task closes and its exact Feishu topic is released. A send
+receipt never marks the task complete. An exact reply says **Reply is pending review** and is not owner approval or an Agent
+instruction. Completion or abandonment disables the existing composer and shows the plain state word. The menu, icons,
+confirmations, typography and spacing are the existing design-system pieces; no token or component is added. Where standing
+proactive-message ingestion is unsupported, the conversation says so instead of presenting an event-driven single-message
+read as a standing collector.
+
 A hand-off write-back card (#5932, web `HandoffCard`, iOS `HandoffCardView`) is the same card for an Inbox item the
 user handed to the conversation: the item's summary over the reply, **Send** primary (**Got It** for a conclusion),
 **Edit** on iOS beside it (the web edits in place) and **Later**, which folds it to one line. It has no Don't handle:

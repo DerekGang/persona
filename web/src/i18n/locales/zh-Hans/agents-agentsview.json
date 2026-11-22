@@ -23,5 +23,16 @@
   "no_detail": "没有更多细节",
   "composer_placeholder": "发消息给这个 Agent（Enter 发送，Shift+Enter 换行）",
   "send": "发送",
-  "restore": "恢复"
+  "restore": "恢复",
+  "task_actions": "任务操作",
+  "complete_task": "完成任务…",
+  "complete_task_confirm": "完成任务",
+  "complete_task_detail": "这会结束外部任务并释放其飞书话题，且无法撤销。",
+  "abandon_task": "放弃任务…",
+  "abandon_task_confirm": "放弃任务",
+  "abandon_task_detail": "这会放弃外部任务并释放其飞书话题，且无法撤销。",
+  "proactive_unsupported": "此机器人不会接收主动消息。",
+  "pending_review": "回复正在等待审核，不代表所有者批准，也不会作为 Agent 指令。",
+  "lifecycle_completed": "已完成",
+  "lifecycle_abandoned": "已放弃"
 }

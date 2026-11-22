@@ -71,6 +71,12 @@ type Source interface {
 	MarkRead(ctx context.Context, key string) error
 }
 
+// ActionSource is an optional source capability for explicit user lifecycle actions. Sources without it keep the
+// existing read/send contract and receive no new behavior.
+type ActionSource interface {
+	Action(ctx context.Context, key, action string) (*Session, error)
+}
+
 var ErrBadID = errors.New("agents: session id must be <source>:<sessionKey>")
 
 // SplitID splits a public id into source name and session key.

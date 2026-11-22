@@ -39,6 +39,7 @@ var Routes = []string{
 	"GET /api/v1/agents/sessions/{id}/avatar",
 	"POST /api/v1/agents/sessions/{id}/messages",
 	"POST /api/v1/agents/sessions/{id}/read",
+	"POST /api/v1/agents/sessions/{id}/action",
 	"/api/v1/messaging",
 	"/api/v1/messaging/",
 	"/api/v1/devices/{id}/widgets",

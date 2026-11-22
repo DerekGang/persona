@@ -428,6 +428,7 @@ todos.write          PATCH /api/v1/todos/{id}
 -                    POST /api/v1/admin/usage-sources
 -                    POST /api/v1/admin/usage-sources/test
 -                    POST /api/v1/agent-shares
+agents.control       POST /api/v1/agents/sessions/{id}/action
 -                    POST /api/v1/agents/sessions/{id}/hide
 agents.control       POST /api/v1/agents/sessions/{id}/messages
 agents.control       POST /api/v1/agents/sessions/{id}/read

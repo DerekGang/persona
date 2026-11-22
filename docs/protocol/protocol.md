@@ -2261,8 +2261,14 @@ Clients report their errors and crashes only while `features` has `error_reports
 | POST | `/api/v1/agents/sessions/{id}/messages` | Send a message `{"clientId"?,"text","origin"?}` → `{outbox, duplicate, upstream?}`; if `clientId` isn't given the hub generates one, and resending the same one won't send twice (`duplicate: true`); `origin` defaults to `app`; empty text or a `clientId` that isn't a UUID 400, over 20000 (counted in UTF-16) 413; `clientId` already used on another session, or the session can't send right now (`canSend=false`) 409 |
 | DELETE | `/api/v1/agents/sessions/{id}/messages/{clientId}` | Delete one outbox entry (by `clientId`) → `{"ok":true}` |
 | POST | `/api/v1/agents/sessions/{id}/read` | Mark this session as read → `{"ok":true}` |
+| POST | `/api/v1/agents/sessions/{id}/action` | Run an explicit source lifecycle action `{"action":"complete"|"abandon"}` → `{session}`; sources without the optional capability return 501, an unsupported action 400, and a closed or conflicting task 409. `agents.control` is required and answer-only devices remain refused |
 | GET | `/api/v1/agents/sessions/{id}/avatar` | The session's avatar image as is, with `ETag`; a matching `If-None-Match` returns 304; cached for a day |
-| GET | `/api/v1/agents/outbox?session_id=&limit=` | The personal Agents' outbox `{"outbox":[{clientId, sessionId, preview, length, origin?, status, error?, attempts, createdAt, updatedAt}]}`; `status` is `sending` / `sent` / `failed` / `deleted` (resending a `failed` one with the same `clientId` is safe) |
+
+Bot session rows may additionally carry `actions` (`complete`, `abandon`), `lifecycle` (`completed`, `abandoned`),
+`reviewState` (`pending_review`) and `proactive` (`unsupported`). They are optional display-safe capabilities/state, not
+private endpoint identity. Older clients ignore them; clients that offer an action use the `/action` route above.
+
+| GET | `/api/v1/agents/outbox?session_id=&limit=` | The personal Agents' outbox `{"outbox":[{clientId, sessionId, preview, length, origin?, status, error?, attempts, createdAt, updatedAt}]}`; `status` is `sending` / `sent` / `failed` / `deleted` (resending a `failed` one with the same `clientId` is safe) | The personal Agents' outbox `{"outbox":[{clientId, sessionId, preview, length, origin?, status, error?, attempts, createdAt, updatedAt}]}`; `status` is `sending` / `sent` / `failed` / `deleted` (resending a `failed` one with the same `clientId` is safe) |
 | POST | `/api/v1/channels/{id}/test` | Send a test message to the owner bound to the channel → `{"ok":true}`; couldn't send 502; no such channel 404 `not_found`, read-only ones or ones from a market not installed yet 409 `read_only`, read-only device 403 ([channels.md](../extensions/channels.md) "6. Endpoints") |
 | DELETE | `/api/v1/channels/{id}/binding` | Unbind: for a plugin channel the connector signs out, for the Lark bot it unpairs; returns the channel details after unbinding; unbind failed 502, other errors as in the row above |
 | POST | `/api/v1/phone/runtime-cli` | `{cmd, args, timeout}`: have the DEBUG build on the phone run one Runtime CLI command (`docs/operations/runtime-cli.md` ("Connecting to a real device via the hub")), returns the App's response as is `{"ok": …}`. Full device credentials only (read-only device 403); no App online that registered `phone_runtime_cli` 503 `phone_offline` (doesn't wake it); no answer within `timeout` seconds (at most 120) 504; the App says the call failed 502. The hub logs one line per call (command, caller device id, status, duration), without arguments or responses |
@@ -5485,7 +5491,7 @@ Media rewrite rules: throughout parts JSON, `"/api/media/` → `"/api/v1/lark/me
 
 ## Personal Agent source status
 
-The hub has no personal Agent sources of its own; all sources come from `agent_sources` of running extensions (`docs/extensions/extensions.md` ("Personal Agent sources")).
+The hub has no personal Agent sources of its own; extension sources come from `agent_sources` of running extensions (`docs/extensions/extensions.md` ("Personal Agent sources")). The extension manager also projects explicitly registered Orca and Feishu bot endpoints into this same collection (#12610, #12793), with no second chat API or transcript store.
 With no such extension running, `GET /api/v1/agents` returns `{"sources":[]}` and `GET /api/v1/agents/sessions` returns `{"sessions":[]}`, both HTTP 200.
 With sources, `GET /api/v1/agents` has one entry per source: `{"sources":[{"source":"<contribution id>","enabled","error"?,"setup"?,"providers":[…],"accounts":[…]}]}`;
 the Lark plugin picks its own source id; keeping the same id across upgrades keeps session ids unchanged.

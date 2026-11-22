@@ -669,6 +669,31 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 		return s.FeishuAction(ctx, p)
 	case assistantwire.MethodFeishuView:
 		return s.FeishuView(ctx), nil
+	case assistantwire.MethodLarkPersonPark:
+		var p assistantwire.LarkPersonPark
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return s.ParkLarkPersonTask(ctx, p)
+	case assistantwire.MethodLarkPersonState:
+		var p assistantwire.LarkPersonClose
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return s.LarkPersonTaskState(ctx, p.TaskID)
+	case assistantwire.MethodLarkPersonClose:
+		var p assistantwire.LarkPersonClose
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return s.CloseLarkPersonTask(ctx, p)
+	case assistantwire.MethodLarkPersonRecord:
+		var p assistantwire.LarkPersonReplyRecord
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		matched, err := s.RecordLarkPersonReply(ctx, p.TaskID, p.ParkInstance, p.Observation)
+		return map[string]any{"matched": matched}, err
 	case assistantwire.MethodFleetAsk:
 		var p struct {
 			Interaction proto.Interaction `json:"interaction"`

@@ -154,6 +154,12 @@ func validateEndpoint(endpoint Endpoint, verified bool) error {
 			return ErrInvalid
 		}
 	}
+	if scope := endpoint.Conversation; scope != nil {
+		if !validOpaqueID(scope.ChatID) || !validOpaqueID(scope.ThreadID) || !validOpaqueID(scope.ParentMessageID) ||
+			!chatAllowed(endpoint, scope.ChatID) {
+			return ErrInvalid
+		}
+	}
 	return nil
 }
 
@@ -176,6 +182,10 @@ func cleanIDs(ids []string) []string {
 
 func cloneEndpoint(endpoint Endpoint) Endpoint {
 	endpoint.AllowedChatIDs = append([]string(nil), endpoint.AllowedChatIDs...)
+	if endpoint.Conversation != nil {
+		scope := *endpoint.Conversation
+		endpoint.Conversation = &scope
+	}
 	return endpoint
 }
 

@@ -185,6 +185,34 @@ One PR per step; all existing tests for hubs with the Lark gateway pass.
 | Permissions | **Enable everything possible**: `lark-cli auth login --domain all` (or `lark-cli --profile <profile> auth login --domain all` for a configured profile); permissions needing admin approval are listed on the settings page ("Configuration") |
 | Whose identity sends messages (2026-11-04) | **The bot**: sending and replying use `--as bot`, and the phone card says "as the bot"; all other reads and writes still use the user identity |
 
+## External bot conversations (#12647, #12793)
+
+An owner-managed `lark_person` endpoint can project one explicitly scoped existing-topic task into the generic Agents →
+Bots registry. Its `conversation` binding names the exact chat, thread and existing parent message; `history_authorized`
+is a separate opt-in for body reads and the chat must already be allowlisted. The public source/session ID contains only
+the stable endpoint ID, and public message IDs are endpoint-scoped hashes. OpenIDs, app IDs, chat/thread IDs, parent IDs,
+task IDs and source message IDs do not enter the Web model or logs.
+
+- Sends use the reviewed durable reservation, frozen endpoint revision and payload, bot `ReplyText`, exact readback and
+  idempotency behavior. Accepted delivery is not completion. After readback, the assistant records a real parked task;
+  new evidence carries an opaque park-instance token chosen before transport, while legacy parks keep timestamp matching.
+  Exact reply observation still enters `pending_review` and never becomes owner consent or an Agent instruction.
+- A same-task follow-up reuses the task with a fresh client/park instance. Only the explicit generic **Complete task** or
+  **Abandon task** action closes the assistant task and releases the current topic claim. The first reply does not release
+  it. Known-failed holders and superseded releases retain the reviewed behavior.
+- Conversation history is a separately authorized exact-topic read projected only from proven bot requests and exact
+  correlated replies. Receipts are never synthesized into replies, and unmatched proactive bodies are not displayed.
+  Reads are bounded to one page; longer topics and provider-cursor pagination fail closed rather than exposing provider
+  tokens or broadening scope.
+- Proactive Inbox things use the declared `external_message` kind with `TierFYI` and empty Preview/Context. The current
+  event-driven reader remains limited to single-message topics; standing per-message ingestion is unsupported and the bot
+  conversation says so. No root/DM thread guessing, broad chat collection, body display without the scoped opt-in,
+  unknown-outcome reposting, automatic Agent action, approval, deployment or merge is enabled.
+
+Implementation and browser checks use synthetic runner/connector/review fixtures only. Live identity preflight and one
+controlled delivery/reply require separate authorization, a dedicated test app and topic, exact bot/account/person checks,
+and endpoint disable/grant revocation afterward.
+
 ## Risks
 
 - **Search-index delay**: `/agent` and the Inbox both rely on search; how soon new messages become searchable is untested, so measure it first in L4 / L5.

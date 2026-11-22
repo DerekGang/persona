@@ -23,5 +23,16 @@
   "no_detail": "No more details",
   "composer_placeholder": "Message this agent (Enter to send, Shift+Enter for a new line)",
   "send": "Send",
-  "restore": "Restore"
+  "restore": "Restore",
+  "task_actions": "Task actions",
+  "complete_task": "Complete task…",
+  "complete_task_confirm": "Complete task",
+  "complete_task_detail": "This closes the external task and releases its Feishu topic. This can't be undone.",
+  "abandon_task": "Abandon task…",
+  "abandon_task_confirm": "Abandon task",
+  "abandon_task_detail": "This abandons the external task and releases its Feishu topic. This can't be undone.",
+  "proactive_unsupported": "Proactive messages aren't ingested for this bot.",
+  "pending_review": "Reply is pending review. It isn't owner approval or an Agent instruction.",
+  "lifecycle_completed": "Completed",
+  "lifecycle_abandoned": "Abandoned"
 }

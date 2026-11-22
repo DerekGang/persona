@@ -37,6 +37,11 @@ type AgentSession struct {
 	CanSend          bool   `json:"canSend"`
 	UnreadCount      int    `json:"unreadCount"`
 	RankTimeMs       int64  `json:"rankTimeMs"`
+	// Actions, Lifecycle, ReviewState and Proactive are optional generic bot conversation metadata.
+	Actions     []string `json:"actions,omitempty"`
+	Lifecycle   string   `json:"lifecycle,omitempty"`
+	ReviewState string   `json:"reviewState,omitempty"`
+	Proactive   string   `json:"proactive,omitempty"`
 }
 
 // AgentBlock is one block of a message: text, tool-call {name,status,summary,input}, tool-result, or anything

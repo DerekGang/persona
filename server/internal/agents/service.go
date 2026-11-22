@@ -381,6 +381,15 @@ type SendResult struct {
 
 var uuidRe = lazyre.New(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// NormalizeBotClientID applies the same UUID contract to every explicitly registered bot transport.
+func NormalizeBotClientID(clientID string) (string, error) {
+	clientID = strings.ToLower(clientID)
+	if !uuidRe.MatchString(clientID) {
+		return "", fail(http.StatusBadRequest, "agents: clientId must be a UUID")
+	}
+	return clientID, nil
+}
+
 func NewClientID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
@@ -502,6 +511,27 @@ func (s *Service) MarkRead(ctx context.Context, id string) error {
 	}
 	s.Updated(src.Name(), []string{key})
 	return nil
+}
+
+// Action invokes an explicit lifecycle action only on a source that declares the optional capability.
+func (s *Service) Action(ctx context.Context, id, action string) (*Session, error) {
+	src, key, err := s.source(id)
+	if err != nil {
+		return nil, err
+	}
+	actions, ok := src.(ActionSource)
+	if !ok {
+		return nil, fail(http.StatusNotImplemented, "agents: session actions are unsupported")
+	}
+	if action != "complete" && action != "abandon" {
+		return nil, fail(http.StatusBadRequest, "agents: unsupported session action")
+	}
+	session, err := actions.Action(ctx, key, action)
+	if err != nil {
+		return nil, err
+	}
+	s.Updated(src.Name(), []string{key})
+	return session, nil
 }
 
 func (s *Service) Outbox(ctx context.Context, id string, limit int) []OutboxEntry {

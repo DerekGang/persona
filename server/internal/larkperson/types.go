@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/connectorwire"
+	adapter "github.com/nwverse/persona/server/internal/larkcli"
 )
 
 const (
@@ -31,18 +32,19 @@ var (
 // after a server-side directory read; DisplayName is presentation metadata and never identity evidence.
 // Revision is also the settings compare-and-swap version.
 type Endpoint struct {
-	ID               string    `json:"id"`
-	Revision         int64     `json:"revision"`
-	Kind             string    `json:"kind"`
-	DisplayName      string    `json:"display_name"`
-	Source           string    `json:"source"`
-	Brand            string    `json:"brand"`
-	AppID            string    `json:"app_id"`
-	AccountOpenID    string    `json:"account_open_id"`
-	PersonOpenID     string    `json:"person_open_id,omitempty"`
-	PersonVerifiedAt time.Time `json:"person_verified_at,omitzero"`
-	AllowedChatIDs   []string  `json:"allowed_chat_ids,omitempty"`
-	Enabled          bool      `json:"enabled"`
+	ID               string             `json:"id"`
+	Revision         int64              `json:"revision"`
+	Kind             string             `json:"kind"`
+	DisplayName      string             `json:"display_name"`
+	Source           string             `json:"source"`
+	Brand            string             `json:"brand"`
+	AppID            string             `json:"app_id"`
+	AccountOpenID    string             `json:"account_open_id"`
+	PersonOpenID     string             `json:"person_open_id,omitempty"`
+	PersonVerifiedAt time.Time          `json:"person_verified_at,omitzero"`
+	AllowedChatIDs   []string           `json:"allowed_chat_ids,omitempty"`
+	Conversation     *ConversationScope `json:"conversation,omitempty"`
+	Enabled          bool               `json:"enabled"`
 }
 
 // Person is a server-side directory result. OpenID, not Name, is the stable identity.
@@ -55,6 +57,33 @@ type Person struct {
 type Topic struct {
 	ChatID   string `json:"chat_id"`
 	ThreadID string `json:"thread_id"`
+}
+
+// ConversationScope is an owner-authorized existing-topic binding. HistoryAuthorized is separate from the chat
+// allowlist and permits body reads only for this exact chat and thread. ParentMessageID is required for every send.
+type ConversationScope struct {
+	ChatID            string `json:"chat_id"`
+	ThreadID          string `json:"thread_id"`
+	ParentMessageID   string `json:"parent_message_id"`
+	HistoryAuthorized bool   `json:"history_authorized"`
+}
+
+// HistoryRequest authorizes one exact-topic body read at an exact endpoint revision. Cursor pagination is deliberately
+// unsupported until a public cursor can be bound without exposing provider tokens; long pages fail closed.
+type HistoryRequest struct {
+	EndpointID       string
+	EndpointRevision int64
+	ChatID           string
+	ThreadID         string
+	Cursor           string
+	Limit            int
+}
+
+// HistoryPage is scoped source data for the generic Bots projection. It is never persisted as a second transcript.
+type HistoryPage struct {
+	Messages   []adapter.Message
+	HasMore    bool
+	NextCursor string
 }
 
 // DeliveryRequest is the owner-approved operation. Payload is hashed before persistence and is never logged.

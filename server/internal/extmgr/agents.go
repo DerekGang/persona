@@ -190,6 +190,21 @@ func (h *Manager) agentRoutes(api *http.ServeMux) {
 		}
 		writeJSON(w, map[string]any{"ok": true})
 	})
+	api.HandleFunc("POST /api/v1/agents/sessions/{id}/action", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Action string `json:"action"`
+		}
+		if err := decodeJSONBody(w, r, &in, 1<<20); err != nil {
+			writeBodyErr(w, err, err)
+			return
+		}
+		session, err := h.agents.Action(r.Context(), r.PathValue("id"), in.Action)
+		if err != nil {
+			agentsErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"session": session})
+	})
 	api.HandleFunc("GET /api/v1/agents/prefs", func(w http.ResponseWriter, r *http.Request) {
 		p, err := h.agents.Prefs(r.Context())
 		if err != nil {

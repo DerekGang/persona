@@ -23,5 +23,16 @@
   "no_detail": "詳細はありません",
   "composer_placeholder": "このエージェントにメッセージ（Enterで送信、Shift+Enterで改行）",
   "send": "送信",
-  "restore": "元に戻す"
+  "restore": "元に戻す",
+  "task_actions": "タスク操作",
+  "complete_task": "タスクを完了…",
+  "complete_task_confirm": "タスクを完了",
+  "complete_task_detail": "外部タスクを終了し、Feishuトピックを解放します。この操作は元に戻せません。",
+  "abandon_task": "タスクを破棄…",
+  "abandon_task_confirm": "タスクを破棄",
+  "abandon_task_detail": "外部タスクを破棄し、Feishuトピックを解放します。この操作は元に戻せません。",
+  "proactive_unsupported": "このボットではプロアクティブメッセージを取り込みません。",
+  "pending_review": "返信はレビュー待ちです。所有者の承認やエージェントへの指示ではありません。",
+  "lifecycle_completed": "完了",
+  "lifecycle_abandoned": "破棄済み"
 }
