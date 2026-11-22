@@ -360,20 +360,26 @@ struct PhoneSystemToolsTests {
             #expect(decoded.presentation.alert.title.defaultValue == String.LocalizationValue("Focus"))
             #expect(String(localized: decoded.presentation.alert.title) == "Focus")
             print("timer sample \(state): title=\(decoded.presentation.alert.title.key), defaultValue=\(String(localized: decoded.presentation.alert.title))")
-            // AlarmKit may normalize the Alert getter or omit its unused Stop when encoding. Verify the actual input
-            // directly instead of inferring it from that getter; the required configuration still decodes.
-            let stop = AlarmsTool.sampleStopButton(title: sample.presentation.alert.title, tintColor: sample.tintColor)
-            #expect(stop.systemImageName == Theme.Icon.interrupt)
-            #expect(stop.textColor == sample.tintColor)
-            #expect(stop.text == sample.presentation.alert.title)
+            // Newer SDKs omit the unused Alert Stop from the encoded Alert; do not reconstruct a marker that was not
+            // delivered. If encoded, its actual path, text, tint and symbol must be intact.
             let encoded = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            if let alert = encoded["presentation"] as? [String: Any],
-               let alertValue = alert["alert"] as? [String: Any],
-               let stop = alertValue["stopButton"] as? [String: Any],
-               let icon = stop["systemImageName"] as? String {
-                #expect(icon == Theme.Icon.interrupt)
-            }
+            let presentation = try #require(encoded["presentation"] as? [String: Any])
+            let alert = try #require(presentation["alert"] as? [String: Any])
             let archived = try #require(encoded["tintColor"] as? String)
+            if let stop = alert["stopButton"] as? [String: Any] {
+                let icon = try #require(stop["systemImageName"] as? String)
+                #expect(icon == Theme.Icon.interrupt)
+                let text = try #require(stop["text"] as? [String: Any])
+                #expect(text["key"] as? String == "sample.title")
+                let defaultValue = try #require(text["defaultValue"] as? [String: Any])
+                #expect(defaultValue["key"] as? String == "Focus")
+                let arguments = try #require(defaultValue["arguments"] as? [Any])
+                #expect(arguments.isEmpty)
+                #expect(stop["textColor"] as? String == archived)
+            } else {
+                #expect(presentation["countdown"] != nil || presentation["paused"] != nil,
+                        "this SDK omits the unused Alert.stopButton; the selected action marker is required")
+            }
             let original = try #require(JSONSerialization.jsonObject(with: encoder.encode(sample)) as? [String: Any])["tintColor"] as? String
             #expect(archived == original)
             let colorData = try #require(Data(base64Encoded: archived))
@@ -438,17 +444,39 @@ struct PhoneSystemToolsTests {
         #expect(pause.totalCountdownDuration == 1500 && pause.previouslyElapsedDuration == 301)
 
         // Real timers keep both states and the complete AlarmKit presentation, unlike the custom widget's sample.
-        let timer = AlarmsTool.attributes(label: "Focus", timer: true).presentation
+        let real = AlarmsTool.attributes(label: "Focus", timer: true)
+        let timer = real.presentation
         #expect(timer.countdown?.pauseButton != nil && timer.paused?.resumeButton != nil)
         #expect(timer.countdown?.pauseButton?.systemImageName == Theme.Icon.pause)
         #expect(timer.paused?.resumeButton.systemImageName == Theme.Icon.run)
-        let accent = AlarmsTool.attributes(label: "Focus", timer: true).tintColor
-        let title = AlarmsTool.sampleTitle(defaultValue: "Focus")
-        // The unused Alert getter normalizes its values on newer SDKs. The shared constructor pins the actual inputs.
-        let stop = AlarmsTool.alarmButton(text: title, textColor: accent, systemImageName: Theme.Icon.interrupt)
-        #expect(stop.systemImageName == Theme.Icon.interrupt)
-        #expect(stop.textColor == accent)
-        #expect(stop.text == title)
+        // Encode/decode the real builder, never a reconstructed button. Newer SDKs omit the unused Alert Stop;
+        // Pause/Resume still serialize, and AlarmButtons supplies Stop from the real tint and ContentState alarm ID.
+        let realData = try encoder.encode(real)
+        let decodedReal = try decoder.decode(AlarmAttributes<PersonaAlarmData>.self, from: realData)
+        #expect(decodedReal.metadata?.label == "Focus")
+        #expect(decodedReal.presentation.countdown?.pauseButton?.systemImageName == Theme.Icon.pause)
+        #expect(decodedReal.presentation.paused?.resumeButton.systemImageName == Theme.Icon.run)
+        #expect(decodedReal.presentation.countdown?.title.key == "Focus")
+        #expect(decodedReal.presentation.paused?.title.key == "Focus")
+        let realEncoded = try #require(JSONSerialization.jsonObject(with: realData) as? [String: Any])
+        let decodedEncoded = try #require(JSONSerialization.jsonObject(with: encoder.encode(decodedReal)) as? [String: Any])
+        #expect(decodedEncoded["tintColor"] as? String == realEncoded["tintColor"] as? String)
+        let realTint = try #require(realEncoded["tintColor"] as? String)
+        let realArchive = try #require(Data(base64Encoded: realTint))
+        let decodedTint = try #require(decodedEncoded["tintColor"] as? String)
+        let decodedArchive = try #require(Data(base64Encoded: decodedTint))
+        let originalColorValue = try NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: realArchive)
+        let originalColor = try #require(originalColorValue)
+        let decodedColorValue = try NSKeyedUnarchiver.unarchivedObject(ofClass: UIColor.self, from: decodedArchive)
+        let decodedColor = try #require(decodedColorValue)
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        #expect(originalColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+        var decodedRed: CGFloat = 0, decodedGreen: CGFloat = 0, decodedBlue: CGFloat = 0, decodedAlpha: CGFloat = 0
+        #expect(decodedColor.getRed(&decodedRed, green: &decodedGreen, blue: &decodedBlue, alpha: &decodedAlpha))
+        #expect(red == decodedRed && green == decodedGreen && blue == decodedBlue && alpha == decodedAlpha)
+        #expect(decodedReal.presentation.alert.stopButton.systemImageName.isEmpty == false)
+        #expect(decodedReal.presentation.alert.title.defaultValue == real.presentation.alert.title.defaultValue)
+        #expect(String(localized: decodedReal.presentation.alert.title) == String(localized: real.presentation.alert.title))
     }
     #endif
 
