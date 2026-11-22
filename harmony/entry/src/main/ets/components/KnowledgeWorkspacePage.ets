@@ -783,7 +783,7 @@ export struct KnowledgeWorkspacePage {
               .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).minFontSize(10.2).maxFontSize(17).fontWeight(600)
               .fontColor(Colors.onAction).textAlign(TextAlign.Center).maxLines(1).flexShrink(1).id('recordings.capture.label')
           }.width('100%').justifyContent(FlexAlign.Center)
-        }.width('100%').height(meetingCaptureHeight(nativeEnvironment.fontScale, this.recordingPageHeight))
+        }.width('100%').constraintSize({minHeight:meetingCaptureHeight(nativeEnvironment.fontScale, this.recordingPageHeight)})
           .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(this.recording.canStop() ? Colors.danger : Colors.action).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
           .onClick(() => {
             if (this.recording.canStop()) this.openRecording().catch(() => undefined);
