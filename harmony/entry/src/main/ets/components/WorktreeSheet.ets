@@ -97,7 +97,9 @@ export struct WorktreeSheet {
             Column() {
               this.valueRow(tr('machines'), this.form.machine)
               this.rule()
-              this.valueRow(tr(this.form.action === 'create' ? 'tree_source' : 'project_worktree'), this.form.locationTitle)
+              ForEach([this.form.locationTitle], (title:string) => {
+                this.valueRow(tr(this.form.action === 'create' ? 'tree_source' : 'project_worktree'), title)
+              }, (title:string):string => title)
               if (this.form.baseBranch) {
                 this.rule()
                 this.codeValue(tr('tree_base_branch'), this.form.baseBranch)
