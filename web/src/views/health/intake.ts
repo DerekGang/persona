@@ -38,7 +38,8 @@ export interface IntakeToday {
   protein: { today: number; goal: number };
 }
 
-/** The most one record may hold (the hub's own limits: 1–3000 ml of water, up to 200 g of protein, one decimal). */
+/** One record's limits: 1–3000 ml of water or 0.1–200 g of protein, one decimal at most. */
+export const INTAKE_MIN: IntakeTotals = { water: 1, protein: 0.1 };
 export const INTAKE_MAX: IntakeTotals = { water: 3000, protein: 200 };
 
 const BASE = "/assistant/health/intake";
@@ -74,12 +75,12 @@ export function deleteEntry(id: string): Promise<{ today: IntakeTotals }> {
   return api(`${BASE}/${enc(id)}?${SPACE}`, { method: "DELETE" });
 }
 
-/** An amount typed in a box: a number above 0 and up to the kind's limit, one decimal at most. null: not one. */
+/** An amount typed in a box: a number within the kind's limits, one decimal at most. null: not one. */
 export function parseAmount(text: string, kind: IntakeKind): number | null {
   const s = text.trim().replace(",", ".");
   if (!/^\d+(\.\d)?$/.test(s)) return null;
   const n = Number(s);
-  return n > 0 && n <= INTAKE_MAX[kind] ? n : null;
+  return n >= INTAKE_MIN[kind] && n <= INTAKE_MAX[kind] ? n : null;
 }
 
 /** A ratio of the goal, 0 to 1 (a day past its goal is a full ring). */

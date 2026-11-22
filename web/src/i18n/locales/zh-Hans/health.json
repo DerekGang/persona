@@ -15,7 +15,7 @@
   "today_other_title": "记喝水",
   "today_grams_title": "记蛋白质",
   "today_amount_label": "数量（{unit}）",
-  "today_amount_hint": "大于 0 的数，最多 {max} {unit}，小数最多一位。",
+  "today_amount_hint": "{min} 至 {max} {unit}，小数最多一位。",
   "today_cancel": "取消",
   "today_log": "记录",
   "today_logged_water": "已记 {amount} 毫升水",

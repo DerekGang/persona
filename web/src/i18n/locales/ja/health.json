@@ -15,7 +15,7 @@
   "today_other_title": "水分を記録",
   "today_grams_title": "たんぱく質を記録",
   "today_amount_label": "量（{unit}）",
-  "today_amount_hint": "0 より大きい数で、最大 {max} {unit}、小数は 1 桁までです。",
+  "today_amount_hint": "{min}〜{max} {unit}の数で、小数は 1 桁までです。",
   "today_cancel": "キャンセル",
   "today_log": "記録",
   "today_logged_water": "水 {amount} ml を記録しました",
