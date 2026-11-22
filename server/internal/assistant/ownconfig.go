@@ -91,10 +91,12 @@ func (c ownConfig) validatePlacement(h Hello) error {
 
 // over is h with c's sections in place of the hello's.
 func (c ownConfig) over(h Hello) Hello {
+	// This approval bypass is manager-file-only: unlike legacy hello sections, a missing assistant section must not
+	// preserve a value supplied by the hub.
+	h.Assistant.AutoApproveReversibleSettings = c.Assistant != nil && c.Assistant.AutoApproveReversibleSettings
 	if a := c.Assistant; a != nil {
 		h.Assistant.MemoryDreaming = a.MemoryDreaming
 		h.Assistant.CompleteAgentlessTodos = a.CompleteAgentlessTodos
-		h.Assistant.AutoApproveReversibleSettings = a.AutoApproveReversibleSettings
 		if a.SupervisionBatchMinutes != nil {
 			h.Assistant.SupervisionBatchMinutes = a.SupervisionBatchMinutes
 		}

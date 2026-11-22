@@ -525,43 +525,43 @@ func (s *Service) ownSettingAction(ctx context.Context, call ToolCall, o ownSett
 	return outcome.Text, err
 }
 
-// applyAutomaticReversibleSetting records the assistant's decision before attempting the write. The history row is an
-// audit of the skipped card, not a claim that the subsequent settings write succeeded. If that row cannot be written,
-// the setting is left alone. The raw before-image is checked again under the same lock as the settings write.
+// applyAutomaticReversibleSetting records the assistant's decision before attempting the write, then updates the same
+// row with saved or not_saved. If the history row cannot be written, the setting is left alone. If the outcome update
+// fails, attempted remains as an explicit unknown rather than a false result. The raw before-image is checked again
+// under the same lock as the settings write.
 func (s *Service) applyAutomaticReversibleSetting(ctx context.Context, call ToolCall, key, proposal string, r *reversibleSetting) (string, error) {
 	st := s.fleetStore()
 	writer, ok := st.(resolvedInteractionInserter)
 	if !ok {
-		return "", fmt.Errorf("%w: this store cannot record a reversible-setting decision", approvalops.ErrNotApplied)
+		return "", fmt.Errorf("%w: this store cannot record a reversible-setting decision and outcome", approvalops.ErrNotApplied)
 	}
 	restoreArguments, _ := json.Marshal(map[string]any{"action": "set", "key": key, "value": r.before})
 	restore, _ := json.Marshal(map[string]any{"tool": "persona_settings", "arguments": json.RawMessage(restoreArguments), "while_switch_enabled": autoApproveReversibleSettingsKey})
 	audit, _ := json.Marshal(struct {
-		Actor     string          `json:"actor"`
-		Operation string          `json:"operation"`
-		Setting   string          `json:"setting"`
-		Before    json.RawMessage `json:"before"`
-		After     json.RawMessage `json:"after"`
-		Proposal  string          `json:"proposal"`
-		Switch    string          `json:"switch"`
-		Restore   json.RawMessage `json:"restore"`
+		Actor       string          `json:"actor"`
+		Operation   string          `json:"operation"`
+		Setting     string          `json:"setting"`
+		Before      json.RawMessage `json:"before"`
+		After       json.RawMessage `json:"after"`
+		Proposal    string          `json:"proposal"`
+		Outcome     string          `json:"outcome"`
+		CardSkipped bool            `json:"card_skipped"`
+		Switch      string          `json:"switch"`
+		Restore     json.RawMessage `json:"restore"`
 	}{Actor: proto.AnsweredByAssistant, Operation: "persona_settings.set", Setting: key, Before: r.before, After: r.after,
-		Proposal: proposal, Switch: autoApproveReversibleSettingsKey, Restore: restore})
+		Proposal: proposal, Outcome: "attempted", CardSkipped: true, Switch: autoApproveReversibleSettingsKey, Restore: restore})
 	allow := true
 	now := time.Now().UTC()
 	resolution := &proto.Resolution{Allow: &allow, AnsweredBy: proto.AnsweredByAssistant,
 		Reason: autoApproveReversibleSettingsKey + "; exactly reversible; restore with persona_settings " + string(restoreArguments)}
 	ix := proto.Interaction{ID: "ix_" + randomHex(6), MachineID: call.MachineID, SessionID: call.SessionID,
 		Kind: proto.IxPermission, ToolName: "persona_settings", SessionTitle: "Persona", CreatedAt: now, ToolInput: audit,
-		Summary: "Confirmation card skipped by " + autoApproveReversibleSettingsKey + "; the settings write is attempted after this record."}
+		Private: s.justMeNow(call.MachineID, call.SessionID), Summary: proposal}
 	if err := writer.InsertResolvedInteraction(ctx, ix, resolution); err != nil {
 		return "", fmt.Errorf("%w: write the reversible-setting history record: %v", approvalops.ErrNotApplied, err)
 	}
-	_, err := s.updateSettingsChecked(ctx, func(v *Settings) error {
+	_, saveErr := s.updateSettingsChecked(ctx, func(v *Settings) error {
 		r.assign(v)
-		if !bytes.Equal(r.current(*v), r.after) {
-			return errors.New("the reversible setting's after-image does not match its audit record")
-		}
 		return nil
 	}, func(v Settings) error {
 		if !bytes.Equal(r.current(v), r.before) {
@@ -569,8 +569,15 @@ func (s *Service) applyAutomaticReversibleSetting(ctx context.Context, call Tool
 		}
 		return nil
 	})
-	if err != nil {
-		return "", err
+	outcome := "not_saved"
+	if saveErr == nil {
+		outcome = "saved"
+	}
+	if err := writer.MarkResolvedInteractionOutcome(ctx, ix.ID, ix.CreatedAt, outcome, time.Now().UTC()); err != nil {
+		s.logf("reversible setting %s: record %s outcome for %s: %v", key, outcome, ix.ID, err)
+	}
+	if saveErr != nil {
+		return "", saveErr
 	}
 	s.settingsChanged(ctx)
 	return r.applied, nil
@@ -743,14 +750,19 @@ func (s *Service) setBoolSetting(ctx context.Context, v json.RawMessage, current
 }
 
 // setReversibleBoolSetting is deliberately separate from setBoolSetting: only the two display-only candidates accept
-// null, and only while the administrator switch is on, so an unset pointer can be restored exactly. With the switch
-// off their existing Boolean-only validation and owner-approved apply path are unchanged.
+// null as raw unset, and only while the administrator switch is on. Switch-on changes compare raw state so an explicit
+// default and unset remain exactly restorable even when their effective values match. Switch-off keeps the legacy
+// decoder (including null as false) and effective-value no-op.
 func (s *Service) setReversibleBoolSetting(ctx context.Context, v json.RawMessage, defaultValue bool,
 	current func(context.Context) bool, unchanged string, card func(l i18n.Lang, before, after string) string,
 	field func(*Settings) **bool, applied string) (*ownChange, error) {
+	auto := s.hello(ctx).Assistant.AutoApproveReversibleSettings
 	var next *bool
-	if err := json.Unmarshal(v, &next); err != nil || next == nil && !s.hello(ctx).Assistant.AutoApproveReversibleSettings {
+	if err := json.Unmarshal(v, &next); err != nil {
 		return nil, errors.New("value must be true or false")
+	}
+	if next == nil && !auto {
+		next = new(bool) // encoding/json historically decoded null into a non-pointer false for these two settings.
 	}
 	before := current(ctx)
 	after := defaultValue
@@ -759,9 +771,11 @@ func (s *Service) setReversibleBoolSetting(ctx context.Context, v json.RawMessag
 	}
 	saved := s.settings(ctx)
 	beforeRaw := reversibleSettingJSON(*field(&saved))
-	// Keep the legacy effective-value no-op for explicit Booleans. Switch-on null must also clear an explicitly
-	// stored default: the effective value stays the same, but exact restoration back to unset changes the raw state.
-	if after == before && (next != nil || bytes.Equal(beforeRaw, reversibleSettingJSON(next))) {
+	if auto {
+		if bytes.Equal(beforeRaw, reversibleSettingJSON(next)) {
+			return &ownChange{summary: unchanged}, nil
+		}
+	} else if after == before {
 		return &ownChange{summary: unchanged}, nil
 	}
 	if s.store() == nil {

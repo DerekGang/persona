@@ -49,9 +49,12 @@ func TestOwnConfigOverTheHello(t *testing.T) {
 	if h.Notify.HookTimeoutMS != 1800000 || h.Notify.LongTurnMS != 5 {
 		t.Fatalf("notify %+v", h.Notify)
 	}
-	// Nothing in manager.json: the hello as it came, with the knowledge base's defaults.
+	// Nothing in manager.json: the hello as it came, with the knowledge base's defaults. The manager-only approval
+	// switch is the exception: a hello cannot enable it, even one from a newer or modified hub.
+	fromHub := hub
+	fromHub.Assistant.AutoApproveReversibleSettings = true
 	none, _ := readOwnConfig(filepath.Join(t.TempDir(), "manager.json"))
-	if h := none.over(hub); h.OwnerNotes != "the hub's notes" || h.Models.JudgeAI.Model != "old" || h.KB == nil || h.KB.Off || h.KB.AttachmentDaysBySource != nil || h.Assistant.CompleteAgentlessTodos || h.Assistant.AutoApproveReversibleSettings {
+	if h := none.over(fromHub); h.OwnerNotes != "the hub's notes" || h.Models.JudgeAI.Model != "old" || h.KB == nil || h.KB.Off || h.KB.AttachmentDaysBySource != nil || h.Assistant.CompleteAgentlessTodos || h.Assistant.AutoApproveReversibleSettings {
 		t.Fatalf("empty %+v", h)
 	}
 	// A machine the hub doesn't have keeps the hub's default.

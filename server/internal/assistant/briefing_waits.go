@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -86,9 +87,13 @@ func (s *Service) setBriefingWaits(ctx context.Context, raw json.RawMessage) (*o
 		after = *next
 	}
 	beforeRaw := reversibleSettingJSON(saved.BriefingWaits)
-	// Preserve the old effective-value no-op unless the administrator switch is restoring raw unset state. In that
-	// case an explicitly stored default must still be cleared even though the effective thresholds do not change.
-	if reflect.DeepEqual(before, after) && (next != nil || !s.hello(ctx).Assistant.AutoApproveReversibleSettings || saved.BriefingWaits == nil) {
+	// Switch-off preserves the legacy effective-value no-op. Switch-on compares raw state so unset and an explicitly
+	// saved default remain exactly restorable even when their effective thresholds match.
+	if s.hello(ctx).Assistant.AutoApproveReversibleSettings {
+		if bytes.Equal(beforeRaw, reversibleSettingJSON(next)) {
+			return &ownChange{summary: "assistant.briefing_waits is unchanged"}, nil
+		}
+	} else if reflect.DeepEqual(before, after) {
 		return &ownChange{summary: "assistant.briefing_waits is unchanged"}, nil
 	}
 	if s.store() == nil {

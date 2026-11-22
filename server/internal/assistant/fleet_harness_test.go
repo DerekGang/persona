@@ -329,6 +329,7 @@ type fleetMem struct {
 	resolvedInsertErr     error
 	resolvedInsertGate    chan struct{}
 	resolvedInsertStarted chan struct{}
+	resolvedOutcomeErr    error
 }
 
 func newFleetMem() *fleetMem {
@@ -380,6 +381,38 @@ func (m *fleetMem) InsertResolvedInteraction(ctx context.Context, ix proto.Inter
 	m.status[ix.ID], m.res[ix.ID] = "resolved", res
 	m.recs = append(m.recs, db.InteractionRecord{Interaction: ix, Status: "resolved", Resolution: res, ResolvedAt: &now})
 	return nil
+}
+
+func (m *fleetMem) MarkResolvedInteractionOutcome(_ context.Context, id string, created time.Time, outcome string, _ time.Time) error {
+	m.fmu.Lock()
+	defer m.fmu.Unlock()
+	if m.resolvedOutcomeErr != nil {
+		return m.resolvedOutcomeErr
+	}
+	if outcome != "saved" && outcome != "not_saved" {
+		return errors.New("unknown resolved-interaction outcome")
+	}
+	if m.status[id] != "resolved" {
+		return errors.New("resolved-interaction outcome was not recorded")
+	}
+	for i := range m.recs {
+		if m.recs[i].Interaction.ID != id || !m.recs[i].Interaction.CreatedAt.Equal(created) {
+			continue
+		}
+		var input map[string]json.RawMessage
+		if err := json.Unmarshal(m.recs[i].Interaction.ToolInput, &input); err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(outcome)
+		input["outcome"] = raw
+		updated, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		m.recs[i].Interaction.ToolInput = updated
+		return nil
+	}
+	return errors.New("resolved-interaction outcome was not recorded")
 }
 
 func (m *fleetMem) MarkInteractionResumable(_ context.Context, id string) (bool, error) {

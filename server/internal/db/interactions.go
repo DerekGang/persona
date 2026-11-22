@@ -46,6 +46,31 @@ func (d *DB) InsertResolvedInteraction(ctx context.Context, ix proto.Interaction
 	return err
 }
 
+// MarkResolvedInteractionOutcome records the result of an operation whose skipped-card decision was inserted before
+// its write. A saved outcome also enters the existing automatic-authorization count. If this update fails, the original
+// attempted outcome remains, which is deliberately an unknown result rather than a false success or failure.
+func (d *DB) MarkResolvedInteractionOutcome(ctx context.Context, id string, created time.Time, outcome string, at time.Time) error {
+	if outcome != "saved" && outcome != "not_saved" {
+		return errors.New("unknown resolved-interaction outcome")
+	}
+	raw, err := json.Marshal(outcome)
+	if err != nil {
+		return err
+	}
+	tag, err := d.pool.Exec(ctx, `UPDATE interactions
+		SET payload = jsonb_set(payload, '{tool_input,outcome}', $3::jsonb, false),
+		auto_authorized_at = CASE WHEN $4 THEN COALESCE(auto_authorized_at, $5) ELSE auto_authorized_at END
+		WHERE id = $1 AND created_at = $2 AND status = 'resolved'`,
+		id, created, raw, outcome == "saved", at)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("resolved-interaction outcome was not recorded")
+	}
+	return nil
+}
+
 // MarkInteractionResumable records that pending interaction id outlives a restart from now on (its payload's
 // resumable, which ExpireStaleInteractions reads): an ask_user question that let go of its turn and is now waited on by
 // no call (assistant/ask_release.go, #7392). false when id is not pending.

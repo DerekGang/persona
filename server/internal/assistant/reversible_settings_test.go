@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -139,6 +140,79 @@ func reversibleJSONEqual(a, b json.RawMessage) bool {
 	return json.Unmarshal(a, &av) == nil && json.Unmarshal(b, &bv) == nil && reflect.DeepEqual(av, bv)
 }
 
+func putReversibleRaw(t *testing.T, st *fleetMem, tc reversibleSettingCase, raw string) {
+	t.Helper()
+	var saved Settings
+	if raw != `null` {
+		switch tc.key {
+		case "assistant.main_background_folded":
+			var value bool
+			if err := json.Unmarshal([]byte(raw), &value); err != nil {
+				t.Fatal(err)
+			}
+			saved.MainBackgroundFolded = &value
+		case "assistant.recent_task_chats":
+			var value bool
+			if err := json.Unmarshal([]byte(raw), &value); err != nil {
+				t.Fatal(err)
+			}
+			saved.RecentTaskChats = &value
+		case "assistant.briefing_waits":
+			var value BriefingWaits
+			if err := json.Unmarshal([]byte(raw), &value); err != nil {
+				t.Fatal(err)
+			}
+			saved.BriefingWaits = &value
+		default:
+			t.Fatalf("unknown reversible setting %q", tc.key)
+		}
+	}
+	if err := st.PutSetting(context.Background(), settingsKey, saved); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type reversibleRestoreCall struct {
+	Tool        string `json:"tool"`
+	WhileSwitch string `json:"while_switch_enabled"`
+	Arguments   struct {
+		Action string          `json:"action"`
+		Key    string          `json:"key"`
+		Value  json.RawMessage `json:"value"`
+	} `json:"arguments"`
+}
+
+func requireReversibleRestore(t *testing.T, rec db.InteractionRecord) reversibleRestoreCall {
+	t.Helper()
+	var audit struct {
+		Restore json.RawMessage `json:"restore"`
+	}
+	if err := json.Unmarshal(rec.Interaction.ToolInput, &audit); err != nil {
+		t.Fatal(err)
+	}
+	var restore reversibleRestoreCall
+	if err := json.Unmarshal(audit.Restore, &restore); err != nil {
+		t.Fatal(err)
+	}
+	if restore.Tool != "persona_settings" || restore.WhileSwitch != autoApproveReversibleSettingsKey || restore.Arguments.Action != "set" {
+		t.Fatalf("restore call = %+v", restore)
+	}
+	return restore
+}
+
+func requireReversibleOutcome(t *testing.T, rec db.InteractionRecord, want string) {
+	t.Helper()
+	var audit struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal(rec.Interaction.ToolInput, &audit); err != nil {
+		t.Fatal(err)
+	}
+	if audit.Outcome != want {
+		t.Fatalf("history outcome = %q, want %q; record = %+v", audit.Outcome, want, rec)
+	}
+}
+
 func reversibleRecords(st *fleetMem) []db.InteractionRecord {
 	st.fmu.Lock()
 	defer st.fmu.Unlock()
@@ -157,16 +231,38 @@ func TestReversibleSettingCandidatesRequireApprovalByDefault(t *testing.T) {
 	}
 }
 
-func TestReversibleBooleanNullStillRejectedWhenSwitchOff(t *testing.T) {
-	for _, tc := range reversibleSettingCases[:2] {
-		t.Run(tc.key, func(t *testing.T) {
-			s, _ := newReversibleSettingService(t, false)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			r := callReversibleSetting(ctx, s, tc.key, `null`)
-			if !r.IsError || !strings.Contains(reversibleResultText(r), "value must be true or false") {
-				t.Fatalf("switch-off null result = %+v %q", r, reversibleResultText(r))
+func TestReversibleBooleanNullMatchesLegacyWhenSwitchOff(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		setting reversibleSettingCase
+		initial Settings
+		raw     string
+		card    bool
+	}{
+		{name: "main default becomes false", setting: reversibleSettingCases[0], raw: `null`, card: true},
+		{name: "main explicit false is unchanged", setting: reversibleSettingCases[0], initial: Settings{MainBackgroundFolded: ptr(false)}, raw: `false`},
+		{name: "recent default is unchanged", setting: reversibleSettingCases[1], raw: `null`},
+		{name: "recent explicit true becomes false", setting: reversibleSettingCases[1], initial: Settings{RecentTaskChats: ptr(true)}, raw: `true`, card: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, st := newReversibleSettingService(t, false)
+			if err := st.PutSetting(context.Background(), settingsKey, tc.initial); err != nil {
+				t.Fatal(err)
 			}
+			if tc.card {
+				requireReversibleApproval(t, s, tc.setting.key, `null`, false)
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				r := callReversibleSetting(ctx, s, tc.setting.key, `null`)
+				if r.IsError || !strings.Contains(reversibleResultText(r), "unchanged") {
+					t.Fatalf("switch-off legacy null result = %+v %q", r, reversibleResultText(r))
+				}
+				if pending := s.pendingQuestions(); len(pending) != 0 {
+					t.Fatalf("switch-off legacy null left a card: %+v", pending)
+				}
+			}
+			requireReversibleRaw(t, st, tc.setting, tc.raw)
 		})
 	}
 }
@@ -205,20 +301,22 @@ func TestReversibleSettingsAutoApproveRestoreAndAudit(t *testing.T) {
 				t.Fatalf("resolved assistant decision: %+v", rec)
 			}
 			var audit struct {
-				Actor     string          `json:"actor"`
-				Operation string          `json:"operation"`
-				Setting   string          `json:"setting"`
-				Before    json.RawMessage `json:"before"`
-				After     json.RawMessage `json:"after"`
-				Proposal  string          `json:"proposal"`
-				Switch    string          `json:"switch"`
-				Restore   json.RawMessage `json:"restore"`
+				Actor       string          `json:"actor"`
+				Operation   string          `json:"operation"`
+				Setting     string          `json:"setting"`
+				Before      json.RawMessage `json:"before"`
+				After       json.RawMessage `json:"after"`
+				Proposal    string          `json:"proposal"`
+				Outcome     string          `json:"outcome"`
+				CardSkipped bool            `json:"card_skipped"`
+				Switch      string          `json:"switch"`
+				Restore     json.RawMessage `json:"restore"`
 			}
 			if err := json.Unmarshal(rec.Interaction.ToolInput, &audit); err != nil {
 				t.Fatal(err)
 			}
 			if audit.Actor != proto.AnsweredByAssistant || audit.Operation != "persona_settings.set" || audit.Setting != tc.key ||
-				audit.Switch != autoApproveReversibleSettingsKey || audit.Proposal == "" ||
+				audit.Switch != autoApproveReversibleSettingsKey || audit.Proposal == "" || audit.Outcome != "saved" || !audit.CardSkipped ||
 				!reversibleJSONEqual(audit.Before, json.RawMessage(`null`)) || !reversibleJSONEqual(audit.After, json.RawMessage(tc.value)) {
 				t.Fatalf("audit = %+v", audit)
 			}
@@ -238,8 +336,8 @@ func TestReversibleSettingsAutoApproveRestoreAndAudit(t *testing.T) {
 				!reversibleJSONEqual(restore.Arguments.Value, json.RawMessage(`null`)) {
 				t.Fatalf("restore = %+v", restore)
 			}
-			if !strings.Contains(rec.Interaction.Summary, "attempted after this record") {
-				t.Fatalf("history summary claims more than the skipped-card decision: %q", rec.Interaction.Summary)
+			if rec.Interaction.Summary != audit.Proposal {
+				t.Fatalf("history summary = %q, localized proposal = %q", rec.Interaction.Summary, audit.Proposal)
 			}
 
 			r := httptest.NewRequest(http.MethodGet, "/api/v1/interactions/history?kind=permission&machine_id=server&session_id=conv1", nil)
@@ -249,6 +347,12 @@ func TestReversibleSettingsAutoApproveRestoreAndAudit(t *testing.T) {
 			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &answer) != nil || len(answer.Interactions) != 1 ||
 				answer.Interactions[0].Interaction.ID != rec.Interaction.ID || answer.Interactions[0].Status != "resolved" {
 				t.Fatalf("history readback: status %d body %s", w.Code, w.Body.String())
+			}
+			var readbackAudit struct {
+				Outcome string `json:"outcome"`
+			}
+			if err := json.Unmarshal(answer.Interactions[0].Interaction.ToolInput, &readbackAudit); err != nil || readbackAudit.Outcome != "saved" {
+				t.Fatalf("history outcome readback = %+v, %v", readbackAudit, err)
 			}
 
 			requireAutomaticReversibleSet(t, s, tc.key, `null`)
@@ -320,6 +424,54 @@ func TestReversibleNullClearsExplicitDefaults(t *testing.T) {
 	}
 }
 
+func TestReversibleSettingsAuditRestoreRoundTripsRawState(t *testing.T) {
+	defaults := []string{
+		`true`,
+		`false`,
+		`{"stalled_minutes":20,"silent_minutes":120,"orphan_minutes":10,"card_minutes":3,"max_rows":15}`,
+	}
+	for i, setting := range reversibleSettingCases {
+		for _, tc := range []struct {
+			name   string
+			before string
+			after  string
+		}{
+			{name: "explicit default to unset", before: defaults[i], after: `null`},
+			{name: "unset to explicit default", before: `null`, after: defaults[i]},
+			{name: "unset to nondefault", before: `null`, after: setting.value},
+			{name: "nondefault to unset", before: setting.value, after: `null`},
+			{name: "explicit default to nondefault", before: defaults[i], after: setting.value},
+			{name: "nondefault to explicit default", before: setting.value, after: defaults[i]},
+		} {
+			t.Run(setting.key+"/"+tc.name, func(t *testing.T) {
+				s, st := newReversibleSettingService(t, true)
+				putReversibleRaw(t, st, setting, tc.before)
+				requireAutomaticReversibleSet(t, s, setting.key, tc.after)
+				requireReversibleRaw(t, st, setting, tc.after)
+				recs := reversibleRecords(st)
+				if len(recs) != 1 {
+					t.Fatalf("history records = %d, want one", len(recs))
+				}
+				restore := requireReversibleRestore(t, recs[0])
+				if restore.Arguments.Key != setting.key || !reversibleJSONEqual(restore.Arguments.Value, json.RawMessage(tc.before)) {
+					t.Fatalf("restore = %+v, before = %s", restore, tc.before)
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				r := callReversibleSettingAction(ctx, s, restore.Arguments.Action, restore.Arguments.Key, string(restore.Arguments.Value), "conv1")
+				if r.IsError {
+					t.Fatalf("execute audited restore: %s", reversibleResultText(r))
+				}
+				requireReversibleRaw(t, st, setting, tc.before)
+				if got := len(reversibleRecords(st)); got != 2 {
+					t.Fatalf("history records after restore = %d, want two", got)
+				}
+			})
+		}
+	}
+}
+
 func TestAutomaticReversibleSettingRejectsConcurrentEdit(t *testing.T) {
 	s, st := newReversibleSettingService(t, true)
 	st.resolvedInsertGate = make(chan struct{})
@@ -347,6 +499,11 @@ func TestAutomaticReversibleSettingRejectsConcurrentEdit(t *testing.T) {
 		t.Fatal("automatic write did not finish")
 	}
 	requireReversibleRaw(t, st, reversibleSettingCases[0], `true`)
+	recs := reversibleRecords(st)
+	if len(recs) != 1 {
+		t.Fatalf("history records = %d, want one", len(recs))
+	}
+	requireReversibleOutcome(t, recs[0], "not_saved")
 	if pending := s.pendingQuestions(); len(pending) != 0 {
 		t.Fatalf("stale automatic change left a card: %+v", pending)
 	}
@@ -365,7 +522,7 @@ func TestAutomaticReversibleSettingFailsClosedWithoutHistory(t *testing.T) {
 	}
 }
 
-func TestAutomaticReversibleSettingHistoryDoesNotClaimSaveSuccess(t *testing.T) {
+func TestAutomaticReversibleSettingHistoryRecordsSaveFailure(t *testing.T) {
 	s, st := newReversibleSettingService(t, true)
 	st.setFailPut(errors.New("disk full"))
 	r := callReversibleSetting(context.Background(), s, "assistant.recent_task_chats", `true`)
@@ -374,8 +531,43 @@ func TestAutomaticReversibleSettingHistoryDoesNotClaimSaveSuccess(t *testing.T) 
 	}
 	requireReversibleRaw(t, st, reversibleSettingCases[1], `null`)
 	recs := reversibleRecords(st)
-	if len(recs) != 1 || !strings.Contains(recs[0].Interaction.Summary, "attempted after this record") {
+	if len(recs) != 1 {
 		t.Fatalf("history after failed save = %+v", recs)
+	}
+	requireReversibleOutcome(t, recs[0], "not_saved")
+}
+
+func TestAutomaticReversibleSettingLeavesOutcomeUnknownWhenMarkingFails(t *testing.T) {
+	s, st := newReversibleSettingService(t, true)
+	st.resolvedOutcomeErr = errors.New("history outcome unavailable")
+	requireAutomaticReversibleSet(t, s, "assistant.recent_task_chats", `true`)
+	requireReversibleRaw(t, st, reversibleSettingCases[1], `true`)
+	recs := reversibleRecords(st)
+	if len(recs) != 1 {
+		t.Fatalf("history after outcome-marking failure = %+v", recs)
+	}
+	requireReversibleOutcome(t, recs[0], "attempted")
+}
+
+func TestAutomaticReversibleSettingMarksJustMeHistoryPrivate(t *testing.T) {
+	s, st := newReversibleSettingService(t, true)
+	s.justMeSent("server", "conv1")
+	s.justMeStarted("server", "conv1", true, false)
+	if !s.justMeNow("server", "conv1") {
+		t.Fatal("test turn is not marked Just me")
+	}
+	requireAutomaticReversibleSet(t, s, "assistant.recent_task_chats", `true`)
+	recs := reversibleRecords(st)
+	if len(recs) != 1 {
+		t.Fatalf("history records = %d, want one", len(recs))
+	}
+	if !recs[0].Interaction.Private {
+		t.Error("Just me automatic decision is not Private")
+	}
+	// A known non-health directory isolates the Private filter from the unknown-conversation fallback.
+	recs[0].Interaction.Cwd = t.TempDir()
+	if hidden := s.extensionHiddenCards(context.Background(), true, recs); len(hidden) != 1 || !hidden[0] {
+		t.Errorf("extension visibility for Just me decision = %v, want hidden", hidden)
 	}
 }
 
@@ -394,6 +586,31 @@ func TestReversibleSettingAllowlistIsExactAndNotAgentWritable(t *testing.T) {
 		if reversibleSettingAutoApproved(key) {
 			t.Errorf("forwarded or dynamic key %q is auto-approved", key)
 		}
+	}
+}
+
+func TestForwardedSettingKeepsHubApprovalWhenSwitchOn(t *testing.T) {
+	f := newFakeHub().withMachine()
+	f.hello.Assistant.AutoApproveReversibleSettings = true
+	f.answerApp(AppSettings, AppTool, func(json.RawMessage) (any, error) {
+		return proto.TextResult("hub approval card requested", false), nil
+	})
+	st := newFleetMem()
+	s := newServiceOn(t, f, st)
+	r := callReversibleSetting(context.Background(), s, "notifications.low_distraction", `false`)
+	if r.IsError || !strings.Contains(reversibleResultText(r), "hub approval card requested") {
+		t.Fatalf("forwarded setting result = %+v %q", r, reversibleResultText(r))
+	}
+	calls := f.appParams(AppSettings, AppTool)
+	if len(calls) != 1 || calls[0]["name"] != compat.LegacyTool("persona_settings") {
+		t.Fatalf("forwarded hub calls = %+v", calls)
+	}
+	args, ok := calls[0]["arguments"].(map[string]any)
+	if !ok || args["action"] != "set" || args["key"] != "notifications.low_distraction" || args["value"] != false {
+		t.Fatalf("forwarded hub arguments = %+v", calls[0]["arguments"])
+	}
+	if recs := reversibleRecords(st); len(recs) != 0 {
+		t.Fatalf("forwarded hub setting produced assistant auto-approval history: %+v", recs)
 	}
 }
 
