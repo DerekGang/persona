@@ -14,7 +14,7 @@ registerHooks({
     return {format:'module',shortCircuit:true,source:stripTypeScriptTypes(code)};
   }
 });
-const {PhoneMeetingOptions,meetingDefaultTitle}=await import('../entry/src/main/ets/models/PhoneMeetingOptions.ets');
+const {PhoneMeetingOptions,meetingDefaultTitle,meetingPlaceholderVp}=await import('../entry/src/main/ets/models/PhoneMeetingOptions.ets');
 const {MeetingHubAudio,MeetingHubChoice}=await import('../entry/src/main/ets/models/MeetingHubAudio.ets');
 const source=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeWorkspacePage.ets',import.meta.url),'utf8');
 const recording=readFileSync(new URL('../entry/src/main/ets/components/KnowledgeRecordingView.ets',import.meta.url),'utf8');
@@ -117,7 +117,11 @@ test('the title uses the mobile date and minutes for the real locale and only it
   assert.match(meetingDefaultTitle('note',time,'en-US','Meeting','Note'),/Note · Nov 22, 2026 9:09 PM/);
   assert.match(meetingDefaultTitle('meeting',time,'ja-JP','会議','ノート'),/^会議 · .*2026.*11.*22.*21:09/);
   const title=source.slice(source.indexOf('TextInput({text:this.meetingTitle'),source.indexOf(".id('recordings.title')"));
-  assert.match(title,/placeholderFont\(\{size:Tokens.interfaceFontVp\(17,nativeEnvironment.fontScale\)/);
+  assert.match(title,/placeholderFont\(\{size:this.placeholderSize\(\)/);
+  assert.match(title,/onAreaChange[^\n]*recordingTitleWidth=Number\(next.width\)/);
+  assert.equal(meetingPlaceholderVp(326,375,23),'19.2vp');
+  assert.equal(meetingPlaceholderVp(380,335,23),'23vp');
+  assert.ok(parseFloat(meetingPlaceholderVp(258,375,23))*375/23<=246);
   assert.doesNotMatch(title,/\.maxFontScale/);
 });
 

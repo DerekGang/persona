@@ -3,8 +3,16 @@ export interface MeetingInputChoice { readonly id:number;readonly bluetooth:bool
 export function meetingDefaultTitle(kind:string,date:Date,language:string,meeting:string,note:string):string {
   const locale=language || undefined;
   const day=date.toLocaleDateString(locale,{year:'numeric',month:'short',day:'numeric'});
-  const clock=date.toLocaleTimeString(locale,{hour:'numeric',minute:'2-digit'});
+  const cjk=/^(zh|ja)(-|_|$)/i.test(language);
+  const clock=cjk ? String(date.getHours()).padStart(2,'0')+':'+String(date.getMinutes()).padStart(2,'0') :
+    date.toLocaleTimeString(locale,{hour:'numeric',minute:'2-digit'});
   return (kind==='note' ? note : meeting)+' · '+day+' '+clock;
+}
+
+/** Fit the complete date and minutes in the field, whose own native inset differs across phone widths. */
+export function meetingPlaceholderVp(width:number,measured:number,preferred:number):string {
+  const fitted=width>12 && measured>0 ? Math.min(preferred,(width-12)*preferred/measured) : Math.min(16,preferred);
+  return String(Math.max(10,Math.floor(fitted*10)/10))+'vp';
 }
 
 /** The recordings destination owns its draft. An open header menu may only change that same, idle draft. */

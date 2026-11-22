@@ -24,7 +24,7 @@ import { NativeRecording } from '../platform/NativeRecording';
 import { KnowledgeRecordingView } from './KnowledgeRecordingView';
 import { LengthMetrics, UIUtils } from '@kit.ArkUI';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
-import { PhoneMeetingOptions, meetingDefaultTitle } from '../models/PhoneMeetingOptions';
+import { PhoneMeetingOptions, meetingDefaultTitle, meetingPlaceholderVp } from '../models/PhoneMeetingOptions';
 import { PhoneMeetingTranscription } from '../models/PhoneMeetingTranscription';
 import { MeetingHubChoice } from '../models/MeetingHubAudio';
 import { meetingAudioNetwork } from '../platform/MeetingAudioNetwork';
@@ -131,6 +131,14 @@ export struct KnowledgeWorkspacePage {
     menu.bind(this.recording,true,canMark,this.privateMeeting,permitted,(mark:boolean):void=>{
       if (permitted() && this.meetingKind==='meeting' && this.model.features.includes('meeting_conversation')) this.privateMeeting=mark;
     },()=>NativeRecording.meetingLanguages(),()=>NativeRecording.meetingInputs());
+  }
+  @Local recordingTitleWidth:number=0;
+  private placeholderSize():string {
+    const ctx=this.getUIContext(),preferred=17*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17));
+    const width=this.recordingTitleWidth || (nativeEnvironment.windowWidthPx ? ctx.px2vp(nativeEnvironment.windowWidthPx)-62 : 0);
+    const label=this.defaultRecordingTitle(this.meetingKind);
+    const measured=ctx.px2vp(ctx.getMeasureUtils().measureText({textContent:label,fontSize:String(preferred)+'vp',fontWeight:FontWeight.Medium}));
+    return meetingPlaceholderVp(width,measured,preferred);
   }
   private defaultRecordingTitle(kind:string):string {
     return meetingDefaultTitle(kind,new Date(),this.model.language==='default' ? i18n.System.getSystemLanguage() : this.model.language,
@@ -648,7 +656,8 @@ export struct KnowledgeWorkspacePage {
         ListItem() {
           Column({space:12}) {
             TextInput({text:this.meetingTitle,placeholder:this.defaultRecordingTitle(this.meetingKind)})
-              .placeholderFont({size:Tokens.interfaceFontVp(17,nativeEnvironment.fontScale),weight:FontWeight.Medium})
+              .placeholderFont({size:this.placeholderSize(),weight:FontWeight.Medium}).width('100%')
+              .onAreaChange((_:Area,next:Area)=>{this.recordingTitleWidth=Number(next.width);})
               .height(this.meetingTitle ? Math.max(42,Math.ceil(24*nativeEnvironment.fontScale)+8) : 46).padding(0).borderRadius(0)
               .backgroundColor(Color.Transparent).onChange((v:string) => { this.meetingTitle=v; this.selectedCalendarEvent=''; }).id('recordings.title')
             Divider().strokeWidth(0.5).color(Colors.divider)
