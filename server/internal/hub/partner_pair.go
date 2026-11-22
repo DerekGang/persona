@@ -1,0 +1,470 @@
+package hub
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/apierr"
+	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/lazyre"
+)
+
+// Pairing two partner hubs (docs/server/partner-hubs.md "Pairing"): hub B makes a one-time code good for 10 minutes
+// (Settings, `personad hub partner code`), a link carrying B's addresses, hub_id and key pin; only B needs TLS, it is
+// the one dialed. Hub A, given the code, connects to B pinned to that key, hands over a credential it issued for B
+// (and its own pin and https addresses, if it has them), and gets B's credential for A in return. A dials B; B dials A
+// only when A gave a pin and an address. A credential of kind and role partner opens /api/v1/partner/link and nothing
+// else; only its hash is kept. Pairing never touches the mesh: a hub that is a mesh member, or a mesh peer of the
+// other, refuses.
+
+// partnerCode is a pairing code as the apps show it.
+type partnerCode struct {
+	Code      string    `json:"code"` // persona://partner?…
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// partnerInfo is what each side tells the other when pairing.
+type partnerInfo struct {
+	HubID     string   `json:"hub_id"`
+	Name      string   `json:"name"`
+	Version   string   `json:"version,omitempty"`
+	FP        string   `json:"fp,omitempty"`
+	TLSPort   int      `json:"tls_port,omitempty"`
+	Endpoints []string `json:"endpoints,omitempty"` // https only
+	Token     string   `json:"token"`               // the credential the sender issued to the other hub
+}
+
+func (h *Hub) selfPartnerInfo() partnerInfo {
+	port, fp := h.tlsPin()
+	info := partnerInfo{HubID: h.hubID(), Name: h.hubName(), Version: h.version, FP: fp, TLSPort: port}
+	if fp == "" {
+		return info // no TLS: nothing to dial here
+	}
+	for _, e := range h.endpointList() {
+		if e.Scheme == "https" {
+			info.Endpoints = append(info.Endpoints, e.URL)
+		}
+	}
+	return info
+}
+
+// canIssue: this hub can hand out a code: it has a TLS key and an https address to be dialed at.
+func (info partnerInfo) canIssue() bool {
+	return info.TLSPort != 0 && info.FP != "" && len(info.Endpoints) > 0
+}
+
+// partnerError is a pairing's refusal as the apps get it: a status, a code they can act on, the text.
+type partnerError struct {
+	status int
+	code   string
+	err    error
+}
+
+func (e *partnerError) Error() string           { return e.err.Error() }
+func (e *partnerError) Unwrap() error           { return e.err }
+func (e *partnerError) Text(l i18n.Lang) string { return i18n.Localize(e.err, l) }
+
+func partnerRefusal(status int, code, key string, args ...i18n.Args) error {
+	return &partnerError{status: status, code: code, err: i18n.Err(key, args...)}
+}
+
+var (
+	errPartnersOff     = partnerRefusal(http.StatusForbidden, "partners_off", "hub-partner_pair.partners_off")
+	errPartnerMember   = partnerRefusal(http.StatusConflict, "member_hub", "hub-partner_pair.member_hub")
+	errPartnerNoTLS    = partnerRefusal(http.StatusConflict, "no_tls", "hub-partner_pair.no_tls")
+	errPartnerOwnCode  = partnerRefusal(http.StatusConflict, "own_code", "hub-partner_pair.own_code")
+	errPartnerLinked   = partnerRefusal(http.StatusConflict, "already_linked", "hub-partner_pair.already_linked")
+	errPartnerPin      = partnerRefusal(http.StatusConflict, "pin_changed", "hub-partner_pair.pin_changed")
+	errPartnerNoStore  = partnerRefusal(http.StatusServiceUnavailable, "no_database", "hub-partner_pair.no_database")
+	errPartnerNotFound = partnerRefusal(http.StatusNotFound, "not_found", "hub-partner_pair.not_found")
+)
+
+// partnersReady refuses what this hub cannot pair as now: partner hubs off, no store, a mesh member.
+func (h *Hub) partnersReady() error {
+	switch {
+	case h.cfg == nil || !h.cfg.Partners.enabled():
+		return errPartnersOff
+	case h.partnerStore() == nil || h.store == nil:
+		return errPartnerNoStore
+	case h.isMember():
+		return errPartnerMember
+	}
+	return nil
+}
+
+// partnerSecret is a code's secret: jh_ and 64 lowercase hex digits.
+var partnerSecret = lazyre.New(`^jh_[0-9a-f]{64}$`)
+
+// newPartnerCode makes a pairing code for this hub (the expired ones are pruned meanwhile).
+func (h *Hub) newPartnerCode(ctx context.Context) (*partnerCode, error) {
+	if err := h.partnersReady(); err != nil {
+		return nil, err
+	}
+	info := h.selfPartnerInfo()
+	if !info.canIssue() {
+		return nil, errPartnerNoTLS
+	}
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		return nil, err
+	}
+	code := "jh_" + hex.EncodeToString(secret[:])
+	now := time.Now().UTC()
+	st := h.partnerStore()
+	if err := st.PrunePartnerCodes(ctx, now); err != nil {
+		h.logf("partners: prune codes: %v", err)
+	}
+	expires := now.Add(partnerCodeLife)
+	if err := st.CreatePartnerCode(ctx, hashToken(code), expires); err != nil {
+		return nil, err
+	}
+	q := url.Values{"hub": {info.HubID}, "name": {info.Name}, "fp": {info.FP}, "tls": {strconv.Itoa(info.TLSPort)}, "code": {code}}
+	for _, e := range info.Endpoints[:min(len(info.Endpoints), 6)] {
+		q.Add("url", e)
+	}
+	return &partnerCode{Code: "persona://partner?" + q.Encode(), ExpiresAt: expires}, nil
+}
+
+type parsedPartnerCode struct {
+	hubID, name, fp, secret string
+	endpoints               []string
+}
+
+func parsePartnerCode(raw string) (*parsedPartnerCode, error) {
+	bad := func(key string) error { return partnerRefusal(http.StatusBadRequest, "bad_code", key) }
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "persona" || u.Host != "partner" {
+		return nil, bad("hub-partner_pair.not_a_code")
+	}
+	q := u.Query()
+	p := &parsedPartnerCode{hubID: q.Get("hub"), name: q.Get("name"), fp: q.Get("fp"), secret: q.Get("code")}
+	if p.hubID == "" || p.fp == "" || !partnerSecret.MatchString(p.secret) {
+		return nil, bad("hub-partner_pair.incomplete")
+	}
+	if p.endpoints = partnerHTTPS(q["url"]); len(p.endpoints) == 0 {
+		return nil, bad("hub-partner_pair.no_address")
+	}
+	return p, nil
+}
+
+// partnerHTTPS are the https candidates of eps, ranked and without duplicates: a partner is only ever dialed over TLS.
+func partnerHTTPS(eps []string) []string {
+	return slices.DeleteFunc(rankEndpoints(eps), func(e string) bool { return !strings.HasPrefix(e, "https://") })
+}
+
+// partnerCredName is what Settings › Devices shows for the credential issued to a partner.
+func (h *Hub) partnerCredName(name, hubID string) string {
+	if name = clip(oneLine(name), 60); name == "" {
+		name = shortID(hubID)
+	}
+	return i18n.T(h.userLang(), "hub-partner_pair.credential_name", i18n.Args{"name": name})
+}
+
+// joinPartner pairs this hub with the hub whose code it was given (this hub is A, the one that dials).
+func (h *Hub) joinPartner(ctx context.Context, raw string) (*db.PartnerHub, error) {
+	code, err := parsePartnerCode(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.partnersReady(); err != nil {
+		return nil, err
+	}
+	me := h.selfPartnerInfo()
+	switch old, had := h.partnerRow(code.hubID); {
+	case code.hubID == me.HubID:
+		return nil, errPartnerOwnCode
+	case h.meshPeer(code.hubID):
+		return nil, errPartnerLinked
+	case had && old.FP != "" && old.FP != code.fp:
+		return nil, errPartnerPin
+	}
+	tok := "jd_" + randomHex(24)
+	cred := db.DeviceToken{ID: "dev_" + randomHex(6), Name: h.partnerCredName(code.name, code.hubID), Kind: rolePartner, Role: rolePartner,
+		MachineID: code.hubID}
+	if err := h.store.CreateDeviceToken(ctx, cred, hashToken(tok)); err != nil {
+		return nil, err
+	}
+	me.Token = tok
+	body, _ := json.Marshal(me)
+	lang := h.contextLang(ctx)
+	got, err := h.partnerPost(ctx, code.fp, code.endpoints, code.secret, body, lang)
+	if err == nil && got.HubID != code.hubID {
+		err = partnerRefusal(http.StatusBadGateway, "wrong_hub", "hub-partner_pair.wrong_hub",
+			i18n.Args{"got": strconv.Quote(got.HubID), "want": strconv.Quote(code.hubID)})
+	}
+	if err != nil {
+		_, _ = h.store.RevokeDeviceToken(context.WithoutCancel(ctx), cred.ID)
+		return nil, err
+	}
+	sealed, err := h.sealKey(got.Token)
+	if err != nil {
+		_, _ = h.store.RevokeDeviceToken(context.WithoutCancel(ctx), cred.ID)
+		return nil, err
+	}
+	name := clip(oneLine(cmp.Or(strings.TrimSpace(got.Name), code.name)), 64)
+	p := db.PartnerHub{HubID: got.HubID, Name: name, FP: code.fp, Endpoints: partnerHTTPS(slices.Concat(code.endpoints, got.Endpoints)),
+		Token: sealed, CredentialID: cred.ID, Dial: assistantwire.PartnerDialAuto, CreatedAt: time.Now().UTC()}
+	if err := h.savePartner(ctx, p); err != nil {
+		_, _ = h.store.RevokeDeviceToken(context.WithoutCancel(ctx), cred.ID)
+		return nil, err
+	}
+	h.logf("partners: paired with %q (%s)", p.Name, p.HubID)
+	return &p, nil
+}
+
+// partnerPost is the pairing request to the code's hub: through the same proxy-aware pinned dial as the link
+// (partner_proxy.go), every candidate raced. A refusal keeps the other hub's code and status; 401 (the code is
+// unknown, used or expired) is said in this hub's words.
+func (h *Hub) partnerPost(ctx context.Context, fp string, eps []string, secret string, body []byte, lang i18n.Lang) (partnerInfo, error) {
+	cands, err := h.partnerCandidates(eps)
+	if err != nil {
+		return partnerInfo{}, &partnerError{status: http.StatusBadGateway, code: "unreachable", err: err}
+	}
+	got, _, err := raceEndpoints(ctx, partnerKeys(cands), func(ctx context.Context, key string) (partnerInfo, error) {
+		c := partnerCandidateOf(cands, key)
+		client := h.partnerClient(fp, c.via)
+		defer client.CloseIdleConnections()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+partnerPairPath, bytes.NewReader(body))
+		if err != nil {
+			return partnerInfo{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+secret)
+		req.Header.Set("Content-Type", "application/json")
+		if lang != "" {
+			req.Header.Set("Accept-Language", string(lang)) // its refusal in this hub's user's words
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return partnerInfo{}, c.failed(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		if resp.StatusCode != http.StatusOK {
+			return partnerInfo{}, partnerAnswered(resp.StatusCode, b)
+		}
+		var out partnerInfo
+		if err := json.Unmarshal(b, &out); err != nil || !strings.HasPrefix(out.Token, "jd_") {
+			return partnerInfo{}, partnerRefusal(http.StatusBadGateway, "no_credentials", "hub-partner_pair.no_credentials")
+		}
+		return out, nil
+	}, func(partnerInfo) {})
+	if err != nil {
+		var pe *partnerError // the other hub answered: its word, not every candidate's
+		if errors.As(err, &pe) {
+			return partnerInfo{}, pe
+		}
+		return partnerInfo{}, &partnerError{status: http.StatusBadGateway, code: "unreachable", err: &partnerDialError{err}}
+	}
+	return got, nil
+}
+
+// partnerAnswered is the code's hub refusing: 401 is the code (in this hub's words), a 4xx its own code and words,
+// anything else that it could not pair.
+func partnerAnswered(status int, b []byte) error {
+	var refusal struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal(b, &refusal)
+	why := apierr.Reason(b) // the other hub's cause, not the summary it localized it into (#5728)
+	if why == "" {
+		why = http.StatusText(status)
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		return partnerRefusal(http.StatusUnauthorized, "code_refused", "hub-partner_pair.code_invalid")
+	case status >= 400 && status < 500 && refusal.Code != "":
+		return &partnerError{status: http.StatusConflict, code: refusal.Code, err: i18n.Err("hub-partner_pair.refused", i18n.Args{"err": why})}
+	}
+	return &partnerError{status: http.StatusBadGateway, code: "refused", err: i18n.Err("hub-partner_pair.refused", i18n.Args{"err": why})}
+}
+
+// savePartner keeps a new pairing (replacing an earlier one with the same hub, whose credential is revoked) and starts
+// dialing it.
+func (h *Hub) savePartner(ctx context.Context, p db.PartnerHub) error {
+	old, had := h.partnerRow(p.HubID)
+	if err := h.partnerStore().SavePartnerHub(ctx, p); err != nil {
+		return err
+	}
+	if had && old.CredentialID != "" && old.CredentialID != p.CredentialID {
+		if _, err := h.store.RevokeDeviceToken(ctx, old.CredentialID); err != nil {
+			h.logf("partners: revoke the old credential of %s: %v", p.HubID, err)
+		}
+		h.forgetToken(old.CredentialID)
+		h.closePartnerLinksOf(old.CredentialID)
+	}
+	h.partnerSaved(p)
+	return nil
+}
+
+// partnerSaved puts a pairing into the running state: the old link (other credentials) goes, the dialer starts.
+func (h *Hub) partnerSaved(p db.PartnerHub) {
+	ps := &h.partners
+	ps.mu.Lock()
+	if ps.rows == nil {
+		ps.rows = map[string]db.PartnerHub{}
+	}
+	if old, had := ps.rows[p.HubID]; had && p.SeenAt == nil {
+		p.SeenAt = old.SeenAt
+	}
+	ps.rows[p.HubID] = p
+	delete(ps.dial, p.HubID)
+	old := ps.links[p.HubID]
+	ps.mu.Unlock()
+	if old != nil {
+		old.close(partnerCloseDuplicate, "paired again")
+	}
+	h.stopPartnerDialer(p.HubID) // a dialer of the old pairing has its credential
+	h.startPartnerDialer(p.HubID)
+	h.partnersChanged()
+}
+
+// meshPeer: hubID is a mesh peer of this hub (paired as linked hubs): it cannot be a partner too.
+func (h *Hub) meshPeer(hubID string) bool {
+	_, ok := h.pairedWith(hubID)
+	return ok
+}
+
+// servePartnerPair is POST /api/v1/partner/pair: another hub (A) brings this hub's code (this hub is B).
+func (h *Hub) servePartnerPair(w http.ResponseWriter, r *http.Request) {
+	p := principalOf(r.Context())
+	if p.Role != rolePartnerPair || p.PairHash == "" {
+		writeErr(w, http.StatusForbidden, errors.New("pairing partner hubs needs a partner pairing code"))
+		return
+	}
+	if r.TLS == nil {
+		h.securityError(w, r, http.StatusForbidden, "tls_required", 0)
+		return
+	}
+	if err := h.partnersReady(); err != nil {
+		writePartnerErr(w, err)
+		return
+	}
+	var req partnerInfo
+	if err := decodeJSONBody(w, r, &req, 64<<10); err != nil {
+		writeBodyErr(w, err, err)
+		return
+	}
+	me := h.selfPartnerInfo()
+	if req.HubID == "" || req.HubID == me.HubID || !strings.HasPrefix(req.Token, "jd_") {
+		writeErr(w, http.StatusBadRequest, errors.New("hub_id and token are required, and the hub_id must be another hub's"))
+		return
+	}
+	old, had := h.partnerRow(req.HubID)
+	switch {
+	case h.meshPeer(req.HubID):
+		writePartnerErr(w, errPartnerLinked)
+		return
+	case had && old.FP != "" && old.FP != req.FP:
+		// Whoever holds a code must not take over a partner's place by claiming its hub_id.
+		writePartnerErr(w, errPartnerPin)
+		return
+	}
+	sealed, err := h.sealKey(req.Token)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	eps := partnerHTTPS(req.Endpoints)
+	dial := assistantwire.PartnerDialNever // it dials this hub; this one dials back only where it can
+	if req.FP != "" && len(eps) > 0 {
+		dial = assistantwire.PartnerDialAuto
+	}
+	tok := "jd_" + randomHex(24)
+	cred := db.DeviceToken{ID: "dev_" + randomHex(6), Name: h.partnerCredName(req.Name, req.HubID), Kind: rolePartner, Role: rolePartner,
+		MachineID: req.HubID}
+	row := db.PartnerHub{HubID: req.HubID, Name: clip(oneLine(req.Name), 64), FP: req.FP, Endpoints: eps, Token: sealed,
+		CredentialID: cred.ID, Dial: dial, CreatedAt: time.Now().UTC()}
+	ok, err := h.partnerStore().RedeemPartnerCode(r.Context(), p.PairHash, row, cred, hashToken(tok))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		h.securityError(w, r, http.StatusUnauthorized, "", 0)
+		return
+	}
+	if had && old.CredentialID != cred.ID { // revoked with the redemption
+		h.forgetToken(old.CredentialID)
+		h.closePartnerLinksOf(old.CredentialID)
+	}
+	h.partnerSaved(row)
+	h.logf("partners: paired with %q (%s), dial %s", row.Name, row.HubID, dial)
+	me.Token = tok
+	writeJSON(w, me)
+}
+
+// unpairPartner ends a pairing from this side: the other hub told over the link (when it is up), the pairing
+// forgotten, the dialing stopped, the credential this hub issued revoked, the link closed (4012).
+func (h *Hub) unpairPartner(ctx context.Context, hubID string, tell bool) (bool, error) {
+	row, ok := h.partnerRow(hubID)
+	if !ok {
+		return false, nil
+	}
+	if tell {
+		if l := h.partnerLinkTo(hubID); l != nil {
+			cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			_ = l.rpc.Call(cctx, "unpair", map[string]any{}, nil)
+			cancel()
+		}
+	}
+	if st := h.partnerStore(); st != nil {
+		if _, err := st.DeletePartnerHub(ctx, hubID); err != nil {
+			return false, err
+		}
+	}
+	ps := &h.partners
+	ps.mu.Lock()
+	delete(ps.rows, hubID)
+	delete(ps.dial, hubID)
+	delete(ps.heard, hubID)
+	l := ps.links[hubID]
+	ps.mu.Unlock()
+	h.stopPartnerDialer(hubID)
+	if row.CredentialID != "" && h.store != nil {
+		if _, err := h.store.RevokeDeviceToken(ctx, row.CredentialID); err != nil {
+			h.logf("partners: revoke the credential of %s: %v", hubID, err)
+		}
+		h.forgetToken(row.CredentialID)
+	}
+	if l != nil {
+		l.close(partnerCloseUnpaired, "unpaired")
+	}
+	h.partnersChanged()
+	h.logf("partners: unpaired %q (%s)", row.Name, hubID)
+	return true, nil
+}
+
+// partnerUnpaired: the partner ended the pairing; this side forgets it too.
+func (h *Hub) partnerUnpaired(hubID string) {
+	if _, err := h.unpairPartner(context.Background(), hubID, false); err != nil {
+		h.logf("partners: %s unpaired this hub: %v", hubID, err)
+	}
+}
+
+// partnerPairPrincipal is the principal of a partner pairing code (jh_…), valid until used or expired.
+func (h *Hub) partnerPairPrincipal(ctx context.Context, tok string) (principal, bool) {
+	st := h.partnerStore()
+	if st == nil || !partnerSecret.MatchString(tok) {
+		return principal{}, false
+	}
+	hash := hashToken(tok)
+	ok, err := st.PartnerCodeValid(ctx, hash)
+	if err != nil || !ok {
+		return principal{}, false
+	}
+	return principal{ID: "partnerpair_" + hash[:12], Role: rolePartnerPair, PairHash: hash}, true
+}
