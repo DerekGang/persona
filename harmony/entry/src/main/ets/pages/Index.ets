@@ -1230,7 +1230,7 @@ struct Index {
           if (this.managerLine(row)) Text(this.managerLine(row)).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      }.width('100%').constraintSize({ minHeight: 44 })
+      }.width('100%').constraintSize({ minHeight: this.drawerMetric(44) })
     }.padding(0).backgroundColor(Color.Transparent).layoutWeight(1)
       .accessibilityText([tr('phone_switch_assistant'), row.title || row.id, this.managerLine(row)].filter((s: string) => !!s).join(' · '))
       .bindMenu(this.drawerManagerMenu(this.model.scope()),{backgroundColor:Colors.surface,backgroundBlurStyle:BlurStyle.NONE}).id('spaces.assistant_switcher')
@@ -1248,16 +1248,25 @@ struct Index {
       inboxTier(row.data()) === 'action' && !Wire.bool(row.data(),'read')).length;
     return this.model.phoneTodoBadge();
   }
+  private drawerMetric(points: number): number {
+    return this.wide() ? points : PhoneStyle.sidebarMetric(points,this.environment.fontScale);
+  }
+  @Builder drawerDivider() {
+    ListItem() {
+      Divider().color(Colors.divider).strokeWidth(Tokens.divider)
+        .margin({left:12,right:12,top:this.wide() ? 4 : 8,bottom:this.wide() ? 6 : 8})
+    }
+  }
   @Builder spaceRow(kind: string) {
     if (this.matchesDrawer(this.spaceTitle(kind))) ListItem() {
       Row({ space: 16 }) {
-        SymbolGlyph(this.spaceSymbol(kind)).fontSize('20vp').fontColor([Colors.ink]).width(24)
-        Text(this.spaceTitle(kind)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
+        SymbolGlyph(this.spaceSymbol(kind)).fontSize(String(this.drawerMetric(this.wide() ? 20 : 22))+'vp').fontColor([Colors.ink]).width(this.drawerMetric(24))
+        Text(this.spaceTitle(kind)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
         if ((kind === 'inbox' || kind === 'todo') && this.placeCount(kind) > 0) {
           Text(String(this.placeCount(kind))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
             .fontColor(Colors.link).id('spaces.count.' + kind)
         }
-      }.padding({left:12,right:12,top:5,bottom:5}).constraintSize({minHeight:44}).width('100%')
+      }.padding({left:12,right:12,top:4,bottom:4}).constraintSize({minHeight:this.drawerMetric(44)}).width('100%')
     }.borderRadius(10).backgroundColor(this.activeModule() === kind ? Colors.control : Color.Transparent)
       .selectable(true).selected(this.activeModule() === kind).onClick(() => { if (this.drawerAcceptsTap()) this.openSpace(kind); }).id('spaces.' + kind)
   }
@@ -1267,9 +1276,9 @@ struct Index {
         Row({ space: 8 }) {
           if (this.drawerManager) this.assistantHeading(this.drawerManager)
           else Text(tr('persona')).fontSize(27).maxFontScale(Tokens.interfaceScaleFor(27)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
-          PhoneIconButton({symbol: $r('sys.symbol.magnifyingglass'), label:tr('search'), identity:'spaces.search_toggle',
+          PhoneIconButton({symbol: $r('sys.symbol.magnifyingglass'), label:tr('search'), identity:'spaces.search_toggle', controlDiameter:this.drawerMetric(46),
             action:() => { if (this.drawerAcceptsTap()) { this.drawerSearch = ''; this.drawerSearching = true; } }})
-        }.width('100%').constraintSize({minHeight:56}).padding({left:16,right:12,top:6,bottom:4})
+        }.width('100%').padding({left:24,right:24,top:8,bottom:8})
       }
       if (!this.wide() && this.drawerSearching) {
         PhoneConversationSearch({model:this.model,inline:true,showScopes:this.mergedPhone() || this.model.section === 1 || this.model.section === 4,
@@ -1277,7 +1286,7 @@ struct Index {
       } else {
       List() {
         this.spaceRow('persona')
-        ListItem() { Divider().color(Colors.divider).strokeWidth(0.5).margin({left:12,right:12,top:4,bottom:6}) }
+        this.drawerDivider()
         if (this.wide() || this.mergedPhone()) {
           this.spaceRow('agents')
           this.spaceRow('projects')
@@ -1290,6 +1299,7 @@ struct Index {
         this.spaceRow('health')
         if (this.applications.visible) this.spaceRow('applications')
         this.spaceRow('devices')
+        if (!this.wide()) this.drawerDivider()
         if (this.wide()) this.spaceRow('settings')
         if (this.directionRowBindings.length) ListItem() {
           Text(tr('phone_sidebar_directions')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
@@ -1302,14 +1312,14 @@ struct Index {
           Row() {
             Text(tr('phone_drawer_recent')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary).layoutWeight(1)
             SymbolGlyph(this.recentExpanded ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-          }.width('100%').constraintSize({minHeight:44}).padding({left:13,right:14,top:6,bottom:4}).onClick(() => { if (this.drawerAcceptsTap()) this.recentExpanded = !this.recentExpanded; }).id('spaces.recent')
+          }.width('100%').constraintSize({minHeight:this.wide() ? 44 : PhoneStyle.formSize(35.7,43,this.environment.fontScale)}).padding({left:12,right:12,top:this.wide() ? 6 : 16,bottom:4}).onClick(() => { if (this.drawerAcceptsTap()) this.recentExpanded = !this.recentExpanded; }).id('spaces.recent')
         }
         if (this.recentExpanded || this.drawerSearch) ForEach(this.conversationRowBindings, (binding: BoundRow<ResourceRow>) => {
           this.drawerChat(binding,'spaces.recent.')
         }, (binding: BoundRow<ResourceRow>) => binding.key)
         ListItem() {
           Row() { Text(tr('flow_all_chats')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1); SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary]) }
-            .width('100%').height(44).padding({left:13,right:14})
+            .width('100%').constraintSize({minHeight:this.drawerMetric(44)}).padding({left:12,right:12})
         }.onClick(() => { if (this.drawerAcceptsTap()) this.showAllChats(false); }).id('spaces.all_chats')
         if (this.mergedPhone() && this.drawerAgentRows.length) {
           ListItem() {
@@ -1333,7 +1343,7 @@ struct Index {
         }
         if (this.wide() || this.mergedPhone()) this.spaceRow('hub')
         if (this.wide() && !this.rail()) this.spaceRow('collapse')
-      }.width('100%').layoutWeight(1).padding({left:5,right:5})
+      }.width('100%').layoutWeight(1).padding({left:this.wide() ? 5 : 8,right:this.wide() ? 5 : 8})
       }
       if (!this.wide()) {
         Row({space:8}) {
@@ -1342,16 +1352,16 @@ struct Index {
               SymbolGlyph(Symbols.edit).fontSize('16vp').fontColor([Colors.onAction])
               Text(tr('phone_new_chat_title')).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.onAction)
             }
-          }.constraintSize({minHeight:Tokens.touch}).padding({left:14,right:14}).backgroundColor(Colors.action).accessibilityText(tr('phone_new_chat_title'))
+          }.height(this.drawerMetric(46)).padding({left:24,right:24}).backgroundColor(Colors.action).accessibilityText(tr('phone_new_chat_title'))
             .onClick(() => { if (!this.drawerAcceptsTap()) return; this.spacesShown = false; if (this.model.section !== 0) this.changeSection(0); this.newConversation(); }).id('spaces.new')
           Blank().layoutWeight(1)
-          PhoneIconButton({symbol:Symbols.gear,label:tr('settings'),identity:'spaces.settings',action:() => { if (this.drawerAcceptsTap()) this.openSpace('settings'); }})
+          PhoneIconButton({symbol:Symbols.gear,label:tr('settings'),identity:'spaces.settings',controlDiameter:this.drawerMetric(46),action:() => { if (this.drawerAcceptsTap()) this.openSpace('settings'); }})
             .bindSheet($$this.phoneSettingsShown, this.phoneSettings(), {height: this.compactFormHeight(),showClose:false,dragBar:false,backgroundColor:Colors.grouped,
               onWillDismiss:(dismiss:DismissSheetAction) => {
                 if (dismiss.reason === DismissReason.PRESS_BACK && this.phoneSettingsPage) this.phoneSettingsPage = '';
                 else dismiss.dismiss();
               }})
-        }.width('100%').padding({left:16,right:14,top:6})
+        }.width('100%').padding({left:24,right:24,top:12,bottom:6})
       }
     }.width('100%').height('100%').padding({bottom:this.spacesInset + 12}).backgroundColor(Colors.surface)
       .id('shell.spaces.content').onAreaChange(() => this.measureSpaces())
@@ -1452,7 +1462,7 @@ struct Index {
         ListItem() {
           Text(sidebarConversationTitle(binding.value,tr)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
             .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-            .width('100%').constraintSize({minHeight:44}).padding({left:13,right:14})
+            .width('100%').constraintSize({minHeight:this.drawerMetric(44)}).padding({left:12,right:12})
         }.accessibilityGroup(true).accessibilityText(sidebarConversationLabel(binding.value,this.sidebarTaskHistory.known(this.model.scope()),
           this.model.language === 'default' ? i18n.System.getSystemLanguage() : this.model.language,Date.now(),tr))
           .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)

@@ -56,6 +56,22 @@ const {AgentLaunchChoices,providerStartModes,launchModelName,recentLaunchDirecto
 const {ProjectWorktree}=await import('../entry/src/main/ets/models/ProjectCatalog.ets');
 const {ResourceRow,Wire}=await import('../entry/src/main/ets/models/Wire.ets');
 
+test('compact sidebar rows, glyphs and their hit targets share the interface scale', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/design/PhoneStyle.ets',import.meta.url),'utf8');
+  const metric=source.match(/static sidebarMetric\([^]*?\{ (return [^}]+) \}/)[1];
+  const measure=new Function('points','scale',metric);
+  assert.equal(measure(44,1),44);
+  assert.equal(measure(44,1.2),52.8);
+  assert.ok(Math.abs(measure(44,3.2)-57.85)<0.01);
+  assert.ok(Math.abs(measure(46,3.2)-60.5)<0.1);
+  const shell=readFileSync(new URL('../entry/src/main/ets/pages/Index.ets',import.meta.url),'utf8');
+  const places=shell.slice(shell.indexOf('@Builder spaceRow(kind:'),shell.indexOf('  private measureSpaces'));
+  assert.match(places,/this\.spaceRow\('persona'\)\s+this\.drawerDivider\(\)/);
+  assert.match(places,/this\.spaceRow\('devices'\)\s+if \(!this\.wide\(\)\) this\.drawerDivider\(\)/);
+  assert.match(places,/SymbolGlyph\(this\.spaceSymbol\(kind\)\)[^\n]*this\.drawerMetric\(24\)/);
+  assert.ok(places.includes('constraintSize({minHeight:this.drawerMetric(44)})'));
+});
+
 test('drawer roots and drill-downs leave always exactly one leading action',()=>{
   assert.equal(phonePlaceAtRoot(4,[],false),true);assert.equal(phonePlaceAtRoot(4,['project'],false),false);
   assert.equal(phonePlaceAtRoot(0,['conversation'],true),true);assert.equal(phonePlaceAtRoot(0,['conversation'],false),false);

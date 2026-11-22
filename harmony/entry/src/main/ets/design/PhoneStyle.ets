@@ -16,6 +16,8 @@ export class PhoneStyle {
     const progress = Math.max(0, Math.min(1, (scale - 1) / (Tokens.interfaceFontMaxScale - 1)));
     return regular + (largest - regular) * progress;
   }
+  // The compact sidebar uses the capped body metric for both symbols and touch targets.
+  static sidebarMetric(points: number, scale: number): number { return points * Math.min(scale,57.85/44); }
   static groupedRowHeight(scale: number): number { return PhoneStyle.formSize(52, 59, scale); }
 
 }
