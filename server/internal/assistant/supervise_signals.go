@@ -80,6 +80,7 @@ var (
 // superviseSignal is one thing about one task the supervisor should know. Key names the stretch of state it is about:
 // the same signal with the same key is told once.
 type superviseSignal struct {
+	WorkerSet       string `json:"worker_set,omitempty"` // accepted child generation of an orphaned leader
 	Todo, Kind, Key string
 	// PendingPredecessors: keys of earlier stretches of this id replaced before their delivery or queue acknowledgment.
 	// An ACK removes exactly its own Key; a still-present predecessor's dedup reservation is not delivery proof.

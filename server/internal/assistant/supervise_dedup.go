@@ -28,7 +28,7 @@ type superviseFingerprint struct {
 }
 
 func digestFingerprint(e prompts.SuperviseEntry, g superviseSignal) (string, string) {
-	if g.Kind == sigTodoReady {
+	if g.Kind == sigTodoReady || g.Kind == sigOrphaned && g.WorkerSet != "" {
 		// One durable wake per dependent to-do and canonical after-prerequisite set, independent of restarts or sweeps.
 		key, _ := json.Marshal([]string{g.Todo, g.Kind})
 		sum := sha256.Sum256([]byte(g.Key))

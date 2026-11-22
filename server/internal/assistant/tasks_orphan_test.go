@@ -423,3 +423,34 @@ func TestOrphanWaitsForAReconnectedNodeToListItsAgents(t *testing.T) {
 		t.Fatalf("still not listed a reconnect window later: %+v %v", g, ok)
 	}
 }
+
+func TestAcceptedWorkersRearmOrphanedLeader(t *testing.T) {
+	now := time.Now().UTC()
+	root := &Todo{ID: "root"}
+	a := &Todo{ID: "a", PartOf: "root", DoneAt: &now, Supervision: &Supervision{State: reviewAccepted}}
+	b := &Todo{ID: "b", Agents: []TodoAgent{{Source: sourceWorker, Via: "root"}}, Supervision: &Supervision{State: reviewAccepted}}
+	todos := map[string]*Todo{"root": root, "a": a, "b": b}
+	key := func() string { return completedWorkerSets(todos)["root"].key() }
+	if key() != "" {
+		t.Fatal("woke before last worker finished")
+	}
+	b.DoneAt = &now
+	first := key()
+	if first == "" || first != key() {
+		t.Fatal("accepted worker generation was not stable")
+	}
+	b.Supervision.State = reviewCancelled
+	if key() != "" {
+		t.Fatal("cancellation counted as acceptance")
+	}
+	b.Supervision.State = reviewAccepted
+	later := now.Add(time.Minute)
+	b.DoneAt = &later
+	if key() == first {
+		t.Fatal("new acceptance did not rearm the wake")
+	}
+	root.DoneAt = &now
+	if key() != "" {
+		t.Fatal("completed parent generated a wake")
+	}
+}
