@@ -358,6 +358,41 @@ func TestPartnerNoProxy(t *testing.T) {
 	}
 }
 
+// The candidates: each address directly first (LAN, IPv6, names, IPv4), then through the proxy (LAN last); with
+// proxy_always the proxied ones alone; http:// never; loopback and NO_PROXY never through the proxy.
+func TestPartnerCandidates(t *testing.T) {
+	t.Setenv("NO_PROXY", "skip.example.com")
+	h := &Hub{cfg: &Config{Partners: PartnersConfig{Proxy: "http://proxy.example.com:3128"}}}
+	eps := []string{"https://hub.example.com:443", "https://[fd00::10]:18662", "http://192.0.2.5:18660", "https://127.0.0.1:18662",
+		"https://skip.example.com"}
+	keys := func() []string {
+		t.Helper()
+		cands, err := h.partnerCandidates(eps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return partnerKeys(cands)
+	}
+	want := []string{"https://[fd00::10]:18662", "https://127.0.0.1:18662", "https://hub.example.com:443", "https://skip.example.com",
+		"https://hub.example.com:443 via proxy", "https://[fd00::10]:18662 via proxy"}
+	if got := keys(); !slices.Equal(got, want) {
+		t.Errorf("candidates %v, want %v", got, want)
+	}
+	h.cfg.Partners.ProxyAlways = true
+	if got := keys(); !slices.Equal(got, want[4:]) {
+		t.Errorf("proxy_always: %v, want %v", got, want[4:])
+	}
+	h.cfg.Partners.Proxy = "off"
+	if _, err := h.partnerCandidates(eps); err != errPartnerProxyNone {
+		t.Errorf("proxy_always with the proxy off: %v", err)
+	}
+	h.cfg.Partners = PartnersConfig{Proxy: "off"}
+	t.Setenv("HTTPS_PROXY", "http://proxy.example.com:3128")
+	if got := keys(); len(got) != 4 || slices.ContainsFunc(got, func(k string) bool { return strings.Contains(k, "proxy") }) {
+		t.Errorf("off, with a proxy in the environment: %v", got)
+	}
+}
+
 // What partners.proxy reads, and how it is shown: credentials never.
 func TestParsePartnerProxy(t *testing.T) {
 	for raw, want := range map[string]string{
