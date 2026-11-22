@@ -113,6 +113,9 @@ def valid_duration(value):
 
 def process_snapshot(rows):
     entries = []
+    frontend_candidates = []
+    candidate_truncated = False
+    seen_candidates = set()
     for row in rows:
         pid, ppid, cpu, rss, elapsed, cpu_time, start, command = row
         # ps does not quote argv. Prefer the executable token, while retaining
@@ -128,6 +131,13 @@ def process_snapshot(rows):
             entry.update({"cpu_seconds": cpu_time, "elapsed_seconds": elapsed,
                           "process_start": start, "process_start_status": "known" if start is not None else "uncertain",
                           **swift_frontend_identity(command)})
+            key = (pid, start)
+            if key not in seen_candidates:
+                if len(frontend_candidates) < MAX_FRONTEND_LIFETIMES:
+                    frontend_candidates.append(entry)
+                    seen_candidates.add(key)
+                else:
+                    candidate_truncated = True
         entries.append(entry)
     entries.sort(key=lambda entry: entry["rss_kib"], reverse=True)
     counts = {}
@@ -135,7 +145,8 @@ def process_snapshot(rows):
         counts[entry["name"]] = counts.get(entry["name"], 0) + 1
     largest = entries[:MAX_PROCESSES]
     return {"counts": counts, "total_rss_kib": sum(entry["rss_kib"] for entry in entries),
-            "largest": largest}
+            "largest": largest, "frontend_candidates": frontend_candidates,
+            "candidate_truncated": candidate_truncated}
 
 
 def process_start(value):
@@ -194,14 +205,18 @@ def process_output(command, with_start, popen=subprocess.Popen):
                          + (rb"\s+(.{24})" if with_start else b"")
                          + rb"\s+(\S+)(?:\s+(.*))?$")
     summary = process_snapshot([])
+    candidates = []
+    candidate_keys = set()
     pending = bytearray()
     truncated = False
     saw_output = False
     valid_rows = 0
+    output_lines = 0
     invalid_compiler_durations = False
 
     def consume(raw):
-        nonlocal valid_rows, invalid_compiler_durations
+        nonlocal valid_rows, output_lines, invalid_compiler_durations
+        output_lines += 1
         match = pattern.match(raw)
         if not match:
             return
@@ -235,6 +250,13 @@ def process_output(command, with_start, popen=subprocess.Popen):
                           "process_start": start,
                           "process_start_status": "known" if start is not None else "uncertain",
                           **identity})
+            key = (entry["pid"], start)
+            if key not in candidate_keys:
+                if len(candidates) < MAX_FRONTEND_LIFETIMES:
+                    candidates.append(entry)
+                    candidate_keys.add(key)
+                else:
+                    summary["candidate_truncated"] = True
         summary["counts"][name] = summary["counts"].get(name, 0) + 1
         summary["total_rss_kib"] += entry["rss_kib"]
         summary["largest"].append(entry)
@@ -277,7 +299,8 @@ def process_output(command, with_start, popen=subprocess.Popen):
         if code:
             return {"command": selected, "unavailable": "process-command-failed"}
         return {"command": selected, "exit": 0, "summary": summary,
-                "saw_output": saw_output, "valid_rows": valid_rows,
+                "frontend_candidates": candidates,
+                "saw_output": saw_output, "valid_rows": valid_rows, "output_lines": output_lines,
                 "invalid_compiler_durations": invalid_compiler_durations}
     except (OSError, subprocess.SubprocessError) as error:
         return {"command": selected, "unavailable": type(error).__name__}
@@ -294,15 +317,19 @@ def stream_processes(popen):
     def usable(result):
         if result.get("exit") != 0 or result["invalid_compiler_durations"]:
             return False
-        return not result["saw_output"] or result["valid_rows"]
+        return not result["saw_output"] or result["valid_rows"] == result["output_lines"]
 
     def unavailable(result):
         reason = result.get("unavailable", "invalid-process-output")
-        return process_snapshot([]) | {"unavailable": reason, "process_start_status": "uncertain"}
+        candidates = [] if result.get("exit") != 0 else result.get("frontend_candidates", [])
+        candidate_truncated = result.get("summary", {}).get("candidate_truncated", False)
+        return {"counts": {}, "total_rss_kib": 0, "largest": [], "frontend_candidates": candidates,
+                "candidate_truncated": candidate_truncated, "unavailable": reason,
+                "process_start_status": "uncertain"}
 
     result = process_output(["ps", "-axo"], True, popen)
     if usable(result):
-        return result["summary"]
+        return result["summary"] | {"frontend_candidates": result["frontend_candidates"]}
     if result.get("unavailable") not in (None, "process-command-failed"):
         return unavailable(result)
     if result.get("invalid_compiler_durations"):
@@ -310,7 +337,10 @@ def stream_processes(popen):
     result = process_output(["ps", "-axo"], False, popen)
     if result.get("invalid_compiler_durations"):
         result["unavailable"] = "invalid-process-duration"
-    return result["summary"] if usable(result) else unavailable(result)
+        result["frontend_candidates"] = []
+    if usable(result):
+        return result["summary"] | {"frontend_candidates": result["frontend_candidates"]}
+    return unavailable(result)
 
 
 def processes(runner=subprocess.run, *, popen=None):
@@ -320,20 +350,35 @@ def processes(runner=subprocess.run, *, popen=None):
     command = ["ps", "-axo", "pid=,ppid=,%cpu=,rss=,etime=,time=,lstart=,args="]
     result = output(command, runner=runner)
     with_start = result.get("exit") == 0
+    output_lines = len(result.get("stdout", "").splitlines())
     rows, invalid_durations, valid_rows = (_process_rows_with_status(result.get("stdout", ""), True)
                                           if with_start else ([], False, 0))
     unavailable = result.get("unavailable")
-    if with_start and result.get("stdout", "").strip() and (not valid_rows or invalid_durations):
-        # A successful but demonstrably legacy-shaped response can be retried;
-        # invalid lstart output is not silently converted to valid evidence.
-        legacy_rows, legacy_invalid_durations, _ = _process_rows_with_status(result.get("stdout", ""), False)
-        if legacy_rows and not legacy_invalid_durations and process_snapshot(legacy_rows)["counts"]:
-            rows = legacy_rows
-            with_start = False
+    if with_start and result.get("stdout", "").strip() and (valid_rows != output_lines or invalid_durations):
+        rows = []
+        if invalid_durations:
+            unavailable = "invalid-process-duration"
         else:
-            unavailable = "invalid-process-duration" if invalid_durations else "invalid-process-output"
-            rows = []
-    if not with_start and "unavailable" not in result:
+            # A successful lstart response with any missing or invalid start
+            # needs fresh no-start evidence, not a partial known identity set.
+            command = ["ps", "-axo", "pid=,ppid=,%cpu=,rss=,etime=,time=,args="]
+            result = output(command, runner=runner)
+            with_start = False
+            if result.get("exit") != 0:
+                unavailable = result.get("unavailable", "process-command-failed")
+                result["unavailable"] = unavailable
+            else:
+                rows, invalid_durations, valid_rows = _process_rows_with_status(result.get("stdout", ""), False)
+                if invalid_durations:
+                    unavailable = "invalid-process-duration"
+                    rows = []
+                elif result.get("stdout", "").strip() and not valid_rows:
+                    unavailable = "invalid-process-output"
+                if unavailable:
+                    rows = []
+            if unavailable:
+                result["unavailable"] = unavailable
+    elif not with_start and "unavailable" not in result and not unavailable:
         if result.get("exit", 0) != 0:
             unavailable = "process-command-failed"
         else:
@@ -348,6 +393,8 @@ def processes(runner=subprocess.run, *, popen=None):
                     unavailable = "invalid-process-duration"
                 elif result.get("stdout", "").strip() and not rows:
                     unavailable = "invalid-process-output"
+                if unavailable:
+                    rows = []
     summary = process_snapshot(rows)
     if unavailable:
         summary.update({"counts": {}, "total_rss_kib": 0, "largest": [],
@@ -525,7 +572,7 @@ def write_json(destination, label, record):
 
 
 def sample(destination, label, runner=subprocess.run, *, final=False, derived_data=None,
-           frontend_history=None, monotonic=time.monotonic):
+           frontend_history=None, monotonic=time.monotonic, popen=None):
     if final:
         # Publish accumulated evidence before any slow collector. If the normal
         # stop drain reaps this observer, the bounded history already exists.
@@ -537,9 +584,13 @@ def sample(destination, label, runner=subprocess.run, *, final=False, derived_da
     memory = output(["memory_pressure"], runner=runner)
     pages = output(["vm_stat"], runner=runner)
     swap = output(["sysctl", "vm.swapusage"], runner=runner)
-    process = processes(runner)
+    process = processes(runner, popen=popen)
+    candidates = process.pop("frontend_candidates")
+    candidate_truncated = process.pop("candidate_truncated")
     if frontend_history is not None:
-        track_frontends(frontend_history, process["largest"], monotonic())
+        track_frontends(frontend_history, candidates, monotonic())
+        if candidate_truncated:
+            frontend_history["truncated"] = True
     # Keep only the evidence needed to compare resource pressure over time. Full
     # pressure/process logs make a 30-minute build produce tens of megabytes.
     record = {"captured_at": datetime.now(timezone.utc).isoformat(),

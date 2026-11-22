@@ -108,7 +108,7 @@ class CompilerResourceTests(unittest.TestCase):
             return legacy(command, **kwargs)
         parsed = watch.processes(popen=legacy_popen)
         self.assertEqual(len(calls), 2)
-        self.assertNotIn("lstart=", calls[1][2])
+        self.assertFalse(any("lstart=" in field for field in calls[1][2]))
         self.assertNotIn("unavailable", parsed)
         self.assertIsNone(parsed["largest"][0]["process_start"])
         self.assertEqual(parsed["largest"][0]["process_start_status"], "uncertain")
@@ -195,7 +195,139 @@ class CompilerResourceTests(unittest.TestCase):
                 output = without_start
             return subprocess.CompletedProcess(command, 0, output, "")
         parsed = watch.processes(partial_legacy)
-        self.assertEqual(len(legacy_calls), 1)
+        self.assertEqual(len(legacy_calls), 2)
+        self.assertFalse(any("lstart=" in field for field in legacy_calls[1]))
+        self.assertNotIn("unavailable", parsed)
+        frontend = parsed["largest"][0]
+        self.assertIsNone(frontend["process_start"])
+        self.assertEqual(frontend["process_start_status"], "uncertain")
+        self.assertEqual(frontend["primary_source"], "Example.swift")
+        self.assertEqual(frontend["cpu_seconds"], 1.5)
+        history = {(42, "Sun Nov 22 10:00:00 2026"): watch.new_lifetime(self.frontend(), 85.0)}
+        watch.track_frontends(history, parsed["frontend_candidates"], 100.0)
+        self.assertEqual(set(history), {(42, "Sun Nov 22 10:00:00 2026"), (42, None)})
+        self.assertEqual(history[(42, None)]["continuity"], "uncertain")
+        self.assertIsNone(history[(42, None)]["process_start"])
+        watch.track_frontends(history, parsed["frontend_candidates"], 115.0)
+        self.assertEqual(history[(42, None)]["sample_count"], 2)
+        self.assertEqual(history[(42, None)]["continuity"], "uncertain")
+        self.assertEqual(history[(42, "Sun Nov 22 10:00:00 2026")]["sample_count"], 1)
+
+        failed_legacy_calls = []
+        def failed_legacy(command, **kwargs):
+            failed_legacy_calls.append(command)
+            if "lstart=" not in command[2]:
+                return subprocess.CompletedProcess(command, 1, "", "ps failed")
+            return subprocess.CompletedProcess(command, 0, "incomplete row", "")
+        parsed = watch.processes(failed_legacy)
+        self.assertEqual(len(failed_legacy_calls), 2)
+        self.assertEqual(parsed["unavailable"], "process-command-failed")
+        self.assertEqual(parsed["process_start_status"], "uncertain")
+        self.assertEqual(parsed["largest"], [])
+        self.assertEqual(parsed["frontend_candidates"], [])
+
+    def test_process_snapshot_keeps_all_frontend_candidates_outside_largest(self):
+        rows = [(pid, 2, "90.0", 9000 - pid, 5.0, 1.5,
+                 "Sun Nov 22 10:00:00 2026", "/Toolchain/swift-frontend -module-name Example")
+                for pid in range(1, 11)]
+        summary = watch.process_snapshot(rows)
+        self.assertEqual(len(summary["largest"]), watch.MAX_PROCESSES)
+        self.assertEqual(len(summary["frontend_candidates"]), 10)
+        history = {}
+        watch.track_frontends(history, summary["frontend_candidates"], 100.0)
+        self.assertEqual(len(history), 10)
+        self.assertEqual(watch.final_frontend_history(history)["status"], "complete")
+
+    def test_frontend_candidate_and_history_capacity_is_explicitly_truncated(self):
+        for collector in ("rows", "stream"):
+            with self.subTest(collector=collector):
+                rows = [(pid, 2, "90.0", 1000, 5.0, 1.5,
+                         "Sun Nov 22 10:00:00 2026", "/Toolchain/swift-frontend -module-name Example")
+                        for pid in range(1, watch.MAX_FRONTEND_LIFETIMES + 3)]
+                if collector == "rows":
+                    summary = watch.process_snapshot(rows)
+                else:
+                    text = "\n".join(
+                        f"{pid} 2 90.0 1000 00:05 00:01.50 Sun Nov 22 10:00:00 2026 "
+                        "swift-frontend /Toolchain/swift-frontend -module-name Example"
+                        for pid in range(1, watch.MAX_FRONTEND_LIFETIMES + 3))
+                    summary = watch.processes(popen=self.pipe_fixture(f"print({text!r})"))
+                self.assertEqual(len(summary["frontend_candidates"]), watch.MAX_FRONTEND_LIFETIMES)
+                self.assertTrue(summary["candidate_truncated"])
+                with tempfile.TemporaryDirectory() as directory:
+                    history = {}
+                    def fake_output(command, **kwargs):
+                        return subprocess.CompletedProcess(command, 0, "", "")
+                    def fake_processes(*args, **kwargs):
+                        return dict(summary)
+                    with mock.patch.object(watch, "processes", side_effect=fake_processes):
+                        record = watch.sample(Path(directory), "final", runner=fake_output, final=True,
+                                              frontend_history=history, monotonic=lambda: 100.0)
+                    final = record["swift_frontend_lifetimes"]
+                    self.assertEqual(final["status"], "truncated")
+                    self.assertLessEqual(len(final["records"]), watch.MAX_FINAL_FRONTEND_RECORDS)
+                    self.assertGreaterEqual(final["omitted_records"], 1)
+                    self.assertNotIn("frontend_candidates", record["processes"])
+                    self.assertNotIn("/Toolchain", (Path(directory) / "final.json").read_text())
+
+    def test_streaming_history_keeps_frontends_beyond_largest(self):
+        rows = "\n".join(
+            f"{pid} 2 90.0 {9000 - pid} 00:05 00:01.50 Sun Nov 22 10:00:00 2026 "
+            "swift-frontend /Toolchain/swift-frontend -module-name Example" for pid in range(1, 11))
+        summary = watch.processes(popen=self.pipe_fixture(f"print({rows!r})"))
+        self.assertEqual(len(summary["largest"]), watch.MAX_PROCESSES)
+        history = {}
+        watch.track_frontends(history, summary["frontend_candidates"], 100.0)
+        self.assertEqual(len(history), 10)
+
+    def test_sample_tracks_all_candidates_without_serializing_them(self):
+        rows = "\n".join(
+            f"{pid} 2 90.0 {9000 - pid} 00:05 00:01.50 Sun Nov 22 10:00:00 2026 "
+            "swift-frontend /Toolchain/swift-frontend -module-name Example" for pid in range(1, 11))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def fake_output(command, **kwargs):
+                if command == ["memory_pressure"]:
+                    return subprocess.CompletedProcess(command, 0, "System-wide memory free percentage: 50%", "")
+                if command == ["vm_stat"]:
+                    return subprocess.CompletedProcess(command, 0, "Pages occupied by compressor: 0.", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+            history = {}
+            record = watch.sample(root, "sample", runner=fake_output, frontend_history=history,
+                                  monotonic=lambda: 100.0, popen=self.pipe_fixture(f"print({rows!r})"))
+            self.assertEqual(len(record["processes"]["largest"]), watch.MAX_PROCESSES)
+            self.assertEqual(len(history), 10)
+            self.assertNotIn("frontend_candidates", record["processes"])
+            self.assertNotIn("candidate_truncated", record["processes"])
+            self.assertNotIn("/Toolchain", (root / "sample.json").read_text())
+
+    def test_partial_lstart_identity_falls_back_for_both_collectors(self):
+        mixed = ("42 2 90.0 6000 00:05 00:01.50 Sun Nov 22 10:00:00 2026 "
+                 "swift-frontend /Toolchain/swift-frontend -module-name Example\n"
+                 "1 0 0.0 100 10:00 00:00.01 launchd /sbin/launchd\n")
+        stream_calls = []
+        def mixed_stream(command, **kwargs):
+            stream_calls.append(command)
+            source = f"print({mixed!r}, end='')"
+            if "lstart=" not in command[2]:
+                source = "print('invalid no-start row')"
+            return self.pipe_fixture(source)(command, **kwargs)
+        parsed = watch.processes(popen=mixed_stream)
+        self.assertEqual(len(stream_calls), 2)
+        self.assertFalse(any("lstart=" in field for field in stream_calls[1][2]))
+        self.assertEqual(parsed["unavailable"], "invalid-process-output")
+        self.assertEqual(parsed["largest"], [])
+
+        calls = []
+        def partial_legacy(command, **kwargs):
+            calls.append(command)
+            output = mixed
+            if "lstart=" not in command[2]:
+                output = "invalid no-start row\n"
+            return subprocess.CompletedProcess(command, 0, output, "")
+        parsed = watch.processes(partial_legacy)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("lstart=", calls[1])
         self.assertEqual(parsed["unavailable"], "invalid-process-output")
         self.assertEqual(parsed["largest"], [])
 
@@ -234,14 +366,20 @@ class CompilerResourceTests(unittest.TestCase):
         self.assertEqual(frontend["primary_source"], "Example.swift")
         self.assertNotIn("/tmp", json.dumps(parsed))
 
-    def test_lstart_success_with_legacy_output_falls_back_without_process_identity(self):
+    def test_lstart_success_with_legacy_output_does_not_reuse_the_same_listing(self):
         line = "42 2 90.0 10000 01:10 00:02.50 /Toolchain/swift-frontend -module-name Example"
+        calls = []
         def runner(command, **kwargs):
+            calls.append(command)
             return subprocess.CompletedProcess(command, 0, line, "")
-        frontend = watch.processes(runner)["largest"][0]
-        self.assertEqual(frontend["target_module"], "Example")
+        parsed = watch.processes(runner)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(any("lstart=" in field for field in calls[1]))
+        self.assertNotIn("unavailable", parsed)
+        frontend = parsed["largest"][0]
         self.assertIsNone(frontend["process_start"])
         self.assertEqual(frontend["process_start_status"], "uncertain")
+        self.assertEqual(frontend["target_module"], "Example")
 
     def test_process_rows_reject_an_invalid_start_without_guessing_argv(self):
         line = "42 2 90.0 10000 01:10 00:02.50 not a process start time /Toolchain/swift-frontend"
@@ -271,7 +409,8 @@ class CompilerResourceTests(unittest.TestCase):
         parsed = watch.processes(legacy_malformed)
         self.assertEqual(parsed["unavailable"], "invalid-process-output")
         self.assertEqual(parsed["largest"], [])
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(any("lstart=" in field for field in calls[1]))
 
     @staticmethod
     def frontend(pid=42, start="Sun Nov 22 10:00:00 2026", cpu=1.5, elapsed=5.0, source="First.swift"):
@@ -476,6 +615,8 @@ class CompilerResourceTests(unittest.TestCase):
             self.assertEqual(record["memory_free_percent"], "System-wide memory free percentage: 4%")
             self.assertEqual(record["pages_used_by_compressor"], "Pages occupied by compressor: 123456.")
             self.assertNotIn("memory", record)
+            self.assertNotIn("frontend_candidates", record)
+            self.assertNotIn("candidate_truncated", record)
             self.assertLess((root / "sample.json").stat().st_size, 1024)
             self.assertLessEqual(watch.MAX_PERIODIC_SAMPLES, 120)
             self.assertLessEqual(watch.MAX_OUTPUT_BYTES, 64 * 1024)
