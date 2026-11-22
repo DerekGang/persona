@@ -21,7 +21,7 @@ registerHooks({
         .replace(/^import .+;$/gm,'').replace(/@Monitor\([^)]*\)\s*/g,'')
         .replace(/@(ComponentV2|Require|Param|Event|Local)\s*/g,'').replace('export struct','export class')+'\n}';
       const native=new URL('../platform/NativeDictation.ets',url).href;
-      const imports='import {NativeDictation} from '+JSON.stringify(native)+'; const i18n={getSystemLanguage:()=>"zh-CN"};\n';
+      const imports='import {NativeDictation} from '+JSON.stringify(native)+'; const Colors={ink:"#19191d"}; const i18n={getSystemLanguage:()=>"zh-CN"};\n';
       return {format:'module',shortCircuit:true,source:imports+stripTypeScriptTypes(component)};
     }
     if (url.endsWith('/NativeDictation.ets')) return {format:'module',shortCircuit:true,
