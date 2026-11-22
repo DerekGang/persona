@@ -34,6 +34,26 @@ function session(id, extra = {}) {
 }
 const machine = row('machine', { id: 'mac', name: 'Studio', online: true });
 
+test('model labels keep their type size and only tighten tracking for a near-fitting identifier', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const method=source.slice(source.indexOf('  private spaceModelTracking('),source.indexOf('  @Builder spaceModel('));
+  const env={windowWidthPx:1206};
+  const Page=new Function('nativeEnvironment','PhoneStyle','return '+stripTypeScriptTypes('class Page {'+method+'}'))(env,{page:16});
+  const widths=new Map([['provider-small',240],['provider-model-two',474],['provider-model-far-too-long',700]]);
+  const observed=[];
+  const page=Object.assign(new Page(),{narrowOutline:()=>false,spaceCardScale:()=>1,spaceCaptionScale:()=>1.5,
+    getUIContext:()=>({px2vp:px=>px/3,vp2px:vp=>vp*3,getMeasureUtils:()=>({measureText:params=>{
+      observed.push(params.fontSize);
+      return widths.get(params.textContent)+(parseFloat(params.letterSpacing||'0')*3*params.textContent.length);
+    }})})});
+  assert.equal(page.spaceModelTracking('provider-small'),'0vp');
+  const adjustment=parseFloat(page.spaceModelTracking('provider-model-two'));
+  assert.ok(adjustment<0 && adjustment>=-.36);
+  assert.equal(page.spaceModelTracking('provider-model-far-too-long'),'0vp');
+  assert.ok(observed.every(font=>font==='18vp'));
+  page.narrowOutline=()=>true;assert.equal(page.spaceModelTracking('provider-model-two'),'0vp');
+});
+
 test('space card headers reserve the status slot and omit the optional runtime before truncating the tab', () => {
   const src=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
   const methods=src.slice(src.indexOf('  private spaceSlotTitle('),src.indexOf('  @Builder spaceSlot('));

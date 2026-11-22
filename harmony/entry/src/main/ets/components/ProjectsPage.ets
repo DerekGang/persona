@@ -728,16 +728,34 @@ export struct ProjectsPage {
       this.spaceStatus(agent)
     }.width('100%').id('projects.space_slot.'+agent.row.id)
   }
+  private spaceModelTracking(model:string): string {
+    if (!model || !nativeEnvironment.windowWidthPx || this.narrowOutline()) return '0vp';
+    const ui=this.getUIContext(), scale=this.spaceCardScale();
+    const column=(ui.px2vp(nativeEnvironment.windowWidthPx)-2*PhoneStyle.page-12)/2;
+    const available=Math.floor(ui.vp2px(column-24*scale))-1;
+    const points=12*scale*this.spaceCaptionScale(12), font=String(points)+'vp';
+    const metrics=ui.getMeasureUtils(), natural=metrics.measureText({textContent:model,fontSize:font});
+    if (natural<=available) return '0vp';
+    // A small tracking adjustment accommodates differences in native font advances at the same reading size.
+    // Keep genuinely long identifiers at their ordinary spacing and truncate the tail.
+    const limit=points*0.02;
+    const compact=metrics.measureText({textContent:model,fontSize:font,letterSpacing:String(-limit)+'vp'});
+    if (compact>available || compact>=natural) return '0vp';
+    return String(-limit*Math.min(1,(natural-available+1)/(natural-compact)))+'vp';
+  }
   @Builder spaceModel(agent:ProjectAgent,measureOnly:boolean) {
     Text(agent.model).fontSize(12*this.spaceCardScale()).maxFontScale(Tokens.interfaceScaleFor(12))
       .fontColor($r('app.color.project_card_tertiary')).maxLines(this.narrowOutline() ? 3 : 1)
+      .letterSpacing(this.spaceModelTracking(agent.model)).wordBreak(WordBreak.BREAK_ALL)
       .textOverflow({overflow:TextOverflow.Ellipsis}).visibility(measureOnly ? Visibility.Hidden : Visibility.Visible)
       .accessibilityLevel('no').id(measureOnly ? '' : 'projects.space_model.'+agent.row.id)
   }
   @Builder spaceFooter(agent:ProjectAgent) {
     if (agent.model) {
       Row() { this.spaceModel(agent,false) }.width('100%')
-        .padding({left:12*this.spaceCardScale(),right:12*this.spaceCardScale(),bottom:12*this.spaceCardScale()})
+        // GridCol measures this overlay against its inner width, while positioning it at the outer origin.
+        // Recover the two stroke widths so the model has the same visual 12-point inset on both sides.
+        .padding({left:12*this.spaceCardScale(),right:12*this.spaceCardScale()-(agent.state==='needs_you' ? 3 : 1),bottom:12*this.spaceCardScale()})
         .hitTestBehavior(HitTestMode.None)
     }
   }
