@@ -38,7 +38,13 @@ export struct AgentRepositoryRows {
       (group:string,manager:string,machine:string):boolean => this.admits(group,manager,machine));
   }
 
-  build() {
+  // ArkUI keeps a virtual ListItemGroup's children when their scoped keys overlap across filters.
+  // Replace that group when the user's search scope changes; the controls and saved folds live above it.
+  @Computed get filterIdentity(): string {
+    return JSON.stringify([this.workspace.search,this.workspace.quickFilter,this.workspace.machineFilter,this.workspace.currentHubOnly]);
+  }
+
+  @Builder repositoryList() {
     ProjectsPage({ model:this.model, catalog:this.catalog, page:'agent_repositories', agentRepositories:this.visible,
       agentFilterActive:this.workspace.quickFilter !== 'all' || !!this.workspace.search.trim(),
       isMuted:(row:ResourceRow):boolean => this.workspace.isMuted(row),
@@ -50,5 +56,10 @@ export struct AgentRepositoryRows {
       onStart:(tree:ProjectWorktree) => this.onRoute('start',tree.key),
       onChanged:(tree:ProjectWorktree,change:WorktreeChange) => this.onChanged(tree,change),
       onRefresh:() => this.catalog.refresh(this.model) })
+  }
+  build() {
+    ForEach([this.filterIdentity],(identity:string) => {
+      this.repositoryList()
+    },(identity:string):string => identity)
   }
 }
