@@ -37,7 +37,8 @@ export class ProjectAgent {
   tabKey: string = '';
   tabTitle: string = '';
   pane?: SessionSpaceTab;
-  search: string;
+  private searchText: string;
+  private searchFolded: boolean = false;
 
   constructor(row: ResourceRow, data: Record<string, Object>) {
     this.row = row;
@@ -75,9 +76,16 @@ export class ProjectAgent {
       this.tabKey = JSON.stringify([row.group, row.manager, row.machine, Wire.text(data,'space_kind'), space, slot]);
       this.tabTitle = (Wire.text(data,'slot_name') || typeof data['slot_index'] === 'number') ? this.pane.label : slot;
     }
-    this.search = [row.title,this.model,this.runtime,this.tab,this.tabTitle,row.path].join(' ').toLocaleLowerCase();
+    this.searchText = [row.title,this.model,this.runtime,this.tab,this.tabTitle,row.path].join(' ');
   }
 
+  get search(): string {
+    if (!this.searchFolded) {
+      this.searchText = this.searchText.toLocaleLowerCase();
+      this.searchFolded = true;
+    }
+    return this.searchText;
+  }
   get active(): boolean { return this.rank < 8; }
 }
 
@@ -209,6 +217,8 @@ class WorkspaceIndex {
 
 export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[], machines: ResourceRow[]): PersonaProject[] {
   const trees = new Map<string, ProjectWorktree>();
+  const identifiers = new Intl.Collator();
+  const keyOrder = (a: string, b: string): number => a === b ? 0 : identifiers.compare(a, b);
   const computers = new Map<string,ResourceRow>(), hostOrder = new Map<string,number>();
   for (const row of machines) {
     const key = JSON.stringify([row.group,row.manager,row.id]);
@@ -325,7 +335,7 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
       projects.set(projectKey, project);
     }
     if (!parent) project.roots.push(tree);
-    tree.agents.sort((a:ProjectAgent,b:ProjectAgent) => a.rank - b.rank || b.activity - a.activity || a.row.id.localeCompare(b.row.id));
+    tree.agents.sort((a:ProjectAgent,b:ProjectAgent) => a.rank - b.rank || b.activity - a.activity || keyOrder(a.row.id,b.row.id));
     tree.sessions = tree.agents.map((a:ProjectAgent) => a.row);
     tree.activeCount = tree.agents.filter((a:ProjectAgent) => a.active).length; tree.latestPin = tree.pinnedAt;
     project.trees.push(tree); project.sessionCount += tree.agents.length;
@@ -333,7 +343,7 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
     project.pinnedAt = Math.max(project.pinnedAt,tree.pinnedAt);
   }
   const order = (a:ProjectWorktree,b:ProjectWorktree):number => b.latestPin - a.latestPin || a.index - b.index ||
-    Number(b.main) - Number(a.main) || titleOrder(a.title,b.title) || a.key.localeCompare(b.key);
+    Number(b.main) - Number(a.main) || titleOrder(a.title,b.title) || keyOrder(a.key,b.key);
   for (const project of projects.values()) {
     // Fold an idle parent only when all its descendants are idle too.
     for (const tree of project.trees) {
@@ -346,8 +356,8 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
     project.roots.sort(order);
     for (const tree of project.trees) tree.children.sort(order);
   }
-  return Array.from(projects.values()).sort((a:PersonaProject,b:PersonaProject) => a.hostOrder - b.hostOrder || a.hostKey.localeCompare(b.hostKey) ||
-    b.pinnedAt - a.pinnedAt || titleOrder(a.title,b.title) || a.key.localeCompare(b.key));
+  return Array.from(projects.values()).sort((a:PersonaProject,b:PersonaProject) => a.hostOrder - b.hostOrder || keyOrder(a.hostKey,b.hostKey) ||
+    b.pinnedAt - a.pinnedAt || titleOrder(a.title,b.title) || keyOrder(a.key,b.key));
 }
 
 @ObservedV2
@@ -397,10 +407,11 @@ export class ProjectCatalog {
   private createdParents: Map<string, Record<string, Object>[]> = new Map();
   private ownerScope: string = '';
   private sequence: number = 0;
+  private projectedFields: string[] = [];
   private snapshots: Map<string, ResourceRow[]> = new Map();
   private savedSessions: Map<string, ResourceRow[]> = new Map();
   private savedComputers: Map<string, ResourceRow[]> = new Map();
-  clear(): void { this.sequence++; this.ownerScope = ''; this.notice = ''; this.browser.clear(); this.foldsRestored = false; this.createdParents.clear(); this.snapshots.clear(); this.savedSessions.clear(); this.savedComputers.clear(); this.projects = []; this.partial = false; this.startError = false; this.loading = false; }
+  clear(): void { this.sequence++; this.ownerScope = ''; this.projectedFields = []; this.notice = ''; this.browser.clear(); this.foldsRestored = false; this.createdParents.clear(); this.snapshots.clear(); this.savedSessions.clear(); this.savedComputers.clear(); this.projects = []; this.partial = false; this.startError = false; this.loading = false; }
 
   syncRows(model: ClientModel): void {
     if (model.scope() !== this.ownerScope) return;
@@ -415,7 +426,16 @@ export class ProjectCatalog {
       for (const row of this.savedSessions.get(key) || []) if (!known.has(row.key())) { sessions.push(row); known.add(row.key()); }
       for (const row of this.savedComputers.get(key) || []) if (!computers.has(row.key())) { machines.push(row); computers.add(row.key()); }
     }
+    // Refresh, cache restore, and directory notifications can present the same rows with new object identities.
+    // Keep the published tree when the full ordered input still matches, including in-place row and connectivity changes.
+    const fields: string[] = [String(rows.length), String(sessions.length), String(machines.length)];
+    const lanes: ResourceRow[][] = [rows, sessions, machines];
+    for (const lane of lanes) for (const row of lane) {
+      fields.push(row.id, row.kind, row.group, row.manager, row.machine, row.session, row.title, row.detail, row.path, row.state, row.raw);
+    }
+    if (fields.length === this.projectedFields.length && fields.every((field: string, index: number) => field === this.projectedFields[index])) return;
     this.projects = projectDirectory(rows, sessions, machines);
+    this.projectedFields = fields;
   }
   toggleBrowserFold(model:ClientModel,id:string,open:boolean): void {
     if (model.scope() !== this.ownerScope) return;

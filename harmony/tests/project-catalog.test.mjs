@@ -303,6 +303,59 @@ test('cycles in host parent IDs leave every worktree reachable without a loop', 
   assert.equal(result[0].roots.length, 1);
   assert.equal(result[0].roots[0].children[0].children.length, 0);
 });
+test('reconnect retains an unchanged directory projection and incorporates in-place edits, authority and row order', async () => {
+  const tree=workspace('root', {cwd:'/repo',is_main:true});
+  const makeSession=(id,title)=>session(id,{title,workspace_id:'root',space_kind:'orca',status:'working'});
+  const first=makeSession('s1','Original'),second=makeSession('s2','Second');
+  const model={
+    connected:true,sessionsReady:true,profile:{id:'home',manager:'work'},scope:()=>'home/work',
+    directorySessions:[first,second],directoryMachines:[machine],directoryUnavailable:0,
+    directoryOwners(){return [this]},owns:()=>true,connectionGeneration:()=>1,refreshDirectory:async()=>{},
+    loadView:async()=>'',saveView:async()=>{},repo:()=>({call:async()=>({workspaces:[tree.data()]})})
+  };
+  const catalog=new ProjectCatalog();
+  await catalog.refresh(model);
+  const initial=catalog.projects;
+  model.directorySessions=[makeSession('s1','Original'),makeSession('s2','Second')];
+  await catalog.refresh(model);
+  assert.equal(catalog.projects,initial,'refetched equivalent metadata should keep the existing observable tree');
+  model.directorySessions[0].title='Changed on reconnect';
+  catalog.syncRows(model);
+  assert.notEqual(catalog.projects,initial);
+  assert.equal(catalog.projects[0].trees[0].agents.find(a=>a.row.id==='s1').row.title,'Changed on reconnect');
+  const beforeOrder=catalog.projects;
+  model.directorySessions.reverse();
+  catalog.syncRows(model);
+  assert.notEqual(catalog.projects,beforeOrder);
+  const beforeOffline=catalog.projects;
+  model.directoryMachines=[row('machine',{id:'mac',name:'Studio',online:false})];
+  catalog.syncRows(model);
+  assert.notEqual(catalog.projects,beforeOffline);
+  assert.equal(catalog.projects[0].trees[0].startAllowed,false);
+  catalog.clear();
+  assert.equal(catalog.projects.length,0);
+  catalog.syncRows({...model,scope:()=>'other/manager'});
+  assert.equal(catalog.projects.length,0);
+});
+
+test('a closed project search defers locale folding and reuses each folded Agent search key',()=>{
+  const item=session('needle',{title:'İSTANBUL / 大模型 - É',status:'working'});
+  const lower=String.prototype.toLocaleLowerCase;
+  let agentFolds=0;
+  String.prototype.toLocaleLowerCase=function(...args) {
+    if(String(this).includes('İSTANBUL'))agentFolds++;
+    return Reflect.apply(lower,this,args);
+  };
+  try{
+    const projects=projectDirectory([], [item], [machine]);
+    projectOutline(projects,new ProjectBrowserState());
+    assert.equal(agentFolds,0);
+    assert.deepEqual(projectSearchAgents(projects[0],'大模型').map(a=>a.row.id),['needle']);
+    assert.deepEqual(projectSearchAgents(projects[0],'É').map(a=>a.row.id),['needle']);
+    assert.equal(agentFolds,1);
+  } finally {String.prototype.toLocaleLowerCase=lower;}
+});
+
 test('a stale manager reply cannot repopulate a different account', async () => {
   let complete;
   const owner = {
