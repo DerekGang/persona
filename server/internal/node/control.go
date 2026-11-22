@@ -291,7 +291,7 @@ func (n *Node) start(ctx context.Context, cwd, launcher, prompt, resume, workspa
 		if resume != "" {
 			return nil, refusal("work_agent_resume", "这个会话不能用启动器接着：pi 在它原来的标签里继续，cursor 和 agy 请在电脑上恢复。这次没有启动。", nil)
 		}
-		return n.startWorkAgent(ctx, launch, cwd, launcher, work, execution.Model, effort, prompt, ws, tabName)
+		return n.startWorkAgent(ctx, launch, cwd, launcher, work, execution.Model, effort, mode, prompt, ws, tabName)
 	}
 	if kind != "claude" { // start_agent.go
 		if mode != "" || effort != "" {
@@ -478,7 +478,7 @@ func (n *Node) resumeKnown(ctx context.Context, id string) bool {
 }
 
 // resumeOutsideHealth: this computer knows where conversation id started, and every directory it knows it by is
-// outside the health space and the Agent folders kept out of Persona. The hub asks it (session.start's
+// outside every space (identity.InSpace) and the Agent folders kept out of Persona. The hub asks it (session.start's
 // resume_outside_health) for a resume an extension's token names that its computer does not list (#10941): a quiet chat
 // leaves the list after a week, or sooner on a busy computer, and a stopped Agent takes no message, so a resume is the
 // only way back to one the extension started.
@@ -527,7 +527,7 @@ func (n *Node) resumeOutsideHealth(ctx context.Context, id string) bool {
 		}
 	}
 	for _, d := range dirs {
-		if d != "" && (identity.InHealthSpace(d) || n.cwdBlocked(d)) {
+		if d != "" && (identity.InSpace(d) || n.cwdBlocked(d)) {
 			return false
 		}
 	}

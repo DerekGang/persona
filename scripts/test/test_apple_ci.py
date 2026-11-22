@@ -45,8 +45,9 @@ class AppleOfflineUnitSchemeTests(unittest.TestCase):
         self.assertEqual((default['test']['language'], default['test']['region']), ('zh-Hans', 'CN'))
 
     def test_offline_build_and_execution_share_the_unit_only_scheme(self):
-        common = self.script.split('  IOS_COMMON=(', 1)[1].split('\n', 2)[:2]
-        self.assertEqual(common[0], '"${XCODE[@]}" -scheme PersonaOfflineUnitTests -derivedDataPath "$OUTPUT/ios-tests" \\')
+        common = self.script.split('  IOS_COMMON=(', 1)[1].split('\n', 3)[:3]
+        self.assertEqual(common[0], 'xcodebuild -project "$OFFLINE_PROJECT" -configuration Debug \\')
+        self.assertEqual(common[1], '    -clonedSourcePackagesDirPath "$SPM/SourcePackages" -scheme PersonaOfflineUnitTests -derivedDataPath "$OUTPUT/ios-tests" \\')
         self.assertNotIn('-scheme Persona ', ''.join(common))
         for marker in ('"${IOS_UNIT_SELECTION[@]}" build-for-testing',
                        '"${IOS_UNIT_SELECTION[@]}" \\\n    -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building',
@@ -56,6 +57,25 @@ class AppleOfflineUnitSchemeTests(unittest.TestCase):
         self.assertIn('BUILD_SECONDS=1800', self.script)
         self.assertIn('UNIT_SECONDS=1800', self.script)
         self.assertIn("result ios-unit \"$SIM\" TypeScaleTests IconVocabularyTests TokenRatchetTests StyleSpecTests", self.script)
+
+    def test_offline_project_keeps_the_real_host_without_embedded_watch_or_share(self):
+        script = self.script
+        self.assertIn('OFFLINE_PROJECT="$SOURCE/apple/PersonaOfflineUnitTests.xcodeproj"', script)
+        self.assertIn('ci_run \'Generate iPhone-only offline unit-test project\' 120 bash -c', script)
+        self.assertIn('xcodegen dump --spec "$spec" --type json > "$output/Persona.whole.json"', script)
+        self.assertIn('python3 "$3" "$output/Persona.whole.json" "$output/PersonaOfflineUnitTests.json"', script)
+        self.assertIn('ci_run \'Generate offline unit-test Xcode project\' 120 xcodegen generate \\\n'
+                      '    --spec "$OUTPUT/PersonaOfflineUnitTests.json" --project-root "$SOURCE/apple" \\\n'
+                      '    --project "$SOURCE/apple"', script)
+        self.assertLess(script.index('Generate iPhone-only offline unit-test project'),
+                        script.index("ci_run 'Build iOS offline unit tests'"))
+        self.assertIn('IOS_COMMON=(xcodebuild -project "$OFFLINE_PROJECT" -configuration Debug \\\n'
+                      '    -clonedSourcePackagesDirPath "$SPM/SourcePackages" -scheme PersonaOfflineUnitTests', script)
+        self.assertNotIn('PERSONA_LEAN_DEV_BUILD=YES', script)
+        self.assertIn('ci_run \'Generate Apple project\' 120 xcodegen generate --spec "$SOURCE/apple/project.yml" --project "$SOURCE/apple"', script)
+        self.assertIn('ci_run \'Unsigned iOS and embedded watch/extensions build\' 1800 "${XCODE[@]}" -scheme Persona', script)
+        self.assertIn('ci_run \'Generate offline unit-test Xcode project\'', script)
+        self.assertIn('xcodegen dump --spec "$spec"', script)
 
     def test_local_ui_test_entry_keeps_default_scheme_and_ui_target(self):
         ui_test = (ROOT / 'scripts/app/ui-test.sh').read_text()
@@ -206,8 +226,21 @@ class AppleCIPreparationTests(unittest.TestCase):
         self.assertNotIn("ci_run 'Collect regular iPad diagnostic evidence'", script)
         original_script = subprocess.run(['git', 'show', 'af32ff9d9459e4faafbba63cd93b3901bd487534:scripts/ci/apple.sh'], cwd=ROOT,
                                          check=True, capture_output=True, text=True).stdout
+        # The packages lane's PersonaWire tests came later (#12734) and are pinned on their own.
+        wire = script[script.index('  # The wire layer every app target links,'):script.index("  ci_run 'PersonaKit unit tests'")]
+        self.assertIn("ci_run 'PersonaWire unit tests'", wire)
         for lane in ('ios', 'ios-focused', 'ios-regressions'):
-            current = script.replace(' || [ "$LANE" = ios-ipad-diagnostic ]', '').replace('|ios-ipad-diagnostic', '')
+            current = script.replace('      --output "$watch_log" --stop "$watch_log/stop" --seconds "$seconds" \\\n      --derived-data "$output/ios-tests" &',
+                                     '      --output "$watch_log" --stop "$watch_log/stop" --seconds "$seconds" &')
+            offline_generation = script[script.index("  # The same real Persona test host and all of PersonaTests"):
+                                       script.index("  # A generic destination must retain the host's single runnable architecture.")]
+            current = current.replace(offline_generation, '')
+            current = current.replace('OFFLINE_PROJECT="$SOURCE/apple/PersonaOfflineUnitTests.xcodeproj"\n', '')
+            current = current.replace('xcodebuild -project "$OFFLINE_PROJECT" -configuration Debug \\\n'
+                                      '    -clonedSourcePackagesDirPath "$SPM/SourcePackages"',
+                                      '"${XCODE[@]}"')
+            current = current.replace(wire, '')
+            current = current.replace(' || [ "$LANE" = ios-ipad-diagnostic ]', '').replace('|ios-ipad-diagnostic', '')
             current = current.replace('      checker="$1"; bundle="$2"; log="$3"; watch_log="$4"; udid="$5"; ci_root="$6"; bundle_id="$7"; output="$8"; diagnostics="$9"; lane="${10}"; shift 10',
                                       '      checker="$1"; bundle="$2"; log="$3"; watch_log="$4"; udid="$5"; ci_root="$6"; bundle_id="$7"; output="$8"; shift 8')
             current = current.replace('      "$CI_ROOT" "$CI_BUNDLE_ID" "$OUTPUT" "$DIAGNOSTICS" "$LANE" "${IOS_COMMON[@]}" \\',
@@ -215,6 +248,7 @@ class AppleCIPreparationTests(unittest.TestCase):
             current = current.replace('        if [ "$lane" = ios-ipad-diagnostic ]; then\n          timeout --kill-after=5s 180s python3 "$ci_root/scripts/ci/apple_diagnostics.py" \\\n            "$output" "$diagnostics" --scope regular || true\n        fi\n', '')
             current = current.replace('    local scope=all\n    if [ "$LANE" = ios-ipad-diagnostic ]; then\n      scope=regular\n    fi\n', '')
             current = current.replace('      "$OUTPUT" "$DIAGNOSTICS" --scope "$scope"', '      "$OUTPUT" "$DIAGNOSTICS"')
+            current = current.replace('  else\n    # pipefail keeps the bounded command\'s failure status. The existing failure\n    # collector retains this allowlisted console log with its xcresult.\n    ci_run "$@" 2>&1 | tee "$OUTPUT/$name.log"\n  fi\n}', '  else\n    ci_run "$@"\n  fi\n}')
             current = current.replace('    if [ "$LANE" = ios-ipad-diagnostic ]; then\n      # A deliberate app-host diagnostic stops after its own strict probe and\n      # observer cleanup; it neither runs nor substitutes for the visual suite.\n      exit 0\n    fi\n', '')
             self.assertEqual(current, original_script)
 
@@ -379,6 +413,20 @@ class AppleCIPreparationTests(unittest.TestCase):
                     self.assertEqual('ssh-lane-continued' in result.stdout, status == 0)
                     self.assertIn('PASS' if status == 0 else 'FAIL', result.stdout)
 
+    def test_persona_wire_tests_run_with_warnings_as_errors(self):
+        # #12734: -warnings-as-errors on a swift test line also applies to the package's dependencies, so the wire
+        # layer the app targets and later packages build on runs its own tests that way in the packages lane.
+        script = SCRIPT.read_text()
+        packages = script.split('if [ "$LANE" = all ] || [ "$LANE" = ios ] || [ "$LANE" = packages ]; then\n', 1)[1].split('\nfi', 1)[0]
+        commands = [line.strip() for line in packages.splitlines() if "ci_run 'PersonaWire " in line]
+        self.assertEqual(commands, [
+            "ci_run 'PersonaWire unit tests' 300 xcrun swift test --package-path \"$SOURCE/apple/Packages/PersonaWire\" "
+            "--scratch-path \"$SPM/PersonaWire\" -Xswiftc -warnings-as-errors"])
+        sources = ROOT / 'apple/Packages/PersonaWire/Sources/PersonaWire'
+        importing = sorted(f.name for f in sources.glob('*.swift')
+                           if re.search(r'^\s*import\s+PersonaWire\b', f.read_text(encoding='utf-8'), re.M))
+        self.assertEqual(importing, [], 'a file inside PersonaWire imports its own module, a warning (an error in CI)')
+
     def test_existing_integration_exclusions_use_exact_swift_testing_selectors(self):
         script = SCRIPT.read_text()
         block = script.split('IOS_EXCLUSIONS=(', 1)[1].split('\n  )', 1)[0]
@@ -429,7 +477,7 @@ class AppleCIPreparationTests(unittest.TestCase):
         self.assertIn('-derivedDataPath "$OUTPUT/ios-device"', script[device_build:device_check])
         self.assertIn('python3 "$CI_ROOT/scripts/release/check_no_callkit.py" \\\n'
                       '    "$OUTPUT/ios-device/Build/Products/Debug-iphoneos/Persona.app"', script[device_check:simulator_build])
-        self.assertIn('IOS_COMMON=("${XCODE[@]}" -scheme PersonaOfflineUnitTests -derivedDataPath "$OUTPUT/ios-tests"', script)
+        self.assertIn('IOS_COMMON=(xcodebuild -project "$OFFLINE_PROJECT" -configuration Debug \\', script)
         self.assertIn('python3 "$CI_ROOT/scripts/release/check_no_callkit.py" \\\n'
                       '    "$OUTPUT/ios-tests/Build/Products/Debug-iphonesimulator/Persona.app"', script[simulator_check:create])
         guards = (ROOT / 'scripts/ci/guards.sh').read_text()

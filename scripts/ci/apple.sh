@@ -37,6 +37,7 @@ OUTPUT=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/persona-apple-ci.XXXXXX")
 DIAGNOSTICS="${CI_APPLE_DIAGNOSTICS:-$OUTPUT/diagnostics}"
 SOURCE="$OUTPUT/source"
 PROJECT="$SOURCE/apple/Persona.xcodeproj"
+OFFLINE_PROJECT="$SOURCE/apple/PersonaOfflineUnitTests.xcodeproj"
 SPM="${CI_SPM_CACHE:-$HOME/Library/Caches/persona-ci/spm}"
 mkdir -p "$SOURCE" "$SPM"
 SPM=$(cd "$SPM" && pwd)
@@ -159,7 +160,9 @@ test_batch() {
     IOS_LAST_STATUS=0
     ci_run "$@" 2>&1 | tee "$OUTPUT/$name.log" || IOS_LAST_STATUS=$?
   else
-    ci_run "$@"
+    # pipefail keeps the bounded command's failure status. The existing failure
+    # collector retains this allowlisted console log with its xcresult.
+    ci_run "$@" 2>&1 | tee "$OUTPUT/$name.log"
   fi
 }
 
@@ -167,6 +170,9 @@ if [ "$LANE" = all ] || [ "$LANE" = ios ] || [ "$LANE" = packages ]; then
   # Real loopback sshd and mock hub, with temporary keys: exercise tunnel recovery before the app builds (#11671).
   ci_run 'PersonaSSH native tunnel integration tests' 900 env PERSONA_SSH_TRACE="$OUTPUT/native-ssh-trace.log" xcrun swift test --package-path "$SOURCE/apple/Packages/PersonaSSH" --scratch-path "$SPM/PersonaSSH"
   ci_run 'PersonaCore strict-concurrency tests and C-binding fixture replay' 900 xcrun swift test --package-path "$SOURCE/apple/Packages/PersonaCore" --scratch-path "$SPM/PersonaCore" -Xswiftc -warnings-as-errors
+  # The wire layer every app target links, the watch and widgets included (#7895). -warnings-as-errors on the command line
+  # also applies to a package's dependencies, so PersonaWire builds without warnings for the packages built on it (#12734).
+  ci_run 'PersonaWire unit tests' 300 xcrun swift test --package-path "$SOURCE/apple/Packages/PersonaWire" --scratch-path "$SPM/PersonaWire" -Xswiftc -warnings-as-errors
   ci_run 'PersonaKit unit tests' 900 xcrun swift test --package-path "$SOURCE/apple/Packages/PersonaKit" --scratch-path "$SPM/PersonaKit"
   # The live screen's video wire and capture decisions (#3954): PersonaScreenCore, all Persona Link's helper is built from
   # (#7927), and PersonaScreenKit, the iOS app's side on top of it (route session, quality tiers).
@@ -251,7 +257,8 @@ if [ "$LANE" != packages ] && [ "$LANE" != ios-build ]; then
     BUILD_SECONDS=1800
     UNIT_SECONDS=1800
   fi
-  IOS_COMMON=("${XCODE[@]}" -scheme PersonaOfflineUnitTests -derivedDataPath "$OUTPUT/ios-tests" \
+  IOS_COMMON=(xcodebuild -project "$OFFLINE_PROJECT" -configuration Debug \
+    -clonedSourcePackagesDirPath "$SPM/SourcePackages" -scheme PersonaOfflineUnitTests -derivedDataPath "$OUTPUT/ios-tests" \
     -parallel-testing-enabled NO -disableAutomaticPackageResolution "${TEST_SIGNING[@]}")
   # Explicit fixture-only exclusions, not evidence of those integrations passing.
   # Swift Testing method selectors include (); without it disabled integration
@@ -290,6 +297,19 @@ fi
   IOS_UNIT_SELECTION=(-only-testing:PersonaTests/MainPagesStackTests
     -only-testing:PersonaTests/PhoneSystemToolsTests)
 fi
+  # The same real Persona test host and all of PersonaTests, but no second
+  # compilation of the embedded Watch/Share targets already covered by the
+  # device build. Resolve the ordinary project once, then remove only targets
+  # the offline test host cannot reach. The default/UI/About projects are whole.
+  ci_run 'Generate iPhone-only offline unit-test project' 120 bash -c '
+    set -euo pipefail
+    spec="$1"; output="$2"
+    xcodegen dump --spec "$spec" --type json > "$output/Persona.whole.json"
+    python3 "$3" "$output/Persona.whole.json" "$output/PersonaOfflineUnitTests.json"
+  ' -- "$SOURCE/apple/project.yml" "$OUTPUT" "$CI_ROOT/scripts/ci/apple_offline_project.py"
+  ci_run 'Generate offline unit-test Xcode project' 120 xcodegen generate \
+    --spec "$OUTPUT/PersonaOfflineUnitTests.json" --project-root "$SOURCE/apple" \
+    --project "$SOURCE/apple"
   # A generic destination must retain the host's single runnable architecture.
   ci_run 'Build iOS offline unit tests' "$BUILD_SECONDS" bash -c '
     set -euo pipefail
@@ -300,7 +320,8 @@ fi
     mv "$watch_log/final.pending" "$watch_log/final.json"
     printf "%s\n" "observer incomplete; bounded unavailable final evidence only" > "$watch_log/observer.status.txt"
     python3 "$ci_root/scripts/ci/apple_build_watch.py" \
-      --output "$watch_log" --stop "$watch_log/stop" --seconds "$seconds" &
+      --output "$watch_log" --stop "$watch_log/stop" --seconds "$seconds" \
+      --derived-data "$output/ios-tests" &
     watcher=$!
     stop_watcher() {
       local code=$?

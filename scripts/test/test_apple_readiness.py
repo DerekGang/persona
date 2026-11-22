@@ -7,6 +7,8 @@ import subprocess
 import textwrap
 import unittest
 
+import yaml
+
 import test_sim_boot
 from test_sim_boot import FAKE_XCRUN, NEW, PHONE, ROOT, WATCH
 
@@ -197,6 +199,9 @@ class AppleReadinessTests(unittest.TestCase):
         '''))
         python.chmod(0o755)
         for name, body in (("xcodebuild", FAKE_XCODE), ("xcrun", FAKE_XCRUN_WRAPPER),
+                           ("xcodegen", "#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$FAKE/xcodegen-calls\"\n"
+                                       "if [[ \"$*\" == *dump* ]]; then\n  /bin/cat \"$OUTPUT/whole.json\"\n"
+                                       "else\n  printf 'synthetic project generation\\n'\nfi\n"),
                            ("fake-simctl", FAKE_XCRUN), ("otool", FAKE_OTOOL),
                            ("file", "#!/bin/bash\nexit 0\n"), ("codesign", "#!/bin/bash\nexit 0\n")):
             if name == "fake-simctl":
@@ -219,6 +224,13 @@ class AppleReadinessTests(unittest.TestCase):
         self.output = self.root / "output"
         self.output.mkdir()
         (self.output / "config.json").write_text(json.dumps({"app": {"bundle_id": "org.example.persona.ci"}}))
+        whole = yaml.safe_load((ROOT / 'apple/project.yml').read_text())
+        whole.pop('include')
+        whole['targets']['Persona']['dependencies'] = [
+            {'target': 'PersonaWatch'}, {'target': 'PersonaShare'},
+            *whole['targets']['Persona']['dependencies'],
+        ]
+        (self.output / 'whole.json').write_text(json.dumps(whole))
 
     def run_preparation(self, regular_only=False, regression_only=False, **options):
         source = SCRIPT.read_text()
@@ -256,11 +268,13 @@ ci_run() {
   python3 "$CI_ROOT/scripts/ci/run.py" --label "$label" --timeout "$TEST_STEP_TIMEOUT" -- "$@"
 }
 XCODE=(xcodebuild)
+OFFLINE_PROJECT="$SOURCE/apple/PersonaOfflineUnitTests.xcodeproj"
 TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=)
 ''' + helpers + block
         env = dict(os.environ, PATH=str(self.fixture.bin) + os.pathsep + os.environ["PATH"],
                    LANE="ios-regressions" if regression_only else "ios", CI_ROOT=str(ROOT), SOURCE=str(ROOT), OUTPUT=str(self.output),
                    PERSONA_CONFIG=str(self.output / "config.json"), SIM_NAME="owned readiness fixture",
+                   SPM="/fixture/spm",
                    DIAGNOSTICS=str(self.root / "diagnostic-artifacts"),
                    CI_BUNDLE_ID="org.example.persona.ci",
                    IOS_RUNTIME="com.apple.CoreSimulator.SimRuntime.iOS-27-0", OWNED_UDID=owned_udid,
@@ -276,6 +290,7 @@ TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manu
     def test_xcode_probe_replaces_the_hung_bootstatus_and_preserves_full_selection(self):
         result, calls = self.run_preparation()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.root / 'xcodegen-calls').is_file(), 'the real xcodegen dump invocation was not captured')
         self.assertEqual(len(calls), 5)
         self.assertEqual([call[-1] for call in calls], ["build-for-testing"] + ["test-without-building"] * 4)
         selectors = lambda args: [a for a in args if a.startswith(("-only-testing:", "-skip-testing:"))]
@@ -290,6 +305,9 @@ TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manu
             self.assertFalse(any(arg.startswith(("ARCHS=", "ONLY_ACTIVE_ARCH=")) for arg in call))
         for call in calls:
             self.assertEqual(call[call.index("-scheme") + 1], "PersonaOfflineUnitTests")
+            self.assertEqual(call[call.index("-project") + 1], str(ROOT / "apple/PersonaOfflineUnitTests.xcodeproj"))
+            self.assertEqual(call[call.index("-configuration") + 1], "Debug")
+            self.assertEqual(call[call.index("-clonedSourcePackagesDirPath") + 1], "/fixture/spm/SourcePackages")
             self.assertIn("CODE_SIGNING_ALLOWED=YES", call)
             self.assertEqual(call[call.index("-derivedDataPath") + 1], str(self.output / "ios-tests"))
         context = json.loads((self.output / "simulator-readiness-context.json").read_text())
@@ -327,6 +345,7 @@ TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manu
         self.assertIn("1 test cases, zero failed/skipped", (self.output / "simulator-readiness.log").read_text())
         self.assertIn("1 test cases, zero failed/skipped", (self.output / "regular-readiness.log").read_text())
         self.assertEqual((self.root / "budgets").read_text().splitlines(), [
+            "Generate iPhone-only offline unit-test project|120", "Generate offline unit-test Xcode project|120",
             "Build iOS offline unit tests|1800", "No CallKit in the simulator build|300",
             "Create stock iOS 26.0 test simulator|100",
             "Verify hosted iOS test readiness|900", "Grant Reminders access to the owned test app|300",
@@ -359,6 +378,7 @@ TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manu
         self.assertTrue((self.output / "diagnostics/live-readiness/observer.status.txt").is_file())
         self.assertFalse((self.output / "regular-readiness-context.json").exists())
         self.assertEqual((self.root / "budgets").read_text().splitlines(), [
+            "Generate iPhone-only offline unit-test project|120", "Generate offline unit-test Xcode project|120",
             "Build iOS offline unit tests|1800", "No CallKit in the simulator build|300",
             "Create stock iOS 26.0 test simulator|100",
             "Verify hosted iOS test readiness|900", "Grant Reminders access to the owned test app|300",
@@ -863,6 +883,44 @@ exit 65
         result, calls = self.run_preparation(FULL_STATUS="7")
         self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
         self.assertEqual(len(calls), 3)
+        self.assertTrue((self.output / "ios-unit.log").is_file())
+
+    def test_failed_test_batch_retains_console_and_readiness_scope(self):
+        source = SCRIPT.read_text()
+        helpers = source[source.index('cleanup_device() {'):source.index('trap cleanup EXIT')] + '\ntrap cleanup EXIT\n'
+        helpers += source[source.index('test_batch() {'):source.index('\nif [ "$LANE" = all ]')]
+        shell = '''set -euo pipefail
+CI_ROOT="$1"
+OUTPUT="$2"
+DIAGNOSTICS="$3"
+SIM=""
+SIM_NAME="unused phone"
+SIM_STARTED=0
+REGULAR_SIM=""
+REGULAR_SIM_NAME="unused regular"
+REGULAR_SIM_STARTED=0
+ci_run() { shift 2; "$@"; }
+''' + helpers + '''
+test_batch ios-unit 'iOS offline unit and design/token tests' 1800 \
+  bash -c 'printf "synthetic test failure\\n"; exit 65'
+'''
+        for name in ('simulator-readiness.log', 'ios-readiness.xcresult/tests.json',
+                     'diagnostics/live-readiness/observer.status.txt'):
+            path = self.output / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name)
+        for lane in ('ios', 'ios-regressions'):
+            with self.subTest(lane=lane):
+                artifacts = self.root / ('artifacts-' + lane)
+                env = dict(os.environ, PATH=str(self.fixture.bin) + os.pathsep + os.environ['PATH'], LANE=lane)
+                result = subprocess.run(['bash', '-c', shell, '--', str(ROOT), str(self.output), str(artifacts)],
+                                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+                self.assertEqual((artifacts / 'ios-unit.log').read_text(), 'synthetic test failure\n')
+                self.assertTrue((artifacts / 'simulator-readiness.log').is_file())
+                self.assertTrue((artifacts / 'ios-readiness.xcresult/tests.json').is_file())
+                self.assertTrue((artifacts / 'live-readiness/observer.status.txt').is_file())
+                self.assertFalse((artifacts / 'regular-readiness.log').exists())
 
 
 if __name__ == "__main__":
