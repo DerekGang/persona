@@ -25,6 +25,7 @@ export struct ProjectsPage {
   @Event isMuted: (row:ResourceRow) => boolean = () => false;
   @Local searchMode: boolean = false;
   @Local quick: string = '';
+  @Local outlineListWidth: number = 0;
   private searchField: SearchController = new SearchController();
   @Event onBack: () => void = () => {};
   @Event onMachine: (tree: ProjectWorktree) => void = () => {};
@@ -452,6 +453,46 @@ export struct ProjectsPage {
       .padding({left:6,right:6,top:1,bottom:1}).backgroundColor(Colors.selection).borderRadius(6)
       .constraintSize({maxWidth:this.narrowOutline() ? '100%' : '41%'}).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
   }
+  // Match the single place line to its actual column, including in split view and nested checkouts.
+  private placeLineFit(agent: ProjectAgent, level: number, place: string, starter: boolean): string {
+    const ui = this.getUIContext(), scale = nativeEnvironment.fontScale;
+    const list = this.outlineListWidth || ui.px2vp(nativeEnvironment.windowWidthPx) - 2*PhoneStyle.page;
+    const available = list - this.treeInset(level) - 6 - 20 - 36*this.outlineControlScale() - 12;
+    const width = (text:string, size:number): number => !text ? 0 :
+      ui.px2vp(Math.ceil(ui.getMeasureUtils().measureText({textContent:text,fontSize:Tokens.interfaceFontVp(size,scale)})));
+    const source = agent.tab || agent.runtime ? width(tr('terminal'),13)+10 : 0;
+    const model = agent.model ? width(agent.model,12)+12 : 0;
+    const icon = agent.todoTitle ? 13*Math.min(scale,Tokens.interfaceScaleFor(13)) : 0;
+    const todo = icon ? icon+4+width(agent.todoTitle,13)+14 : 0;
+    const placeWidth = width(place,13), starterWidth = starter ? width(tr('session_space_starter'),12) : 0;
+    const occupied = (modelWidth:number,todoWidth:number): number => {
+      const parts = [source,placeWidth,modelWidth,todoWidth,starterWidth]
+        .filter((part:number) => part>0);
+      return parts.reduce((sum:number,part:number) => sum+part,0) + 4*Math.max(0,parts.length-1);
+    };
+    if (occupied(model,todo)<=available) return 'full';
+    if (occupied(model,icon)<=available) return 'todo-icon';
+    return 'place';
+  }
+  @Builder agentPlaceLine(agent:ProjectAgent,place:string,starter:boolean,fit:string) {
+    Row({space:4}) {
+      if (agent.tab || agent.runtime) Text(tr('terminal')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ai)
+        .maxLines(1).padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.subtle).borderRadius(7)
+      if (place) Text(place).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+        .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
+      if (agent.model && fit !== 'place') Text(agent.model).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        .maxLines(1).padding({left:6,right:6,top:1,bottom:1}).border({width:0.5,color:Colors.divider,radius:8})
+      if (agent.todoTitle) {
+        Row({space:4}) {
+          SymbolGlyph($r('sys.symbol.list_checkmark')).fontSize(Tokens.interfaceFontVp(13,nativeEnvironment.fontScale)).fontColor([Colors.secondary])
+          if (fit === 'full') Text(agent.todoTitle).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(1)
+        }.padding({left:fit === 'full' ? 7 : 0,right:fit === 'full' ? 7 : 0,top:fit === 'full' ? 1 : 0,bottom:fit === 'full' ? 1 : 0})
+          .border({width:fit === 'full' ? 0.5 : 0,color:Colors.divider,radius:8})
+          .accessibilityGroup(true).accessibilityText(tr('todo')+' · '+agent.todoTitle).id('projects.session_todo.'+agent.row.id)
+      }
+      if (starter) Text(tr('session_space_starter')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
+    }.width('100%').margin({top:2})
+  }
   @Builder agentCell(agent:ProjectAgent, treeKey:string, level:number, paneName:string = '', starter:boolean = false) {
     Row({space:12}) {
       this.agentMark(agent)
@@ -464,20 +505,12 @@ export struct ProjectsPage {
         }.width('100%')
         if (agent.preview) Row({space:8}) {
           Text(agent.preview).maxLines(this.narrowOutline() ? 4 : 2).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+            .lineSpacing(LengthMetrics.vp(2),{onlyBetweenLines:true})
             .layoutWeight(1).textOverflow({overflow:TextOverflow.Ellipsis})
           if (agent.state === 'needs_you' && !this.narrowOutline()) this.needsReply()
         }.width('100%').alignItems(VerticalAlign.Top)
         if (agent.state === 'needs_you' && (!agent.preview || this.narrowOutline())) this.needsReply()
-        Flex({wrap:FlexWrap.Wrap,alignItems:ItemAlign.Center,space:{main:LengthMetrics.vp(5),cross:LengthMetrics.vp(2)}}) {
-          if (agent.tab || agent.runtime) Text(tr('terminal')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ai)
-            .padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.subtle).borderRadius(7)
-          if (paneName || agent.tab) Text(paneName || agent.tab).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
-          if (agent.model || agent.runtime) Text(agent.model || agent.runtime).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-            .maxLines(this.narrowOutline() ? 3 : 1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
-          if (agent.todoTitle) SymbolGlyph($r('sys.symbol.list_checkmark')).fontSize('13vp').fontColor([Colors.secondary])
-            .accessibilityText(tr('todo')+' · '+agent.todoTitle).id('projects.session_todo.'+agent.row.id)
-          if (starter) Text(tr('session_space_starter')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-        }.width('100%').margin({top:2})
+        this.agentPlaceLine(agent,paneName || agent.tab,starter,this.placeLineFit(agent,level,paneName || agent.tab,starter))
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
     }.width('100%').alignItems(VerticalAlign.Top).constraintSize({minHeight:58}).padding({
       left:this.treeInset(level)+6,right:20,top:19,bottom:19
@@ -651,7 +684,11 @@ export struct ProjectsPage {
             this.catalog.partial ? 'project_catalog_unavailable' : 'project_empty'))
         }
       }.layoutWeight(1).width('100%').scrollBar(BarState.Auto).maintainVisibleContentPosition(true)
-        .onAreaChange(() => this.restorePosition())
+        .onAreaChange((before:Area,after:Area) => {
+          const width = Number(after.width);
+          if (width>0 && width!==this.outlineListWidth) this.outlineListWidth = width;
+          this.restorePosition();
+        })
         .contentStartOffset(this.compact && this.page === 'projects' && !this.searchMode ? this.topContentInset : 0)
         .onScrollIndex((start:number) => this.rememberPosition(start)).id(this.page === 'projects' ? 'projects.list' : 'projects.worktrees')
     }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page})

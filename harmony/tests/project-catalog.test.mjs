@@ -608,6 +608,25 @@ test('typing a repository name or a distinct Agent title narrows the status coun
   assert.deepEqual(matches('never-matches'),[]);assert.deepEqual(matches(''),['one','three','two']);
 });
 
+test('repository Agent metadata keeps the to-do visible and drops the model before cutting the place name', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
+  const method=source.match(/^  private placeLineFit\([\s\S]+?^  \}/m)[0];
+  const env={fontScale:1,windowWidthPx:402};
+  const tokens={interfaceFontVp:(points,scale)=>Math.min(points*scale,points+6)+'vp',interfaceScaleFor:points=>(points+6)/points};
+  const Page=new Function('nativeEnvironment','PhoneStyle','Tokens','tr','return '+stripTypeScriptTypes('class Page {'+method+'}'))(env,{page:16},tokens,key=>key);
+  const page=new Page(); page.outlineControlScale=()=>Math.min(env.fontScale,67/51); page.treeInset=level=>14+22*page.outlineControlScale()*level;
+  const widths={terminal:26,tests:29,'claude-sonnet-5-5':105,opus:27,task:103,'Claude 1':51};
+  page.getUIContext=()=>({px2vp:v=>v,getMeasureUtils:()=>({measureText:({textContent,fontSize})=>
+    widths[textContent]*parseFloat(fontSize)/(textContent==='claude-sonnet-5-5'||textContent==='opus'?12:13)})});
+  const agent={tab:'tests',runtime:'claude',model:'claude-sonnet-5-5',todoTitle:'task'};
+  page.outlineListWidth=470; assert.equal(page.placeLineFit(agent,1,'tests',false),'full');
+  page.outlineListWidth=370; assert.equal(page.placeLineFit(agent,1,'tests',false),'todo-icon');
+  env.fontScale=3.2; assert.equal(page.placeLineFit(agent,1,'tests',false),'place');
+  assert.equal(page.placeLineFit({...agent,model:'opus'},1,'Claude 1',false),'todo-icon');
+  page.outlineListWidth=240; assert.equal(page.placeLineFit({...agent,model:'opus'},1,'Claude 1',false),'place');
+  page.outlineListWidth=470; assert.equal(page.placeLineFit({...agent,todoTitle:''},1,'tests',false),'full');
+});
+
 test('the full inferred-worktree row folds, while a host workspace or search result opens', () => {
   const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
   const method=source.match(/^  private treeRowFolds\(line:[\s\S]+?^  \}/m)[0];
