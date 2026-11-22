@@ -131,6 +131,15 @@ func (s *Service) CloseLarkPersonTask(ctx context.Context, request assistantwire
 	if accepted {
 		reason = "External bot task completed by the user"
 	}
+	// Record the outcome as the review's state first, as other closes do (task_leader.go): left "parked", the To-dos
+	// page reads an abandoned task as accepted.
+	verdict := reviewCancelled
+	if accepted {
+		verdict = reviewAccepted
+	}
+	if _, _, err := s.updateSupervision(ctx, request.TaskID, func(v *Supervision) bool { v.State = verdict; return true }); err != nil {
+		return assistantwire.LarkPersonTask{}, err
+	}
 	if _, err := s.reviewDoneTodo(ctx, request.TaskID, reason, accepted); err != nil {
 		return assistantwire.LarkPersonTask{}, err
 	}

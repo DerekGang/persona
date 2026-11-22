@@ -100,6 +100,9 @@ func TestLarkPersonBotOpaqueParkPendingReviewAndClose(t *testing.T) {
 	if err != nil || state.Lifecycle != "completed" {
 		t.Fatalf("completion state=%+v err=%v", state, err)
 	}
+	if done, ok := assistantService.todoNow(request.TaskID); !ok || done.Supervision == nil || done.Supervision.State != reviewAccepted {
+		t.Fatalf("completed bot task kept a non-accepted review state: %+v", done.Supervision)
+	}
 	if state, err = assistantService.CloseLarkPersonTask(context.Background(), assistantwire.LarkPersonClose{TaskID: request.TaskID, Action: "complete"}); err != nil || state.Lifecycle != "completed" {
 		t.Fatalf("idempotent completion state=%+v err=%v", state, err)
 	}
@@ -110,5 +113,8 @@ func TestLarkPersonBotOpaqueParkPendingReviewAndClose(t *testing.T) {
 	state, err = assistantService.CloseLarkPersonTask(context.Background(), assistantwire.LarkPersonClose{TaskID: "todo_lark_abandon", Action: "abandon"})
 	if err != nil || state.Lifecycle != "abandoned" {
 		t.Fatalf("abandonment state=%+v err=%v", state, err)
+	}
+	if done, ok := assistantService.todoNow("todo_lark_abandon"); !ok || done.Supervision == nil || done.Supervision.State != reviewCancelled {
+		t.Fatalf("abandoned bot task is not cancelled for the To-dos page: %+v", done.Supervision)
 	}
 }
