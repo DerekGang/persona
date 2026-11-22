@@ -8,8 +8,8 @@ import { NativeDictation, DictationListener } from '../platform/NativeDictation'
 @ComponentV2
 export struct PhoneDictationControl {
   @Param ink:ResourceColor=Colors.ink;
-  @Param target: number = Tokens.touch;
-  @Param symbolSize: number = 22;
+  @Require @Param target: number;
+  @Require @Param symbolSize: number;
   @Require @Param owner: string;
   @Param active: boolean = true;
   @Param language: string = 'default';
