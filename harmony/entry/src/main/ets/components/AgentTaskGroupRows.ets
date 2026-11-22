@@ -1,7 +1,5 @@
-import { ClientModel } from '../models/ClientModel';
 import { AgentWorkspace } from '../models/AgentWorkspace';
-import { AgentTaskGrouping } from '../models/AgentTaskGrouping';
-import { AgentTaskLine, AgentTaskSection, directionAgentSections, todoAgentSections } from '../models/AgentTaskSections';
+import { AgentTaskLine, AgentTaskSection } from '../models/AgentTaskSections';
 import { ResourceRow, Wire } from '../models/Wire';
 import { tr } from '../design/Strings';
 import { Colors } from '../design/Colors';
@@ -12,10 +10,8 @@ import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironm
 
 @ComponentV2
 export struct AgentTaskGroupRows {
-  @Require @Param model: ClientModel;
+  @Require @Param section: AgentTaskSection;
   @Require @Param workspace: AgentWorkspace;
-  @Require @Param source: AgentTaskGrouping;
-  @Require @Param mode: string;
   @Event onOpen: (row: ResourceRow) => void = () => {};
   @Event onOpenTodo: (row: ResourceRow) => void = () => {};
   @BuilderParam rowContent: (row: ResourceRow, depth: number) => void;
@@ -23,17 +19,6 @@ export struct AgentTaskGroupRows {
   @Local environment: NativeEnvironment = nativeEnvironment;
 
   private target(): number { return PhoneStyle.formSize(44,58,this.environment.fontScale); }
-
-  @Computed get sections(): AgentTaskSection[] {
-    const filtering = !!this.workspace.search.trim() || this.workspace.quickFilter !== 'all';
-    const group = this.model.profile.id, manager = this.model.profile.manager;
-    const muted = (row: ResourceRow): boolean => this.workspace.isMuted(row);
-    if (this.mode === 'direction' && this.source.supportsDirections) {
-      return directionAgentSections(this.source.directions, this.workspace.unpinnedRows,
-        this.model.directorySessions.concat(this.model.sessions), this.model.conversations, group, manager, filtering, muted);
-    }
-    return todoAgentSections(this.source.currentTodos(this.model), this.workspace.unpinnedRows, group, manager, filtering, muted);
-  }
 
   private folded(section: AgentTaskSection): boolean {
     return !this.workspace.search.trim() && this.workspace.groupingFolded(section.key,section.folded);
@@ -115,21 +100,19 @@ export struct AgentTaskGroupRows {
   }
 
   build() {
-    ForEach(this.sections,(section: AgentTaskSection) => {
-      ListItemGroup({header:() => this.header(section)}) {
-        if (!this.folded(section)) {
-          if (!section.lines.length && section.hint) {
-            ListItem() {
-              Text(tr(section.hint)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
-                .width('100%').padding({left:16,right:16,top:8,bottom:8}).backgroundColor(Colors.surface)
-            }.id('agents.group.empty.' + section.key)
-          }
-          ForEach(section.lines,(line: AgentTaskLine) => {
-            if (line.kind === 'session') this.rowContent(line.row,line.depth)
-            else this.taskOrTree(line)
-          },(line: AgentTaskLine) => line.kind + line.row.key())
+    ListItemGroup({header:() => this.header(this.section)}) {
+      if (!this.folded(this.section)) {
+        if (!this.section.lines.length && this.section.hint) {
+          ListItem() {
+            Text(tr(this.section.hint)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+              .width('100%').padding({left:16,right:16,top:8,bottom:8}).backgroundColor(Colors.surface)
+          }.id('agents.group.empty.' + this.section.key)
         }
-      }.id('agents.group.' + section.key)
-    },(section: AgentTaskSection) => section.key)
+        Repeat<AgentTaskLine>(this.section.lines).each((entry: RepeatItem<AgentTaskLine>) => {
+          if (entry.item.kind === 'session') this.rowContent(entry.item.row,entry.item.depth)
+          else this.taskOrTree(entry.item)
+        }).key((line: AgentTaskLine) => line.kind + line.row.key())
+      }
+    }.id('agents.group.' + this.section.key)
   }
 }

@@ -1,5 +1,7 @@
 import type { ClientModel } from './ClientModel';
 import type { HubRepository } from './HubRepository';
+import type { AgentWorkspace } from './AgentWorkspace';
+import { AgentTaskSection, directionAgentSections, todoAgentSections } from './AgentTaskSections';
 import { HttpFailure } from '../platform/HubTransport';
 import { ResourceRow, Wire } from './Wire';
 
@@ -82,4 +84,17 @@ export class AgentTaskGrouping {
       if (current() && error instanceof HttpFailure && error.status === 404) { this.supportsDirections = false; this.directions = []; }
     }
   }
+}
+
+
+// The parent List must emit one native child per section so scrolling and virtualization see every group.
+export function agentTaskSectionsFor(model: ClientModel, workspace: AgentWorkspace, source: AgentTaskGrouping, mode: string): AgentTaskSection[] {
+  const filtering = !!workspace.search.trim() || workspace.quickFilter !== 'all';
+  const group = model.profile.id, manager = model.profile.manager;
+  const muted = (row: ResourceRow): boolean => workspace.isMuted(row);
+  if (mode === 'direction' && source.supportsDirections) {
+    return directionAgentSections(source.directions, workspace.unpinnedRows, model.directorySessions.concat(model.sessions),
+      model.conversations, group, manager, filtering, muted);
+  }
+  return todoAgentSections(source.currentTodos(model), workspace.unpinnedRows, group, manager, filtering, muted);
 }
