@@ -104,18 +104,27 @@ TalkBack: accessibility-service verification is separately named and must not be
 The initial #13282 target is a dedicated x86_64 Android 15 / API 35 AOSP emulator (model
 `Android SDK built for x86_64`, build `AE3A.240806.019`, userdebug/test-keys), not a physical device. It runs
 without hardware acceleration; a separate `System UI isn't responding` capture is environment diagnostics, not an
-application screenshot. Standard `:feature:settings:connectedDebugAndroidTest` reached the actual assertions:
-the localized en/zh-Hans/ja generated/native read-only and 48 dp test passed in an earlier bounded run, but that
-run's full rollback test failed its read-only click assertion because the test host stacked the native rows in a
-`Box`. The corrected host keeps the About siblings in a vertical `Column`, and a subsequent standard-channel run
-passed the complete handwritten → generated → handwritten rollback, native Commit copy and light/dark captures;
-its localized test instead failed the handwritten-row matcher before the localized assertions, so this is **not**
-a complete two-test pass or an accepted screenshot set. That test used the unmerged tree for a native merged-text
-row; the final test source uses the default merged tree for that row, but has not been rerun on a device and must
-not be reported as a passed final-localized result. The installed test package supplies real zero `longVersionCode`;
-nonzero adapter cases remain Native JVM evidence, not a device claim. System-service traces contain SQLite
-configuration and PackageManager binder waits unrelated to the About test and block further reliable runs on this
-emulator.
+application screenshot. Standard `:feature:settings:connectedDebugAndroidTest` reached the actual assertions. The
+historical runs are distinct: in an earlier bounded run, the localized en/zh-Hans/ja generated/native read-only
+and 48 dp test passed, but the full rollback test failed its read-only click assertion because the test host
+stacked the native rows in a
+`Box`. After the host was corrected to keep the About siblings in a vertical `Column`, a subsequent standard-channel
+run passed the complete handwritten → generated → handwritten rollback, native Commit copy and light/dark captures;
+its localized test failed the forced-unmerged handwritten-row matcher before the localized assertions. That
+rollback-only pass is historical evidence for the intermediate host, **not** a final-head pass, a complete two-test
+pass or an accepted screenshot set.
+
+At exact final head `000a59d651a5efc2d9e1c66a30db02292e143d36`, exactly one complete standard-channel invocation
+ran the final selector, with no subsequent selector edit or retry. Its XML timestamp is `2026-11-22T23:43:20`:
+**2 tests, 2 failures, 0 errors, 0 skipped**. Both cases stop in `mergedBuildRow` at test line 213 because no node
+satisfies `hasText("Build") and hasText("0")` in the merged tree: the rollback case fails at `assertHost` line 193,
+and the localized case fails at its native-row selection line 174. The earlier rollback-only pass therefore does not
+establish that either final test passes, and no final full rollback, localized semantics, 48 dp or screenshot
+acceptance is claimed. The XML is retained outside the repository with SHA-256
+`afc441b0c1eeb9604cd0730da1092fce5c23d26bf883fdbbc48ef8dcc9fab2c2`. The installed test package supplies real
+zero `longVersionCode`; nonzero adapter cases remain Native JVM evidence, not a device claim. System-service traces
+contain SQLite configuration and PackageManager binder waits unrelated to the About test; these environment limits
+do not excuse or replace the final failures.
 Direct `am instrument` startup failed separately and is not substituted for the standard channel. There is no
 TalkBack, full device-matrix, performance or Gate A–D claim. Keep this limitation with any PR using the host
 rather than treating a successful JVM or build result as device acceptance.
