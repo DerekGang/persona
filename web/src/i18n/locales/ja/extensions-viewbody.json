@@ -30,5 +30,7 @@
   "graph_inspector": "詳細",
   "graph_links": "セッションとリンク",
   "graph_open_action": "開く",
-  "graph_running": "実行中"
+  "graph_running": "実行中",
+  "scene": "3Dシーン",
+  "scene_reset": "視点をリセット"
 }

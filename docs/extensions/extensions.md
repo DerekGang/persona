@@ -3110,8 +3110,9 @@ extension sees that). One new component, `scene`, authoritative in `schema/exten
 its `Scene*` definitions, `x-since: 11`); the example is `schema/extension/examples/View.v11-scene-flat.json`. **An app sends
 11 only when it draws all of the below** (and all of 10). **iOS** (#12544) draws `scene` in
 `apple/Persona/Views/Settings/ExtensionScene.swift` (`ExtensionSceneGeometry.swift`, `ExtensionSceneModel.swift`) and sends `11`
-for pages and cards (`pageVersion` and `cardVersion`, including Share as Image's direct still snapshot); **web** (#12641) and
-**Android** (#12642) stay on `10` and get the downgrade below until their renderers land.
+for pages and cards (`pageVersion` and `cardVersion`, including Share as Image's direct still snapshot). **Web** (#12641) draws
+it in `web/src/views/extensions/ViewBody11.tsx` and `scene-geometry.ts` and sends `11` for pages and cards; **Android** (#12642)
+stays on `10` and gets the downgrade below until its renderer lands.
 
 Extensions still run no code in the app and send no model file: they say what the shapes are, and each app builds them with
 its own engine. A list of simple shapes is the contract because no 3D file format is drawn by every client (SceneKit reads
@@ -3135,6 +3136,16 @@ angles in degrees, counter-clockwise from +x seen from above. A box at `yaw` 0 h
 **Colors.** A scene's shapes are content, like the pixels of an `image`, so their colors are the extension's own: walls, floors
 and sofas need colors no role or named color has. Pins and every control around the model keep the app's: a pin's dot is a
 `tone` or a named `color`, its text the app's ink on the app's surface. Dark mode changes the model's lighting, never its colors.
+
+**The web renderer** uses a lazy Canvas 2D chunk, with no WebGL or new dependency and no scene code in the cold first screen.
+It builds rounded and beveled boxes, cylinders and prisms, projects the same orthographic camera around the shapes' bounds, and
+reuses geometry when a redraw leaves the shapes' content unchanged. Drag and arrow keys orbit; wheel, pinch, +/- and the Zoom
+buttons zoom; `0` and Reset restore the extension's current default. Camera changes are immediate, including with reduced motion.
+A touched camera survives redraws by owner scope and component `key` in a bounded 64-entry store; an untouched one follows a new
+default. Opaque design-system chips carry labels and pins in `alt`, `labels`, `pins`, controls reading order, and remain inside the
+viewport. A page uses the graph's responsive canvas height and Full screen; a compact card is a non-interactive 200 px preview
+whose single button opens the same interactive scene. `web/e2e/extension-scene.mjs` covers Chromium light/dark rendering, gestures,
+pin actions, camera persistence, contrast, full-screen visibility and the compact preview against `MOCK_EXTENSION_SCENE=1`.
 
 **The hub's checks** (`sdk/go/wire/viewcheck11.go`; the whole page is refused otherwise): every number finite; a shape at least
 0.005 tall; a box's `round` at most half its smaller size and no field of another kind (a box's `radius`, a prism's

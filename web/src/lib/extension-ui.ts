@@ -15,14 +15,15 @@ import { t } from "../i18n";
 import type { Comment, Hunk, Thread, TreeEntry } from "./code-view";
 import type { UIColor, UIImageSource, UIRowAction, UIRowControl, UISpark, UITile } from "./extension-ui-v6";
 import { SUBSCRIPTIONS_UI } from "./subscriptions-ui";
+import type { SceneCamera, SceneLabel, ScenePin, SceneShape } from "./extension-wire";
 
 export { isHttps };
 
 /**
- * The UI version the web draws (context.ui_version): all of 10, the graph canvas (views/extensions/ViewBody10.tsx),
- * the columns layout's (views/extensions/ViewBody8.tsx) and a tile's gauge (views/extensions/ViewBody9.tsx) too.
+ * The UI version the web draws (context.ui_version): all of 11, including the graph canvas (ViewBody10.tsx) and
+ * the lazy 3D scene (ViewBody11.tsx).
  */
-export const UI_VERSION = 10;
+export const UI_VERSION = 11;
 
 export type UITone = "neutral" | "positive" | "caution" | "danger";
 
@@ -165,6 +166,11 @@ export interface UIItem {
   folded?: string[];
   layout?: UIGraph["layout"];
   direction?: UIGraph["direction"];
+  /** UI version 11: an orthographic 3D scene, drawn by ViewBody11.tsx. */
+  camera?: SceneCamera;
+  shapes?: SceneShape[];
+  labels?: SceneLabel[];
+  pins?: ScenePin[];
 }
 
 /** A view's tabs on top (UI version 4): choosing one sends {name: value} (with the search's q) at once. */
@@ -676,6 +682,7 @@ export const KNOWN_ITEMS: readonly string[] = [
   "header", "breadcrumb", "file_tree", "code", "diff", "comment_thread", "composer", // UI version 4
   "image", "grid", "carousel", // UI version 6
   "graph", // UI version 10
+  "scene", // UI version 11
 ];
 
 /** An item the web can draw: a known type with what it needs to be drawn at all (a chart with points, a grid with stats). */
@@ -718,6 +725,8 @@ function drawable(it: unknown): it is UIItem {
     // UI version 10: a graph with nodes that read at all; the rest of the reading is readGraph's
     case "graph":
       return Array.isArray(it.nodes) && it.nodes.some((n: Record<string, unknown>) => isObject(n) && typeof n.id === "string" && typeof n.title === "string" && !!n.title);
+    case "scene":
+      return typeof it.alt === "string" && !!it.alt && Array.isArray(it.shapes) && it.shapes.length > 0;
     default:
       return true;
   }
@@ -903,6 +912,10 @@ function readItem(it: UIItem): UIItem {
     else delete out.direction;
     if (graph?.selected) out.selected = graph.selected;
     else delete out.selected;
+  }
+  // UI version 11: a scene's pins carry the same checked actions as rows and tiles.
+  if (it.type === "scene" && Array.isArray(raw.pins)) {
+    out.pins = raw.pins.filter(isObject).map((pin) => ({ ...pin, action: readAction(pin.action) })) as ScenePin[];
   }
   // UI version 4: the other places an action sits, each read the same way
   for (const k of ["expand", "load", "comment", "reply", "context", "mark_viewed", "draft"] as const) if (k in raw) out[k] = readAction(raw[k]);
