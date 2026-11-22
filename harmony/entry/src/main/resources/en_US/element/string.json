@@ -4930,7 +4930,7 @@
     },
     {
       "name": "tree_cleaned_branch",
-      "value": "Worktree removed. Check the remaining branch."
+      "value": "Worktree removed. Check whether the branch was deleted."
     },
     {
       "name": "tree_preview_changed",

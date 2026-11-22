@@ -275,7 +275,9 @@ export class WorktreeActions {
     change.action = this.action; change.id = Wire.text(value, 'workspace_id', this.tree!.sourceId);
     change.path = Wire.text(value, 'path', this.path); change.branch = Wire.text(value, 'branch', this.branch);
     change.parent = Wire.text(value, 'parent_workspace_id') || this.tree!.sourceId;
-    change.branchRetained = this.action === 'clean' && this.deleteBranch && !Wire.bool(value, 'branch_deleted');
+    // Only the dispatched request records whether the user asked to delete the branch.
+    change.branchRetained = this.action === 'clean' && Wire.bool(Wire.parse(this.requestBody), 'delete_branch') &&
+      !Wire.bool(value, 'branch_deleted');
     return change;
   }
   async submit(): Promise<WorktreeChange | undefined> {

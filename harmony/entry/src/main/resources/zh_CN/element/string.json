@@ -4930,7 +4930,7 @@
     },
     {
       "name": "tree_cleaned_branch",
-      "value": "工作树已移除，请核对保留的分支。"
+      "value": "工作树已移除。请核对分支是否已删除。"
     },
     {
       "name": "tree_preview_changed",

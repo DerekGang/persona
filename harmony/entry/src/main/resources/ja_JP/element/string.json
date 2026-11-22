@@ -4930,7 +4930,7 @@
     },
     {
       "name": "tree_cleaned_branch",
-      "value": "ワークツリーを削除しました。残っているブランチを確認してください。"
+      "value": "ワークツリーを削除しました。ブランチが削除されたか確認してください。"
     },
     {
       "name": "tree_preview_changed",

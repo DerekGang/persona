@@ -80,7 +80,7 @@ function fixture() {
   const root = { ...owner, name: 'root', viewFor: async () => owner };
   const tree = Object.assign(new ProjectWorktree(), { source: 'herdr', sourceId: 'child', machine: 'Studio/1', machineTitle: 'Studio',
     group: 'home', manager: 'default', cwd: '/qa/child', title: 'Child', online: true, startAllowed: true });
-  return { form: new WorktreeActions(), root, owner, tree, behavior, writes, queries, finished, blocked, replayed, reads, views };
+  return { form: new WorktreeActions(), root, owner, tree, behavior, writes, queries, finished, blocked, replayed, reads, views, cleanupResult: removed };
 }
 
 test('typed branch follows the prepared directory, while an explicitly edited directory survives typing', async () => {
@@ -135,6 +135,56 @@ test('a lost cleanup reply is reconciled without issuing a second mutation or le
   assert.deepEqual(finished, [[writes[0].id,'done']]);
   await form.open(root, tree, 'clean'); root.epoch++; assert.equal(await form.submit(), undefined);
   assert.equal(form.error, 'tree_preview_changed'); assert.equal(writes.length, 1);
+});
+
+test('cleanup reads the confirmed branch option across a lost reply and a reopened form', async () => {
+  for (const requested of [true, false]) for (const deleted of [undefined, false, true]) for (const reopen of [false, true]) {
+    const { form, root, tree, behavior, writes, queries, finished, cleanupResult } = fixture();
+    behavior.unknown = true;
+    await form.open(root, tree, 'clean');
+    form.deleteBranch = requested;
+    assert.equal(await form.submit(), undefined);
+    assert.equal(form.unknown, true);
+    if (deleted === undefined) delete cleanupResult.branch_deleted;
+    else cleanupResult.branch_deleted = deleted;
+
+    const recovery = reopen ? new WorktreeActions() : form;
+    if (reopen) {
+      form.close();
+      await recovery.open(root, tree, 'clean');
+    }
+    assert.equal(recovery.deleteBranch, requested);
+    recovery.deleteBranch = !requested; // A late native control update cannot change the dispatched payload.
+    const result = await recovery.reconcile();
+    assert.equal(result.branchRetained, requested && deleted !== true, JSON.stringify({ requested, deleted, reopen }));
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.delete_branch, requested);
+    assert.deepEqual(queries.at(-1).body, { workspace_id: 'child', kind: 'herdr', preview_token: 'this-preview', reconcile: true });
+    assert.deepEqual(finished, [[writes[0].id, 'done']]);
+  }
+});
+
+test('a switch update while cleanup is in flight cannot change its result notice', async () => {
+  const { form, root, tree, owner, writes, cleanupResult } = fixture();
+  delete cleanupResult.branch_deleted;
+  const sent = Promise.withResolvers(), reply = Promise.withResolvers();
+  const repo = owner.repo(), call = repo.call.bind(repo);
+  repo.call = async (...args) => {
+    const result = await call(...args);
+    sent.resolve();
+    await reply.promise;
+    return result;
+  };
+  await form.open(root, tree, 'clean');
+  form.deleteBranch = true;
+  const pending = form.submit();
+  await sent.promise;
+  assert.equal(form.busy, true);
+  form.deleteBranch = false;
+  reply.resolve();
+  assert.equal((await pending).branchRetained, true);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].body.delete_branch, true);
 });
 
 test('offline machines, missing permission and superseded clean previews report distinct recoveries', async () => {
