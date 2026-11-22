@@ -26,8 +26,7 @@ internal/ai app-exported-record 6
 internal/ai app-named-primitive 1
 internal/apns app-exported-record 4
 internal/approval app-exported-record 2
-internal/assistant app-exported-record 156
-internal/assistant app-exported-record ContainerWorkspaceSelection #13160
+internal/assistant app-exported-record 157
 internal/assistant app-exported-record InboxFeedback #4512
 internal/assistant app-exported-record InboxProgress #4512
 internal/assistant app-exported-record MessageAuthorization #9782
