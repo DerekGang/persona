@@ -22,7 +22,7 @@ function method(name) {
 const Composer = new Function('Tokens', 'Edge', 'restingComposerSize', 'composerReadingSize', 'return ' + stripTypeScriptTypes('class Composer { get readingSize() { return composerReadingSize(this.environment.fontScale); } get restingSize() { return restingComposerSize(this.environment.fontScale); }' +
   ['hasComposerAction', 'trailingActionWidth', 'leftActionWidth', 'expandedComposer', 'composerColumns', 'sendColumns',
     'restingComposer', 'composerActionSize', 'restingStrokePx', 'composerPadding', 'controlsPadding', 'composerAvailable',
-    'leftColumns', 'verticalActions', 'maxControlsHeight', 'inlineEditorMaxHeight', 'revealOverflowingActions'].map(method).join('\n') + '}'))(Tokens, { Bottom: 'bottom' }, restingComposerSize, composerReadingSize);
+    'leftColumns', 'inlineKeyboardAction', 'verticalActions', 'maxControlsHeight', 'inlineEditorMaxHeight', 'revealOverflowingActions'].map(method).join('\n') + '}'))(Tokens, { Bottom: 'bottom' }, restingComposerSize, composerReadingSize);
 function fixture(density = 3, width = 372) {
   return Object.assign(new Composer(), {
     composerWidth: width, fieldFocused: false, primaryStop: () => false, sending: false, active: true,
@@ -43,13 +43,13 @@ test('the resting shell uses the next capped iPhone category for controls and bo
     assert.equal(v.restingSize.plus, plus);
     assert.equal(v.restingSize.microphone, headline * 24 / 19);
     v.fieldFocused = true;
-    assert.equal(v.composerActionSize(), Tokens.touch);
+    assert.equal(v.composerActionSize(), v.restingSize.target);
   }
   const v = fixture(3,275);
   assert.equal(v.expandedComposer(), false);
   v.environment.fontScale = 3.2;
   assert.equal(v.expandedComposer(), true);
-  assert.equal(v.composerActionSize(), Tokens.touch);
+  assert.equal(v.composerActionSize(), v.restingSize.target);
 });
 
 test('resting touch targets sit 16vp from the sides and 10vp above the native safe bottom at every font scale', () => {
@@ -81,8 +81,8 @@ test('focus, keyboard dismissal, draft, menu, narrow viewport and unavailable in
     change(v);
     assert.equal(v.restingComposer(), false);
     if (v.expandedComposer()) {
-      assert.deepEqual(v.controlsPadding(), {left:12,right:12,top:8,bottom:4});
-      assert.deepEqual(v.composerPadding(), {left:'10px',right:'10px',top:0,bottom:'4px'});
+      assert.deepEqual(v.controlsPadding(), {left:12,right:12,top:8,bottom:8});
+      assert.deepEqual(v.composerPadding(), {left:'10px',right:'10px',top:0,bottom:'22px'});
     } else {
       assert.deepEqual(v.controlsPadding(), {left:16,right:16,top:8,bottom:4});
       assert.deepEqual(v.composerPadding(), {left:5,right:5,top:3,bottom:3});
@@ -122,7 +122,7 @@ test('focus, a restored draft, a quote or an attachment opens the editing card i
     const v = fixture();
     change(v);
     assert.equal(v.expandedComposer(), true);
-    assert.equal(v.composerColumns(), 12);
+    assert.equal(v.composerColumns(), v.composerWidth*3);
   }
 });
 
@@ -141,7 +141,7 @@ test('a blurred empty composer returns to one line, with enough space for the ke
   }
   const narrow=fixture(3,220);
   assert.equal(narrow.expandedComposer(),true);
-  assert.equal(narrow.composerColumns(),12);
+  assert.equal(narrow.composerColumns(),narrow.composerWidth*3);
 
 });
 
@@ -172,13 +172,13 @@ test('resized phone viewport leaves a full keyboard and send target at both text
     assert.equal(v.maxControlsHeight(), 270); // ArkUI has already removed the keyboard.
     assert.equal(v.verticalActions(), width < 260);
     const actionRows = v.verticalActions() ? 2 : 1;
-    const reserved = actionRows * Tokens.touch + Tokens.gap + Tokens.footer + 8;
+    const reserved = actionRows * v.composerActionSize() + Tokens.gap + Tokens.footer + 8;
     const height = v.inlineEditorMaxHeight();
     assert.ok(height + reserved <= v.availableHeight);
     assert.ok([1,2,3,4,5,6].some(lines => v.readingSize.height(lines) === height));
     if (!v.verticalActions()) {
-      const middle = (12 - v.leftColumns() - v.sendColumns()) * width / 12;
-      assert.ok(middle >= 44, 'keyboard button fits between leading tools and send');
+      const middle = (v.composerColumns() - v.leftColumns() - v.sendColumns()) * width / v.composerColumns();
+      assert.ok(middle >= Tokens.page, 'native leading and trailing controls fit at their full size');
     }
     v.environment.keyboardHeightPx = 0;
     v.availableHeight = 690;
@@ -290,4 +290,15 @@ test('draft wrapping uses the full text width and measures before reserving the 
   assert.equal(calls.at(-1).maxLines,7);
   assert.equal(composerReadingSize(1).height(1),23);
   assert.ok(composerReadingSize(1.63).points>composerReadingSize(1.4).points);
+});
+
+test('expanded native toolbar places its scaled controls between the two eight-unit card insets', () => {
+  for (const scale of [1,1.5,3.2]) {
+    const v=fixture(3,370);v.fieldFocused=true;v.model.draft='draft';v.environment.fontScale=scale;
+    const size=v.restingSize.target, unit=v.composerWidth/v.composerColumns();
+    assert.ok(Math.abs(v.leftColumns()*unit-(4+size+4+size))<=1/3);
+    assert.ok(Math.abs(v.sendColumns()*unit-(4+size+4+size))<=1/3);
+    assert.equal(v.verticalActions(),false);
+    v.fieldFocused=false;assert.ok(Math.abs(v.leftColumns()*unit-(4+size))<=1/3);
+  }
 });

@@ -438,7 +438,8 @@ export struct Conversation {
   private attachmentNodeId: string = 'chat.attachment.' + util.generateRandomUUID();
   private attachmentLayoutReady: boolean = false;
   @Computed get restingSize(): ComposerSize { return restingComposerSize(this.environment.fontScale); }
-  private composerActionSize(): number { return this.restingComposer() ? this.restingSize.target : Tokens.touch; }
+  private composerActionSize(): number { return this.composerAvailable() ? this.restingSize.target : Tokens.touch; }
+  private inlineKeyboardAction(): boolean { return this.fieldFocused || this.environment.keyboardHeightPx > 0; }
   private leftActionWidth(size: number): number { return !this.model.demo || this.showContextMenu ? size : 0; }
   private hasComposerAction(): boolean {
     return this.primaryStop() || this.sending || !!this.model.draft.trim() || this.attachments.attachments.length > 0 || !!this.model.sourceContext;
@@ -464,23 +465,34 @@ export struct Conversation {
     // 4vp / 2vp insets once so the stroke cannot cost either edge a device pixel.
     const ui = this.getUIContext(), stroke = this.restingStrokePx();
     const side = String(Math.max(0, Math.round(ui.vp2px(Tokens.fine)) - stroke)) + 'px';
-    const end = String(Math.max(0, Math.round(ui.vp2px(2)) - stroke)) + 'px';
+    const end = String(Math.max(0, Math.round(ui.vp2px(this.expandedComposer() ? Tokens.gap : 2)) - stroke)) + 'px';
     return { left: side, right: side, top: this.expandedComposer() ? 0 : end, bottom: end };
   }
   private controlsPadding(): Padding {
     const resting = this.restingComposer(), side = resting || this.expandedComposer() ? Tokens.inset : Tokens.page;
-    return { left: side, right: side, top: Tokens.gap, bottom: resting ? Tokens.gap : Tokens.footer };
+    return { left: side, right: side, top: Tokens.gap, bottom: resting || this.expandedComposer() ? Tokens.gap : Tokens.footer };
   }
   private verticalActions(): boolean {
     // The tools are icon buttons with vp touch targets. Only wrap when their actual slots cannot fit.
     if (this.composerWidth < Tokens.composerNarrowActions) return true;
     const middle = this.composerColumns() - this.leftColumns() - this.sendColumns();
-    return this.expandedComposer() && middle * this.composerWidth / this.composerColumns() < 44;
+    return this.expandedComposer() && middle * this.composerWidth / this.composerColumns() < Tokens.page;
   }
-  // Native ordering keeps the same editor mounted. Compact slots use pixel precision, not twelfths of the row.
-  private composerColumns(): number { return this.expandedComposer() ? 12 : Math.max(1, Math.round(this.getUIContext().vp2px(this.composerWidth))); }
-  private sendColumns(): number { const width = this.trailingActionWidth(this.composerActionSize()) + (this.expandedComposer() ? 0 : Tokens.gap); return Math.ceil(width * this.composerColumns() / this.composerWidth); }
-  private leftColumns(): number { const width = this.leftActionWidth(this.composerActionSize()); return Math.ceil((width + (width && !this.expandedComposer() ? Tokens.gap : 0)) * this.composerColumns() / this.composerWidth); }
+  // The native grid keeps one editor mounted in both layouts. Pixel columns place each
+  // control at its measured target even when it is wider than one twelfth of a phone.
+  private composerColumns(): number { return Math.max(1, Math.round(this.getUIContext().vp2px(this.composerWidth))); }
+  private sendColumns(): number {
+    const size = this.composerActionSize();
+    const width = this.expandedComposer() ? Tokens.fine + size + (this.hasComposerAction() ? Tokens.fine + size : 0) :
+      this.trailingActionWidth(size) + Tokens.gap;
+    return Math.ceil(width * this.composerColumns() / this.composerWidth);
+  }
+  private leftColumns(): number {
+    const size = this.composerActionSize(), leading = this.leftActionWidth(size);
+    const width = this.expandedComposer() ? Tokens.fine + leading + (this.inlineKeyboardAction() ? size + (leading ? Tokens.fine : 0) : 0) :
+      leading + (leading ? Tokens.gap : 0);
+    return Math.ceil(width * this.composerColumns() / this.composerWidth);
+  }
   private primaryStop(): boolean { return this.composerAvailable() && this.model.canStop() && !this.model.draft.trim() && !this.attachments.attachments.length; }
   @Monitor('active', 'model.selected', 'model.sessions', 'model.connected', 'model.draft', 'model.decision', 'attachments.attachments', 'model.interruptPendingKey')
   primaryStopChanged(): void { this.onPrimaryStop(this.active && this.primaryStop()); }
@@ -528,7 +540,7 @@ export struct Conversation {
   private inlineEditorMaxHeight(): number {
     if (!this.expandedComposer()) return this.composerActionSize();
     const line = this.readingSize.line;
-    const actions = Tokens.touch * (this.verticalActions() ? 2 : 1);
+    const actions = this.composerActionSize() * (this.verticalActions() ? 2 : 1);
     // Include the outer spacing and both borders before the first native measurement.
     // After layout this also reserves the measured quote, attachment strip and Persona task dock.
     // Session requests have a separate scroll viewport that yields room to the composer.
@@ -1261,20 +1273,21 @@ export struct Conversation {
   private toolInk():ResourceColor {
     return this.model.style==='system' || this.model.style==='glass' ? this.environment.dark ? '#FFFFFF' : '#000000' : Colors.secondary;
   }
-  @Builder composerRound() {
+  @Builder composerRound(size: number = 44, inline: boolean = false) {
     Stack() {
-      Circle().width(40).height(40).fill(this.roundInk())
-      if (IconActions.busy(this.primaryActionKey())) LoadingProgress().width(20).height(20).color(this.roundSymbol())
-      else SymbolGlyph(this.primaryStop() ? Symbols.stop : Symbols.send).fontSize('22vp').fontWeight(FontWeight.Bold).fontColor([this.roundSymbol()])
-    }.width(44).height(44)
+      Circle().width(inline ? size * 36 / 44 : 40).height(inline ? size * 36 / 44 : 40).fill(this.roundInk())
+      if (IconActions.busy(this.primaryActionKey())) LoadingProgress().width(size * 20 / 44).height(size * 20 / 44).color(this.roundSymbol())
+      else SymbolGlyph(this.primaryStop() ? Symbols.stop : Symbols.send).fontSize(String(inline ? this.readingSize.shellPoints : 22) + 'vp').fontWeight(FontWeight.Bold).fontColor([this.roundSymbol()])
+    }.width(size).height(size)
   }
   @Builder hideKeyboard(page: boolean) {
     Button({type:ButtonType.Circle}) {
       Column({space:0}) {
-        SymbolGlyph($r('sys.symbol.keyboard')).fontSize('19vp').fontColor([this.toolInk()])
-        SymbolGlyph(Symbols.down).fontSize('7vp').fontWeight(FontWeight.Medium).fontColor([this.toolInk()])
+        SymbolGlyph($r('sys.symbol.keyboard')).fontSize(String(page ? 19 : this.readingSize.shellPoints) + 'vp').fontColor([this.toolInk()])
+        SymbolGlyph(Symbols.down).fontSize(String(page ? 7 : this.readingSize.shellPoints * 7 / 19) + 'vp').fontWeight(FontWeight.Medium).fontColor([this.toolInk()])
       }
-    }.width(44).height(44).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_chat_hide_keyboard'))
+    }.width(page ? 44 : this.composerActionSize()).height(page ? 44 : this.composerActionSize()).padding(0)
+      .responseRegion(ButtonStyles.touchRegion(page ? 44 : this.composerActionSize())).backgroundColor(Color.Transparent).accessibilityText(tr('phone_chat_hide_keyboard'))
       .bindTips(tr('phone_chat_hide_keyboard')).id(page ? 'chat.editor.keyboard' : 'chat.keyboard')
       .onClick(() => { if (page) this.pageField.stopEditing(); else this.inlineField.stopEditing(); })
   }
@@ -1349,11 +1362,12 @@ export struct Conversation {
                 .enabled(!this.sending && !this.model.draftLoading).onFocus(() => this.fieldFocused = true).onBlur(() => this.fieldFocused = false)
                 .onTextSelectionChange((start:number,end:number) => { if (!this.draftEditorOpen) this.rememberSelection(start,end); })
                 .onChange((value: string) => { if (!this.draftEditorOpen) this.model.updateDraft(value); }).id('chat.input')
-            }.width('100%').padding(this.expandedComposer() ? {left:Tokens.inset, right:Tokens.inset + (this.offersDraftEditor() ? this.restingSize.target : 0), top:Tokens.page} : 0)
+            }.width('100%').constraintSize({minHeight:this.expandedComposer() ? this.composerActionSize() * (this.offersDraftEditor() ? 48 : 44) / 44 : this.composerActionSize()})
+              .padding(this.expandedComposer() ? {left:Tokens.inset, right:Tokens.inset + (this.offersDraftEditor() ? this.restingSize.target : 0), top:Tokens.page} : 0)
             if (this.offersDraftEditor()) {
               Button({type:ButtonType.Circle}) {
                 SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('17vp').fontColor([Colors.ink])
-              }.width(this.restingSize.target).height(this.restingSize.target).padding(0).backgroundColor(Color.Transparent)
+              }.width(this.restingSize.target).height(this.restingSize.target).padding(0).margin({right:Tokens.fine,top:Tokens.fine}).backgroundColor(Color.Transparent)
                 .responseRegion(ButtonStyles.touchRegion(this.restingSize.target)).accessibilityText(tr('phone_chat_expand_editor')).bindTips(tr('phone_chat_expand_editor'))
                 .onClick(() => this.expandDraftEditor()).id('chat.expand')
             }
@@ -1364,9 +1378,9 @@ export struct Conversation {
         }.id(this.editorAnchorId)
           .onAreaChange((_old: Area, area: Area) => { this.editorLeft = Number(area.globalPosition.x); this.editorTop = Number(area.globalPosition.y); this.editorWidth = Number(area.width); this.editorHeight = Number(area.height); })
           .bindPopup(this.chooser.shown && this.chooser.session?.preserveInput === true, this.chooserPopupOptions())
-        if (!this.model.demo || this.showContextMenu || this.verticalActions() && (this.fieldFocused || this.environment.keyboardHeightPx > 0)) GridCol({ span: this.verticalActions() ? this.composerColumns() : this.leftColumns(), order: this.expandedComposer() ? this.verticalActions() ? 2 : 1 : 0 }) {
-          Row({ space: Tokens.gap }) {
-            if (!this.model.demo) Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(String(this.restingComposer() ? this.restingSize.plus : 26) + 'vp').fontWeight(FontWeight.Regular).fontColor([this.toolInk()]) }
+        if (!this.model.demo || this.showContextMenu || this.expandedComposer() && this.inlineKeyboardAction()) GridCol({ span: this.verticalActions() ? this.composerColumns() : this.leftColumns(), order: this.expandedComposer() ? this.verticalActions() ? 2 : 1 : 0 }) {
+          Row({ space: this.expandedComposer() ? Tokens.fine : Tokens.gap }) {
+            if (!this.model.demo) Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.plus).fontSize(String(this.restingSize.plus) + 'vp').fontWeight(FontWeight.Regular).fontColor([this.toolInk()]) }
               .attributeModifier(ButtonStyles.quiet).width(this.composerActionSize()).height(this.composerActionSize()).padding(0)
               .responseRegion(ButtonStyles.touchRegion(this.composerActionSize()))
               .accessibilityText(tr('attach'))
@@ -1375,23 +1389,22 @@ export struct Conversation {
               .parallelGesture(LongPressGesture().onAction(() => { if (this.showContextMenu) this.requestComposerActions(false); }))
               .bindContextMenu(this.nativeChooser('actions'), this.attachmentNativeMenu, this.actionContextMenuOptions())
             if (this.showContextMenu && this.model.demo) Button({ type: ButtonType.Circle }) { Image(Symbols.more).width(Tokens.symbol).height(Tokens.symbol).fillColor(Colors.ink) }
-              .attributeModifier(ButtonStyles.quiet).width(Tokens.touch).height(Tokens.touch).padding(0).accessibilityText(tr('more')).onClick((event: ClickEvent) => this.openComposerActions(event))
+              .attributeModifier(ButtonStyles.quiet).width(this.composerActionSize()).height(this.composerActionSize()).padding(0).accessibilityText(tr('more')).onClick((event: ClickEvent) => this.openComposerActions(event))
               .parallelGesture(LongPressGesture().onAction(() => this.requestComposerActions(false)))
               .bindContextMenu(this.nativeChooser('actions'), this.attachmentNativeMenu, this.actionContextMenuOptions()).id('chat.more')
-            if (this.verticalActions() && (this.fieldFocused || this.environment.keyboardHeightPx > 0)) this.hideKeyboard(false)
-          }.width('100%').constraintSize({ minHeight: this.composerActionSize() }).alignItems(VerticalAlign.Center)
+            if (this.expandedComposer() && this.inlineKeyboardAction()) this.hideKeyboard(false)
+          }.width('100%').padding({left:this.expandedComposer() ? Tokens.fine : 0}).constraintSize({ minHeight: this.composerActionSize() }).alignItems(VerticalAlign.Center)
         }
         if (this.expandedComposer() && !this.verticalActions()) GridCol({ span: this.composerColumns() - this.leftColumns() - this.sendColumns(), order: 3 }) {
           Row() {
-            if (this.fieldFocused || this.environment.keyboardHeightPx > 0) this.hideKeyboard(false)
             SessionComposerModeChip({model:this.model,active:this.active && !this.draftEditorOpen,onMenu:(open:boolean) => this.modeMenuOpen=open}).layoutWeight(1)
-          }.width('100%').constraintSize({ minHeight: Tokens.touch })
+          }.width('100%').constraintSize({ minHeight: this.composerActionSize() })
         }
         GridCol({ span: this.verticalActions() ? this.composerColumns() : this.sendColumns(), order: this.expandedComposer() ? this.verticalActions() ? 1 : 4 : 2 }) {
-          Row() {
+          Row({space:this.expandedComposer() ? Tokens.fine : 0}) {
           if (this.verticalActions()) SessionComposerModeChip({model:this.model,active:this.active && !this.draftEditorOpen,onMenu:(open:boolean) => this.modeMenuOpen=open}).layoutWeight(1)
           PhoneDictationControl({owner: this.dictationOwner(),ink:this.toolInk(), target:this.composerActionSize(),
-            resting:this.restingComposer(), symbolSize:this.restingComposer() ? this.restingSize.microphone : 22,
+            resting:this.composerAvailable(), symbolSize:this.restingSize.microphone,
             active: this.active && !this.draftEditorOpen && !this.sending && !this.model.draftLoading, language: this.model.language,
             chooseLanguage: () => this.model.dictationLocaleForChat(), onListeningIn: (locale: string) => this.model.rememberDictationLocale(locale),
             allowed: (owner: string) => owner === this.dictationOwner() && this.sendCurrent() && this.composerAvailable(),
@@ -1404,13 +1417,15 @@ export struct Conversation {
               return true;
             }})
           if (this.hasComposerAction()) Button({ type: ButtonType.Circle }) {
-            this.composerRound()
-          }.accessibilityText(tr(this.primaryActionKey())).buttonStyle(ButtonStyleMode.TEXTUAL).padding(0).width(44).height(44)
+            this.composerRound(this.expandedComposer() ? this.composerActionSize() : 44, this.expandedComposer())
+          }.accessibilityText(tr(this.primaryActionKey())).buttonStyle(ButtonStyleMode.TEXTUAL).padding(0)
+            .width(this.expandedComposer() ? this.composerActionSize() : 44).height(this.expandedComposer() ? this.composerActionSize() : 44)
+            .responseRegion(ButtonStyles.touchRegion(this.expandedComposer() ? this.composerActionSize() : 44))
             .backgroundColor(Color.Transparent)
             .enabled(this.primaryEnabled())
             .onClick(() => { if (!this.sendCurrent()) return; if (this.primaryStop()) this.model.stop(() => this.sendCurrent()); else this.sendDraft(); }).id('chat.send')
           }.width('100%').height(this.composerActionSize()).alignItems(VerticalAlign.Center).justifyContent(FlexAlign.End)
-            .padding({ right: this.restingComposer() ? 0 : 3 })
+            .padding({ right: this.expandedComposer() ? Tokens.fine : 0 })
         }
       }.width('100%').onAreaChange((_old: Area, area: Area) => { const width = Number(area.width); if (Number.isFinite(width) && width > 0) this.composerWidth = width; })
     }.padding(this.composerPadding()).backgroundColor(this.model.style==='system' ? this.environment.dark ? '#1F1F21' : '#FFFFFF' : Colors.surface)
