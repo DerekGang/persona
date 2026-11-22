@@ -54,7 +54,7 @@ func TestHealthIntakePageTotalsPaginationAndVersions(t *testing.T) {
 			if err := wire.CheckView(&page); err != nil {
 				t.Fatal(err)
 			}
-			progress := page.Sections[0].Items[0]
+			progress := page.Sections[0].Items[0].Tiles[0].Gauge
 			wantRatio := 0.375
 			if kind == "protein" {
 				wantRatio = 25.5 / 60

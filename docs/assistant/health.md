@@ -159,7 +159,11 @@ content. Clients show these capabilities only when hello includes `health_intake
 **Details.** Water and Protein reuse the Subscriptions page's declarative renderer under
 reserved extension id `-health-intake`, page `pages`. Initial state selects `kind:"water"`
 or `kind:"protein"`. The pages show today's entries with Delete (protein includes what was
-eaten), 7/30-day bar charts and how many dates met the current goal. Today's entries are
+eaten), 7/30-day bar charts and how many dates met the current goal. Today's gauge and the
+bar-chart series use the named category colors `blue` for water and `amber` for protein,
+including after the goal is met. The existing UI-version fitting keeps the total, unit and
+percentage when an older renderer cannot draw the gauge. Water's timezone note mentions
+recording and reminders; protein's mentions recording only. Today's entries are
 paged in groups of 40. Settings open from the page: water goal, cup size, reminders on/off,
 start/end, interval, weekends, stop when done; protein goal. Changes are validated before
 saving to `health.intake`. Invalid stored settings fall back to defaults and are logged, so

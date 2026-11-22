@@ -2618,6 +2618,10 @@ both records and reminders; `context.tz` does not change it. A render or action 
 active entries (40 at a time, with earlier/latest buttons), and a bar chart for 7 or 30
 calendar days. Days meeting the current goal are counted within that selected range.
 Protein entries include their food note. Settings open from a separate Settings button.
+Today's total uses the existing `Tile.gauge` (UI version 9); the gauge and bar-chart series
+use named `Color` values `blue` for water and `amber` for protein, even when the goal is met.
+Version fitting preserves the total, unit and percentage on older renderers. The timezone
+note mentions recording and reminders for water, and recording only for protein.
 
 All `values` are strings. Page actions:
 

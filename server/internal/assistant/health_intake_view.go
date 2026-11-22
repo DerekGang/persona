@@ -42,18 +42,21 @@ func drawIntakePage(p intakePageState, c healthIntakeSettings, v healthIntakeVie
 		items = append(items, button(t("save"), "save", true), button(t("back"), "back", false))
 		page.Sections = []wire.Section{{Title: t("settings"), Items: items}}
 	} else {
-		kind, unit := v.Water, t("unit.water")
+		kind, unit, color := v.Water, t("unit.water"), "blue"
 		if p.Kind == "protein" {
-			kind, unit = v.Protein, t("unit.protein")
+			kind, unit, color = v.Protein, t("unit.protein"), "amber"
 		}
 		ratio := min(1.0, kind.Today/float64(kind.Goal))
 		detail := t("progress", i18n.Args{"today": intakeNumber(kind.Today), "goal": kind.Goal, "unit": unit})
-		tone := ""
 		if ratio >= 1 {
-			detail, tone = t("toast.goal"), "positive"
+			detail = t("toast.goal")
 		}
-		today := []wire.Component{{Type: "progress", Label: t("today"), Ratio: &ratio, Detail: detail, Tone: tone},
-			text(t("zone", i18n.Args{"zone": v.Zone}))}
+		// Progress has no category color; the existing gauge keeps the intake kind's hue.
+		today := []wire.Component{{Type: "grid", MaxColumns: 1, Tiles: []wire.Tile{{
+			Title: t("today"), Value: intakeNumber(kind.Today), Subtitle: detail, Color: color,
+			Gauge: &wire.Gauge{Ratio: &ratio, Unit: unit, Color: color},
+		}}},
+			text(t("zone."+p.Kind, i18n.Args{"zone": v.Zone}))}
 		if p.Kind == "water" {
 			today = append(today, text(intakeReminderStatus(l, c.Water, reminder, kind.Entries, now, loc)))
 			if quiet {
@@ -107,7 +110,7 @@ func drawIntakePage(p intakePageState, c healthIntakeSettings, v healthIntakeVie
 		recent := []wire.Component{
 			{Type: "segmented", Name: "days", Value: strconv.Itoa(p.Days), Choices: []wire.Choice{
 				{Value: "7", Title: t("days", i18n.Args{"days": 7})}, {Value: "30", Title: t("days", i18n.Args{"days": 30})}}, Action: &wire.Action{ID: "range"}},
-			{Type: "chart", Kind: "bar", Title: t("chart." + p.Kind), Unit: unit, Series: []wire.ChartSeries{{Name: t("title." + p.Kind), Points: points}}},
+			{Type: "chart", Kind: "bar", Title: t("chart." + p.Kind), Unit: unit, Series: []wire.ChartSeries{{Name: t("title." + p.Kind), Color: color, Points: points}}},
 			text(t("days_done", i18n.Args{"goal": kind.Goal, "unit": unit, "days": daysDone})),
 		}
 		page.Sections = []wire.Section{
