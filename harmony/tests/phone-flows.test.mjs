@@ -493,6 +493,16 @@ test('only a workspace opened over the same owned session inherits its phone hea
   assert.equal(shell.phoneToolParent,'');
 });
 
+test('the long-draft header belongs only to the originating active portrait-phone session', () => {
+  const expr=formSource.match(/@Computed get floatingDraftHeader\(\): boolean \{\s*return ([\s\S]+?);\s*\}/)[1];
+  const floating=new Function('return '+expr);
+  const view={fullHeightPhone:()=>true,phoneTop:'session',longDraftIdentity:'photos',activeChild:'photos'};
+  assert.equal(floating.call(view),true);
+  view.activeChild='weather';assert.equal(floating.call(view),false);
+  view.activeChild='photos';view.longDraftIdentity='';assert.equal(floating.call(view),false);
+  view.longDraftIdentity='photos';view.fullHeightPhone=()=>false;assert.equal(floating.call(view),false);
+});
+
 test('a foreground appearance change recreates just the retained session header and sibling controls', () => {
   const header = formSource.slice(formSource.indexOf('  @Builder phoneHeader()'), formSource.indexOf('  @Builder compactPlaces()'));
   assert.match(header,/this\.phoneTop === 'session' \|\| this\.phoneToolParent/);
@@ -510,7 +520,7 @@ test('a foreground appearance change recreates just the retained session header 
   assert.deepEqual(count('session',true),[true,false]);assert.deepEqual(count('',false),[false,true]);
   assert.deepEqual(count('',false,false,true,true),[true,false]);
   assert.deepEqual(count('',true,false,false),[true,false]);assert.deepEqual(count('session',false,true),[false,false]);
-  assert.match(formSource,/if \(this\.floatingProjectHeader\) [\s\S]{0,100}this\.phoneHeader\(\)/);
+  assert.match(formSource,/if \(this\.floatingProjectHeader \|\| this\.floatingDraftHeader\) [\s\S]{0,100}this\.phoneHeader\(\)/);
   const chrome = formSource.slice(formSource.indexOf('  @Builder compactPlaces()'), formSource.indexOf('  private parentIndexes()'));
   assert.match(chrome,/SessionSpaceTabs\(\{space:this\.phoneSessionSpace/);
 });
