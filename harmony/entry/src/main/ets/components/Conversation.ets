@@ -8,7 +8,7 @@ import { Theme, SymbolGlyphModifier } from '@kit.ArkUI';
 import { ComposerOverlayWorkspace, ComposerOverlaySession } from '../models/ComposerOverlayWorkspace';
 import { composerPopupLayout, ComposerPopupLayout } from '../core/ComposerPopupLayout';
 import { util } from '@kit.ArkTS';
-import { FoldSplitContainer, HoverModeStatus, FrameCallback, LengthMetrics } from '@kit.ArkUI';
+import { FoldSplitContainer, HoverModeStatus, FrameCallback, LengthMetrics, window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironment';
 import { DeviceLook, deviceLook } from '../models/DeviceLook';
@@ -493,11 +493,37 @@ export struct Conversation {
     return this.model.decision.kind === 'question' ? Math.max(half, this.availableHeight - 72) : half;
   }
   @Local agentComposerHeight: number = 0;
+  @Local agentCountHeight: number = 0;
   private agentCardsRoom(): number {
-    const remaining = this.availableHeight - Math.max(this.agentComposerHeight, this.restingSize.target + Tokens.footer) - Tokens.gap;
-    const loneQuestion = this.model.pendingDecisions.length <= 1 && this.model.decision?.kind === 'question';
-    const cap = this.environment.keyboardHeightPx > 0 || loneQuestion ? remaining - Tokens.touch : this.availableHeight * 0.5;
-    return Math.max(Tokens.touch, Math.min(remaining, cap));
+    const ui=this.getUIContext(), keyboard=this.environment.keyboardHeightPx>0;
+    let visibleBody=this.availableHeight, page=this.availableHeight, topAllowance=0;
+    const windowName=ui.getWindowName();
+    if (windowName) {
+      try {
+        const owner=window.findWindow(windowName), rect=owner.getWindowProperties().windowRect;
+        const height=ui.px2vp(rect.height), width=ui.px2vp(rect.width), origin=ui.px2vp(rect.top);
+        const topInset=Math.max(0,ui.px2vp(this.environment.safeTopPx));
+        const bottomInset=this.environment.safeBottomPx>0 ? Math.max(0,ui.px2vp(rect.top+rect.height-this.environment.safeBottomPx)) : 0;
+        const bottom=origin+height-Math.max(bottomInset,ui.px2vp(this.environment.keyboardHeightPx));
+        // The Ark navigation header is outside Conversation. Its visible body already starts below that header.
+        visibleBody=Math.max(0,Math.min(this.availableHeight,bottom-this.contentTop));
+        const compact=owner.getWindowStatus()===window.WindowStatusType.FULL_SCREEN && !this.environment.nativeHoverAvailable &&
+          width<600 && height>width && Math.abs(width-this.availableWidth)<2;
+        if (compact) {
+          // The compact phone chat's half-page budget includes its header and excludes its safe areas.
+          // Larger native cutouts and navigation indicators still take precedence.
+          topAllowance=Math.max(0,62-topInset);
+          page=height-Math.max(62,topInset)-Math.max(34,bottomInset);
+        } else page=visibleBody;
+      } catch (_) { /* Before the window attaches, use the measured conversation pane. */ }
+    }
+    const composer=Math.max(this.agentComposerHeight,this.restingSize.target+Tokens.footer);
+    const cards=this.model.pendingDecisions, loneQuestion=cards.length<=1 && this.model.decision?.kind==='question';
+    const countRoom=cards.length>1 ? this.agentCountHeight+Tokens.gap : 0;
+    const remaining=visibleBody-composer-Tokens.gap-countRoom;
+    const floor=Tokens.gap+1, half=page/2;
+    const cap=keyboard ? remaining-topAllowance-floor : loneQuestion ? Math.max(half,remaining-72-floor) : half;
+    return Math.max(0,Math.min(remaining,Math.max(44,cap)));
   }
   private inlineEditorMaxHeight(): number {
     if (!this.expandedComposer()) return this.composerActionSize();
@@ -1367,7 +1393,7 @@ export struct Conversation {
     Column({ space: Tokens.gap }) {
       if (this.model.selected.kind === 'session') {
         AgentPendingCards({ model: this.model, room: this.agentCardsRoom(), keyboard: this.environment.keyboardHeightPx > 0,
-          admission: () => this.sendCurrent(), onLink: (address: string) => this.onLink(address) })
+          onCountHeight:(height:number) => { if (Math.abs(height-this.agentCountHeight)>.5) this.agentCountHeight=height; }, admission: () => this.sendCurrent(), onLink: (address: string) => this.onLink(address) })
           .padding({ left: 12, right: 12 })
         if (this.composerAvailable()) Column() { this.composer() }.width('100%').padding(this.controlsPadding())
           .onAreaChange((_old: Area, area: Area) => {

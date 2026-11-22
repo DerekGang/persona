@@ -231,3 +231,26 @@ test('opening and collapsing the page editor restores its edited draft and selec
   assert.deepEqual(focused, ['chat.editor.input', 'chat.input']);
   assert.deepEqual(selected, [[2, 5], [4, 6]]);
 });
+
+test('pending Agent cards derive the half page from the compact portrait window and keep the live keyboard and larger native insets clear', () => {
+  let width=402,height=874,mode=1,insetTop=39,insetBottom=28,origin=0;
+  const win={WindowStatusType:{FULL_SCREEN:1},findWindow:()=>({getWindowStatus:()=>mode,
+    getWindowProperties:()=>({windowRect:{width:width*3,height:height*3,top:origin*3}})})};
+  const Page=new Function('window','Tokens','return '+stripTypeScriptTypes('class Page {'+method('agentCardsRoom')+'}'))(win,Tokens);
+  const view=Object.assign(new Page(),{getUIContext:()=>({px2vp:x=>x/3,getWindowName:()=>'main'}),
+    availableHeight:741,availableWidth:402,contentTop:133,agentComposerHeight:68.33,agentCountHeight:15.33,
+    restingSize:{target:48.3},model:{pendingDecisions:[{},{}],decision:{kind:'permission'}},environment:{}});
+  const insets=()=>Object.assign(view.environment,{safeTopPx:insetTop*3,safeBottomPx:(origin+height-insetBottom)*3,keyboardHeightPx:0,nativeHoverAvailable:false});
+  insets();assert.equal(view.agentCardsRoom(),389);
+  height=974;view.availableHeight+=100;insets();assert.equal(view.agentCardsRoom(),439);
+  height=874;view.availableHeight=741;insetTop=92;insetBottom=46;insets();assert.equal(view.agentCardsRoom(),368);
+  insetTop=39;insetBottom=28;insets();view.availableHeight=427;view.agentComposerHeight=115.33;view.environment.keyboardHeightPx=314*3;
+  assert.ok(Math.abs(view.agentCardsRoom()-248.34)<.02);
+  view.agentComposerHeight=223;assert.ok(view.agentCardsRoom()<150);
+  view.availableHeight=741;view.agentComposerHeight=68.33;insets();view.environment.nativeHoverAvailable=true;
+  assert.equal(view.agentCardsRoom(),(846-133)/2);
+  insets();mode=5;assert.equal(view.agentCardsRoom(),(846-133)/2);
+  mode=1;width=874;height=402;insetTop=20;insetBottom=15;view.contentTop=90;view.availableWidth=874;view.availableHeight=312;insets();
+  assert.equal(view.agentCardsRoom(),(402-15-90)/2);
+  view.contentTop=354;view.availableHeight=48;view.agentComposerHeight=90;assert.equal(view.agentCardsRoom(),0);
+});

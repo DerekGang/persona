@@ -1,5 +1,6 @@
 import { IconActions } from '../design/IconActions';
 import { LengthMetrics } from '@kit.ArkUI';
+import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { QuestionDraft } from '../models/QuestionWorkspace';
 import { Symbols } from '../design/Symbols';
 import { MarkdownText } from './MarkdownText';
@@ -590,40 +591,49 @@ export struct InteractionDecisionForm {
         .enabled(this.canRespond()).onClick(() => this.submit('dismiss'))
     }
   }
+  private agentFontSize(points:number):number {
+    return points*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(points));
+  }
+  private headerControlSide():number {
+    return this.agentCard ? 28*Math.max(1,Math.min(nativeEnvironment.fontScale,67/51)) : 28;
+  }
+  private agentActionHeight():number {
+    return 30 + this.agentFontSize(17)*1.2;
+  }
   @Builder taskHeader() {
     Row({space:5}) {
       Button({type:ButtonType.Normal}) {
         Row({space:5}) {
           SymbolGlyph(this.request.kind==='plan' ? Symbols.document : this.request.kind==='question' ? $r('sys.symbol.ellipsis_bubble') : $r('sys.symbol.hand_raised_fingers_spread'))
-            .fontSize('13vp').fontColor([Colors.link])
+            .fontSize(this.agentCard ? Tokens.interfaceFontVp(13,nativeEnvironment.fontScale) : '13vp').fontColor([Colors.link])
           Text(this.cardHeading()).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(Colors.link).maxLines(1)
           if (this.cardFolded && this.foldPreview()) Text(this.foldPreview()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
             .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
         }.align(Alignment.Start).width('100%')
-      }.layoutWeight(1).height(28).backgroundColor(Color.Transparent).padding(0)
+      }.layoutWeight(1).height(this.headerControlSide()).backgroundColor(Color.Transparent).padding(0)
         .onClick(() => this.toggleCard()).accessibilityText(this.cardHeading()).accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded'))
       if (this.docked && this.taskAgent) Button(tr('decision_view_in_chat'),{type:ButtonType.Normal})
-        .height(28).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
+        .height(this.headerControlSide()).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
         .backgroundColor(Color.Transparent).onClick(() => { if (this.admission()) this.onViewTask(); }).id('interaction.task.source')
       if (this.docked && interactionSkipReason(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
-        .height(28).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        .height(this.headerControlSide()).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
         .backgroundColor(Color.Transparent).enabled(false).id('interaction.task.skip_unavailable')
       else if ((this.docked || this.agentCard) && interactionScreenCanCancel(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
-        .height(28).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
+        .height(this.headerControlSide()).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
         .backgroundColor(Color.Transparent).enabled(this.canRespond()).onClick(() => this.submit('cancel')).id('interaction.task.skip')
       if (!this.cardFolded && this.request.kind==='plan') Button({type:ButtonType.Circle}) {
         SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('13vp').fontColor([Colors.secondary])
-      }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_plan_fullscreen'))
+      }.width(this.headerControlSide()).height(this.headerControlSide()).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_plan_fullscreen'))
         .onClick(() => { if (this.admission()) this.fullPlan=true; }).id('interaction.task.expand_plan')
       if ((this.taskQueue || this.agentCard) && interactionToolName(this.request)!=='ask_user') Button({type:ButtonType.Circle}) {
         Row({space:2}) {
           ForEach([0,1,2],(_dot:number) => { Circle().width(2.5).height(2.5).fill(Colors.secondary) },(dot:number) => String(dot))
         }
-      }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).enabled(this.canRespond()).accessibilityText(tr('more'))
+      }.width(this.headerControlSide()).height(this.headerControlSide()).padding(0).backgroundColor(Color.Transparent).enabled(this.canRespond()).accessibilityText(tr('more'))
         .bindMenu(this.dockMenu).id('interaction.task.menu')
       Button({type:ButtonType.Circle}) {
         SymbolGlyph(this.cardFolded ? Symbols.up : Symbols.down).fontSize('13vp').fontColor([Colors.secondary])
-      }.width(27).height(27).padding(0).backgroundColor(Colors.control).accessibilityText(tr(this.cardFolded ? 'agent_expand' : 'agent_collapse'))
+      }.width(this.agentCard ? this.headerControlSide() : 27).height(this.agentCard ? this.headerControlSide() : 27).padding(0).backgroundColor(Colors.control).accessibilityText(tr(this.cardFolded ? 'agent_expand' : 'agent_collapse'))
         .accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded')).onClick(() => this.toggleCard()).id('interaction.task.fold')
     }.width('100%').onAreaChange((_before:Area,area:Area) => {
       const height=Number(area.height);
@@ -697,7 +707,7 @@ export struct InteractionDecisionForm {
   @Builder agentPermissionBody() {
     Column({space:12}) {
       Row({space:8}) {
-        if (interactionToolName(this.request)==='Bash') Text('>_').fontFamily('monospace').fontSize(12).fontWeight(600)
+        if (interactionToolName(this.request)==='Bash') Text('>_').fontFamily('monospace').fontSize(Tokens.interfaceFontVp(12,nativeEnvironment.fontScale)).fontWeight(600)
           .fontColor(Colors.link).padding({left:2,right:2}).border({width:1,color:Colors.link,radius:3}).accessibilityLevel('no')
         else SymbolGlyph(Symbols.document).fontSize('17vp').fontColor([Colors.link])
         Text(interactionPermissionTool(this.request) || tr('tool')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
@@ -705,6 +715,7 @@ export struct InteractionDecisionForm {
       }.width('100%')
       if (this.permissionSubject) Text(this.permissionSubject).fontFamily('monospace')
         .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink)
+        .letterSpacing(String(this.agentFontSize(13)/80)+'vp').lineHeight(String(this.agentFontSize(13)*1.2)+'vp')
         .maxLines(this.commandExpanded || !this.longPermissionCommand() ? undefined : 5).textOverflow({overflow:TextOverflow.Ellipsis})
         .width('100%').padding(12).backgroundColor(Colors.subtle).borderRadius(10).id('interaction.permission.command')
       if (this.longPermissionCommand()) Button(tr(this.commandExpanded ? 'agent_collapse' : 'agent_expand'),{buttonStyle:ButtonStyleMode.TEXTUAL})
@@ -715,18 +726,21 @@ export struct InteractionDecisionForm {
   @Builder agentPermissionActions() {
     Column({space:12}) {
       Row({space:8}) {
-        Button(tr('deny'),{type:ButtonType.Capsule}).layoutWeight(1).constraintSize({minHeight:50}).fontSize(17)
+        Button(tr('deny'),{type:ButtonType.Capsule}).layoutWeight(1).height(this.agentActionHeight()).constraintSize({minHeight:this.agentActionHeight()}).fontSize(17)
           .maxFontScale(Tokens.interfaceScaleFor(17)).backgroundColor(Colors.control).fontColor(Colors.link).enabled(this.canRespond())
           .onClick(() => this.sendPermission('deny')).id('interaction.permission.deny')
-        Button(tr('allow'),{type:ButtonType.Capsule}).layoutWeight(1).constraintSize({minHeight:50}).fontSize(17)
+        Button(tr('allow'),{type:ButtonType.Capsule}).layoutWeight(1).height(this.agentActionHeight()).constraintSize({minHeight:this.agentActionHeight()}).fontSize(17)
           .maxFontScale(Tokens.interfaceScaleFor(17)).backgroundColor(Colors.action).fontColor(Colors.onAction).enabled(this.permissionAllowed())
           .onClick(() => this.sendPermission('allow')).id('interaction.permission.allow')
       }.width('100%')
       if (interactionSessionAllowance(this.request)) {
-        Button(tr('decision_allow_session'),{type:ButtonType.Normal}).width('100%').padding(0).height('auto').constraintSize({minHeight:16})
-          .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink).backgroundColor(Color.Transparent).enabled(this.permissionAllowed())
-          .onClick(() => this.sendPermission('allow_session')).id('interaction.permission.allow_session')
-        if (this.permissionScope()) Text(this.permissionScope()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+        Row() {
+          Text(tr('decision_allow_session')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).lineHeight(String(this.agentFontSize(13)*1.2)+'vp').fontColor(Colors.ink)
+            .accessibilityRole(AccessibilityRoleType.BUTTON).enabled(this.permissionAllowed())
+            .responseRegion({x:0,y:-6,width:'100%',height:'160%'})
+            .onClick(() => this.sendPermission('allow_session')).id('interaction.permission.allow_session')
+        }.width('100%').justifyContent(FlexAlign.Center)
+        if (this.permissionScope()) Text(this.permissionScope()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).lineHeight(String(this.agentFontSize(13)*1.2)+'vp').fontColor(Colors.secondary)
           .width('100%').id('interaction.permission.scope')
       }
     }.width('100%').alignItems(HorizontalAlign.Start)
