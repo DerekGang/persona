@@ -290,6 +290,8 @@ test('New Agent shows the row and picker default from the current machine purpos
   assert.equal(form.launchRowDetail('model'),'preset-id');
   form.agentModelId='';form.launcher='';form.agentUsesModelSettings=false;
   assert.equal(form.launchRowDetail('model'),'Host choice');assert.equal(form.agentModelId,'');
+  form.agentPanel='';form.launchChoices.locked='model is fixed by launcher';form.openAgentPicker('model');
+  assert.equal(form.agentPanel,'');assert.equal(form.launchRowDetail('model'),'model is fixed by launcher');
 });
 
 test('the start sheet and the session request agree on thinking effort for each launcher and model', async () => {
@@ -358,6 +360,7 @@ test('the New Agent footer follows an available model purpose and still loads la
     assert.deepEqual(calls.slice(0,2),[launcherPath,purposePath]); assert.ok(calls[2].includes('/launchers/'+launcher+'/models?'));
     assert.equal(form.defaultLauncherName,launcher); assert.equal(form.machineDefaultLabel,label);
     assert.equal(form.launchListReady,true); assert.equal(form.agentModelHelp(),hint);
+    assert.equal(form.launchRowDetail('model'),purpose ? 'Model Settings: picked' : 'flow_use_default');
     form.launcherData=[{name:launcher,source:'paseo',agent:'grok'}];
     assert.equal(form.agentModelHelp(),hint.replace(' /model',''));
   }

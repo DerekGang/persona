@@ -7293,6 +7293,10 @@
       "value": "手动输入的模型 ID：{id}"
     },
     {
+      "name": "phone_start_named_preset",
+      "value": "预设 {preset}"
+    },
+    {
       "name": "phone_start_preset",
       "value": "预设"
     },

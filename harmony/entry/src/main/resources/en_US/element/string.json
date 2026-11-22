@@ -7293,6 +7293,10 @@
       "value": "Typed model ID: {id}"
     },
     {
+      "name": "phone_start_named_preset",
+      "value": "Preset {preset}"
+    },
+    {
       "name": "phone_start_preset",
       "value": "Preset"
     },

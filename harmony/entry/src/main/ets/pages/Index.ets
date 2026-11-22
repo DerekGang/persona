@@ -1774,7 +1774,8 @@ struct Index {
     return this.agentPanel === 'model' ? this.agentModelId : this.agentEffort;
   }
   private openAgentPicker(kind:string): void {
-    if (this.switchingAgentMachine || this.creatingAgent || !this.agentOwnsMachine(this.chosenAgentMachine()) || kind === 'effort' && this.launchChoices.startEfforts(this.chosenLauncher()).length === 0) return;
+    if (this.switchingAgentMachine || this.creatingAgent || !this.agentOwnsMachine(this.chosenAgentMachine()) ||
+      kind === 'model' && !!this.launchChoices.locked || kind === 'effort' && this.launchChoices.startEfforts(this.chosenLauncher()).length === 0) return;
     this.startFailure = ''; this.agentPanel = kind;
     if (kind === 'workspace' && !this.projectCatalog.loading) this.projectCatalog.refresh(this.model);
     else if (kind === 'folder') this.browseAgentFolder(this.directory);
@@ -1850,7 +1851,7 @@ struct Index {
   private launchRowTitle(key:string): string {
     if (key === 'workspace') return tr('workspace');
     if (key === 'folder') return this.directory ? this.directory.split('/').filter((part:string) => !!part).pop() || '/' : tr('directory');
-    if (key === 'preset') return tr('phone_start_preset');
+    if (key === 'preset') return this.agentPreset ? tr('phone_start_named_preset').replace('{preset}',this.agentPreset) : tr('phone_start_preset');
     if (key === 'launcher') return this.launcher || (this.machineDefaultLabel ? tr('admin_default')+' · '+this.machineDefaultLabel : tr('launcher'));
     if (key === 'model') return this.startModelRow(this.agentModelId).title;
     return tr('flow_effort');
@@ -1858,7 +1859,7 @@ struct Index {
   private launchRowDetail(key:string): string {
     if (key === 'workspace') return this.selectedAgentTree()?.title || tr('flow_choose_folder');
     if (key === 'folder') return this.agentPathLabel(this.directory || Wire.text(this.chosenAgentMachine()?.data() || {},'home') || '~');
-    if (key === 'preset') return this.agentPreset || this.agentTierProfile || tr('phone_default_preset');
+    if (key === 'preset') return this.agentTierProfile;
     if (key === 'launcher') return this.launcher ? Wire.text(this.chosenLauncher(),'model') : '';
     if (key === 'model') return this.startModelRow(this.agentModelId).detail;
     return this.agentEffort || tr('flow_use_default');
@@ -1905,8 +1906,13 @@ struct Index {
         if (this.launchRowDetail(key)) Text(this.launchRowDetail(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
           .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(key==='folder' ? EllipsisMode.START : EllipsisMode.END)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      PhoneOutlineIcon({name:'forward',iconScale:this.agentSize(1,1.35),color:Colors.secondary}).opacity(0.55).id('agent.chevron.'+key)
-    }.width('100%').constraintSize({minHeight:this.launchRowDetail(key) ? this.agentSize(66.67,81.33) : this.agentSize(52.33,59.33)})
+      if (key === 'model' && this.launchChoices.locked) {
+        SymbolGlyph($r('sys.symbol.lock')).fontSize(Tokens.interfaceFontVp(15,this.environment.fontScale))
+          .fontColor([Colors.secondary]).id('agent.model.lock')
+      } else {
+        PhoneOutlineIcon({name:'forward',iconScale:this.agentSize(1,1.35),color:Colors.secondary}).opacity(0.55).id('agent.chevron.'+key)
+      }
+    }.enabled(key !== 'model' || !this.launchChoices.locked).width('100%').constraintSize({minHeight:this.launchRowDetail(key) ? this.agentSize(66.67,81.33) : this.agentSize(52.33,59.33)})
       .padding({left:20,right:20,top:12,bottom:12}).onClick(() => this.openAgentPicker(key)).accessibilityGroup(true).id('agent.'+key)
   }
   @Builder launchDivider() { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:48}) }

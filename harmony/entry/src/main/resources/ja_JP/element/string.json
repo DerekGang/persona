@@ -7293,6 +7293,10 @@
       "value": "手入力のモデルID：{id}"
     },
     {
+      "name": "phone_start_named_preset",
+      "value": "プリセット {preset}"
+    },
+    {
       "name": "phone_start_preset",
       "value": "プリセット"
     },
