@@ -409,6 +409,22 @@
       "value": "已完成"
     },
     {
+      "name": "phone_working_seconds",
+      "value": "正在工作 {s} 秒"
+    },
+    {
+      "name": "phone_working_minutes",
+      "value": "正在工作 {m} 分"
+    },
+    {
+      "name": "phone_working_minutes_seconds",
+      "value": "正在工作 {m} 分 {s} 秒"
+    },
+    {
+      "name": "phone_working_hours_minutes",
+      "value": "正在工作 {h} 小时 {m} 分"
+    },
+    {
       "name": "work_summary",
       "value": "工作过程"
     },

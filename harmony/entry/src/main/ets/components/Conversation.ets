@@ -45,6 +45,7 @@ import { ContextPicker } from './ContextPicker';
 import type { ClientViewLease } from '../models/ClientModel';
 import { parseReadingAnchor, readingAnchorIndex } from '../core/ConversationReading';
 import type { ReadingAnchor } from '../core/ConversationReading';
+import { workingTurnLabel } from '../core/PhoneDate';
 
 class ConversationFrame extends FrameCallback {
   private action: () => void;
@@ -83,6 +84,29 @@ struct MessageSurface {
       .padding(this.own || this.personaReply ? {left:14,right:14,top:9,bottom:9} : 0)
       .backgroundColor(this.own ? this.fill : this.personaReply ? Colors.control : Color.Transparent)
       .borderRadius(this.own || this.personaReply ? Tokens.bubble : 0)
+  }
+}
+
+@ComponentV2
+struct RunningTurnLabel {
+  @Require @Param start: number;
+  @Require @Param active: boolean;
+  @Local now: number = Date.now();
+  private visible: boolean = false;
+  private timer: number = -1;
+  @Monitor('active', 'start') syncClock(): void {
+    if (this.timer !== -1) { clearInterval(this.timer); this.timer = -1; }
+    if (!this.visible || !this.active || this.start <= 0) return;
+    this.now = Date.now();
+    this.timer = setInterval(() => { this.now = Date.now(); }, 1000);
+  }
+  aboutToDisappear(): void { this.visible = false; this.syncClock(); }
+  build() {
+    Text(workingTurnLabel(this.start, this.now, tr)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+      .onVisibleAreaChange([0,1], (shown: boolean, ratio: number) => {
+        const visible = shown && ratio > 0;
+        if (this.visible !== visible) { this.visible = visible; this.syncClock(); }
+      })
   }
 }
 
@@ -957,12 +981,18 @@ export struct Conversation {
   }
   @Builder message(entry: RepeatItem<ConversationLine>) {
     Column({ space: Tokens.gap }) {
-      if (entry.item.message!.work) {
+      if (entry.item.message!.role === 'work' && entry.item.message!.running && !entry.item.message!.work) {
+        Row({ space: 5 }) {
+          LoadingProgress().width(14).height(14).color(Colors.working)
+          RunningTurnLabel({ start: entry.item.message!.at, active: this.active })
+        }.id('chat.work.' + entry.item.message!.id)
+      } else if (entry.item.message!.work) {
         Button({ type: ButtonType.Normal }) {
           Row({ space: 7 }) {
             if (entry.item.message!.running) LoadingProgress().width(14).height(14).color(Colors.working)
             else SymbolGlyph($r('sys.symbol.list_bullet')).fontSize(15).fontColor([Colors.secondary])
-            Text(tr(entry.item.message!.running ? 'working' : 'work_summary')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
+            if (entry.item.message!.running) RunningTurnLabel({ start: entry.item.message!.at, active: this.active })
+            else Text(tr('work_summary')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
             if (entry.item.message!.toolCount > 0) Text(tr('tool') + ' ' + String(entry.item.message!.toolCount)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             if (entry.item.message!.thoughtCount > 0) Text(tr('phone_chat_thoughts') + ' ' + String(entry.item.message!.thoughtCount)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
             SymbolGlyph(this.expanded.includes(entry.item.message!.id) ? Symbols.down : Symbols.expand).fontSize(12).fontColor([Colors.secondary])
@@ -1103,7 +1133,11 @@ export struct Conversation {
           .backgroundColor(entry.item.id === this.highlightedLine ? Colors.selection : Color.Transparent).borderRadius(12)
           .id('chat.line.' + entry.item.id)
       }).key((line: ConversationLine) => line.id).virtualScroll({ totalCount: this.lines.length, reusable: false })
-    }.stackFromEnd(!this.showWelcome()).height('100%').width('100%').id('chat.transcript')
+    }.stackFromEnd(!this.showWelcome())
+      // The native Agent list leaves 48 points between its last text and the footer.
+      // Four are already inside the message row. This space scrolls with its contents.
+      .contentEndOffset(this.model.selected.kind === 'session' && this.lines.length > 0 ? 44 : 0)
+      .height('100%').width('100%').id('chat.transcript')
       .onAreaChange((_old: Area, area: Area) => this.transcriptViewportChanged(Number(area.height)))
       .bindSheet(this.questions.shown, this.questionContent(), { title: { title: tr('interaction_question_reopen') }, height: SheetSize.LARGE, keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY, showClose: true, onWillAppear: () => this.presentedQuestion = this.questions.beginPresentation(), onAppear: () => { this.questionLayoutReady = true; this.measureQuestion(); }, onWillDismiss: (action: DismissSheetAction) => this.questions.dismiss(this.presentedQuestion, () => action.dismiss()), onDisappear: () => { this.questionLayoutReady = false; this.questions.endPresentation(this.presentedQuestion); this.presentedQuestion = undefined; } })
       .maintainVisibleContentPosition(true)

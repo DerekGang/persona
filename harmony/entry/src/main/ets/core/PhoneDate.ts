@@ -22,3 +22,15 @@ export function phoneDueDate(at: number, now: number, locale: string, timed: boo
   if (timed) { options.hour = 'numeric'; options.minute = '2-digit'; }
   return new Intl.DateTimeFormat(locale || undefined, options).format(date);
 }
+
+/** Elapsed time for a live exchange, starting at its transcript input or wake. */
+export function workingTurnLabel(start: number, now: number, translate: (key: string) => string): string {
+  if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(now) || now < start) return translate('working');
+  const seconds = Math.floor((now - start) / 1000);
+  const minutes = Math.floor(seconds / 60);
+  if (minutes === 0) return translate('phone_working_seconds').replace('{s}', String(seconds));
+  if (minutes >= 60) return translate('phone_working_hours_minutes')
+    .replace('{h}', String(Math.floor(minutes / 60))).replace('{m}', String(minutes % 60));
+  const pattern = seconds % 60 ? 'phone_working_minutes_seconds' : 'phone_working_minutes';
+  return translate(pattern).replace('{m}', String(minutes)).replace('{s}', String(seconds % 60));
+}

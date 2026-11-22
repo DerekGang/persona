@@ -409,6 +409,22 @@
       "value": "Completed"
     },
     {
+      "name": "phone_working_seconds",
+      "value": "Working {s} s"
+    },
+    {
+      "name": "phone_working_minutes",
+      "value": "Working {m} min"
+    },
+    {
+      "name": "phone_working_minutes_seconds",
+      "value": "Working {m}m {s}s"
+    },
+    {
+      "name": "phone_working_hours_minutes",
+      "value": "Working {h} hr {m} min"
+    },
+    {
       "name": "work_summary",
       "value": "Work details"
     },

@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
 import { projectToolTurn } from '../entry/src/main/ets/core/Domain.ts';
+import { workingTurnLabel } from '../entry/src/main/ets/core/PhoneDate.ts';
 import { stepsToItems } from '../../integrations/antigravity/lib/map.js';
 
 const source = readFileSync(new URL('../entry/src/main/ets/models/ClientModel.ets', import.meta.url), 'utf8');
@@ -33,7 +34,7 @@ class ChatMessage {
 
 const ProjectionHarness = new Function(
   'projectToolTurn', 'ChatMessage', 'messageDisplay', 'parseMessageContent',
-  'return ' + stripTypeScriptTypes('class ProjectionHarness {' + method('projectMessages') + '}'),
+  'return ' + stripTypeScriptTypes('class ProjectionHarness {' + method('projectMessages') + method('itemTime') + '}'),
 )(
   projectToolTurn,
   ChatMessage,
@@ -59,14 +60,30 @@ const transcripts = JSON.parse(execFileSync(
   'python3', ['-c', python, fixturePath, JSON.stringify(configs)], { encoding: 'utf8' },
 ));
 
-function project(items) {
+function project(items, running = false) {
   const model = Object.assign(new ProjectionHarness(), {
     target: () => 'fixture-reading-target',
-    itemTime: () => 0,
     workText: step => step.item?.text ?? '',
   });
-  return model.projectMessages(items, false);
+  return model.projectMessages(items, running);
 }
+
+test('a live final turn keeps its work line between the real input and answer without fabricating tool activity', () => {
+  const at='2026-11-23T01:00:00Z';
+  const items=[{id:'input',role:'user',kind:'text',text:'Convert to JPEG',ts:at},
+               {id:'answer',role:'assistant',kind:'text',text:'The plan is ready',ts:'2026-11-23T01:04:00Z'}];
+  const rows=project(items,true);
+  assert.deepEqual(rows.map(row=>row.role),['user','work','assistant']);
+  assert.equal(rows[1].at,Date.parse(at));assert.equal(rows[1].work,'');assert.equal(rows[1].running,true);
+  assert.equal(rows[1].toolCount,0);assert.equal(rows[1].thoughtCount,0);
+  assert.deepEqual(project(items).map(row=>row.role),['user','assistant']);
+  const strings={working:'Working',phone_working_seconds:'Working {s} s',phone_working_minutes:'Working {m} min',
+                 phone_working_minutes_seconds:'Working {m}m {s}s',phone_working_hours_minutes:'Working {h} hr {m} min'};
+  const label=(delta,start=rows[1].at)=>workingTurnLabel(start,rows[1].at+delta*1000,key=>strings[key]);
+  assert.equal(label(9),'Working 9 s');assert.equal(label(60),'Working 1 min');
+  assert.equal(label(91),'Working 1m 31s');assert.equal(label(3661),'Working 1 hr 1 min');
+  assert.equal(label(-1),'Working');assert.equal(label(20,0),'Working');
+});
 
 test('native transcript projection keeps a middle stable ID across prepend and append phases', () => {
   const middleId = 'visible-fixture-reading-50#0';

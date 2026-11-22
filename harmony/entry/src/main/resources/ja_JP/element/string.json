@@ -409,6 +409,22 @@
       "value": "完了"
     },
     {
+      "name": "phone_working_seconds",
+      "value": "作業中{s}秒"
+    },
+    {
+      "name": "phone_working_minutes",
+      "value": "作業中{m}分"
+    },
+    {
+      "name": "phone_working_minutes_seconds",
+      "value": "作業中{m}分{s}秒"
+    },
+    {
+      "name": "phone_working_hours_minutes",
+      "value": "作業中{h}時間{m}分"
+    },
+    {
       "name": "work_summary",
       "value": "作業の詳細"
     },

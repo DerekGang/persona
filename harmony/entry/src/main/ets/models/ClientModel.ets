@@ -1043,7 +1043,7 @@ export class ClientModel {
       this.closeTranscript(); this.transcriptKey = target;
       this.transcript = new TranscriptModel(row, this.repo(), this.local, target, (items: readonly TranscriptItem[], hasMore: boolean, historyReady: boolean) => {
         if (!this.owns(generation, scope) || this.target() !== target) return;
-        this.hasMoreMessages = hasMore; this.transcriptHistoryReady = historyReady; this.publishTranscript(items, row.state === 'working' || Wire.bool(row.data(), 'working'));
+        this.hasMoreMessages = hasMore; this.transcriptHistoryReady = historyReady; this.publishTranscript(items, this.turnWorking());
       }, (error: Error) => { if (this.owns(generation, scope) && this.target() === target) this.failure(error); });
       await this.transcript.open();
     } else await this.transcript.latest();
@@ -1078,6 +1078,7 @@ export class ClientModel {
       projection.userImages.forEach((item: TranscriptItem) => { const message = new ChatMessage(item.id, 'user'); message.imageId = item.id; message.ownerTarget = this.target(); message.itemId = item.id; message.at = this.itemTime(item); messages.push(message); });
       if (projection.summaryVisible) {
         const summary = new ChatMessage(projection.workKey, 'work');
+        summary.at = this.itemTime(group[0]);
         summary.toolCount = projection.toolCount; summary.thoughtCount = projection.thoughtCount; summary.running = projection.running;
         summary.work = projection.inspectionSteps.map((step: WorkInspectionStep) => this.workText(step)).filter((value: string) => !!value).join('\n\n');
         summary.raw = JSON.stringify(group); messages.push(summary);
