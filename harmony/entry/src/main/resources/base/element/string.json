@@ -5957,6 +5957,10 @@
       "value": "Recent folders"
     },
     {
+      "name": "flow_folder_up",
+      "value": "Up One Level"
+    },
+    {
       "name": "flow_use_named_folder",
       "value": "Use “{name}”"
     },

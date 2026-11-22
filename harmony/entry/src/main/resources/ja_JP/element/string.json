@@ -5957,6 +5957,10 @@
       "value": "最近使ったフォルダ"
     },
     {
+      "name": "flow_folder_up",
+      "value": "1つ上へ"
+    },
+    {
       "name": "flow_use_named_folder",
       "value": "「{name}」を使用"
     },

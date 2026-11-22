@@ -1669,6 +1669,13 @@ struct Index {
       Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('verify')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('verify', true)]) }.attributeModifier(ButtonStyles.iconPrimary).accessibilityText(tr('verify')).bindTips(tr('verify')).enabled(!!this.address.trim() && (!!this.pairCode.trim() || isPairingAddress(this.address.trim())) && !this.model.busy).onClick(() => this.connect()).id('pair.verify').alignSelf(ItemAlign.End)
     }.padding(Tokens.page).width('100%')
   }
+  private agentActionBottom(): number {
+    const env = this.environment;
+    if (!this.fullHeightPhone()) return 12;
+    if (env.keyboardHeightPx > 0) return 16;
+    const bottom = env.safeBottomPx > 0 ? this.getUIContext().px2vp(env.windowHeightPx - env.safeBottomPx) : 0;
+    return Math.max(34, bottom) + Tokens.gap;
+  }
   private createAgentKey(): string {
     if (this.creatingAgent) return 'sending';
     return this.agentModel.operationBlocked('/api/v1/sessions') ? 'result_unknown' : 'create';
@@ -1981,15 +1988,18 @@ struct Index {
               .onBlur(() => { this.agentMessageFocused = false; })
               .onChange((v:string) => { this.newTask = v; this.saveAgentDraft(); }).id('agent.task')
             if ((this.agentWorktree || this.pickedAgentTree) && !this.selectedAgentTree()) Text(tr('project_gone')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
-            if (this.startFailure) Text(trError(this.startFailure)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8).id('agent.error')
           }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,bottom:14})
             .onAreaChange((before:Area,after:Area) => this.agentDraftAreaChanged(before,after))
         }.width('100%').layoutWeight(1).align(Alignment.TopStart)
           .onAreaChange((before:Area,after:Area) => this.agentDraftAreaChanged(before,after))
-        Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start_chat'),{type:ButtonType.Capsule})
-          .height(Math.max(50, 33 * Math.min(this.environment.fontScale,Tokens.interfaceFontMaxScale) + 17))
-          .width('89%').margin({top:7,bottom:12}).backgroundColor(Colors.action).fontColor(Colors.onAction).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17))
-          .enabled(this.canStartAgent()).onClick(() => this.createAgent()).id('agent.create')
+        Column({space:Tokens.gap}) {
+          if (this.startFailure) Text(trError(this.startFailure)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
+            .fontColor(Colors.danger).width('100%').padding(8).id('agent.error')
+          Button(tr(this.creatingAgent || this.agentModel.operationBlocked('/api/v1/sessions') ? this.createAgentKey() : 'flow_start_chat'),{type:ButtonType.Capsule})
+            .height(PhoneStyle.formSize(60,69.3,this.environment.fontScale)).width('100%').backgroundColor(Colors.action).fontColor(Colors.onAction)
+            .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium)
+            .enabled(this.canStartAgent()).onClick(() => this.createAgent()).id('agent.create')
+        }.width('100%').padding({left:24,right:24,top:7,bottom:this.agentActionBottom()})
       }.width('100%').height('100%').backgroundColor(Colors.grouped)
     }
   }

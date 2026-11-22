@@ -5957,6 +5957,10 @@
       "value": "最近使用的目录"
     },
     {
+      "name": "flow_folder_up",
+      "value": "上一级"
+    },
+    {
       "name": "flow_use_named_folder",
       "value": "使用「{name}」"
     },

@@ -32,43 +32,53 @@ export struct AgentStartPicker {
     return path.split('/').pop() || this.choices.path;
   }
   @Builder divider(inset:number) { Divider().strokeWidth(0.5).color(Colors.divider).margin({left:inset}) }
+  private optionHeight(choice: LaunchChoice, folder: boolean): number {
+    const scale = nativeEnvironment.fontScale;
+    if (this.kind !== 'model') return folder ? PhoneStyle.groupedRowHeight(scale) : 48;
+    if (choice.description) return PhoneStyle.formSize(83, 105, scale);
+    if (choice.detail || !choice.id && this.choices.defaultModelName()) return PhoneStyle.formSize(66.7, 81.3, scale);
+    return PhoneStyle.groupedRowHeight(scale);
+  }
   @Builder item(o:LaunchChoice,folder:boolean) {
     Row({space:11}) {
       if (this.kind !== 'model') SymbolGlyph(folder || this.kind === 'workspace' ? Symbols.folder : this.kind === 'launcher' ? Symbols.agent : Symbols.apps)
         .fontSize('18vp').fontColor([folder && o.detail !== 'Git' ? Colors.secondary : Colors.link])
-      Column({space:3}) {
-        Text(o.title).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(folder ? FontWeight.Normal : FontWeight.Medium).fontColor(folder ? Colors.link : Colors.ink).maxLines(2)
+      Column({space:this.kind === 'model' ? 2 : 3}) {
+        Text(o.title).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(folder ? FontWeight.Normal : FontWeight.Medium).fontColor(folder ? Colors.link : Colors.ink).maxLines(2)
         if (o.detail || this.kind === 'model' && !o.id && this.choices.defaultModelName()) Text(o.detail || this.choices.defaultModelName()).fontFamily(this.kind === 'model' ? 'monospace' : 'sans-serif')
           .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
-        if (!folder && o.description) Text(o.description).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).maxLines(3).textOverflow({overflow:TextOverflow.Ellipsis})
+        if (!folder && o.description) Text(o.description).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       if (!folder && o.id === this.selected) SymbolGlyph(Symbols.check).fontSize('18vp').fontColor([Colors.link])
-    }.width('100%').constraintSize({minHeight:48}).padding({left:14,right:13,top:8,bottom:8})
+    }.width('100%').constraintSize({minHeight:this.optionHeight(o,folder)}).padding({left:20,right:20,top:this.kind === 'model' ? 12 : 8,bottom:this.kind === 'model' ? 12 : 8})
       .backgroundColor(Colors.surface).borderRadius(folder || this.kind === 'model' ? 0 : 10)
       .enabled(!o.disabled).opacity(o.disabled ? 0.65 : 1).onClick(() => { if (folder) this.browse(o.id); else this.choose(o.id); })
       .accessibilityGroup(true).accessibilitySelected(!folder && o.id === this.selected).id(folder ? 'agent.folder.item' : 'agent.option')
   }
   @Builder pickerSearch() {
     Search({value:this.query,placeholder:this.kind === 'model' && this.manual ? tr('flow_model_id_search') :
-      tr(this.kind === 'workspace' ? 'flow_workspace_search' : 'search'),controller:this.searchField}).searchIcon({size:'16vp'}).height(Math.max(42, 22 * nativeEnvironment.fontScale + 12))
-      .onChange((v:string) => this.query = v).margin({left:14,right:14,bottom:8}).id('agent.picker.search')
+      tr(this.kind === 'workspace' ? 'flow_workspace_search' : 'search'),controller:this.searchField}).searchIcon({size:Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)})
+      .textFont({size:Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)}).placeholderFont({size:Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)})
+      .height(this.kind === 'model' ? 48 : PhoneStyle.formSize(44,58,nativeEnvironment.fontScale))
+      .onChange((v:string) => this.query = v).margin({left:this.kind === 'model' ? 28 : 14,right:this.kind === 'model' ? 28 : 14,bottom:this.kind === 'model' && !nativeEnvironment.keyboardHeightPx ? 28 : 8}).id('agent.picker.search')
   }
   @Builder chooseFolder() {
     Column() {
       Row({space:6}) {
-        TextInput({text:this.address,placeholder:tr('flow_folder_search')}).layoutWeight(1).height(Math.max(46, 22 * nativeEnvironment.fontScale + 14)).fontSize(15)
+        TextInput({text:this.address,placeholder:tr('flow_folder_search')}).layoutWeight(1).height(PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)).fontSize(Tokens.interfaceFontVp(13,nativeEnvironment.fontScale))
+          .placeholderFont({size:Tokens.interfaceFontVp(13,nativeEnvironment.fontScale)})
           .fontFamily('monospace').backgroundColor(Color.Transparent).padding(0)
           .onChange((v:string) => this.address = v).onSubmit(() => this.browse(this.address)).id('agent.folder.address')
         if (this.address.trim() && this.address.trim() !== this.choices.path) Button(tr('open'),{buttonStyle:ButtonStyleMode.TEXTUAL})
           .fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).onClick(() => this.browse(this.address)).id('agent.folder.go')
-      }.width('100%').padding({left:14,right:8})
-      this.divider(14)
+      }.width('100%').padding({left:20,right:20})
+      this.divider(20)
       Button({type:ButtonType.Normal}) {
         Row({space:8}) {
           Stack() { SymbolGlyph(Symbols.check).fontSize('13vp').fontColor([Colors.onAction]) }.width(21).height(21).borderRadius(11).backgroundColor(Colors.action)
           Text(this.folderName() ? tr('flow_use_named_folder').replace('{name}',this.folderName()) : tr('flow_use_folder'))
             .fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.link).layoutWeight(1).textAlign(TextAlign.Start)
-        }.width('100%').constraintSize({minHeight:49}).padding({top:7,bottom:7})
+        }.width('100%').constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).padding({top:7,bottom:7})
       }.width('100%').padding({left:14,right:14}).backgroundColor(Color.Transparent)
         .enabled(!this.choices.loading && !!this.choices.path && !this.choices.error)
         .onClick(() => this.choose(this.choices.path)).id('agent.folder.use')
@@ -83,8 +93,8 @@ export struct AgentStartPicker {
       if (folder && this.choices.parent && this.choices.parent !== this.choices.path) {
         Row({space:11}) {
           SymbolGlyph(Symbols.up).fontSize('17vp').fontColor([Colors.link])
-          Text(tr('parent_folder')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link)
-        }.width('100%').constraintSize({minHeight:48}).padding({left:14,right:14}).accessibilityGroup(true)
+          Text(tr('flow_folder_up')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.link)
+        }.width('100%').constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).padding({left:20,right:20}).accessibilityGroup(true)
           .onClick(() => this.browse(this.choices.parent)).id('agent.folder.up')
         if (this.choices.directories.length) this.divider(41)
       }
@@ -104,7 +114,7 @@ export struct AgentStartPicker {
         Blank().width(42)
       }.width('100%').padding({left:14,right:14,top:17,bottom:11})
       if (this.kind !== 'folder' && this.kind !== 'model' && (this.kind === 'workspace' || this.options.length > 5 || this.manual)) this.pickerSearch()
-      List({space:this.kind === 'folder' || this.kind === 'model' ? 12 : 3}) {
+      List({space:this.kind === 'folder' ? 12 : this.kind === 'model' ? 9 : 3}) {
         if (this.kind === 'folder' && this.choices.path) ListItem() {
           Column({space:7}) {
             this.chooseFolder()
@@ -153,7 +163,7 @@ export struct AgentStartPicker {
           }
           if (!this.filtered.length && !this.manual && !this.choices.loading) ListItem() { Text(tr('no_results')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).padding(12) }
         }
-      }.width('100%').layoutWeight(1).padding({left:16,right:16,top:this.kind === 'model' || this.kind === 'folder' ? 22 : 7,bottom:10})
+      }.width('100%').layoutWeight(1).padding({left:16,right:16,top:this.kind === 'model' || this.kind === 'folder' ? 35 : 7,bottom:10})
       if (this.kind === 'model' && (this.options.length > 5 || this.manual)) this.pickerSearch()
     }.width('100%').height('100%').backgroundColor(Colors.grouped).id('agent.picker')
   }
