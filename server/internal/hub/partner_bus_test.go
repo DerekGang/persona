@@ -83,6 +83,11 @@ func TestPartnerEnvelopeRoundTrip(t *testing.T) {
 	if err := ma.call(assistantwire.MethodPartnerSend, assistantwire.PartnerSend{To: hubB, Envelope: bad}, &res); rpcCode(err) != bus.CodeInvalidParams {
 		t.Fatalf("a bad kind: %v", err)
 	}
+	bad = partnerEnvelope(assistantwire.PartnerKindReply, "x")
+	bad.ReplyTo = "not a message id"
+	if err := ma.call(assistantwire.MethodPartnerSend, assistantwire.PartnerSend{To: hubB, Envelope: bad}, &res); rpcCode(err) != bus.CodeInvalidParams {
+		t.Fatalf("a bad reply_to: %v", err)
+	}
 	bad = partnerEnvelope("message", strings.Repeat("x", partnerTextCap+1))
 	if err := ma.call(assistantwire.MethodPartnerSend, assistantwire.PartnerSend{To: hubB, Envelope: bad}, &res); rpcCode(err) != bus.CodeInvalidParams {
 		t.Fatalf("a text over the cap: %v", err)
@@ -93,6 +98,11 @@ func TestPartnerEnvelopeRoundTrip(t *testing.T) {
 	other := connectPartnerManager(t, a, "other", caps, nil)
 	if err := other.call(assistantwire.MethodPartnerSend, assistantwire.PartnerSend{To: hubB, Envelope: env}, &res); rpcCode(err) != codeOtherManager {
 		t.Fatalf("a manager that is not the default: %v", err)
+	}
+	// Nor does it get the list: partner hubs are the default manager's.
+	var none assistantwire.PartnerHubs
+	if err := other.call(assistantwire.MethodPartnerHubs, map[string]any{}, &none); err != nil || none.Enabled || len(none.Hubs) != 0 {
+		t.Fatalf("partner.hubs for another manager: %+v %v", none, err)
 	}
 	if len(mb.received()) != 2 {
 		t.Fatalf("a refused envelope reached B: %+v", mb.received())
@@ -139,4 +149,44 @@ func TestPartnerSendWhenItCannotGo(t *testing.T) {
 	if err := send(); rpcCode(err) != assistantwire.CodePartnerUnknown {
 		t.Fatalf("unpaired: %v", err)
 	}
+}
+
+// A partner with more calls running here than partnerLinkCalls (its manager would send one at a time) has its link
+// closed 4013; it dials again and the link comes back.
+func TestPartnerTooManyCalls(t *testing.T) {
+	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{})
+	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{})
+	release := make(chan struct{})
+	defer close(release)
+	connectPartnerManager(t, b, assistantwire.AssistantID, []string{assistantwire.CapabilityPartnerHubs},
+		func(assistantwire.PartnerReceive) (any, error) {
+			<-release // B's manager is busy: every call stays running on B
+			return assistantwire.PartnerResult{Status: assistantwire.PartnerAccepted}, nil
+		})
+	pairPartners(t, a, b)
+	la, lb := waitPartnerLink(t, a, b)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ended := make(chan error, partnerLinkCalls+1)
+	for range partnerLinkCalls + 1 {
+		go func() {
+			var res assistantwire.PartnerResult
+			ended <- la.rpc.Call(ctx, "msg", partnerEnvelope(assistantwire.PartnerKindMessage, "hi"), &res)
+		}()
+	}
+	select {
+	case <-lb.ctx.Done():
+	case <-ctx.Done():
+		t.Fatal("B kept a link with too many calls running")
+	}
+	if why := context.Cause(lb.ctx); why == nil || why.Error() != "too many calls at once" {
+		t.Fatalf("B's link ended with %v", why)
+	}
+	if err := <-ended; err == nil {
+		t.Fatal("a call on the closed link answered")
+	}
+	eventually(t, 20*time.Second, "the link back", func() bool {
+		l := b.h.partnerLinkTo(hubA)
+		return l != nil && l != lb && a.h.partnerLinkTo(hubB) != nil
+	})
 }

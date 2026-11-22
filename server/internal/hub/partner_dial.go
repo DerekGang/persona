@@ -14,7 +14,7 @@ import (
 	"github.com/nwverse/persona/server/internal/i18n"
 )
 
-// Dialing a partner (docs/server/partner-hubs.md "Dialing"): every partner whose dial is auto, with a pin and an https
+// Dialing a partner (docs/server/partner-hubs.md "The link"): every partner whose dial is auto, with a pin and an https
 // address, is dialed until there is a link to it, whichever side made it; one set to never only waits for the partner
 // to dial (it cannot be reached from here). Candidates are its https addresses (the pairing's and its last hello's),
 // ranked as the mesh ranks them, directly and through the proxy (partner_proxy.go), one every 300 ms, the first that
@@ -49,20 +49,26 @@ func (h *Hub) startPartnerDialer(hubID string) {
 	ps.mu.Unlock()
 	go func() {
 		defer close(d.done)
-		defer h.partnerDialerDone(hubID, d)
+		defer h.partnerDialerDone(ctx, hubID, d)
 		h.partnerDialLoop(ctx, hubID)
 	}()
 }
 
-// partnerDialerDone forgets a dialer that ended on its own (the partner set to never, say), so another may start.
-func (h *Hub) partnerDialerDone(hubID string, d *peerDialer) {
+// partnerDialerDone forgets a dialer that ended on its own (the partner set to never, say), so another may start; one
+// set back to auto while it was ending (startPartnerDialer saw it still there) starts again now.
+func (h *Hub) partnerDialerDone(ctx context.Context, hubID string, d *peerDialer) {
 	ps := &h.partners
 	ps.mu.Lock()
-	if ps.dialers[hubID] == d {
+	mine := ps.dialers[hubID] == d
+	if mine {
 		delete(ps.dialers, hubID)
 	}
 	ps.mu.Unlock()
+	ended := ctx.Err() == nil // not stopped: it found nothing to dial
 	d.cancel()
+	if mine && ended {
+		h.startPartnerDialer(hubID) // a no-op unless the partner is dialable again
+	}
 }
 
 func (h *Hub) stopPartnerDialer(hubID string) {
@@ -133,9 +139,18 @@ func (h *Hub) partnerDialLoop(ctx context.Context, hubID string) {
 			}
 			wait := b.next()
 			f := partnerDialFail{err: err, at: time.Now()}
+			// What the partner answered, said plainly: 401 its credential gone (unpaired there, most likely), 403 partner
+			// hubs off there, 409 it joined a linked-hubs group. None changes soon: look again in partnerRefusedWait.
 			var he *peerHTTPError
-			if errors.As(err, &he) && (he.status == http.StatusUnauthorized || he.status == http.StatusForbidden) {
-				f.refused, f.err, wait = true, i18n.Err("hub-partner_dial.refused"), partnerRefusedWait
+			if errors.As(err, &he) {
+				switch he.status {
+				case http.StatusUnauthorized:
+					f.refused, f.err, wait = true, i18n.Err("hub-partner_dial.refused"), partnerRefusedWait
+				case http.StatusForbidden:
+					f.refused, f.err, wait = true, i18n.Err("hub-partner_dial.partner_off"), partnerRefusedWait
+				case http.StatusConflict:
+					f.err, wait = i18n.Err("hub-partner_dial.partner_member"), partnerRefusedWait
+				}
 			}
 			h.setPartnerDial(hubID, f)
 			if !sleepCtx(ctx, wait) {
@@ -180,7 +195,9 @@ func (h *Hub) dialPartner(ctx context.Context, fp, token string, eps []string) (
 	}
 	conn, key, err := raceEndpoints(ctx, partnerKeys(cands), func(ctx context.Context, key string) (*websocket.Conn, error) {
 		c := partnerCandidateOf(cands, key)
-		conn, resp, err := websocket.Dial(ctx, peerWSURL(c.url, partnerLinkPath), &websocket.DialOptions{HTTPClient: h.partnerClient(fp, c.via),
+		client := h.partnerClient(fp, c.via)
+		defer client.CloseIdleConnections() // a refusal's connection: the WebSocket's own was taken over
+		conn, resp, err := websocket.Dial(ctx, peerWSURL(c.url, partnerLinkPath), &websocket.DialOptions{HTTPClient: client,
 			HTTPHeader: http.Header{"Authorization": {"Bearer " + token}}, CompressionMode: websocket.CompressionContextTakeover})
 		if err != nil {
 			if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {

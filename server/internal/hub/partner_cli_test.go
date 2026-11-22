@@ -32,7 +32,8 @@ func partnerCLIAt(t *testing.T, mh *testHub) {
 }
 
 // `personad hub partner …` against two hubs: a code on one, add on the other, list, dial, remove; in the terminal's
-// language, the other hub's name inert.
+// language, the other hub's name without the control characters it came with (the hub drops them; the command line
+// prints names inert besides).
 func TestPartnerCommands(t *testing.T) {
 	peerCLIHome(t)
 	t.Setenv("PERSONA_LANG", "en")
@@ -57,13 +58,13 @@ func TestPartnerCommands(t *testing.T) {
 	if _, err := run("code"); err == nil || !strings.Contains(err.Error(), "TLS") {
 		t.Fatalf("code on a hub without TLS: %v", err)
 	}
-	if out, err = run("add", code); err != nil || !strings.Contains(out, "Paired with partner hub “Office<ESC>[31m” ("+hubB+"): connected") {
+	if out, err = run("add", code); err != nil || !strings.Contains(out, "Paired with partner hub “Office[31m” ("+hubB+"): connected") {
 		t.Fatalf("add: %q %v", out, err)
 	}
-	if out, err = run("list"); err != nil || !strings.HasPrefix(out, hubB+"  Office<ESC>[31m  this hub connects to it  connected") {
+	if out, err = run("list"); err != nil || !strings.HasPrefix(out, hubB+"  Office[31m  this hub connects to it  connected") {
 		t.Fatalf("list: %q %v", out, err)
 	}
-	if out, err = run("dial", hubB, "never"); err != nil || out != "“Office<ESC>[31m”: waits for it to connect\n" {
+	if out, err = run("dial", hubB, "never"); err != nil || out != "“Office[31m”: waits for it to connect\n" {
 		t.Fatalf("dial: %q %v", out, err)
 	}
 	if out, err = run("remove", hubB); err != nil || out != "Unpaired, and its credentials revoked.\n" {

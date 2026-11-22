@@ -13,7 +13,7 @@ type partnerStore interface {
 	PartnerHubs(ctx context.Context) ([]db.PartnerHub, error)
 	SavePartnerHub(ctx context.Context, p db.PartnerHub) error
 	SetPartnerDial(ctx context.Context, hubID, dial string) (bool, error)
-	UpdatePartnerSeen(ctx context.Context, hubID, name, fp string, endpoints []string) error
+	UpdatePartnerSeen(ctx context.Context, p db.PartnerHub) error
 	DeletePartnerHub(ctx context.Context, hubID string) (bool, error)
 	CreatePartnerCode(ctx context.Context, hash string, expiresAt time.Time) error
 	PartnerCodeValid(ctx context.Context, hash string) (bool, error)

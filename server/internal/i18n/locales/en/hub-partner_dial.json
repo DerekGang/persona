@@ -7,6 +7,8 @@
   "proxy_failed": "{address} through the proxy: {err}",
   "credentials_unreadable": "Can’t read the partner hub’s credentials: {err}",
   "refused": "The partner hub doesn’t accept this hub’s credentials (it may have unpaired). Pair again",
+  "partner_off": "The partner hub has partner hubs turned off",
+  "partner_member": "The partner hub is now a member of a linked-hubs group, so it has no partner hubs",
   "unpaired": "The partner hub unpaired",
   "no_tls_address": "No secure address or key for the partner hub: this hub waits for it to connect"
 }

@@ -393,22 +393,30 @@ func TestPartnerCandidates(t *testing.T) {
 	}
 }
 
-// What partners.proxy reads, and how it is shown: credentials never.
+// What partners.proxy reads, and how the log names it: its kind, never its address or credentials.
 func TestParsePartnerProxy(t *testing.T) {
 	for raw, want := range map[string]string{
-		"http://u:p@proxy.example.com:3128": "http://proxy.example.com:3128",
-		"proxy.example.com:3128":            "http://proxy.example.com:3128",
-		"https://proxy.example.com":         "https://proxy.example.com",
-		"socks5://u:p@192.0.2.9":            "socks5://192.0.2.9",
-		"SOCKS5H://192.0.2.9:1081":          "socks5h://192.0.2.9:1081",
+		"http://u:p@proxy.example.com:3128": "http",
+		"proxy.example.com:3128":            "http",
+		"https://proxy.example.com":         "https",
+		"socks5://u:p@192.0.2.9":            "socks5",
+		"SOCKS5H://192.0.2.9:1081":          "socks5h",
 		"socks5://":                         "",
 		"socks5://192.0.2.9:99999":          "",
 		"socks4://192.0.2.9":                "",
 		"ftp://192.0.2.9":                   "",
 		"https:u:p@proxy.example.com":       "",
 	} {
-		if got := redactedProxy(raw); got != want {
+		if got := proxyKind(raw); got != want {
 			t.Errorf("%q: %q, want %q", raw, got, want)
+		}
+	}
+	for raw, want := range map[string]string{
+		"socks5://u:p@192.0.2.9":   "192.0.2.9", // no port: 1080 when dialed
+		"SOCKS5H://192.0.2.9:1081": "192.0.2.9:1081",
+	} {
+		if u, err := parsePartnerProxy(raw); err != nil || u.Host != want {
+			t.Errorf("%q: %v %v", raw, u, err)
 		}
 	}
 }

@@ -29,10 +29,18 @@ import (
 const (
 	partnerCloseDuplicate websocket.StatusCode = 4011 // the two hubs have another link: this one is not kept
 	partnerCloseUnpaired  websocket.StatusCode = 4012 // the pairing ended (its credential revoked)
+	partnerCloseSlow      websocket.StatusCode = 4013 // the partner has more calls running here than this hub takes
 )
 
 // partnerProto is the version of the calls on a partner link.
 const partnerProto = 1
+
+// partnerLinkCalls is the most calls a partner may have running on this hub at once (its manager sends one envelope
+// at a time, and status envelopes): past it the link is closed (4013), and the partner dials again.
+const partnerLinkCalls = 64
+
+// errPartnerNotLinked: the link was not kept because the pairing ended meanwhile, or the hub is stopping.
+var errPartnerNotLinked = errors.New("not paired any more, or the hub is stopping")
 
 type partnerLink struct {
 	h       *Hub
@@ -47,6 +55,7 @@ type partnerLink struct {
 	cancel  context.CancelCauseFunc
 	since   time.Time
 	rtt     atomic.Int64 // the last ping round trip, ns
+	calls   atomic.Int64 // the partner's calls running here
 	every   time.Duration
 	timeout time.Duration
 	info    partnerHello // what the other hub said about itself
@@ -126,7 +135,16 @@ func (h *Hub) runPartnerLink(parent context.Context, conn *websocket.Conn, hubID
 	ps.mu.Unlock()
 	nc := websocket.NetConn(nctx, conn, websocket.MessageBinary)
 	l.rpc = rpc.New("x", nc)
+	// Bounded like the WebSocket: one line no larger than a message may be, and only so many calls at once (the
+	// rpc's own budget, above this one, is the backstop).
+	l.rpc.Limits = rpc.Limits{FrameBytes: 1 << 20, ConcurrentRequests: 2 * partnerLinkCalls}
 	l.rpc.OnRequest = func(rctx context.Context, method string, params json.RawMessage) (any, error) {
+		if l.calls.Add(1) > partnerLinkCalls {
+			l.calls.Add(-1)
+			l.close(partnerCloseSlow, "too many calls at once")
+			return nil, errors.New("too many calls at once")
+		}
+		defer l.calls.Add(-1)
 		return h.partnerRequest(rctx, l, method, params)
 	}
 	served := make(chan error, 1)
@@ -142,9 +160,16 @@ func (h *Hub) runPartnerLink(parent context.Context, conn *websocket.Conn, hubID
 		_ = conn.Close(websocket.StatusPolicyViolation, "hello failed")
 		return fmt.Errorf("hello: %w", err)
 	}
-	if !h.registerPartnerLink(l) {
+	if err := h.registerPartnerLink(l); errors.Is(err, errDuplicateLink) {
 		_ = conn.Close(partnerCloseDuplicate, "the two hubs already have a link")
-		return errDuplicateLink
+		return err
+	} else if err != nil {
+		code := websocket.StatusGoingAway
+		if h.partnersRunning() {
+			code = partnerCloseUnpaired
+		}
+		_ = conn.Close(code, "not paired")
+		return err
 	}
 	defer h.unregisterPartnerLink(l)
 	go l.keepAlive()
@@ -171,27 +196,37 @@ func (h *Hub) runPartnerLink(parent context.Context, conn *websocket.Conn, hubID
 }
 
 // registerPartnerLink makes l the link to its hub, unless the two hubs already have one that stays (the mesh's rule):
-// the one dialed by the smaller hub_id stays; a newer link dialed by the same hub replaces the older (it went away
-// unnoticed). A hub unpaired meanwhile gets none.
-func (h *Hub) registerPartnerLink(l *partnerLink) bool {
+// the one dialed by the smaller hub_id stays (errDuplicateLink); a newer link dialed by the same hub replaces the
+// older (it went away unnoticed). A hub unpaired meanwhile, or one stopping, gets none (errPartnerNotLinked).
+func (h *Hub) registerPartnerLink(l *partnerLink) error {
 	preferred := min(h.hubID(), l.hubID)
 	ps := &h.partners
 	ps.mu.Lock()
-	if _, paired := ps.rows[l.hubID]; !ps.running || !paired {
+	row, paired := ps.rows[l.hubID]
+	// An accepted link came with a credential: the pairing's own, or one a pairing again replaced meanwhile.
+	if !ps.running || !paired || l.tokenID != "" && row.CredentialID != l.tokenID {
 		ps.mu.Unlock()
-		return false
+		return errPartnerNotLinked
 	}
 	old := ps.links[l.hubID]
 	if old != nil && old.ctx.Err() == nil && old.dialer != l.dialer && l.dialer != preferred {
 		ps.mu.Unlock()
-		return false
+		return errDuplicateLink
 	}
 	ps.links[l.hubID] = l
 	ps.mu.Unlock()
 	if old != nil {
 		old.close(partnerCloseDuplicate, "replaced by another link between the two hubs")
 	}
-	return true
+	return nil
+}
+
+// partnersRunning: the partner hubs started and the hub is not stopping.
+func (h *Hub) partnersRunning() bool {
+	ps := &h.partners
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.running
 }
 
 func (h *Hub) unregisterPartnerLink(l *partnerLink) {
@@ -211,7 +246,7 @@ func (h *Hub) unregisterPartnerLink(l *partnerLink) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = st.UpdatePartnerSeen(ctx, row.HubID, row.Name, row.FP, row.Endpoints)
+			_ = st.UpdatePartnerSeen(ctx, row)
 		}()
 	}
 	h.partnersChanged()
@@ -226,10 +261,10 @@ func (h *Hub) partnerLinkUp(l *partnerLink) {
 	ps.mu.Lock()
 	row, ok := ps.rows[l.hubID]
 	if ok {
-		if n := clip(oneLine(l.info.Name), 64); n != "" {
+		if n := partnerName(l.info.Name); n != "" {
 			row.Name = n
 		}
-		if row.FP == "" {
+		if row.FP == "" && len(l.info.FP) <= 128 {
 			row.FP = l.info.FP
 		}
 		if len(eps) > 0 {
@@ -245,7 +280,7 @@ func (h *Hub) partnerLinkUp(l *partnerLink) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := st.UpdatePartnerSeen(ctx, row.HubID, row.Name, row.FP, row.Endpoints); err != nil {
+			if err := st.UpdatePartnerSeen(ctx, row); err != nil {
 				h.logf("partners: save %s: %v", row.HubID, err)
 			}
 		}()

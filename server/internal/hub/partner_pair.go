@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
@@ -109,6 +110,13 @@ func (h *Hub) partnersReady() error {
 // partnerSecret is a code's secret: jh_ and 64 lowercase hex digits.
 var partnerSecret = lazyre.New(`^jh_[0-9a-f]{64}$`)
 
+// partnerHubID is what a hub_id from another hub may be (a hub makes a UUID, public.go): it names a credential and a
+// pairing and goes into paths, so nothing else is taken.
+var partnerHubID = lazyre.New(`^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`)
+
+// partnerMaxEndpoints is the most https addresses kept and dialed for a partner (a code names at most 6).
+const partnerMaxEndpoints = 8
+
 // newPartnerCode makes a pairing code for this hub (the expired ones are pruned meanwhile).
 func (h *Hub) newPartnerCode(ctx context.Context) (*partnerCode, error) {
 	if err := h.partnersReady(); err != nil {
@@ -152,7 +160,7 @@ func parsePartnerCode(raw string) (*parsedPartnerCode, error) {
 	}
 	q := u.Query()
 	p := &parsedPartnerCode{hubID: q.Get("hub"), name: q.Get("name"), fp: q.Get("fp"), secret: q.Get("code")}
-	if p.hubID == "" || p.fp == "" || !partnerSecret.MatchString(p.secret) {
+	if !partnerHubID.MatchString(p.hubID) || p.fp == "" || len(p.fp) > 128 || !partnerSecret.MatchString(p.secret) {
 		return nil, bad("hub-partner_pair.incomplete")
 	}
 	if p.endpoints = partnerHTTPS(q["url"]); len(p.endpoints) == 0 {
@@ -161,14 +169,37 @@ func parsePartnerCode(raw string) (*parsedPartnerCode, error) {
 	return p, nil
 }
 
-// partnerHTTPS are the https candidates of eps, ranked and without duplicates: a partner is only ever dialed over TLS.
+// partnerHTTPS are the https candidates of eps, ranked and without duplicates, at most partnerMaxEndpoints: a partner
+// is only ever dialed over TLS, and what the other hub names is bounded (a code, its pairing answer, its hello).
 func partnerHTTPS(eps []string) []string {
-	return slices.DeleteFunc(rankEndpoints(eps), func(e string) bool { return !strings.HasPrefix(e, "https://") })
+	out := slices.DeleteFunc(rankEndpoints(eps), func(e string) bool {
+		if !strings.HasPrefix(e, "https://") || len(e) > 512 {
+			return true
+		}
+		u, err := url.Parse(e)
+		return err != nil || u.Hostname() == "" || u.User != nil
+	})
+	return out[:min(len(out), partnerMaxEndpoints)]
+}
+
+// partnerName is a name another hub gave, as this hub keeps and shows it (partnerText, 64 characters).
+func partnerName(s string) string { return partnerText(s, 64) }
+
+// partnerText is short text another hub gave: one line of at most n characters, without control or bidirectional
+// formatting characters (they would let it show as other text).
+func partnerText(s string, n int) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) || bidiFormat(r) {
+			return -1
+		}
+		return r
+	}, s)
+	return clip(oneLine(s), n)
 }
 
 // partnerCredName is what Settings › Devices shows for the credential issued to a partner.
 func (h *Hub) partnerCredName(name, hubID string) string {
-	if name = clip(oneLine(name), 60); name == "" {
+	if name = clip(partnerName(name), 60); name == "" {
 		name = shortID(hubID)
 	}
 	return i18n.T(h.userLang(), "hub-partner_pair.credential_name", i18n.Args{"name": name})
@@ -215,7 +246,7 @@ func (h *Hub) joinPartner(ctx context.Context, raw string) (*db.PartnerHub, erro
 		_, _ = h.store.RevokeDeviceToken(context.WithoutCancel(ctx), cred.ID)
 		return nil, err
 	}
-	name := clip(oneLine(cmp.Or(strings.TrimSpace(got.Name), code.name)), 64)
+	name := cmp.Or(partnerName(got.Name), partnerName(code.name))
 	p := db.PartnerHub{HubID: got.HubID, Name: name, FP: code.fp, Endpoints: partnerHTTPS(slices.Concat(code.endpoints, got.Endpoints)),
 		Token: sealed, CredentialID: cred.ID, Dial: assistantwire.PartnerDialAuto, CreatedAt: time.Now().UTC()}
 	if err := h.savePartner(ctx, p); err != nil {
@@ -272,6 +303,11 @@ func (h *Hub) partnerPost(ctx context.Context, fp string, eps []string, secret s
 	return got, nil
 }
 
+// partnerPassedCodes are the other hub's refusal codes passed on as they are (the apps act on them); any other is
+// "refused".
+var partnerPassedCodes = map[string]bool{"partners_off": true, "member_hub": true, "already_linked": true, "pin_changed": true,
+	"tls_required": true, "no_database": true}
+
 // partnerAnswered is the code's hub refusing: 401 is the code (in this hub's words), a 4xx its own code and words,
 // anything else that it could not pair.
 func partnerAnswered(status int, b []byte) error {
@@ -283,10 +319,11 @@ func partnerAnswered(status int, b []byte) error {
 	if why == "" {
 		why = http.StatusText(status)
 	}
+	why = partnerText(why, 300) // the other hub's words, shown here: one bounded line
 	switch {
 	case status == http.StatusUnauthorized:
 		return partnerRefusal(http.StatusUnauthorized, "code_refused", "hub-partner_pair.code_invalid")
-	case status >= 400 && status < 500 && refusal.Code != "":
+	case status >= 400 && status < 500 && partnerPassedCodes[refusal.Code]:
 		return &partnerError{status: http.StatusConflict, code: refusal.Code, err: i18n.Err("hub-partner_pair.refused", i18n.Args{"err": why})}
 	}
 	return &partnerError{status: http.StatusBadGateway, code: "refused", err: i18n.Err("hub-partner_pair.refused", i18n.Args{"err": why})}
@@ -359,7 +396,8 @@ func (h *Hub) servePartnerPair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := h.selfPartnerInfo()
-	if req.HubID == "" || req.HubID == me.HubID || !strings.HasPrefix(req.Token, "jd_") {
+	if !partnerHubID.MatchString(req.HubID) || req.HubID == me.HubID || !strings.HasPrefix(req.Token, "jd_") || len(req.Token) > 256 ||
+		len(req.FP) > 128 {
 		writeErr(w, http.StatusBadRequest, errors.New("hub_id and token are required, and the hub_id must be another hub's"))
 		return
 	}
@@ -386,7 +424,7 @@ func (h *Hub) servePartnerPair(w http.ResponseWriter, r *http.Request) {
 	tok := "jd_" + randomHex(24)
 	cred := db.DeviceToken{ID: "dev_" + randomHex(6), Name: h.partnerCredName(req.Name, req.HubID), Kind: rolePartner, Role: rolePartner,
 		MachineID: req.HubID}
-	row := db.PartnerHub{HubID: req.HubID, Name: clip(oneLine(req.Name), 64), FP: req.FP, Endpoints: eps, Token: sealed,
+	row := db.PartnerHub{HubID: req.HubID, Name: partnerName(req.Name), FP: req.FP, Endpoints: eps, Token: sealed,
 		CredentialID: cred.ID, Dial: dial, CreatedAt: time.Now().UTC()}
 	ok, err := h.partnerStore().RedeemPartnerCode(r.Context(), p.PairHash, row, cred, hashToken(tok))
 	if err != nil {
@@ -433,15 +471,17 @@ func (h *Hub) unpairPartner(ctx context.Context, hubID string, tell bool) (bool,
 	delete(ps.heard, hubID)
 	l := ps.links[hubID]
 	ps.mu.Unlock()
+	// The link first: a link this hub dialed ends with its dialer's context, which would close it 1001 (stopping)
+	// before the 4012 that tells the partner to stop dialing.
+	if l != nil {
+		l.close(partnerCloseUnpaired, "unpaired")
+	}
 	h.stopPartnerDialer(hubID)
 	if row.CredentialID != "" && h.store != nil {
 		if _, err := h.store.RevokeDeviceToken(ctx, row.CredentialID); err != nil {
 			h.logf("partners: revoke the credential of %s: %v", hubID, err)
 		}
 		h.forgetToken(row.CredentialID)
-	}
-	if l != nil {
-		l.close(partnerCloseUnpaired, "unpaired")
 	}
 	h.partnersChanged()
 	h.logf("partners: unpaired %q (%s)", row.Name, hubID)

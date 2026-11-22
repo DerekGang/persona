@@ -21,7 +21,7 @@ import (
 	"github.com/nwverse/persona/server/internal/link"
 )
 
-// Dialing a partner through an outbound proxy (docs/server/partner-hubs.md "Proxy"): hub.json partners.proxy ("off":
+// Dialing a partner through an outbound proxy (docs/server/partner-hubs.md "Proxies"): hub.json partners.proxy ("off":
 // none, not even the environment's), else the environment's (https_proxy, HTTPS_PROXY, all_proxy, ALL_PROXY, in that
 // order; a SOCKS URL there is used too, unlike persona-link). http:// and https:// proxies are CONNECT ones (persona-link's
 // code, link.DialThrough); socks5:// and socks5h:// have the proxy resolve the name. NO_PROXY applies, and loopback and
@@ -81,29 +81,33 @@ func parsePartnerProxy(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// redactedProxy is a proxy to log: no credentials, "" when it does not read.
-func redactedProxy(raw string) string {
+// proxyKind is a proxy as the log names it: its scheme alone (never its address or credentials), "" when it does not
+// read.
+func proxyKind(raw string) string {
 	u, err := parsePartnerProxy(raw)
 	if err != nil {
 		return ""
 	}
-	u.User = nil
-	return u.String()
+	return u.Scheme
 }
 
-// sayPartnerProxy logs once, at start, which proxy partners are dialed through (never its credentials), or that the
-// configured one does not read (every dial fails then).
+// sayPartnerProxy logs once, at start, what kind of proxy partners are dialed through and whose setting it is (never
+// its address or credentials), or that the configured one does not read (every dial fails then).
 func (h *Hub) sayPartnerProxy() {
 	raw, explicit, _ := h.partnerProxySetting()
-	switch shown := redactedProxy(raw); {
+	from := "the environment's"
+	if explicit {
+		from = "partners.proxy's"
+	}
+	switch kind := proxyKind(raw); {
 	case raw == "":
-	case shown == "" && explicit:
+	case kind == "" && explicit:
 		h.logf("partners: partners.proxy does not read (http://, https://, socks5:// or socks5h://, host and port): " +
 			"every dial of a partner fails until it is fixed")
-	case shown == "":
+	case kind == "":
 		h.logf("partners: the environment's proxy does not read: partners are dialed without it")
 	default:
-		h.logf("partners: dialing through %s (proxy_always %v)", shown, h.cfg.Partners.ProxyAlways)
+		h.logf("partners: dialing through %s %s proxy (proxy_always %v)", from, kind, h.cfg.Partners.ProxyAlways)
 	}
 }
 

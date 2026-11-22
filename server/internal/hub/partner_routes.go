@@ -150,7 +150,8 @@ func (h *Hub) servePartnerAdd(w http.ResponseWriter, r *http.Request) {
 		writeBodyErr(w, err, i18n.Err("hub-partner_pair.not_a_code"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	// Not the request's: an app that goes away mid-pairing must not leave the other hub paired and this one not.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 	defer cancel()
 	p, err := h.joinPartner(ctx, req.Code)
 	if err != nil {
@@ -212,7 +213,11 @@ func (h *Hub) servePartnerDial(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) servePartnerRemove(w http.ResponseWriter, r *http.Request) {
-	ok, err := h.unpairPartner(r.Context(), r.PathValue("hub_id"), true)
+	// Not the request's context: an unpairing half done (the pairing forgotten, its credential not revoked) is worse
+	// than one that finishes after the app went away.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+	defer cancel()
+	ok, err := h.unpairPartner(ctx, r.PathValue("hub_id"), true)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

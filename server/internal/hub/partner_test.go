@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,8 @@ func TestPartnerPairingCode(t *testing.T) {
 		"persona://partner?hub=" + hubB + "&url=https://192.0.2.1&code=jh_" + randomHex(32):                  "bad_code",
 		"persona://partner?hub=" + hubB + "&fp=x&url=http://192.0.2.1:18660&code=jh_" + randomHex(32):        "bad_code",
 		"persona://partner?hub=" + hubB + "&fp=x&url=https://192.0.2.1&url=https://[2001:db8::1]&code=jh_00": "bad_code",
+		"persona://partner?hub=..%2Fx&fp=x&url=https://192.0.2.1&code=jh_" + randomHex(32):                   "bad_code",
+		"persona://partner?hub=" + hubB + "&fp=x&url=https://user:pw@192.0.2.1&code=jh_" + randomHex(32):     "bad_code",
 	} {
 		if _, err := c.h.joinPartner(ctx, raw); partnerErrCode(err) != want || partnerErrStatus(err) != http.StatusBadRequest {
 			t.Errorf("%s: %v", raw, err)
@@ -248,5 +251,94 @@ func TestPartnerPairingRefusals(t *testing.T) {
 	}
 	if d.h.partnersOn() || len(d.h.partnerFeatures()) != 0 {
 		t.Fatal("partner hubs on on a mesh member")
+	}
+}
+
+// What another hub says about itself is bounded: a hub_id that is not one, a token or pin of any size, more addresses
+// than are ever dialed. The pairing route refuses the first ones; addresses are cut to partnerMaxEndpoints, https only,
+// without credentials in them.
+func TestPartnerPairBounds(t *testing.T) {
+	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{})
+	ctx := context.Background()
+	pair := func(body string) (int, []byte) {
+		t.Helper()
+		code, err := b.h.newPartnerCode(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := parsePartnerCode(code.Code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b.do(t, "POST", partnerPairPath, parsed.secret, body)
+	}
+	for _, body := range []string{
+		`{"hub_id":"../x","token":"jd_` + randomHex(24) + `"}`,
+		`{"hub_id":"` + strings.Repeat("a", 65) + `","token":"jd_` + randomHex(24) + `"}`,
+		`{"hub_id":"` + hubA + `","token":"jd_` + strings.Repeat("0", 300) + `"}`,
+		`{"hub_id":"` + hubA + `","fp":"` + strings.Repeat("x", 200) + `","token":"jd_` + randomHex(24) + `"}`,
+	} {
+		if code, out := pair(body); code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s", body, code, out)
+		}
+	}
+	if _, ok := b.h.partnerRow(hubA); ok {
+		t.Fatal("a refused pairing was kept")
+	}
+	var eps []string
+	for i := range 40 {
+		eps = append(eps, "https://hub"+strconv.Itoa(i)+".example.com:18662")
+	}
+	eps = append(eps, "http://192.0.2.9:18660", "https://user:pw@192.0.2.10", "https://"+strings.Repeat("a", 600)+".example.com")
+	body, _ := json.Marshal(partnerInfo{HubID: hubA, Name: "家里", FP: "fp", Endpoints: eps, Token: "jd_" + randomHex(24)})
+	if code, out := pair(string(body)); code != http.StatusOK {
+		t.Fatalf("pair: %d %s", code, out)
+	}
+	row, _ := b.h.partnerRow(hubA)
+	if len(row.Endpoints) != partnerMaxEndpoints {
+		t.Fatalf("kept %d addresses: %v", len(row.Endpoints), row.Endpoints)
+	}
+	for _, e := range row.Endpoints {
+		if !strings.HasPrefix(e, "https://hub") {
+			t.Fatalf("kept %q", e)
+		}
+	}
+}
+
+// A name another hub gives is kept as one plain line: no control or bidirectional formatting characters, 64 at most.
+func TestPartnerName(t *testing.T) {
+	for in, want := range map[string]string{
+		"  Office\n hub ":       "Office hub",
+		"Off\u202eice\x1b[31m":  "Office[31m",
+		"家里\u0000":              "家里",
+		strings.Repeat("长", 70): strings.Repeat("长", 64) + "…",
+	} {
+		if got := partnerName(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The other hub's refusal: its code passed on when the apps know it, "refused" when not, its words on one short line.
+func TestPartnerAnswered(t *testing.T) {
+	long := strings.Repeat("why ", 400)
+	for _, tc := range []struct {
+		status    int
+		body      string
+		code      string
+		statusOut int
+	}{
+		{401, `{"error":"no"}`, "code_refused", http.StatusUnauthorized},
+		{409, `{"error":"linked","code":"already_linked"}`, "already_linked", http.StatusConflict},
+		{409, `{"error":"x","code":"` + strings.Repeat("z", 500) + `"}`, "refused", http.StatusBadGateway},
+		{500, `{"error":"` + long + `\nsecond line"}`, "refused", http.StatusBadGateway},
+	} {
+		err := partnerAnswered(tc.status, []byte(tc.body))
+		if partnerErrCode(err) != tc.code || partnerErrStatus(err) != tc.statusOut {
+			t.Errorf("%d %s: %v (%s, %d)", tc.status, clip(tc.body, 60), err, partnerErrCode(err), partnerErrStatus(err))
+		}
+		if text := err.Error(); len(text) > 400 || strings.Contains(text, "\n") {
+			t.Errorf("the other hub's words not bounded: %q", text)
+		}
 	}
 }

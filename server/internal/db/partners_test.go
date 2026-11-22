@@ -55,7 +55,15 @@ func TestPartnerHubsAndCodes(t *testing.T) {
 	if tok, _ := d.DeviceTokenByHash(ctx, "meshhash"); tok == nil {
 		t.Fatal("pairing a partner revoked a mesh credential")
 	}
-	if err := d.UpdatePartnerSeen(ctx, "hub-b", "B2", "fp-b", []string{"https://[2001:db8::1]:18662"}); err != nil {
+	// Seen for an older pairing (another credential) changes nothing; for the current one it is kept.
+	if err := d.UpdatePartnerSeen(ctx, PartnerHub{HubID: "hub-b", Name: "old", FP: "fp-old", CredentialID: cred.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := d.PartnerHubs(ctx); list[0].Name != "B" || list[0].FP != "" || list[0].SeenAt != nil {
+		t.Fatalf("seen for an older pairing: %+v", list[0])
+	}
+	if err := d.UpdatePartnerSeen(ctx, PartnerHub{HubID: "hub-b", Name: "B2", FP: "fp-b", Endpoints: []string{"https://[2001:db8::1]:18662"},
+		CredentialID: cred2.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := d.SetPartnerDial(ctx, "hub-b", "never"); err != nil || !ok {

@@ -659,13 +659,13 @@ func (s *meshStore) SetPartnerDial(_ context.Context, hubID, dial string) (bool,
 	return ok, nil
 }
 
-func (s *meshStore) UpdatePartnerSeen(_ context.Context, hubID, name, fp string, endpoints []string) error {
+func (s *meshStore) UpdatePartnerSeen(_ context.Context, seen db.PartnerHub) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p, ok := s.partners[hubID]; ok {
+	if p, ok := s.partners[seen.HubID]; ok && p.CredentialID == seen.CredentialID {
 		now := time.Now().UTC()
-		p.Name, p.FP, p.Endpoints, p.SeenAt = name, fp, endpoints, &now
-		s.partners[hubID] = p
+		p.Name, p.FP, p.Endpoints, p.SeenAt = seen.Name, seen.FP, seen.Endpoints, &now
+		s.partners[seen.HubID] = p
 	}
 	return nil
 }

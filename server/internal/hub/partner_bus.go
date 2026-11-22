@@ -30,7 +30,10 @@ const partnerTextCap = 64 << 10
 
 func init() {
 	handleBus(assistantwire.MethodPartnerSend, (*Hub).busPartnerSend)
-	handleBus(assistantwire.MethodPartnerHubs, func(h *Hub, _ context.Context, _ *busConn, _ json.RawMessage) (any, error) {
+	handleBus(assistantwire.MethodPartnerHubs, func(h *Hub, ctx context.Context, c *busConn, _ json.RawMessage) (any, error) {
+		if c.managerID() != h.defaultOwner(ctx) { // partner hubs are the default manager's: another has none to offer
+			return assistantwire.PartnerHubs{Hubs: []assistantwire.PartnerHub{}}, nil
+		}
 		return h.partnerHubsWire(), nil
 	})
 }
@@ -41,6 +44,8 @@ func partnerEnvelopeCode(e assistantwire.PartnerEnvelope) string {
 	case !partnerMessageID.MatchString(e.MessageID):
 		return assistantwire.PartnerCodeInvalid
 	case e.Kind != assistantwire.PartnerKindMessage && e.Kind != assistantwire.PartnerKindReply && e.Kind != assistantwire.PartnerKindStatus:
+		return assistantwire.PartnerCodeInvalid
+	case e.ReplyTo != "" && !partnerMessageID.MatchString(e.ReplyTo), len(e.State) > 32, len(e.Code) > 32:
 		return assistantwire.PartnerCodeInvalid
 	case len(e.Text) > partnerTextCap:
 		return assistantwire.PartnerCodeTooLong

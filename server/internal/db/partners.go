@@ -67,11 +67,12 @@ func (d *DB) SetPartnerDial(ctx context.Context, hubID, dial string) (bool, erro
 	return err == nil && tag.RowsAffected() > 0, err
 }
 
-// UpdatePartnerSeen keeps what a live partner says about itself (its name, pin and addresses) and when it was seen.
-func (d *DB) UpdatePartnerSeen(ctx context.Context, hubID, name, fp string, endpoints []string) error {
-	eps, _ := json.Marshal(nonNil(endpoints))
+// UpdatePartnerSeen keeps what a live partner says about itself (p's name, pin and addresses) and that it was seen
+// now, for the pairing p is (its credential): a pairing made again meanwhile is not overwritten with the older one's.
+func (d *DB) UpdatePartnerSeen(ctx context.Context, p PartnerHub) error {
+	eps, _ := json.Marshal(nonNil(p.Endpoints))
 	_, err := d.pool.Exec(ctx, `UPDATE partner_hubs SET name = $2, fp = $3, endpoints = $4, seen_at = now(), updated_at = now()
-		WHERE hub_id = $1`, hubID, name, fp, eps)
+		WHERE hub_id = $1 AND credential_id = $5`, p.HubID, p.Name, p.FP, eps, p.CredentialID)
 	return err
 }
 

@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/link"
 )
 
 // A hub without TLS pairs with one that has it: only it dials (the other waits, dial never), the link comes up, and
@@ -33,6 +37,19 @@ func TestPartnerOneSideDialsAndReconnects(t *testing.T) {
 		}
 	}
 	noDialer()
+	// A's server is plain: its partner link and pairing are TLS only, even on loopback, even with a good credential or
+	// code.
+	_, heldByB := partnerCredOf(t, b, a) // the one A issued B
+	if code, body := a.do(t, "GET", partnerLinkPath, heldByB, ""); code != http.StatusForbidden || !strings.Contains(string(body), "tls_required") {
+		t.Fatalf("a partner link over plain HTTP: %d %s", code, body)
+	}
+	plainCode := "jh_" + randomHex(32)
+	if err := a.store.CreatePartnerCode(context.Background(), hashToken(plainCode), time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := a.do(t, "POST", partnerPairPath, plainCode, "{}"); code != http.StatusForbidden || !strings.Contains(string(body), "tls_required") {
+		t.Fatalf("pairing over plain HTTP: %d %s", code, body)
+	}
 	full, _ := b.deviceToken(t, roleFull)
 	view := func() partnerHubView {
 		t.Helper()
@@ -151,6 +168,27 @@ func TestPartnerUnpair(t *testing.T) {
 		t.Fatal(err)
 	}
 	unpaired("unpaired from B")
+	// From A without telling B (B unreachable for the call): A's own link (A dialed it) ends as unpaired (4012), not as
+	// a hub stopping; B's next dial is refused, and its page says so.
+	pairPartners(t, a, b)
+	la := a.h.partnerLinkTo(hubB)
+	if la.dialer != hubA {
+		t.Fatalf("the link was dialed by %s", la.dialer)
+	}
+	if _, err := a.h.unpairPartner(context.Background(), hubB, false); err != nil {
+		t.Fatal(err)
+	}
+	if why := context.Cause(la.ctx); why == nil || why.Error() != "unpaired" {
+		t.Fatalf("A's link ended with %v", why)
+	}
+	eventually(t, 20*time.Second, "B refused by A", func() bool {
+		row, ok := b.h.partnerRow(hubA)
+		return ok && b.h.partnerView(row, "en").State == "refused"
+	})
+	if _, err := b.h.unpairPartner(context.Background(), hubA, true); err != nil {
+		t.Fatal(err)
+	}
+	unpaired("unpaired from B after A left")
 }
 
 // The dial setting: never stops dialing (and the hub waits), auto starts it again; an unknown hub or setting is refused.
@@ -211,5 +249,42 @@ func TestPartnerLinksStopWithTheHub(t *testing.T) {
 	case <-done:
 	case <-ctx.Done():
 		t.Fatal("a WebSocket handler stayed after the partner links stopped")
+	}
+}
+
+// What a partner answers a dial with is said plainly on the partner's row: 403 partner hubs off there, 409 it joined a
+// linked-hubs group (not a refusal of this hub's credential), 401 the credential gone.
+func TestPartnerDialRefusalsSaid(t *testing.T) {
+	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{})
+	for _, tc := range []struct {
+		status  int
+		refused bool
+		says    string
+	}{
+		{http.StatusForbidden, true, "turned off"},
+		{http.StatusConflict, false, "linked-hubs group"},
+		{http.StatusUnauthorized, true, "doesn’t accept"},
+	} {
+		other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, `{"error":"no"}`, tc.status)
+		}))
+		sealed, err := a.h.sealKey("jd_" + randomHex(24))
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := db.PartnerHub{HubID: hubB, Name: "Office", FP: link.Pin(other.Certificate()), Endpoints: []string{other.URL}, Token: sealed,
+			CredentialID: "dev_" + randomHex(6), Dial: assistantwire.PartnerDialAuto, CreatedAt: time.Now()}
+		if err := a.h.savePartner(context.Background(), row); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, 10*time.Second, "the partner's answer said", func() bool {
+			got, _ := a.h.partnerRow(hubB)
+			v := a.h.partnerView(got, "en")
+			return (v.State == "refused") == tc.refused && strings.Contains(v.Error, tc.says)
+		})
+		if _, err := a.h.unpairPartner(context.Background(), hubB, false); err != nil {
+			t.Fatal(err)
+		}
+		other.Close()
 	}
 }
