@@ -1,14 +1,14 @@
+import { AssistantChatStateMark, AssistantChatTitle, assistantSourceSymbol } from './AssistantChatMarks';
 import { LengthMetrics } from '@kit.ArkUI';
 import { i18n } from '@kit.LocalizationKit';
 import { Colors } from '../design/Colors';
-import { Symbols } from '../design/Symbols';
 import { PhoneStyle } from '../design/PhoneStyle';
 import { Tokens } from '../design/Tokens';
 import { tr, trError } from '../design/Strings';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { AdminSnapshot, AdminWorkspace } from '../models/AdminWorkspace';
 import { AllChatGroup, allAssistantChatGroups, allChatDetail, assistantChatSource, assistantChatSourceKey,
-  assistantChatState, assistantChatTitleParts, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
+  assistantChatState, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
 import { ClientModel } from '../models/ClientModel';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { ResourceRow, Wire } from '../models/Wire';
@@ -76,18 +76,6 @@ export struct PhoneAllChats {
     return [sidebarConversationTitle(row,tr), this.filter !== 'all' && src ? tr(assistantChatSourceKey(src,true)) : '',
       this.detail(row)].filter((s:string) => !!s).join(tr('phone_sidebar_label_separator'));
   }
-  private sourceIcon(key: string): Resource {
-    switch (key) {
-      case 'all': return Symbols.spaces;
-      case 'mine': return $r('sys.symbol.person');
-      case 'inbox': return Symbols.inbox;
-      case 'task': return $r('sys.symbol.clock');
-      case 'lark_agent': return $r('sys.symbol.paperplane');
-      case 'spawned': return Symbols.persona;
-      case 'extension': return Symbols.apps;
-      default: return Symbols.gear;
-    }
-  }
   private filterName(key: string): string {
     return tr(key === 'all' ? 'all' : key === 'mine' ? 'phone_all_chats_mine' : assistantChatSourceKey(key));
   }
@@ -114,7 +102,9 @@ export struct PhoneAllChats {
           .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('close')).id('all_chats.close').onClick(() => this.onClose())
         Blank().layoutWeight(1)
         if (this.hasOptions()) Button({type:ButtonType.Circle}) {
-          Image(Symbols.more).width(19).height(19).fillColor(Colors.link)
+          Row({space:3}) {
+            ForEach([0,1,2],(dot:number) => { Circle().width(3.5).height(3.5).fill(Colors.link) },(dot:number) => String(dot))
+          }
         }.width(40).height(40).padding(0).backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:20})
           .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('phone_all_chats_display_options'))
           .bindMenu(this.displayMenu(this.options.capture('/api/v1/assistant'))).id('phone_search.display_options')
@@ -126,7 +116,7 @@ export struct PhoneAllChats {
       ForEach(this.groups,(g: AllChatGroup) => {
         Button({type:ButtonType.Capsule}) {
           Row({space:4}) {
-            SymbolGlyph(this.sourceIcon(g.id)).fontSize(Tokens.interfaceFontVp(13,nativeEnvironment.fontScale)).fontColor([this.filter === g.id ? Colors.link : Colors.secondary])
+            SymbolGlyph(assistantSourceSymbol(g.id)).fontSize(Tokens.interfaceFontVp(13,nativeEnvironment.fontScale)).fontColor([this.filter === g.id ? Colors.link : Colors.secondary])
             Text(this.filterName(g.id) + ' ' + String(g.rows.length)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
               .fontWeight(FontWeight.Medium).fontColor(this.filter === g.id ? Colors.link : Colors.secondary).maxLines(1)
           }
@@ -139,24 +129,12 @@ export struct PhoneAllChats {
   @Builder chat(binding: BoundRow<ResourceRow>) {
     Row({space:Tokens.inset}) {
       Column({space:3}) {
-        Row({space:4}) {
-          Text() {
-            Span(assistantChatTitleParts(sidebarConversationTitle(binding.value,tr))[0]).fontColor(Colors.secondary)
-            Span(assistantChatTitleParts(sidebarConversationTitle(binding.value,tr))[1]).fontColor(Colors.ink)
-          }.fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body)).maxLines(1)
-            .textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
-          if (this.source(binding.value) === 'lark_agent') Image($r('app.media.brand_lark'))
-            .width(PhoneStyle.formSize(16,21,nativeEnvironment.fontScale)).aspectRatio(1).objectFit(ImageFit.Contain)
-            .accessibilityLevel('no')
-          else if (this.source(binding.value)) SymbolGlyph(this.sourceIcon(this.source(binding.value)))
-            .fontSize(Tokens.interfaceFontVp(13,nativeEnvironment.fontScale)).fontColor([Colors.secondary])
-        }.width('100%').alignItems(VerticalAlign.Center)
+        AssistantChatTitle({title:sidebarConversationTitle(binding.value,tr),source:this.source(binding.value),
+          identity:'all_chats.mark.'+(binding.value.session || binding.value.id)}).width('100%')
         if (this.detail(binding.value)) Text(this.detail(binding.value)).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
           .fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      if (assistantChatState(binding.value) === 'working') LoadingProgress().width(13).height(13).color(Colors.working)
-      else if (['needs_you','unread'].includes(assistantChatState(binding.value))) Circle().width(8).height(8)
-        .fill(assistantChatState(binding.value) === 'needs_you' ? Colors.needs : Colors.link)
+      AssistantChatStateMark({state:assistantChatState(binding.value),identity:'all_chats.mark.'+(binding.value.session || binding.value.id)})
     }.width('100%').constraintSize({minHeight:PhoneStyle.formSize(74,89,nativeEnvironment.fontScale)}).padding({left:20,right:16,top:8,bottom:8}).alignItems(VerticalAlign.Center)
       .accessibilityGroup(true).accessibilityText(this.spoken(binding.value)).onClick(() => {
         const row=binding.value;

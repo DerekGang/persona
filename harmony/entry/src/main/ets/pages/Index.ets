@@ -1,4 +1,5 @@
-import { assistantSidebarChats, sidebarConversationLabel, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
+import { AssistantChatStateMark, AssistantChatTitle } from '../components/AssistantChatMarks';
+import { assistantChatSource, assistantChatState, assistantSidebarChats, sidebarConversationLabel, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
 import { i18n } from '@kit.LocalizationKit';
 import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { AgentStartPicker } from '../components/AgentStartPicker';
@@ -1136,10 +1137,10 @@ struct Index {
     if (kind === 'projects') return Symbols.folder;
     if (kind === 'agents') return Symbols.agents;
     if (kind === 'inbox') return $r('sys.symbol.inbox');
-    if (kind === 'todo') return Symbols.check;
-    if (kind === 'knowledge') return $r('sys.symbol.book_pages');
+    if (kind === 'todo') return $r('sys.symbol.list_checkmark');
+    if (kind === 'knowledge') return $r('sys.symbol.books_vertical_fill');
     if (kind === 'health') return $r('sys.symbol.heart');
-    if (kind === 'devices') return Symbols.device;
+    if (kind === 'devices') return $r('sys.symbol.matebook_and_phone_fill');
     if (kind === 'settings') return Symbols.gear;
     if (kind === 'applications') return Symbols.apps;
     if (kind === 'collapse') return Symbols.collapse;
@@ -1176,7 +1177,7 @@ struct Index {
     if (!Wire.has(data, 'online')) return '';
     if (!Wire.bool(data, 'online')) return tr('offline');
     const host = Wire.text(data, 'host');
-    return host ? tr('online') + ' · ' + host : tr('online');
+    return host ? tr('admin_manager_online') + ' · ' + host : tr('admin_manager_online');
   }
   @Builder managerChoice(row: ResourceRow) {
     Row({space:10}) {
@@ -1265,8 +1266,9 @@ struct Index {
         SymbolGlyph(this.spaceSymbol(kind)).fontSize(String(this.drawerMetric(this.wide() ? 20 : 22))+'vp').fontColor([Colors.ink]).width(this.drawerMetric(24))
         Text(this.spaceTitle(kind)).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
         if ((kind === 'inbox' || kind === 'todo') && this.placeCount(kind) > 0) {
-          Text(String(this.placeCount(kind))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
-            .fontColor(Colors.link).id('spaces.count.' + kind)
+          Text(this.placeCount(kind)>99 ? '99+' : String(this.placeCount(kind))).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium)
+            .fontColor(Colors.link).padding({left:6,right:6,top:2,bottom:2}).backgroundColor(Colors.control).borderRadius(16)
+            .accessibilityText(String(this.placeCount(kind))).id('spaces.count.' + kind)
         }
       }.padding({left:12,right:12,top:4,bottom:4}).constraintSize({minHeight:this.drawerMetric(44)}).width('100%')
     }.borderRadius(10).backgroundColor(this.activeModule() === kind ? Colors.control : Color.Transparent)
@@ -1462,9 +1464,11 @@ struct Index {
           .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)
       } else {
         ListItem() {
-          Text(sidebarConversationTitle(binding.value,tr)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
-            .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-            .width('100%').constraintSize({minHeight:this.drawerMetric(44)}).padding({left:12,right:12})
+          Row({space:12}) {
+            AssistantChatTitle({title:sidebarConversationTitle(binding.value,tr),source:assistantChatSource(binding.value,this.sidebarTaskHistory.known(this.model.scope())),
+              gap:12,identity:'drawer.mark.'+binding.value.id}).layoutWeight(1)
+            AssistantChatStateMark({state:assistantChatState(binding.value),identity:'drawer.mark.'+binding.value.id})
+          }.width('100%').constraintSize({minHeight:this.drawerMetric(44)}).padding({left:12,right:12})
         }.accessibilityGroup(true).accessibilityText(sidebarConversationLabel(binding.value,this.sidebarTaskHistory.known(this.model.scope()),
           this.model.language === 'default' ? i18n.System.getSystemLanguage() : this.model.language,Date.now(),tr))
           .onClick(() => { if (this.drawerAcceptsTap()) this.openPickedChat(binding.value); }).id(prefix+binding.value.id)

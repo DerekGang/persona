@@ -87,6 +87,18 @@ test('All Chats leaves the presenting drawer in place until a conversation is se
   assert.match(shell,/private openPickedChat\([^}]+this\.spacesShown = false; this\.drawerSearching = false; this\.chatSearchShown = false/);
 });
 
+test('the sidebar and full list use the same source and state marks', () => {
+  const read=p=>readFileSync(new URL('../entry/src/main/ets/'+p+'.ets',import.meta.url),'utf8');
+  for(const path of ['components/PhoneAllChats','pages/Index']) {
+    assert.ok(read(path).includes('AssistantChatTitle({title:sidebarConversationTitle(binding.value,tr)'));
+    assert.ok(read(path).includes('AssistantChatStateMark({state:assistantChatState(binding.value)'));
+  }
+  const marks=read('components/AssistantChatMarks');
+  assert.ok(marks.includes("this.state === 'needs_you' ? Colors.needs : Colors.unread"));
+  assert.ok(marks.includes("if (this.state === 'working') LoadingProgress()"));
+  assert.ok(marks.includes("if (this.source === 'lark_agent') Image($r('app.media.brand_lark'))"));
+});
+
 test('drawer roots and drill-downs leave always exactly one leading action',()=>{
   assert.equal(phonePlaceAtRoot(4,[],false),true);assert.equal(phonePlaceAtRoot(4,['project'],false),false);
   assert.equal(phonePlaceAtRoot(0,['conversation'],true),true);assert.equal(phonePlaceAtRoot(0,['conversation'],false),false);
