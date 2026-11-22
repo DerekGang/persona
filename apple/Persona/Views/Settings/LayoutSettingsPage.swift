@@ -57,7 +57,7 @@ struct LayoutSettingsPage: View {
             } header: {
                 Text("Seen Agents").id(SeenRows.key)
             } footer: {
-                Text("An Agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat.")
+                Text("An agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat.")
             }
         }
     }

@@ -5,7 +5,7 @@ import Foundation
 /// iPad only; elsewhere (no such setting) seen rows leave with their chat, as before.
 nonisolated enum SeenRows: String, CaseIterable, Identifiable, Sendable {
     /// It keeps its place, drawn as Seen, until the list is refreshed (`AppModel.seenThisVisit`): pull to refresh, Clear
-    /// Seen, a quick filter chosen, another computer or hub, a new launch. The default since #12514.
+    /// Seen, a quick filter chosen, another computer, hub or assistant, a new launch. The default since #12514.
     case stay
     /// It moves to Seen once its chat is left, as every row did before #12514 (`AppModel.heldInList`).
     case leave
@@ -31,13 +31,13 @@ nonisolated enum SeenRows: String, CaseIterable, Identifiable, Sendable {
 
     /// What VoiceOver says the header's action does.
     static var clearHint: String {
-        String(localized: "Takes the Agents you have read out of this section.")
+        String(localized: "Takes the agents you have read out of this section.")
     }
 
     /// The one-time notice over the list when a read row first stays (the Agents list's `seenRowsNotice`): the changed
-    /// default, said once.
+    /// default, said once, in words that also hold for a new install (nothing "now" about it there).
     static var notice: String {
-        String(localized: "Agents you read now stay where they were, marked as seen, until you pull down to refresh.")
+        String(localized: "Agents you read stay where they were, marked as seen, until you pull down to refresh.")
     }
 }
 

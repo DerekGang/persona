@@ -2456,7 +2456,7 @@ private struct AgentsList: View {
                             linkTodo: { linkingSpace = space }).equatable()
             TodoSpaceMenuItem(group: space) { todoID in openFromList(TodoDetailRoute(id: todoID)) }
         } else {
-            RepoMenuItems(unread: prepared?.unread ?? []).equatable()
+            RepoMenuItems(unread: prepared?.unread ?? [], all: prepared?.keys ?? []).equatable()
         }
     }
 
@@ -2624,7 +2624,7 @@ private struct AgentsList: View {
                         SpaceHeaderMenu(group: space, isMuted: model.isMuted, rename: { renamingSpace = space }, open: { openFromList(SpaceRoute(id: space.id)) },
                                         linkTodo: { linkingSpace = space }).equatable()
                     } else {
-                        RepoMenuItems(unread: unread).equatable()
+                        RepoMenuItems(unread: unread, all: prepared?.keys ?? []).equatable()
                     }
                 } label: {
                     headerMenuLabel
@@ -2902,11 +2902,14 @@ private struct AgentsList: View {
     }
 
     /// A section's Clear Seen (N) (#12514): the rows read during this visit and kept there leave it, as a pull to refresh
-    /// lets every one of them go.
+    /// lets every one of them go; under a quick filter they leave the list, as its Mark All as Seen's do.
     private func clearSeenButton(_ keys: [SessionKey]) -> some View {
         Button {
             Haptics.tap()
-            withAnimation(Theme.Motion.standard) { model.releaseSeen(keys) }
+            withAnimation(Theme.Motion.standard) {
+                model.releaseSeen(keys)
+                kept.subtract(keys)
+            }
         } label: {
             Text(SeenRows.clearTitle(keys.count))
                 .font(Theme.Font.secondary)
@@ -4382,9 +4385,10 @@ struct FoldButton<Content: View, Accessory: View>: View {
                 .buttonStyle(.plain)
                 .modifier(FoldSpoken(title: title, folded: folded, detail: detail, identifier: identifier))
                 accessory
-                // The chevron folds too, as it does in the header without an action; the button above says so.
+                // The chevron folds too, as it does in the header without an action; the button above says so. A finger's
+                // square at the trailing edge (#3753), its glyph where the header without an action draws it.
                 Button(action: action) {
-                    FoldChevron(folded: folded).tapTargetHeight(alignment: .bottom).contentShape(.rect)
+                    FoldChevron(folded: folded).tapTargetFrame(alignment: .bottomTrailing).contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHidden(true)
@@ -5315,7 +5319,11 @@ struct SpaceMenuItems: View {
         }
         let unread = group.sessions.filter { $0.needsSeen(muted: model.isMuted($0)) }.map(\.key)
         if !unread.isEmpty {
-            Button { model.markSeen(unread) } label: { Label(StateName.markAllSeen(unread.count), systemImage: Theme.Icon.success) }
+            // All of the space's rows: the unread ones are marked, and the ones read during the visit and held in place
+            // leave with them (#12514), as the Just finished header's does.
+            Button { model.markSeen(group.sessions.map(\.key)) } label: {
+                Label(StateName.markAllSeen(unread.count), systemImage: Theme.Icon.success)
+            }
         }
         if let rename, group.spaceID != "-" {
             Button(action: rename) { Label("Rename Space", systemImage: Theme.Icon.edit) }

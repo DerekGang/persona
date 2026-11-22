@@ -685,43 +685,55 @@ final class AgentsListTests: XCTestCase {
         see(filter("all"), "the quick filters", timeout: 15)
     }
 
-    /// By Status: rows read from Unread one after another stay in Unread, drawn as Seen, and leave its count, so the
-    /// next one is still right below; the section's Clear Seen lets them go, and so does a pull to refresh.
+    /// By Status: five rows read from Unread one after another (#12514's acceptance) stay in Unread, drawn as Seen, and
+    /// leave its count, so the next one is still right below; a pull to refresh lets them all go, and the section's Clear
+    /// Seen lets a read row go too.
     @MainActor func testReadRowsStayInUnreadUntilRefreshed() throws {
         launchByStatusOnTheStudio()
-        raise(reach(header("完成未看"), "完成未看's header"))
-        let first = rowTitles(under: "完成未看", 3)
-        XCTAssertEqual(first.count, 3, "three unread rows to read")
+        // High on the screen: six rows fit under the header.
+        raise(reach(header("完成未看"), "完成未看's header"), to: 0.2)
+        let first = rowTitles(under: "完成未看", 6)
+        XCTAssertEqual(first.count, 6, "six unread rows to read")
         let unread = try XCTUnwrap(count(of: "完成未看"), header("完成未看").label)
         shot("agents-state-before-reading")
 
-        readAndGoBack(first[0], steady: true)
-        readAndGoBack(first[1], steady: true)
-        wait("the hub hears of both (\(seen()))") { seen().count == 2 }
-        XCTAssertEqual(rowTitles(under: "完成未看", 3), first, "the read rows keep their places, the next one below them")
-        for title in first.prefix(2) {
+        let five = Array(first.prefix(5))
+        readAndGoBack(five[0], steady: true)
+        // The first row that stays brings the one-time notice over the list's foot; closed, it uncovers the rows there.
+        let notice = app.descendants(matching: .any)["agents.seenNotice"].firstMatch
+        see(notice, "the notice that read rows stay")
+        let close = notice.buttons["notice.dismiss"].firstMatch
+        (close.waitForExistence(timeout: 2) ? close : app.buttons["notice.dismiss"].firstMatch).tap()
+        gone(notice, "the notice, closed")
+        for title in five.dropFirst() { readAndGoBack(title, steady: true) }
+        wait("the hub hears of all five (\(seen()))") { seen().count == 5 }
+        XCTAssertEqual(rowTitles(under: "完成未看", 6), first, "the read rows keep their places, the next one below them")
+        for title in five {
             XCTAssertTrue(agentRow(title).label.contains("已看"), "\(title) is drawn as Seen: \(agentRow(title).label)")
         }
-        XCTAssertTrue(agentRow(first[2]).label.contains("完成未看"), agentRow(first[2]).label)
-        wait("完成未看 counts what is still unread (\(header("完成未看").label))") { self.count(of: "完成未看") == unread - 2 }
-        let clear = see(app.buttons["agents.clearSeen"], "完成未看's Clear Seen")
-        XCTAssertEqual(clear.label, "清理已看（2）")
+        XCTAssertTrue(agentRow(first[5]).label.contains("完成未看"), agentRow(first[5]).label)
+        wait("完成未看 counts what is still unread (\(header("完成未看").label))") { self.count(of: "完成未看") == unread - 5 }
+        XCTAssertEqual(see(app.buttons["agents.clearSeen"], "完成未看's Clear Seen").label, "清理已看（5）")
         shot("agents-state-read-rows-held")
 
-        clear.tap()
-        gone(app.buttons["agents.clearSeen"], "Clear Seen leaves with the rows it let go")
-        wait("the read rows left 完成未看") { self.rowTitles(under: "完成未看", 1) == [first[2]] }
-        XCTAssertEqual(count(of: "完成未看"), unread - 2, header("完成未看").label)
-
-        // A pull to refresh lets go of a read row too.
-        readAndGoBack(first[2], steady: true)
-        see(app.buttons["agents.clearSeen"], "Clear Seen for the third")
-        XCTAssertEqual(rowTitles(under: "完成未看", 1), [first[2]], "the third keeps its place")
+        // A pull to refresh lets every read row go.
         pullToRefresh()
         raise(reach(header("完成未看"), "完成未看's header after the refresh"))
-        XCTAssertFalse(app.buttons["agents.clearSeen"].exists, "a pull to refresh lets the read row go")
-        XCTAssertEqual(count(of: "完成未看"), unread - 3, header("完成未看").label)
-        XCTAssertFalse(rowTitles(under: "完成未看", 3).contains(first[2]), "the third left 完成未看")
+        XCTAssertFalse(app.buttons["agents.clearSeen"].exists, "a pull to refresh lets the read rows go")
+        XCTAssertEqual(count(of: "完成未看"), unread - 5, header("完成未看").label)
+        let after = rowTitles(under: "完成未看", 6)
+        XCTAssertEqual(after.first, first[5], "the sixth is the first unread row now")
+        XCTAssertTrue(Set(after).isDisjoint(with: five), "none of the five is left in 完成未看: \(after)")
+
+        // The section's Clear Seen lets a read row go too.
+        readAndGoBack(first[5], steady: true)
+        let clear = see(app.buttons["agents.clearSeen"], "Clear Seen for the sixth")
+        XCTAssertEqual(clear.label, "清理已看（1）")
+        XCTAssertEqual(rowTitles(under: "完成未看", 1), [first[5]], "the sixth keeps its place")
+        clear.tap()
+        gone(app.buttons["agents.clearSeen"], "Clear Seen leaves with the row it let go")
+        wait("the sixth left 完成未看") { !self.rowTitles(under: "完成未看", 6).contains(first[5]) }
+        XCTAssertEqual(count(of: "完成未看"), unread - 6, header("完成未看").label)
     }
 
     /// The changed default is said once (a notice over the list, here under the Unread filter, where read rows stay

@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import Persona
 import PersonaCoreTestSupport
@@ -47,12 +48,49 @@ import PersonaWire
         #expect(model.heldInList == nil, "the open one is let go of as it was")
         model.markSeen(key("menu"))
         model.markSeen(key("done"))
-        // "away" was seen on another device: the list holds it by what it showed.
+        #expect(model.seenThisVisit == [key("open"): .unread, key("menu"): .unread, key("done"): .justFinished])
+        #expect(model.shownThisVisit == [key("away"): .unread], "still unseen: noted, not held")
+        // "away" was seen on another device: the list holds it by what it showed, from the push that says so.
+        model.applySessions([machine: [session("open", state: "idle"), session("menu", state: "idle"),
+                                       session("done", state: "idle"), session("away", state: "idle")]])
         #expect(model.seenThisVisit == [key("open"): .unread, key("away"): .unread, key("menu"): .unread, key("done"): .justFinished])
+        #expect(model.shownThisVisit.isEmpty)
         model.releaseSeen([key("menu")])
         #expect(model.seenThisVisit[key("menu")] == nil && model.seenThisVisit.count == 3, "a section's Clear Seen")
         model.releaseAllSeen()
         #expect(model.seenThisVisit.isEmpty, "a pull to refresh")
+    }
+
+    /// Noting the rows the list shows unseen changes nothing the list watches: only a row seen since does (the list's
+    /// projection is keyed by `seenThisVisit`, so a row that finishes derives it once, not twice).
+    @Test func notingUnseenRowsChangesNothingTheListWatches() {
+        let (model, folder) = makeModel(.stay, [session("a", state: "unread"), session("b", state: "unread")])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        nonisolated(unsafe) var changed = false // the change handler fires once, synchronously, on the write
+        withObservationTracking { _ = model.seenThisVisit } onChange: { changed = true }
+        model.noteShownUnseen([key("a"): .unread, key("b"): .unread])
+        #expect(!changed, "noted, not watched")
+        #expect(model.shownThisVisit.count == 2 && model.seenThisVisit.isEmpty)
+        model.markSeen(key("a"))
+        #expect(changed, "a read row is")
+        #expect(model.seenThisVisit == [key("a"): .unread] && model.shownThisVisit == [key("b"): .unread])
+    }
+
+    /// A row the list noted unseen and already seen by the time it is noted (the list was derived before the push that
+    /// said so) is held at once; a held row the list shows unseen in another section again is held there once seen.
+    @Test func aNotedRowSeenMeanwhileIsHeldAndAHeldRowShownAgainMoves() {
+        let (model, folder) = makeModel(.stay, [session("late", state: "idle"), session("again", state: "unread")])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        model.noteShownUnseen([key("late"): .unread])
+        #expect(model.seenThisVisit == [key("late"): .unread] && model.shownThisVisit.isEmpty)
+        model.markSeen(key("again"))
+        #expect(model.seenThisVisit[key("again")] == .unread)
+        // It worked and finished unseen again, now shown in Just finished.
+        model.applySessions([machine: [session("late", state: "idle"), session("again", state: "idle", justFinished: true)]])
+        model.noteShownUnseen([key("again"): .justFinished])
+        #expect(model.seenThisVisit[key("again")] == .justFinished)
+        model.markSeen(key("again"))
+        #expect(model.seenThisVisit == [key("late"): .unread, key("again"): .justFinished] && model.shownThisVisit.isEmpty)
     }
 
     /// A chat that finished while it was open was never in Unread on the list: it is held while open only, as before.
@@ -74,14 +112,15 @@ import PersonaWire
         model.noteShownUnseen([key("read"): .unread, key("next"): .unread])
         model.markSeen(key("read"))
         model.releaseAllSeen(keeping: [key("next"): .unread])
-        #expect(model.seenThisVisit == [key("next"): .unread], "the read row goes, the unseen one starts the next visit")
+        #expect(model.seenThisVisit.isEmpty, "the read row goes")
+        #expect(model.shownThisVisit == [key("next"): .unread], "the unseen one starts the next visit")
         model.visibleSession = key("next")
         model.markSeen(key("next"))
         model.visibleSession = nil
         #expect(model.seenThisVisit == [key("next"): .unread], "opened after the refresh, it is held")
         model.seenRowsForTests = .leave
         model.releaseAllSeen(keeping: [key("next"): .unread])
-        #expect(model.seenThisVisit.isEmpty)
+        #expect(model.seenThisVisit.isEmpty && model.shownThisVisit.isEmpty)
     }
 
     /// Mark All as Seen is done with its rows: they leave at once, those already seen in place too.
@@ -91,8 +130,50 @@ import PersonaWire
         model.markSeen(key("a"))
         model.noteShownUnseen([key("b"): .unread, key("c"): .unread])
         model.markSeen([key("a"), key("b")])
-        #expect(model.seenThisVisit == [key("c"): .unread])
+        #expect(model.seenThisVisit.isEmpty, "the one read before goes with the batch")
+        #expect(model.shownThisVisit == [key("c"): .unread], "and the batch's unread one is not held once seen")
         #expect(model.session(key("b"))?.needsSeen() == false)
+    }
+
+    /// A space's Mark All as Seen (its ⋯, and a repository's) passes all of its rows: a row read there before and held
+    /// leaves with the unread one, as under the Just finished header.
+    @Test func aSpacesMarkAllLetsItsHeldRowsGoWithItsUnreadOnes() throws {
+        let (model, folder) = makeModel(.stay, [session("read", state: "unread"), session("unread", state: "unread")])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        model.noteShownUnseen([key("read"): .unread, key("unread"): .unread])
+        model.markSeen(key("read"))
+        #expect(model.seenThisVisit == [key("read"): .unread])
+        let space = try #require(SpaceGroup.build(model.allSessions).first)
+        #expect(space.sessions.count == 2, "both in one space")
+        model.markSeen(space.sessions.map(\.key))
+        #expect(model.seenThisVisit.isEmpty && model.shownThisVisit.isEmpty, "both leave")
+        #expect(model.session(key("unread"))?.needsSeen() == false)
+    }
+
+    /// The counts know only the hub's state: rows read and held in place leave them at once, as any read row does. The
+    /// Home widget's finished rows and the Unread filter drop by the rows read; the tab's badge counts who needs the user,
+    /// never these. The Live Activity's numbers are the hub's (`FleetState`), told by the same seen marks.
+    @Test func readRowsLeaveTheCountsWhileTheyAreHeld() {
+        let ids = ["a", "b", "c", "d", "e", "f"]
+        let (model, folder) = makeModel(.stay, ids.map { session($0, state: "unread") })
+        defer { try? FileManager.default.removeItem(at: folder) }
+        model.noteShownUnseen(Dictionary(uniqueKeysWithValues: ids.map { (key($0), AgentListOrder.Held.unread) }))
+        func finished() -> Int {
+            let agents = HomeAgents.build(needsYou: [], sessions: model.allSessions, place: { _ in .agents }, session: { model.session($0) },
+                                          machineName: { _ in nil }, isTask: { _ in false })
+            return agents.rows.filter { $0.state == .done }.count + agents.more.done
+        }
+        let badges = model.badges
+        #expect(finished() == 6)
+        for id in ids.prefix(5) { model.markSeen(key(id)) }
+        #expect(model.seenThisVisit.count == 5, "the five read rows are held in Unread")
+        #expect(finished() == 1, "the widget's finished rows drop by the five read")
+        var settings = AgentListProjection.Settings(grouping: "state")
+        settings.heldSeen = model.seenThisVisit
+        let projection = AgentListProjection.build(.init(sessions: model.allSessions, machines: [], settings: settings))
+        #expect(projection.filterCounts[.unread] == 1, "the Unread filter counts what is still unread")
+        #expect(projection.heldSeen.count == 5)
+        #expect(model.badges == badges, "the tab's badge counts who needs you, never these")
     }
 
     /// With seen rows leaving with their chat, nothing is held past the open one, as before #12514.
@@ -102,7 +183,7 @@ import PersonaWire
         model.visibleSession = key("open")
         model.markSeen(key("open"))
         model.noteShownUnseen([key("other"): .unread])
-        #expect(model.heldInList == key("open") && model.seenThisVisit.isEmpty)
+        #expect(model.heldInList == key("open") && model.seenThisVisit.isEmpty && model.shownThisVisit.isEmpty)
         model.visibleSession = nil
         #expect(model.heldInList == nil)
     }
@@ -118,8 +199,10 @@ import PersonaWire
         model.seenRowsForTests = .stay
         model.applySessions([gone.machineRef: [gone], kept.machineRef: [kept]])
         model.noteShownUnseen([gone.key: .unread, kept.key: .unread])
+        model.markSeen(gone.key)
+        #expect(model.seenThisVisit == [gone.key: .unread])
         model.forgetGroups([gone.group])
-        #expect(model.seenThisVisit == [kept.key: .unread])
+        #expect(model.seenThisVisit.isEmpty && model.shownThisVisit == [kept.key: .unread])
     }
 
     // MARK: The projection

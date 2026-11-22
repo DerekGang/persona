@@ -158,6 +158,8 @@ final class AppModel {
         #endif
         for s in indexedSides where index[s.key] == nil { index[s.key] = s }
         sessionIndex = index
+        // A row the Agents list showed unseen and seen since, here or elsewhere, keeps its place (#12514).
+        if !shownThisVisit.isEmpty { holdNotedSeen(Array(shownThisVisit.keys)) }
         for (key, cell) in sideCells {
             let now = SideSessions(fold, parent: key)
             if cell.value != now { cell.value = now }
@@ -617,11 +619,15 @@ final class AppModel {
     /// its chat is left (`AgentListOrder.held`, #2213; user, 2026-11-05: it moves to Idle only after you leave).
     private(set) var heldInList: SessionKey?
     private(set) var heldJustFinished = false
-    /// The rows the Agents list showed as Unread or Just finished during this visit, by that section (#12514). With
-    /// `SeenRows.stay` each one seen since (opened here, marked here, or seen elsewhere) keeps its place there, drawn as
-    /// Seen (`AgentListOrder.heldSeen`), until the list is refreshed (`releaseSeen`); Mark All as Seen lets its rows go
-    /// at once. In memory only: a new launch starts without any.
+    /// The rows the Agents list showed as Unread or Just finished during this visit and seen since (opened here, marked
+    /// here, or seen elsewhere), by the section each was shown in (#12514). With `SeenRows.stay` each keeps its place
+    /// there, drawn as Seen (`AgentListOrder.heldSeen`), until the list is refreshed (`releaseSeen`); Mark All as Seen
+    /// lets its rows go at once. In memory only: a new launch starts without any.
     private(set) var seenThisVisit: [SessionKey: AgentListOrder.Held] = [:]
+    /// The rows the list showed as Unread or Just finished during this visit that are still unseen, by that section
+    /// (`noteShownUnseen`). Not watched: a row that finishes changes nothing the list derives until it is seen, when it
+    /// moves into `seenThisVisit` (`markSeen`, `holdNotedSeen`).
+    @ObservationIgnored private(set) var shownThisVisit: [SessionKey: AgentListOrder.Held] = [:]
     /// Tests: a choice of their own, whatever this device's setting.
     @ObservationIgnored var seenRowsForTests: SeenRows?
     @ObservationIgnored private let seenRowsChoice = SeenRowsChoice()
@@ -3965,8 +3971,9 @@ final class AppModel {
                 // Opened after the list showed it unseen, or marked from its menu: it stays where it was until the list is
                 // refreshed (#12514). A chat that finished while it was open was never in that place: it is held only
                 // while open, as before.
-                if seenRows == .stay, key != visibleSession || seenThisVisit[key] != nil, seenThisVisit[key] != place {
-                    seenThisVisit[key] = place
+                if seenRows == .stay, key != visibleSession || shownThisVisit[key] != nil || seenThisVisit[key] != nil {
+                    shownThisVisit[key] = nil
+                    if seenThisVisit[key] != place { seenThisVisit[key] = place }
                 }
             }
             list[i].markLocallySeen()
@@ -3976,26 +3983,51 @@ final class AppModel {
     }
 
     /// The Agents list shows these rows as Unread or Just finished (`AgentListProjection.needsSeen`): with
-    /// `SeenRows.stay` each keeps that place once it is seen, here or elsewhere (#12514). Written only when it adds or
-    /// moves one, so a list drawn again with the same rows changes nothing.
+    /// `SeenRows.stay` each keeps that place once it is seen, here or elsewhere (#12514). Noted where the list does not
+    /// watch (`shownThisVisit`), so a row that finishes derives the list once, not again for being noted.
     func noteShownUnseen(_ rows: [SessionKey: AgentListOrder.Held]) {
-        guard seenRows == .stay, rows.contains(where: { seenThisVisit[$0.key] != $0.value }) else { return }
-        seenThisVisit.merge(rows) { _, shown in shown }
+        guard seenRows == .stay, !rows.isEmpty else { return }
+        shownThisVisit.merge(rows) { _, shown in shown }
+        // Seen in the meantime (the list was derived before a push said so), or a held row shown in another section again.
+        holdNotedSeen(rows.keys)
+    }
+
+    /// The noted rows that are seen now, here or elsewhere, keep the place they were shown in (#12514); a held row the list
+    /// shows unseen again in another section is held there once seen. Called for every change of the lists
+    /// (`sessionsChanged`): the one place a row seen on another device, herdr or the Codex app lands.
+    private func holdNotedSeen(_ keys: some Sequence<SessionKey>) {
+        var held = seenThisVisit, changed = false
+        for key in keys {
+            guard let place = shownThisVisit[key] else { continue }
+            if let s = sessionIndex[key], s.isQuiet, !s.needsSeen() {
+                shownThisVisit[key] = nil
+            } else if held[key] == nil {
+                continue
+            }
+            if held[key] != place {
+                held[key] = place
+                changed = true
+            }
+        }
+        if changed { seenThisVisit = held }
     }
 
     /// Lets these rows go from the places they were held in (a section's Clear Seen, Mark All as Seen).
     func releaseSeen(_ keys: some Sequence<SessionKey>) {
         var rest = seenThisVisit
-        for key in keys { rest[key] = nil }
+        for key in keys {
+            rest[key] = nil
+            shownThisVisit[key] = nil
+        }
         if rest.count != seenThisVisit.count { seenThisVisit = rest }
     }
 
-    /// The list is refreshed (pull to refresh, a quick filter chosen, another computer or hub, the setting changed):
-    /// every row seen during the visit goes where its state puts it. `shown`: the rows the list shows as unseen now
-    /// (`AgentListProjection.needsSeen`), which start the next visit; the list notes them again only when they change.
+    /// The list is refreshed (pull to refresh, a quick filter chosen, another computer, hub or assistant, the setting
+    /// changed): every row seen during the visit goes where its state puts it. `shown`: the rows the list shows as unseen
+    /// now (`AgentListProjection.needsSeen`), which start the next visit.
     func releaseAllSeen(keeping shown: [SessionKey: AgentListOrder.Held] = [:]) {
-        let next = seenRows == .stay ? shown : [:]
-        if seenThisVisit != next { seenThisVisit = next }
+        shownThisVisit = seenRows == .stay ? shown : [:]
+        if !seenThisVisit.isEmpty { seenThisVisit = [:] }
     }
 
     func keepSeen(in list: SessionListModel<Session>) {
@@ -4010,7 +4042,7 @@ final class AppModel {
             self.heldInList = nil
             heldJustFinished = false
         }
-        releaseSeen(seenThisVisit.keys.filter { groups?.contains($0.group) ?? true })
+        releaseSeen((Array(seenThisVisit.keys) + shownThisVisit.keys).filter { groups?.contains($0.group) ?? true })
     }
 
     private func sendSeen(_ key: SessionKey) {
@@ -4905,6 +4937,9 @@ final class AppModel {
         if switched {
             if let a = assistantCurrent, let s = session(a), s.assistant, !s.isHealth, !assistantShows(s.manager) { assistantCurrent = assistantMain }
             assistantSwitches += 1
+            // Another assistant's computers on the Agents list: it starts again, as for another computer or hub (#12514). The
+            // rows it noted unseen stay noted: those still shown keep their place once read, even when the rows did not change.
+            releaseAllSeen(keeping: shownThisVisit)
             // the "/" list offers the new assistant's saved prompts, never the one before's (#9436)
             SavedPromptStore.shared.forget()
             SavedPromptStore.shared.reload()

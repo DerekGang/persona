@@ -16,7 +16,7 @@ final class AgentsTouchTargetUITests: XCTestCase {
     static let tapped: Set<String> = ["agents.row", "agents.compactRow", "agents.project", "agents.worktree", "agents.foldWorkspace",
                                       "agents.childSpaces", "agents.host", "agents.showAll", "agents.tab", "agents.quietSpace",
                                       "agents.waiting", "agents.section", "agents.space", "agents.idleFold", "agents.collapse",
-                                      "agents.subtasks"]
+                                      "agents.subtasks", "agents.clearSeen"]
     static let groupings = ["repo", "space", "state", "machine", "app", "todo", "recent"]
     /// Avatar, Two Lines, State Cards, Compact List.
     static let displays = ["avatar", "compact", "cards", "list"]
@@ -77,6 +77,35 @@ final class AgentsTouchTargetUITests: XCTestCase {
         a.name = "heights"
         a.lifetime = .keepAlways
         add(a)
+    }
+
+    /// A By Status section holding a row read during the visit (#12514): its Clear Seen is a finger tall, and the chevron
+    /// beside it folds the section from a finger's width, not only on its glyph.
+    @MainActor func testClearSeenAndTheChevronBesideItAreFingerSized() throws {
+        launch(grouping: "state", display: "list")
+        let column = app.collectionViews.firstMatch
+        let unread = app.buttons.matching(identifier: "agents.section").matching(NSPredicate(format: "label BEGINSWITH 'Unread'")).firstMatch
+        bringUp(unread, column: column)
+        XCTAssertTrue(unread.exists && unread.isHittable, "no Unread heading")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["agents.row", "agents.compactRow"])).allElementsBoundByIndex
+        let row = try XCTUnwrap(rows.filter { $0.exists && $0.frame.minY >= unread.frame.maxY - 1 }.min { $0.frame.minY < $1.frame.minY },
+                                "a row under Unread")
+        row.press(forDuration: 1.0)
+        let mark = app.buttons["Mark as Seen"].firstMatch
+        XCTAssertTrue(mark.waitForExistence(timeout: 5), "the row's menu offers Mark as Seen")
+        mark.tap()
+        let clear = app.buttons["agents.clearSeen"].firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: 5), "the read row is held, and Unread offers Clear Seen")
+        shot("touch-state-clear-seen")
+        XCTAssertGreaterThanOrEqual(clear.frame.height, Self.floor, "Clear Seen is \(clear.frame.height) pt tall")
+        XCTAssertGreaterThanOrEqual(unread.frame.height, Self.floor, "the Unread heading is \(unread.frame.height) pt tall")
+        // The chevron's square starts just past Clear Seen: 30 pt past it is beyond the glyph's own width.
+        let f = clear.frame
+        for _ in 0..<2 {
+            let before = unread.label
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.maxX + 30, dy: f.midY)).tap()
+            XCTAssertTrue(waitUntil { unread.exists && unread.label != before }, "a tap by the chevron did nothing (\(before))")
+        }
     }
 
     /// A tap 3 pt inside the top and the bottom of a heading or a row that folds lands on it: the machine's heading and a

@@ -284,6 +284,8 @@ nonisolated struct AgentListProjection: Sendable {
         var space: SpaceGroup?
         var counts: SpaceGroup
         var unread: [SessionKey]
+        /// Every row of the repository: its Mark All as Seen lets the held ones go with the unread ones (#12514).
+        var keys: [SessionKey] = []
         var quiet: Bool
     }
 
@@ -478,7 +480,8 @@ nonisolated struct AgentListProjection: Sendable {
                     let quiet = !repo.structured && settings.filter == .all && sessions.allSatisfy { !order.stays($0) }
                     result.repositories[repo.id] = Repository(sessions: sessions,
                         space: spaces.count == 1 && spaces[0].spaceID != "-" ? spaces[0] : nil,
-                        counts: counts, unread: sessions.filter { $0.needsSeen(muted: settings.muted($0)) }.map(\.key), quiet: quiet)
+                        counts: counts, unread: sessions.filter { $0.needsSeen(muted: settings.muted($0)) }.map(\.key),
+                        keys: sessions.map(\.key), quiet: quiet)
                     for worktree in repo.worktrees {
                         func prepare(_ item: RepoTree.Worktree) {
                             result.rows[item.id] = partition(item.sessions, settings: settings)

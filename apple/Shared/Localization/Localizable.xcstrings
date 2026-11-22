@@ -24666,25 +24666,25 @@
         }
       }
     },
-    "Agents you read now stay where they were, marked as seen, until you pull down to refresh." : {
+    "Agents you read stay where they were, marked as seen, until you pull down to refresh." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Agents you read now stay where they were, marked as seen, until you pull down to refresh."
+            "value" : "Agents you read stay where they were, marked as seen, until you pull down to refresh."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認したセッションは、引き下げて更新するまで、確認済みとしてその場に残るようになりました。"
+            "value" : "確認したエージェントは、引き下げて更新するまで、確認済みとしてその場に残ります。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "看过的会话现在会以「已看」留在原处，下拉刷新后才移走。"
+            "value" : "看过的 Agent 会以「已看」留在原处，下拉刷新后才移走。"
           }
         }
       }
@@ -28150,29 +28150,6 @@
         }
       }
     },
-    "An Agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "An Agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「未確認」や「完了したばかり」から開いたり確認済みにしたりしたセッションは、引き下げて更新するか、「確認済みを片付ける」をタップするか、フィルタを選ぶまで、確認済みとしてその場に残ります。「チャットを閉じたら移す」では、チャットを閉じるとすぐに確認済みに移ります。"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "从「完成未看」或「刚做完待看」打开或标为已看的会话，会以「已看」留在原处，直到你下拉刷新、点「清理已看」或选择筛选。选「离开就移走」时，离开对话就会移到「已看」。"
-          }
-        }
-      }
-    },
     "An Anthropic-compatible endpoint, like a Coding Plan or your company's proxy" : {
       "localizations" : {
         "en" : {
@@ -28264,6 +28241,29 @@
         }
       },
       "extractionState" : "manual"
+    },
+    "An agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An agent you open or mark as seen from Unread or Just Finished keeps its place, marked as seen, until you pull down to refresh, tap Clear Seen or choose a filter. With Leave When the Chat Closes it moves to Seen as soon as you leave its chat."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「未確認」や「完了したばかり」から開いたり確認済みにしたりしたエージェントは、引き下げて更新するか、「確認済みを片付ける」をタップするか、フィルタを選ぶまで、確認済みとしてその場に残ります。「チャットを閉じたら移す」では、チャットを閉じるとすぐに確認済みに移ります。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从「完成未看」或「刚做完待看」打开或标为已看的 Agent，会以「已看」留在原处，直到你下拉刷新、点「清理已看」或选择筛选。选「离开就移走」时，离开对话就会移到「已看」。"
+          }
+        }
+      }
     },
     "An extension market is an index of extensions published by a repository or website. Add one to list its extensions here and install them directly." : {
       "localizations" : {
@@ -151884,13 +151884,13 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認済みのセッション"
+            "value" : "確認済みのエージェント"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "看过的会话"
+            "value" : "看过的 Agent"
           }
         }
       }
@@ -168846,25 +168846,25 @@
         }
       }
     },
-    "Takes the Agents you have read out of this section." : {
+    "Takes the agents you have read out of this section." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Takes the Agents you have read out of this section."
+            "value" : "Takes the agents you have read out of this section."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確認したセッションをこのセクションから外します。"
+            "value" : "確認したエージェントをこのセクションから外します。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "把你看过的会话移出这一段。"
+            "value" : "把你看过的 Agent 移出这一段。"
           }
         }
       }
@@ -216083,13 +216083,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Agents 列表 布局 行 卡片 紧凑 看过的会话 已看 留到刷新"
+            "value" : "Agents 列表 布局 行 卡片 紧凑 看过的 Agent 已看 留到刷新"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Agents 一覧 レイアウト 行 カード コンパクト 確認済み 更新まで残す"
+            "value" : "Agents 一覧 レイアウト 行 カード コンパクト 確認済みのエージェント 更新まで残す"
           }
         }
       }

@@ -1000,6 +1000,8 @@ A side session folded into its parent (#7944, `parent_agent_id`, with `sessions_
 
 A herdr tab's workers are the same (web, #5180; the owner asked on 2026-11-12 that this follow cindy's Team exactly). In a tab with several Agents the lead is the Agent in its first pane and the tab's other running Agents are its workers, folded under it by the hub. A worker is never a row, dock entry or count of its own; the lead's row carries it as above. The lead's chat shows no strip of pane tabs any more: its workers are in the **Team** side panel (section 3.3). A tab whose first pane is a shell has no lead, and its Agents stay rows of their own.
 
+A row read from Unread or Just finished and held in that place ("Rows read during a visit" below) does not need the user: it is drawn and counted as Seen, so it never stands in for, or hides, one that does.
+
 #### Finished work nobody has seen
 
 With Session Triage on, a turn the triage found done leaves Unread, but while it is new it is not filed with the
@@ -1020,20 +1022,23 @@ seen elsewhere (`docs/protocol/agent-states.md` ("Seen")), in every grouping and
 is still right below and nothing slides from under the finger. A chat that finished while it was open was never in that
 place on the list: it is held while open only, as every opened row was before.
 
-- **Look**: the row is drawn as any Seen row is (`AgentState.tone`'s gray dot, the regular title weight; VoiceOver says
-  Seen). No new style, no dimming, no movement while it is held.
+- **Look**: the row is drawn as any Seen row is (`AgentState.tone`'s gray dot, Seen's title weight `Theme.Font.bodyStrong`
+  rather than Unread's `bodyHeavy`; VoiceOver says Seen). No new style, no dimming, no movement while it is held.
 - **Counts**: a section counts what is still in its state; a held row is left out of its header, the quick filters, the
   badge and the Live Activity, which only know the hub's state.
 - **Clear Seen (N)**: a By Status section holding such rows has a text button between its title and its chevron
   (`FoldButton`'s `accessory`: a button of its own, the fold keeps the rest of the header), N the rows it lets go.
-- **When they go**: pull to refresh, Clear Seen, a quick filter chosen (again), another computer or hub, a new launch.
-  Mark All as Seen takes its rows at once: a batch says the user is done with them. A row that works, needs the user or
-  finishes unseen again goes where its state puts it.
+- **When they go**: pull to refresh, Clear Seen, a quick filter chosen (again), another computer, hub or assistant, a
+  new launch. Going to the background is none of these: the visit lasts however long the app was away, until one of
+  them. Mark All as Seen (a section's, a space's or a repository's) takes its rows at once, those already read there
+  too: a batch says the user is done with them. A row that works, needs the user or finishes unseen again goes where
+  its state puts it.
 - **The choice**: Settings › Appearance & Display › Agents List Layout › Seen Agents, **Stay Until Refresh** (the
   default) or **Leave When the Chat Closes**, the behavior before #12514 (only the open row holds, #2213). It is this
   device's: a list behavior, not the assistant's (4.1.1). The first time a read row stays, a neutral `NoticeBanner` at
   the list's foot says so once, with **Change in Settings** (the page opens at the choice) and its ✕ (Principle 1: the
-  changed default is said, and the old one is a tap away). It floats over the list (`floatingFooter(over:shown:)`,
+  changed default is said, and the old one is a tap away); its words say what happens, not that it changed, so they
+  hold on a new install too. It floats over the list (`floatingFooter(over:shown:)`,
   3.12), not in it: put in at the list's top while the chat was open over it, it moved the rows on the way back.
 
 Why: one concept had two rules. The Unread filter kept a read row (`kept`) and the Assistant tray's Finished entry keeps
