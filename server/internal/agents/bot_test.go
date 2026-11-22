@@ -310,13 +310,14 @@ func TestBotOperationBookIsBoundedAndKeepsNewest(t *testing.T) {
 	caller := &fakeBotCaller{pages: map[string]BotPage{testBotRegistration.SessionID: testBotPage()}}
 	kv := &memKV{m: map[string][]byte{}}
 	src := newTestBot(t, kv, caller)
+	clock := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	src.ops.now = func() time.Time { clock = clock.Add(time.Millisecond); return clock } // distinct CreatedAt, no sleep
 	ids := make([]string, 5)
 	for i := range ids {
 		ids[i] = NewClientID()
 		if _, err := src.Send(context.Background(), BotSessionKey, ids[i], fmt.Sprintf("message %d", i)); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(2 * time.Millisecond) // distinct CreatedAt
 	}
 	var saved map[string]botOperation
 	if ok, err := kv.Setting(context.Background(), botOperationsKey, &saved); !ok || err != nil {
