@@ -28,7 +28,7 @@ type superviseFingerprint struct {
 }
 
 func digestFingerprint(e prompts.SuperviseEntry, g superviseSignal) (string, string) {
-	if g.Kind == sigTodoReady || g.Kind == sigOwnerChoice {
+	if g.Kind == sigTodoReady {
 		// One durable wake per dependent to-do and canonical after-prerequisite set, independent of restarts or sweeps.
 		key, _ := json.Marshal([]string{g.Todo, g.Kind})
 		sum := sha256.Sum256([]byte(g.Key))
@@ -168,6 +168,12 @@ func (s *Service) reserveSupervisionDelivery(ctx context.Context, entries []prom
 	var resumingIDs [][2]string
 	resuming := delivery == leaderResumeDelivery
 	for i, entry := range entries {
+		if signals[i].Kind == sigOwnerChoice {
+			// The queue and pending outbox share an atomic admission receipt. A
+			// pre-send fingerprint could retire this choice after a crash.
+			out, kept = append(out, entry), append(kept, signals[i])
+			continue
+		}
 		key, hash := digestFingerprint(entry, signals[i])
 		current, undelivered := pending[signals[i].id()]
 		if seen, ok := next[key]; ok && seen.Hash == hash && (seen.Permanent || seen.Todo != "" || now.Sub(seen.At) < superviseDedupWindow) {
@@ -196,7 +202,7 @@ func (s *Service) reserveSupervisionDelivery(ctx context.Context, entries []prom
 		if signals[i].Kind == sigAllStopped || signals[i].Kind == sigParkedSummary || signals[i].Kind == sigPREvent || keptUntilChange(signals[i]) {
 			fingerprint.Todo = signals[i].Todo
 		}
-		if g := signals[i]; g.Kind == sigOwnerChoice || g.Kind == sigTodoReady || g.externalPRReview() || g.Kind == sigInbox && g.Inbox != nil && g.Inbox.ToAgent == "unhandled" {
+		if g := signals[i]; g.Kind == sigTodoReady || g.externalPRReview() || g.Kind == sigInbox && g.Inbox != nil && g.Inbox.ToAgent == "unhandled" {
 			fingerprint.Todo = g.Todo
 		}
 		next[key] = fingerprint

@@ -1169,6 +1169,11 @@ func (s *Service) superviseWatch(ctx context.Context, now time.Time) {
 		if t.Supervision == nil || t.DoneAt != nil {
 			continue
 		}
+		if t.Supervision.State == reviewNeedsUser {
+			if a, ok := s.askCopy(t.ID); ok && a.OwnerHandoff && !a.AcceptedAt.IsZero() {
+				s.userDecidedRound(ctx, t.ID, a.AskedAt)
+			}
+		}
 		s.remedyWatch(ctx, t, now, history) // a failed start's kept tab expired (start_remedy.go)
 		t = s.checkTaskHandoff(ctx, t, now)
 		agents := s.taskAgentsIn(ctx, t, lists)
