@@ -195,8 +195,10 @@ nonisolated enum AssistantEntries {
     /// The task waits for its supervisor's review, which is not the owner's to do yet (the web's `supervisorReviewing`):
     /// open, in `pending_review` for less than `reviewOverdueAfter`. False past that, and when the hub does not say since
     /// when (an older hub): the review is then the owner's, as it was. An open ask or an asking Agent is the owner's
-    /// whatever this says.
+    /// whatever this says. An owner hold its Agent reported that the supervisor has not read yet (#13191) is the
+    /// supervisor's however old.
     static func supervisorReviewing(_ todo: TodoItem, now: Date) -> Bool {
+        if todo.doneAt == nil, todo.delivery?.heldForSupervisor == true { return true }
         guard todo.doneAt == nil, todo.supervision?.state == "pending_review", let since = todo.supervision?.pendingSince else { return false }
         return now.timeIntervalSince(since) < reviewOverdueAfter
     }
@@ -490,6 +492,10 @@ struct AssistantActionBar: View {
     var key: SessionKey? = nil
     /// The conversation's model operating a Mac (#1343): its pill after the entries.
     var computer: ComputerActivity? = nil
+    /// The pager over the composer (#12831): its To Decide entry comes first, and one of it and a tray shows at a time.
+    var dock: QuestionDockState? = nil
+    /// The conversation's own cards the pager holds (with its tasks' questions, read here).
+    var dockOwn: [DockCard] = []
     @State private var open: ActionTray?
     /// The open tray's rows, measured: the tray is as tall as they are, up to its cap.
     @State private var listHeight: CGFloat = 0
@@ -532,6 +538,24 @@ struct AssistantActionBar: View {
             // nothing moves.
             ScrollView(.horizontal, showsIndicators: false) {
                 row {
+                    if let dock {
+                        let ids = QuestionDock.cards(own: dockOwn, conversation: conversation).map(\.id)
+                        if !ids.isEmpty {
+                            QuestionDockEntry(count: ids.count, arrived: QuestionDockLogic.arrived(ids, seen: dock.seen),
+                                              open: dock.showing(ids)) {
+                                Haptics.tap()
+                                withAnimation(Theme.Motion.state) {
+                                    if dock.showing(ids) {
+                                        dock.fold(ids)
+                                    } else {
+                                        open = nil
+                                        heldOpen = false
+                                        dock.show()
+                                    }
+                                }
+                            }
+                        }
+                    }
                     ForEach(content.entries(open: open)) { entry($0, count: content.count($0)) }
                     if inMain, let held {
                         PushInterceptsEntry(model: held, open: heldOpen) {
@@ -557,6 +581,8 @@ struct AssistantActionBar: View {
         .onChange(of: conversation) { open = nil; expanded = []; drawn = []; planChoices = [:] }
         // One tray at a time: Needs You's or In Progress' opening closes the held pushes'.
         .onChange(of: open) { if open == nil { expanded = []; drawn = []; planChoices = [:] } else { heldOpen = false } }
+        // The pager steps aside while a tray is open (#12831).
+        .onChange(of: open != nil || heldOpen, initial: true) { _, tray in dock?.trayOpen = tray }
         // The held pushes are read in the main conversation while its tab is in front, every 30 s, with ln mode off too,
         // so the entry comes when the mode is turned on; the bar reads none of the model's values itself.
         .tabActiveTask(id: inMain) {
@@ -750,7 +776,10 @@ struct AssistantActionBar: View {
         case .ask(let ask):
             // The card itself is right below the bar: the row closes the tray to show it.
             Button {
-                withAnimation(Theme.Motion.state) { open = nil }
+                withAnimation(Theme.Motion.state) {
+                    open = nil
+                    dock?.show(ask.id) // the pager, on that card (#12831)
+                }
             } label: {
                 line(title: ask.title, detail: StateName.needsYou.text, tint: AgentState.needsYou.tone.text, trail: .open) {
                     ThemedIcon(Theme.Icon.askFirst).font(Theme.Font.labelStrong).foregroundStyle(AgentState.needsYou.tone.text)
