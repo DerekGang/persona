@@ -406,6 +406,15 @@ example configs and services) and both watcher skills under `.claude/skills/`. T
   share-sheet and performance tests) clears it first, whatever the shell exported; `scripts/test/test_apple_dev_build.py`
   finds them by searching. After `sim.sh`, the project Xcode opens is the lean one until the next `xcodegen generate`,
   and its Rust core has the simulator slice only (the last item).
+- **The offline hosted test host has its own graph, not the development switch.** `scripts/ci/apple.sh` first generates
+  the unchanged whole `Persona.xcodeproj` for package resolution and the unsigned device build, which still covers the
+  embedded Watch app, Watch widgets and Share extension. Before `build-for-testing`, it resolves that whole spec once
+  with `xcodegen dump`, and `scripts/ci/apple_offline_project.py` creates a separate `PersonaOfflineUnitTests.xcodeproj`
+  in the disposable snapshot. Only this project omits targets the unit-test host cannot reach: Watch/Share, Vision,
+  UI tests and the separate About accessibility host. It retains the real `Persona` host, Widgets, Notify, all package
+  dependencies, `PersonaTests`, and the exact `TEST_HOST` / `BUNDLE_LOADER`. It does not set `PERSONA_LEAN_DEV_BUILD`,
+  change a test selector or alter the default, UI-test or About schemes. `scripts/test/test_apple_offline_project.py`
+  generates and inspects this project when `xcodegen` is installed; the ordinary project still embeds all four targets.
 - **A lean build says when it skipped what the branch changed.** The watch app compiles all of `apple/Shared/` and the
   `PersonaWire` package (`apple/Packages/PersonaWire/`) for watchOS 10, the share extension compiles them as an app
   extension, and no hosted CI runs on a PR, so with lean builds alone a change that breaks either would first fail on
@@ -574,6 +583,15 @@ The versioned JSON snapshot contains file and line totals and counts by record k
 sample paths and message bodies. The comparison marks kinds and versions as added (`+`), missing (`-`) or changed
 (`~`). An added kind is newly observed in the selected transcripts. Check its local sample before deciding whether
 the parser needs a new fixture or handling. Pass transcript directories to either command to limit the scan.
+
+To compare scans saved on different machines or review them later, create both snapshots with `--json`. Compare the
+saved counts without copying the transcripts or passing transcript directories:
+
+```sh
+python3 scripts/diag/transcript_stats.py --compare before-upgrade.json --against after-upgrade.json
+```
+
+The offline command validates both snapshots, leaves them unchanged and reads no transcript directories.
 
 API smoke tests: `curl -H "Authorization: Bearer $TOKEN" …/api/v1/machines`, `…/api/v1/sessions?machine_id=<machine>`.
 
