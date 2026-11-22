@@ -11,7 +11,7 @@ import { BASE } from "../../lib/base";
 import { navigate } from "../../lib/router";
 import { GaugeFace } from "../../ui/GaugeFace";
 import { inputClass, SectionTitle } from "../assistant/parts";
-import { INTAKE_MAX, newDraft, parseAmount, type IntakeDraft, type IntakeEntry, type IntakeKind } from "./intake";
+import { INTAKE_MIN, INTAKE_MAX, newDraft, parseAmount, type IntakeDraft, type IntakeEntry, type IntakeKind } from "./intake";
 import { useHealthIntake, type Ring } from "./useHealthIntake";
 
 const num = (n: number) => new Intl.NumberFormat(currentLanguage(), { maximumFractionDigits: 1 }).format(n);
@@ -36,6 +36,10 @@ export function HealthToday() {
   const record = async (draft: IntakeDraft) => {
     try {
       const e = await intake.log(draft);
+      if (e.deleted_at) {
+        toast(t("health.today_undone"), "info");
+        return;
+      }
       const said = e.kind === "water" ? t("health.today_logged_water", { amount: num(e.amount) }) : t("health.today_logged_protein", { amount: num(e.amount) });
       toast(said, "ok", { label: t("health.today_undo"), run: () => void undo(e) });
     } catch (err) {
@@ -103,7 +107,7 @@ export function HealthToday() {
               className={inputClass}
             />
             <span id="health-today-amount-note" className={invalid ? "mt-1 block text-label text-red" : "mt-1 block text-label text-ink-3"}>
-              {t("health.today_amount_hint", { max: num(INTAKE_MAX[ask]), unit: unitOf(ask) })}
+              {t("health.today_amount_hint", { min: num(INTAKE_MIN[ask]), max: num(INTAKE_MAX[ask]), unit: unitOf(ask) })}
             </span>
           </label>
         )}

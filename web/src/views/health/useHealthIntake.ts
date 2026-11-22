@@ -50,6 +50,7 @@ export function useHealthIntake(): HealthIntake {
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const writing = useRef(0);
   const wrote = useRef(0);
+  const read = useRef(0);
   const stale = useRef(false);
   const alive = useRef(true);
   useEffect(() => {
@@ -57,24 +58,34 @@ export function useHealthIntake(): HealthIntake {
     return () => { alive.current = false; };
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async function loadToday() {
+    if (!alive.current) return;
     if (writing.current > 0) {
       stale.current = true;
       return;
     }
     const epoch = wrote.current;
+    const sequence = ++read.current;
+    const accept = () => {
+      if (!alive.current || sequence !== read.current) return false;
+      if (writing.current > 0 || wrote.current !== epoch) {
+        // A write invalidated this read. If it already settled, there is no later drain to consume stale.
+        stale.current = true;
+        if (writing.current === 0) {
+          stale.current = false;
+          void loadToday();
+        }
+        return false;
+      }
+      return true;
+    };
     try {
       const r = await readToday();
-      // a write that began or ended while this read was out: its answer is the newer one, and a read is made again
-      if (!alive.current) return;
-      if (writing.current > 0 || wrote.current !== epoch) {
-        stale.current = true;
-        return;
-      }
+      if (!accept()) return;
       setServer(r);
       setError("");
     } catch (e) {
-      if (alive.current) setError(errorText(e));
+      if (accept()) setError(errorText(e));
     }
   }, []);
 
@@ -94,6 +105,7 @@ export function useHealthIntake(): HealthIntake {
     const visible = () => { if (document.visibilityState === "visible") void load(); };
     document.addEventListener("visibilitychange", visible);
     return () => {
+      read.current++; // Results from the previous subscription are no longer current.
       stops.forEach((stop) => stop());
       document.removeEventListener("visibilitychange", visible);
     };
@@ -102,13 +114,13 @@ export function useHealthIntake(): HealthIntake {
   /** One write, after the ones before it; `local` is on the rings until it is answered. */
   const write = useCallback(<T extends { today: IntakeTotals }>(local: Pending, send: () => Promise<T>): Promise<T> => {
     setPending((p) => [...p, local]);
+    wrote.current++;
     writing.current++;
     const run = queue.current.then(send);
     queue.current = run.catch(() => undefined);
     return run.then(
       (r) => {
         // the hub's total replaces the local sum for this kind; the other kind's is untouched by it
-        wrote.current++;
         writing.current--;
         if (alive.current) {
           setServer((s) => (s ? { water: { ...s.water, today: r.today.water }, protein: { ...s.protein, today: r.today.protein } } : s));

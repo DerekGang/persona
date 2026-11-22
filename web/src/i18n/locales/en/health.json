@@ -15,7 +15,7 @@
   "today_other_title": "Log water",
   "today_grams_title": "Log protein",
   "today_amount_label": "Amount ({unit})",
-  "today_amount_hint": "A number above 0, up to {max} {unit}, one decimal at most.",
+  "today_amount_hint": "A number from {min} to {max} {unit}, one decimal at most.",
   "today_cancel": "Cancel",
   "today_log": "Log",
   "today_logged_water": "Logged {amount} ml of water",

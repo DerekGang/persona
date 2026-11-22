@@ -7,20 +7,21 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-interface Rec { id: string; kind: "water" | "protein"; amount: number }
+interface Rec { id: string; kind: "water" | "protein"; amount: number; deleted_at?: string }
 const hub = vi.hoisted(() => ({
   features: ["health_intake"] as string[],
   listeners: new Map<string, Set<() => void>>(),
   calls: [] as { method: string; path: string; json?: Record<string, unknown> }[],
-  records: new Map<string, { id: string; kind: "water" | "protein"; amount: number }>(),
+  records: new Map<string, { id: string; kind: "water" | "protein"; amount: number; deleted_at?: string }>(),
   cup: 250,
   goals: { water: 2000, protein: 60 },
   failWith: "" as string,
   failDelete: "" as string,
+  loseResponse: false,
   gate: null as Promise<void> | null,
   readGate: null as Promise<void> | null,
 }));
-const total = (kind: "water" | "protein") => [...hub.records.values()].filter((r) => r.kind === kind).reduce((n, r) => n + r.amount, 0);
+const total = (kind: "water" | "protein") => [...hub.records.values()].filter((r) => r.kind === kind && !r.deleted_at).reduce((n, r) => n + r.amount, 0);
 const totals = () => ({ water: total("water"), protein: total("protein") });
 
 vi.mock("../../lib/api", async (orig) => ({
@@ -35,10 +36,11 @@ vi.mock("../../lib/api", async (orig) => ({
     if (method === "GET") {
       const gate = hub.readGate;
       const snapshot = totals();
+      const goals = { ...hub.goals };
       if (gate) await gate;
       return {
-        water: { today: snapshot.water, goal: hub.goals.water, entries: [] },
-        protein: { today: snapshot.protein, goal: hub.goals.protein, entries: [] },
+        water: { today: snapshot.water, goal: goals.water, entries: [] },
+        protein: { today: snapshot.protein, goal: goals.protein, entries: [] },
         days: [],
         zone: "UTC",
       };
@@ -49,6 +51,7 @@ vi.mock("../../lib/api", async (orig) => ({
       const body = init.json as { id: string; kind: "water" | "protein"; amount?: number };
       if (!hub.records.has(body.id)) hub.records.set(body.id, { id: body.id, kind: body.kind, amount: body.amount ?? hub.cup });
       const r = hub.records.get(body.id)!;
+      if (hub.loseResponse) throw new Error("response lost");
       return { entry: { ...r, at: "2026-11-23T08:00:00Z", note: "", seq: hub.records.size, created_at: "2026-11-23T08:00:00Z" }, today: totals(), zone: "UTC" };
     }
     if (hub.failDelete) throw new Error(hub.failDelete);
@@ -123,6 +126,7 @@ beforeEach(() => {
   hub.goals = { water: 2000, protein: 60 };
   hub.failWith = "";
   hub.failDelete = "";
+  hub.loseResponse = false;
   hub.gate = null;
   hub.readGate = null;
   host = document.createElement("div");
@@ -131,6 +135,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   act(() => root.unmount());
   host.remove();
   document.body.innerHTML = "";
@@ -410,5 +415,82 @@ describe("Today: opening a ring's page", () => {
     history.replaceState(null, "", "/health/new");
     act(() => open("water").click());
     expect(new URLSearchParams(location.search).get("state")).toBe('{"kind":"water"}');
+  });
+});
+
+describe("Today: read and retry regressions", () => {
+  it("repeats a read invalidated by a write that has already completed", async () => {
+    await render();
+    let releaseRead!: () => void;
+    hub.readGate = new Promise<void>((r) => (releaseRead = r));
+    hub.goals.water = 3000;
+    act(() => hub.listeners.get("health_intake")?.forEach((l) => l()));
+    await flush();
+    const count = reads().length;
+    await press(button(ring("water"), t("health.today_drank")));
+    releaseRead();
+    await flush();
+    expect(reads()).toHaveLength(count + 1);
+    expect(ring("water").textContent).toContain(t("health.today_goal", { goal: "3,000", unit: t("health.today_unit_water") }));
+  });
+
+  it("reports a tombstone returned by Retry as removed rather than newly logged", async () => {
+    await render();
+    // Keep a prior test's identical notice outside the toast duplicate window.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10_000);
+    hub.loseResponse = true;
+    await press(button(ring("water"), t("health.today_drank")));
+    const id = posts()[0].json?.id as string;
+    expect(total("water")).toBe(250); // saved before the response was lost
+    hub.records.get(id)!.deleted_at = "2026-11-23T08:01:00Z";
+    hub.loseResponse = false;
+    await press(button(newest(), t("health.retry")));
+    expect(posts()[1].json).toEqual(posts()[0].json);
+    expect(hub.records.size).toBe(1);
+    expect(meter("water").getAttribute("aria-valuenow")).toBe("0");
+    expect(newest().textContent).toBe(t("health.today_undone"));
+    expect(button(newest(), t("health.today_undo"))).toBeUndefined();
+  });
+
+  it("keeps the newest broadcast result when two reads finish out of order", async () => {
+    await render();
+    let releaseOlder!: () => void;
+    hub.readGate = new Promise<void>((r) => (releaseOlder = r));
+    seed({ id: "first", kind: "water", amount: 250 });
+    act(() => hub.listeners.get("health_intake")?.forEach((l) => l()));
+    await flush();
+    let releaseNewer!: () => void;
+    hub.readGate = new Promise<void>((r) => (releaseNewer = r));
+    seed({ id: "second", kind: "water", amount: 250 });
+    act(() => hub.listeners.get("health_intake")?.forEach((l) => l()));
+    await flush();
+    releaseNewer();
+    await flush();
+    expect(meter("water").getAttribute("aria-valuenow")).toBe("25");
+    releaseOlder();
+    await flush();
+    expect(meter("water").getAttribute("aria-valuenow")).toBe("25");
+  });
+
+  it.each(["0.5", "0.9"])("rejects %s ml of water before making a request", async (amount) => {
+    await render();
+    await press(button(ring("water"), t("health.today_other")));
+    type(dialogInput()!, amount);
+    await press(dialogLog());
+    expect(posts()).toHaveLength(0);
+    expect(dialogInput()?.getAttribute("aria-invalid")).toBe("true");
+  });
+});
+
+describe("Today: minimum amounts", () => {
+  it.each([ ["water", "1"], ["protein", "0.1"] ] as const)("accepts %s at %s", async (kind, amount) => {
+    await render();
+    await press(button(ring(kind), t(kind === "water" ? "health.today_other" : "health.today_grams")));
+    type(dialogInput()!, amount);
+    await press(dialogLog());
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0].json).toMatchObject({ kind, amount: Number(amount) });
+    expect(dialogInput()).toBeNull();
+    expect(ring(kind).textContent).toContain(amount);
   });
 });
