@@ -129,22 +129,35 @@ Hubs dial each other directly, through a proxy, or both:
   anything else automatically. Before anything is stored or shown, credentials are scrubbed
   (`transcript.SanitizeShareText`: private keys, Bearer tokens, `name=value` secrets, known token formats, credentials in
   URLs; plus Persona's own `jd_`, `jp_`, `jx_`, `jb_`, `jc_`, `jh_` and `pext_` tokens); the tool says how many it
-  removed. At most 20 messages and replies go to one partner in 10 minutes; past that the tool refuses.
+  removed. At most 20 messages and replies go to one partner in 10 minutes; past that the tool refuses (the count and
+  the row it lets in are one step, so tool calls side by side get no more past it).
 - **The owner confirms on the phone by default.** The tool raises a permission card in the conversation ("Send this
-  message to the partner hub "Work"?", a blank line, then the exact scrubbed text) and returns at once with the
-  message_id: the conversation is never held while the card waits. Allow queues it; Deny ends it (`declined`) and the
-  conversation is told; **Don't ask again for messages to "Work"** with Allow stops asking for that partner. A card left
+  message to the partner hub "Work" (7c1e4a2b)?", the partner's name and the first 8 characters of its hub_id, since
+  a partner chooses its own name; a blank line, then the exact scrubbed text) and returns at once with the message_id:
+  the conversation is never held while the card waits. Allow queues it; Deny ends it (`declined`) and the conversation
+  is told; **Don't ask again for messages to "Work" (7c1e4a2b)** with Allow stops asking for that partner. A card left
   unanswered for 24 hours after the message was made, dismissed, or allowed on the owner's behalf (by the assistant or
   a supervising conversation) expires, and the conversation is told. Each partner has an **Ask me before sending**
   switch (on by default) in Settings; no tool can turn it off. A manager restart raises the waiting cards again.
+  `hub_list` says when two partners have one name (name them by hub_id).
+- **Everything the manager keeps for a partner belongs to that pairing** (`PartnerHub.paired_at`, when it was made): a
+  hub unpaired and paired again under the same hub_id starts over. Its **Ask me before sending** is on again (a setting
+  is kept with the pairing it was made for, `partner_prefs.paired_at`, and one of an earlier pairing counts as none),
+  and nothing approved or queued for the earlier pairing goes to it: once the hub's list no longer has the pairing (the
+  hub unpaired, or paired again since the message was written), messages still waiting for a card (the card taken
+  back) or in the queue fail as `unpaired`, and the conversation is told once; the delivery loop checks again before
+  each send, and a restarted manager before raising a card again.
 - The tool's answer, the card and the message list keep **receipt, delivery and answer distinct**: `confirming` (waiting
   for your OK) → `queued` (waiting for the link) → `sent` (the partner's manager stored it) → `delivered` (it is in the
   partner's conversation) → `answered`; or `declined`, `expired`, `failed` with a code (`invalid`, `too_long`,
   `hop_limit`, `rate_limited`, `no_main`, `unpaired`, `undelivered`).
 - Offline partner, or one whose manager is away: the message stays queued and goes out again with the same
-  `message_id`, 5 s doubling to 5 minutes apart, and at once when the partner comes online. A message still queued
-  after 7 days expires and the conversation is told. A partner the hub no longer knows (unpaired, or partner hubs off
-  here) fails the message as `unpaired`.
+  `message_id`, 5 s doubling to 5 minutes apart (counted from the end of the try), and at once when the partner comes
+  online. A message still queued after 7 days expires and the conversation is told. A partner the hub no longer knows
+  (unpaired, or partner hubs off here) fails the message as `unpaired`.
+- The delivery loop sends to each partner on its own (one envelope in flight per partner, at most 8 partners at once,
+  each partner's in the order they were written): a partner that keeps its link up but never answers holds up only its
+  own envelopes. One it does not take now ends that partner's turn: its other envelopes wait as long as that one.
 
 ### Receiving
 
@@ -158,18 +171,24 @@ Hubs dial each other directly, through a proxy, or both:
   web shows "@Work · Request from another hub, not from you") and framed as a **request, never the owner's
   instruction** (`server/internal/prompts/assistant/partner_message.md`): the receiving assistant handles it under its own hub's rules,
   asks its own owner where it normally would (starting Agents that change things, sending things out, spending,
-  deleting), and answers only with what is needed. It never carries a `client_msg_id`, the owner's quoted words, a
-  hand-over or any of the hub's "this came from the owner" marks.
+  deleting), and answers only with what is needed. The framing (with the hub_id and message_id to answer with) is in a
+  `kind="context"` block first, so the apps show it folded; the partner's words follow it as the message's own text,
+  which the chat shows as the message. It never carries a `client_msg_id`, the owner's quoted words, a hand-over or any
+  of the hub's "this came from the owner" marks.
 - **Replies** go back with `hub_send {hub, reply_to: <message_id>, text}`. A reply leaves the replying hub, so its owner
   is asked first too, unless they turned that off for the partner. It arrives in the conversation that sent the original
   message (or the main conversation if that one is gone), framed as information from another assistant
   (`partner_reply.md`); the original becomes `answered`, the incoming message `replied`.
 - **Status envelopes** (`delivered`, or `failed` with a code) go back once a message or reply is in its conversation or
   cannot be; they carry no text and need no confirmation. A conversation that refuses a reply for good sends it on to
-  the main conversation; anything else refused fails `undelivered`. An incoming envelope not delivered within 2 minutes
-  is taken up again by the delivery loop, after checking the transcript for it.
+  the main conversation, where it counts as delivered (it waits in that queue); anything else refused, or lost with its
+  conversation while it waited, fails `undelivered`. An incoming envelope not delivered within 2 minutes is taken up
+  again by the delivery loop, after checking the transcript for it. An incoming message keeps a next try until its
+  status is queued (a status's `message_id` comes from the message and its state, so queuing it twice adds nothing):
+  one whose status was lost to a database error or a stop in between gets it from the loop.
 - Limits: an exchange is at most 6 hops (message 1, reply 2, …; the hop of a reply is taken from this hub's own record,
-  never the envelope); each manager takes at most 30 messages and replies and 120 statuses per partner in 10 minutes.
+  never the envelope); each manager takes at most 30 messages and replies and 120 statuses per partner in 10 minutes,
+  however many arrive at once (the count and the row it lets in are one step per partner).
 
 ## Routes
 
@@ -214,8 +233,8 @@ the default manager is the one that sends. No tool reaches them: a model cannot 
 | Method | Path | Body → answer |
 | --- | --- | --- |
 | GET | `/api/v1/partner-messages?hub=<hub_id>&limit=<n>` | → `{messages:[{id, direction: "out" \| "in", hub_id, hub_name, kind: "message" \| "reply", state, code?, text, title?, created_at, updated_at}]}`, newest first, statuses left out; `limit` 20 by default, at most 100; `400 partner_invalid` |
-| GET | `/api/v1/partner-messages/prefs` | → `{prefs:[{hub_id, confirm}]}`: the stored settings only (no row: `confirm` is true) |
-| PUT | `/api/v1/partner-messages/prefs/{hub_id}` | `{confirm: bool}` → `{hub_id, confirm}` |
+| GET | `/api/v1/partner-messages/prefs` | → `{prefs:[{hub_id, confirm}]}`: the stored settings of the pairings there are now only (no row, or one of an earlier pairing under that hub_id: `confirm` is true) |
+| PUT | `/api/v1/partner-messages/prefs/{hub_id}` | `{confirm: bool}` → `{hub_id, confirm}`, kept for the hub's pairing now (replacing one of an earlier pairing); `404 partner_not_found` for a hub that is not paired |
 
 ## Bus
 
@@ -229,8 +248,9 @@ Types in `server/internal/assistantwire/partners.go`.
   bad `reply_to`, `state` or `code` over 32 bytes, text over 64 KiB), `partner_unknown` (not paired, or partner hubs off
   here: stop), `partner_offline` (no link now, or the call dropped or found no answer within 30 s: send it again, the
   partner deduplicates), `partner_unavailable` (the partner hub has no manager that takes it now: send it again).
-- `partner.hubs {}` → `{enabled, hubs:[{hub_id, name, online, dial}]}` (manager → hub): the default manager's list;
-  any other manager gets `{enabled: false, hubs: []}`.
+- `partner.hubs {}` → `{enabled, hubs:[{hub_id, name, online, dial, paired_at?}]}` (manager → hub): the default
+  manager's list; any other manager gets `{enabled: false, hubs: []}`. `paired_at` is when the pairing was made: the
+  manager keeps a partner's setting and waiting messages for that pairing only (without it, for the hub_id).
 - `partner.receive {from_hub, from_name, envelope}` → `{status, code?}` (hub → its default manager, 20 s): `from_hub`
   comes from the link's credential and `from_name` from this hub's pairing record, never from the envelope. The hub
   answers an envelope that does not read itself (`refused`, `invalid` or `too_long`); with no manager that takes it, or
@@ -262,9 +282,13 @@ Types in `server/internal/assistantwire/partners.go`.
 - **A partner's text is bounded and cleaned**: names and refusal reasons from the other hub lose control and
   bidirectional formatting characters (names at most 64 characters, reasons 300); envelope text is at most 64 KiB at the
   hub and 12,000 characters at the manager, keeps no control characters but line breaks and tabs, is scrubbed again, and
-  goes into the conversation inside a quoted-message context block, with the partner's name inline only after its angle
-  brackets and quote marks were replaced by look-alikes. Hub ids must match `^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`;
-  addresses are cut to 8 https ones without `user:pass@`.
+  goes into the conversation as the message's own words after Persona's framing block, with the `<` of every
+  context-block, file, photo or pasted-text tag in it written as `&lt;` (`prompts.PlainWords`), so it can neither open,
+  close nor forge a block; the partner's name goes inline only after its angle brackets and quote marks were replaced by
+  look-alikes. Hub ids must match `^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`; addresses are cut to 8 https ones without
+  `user:pass@`.
+- **A partner chooses its name** (and may change it in a later hello): the owner's card names it with the first 8
+  characters of its hub_id too, and `hub_list` says when two partners have one name.
 - **Refusal codes from a partner are mapped to known ones**: a pairing refusal is passed on only for `partners_off`,
   `member_hub`, `already_linked`, `pin_changed`, `tls_required` and `no_database` (anything else is `refused`); the
   manager keeps only the contract's codes (anything else is `invalid` for a refusal, `undelivered` for a failed status),
@@ -288,7 +312,8 @@ Types in `server/internal/assistantwire/partners.go`.
   `enabled: false` is the emergency switch: no pairing, links refused (`403 partners_off`), no dialing, the tools gone;
   the pairings are kept, and messages still queued fail as `unpaired`.
 - In Postgres: the pairs (`partner_hubs`, `partner_codes`, hub set) with each partner's **Connect to this hub** switch;
-  the messages (`partner_messages`) and each partner's **Ask me before sending** switch (`partner_prefs`), manager set.
+  the messages (`partner_messages`) and each partner's **Ask me before sending** switch with the pairing it was set
+  for (`partner_prefs`), manager set.
 
 ## Setting up two hubs where only one can reach the other
 
@@ -365,7 +390,13 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
   `TestPartnerOfflineThenOnline`, `TestPartnerRestartAsksAgain`, `TestPartnerQueueExpires`,
   `TestPartnerReconcilerDeliversWhatWasLeft`, `TestPartnerMessageFollowsTheMainConversation`,
   `TestPartnerCodesAreTheContractsOnly`, `TestPartnerInlineKeepsTheNameInItsQuotes`, `TestPartnerRoutes`,
-  `TestManagerCapabilitiesFit`. Run: `go test -count=1 -race -run 'Partner|HubSend|TestManagerCapabilitiesFit' ./internal/assistant/`.
+  `TestManagerCapabilitiesFit`; in `partner_pairing_test.go`: `TestPartnerPairedAgainStartsOver`,
+  `TestPartnerUnpairedFailsWhatWaits`, `TestPartnerSendsNothingOfAnEarlierPairing`, `TestPartnerLookalikeNames`; in
+  `partner_delivery_test.go`: `TestPartnerSilentPartnerHoldsUpOnlyItself`, `TestPartnerRateLimits` (both limits, envelopes
+  and tool calls side by side), `TestPartnerReplyRefusedGoesToMainOnce`, `TestPartnerReconcilerQueuesALostStatus`,
+  `TestPartnerRefusedThereIsFailedHere` (two managers: refused there, failed and told here),
+  `TestPartnerLostOrWorkComputerFailsUndelivered`. The framing's prompt test is `TestPlainWordsOpenAndCloseNothing`
+  (`server/internal/prompts/context_body_test.go`). Run: `go test -count=1 -race -run 'Partner|HubSend|TestManagerCapabilitiesFit' ./internal/assistant/`.
 - **Two hubs end to end** (`server/internal/hub/partner_e2e_test.go`: real managers on two in-process hubs, each with
   its delivery loop, a node for its main conversation and an app answering its cards; their partner messages kept in
   memory by `server/internal/hub/partner_e2e_store_test.go`): `TestPartnerE2E` (pairing lists the tools; a message waits
@@ -391,5 +422,6 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
 - **Early stop of a candidate race**: a 401 or a pin mismatch on one address does not stop the others; the dial waits
   for every candidate (as the mesh does), and its error lists each.
 - **No relay between three hubs**: each pair is separate, and a hub never passes a partner's message on.
-- The manager's message list (`GET /api/v1/partner-messages`) has no screen yet. The delivery loop sends one envelope
-  after another, so a partner whose calls time out delays the others in that pass.
+- The manager's message list (`GET /api/v1/partner-messages`) has no screen yet.
+- The source label in the chat (`@Work`) is the partner's name alone; two partners of one name are told apart in
+  `hub_list` and on the owner's card (the start of the hub_id), not in the label.

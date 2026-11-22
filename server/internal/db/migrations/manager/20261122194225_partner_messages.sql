@@ -1,6 +1,7 @@
 -- Partner hubs (docs/server/partner-hubs.md): the envelopes this hub's assistant sent to and received from paired hubs,
 -- each one once by (direction, peer_hub, message_id), with where it stands; and, per paired hub, whether a message to
--- it waits for the owner's OK first (no row: it does).
+-- it waits for the owner's OK first (no row: it does). paired_at is the pairing a setting was made for (the hub's
+-- PartnerHub.PairedAt; NULL: a hub that does not say): a hub paired again under the same hub_id does not inherit it.
 CREATE TABLE IF NOT EXISTS partner_messages (
     id text PRIMARY KEY,
     direction text NOT NULL CHECK (direction IN ('out', 'in')),
@@ -32,5 +33,6 @@ CREATE INDEX IF NOT EXISTS partner_messages_state ON partner_messages (direction
 CREATE TABLE IF NOT EXISTS partner_prefs (
     hub_id text PRIMARY KEY,
     confirm boolean NOT NULL DEFAULT true,
+    paired_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now()
 );

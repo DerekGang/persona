@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -55,17 +56,25 @@ func (s *Service) partnerCaller(ctx context.Context, machine, self string) error
 	return nil
 }
 
-// partnerAsks says, for a paired hub, whether a message to it waits for the owner's OK (no setting, or one that
-// cannot be read: it does).
-func partnerAsks(ctx context.Context, st partnerStore) func(hub string) bool {
+// partnerAsks says, for a paired hub, whether a message to it waits for the owner's OK (no setting, one made for an
+// earlier pairing under its hub_id, or one that cannot be read: it does).
+func partnerAsks(ctx context.Context, st partnerStore) func(h assistantwire.PartnerHub) bool {
 	prefs, err := st.PartnerPrefs(ctx)
-	off := map[string]bool{}
-	if err == nil {
-		for _, p := range prefs {
-			off[p.HubID] = !p.Confirm
+	if err != nil {
+		prefs = nil
+	}
+	return func(h assistantwire.PartnerHub) bool { return partnerPrefOf(prefs, h) }
+}
+
+// partnerPrefOf is whether a message to h waits for the owner's OK, by prefs: a setting holds only for the pairing it
+// was made for.
+func partnerPrefOf(prefs []db.PartnerPref, h assistantwire.PartnerHub) bool {
+	for _, p := range prefs {
+		if p.HubID == h.HubID && samePairing(p.PairedAt, h.PairedAt) {
+			return p.Confirm
 		}
 	}
-	return func(hub string) bool { return !off[hub] }
+	return true
 }
 
 func (s *Service) toolHubList(ctx context.Context, machine, self string) (string, error) {
@@ -95,10 +104,17 @@ func (s *Service) toolHubList(ctx context.Context, machine, self string) (string
 			state = "online"
 		}
 		confirm := "a message waits for the user's OK on the phone first"
-		if !asks(h.HubID) {
+		if !asks(h) {
 			confirm = "a message goes without asking the user"
 		}
-		fmt.Fprintf(&b, "\n- %q (hub_id %s): %s; %s", h.Name, h.HubID, state, confirm)
+		// A partner names itself: one that took another's name is told apart by its hub_id only.
+		same := ""
+		if slices.ContainsFunc(list.Hubs, func(o assistantwire.PartnerHub) bool {
+			return o.HubID != h.HubID && strings.EqualFold(strings.TrimSpace(o.Name), strings.TrimSpace(h.Name))
+		}) {
+			same = "; another partner hub has this name too: name it by hub_id, and tell the user which one (its hub_id) you mean"
+		}
+		fmt.Fprintf(&b, "\n- %q (hub_id %s): %s; %s%s", h.Name, h.HubID, state, confirm, same)
 	}
 	return b.String(), nil
 }
@@ -212,20 +228,26 @@ func (s *Service) toolHubSend(ctx context.Context, machine, self string, args js
 	} else {
 		a.ReplyTo = ""
 	}
+	asks := partnerAsks(ctx, st)(hub)
+	title := s.partnerTitle(ctx, machine, self)
+	// The count and the row it lets in are one step: tool calls side by side get no more past the limit.
+	unlock := s.partnerGate(partnerOut, hub.HubID)
 	now := time.Now().UTC()
 	if n, err := st.CountPartnerMessages(ctx, partnerOut, hub.HubID, false, now.Add(-partnerRateWindow)); err != nil {
+		unlock()
 		return "", err
 	} else if n >= partnerOutRate {
+		unlock()
 		return "", fmt.Errorf("%d messages went to %q in the last %d minutes already (at most %d): wait, or tell the user", n, hub.Name, int(partnerRateWindow.Minutes()), partnerOutRate)
 	}
-	asks := partnerAsks(ctx, st)(hub.HubID)
 	m := db.PartnerMessage{ID: "pr_" + randomHex(12), Direction: partnerOut, PeerHub: hub.HubID, PeerName: partnerInline(hub.Name, 64),
 		MessageID: newPartnerMessageID(), Kind: kind, ReplyTo: a.ReplyTo, Hop: hop, MachineID: machine, SessionID: self,
-		Title: s.partnerTitle(ctx, machine, self), Text: text, State: partnerConfirming, CreatedAt: now}
+		Title: title, Text: text, State: partnerConfirming, CreatedAt: now}
 	if !asks {
 		m.State, m.NextTry = partnerQueued, &now
 	}
 	m, _, err = st.InsertPartnerMessage(ctx, m)
+	unlock()
 	if err != nil {
 		return "", err
 	}
@@ -276,6 +298,10 @@ func (s *Service) partnerAsk(m db.PartnerMessage) {
 		b.mu.Unlock()
 	}()
 	ctx := s.runCtx()
+	if s.partnerStale(m) { // its pairing ended before the card went up (a restart asking again)
+		s.partnerUnpaired(ctx, st, m)
+		return
+	}
 	now := time.Now().UTC()
 	expires := m.CreatedAt.Add(partnerCardWait)
 	if !expires.After(now) {
@@ -283,10 +309,13 @@ func (s *Service) partnerAsk(m db.PartnerMessage) {
 		return
 	}
 	l := s.lang(ctx)
+	// The partner chooses its name: the card names it with the start of its hub_id too, so a partner named like
+	// another is told apart.
+	names := i18n.Args{"hub": m.PeerName, "id": partnerShortID(m.PeerHub)}
 	input, _ := json.Marshal(map[string]string{"hub": m.PeerName, "hub_id": m.PeerHub, "message_id": m.MessageID, "text": m.Text})
 	ix := proto.Interaction{ID: "ix_" + randomHex(6), MachineID: m.MachineID, SessionID: m.SessionID, Kind: proto.IxPermission,
-		ToolName: "hub_send", Summary: i18n.T(l, "assistant-partners.confirm", i18n.Args{"hub": m.PeerName}) + "\n\n" + m.Text,
-		ToolInput: input, SessionTitle: "Persona", AlwaysLabel: i18n.T(l, "assistant-partners.always", i18n.Args{"hub": m.PeerName}),
+		ToolName: "hub_send", Summary: i18n.T(l, "assistant-partners.confirm", names) + "\n\n" + m.Text,
+		ToolInput: input, SessionTitle: "Persona", AlwaysLabel: i18n.T(l, "assistant-partners.always", names),
 		CreatedAt: now, ExpiresAt: expires}
 	if c, ok := s.session(ctx, m.MachineID, m.SessionID); ok {
 		ix.Cwd = c.Cwd
@@ -341,8 +370,10 @@ func (s *Service) partnerAnswered(ctx context.Context, st partnerStore, m db.Par
 		return // answered on another card, or by another manager
 	}
 	if allowed {
-		if r.Always {
-			if err := st.SetPartnerConfirm(ctx, m.PeerHub, false); err != nil {
+		// Always stops asking for this pairing only: a later one under the same hub_id asks again.
+		if list, known := s.partnerListNow(); r.Always && (!known || !partnerStaleIn(list, m)) {
+			h, _ := partnerListed(list, m.PeerHub)
+			if err := st.SetPartnerConfirm(ctx, m.PeerHub, false, h.PairedAt); err != nil {
 				s.logf("partner %s: always: %v", m.PeerHub, err)
 			}
 		}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"hash/fnv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/lazyre"
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // Partner hubs (docs/server/partner-hubs.md): another person's hub its owner paired with this one, whose assistant this
@@ -76,7 +78,7 @@ type partnerStore interface {
 	RecentPartnerMessages(ctx context.Context, peer string, limit int) ([]db.PartnerMessage, error)
 	CountPartnerMessages(ctx context.Context, direction, peer string, status bool, since time.Time) (int, error)
 	PartnerPrefs(ctx context.Context) ([]db.PartnerPref, error)
-	SetPartnerConfirm(ctx context.Context, hub string, confirm bool) error
+	SetPartnerConfirm(ctx context.Context, hub string, confirm bool, pairedAt time.Time) error
 }
 
 var _ partnerStore = (*db.DB)(nil)
@@ -122,6 +124,13 @@ type partnerBook struct {
 	// restoreInteractions): a card raised before that would be cancelled with the stale ones.
 	restoredOnce, restoredClose sync.Once
 	restored                    chan struct{}
+	// gates make one partner's rate check and the row it lets in one step (partnerGate).
+	gates [16]sync.Mutex
+	// sending is, per partner the loop sends to now, what its sender has still to send, oldest first (partner_loop.go);
+	// senders are those senders.
+	sendMu  sync.Mutex
+	sending map[string][]db.PartnerMessage
+	senders sync.WaitGroup
 	// tick and retry replace partnerTick and partnerRetryFirst when set (tests).
 	tick, retry time.Duration
 }
@@ -166,11 +175,12 @@ func (s *Service) partnersPaired() bool {
 }
 
 // partnersChanged takes the hub's list (partner.changed, partner.hubs). The tools come and go with the first partner
-// and the last; a partner that came online gets what waits for it now.
+// and the last; a partner that came online gets what waits for it now; what waits for a pairing that ended (a hub no
+// longer listed, or paired again since) fails as unpaired (partnerSweep).
 func (s *Service) partnersChanged(p assistantwire.PartnerHubs) {
 	b := &s.partners
 	b.mu.Lock()
-	before, old := b.pairedLocked(), b.list
+	before, old, knew := b.pairedLocked(), b.list, b.known
 	b.list, b.known = p, true
 	after := b.pairedLocked()
 	b.mu.Unlock()
@@ -180,11 +190,157 @@ func (s *Service) partnersChanged(p assistantwire.PartnerHubs) {
 	if !p.Enabled {
 		return
 	}
+	if !knew || partnerPairingsEnded(old, p) {
+		go s.partnerSweep()
+	}
 	for _, h := range p.Hubs {
 		if h.Online && !partnerOnline(old, h.HubID) {
 			go s.partnerHurry(h.HubID)
 		}
 	}
+}
+
+// partnerPairingsEnded: a pairing in old is not in now (unpaired, or paired again under its hub_id).
+func partnerPairingsEnded(old, now assistantwire.PartnerHubs) bool {
+	if !old.Enabled {
+		return true // nothing known of what ended while partner hubs were off
+	}
+	for _, h := range old.Hubs {
+		if n, ok := partnerListed(now, h.HubID); !ok || !samePairing(n.PairedAt, h.PairedAt) {
+			return true
+		}
+	}
+	return false
+}
+
+// partnerListed is hub as list has it.
+func partnerListed(list assistantwire.PartnerHubs, hub string) (assistantwire.PartnerHub, bool) {
+	for _, h := range list.Hubs {
+		if h.HubID == hub {
+			return h, true
+		}
+	}
+	return assistantwire.PartnerHub{}, false
+}
+
+// samePairing: two pairing times are one pairing (the database keeps microseconds).
+func samePairing(a, b time.Time) bool {
+	return a.Truncate(time.Microsecond).Equal(b.Truncate(time.Microsecond))
+}
+
+// partnerListNow is the list as the hub last said it; false before it said one.
+func (s *Service) partnerListNow() (assistantwire.PartnerHubs, bool) {
+	b := &s.partners
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.list, b.known
+}
+
+// partnerStaleIn: list (partner hubs on) shows m, a message kept for a partner, belongs to no pairing there is now: its
+// hub is not paired, or was paired again after m was written. With partner hubs off the hub refuses it when it goes.
+func partnerStaleIn(list assistantwire.PartnerHubs, m db.PartnerMessage) bool {
+	if !list.Enabled {
+		return false
+	}
+	h, ok := partnerListed(list, m.PeerHub)
+	return !ok || m.CreatedAt.Before(h.PairedAt.Truncate(time.Microsecond))
+}
+
+// partnerStale is partnerStaleIn on the list as the hub last said it (none yet: not stale).
+func (s *Service) partnerStale(m db.PartnerMessage) bool {
+	list, known := s.partnerListNow()
+	return known && partnerStaleIn(list, m)
+}
+
+// partnerSweep fails what waits for a pairing that ended: the messages still waiting for the owner's OK (their cards
+// taken back) and those queued for the partner (statuses too). A message approved for one pairing never goes to the
+// next one under the same hub_id.
+func (s *Service) partnerSweep() {
+	st := s.partnerStore()
+	if st == nil {
+		return
+	}
+	ctx := s.runCtx()
+	for _, state := range []string{partnerConfirming, partnerQueued} {
+		rows, err := st.PartnerMessagesInState(ctx, partnerOut, state)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.logf("partner hubs: the waiting messages: %v", err)
+			}
+			return
+		}
+		for _, m := range rows {
+			if s.partnerStale(m) {
+				s.partnerUnpaired(ctx, st, m)
+			}
+		}
+	}
+}
+
+// partnerUnpaired fails m, a message waiting for the owner's OK or queued for a pairing that ended: its card is taken
+// back, and the conversation that sent it is told (a status is not told of), once.
+func (s *Service) partnerUnpaired(ctx context.Context, st partnerStore, m db.PartnerMessage) {
+	was := ""
+	m, ok, err := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
+		if r.State != partnerConfirming && r.State != partnerQueued {
+			return false
+		}
+		was = r.State
+		r.State, r.Code, r.NextTry = partnerFailed, assistantwire.PartnerCodeUnpaired, nil
+		return true
+	})
+	if err != nil {
+		s.logf("partner %s: unpaired: %v", m.MessageID, err)
+	}
+	if !ok {
+		return
+	}
+	s.logf("partner %s: %s %s of a pairing that ended: failed", short(m.PeerHub), m.Kind, m.MessageID)
+	if was == partnerConfirming {
+		s.partnerWithdraw(m.CardID)
+	}
+	if m.Kind != assistantwire.PartnerKindStatus {
+		s.partnerTell(ctx, m, "unpaired", assistantwire.PartnerCodeUnpaired)
+	}
+}
+
+// partnerWithdraw takes back card id of a message that will not go now: it closes dismissed, which no allow follows.
+func (s *Service) partnerWithdraw(id string) {
+	if id == "" {
+		return
+	}
+	s.questions.mu.Lock()
+	q := s.questions.m[id]
+	s.questions.mu.Unlock()
+	if q == nil {
+		return
+	}
+	r := proto.Resolution{Dismiss: true}
+	if err := s.resolve(id, r); err != nil {
+		select {
+		case q.answer <- r:
+		default:
+		}
+	}
+}
+
+// partnerGate holds partner peer's gate for direction until the returned func: a rate check and the row it lets in are
+// one step however many envelopes come at once (a link runs a partner's calls side by side, a turn its tool calls).
+func (s *Service) partnerGate(direction, peer string) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(direction + "\x00" + peer))
+	mu := &s.partners.gates[h.Sum32()%uint32(len(s.partners.gates))]
+	mu.Lock()
+	return mu.Unlock
+}
+
+// partnerShortID is how the owner's card names a partner beside its name (which the partner chooses): the start of its
+// hub_id, so two of one name, or one named like another, tell apart.
+func partnerShortID(hub string) string {
+	if len(hub) <= 8 {
+		return hub
+	}
+	return hub[:8]
 }
 
 func partnerOnline(list assistantwire.PartnerHubs, hub string) bool {

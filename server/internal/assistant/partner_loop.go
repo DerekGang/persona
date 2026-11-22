@@ -1,22 +1,30 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 )
 
-// partnerClaimMost is how many due envelopes the loop takes at a time.
-const partnerClaimMost = 20
+const (
+	// partnerClaimMost is how many due envelopes the loop takes at a time.
+	partnerClaimMost = 20
+	// partnerSendersMost is how many partners the loop sends to at once, one envelope in flight to each: a partner that
+	// keeps its link up but never answers holds up its own envelopes only.
+	partnerSendersMost = 8
+)
 
 // partnerLoop hands the queued envelopes to the hub for their partners and takes up incoming ones that did not get in,
-// until ctx ends (Run starts it). It looks every partnerTick, and at once when woken (a message allowed, a partner
-// online). At its first look it reads the partner list and asks again for every message whose card the manager before
-// it had up: a restart cancels those cards (db ExpireStaleInteractions).
+// until ctx ends (Run starts it); it returns once its senders have. It looks every partnerTick, and at once when woken
+// (a message allowed, a partner online). At its first look it reads the partner list and asks again for every message
+// whose card the manager before it had up: a restart cancels those cards (db ExpireStaleInteractions).
 func (s *Service) partnerLoop(ctx context.Context) {
+	defer s.partners.senders.Wait()
 	started := false
 	for {
 		more := false
@@ -74,7 +82,9 @@ func (s *Service) partnerStart(ctx context.Context, st partnerStore) {
 	}()
 }
 
-// partnerDue acts on the envelopes whose next try is due; true when there may be more.
+// partnerDue acts on the envelopes whose next try is due; true when there may be more. Queued ones go to their
+// partner's sender (partnerSendTo), oldest first; incoming ones are taken up here: one not delivered yet, and one
+// delivered or failed whose status may not have been queued (partnerStatusOf).
 func (s *Service) partnerDue(ctx context.Context, st partnerStore) bool {
 	rows, err := st.ClaimPartnerMessages(ctx, partnerLease, partnerClaimMost)
 	if err != nil {
@@ -83,12 +93,18 @@ func (s *Service) partnerDue(ctx context.Context, st partnerStore) bool {
 		}
 		return false
 	}
+	slices.SortStableFunc(rows, func(a, b db.PartnerMessage) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID))
+	})
 	for _, m := range rows {
 		switch {
 		case m.Direction == partnerOut && m.State == partnerQueued:
-			s.partnerSendOne(ctx, st, m)
+			s.partnerSendTo(ctx, st, m)
 		case m.Direction == partnerIn && m.State == partnerReceived:
 			s.partnerDeliverIn(ctx, st, m, true)
+		case m.Direction == partnerIn && m.Kind != assistantwire.PartnerKindStatus &&
+			(m.State == partnerDelivered || m.State == partnerFailed || m.State == partnerReplied):
+			s.partnerStatusOf(ctx, st, m)
 		default: // moved on meanwhile: nothing to do
 			_, _, _ = partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
 				if r.NextTry == nil {
@@ -100,6 +116,70 @@ func (s *Service) partnerDue(ctx context.Context, st partnerStore) bool {
 		}
 	}
 	return len(rows) == partnerClaimMost
+}
+
+// partnerSendTo hands queued envelope m to the sender of its partner: the one sending to it now (a newer claim of a row
+// it holds replaces that one), else a new one. With partnerSendersMost partners being sent to already, m keeps its
+// lease and is due again after it.
+func (s *Service) partnerSendTo(ctx context.Context, st partnerStore, m db.PartnerMessage) {
+	b := &s.partners
+	b.sendMu.Lock()
+	defer b.sendMu.Unlock()
+	if q, ok := b.sending[m.PeerHub]; ok {
+		if i := slices.IndexFunc(q, func(r db.PartnerMessage) bool { return r.ID == m.ID }); i >= 0 {
+			q[i] = m
+		} else {
+			b.sending[m.PeerHub] = append(q, m)
+		}
+		return
+	}
+	if len(b.sending) >= partnerSendersMost {
+		return
+	}
+	if b.sending == nil {
+		b.sending = map[string][]db.PartnerMessage{}
+	}
+	b.sending[m.PeerHub] = []db.PartnerMessage{m}
+	b.senders.Add(1)
+	go s.partnerSender(ctx, st, m.PeerHub)
+}
+
+// partnerSender sends what waits for partner peer, one envelope after another in the order they were written, until
+// none is left. One the partner does not take now (no link, its manager away, no answer in time) ends it: what else
+// waits for that partner waits as long as that one (and is tried after it), untried meanwhile.
+func (s *Service) partnerSender(ctx context.Context, st partnerStore, peer string) {
+	b := &s.partners
+	defer b.senders.Done()
+	for {
+		b.sendMu.Lock()
+		q := b.sending[peer]
+		if len(q) == 0 || ctx.Err() != nil {
+			delete(b.sending, peer)
+			b.sendMu.Unlock()
+			return
+		}
+		m := q[0]
+		b.sending[peer] = q[1:]
+		b.sendMu.Unlock()
+		next := s.partnerSendOne(ctx, st, m)
+		if next == nil {
+			continue
+		}
+		b.sendMu.Lock()
+		rest := b.sending[peer]
+		delete(b.sending, peer)
+		b.sendMu.Unlock()
+		for _, r := range rest {
+			_, _, _ = partnerMutate(ctx, st, r, func(row *db.PartnerMessage) bool {
+				if row.State != partnerQueued {
+					return false
+				}
+				row.NextTry = next
+				return true
+			})
+		}
+		return
+	}
 }
 
 // partnerEnvelope is queued envelope m as it goes.
@@ -126,10 +206,15 @@ func (s *Service) partnerRetry(attempts int) time.Duration {
 }
 
 // partnerSendOne hands queued envelope m to the hub for its partner. Taken (accepted, or a duplicate of a try that
-// went): sent. Refused, or the hubs no longer paired: failed, and the sending conversation is told (a status is not
-// told of). Anything else (no link now, the partner's manager away, an answer that never came): it stays queued and is
-// tried again under the same message_id, later each time; one queued past partnerQueueMax expires (a status too).
-func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.PartnerMessage) {
+// went): sent. Refused, or the hubs no longer paired (as the hub says now, or its list did already): failed, and the
+// sending conversation is told (a status is not told of). Anything else (no link now, the partner's manager away, an
+// answer that never came): it stays queued and is tried again under the same message_id, later each time, and its next
+// try is returned; one queued past partnerQueueMax expires (a status too).
+func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.PartnerMessage) *time.Time {
+	if s.partnerStale(m) { // written for a pairing that ended: never to the hub paired since under its hub_id
+		s.partnerUnpaired(ctx, st, m)
+		return nil
+	}
 	now := time.Now().UTC()
 	if now.Sub(m.CreatedAt) > partnerQueueMax {
 		// A status that waited as long goes too, untold: nobody here waits for it, and kept it would be tried for ever.
@@ -142,7 +227,7 @@ func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.Part
 		}); ok && m.Kind != assistantwire.PartnerKindStatus {
 			s.partnerTell(ctx, m, "stale", "")
 		}
-		return
+		return nil
 	}
 	state, code := partnerQueued, ""
 	var err error
@@ -166,14 +251,15 @@ func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.Part
 	if state == partnerQueued && (m.Attempts == 0 || (m.Attempts+1)%10 == 0) && ctx.Err() == nil {
 		s.logf("partner %s: %s %s not taken yet (try %d): %v", short(m.PeerHub), m.Kind, m.MessageID, m.Attempts+1, err)
 	}
-	_, changed, merr := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
+	tried := time.Now().UTC() // the wait for the next try starts after this one, however long it took
+	written, changed, merr := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
 		if r.State != partnerQueued {
 			return false
 		}
 		r.Attempts++
 		r.State, r.Code, r.NextTry = state, code, nil
 		if state == partnerQueued {
-			next := now.Add(s.partnerRetry(r.Attempts))
+			next := tried.Add(s.partnerRetry(r.Attempts))
 			r.NextTry = &next
 		}
 		return true
@@ -182,7 +268,10 @@ func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.Part
 		s.logf("partner %s: %s: %v", short(m.PeerHub), m.MessageID, merr)
 	}
 	if !changed {
-		return
+		return nil
+	}
+	if state == partnerQueued {
+		return written.NextTry
 	}
 	switch {
 	case state == partnerSent && m.Kind == assistantwire.PartnerKindReply:
@@ -194,6 +283,7 @@ func (s *Service) partnerSendOne(ctx context.Context, st partnerStore, m db.Part
 		}
 		s.partnerTell(ctx, m, event, code)
 	}
+	return nil
 }
 
 // partnerReplied notes the incoming message reply m answers as answered from here.

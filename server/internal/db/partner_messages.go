@@ -37,10 +37,13 @@ type PartnerMessage struct {
 	UpdatedAt time.Time
 }
 
-// PartnerPref is the owner's setting for one partner hub: whether a message to it waits for their OK.
+// PartnerPref is the owner's setting for one partner hub: whether a message to it waits for their OK. PairedAt is the
+// pairing it was made for (the hub's PartnerHub.PairedAt; zero: not known): it does not hold for a later pairing under
+// the same hub_id.
 type PartnerPref struct {
 	HubID     string
 	Confirm   bool
+	PairedAt  time.Time
 	UpdatedAt time.Time
 }
 
@@ -151,9 +154,10 @@ func (d *DB) CountPartnerMessages(ctx context.Context, direction, peer string, s
 	return n, err
 }
 
-// PartnerPrefs are the partner hubs the owner set "ask me before sending" for; a hub with none asks.
+// PartnerPrefs are the partner hubs the owner set "ask me before sending" for, each with the pairing it was set for; a
+// hub with none (or with one of an earlier pairing) asks.
 func (d *DB) PartnerPrefs(ctx context.Context) ([]PartnerPref, error) {
-	rows, err := d.pool.Query(ctx, `SELECT hub_id, confirm, updated_at FROM partner_prefs ORDER BY hub_id`)
+	rows, err := d.pool.Query(ctx, `SELECT hub_id, confirm, paired_at, updated_at FROM partner_prefs ORDER BY hub_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,17 +165,28 @@ func (d *DB) PartnerPrefs(ctx context.Context) ([]PartnerPref, error) {
 	var out []PartnerPref
 	for rows.Next() {
 		var p PartnerPref
-		if err := rows.Scan(&p.HubID, &p.Confirm, &p.UpdatedAt); err != nil {
+		var paired *time.Time
+		if err := rows.Scan(&p.HubID, &p.Confirm, &paired, &p.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if paired != nil {
+			p.PairedAt = paired.UTC()
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
-// SetPartnerConfirm keeps whether a message to hub waits for the owner's OK.
-func (d *DB) SetPartnerConfirm(ctx context.Context, hub string, confirm bool) error {
-	_, err := d.pool.Exec(ctx, `INSERT INTO partner_prefs (hub_id, confirm, updated_at) VALUES ($1, $2, now())
-		ON CONFLICT (hub_id) DO UPDATE SET confirm=EXCLUDED.confirm, updated_at=now()`, hub, confirm)
+// SetPartnerConfirm keeps whether a message to hub waits for the owner's OK, for its pairing made at pairedAt (zero:
+// not known), in place of a setting of an earlier pairing.
+func (d *DB) SetPartnerConfirm(ctx context.Context, hub string, confirm bool, pairedAt time.Time) error {
+	var paired *time.Time
+	if !pairedAt.IsZero() {
+		t := pairedAt.UTC()
+		paired = &t
+	}
+	_, err := d.pool.Exec(ctx, `INSERT INTO partner_prefs (hub_id, confirm, paired_at, updated_at) VALUES ($1, $2, $3, now())
+		ON CONFLICT (hub_id) DO UPDATE SET confirm=EXCLUDED.confirm, paired_at=EXCLUDED.paired_at, updated_at=now()`,
+		hub, confirm, paired)
 	return err
 }
