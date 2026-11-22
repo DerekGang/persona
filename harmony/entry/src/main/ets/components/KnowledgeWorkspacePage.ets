@@ -23,6 +23,9 @@ import { NativeRecording } from '../platform/NativeRecording';
 import { KnowledgeRecordingView } from './KnowledgeRecordingView';
 import { LengthMetrics, UIUtils } from '@kit.ArkUI';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
+import { PhoneMeetingTranscription } from '../models/PhoneMeetingTranscription';
+import { MeetingHubChoice } from '../models/MeetingHubAudio';
+import { meetingAudioNetwork } from '../platform/MeetingAudioNetwork';
 import type { Binding } from '@kit.ArkUI';
 
 const KB_KINDS: string[] = ['projects', 'topics', 'chats', 'people', 'docs', 'meetings', 'events'];
@@ -111,6 +114,11 @@ export struct KnowledgeWorkspacePage {
   @Local localMeetings: boolean = false;
   @Local meetingKind: string = 'meeting';
   @Local meetingPreferences:MeetingPreferences = new MeetingPreferences();
+  @Local meetingSpeech:PhoneMeetingTranscription = new PhoneMeetingTranscription();
+  @Local meetingNetworkReady:boolean=false;
+  @Local selectedAudioOwner:string='';
+  private confirmVersion:number=0;
+  private stopMeetingEvents:(()=>void)|undefined;
   @Local invitationOverride:string='';
   @Local privateMeeting:boolean=false;
   private canInvite():boolean { return this.model.connected && this.model.features.includes('meeting_attendance') && this.model.features.includes('meeting_conversation'); }
@@ -120,7 +128,54 @@ export struct KnowledgeWorkspacePage {
     return this.meetingPreferences.role==='participant' ? 'participant' : 'listener';
   }
   @Monitor('model.features') meetingFeaturesChanged():void {
-    if (this.pageAvailable && this.initialKind==='recordings' && !this.row) this.meetingPreferences.open(this.model);
+    this.stopMeetingEvents?.();this.stopMeetingEvents=undefined;this.resetMeetingMode();
+    if (!this.pageAvailable || !this.visible || this.initialKind!=='recordings' || this.row) return;
+    this.meetingPreferences.open(this.model);
+    this.meetingSpeech.open(this.model);
+    const model=this.model;
+    if (model.connected && !model.demo) this.stopMeetingEvents=model.observeEvents((raw:string):void => {
+      if (!this.pageAvailable || !this.visible || this.model!==model || raw.length>2*1024*1024) return;
+      const kind=Wire.text(Wire.parse(raw),'type');
+      if (['assistant','assistant_config','assistant_settings','plugin','plugins','extensions','features'].includes(kind)) {
+        this.resetMeetingMode();this.meetingSpeech.open(model);
+      }
+    });
+    const context=this.getUIContext().getHostContext() as common.UIAbilityContext,owner=this.recordingScope();
+    this.meetingNetworkReady=false;
+    if (context) meetingAudioNetwork.initialize(context).then(()=>{
+      if (this.pageAvailable && owner===this.recordingScope()) this.meetingNetworkReady=true;
+    }).catch(()=>{});
+  }
+
+  private resetMeetingMode():void { this.confirmVersion++; this.selectedAudioOwner=''; }
+  private readyForHub():boolean {
+    return this.meetingKind==='meeting' && this.pageAvailable && this.visible && this.model.connected && !this.model.demo &&
+      this.meetingNetworkReady && this.meetingSpeech.offered && this.meetingSpeech.ready &&
+      ['meeting_conversation','meeting_live_view','meeting_transcription'].every((key:string)=>this.model.features.includes(key));
+  }
+  private modeOwner():string {
+    return JSON.stringify([this.recordingScope(),this.model.connectionGeneration(),this.model.profile.baseUrl,this.model.profile.pin,
+      this.meetingSpeech.extensionRef,this.meetingSpeech.serviceName(),meetingAudioNetwork.wifiOnly]);
+  }
+  private pickedHub():boolean { return this.readyForHub() && this.selectedAudioOwner===this.modeOwner(); }
+  private chooseMode(hub:boolean):void { this.confirmVersion++; this.selectedAudioOwner=hub && this.readyForHub() ? this.modeOwner() : ''; }
+  private hubService():string { return this.meetingSpeech.serviceName() || tr('persona'); }
+  private hubUnavailable():boolean {
+    return this.meetingKind==='meeting' && this.meetingSpeech.offered && this.meetingSpeech.mode==='hub' && !this.readyForHub();
+  }
+  private sourceName(hub:boolean):string {
+    return hub ? tr('meeting_cloud_service').replace('{service}',this.hubService()) : tr('meeting_this_device');
+  }
+  private setMeetingKind(kind:string):void {
+    if (kind!==this.meetingKind) { this.resetMeetingMode(); this.meetingKind=kind; }
+  }
+  private startContext():string {
+    return JSON.stringify([this.modeOwner(),this.meetingKind,this.meetingTitle,this.roomRole(),this.privateMeeting,this.selectedCalendarEvent]);
+  }
+  private modePrivacy(hub:boolean):string {
+    const days=this.meetingSpeech.retentionDays;
+    return tr(hub ? (days ? 'meeting_start_privacy_cloud_days' : 'meeting_start_privacy_cloud') : (days ? 'meeting_start_privacy_local_days' : 'phone_record_audio_local'))
+      .replace('{service}',this.meetingSpeech.serviceName() || tr('meeting_configured_service')).replace('{days}',String(days));
   }
 
   @Local meetingTitle: string = '';
@@ -174,7 +229,7 @@ export struct KnowledgeWorkspacePage {
   }
   aboutToDisappear(): void {
     this.landingMenu?.clear(this.workspace);this.knowledgeMapOpen=false;
-    this.pageAvailable = false; this.meetingPreferences.close(); this.calendarRequest++; this.localOwner = ''; this.localOpening = undefined; this.openSerial++; this.workspaceOpening = false; this.queuedRefresh = false;
+    this.pageAvailable=false; this.stopMeetingEvents?.();this.stopMeetingEvents=undefined;this.resetMeetingMode(); this.meetingSpeech.close(); this.meetingPreferences.close(); this.calendarRequest++; this.localOwner=''; this.localOpening=undefined; this.openSerial++; this.workspaceOpening=false; this.queuedRefresh=false;
     this.workspace.hide(); this.recording.dispose().catch(() => undefined);
   }
 
@@ -193,10 +248,15 @@ export struct KnowledgeWorkspacePage {
     this.recording.stopForBackground().catch(() => undefined); this.syncRowBindings(); this.openWorkspace();
     if (this.initialKind === 'recordings' && !this.row) this.loadRecordings().catch(() => undefined);
   }
-  @Monitor('model.connected') connectionChanged(): void { if (this.model.connected) { this.refreshWhenReady(); if (this.recordingOpen || this.initialKind === 'recordings') this.loadRecordings().catch(() => undefined); } }
+  @Monitor('model.connected') connectionChanged(): void {
+    this.meetingFeaturesChanged();
+    if (this.model.connected) { this.refreshWhenReady(); if (this.recordingOpen || this.initialKind === 'recordings') this.loadRecordings().catch(() => undefined); }
+  }
   @Monitor('visible') visibilityChanged(): void {
     const becameVisible = !this.lastVisible && this.visible;
     this.lastVisible = this.visible;
+    if (!this.visible) { this.stopMeetingEvents?.();this.stopMeetingEvents=undefined;this.resetMeetingMode(); }
+    else if (becameVisible && this.pageAvailable && this.initialKind==='recordings') this.meetingFeaturesChanged();
     if (becameVisible && this.pageAvailable && !this.row) this.refreshWhenReady();
   }
   @Monitor('workspace.entries', 'workspace.results', 'workspace.agents') rowSourcesChanged(): void { this.syncRowBindings(); }
@@ -245,21 +305,43 @@ export struct KnowledgeWorkspacePage {
     }
     return this.pageAvailable && this.visible && key === this.localOwner && this.recordingScope() === key;
   }
-  private async openRecording(id: string = '', start: boolean = false): Promise<void> {
-    const kind=this.meetingKind, role=this.roomRole(), privateMark=this.privateMeeting;
-    const title=this.meetingTitle.trim() || tr(kind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')+' · '+new Date().toLocaleDateString();
+  private requestRecordingStart():void {
+    if (!this.pageAvailable || !this.visible || !this.recording.canStart()) return;
+    if (!this.pickedHub()) {
+      this.openRecording('',true).catch(() => undefined);
+      return;
+    }
+    const version=++this.confirmVersion, context=this.startContext();
+    this.getUIContext().showAlertDialog({title:tr('meeting_start_confirm_title'),message:this.modePrivacy(true),
+      primaryButton:{value:tr('cancel'),action:() => { if (version===this.confirmVersion) this.confirmVersion++; }},
+      secondaryButton:{value:tr('meeting_start_send'),action:() => {
+        if (version!==this.confirmVersion || !this.pickedHub() || !this.recording.canStart() || context!==this.startContext()) return;
+        this.confirmVersion++;
+        const choice=new MeetingHubChoice(this.model,this.meetingSpeech.extensionRef,this.meetingSpeech.serviceName(),meetingAudioNetwork.wifiOnly);
+        this.openRecording('',true,choice,context).catch(() => undefined);
+      }}
+    });
+  }
 
+  private async openRecording(id:string='', start:boolean=false, choice?:MeetingHubChoice, context:string=''):Promise<void> {
+    const kind=this.meetingKind, role=this.roomRole(), privateMark=this.privateMeeting, event=kind==='meeting' ? this.selectedCalendarEvent : '';
+    const title=this.meetingTitle.trim() || tr(kind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')+' · '+new Date().toLocaleDateString();
     if (!await this.loadRecordings()) return;
     if (id) this.recording.selectEntry(id);
-    this.recordingOpen = true;
-    const event=kind==='meeting' ? this.selectedCalendarEvent : '';
-    if (start && this.recording.canStart() && await this.recording.start(kind,title,role,privateMark)) {
+    this.recordingOpen=true;
+    if (!start || !this.recording.canStart()) return;
+    if (choice && (!choice.matches(this.model) || !this.pickedHub() || context!==this.startContext())) {
+      this.recording.error='request_updated';
+      return;
+    }
+    this.resetMeetingMode();
+    if (await this.recording.start(kind,title,role,privateMark,choice)) {
       this.recordingCalendarEvent=event;nativeMeetingServices.setRecordingEvent(event);this.selectedCalendarEvent='';
       this.meetingTitle=''; this.calendarEvents=[]; this.calendarState=''; this.invitationOverride=''; this.privateMeeting=false;
     }
   }
 
-  // Calendar titles stay on this device until the person picks one and explicitly saves a transcript.
+  // Calendar lookup only fills the local draft. Starting an attended or cloud-transcribed meeting uses the selected title.
   private async readMeetingCalendar(): Promise<void> {
     const context=this.getUIContext().getHostContext() as common.UIAbilityContext, owner=this.recordingScope();
     if (!context || this.calendarState==='loading') return;
@@ -286,7 +368,7 @@ export struct KnowledgeWorkspacePage {
   }
 
   @Builder recordingSheet() {
-    Scroll() { KnowledgeRecordingView({ model: this.recording,startKind:this.meetingKind,startTitle:this.meetingTitle,roomRole:this.roomRole(),privateMark:this.privateMeeting,onDeleteLocal: (): void => this.deleteRecording() }) }
+    Scroll() { KnowledgeRecordingView({ model:this.recording,onStart:():void => this.requestRecordingStart(),onDeleteLocal: (): void => this.deleteRecording() }) }
       .width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped)
   }
 
@@ -490,6 +572,30 @@ export struct KnowledgeWorkspacePage {
     }.width('100%').height('100%').padding({left:16,right:16,top:6,bottom:8}).backgroundColor(Colors.grouped)
       .bindSheet($$this.knowledgeMapOpen,this.landingMap(),{height:SheetSize.LARGE,showClose:false,dragBar:false})
   }
+  @Builder transcriptionLine() {
+    Row({space:7}) {
+      if (this.pickedHub()) SymbolGlyph($r('sys.symbol.ellipsis_bubble')).fontSize('17vp').fontColor([Colors.secondary])
+      else Image($r('sys.media.ohos_ic_public_device_phone')).width(15).height(17)
+        .fillColor(this.hubUnavailable() ? Colors.working : Colors.secondary).accessibilityLevel('no')
+      Text(tr('meeting_transcription_label')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+      Text(this.hubUnavailable() ? tr('meeting_hub_unavailable') : this.sourceName(this.pickedHub()))
+        .fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
+        .fontColor(this.hubUnavailable() ? Colors.working : Colors.ink).layoutWeight(1).textAlign(TextAlign.Start)
+      if (this.readyForHub()) Column() {
+        SymbolGlyph(Symbols.up).fontSize('8vp').fontColor([Colors.subtle])
+        SymbolGlyph(Symbols.down).fontSize('8vp').fontColor([Colors.subtle])
+      }
+    }.width('100%').constraintSize({minHeight:34})
+  }
+  @Builder transcriptionMenu() {
+    Menu() {
+      ForEach(['device','hub'],(mode:string) => {
+        MenuItem({content:this.sourceName(mode==='hub')}).contentFont({size:Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)}).selected(this.pickedHub()===(mode==='hub')).selectIcon(true)
+          .onClick(() => this.chooseMode(mode==='hub')).id('recordings.transcription.'+mode)
+      },(mode:string)=>mode)
+    }.width(250)
+  }
+
   @Builder recordingHome() {
     Column({space:6}) {
       List({space:10}) {
@@ -509,7 +615,7 @@ export struct KnowledgeWorkspacePage {
               Button({type:ButtonType.Normal}) {
                 Text(this.clockTime(event.start)+'  '+event.title).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).width('100%')
               }.width('100%').constraintSize({minHeight:44}).padding({left:15,right:15}).backgroundColor(Color.Transparent)
-                .onClick(() => { this.meetingKind='meeting'; this.meetingTitle=event.title; this.selectedCalendarEvent=event.id; this.calendarEvents=[]; this.calendarState=''; })
+                .onClick(() => { this.setMeetingKind('meeting'); this.meetingTitle=event.title; this.selectedCalendarEvent=event.id; this.calendarEvents=[]; this.calendarState=''; })
             },(event:MeetingOccurrence) => event.key())
           }.width('100%').borderRadius(16).backgroundColor(Colors.surface)
         }
@@ -526,7 +632,7 @@ export struct KnowledgeWorkspacePage {
                     .fontWeight(this.meetingKind===kind ? FontWeight.Bold : FontWeight.Normal).fontColor(Colors.ink)
                 }.layoutWeight(1).constraintSize({minHeight:34}).padding({top:3,bottom:3})
                   .backgroundColor(this.meetingKind===kind ? Colors.surface : Color.Transparent)
-                  .accessibilitySelected(this.meetingKind===kind).onClick(() => this.meetingKind=kind).id('recordings.kind.'+kind)
+                  .accessibilitySelected(this.meetingKind===kind).onClick(() => this.setMeetingKind(kind)).id('recordings.kind.'+kind)
               },(kind:string) => kind)
             }.width('100%').borderRadius(18).padding(2).backgroundColor(Colors.control)
             if (this.meetingKind==='meeting' && this.canInvite()) {
@@ -557,13 +663,20 @@ export struct KnowledgeWorkspacePage {
                 }.width('100%')
               }
             }
-            Row({space:9}) {
-              SymbolGlyph($r('sys.symbol.mic')).fontSize('17vp').fontColor([Colors.link])
-              Text(tr('phone_meeting_local_transcription')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.ink).layoutWeight(1)
-            }.width('100%').constraintSize({minHeight:38}).accessibilityGroup(true).id('recordings.transcription')
+            if (this.meetingKind==='meeting') {
+              Divider().strokeWidth(0.5).color(Colors.divider)
+              if (this.readyForHub()) {
+                Button({type:ButtonType.Normal}) { this.transcriptionLine() }
+                  .width('100%').padding(0).constraintSize({minHeight:38}).backgroundColor(Color.Transparent)
+                  .accessibilityText(tr('meeting_transcription_label')+' · '+this.sourceName(this.pickedHub()))
+                  .bindMenu(this.transcriptionMenu).id('recordings.transcription')
+              } else Column() { this.transcriptionLine() }.width('100%').accessibilityGroup(true)
+                .accessibilityText(tr('meeting_transcription_label')+' · '+(this.hubUnavailable() ? tr('meeting_hub_unavailable') : this.sourceName(false)))
+                .id('recordings.transcription')
+            }
           }.width('100%').alignItems(HorizontalAlign.Start).padding(15).borderRadius(16).backgroundColor(Colors.surface)
         }
-        ListItem() { Text(tr('phone_record_audio_local')).width('100%').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding({left:14,right:12,bottom:6}) }
+        ListItem() { Text(this.modePrivacy(this.pickedHub())).id('recordings.privacy').width('100%').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding({left:14,right:12,bottom:6}) }
         if (this.visibleLocal().length) ListItem() { PhoneSectionTitle({text:tr('phone_record_local'),trailing:String(this.visibleLocal().length)}) }
         ForEach(this.visibleLocal(), (entry:KnowledgeRecordingEntry) => {
           ListItem() {
@@ -597,7 +710,10 @@ export struct KnowledgeWorkspacePage {
           }.width('100%').justifyContent(FlexAlign.Center)
         }.width('100%').constraintSize({minHeight:Math.max(45,Math.ceil(22*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17)))+12)})
           .padding({left:14,right:14,top:6,bottom:6}).backgroundColor(this.recording.canStop() ? Colors.danger : Colors.action).enabled(!this.model.demo && (this.recording.canStart() || this.recording.canStop()))
-          .onClick(() => this.openRecording('', !this.recording.canStop())).id('recordings.capture')
+          .onClick(() => {
+            if (this.recording.canStop()) this.openRecording().catch(() => undefined);
+            else this.requestRecordingStart();
+          }).id('recordings.capture')
       }.width('100%').padding({top:4,bottom:4}).id('knowledge.recording.open')
     }.width('100%').height('100%').padding({left:16,right:16,top:18,bottom:12}).backgroundColor(Colors.grouped).id('recordings.home')
       .bindSheet($$this.recordingOpen,this.recordingSheet(),{title:{title:tr('knowledge_recording_open')},height:SheetSize.LARGE,showClose:true,

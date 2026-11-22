@@ -6943,6 +6943,122 @@
     {
       "name": "kb_events",
       "value": "日程"
+    },
+    {
+      "name": "meeting_this_device",
+      "value": "本机"
+    },
+    {
+      "name": "meeting_transcription_label",
+      "value": "转写"
+    },
+    {
+      "name": "meeting_cloud_service",
+      "value": "云端 · {service}"
+    },
+    {
+      "name": "meeting_hub_unavailable",
+      "value": "本机 · Hub 暂时无法转写"
+    },
+    {
+      "name": "meeting_start_privacy_cloud",
+      "value": "本次会议的音频将经由你的 Hub 发往「{service}」转写。生成会议纪要后，Hub 会删除音频。"
+    },
+    {
+      "name": "meeting_start_privacy_cloud_days",
+      "value": "本次会议的音频将经由你的 Hub 发往「{service}」转写。生成会议纪要后，Hub 会删除音频，转写文本保留 {days} 天。"
+    },
+    {
+      "name": "meeting_start_privacy_local_days",
+      "value": "音频保留在本机。同步到知识库的转写文本将保留 {days} 天。"
+    },
+    {
+      "name": "meeting_start_confirm_title",
+      "value": "发送本次会议的音频？"
+    },
+    {
+      "name": "meeting_start_send",
+      "value": "开始并发送音频"
+    },
+    {
+      "name": "meeting_start_opt_in",
+      "value": "需要发送音频时，请在每次开始会议时选择云端转写并确认。"
+    },
+    {
+      "name": "meeting_wifi_only",
+      "value": "仅通过 Wi-Fi 向 Hub 发送音频"
+    },
+    {
+      "name": "meeting_wifi_note",
+      "value": "此设置仅适用于本机。使用移动网络或按流量计费的连接时，音频会保留在设备上，等连上不限流量的 Wi-Fi 再发送。一小时音频约为 115 MB。"
+    },
+    {
+      "name": "meeting_cloud_transcription",
+      "value": "Hub 转写"
+    },
+    {
+      "name": "meeting_audio_negotiating",
+      "value": "正在向 Hub 确认本次会议的转写服务。"
+    },
+    {
+      "name": "meeting_audio_connecting",
+      "value": "正在连接 Hub。"
+    },
+    {
+      "name": "meeting_audio_live",
+      "value": "Hub 正在转写本次会议。"
+    },
+    {
+      "name": "meeting_audio_reconnecting",
+      "value": "正在重新连接 Hub。音频暂存于本机。"
+    },
+    {
+      "name": "meeting_audio_waiting_network",
+      "value": "等待符合网络设置的连接，再向 Hub 发送音频。"
+    },
+    {
+      "name": "meeting_audio_fallback",
+      "value": "Hub 暂时无法转写本次会议，可在本机使用录音。"
+    },
+    {
+      "name": "meeting_audio_finishing",
+      "value": "Hub 正在完成转写。"
+    },
+    {
+      "name": "meeting_audio_final",
+      "value": "Hub 已完成转写。"
+    },
+    {
+      "name": "meeting_audio_failed",
+      "value": "Hub 未能完成转写，可在本机使用录音。"
+    },
+    {
+      "name": "meeting_audio_revoked",
+      "value": "已停止向 Hub 发送音频。"
+    },
+    {
+      "name": "meeting_audio_previous",
+      "value": "此次录音选择了 Hub 转写。"
+    },
+    {
+      "name": "meeting_audio_processing_problem",
+      "value": "Hub 报告了转写问题。"
+    },
+    {
+      "name": "meeting_audio_received",
+      "value": "Hub 已收到 {seconds} 秒音频"
+    },
+    {
+      "name": "meeting_audio_withdraw",
+      "value": "停止发送音频"
+    },
+    {
+      "name": "meeting_audio_withdraw_note",
+      "value": "停止发送本次会议后续的音频。Hub 已收到的音频仍按其保留设置处理。"
+    },
+    {
+      "name": "meeting_configured_service",
+      "value": "Hub 配置的语音服务"
     }
   ]
 }

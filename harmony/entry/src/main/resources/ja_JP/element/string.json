@@ -6943,6 +6943,122 @@
     {
       "name": "kb_events",
       "value": "予定"
+    },
+    {
+      "name": "meeting_this_device",
+      "value": "この端末"
+    },
+    {
+      "name": "meeting_transcription_label",
+      "value": "文字起こし"
+    },
+    {
+      "name": "meeting_cloud_service",
+      "value": "クラウド · {service}"
+    },
+    {
+      "name": "meeting_hub_unavailable",
+      "value": "この端末 · 現在ハブで文字起こしできません"
+    },
+    {
+      "name": "meeting_start_privacy_cloud",
+      "value": "この会議の音声はハブ経由で {service} に送られ、文字起こしされます。議事録が完成すると、ハブの音声は削除されます。"
+    },
+    {
+      "name": "meeting_start_privacy_cloud_days",
+      "value": "この会議の音声はハブ経由で {service} に送られます。議事録が完成するとハブの音声は削除され、文字起こしは {days} 日間保存されます。"
+    },
+    {
+      "name": "meeting_start_privacy_local_days",
+      "value": "音声はこの端末に残ります。ナレッジに同期した文字起こしは {days} 日間保存されます。"
+    },
+    {
+      "name": "meeting_start_confirm_title",
+      "value": "この会議の音声を送信しますか？"
+    },
+    {
+      "name": "meeting_start_send",
+      "value": "録音を開始して送信"
+    },
+    {
+      "name": "meeting_start_opt_in",
+      "value": "この端末から音声を送るには、会議の開始時に毎回クラウドの文字起こしを選んで確認してください。"
+    },
+    {
+      "name": "meeting_wifi_only",
+      "value": "Wi-Fi のみでハブに音声を送信"
+    },
+    {
+      "name": "meeting_wifi_note",
+      "value": "この端末のみの設定です。モバイル通信や従量制の回線では音声を端末に保持し、従量制でない Wi-Fi に接続すると送信します。音声は 1 時間で約 115 MB です。"
+    },
+    {
+      "name": "meeting_cloud_transcription",
+      "value": "ハブでの文字起こし"
+    },
+    {
+      "name": "meeting_audio_negotiating",
+      "value": "この会議の文字起こしサービスをハブに確認しています。"
+    },
+    {
+      "name": "meeting_audio_connecting",
+      "value": "ハブに接続しています。"
+    },
+    {
+      "name": "meeting_audio_live",
+      "value": "ハブがこの会議を文字起こししています。"
+    },
+    {
+      "name": "meeting_audio_reconnecting",
+      "value": "ハブに再接続しています。音声は端末に保持されています。"
+    },
+    {
+      "name": "meeting_audio_waiting_network",
+      "value": "許可された回線に接続すると、ハブに音声を送信します。"
+    },
+    {
+      "name": "meeting_audio_fallback",
+      "value": "この会議ではハブの文字起こしを利用できません。録音はこの端末で利用できます。"
+    },
+    {
+      "name": "meeting_audio_finishing",
+      "value": "ハブが文字起こしを仕上げています。"
+    },
+    {
+      "name": "meeting_audio_final",
+      "value": "ハブでの文字起こしが完了しました。"
+    },
+    {
+      "name": "meeting_audio_failed",
+      "value": "ハブで文字起こしを完了できませんでした。録音はこの端末で利用できます。"
+    },
+    {
+      "name": "meeting_audio_revoked",
+      "value": "ハブへの音声の送信を停止しました。"
+    },
+    {
+      "name": "meeting_audio_previous",
+      "value": "この録音ではハブの文字起こしが選択されました。"
+    },
+    {
+      "name": "meeting_audio_processing_problem",
+      "value": "ハブの文字起こしで問題が発生しました。"
+    },
+    {
+      "name": "meeting_audio_received",
+      "value": "ハブが受信した音声は {seconds} 秒です"
+    },
+    {
+      "name": "meeting_audio_withdraw",
+      "value": "音声の送信を停止"
+    },
+    {
+      "name": "meeting_audio_withdraw_note",
+      "value": "この会議の今後の音声送信を停止します。ハブが受信済みの音声には保存設定が適用されます。"
+    },
+    {
+      "name": "meeting_configured_service",
+      "value": "ハブに設定された音声サービス"
     }
   ]
 }

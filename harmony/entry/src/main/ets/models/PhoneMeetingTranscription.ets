@@ -37,6 +37,7 @@ export function meetingSpeechServices(rows:Fields[]):MeetingSpeechService[] {
 export class PhoneMeetingTranscription {
   @Trace offered:boolean=false;
   @Trace ready:boolean=false;
+  @Trace retentionDays:number=0;
   @Trace mode:string='device';
   @Trace glossary:string[]=[];
   @Trace extensionRef:string='';
@@ -49,7 +50,7 @@ export class PhoneMeetingTranscription {
   private scope:string='';
   private revision:number=0;
   close():void {
-    this.revision++;this.offered=false;this.ready=false;this.mode='device';this.glossary=[];this.extensionRef='';this.choices=[];
+    this.revision++;this.offered=false;this.ready=false;this.retentionDays=0;this.mode='device';this.glossary=[];this.extensionRef='';this.choices=[];
     this.saving=false;this.error='';this.owner=undefined;this.repo=undefined;
   }
   private current(n:number):boolean {
@@ -57,6 +58,9 @@ export class PhoneMeetingTranscription {
     return !!owner && n===this.revision && owner.connected && owner.owns(this.generation,this.scope) && owner.repo()===this.repo;
   }
   private apply(data:Fields):void {
+    const days=Wire.number(data,'recording_days');
+    this.retentionDays=Wire.text(data,'manager',this.owner?.profile.manager || '')===(this.owner?.profile.manager || '') &&
+      Number.isInteger(days) && days>=1 && days<=365 ? days : 0;
     const mode=Wire.text(data,'meeting_transcription_default');
     this.offered=Wire.text(data,'manager',this.owner?.profile.manager || '')===(this.owner?.profile.manager || '') && ['device','hub'].includes(mode);this.mode=this.offered ? mode : 'device';this.ready=Wire.bool(data,'meeting_transcription_ready');
     this.glossary=Wire.strings(data,'meeting_glossary');this.extensionRef=Wire.text(data,'meeting_transcription_extension');

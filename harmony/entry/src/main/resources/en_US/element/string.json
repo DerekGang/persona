@@ -6943,6 +6943,122 @@
     {
       "name": "kb_events",
       "value": "Events"
+    },
+    {
+      "name": "meeting_this_device",
+      "value": "This device"
+    },
+    {
+      "name": "meeting_transcription_label",
+      "value": "Transcription"
+    },
+    {
+      "name": "meeting_cloud_service",
+      "value": "Cloud · {service}"
+    },
+    {
+      "name": "meeting_hub_unavailable",
+      "value": "This device · the hub can’t transcribe now"
+    },
+    {
+      "name": "meeting_start_privacy_cloud",
+      "value": "Audio from this meeting goes through your hub to {service} for transcription. The hub deletes the audio once the minutes are written."
+    },
+    {
+      "name": "meeting_start_privacy_cloud_days",
+      "value": "Audio from this meeting goes through your hub to {service} for transcription. The hub deletes the audio once the minutes are written and keeps the transcript for {days} days."
+    },
+    {
+      "name": "meeting_start_privacy_local_days",
+      "value": "Audio stays on this device. Text synced to Knowledge is kept for {days} days."
+    },
+    {
+      "name": "meeting_start_confirm_title",
+      "value": "Send this meeting’s audio?"
+    },
+    {
+      "name": "meeting_start_send",
+      "value": "Start and send audio"
+    },
+    {
+      "name": "meeting_start_opt_in",
+      "value": "Choose cloud transcription and confirm when starting each meeting to send its audio from this phone."
+    },
+    {
+      "name": "meeting_wifi_only",
+      "value": "Hub transcription on Wi-Fi only"
+    },
+    {
+      "name": "meeting_wifi_note",
+      "value": "Applies to this phone. On cellular or a metered connection, audio waits on the device until an unmetered Wi-Fi connection is available. An hour of audio is about 115 MB."
+    },
+    {
+      "name": "meeting_cloud_transcription",
+      "value": "Hub transcription"
+    },
+    {
+      "name": "meeting_audio_negotiating",
+      "value": "Checking which service will transcribe this meeting."
+    },
+    {
+      "name": "meeting_audio_connecting",
+      "value": "Connecting to the hub."
+    },
+    {
+      "name": "meeting_audio_live",
+      "value": "The hub is transcribing this meeting."
+    },
+    {
+      "name": "meeting_audio_reconnecting",
+      "value": "Reconnecting to the hub. Audio is retained on this device."
+    },
+    {
+      "name": "meeting_audio_waiting_network",
+      "value": "Waiting for a permitted network to send audio to the hub."
+    },
+    {
+      "name": "meeting_audio_fallback",
+      "value": "Hub transcription is unavailable for this meeting. The recording remains available on this device."
+    },
+    {
+      "name": "meeting_audio_finishing",
+      "value": "The hub is finishing the transcript."
+    },
+    {
+      "name": "meeting_audio_final",
+      "value": "The hub finished the transcript."
+    },
+    {
+      "name": "meeting_audio_failed",
+      "value": "The hub could not finish the transcript. The recording is available on this device."
+    },
+    {
+      "name": "meeting_audio_revoked",
+      "value": "Sending audio to the hub has stopped."
+    },
+    {
+      "name": "meeting_audio_previous",
+      "value": "Hub transcription was requested for this recording."
+    },
+    {
+      "name": "meeting_audio_processing_problem",
+      "value": "The hub reported a transcription problem."
+    },
+    {
+      "name": "meeting_audio_received",
+      "value": "Audio received by the hub: {seconds} s"
+    },
+    {
+      "name": "meeting_audio_withdraw",
+      "value": "Stop sending audio"
+    },
+    {
+      "name": "meeting_audio_withdraw_note",
+      "value": "Stops further audio from this meeting. Audio the hub already received is processed under its retention settings."
+    },
+    {
+      "name": "meeting_configured_service",
+      "value": "its configured speech service"
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { ClientModel } from '../models/ClientModel';
 import { PhoneMeetingTranscription, MeetingSpeechService } from '../models/PhoneMeetingTranscription';
+import { meetingAudioNetwork } from '../platform/MeetingAudioNetwork';
 import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { Tokens } from '../design/Tokens';
 import { Symbols } from '../design/Symbols';
@@ -17,14 +18,36 @@ export struct PhoneMeetingServices {
   @Local panel:string='';
   @Local draft:string='';
   @Local capturedScope:string='';
+  @Local networkReady:boolean=false;
+  @Local networkBusy:boolean=false;
+  @Local networkProblem:boolean=false;
+  private networkRevision:number=0;
+  private supportsAudio():boolean {
+    return this.model.connected && !this.model.demo && this.speech.offered &&
+      ['meeting_conversation','meeting_live_view','meeting_transcription'].every((key:string)=>this.model.features.includes(key));
+  }
+  private async loadNetwork():Promise<void> {
+    const n=++this.networkRevision,ctx=this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.networkReady=false;this.networkProblem=false;this.networkBusy=false;
+    if (!ctx) { this.networkProblem=true;return; }
+    try { await meetingAudioNetwork.initialize(ctx);if (n===this.networkRevision) this.networkReady=true; }
+    catch (_) { if (n===this.networkRevision) this.networkProblem=true; }
+  }
+  private async setWifi(value:boolean):Promise<void> {
+    if (!this.networkReady || this.networkBusy || !this.supportsAudio()) return;
+    const n=this.networkRevision;this.networkBusy=true;this.networkProblem=false;
+    try { await meetingAudioNetwork.setWifiOnly(value); }
+    catch (_) { if (n===this.networkRevision) this.networkProblem=true; }
+    finally { if (n===this.networkRevision) this.networkBusy=false; }
+  }
   aboutToAppear():void {
     const ctx=this.getUIContext().getHostContext() as common.UIAbilityContext;
     if (ctx) this.local.initialize(ctx).catch(() => {});
-    this.speech.open(this.model);
+    this.speech.open(this.model);this.loadNetwork();
   }
-  aboutToDisappear():void { this.speech.close();this.modal=false;this.panel=''; }
+  aboutToDisappear():void { this.networkRevision++;this.speech.close();this.modal=false;this.panel=''; }
   @Monitor('model.profile','model.connected','model.features') ownerChanged():void {
-    this.modal=false;this.panel='';this.draft='';this.speech.open(this.model);
+    this.modal=false;this.panel='';this.draft='';this.speech.open(this.model);this.loadNetwork();
   }
   private editTerms():void {
     this.draft=this.speech.glossary.join('\n');this.capturedScope=this.model.scope();this.panel='glossary';this.modal=true;
@@ -105,9 +128,21 @@ export struct PhoneMeetingServices {
       this.line(tr('meeting_glossary'),String(this.speech.glossary.length),'settings.meeting.glossary',() => this.editTerms())
     }.width('100%').backgroundColor(Colors.surface).borderRadius(12)
     this.note(tr(this.speech.mode==='device' ? 'meeting_privacy_device' : 'meeting_privacy_hub').replace('{service}',this.speech.serviceName() || tr('meeting_service_builtin')))
-    if (this.speech.mode==='hub') this.note(tr('meeting_privacy_this_phone'))
+    if (this.speech.mode==='hub') this.note(tr(this.supportsAudio() ? 'meeting_start_opt_in' : 'meeting_privacy_this_phone'))
     if (this.speech.mode==='hub' && !this.speech.ready) this.note(tr('meeting_speech_not_ready'))
     if (this.speech.error) this.note(tr(this.speech.error))
+  }
+  @Builder networkPolicy() {
+    Row({space:10}) {
+      SymbolGlyph($r('sys.symbol.wifi')).fontSize('18vp').fontColor([Colors.link])
+      Text(tr('meeting_wifi_only')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
+      if (this.networkReady) {
+        Toggle({type:ToggleType.Switch,isOn:meetingAudioNetwork.wifiOnly}).id('settings.meeting.transcription.wifi')
+          .enabled(!this.networkBusy).accessibilityText(tr('meeting_wifi_only')).onChange((value:boolean) => this.setWifi(value))
+      } else if (!this.networkProblem) LoadingProgress().width(18).height(18)
+    }.width('100%').constraintSize({minHeight:48}).padding({left:15,right:15,top:5,bottom:5}).backgroundColor(Colors.surface).borderRadius(12)
+    this.note(tr('meeting_wifi_note'))
+    if (this.networkProblem) this.line(tr('knowledge_storage_unavailable'),tr('retry'),'settings.meeting.transcription.wifi.retry',() => this.loadNetwork())
   }
   @Builder sheet() {
     if (this.panel==='glossary') this.glossary()
@@ -117,6 +152,7 @@ export struct PhoneMeetingServices {
     Column({space:5}) {
       this.calendar()
       if (this.speech.offered) this.transcription()
+      if (this.supportsAudio()) this.networkPolicy()
     }.width('100%').alignItems(HorizontalAlign.Start).id('settings.meeting.services')
     .bindSheet($$this.modal,this.sheet(),{title:{title:tr(this.panel==='glossary' ? 'meeting_glossary' : 'meeting_service')},
       height:this.panel==='glossary' ? SheetSize.LARGE : SheetSize.MEDIUM,showClose:true,onDisappear:() => { this.panel='';this.draft=''; }})

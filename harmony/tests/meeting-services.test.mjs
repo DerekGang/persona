@@ -90,3 +90,11 @@ test('a background-reminder quota rejection is distinct from a notification refu
   assert.equal((await system.existing()).length,0);assert.equal(meetingReminderFailure(1700001),'notifications_denied');
   assert.equal(meetingReminderFailure(500),'meeting_reminder_unavailable');
 });
+
+test('retention shown before capture belongs to the selected assistant and is kept only for a positive whole number of days',async t=>{
+  const env=await isolated(t,{manager:'synthetic',meeting_transcription_default:'hub',meeting_transcription_ready:true,recording_days:14});
+  const speech=new PhoneMeetingTranscription();
+  await speech.open(env.owner);assert.equal(speech.retentionDays,14);
+  for(const value of [0,-3,4.2,366,undefined]){env.state.recording_days=value;await speech.open(env.owner);assert.equal(speech.retentionDays,0);}
+  env.state.recording_days=28;env.state.manager='foreign';await speech.open(env.owner);assert.equal(speech.retentionDays,0);
+});
