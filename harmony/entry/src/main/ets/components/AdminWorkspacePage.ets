@@ -371,13 +371,6 @@ export struct AdminWorkspacePage {
         .backgroundColor($r('sys.color.comp_background_tertiary')).borderRadius(Tokens.inset)
       Column({ space: Tokens.gap }) {
         this.title('admin_preferences')
-        if (typeof this.workspace.assistantData['recent_task_chats'] === 'boolean') Row({ space: Tokens.gap }) {
-          Text(tr('phone_sidebar_show_scheduled')).layoutWeight(1).fontSize(Tokens.body)
-          Toggle({type:ToggleType.Switch,isOn:Wire.bool(this.workspace.assistantData,'recent_task_chats')}).enabled(!this.workspace.saving)
-            .accessibilityText(tr('phone_sidebar_show_scheduled')).onChange((on:boolean) => {
-              this.workspace.setRecentTaskChats(this.workspace.capture('/api/v1/assistant'),on).catch(() => undefined);
-            }).id('admin.assistant.recent_task_chats')
-        }.width('100%')
         Row({ space: Tokens.gap }) {
           Text(tr('admin_main_tasks_quiet')).layoutWeight(1).fontSize(Tokens.body)
           Toggle({ type: ToggleType.Switch, isOn: this.workspace.formBool('main_tasks_quiet', true) })
@@ -418,6 +411,20 @@ export struct AdminWorkspacePage {
         }.width('100%')
       }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.inset)
         .backgroundColor($r('sys.color.comp_background_tertiary')).borderRadius(Tokens.inset)
+      if (typeof this.workspace.assistantData['recent_task_chats'] === 'boolean') Column({space:6}) {
+        Text(tr('phone_sidebar_recent_heading')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.secondary)
+        Row({space:Tokens.inset}) {
+          SymbolGlyph($r('sys.symbol.clock')).fontSize('22vp').fontColor([Colors.link])
+          Text(tr('phone_sidebar_show_scheduled')).layoutWeight(1).fontSize(Tokens.body).maxFontScale(Tokens.interfaceScaleFor(Tokens.body))
+            .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          Toggle({type:ToggleType.Switch,isOn:Wire.bool(this.workspace.assistantData,'recent_task_chats')})
+            .enabled(!this.workspace.saving).accessibilityText(tr('phone_sidebar_show_scheduled')).onChange((on:boolean) => {
+              this.workspace.setRecentTaskChats(this.workspace.capture('/api/v1/assistant'),on).catch(() => undefined);
+            }).id('admin.assistant.recent_task_chats')
+        }.width('100%').constraintSize({minHeight:48}).padding({left:Tokens.inset,right:Tokens.inset}).backgroundColor(Colors.surface).borderRadius(Tokens.inset)
+        Text(tr('phone_sidebar_recent_help')).fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption))
+          .fontColor(Colors.secondary).width('100%').id('admin.assistant.recent_task_chats.help')
+      }.width('100%').alignItems(HorizontalAlign.Start)
     }.width('100%').alignItems(HorizontalAlign.Start)
   }
 

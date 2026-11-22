@@ -7315,6 +7315,14 @@
     {
       "name": "phone_todo_not_handed",
       "value": "まだエージェントに任せていません"
+    },
+    {
+      "name": "phone_sidebar_recent_heading",
+      "value": "サイドバーの「最近」"
+    },
+    {
+      "name": "phone_sidebar_recent_help",
+      "value": "定期タスクとバックグラウンド監督が始めたチャットも、時間順にサイドバーの「最近」に並びます。すべてのデバイスに反映されます。"
     }
   ]
 }

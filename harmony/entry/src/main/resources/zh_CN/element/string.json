@@ -7315,6 +7315,14 @@
     {
       "name": "phone_todo_not_handed",
       "value": "还没交给 Agent"
+    },
+    {
+      "name": "phone_sidebar_recent_heading",
+      "value": "侧边栏「最近」"
+    },
+    {
+      "name": "phone_sidebar_recent_help",
+      "value": "定时任务和后台督办开的对话，也按时间排进侧边栏的「最近」。你的所有设备都会跟着变。"
     }
   ]
 }
