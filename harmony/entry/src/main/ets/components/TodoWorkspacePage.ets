@@ -938,13 +938,24 @@ export struct TodoWorkspacePage {
       .onClick(() => this.confirmUnlinkSpace(this.workspace.selected, binding.value)) }
   }
 
+  private detailState():string {
+    const todo=this.workspace.selected;
+    if (this.hubMode()) return tr(todoHubLabel(this.workspace.hubSection(todo,this.clock)));
+    if (todo.startError) return tr('phone_todo_did_not_start');
+    const state=this.workspace.state(todo);
+    return tr(['needs_you','working'].includes(state) ? state : 'todo_state_'+state);
+  }
+  private detailStatusLine():string {
+    const todo=this.workspace.selected,line=this.hubMode() ? todo.hubView?.line || '' : '';
+    return line && ![todo.notes,todo.startError,todo.doneReason].includes(line) ? line : '';
+  }
+
   @Builder detailContent() {
     Column() {
       Scroll() {
         if (this.workspace.selected.id) Column({ space: Tokens.page }) {
           PhoneTodoDetailForm({workspace:this.workspace, editor:this.detailEditor,locale:this.dateLocale(),now:this.clock,
-            status:tr(this.hubMode() ? todoHubLabel(this.workspace.hubSection(this.workspace.selected,this.clock)) : this.workspace.stateLabelKey(this.workspace.selected)),
-            tone:Colors.link})
+            status:this.detailState(), statusLine:this.detailStatusLine(),statusMenu:():void=>this.todoMenu(this.workspace.selected),tone:Colors.link})
           if (this.workspace.selected.notes) Column({space:6}) {
             Text(tr('todo_detail_notes')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
             MarkdownText({text:this.workspace.selected.notes,onLink:(address:string) => this.onLink(address)})
