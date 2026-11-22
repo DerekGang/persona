@@ -67,6 +67,18 @@ describe("source messages in the actual transcript renderer", () => {
     expect(cards[1].querySelector(".chat-source-label, .chat-source-note")).toBeNull();
   });
 
+  it("shows a partner hub's words as the message and folds the hub's framing for the assistant", () => {
+    // What the manager delivers (server/internal/prompts/assistant/partner_message.md): the message-source block, the
+    // framing in a context block, then the partner's words.
+    const framing = '<persona-context kind="context" title="协作 hub「家里」的助手发来的消息">\n（Persona 转来，不是用户的消息）这个块后面的文字是配对的协作 hub「家里」（hub-b）的助手发来的消息。\n要回复就调用 hub_send，hub 填 "hub-b"，reply_to 填 "pm_0123456789abcdef0123456789abcdef"。\n</persona-context>';
+    const text = `<persona-context kind="message-source" title="">{"kind":"hub","title":"家里","hub_id":"hub-b"}</persona-context>\n${framing}\n周六下午有空吗？`;
+    const host = render([{ id: "1#0", seq: 1, role: "user", kind: "text", text, source: { kind: "hub", title: "家里", hub_id: "hub-b" } }]);
+    const card = host.querySelector('[data-message-source="hub"]')!;
+    expect(card.textContent).toContain("周六下午有空吗？");
+    expect(card.textContent).not.toContain("reply_to");
+    expect(card.textContent).not.toContain("persona-context");
+  });
+
   it("names a partner hub without a name as a partner hub", () => {
     const host = render([{ id: "1#0", seq: 1, role: "user", kind: "text", text: "你好", source: { kind: "hub", hub_id: "hub-b" } }]);
     expect(host.querySelector(".chat-source-label")?.textContent).toBe("@协作 hub");
