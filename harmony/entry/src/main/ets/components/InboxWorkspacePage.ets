@@ -609,6 +609,11 @@ export struct InboxWorkspacePage {
       }.padding({left:4,right:0})
     }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).width('100%').id('inbox.status')
   }
+  private chipTouchRegion(): Rectangle {
+    const height = PhoneStyle.sidebarMetric(44, this.environment.fontScale);
+    const visible = PhoneStyle.formSize(30, 37.3, this.environment.fontScale);
+    return {x:0, y:(visible-height)/2, width:'100%', height:height};
+  }
   @Builder sourceChip(value:string, account:boolean) {
     Button({type:ButtonType.Capsule}) {
       Row({space:4}) {
@@ -617,7 +622,7 @@ export struct InboxWorkspacePage {
         Text(account ? this.workspace.filterAccountName(value) : this.sourceLabel(value)).fontSize(13)
           .maxFontScale(Tokens.navigationTextMaxScale).maxLines(1).fontColor(this.chipSelected(value,account) ? Colors.onAction : Colors.ink)
       }
-    }.height(PhoneStyle.formSize(30,37.3,this.environment.fontScale)).padding({left:13,right:13,top:3,bottom:3})
+    }.height(PhoneStyle.formSize(30,37.3,this.environment.fontScale)).responseRegion(this.chipTouchRegion()).padding({left:13,right:13,top:3,bottom:3})
       .backgroundColor(this.chipSelected(value,account) ? Colors.action : Colors.control).accessibilitySelected(this.chipSelected(value,account))
       .onClick(() => {
         const clear=this.chipSelected(value,account);
@@ -641,7 +646,7 @@ export struct InboxWorkspacePage {
         Divider().vertical(true).height(19).color(Colors.divider)
         ForEach(['mention','dm','group','mail','agent'],(kind:string) => {
           Button(tr(kind==='mail' || kind==='agent' ? kind : 'phone_inbox_'+kind),{type:ButtonType.Capsule})
-            .height(PhoneStyle.formSize(30,37.3,this.environment.fontScale)).padding({left:13,right:13,top:3,bottom:3})
+            .height(PhoneStyle.formSize(30,37.3,this.environment.fontScale)).responseRegion(this.chipTouchRegion()).padding({left:13,right:13,top:3,bottom:3})
             .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).backgroundColor(this.workspace.kindFilter===kind ? Colors.action : Colors.subtle)
             .fontColor(this.workspace.kindFilter===kind ? Colors.onAction : Colors.ink).accessibilitySelected(this.workspace.kindFilter===kind)
             .onClick(() => this.workspace.kindFilter=this.workspace.kindFilter===kind ? '' : kind).id('inbox.kind.'+kind)

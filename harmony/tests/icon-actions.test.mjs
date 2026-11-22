@@ -86,7 +86,9 @@ test('magnified Inbox filters can grow and row icons keep their layout slots', (
   const list = source.slice(source.indexOf('@Builder sectionHeading('), source.indexOf('@Builder header()'));
 
   assert.match(filters, /Text\(tr\(inboxTierLabel\(choice.key\)\)\)\.fontSize\(14\)\.maxFontScale\(Tokens.navigationTextMaxScale\)/);
-  assert.match(filters, /minHeight: this.environment.fontScale >= 1.5 \? Tokens.touch : 34/);
+  assert.match(filters, /height\(PhoneStyle\.sidebarMetric\(44,this.environment.fontScale\)\)/);
+  assert.equal((filters.match(/responseRegion\(this\.chipTouchRegion\(\)\)/g) || []).length, 2);
+  assert.match(filters, /const height = PhoneStyle\.sidebarMetric\(44, this.environment.fontScale\)/);
   assert.doesNotMatch(filters, /\.height\(34\)/);
   assert.match(filters, /\.scrollable\(ScrollDirection.Horizontal\)/);
   assert.doesNotMatch(list, /SymbolGlyph\([^\n]*?\)\.fontSize\(\d+\)/);
@@ -94,5 +96,5 @@ test('magnified Inbox filters can grow and row icons keep their layout slots', (
   assert.ok(list.indexOf('this.sourceBar()') < list.indexOf('this.inboxSearch(true)'));
   assert.match(filters, /this.workspace.sourceFilter=account \|\| clear \? 'all' : value/);
   assert.match(filters, /this.workspace.accountFilter=account && !clear \? value : 'all'/);
-  assert.match(list, /minHeight:section.sourceGroup \? 42 : 52/);
+  assert.match(list, /minHeight:PhoneStyle\.sidebarMetric\(44,this.environment.fontScale\)/);
 });
