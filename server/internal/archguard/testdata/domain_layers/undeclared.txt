@@ -135,6 +135,7 @@ internal/pinneddial
 internal/preview
 internal/procinfo
 internal/procs
+internal/promptcontent
 internal/prompts
 internal/protectedapps
 internal/proto
@@ -197,5 +198,4 @@ plugins
 # line here.
 internal/machineops #13065
 internal/operations/recovery #12876
-internal/promptcontent #11552 #11612 #11681 #12378
 internal/rpcio #1507

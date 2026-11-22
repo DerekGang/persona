@@ -395,6 +395,16 @@ def tree_files(revision, dirs=None):
     return out
 
 
+def clause(text):
+    """A Go file's text up to and including its package clause: all a layer is read from (the package comment, a
+    generated-code marker and the clause), so a tree written for layer_names stays small."""
+    lines = text.splitlines(True)
+    for i, line in enumerate(lines):
+        if re.match(r"package\s+\w", line):
+            return "".join(lines[:i + 1])
+    return text
+
+
 def layer_names(work, trees):
     """{key: names}: the undeclared package directories in each tree ({key: {path under server/: text}}), as archguard's
     TestDomainLayerNames reads them; a tree it could not read has no entry. work is a directory to use, empty or
@@ -427,14 +437,18 @@ def tree_pending(base, prs, idle_days, work, log=sys.stderr):
     base."""
     counted_prs = counted(prs, UNDECLARED.source, idle_days, log=log)
     fetch(counted_prs)
-    trees, keys = {"base": tree_files(base)}, {}
+
+    def heads(revision, dirs=None):
+        return {rel: clause(text) for rel, text in tree_files(revision, dirs).items()}
+
+    trees, keys = {"base": heads(base)}, {}
     for pr in counted_prs:
         mb = merge_base(pr.head, base)
         dirs = changed_dirs(mb, pr.head)
         if dirs:
             keys[pr.number] = ("head%d" % pr.number, "mb%d" % pr.number)
-            trees[keys[pr.number][0]] = tree_files(pr.head, dirs)
-            trees[keys[pr.number][1]] = tree_files(mb, dirs)
+            trees[keys[pr.number][0]] = heads(pr.head, dirs)
+            trees[keys[pr.number][1]] = heads(mb, dirs)
     names = layer_names(work, trees)
     today, found = names.get("base", set()), {}
     for pr in counted_prs:
