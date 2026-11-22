@@ -59,6 +59,45 @@ final class PageAgentPushTests: XCTestCase {
         }
     }
 
+    /// The Agent pushed over the main conversation belongs to the conversation's stack: another Agent picked in the
+    /// sidebar is shown at once, not hidden under the pushed chat; the main conversation picked again comes back with the
+    /// pushed chat in front, and Back returns to the conversation itself.
+    @MainActor func testAnAgentPushedOverTheConversationStaysWithIt() throws {
+        launch()
+        let open = app.buttons["打开：Mock 用协议注入还是保留单例？"]
+        reveal(open)
+        open.tap()
+        assertChat(Self.testsAgent)
+        let pushed = settled { $0.root == "conversation" && $0.path == 1 }
+        XCTAssertEqual(pushed?.path, 1, "the Agent's chat was not pushed over the conversation: \(pushed.map(\.description) ?? "-")")
+        shot("stack-0-pushed")
+
+        // Another Agent from the sidebar: the page is that Agent's chat, its root, nothing pushed on it.
+        guard let row = sidebarAgentRow(Self.widgetTitle) else { return }
+        row.tap()
+        assertChat(Self.widgetAgent)
+        let picked = settled { $0.root == "agent" && $0.path == 0 }
+        XCTAssertEqual(picked?.root, "agent", "the picked Agent is not the page's root: \(picked.map(\.description) ?? "-")")
+        XCTAssertEqual(picked?.path, 0, "the conversation's pushed chat is still on the page: \(picked.map(\.description) ?? "-")")
+        app.assertOneSelectedSidebarRow("agents.row", containing: Self.widgetTitle, "the Agent picked in the sidebar")
+        shot("stack-1-picked")
+
+        // The main conversation again: back as it was left, the pushed chat in front with its Back.
+        app.descendants(matching: .any)["sidebar-main"].firstMatch.tap()
+        assertChat(Self.testsAgent)
+        let back = settled { $0.root == "conversation" && $0.path == 1 }
+        XCTAssertEqual(back?.root, "conversation", "the main conversation is not the root: \(back.map(\.description) ?? "-")")
+        XCTAssertEqual(back?.path, 1, "the conversation lost its pushed chat: \(back.map(\.description) ?? "-")")
+        app.assertOneSelectedSidebarRow("sidebar-main", "the main conversation picked again")
+        shot("stack-2-conversation")
+        oneBack("the conversation's pushed chat").tap()
+        let card = app.descendants(matching: .any)["brief.card"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "Back did not return to the conversation:\n\(app.debugDescription)")
+        let root = settled { $0.root == "conversation" && $0.path == 0 }
+        XCTAssertEqual(root?.path, 0, "Back left something on the conversation: \(root.map(\.description) ?? "-")")
+        shot("stack-3-back")
+    }
+
     /// A to-do's Agent row pushes the Agent's chat over the to-do's page.
     @MainActor func testAToDoPushesItsAgentWithBack() throws {
         launch(["-openShellPage", "todos"])
@@ -140,6 +179,25 @@ final class PageAgentPushTests: XCTestCase {
         guard fold.exists, fold.isHittable, app.windows.firstMatch.frame.width < 1000 else { return }
         let main = app.descendants(matching: .any)["sidebar-main"].firstMatch
         if main.exists, main.isHittable, main.frame.maxX > app.windows.firstMatch.frame.width * 0.45 { fold.tap() }
+    }
+
+    /// The Agent's row titled `title` in the sidebar's Agents list, the column scrolled to it; nil (skipped) where the
+    /// column is not beside the page (a phone's drawer, the open Duo upright's overlay).
+    @MainActor private func sidebarAgentRow(_ title: String) -> XCUIElement? {
+        let main = app.descendants(matching: .any)["sidebar-main"].firstMatch
+        guard main.exists, main.isHittable else {
+            XCTFail("the sidebar is not beside the page:\n\(app.debugDescription)")
+            return nil
+        }
+        let row = app.buttons.matching(identifier: "agents.row").matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+        let column = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: main.frame.midX, dy: app.windows.firstMatch.frame.height * 0.6))
+        for _ in 0..<12 where !(row.exists && row.isHittable) {
+            column.press(forDuration: 0.05, thenDragTo: column.withOffset(CGVector(dx: 0, dy: -200)))
+            usleep(500_000)
+        }
+        XCTAssertTrue(row.exists && row.isHittable, "no \(title) row in the sidebar:\n\(app.debugDescription)")
+        return row
     }
 
     /// The weather widget Agent's row on the page in front, scrolled into view.
