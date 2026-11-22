@@ -552,3 +552,66 @@ test('read-only cleanup reconciliation reports the matching workspace state and 
   assert.deepEqual(f.writes,[request]);
   assert.deepEqual(f.finished,[]);
 });
+
+test('a verified Hub release or clean deploy names the first release with worktree receipts in its ancestry', async () => {
+  const versions = [
+    ['v0.1.0', true], ['v0.1.0-13-g123abcd-202611210631', true],
+    ['v0.9.1-beta.2-1045-g6f14df7d1-202611221823', true], ['v0.9.1-rc1', true],
+    ['v0.1.0-beta.3-42-g123abcd-202611221823', false], ['v0.0.9-12-g123abcd-202611221823', false],
+    ['v0.9.1-beta.2-1045-g6f14df7d1-dirty-202611221823', false], ['dev-202611221823', false],
+    ['0.9.1-custom', false], ['v0.9.1-42-gunknown-202611221823', false]
+  ];
+  for (const [version, supported] of versions) {
+    const f = fixture(); f.behavior.helloVersion = version; f.behavior.unknown = true;
+    await f.form.open(f.root, f.tree, 'create'); f.form.setBranch('qa/release'); await f.form.submit();
+    assert.equal(f.form.canRetrySame, supported, version); assert.equal(f.replayed.length, 0);
+  }
+});
+
+async function olderManualCreate() {
+  const f = fixture();
+  f.behavior.helloVersion = 'custom'; f.behavior.unknown = true;
+  await f.form.open(f.root, f.tree, 'create'); f.form.setBranch('qa/original'); await f.form.submit();
+  const [key] = f.views.keys(), saved = JSON.parse(f.views.get(key));
+  assert.equal(saved.receipts, false);
+  saved.at = Date.now() - 3 * 60000;
+  f.views.set(key, JSON.stringify(saved));
+  Object.assign(f.blocked[0], {createdAt: new Date(saved.at).toISOString(), confirmedPending: false, requiresReceipt: false});
+  f.form.close();
+  f.behavior.helloVersion = 'v0.9.1-beta.2-1045-g6f14df7d1-202611221823';
+  await f.form.open(f.root, f.tree, 'create');
+  return {...f, key, saved};
+}
+
+test('a saved manual create on a previously unrecognized Hub retries only with the original ID and bytes after two read-only checks', async () => {
+  const f = await olderManualCreate();
+  assert.equal(f.form.canRetrySame, false);
+  await f.form.reconcile();
+  assert.equal(f.form.canRetrySame, true); assert.equal(f.replayed.length, 0);
+  const change = await f.form.reconcile(true);
+  assert.equal(change.id, 'new-id'); assert.equal(f.writes.length, 1);
+  assert.deepEqual(f.replayed, [{path:f.saved.path,method:'POST',json:f.saved.payload,id:f.saved.id}]);
+  assert.equal(f.reads.filter(path => path === '/api/v1/workspaces').length, 2);
+});
+
+test('a fresh, pending, retained or unverified manual checkout cannot be replayed, including changes between checks', async () => {
+  for (const reason of ['young','pending','receipt','directory','branch','partial','other-owner','manager','snapshot','unsupported','different-record']) {
+    const f = await olderManualCreate();
+    await f.form.reconcile(); assert.equal(f.form.canRetrySame, true);
+    const record = f.blocked[0], source = f.behavior.workspaces[0];
+    if (reason === 'young') record.createdAt = new Date().toISOString();
+    if (reason === 'pending') record.confirmedPending = true;
+    if (reason === 'receipt') record.requiresReceipt = true;
+    if (reason === 'directory') f.behavior.workspaces.push({...source,source_id:'new',cwd:'/qa/qa-original'});
+    if (reason === 'branch') f.behavior.workspaces.push({...source,source_id:'new',branch:'qa/original'});
+    if (reason === 'partial') f.behavior.errors = [{machine_id:'Studio/1', error:'unavailable'}];
+    if (reason === 'other-owner') source.source_id = 'other';
+    if (reason === 'manager') source.manager_id = 'other';
+    if (reason === 'snapshot') f.views.set(f.key, 'replaced');
+    if (reason === 'unsupported') f.behavior.helloVersion = 'dev';
+    if (reason === 'different-record') Object.assign(record,{id:'00000000-0000-4000-8000-000000000003'});
+    await f.form.reconcile(true);
+    assert.equal(f.replayed.length, 0, reason); assert.equal(f.form.canRetrySame, false, reason);
+    assert.equal(f.finished.length, 0, reason);
+  }
+});

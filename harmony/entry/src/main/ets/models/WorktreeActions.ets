@@ -39,9 +39,11 @@ function checkoutComparable(path: string): string {
   return /^[a-z]:\//i.test(value) ? value.toLowerCase() : value;
 }
 function releaseSupportsCreateReceipts(version: string): boolean {
-  // v0.1.0 is the first official release containing 88631b0c57 (worktree_create). Unversioned and prerelease builds need a real receipt.
-  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[a-zA-Z0-9.-]+)?$/.exec(version);
-  return !!match && (Number(match[1]) > 0 || Number(match[2]) >= 1);
+  // A clean deploy.sh build names the release tag in its ancestry. Receipts shipped in v0.1.0.
+  const tag = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(?:alpha|beta|rc)(?:\.?\d+)*)?(?:\+[a-zA-Z0-9.-]+|(?:-[1-9]\d*-g[0-9a-f]{7,40})?-[0-9]{12})?$/.exec(version);
+  if (!tag) return false;
+  const major = Number(tag[1]), minor = Number(tag[2]), patch = Number(tag[3]);
+  return major > 0 || minor > 1 || minor === 1 && (patch > 0 || !tag[4]);
 }
 function operationAcknowledged(action: string, sourceId: string, request: Record<string, Object>, value: Record<string, Object>): boolean {
   if (['pending','unknown','failed'].includes(Wire.text(value,'state')) || Wire.text(value,'delivered') === 'unknown') return false;
@@ -495,8 +497,34 @@ export class WorktreeActions {
     await this.refused(rev,'');
     if (this.current(rev)) { this.error = ''; this.legacyId = ''; this.requestId = ''; this.requestBody = ''; }
   }
+  private async canRetryMissingCreate(rev: number, id: string): Promise<boolean> {
+    if (!await this.verifyCreateVersion() || !this.current(rev)) return false;
+    if (this.originalReceiptRoute) return true;
+    // An older phone could save a full request without recognizing the Hub's build.
+    // Recheck the exact manual target before offering or executing a retry with that same ID.
+    const record = this.exactRecord(id), body = Wire.parse(this.requestBody);
+    const branch = Wire.text(body, 'branch'), path = Wire.text(body, 'path');
+    const recorded = this.requestTime, created = record ? Date.parse(record.createdAt) : 0;
+    if (!record || record.state !== 'unknown' || record.confirmedPending !== false || record.requiresReceipt !== false ||
+      !this.fresh(recorded) || !this.fresh(created) || Date.now() - Math.max(created, recorded) <= NODE_CREATE_TIMEOUT ||
+      this.automatic || Wire.bool(body, 'auto_name') || !validWorktreeBranch(branch) || !path ||
+      this.branch.trim() !== branch || this.path.trim() !== path) return false;
+    const rows = await this.workspaces(rev, true);
+    this.requireCurrent(rev);
+    const original = rows.filter((row: Record<string,Object>) => Wire.text(row, 'machine_id') === this.tree!.machine &&
+      Wire.text(row, 'source') === this.tree!.source && Wire.text(row, 'source_id') === this.tree!.sourceId);
+    const targetExists = rows.some((row: Record<string,Object>) => Wire.text(row, 'machine_id') === this.tree!.machine &&
+      (checkoutComparable(Wire.text(row, 'cwd')) === checkoutComparable(path) || Wire.text(row, 'branch') === branch));
+    const saved = await this.view!.read();
+    this.requireCurrent(rev);
+    return saved === this.snapshot() && original.length === 1 && this.sameSource(original[0]) &&
+      (!Wire.has(original[0], 'manager_id') || Wire.text(original[0], 'manager_id') === this.tree!.manager) &&
+      !targetExists && this.exactRecord(id) === record && record.state === 'unknown' &&
+      record.confirmedPending === false && record.requiresReceipt === false && this.fresh(this.requestTime);
+  }
   private async recoverCreate(rev: number, replay: boolean): Promise<WorktreeChange | undefined> {
     const id = this.legacy ? this.legacyId : this.requestId, canReplay = this.canReplayDuringCheck(id);
+    this.retrySupported = false;
     const op = await this.status(id);
     if (!this.current(rev)) return undefined;
     const state = Wire.text(op,'state'), result = Wire.object(op,'result'), answer = this.receiptBody(result);
@@ -505,7 +533,7 @@ export class WorktreeActions {
     if (state === 'failed') { await this.refused(rev, Wire.text(answer,'code') || Wire.text(answer,'error') || 'failed'); return undefined; }
     if (state === 'missing' && this.legacy) { await this.checkMissingLegacy(rev,replay); return undefined; }
     if (!['pending','unknown','missing','done'].includes(state)) throw new Error('result_unknown');
-    const supported = state !== 'missing' || this.originalReceiptRoute && await this.verifyCreateVersion();
+    const supported = state !== 'missing' || await this.canRetryMissingCreate(rev, id);
     if (!this.current(rev)) return undefined;
     this.retrySupported = !this.legacy && supported;
     if (state === 'pending' || state === 'unknown') await this.finishRecord(id,state);
