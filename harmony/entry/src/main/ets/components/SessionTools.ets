@@ -22,6 +22,7 @@ import { PhoneStyle } from '../design/PhoneStyle';
 import { tr, trError } from '../design/Strings';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { readerLink } from '../platform/ReaderLink';
+import { relativeActivityDate } from '../core/PhoneDate';
 
 const TRANSFER_LIMIT: number = 32 * 1024 * 1024;
 
@@ -750,9 +751,9 @@ export struct SessionTools {
     return this.gitDate(value);
   }
   private fileSubtitle(file:WorkspaceEntry):string {
-    const date=new Date(file.mtime), now=new Date(), language=this.model.language==='default' ? i18n.getSystemLanguage() : this.model.language;
-    const modified = !Number.isFinite(date.getTime()) ? '' : date.toDateString()===now.toDateString() ?
-      date.toLocaleTimeString(language,{hour:'2-digit',minute:'2-digit'}) : this.gitDate(file.mtime);
+    const language = this.model.language === 'default' ? i18n.getSystemLanguage() : this.model.language;
+    const modified = relativeActivityDate(new Date(file.mtime).getTime(), Date.now(), language,
+      tr('agent_time_just_now'), tr('kb_minutes_ago'), tr('kb_yesterday'));
     const link=file.symlink ? tr('symlink')+(file.linkTarget ? ' → '+file.linkTarget : '') : '';
     return [link,file.ignored ? tr('ignored') : '',file.directory ? '' : this.sizeText(file.size),modified].filter((v:string) => !!v).join('  ');
   }
@@ -760,18 +761,19 @@ export struct SessionTools {
   @Builder fileRow(binding:BoundRow<WorkspaceEntry>) {
     Row({space:Tokens.inset}) {
       SymbolGlyph(binding.value.directory ? $r('sys.symbol.folder_fill') : /\.(swift|ts|js|go|rs|py|json)$/i.test(binding.value.name) ? $r('sys.symbol.code') : Symbols.document)
-        .fontSize('19vp').fontColor([binding.value.ignored ? Colors.secondary : binding.value.directory ? Colors.link : Colors.secondary])
-        .width(23).flexShrink(0).id('session.fileRow.icon.'+binding.value.path)
-      Column({space:1}) {
+        .fontSize(Tokens.interfaceFontVp(17, nativeEnvironment.fontScale)).fontColor([binding.value.ignored ? Colors.secondary : binding.value.directory ? Colors.link : Colors.secondary])
+        .width(24 * Math.min(nativeEnvironment.fontScale, Tokens.interfaceFontMaxScale)).flexShrink(0).id('session.fileRow.icon.'+binding.value.path)
+      Column({space:2}) {
         Text(binding.value.name).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(binding.value.ignored ? Colors.secondary : Colors.ink)
-          .wordBreak(WordBreak.BREAK_WORD).id('session.fileRow.name.'+binding.value.path)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).id('session.fileRow.name.'+binding.value.path)
         if (this.fileSubtitle(binding.value)) Text(this.fileSubtitle(binding.value))
-          .fontSize(12).fontColor(binding.value.linkBroken ? Colors.danger : Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
+          .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(binding.value.linkBroken ? Colors.danger : Colors.secondary)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       if (this.workspace.fileGitMark(binding.value)) Circle().width(7).height(7)
         .fill(this.gitMarkColor(this.workspace.fileGitMark(binding.value))).id('session.files.git_mark.'+binding.value.path)
       if (binding.value.directory) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-    }.width('100%').constraintSize({minHeight:54}).padding({top:7,bottom:7}).backgroundColor(Colors.canvas)
+    }.width('100%').constraintSize({minHeight:54}).padding({top:15,bottom:15}).backgroundColor(Colors.canvas)
   }
 
   @Builder pathMenu() {
@@ -816,7 +818,9 @@ export struct SessionTools {
       }.width('100%')
       Row({space:Tokens.gap}) {
         if (!this.editingPath) Search({value:this.fileQuery,placeholder:tr('session_find_in_folder').replace('{folder}',this.pathCrumbs[this.pathCrumbs.length-1]?.title || this.workspace.currentPath)})
-          .height(Math.max(34,20*nativeEnvironment.fontScale+9)).textFont({size:15}).placeholderFont({size:15}).searchIcon({size:'15vp'})
+          .height(Math.max(34, 20 * Math.min(nativeEnvironment.fontScale, Tokens.interfaceScaleFor(15)) + 9))
+          .textFont({size:Tokens.interfaceFontVp(15, nativeEnvironment.fontScale)})
+          .placeholderFont({size:Tokens.interfaceFontVp(15, nativeEnvironment.fontScale)}).searchIcon({size:'15vp'})
           .backgroundColor(Colors.control).borderRadius(22).layoutWeight(1)
           .onChange((v:string) => { this.fileQuery=v; if (v.trim()) this.workspace.loadFileIndex(); }).id('session.files.query')
         else Blank().layoutWeight(1)
@@ -824,11 +828,6 @@ export struct SessionTools {
           .width(44).height(44).padding(0).backgroundColor(Colors.control).bindMenu(this.fileMenu).accessibilityText(tr('more')).id('session.files.more')
           .bindSheet($$this.transferOpen,this.fileTransferForm(),{title:{title:tr('file_transfer_title')},height:SheetSize.LARGE,showClose:true})
       }.width('100%').id('session.files.find')
-      if (this.fileQuery.trim()) Row({space:6}) {
-        Text(tr('session_find_here')+' · '+(this.pathCrumbs[this.pathCrumbs.length-1]?.title || this.workspace.currentPath))
-          .fontSize(12).fontColor(Colors.secondary).layoutWeight(1).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
-        if (!this.workspace.findBusy) Text((this.findRows.length>=100 ? '≥' : '')+this.findRows.length).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-      }.width('100%').padding({left:4,right:4})
     }.padding({left:PhoneStyle.page,right:PhoneStyle.page,top:5,bottom:8}).width('100%')
   }
   @Builder fileView() {
@@ -850,17 +849,26 @@ export struct SessionTools {
       if (this.workspace.fileBusy || this.fileQuery.trim() && this.workspace.findBusy) LoadingProgress().height(28).width(28)
       List() {
         if (this.fileQuery.trim()) {
+          if (!this.workspace.findBusy && !this.workspace.findError) ListItem() {
+            Text(tr('session_find_here').replace('{folder}', this.pathCrumbs[this.pathCrumbs.length-1]?.title || this.workspace.currentPath)
+              .replace('{count}', (this.findRows.length >= 100 ? '≥' : '') + this.findRows.length))
+              .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+              .width('100%').padding({top:19,bottom:19}).id('session.files.find_count')
+          }
           if (this.workspace.findError) ListItem() { Text(tr('session_find_unavailable')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding(10) }
           ForEach(this.findRows,(hit:FileFindHit) => {
             ListItem() {
-              Row({space:10}) {
-                SymbolGlyph(hit.directory ? Symbols.folder : Symbols.document).fontSize('18vp').fontColor([hit.directory ? Colors.link : Colors.secondary])
+              Row({space:Tokens.inset}) {
+                SymbolGlyph(hit.directory ? Symbols.folder : Symbols.document).fontSize(Tokens.interfaceFontVp(17, nativeEnvironment.fontScale))
+                  .width(24 * Math.min(nativeEnvironment.fontScale, Tokens.interfaceFontMaxScale)).flexShrink(0).fontColor([hit.directory ? Colors.link : Colors.secondary])
                 Column({space:2}) {
-                  Text(this.leaf(hit.relative)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
-                  Text('./'+this.relativeParent(hit.relative)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
+                  Text(this.leaf(hit.relative)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink)
+                    .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+                  Text((this.relativeParent(hit.relative) || '.')+'/').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+                    .fontFamily('monospace').fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
                 }.layoutWeight(1).alignItems(HorizontalAlign.Start)
                 if (hit.directory) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-              }.width('100%').constraintSize({minHeight:54}).padding({top:7,bottom:7}).backgroundColor(Colors.canvas)
+              }.width('100%').constraintSize({minHeight:54}).padding({top:15,bottom:15}).backgroundColor(Colors.canvas)
             }.onClick(() => this.findHit(hit)).id('session.find.'+hit.relative)
           },(hit:FileFindHit) => hit.relative)
           if (!this.workspace.findBusy && !this.findRows.length) ListItem() { Text(tr('no_results')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).padding(14) }
@@ -1113,7 +1121,7 @@ export struct SessionTools {
           Wire.text(this.workspace.gitStatus,'upstream') && Wire.number(this.workspace.gitStatus,'ahead')>0 ? '↑ '+Wire.number(this.workspace.gitStatus,'ahead') : '',
           Wire.number(this.workspace.gitStatus,'behind')>0 ? '↓ '+Wire.number(this.workspace.gitStatus,'behind') : '',
           this.workspace.gitStashCount() ? tr('session_tools_stashes')+' '+this.workspace.gitStashCount() : ''].filter((v:string) => !!v).join(' · '))
-          .fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
+          .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
         Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
           .fontFamily('monospace').maxLines(3).copyOption(CopyOptions.LocalDevice)
       }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:10,bottom:13})
@@ -1184,20 +1192,15 @@ export struct SessionTools {
         Text(binding.value.mark).width(20).fontSize('13vp').textAlign(TextAlign.Center).fontWeight(FontWeight.Bold)
           .fontColor(this.fileInk(binding.value)).padding({top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(5)
         Column({space:3}) {
-          Text(this.leaf(binding.value.path)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
+          Text(this.leaf(binding.value.path)).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
           if (this.fileChangeDetail(binding.value)) Text(this.fileChangeDetail(binding.value))
-            .fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
-          if (nativeEnvironment.fontScale >= 1.5 && (binding.value.binary || binding.value.added || binding.value.deleted)) {
-            if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
-            else Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(5)}}) { this.lineCounts(binding.value.added,binding.value.deleted) }.width('100%')
-          }
+            .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+            .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
         }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-        if (nativeEnvironment.fontScale < 1.5) {
-          if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
-          else if (binding.value.added || binding.value.deleted) Row({space:4}) {
-            this.lineCounts(binding.value.added,binding.value.deleted)
-          }.alignItems(VerticalAlign.Center)
-        }
+        if (binding.value.binary) Text(tr('session_tools_binary_file')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+        else if (binding.value.added || binding.value.deleted) Row({space:4}) {
+          this.lineCounts(binding.value.added,binding.value.deleted)
+        }.flexShrink(0)
       }.layoutWeight(1).constraintSize({minHeight:44}).onClick(() => this.openGitFile(binding.value,this.gitFilter==='all' ? undefined : this.gitFilter==='staged'))
         .bindContextMenu(this.gitFileMenu(binding),ResponseType.LongPress).id('session.git.'+binding.value.path)
     }.width('100%').padding({left:3,right:16,top:2,bottom:2}).backgroundColor(Colors.surface)
@@ -1207,7 +1210,7 @@ export struct SessionTools {
       Column({space:4}) {
         Text(Wire.text(c,'subject') || Wire.text(c,'short')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).maxLines(2)
         Text([Wire.text(c,'short') || Wire.text(c,'hash').slice(0,8),Wire.text(c,'author'),this.timeLabel(Wire.text(c,'date'))]
-          .filter((v:string) => !!v).join(' · ')).fontSize(12).fontColor(Colors.secondary).maxLines(2)
+          .filter((v:string) => !!v).join(' · ')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(2)
         if (Wire.text(c,'refs')) Text(Wire.text(c,'refs').replace(/HEAD -> /g,'')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link).maxLines(2)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
@@ -1519,11 +1522,11 @@ export struct SessionTools {
       Text(Wire.text(commit,'subject')).fontSize(18).maxFontScale(Tokens.interfaceScaleFor(18)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
       if (Wire.text(commit,'body')) Text(Wire.text(commit,'body')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
       Text([Wire.text(commit,'author'),this.commitDate(Wire.text(commit,'date'))].filter((v:string) => !!v).join(' · '))
-        .fontSize(13).fontColor(Colors.secondary)
+        .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
       Button({type:ButtonType.Normal}) {
         Row({space:7}) {
           SymbolGlyph(IconActions.symbol('copy')).fontSize('14vp').fontColor([Colors.link])
-          Text(this.workspace.gitCommitHash).fontSize(12).fontFamily('monospace').fontColor(Colors.link)
+          Text(this.workspace.gitCommitHash).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontFamily('monospace').fontColor(Colors.link)
             .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.CENTER).layoutWeight(1)
         }.width('100%')
       }.width('100%').height(Math.max(44,16*nativeEnvironment.fontScale+10)).padding(0).backgroundColor(Color.Transparent)
@@ -1542,17 +1545,13 @@ export struct SessionTools {
         .fontColor(this.gitMarkColor(Wire.text(file,'index') || Wire.text(file,'worktree'))).padding({top:3,bottom:3}).backgroundColor(Colors.control).borderRadius(5).flexShrink(0)
         .id('session.commitRow.icon.'+Wire.text(file,'path'))
       Column({space:2}) {
-        Text(this.leaf(Wire.text(file,'path'))).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).wordBreak(WordBreak.BREAK_WORD)
+        Text(this.leaf(Wire.text(file,'path'))).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
           .id('session.commitRow.name.'+Wire.text(file,'path'))
         if (Wire.text(file,'path').includes('/')) Text(Wire.text(file,'path').split('/').slice(0,-1).join('/'))
-          .fontSize(12).fontColor(Colors.secondary).wordBreak(WordBreak.BREAK_WORD)
-        if (nativeEnvironment.fontScale >= 1.5) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(5)}}) {
-          this.lineCounts(Wire.number(file,'added'),Wire.number(file,'deleted'))
-        }.width('100%')
+          .fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      if (nativeEnvironment.fontScale < 1.5) {
-        this.lineCounts(Wire.number(file,'added'),Wire.number(file,'deleted'))
-      }
+      Row({space:4}) { this.lineCounts(Wire.number(file,'added'),Wire.number(file,'deleted')) }.flexShrink(0)
       SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
     }.width('100%').constraintSize({minHeight:46}).padding({left:12,right:12,top:5,bottom:5})
       .backgroundColor(Colors.surface).accessibilityGroup(true).accessibilityText(Wire.text(file,'path'))
@@ -1576,7 +1575,7 @@ export struct SessionTools {
             ListItem() { this.commitInfo(Wire.object(this.workspace.gitShow,'commit')) }
             ListItem() {
               Text(tr('session_git_file_count').replace('{count}',String(Wire.rows(this.workspace.gitShow,'files').length)))
-                .fontSize(14).fontColor(Colors.secondary).padding({left:9,top:18,bottom:7})
+                .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).padding({left:9,top:18,bottom:7})
             }
             ListItemGroup() {
               ForEach(Wire.rows(this.workspace.gitShow,'files'),(file:Record<string,Object>) => {

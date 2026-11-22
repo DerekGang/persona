@@ -5498,7 +5498,7 @@
     },
     {
       "name": "session_find_here",
-      "value": "搜索当前文件夹"
+      "value": "在「{folder}」及子文件夹里 · {count} 个结果"
     },
     {
       "name": "session_find_unavailable",

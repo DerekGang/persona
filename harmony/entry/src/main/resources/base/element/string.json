@@ -5498,7 +5498,7 @@
     },
     {
       "name": "session_find_here",
-      "value": "Search in this folder"
+      "value": "In “{folder}” and its folders · {count} found"
     },
     {
       "name": "session_find_unavailable",

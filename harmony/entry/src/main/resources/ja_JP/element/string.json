@@ -5498,7 +5498,7 @@
     },
     {
       "name": "session_find_here",
-      "value": "このフォルダ内を検索"
+      "value": "「{folder}」とその中のフォルダ・{count} 件"
     },
     {
       "name": "session_find_unavailable",
