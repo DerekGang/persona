@@ -79,6 +79,22 @@
     {
       "name": "agent_task_state_offline",
       "value": "Not running"
+    },
+    {
+      "name": "agent_task_count",
+      "value": "{n}"
+    },
+    {
+      "name": "agent_task_expanded",
+      "value": "Expanded"
+    },
+    {
+      "name": "agent_task_collapsed",
+      "value": "Collapsed"
+    },
+    {
+      "name": "agent_task_about",
+      "value": "About “{title}”"
     }
   ]
 }

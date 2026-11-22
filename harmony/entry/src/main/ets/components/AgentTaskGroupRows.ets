@@ -7,6 +7,8 @@ import { tr } from '../design/Strings';
 import { Colors } from '../design/Colors';
 import { Symbols } from '../design/Symbols';
 import { Tokens } from '../design/Tokens';
+import { PhoneStyle } from '../design/PhoneStyle';
+import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironment';
 
 @ComponentV2
 export struct AgentTaskGroupRows {
@@ -18,6 +20,9 @@ export struct AgentTaskGroupRows {
   @Event onOpenTodo: (row: ResourceRow) => void = () => {};
   @BuilderParam rowContent: (row: ResourceRow, depth: number) => void;
   @Local tip: string = '';
+  @Local environment: NativeEnvironment = nativeEnvironment;
+
+  private target(): number { return PhoneStyle.formSize(44,58,this.environment.fontScale); }
 
   @Computed get sections(): AgentTaskSection[] {
     const filtering = !!this.workspace.search.trim() || this.workspace.quickFilter !== 'all';
@@ -47,20 +52,20 @@ export struct AgentTaskGroupRows {
   }
 
   private detail(section: AgentTaskSection): string {
-    const count = section.direction ? (section.needs > 0 ? tr('agent_task_needs_count').replace('{n}',String(section.needs)) : '') : String(section.lines.length);
-    return [this.title(section),tr(this.folded(section) ? 'agent_expand' : 'agent_collapse'),count,section.hint ? tr(section.hint) : '']
+    const count = section.direction ? (section.needs > 0 ? tr('agent_task_needs_count').replace('{n}',String(section.needs)) : '') : tr('agent_task_count').replace('{n}',String(section.lines.length));
+    return [this.title(section),tr(this.folded(section) ? 'agent_task_collapsed' : 'agent_task_expanded'),count,section.hint ? tr(section.hint) : '']
       .filter((part: string) => !!part).join(', ');
   }
 
   @Builder header(section: AgentTaskSection) {
     Row({space:6}) {
-      Text(this.title(section)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.SemiBold)
+      Text(this.title(section)).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.SemiBold)
         .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
       if (section.hint) {
         Button({type:ButtonType.Circle}) {
           SymbolGlyph($r('sys.symbol.info_circle')).fontSize('15vp').fontColor([Colors.secondary])
-        }.width(23).height(30).padding(0).backgroundColor(Color.Transparent)
-          .accessibilityText(tr(section.hint)).id('agents.task.info.' + section.key)
+        }.width(this.target()).height(this.target()).padding(0).backgroundColor(Color.Transparent)
+          .accessibilityText(tr('agent_task_about').replace('{title}',this.title(section))).id('agents.task.info.' + section.key)
           .onClick(() => { this.tip = this.tip === section.key ? '' : section.key; })
           .bindPopup(this.tip === section.key,{message:tr(section.hint),placement:Placement.Bottom,
             onStateChange:(event:PopupStateChangeParam) => { if (!event.isVisible && this.tip === section.key) this.tip = ''; }})
@@ -77,12 +82,12 @@ export struct AgentTaskGroupRows {
       if (section.todo) {
         Button({type:ButtonType.Circle}) {
           SymbolGlyph(Symbols.expand).fontSize('15vp').fontColor([Colors.secondary])
-        }.width(44).height(44).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('agent_task_detail'))
+        }.width(this.target()).height(this.target()).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('agent_task_detail'))
           .id('agents.task.open.' + section.key).onClick(() => { if (section.todo) this.onOpenTodo(section.todo); })
       }
       Blank().layoutWeight(1)
       SymbolGlyph(this.folded(section) ? Symbols.expand : Symbols.down).fontSize('12vp').fontColor([Colors.tertiary])
-    }.width('100%').constraintSize({minHeight:44}).padding({left:7,right:7,top:4})
+    }.width('100%').constraintSize({minHeight:this.target()+20}).padding({left:20,right:20,top:10,bottom:10})
       .accessibilityText(this.detail(section)).accessibilityRole(AccessibilityRoleType.BUTTON)
       .onClick(() => this.workspace.toggleGroupingFold(section.key, this.folded(section))).id('agents.group.toggle.'+section.key)
   }
@@ -92,7 +97,7 @@ export struct AgentTaskGroupRows {
       Button({type:ButtonType.Normal}) {
         Row({space:8}) {
           if (line.kind === 'task') {
-            SymbolGlyph($r('sys.symbol.checkmark_circle')).fontSize('17vp').fontColor([Colors.secondary])
+            SymbolGlyph($r('sys.symbol.list_checkmark')).fontSize('17vp').fontColor([Colors.secondary])
           } else {
             Circle().width(8).height(8).fill(this.tone(line.state))
           }
@@ -101,7 +106,7 @@ export struct AgentTaskGroupRows {
           Text(tr((line.kind === 'task' ? 'agent_task_' : 'agent_task_state_') + line.state))
             .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(this.tone(line.state)).maxLines(1)
           if (line.kind === 'task') SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.tertiary])
-        }.width('100%').constraintSize({minHeight:44}).padding({left:16+Math.min(line.depth,5)*12,right:14})
+        }.width('100%').constraintSize({minHeight:this.target()+30}).padding({left:20+Math.min(line.depth,5)*16,right:20,top:15,bottom:15})
       }.width('100%').padding(0).backgroundColor(Colors.surface)
         .accessibilityText(this.lineTitle(line) + ', ' + tr((line.kind === 'task' ? 'agent_task_' : 'agent_task_state_') + line.state))
         .id((line.kind === 'task' ? 'agents.direction.task.' : 'agents.direction.agent.') + line.row.id)

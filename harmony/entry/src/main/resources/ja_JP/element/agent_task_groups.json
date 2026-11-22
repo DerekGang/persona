@@ -79,6 +79,22 @@
     {
       "name": "agent_task_state_offline",
       "value": "停止中"
+    },
+    {
+      "name": "agent_task_count",
+      "value": "{n}件"
+    },
+    {
+      "name": "agent_task_expanded",
+      "value": "展開済み"
+    },
+    {
+      "name": "agent_task_collapsed",
+      "value": "折りたたみ済み"
+    },
+    {
+      "name": "agent_task_about",
+      "value": "「{title}」について"
     }
   ]
 }

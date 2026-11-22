@@ -79,6 +79,22 @@
     {
       "name": "agent_task_state_offline",
       "value": "未运行"
+    },
+    {
+      "name": "agent_task_count",
+      "value": "{n} 个"
+    },
+    {
+      "name": "agent_task_expanded",
+      "value": "已展开"
+    },
+    {
+      "name": "agent_task_collapsed",
+      "value": "已折叠"
+    },
+    {
+      "name": "agent_task_about",
+      "value": "关于「{title}」"
     }
   ]
 }
