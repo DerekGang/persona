@@ -203,7 +203,7 @@ struct Index {
   @Local agentPreset: string = '';
   @Local machineDefaultLabel: string = '';
   private launcherRevision: number = 0;
-  @Local agentWorkspace: AgentWorkspace = new AgentWorkspace();
+  @Local agentWorkspace: AgentWorkspace = new AgentWorkspace(undefined,'repo');
   @Local environment: NativeEnvironment = nativeEnvironment;
   @Local spacesShown: boolean = false;
   @Local phoneSettingsShown: boolean = false;
@@ -819,9 +819,9 @@ struct Index {
   }
   @Monitor('detailModel.connected') chatMenuConnectionChanged(): void { if (!this.detailModel.connected && (this.chatTitleMenuVisible || this.chatBodyMenuVisible)) this.dismissChatActions(); }
   @Monitor('model.directorySessions', 'model.directoryMachines') projectDirectoryChanged(): void {
-    if (this.model.section === 4) this.projectCatalog.syncRows(this.model);
+    if (this.model.section === 4 || this.model.section === 1 && this.agentWorkspace.groupingMode === 'repo') this.projectCatalog.syncRows(this.model);
   }
-  @Monitor('model.connected') connectionChanged(): void { if (this.model.section === 4) this.projectCatalog.refresh(this.model); deviceFeatures.context(); if (this.model.connected && this.shownName && this.activeChild === this.childKey(this.shownName, this.shownParam)) this.restoreTarget(this.shownName, this.shownParam); }
+  @Monitor('model.connected') connectionChanged(): void { if (this.model.section === 4 || this.model.section === 1 && this.agentWorkspace.groupingMode === 'repo') this.projectCatalog.refresh(this.model); deviceFeatures.context(); if (this.model.connected && this.shownName && this.activeChild === this.childKey(this.shownName, this.shownParam)) this.restoreTarget(this.shownName, this.shownParam); }
   @Monitor('model.forgottenEpoch') forgetNavigation(): void {
     for (const key of this.paths.keys()) if (isHubStateKey('view:' + key, this.model.forgottenProfile)) this.paths.delete(key);
     this.rowVisibility.clear(); this.visibilityEpoch++;
@@ -1553,8 +1553,22 @@ struct Index {
     return this.model.section === 1 && this.detailModel.selected.kind === 'session' &&
       (!!this.activeChild || this.stack.getAllPathName().includes('session'));
   }
+  private openAgentRepositoryRoute(kind: string, key: string): void {
+    if (this.model.section !== 1) return;
+    const tree = this.projectCatalog.tree(key);
+    if (kind === 'start') {
+      if (tree?.canStart) this.prepareAgent(undefined,tree);
+    } else if (kind === 'project_tree' && tree ||
+      kind === 'project' && this.projectCatalog.projects.some((project:PersonaProject) => project.key === key) ||
+      kind === 'machine_projects' && this.projectCatalog.projects.some((project:PersonaProject) => project.hostKey === key)) {
+      this.pushPlace(kind,key);
+    }
+  }
   @Builder agentsList() {
-    AgentListPage({ onSearchMode:(editing:boolean)=>{this.agentSearching=editing;}, compactRoot:!this.wide() && !this.rail(), model: this.model, workspace: this.agentWorkspace, retainWorkspace: true, active: this.model.section === 1, selectedRow: this.detailModel.selected, selectionVisible: this.chatSelectionShown('session'), rail: this.rail(), readingDetail: this.readingAgentDetail(),
+    AgentListPage({ projectCatalog:this.projectCatalog,
+      onRepositoryOpen:(kind:string,key:string) => this.openAgentRepositoryRoute(kind,key),
+      onRepositoryChanged:(tree:ProjectWorktree,change:WorktreeChange) => { this.worktreeChanged(tree,change).catch((err:Error) => this.model.reportError(err)); },
+      onOpenTodo:(row:ResourceRow) => this.openLinkedResource(row), onSearchMode:(editing:boolean)=>{this.agentSearching=editing;}, compactRoot:!this.wide() && !this.rail(), model: this.model, workspace: this.agentWorkspace, retainWorkspace: true, active: this.model.section === 1, selectedRow: this.detailModel.selected, selectionVisible: this.chatSelectionShown('session'), rail: this.rail(), readingDetail: this.readingAgentDetail(),
       onOpen: (row: ResourceRow) => this.openRow(row), onVisible: (row: ResourceRow, ratio: number) => {
         this.rowVisibility.set(this.model.scope() + row.key(), ratio); if (row.key() === this.detailModel.selected.key()) this.visibilityEpoch++;
       } })
@@ -1619,11 +1633,11 @@ struct Index {
   }
   private async worktreeChanged(tree: ProjectWorktree, change: WorktreeChange): Promise<void> {
     const root = this.model, scope = root.scope(), epoch = root.connectionGeneration(), stack = this.stack;
-    const names = stack.getAllPathName(), intent = this.navigationIntent;
+    const names = stack.getAllPathName(), intent = this.navigationIntent, section = this.model.section;
     const source = new ResourceRow(); source.group = tree.group; source.manager = tree.manager;
     const owner = root.directoryOwnerFor(source);
     const live = (): boolean => root.owns(epoch, scope) && this.model === root;
-    const stay = (): boolean => live() && this.stack === stack && this.navigationIntent === intent && this.model.section === 4;
+    const stay = (): boolean => live() && this.stack === stack && this.navigationIntent === intent && this.model.section === section && (section === 4 || section === 1);
     if (owner && (change.action === 'create' || change.action === 'clean')) {
       try { await this.projectCatalog.saveParent(owner, tree, change.id, change.action === 'create' ? change.path : '', change.parent); }
       catch (_) { /* The host mutation succeeded; its inventory remains authoritative. */ }

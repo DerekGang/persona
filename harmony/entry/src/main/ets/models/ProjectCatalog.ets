@@ -341,10 +341,30 @@ export function projectDirectory(catalog: ResourceRow[], sessions: ResourceRow[]
     b.pinnedAt - a.pinnedAt || titleOrder(a.title,b.title) || keyOrder(a.key,b.key));
 }
 
+/** Prune a fresh projection, preserving every ancestor of an admitted session or a matching registered workspace. */
+export function trimAgentProjects(projects: PersonaProject[], includeEmpty: boolean, search: string): PersonaProject[] {
+  const query=search.trim().toLocaleLowerCase();
+  return projects.filter((project:PersonaProject) => {
+    const trees = new Map<string,ProjectWorktree>(), keep = new Set<string>();
+    for (const tree of project.trees) trees.set(tree.key,tree);
+    for (const tree of project.trees) {
+      const matches = !query || (tree.title + ' ' + tree.cwd).toLocaleLowerCase().includes(query);
+      if (!tree.agents.length && !(includeEmpty && tree.boundStart && matches)) continue;
+      let current: ProjectWorktree | undefined = tree;
+      while (current && !keep.has(current.key)) { keep.add(current.key); current=trees.get(current.parentKey); }
+    }
+    project.trees=project.trees.filter((tree:ProjectWorktree) => keep.has(tree.key));
+    project.roots=project.roots.filter((tree:ProjectWorktree) => keep.has(tree.key));
+    for (const tree of project.trees) tree.children=tree.children.filter((child:ProjectWorktree) => keep.has(child.key));
+    return project.trees.length>0;
+  });
+}
+
 @ObservedV2
 export class ProjectBrowserState {
   @Trace query: string = '';
   @Trace private searchClosed: string[] = [];
+  private searchScope: string = '';
   @Trace machine: string = '';
   @Trace preferences: string[] = [];
   @Trace unlimited: string[] = [];
@@ -354,13 +374,17 @@ export class ProjectBrowserState {
   edits: number = 0;
 
   clear(): void {
-    this.query = ''; this.machine = ''; this.preferences = []; this.unlimited = []; this.selectedTree = ''; this.selectedSession = ''; this.anchors.clear(); this.searchClosed = []; this.edits++;
+    this.query = ''; this.machine = ''; this.preferences = []; this.unlimited = []; this.selectedTree = ''; this.selectedSession = ''; this.anchors.clear(); this.searchClosed = []; this.searchScope = ''; this.edits++;
   }
   searchOpen(id:string): boolean { return !this.searchClosed.includes(id); }
   toggleSearch(id:string): void {
     this.searchClosed = this.searchOpen(id) ? this.searchClosed.concat([id]) : this.searchClosed.filter((key:string) => key !== id);
   }
   resetSearchFolds(): void { this.searchClosed = []; }
+  setSearch(query: string, scope: string): void {
+    if (this.query !== query || this.searchScope !== scope) this.resetSearchFolds();
+    this.query = query; this.searchScope = scope;
+  }
   open(id: string, fallback: boolean): boolean {
     if (this.preferences.includes('+' + id)) return true;
     return this.preferences.includes('-' + id) ? false : fallback;
@@ -383,6 +407,7 @@ export class ProjectCatalog {
   @Trace startError: boolean = false;
   @Trace notice: string = '';
   readonly browser: ProjectBrowserState = new ProjectBrowserState();
+  readonly agentBrowser: ProjectBrowserState = new ProjectBrowserState();
   private foldsRestored: boolean = false;
   private foldWrite: Promise<void> = Promise.resolve();
   private createdParents: Map<string, Record<string, Object>[]> = new Map();
@@ -392,7 +417,33 @@ export class ProjectCatalog {
   private snapshots: Map<string, ResourceRow[]> = new Map();
   private savedSessions: Map<string, ResourceRow[]> = new Map();
   private savedComputers: Map<string, ResourceRow[]> = new Map();
-  clear(): void { this.sequence++; this.ownerScope = ''; this.projectedFields = []; this.notice = ''; this.browser.clear(); this.foldsRestored = false; this.createdParents.clear(); this.snapshots.clear(); this.savedSessions.clear(); this.savedComputers.clear(); this.projects = []; this.partial = false; this.startError = false; this.loading = false; }
+  clear(): void { this.sequence++; this.ownerScope = ''; this.projectedFields = []; this.notice = ''; this.browser.clear(); this.agentBrowser.clear(); this.foldsRestored = false; this.createdParents.clear(); this.snapshots.clear(); this.savedSessions.clear(); this.savedComputers.clear(); this.projects = []; this.partial = false; this.startError = false; this.loading = false; }
+
+  /** Rebuild from the Agents projection's actual unpinned rows; empty workspaces come only from the owning catalog. */
+  agentDirectory(model: ClientModel, sessions: ResourceRow[], includeEmpty: boolean, query: string,
+    admits: (group:string,manager:string,machine:string) => boolean): PersonaProject[] {
+    const rows: ResourceRow[] = [], pinned = new Set<string>();
+    const known = new Set<string>(model.directoryMachines.map((row:ResourceRow) => JSON.stringify([row.group,row.manager,row.id])));
+    if (model.scope() === this.ownerScope && this.projects.length) {
+      for (const bucket of this.snapshots.values()) for (const row of bucket) {
+        if (!known.has(JSON.stringify([row.group,row.manager,row.machine])) || !admits(row.group,row.manager,row.machine)) continue;
+        rows.push(row);
+        const data = row.data();
+        if (Wire.text(data,'source') === 'paseo' && parsedTime(Wire.text(data,'pinned_at'))) {
+          pinned.add(JSON.stringify([row.group,row.manager,row.machine,Wire.text(data,'source_id')]));
+        }
+      }
+    }
+    const visible = sessions.filter((row: ResourceRow) => {
+      if (row.kind !== 'session' || !admits(row.group,row.manager,row.machine)) return false;
+      const data = row.data();
+      if (Wire.bool(data,'archived')) return false;
+      if (row.state !== 'offline') return true;
+      return Wire.text(data,'space_kind') === 'paseo' && pinned.has(JSON.stringify([row.group,row.manager,row.machine,Wire.text(data,'workspace_id')]));
+    });
+    const projected = projectDirectory(rows,visible,model.directoryMachines);
+    return trimAgentProjects(projected,includeEmpty,query);
+  }
 
   syncRows(model: ClientModel): void {
     if (model.scope() !== this.ownerScope) return;

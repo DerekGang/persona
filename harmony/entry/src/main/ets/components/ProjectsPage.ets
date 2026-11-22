@@ -8,7 +8,7 @@ import { tr } from '../design/Strings';
 import { AgentDecisionQueue } from '../models/AgentDecisionQueue';
 import { ClientModel } from '../models/ClientModel';
 import { machineAgents } from '../models/MachineDashboard';
-import { ProjectCatalog, PersonaProject, ProjectAgent, ProjectWorktree } from '../models/ProjectCatalog';
+import { ProjectCatalog, PersonaProject, ProjectAgent, ProjectWorktree, ProjectBrowserState } from '../models/ProjectCatalog';
 import { ResourceRow, Wire } from '../models/Wire';
 import { ProjectLine, ProjectHost, projectOutline, projectHosts, projectQuickKind, projectSearchAgents, worktreeSpaceCards } from '../models/ProjectOutline';
 import { WorktreeActions, WorktreeChange } from '../models/WorktreeActions';
@@ -20,6 +20,12 @@ import { nativeEnvironment } from '../platform/NativeEnvironment';
 export struct ProjectsPage {
   @Require @Param model: ClientModel;
   @Require @Param catalog: ProjectCatalog;
+  @Param agentRepositories: PersonaProject[] | undefined = undefined;
+  @Param agentFilterActive: boolean = false;
+  private get outlineBrowser(): ProjectBrowserState {
+    return this.agentRepositories ? this.catalog.agentBrowser : this.catalog.browser;
+  }
+  @Computed get outlineProjects(): PersonaProject[] { return this.agentRepositories || this.catalog.projects; }
   @Param compact: boolean = false;
   @Param adjacentItem: string = '';
   @Param topContentInset: number = 0;
@@ -78,7 +84,7 @@ export struct ProjectsPage {
   private readonly activityKinds: string[] = ['needs_you', 'working', 'agent_group_unread', 'agent_group_background', 'idle'];
   private count(n: number, word: string): string { return String(n) + ' ' + tr(word); }
   private project(): PersonaProject | undefined { return this.catalog.projects.find((row: PersonaProject) => row.key === this.target); }
-  @Computed get hosts(): ProjectHost[] { return projectHosts(this.catalog.projects); }
+  @Computed get hosts(): ProjectHost[] { return projectHosts(this.outlineProjects); }
   @Computed get hostActivity(): Map<string, Map<string, number>> {
     const byHost = new Map<string, Map<string, number>>();
     for (const host of this.hosts) {
@@ -113,7 +119,7 @@ export struct ProjectsPage {
     if (kind === 'agent_group_background') return Colors.working;
     return kind === 'agent_group_waiting' ? Colors.ai : Colors.secondary;
   }
-  private filteringText(): boolean { return this.page === 'projects' && (!!this.catalog.browser.query.trim() || !!this.quick); }
+  private filteringText(): boolean { return this.agentRepositories ? this.agentFilterActive : this.page === 'projects' && (!!this.catalog.browser.query.trim() || !!this.quick); }
   private narrowOutline(): boolean {
     const width = nativeEnvironment.windowWidthPx;
     return width > 0 && this.getUIContext().px2vp(width) < 320;
@@ -145,8 +151,9 @@ export struct ProjectsPage {
     return worktreeSpaceCards(this.catalog.projects, tree);
   }
   @Computed get lines(): ProjectLine[] {
-    return projectOutline(this.catalog.projects,this.catalog.browser,this.page === 'project' ? this.target : '',
-      this.page === 'machine_projects' ? this.target : '',this.page === 'projects' ? this.quick : '',(agent:ProjectAgent) => this.isMuted(agent.row));
+    return projectOutline(this.outlineProjects,this.outlineBrowser,this.page === 'project' ? this.target : '',
+      this.page === 'machine_projects' ? this.target : '',this.page === 'projects' ? this.quick : '',(agent:ProjectAgent) => this.isMuted(agent.row),
+      !!this.agentRepositories,this.agentFilterActive);
   }
   @Computed get tabRows(): Map<string, ProjectLine> {
     const result = new Map<string, ProjectLine>();
@@ -181,14 +188,17 @@ export struct ProjectsPage {
   }
   private toggle(line:ProjectLine):void {
     const current = this.lines.find((entry:ProjectLine) => entry.key === line.key);
-    if (current) this.catalog.toggleBrowserFold(this.model,current.key,current.open);
+    if (!current) return;
+    if (this.agentRepositories) this.outlineBrowser.toggle(current.key,current.open);
+    else this.catalog.toggleBrowserFold(this.model,current.key,current.open);
   }
   private tabOpen(key: string): boolean {
-    return this.filteringText() || this.catalog.browser.open(key, true);
+    return this.filteringText() || this.outlineBrowser.open(key, true);
   }
   private toggleTab(key: string): void {
     if (this.filteringText() || !this.tabRows.has(key)) return;
-    this.catalog.toggleBrowserFold(this.model, key, this.catalog.browser.open(key, true));
+    if (this.agentRepositories) this.outlineBrowser.toggle(key,this.outlineBrowser.open(key,true));
+    else this.catalog.toggleBrowserFold(this.model, key, this.outlineBrowser.open(key, true));
   }
   private tabDescription(key: string): string {
     const row = this.tabRows.get(key);
@@ -201,21 +211,22 @@ export struct ProjectsPage {
     return lead ? this.tint(lead) : Colors.secondary;
   }
   private openHeader(line: ProjectLine): void {
-    if (this.filteringText()) this.catalog.browser.toggleSearch(line.key);
+    if (this.filteringText()) this.outlineBrowser.toggleSearch(line.key);
     else this.toggle(line);
   }
   private openTree(tree: ProjectWorktree): void {
     const entry = this.catalog.tree(tree.key);
     if (!entry) return;
-    if (entry.agents.length) this.chooseAgent(entry.agents[0]); else this.chooseTree(entry.key);
+    const agents = this.agentRepositories ? tree.agents : entry.agents;
+    if (agents.length) this.chooseAgent(agents[0]); else this.chooseTree(entry.key);
   }
   private chooseAgent(agent:ProjectAgent):void {
-    this.catalog.browser.selectedTree = ''; this.catalog.browser.selectedSession = agent.row.key();
+    this.outlineBrowser.selectedTree = ''; this.outlineBrowser.selectedSession = agent.row.key();
     this.onSession(agent.row);
   }
   private chooseTree(key:string):void {
     if (!this.catalog.tree(key)) return;
-    this.catalog.browser.selectedSession = ''; this.catalog.browser.selectedTree = key;
+    this.outlineBrowser.selectedSession = ''; this.outlineBrowser.selectedTree = key;
     this.onTree(key);
   }
   private age(agent:ProjectAgent):string {
@@ -484,7 +495,7 @@ export struct ProjectsPage {
     })
       .accessibilityGroup(true).accessibilityText([agent.row.title,agent.preview,tr(agent.stateLabel),this.agentContext(agent,paneName,starter),agent.todoTitle,this.age(agent)].filter((v:string) => !!v).join(' · '))
       .accessibilitySelected(this.adjacentItem === 'session:' + agent.row.key())
-      .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id('projects.inline_session')
+      .onClick(() => this.chooseAgent(agent)).bindContextMenu(this.actionMenu(treeKey),ResponseType.LongPress).id(this.agentRepositories ? 'agents.repo.session' : 'projects.inline_session')
   }
   @Builder foldChevron(open:boolean) {
     SymbolGlyph(open ? Symbols.down : Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
@@ -550,7 +561,8 @@ export struct ProjectsPage {
         line.kind === 'host' ? this.hostSummary(line.project.hostKey) : this.count(line.count,'project_sessions'),
         tr(line.open ? 'agent_collapse' : 'agent_expand')]
         .filter((part: string) => !!part).join(' · '))
-      .onClick(() => this.openHeader(line)).id(line.kind === 'host' ? 'projects.host' : 'projects.project')
+      .onClick(() => this.openHeader(line)).id(this.agentRepositories ? (line.kind === 'host' ? 'agents.repo.machine' : 'agents.project') :
+        line.kind === 'host' ? 'projects.host' : 'projects.project')
   }
   private treeSummary(line:ProjectLine):string {
     return [line.tree!.main ? tr('project_checkout_primary') : '', this.treeDetail(line.tree!),
@@ -594,7 +606,7 @@ export struct ProjectsPage {
         .accessibilityText([line.tree!.title,this.treeDetail(line.tree!),line.tree!.cwd,this.count(line.count,'project_sessions'),
           this.treeRowFolds(line) ? tr(line.open ? 'agent_collapse' : 'agent_expand') : ''].filter((v:string) => !!v).join(' · '))
         .onClick(() => { if (this.treeRowFolds(line)) this.toggle(line); else this.openTree(line.tree!); })
-        .bindContextMenu(this.actionMenu(line.tree!.key),ResponseType.LongPress).id('projects.worktree')
+        .bindContextMenu(this.actionMenu(line.tree!.key),ResponseType.LongPress).id(this.agentRepositories ? 'agents.worktree' : 'projects.worktree')
       if (line.tree!.source && !this.filteringText() && (line.count || line.tree!.children.length)) Button({type:ButtonType.Normal}) { this.foldChevron(line.open) }
         .width(44*this.outlineControlScale()).height(44*this.outlineControlScale()).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr(line.open ? 'agent_collapse' : 'agent_expand'))
         .onClick(() => this.toggle(line)).id('projects.fold')
@@ -610,7 +622,7 @@ export struct ProjectsPage {
       if (!this.filteringText() || line.kind === 'more') this.foldChevron(line.kind !== 'more' && line.open)
     }.width('100%').constraintSize({minHeight:44*this.outlineControlScale()}).padding({left:this.treeInset(line.level),right:PhoneStyle.inset})
       .accessibilityGroup(true).onClick(() => {
-        if (line.kind === 'more') this.catalog.browser.showAll(line.tree!.key);
+        if (line.kind === 'more') this.outlineBrowser.showAll(line.tree!.key);
         else if (!this.filteringText()) this.toggle(line);
       })
       .id(line.kind === 'children' ? 'projects.children' : line.kind === 'more' ? 'projects.show_all' : 'projects.idle_agents')
@@ -625,6 +637,21 @@ export struct ProjectsPage {
     else if (line.kind === 'session') this.agentCell(line.agent!,line.tree!.key,line.level,line.paneName,line.starter)
     else this.subsidiaryLine(line)
   }
+  @Builder outlineItems() {
+    Repeat(this.lines).each((entry:RepeatItem<ProjectLine>) => {
+      ListItem() {
+        Column() {
+          this.lineContent(entry.item)
+        }.width('100%').alignItems(HorizontalAlign.Start)
+          .backgroundColor(entry.item.kind === 'host' || entry.item.kind === 'idle-projects' ? Color.Transparent :
+            entry.item.agent && this.adjacentItem === 'session:' + entry.item.agent!.row.key() ||
+            entry.item.kind === 'tree' && this.adjacentItem === 'tree:' + entry.item.tree!.key ? Colors.selection : Colors.surface)
+          .borderRadius({topLeft:entry.item.first ? PhoneStyle.cardRadius : 0,topRight:entry.item.first ? PhoneStyle.cardRadius : 0,
+            bottomLeft:entry.item.last ? PhoneStyle.cardRadius : 0,bottomRight:entry.item.last ? PhoneStyle.cardRadius : 0})
+          .margin({bottom:entry.item.last && this.lines[entry.index+1]?.kind !== 'host' ? 12 : 0})
+      }
+    }).key((line:ProjectLine) => line.key).virtualScroll({totalCount:this.lines.length,reusable:false})
+  }
   @Builder repositoryList() {
     Column() {
       if (this.page === 'projects' && (!this.compact || this.searchMode)) this.searchAndFilter()
@@ -633,19 +660,7 @@ export struct ProjectsPage {
         if (this.page === 'project' && this.project()) ListItem() {
           PhoneSectionTitle({ text: this.project()!.machine, trailing: this.count(this.project()!.trees.length, 'project_worktrees') })
         }.id('projects.repository_summary')
-        Repeat(this.lines).each((entry:RepeatItem<ProjectLine>) => {
-          ListItem() {
-            Column() {
-              this.lineContent(entry.item)
-            }.width('100%').alignItems(HorizontalAlign.Start)
-              .backgroundColor(entry.item.kind === 'host' || entry.item.kind === 'idle-projects' ? Color.Transparent :
-                entry.item.agent && this.adjacentItem === 'session:' + entry.item.agent!.row.key() ||
-                entry.item.kind === 'tree' && this.adjacentItem === 'tree:' + entry.item.tree!.key ? Colors.selection : Colors.surface)
-              .borderRadius({topLeft:entry.item.first ? PhoneStyle.cardRadius : 0,topRight:entry.item.first ? PhoneStyle.cardRadius : 0,
-                bottomLeft:entry.item.last ? PhoneStyle.cardRadius : 0,bottomRight:entry.item.last ? PhoneStyle.cardRadius : 0})
-              .margin({bottom:entry.item.last && this.lines[entry.index+1]?.kind !== 'host' ? 12 : 0})
-          }
-        }).key((line:ProjectLine) => line.key).virtualScroll({totalCount:this.lines.length,reusable:false})
+        this.outlineItems()
         if (!this.lines.length && !this.catalog.loading) ListItem() {
           this.message(tr(this.catalog.browser.query || this.catalog.browser.machine ? 'no_results' :
             this.catalog.partial ? 'project_catalog_unavailable' : 'project_empty'))
@@ -837,7 +852,18 @@ export struct ProjectsPage {
       .padding({left:PhoneStyle.page,right:PhoneStyle.page,top:15,bottom:6}).id('shell.page_title')
   }
   build() {
-    Column() {
+    if (this.agentRepositories) {
+      ListItemGroup() {
+        this.outlineItems()
+        if (!this.lines.length) ListItem() {
+          if (this.catalog.loading) LoadingProgress().width(28).height(28).margin(12)
+          else this.message(tr(this.agentFilterActive ? 'no_results' : this.catalog.partial ? 'project_catalog_unavailable' : 'project_empty'))
+        }
+      }.width('100%').id('agents.repositories')
+        .bindSheet($$this.editorShown,this.editorSheet(),{height:SheetSize.LARGE,showClose:false,dragBar:false,
+          onWillDismiss:(dismiss:DismissSheetAction) => { if (!this.editor.busy) dismiss.dismiss(); },
+          onDisappear:() => { this.editor.close();this.editedTree=undefined; }})
+    } else Column() {
       if (this.compact && this.detailTree) this.spaceBar(this.detailTree!)
       if (this.catalog.loading && !this.catalog.projects.length) LoadingProgress().width(29).height(29).margin(14)
       if (this.catalog.startError) this.message(tr('project_start_unavailable'))

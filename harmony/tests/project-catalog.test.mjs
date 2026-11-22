@@ -717,9 +717,10 @@ test('one mounted tab header keeps its arrow, spoken action and handler in sync 
   const source=readFileSync(new URL('../entry/src/main/ets/components/ProjectsPage.ets',import.meta.url),'utf8');
   const functions=['tabOpen','toggleTab','tabDescription'].map(name=>
     source.match(new RegExp('^  private '+name+'\\([\\s\\S]+?^  \\}', 'm'))[0]);
+  const browser=source.match(/^  private get outlineBrowser\([\s\S]+?^  \}/m)[0];
   const getter=source.match(/^  @Computed get tabRows\([\s\S]+?^  \}/m)[0].replace('@Computed ','');
   const query=source.match(/^  private filteringText\([^\n]+$/m)[0];
-  const Page=new Function('tr','return '+stripTypeScriptTypes('class Page {\n'+[getter,query,...functions].join('\n')+'\n}'))(
+  const Page=new Function('tr','return '+stripTypeScriptTypes('class Page {\n'+[browser,getter,query,...functions].join('\n')+'\n}'))(
     key=>key==='project_agent_count'?'{count} agents':key);
   const state=new ProjectBrowserState(), received=[];
   const pane=id=>session(id,{cwd:'/repo',state:'working',space_kind:'herdr',space_id:'w1',slot_id:'w1:t4',slot_name:'release',agent:'claude'});
@@ -750,4 +751,49 @@ test('one mounted tab header keeps its arrow, spoken action and handler in sync 
   assert.equal((builder.match(/\.id\('projects\.tab'\)/g)||[]).length,1);
   assert.match(builder,/onClick\(\(\) => this\.toggleTab\(key\)\)/);
   assert.match(builder,/rotate\(\{angle:this\.tabOpen\(key\)/);
+});
+
+test('Agents uses only its admitted inventory and exposes registered workspaces of known, admitted owners', () => {
+  const parent=workspace('main',{is_main:true}), child=workspace('feature',{parent_source_id:'main'}),
+    idle=workspace('demo',{title:'Demo release',source:'paseo',pinned_at:'2026-02-02T09:00:00Z'}),
+    other=workspace('not-registered',{source:'herdr'}), hidden=workspace('private-preview');
+  hidden.group='other';
+  const duplicate=session('pinned',{state:'offline',space_kind:'paseo',workspace_id:'demo'});
+  const foreign=session('foreign',{state:'offline',space_kind:'paseo',workspace_id:'demo'});foreign.group='other';
+  const active=session('body-match',{state:'working',workspace_id:'feature',space_kind:'orca'});
+  const archived=session('archived',{state:'working',archived:true}), offline=session('other-offline',{state:'offline'});
+  const model={scope:()=>'home',directoryMachines:[machine]};
+  const catalog=new ProjectCatalog(), raw=[parent,child,idle,other,hidden];
+  catalog.ownerScope='home';catalog.snapshots=new Map([['home',raw]]);
+  catalog.projects=projectDirectory(raw,[active,archived,offline,duplicate,foreign],[machine]);
+  const canonical=catalog.projects.flatMap(p=>p.trees.map(t=>t.key));
+  const visible=(query,empty,admission=()=>true,rows=[active,archived,offline,duplicate,foreign])=>
+    catalog.agentDirectory(model,rows,empty,query,admission);
+  const trees=projects=>projects.flatMap(p=>p.trees);
+  const agents=projects=>trees(projects).flatMap(t=>t.agents.map(a=>a.row.key()));
+  assert.deepEqual(agents(visible('',true)).sort(),[active.key(),duplicate.key()].sort());
+  assert.deepEqual(trees(visible('',true)).map(t=>t.sourceId).sort(),['main','feature','demo'].sort());
+  assert.deepEqual(trees(visible('release',true,()=>true,[])).map(t=>t.sourceId),['demo']);
+  assert.deepEqual(visible('nonexistent',true,()=>true,[]),[]);
+  assert.deepEqual(visible('',true,(g,m,id)=>g==='home' && m==='other' && id==='mac'),[]);
+  const filtered=visible('from transcript',false,()=>true,[active]);
+  assert.deepEqual(trees(filtered).map(t=>t.sourceId).sort(),['main','feature'].sort());
+  const state=new ProjectBrowserState();state.query='from transcript';
+  assert.deepEqual(projectOutline(filtered,state,'','','',()=>false,true,true)
+    .filter(l=>l.kind==='session').map(l=>l.agent.row.key()),[active.key()]);
+  assert.deepEqual(catalog.projects.flatMap(p=>p.trees.map(t=>t.key)),canonical);
+  model.scope=()=>'switched';assert.deepEqual(visible('',true,()=>true,[]),[]);
+});
+
+test('Agents repository routes stay on the owning stack and refuse stale targets', () => {
+  const source=readFileSync(new URL('../entry/src/main/ets/pages/Index.ets',import.meta.url),'utf8');
+  const method=source.match(/^  private openAgentRepositoryRoute\([\s\S]+?^  \}/m)[0];
+  const Page=new Function('return '+stripTypeScriptTypes('class Page {'+method+'}'))();
+  const calls=[], tree={key:'workspace',canStart:true};
+  const page=Object.assign(new Page(),{model:{section:1},projectCatalog:{tree:k=>k==='workspace'?tree:undefined,
+    projects:[{key:'repository',hostKey:'the-owner'}]},pushPlace:(name,key)=>calls.push([name,key]),prepareAgent:(_,t)=>calls.push(['start',t.key])});
+  for (const [name,key] of [['project','repository'],['project_tree','workspace'],['start','workspace'],['machine_projects','the-owner'],
+    ['project_tree','repository'],['project','workspace'],['machine_projects','other-owner']]) page.openAgentRepositoryRoute(name,key);
+  page.model.section=4;page.openAgentRepositoryRoute('project','repository');
+  assert.deepEqual(calls,[['project','repository'],['project_tree','workspace'],['start','workspace'],['machine_projects','the-owner']]);
 });

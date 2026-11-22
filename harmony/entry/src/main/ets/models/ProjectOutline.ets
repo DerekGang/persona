@@ -93,10 +93,10 @@ export function projectSearchAgents(project:PersonaProject,query:string): Projec
 }
 
 export function projectOutline(projects:PersonaProject[], state:ProjectBrowserState, focus:string = '', hostKey:string = '',
-  quick:string = '', muted:(agent:ProjectAgent) => boolean = () => false): ProjectLine[] {
+  quick:string = '', muted:(agent:ProjectAgent) => boolean = () => false, admittedRows: boolean = false, reveal: boolean = false): ProjectLine[] {
   const result:ProjectLine[] = [];
   const query = focus || hostKey ? '' : state.query.trim().toLocaleLowerCase();
-  const filtering = !!query || !!quick;
+  const filtering = !!query || !!quick || reveal;
   const groups = projectHosts(focus ? projects.filter((p:PersonaProject) => p.key === focus) : projects);
   const matches = new Map<string,ProjectMatch>();
   for (const host of groups) {
@@ -106,7 +106,7 @@ export function projectOutline(projects:PersonaProject[], state:ProjectBrowserSt
       // their directories for explicit searches and management, and enter the tree through a session.
       if (!focus && !hostKey && !filtering && !p.sessionCount &&
         !p.trees.some((tree:ProjectWorktree) => tree.source === 'orca' || tree.source === 'paseo')) return false;
-      const match = new ProjectMatch(p,query,quick,muted); matches.set(p.key,match);
+      const match = new ProjectMatch(p,admittedRows ? '' : query,admittedRows ? '' : quick,muted); matches.set(p.key,match);
       return match.all || !!match.visible.size;
     });
     if (!visible.length) continue;
