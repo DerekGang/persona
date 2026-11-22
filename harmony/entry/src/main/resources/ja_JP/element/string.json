@@ -101,6 +101,18 @@
       "value": "検索"
     },
     {
+      "name": "agents_search_prompt",
+      "value": "スペース、タブ、セッション、内容を検索"
+    },
+    {
+      "name": "agent_source_lark_group",
+      "value": "Larkグループ"
+    },
+    {
+      "name": "agent_grouping_current",
+      "value": "グループ：{group}"
+    },
+    {
       "name": "search_sessions",
       "value": "セッションを検索"
     },

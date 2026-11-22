@@ -101,6 +101,18 @@
       "value": "Search"
     },
     {
+      "name": "agents_search_prompt",
+      "value": "Search spaces, tabs, sessions, content"
+    },
+    {
+      "name": "agent_source_lark_group",
+      "value": "Lark Group"
+    },
+    {
+      "name": "agent_grouping_current",
+      "value": "Grouping: {group}"
+    },
+    {
       "name": "search_sessions",
       "value": "Search sessions"
     },

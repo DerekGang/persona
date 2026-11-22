@@ -40,6 +40,7 @@ export interface CoreAgentListProjection {
   filter_counts?: Record<string, Object>;
   groups: CoreAgentListGroup[];
   unread_shown: string[];
+  filtered?: string[];
   quiet_title?: string | null;
 }
 export interface CoreSortInput {

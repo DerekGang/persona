@@ -189,7 +189,7 @@ export class AgentWorkspace {
       if (!this.loadCurrent(client, revision)) return;
       const saved = Wire.parse(values[0]);
       if (!this.hubModeLoaded) { this.currentHubOnly = values[1] === 'current'; this.hubModeLoaded = true; }
-      this.quickFilter = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting'].includes(Wire.text(saved, 'quick')) ? Wire.text(saved, 'quick') :
+      this.quickFilter = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting', 'feishu', 'terminal'].includes(Wire.text(saved, 'quick')) ? Wire.text(saved, 'quick') :
         (Wire.text(saved, 'quick') === 'needs_you' ? 'needsYou' : 'all');
       this.groupingMode = ['state', 'machine', 'space'].includes(Wire.text(saved, 'grouping')) ? Wire.text(saved, 'grouping') : 'state';
       const savedMachine = Wire.text(saved, 'machine');
@@ -281,7 +281,7 @@ export class AgentWorkspace {
   }
 
   setQuickFilter(value: string): void {
-    if (!['all', 'needsYou', 'working', 'unread', 'backgroundWaiting'].includes(value)) return;
+    if (!['all', 'needsYou', 'working', 'unread', 'backgroundWaiting', 'feishu', 'terminal'].includes(value)) return;
     this.releaseFreeze(); this.quickFilter = value; this.rebuild(); this.refreezeAfterFilter(); this.saveViewLater();
   }
 
@@ -812,7 +812,7 @@ export class AgentWorkspace {
         return current;
       }),
       coreSettings: { 'sort': 'state', 'folded': this.folded, 'expanded_idle': this.expandedIdle, 'expanded_quiet': this.expandedQuiet,
-        'compact': false, 'history': this.history, 'include_filter_counts': true, 'now': new Date().toISOString(), 'held': this.heldSession },
+        'compact': false, 'history': this.history, 'include_filter_counts': true, 'include_source_filters': true, 'now': new Date().toISOString(), 'held': this.heldSession },
       preferencesFor: (row: AgentListRow): AgentListPreferences => this.preferencesFor(row.source as ResourceRow),
       machineIdentity: (row: AgentListRow): string => this.machineIdentity(row.source as ResourceRow),
       machineName: (row: AgentListRow): string => {

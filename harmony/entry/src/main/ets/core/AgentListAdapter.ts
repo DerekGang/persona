@@ -9,10 +9,48 @@ export interface AgentListAdapter {
 /** The production adapter has one sorter: the shared Rust core. */
 export class CoreAgentListAdapter implements AgentListAdapter {
   project(input: AgentListInput): CoreAgentListProjection {
-    const projected = JSON.parse(native.coreProjectSort(JSON.stringify(coreAgentSortInput(input)))) as CoreAgentListProjection;
+    if (!input.coreSettings['include_source_filters']) return this.sort(coreAgentSortInput(input));
+    const sourceFilter = input.quick === 'feishu' || input.quick === 'terminal';
+    const baseInput = coreAgentSortInput({ ...input, quick: 'all' });
+    baseInput.settings['inventory'] = true;
+    const base = this.sort(baseInput);
+    if (!base.filtered) throw new Error('missing_core_inventory');
+    const included = new Set(base.filtered), kept = new Set(input.kept);
+    const counts: Record<string, Object> = { ...base.filter_counts, feishu: 0, terminal: 0 };
+    const selected: Record<string, Object>[] = [];
+    for (const row of input.rows) {
+      const id = ['app_hub_group', 'manager', 'machine_id', 'session_id'].map((field) => rowText(row.raw, field)).filter(Boolean).join('|');
+      if (!included.has(id)) continue;
+      const origin = agentPaneSource(rowText(row.raw, 'pane_id'));
+      if (origin && row.raw['nested_subtask'] !== true) counts[origin] = Number(counts[origin]) + 1;
+      if (sourceFilter && (origin === input.quick || kept.has(id))) selected.push(row.raw);
+    }
+    let shown = base;
+    if (sourceFilter) {
+      baseInput.sessions = selected;
+      shown = this.sort(baseInput);
+    } else if (input.quick !== 'all') {
+      baseInput.settings['quick'] = input.quick === 'needs_you' ? 'needsYou' : input.quick;
+      shown = this.sort(baseInput);
+    }
+    shown.filter_counts = counts;
+    return shown;
+  }
+
+  private sort(input: CoreSortInput): CoreAgentListProjection {
+    const projected = JSON.parse(native.coreProjectSort(JSON.stringify(input))) as CoreAgentListProjection;
     if (!projected || !Array.isArray(projected.groups) || !Array.isArray(projected.unread_shown) || !projected.counts) throw new Error('invalid_core_projection');
     return projected;
   }
+}
+
+// Session.source on iPhone classifies the native pane identity, independently of the Agent provider.
+export function agentPaneSource(pane: string): string {
+  if (!pane) return '';
+  const marker = pane.indexOf(':');
+  const host = marker < 0 ? '' : pane.slice(0, marker);
+  if (host === 'botmux') return 'feishu';
+  return host === 'orca' ? '' : 'terminal';
 }
 
 export function coreAgentSortInput(input: AgentListInput): CoreSortInput {

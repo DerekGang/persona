@@ -101,6 +101,18 @@
       "value": "搜索"
     },
     {
+      "name": "agents_search_prompt",
+      "value": "搜索空间、标签、会话、内容"
+    },
+    {
+      "name": "agent_source_lark_group",
+      "value": "飞书群"
+    },
+    {
+      "name": "agent_grouping_current",
+      "value": "分组：{group}"
+    },
+    {
       "name": "search_sessions",
       "value": "搜索会话"
     },

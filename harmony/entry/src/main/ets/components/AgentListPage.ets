@@ -7,6 +7,7 @@ import { AgentWorkspace, AgentWorkspaceGroup } from '../models/AgentWorkspace';
 import { ResourceRow, Wire } from '../models/Wire';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { Tokens } from '../design/Tokens';
+import { PhoneStyle } from '../design/PhoneStyle';
 import { Colors } from '../design/Colors';
 import { ButtonStyles, SelectStyles } from '../design/Controls';
 import { Symbols } from '../design/Symbols';
@@ -15,8 +16,8 @@ import { nativeEnvironment, NativeEnvironment } from '../platform/NativeEnvironm
 import { nativeSheetInset } from '../platform/NativeInsets';
 import { DeviceLook, deviceLook } from '../models/DeviceLook';
 
-const QUICK_FILTERS: string[] = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting'];
-const QUICK_LABELS: string[] = ['all', 'needs_you', 'agent_group_unread', 'working', 'agent_group_background'];
+const QUICK_FILTERS: string[] = ['all', 'needsYou', 'unread', 'working', 'backgroundWaiting', 'feishu', 'terminal'];
+const QUICK_LABELS: Record<string,string> = { 'all':'all', 'needsYou':'needs_you', 'unread':'agent_group_unread', 'working':'working', 'backgroundWaiting':'agent_group_background', 'feishu':'agent_source_lark_group', 'terminal':'terminal' };
 const GROUPINGS: string[] = ['state', 'machine', 'space'];
 const GROUP_LABELS: Record<string, string> = {'state': 'agent_group_state', 'machine': 'agent_filter_machine', 'space': 'agent_group_space'};
 const STATE_LABELS: Record<string, string> = {'pinned': 'agent_group_pinned', 'state/needs': 'needs_you',
@@ -101,6 +102,8 @@ export struct AgentListPage {
   private retireDecisions(): void { clearTimeout(this.decisionQueued); this.decisions.clear(); }
 
   @Local searchOpen: boolean = false;
+  @Local searchEditing: boolean = false;
+  private searchField: SearchController = new SearchController();
   private agentScroller: Scroller = new Scroller();
   private pullY: number = -1;
   private pullX: number = 0;
@@ -290,6 +293,7 @@ export struct AgentListPage {
   }
 
   private openRow(row: ResourceRow): void {
+    if (this.compactRoot) { this.searchField.stopEditing(); this.resetSearchReveal(); }
     this.workspace.selectRow(row); this.onOpen(row);
   }
 
@@ -585,20 +589,24 @@ export struct AgentListPage {
 
   private searchVisible(): boolean { return !this.compactRoot || this.searchOpen || !!this.workspace.search; }
   private resetSearchReveal(): void {
-    this.searchOpen = false; this.focusSearch = false; this.pullY = -1; this.revealedDuringPull = false;
+    this.searchOpen = false; this.searchEditing = false; this.focusSearch = false; this.pullY = -1; this.revealedDuringPull = false;
   }
   private trackPull(event: TouchEvent): void {
     if (event.type === TouchType.Down) this.revealedDuringPull = false;
-    if (!this.compactRoot || !this.active || this.searchVisible()) return;
+    if (!this.compactRoot || !this.active || this.searchEditing || this.workspace.search) return;
     if (event.type === TouchType.Down) {
       let top = false;
       try { top = this.agentScroller.currentOffset().yOffset <= 1; } catch (_) { }
-      if (top && event.touches.length === 1) {
+      if ((top || this.searchOpen) && event.touches.length === 1) {
         this.pullX = event.touches[0].windowX; this.pullY = event.touches[0].windowY;
       } else this.pullY = -1;
     } else if (event.type === TouchType.Move && event.touches.length === 1 && this.pullY >= 0) {
       const dy = event.touches[0].windowY - this.pullY, dx = Math.abs(event.touches[0].windowX - this.pullX);
-      if (dy >= 48 && dy > 1.5 * dx) { this.revealedDuringPull = true; this.searchOpen = true; this.pullY = -1; }
+      if (Math.abs(dy) >= 48 && Math.abs(dy) > 1.5 * dx) {
+        if (dy > 0 && !this.searchOpen) { this.revealedDuringPull = true; this.searchOpen = true; }
+        else if (dy < 0 && this.searchOpen) this.searchOpen = false;
+        this.pullY = -1;
+      }
     } else this.pullY = -1;
   }
   private refreshAgents(): void {
@@ -609,10 +617,19 @@ export struct AgentListPage {
       this.refreshing = false;
     });
   }
+  @Computed get shownQuickFilters(): string[] {
+    const counts = this.workspace.filterCounts;
+    const known = !this.workspace.loading && Object.keys(counts).length > 0;
+    return QUICK_FILTERS.filter((key: string) => !known || key === 'all' || key === this.workspace.quickFilter || Wire.number(counts,key)>0);
+  }
+  private quickHeight(): number { return PhoneStyle.formSize(44,57.7,this.environment.fontScale); }
+
   @Builder searchControl() {
-    Search({ value: this.workspace.search, placeholder: tr('search_sessions') }).maxFontScale(Tokens.interfaceFontMaxScale)
-      .height(Math.max(38, Tokens.lineHeight * Math.min(this.environment.fontScale,Tokens.interfaceScaleFor(17)) + 10))
-      .textFont({ size: Tokens.body }).placeholderFont({ size: Tokens.body }).caretStyle({ color: Colors.action })
+    Search({value:this.workspace.search,placeholder:tr('agents_search_prompt'),controller:this.searchField})
+      .maxFontScale(Tokens.interfaceFontMaxScale).height(44)
+      .textFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)}).caretStyle({color:Colors.action})
+      .onFocus(() => { if (this.compactRoot) { this.searchEditing = true; this.searchOpen = true; } })
+      .onBlur(() => { this.searchEditing = false; })
       .onChange((value: string) => { if (this.compactRoot) this.searchOpen = true; this.workspace.setSearch(value); })
       .onAppear(() => {
         if (!this.focusSearch) return;
@@ -620,45 +637,61 @@ export struct AgentListPage {
         setTimeout(() => { if (this.active && this.searchOpen) this.getUIContext().getFocusController().requestFocus('agents.search'); }, 0);
       }).id('agents.search')
   }
+  @Builder groupingMenu() {
+    Menu() {
+      ForEach(GROUPINGS,(key:string,index:number) => {
+        MenuItem({content:tr(GROUP_LABELS[key])}).selected(key===this.workspace.groupingMode).selectIcon(true)
+          .onClick(() => { this.selectGrouping(index); this.searchOpen = true; this.agentScroller.scrollToIndex(0); }).id('agents.grouping.'+key)
+      },(key:string)=>key)
+      MenuItem({content:tr('agent_filters_title')}).onClick(()=>this.filterSheetOpen=true).id('agents.grouping.filters')
+    }
+  }
   @Builder filterControl() {
-    Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.filter).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('agent_filter_button'))
-      .onClick(() => this.filterSheetOpen = true).id('agents.filter')
+    if (this.compactRoot) {
+      Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.filter).fontSize(Tokens.interfaceFontVp(15,this.environment.fontScale)).fontColor([Colors.ink]) }
+        .width(this.quickHeight()).height(this.quickHeight()).padding(0).backgroundColor(Color.Transparent)
+        .accessibilityText(tr('agent_grouping_current').replace('{group}',tr(GROUP_LABELS[this.workspace.groupingMode])))
+        .bindMenu(this.groupingMenu).id('agents.grouping.quick')
+    } else {
+      Button({ type: ButtonType.Circle }) { SymbolGlyph(Symbols.filter).fontSize(Tokens.symbolFont).fontColor([Colors.link]) }.attributeModifier(ButtonStyles.chrome).accessibilityText(tr('agent_filter_button'))
+        .onClick(() => this.filterSheetOpen = true).id('agents.filter')
+    }
   }
   @Builder filters() {
     if (!this.rail) Column({ space: 6 }) {
       if (this.searchVisible()) {
         if (this.compactRoot) Row({space: 6}) {
           Column() { this.searchControl() }.layoutWeight(1)
-          Button(tr('cancel'), {type:ButtonType.Normal}).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).backgroundColor(Color.Transparent)
-            .padding({left:4,right:4}).onClick(() => { this.workspace.setSearch(''); this.resetSearchReveal(); }).id('agents.search_cancel')
+          if (this.searchEditing) Button(tr('cancel'), {type:ButtonType.Normal}).fontSize(15).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.link).backgroundColor(Color.Transparent)
+            .padding({left:4,right:4}).onClick(() => { this.searchField.stopEditing(); this.workspace.setSearch(''); this.resetSearchReveal(); }).id('agents.search_cancel')
         }.width('100%')
         else this.searchControl()
       }
       Row({ space: 6 }) {
         Scroll() {
           Row({ space: 3 }) {
-            ForEach(QUICK_FILTERS, (key: string, index: number) => {
+            ForEach(this.shownQuickFilters, (key: string) => {
               Button({ type: ButtonType.Capsule }) {
                 Row({space:4}) {
-                  if (key !== 'all') Circle().width(5).height(5)
+                  if (key !== 'all' && key !== 'feishu' && key !== 'terminal') Circle().width(5).height(5)
                     .fill(key === 'needsYou' ? Colors.needs : key === 'unread' ? Colors.unread : key === 'working' ? Colors.working : Colors.secondary)
-                  Text(tr(QUICK_LABELS[index])).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale)
+                  Text(tr(QUICK_LABELS[key])).fontSize(14).maxFontScale(Tokens.navigationTextMaxScale)
                     .fontWeight(this.workspace.quickFilter === key ? FontWeight.Bold : FontWeight.Normal)
                     .fontColor(this.workspace.quickFilter === key ? Colors.link : Colors.ink).maxLines(1)
                   if (Wire.number(this.workspace.filterCounts,key)>0) Text(String(Wire.number(this.workspace.filterCounts,key)))
                     .fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.secondary)
                 }
               }
-                .height(Math.max(32, 23 * Math.min(this.environment.fontScale, Tokens.navigationTextMaxScale))).padding({ left: 11, right: 11 })
+                .height(this.quickHeight()).constraintSize({minWidth:this.quickHeight()}).padding({left:10,right:10})
                 .backgroundColor(this.workspace.quickFilter === key ? Colors.selection : Colors.control)
-                .accessibilityText(tr(QUICK_LABELS[index]))
+                .accessibilityText(tr(QUICK_LABELS[key]))
                 .accessibilityDescription(Wire.number(this.workspace.filterCounts,key)>0 ? String(Wire.number(this.workspace.filterCounts,key)) : '')
                 .accessibilitySelected(this.workspace.quickFilter === key)
-                .responseRegion({ x: 0, y: -6, width: '100%', height: Math.max(44, 23 * Math.min(this.environment.fontScale, Tokens.navigationTextMaxScale) + 12) })
+                .responseRegion({x:0,y:0,width:'100%',height:this.quickHeight()})
                 .onClick(() => { if (this.workspace.quickFilter !== key) this.workspace.setQuickFilter(key); }).id('agents.quick.' + key)
             }, (key: string) => key)
-          }.padding({left:1,right:1})
-        }.layoutWeight(1).constraintSize({ minHeight: 44 }).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
+          }.padding({left:4,right:4})
+        }.layoutWeight(1).height(this.quickHeight()).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off)
           .id('agents.quick')
         if (this.compactRoot && !this.searchVisible()) {
           Button({type:ButtonType.Circle}) {
