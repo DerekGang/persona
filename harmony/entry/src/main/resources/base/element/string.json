@@ -6237,6 +6237,34 @@
       "value": "Handle in Terminal on Computer"
     },
     {
+      "name": "decision_allow_session",
+      "value": "Always Allow in Session"
+    },
+    {
+      "name": "decision_scope_reads",
+      "value": "All reads in this directory in this conversation"
+    },
+    {
+      "name": "decision_scope_edits",
+      "value": "All file edits in this directory in this conversation"
+    },
+    {
+      "name": "decision_scope_commands",
+      "value": "All commands in this conversation"
+    },
+    {
+      "name": "decision_scope_tool",
+      "value": "All uses of this tool in this conversation"
+    },
+    {
+      "name": "decision_scope_custom",
+      "value": "The approved scope remains allowed in this conversation"
+    },
+    {
+      "name": "decision_other_choice",
+      "value": "Other answer…"
+    },
+    {
       "name": "phone_agent_plan_approval",
       "value": "Plan ready for review"
     },

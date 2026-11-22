@@ -6237,6 +6237,34 @@
       "value": "コンピューターのターミナルで対応"
     },
     {
+      "name": "decision_allow_session",
+      "value": "このセッションでは常に許可"
+    },
+    {
+      "name": "decision_scope_reads",
+      "value": "この会話中、このディレクトリ内のすべての読み取り"
+    },
+    {
+      "name": "decision_scope_edits",
+      "value": "この会話中、このディレクトリ内のすべてのファイル編集"
+    },
+    {
+      "name": "decision_scope_commands",
+      "value": "この会話内のすべてのコマンド"
+    },
+    {
+      "name": "decision_scope_tool",
+      "value": "この会話内でのこのツールのすべての呼び出し"
+    },
+    {
+      "name": "decision_scope_custom",
+      "value": "許可した範囲はこの会話中、引き続き許可されます"
+    },
+    {
+      "name": "decision_other_choice",
+      "value": "その他の回答…"
+    },
+    {
       "name": "phone_agent_plan_approval",
       "value": "プランの承認待ち"
     },

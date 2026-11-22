@@ -19,7 +19,8 @@ registerHooks({
 });
 
 const {
-  agentPendingCards, decodeInteractionDecision, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
+  agentPendingCards, interactionCardAgent, interactionPermissionTool, interactionPermissionSubject, interactionQuestionHeader, interactionSessionAllowance, interactionAllowanceScope,
+  decodeInteractionDecision, interactionCanDefer, interactionCanSubmit, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
   interactionPermissionFieldPlaceholder, interactionPlanTitle, interactionQuestionOptions, interactionResolution, interactionScreenOptions,
   validateInteractionElicitation
@@ -182,4 +183,55 @@ test('the inline approval opens its native plan sheet from a stable card and clo
   assert.match(form,/id\('interaction.card'\)\s*\.bindSheet\(\$\$this\.fullPlan,this\.planReader\(\),\{height:SheetSize\.LARGE/);
   assert.match(form,/this\.fullPlan=false\)\.id\('interaction.task.reader.close'\)/);
   assert.match(form,/aboutToDisappear\(\): void \{ this\.fullPlan=false;/);
+});
+
+test('agent permission cards show their tool input and send session approval only where the hub honors it', () => {
+  const permission=(data={})=>decision({id:'photo-check',kind:'permission',session_id:'photo',tool_name:'Bash',
+    tool_input:{command:'python3 -m unittest discover',description:'Run checks'},...data});
+  const current=permission();
+  assert.equal(interactionPermissionSubject(current),'python3 -m unittest discover');
+  assert.equal(interactionPermissionTool(permission({tool_title:'Test runner'})),'Test runner');
+  assert.equal(interactionPermissionSubject(permission({summary:'Run project tests'})),'Run project tests');
+  assert.equal(interactionPermissionSubject(permission({tool_name:'Read',tool_input:{file_path:'README.md',description:'Read it'}})),'README.md');
+  assert.equal(interactionPermissionSubject(permission({tool_name:'Other',tool_input:{z:2,a:'p'}})),'a: p\nz: 2');
+  assert.equal(interactionPermissionSubject(permission({tool_name:'Other',fields:[{key:'password',secret:true}],tool_input:{password:'private',file:'doc'}})),'file: doc');
+  assert.equal(interactionPermissionSubject(permission({tool_name:'secret_run'})),'');
+  assert.equal(interactionSessionAllowance(current),true);
+  assert.equal(interactionAllowanceScope(current),'decision_scope_commands');
+  assert.deepEqual(interactionResolution(current,'allow_session',{}),{allow:true,always:true});
+  assert.deepEqual(interactionResolution(current,'approve',{always:true}),{allow:true});
+  assert.deepEqual(interactionResolution(current,'deny',{always:true}),{allow:false});
+  for (const data of [{always_honored:false},{session_id:''},{agent:'codex'}, {agent:'paseo'}, {tool_name:'secret_handoff',always_honored:true}]) {
+    const request=permission(data);
+    assert.equal(interactionSessionAllowance(request),false);
+    assert.throws(()=>interactionResolution(request,'allow_session',{}),/unsupported/);
+  }
+  assert.equal(interactionSessionAllowance(permission({agent:'codex',always_label:'This command'})),true);
+  assert.equal(interactionSessionAllowance(permission({agent:'codex',always_honored:true})),true);
+  assert.equal(interactionAllowanceScope(permission({always_label:'Only this workspace'})),'Only this workspace');
+  assert.equal(interactionAllowanceScope(permission({always_keys:['tool:Read(/tmp/**)']})),'decision_scope_reads');
+  const gated=permission({fields:[{key:'token',secret:true}]});
+  assert.throws(()=>interactionResolution(gated,'allow_session',{}),/required/);
+  assert.deepEqual(interactionResolution(gated,'allow_session',{token:'user-entered'}),{allow:true,always:true,values:{token:'user-entered'}});
+});
+
+test('agent cards use the actual question header and one-tap sends share the same admission checks as every reply',()=>{
+  const first=decision({id:'q',kind:'question',agent:'codex',questions:[{header:'Format',question:'Which format?',options:[{label:'JPEG',description:'Stable export'}]}]});
+  const field=first.fields[0],choice=interactionQuestionOptions(first,field.key)[0];
+  assert.equal(interactionQuestionHeader(first,field.key),'Format');
+  assert.equal(interactionCardAgent(first,{}),'Codex');
+  assert.equal(interactionCardAgent(decision({kind:'question',tool_name:'ask_user'}),{}),'Persona');
+  const src=readFileSync(new URL('../entry/src/main/ets/components/InteractionDecisionForm.ets',import.meta.url),'utf8');
+  const names=['sendPermission','chooseAgentAnswer'];
+  const methods=names.map(name=>src.match(new RegExp('^  private '+name+'\\([^]*?^  }','m'))[0]);
+  const Form=new Function('interactionSessionAllowance','return '+stripTypeScriptTypes('class Form {'+methods.join('\n')+'}'))(interactionSessionAllowance);
+  let admitted=false;const submitted=[],form=Object.assign(new Form(),{request:first,questionPage:0,
+    canRespond:()=>admitted,pickQuestion(f,c){this.pick=c.label;},submit(action){submitted.push(action);}});
+  form.chooseAgentAnswer(field,choice);assert.deepEqual(submitted,[]);
+  admitted=true;form.chooseAgentAnswer(field,choice);assert.equal(form.pick,'JPEG');assert.deepEqual(submitted,['answer']);
+  form.chooseAgentAnswer({...field,kind:'multi_choice'},choice);assert.deepEqual(submitted,['answer']);
+  form.request=decision({id:'a',kind:'permission',always_honored:false});
+  form.sendPermission('allow_session');assert.deepEqual(submitted,['answer']);
+  form.sendPermission('deny');assert.deepEqual(submitted,['answer','deny']);
+  admitted=false;form.sendPermission('allow');assert.deepEqual(submitted,['answer','deny']);
 });

@@ -6237,6 +6237,34 @@
       "value": "交给电脑上的终端处理"
     },
     {
+      "name": "decision_allow_session",
+      "value": "本会话总是允许"
+    },
+    {
+      "name": "decision_scope_reads",
+      "value": "这段对话中，这个目录里的所有读取操作"
+    },
+    {
+      "name": "decision_scope_edits",
+      "value": "这段对话中，这个目录里的所有文件编辑"
+    },
+    {
+      "name": "decision_scope_commands",
+      "value": "这段对话里的所有命令"
+    },
+    {
+      "name": "decision_scope_tool",
+      "value": "这段对话里对这个工具的所有调用"
+    },
+    {
+      "name": "decision_scope_custom",
+      "value": "批准的范围在这段对话中持续有效"
+    },
+    {
+      "name": "decision_other_choice",
+      "value": "其他回答…"
+    },
+    {
       "name": "phone_agent_plan_approval",
       "value": "计划等你审批"
     },

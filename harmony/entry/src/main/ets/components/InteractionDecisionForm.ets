@@ -9,6 +9,7 @@ import { AgentDecisionQueue, AgentDecisionCard } from '../models/AgentDecisionQu
 import { util } from '@kit.ArkTS';
 import {
   InteractionChoice, InteractionSchemaField, InteractionValidation,
+  interactionCardAgent, interactionQuestionHeader, interactionPermissionTool, interactionPermissionSubject, interactionSessionAllowance, interactionAllowanceScope,
   recordedPlanMode, interactionCanDefer, interactionCanSubmit, interactionToolName, interactionElicitationDefaults, interactionElicitationMessage,
   interactionElicitationMode, interactionElicitationSupported, interactionElicitationUrl, interactionHistoryResolution,
   interactionPermissionFieldPlaceholder, interactionPlanTitle, interactionQuestionOptions,
@@ -26,6 +27,7 @@ export struct InteractionDecisionForm {
   @Require @Param request: Decision;
   @Param readOnly: boolean = false;
   @Param docked: boolean = false;
+  @Param agentCard: boolean = false;
   @Param dockSource: string = '';
   @Event onDockFold: () => void = () => {};
   @Event onViewTask: () => void = () => {};
@@ -39,6 +41,10 @@ export struct InteractionDecisionForm {
   @Local inlineFooterHeight: number = 44;
   @Local inlineHeaderHeight: number = 28;
   @Local cardFolded: boolean = false;
+  @Local questionPage: number = 0;
+  @Local reviewingQuestions: boolean = false;
+  @Local otherQuestion: string = '';
+  @Local commandExpanded: boolean = false;
   @Local fullPlan: boolean = false;
   @Param draft: QuestionDraft | undefined = undefined;
   @Param draftSession: string = '';
@@ -69,7 +75,7 @@ export struct InteractionDecisionForm {
   }
 
   private resetForm(): void {
-    this.cardFolded = false;
+    this.cardFolded = false; this.questionPage=0; this.reviewingQuestions=false; this.otherQuestion=''; this.commandExpanded=false;
     this.fullPlan = false;
     this.selected = '';
     this.selectedScreen = '';
@@ -86,7 +92,7 @@ export struct InteractionDecisionForm {
     this.questionOptions = choices;
   }
 
-  private persistQuestionDraft(): void { if (this.request.kind === 'question' && this.draft && this.admission()) this.draft.save(this.textValues, this.questionPicks, this.draftSession); }
+  private persistQuestionDraft(): void { if (this.request.kind === 'question' && this.draft && this.draft.id===this.request.id && this.draft.raw===this.request.raw && this.draft.owns(this.draftSession) && this.admission()) this.draft.save(this.textValues, this.questionPicks, this.draftSession); }
   private canRespond(): boolean {
     if (!this.admission() || this.busy || !interactionCanSubmit(this.request,this.readOnly)) return false;
     if (this.taskQueue) return !!this.taskCard && this.taskCard.request===this.request && !!this.taskAgent &&
@@ -289,7 +295,7 @@ export struct InteractionDecisionForm {
   private submit(option: string): void {
     if (!this.canRespond()) return;
     if (option === 'dismiss') {
-      if (!this.taskQueue || interactionToolName(this.request) === 'ask_user') return;
+      if ((!this.taskQueue && !this.agentCard) || interactionToolName(this.request) === 'ask_user') return;
     } else if (this.request.kind === 'question' && option === 'cancel') {
       if (!interactionScreenCanCancel(this.request)) return;
     } else if (this.request.kind === 'elicitation' && (option === 'decline' || option === 'cancel')) {
@@ -299,12 +305,12 @@ export struct InteractionDecisionForm {
       Wire.payload([], []) : this.answerValues();
     this.busy = true;
     this.clearSecrets();
-    const request=this.request, agent=this.taskAgent, card=this.taskCard;
+    const request=this.request, raw=request.raw, agent=this.taskAgent, card=this.taskCard;
     const answer=this.taskQueue && agent && card ? this.taskQueue.answerForm(this.model,agent,card,option,values,util.generateRandomUUID(),this.admission) :
       this.model.answer(option,values,request,this.admission);
-    answer.then(() => { if (request===this.request && request.status==='resolved') this.onResolved(); })
-      .catch(() => { if (request===this.request && this.admission()) this.model.error='failed'; })
-      .finally(() => { if (request===this.request) this.busy=false; });
+    answer.then(() => { if (request===this.request && request.raw===raw && request.status==='resolved') this.onResolved(); })
+      .catch(() => { if (request===this.request && request.raw===raw && this.admission()) this.model.error='failed'; })
+      .finally(() => { if (request===this.request && request.raw===raw) this.busy=false; });
   }
 
   private historySummary(): string {
@@ -539,10 +545,20 @@ export struct InteractionDecisionForm {
     if (this.request.kind==='plan') return tr('phone_agent_plan_approval');
     if (this.request.kind==='permission') return tr('phone_agent_needs_approval');
     if (this.request.kind==='question') {
+      if (this.agentCard) return tr('phone_agent_asks').replace('{agent}',interactionCardAgent(this.request,this.model.selected.data()));
       const provider=interactionToolName(this.request)==='ask_user' ? 'Persona' : Wire.text(this.taskAgent?.data() || {},'agent_label') || Wire.text(this.taskAgent?.data() || {},'agent');
       return tr('phone_agent_asks').replace('{agent}',provider==='claude' ? 'Claude' : provider==='codex' ? 'Codex' : provider || tr('agent'));
     }
     return tr('needs_you');
+  }
+
+  private foldPreview():string {
+    if (this.taskCard) return this.taskCard.preview;
+    if (!this.agentCard) return '';
+    if (this.request.kind==='question') return this.request.fields[0]?.title || this.request.prompt;
+    if (this.request.kind==='plan') return interactionPlanTitle(this.taskPlanSource(),tr('plan'));
+    if (this.request.kind==='permission') return interactionPermissionSubject(this.request) || interactionPermissionTool(this.request);
+    return this.headerPrompt();
   }
 
   private toggleCard():void {
@@ -570,7 +586,7 @@ export struct InteractionDecisionForm {
 
   @Builder dockMenu() {
     Menu() {
-      if (this.taskQueue && interactionToolName(this.request) !== 'ask_user') MenuItem({content:tr('phone_interaction_terminal')})
+      if ((this.taskQueue || this.agentCard) && interactionToolName(this.request) !== 'ask_user') MenuItem({content:tr('phone_interaction_terminal')})
         .enabled(this.canRespond()).onClick(() => this.submit('dismiss'))
     }
   }
@@ -578,10 +594,10 @@ export struct InteractionDecisionForm {
     Row({space:5}) {
       Button({type:ButtonType.Normal}) {
         Row({space:5}) {
-          SymbolGlyph(this.request.kind==='plan' ? Symbols.document : $r('sys.symbol.hand_raised_fingers_spread'))
+          SymbolGlyph(this.request.kind==='plan' ? Symbols.document : this.request.kind==='question' ? $r('sys.symbol.ellipsis_bubble') : $r('sys.symbol.hand_raised_fingers_spread'))
             .fontSize('13vp').fontColor([Colors.link])
           Text(this.cardHeading()).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(Colors.link).maxLines(1)
-          if (this.cardFolded && this.taskCard?.preview) Text(this.taskCard.preview).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+          if (this.cardFolded && this.foldPreview()) Text(this.foldPreview()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
             .fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
         }.align(Alignment.Start).width('100%')
       }.layoutWeight(1).height(28).backgroundColor(Color.Transparent).padding(0)
@@ -592,14 +608,14 @@ export struct InteractionDecisionForm {
       if (this.docked && interactionSkipReason(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
         .height(28).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
         .backgroundColor(Color.Transparent).enabled(false).id('interaction.task.skip_unavailable')
-      else if (this.docked && interactionScreenCanCancel(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
+      else if ((this.docked || this.agentCard) && interactionScreenCanCancel(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
         .height(28).padding({left:3,right:3}).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.link)
         .backgroundColor(Color.Transparent).enabled(this.canRespond()).onClick(() => this.submit('cancel')).id('interaction.task.skip')
       if (!this.cardFolded && this.request.kind==='plan') Button({type:ButtonType.Circle}) {
         SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right')).fontSize('13vp').fontColor([Colors.secondary])
       }.width(28).height(28).padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_plan_fullscreen'))
         .onClick(() => { if (this.admission()) this.fullPlan=true; }).id('interaction.task.expand_plan')
-      if (this.taskQueue && interactionToolName(this.request)!=='ask_user') Button({type:ButtonType.Circle}) {
+      if ((this.taskQueue || this.agentCard) && interactionToolName(this.request)!=='ask_user') Button({type:ButtonType.Circle}) {
         Row({space:2}) {
           ForEach([0,1,2],(_dot:number) => { Circle().width(2.5).height(2.5).fill(Colors.secondary) },(dot:number) => String(dot))
         }
@@ -648,6 +664,173 @@ export struct InteractionDecisionForm {
       }
       if (this.taskQueue?.error) Text(tr(this.taskQueue.error)).fontSize(12).fontColor(Colors.danger)
     }.width('100%')
+  }
+
+  private sendPermission(action:string):void {
+    if (!this.canRespond() || action==='allow_session' && !interactionSessionAllowance(this.request)) return;
+    this.selected=action==='deny' ? 'deny' : 'approve';
+    this.submit(action);
+  }
+  private permissionAllowed():boolean {
+    return this.canRespond() && !this.request.fields.some((field:DecisionField) => field.required && !(this.textValues[field.key] || '').trim());
+  }
+  private permissionScope():string {
+    const scope=interactionAllowanceScope(this.request);
+    return scope.startsWith('decision_scope_') ? tr(scope) : scope;
+  }
+  private pickedAnswer(field:DecisionField):string {
+    return (this.textValues[field.key+':other'] || (this.questionPicks[field.key] || []).join(', ')).trim();
+  }
+  private chooseAgentAnswer(field:DecisionField,choice:InteractionChoice):void {
+    if (!this.canRespond()) return;
+    this.otherQuestion='';this.pickQuestion(field,choice);
+    if (field.kind==='multi_choice') return;
+    if (this.request.fields.length===1) this.submit('answer');
+    else if (this.questionPage+1<this.request.fields.length) this.questionPage++;
+    else this.reviewingQuestions=true;
+  }
+  @Computed get permissionSubject():string { return interactionPermissionSubject(this.request); }
+  private longPermissionCommand():boolean {
+    const body=this.permissionSubject;
+    return body.length>320 || body.split('\n').length>5;
+  }
+  @Builder agentPermissionBody() {
+    Column({space:12}) {
+      Row({space:8}) {
+        if (interactionToolName(this.request)==='Bash') Text('>_').fontFamily('monospace').fontSize(12).fontWeight(600)
+          .fontColor(Colors.link).padding({left:2,right:2}).border({width:1,color:Colors.link,radius:3}).accessibilityLevel('no')
+        else SymbolGlyph(Symbols.document).fontSize('17vp').fontColor([Colors.link])
+        Text(interactionPermissionTool(this.request) || tr('tool')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
+          .fontWeight(600).fontColor(Colors.ink).id('interaction.permission.tool')
+      }.width('100%')
+      if (this.permissionSubject) Text(this.permissionSubject).fontFamily('monospace')
+        .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink)
+        .maxLines(this.commandExpanded || !this.longPermissionCommand() ? undefined : 5).textOverflow({overflow:TextOverflow.Ellipsis})
+        .width('100%').padding(12).backgroundColor(Colors.subtle).borderRadius(10).id('interaction.permission.command')
+      if (this.longPermissionCommand()) Button(tr(this.commandExpanded ? 'agent_collapse' : 'agent_expand'),{buttonStyle:ButtonStyleMode.TEXTUAL})
+        .fontSize(13).fontColor(Colors.link).onClick(() => this.commandExpanded=!this.commandExpanded).id('interaction.permission.expand')
+      ForEach(this.request.fields,(field:DecisionField) => this.permissionField(field),(field:DecisionField) => field.key)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+  @Builder agentPermissionActions() {
+    Column({space:12}) {
+      Row({space:8}) {
+        Button(tr('deny'),{type:ButtonType.Capsule}).layoutWeight(1).constraintSize({minHeight:50}).fontSize(17)
+          .maxFontScale(Tokens.interfaceScaleFor(17)).backgroundColor(Colors.control).fontColor(Colors.link).enabled(this.canRespond())
+          .onClick(() => this.sendPermission('deny')).id('interaction.permission.deny')
+        Button(tr('allow'),{type:ButtonType.Capsule}).layoutWeight(1).constraintSize({minHeight:50}).fontSize(17)
+          .maxFontScale(Tokens.interfaceScaleFor(17)).backgroundColor(Colors.action).fontColor(Colors.onAction).enabled(this.permissionAllowed())
+          .onClick(() => this.sendPermission('allow')).id('interaction.permission.allow')
+      }.width('100%')
+      if (interactionSessionAllowance(this.request)) {
+        Button(tr('decision_allow_session'),{type:ButtonType.Normal}).width('100%').padding(0).height('auto').constraintSize({minHeight:16})
+          .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink).backgroundColor(Color.Transparent).enabled(this.permissionAllowed())
+          .onClick(() => this.sendPermission('allow_session')).id('interaction.permission.allow_session')
+        if (this.permissionScope()) Text(this.permissionScope()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+          .width('100%').id('interaction.permission.scope')
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder agentQuestion(field:DecisionField) {
+    Column({space:12}) {
+      if (interactionQuestionHeader(this.request,field.key) || this.request.fields.length>1)
+        Text([interactionQuestionHeader(this.request,field.key),this.request.fields.length>1 ? String(this.questionPage+1)+'/'+String(this.request.fields.length) : '']
+          .filter((item:string) => !!item).join(' · ')).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
+          .fontWeight(600).fontColor(Colors.secondary).width('100%')
+      Text(field.title).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(600).fontColor(Colors.ink)
+        .width('100%').id('interaction.question.title')
+      Column() {
+        ForEach(this.questionChoices(field),(choice:InteractionChoice,i:number) => {
+          Row({space:12}) {
+            Text(String(i+1)).width(28).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).textAlign(TextAlign.Center).fontColor(Colors.secondary)
+            Column({space:4}) {
+              Text(choice.label).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(500).fontColor(Colors.ink)
+              if (choice.detail) Text(choice.detail).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+            if (this.pickedQuestion(field,choice.label)) SymbolGlyph(Symbols.check).fontSize('16vp').fontColor([Colors.link])
+          }.width('100%').padding(12).constraintSize({minHeight:choice.detail ? 64 : 48}).enabled(this.canRespond())
+            .accessibilityGroup(true).accessibilitySelected(this.pickedQuestion(field,choice.label)).accessibilityText(choice.label)
+            .onClick(() => this.chooseAgentAnswer(field,choice)).id('interaction.question.'+field.key+'.'+choice.label)
+          Divider().color(Colors.divider).strokeWidth(0.5).margin({left:52})
+        },(choice:InteractionChoice) => choice.label)
+        if (!this.questionChoices(field).length || this.otherQuestion===field.key || this.textValues[field.key+':other']) {
+          TextInput({text:this.textValues[field.key+':other'] || '',placeholder:tr('decision_other_choice')})
+            .width('100%').constraintSize({minHeight:48}).fontSize(16).enabled(this.canRespond())
+            .onChange((v:string) => this.setText(field.key+':other',v)).id('interaction.question.'+field.key+'.other')
+        } else Button({type:ButtonType.Normal}) {
+          Row({space:12}) {
+            SymbolGlyph(Symbols.edit).width(28).fontSize('14vp').fontColor([Colors.secondary])
+            Text(tr('decision_other_choice')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.secondary)
+          }.width('100%').padding(12)
+        }.width('100%').constraintSize({minHeight:48}).backgroundColor(Color.Transparent).padding(0).enabled(this.canRespond())
+          .onClick(() => this.otherQuestion=field.key).id('interaction.question.other')
+      }.width('100%').backgroundColor(Colors.subtle).borderRadius(12).clip(true)
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+  @Builder agentQuestionActions() {
+    Row({space:8}) {
+      if (this.questionPage>0 || this.reviewingQuestions) Button(tr('decision_previous')).layoutWeight(1).fontSize(15)
+        .enabled(this.canRespond()).onClick(() => {
+          if (this.reviewingQuestions) this.reviewingQuestions=false;
+          else this.questionPage--;
+        }).id('interaction.question.previous')
+      if (this.reviewingQuestions || this.request.fields.length===1)
+        Button(tr('answer'),{type:ButtonType.Capsule}).layoutWeight(1).fontSize(16).backgroundColor(Colors.action).fontColor(Colors.onAction)
+          .enabled(this.canSubmit()).onClick(() => this.submit('answer')).id('interaction.submit')
+      else if (this.request.fields.length>0) Button(tr(this.questionPage+1<this.request.fields.length ? 'decision_next' : 'review'))
+        .layoutWeight(1).fontSize(15).enabled(this.canRespond() && !!this.pickedAnswer(this.request.fields[this.questionPage]))
+        .onClick(() => { if (this.questionPage+1<this.request.fields.length) this.questionPage++;else this.reviewingQuestions=true; })
+        .id('interaction.question.next')
+    }.width('100%')
+  }
+  @Builder agentBody() {
+    if (this.readOnly) this.formBody()
+    else if (this.request.kind==='permission') this.agentPermissionBody()
+    else if (this.request.kind==='plan') MarkdownText({text:this.taskPlanSource(),chatReply:true,onLink:this.onLink})
+    else if (this.request.kind==='question' && this.request.fields.length) {
+      if (this.reviewingQuestions) Column({space:8}) {
+        ForEach(this.request.fields,(field:DecisionField) => {
+          Text(field.title).fontSize(15).fontWeight(600).fontColor(Colors.ink).width('100%')
+          Text(this.pickedAnswer(field)).fontSize(15).fontColor(Colors.secondary).width('100%')
+        },(field:DecisionField) => field.key)
+      }.width('100%').alignItems(HorizontalAlign.Start)
+      else this.agentQuestion(this.request.fields[this.questionPage])
+    } else this.formBody()
+  }
+  private agentHasFooter():boolean {
+    if (this.readOnly) return false;
+    if (this.request.kind!=='question' || this.request.fields.length!==1) return true;
+    const field=this.request.fields[0];
+    return field.kind==='multi_choice' || !this.questionChoices(field).length || this.otherQuestion===field.key || !!this.textValues[field.key+':other'];
+  }
+  @Builder agentFooter() {
+    if (this.request.kind==='permission') this.agentPermissionActions()
+    else if (this.request.kind==='plan') this.taskPlanActions()
+    else if (this.request.kind==='question') this.agentQuestionActions()
+    else this.responseFooter()
+    if (this.model.error && ['permission','plan','question'].includes(this.request.kind)) Text(tr(this.model.error)).fontSize(13).fontColor(Colors.danger)
+  }
+  @Builder agentDecisionCard() {
+    Column({space:12}) {
+      this.taskHeader()
+      if (!this.cardFolded) {
+        if (this.heightLimit>0) Scroll() {
+          Column() { this.agentBody() }.width('100%').alignItems(HorizontalAlign.Start)
+            .onAreaChange((_before:Area,after:Area) => {
+              const h=Number(after.height); if (h>0 && Math.abs(this.inlineBodyHeight-h)>0.5) this.inlineBodyHeight=h;
+            })
+        }.width('100%').height(this.inlineBodyHeight>0 ? Math.min(this.inlineBodyHeight,this.inlineSpace()) : undefined)
+          .constraintSize({maxHeight:this.inlineSpace()}).align(Alignment.TopStart).id('interaction.body')
+        else Column() { this.agentBody() }.width('100%').alignItems(HorizontalAlign.Start).id('interaction.body')
+        if (this.agentHasFooter()) Column() { this.agentFooter() }.width('100%')
+          .onAreaChange((_before:Area,after:Area) => {
+            const h=Number(after.height); if (h>0 && Math.abs(this.inlineFooterHeight-h)>0.5) this.inlineFooterHeight=h;
+          })
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:12,bottom:16})
+      .backgroundColor(Colors.surface).border({width:0.6,color:Colors.divider,radius:20}).borderRadius(20).id('interaction.card')
+      .bindSheet($$this.fullPlan,this.planReader(),{height:SheetSize.LARGE,showClose:false,dragBar:false,preferType:SheetType.BOTTOM})
   }
 
   @Builder responseFooter() {
@@ -710,10 +893,12 @@ export struct InteractionDecisionForm {
   }
 
   private inlineSpace(): number {
+    if (this.agentCard) return Math.max(1,this.heightLimit-this.inlineHeaderHeight-40-(this.agentHasFooter() ? this.inlineFooterHeight+12 : 0));
     return Math.max(1, this.heightLimit - this.inlineFooterHeight - (this.docked || this.taskQueue ? this.inlineHeaderHeight + 28 : 22));
   }
   build() {
-    if (this.heightLimit > 0) Column({space: 6}) {
+    if (this.agentCard) this.agentDecisionCard()
+    else if (this.heightLimit > 0) Column({space: 6}) {
       if (this.docked || this.taskQueue) this.taskHeader()
       if (!this.cardFolded) Scroll() {
         Column({space: Tokens.gap}) {

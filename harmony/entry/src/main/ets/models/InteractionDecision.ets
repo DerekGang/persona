@@ -77,6 +77,61 @@ export function interactionToolName(request: Decision): string {
   return Wire.text(rawInteraction(request), 'tool_name');
 }
 
+export function interactionQuestionHeader(request:Decision, key:string):string {
+  const question=Wire.rows(rawInteraction(request),'questions').find((item:Record<string,Object>) => Wire.text(item,'question')===key);
+  return question ? Wire.text(question,'header') : '';
+}
+
+export function interactionCardAgent(request:Decision, session:Record<string,Object>):string {
+  const data=rawInteraction(request), agent=Wire.text(data,'agent'), label=Wire.text(data,'agent_label');
+  if (Wire.text(data,'tool_name')==='ask_user') return 'Persona';
+  if (!agent || agent==='claude') return 'Claude';
+  if (agent==='codex') return 'Codex';
+  if (agent==='paseo' && (!label || label.toLowerCase()==='paseo')) return Wire.text(session,'agent_label') || Wire.text(session,'launcher') || label || agent;
+  return label || agent;
+}
+
+export function interactionPermissionTool(request:Decision):string {
+  const data=rawInteraction(request);
+  return Wire.text(data,'tool_title') || Wire.text(data,'tool_name');
+}
+
+export function interactionPermissionSubject(request:Decision):string {
+  const data=rawInteraction(request), input=Wire.object(data,'tool_input'), summary=Wire.text(data,'summary').trim();
+  if (summary) return summary;
+  const tool=Wire.text(data,'tool_name');
+  if (['secret_run','secret_handoff'].includes(tool)) return '';
+  const hidden=request.fields.filter((field:DecisionField) => field.kind==='secret').map((field:DecisionField) => field.key);
+  const first=tool==='Bash' ? ['command'] : ['Read','Edit','Write','MultiEdit','NotebookEdit'].includes(tool) ? ['file_path','notebook_path'] :
+    tool==='WebFetch' ? ['url'] : tool==='WebSearch' ? ['query'] : [];
+  for (const field of first.concat(['description','command','path','url','query','prompt'])) {
+    const value=hidden.includes(field) ? '' : Wire.text(input,field);
+    if (value.trim()) return value;
+  }
+  return Object.keys(input).filter((key:string) => !hidden.includes(key)).sort().map((key:string) => key+': '+(typeof input[key]==='string' ? String(input[key]) : JSON.stringify(input[key]))).join('\n');
+}
+
+export function interactionSessionAllowance(request:Decision):boolean {
+  const data=rawInteraction(request), agent=Wire.text(data,'agent');
+  if (request.kind!=='permission' || ['secret_run','secret_handoff'].includes(Wire.text(data,'tool_name'))) return false;
+  if (Wire.has(data,'always_honored')) return Wire.bool(data,'always_honored');
+  if (agent && agent!=='claude') return !!Wire.text(data,'always_label').trim();
+  return !!request.session;
+}
+
+// A host-provided scope is literal text. Built-in scopes use the same descriptions as the iPhone.
+export function interactionAllowanceScope(request:Decision):string {
+  const data=rawInteraction(request), label=Wire.text(data,'always_label').trim();
+  if (label) return label;
+  const agent=Wire.text(data,'agent');
+  if (agent && agent!=='claude') return '';
+  const keys=Wire.strings(data,'always_keys'), tool=Wire.text(data,'tool_name');
+  if (keys.length && keys.every((v:string) => v.startsWith('tool:Read(') && v.endsWith('/**)'))) return 'decision_scope_reads';
+  if (keys.length && keys.every((v:string) => v.startsWith('tool:Edit(') && v.endsWith('/**)'))) return 'decision_scope_edits';
+  if (!keys.length || keys.every((v:string) => v==='tool:'+tool)) return tool==='Bash' ? 'decision_scope_commands' : 'decision_scope_tool';
+  return 'decision_scope_custom';
+}
+
 /** Only the assistant's own ask_user question is non-blocking in a Persona conversation. */
 export function isPersonaAskUserQuestion(request: Decision, selectedKind: string): boolean {
   return selectedKind === 'conversation' && request.kind === 'question' && interactionToolName(request) === 'ask_user';
@@ -484,9 +539,12 @@ export function interactionResolution(request: Decision, action: string, values:
     return body;
   }
   if (request.kind === 'permission') {
-    if (action !== 'allow' && action !== 'approve' && action !== 'deny') throw new Error('unsupported');
-    const allowed = action === 'allow' || action === 'approve';
+    const sessionAllowance=action==='allow_session';
+    if (sessionAllowance && !interactionSessionAllowance(request)) throw new Error('unsupported');
+    if (!sessionAllowance && action !== 'allow' && action !== 'approve' && action !== 'deny') throw new Error('unsupported');
+    const allowed = sessionAllowance || action === 'allow' || action === 'approve';
     const body = Wire.payload(['allow'], [allowed]);
+    if (sessionAllowance) body['always']=true;
     if (allowed) {
       const fields = Wire.rows(data, 'fields'), filled = Wire.payload([], []);
       fields.forEach((field: Record<string, Object>) => {
