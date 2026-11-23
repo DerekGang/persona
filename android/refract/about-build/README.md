@@ -129,6 +129,29 @@ Direct `am instrument` startup failed separately and is not substituted for the 
 TalkBack, full device-matrix, performance or Gate A–D claim. Keep this limitation with any PR using the host
 rather than treating a successful JVM or build result as device acceptance.
 
+The test-only selector correction at `17c2f552a562604fcd68f7a42c0ac22b19d2a4cf` replaces the invalid merged-node
+requirement. In the unmerged tree, `hasAnyDescendant` locates the exact title below the row's inner `Column`; the
+value is a separate `Text` constrained by `hasAnyAncestor` to that same row. The selected node must not contain
+another candidate title row, which excludes the outer About container, and its text descendants must be exactly
+`[title, value]`. A nearby `Commit Build ...` line checks that Build text in a Commit line does not widen the
+selection. The actual zero version is not excluded or replaced. No `mergeDescendants=true`, generated/production
+semantics change or production source change is involved.
+
+At this correction, focused offline compilation of the androidTest APK, settings debug unit-test/release Kotlin and
+app debug Kotlin passed (431 tasks), the existing four About Build JVM test classes passed **18 tests with 0
+failures/errors/skips**, and the About Build checker (14 tests), Android shard checker (12 tests), privacy scan and
+documentation-path checks (21 tests) passed. `adb devices -l` returned no attached target; no emulator was started,
+restarted or reconfigured and no instrumentation run was made. **The correction is not GREEN.** The previous XML is
+still the latest actual device result. On an explicitly owned already-running target, from `android/`, run:
+
+```sh
+./gradlew :feature:settings:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=persona.feature.settings.AboutBuildHostInstrumentedTest
+```
+
+Require the standard XML for this exact head to show **2 tests, 0 failures, 0 errors, 0 skipped** before calling the
+selector correction GREEN. This request does not establish TalkBack, a physical device, nonzero device metadata,
+accepted captures or Gates A–D.
+
 These are Native JVM Compose comparisons, not a physical device,
 TalkBack, accessibility-service or performance result. This local generation, Kotlin compilation and JVM comparison
 does not complete any part of Gates A–D, their required visual/device acceptance, or the separately unauthorized
