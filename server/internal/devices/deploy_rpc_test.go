@@ -114,7 +114,7 @@ func (n *updatingNode) handle(_ context.Context, method string, params json.RawM
 			n.handoffGraceSeconds = *p.HandoffGraceSeconds
 		}
 		n.commits++
-		time.Sleep(n.commitDelay)
+		time.Sleep(n.commitDelay) // sleep-ok: the fake node's commit takes this long, as a node's first-run self-checks do
 		if n.busyCommit && n.commits == 1 {
 			return nil, &rpc.Error{Code: "node_update_busy", Message: "node is busy"}
 		}
