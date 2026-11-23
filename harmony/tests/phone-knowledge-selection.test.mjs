@@ -121,3 +121,39 @@ test('an unknown saved write or a superseded settings owner never dispatches ano
   assert.equal(await pending,false);
   assert.deepEqual(form.data,{});
 });
+
+test('map prefetch stays within the current manager, reads at most six details and retains partial lists',async()=>{
+  const {state,client,form}=fixture();
+  const list=Array.from({length:11},(_,i)=>({id:'entry-'+i,name:'Entry '+i}));
+  let active=0,peak=0;
+  state.handle=async({path,method})=>{
+    assert.equal(method,'GET');
+    if(path==='/api/v1/kb/topics')return {items:list};
+    if(path.startsWith('/api/v1/kb/topics/')){
+      peak=Math.max(peak,++active);
+      await new Promise(resolve=>setImmediate(resolve));
+      active--;
+      if(path.endsWith('/entry-4'))throw Error('404');
+      if(path.endsWith('/entry-8'))return {};
+      return {detail:{points:[]}};
+    }
+  };
+  await form.open(client,true);
+  const read=await form.readOutline('topics');
+  assert.equal(peak,6);assert.deepEqual(read.items,list);
+  assert.equal(read.failed,2);assert.equal(read.details.size,9);assert.equal(read.curating,true);
+});
+
+test('a map response from a retired owner cannot supply another assistant’s outline',async()=>{
+  const {state,client,form}=fixture();let release,entered;
+  const waiting=new Promise(resolve=>{entered=resolve;});
+  state.handle=async({path})=>{
+    if(path==='/api/v1/kb/projects')return {items:[{id:'secret',name:'First owner'}]};
+    if(path==='/api/v1/kb/projects/secret'){entered();return new Promise(resolve=>{release=resolve;});}
+  };
+  await form.open(client,true);
+  const pending=form.readOutline('projects');await waiting;
+  state.manager='new-owner';state.generation++;form.close();
+  release({detail:{summary:'old-scoped-data'}});
+  assert.equal(await pending,undefined);
+});

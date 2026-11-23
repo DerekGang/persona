@@ -32,6 +32,7 @@ import { PhoneAgentSettingsPage } from '../components/PhoneAgentSettingsPage';
 import { PhoneMeetingSettings } from '../components/PhoneMeetingSettings';
 import { MeetingInputChoice, PhoneMeetingOptions } from '../models/PhoneMeetingOptions';
 import { KnowledgeLandingMenu } from '../models/KnowledgeListPresentation';
+import { PhoneKnowledgeMap } from '../components/PhoneKnowledgeMap';
 import { PhoneKnowledgeSelection } from '../components/PhoneKnowledgeSelection';
 import { AdminWorkspacePage } from '../components/AdminWorkspacePage';
 import { ExtensionPage } from '../components/ExtensionPage';
@@ -2743,7 +2744,8 @@ struct Index {
           onTitle: (title: string) => { if (name === 'todo' && this.activeChild === this.childKey(name, param)) this.todoTitle = title; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), onCreateAgent: (todo: ResourceRow) => this.createAgentFrom(name, param, todo) })
         else this.targetLoading(name, param)
       } else if (name === 'knowledge_map') {
-        if (param === this.model.scope()) PhoneKnowledgeSelection({ model:this.model, mapOnly:true })
+        if (param === this.model.scope()) PhoneKnowledgeMap({ model:this.model,
+          onEntry:(row:ResourceRow)=>this.openFrom(name,param,row), onSelection:()=>{ if (this.activeChild===this.childKey(name,param)) this.pushPlace('settings','phone_knowledge_selection'); } })
       } else if (name === 'knowledge' || name === 'recordings' || name === 'knowledge_meetings' || name === 'resources' && param === 'knowledge') {
         if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ meetingMenu:name==='recordings' ? this.meetingOptions : undefined,landingMenu:!this.wide() && (name==='knowledge_meetings' || name==='resources' && param==='knowledge') ? this.knowledgeMenu : undefined, initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onOpenMap:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_map',this.model.scope()); }, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onChat: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address) })

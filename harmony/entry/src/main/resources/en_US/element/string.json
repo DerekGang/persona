@@ -4857,6 +4857,170 @@
       "value": "Type"
     },
     {
+      "name": "map_point_title",
+      "value": "Knowledge Point"
+    },
+    {
+      "name": "map_from",
+      "value": "From"
+    },
+    {
+      "name": "map_confirmed",
+      "value": "Confirmed %s"
+    },
+    {
+      "name": "map_active",
+      "value": "Active"
+    },
+    {
+      "name": "map_done",
+      "value": "Done"
+    },
+    {
+      "name": "map_paused",
+      "value": "Paused"
+    },
+    {
+      "name": "map_unrated",
+      "value": "Not rated"
+    },
+    {
+      "name": "map_other",
+      "value": "Other"
+    },
+    {
+      "name": "map_summary",
+      "value": "Summary"
+    },
+    {
+      "name": "map_goal",
+      "value": "Goal"
+    },
+    {
+      "name": "map_role",
+      "value": "My role"
+    },
+    {
+      "name": "map_latest",
+      "value": "Latest"
+    },
+    {
+      "name": "map_notes",
+      "value": "Main chat notes"
+    },
+    {
+      "name": "map_dirs",
+      "value": "Code folders"
+    },
+    {
+      "name": "map_chats",
+      "value": "Related chats"
+    },
+    {
+      "name": "map_people",
+      "value": "Related people"
+    },
+    {
+      "name": "map_topics",
+      "value": "Topics"
+    },
+    {
+      "name": "map_topic_count",
+      "value": "Topics"
+    },
+    {
+      "name": "map_points",
+      "value": "Knowledge Points"
+    },
+    {
+      "name": "map_sources",
+      "value": "Sources"
+    },
+    {
+      "name": "map_with_summary",
+      "value": "With a summary"
+    },
+    {
+      "name": "map_knowledge",
+      "value": "Knowledge"
+    },
+    {
+      "name": "map_by_topic",
+      "value": "by topic"
+    },
+    {
+      "name": "map_by_status",
+      "value": "by status"
+    },
+    {
+      "name": "map_topics_off",
+      "value": "Knowledge Points Are Off"
+    },
+    {
+      "name": "map_topics_none",
+      "value": "No Topics Yet"
+    },
+    {
+      "name": "map_projects_none",
+      "value": "No Projects Yet"
+    },
+    {
+      "name": "map_topics_off_info",
+      "value": "Turn on “Organize knowledge points by topic” in Settings › Knowledge Selection, and Persona starts curating in the background."
+    },
+    {
+      "name": "map_topics_none_info",
+      "value": "In the background, Persona pulls durable knowledge out of your project timelines and chats and files it by topic. The map fills in as it does."
+    },
+    {
+      "name": "map_projects_none_info",
+      "value": "Projects appear as Persona sorts them out of your chats and Agents' work."
+    },
+    {
+      "name": "map_open_selection",
+      "value": "Open Knowledge Selection"
+    },
+    {
+      "name": "map_why",
+      "value": "Why"
+    },
+    {
+      "name": "map_cause",
+      "value": "Cause"
+    },
+    {
+      "name": "map_concept",
+      "value": "Concept"
+    },
+    {
+      "name": "map_decision",
+      "value": "Decision"
+    },
+    {
+      "name": "map_practice",
+      "value": "How to"
+    },
+    {
+      "name": "map_pitfall",
+      "value": "Pitfall"
+    },
+    {
+      "name": "map_fact",
+      "value": "Fact"
+    },
+    {
+      "name": "map_question",
+      "value": "Open question"
+    },
+    {
+      "name": "map_point",
+      "value": "Point"
+    },
+    {
+      "name": "map_partial",
+      "value": "Some entries could not be read (%s)."
+    },
+    {
       "name": "knowledge_frequent_tags",
       "value": "Frequent Tags"
     },

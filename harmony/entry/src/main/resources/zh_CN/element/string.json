@@ -4857,6 +4857,170 @@
       "value": "类型"
     },
     {
+      "name": "map_point_title",
+      "value": "知识点"
+    },
+    {
+      "name": "map_from",
+      "value": "来自"
+    },
+    {
+      "name": "map_confirmed",
+      "value": "%s 确认"
+    },
+    {
+      "name": "map_active",
+      "value": "进行中"
+    },
+    {
+      "name": "map_done",
+      "value": "已完成"
+    },
+    {
+      "name": "map_paused",
+      "value": "已暂停"
+    },
+    {
+      "name": "map_unrated",
+      "value": "未定级"
+    },
+    {
+      "name": "map_other",
+      "value": "其他"
+    },
+    {
+      "name": "map_summary",
+      "value": "摘要"
+    },
+    {
+      "name": "map_goal",
+      "value": "目标"
+    },
+    {
+      "name": "map_role",
+      "value": "我的角色"
+    },
+    {
+      "name": "map_latest",
+      "value": "最新进展"
+    },
+    {
+      "name": "map_notes",
+      "value": "主对话记录"
+    },
+    {
+      "name": "map_dirs",
+      "value": "代码目录"
+    },
+    {
+      "name": "map_chats",
+      "value": "关联会话"
+    },
+    {
+      "name": "map_people",
+      "value": "关联的人"
+    },
+    {
+      "name": "map_topics",
+      "value": "知识主题"
+    },
+    {
+      "name": "map_topic_count",
+      "value": "主题"
+    },
+    {
+      "name": "map_points",
+      "value": "知识点"
+    },
+    {
+      "name": "map_sources",
+      "value": "来源"
+    },
+    {
+      "name": "map_with_summary",
+      "value": "有摘要"
+    },
+    {
+      "name": "map_knowledge",
+      "value": "知识"
+    },
+    {
+      "name": "map_by_topic",
+      "value": "按主题"
+    },
+    {
+      "name": "map_by_status",
+      "value": "按状态"
+    },
+    {
+      "name": "map_topics_off",
+      "value": "知识点整理已关闭"
+    },
+    {
+      "name": "map_topics_none",
+      "value": "还没有主题"
+    },
+    {
+      "name": "map_projects_none",
+      "value": "还没有项目"
+    },
+    {
+      "name": "map_topics_off_info",
+      "value": "在「设置 › 知识选择」里打开「按主题整理知识点」，Persona 就会在后台开始整理。"
+    },
+    {
+      "name": "map_topics_none_info",
+      "value": "Persona 会在后台从项目时间线和会话里整理出以后用得上的知识，按主题归类，整理出来导图就会慢慢填满。"
+    },
+    {
+      "name": "map_projects_none_info",
+      "value": "Persona 从会话和 Agent 的工作里整理出项目后，就会显示在这里。"
+    },
+    {
+      "name": "map_open_selection",
+      "value": "打开知识选择"
+    },
+    {
+      "name": "map_why",
+      "value": "理由"
+    },
+    {
+      "name": "map_cause",
+      "value": "原因"
+    },
+    {
+      "name": "map_concept",
+      "value": "概念"
+    },
+    {
+      "name": "map_decision",
+      "value": "决定"
+    },
+    {
+      "name": "map_practice",
+      "value": "做法"
+    },
+    {
+      "name": "map_pitfall",
+      "value": "坑"
+    },
+    {
+      "name": "map_fact",
+      "value": "事实"
+    },
+    {
+      "name": "map_question",
+      "value": "待定"
+    },
+    {
+      "name": "map_point",
+      "value": "知识点"
+    },
+    {
+      "name": "map_partial",
+      "value": "部分条目读取失败（%s）。"
+    },
+    {
       "name": "knowledge_frequent_tags",
       "value": "常用标签"
     },

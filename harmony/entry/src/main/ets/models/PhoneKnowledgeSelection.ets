@@ -85,6 +85,13 @@ export function validSelection(document:Fields):boolean {
     only(Wire.object(history,key),['back_days']) && numberIn(Wire.object(history,key)['back_days'],1,36500));
 }
 
+export class KnowledgeMapData {
+  items:Fields[]=[];
+  details:Map<string,Fields>=new Map<string,Fields>();
+  failed:number=0;
+  curating:boolean|undefined=undefined;
+}
+
 @ObservedV2
 export class PhoneKnowledgeSelectionModel {
   @Trace data:Fields={};
@@ -298,6 +305,41 @@ export class PhoneKnowledgeSelectionModel {
     } catch (error) { if (this.live(epoch)) { this.topicsOn=previous; this.topicProblem=this.selectionFailure(error as Error,false); } }
     finally { if (this.epoch===epoch) this.topicSaving=false; }
   }
+  /** Load the list and its real child details as a single ownership-checked outline snapshot. */
+  async readOutline(mode:string):Promise<KnowledgeMapData|undefined> {
+    const client=this.client, epoch=this.epoch, read=++this.mapReads;
+    if (!client || !this.live(epoch) || (mode!=='topics' && mode!=='projects')) return undefined;
+    const current=():boolean=>this.live(epoch) && read===this.mapReads;
+    const path='/api/v1/kb/'+mode;
+    const response=await client.repo().call(this.path(path));
+    if (!current()) return undefined;
+    const result=new KnowledgeMapData();result.items=Wire.rows(response,'items');
+    let next=0;
+    const fetchNext=async():Promise<void>=>{
+      while (current() && next<result.items.length) {
+        const id=Wire.text(result.items[next++],'id');
+        if (!id) continue;
+        try {
+          const full=await client.repo().call(this.path(path+'/'+encodeURIComponent(id)));
+          if (current()) {
+            if (record(full['detail'])) result.details.set(id,Wire.object(full,'detail'));
+            else result.failed++;
+          }
+        } catch (_) { if (current()) result.failed++; }
+      }
+    };
+    const workers:Promise<void>[]=[];
+    for (let i=0;i<Math.min(6,result.items.length);i++) workers.push(fetchNext());
+    await Promise.all(workers);
+    if (mode==='topics' && current()) {
+      try {
+        const settings=await client.repo().call(this.path('/api/v1/assistant'));
+        if (current() && typeof settings['kb_topics']==='boolean') result.curating=Wire.bool(settings,'kb_topics');
+      } catch (_) {}
+    }
+    return current() ? result : undefined;
+  }
+
   async map(mode:string,entry:string=''):Promise<void> {
     if (!['topics','projects'].includes(mode)) return;
     const client=this.client,epoch=this.epoch,read=++this.mapReads;
