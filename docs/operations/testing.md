@@ -236,8 +236,9 @@ A PR does not need every lane: `scripts/ci/affected.sh` runs only what its diff 
 `origin/main` reaches, and `scripts/ci/full.sh` runs every portable Linux lane for `main` after a merge and the
 nightly run. Each lane keeps about eight CPUs busy, so full.sh runs one lane per eight CPUs it may use at a time
 (`PERSONA_CI_FULL_JOBS` overrides): on eight CPUs, six lanes at once took each two to three times as long and timed
-out the tests that measure their own deadlines. `PERSONA_CI_FULL_EXCLUDE` leaves lanes out for a runner that runs them
-elsewhere (the gate runs web on a second slot when one is free).
+out the tests that measure their own deadlines. For a runner that spreads the lanes over several slots or machines,
+`PERSONA_CI_FULL_INCLUDE` runs only the lanes it names and `PERSONA_CI_FULL_EXCLUDE` leaves out the ones it names
+(spaces or commas; both may be set, and an unknown lane name is refused); `scripts/ci/test_full.py` covers both.
 
 - **Go**: `scripts/ci/affected.py` takes the server and `sdk/go` packages with a changed file (a non-Go file counts for
   the package whose directory holds it), every server package that imports one of them directly or through others, and
