@@ -69,7 +69,16 @@ is green"); pairing and the per-hub switches live in Settings › This hub › P
   shows it holds that key, and a hub's pin is no secret), so pairing with a hub this one is paired with (or claiming to
   be one) is refused, with that pin or without one; the code is not used up. To pair the same two hubs again, unpair
   first, on both sides. The other hub's own refusal comes back as a 409 with its code, from a fixed list ("Security
-  boundaries"); anything else it answered is `502 refused`; no address worked, `502 unreachable`. "Routes" lists them.
+  boundaries"), in its words for this hub's owner: where it is the one to unpair on, its words say so ("that hub", not
+  this one). Anything else it answered is `502 refused`; no address worked, `502 unreachable`. "Routes" lists them.
+- **One pairing with a hub at a time, on each side**: while a hub is pairing with another (pasting its code, or
+  answering its request), a second pairing with that hub is refused, `409 pairing_in_progress`, before any credential is
+  issued and without using the code up. Two owners pasting each other's codes at the same moment would otherwise each
+  have their hub's answer revoke the credential its own paste was handing over (the code's hub revokes any partner
+  credential left over for that hub), leaving both hubs paired with credentials the other had revoked. Now the request
+  that reaches a hub pairing with its sender is refused; that paste fails and revokes only the credential it issued, and
+  the other one goes through. When both cross exactly, both are refused and either owner pairs again; only one of the
+  two needs to paste a code. The mark is the running hub's own (in memory, released when that pairing ends).
 - **Unpair** (either side, Settings or `personad hub partner remove <hub_id>`): tell the other hub over the link (when it
   is up), delete the pair, close the link (4012), stop dialing, revoke the credential this hub issued. The other hub does
   the same on receipt. A hub that was not linked then learns at its next dial: the partner answers 401, its page shows
@@ -184,8 +193,11 @@ Hubs dial each other directly, through a proxy, or both:
   asks its own owner where it normally would (starting Agents that change things, sending things out, spending,
   deleting), and answers only with what is needed. The framing (with the hub_id and message_id to answer with) is in a
   `kind="context"` block first, so the apps show it folded; the partner's words follow it as the message's own text,
-  which the chat shows as the message. It never carries a `client_msg_id`, the owner's quoted words, a hand-over or any
-  of the hub's "this came from the owner" marks.
+  which the chat shows as the message. It is never read as one of Persona's own notes (`injected`: a task's notice, a
+  supervision, a follow-up, the answer-again or a wake-up), whatever its words begin with: the hub never marks it,
+  `prompts.ParseInjected` (the manager, the node and the transcript readers) and the web never take it for one, so the
+  chat shows the words and never folds the turn as supervision. It never carries a `client_msg_id`, the owner's quoted
+  words, a hand-over or any of the hub's "this came from the owner" marks.
 - **Replies** go back with `hub_send {hub, reply_to: <message_id>, text}`. A reply leaves the replying hub, so its owner
   is asked first too, unless they turned that off for the partner. It arrives in the conversation that sent the original
   message (or the main conversation if that one is gone), framed as information from another assistant
@@ -211,7 +223,7 @@ Errors are JSON `{"error": <text in the request's language>, "code": …}` like 
 | --- | --- | --- |
 | GET | `/api/v1/partner-hubs` | → `{enabled, member, can_issue, hubs:[view]}`; `enabled`: partner hubs are on here; `can_issue`: this hub can show a code (a TLS key and an https address) |
 | POST | `/api/v1/partner-hubs/code` | → `{code, expires_at}` (`Cache-Control: no-store`); `409 no_tls`, `409 member_hub`, `403 partners_off`, `503 no_database` / `not_ready` |
-| POST | `/api/v1/partner-hubs` | `{code}` → view, once the link is up (at most 5 s later); `400 bad_code`, `401 code_refused`, `403 partners_off`, `409 own_code` / `member_hub` / `already_linked` / `already_paired` / `pin_changed`, a 409 with the other hub's code, `502 unreachable` / `wrong_hub` / `no_credentials` / `refused`, `503 no_database` / `not_ready` |
+| POST | `/api/v1/partner-hubs` | `{code}` → view, once the link is up (at most 5 s later); `400 bad_code`, `401 code_refused`, `403 partners_off`, `409 own_code` / `member_hub` / `already_linked` / `already_paired` / `pin_changed` / `pairing_in_progress`, a 409 with the other hub's code, `502 unreachable` / `wrong_hub` / `no_credentials` / `refused`, `503 no_database` / `not_ready` |
 | PATCH | `/api/v1/partner-hubs/{hub_id}` | `{dial: "auto" \| "never"}` → view; `404 not_found`, `503 not_ready` |
 | DELETE | `/api/v1/partner-hubs/{hub_id}` | → `{ok: true}`; `404 not_found`, `503 not_ready` |
 
@@ -230,7 +242,8 @@ Errors are JSON `{"error": <text in the request's language>, "code": …}` like 
   `{hub_id, name, version?, fp?, tls_port?, endpoints?, token}` (`token`: the credential the pasting hub issued, `jd_…`)
   → the same fields of the code's hub, with the credential it issued. A used, expired or unknown code is 401; a bad
   hub_id or token 400; `403 partners_off`; `409 member_hub` / `already_linked` / `already_paired` (that hub_id is a
-  partner here already, whatever pin it names) / `pin_changed`; `503 no_database` / `not_ready`.
+  partner here already, whatever pin it names) / `pin_changed` / `pairing_in_progress` (this hub is pairing with that
+  one meanwhile; the code is kept); `503 no_database` / `not_ready`.
 - `GET /api/v1/partner/link`: "The link". A linked-hubs member answers both itself (`409 member_hub`), never forwarding
   them to its primary.
 
@@ -304,8 +317,9 @@ Types in `server/internal/assistantwire/partners.go`.
   goes into the conversation as the message's own words after Persona's framing block, with the `<` of every
   context-block, file, photo or pasted-text tag in it, and of the notes the apps hide and the model takes for Persona's
   or the runtime's (view feedback, a system reminder, a local command's caveat), written as `&lt;`
-  (`prompts.PlainWords`), so it can neither open, close nor forge a block or note; the partner's name goes inline only
-  after its angle brackets and quote marks were replaced by look-alikes. Hub ids must match
+  (`prompts.PlainWords`), so it can neither open, close nor forge a block or note, and a message from a partner (its
+  source `hub`) is never taken for one of Persona's notes whatever it begins with ("Receiving"); the partner's name
+  goes inline only after its angle brackets and quote marks were replaced by look-alikes. Hub ids must match
   `^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`; addresses are cut to 8 https ones without `user:pass@`. A partner's error answer
   to a message reaches this hub's manager as one line of at most 200 characters, cleaned the same way.
 - **A partner chooses its name** (and may change it in a later hello): the owner's card names it with the first 8
@@ -318,9 +332,9 @@ Types in `server/internal/assistantwire/partners.go`.
   (`already_paired`, `pin_changed`) on both sides, and the partner's pairing, credential and link stay as they were. A
   new pairing's hub_id is whatever the code's holder names: the code is what the owner handed out.
 - **Refusal codes from a partner are mapped to known ones**: a pairing refusal is passed on only for `partners_off`,
-  `member_hub`, `already_linked`, `already_paired`, `pin_changed`, `tls_required` and `no_database` (anything else is
-  `refused`); the manager keeps only the contract's codes (anything else is `invalid` for a refusal, `undelivered` for
-  a failed status), so a partner's words never go into Persona's own notices.
+  `member_hub`, `already_linked`, `already_paired`, `pin_changed`, `pairing_in_progress`, `tls_required` and
+  `no_database` (anything else is `refused`); the manager keeps only the contract's codes (anything else is `invalid`
+  for a refusal, `undelivered` for a failed status), so a partner's words never go into Persona's own notices.
 - **Credentials**: codes single use, 10 minutes, hash only; issued credentials (device tokens of kind and role
   `partner`, `machine_id` the partner's hub_id) stored as hashes, received ones sealed; TLS pinned both ways, inside any
   proxy. Unpairing or revoking the credential ends the link at once.
@@ -397,10 +411,17 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
   `server/internal/hub/partner_harness_test.go`, each with a key of its own where pins matter (`partnerCert`),
   scripted managers on each bus; `waitPartnerLink` waits for the link the duplicate rule keeps):
   - `TestPartnerPairAndLink`, `TestPartnerPairingCode`, `TestPartnerPairingRefusals`,
-    `TestPartnerPairingNeverReplacesAPartner`, `TestPartnerPairBounds`, `TestPartnerName`, `TestPartnerAnswered`
-    (`partner_test.go`): pairing both ways, the code's rules, every refusal, a code's holder claiming a partner's
-    hub_id refused on both sides (`pin_changed`, `already_paired`) with the partner untouched, bounds on what the other
-    hub sends, cleaned names, refusal codes passed on only from the list.
+    `TestPartnerPairingNeverReplacesAPartner`, `TestPartnerPairingWordsSayWhereToUnpair`, `TestPartnerPairingCrossed`,
+    `TestPartnerPairBounds`, `TestPartnerName`, `TestPartnerAnswered` (`partner_test.go`): pairing both ways, the code's
+    rules, every refusal, a code's holder claiming a partner's hub_id refused on both sides (`pin_changed`,
+    `already_paired`) with the partner untouched and the code's hub's words naming it as the hub to unpair on, two
+    owners pasting each other's codes at once (one side held mid-pairing: one refused with `pairing_in_progress`, the
+    other paired with credentials neither side revoked), bounds on what the other hub sends, cleaned names, refusal
+    codes passed on only from the list.
+  - `TestWithInjectedNeverAPartnersWords` (`injected_test.go`): a partner's words that begin like a task's notice, a
+    supervision, the answer-again or a wake-up, as delivered, are never marked as Persona's note
+    (`TestParseInjectedNeverAPartnersWords` in `server/internal/prompts/injected_test.go` for every note, message and
+    reply; the web's in `web/src/lib/injected.test.ts` and `web/src/lib/turns.test.ts`).
   - `TestPartnerOneSideDialsAndReconnects`, `TestPartnerDuplicateLink`, `TestPartnerHelloMustNameThePairedHub`,
     `TestPartnerUnpair`, `TestPartnerDialSetting`, `TestPartnerLinksStopWithTheHub`, `TestPartnerDialRefusalsSaid`
     (`partner_link_test.go`).
@@ -450,7 +471,9 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
 ## Not implemented / follow-ups
 
 - **iOS and Android settings**: no Partner hubs page yet (pair, switches, unpair); use the web app or the command line.
-  Messages from a partner already show on iOS and Android as a source message labeled with the hub's name.
+  Messages from a partner already show on iOS and Android as a source message labeled with the hub's name. iOS still
+  reads Persona's notes off an unmarked message's text itself (`apple/Shared/Injected.swift`, for older hubs) without
+  skipping a partner's: there a partner's words that begin exactly like one of the notes show as that note's line.
 - **Binding approvals to the owner's own device**: the card accepts any answer `UserAllowed()` accepts ("Security
   boundaries"). Requiring the owner's own device (carrying it through the card's answer as the secret hand-off card
   does) would also stop approvals from the watch and from Lark: a product decision.

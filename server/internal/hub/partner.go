@@ -46,6 +46,7 @@ type partnerState struct {
 	dialers map[string]*peerDialer     // hub id -> the loop dialing it
 	dial    map[string]partnerDialFail // hub id -> how dialing it last went
 	heard   map[string][]string        // hub id -> the https addresses its last hello named
+	pairing map[string]bool            // hub id -> a pairing with it is being made here (pairingPartner)
 	// changed is closed and replaced on every change (waiters: the dialers).
 	changed chan struct{}
 	// kick wakes tellLoop, which tells the default manager (manager) and the apps (apps) the list as it is then, and
@@ -55,8 +56,9 @@ type partnerState struct {
 	manager, apps, recheck bool
 	hellos                 map[string]bool
 	told                   string
-	ping                   [2]time.Duration // tests: heartbeat interval and timeout
-	retry                  [2]time.Duration // tests: the first and the longest wait before reading the pairings again
+	ping                   [2]time.Duration  // tests: heartbeat interval and timeout
+	retry                  [2]time.Duration  // tests: the first and the longest wait before reading the pairings again
+	joinStep               func(step string) // tests: called at joinPartner's steps (partnerJoinIssued, partnerJoinAnswered)
 }
 
 // partnerDialFail is how the last dial of a partner went: nil err after a success.
