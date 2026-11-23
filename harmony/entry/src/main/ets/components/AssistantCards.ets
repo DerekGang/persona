@@ -52,7 +52,7 @@ export struct AssistantCards {
   @Local private pagerHeight: number = 28;
   @Local private dragHeight: number = -1;
   private dragStart: number = 0;
-  private dragCard: string = '';
+  @Local private dragCard: string = '';
   @Param detailOnly: boolean = false;
   @Param active: boolean = false;
   @Event onOpenResource: (row: ResourceRow) => void = () => {};
@@ -547,6 +547,9 @@ export struct AssistantCards {
       this.model.setQuestionCardHeight(chosen).catch(() => {});this.dragCard='';this.dragHeight=-1;
     }
   }
+  @Computed get dockCardLimit():number {
+    return Math.max(44,this.dockHeightLimit()-(this.decisionIds.length>1 ? this.pagerHeight+4 : 0));
+  }
   @Builder decisionArrow(next:boolean) {
     Button({type:ButtonType.Normal}) {
       Stack() {
@@ -579,7 +582,7 @@ export struct AssistantCards {
       InteractionDecisionForm({model:this.model,request:request,taskAgent:row?.agent,taskCard:row?.card,taskQueue:row ? this.requests : undefined,
         docked:true, dockSource:row?.title || '', draft:this.decisionPager?.draft(request), draftSession:this.trayScope(),
         resizeDock:this.environment.keyboardHeightPx===0 && this.dockRoom>0, onDockResize:(phase:string,delta:number):void => this.resizeCard(request,phase,delta),
-        heightLimit:Math.max(44,this.dockHeightLimit()-(this.decisionIds.length>1 ? this.pagerHeight+4 : 0)),admission:this.decisionAdmission(request),
+        heightLimit:this.dockCardLimit,admission:this.decisionAdmission(request),
         onDockFold:() => this.decisionPager?.fold(this.decisionIds), onLater:() => this.decisionPager?.fold(this.decisionIds),
         onViewTask:() => { if (row) this.openQuestionSource(row,scope); },
         onLink:(address:string) => { if (this.decisionVisible(request,scope)) this.onLink(address); }})

@@ -1572,7 +1572,8 @@ export struct Conversation {
           this.revealOverflowingActions();
         }
       })
-    }.width('100%').height('100%').onAreaChange(() => this.revealOverflowingActions())
+    }.width('100%').height('100%').enableScrollInteraction(!this.assistantDockVisible || this.controlsHeight>this.maxControlsHeight()+1)
+      .onAreaChange(() => this.revealOverflowingActions())
   }
 
   build() {

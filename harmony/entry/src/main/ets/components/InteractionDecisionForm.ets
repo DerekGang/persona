@@ -978,6 +978,34 @@ export struct InteractionDecisionForm {
     } else if (!this.deferred) this.bodyContent()
   }
 
+  // The grip moves with the card: a local y coordinate would reset part of each
+  // drag as layout follows the finger. Read the stable window coordinates instead.
+  private gripWindowY:number = 0;
+  private gripWindowX:number = 0;
+  private gripDistance:number = 0;
+  private gripDown:boolean = false;
+  private gripMoved:boolean = false;
+  private gripEnded:number = 0;
+  private trackGrip(event:TouchEvent):void {
+    const touch=event.changedTouches[0] || event.touches[0];
+    if (event.type===TouchType.Down && touch) {
+      this.gripDown=true;this.gripMoved=false;this.gripDistance=0;this.gripWindowY=touch.windowY;this.gripWindowX=touch.windowX;
+      event.stopPropagation();return;
+    }
+    if (!this.gripDown) return;
+    if (event.type===TouchType.Move && touch) {
+      const dy=touch.windowY-this.gripWindowY;
+      if (!this.gripMoved && Math.abs(dy)>=4 && Math.abs(dy)>Math.abs(touch.windowX-this.gripWindowX)) {
+        this.gripMoved=true;this.onDockResize('begin',0);
+      }
+      if (this.gripMoved) { this.gripDistance=dy;this.onDockResize('move',dy); }
+    } else if (event.type===TouchType.Up || event.type===TouchType.Cancel) {
+      this.gripDown=false;this.gripEnded=Date.now();
+      if (this.gripMoved) this.onDockResize(event.type===TouchType.Up ? 'end' : 'cancel',this.gripDistance);
+      else if (event.type===TouchType.Up) this.onDockResize('toggle',0);
+    }
+    event.stopPropagation();
+  }
   @Builder dockGrip() {
     Button({type:ButtonType.Normal}) {
       Row() {
@@ -989,11 +1017,8 @@ export struct InteractionDecisionForm {
       .accessibilityDescription(tr('phone_decision_height_hint')).accessibilityCustomActions([
         {name:tr('phone_decision_taller'),onAction:() => this.onDockResize('up',0)},
         {name:tr('phone_decision_shorter'),onAction:() => this.onDockResize('down',0)}])
-      .onClick(() => this.onDockResize('toggle',0)).priorityGesture(PanGesture({fingers:1,direction:PanDirection.Vertical,distance:4})
-        .onActionStart((e:GestureEvent) => this.onDockResize('begin',e.offsetY))
-        .onActionUpdate((e:GestureEvent) => this.onDockResize('move',e.offsetY))
-        .onActionEnd((e:GestureEvent) => this.onDockResize('end',e.offsetY))
-        .onActionCancel(() => this.onDockResize('cancel',0))).id('interaction.grabber')
+      .onTouch((event:TouchEvent):void => this.trackGrip(event))
+      .onClick(() => { if (Date.now()-this.gripEnded>400) this.onDockResize('toggle',0); }).id('interaction.grabber')
   }
   private dockHeadingAway():boolean {
     // On a short keyboard viewport keep the answer interface ahead of the optional title row.
