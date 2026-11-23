@@ -196,6 +196,26 @@ struct ModelConfigurationModelTests {
         #expect(hub.sent("PATCH", "/api/v1/model-config/purposes/agent.new").isEmpty)
     }
 
+    @Test func inboxUnsetPermissionDoesNotInheritAgentsAndPlanIsNotOffered() async throws {
+        let hub = FakeHub()
+        let twin = Self.twin
+            .replacingOccurrences(of: #""effort":"medium"}"#, with: #""effort":"medium","permission_mode":"bypassPermissions"}"#)
+            .replacingOccurrences(of: #"["provider","model","effort"]"#, with: #"["provider","model","effort","permission_mode"]"#)
+        hub.on("GET", "/api/v1/model-config/purposes/inbox.agent", json: #"{"purpose":\#(twin),"providers":\#(Self.providers)}"#)
+        let page = make(hub)
+        await page.load(purposeID: "inbox.agent")
+        #expect(page.permissionModeInEffect == "default")
+        #expect(page.draft.permissionMode == nil && !page.dirty)
+        #expect(page.permissionModes.map(\.id) == ["default", "acceptEdits", "auto", "bypassPermissions"])
+        #expect(page.permissionModeDefaultLabel == String(localized: "Default Permissions"))
+
+        let legacyPlan = twin.replacingOccurrences(of: #""override":{}"#, with: #""override":{"permission_mode":"plan"}"#)
+        hub.on("GET", "/api/v1/model-config/purposes/inbox.agent", json: #"{"purpose":\#(legacyPlan),"providers":\#(Self.providers)}"#)
+        await page.load(purposeID: "inbox.agent")
+        #expect(page.permissionModeInEffect == "default")
+        #expect(page.draft.permissionMode == nil && !page.dirty)
+    }
+
     /// A hub from before #4232 keeps the twin a read-only use: it is not listed apart and opens Agents.
     @Test func anOlderHubsTwinStaysAUseOfAgents() async {
         let hub = FakeHub()

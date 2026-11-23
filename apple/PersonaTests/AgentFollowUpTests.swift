@@ -71,7 +71,8 @@ struct AgentFollowUpTests {
 
     @Test func eachChangeSendsOnlyItsFieldNamingTheAssistantThatAnswered() async throws {
         let cases: [(AgentFollowUpModel.Change, String, Any)] = [
-            (.startRequested(false), "start_requested_tasks", false), (.workspace("prefer-new"), "task_workspace_preference", "prefer-new"),
+            (.startRequested(false), "start_requested_tasks", false), (.defaultPermission("bypassPermissions"), "default_permission_mode", "bypassPermissions"),
+            (.workspace("prefer-new"), "task_workspace_preference", "prefer-new"),
             (.mainSupervises(true), "main_supervises_own_tasks", true), (.agentTasks(true), "agent_tasks", true),
             (.closeEndedTerminals(true), "close_ended_terminals", true),
             (.idleHours(0), "idle_close_hours", 0), (.archiveDays(30), "archive_closed_days", 30),
@@ -123,6 +124,20 @@ struct AgentFollowUpTests {
         await page.load()
         await page.set(.archiveDays(30))
         #expect(page.state?.archiveClosedDays == 7)
+    }
+
+    @Test func defaultPermissionRollsBackWhenTheHubDoesNotConfirmIt() async throws {
+        let hub = FakeHub()
+        hub.on("GET", "/api/v1/assistant", json: Self.state)
+        hub.on("PUT", "/api/v1/assistant", json: Self.state.replacingOccurrences(of: #"     "default_permission_mode":"default",
+"#, with: ""))
+        let seen = Seen()
+        let page = page(hub, seen: seen)
+        await page.load()
+        await page.set(.defaultPermission("bypassPermissions"))
+        #expect(page.state?.defaultPermissionMode == "default")
+        #expect(seen.toasts.map(\.style) == [.error] && seen.saved.isEmpty)
+        #expect(page.saving.isEmpty)
     }
 
     @Test func anotherAssistantsPageNamesThatOne() async throws {
