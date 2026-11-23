@@ -143,10 +143,11 @@ import SwiftUI
         return !(s.manager ?? "").isEmpty && (1...AgentFollowUpText.maxNames).contains(max) && (0...AgentFollowUpText.maxHours).contains(every)
     }
 
-    /// Whether the hub has any of the page's settings: the profile shows its row only then.
+    /// Whether the hub has any of this page's settings: the profile shows its row only then. Default Permissions lives
+    /// in Settings › Agent and the Direction sheet, so that field alone must not open a page with none of its own rows.
     static func offered(_ s: APIClient.AssistantState?) -> Bool {
         guard let s else { return false }
-        return s.defaultPermissionMode != nil || s.startRequestedTasks != nil || s.taskWorkspacePreference != nil || s.mainSupervisesOwnTasks != nil || s.agentTasks != nil
+        return s.startRequestedTasks != nil || s.taskWorkspacePreference != nil || s.mainSupervisesOwnTasks != nil || s.agentTasks != nil
             || s.idleCloseHours != nil || s.archiveClosedDays != nil || s.agentAutoNaming != nil || s.closeEndedTerminals != nil
     }
 
