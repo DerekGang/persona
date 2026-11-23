@@ -24,8 +24,19 @@ func TestPartnerMessagesInsertOnce(t *testing.T) {
 	m := PartnerMessage{ID: "pr_1", Direction: "in", PeerHub: "hub-b", PeerName: "B", MessageID: "pm_1", Kind: "message", Hop: 1,
 		Text: "hello", State: "received"}
 	got, created, err := d.InsertPartnerMessage(ctx, m)
-	if err != nil || !created || got.ID != "pr_1" || got.Revision != 1 || got.CreatedAt.IsZero() || got.NextTry != nil {
+	if err != nil || !created || got.ID != "pr_1" || got.Revision != 1 || got.CreatedAt.IsZero() || got.NextTry != nil ||
+		!got.PairedAt.IsZero() {
 		t.Fatalf("insert = %+v %v %v", got, created, err)
+	}
+	// The pairing a row was written for is kept as the hub said it (microseconds, UTC); none is NULL, read as zero.
+	paired := time.Date(2026, 11, 20, 9, 30, 0, 123456789, time.FixedZone("UTC+8", 8*3600))
+	if got, _, err := d.InsertPartnerMessage(ctx, PartnerMessage{ID: "pr_p", Direction: "out", PeerHub: "hub-b", MessageID: "pm_p",
+		Kind: "message", State: "queued", PairedAt: paired}); err != nil || !got.PairedAt.Equal(paired.Truncate(time.Microsecond)) ||
+		got.PairedAt.Location() != time.UTC {
+		t.Fatalf("paired_at = %v %v", got.PairedAt, err)
+	}
+	if got, err := d.PartnerMessageOf(ctx, "out", "hub-b", "pm_p"); err != nil || got == nil || !got.PairedAt.Equal(paired.Truncate(time.Microsecond)) {
+		t.Fatalf("paired_at read = %+v %v", got, err)
 	}
 	again := m
 	again.ID, again.Text = "pr_2", "changed"

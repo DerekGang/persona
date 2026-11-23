@@ -236,14 +236,27 @@ func (s *Service) partnerListNow() (assistantwire.PartnerHubs, bool) {
 	return b.list, b.known
 }
 
-// partnerStaleIn: list (partner hubs on) shows m, a message kept for a partner, belongs to no pairing there is now: its
-// hub is not paired, or was paired again after m was written. With partner hubs off the hub refuses it when it goes.
+// partnerStaleIn: list (partner hubs on) shows m, an envelope kept for or from a partner, belongs to no pairing there is
+// now: its hub is not paired, or the pairing m was written for (m.PairedAt) is not the one there is (paired again since).
+// Both times are the hub's, so the manager's clock never comes into it; one not known (a row written before the hub
+// said its pairings, a hub that does not say when it paired) is no evidence of another pairing. With partner hubs off the
+// hub refuses what goes when it goes.
 func partnerStaleIn(list assistantwire.PartnerHubs, m db.PartnerMessage) bool {
 	if !list.Enabled {
 		return false
 	}
 	h, ok := partnerListed(list, m.PeerHub)
-	return !ok || m.CreatedAt.Before(h.PairedAt.Truncate(time.Microsecond))
+	if !ok {
+		return true
+	}
+	return !m.PairedAt.IsZero() && !h.PairedAt.IsZero() && !samePairing(m.PairedAt, h.PairedAt)
+}
+
+// partnerPairedAt is the pairing with peer as the hub last said it (zero: not known): what a row written now is for.
+func (s *Service) partnerPairedAt(peer string) time.Time {
+	list, _ := s.partnerListNow()
+	h, _ := partnerListed(list, peer)
+	return h.PairedAt
 }
 
 // partnerStale is partnerStaleIn on the list as the hub last said it (none yet: not stale).
@@ -253,16 +266,19 @@ func (s *Service) partnerStale(m db.PartnerMessage) bool {
 }
 
 // partnerSweep fails what waits for a pairing that ended: the messages still waiting for the owner's OK (their cards
-// taken back) and those queued for the partner (statuses too). A message approved for one pairing never goes to the
-// next one under the same hub_id.
+// taken back) and those queued for the partner (statuses too), and what that partner sent that is not in a
+// conversation yet (partnerInUnpaired; one in a relay queue already is dropped as it would go in, partnerRelayStale). A
+// message approved for one pairing never goes to the next one under the same hub_id, nor one taken under it into a
+// conversation after it.
 func (s *Service) partnerSweep() {
 	st := s.partnerStore()
 	if st == nil {
 		return
 	}
 	ctx := s.runCtx()
-	for _, state := range []string{partnerConfirming, partnerQueued} {
-		rows, err := st.PartnerMessagesInState(ctx, partnerOut, state)
+	for _, w := range []struct{ direction, state string }{{partnerOut, partnerConfirming}, {partnerOut, partnerQueued},
+		{partnerIn, partnerReceived}} {
+		rows, err := st.PartnerMessagesInState(ctx, w.direction, w.state)
 		if err != nil {
 			if ctx.Err() == nil {
 				s.logf("partner hubs: the waiting messages: %v", err)
@@ -270,7 +286,11 @@ func (s *Service) partnerSweep() {
 			return
 		}
 		for _, m := range rows {
-			if s.partnerStale(m) {
+			switch {
+			case !s.partnerStale(m):
+			case w.direction == partnerIn:
+				s.partnerInUnpaired(ctx, st, m)
+			default:
 				s.partnerUnpaired(ctx, st, m)
 			}
 		}

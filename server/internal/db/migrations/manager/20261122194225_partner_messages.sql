@@ -1,7 +1,8 @@
 -- Partner hubs (docs/server/partner-hubs.md): the envelopes this hub's assistant sent to and received from paired hubs,
 -- each one once by (direction, peer_hub, message_id), with where it stands; and, per paired hub, whether a message to
--- it waits for the owner's OK first (no row: it does). paired_at is the pairing a setting was made for (the hub's
--- PartnerHub.PairedAt; NULL: a hub that does not say): a hub paired again under the same hub_id does not inherit it.
+-- it waits for the owner's OK first (no row: it does). paired_at is the pairing an envelope was written for, or a
+-- setting made for (the hub's PartnerHub.PairedAt, from the hub's clock; NULL: not known): a hub paired again under the
+-- same hub_id gets nothing of the earlier pairing and does not inherit its setting.
 CREATE TABLE IF NOT EXISTS partner_messages (
     id text PRIMARY KEY,
     direction text NOT NULL CHECK (direction IN ('out', 'in')),
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS partner_messages (
     card_id text NOT NULL DEFAULT '',
     attempts int NOT NULL DEFAULT 0,
     next_try timestamptz,
+    paired_at timestamptz,
     revision bigint NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),

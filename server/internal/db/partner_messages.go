@@ -26,12 +26,15 @@ type PartnerMessage struct {
 	SessionID string
 	Title     string
 	// Text is a message's or a reply's text, scrubbed; for a status, the state it reports (delivered | failed).
-	Text      string
-	State     string
-	Code      string // why it failed; a status: the code it reports
-	CardID    string // the owner's confirmation card raised last
-	Attempts  int
-	NextTry   *time.Time // when the delivery loop looks at it next; nil: nothing to do
+	Text     string
+	State    string
+	Code     string // why it failed; a status: the code it reports
+	CardID   string // the owner's confirmation card raised last
+	Attempts int
+	NextTry  *time.Time // when the delivery loop looks at it next; nil: nothing to do
+	// PairedAt is the pairing it was written for (the hub's PartnerHub.PairedAt then; zero: not known): kept from the
+	// hub's clock, so it is only ever compared with the hub's own pairing times.
+	PairedAt  time.Time
 	Revision  int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -48,17 +51,30 @@ type PartnerPref struct {
 }
 
 const partnerMessageColumns = `id, direction, peer_hub, peer_name, message_id, kind, reply_to, hop, machine_id, session_id, title,
-	text, state, code, card_id, attempts, next_try, revision, created_at, updated_at`
+	text, state, code, card_id, attempts, next_try, paired_at, revision, created_at, updated_at`
 
 func scanPartnerMessage(r pgx.Row) (*PartnerMessage, error) {
 	m := new(PartnerMessage)
+	var paired *time.Time
 	err := r.Scan(&m.ID, &m.Direction, &m.PeerHub, &m.PeerName, &m.MessageID, &m.Kind, &m.ReplyTo, &m.Hop, &m.MachineID,
-		&m.SessionID, &m.Title, &m.Text, &m.State, &m.Code, &m.CardID, &m.Attempts, &m.NextTry, &m.Revision, &m.CreatedAt,
-		&m.UpdatedAt)
+		&m.SessionID, &m.Title, &m.Text, &m.State, &m.Code, &m.CardID, &m.Attempts, &m.NextTry, &paired, &m.Revision,
+		&m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
+	if paired != nil {
+		m.PairedAt = paired.UTC()
+	}
 	return m, err
+}
+
+// nullTime is t for a nullable column: NULL when zero.
+func nullTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	t = t.UTC()
+	return &t
 }
 
 func scanPartnerMessages(rows pgx.Rows, err error) ([]PartnerMessage, error) {
@@ -86,11 +102,11 @@ func (d *DB) InsertPartnerMessage(ctx context.Context, m PartnerMessage) (Partne
 	}
 	row, err := scanPartnerMessage(d.pool.QueryRow(ctx, `INSERT INTO partner_messages (id, direction, peer_hub, peer_name,
 		message_id, kind, reply_to, hop, machine_id, session_id, title, text, state, code, card_id, attempts, next_try,
-		created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)
+		paired_at, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)
 		ON CONFLICT (direction, peer_hub, message_id) DO NOTHING RETURNING `+partnerMessageColumns,
 		m.ID, m.Direction, m.PeerHub, m.PeerName, m.MessageID, m.Kind, m.ReplyTo, m.Hop, m.MachineID, m.SessionID, m.Title,
-		m.Text, m.State, m.Code, m.CardID, m.Attempts, m.NextTry, created.UTC()))
+		m.Text, m.State, m.Code, m.CardID, m.Attempts, m.NextTry, nullTime(m.PairedAt), created.UTC()))
 	if err != nil {
 		return PartnerMessage{}, false, err
 	}
@@ -180,13 +196,8 @@ func (d *DB) PartnerPrefs(ctx context.Context) ([]PartnerPref, error) {
 // SetPartnerConfirm keeps whether a message to hub waits for the owner's OK, for its pairing made at pairedAt (zero:
 // not known), in place of a setting of an earlier pairing.
 func (d *DB) SetPartnerConfirm(ctx context.Context, hub string, confirm bool, pairedAt time.Time) error {
-	var paired *time.Time
-	if !pairedAt.IsZero() {
-		t := pairedAt.UTC()
-		paired = &t
-	}
 	_, err := d.pool.Exec(ctx, `INSERT INTO partner_prefs (hub_id, confirm, paired_at, updated_at) VALUES ($1, $2, $3, now())
 		ON CONFLICT (hub_id) DO UPDATE SET confirm=EXCLUDED.confirm, paired_at=EXCLUDED.paired_at, updated_at=now()`,
-		hub, confirm, paired)
+		hub, confirm, nullTime(pairedAt))
 	return err
 }

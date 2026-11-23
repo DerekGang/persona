@@ -82,14 +82,14 @@ func (s *Service) partnerReceive(ctx context.Context, p assistantwire.PartnerRec
 	}
 	now := time.Now().UTC()
 	m := db.PartnerMessage{ID: "pr_" + randomHex(12), Direction: partnerIn, PeerHub: peer, PeerName: partnerInline(p.FromName, 64),
-		MessageID: e.MessageID, Kind: e.Kind, Hop: 1, State: partnerReceived, CreatedAt: now}
+		MessageID: e.MessageID, Kind: e.Kind, Hop: 1, State: partnerReceived, PairedAt: s.partnerPairedAt(peer), CreatedAt: now}
 	if m.PeerName == "" {
 		m.PeerName = peer
 	}
 	status := false
 	switch e.Kind {
 	case assistantwire.PartnerKindMessage, assistantwire.PartnerKindReply:
-		text, _, err := partnerScrub(partnerPlain(e.Text))
+		text, _, _, err := partnerScrub(partnerPlain(e.Text))
 		if err != nil || text == "" {
 			return refused(assistantwire.PartnerCodeInvalid)
 		}
@@ -171,6 +171,10 @@ func partnerPlain(text string) string {
 // means in the conversation or durably queued for it, and the partner is told; a refusal for good tells it too
 // (partnerRelayRefused). Anything else leaves m received, for the loop (again: a try before this one may have gone in).
 func (s *Service) partnerDeliverIn(ctx context.Context, st partnerStore, m db.PartnerMessage, again bool) {
+	if s.partnerStale(m) { // taken under a pairing that ended since: never into a conversation after it
+		s.partnerInUnpaired(ctx, st, m)
+		return
+	}
 	if m.Kind == assistantwire.PartnerKindStatus {
 		s.partnerStatusIn(ctx, st, m)
 		return
@@ -233,6 +237,61 @@ func (s *Service) partnerDeliverIn(ctx context.Context, st partnerStore, m db.Pa
 	default:
 		s.logf("partner %s: %s %s into %s: %v; tried again later", short(m.PeerHub), m.Kind, m.MessageID, short(to), err)
 	}
+}
+
+// partnerInUnpaired fails incoming m, taken under a pairing that ended (the hub unpaired, or paired again since) and not
+// in a conversation yet (received, or delivered into a relay queue it has not left), as unpaired: it goes in nowhere,
+// and the hub it came from, no longer that partner, is sent no status.
+func (s *Service) partnerInUnpaired(ctx context.Context, st partnerStore, m db.PartnerMessage) {
+	m, ok, err := partnerMutate(ctx, st, m, func(r *db.PartnerMessage) bool {
+		if r.State != partnerReceived && r.State != partnerDelivered {
+			return false
+		}
+		r.State, r.Code, r.NextTry = partnerFailed, assistantwire.PartnerCodeUnpaired, nil
+		return true
+	})
+	if err != nil {
+		s.logf("partner %s: %s unpaired: %v", short(m.PeerHub), m.MessageID, err)
+	}
+	if ok {
+		s.logf("partner %s: %s %s of a pairing that ended: dropped", short(m.PeerHub), m.Kind, m.MessageID)
+	}
+}
+
+// partnerRelayStale: msg, a partner's message or reply waiting in a conversation's relay queue, came under a pairing
+// that ended since (its row's, partnerStale; one without a row by its hub alone): drainRelays drops it as it would go
+// in, and its row fails as unpaired, untold (partnerInUnpaired). A list that cannot be read now lets it go as it is.
+func (s *Service) partnerRelayStale(ctx context.Context, msg relayMsg) bool {
+	if msg.Tool != partnerMessageTool && msg.Tool != partnerReplyTool {
+		return false
+	}
+	st := s.partnerStore()
+	if st == nil {
+		return false
+	}
+	list, err := s.partnerList(ctx)
+	if err != nil {
+		return false
+	}
+	m := &db.PartnerMessage{Direction: partnerIn, PeerHub: strings.TrimPrefix(msg.From, partnerFrom), MessageID: msg.Partner}
+	if msg.Partner != "" {
+		row, err := st.PartnerMessageOf(ctx, partnerIn, m.PeerHub, msg.Partner)
+		if err != nil {
+			return false
+		}
+		if row != nil {
+			m = row
+		}
+	}
+	if !partnerStaleIn(list, *m) {
+		return false
+	}
+	if m.ID != "" {
+		s.partnerInUnpaired(ctx, st, *m)
+	} else {
+		s.logf("partner %s: queued %s of a pairing that ended: dropped", short(m.PeerHub), msg.Tool)
+	}
+	return true
 }
 
 // partnerInWent notes incoming m delivered into conversation to (a reply's out: the message it answers, answered now)
@@ -309,7 +368,10 @@ func (s *Service) partnerStatusOut(ctx context.Context, st partnerStore, m db.Pa
 	now := time.Now().UTC()
 	row := db.PartnerMessage{ID: "pr_" + randomHex(12), Direction: partnerOut, PeerHub: m.PeerHub, PeerName: m.PeerName,
 		MessageID: partnerStatusID(m, state), Kind: assistantwire.PartnerKindStatus, ReplyTo: m.MessageID,
-		Hop: m.Hop, Text: state, Code: code, State: partnerQueued, NextTry: &now, CreatedAt: now}
+		Hop: m.Hop, Text: state, Code: code, State: partnerQueued, NextTry: &now, PairedAt: m.PairedAt, CreatedAt: now}
+	if row.PairedAt.IsZero() {
+		row.PairedAt = s.partnerPairedAt(m.PeerHub)
+	}
 	if _, _, err := st.InsertPartnerMessage(ctx, row); err != nil {
 		s.logf("partner %s: status of %s: %v", short(m.PeerHub), m.MessageID, err)
 		return false

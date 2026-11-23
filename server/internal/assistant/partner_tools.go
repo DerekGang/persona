@@ -158,16 +158,47 @@ func (s *Service) partnerHubFor(ctx context.Context, hub string) (assistantwire.
 // extension's) that SanitizeShareText does not know.
 var partnerTokenRe = lazyre.New(`\b(?:(?:jd|jp|jx|jb|jc|jh)_[A-Za-z0-9_-]{16,}|pext_[A-Za-z0-9_-]{8,})`)
 
-// partnerScrub is text as it may leave for a partner hub: credentials removed (transcript.SanitizeShareText, and
-// Persona's own token kinds), and how many places were. A text the sanitizer leaves as it was, but for its Unicode
-// normalisation, goes as written: that normalisation alone would change the punctuation of Chinese text.
-func partnerScrub(text string) (string, int, error) {
-	text = strings.TrimSpace(text)
-	clean, err := transcript.SanitizeShareText(text)
-	if err != nil {
-		return "", 0, err
+// partnerHidden is a character nobody sees where it is shown but a model reads, or one that reorders what is shown
+// around it: Unicode tag characters (which spell out text of their own), bidirectional embeddings, overrides and
+// isolates, and the invisible format characters (zero-width space, word joiner, byte order mark, soft hyphen,
+// Mongolian vowel separator). Zero-width joiner and non-joiner stay: emoji and scripts need them.
+func partnerHidden(r rune) bool {
+	switch {
+	case r >= 0xE0000 && r <= 0xE007F, r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
+		return true
 	}
-	removed := 0
+	switch r {
+	case 0x200B, 0x2060, 0xFEFF, 0x00AD, 0x180E:
+		return true
+	}
+	return false
+}
+
+// partnerVisible is text without its hidden characters (partnerHidden), and how many there were.
+func partnerVisible(text string) (string, int) {
+	n := 0
+	text = strings.Map(func(r rune) rune {
+		if partnerHidden(r) {
+			n++
+			return -1
+		}
+		return r
+	}, text)
+	return text, n
+}
+
+// partnerScrub is text as it goes between this hub and a partner, both ways: without the characters nobody would see
+// on the owner's card or in the chat (partnerVisible: what goes is what the card shows), and with credentials removed
+// (transcript.SanitizeShareText, and Persona's own token kinds); and how many of each were. A text the sanitizer leaves
+// as it was, but for its Unicode normalisation, goes as written: that normalisation alone would change the punctuation
+// of Chinese text.
+func partnerScrub(text string) (clean string, removed, hidden int, err error) {
+	text, hidden = partnerVisible(text)
+	text = strings.TrimSpace(text)
+	clean, err = transcript.SanitizeShareText(text)
+	if err != nil {
+		return "", 0, 0, err
+	}
 	if clean == norm.NFKC.String(strings.ReplaceAll(text, "\r\n", "\n")) {
 		clean = text
 	} else {
@@ -177,7 +208,7 @@ func partnerScrub(text string) (string, int, error) {
 		removed++
 		return "[REDACTED]"
 	})
-	return strings.TrimSpace(clean), removed, nil
+	return strings.TrimSpace(clean), removed, hidden, nil
 }
 
 func newPartnerMessageID() string { return "pm_" + randomHex(16) }
@@ -202,7 +233,7 @@ func (s *Service) toolHubSend(ctx context.Context, machine, self string, args js
 	if err != nil {
 		return "", err
 	}
-	text, removed, err := partnerScrub(a.Text)
+	text, removed, hidden, err := partnerScrub(a.Text)
 	if err != nil {
 		return "", fmt.Errorf("the text can't be sent: %w", err)
 	}
@@ -220,6 +251,9 @@ func (s *Service) toolHubSend(ctx context.Context, machine, self string, args js
 		}
 		if in == nil || in.Kind == assistantwire.PartnerKindStatus {
 			return "", fmt.Errorf("reply_to %q names no message %q sent here", replyTo, hub.Name)
+		}
+		if s.partnerStale(*in) {
+			return "", fmt.Errorf("reply_to %q is a message of an earlier pairing with %q, which ended: it is not answered", replyTo, hub.Name)
 		}
 		if hop = in.Hop + 1; hop > assistantwire.PartnerHopMax {
 			return "", fmt.Errorf("this exchange with %q is %d messages long already (at most %d): tell the user instead of answering", hub.Name, in.Hop, assistantwire.PartnerHopMax)
@@ -242,7 +276,7 @@ func (s *Service) toolHubSend(ctx context.Context, machine, self string, args js
 	}
 	m := db.PartnerMessage{ID: "pr_" + randomHex(12), Direction: partnerOut, PeerHub: hub.HubID, PeerName: partnerInline(hub.Name, 64),
 		MessageID: newPartnerMessageID(), Kind: kind, ReplyTo: a.ReplyTo, Hop: hop, MachineID: machine, SessionID: self,
-		Title: title, Text: text, State: partnerConfirming, CreatedAt: now}
+		Title: title, Text: text, State: partnerConfirming, PairedAt: hub.PairedAt, CreatedAt: now}
 	if !asks {
 		m.State, m.NextTry = partnerQueued, &now
 	}
@@ -254,6 +288,9 @@ func (s *Service) toolHubSend(ctx context.Context, machine, self string, args js
 	note := ""
 	if removed > 0 {
 		note = fmt.Sprintf(" Credentials were removed from the text first (%d found); what goes is the text without them.", removed)
+	}
+	if hidden > 0 {
+		note += fmt.Sprintf(" %d invisible characters were removed from the text: only what the user can see goes.", hidden)
 	}
 	if asks {
 		go s.partnerAsk(m)
@@ -372,8 +409,11 @@ func (s *Service) partnerAnswered(ctx context.Context, st partnerStore, m db.Par
 	if allowed {
 		// Always stops asking for this pairing only: a later one under the same hub_id asks again.
 		if list, known := s.partnerListNow(); r.Always && (!known || !partnerStaleIn(list, m)) {
-			h, _ := partnerListed(list, m.PeerHub)
-			if err := st.SetPartnerConfirm(ctx, m.PeerHub, false, h.PairedAt); err != nil {
+			paired := m.PairedAt // the pairing the message was written for, which is the one there is
+			if h, _ := partnerListed(list, m.PeerHub); paired.IsZero() {
+				paired = h.PairedAt
+			}
+			if err := st.SetPartnerConfirm(ctx, m.PeerHub, false, paired); err != nil {
 				s.logf("partner %s: always: %v", m.PeerHub, err)
 			}
 		}
