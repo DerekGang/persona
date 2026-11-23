@@ -121,6 +121,7 @@ export struct KnowledgeWorkspacePage {
   @Local facts: RecordingFactsDraft = new RecordingFactsDraft();
   @Local removedFacts: string = '';
   private removedFactsOwner: string = '';
+  private removedFactsNotice: number = 0;
   @Local recordingTools: boolean = false;
   @Require @Param model: ClientModel;
   @Param row: ResourceRow | undefined = undefined;
@@ -926,16 +927,40 @@ export struct KnowledgeWorkspacePage {
     this.facts.close();
     if (await this.workspace.saveFacts('',previous) && owner===this.factsOwner()) {
       this.removedFactsOwner=owner; this.removedFacts=previous;
+      const notice=++this.removedFactsNotice;
+      setTimeout(() => {
+        if (this.removedFactsNotice===notice && this.removedFactsOwner===owner) {
+          this.removedFacts=''; this.removedFactsOwner='';
+        }
+      },5000);
     }
   }
   private async undoFacts():Promise<void> {
     const value=this.removedFacts,owner=this.factsOwner();
     if (!value || this.removedFactsOwner!==owner || this.workspace.busy) return;
-    if (await this.workspace.saveFacts(value,'') && this.factsOwner()===owner) this.removedFacts='';
+    this.removedFacts=''; this.removedFactsOwner='';
+    await this.workspace.saveFacts(value,'');
   }
   private async submitFacts():Promise<void> {
     if (this.facts.baseline && !this.facts.text.trim()) await this.deleteFacts();
     else await this.facts.save(this.workspace);
+  }
+
+  @Builder recordingUndoNotice() {
+    if (this.removedFacts && this.removedFactsOwner===this.factsOwner() && !Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) {
+      Row({space:12}) {
+        Stack() { SymbolGlyph(Symbols.check).fontSize('11vp').fontColor([Color.White]) }
+          .width(20).height(20).borderRadius(10).backgroundColor(Colors.positive)
+        Text(tr('recording_facts_deleted')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
+          .fontColor(Colors.ink).maxLines(3).flexShrink(1)
+        Button({type:ButtonType.Normal}) {
+          Text(tr('ks_undo')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.link)
+        }.height(32).padding(0).backgroundColor(Color.Transparent).enabled(!this.workspace.busy)
+          .accessibilityText(tr('ks_undo')).onClick(() => { this.undoFacts().catch(() => {}); }).id('knowledge.facts.undo')
+      }.constraintSize({maxWidth:'94%',minHeight:44}).padding({left:16,right:16,top:4,bottom:4})
+        .backgroundColor(Colors.surface).borderRadius(28).border({width:0.5,color:Colors.divider})
+        .shadow({radius:6,color:Colors.subtle,offsetY:2}).hitTestBehavior(HitTestMode.Transparent).id('knowledge.facts.undo_notice')
+    }
   }
 
   @Builder recordingFactsEditor() {
@@ -1028,9 +1053,6 @@ export struct KnowledgeWorkspacePage {
             detents:this.facts.baseline ? [SheetSize.MEDIUM,SheetSize.LARGE] : [SheetSize.LARGE,SheetSize.MEDIUM],
             dragBar:true,showClose:false,backgroundColor:Colors.grouped,keyboardAvoidMode:SheetKeyboardAvoidMode.TRANSLATE_AND_RESIZE,
             onWillDismiss:(action:DismissSheetAction) => { if (!this.workspace.busy && !this.factsChanged()) { this.facts.close(); action.dismiss(); } }})
-        if (this.removedFacts && this.removedFactsOwner===this.factsOwner() && !Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) {
-          Button(tr('ks_undo'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => { this.undoFacts().catch(() => {}); }).id('knowledge.facts.undo')
-        }
         this.recordingFootnote('phone_kb_fact_note')
         if (Wire.text(this.workspace.detail,'summary')) {
           this.recordingHeading('phone_kb_profile')
@@ -1065,6 +1087,7 @@ export struct KnowledgeWorkspacePage {
         }
       }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:31,bottom:24})
     }.width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped).id('knowledge.recording.detail')
+      .overlay(this.recordingUndoNotice(),{align:Alignment.Top,offset:{x:0,y:8}})
       .bindSheet($$this.metadataSheet,this.metadataForm(),{title:{title:tr('knowledge_edit_metadata')},height:SheetSize.LARGE,showClose:true,
         onDisappear:() => { this.workspace.editOpen=false; }})
   }

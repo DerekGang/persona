@@ -19,6 +19,10 @@
     {
       "name": "recording_facts_edit",
       "value": "编辑确认的事实"
+    },
+    {
+      "name": "recording_facts_deleted",
+      "value": "已删除确认的事实"
     }
   ]
 }

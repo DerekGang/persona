@@ -172,9 +172,9 @@ test('the recording facts sheet returns to its own entry and permits an explicit
 });
 
 test('deleting a confirmed recording fact dismisses immediately and only its owner can undo the successful write',async()=>{
-  const body=source.slice(source.indexOf('  private async deleteFacts()'),source.indexOf('  @Builder recordingFactsEditor()'));
-  const Actions=new Function(stripTypeScriptTypes('class RecordingActions { '+body+' }')+'; return RecordingActions;')();
-  const actions=new Actions(),writes=[];
+  const body=source.slice(source.indexOf('  private async deleteFacts()'),source.indexOf('  @Builder recordingUndoNotice()'));
+  const timers=[],Actions=new Function('setTimeout',stripTypeScriptTypes('class RecordingActions { '+body+' }')+'; return RecordingActions;')((fn,duration)=>timers.push({fn,duration}));
+  const actions=new Actions(),writes=[];actions.removedFactsNotice=0;
   let owner='meeting A',finish;
   actions.factsOwner=()=>owner;
   actions.facts={baseline:'initial fact',open:true,close(){this.open=false;}};
@@ -190,4 +190,9 @@ test('deleting a confirmed recording fact dismisses immediately and only its own
   owner='meeting A';const undo=actions.undoFacts();finish(true);await undo;
   assert.deepEqual(writes,[['','initial fact'],['','initial fact'],['initial fact','']]);
   assert.equal(actions.removedFacts,'');
+  actions.facts.open=true;const next=actions.deleteFacts();finish(true);await next;
+  assert.deepEqual(timers.map(timer=>timer.duration),[5000,5000]);
+  timers[0].fn();assert.equal(actions.removedFacts,'initial fact');
+  timers[1].fn();assert.equal(actions.removedFacts,'');assert.equal(writes.length,4);
+  assert.match(source,/\.overlay\(this\.recordingUndoNotice\(\),\{align:Alignment\.Top/);
 });

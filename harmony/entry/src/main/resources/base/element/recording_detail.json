@@ -19,6 +19,10 @@
     {
       "name": "recording_facts_edit",
       "value": "Edit Confirmed Facts"
+    },
+    {
+      "name": "recording_facts_deleted",
+      "value": "Confirmed facts deleted"
     }
   ]
 }
