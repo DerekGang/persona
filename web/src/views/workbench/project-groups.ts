@@ -3,7 +3,7 @@
 // label is the folder name only, never a path or an id (docs/design/DESIGN_SYSTEM.md 5.6). The rows are the complete
 // list the existing sidebar reads (useFullAgentSessions), so a row's state and the counts are the same numbers.
 import { stateOf } from "../../lib/format";
-import { foldedState } from "../../lib/child-sessions";
+import { foldedState, isFoldedIn, listedKeys } from "../../lib/child-sessions";
 import { repoOf } from "../../lib/agent-repos";
 import type { Machine, Session } from "../../lib/types";
 
@@ -44,8 +44,10 @@ export function sortThreads(list: readonly Session[]): Session[] {
 export function groupByProject(sessions: readonly Session[], machines: readonly Machine[], other: string): Project[] {
   const names = new Map(machines.map((m) => [m.id, m.name]));
   const by = new Map<string, Project>();
+  // a child that folds under a parent the list holds is never a row or a count of its own (the usual sidebar's rule)
+  const listed = listedKeys(sessions);
   for (const s of sessions) {
-    if (s.assistant || s.hidden_by_directory) continue;
+    if (s.assistant || s.hidden_by_directory || isFoldedIn(s, listed)) continue;
     const r = repoOf(s.cwd ?? "", s.repo_root);
     const key = r.repo ? `${s.machine_id}\n${r.repo}` : OTHER;
     let p = by.get(key);

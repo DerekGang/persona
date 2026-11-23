@@ -6,6 +6,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { t } from "../../i18n";
 import { repoOf } from "../../lib/agent-repos";
 import { CHAT_MIN, PANEL_MIN } from "../../lib/layout";
+import { usePanel } from "../../lib/panel";
 import { registerContextCommands } from "../../lib/palette";
 import { openNewAgent } from "../../lib/new-agent";
 import { canShowTerminal } from "../../lib/session-view";
@@ -58,6 +59,8 @@ function useRoom(ref: React.RefObject<HTMLElement | null>): number {
 
 function DrawerResize({ height, column, onResize }: { height: number; column: number; onResize: (h: number) => void }) {
   const max = column > 0 ? Math.max(DRAWER_MIN, column * DRAWER_MAX_SHARE) : 2000;
+  const drag = useRef<(() => void) | null>(null);
+  useEffect(() => () => drag.current?.(), []);
   const start = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -67,9 +70,14 @@ function DrawerResize({ height, column, onResize }: { height: number; column: nu
     const up = () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      drag.current = null;
     };
+    drag.current?.();
+    drag.current = up;
     addEventListener("pointermove", move);
     addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
   };
   return (
     <div
@@ -103,6 +111,8 @@ export function WorkbenchThread({ mid, sid, children }: { mid: string; sid: stri
   const frame = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
   const room = useRoom(frame);
+  // the shell's own right panel (Team, Files, Review, Side) takes the right edge while it is open: never two at once
+  const shellPanel = usePanel();
   const columnHeight = useRoomHeight(column);
 
   const toggleDiff = useCallback(() => writeWorkbenchLayout({ diff: !readWorkbenchLayout().diff }), []);
@@ -132,7 +142,7 @@ export function WorkbenchThread({ mid, sid, children }: { mid: string; sid: stri
     ];
     return () => offs.reverse().forEach((off) => off());
   }, [toggleDiff, toggleDrawer, mid]);
-  const showDiff = layout.diff && diffFits(room);
+  const showDiff = layout.diff && diffFits(room) && !shellPanel;
   const showDrawer = layout.drawer && canTerm;
   const diffW = diffWidth(layout.diffWidth, room);
   const drawerH = drawerHeight(layout.drawerHeight, columnHeight);
@@ -142,7 +152,7 @@ export function WorkbenchThread({ mid, sid, children }: { mid: string; sid: stri
     <div ref={frame} data-workbench-thread-frame className="flex h-full min-h-0 flex-col">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
         <span className="min-w-0 flex-1 truncate text-label text-ink-3">{project.name}</span>
-        <IconButton icon="sidebar" size={26} iconSize={14} label={t("workbench.toggle_diff")} pressed={layout.diff} onClick={toggleDiff} />
+        <IconButton icon="sidebar" size={26} iconSize={14} label={t("workbench.toggle_diff")} pressed={showDiff} onClick={toggleDiff} />
         {canTerm && <IconButton icon="terminal" size={26} iconSize={14} label={t("workbench.toggle_terminal")} pressed={layout.drawer} onClick={toggleDrawer} />}
       </div>
       <div className="flex min-h-0 flex-1">

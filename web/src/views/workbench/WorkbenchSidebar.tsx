@@ -4,7 +4,7 @@
 // middle click work, and the next / previous row shortcuts (⌘⌥↑ / ⌘⌥↓) walk them like the usual sidebar's.
 import { useMemo } from "react";
 import { t } from "../../i18n";
-import { ago, backgroundWaiting, sessionTitle, stateOf } from "../../lib/format";
+import { ago, backgroundWaiting, sessionTitle } from "../../lib/format";
 import { useFullAgentSessions } from "../../lib/sessions";
 import { openNewAgent } from "../../lib/new-agent";
 import { href, type Route } from "../../lib/router";
@@ -17,6 +17,7 @@ import { CollapseButton } from "../SidebarRail";
 import { cx, IconButton } from "../../ui/atoms";
 import { CountBadge } from "../../ui/CountBadge";
 import { Icon } from "../../ui/icons";
+import { foldedState } from "../../lib/child-sessions";
 import { StatusMark } from "../../ui/StatusMark";
 import { groupByProject, type Project } from "./project-groups";
 import type { Session } from "../../lib/types";
@@ -29,7 +30,7 @@ function threadRoute(s: Session): Route {
 
 /** One thread: its title and the plain word for its state; the state dot stands where a state needs saying. */
 export function ThreadRow({ s, active, go }: { s: Session; active: boolean; go: ReturnType<typeof useGo> }) {
-  const st = stateOf(s);
+  const st = foldedState(s);
   const bg = backgroundWaiting(s);
   const word = bg ? stateName("bg_waiting") : STATE_LABEL[st];
   const to = threadRoute(s);

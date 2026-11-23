@@ -1,7 +1,7 @@
 {
   "sidebar_label": "项目和会话",
   "projects": "项目",
-  "other_project": "其他",
+  "other_project": "无文件夹",
   "new_thread": "新建会话",
   "new_thread_in": "在 {name} 中新建会话",
   "toggle_diff": "显示或隐藏改动",

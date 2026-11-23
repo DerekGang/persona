@@ -98,6 +98,8 @@ function parseLayout(raw: string | null): WorkbenchLayoutState {
 
 let cachedRaw: string | null | undefined;
 let cachedLayout = WORKBENCH_LAYOUT_DEFAULT;
+/** Storage refused a write: this page keeps its own copy from then on. */
+let memoryOnly = false;
 
 /** The layout flags as kept (a stable object while nothing changed, for useSyncExternalStore). */
 export function readWorkbenchLayout(): WorkbenchLayoutState {
@@ -107,6 +109,7 @@ export function readWorkbenchLayout(): WorkbenchLayoutState {
   } catch {
     // unreadable storage: the defaults
   }
+  if (memoryOnly) return cachedLayout;
   if (raw !== cachedRaw) {
     cachedRaw = raw;
     cachedLayout = parseLayout(raw);
@@ -119,7 +122,8 @@ export function writeWorkbenchLayout(patch: Partial<WorkbenchLayoutState>): void
   try {
     localStorage.setItem(WORKBENCH_LAYOUT_KEY, JSON.stringify(next));
   } catch {
-    // not kept: this page's copy still follows
+    // not kept: this page's copy follows from here on
+    memoryOnly = true;
   }
   cachedRaw = JSON.stringify(next);
   cachedLayout = next;

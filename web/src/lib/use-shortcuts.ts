@@ -115,7 +115,8 @@ export function useShortcuts(ctx: ShortcutContext) {
       }),
       registerShortcut("right-panel", () => {
         // the Workbench layout's changes region, while it is up (Settings › Labs)
-        const workbench = workbenchKey("right-panel");
+        // (a panel the shell has open keeps the usual toggle, so Team, Files and Side panels still close)
+        const workbench = getPanel() ? undefined : workbenchKey("right-panel");
         if (workbench) return workbench();
         const current = getPanel();
         const pane = at.current.pane;

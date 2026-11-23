@@ -11,6 +11,16 @@ const row = (sid: string, cwd: string, extra: Partial<Session> = {}): Session =>
 const needs = (sid: string, cwd: string, extra: Partial<Session> = {}) => row(sid, cwd, { state: "needs_you", status: "blocked", ...extra });
 const group = (list: Session[]) => groupByProject(list, machines, "Other");
 
+describe("groupByProject children", () => {
+  it("folds a child under its listed parent: no row, no count of its own, the parent carries the wait", () => {
+    const parent = row("p", "/code/app");
+    const child = needs("c", "/code/app", { folded_under: "p", folded_as: "worker" });
+    const [p] = group([parent, child]);
+    expect(p.threads.map((s) => s.session_id)).toEqual(["p"]);
+    expect(p.needs).toBeLessThanOrEqual(1);
+  });
+});
+
 describe("groupByProject", () => {
   it("groups by the repository's folder name, worktrees of one repository together", () => {
     const projects = group([row("a", "/code/app"), row("b", "/code/app/.worktrees/feat"), row("c", "/code/api")]);
