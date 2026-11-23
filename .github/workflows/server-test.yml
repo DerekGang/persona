@@ -44,6 +44,18 @@ jobs:
         if: matrix.shard == 'other'
         with:
           bun-version: '1.4.2'
+      - name: Load the hub AppArmor profile on the hosted test VM
+        if: matrix.shard == 'other'
+        shell: bash
+        run: |
+          security=$(docker info --format '{{json .SecurityOptions}}')
+          if [[ "$security" == *apparmor* ]]; then
+            if ! command -v apparmor_parser >/dev/null; then
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends apparmor
+            fi
+            sudo apparmor_parser -r deploy/docker/persona-hub.apparmor
+          fi
       - name: Server checks
         run: scripts/ci/server.sh "$CI_SERVER_SHARD"
       - name: Save shard Go caches
