@@ -448,6 +448,8 @@ struct AssistantActionBar: View {
     /// Another conversation to open after this one's last card was answered (#4348), in the same row (#7770).
     var nextTitle: String? = nil
     var openNext: (() -> Void)? = nil
+    /// While the reply streams, hide the whole identified container as well as its entries (#7770).
+    var hidden = false
     @State private var open: ActionTray?
     /// The open tray's rows, measured: the tray is as tall as they are, up to its cap.
     @State private var listHeight: CGFloat = 0
@@ -564,8 +566,12 @@ struct AssistantActionBar: View {
                 minute &+= 1
             }
         }
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: hidden ? .ignore : .contain)
         .accessibilityIdentifier("action-bar")
+        .accessibilityHidden(hidden)
+        // One subtree across stream boundaries preserves each card's unsent edits; hidden content leaves accessibility.
+        .opacity(hidden ? 0 : 1)
+        .allowsHitTesting(!hidden)
     }
 
     static func content(_ conversation: String, key: SessionKey? = nil) -> ActionTrayContent {

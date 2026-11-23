@@ -98,7 +98,9 @@ final class PersonaQueueUITests: XCTestCase {
         XCTAssertFalse(app.buttons["queue-relayed-summary"].exists, "another conversation gets no insertion row above the composer")
         XCTAssertEqual(app.buttons.matching(identifier: "queue-item").count, 0, "a fresh queue is collapsed")
         if strip.elementType == .button { strip.tap() } else { strip.buttons.firstMatch.tap() }
-        XCTAssertEqual(app.buttons.matching(identifier: "queue-item").count, 2, "only the owner's two messages open")
+        let items = app.buttons.matching(identifier: "queue-item")
+        XCTAssertTrue(items.element(boundBy: 1).waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(items.count, 2, "only the owner's two messages open")
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "来自「早报")).firstMatch.exists)
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "对话空闲后送达")).firstMatch.exists)
         try shotLightAndDark(app, "relayed-count-only")

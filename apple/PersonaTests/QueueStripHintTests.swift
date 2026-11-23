@@ -42,6 +42,15 @@ import UIKit
         #expect(element.accessibilityHint == expected, "the hint VoiceOver reads: \(String(describing: element.accessibilityHint))")
         let actions = (element.accessibilityCustomActions ?? []).map(\.name)
         #expect(actions == [String(localized: "Send Now [Queue Strip]")], "Send Now among the row's actions: \(actions)")
+        #expect(element.accessibilityValue == String(localized: "Collapsed"), "the closed disclosure tells VoiceOver its state")
+
+        try #require(element.accessibilityActivate())
+        var value = ""
+        for _ in 0..<30 where value != String(localized: "Expanded") {
+            try? await Task.sleep(for: .milliseconds(100))
+            value = RuntimeCLI.elements(matching: ["id": "queue-strip"]).first?.object.accessibilityValue ?? ""
+        }
+        #expect(value == String(localized: "Expanded"), "the open disclosure tells VoiceOver its state")
     }
 
     private func automation(_ on: Bool) throws {

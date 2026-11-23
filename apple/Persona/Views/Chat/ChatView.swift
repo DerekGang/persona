@@ -2872,9 +2872,10 @@ struct ChatView: View {
             let next = nextNeedsYouSession
             AssistantActionBar(conversation: conversation, key: key, computer: computerActivity,
                                nextTitle: next.map { $0.assistant ? ($0.title.isEmpty ? model.assistantShownName : $0.title) : $0.displayTitle },
-                               openNext: next.map { item in { openNext(item) } })
+                               openNext: next.map { item in { openNext(item) } }, hidden: streamingReply)
                 .opacity(streamingReply ? 0 : 1)
                 .allowsHitTesting(!streamingReply)
+                // The bar ignores its children while streaming; hide the identified wrapper at this composition level too.
                 .accessibilityHidden(streamingReply)
             RouteChip(conversation: conversation)
             // Items handed to the main conversation that are still open: "Wrap up" asks it for the final write-back (#5932).
@@ -7142,26 +7143,15 @@ struct QueueStrip: View {
     /// One row's height with its spacing, as drawn (it follows the text size and the rows' line counts).
     @State private var rowHeight: CGFloat = 0
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private static let visibleRows: CGFloat = 3
 
     var body: some View {
-        Group {
-            if drawnCount > 0 {
-                DisclosureGroup(isExpanded: $expanded) {
-                    Color.clear.frame(height: 0)
-                } label: {
-                    summary
-                }
-            } else {
-                // Relayed-only messages still count, but there are no rows to disclose and no Send Now action.
-                summary
-            }
-        }
+        summary
         .tint(.secondary)
         .padding(Theme.Space.m)
         .surface(in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
         .transition(.opacity)
-        .accessibilityIdentifier("queue-strip")
         // Expanded rows float behind the summary instead of changing the footer height (#7770): its height and the
         // newest end stay fixed, and the one real Send Now button remains above the rows in layout and hit order.
         .background(alignment: .top) {
@@ -7194,10 +7184,7 @@ struct QueueStrip: View {
                 ViewThatFits(in: .horizontal) {
                     oneLine
                     VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
-                            tray
-                            title.multilineTextAlignment(.leading) // the label centers wrapped lines
-                        }
+                        disclosureTitle(multiline: true)
                         sendNowButton
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -7213,14 +7200,67 @@ struct QueueStrip: View {
 
     private var title: Text { Text("\(total) queued · \(agent) will handle them in order [Queue Strip]") }
 
-    /// The tray, the title on one line and Send Now at the end.
+    /// The tray and title are the disclosure's accessible row. Send Now stays its sibling: nesting one button inside
+    /// another changes the row's accessibility frame when ownership changes and can promote Send Now's identifier.
     private var oneLine: some View {
         HStack(spacing: Theme.Space.sm) {
-            tray
-            title.lineLimit(1)
-            Spacer(minLength: 0)
+            disclosureTitle()
             sendNowButton
         }
+    }
+
+    @ViewBuilder private func disclosureTitle(multiline: Bool = false) -> some View {
+        if drawnCount > 0 {
+            Button(action: toggleExpanded) {
+                HStack(spacing: Theme.Space.sm) {
+                    headingLabel(multiline: multiline)
+                    disclosureIndicator
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("queue-strip")
+            .accessibilityValue(expanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+            .accessibilityHint(canSendNow ? sendNowHint : Text(""))
+            .accessibilityActions {
+                if canSendNow {
+                    Button("Send Now [Queue Strip]", action: sendNow)
+                }
+            }
+        } else {
+            // Relayed-only messages still count, but there are no rows to disclose and no Send Now action.
+            headingLabel(multiline: multiline)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("queue-strip")
+        }
+    }
+
+    @ViewBuilder private func headingLabel(multiline: Bool) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            tray
+            if multiline {
+                title.multilineTextAlignment(.leading) // the label centers wrapped lines
+            } else {
+                title.lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(.rect)
+    }
+
+    @ViewBuilder private var disclosureIndicator: some View {
+        if drawnCount > 0 {
+            ThemedIcon(Theme.Icon.disclosure)
+                .font(Theme.Font.labelStrong)
+                .foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var canSendNow: Bool { steers && own > 0 && !busy }
+
+    private func toggleExpanded() {
+        withAnimation(reduceMotion ? nil : Theme.Motion.state) { expanded.toggle() }
     }
 
     /// Send Now when a Claude in a terminal has the user's own messages queued, or the spinner while the queue is being
@@ -7229,7 +7269,7 @@ struct QueueStrip: View {
     @ViewBuilder private var sendNowButton: some View {
         if busy {
             ProgressView().controlSize(.mini)
-        } else if steers, own > 0 {
+        } else if canSendNow {
             Button(action: sendNow) {
                 Label("Send Now [Queue Strip]", systemImage: Theme.Icon.sendNow).lineLimit(1).fixedSize()
             }

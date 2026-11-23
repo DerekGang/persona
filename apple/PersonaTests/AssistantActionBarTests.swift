@@ -1,5 +1,6 @@
 import SwiftUI
 import Testing
+import UIKit
 @testable import Persona
 import PersonaWire
 
@@ -256,5 +257,155 @@ struct AssistantActionBarTests {
         let line = UIFont.preferredFont(forTextStyle: .footnote, compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)).lineHeight
         #expect(abs(h - (line + 2 * Theme.Space.sm)) <= 1, "\(h) pt for a \(line) pt line")
         #expect(h < Theme.Size.tapTarget)
+    }
+
+    /// Streaming hides the identified container, not only its buttons: applying the modifier after `contain` and the
+    /// identifier keeps VoiceOver and strict `app.descendants(matching: .any)["action-bar"]` queries out of the row.
+    @Test func streamingHidesTheWholeActionBar() async throws {
+        try automation(true)
+        defer { try? automation(false) }
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        defer { window.isHidden = true }
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        let controller = UIHostingController(rootView: AssistantActionBar(conversation: "test-action-bar-hidden", nextTitle: "Next conversation", openNext: {}))
+        window.rootViewController = controller
+        window.isHidden = false
+        window.layoutIfNeeded()
+
+        func shown(_ id: String = "action-bar") -> Bool {
+            try? automation(true) // another hosted test may have disabled the process-global switch meanwhile
+            return RuntimeCLI.elements(matching: ["id": id, "containers": true]).contains {
+                RuntimeCLI.view(of: $0.object)?.window === window
+            }
+        }
+        for _ in 0..<30 where !shown() {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(shown(), "the visible action-bar container must exist before testing its hidden state")
+        #expect(shown("chat.nextNeedsYou"), "the next-conversation capsule starts visible")
+
+        controller.rootView = AssistantActionBar(conversation: "test-action-bar-hidden", nextTitle: "Next conversation", openNext: {}, hidden: true)
+        window.layoutIfNeeded()
+        for _ in 0..<30 where shown() {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(!shown(), "streaming leaves an exposed action-bar container")
+
+        controller.rootView = AssistantActionBar(conversation: "test-action-bar-hidden", nextTitle: "Next conversation", openNext: {})
+        window.layoutIfNeeded()
+        for _ in 0..<30 where !shown() {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(shown(), "the action-bar container does not return after streaming")
+        #expect(shown("chat.nextNeedsYou"), "the next-conversation capsule does not return after streaming")
+    }
+
+    /// Hiding the bar for streaming must not throw away the message card's view identity: the local text has not been
+    /// sent or persisted anywhere else. The hidden checks read the same accessibility tree as the strict UI queries.
+    @Test func streamingKeepsAnUnsentMessageEditAndHidesIt() async throws {
+        try automation(true)
+        defer { try? automation(false) }
+        let conversation = "test-action-bar-message-state"
+        let original = "Original draft"
+        let suffix = " — unsent local edit"
+        let edited = original + suffix
+        let card: FeedItem = decode(["id": "message-state", "conversation": conversation, "at": iso(2), "kind": "message",
+                                     "ref": "lark:message-state", "body": ["text": "Can we ship today?", "draft": original]])
+        TasksStore.shared.received(card)
+
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        defer { window.endEditing(true); window.isHidden = true }
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+
+        func root(hidden: Bool) -> some View {
+            VStack {
+                Spacer()
+                AssistantActionBar(conversation: conversation, hidden: hidden)
+            }
+        }
+        func elements(_ id: String? = nil, containers: Bool = false) -> [RuntimeCLI.Element] {
+            try? automation(true) // another hosted test may have disabled the process-global switch meanwhile
+            var args: RuntimeCLI.Args = [:]
+            if let id { args["id"] = id }
+            if containers { args["containers"] = true }
+            return RuntimeCLI.elements(matching: args).filter { RuntimeCLI.view(of: $0.object)?.window === window }
+        }
+        func wait(_ id: String, containers: Bool = false) async -> RuntimeCLI.Element? {
+            for _ in 0..<30 {
+                if let match = elements(id, containers: containers).first { return match }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return nil
+        }
+        func waitForValue(_ value: String) async -> RuntimeCLI.Element? {
+            for _ in 0..<30 {
+                if let match = elements().first(where: { $0.value == value }) { return match }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return nil
+        }
+        func gone(_ id: String, containers: Bool = false) async -> Bool {
+            for _ in 0..<30 where !elements(id, containers: containers).isEmpty {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return elements(id, containers: containers).isEmpty
+        }
+        func valueGone(_ value: String) async -> Bool {
+            for _ in 0..<30 where elements().contains(where: { $0.value == value }) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return !elements().contains(where: { $0.value == value })
+        }
+        func textInput(in view: UIView?) -> (UIView & UIKeyInput)? {
+            guard let view else { return nil }
+            if let input = view as? (UIView & UIKeyInput) { return input }
+            for child in view.subviews {
+                if let input = textInput(in: child) { return input }
+            }
+            return nil
+        }
+
+        let controller = UIHostingController(rootView: root(hidden: false))
+        window.rootViewController = controller
+        window.isHidden = false
+        window.layoutIfNeeded()
+
+        let needs = try #require(await wait("action-bar.needs-you"), "the message card starts in Needs You")
+        try #require(needs.object.accessibilityActivate())
+        let row = try #require(await wait("action-tray.row"), "the folded message row opens")
+        try #require(row.object.accessibilityActivate())
+        let edit = try #require(await wait("messageCard.edit"), "the message card offers Edit")
+        try #require(edit.object.accessibilityActivate())
+        let field = try #require(await waitForValue(original), "editing exposes the draft in a real text field")
+        let input = try #require(textInput(in: RuntimeCLI.view(of: field.object)), "the draft has a UIKit text input")
+        try #require(input.becomeFirstResponder())
+        if let textField = input as? UITextField {
+            let end = textField.endOfDocument
+            textField.selectedTextRange = textField.textRange(from: end, to: end)
+        } else if let textView = input as? UITextView {
+            textView.selectedRange = NSRange(location: textView.text.count, length: 0)
+        }
+        input.insertText(suffix)
+        _ = try #require(await waitForValue(edited), "the field received the local, unsent edit")
+
+        controller.rootView = root(hidden: true)
+        window.layoutIfNeeded()
+        #expect(await gone("action-bar", containers: true), "streaming leaves an exposed action-bar container")
+        #expect(await gone("messageCard.reply", containers: true), "streaming leaves the hidden message card in accessibility")
+        #expect(await valueGone(edited), "streaming leaves the hidden unsent edit in accessibility")
+
+        controller.rootView = root(hidden: false)
+        window.layoutIfNeeded()
+        _ = try #require(await wait("messageCard.reply", containers: true), "the message card returns after streaming")
+        _ = try #require(await waitForValue(edited), "streaming discarded the message card's unsent text")
+    }
+
+    private func automation(_ on: Bool) throws {
+        let handle = try #require(dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW))
+        let set = try #require(dlsym(handle, "_AXSSetAutomationEnabled"))
+        typealias Enable = @convention(c) (Int32) -> Void
+        unsafeBitCast(set, to: Enable.self)(on ? 1 : 0)
     }
 }
