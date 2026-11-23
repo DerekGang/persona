@@ -97,10 +97,26 @@ func TestDirectionTodoFailedStartRetriesCurrentAssignment(t *testing.T) {
 						t.Fatalf("task_retry: %v", err)
 					}
 				}
-				waitFor(t, "the retried agent on the same to-do", func() bool {
-					cur := todoNow(e.s, piece.ID)
-					return len(e.f.started()) == 2 && cur.DoneAt == nil && len(cur.Agents) == 1
-				})
+				var cur Todo
+				var startCount int
+				if !pollUntil(func() bool {
+					cur = todoNow(e.s, piece.ID)
+					startCount = len(e.f.started())
+					return startCount == 2 && cur.DoneAt == nil && len(cur.Agents) == 1
+				}) {
+					t.Logf("timed out waiting for the retried agent on the same to-do: starts=%d (want 2), doneAt=%v (want nil), agents=%d (want 1), startError=%q",
+						startCount, cur.DoneAt, len(cur.Agents), cur.StartError)
+					readCtx, cancel := context.WithTimeout(ctx, time.Second)
+					defer cancel()
+					p, err := e.s.loadPlan(readCtx, plan.ID)
+					if err != nil {
+						t.Fatalf("reading the retried plan: %v", err)
+					}
+					if len(p.Tasks) == 0 {
+						t.Fatal("the retried plan has no tasks")
+					}
+					t.Fatalf("plan task 0 error=%q", p.Tasks[0].Error)
+				}
 				starts := e.f.started()
 				if starts[1]["cwd"] != starts[0]["cwd"] || starts[1]["permission_mode"] != starts[0]["permission_mode"] {
 					t.Fatalf("the retry did not start the plan's task as it was: %+v", starts)
