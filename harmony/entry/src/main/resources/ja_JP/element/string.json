@@ -1117,6 +1117,30 @@
       "value": "ブランチに切り替えてコミット"
     },
     {
+      "name": "session_git_pull_no_directory",
+      "value": "このペインのフォルダーがわかりません。"
+    },
+    {
+      "name": "session_git_pull_not_a_repository",
+      "value": "このフォルダは Git リポジトリにありません。"
+    },
+    {
+      "name": "session_git_pull_detached_head",
+      "value": "HEAD が切り離されています。先にブランチに切り替えてください。"
+    },
+    {
+      "name": "session_git_pull_no_upstream",
+      "value": "このブランチにはアップストリームブランチがありません。先にコンピュータで設定してください。"
+    },
+    {
+      "name": "session_git_pull_uncommitted_changes",
+      "value": "作業ツリーにコミットしていない変更があります。コンピュータでコミットかスタッシュしてからプルしてください。"
+    },
+    {
+      "name": "session_git_pull_not_fast_forward",
+      "value": "ブランチとアップストリームの両方に新しいコミットがあるため、早送りできません。コンピュータでマージかリベースしてください。"
+    },
+    {
       "name": "session_git_pulling",
       "value": "取得中"
     },

@@ -403,7 +403,7 @@ export class HubTransport {
           } catch (_) {}
         }
         throw new HttpFailure(response.statusCode,errorCode(text,path,verb,response.statusCode),
-          !['GET','HEAD'].includes(verb) && writeResultUnknown(response.statusCode,text),false,userMessage);
+          !['GET','HEAD'].includes(verb) && writeResultUnknown(response.statusCode,text,pullRequest),false,userMessage);
       }
       const responseType = response.headers['content-type'] || response.headers['Content-Type'];
       return { data: toArrayBuffer(bytes), contentType: typeof responseType === 'string' ? responseType : '' };

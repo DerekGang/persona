@@ -1117,6 +1117,30 @@
       "value": "Switch to a branch to commit"
     },
     {
+      "name": "session_git_pull_no_directory",
+      "value": "Persona doesn’t know this pane’s folder."
+    },
+    {
+      "name": "session_git_pull_not_a_repository",
+      "value": "This folder isn’t in a Git repository."
+    },
+    {
+      "name": "session_git_pull_detached_head",
+      "value": "HEAD is detached. Switch to a branch first."
+    },
+    {
+      "name": "session_git_pull_no_upstream",
+      "value": "This branch has no upstream branch. Set one on the computer first."
+    },
+    {
+      "name": "session_git_pull_uncommitted_changes",
+      "value": "The working tree has uncommitted changes. Commit or stash them on the computer, then pull."
+    },
+    {
+      "name": "session_git_pull_not_fast_forward",
+      "value": "The branch and its upstream have both moved on, so it can’t fast-forward. Merge or rebase it on the computer."
+    },
+    {
       "name": "session_git_pulling",
       "value": "Pulling"
     },

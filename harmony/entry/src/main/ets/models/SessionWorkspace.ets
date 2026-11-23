@@ -1052,6 +1052,19 @@ export class SessionWorkspace {
     try {
       let result:Record<string,Object>;
       if (operation==='pull') {
+        // A dirty snapshot may already be stale after the user cleans the checkout on the host.
+        // Re-read it before sending the write, preserving the current branch and session.
+        if (this.gitFiles.length>0) {
+          const status=await this.request(this.requestPath('/git/status?cwd='+segment(this.cwd)));
+          if (!this.activeRevision(revision,target,1) || !samePullTarget()) throw new Error('request_updated');
+          this.gitStatusEpoch++; this.gitBusy=false;
+          this.applyGitStatus(status,false);
+          if (!samePullTarget()) throw new Error('request_updated');
+          if (this.gitFiles.length>0) {
+            this.gitPullState=''; this.gitWriteState='failed'; this.gitWriteError='session_git_pull_uncommitted_changes';
+            return false;
+          }
+        }
         result=await this.request(path,'POST',body,() => samePullTarget() && this.machineTrustedOnline() && this.sessionWritable(),
           (value:Record<string,Object>) => {
             const status=Wire.object(value,'status');
@@ -1085,7 +1098,9 @@ export class SessionWorkspace {
         this.gitPullState='';
         const failure = error as HttpFailure;
         this.gitWriteState = failure instanceof HttpFailure && failure.resultUnknown ? (failure.resultPending ? 'pending' : 'unknown') : 'failed';
-        this.gitWriteError = this.message(error as Error);
+        const code=failure instanceof HttpFailure ? failure.code : '';
+        const refusal=operation==='pull' && ['no_directory','not_a_repository','detached_head','no_upstream','uncommitted_changes','not_fast_forward'].includes(code);
+        this.gitWriteError=refusal ? 'session_git_pull_'+code : this.message(error as Error);
       }
       return false;
     } finally {

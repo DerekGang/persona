@@ -17,12 +17,15 @@ export function heldReceipt202(body: string, operation: string): string {
 }
 
 /** Only explicit refusal evidence permits replacing a dispatched write. */
-export function writeResultUnknown(status: number, body = ""): boolean {
+export function writeResultUnknown(status: number, body = "", gitPull = false): boolean {
   if (body) {
     try {
       const data = JSON.parse(body) as Record<string, unknown>;
       if (data.state === "unknown" || data.state === "pending" || data.delivered === "unknown" || data.delivered === "yes") return true;
       if (data.delivered === "none") return false;
+      // The node sends these codes before it runs git pull. Older proxies may return them with HTTP 502.
+      if (gitPull && typeof data.code === "string" &&
+          ["no_directory", "not_a_repository", "detached_head", "no_upstream", "uncommitted_changes"].includes(data.code)) return false;
     } catch { /* An unreadable response is not proof of no side effect. */ }
   }
   return ![400, 401, 403, 404, 405, 409, 410, 413, 415, 422].includes(status);

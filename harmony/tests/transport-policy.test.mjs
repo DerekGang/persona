@@ -29,3 +29,12 @@ test('unknown or pending receipt evidence takes precedence over HTTP status', ()
   assert.equal(writeResultUnknown(status,'{"delivered":"yes"}'),true);
  }
 });
+
+test('only a typed refusal before a Git pull is definitive on a gateway error',()=>{
+  const body=JSON.stringify({code:'uncommitted_changes',error:'Dirty working tree'});
+  assert.equal(writeResultUnknown(502,body,true),false);
+  assert.equal(writeResultUnknown(502,body),true);
+  assert.equal(writeResultUnknown(502,'{"code":"uncommitted_changes","delivered":"unknown"}',true),true);
+  assert.equal(writeResultUnknown(502,'{"code":"pull_failed"}',true),true);
+  assert.equal(writeResultUnknown(502,'{"error":"upstream timeout"}',true),true);
+});

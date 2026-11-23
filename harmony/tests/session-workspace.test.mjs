@@ -546,3 +546,19 @@ test('pull reports a refused dirty checkout and cannot apply an in-flight reply 
   assert.equal(workspace.gitStatus.branch,'other');assert.equal(workspace.gitPullState,'');
   assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,2);
 });
+
+test('pull rechecks dirty files on the original checkout before dispatching a write',async()=>{
+  let files=[{path:'owned.txt',index:'.',worktree:'M'}];
+  const status=()=>({is_repo:true,root:'/repo',branch:'main',upstream:'origin/main',files,commits:[]});
+  const {workspace,state}=fixture({handle:call=>{
+    if(call.path.includes('/git/status')) return status();
+    if(call.path.endsWith('/git/pull')) return {updated:false,status:status()};
+  }});
+  workspace.selectTab(1);await waitForTurn();
+  assert.equal(await workspace.pullGit(),false);
+  assert.equal(workspace.gitWriteError,'session_git_pull_uncommitted_changes');
+  assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,0);
+  files=[];assert.equal(await workspace.pullGit(),true);
+  assert.equal(workspace.gitPullState,'current');
+  assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,1);
+});

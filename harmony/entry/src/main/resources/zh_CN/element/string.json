@@ -1117,6 +1117,30 @@
       "value": "先切换到分支再提交"
     },
     {
+      "name": "session_git_pull_no_directory",
+      "value": "不知道这个窗格在哪个文件夹。"
+    },
+    {
+      "name": "session_git_pull_not_a_repository",
+      "value": "这个文件夹不在 Git 仓库里。"
+    },
+    {
+      "name": "session_git_pull_detached_head",
+      "value": "当前是分离的 HEAD，请先切换到分支。"
+    },
+    {
+      "name": "session_git_pull_no_upstream",
+      "value": "这个分支没有上游分支，请先在电脑上设置。"
+    },
+    {
+      "name": "session_git_pull_uncommitted_changes",
+      "value": "工作区有未提交的改动，请先在电脑上提交或 stash，再拉取。"
+    },
+    {
+      "name": "session_git_pull_not_fast_forward",
+      "value": "本地分支和上游都有新提交，无法快进。请在电脑上合并或变基。"
+    },
+    {
       "name": "session_git_pulling",
       "value": "正在拉取"
     },
