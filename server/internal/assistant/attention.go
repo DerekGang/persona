@@ -312,7 +312,7 @@ func attentionErr(w http.ResponseWriter, status int, code string) {
 // writeAttention answers the mode in force, the modes there are, and whether this client may change it.
 func writeAttention(w http.ResponseWriter, r *http.Request, a assistantwire.Attention) {
 	if !fullRole(r) {
-		a.Focus = nil // which conversation the user is deep in is theirs: an extension reads the mode only
+		a.Focus = nil // which conversation the user is deep in is theirs: another client reads the mode only
 	}
 	apierr.WriteJSON(w, map[string]any{"attention": a, "modes": assistantwire.AttentionModes, "can_write": fullRole(r),
 		"max_minutes": int(assistantwire.AttentionMaxDuration / time.Minute)})

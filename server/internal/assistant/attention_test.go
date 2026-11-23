@@ -156,7 +156,7 @@ func TestAttentionRoutes(t *testing.T) {
 	if p := ft.f.lastSnapshot().Profile; p == nil || p.Attention == nil || p.Attention.Mode != assistantwire.AttentionImmersive {
 		t.Fatalf("profile %+v", p)
 	}
-	// An extension reads the mode, never the focus.
+	// A client without full access reads the mode, never the focus (the hub keeps extension tokens off this route).
 	code, out = attentionCall(t, s, http.MethodGet, roleExtension, "")
 	if a := decodeAttention(t, out["attention"]); code != http.StatusOK || a.Mode != assistantwire.AttentionImmersive || a.Focus != nil {
 		t.Errorf("extension GET: %d %+v", code, a)

@@ -12,7 +12,7 @@ import (
 // Normal is today's behaviour: the low-distraction switch (hub.ln_mode) decides. A mode other than normal filters
 // whatever that switch says and never writes it, so at the end the switch is what it was.
 
-// attentionRoutes read and set the mode. Only the user (a full-access client) sets it; an extension may read it.
+// attentionRoutes read and set the mode: full credentials only (not open to extension tokens); only the user sets it.
 var attentionRoutes = []string{
 	"GET /api/v1/assistant/attention",
 	"PUT /api/v1/assistant/attention",
