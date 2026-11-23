@@ -484,7 +484,10 @@ export struct Conversation {
     this.sending = true;
     try {
       const prepared = await this.attachments.prepareSend(owner.prepareMessageText(draft), current);
-      await owner.sendPrepared(prepared, draft, context, current);
+      const sent = await owner.sendPrepared(prepared, draft, context, current);
+      if (sent && current() && prepared.overflowNoticeKey) {
+        this.getUIContext().getPromptAction().showToast({ message: tr(prepared.overflowNoticeKey) });
+      }
     } catch (error) { if (current()) this.attachments.errorKey = error instanceof Error && error.message.startsWith('chat_attachment_') ? error.message : 'chat_attachment_send_failed'; }
     finally { this.sending = false; }
   }

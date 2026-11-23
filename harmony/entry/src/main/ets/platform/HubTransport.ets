@@ -213,11 +213,15 @@ function constantTimeEqual(left: string, right: string): boolean {
   return difference === 0;
 }
 
-function errorCode(body: string): string {
+function errorCode(body: string, status: number, method: string, path: string): string {
   if (!body || body.length > 64 * 1024) return 'http_error';
   try {
     const parsed = JSON.parse(body) as Record<string, Object>;
     const code = parsed['code'];
+    // Older hubs reject dest=attachment before reading any file bytes. Preserve that exact refusal for a temp upload.
+    if ((code === undefined || code === 'bad_request') && status === 400 && method === 'POST' && /^\/api\/v1\/machines\/[^/]+\/files\?/.test(path) &&
+      /[?&]dest=attachment(?:&|$)/.test(path) && (parsed['error'] === 'unknown dest' || parsed['detail'] === 'unknown dest'))
+      return 'unknown_upload_destination';
     if (typeof code === 'string' && code.length <= 128) return code;
     const error = parsed['error'];
     if (typeof error === 'string' && error.length <= 128) return error;
@@ -363,7 +367,7 @@ export class HubTransport {
         if (state !== 'held') throw new HttpFailure(202, state === 'unknown' ? 'result_unknown' : 'pending', true, state === 'pending');
       }
       if (response.statusCode < 200 || response.statusCode >= 300)
-        throw new HttpFailure(response.statusCode, errorCode(text), !['GET', 'HEAD'].includes(verb) && writeResultUnknown(response.statusCode, text));
+        throw new HttpFailure(response.statusCode, errorCode(text, response.statusCode, verb, path), !['GET', 'HEAD'].includes(verb) && writeResultUnknown(response.statusCode, text));
       const responseType = response.headers['content-type'] || response.headers['Content-Type'];
       return { data: toArrayBuffer(bytes), contentType: typeof responseType === 'string' ? responseType : '' };
     } catch (error) {
@@ -374,8 +378,9 @@ export class HubTransport {
     } finally { this.requests.delete(session); try { session.close(); } catch (_) {} }
   }
 
-  async request(path: string, method: string = 'GET', body: string = '', opId: string = ''): Promise<string> {
-    if (utf8(body).length > MAX_HTTP_BYTES) throw new HttpFailure(0, 'request_too_large');
+  async request(path: string, method: string = 'GET', body: string = '', opId: string = '', messageRequestBytes: number = MAX_HTTP_BYTES): Promise<string> {
+    const requestLimit = isAgentMessagePost(method.toUpperCase(), path) ? messageRequestBytes : MAX_HTTP_BYTES;
+    if (utf8(body).length > requestLimit) throw new HttpFailure(0, 'request_too_large');
     const response = await this.requestData(path, method, body || undefined, 'application/json', MAX_HTTP_BYTES, opId);
     try { return utf8String(new Uint8Array(response.data), true); }
     catch (_) { throw new HttpFailure(0, 'response_invalid', !['GET', 'HEAD'].includes(method.toUpperCase())); }
@@ -388,8 +393,8 @@ export class HubTransport {
     try { return utf8String(new Uint8Array(response.data), true); }
     catch (_) { throw new HttpFailure(0, 'response_invalid', true); }
   }
-  async requestBytes(path: string, method: string = 'GET', body?: ArrayBuffer, contentType: string = 'application/octet-stream', opId: string = ''): Promise<BytesResponse> {
-    if (body && body.byteLength > MAX_BINARY_BYTES) throw new HttpFailure(0, 'request_too_large');
+  async requestBytes(path: string, method: string = 'GET', body?: ArrayBuffer, contentType: string = 'application/octet-stream', opId: string = '', requestLimit: number = MAX_BINARY_BYTES): Promise<BytesResponse> {
+    if (body && body.byteLength > requestLimit) throw new HttpFailure(0, 'request_too_large');
     return this.requestData(path, method, body, contentType, MAX_BINARY_BYTES, opId);
   }
 
