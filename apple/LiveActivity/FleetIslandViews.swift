@@ -72,7 +72,8 @@ struct IslandPair {
         case let .tpm(n): self.init(symbol: FleetSymbol.tpm, text: FleetText.short(n), tint: FleetPalette.coral)
         case let .tokens(n): self.init(symbol: FleetSymbol.tokens, text: FleetText.short(n), tint: FleetPalette.coral)
         case let .requests(n): self.init(symbol: FleetSymbol.requests, text: FleetText.short(n), tint: FleetPalette.coral)
-        case let .load(_, p): self.init(symbol: FleetSymbol.load, text: "\(p)%", tint: FleetPalette.coral)
+        // Load per core beside the CPU symbol ("1.1"), as Machines writes it: "110%" read as CPU use (#12519).
+        case let .load(_, p): self.init(symbol: FleetSymbol.load, text: FleetText.perCore(p), tint: FleetPalette.coral)
         case .assistant, .timer, .empty: return nil
         }
     }

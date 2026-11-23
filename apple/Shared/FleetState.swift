@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The "Fleet" Live Activity's content (hub/liveactivity.go FleetState, field for field): every agent that needs you,
 /// is working, or finished unseen, summed up for the lock screen and the Dynamic Island. The hub computes it and
@@ -37,6 +38,8 @@ nonisolated struct FleetState: Codable, Hashable, Sendable {
         nonisolated struct Load: Codable, Hashable, Sendable {
             var id: String
             var name = ""
+            /// The 1-minute load average over the cores × 100, rounded to 5 (hub fleetStats); shown per core
+            /// (`FleetText.perCore`), never as a percentage.
             var percent = 0
         }
 
@@ -308,10 +311,15 @@ nonisolated enum FleetText {
         case let .tokens(n): interfaceText(LocalizedStringResource("\(short(n)) today", comment: "Tokens today"))
         case let .requests(n): interfaceText(LocalizedStringResource("\(short(n)) reqs today", comment: "Requests today"))
         case let .assistant(on): on ? interfaceText("Assistant replying") : interfaceText("Assistant idle")
-        case let .load(name, p): name.isEmpty ? interfaceText("Load \(p)%") : "\(name) \(p)%"
+        // Load per core, as Machines writes it ("Load 1.4 per core"); a chosen machine's name stands for "Load".
+        case let .load(name, p): interfaceText(name.isEmpty ? "Load \(perCore(p)) per core" : "\(name) \(perCore(p)) per core")
         default: nil
         }
     }
+
+    /// A machine's load per core from the island's percent (load ÷ cores × 100, the hub's fleetStats), one decimal as
+    /// on Machines and the web: 110 is "1.1". Not a CPU percentage, and not capped: past 1, threads wait for a core.
+    static func perCore(_ percent: Int) -> String { MetricFormat.perCore(Double(percent) / 100) }
 }
 
 /// What one side of the compact Dynamic Island can show (hub notify.go, the same names).

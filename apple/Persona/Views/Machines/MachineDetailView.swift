@@ -117,6 +117,7 @@ struct MachineDetailView: View {
                             charts(system: system)
                             if let cores = data?.latest?.cores, online, cores.count > 1 { CoreBars(cores: cores) }
                         }
+                        .id(Self.monitorAnchor)
                         // The node's self-check by feature (#3018); two rows when everything works.
                         NodeHealthSection(ref: ref, machine: machine)
                         if let computer = machine.computer { ComputerSection(ref: ref, computer: computer, online: online) }
@@ -172,6 +173,17 @@ struct MachineDetailView: View {
                 // A different phase can change the card's height after that first layout, especially at xxxLarge.
                 try? await Task.sleep(for: .milliseconds(300))
                 scroller.scrollTo(Self.linkSwitchAnchor, anchor: .top)
+            }
+            // `-openMachineMonitor top|load`: the page opens scrolled to Monitor's top (the load tile), or to what load
+            // counts under its charts (screenshots, #12519).
+            .task(id: data != nil) {
+                guard data != nil, let at = UserDefaults.standard.string(forKey: "openMachineMonitor") else { return }
+                try? await Task.sleep(for: .seconds(1)) // after the charts have their height
+                if at == "load" {
+                    scroller.scrollTo(Self.loadDefinitionAnchor, anchor: .bottom)
+                } else {
+                    scroller.scrollTo(Self.monitorAnchor, anchor: .top)
+                }
             }
             #endif
         }
@@ -233,6 +245,8 @@ struct MachineDetailView: View {
     private static let clipboardAnchor = "machine-clipboard"
     private static let browserLoginsAnchor = "machine-browser-logins"
     private static let linkSwitchAnchor = "machine-link-switch"
+    private static let monitorAnchor = "machine-monitor"
+    private static let loadDefinitionAnchor = "machine-load-definition"
 
     nonisolated private struct Poll: Hashable, Sendable { var range: MetricRange; var active: Bool }
     nonisolated private struct ExtensionsKey: Hashable, Sendable { var ref: MachineRef; var slots: Bool }
@@ -599,6 +613,13 @@ struct MachineDetailView: View {
                 Text(data.online ? String(localized: "Recording just started. Charts will appear here shortly.") : String(localized: "This machine wasn't connected during this period."))
                     .font(Theme.Font.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
             }
+            // What load counts, under its chart, in the words of Machines' footnote.
+            Text(MachineCard.loadDefinition)
+                .font(Theme.Font.label).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Theme.Space.xs)
+                .accessibilityIdentifier("machine.loadDefinition")
+                .id(Self.loadDefinitionAnchor)
         } else if let failure {
             EmptyStateView(symbol: "chart.xyaxis.line", title: String(localized: "No monitoring data"), message: failure)
                 .padding(.vertical, 30)
@@ -621,8 +642,10 @@ private struct NowGrid: View {
             tile(String(localized: "Memory [Machine Detail View 7d8f8c]"), MetricFormat.percent(sample.memPercent), detail: MetricFormat.bytes(sample.memUsed) + " / " + MetricFormat.bytes(sample.memTotal),
                  fraction: sample.memPercent.map { $0 / 100 }, color: MetricColor.mem, level: MetricLevel.of(sample.memPercent, warn: 80, crit: 90))
             tile(String(localized: "Network"), "↓ " + MetricFormat.rate(sample.netRx), detail: "↑ " + MetricFormat.rate(sample.netTx), fraction: nil, color: MetricColor.rx, level: .normal)
-            tile(String(localized: "Load"), MetricFormat.load(sample.load), detail: cores.map { String(localized: "\($0) cores") }, fraction: nil, color: MetricColor.load,
-                 level: MetricLevel.of(sample.load.flatMap { l in cores.map { l / Double(max($0, 1)) } }, warn: 1, crit: 2))
+            // The raw load average with load per core under it: the card's and the alert's figure (#12519).
+            let perCore = MetricFormat.loadPerCore(sample.load, cores: cores)
+            tile(String(localized: "Load"), MetricFormat.load(sample.load), detail: perCore.map { String(localized: "\(MetricFormat.perCore($0)) per core") },
+                 fraction: nil, color: MetricColor.load, level: MetricLevel.of(perCore, warn: 1, crit: 2))
             tile(String(localized: "Disk"), MetricFormat.percent(sample.diskPercent), detail: MetricFormat.bytes(sample.diskUsed) + " / " + MetricFormat.bytes(sample.diskTotal),
                  fraction: sample.diskPercent.map { $0 / 100 }, color: .secondary, level: MetricLevel.of(sample.diskPercent, warn: 80, crit: 90))
             tile(String(localized: "Swap"), sample.swapTotal > 0 ? MetricFormat.bytes(sample.swapUsed) : String(localized: "Off [Machine Detail View f95ea7]"),

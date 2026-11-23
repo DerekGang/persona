@@ -3,7 +3,7 @@
 import { memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { storedValue, storeValue } from "../lib/compatibility";
 import { lazyPage } from "../lib/lazy-page";
-import { concernOf, launcherFailing, machineAlerts, orderMachines, type AlertKind, type LauncherHealthRecord } from "../lib/machine-alerts";
+import { concernOf, launcherFailing, loadDefinition, machineAlerts, orderMachines, type AlertKind, type LauncherHealthRecord } from "../lib/machine-alerts";
 import { t as tr } from "../i18n";
 import { canAddComputer, isPending, machineErrorText, neverConnected } from "../lib/add-computer";
 import { api, enc, errorText } from "../lib/api";
@@ -249,6 +249,10 @@ export function Machines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
                 onAlert={openAlert}
               />
           ))}
+          {/* what load counts, under the cards that show it (#12519; the apps' footnote) */}
+          {view === "cards" && metrics && machines.length > 0 && (
+            <p className="col-span-full px-1 text-submeta leading-relaxed text-ink-3" data-testid="load-definition">{loadDefinition()}</p>
+          )}
         </div>
       </div>
       <AlertSheetHost sheet={sheet} machines={machines} metrics={metrics} sessions={full.sessions} known={known} records={records} launcherIssues={launcherIssues} roster={roster} onKind={openAlert} onClose={() => setSheet(null)} onReconnect={reconnect} />

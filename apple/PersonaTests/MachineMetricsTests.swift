@@ -42,6 +42,33 @@ struct MachineMetricsTests {
         #expect(MetricAlert.of(s, cores: nil) == [MetricAlert(label: "磁盘快满", level: .critical)])
     }
 
+    /// Load means one thing everywhere (#12519): the load average over the cores, one decimal, the figure the alert goes
+    /// by, on the card ("Load 1.4 per core") and under the raw value on the machine page.
+    @Test @MainActor func loadReadsPerCore() {
+        #expect(MetricFormat.loadPerCore(25.4, cores: 18).map(MetricFormat.perCore) == "1.4")
+        #expect(MetricFormat.loadPerCore(25.4, cores: nil) == nil)
+        #expect(MetricFormat.loadPerCore(25.4, cores: 0) == nil)
+        #expect(MetricFormat.loadPerCore(nil, cores: 18) == nil)
+        #expect(MetricFormat.perCore(0.04) == "0.0")
+        #expect(MetricFormat.perCore(12.345) == "12.3")
+        let s = MetricSample(t: 0, cpu: 41, load: 25.4, memUsed: 50, memTotal: 100, swapUsed: 0, swapTotal: 0, diskUsed: 10, diskTotal: 100)
+        #expect(MachineCard.loadLine(s, cores: 18) == "负载 每核 1.4")
+        #expect(MachineCard.loadLine(s, cores: nil) == "负载 25.4") // no core count yet: the raw value, as before
+        #expect(MachineCard.loadLine(nil, cores: 18) == nil)
+        // The alert reads the same figure: 1.4 per core is a warning, whatever the raw value.
+        #expect(MetricAlert.of(s, cores: 18) == [MetricAlert(label: "负载高", level: .warning)])
+        #expect(MetricAlert.of(s, cores: 13).first?.level == .warning)
+        #expect(MetricAlert.of(s, cores: 12).first?.level == .critical)
+        #expect(MetricAlert.of(s, cores: 26).isEmpty)
+    }
+
+    /// The definition shown under Machines and a machine's charts says what it counts, in the test language.
+    @Test @MainActor func loadDefinitionSaysWhatItCounts() {
+        let text = MachineCard.loadDefinition
+        #expect(text.hasPrefix("负载 = 正在运行和排队等 CPU 的线程数"))
+        #expect(text.contains("不是占用率") && text.contains("每核超过 1"))
+    }
+
     @Test func formats() {
         #expect(MetricFormat.bytes(512.0) == "512 B")
         #expect(MetricFormat.bytes(1536.0) == "1.50 KB")

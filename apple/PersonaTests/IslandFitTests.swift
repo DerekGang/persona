@@ -79,7 +79,8 @@ struct IslandFitTests {
     @Test(arguments: counts)
     func compactSidesFit(_ n: Int) throws {
         let side = CGSize(width: IslandMetrics.compactContent, height: IslandMetrics.limited)
-        let numbers: [IslandCell] = [.tpm(n * 1000), .tokens(n * 1_000_000), .requests(n * 10), .load(name: "", percent: min(n, 100))]
+        // Load is per core ("0.1" … "12.3" … "99.9", #12519), and past 1 when threads wait: not capped at 100%.
+        let numbers: [IslandCell] = [.tpm(n * 1000), .tokens(n * 1_000_000), .requests(n * 10), .load(name: "", percent: min(n * 10, 9990))]
         for cell in Self.statusCells(n) + numbers {
             let drawn = try ink(IslandCellView(cell: cell), region: side)
             #expect(inside(drawn.rect, side), "\(cell) is wider than a compact side: \(drawn.rect)")
