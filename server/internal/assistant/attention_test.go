@@ -165,6 +165,14 @@ func TestAttentionRoutes(t *testing.T) {
 	if !s.quietModeOn(context.Background()) || !s.attentionDefersQuestions(context.Background()) {
 		t.Error("immersive: switch off or questions not deferred")
 	}
+	// A question from the session in focus goes at once; one from elsewhere waits.
+	task := Todo{ID: "t1", Supervision: &Supervision{Supervisor: "lead"}}
+	if s.attentionDefersQuestion(context.Background(), task, "mac", "s1") {
+		t.Error("the focused session's question was deferred")
+	}
+	if !s.attentionDefersQuestion(context.Background(), task, "mac", "s2") {
+		t.Error("a question outside the focus was not deferred")
+	}
 
 	// Its time runs out: normal again, by the system, and the profile says nothing of it.
 	mu.Lock()
@@ -195,5 +203,32 @@ func TestAttentionNormalWithoutAStore(t *testing.T) {
 	}
 	if code, _ := attentionCall(t, ft.s, http.MethodPut, roleFull, `{"mode":"quiet","minutes":30}`); code != http.StatusServiceUnavailable {
 		t.Errorf("PUT without a store: %d", code)
+	}
+}
+
+// A question is in focus when the focus names its task's track, the session that reports, or the task's supervising
+// conversation; with no focus, nothing is.
+func TestQuestionInFocus(t *testing.T) {
+	task := Todo{ID: "t1", Supervision: &Supervision{Supervisor: "lead"}}
+	cases := []struct {
+		name  string
+		f     *assistantwire.AttentionFocus
+		track string
+		want  bool
+	}{
+		{"no focus", nil, "qa-finance", false},
+		{"track", &assistantwire.AttentionFocus{Track: "qa-finance"}, "qa-finance", true},
+		{"other track", &assistantwire.AttentionFocus{Track: "qa-plain"}, "qa-finance", false},
+		{"reporting session", &assistantwire.AttentionFocus{MachineID: "mac", SessionID: "s1"}, "", true},
+		{"reporting session, any machine", &assistantwire.AttentionFocus{SessionID: "s1"}, "", true},
+		{"reporting session, other machine", &assistantwire.AttentionFocus{MachineID: "pc", SessionID: "s1"}, "", false},
+		{"supervisor", &assistantwire.AttentionFocus{MachineID: "hubmac", SessionID: "lead"}, "", true},
+		{"supervisor, other machine", &assistantwire.AttentionFocus{MachineID: "pc", SessionID: "lead"}, "", false},
+		{"other session", &assistantwire.AttentionFocus{SessionID: "s9"}, "", false},
+	}
+	for _, c := range cases {
+		if got := questionInFocus(c.f, c.track, "hubmac", task, "mac", "s1"); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
 	}
 }

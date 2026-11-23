@@ -110,10 +110,53 @@ func (s *Service) attentionProfile(ctx context.Context) *assistantwire.Attention
 	return &a
 }
 
-// attentionDefersQuestions: immersive mode is in force, so a question an agent reports to its supervisor waits for
-// the briefing as one it said can wait (later.go).
+// attentionDefersQuestions: immersive mode is in force, so a question an agent reports to its supervisor may wait for
+// the briefing as one it said can wait (later.go), unless it is about the matter in focus (attentionDefersQuestion).
 func (s *Service) attentionDefersQuestions(ctx context.Context) bool {
 	return s.attentionNow(ctx).Mode == assistantwire.AttentionImmersive
+}
+
+// attentionDefersQuestion: immersive mode is in force and task t's question, reported from machine/session, is not
+// about the matter the user focuses on, so it waits as one that can wait. In focus (never deferred): the focus names
+// the track t was opened from, the reporting session, or t's supervising conversation (the way
+// assistantwire.Attention.inFocus reads a push).
+func (s *Service) attentionDefersQuestion(ctx context.Context, t Todo, machine, session string) bool {
+	a := s.attentionNow(ctx)
+	if a.Mode != assistantwire.AttentionImmersive {
+		return false
+	}
+	return !questionInFocus(a.Focus, s.todoTrack(ctx, t), s.settings(ctx).MachineID, t, machine, session)
+}
+
+// todoTrack is the track (space slug) task t was opened from: its origin conversation's; "" for the main space or none.
+func (s *Service) todoTrack(ctx context.Context, t Todo) string {
+	if t.Origin == "" {
+		return ""
+	}
+	space, _ := s.selfSpace(ctx, t.Origin)
+	return space
+}
+
+// questionInFocus: focus f names track (t's), the session machine/session that reports, or t's supervising
+// conversation on the assistant's machine self.
+func questionInFocus(f *assistantwire.AttentionFocus, track, self string, t Todo, machine, session string) bool {
+	if f == nil {
+		return false
+	}
+	if ft := strings.TrimSpace(f.Track); ft != "" && ft == track {
+		return true
+	}
+	if f.SessionID == "" {
+		return false
+	}
+	if f.SessionID == session && (f.MachineID == "" || f.MachineID == machine) {
+		return true
+	}
+	sup := ""
+	if t.Supervision != nil {
+		sup = t.Supervision.Supervisor
+	}
+	return sup != "" && f.SessionID == sup && (f.MachineID == "" || f.MachineID == self)
 }
 
 // attentionFieldMax bounds a focus's slug and ids.
