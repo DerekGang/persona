@@ -1123,6 +1123,10 @@ export struct SessionTools {
     return tr(state==='updated' ? 'session_git_pulled' : 'session_git_up_to_date');
   }
 
+  private hasPullUpstream():boolean {
+    return !!Wire.text(this.workspace.gitStatus,'upstream') && !Wire.bool(this.workspace.gitStatus,'gone');
+  }
+
   @Builder gitBranchCard() {
     Column() {
       Column({space:this.gitMetric(6,8,4)}) {
@@ -1130,7 +1134,7 @@ export struct SessionTools {
           SymbolGlyph($r('sys.symbol.arrow_triangle_merge')).fontSize(Tokens.interfaceFontVp(18,nativeEnvironment.fontScale)).width(this.gitMetric(20,26.3,18)).fontColor([Colors.iconAccent]).rotate({angle:180})
           Text(Wire.text(this.workspace.gitStatus,'branch') || tr('session_git_detached')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium)
             .fontColor(Colors.ink).layoutWeight(1).wordBreak(WordBreak.BREAK_WORD)
-          if (Wire.text(this.workspace.gitStatus,'upstream') && !Wire.bool(this.workspace.gitStatus,'gone')) {
+          if (this.hasPullUpstream()) {
             Button({type:ButtonType.Capsule}) {
               Row({space:3}) {
                 SymbolGlyph($r('sys.symbol.arrow_down')).fontSize('12vp').fontColor([Colors.link])
@@ -1172,8 +1176,10 @@ export struct SessionTools {
               .fontColor(this.workspace.hasGitPullIssue() ? Colors.danger : Colors.positive).layoutWeight(1)
           }.width('100%').accessibilityGroup(true).accessibilityText(this.gitPullMessage()).id('session.git.pull.result')
         }
-      }.width('100%').constraintSize({minHeight:this.gitMetric(113.7,135.7,0)}).justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Start).padding({left:this.gitMetric(20,20,16),right:this.gitMetric(20,20,16),top:10,bottom:12})
+      }.width('100%').constraintSize({minHeight:this.gitMetric(113.7,135.7,0)})
+        .justifyContent(this.hasPullUpstream() ? FlexAlign.Start : FlexAlign.Center)
+        .alignItems(HorizontalAlign.Start).padding({left:this.gitMetric(20,20,16),right:this.gitMetric(20,20,16),
+          top:this.hasPullUpstream() ? this.gitMetric(12.7,12.7,10) : 10,bottom:12})
       if (this.model.features.includes('git_write')) {
         this.branchSectionRow('branch',$r('sys.symbol.arrow_triangle_merge'),'','branch','session.git.branch_picker')
         this.branchSectionRow('session_tools_stashes',$r('sys.symbol.archivebox'),this.workspace.gitStashCount() ? String(this.workspace.gitStashCount()) : '','stashes','session.git.stashes')
