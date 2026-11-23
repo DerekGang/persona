@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseReadingAnchor, readingAnchorIndex, readingSizeClassChanges } from '../entry/src/main/ets/core/ConversationReading.ts';
+import { measuredReadingBoundary, parseReadingAnchor, readingAnchorIndex, readingSizeClassChanges } from '../entry/src/main/ets/core/ConversationReading.ts';
+
+test('a type change keeps the trailing edge of measured rows until the newest row is in range',()=>{
+ const heights=[60,220,60,220,60,220,60,220];
+ const height=i=>heights[i];
+ assert.deepEqual(measuredReadingBoundary(2,641,600,8,8,height),{nextIndex:7,fromBottom:641});
+ assert.deepEqual(measuredReadingBoundary(2,500,600,8,5,height),{nextIndex:5,fromBottom:196});
+ assert.equal(measuredReadingBoundary(2,500,600,8,9,i=>i===4 ? 0 : height(i)),undefined);
+ assert.equal(measuredReadingBoundary(-1,500,600,8,8,height),undefined);
+ assert.deepEqual(measuredReadingBoundary(2,1300,600,8,8,height),{nextIndex:3,fromBottom:708});
+});
 
 test('reading returns to the same message after older and newer messages are inserted',()=>{
  const anchor=parseReadingAnchor(JSON.stringify({id:'read-message',offset:-18,atEnd:false}));
@@ -31,6 +41,18 @@ test('unusable saved reading positions fall back to newest without admitting inv
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 const source=readFileSync(new URL('../entry/src/main/ets/components/Conversation.ets',import.meta.url),'utf8');
+test('overlapping native rows reconstruct the physical distance from newest only at the same size and content',()=>{
+ const Geometry=new Function('return '+stripTypeScriptTypes('class Geometry {'+method('measuredDistanceFromNewest')+'}'))();
+ const lines=[{}, {}, {}],rows=new Map([[0,{line:lines[0],height:52,atNewest:-672,count:3,tail:lines[2]}],[1,{line:lines[1],height:101,atNewest:-612,count:3,tail:lines[2]}]]);
+ const v=Object.assign(new Geometry(),{lines,measuredRows:rows,measuredScale:1,measuredWidth:402,availableWidth:402,
+   firstVisibleIndex:0,lastVisibleIndex:1,transcriptHeight:626,readingPrefix:()=>0,
+   scroller:{getItemRect:i=>i===0 ? {y:554,height:52} : {y:614,height:101}}});
+ assert.equal(v.measuredDistanceFromNewest(1),600);
+ rows.get(1).atNewest=-614;
+ assert.equal(v.measuredDistanceFromNewest(1),undefined);
+ rows.get(1).atNewest=-612;v.lines=[lines[0],lines[1],{}];
+ assert.equal(v.measuredDistanceFromNewest(1),undefined);
+});
 function method(name){
  const match=new RegExp(name==='feedContextChanged' ? 'feedContextChanged\\(\\): void' : '  private (?:async )?'+name+'\\(').exec(source);assert.ok(match,name);const start=match.index,body=source.indexOf('{',start);let depth=1,quote='',escape=false,i=body+1;
  for(;i<source.length&&depth;i++){const c=source[i];if(quote){if(escape)escape=false;else if(c==='\\')escape=true;else if(c===quote)quote='';}else if(c==='"'||c==="'"||c==='`')quote=c;else if(c==='{')depth++;else if(c==='}')depth--;}
@@ -47,8 +69,8 @@ test('only a transition between standard and accessibility reading sizes changes
 
 test('reflow targets only an undisturbed manual reader in this foreground chat',()=>{
  const Reflow=new Function('readingSizeClassChanges','ConversationFrame','ScrollAlign','LengthMetrics','return '+stripTypeScriptTypes(
-   'class Reflow {'+['canReflowManualHistory','transcriptEndInset','distanceFromTranscriptEnd','reflowReadingSize'].map(method).join('\n')+'}'))(
-     readingSizeClassChanges,Frame,{END:'end'},{vp:value=>value});
+   'class Reflow {'+['canReflowManualHistory','transcriptEndInset','distanceFromTranscriptEnd','settleReadingBoundary','reflowReadingSize'].map(method).join('\n')+'}'))(
+     readingSizeClassChanges,Frame,{END:'end',START:'start'},{vp:value=>value});
  const frames=[],seen=[],posted=[],landings=[];
  const observer={on:(event,handler)=>{assert.equal(event,'didLayout');frames.push(handler);},
    off:(event,handler)=>{assert.equal(event,'didLayout');const i=frames.indexOf(handler);assert.notEqual(i,-1);frames.splice(i,1);}};
@@ -57,7 +79,8 @@ test('reflow targets only an undisturbed manual reader in this foreground chat',
  const base={mounted:true,active:true,model,admission:()=>true,manuallyReading:true,jumpAvailable:true,lastManualAnchor:{id:'any',atEnd:false,offset:12},
    selectionStart:0,selectionEnd:0,attachments:{attachments:[]},chooser:{},environment:{fontScale:3.2,keyboardHeightPx:0},
    readingEpoch:1,readingMotion:2,typeChange:0,lines:[{readingId:'older'},{readingId:'tail'}],readingPrefix:()=>1,transcriptHeight:626,
-   scroller:{contentSize:()=>({height:1539}),currentOffset:()=>({yOffset:436}),scrollToIndex:(...args)=>landings.push(args)},
+   scroller:{getItemRect:()=>({y:0,height:0}),contentSize:()=>({height:1539}),currentOffset:()=>({yOffset:436}),scrollToIndex:(...args)=>landings.push(args)},
+   readingBoundary:()=>undefined,measuredDistanceFromNewest:()=>undefined,sampleVisibleReadingRows:()=>{},
    visibleReadingAnchor:()=>({id:'read',offset:-4,atEnd:false}),rememberTailPosition:()=>{},
    getUIContext:()=>({getUIObserver:()=>observer,postFrameCallback:frame=>posted.push(frame)}),jumpToLatest:()=>seen.push(1)};
  const make=(override={})=>Object.assign(new Reflow(),base,override);
@@ -74,17 +97,32 @@ test('reflow targets only an undisturbed manual reader in this foreground chat',
  while(posted.length)posted.shift().onFrame();
  assert.deepEqual(landings,[[2,false,'end',{extraOffset:-521}]]);
  assert.deepEqual(sameClass.lastManualAnchor,{id:'read',offset:-4,atEnd:false});
+ const throughRange=make({environment:{fontScale:33/17,keyboardHeightPx:0},lines:Array.from({length:9},(_,n)=>({readingId:String(n)})),distanceFromTranscriptEnd:()=>1221,
+   readingBoundary:()=>({nextIndex:7,fromBottom:605}),sampleVisibleReadingRows:()=>{},tailPosition:{distance:1221}});
+ throughRange.reflowReadingSize(28/17,33/17);frames[0]();
+ while(posted.length)posted.shift().onFrame();
+ assert.deepEqual(landings.pop(),[8,false,'start',{extraOffset:-1231}]);
+ assert.equal(throughRange.tailPosition,undefined);
+ let observed=654;
+ const shifts=[];
+ const back=make({environment:{fontScale:1,keyboardHeightPx:0},readingBoundary:scale=>({nextIndex:2,fromBottom:scale===1 ? observed : 566}),
+   scroller:{...base.scroller,scrollBy:(x,y)=>{shifts.push([x,y]);observed-=y;}}});
+ back.reflowReadingSize(19/17,1);frames[0]();
+ while(posted.length)posted.shift().onFrame();
+ assert.deepEqual(landings.pop(),[2,false,'end',{extraOffset:-610}]);
+ assert.deepEqual(shifts,[[0,88]]);
  const changed=make({environment:{fontScale:19/17,keyboardHeightPx:0}});
  changed.reflowReadingSize(1,19/17);frames[0]();changed.readingMotion++;posted.shift().onFrame();
  assert.equal(landings.length,1);
  for(const change of [v=>v.readingMotion++,v=>v.readingEpoch++,v=>v.searchPresented=true,v=>v.selectedReadingLine='selected',
-   v=>v.model={...model,owns:()=>false},v=>v.model={...model,target:()=> 'other'},v=>v.model={...model,draft:'typed'}]){
+   v=>v.model={...model,owns:()=>false},v=>v.model={...model,target:()=> 'other'},v=>v.model={...model,draft:'typed'},
+   v=>v.lines=[v.lines[0],{readingId:'tail'}]]){
    const v=make();v.reflowReadingSize(1,3.2);assert.equal(frames.length,1);change(v);frames[0]();assert.equal(frames.length,0);assert.equal(seen.length,0);
  }
  make().reflowReadingSize(1,3.2);assert.equal(seen.length,0);frames[0]();assert.equal(frames.length,0);assert.equal(seen.length,1);
 });
 const Reading=new Function('parseReadingAnchor','readingAnchorIndex','ConversationFrame','Edge','ScrollAlign','LengthMetrics','return '+stripTypeScriptTypes('class Reading {'+['readingProgress','showWelcome','readingPrefix','saveReading','syncReading','scheduleReading','restoreReading','visibleReadingAnchor','loadEarlier','feedContextChanged'].map(method).join('\n')+'}'))(parseReadingAnchor,readingAnchorIndex,Frame,{Bottom:1},{START:1},{vp:v=>v});
-function fixture(){let resolve;const read=new Promise(r=>resolve=r),frames=[],scrolls=[],writes=[];const v=new Reading();Object.assign(v,{active:true,readingKey:'',readingEpoch:0,readingRestoring:true,readingAnchorReady:false,readingFetching:false,readingCursors:new Set(),readingFailed:false,anchor:{id:'',offset:0,atEnd:true},lines:[],feed:{error:'',nextCursor:''},feedKey:'',model:{selected:{kind:'session'},scope:()=> 'owner',target:()=> 'chat',hasMoreMessages:false,transcriptHistoryReady:false,transcriptItems:()=>v.lines,connected:true,captureView:()=>({read:()=>read,valid:()=>true,write:async s=>writes.push(s)})},scroller:{scrollEdge:()=>scrolls.push('bottom'),scrollToIndex:i=>scrolls.push(i)},getUIContext:()=>({postFrameCallback:f=>frames.push(f)})});return {v,resolve,scrolls,writes,flush:async()=>{while(frames.length)frames.shift().onFrame();await Promise.resolve();}};}
+function fixture(){let resolve;const read=new Promise(r=>resolve=r),frames=[],scrolls=[],writes=[];const v=new Reading();Object.assign(v,{active:true,readingKey:'',readingEpoch:0,readingRestoring:true,readingAnchorReady:false,readingFetching:false,readingCursors:new Set(),measuredRows:new Map(),precedingRows:new Map(),readingFailed:false,anchor:{id:'',offset:0,atEnd:true},lines:[],feed:{error:'',nextCursor:''},feedKey:'',model:{selected:{kind:'session'},scope:()=> 'owner',target:()=> 'chat',hasMoreMessages:false,transcriptHistoryReady:false,transcriptItems:()=>v.lines,connected:true,captureView:()=>({read:()=>read,valid:()=>true,write:async s=>writes.push(s)})},scroller:{scrollEdge:()=>scrolls.push('bottom'),scrollToIndex:i=>scrolls.push(i)},getUIContext:()=>({postFrameCallback:f=>frames.push(f)})});return {v,resolve,scrolls,writes,flush:async()=>{while(frames.length)frames.shift().onFrame();await Promise.resolve();}};}
 
 test('earlier message frames cannot finalize reading before the saved anchor resolves',async()=>{
  const {v,resolve,scrolls,flush}=fixture();v.syncReading();v.lines=[{id:'old',readingId:'old'},{id:'saved',readingId:'saved'},{id:'latest',readingId:'latest'}];v.scheduleReading();await flush();assert.deepEqual(scrolls,[]);assert.equal(v.readingRestoring,true);

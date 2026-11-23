@@ -44,8 +44,8 @@ import { ButtonStyles } from '../design/Controls';
 import { nativeSheetInset } from '../platform/NativeInsets';
 import { ContextPicker } from './ContextPicker';
 import type { ClientViewLease } from '../models/ClientModel';
-import { parseReadingAnchor, readingAnchorIndex, readingSizeClassChanges } from '../core/ConversationReading';
-import type { ReadingAnchor } from '../core/ConversationReading';
+import { measuredReadingBoundary, parseReadingAnchor, readingAnchorIndex, readingSizeClassChanges } from '../core/ConversationReading';
+import type { ReadingAnchor, ReadingBoundary } from '../core/ConversationReading';
 import { workingTurnLabel } from '../core/PhoneDate';
 
 class ConversationFrame extends FrameCallback {
@@ -75,6 +75,7 @@ class ComposerActionIntent {
 @ComponentV2
 struct MessageSurface {
   @Param own: boolean = false;
+  @Param agentPrompt: boolean = false;
   @Param personaReply: boolean = false;
   @Param maximum: number = Tokens.readingMax;
   @BuilderParam content: () => void;
@@ -82,7 +83,8 @@ struct MessageSurface {
   onWillApplyTheme(theme: Theme): void { this.fill = theme.colors.compBackgroundPrimary; }
   build() {
     Column() { this.content() }.width(this.own ? undefined : '100%').constraintSize({ maxWidth: this.maximum })
-      .padding(this.own || this.personaReply ? {left:14,right:14,top:9,bottom:9} : 0)
+      .padding(this.agentPrompt ? { left: Tokens.page, right: Tokens.page, top: Tokens.inset, bottom: Tokens.inset } :
+        this.own || this.personaReply ? {left:14,right:14,top:9,bottom:9} : 0)
       .backgroundColor(this.own ? this.fill : this.personaReply ? Colors.control : Color.Transparent)
       .borderRadius(this.own || this.personaReply ? Tokens.bubble : 0)
   }
@@ -120,6 +122,14 @@ interface ReadingTailPosition {
   distance: number;
   count: number;
   lastId: string;
+}
+
+interface MeasuredReadingRow {
+  line: ConversationLine;
+  height: number;
+  atNewest?: number;
+  count?: number;
+  tail?: ConversationLine;
 }
 
 class ConversationLine {
@@ -184,6 +194,11 @@ export struct Conversation {
   private readingMotion: number = 0;
   private typeChange: number = 0;
   private tailPosition: ReadingTailPosition | undefined;
+  private measuredRows: Map<number, MeasuredReadingRow> = new Map();
+  private measuredScale: number = -1;
+  private measuredWidth: number = -1;
+  private precedingRows: Map<number, MeasuredReadingRow> = new Map();
+  private precedingScale: number = -1;
   private scrollingByHand: boolean = false;
   private lastManualAnchor: ReadingAnchor | undefined = undefined;
   private manuallyReading: boolean = false;
@@ -277,6 +292,7 @@ export struct Conversation {
     const key = JSON.stringify([this.model.scope(), this.model.target()]);
     if (this.readingKey === key) return;
     this.manuallyReading = false; this.selectedReadingLine = ''; this.readingMenuLine = ''; this.tailPosition = undefined;
+    this.measuredRows.clear(); this.precedingRows.clear();
     this.saveReading(); this.lastManualAnchor = undefined; this.scrollingByHand = false; this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
     const epoch = ++this.readingEpoch, lease = this.model.captureView('reading:' + this.model.target());
     this.readingLease = lease; this.readingCursors.clear(); this.readingFetching = false; this.readingRestoring = true; this.readingAnchorReady = false; this.readingFailed = false;
@@ -400,9 +416,87 @@ export struct Conversation {
     if (size) this.reflowReadingSize(size.before, size.now);
   }
   private transcriptEndInset(): number { return this.model.selected.kind === 'session' && this.lines.length > 0 ? 44 : 0; }
+  private sampleVisibleReadingRows(): void {
+    if (!this.active || this.model.selected.kind !== 'session' || this.transcriptHeight <= 0 || !this.lines.length) return;
+    const scale = this.environment.fontScale, width = this.availableWidth;
+    if (width !== this.measuredWidth) {
+      this.measuredRows.clear(); this.precedingRows.clear();
+      this.measuredScale = scale; this.measuredWidth = width; this.precedingScale = -1;
+    } else if (scale !== this.measuredScale) {
+      const previous = this.measuredRows;
+      this.measuredRows = scale === this.precedingScale ? this.precedingRows : new Map<number, MeasuredReadingRow>();
+      this.precedingRows = previous; this.precedingScale = this.measuredScale; this.measuredScale = scale;
+    }
+    const prefix = this.readingPrefix();
+    const first = Math.max(0,this.firstVisibleIndex-prefix), last = Math.min(this.lines.length-1,this.lastVisibleIndex-prefix);
+    const keepAhead = Math.max(32,(last-first+1)*4);
+    this.measuredRows.forEach((_v: MeasuredReadingRow, index: number): void => {
+      if (index < first || index > last+keepAhead) this.measuredRows.delete(index);
+    });
+    try {
+      const count = this.lines.length, tail = this.lines[count-1], end = this.scroller.getItemRect(prefix+count-1);
+      const aligned = end.height > 0 && Math.abs(end.y+end.height+this.transcriptEndInset()-this.transcriptHeight) < 0.67;
+      for (let index = first; index <= last; index++) {
+        const rect = this.scroller.getItemRect(prefix+index);
+        if (rect.height <= 0) continue;
+        const line = this.lines[index], previous = this.measuredRows.get(index);
+        const retained = previous?.line === line && previous.tail === tail && previous.count === count &&
+          Math.abs(previous.height-rect.height) < 0.67 ? previous.atNewest : undefined;
+        this.measuredRows.set(index,{ line: line, height: rect.height, count: count, tail: tail,
+          atNewest: aligned ? rect.y-this.transcriptHeight : retained });
+      }
+    } catch (_) { /* A row may leave the measured native viewport before the callback. */ }
+  }
+  private measuredDistanceFromNewest(scale: number): number | undefined {
+    if (this.measuredScale !== scale || this.measuredWidth !== this.availableWidth) return undefined;
+    const count = this.lines.length, prefix = this.readingPrefix();
+    const first = Math.max(0,this.firstVisibleIndex-prefix), last = Math.min(count-1,this.lastVisibleIndex-prefix);
+    let distance: number | undefined;
+    for (let index = first; index <= last; index++) {
+      const saved = this.measuredRows.get(index);
+      if (saved?.atNewest === undefined || saved.line !== this.lines[index] || saved.count !== count || saved.tail !== this.lines[count-1]) continue;
+      const rect = this.scroller.getItemRect(prefix+index);
+      if (rect.height <= 0 || Math.abs(rect.height-saved.height) >= 0.67) continue;
+      const measured = Math.max(0,rect.y-this.transcriptHeight-saved.atNewest);
+      if (distance !== undefined && Math.abs(measured-distance) > 0.67) return undefined;
+      distance = measured;
+    }
+    return distance;
+  }
+  private readingBoundary(scale: number, requested: number = -1): ReadingBoundary | undefined {
+    if (this.measuredScale !== scale || this.measuredWidth !== this.availableWidth) return undefined;
+    const prefix = this.readingPrefix(), last = Math.min(this.lines.length-1,this.lastVisibleIndex-prefix);
+    if (last < 0) return undefined;
+    try {
+      const physical = this.measuredDistanceFromNewest(scale);
+      if (requested === this.lines.length && physical !== undefined) {
+        return { nextIndex: requested, fromBottom: physical-this.transcriptEndInset() };
+      }
+      if (requested >= 0 && requested < this.lines.length) {
+        const destination = this.scroller.getItemRect(prefix+requested);
+        if (destination.height > 0) return { nextIndex: requested, fromBottom: destination.y-this.transcriptHeight };
+        if (requested <= last) return undefined;
+      }
+      const rect = this.scroller.getItemRect(prefix+last);
+      if (rect.height <= 0) return undefined;
+      const range = measuredReadingBoundary(last,rect.y+rect.height,this.transcriptHeight,Tokens.gap,this.lines.length,
+        (index: number): number => {
+          const row = this.measuredRows.get(index);
+          return row && row.line === this.lines[index] ? row.height : 0;
+        },requested);
+      return range && range.nextIndex === this.lines.length && physical !== undefined ?
+        { nextIndex: range.nextIndex, fromBottom: physical-this.transcriptEndInset() } : range;
+    } catch (_) { return undefined; }
+  }
   private distanceFromTranscriptEnd(scale: number): number {
     if (this.transcriptHeight <= 0 || !this.lines.length) return -1;
     try {
+      const end = this.scroller.getItemRect(this.readingPrefix()+this.lines.length-1);
+      if (end.height > 0 && Number.isFinite(end.y)) {
+        return Math.max(0,end.y+end.height+this.transcriptEndInset()-this.transcriptHeight);
+      }
+      const physical = this.measuredDistanceFromNewest(scale);
+      if (physical !== undefined) return physical;
       const prior = this.tailPosition;
       if (prior && prior.scale === scale && prior.count === this.lines.length && this.lines[prior.count-1]?.readingId === prior.lastId &&
         this.lines[prior.index]?.readingId === prior.id) {
@@ -418,11 +512,12 @@ export struct Conversation {
     } catch (_) { return -1; }
   }
   private rememberTailPosition(known: number = -1): void {
+    this.sampleVisibleReadingRows();
     if (!this.active || this.readingRestoring || this.model.selected.kind !== 'session' || !this.lines.length ||
       this.transcriptHeight <= 0 || known < 0 && !this.scrollingByHand && !this.atEnd) return;
     try {
       const scale = this.environment.fontScale;
-      const distance = known >= 0 ? known : this.atEnd ? 0 : this.distanceFromTranscriptEnd(scale);
+      const distance = known >= 0 ? known : this.distanceFromTranscriptEnd(scale);
       if (distance < 0) return;
       const prefix = this.readingPrefix(), index = Math.min(this.lines.length-1,Math.max(0,Math.floor((this.firstVisibleIndex+this.lastVisibleIndex)/2)-prefix));
       const row = this.scroller.getItemRect(prefix+index);
@@ -431,18 +526,44 @@ export struct Conversation {
         count:this.lines.length,lastId:this.lines[this.lines.length-1].readingId };
     } catch (_) { /* A row can leave the measured area before the scroll callback runs. */ }
   }
+  private settleReadingBoundary(index: number, expected: number, scale: number, current: () => boolean): void {
+    let previous = NaN, stable = 0, frames = 0, corrections = 0;
+    const inspect = (): void => {
+      if (!current()) return;
+      this.sampleVisibleReadingRows();
+      const measured = this.readingBoundary(scale,index);
+      const position = measured ? measured.fromBottom : NaN;
+      stable = Math.abs(position-previous) < 0.35 ? stable+1 : 0;
+      previous = position; frames++;
+      if (frames < 10 && stable < 2) {
+        this.getUIContext().postFrameCallback(new ConversationFrame(inspect)); return;
+      }
+      // An estimated native scroll offset can already equal the request while real rows still lie elsewhere.
+      // A correction uses only the measured row geometry for this width, type size and transcript.
+      if (measured && Math.abs(position-expected) > 0.67 && corrections < 2) {
+        this.scroller.scrollBy(0,position-expected); corrections++; previous = NaN; stable = 0; frames = 0;
+        this.getUIContext().postFrameCallback(new ConversationFrame(inspect)); return;
+      }
+      this.lastManualAnchor = this.visibleReadingAnchor() || this.lastManualAnchor;
+      if (index === this.lines.length) this.rememberTailPosition(Math.max(0,(measured ? position : expected)+this.transcriptEndInset()));
+    };
+    this.getUIContext().postFrameCallback(new ConversationFrame(inspect));
+  }
   private reflowReadingSize(before: number, next: number): void {
     const change = ++this.typeChange;
     if (!this.canReflowManualHistory() || before === next) return;
     const crossesClass = readingSizeClassChanges(before, next);
-    const distance = crossesClass ? 0 : this.distanceFromTranscriptEnd(before);
+    const range = crossesClass ? undefined : this.readingBoundary(before);
+    const boundary = range && range.nextIndex < this.lines.length ? range : undefined;
+    const distance = crossesClass || boundary ? 0 : range ?
+      Math.max(0,range.fromBottom+this.transcriptEndInset()) : this.distanceFromTranscriptEnd(before);
     if (distance < 0) return;
     const epoch = this.readingEpoch, motion = this.readingMotion, target = this.model.target();
     const generation = this.model.connectionGeneration(), scope = this.model.scope();
-    const count = this.lines.length, last = this.lines[count-1]?.readingId;
+    const count = this.lines.length, last = this.lines[count-1];
     const current = (): boolean => change === this.typeChange && this.readingEpoch === epoch &&
       this.readingMotion === motion && this.environment.fontScale === next && this.model.owns(generation,scope) &&
-      this.model.target() === target && this.lines.length === count && this.lines[count-1]?.readingId === last &&
+      this.model.target() === target && this.lines.length === count && this.lines[count-1] === last &&
       this.canReflowManualHistory();
     const observer = this.getUIContext().getUIObserver();
     const afterLayout = (): void => {
@@ -461,13 +582,15 @@ export struct Conversation {
         }
         // The inverted iPhone transcript keeps the distance from its newest row within a size class.
         // Native end alignment recalculates the off-screen tail without materializing an entire long history.
-        this.scroller.scrollToIndex(this.readingPrefix()+count-1,false,ScrollAlign.END,{ extraOffset:LengthMetrics.vp(-distance) });
-        this.getUIContext().postFrameCallback(new ConversationFrame(() => {
-          if (current()) {
-            this.lastManualAnchor = this.visibleReadingAnchor() || this.lastManualAnchor;
-            this.rememberTailPosition(distance);
-          }
-        }));
+        if (boundary) {
+          this.tailPosition = undefined;
+          this.scroller.scrollToIndex(this.readingPrefix()+boundary.nextIndex,false,ScrollAlign.START,
+            { extraOffset:LengthMetrics.vp(-(viewport+boundary.fromBottom)) });
+        } else {
+          this.scroller.scrollToIndex(this.readingPrefix()+count-1,false,ScrollAlign.END,{ extraOffset:LengthMetrics.vp(-distance) });
+        }
+        this.settleReadingBoundary(boundary ? boundary.nextIndex : count,
+          boundary ? boundary.fromBottom : distance-this.transcriptEndInset(),next,current);
       };
       this.getUIContext().postFrameCallback(new ConversationFrame(afterResize));
     };
@@ -1221,6 +1344,12 @@ export struct Conversation {
     const next = this.lines[entry.index + 1]?.message;
     if (this.model.selected.kind === 'session' && message.role === 'assistant' && message.text &&
       next?.role === 'recap' && next.terminalRecap) return Tokens.gap;
+    // The chat's native stack leaves 16pt between consecutive prompt and reply surfaces.
+    // The List already contributes its own gap and the next row has a 3vp top inset.
+    if (this.model.selected.kind === 'session' && next &&
+      ((message.role === 'user' && next.role === 'assistant') || (message.role === 'assistant' && next.role === 'user'))) {
+      return Tokens.page - Tokens.gap - 3;
+    }
     return Tokens.fine;
   }
   @Builder message(entry: RepeatItem<ConversationLine>) {
@@ -1264,10 +1393,12 @@ export struct Conversation {
         galleryIndex: this.imageIndex(entry.item.message!, 'item', entry.item.message!.imageId), onEdit: (image: LoadedMessageImage) => this.editReceivedImage(image) })
       if (entry.item.message!.text) {
         WithTheme({ colorMode: this.environment.dark ? ThemeColorMode.DARK : ThemeColorMode.LIGHT, theme: nativeMessageTheme(this.look, this.model.style, entry.item.message!.role === 'user', this.environment.dark) }) {
-        MessageSurface({ own: entry.item.message!.role === 'user', personaReply: this.model.selected.kind === 'conversation' && entry.item.message!.role === 'assistant', maximum: entry.item.message!.role === 'user' ? Math.max(Tokens.touch, Math.min(this.availableWidth, Tokens.readingMax) - Tokens.page * 2 - Tokens.touch) : Tokens.readingMax }) {
+        MessageSurface({ own: entry.item.message!.role === 'user', agentPrompt: this.model.selected.kind === 'session' && entry.item.message!.role === 'user',
+          personaReply: this.model.selected.kind === 'conversation' && entry.item.message!.role === 'assistant', maximum: entry.item.message!.role === 'user' ? Math.max(Tokens.touch, Math.min(this.availableWidth, Tokens.readingMax) - Tokens.page * 2 - Tokens.touch) : Tokens.readingMax }) {
           if (entry.item.message!.role === 'assistant' && this.model.selected.kind === 'conversation') AssistantMessage({ model: this.model, feed: this.feed, message: entry.item.message!, active: this.active, onLink: (address: string) => this.onLink(address), onOpenResource: (row: ResourceRow) => this.onOpenResource(row) })
           else MarkdownText({ text: entry.item.message!.text, chatReply: entry.item.message!.role === 'assistant',
             agentReply: this.model.selected.kind === 'session' && entry.item.message!.role === 'assistant',
+            agentPrompt: this.model.selected.kind === 'session' && entry.item.message!.role === 'user',
             agentFontScale: this.environment.fontScale, fitContent: entry.item.message!.role === 'user',
             onSelectionChange: (selected: boolean) => this.selectReadingText(entry.item.id, selected), onLink: (address: string) => this.onLink(address) })
         }

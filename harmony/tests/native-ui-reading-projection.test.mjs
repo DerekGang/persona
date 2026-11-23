@@ -146,9 +146,9 @@ test('real recap entries retain original answers, time ordering and all consecut
 test('full recap Markdown grows past interface type, with the body-relative reading metric and spacing between lines', () => {
   const markdown = readFileSync(new URL('../entry/src/main/ets/components/MarkdownText.ets', import.meta.url), 'utf8');
   const environment = {fontScale: 1};
-  const Renderer = new Function('nativeEnvironment', 'return ' + stripTypeScriptTypes(
-    'class Renderer {' + method('readingPoints', markdown) + method('readingFont', markdown) + '}',
-  ))(environment);
+  const Renderer = new Function('nativeEnvironment', 'hasHanProse', 'return ' + stripTypeScriptTypes(
+    'class Renderer {' + ['readingPoints','readingFont','inlineSpacing','inlineLineHeight'].map(name=>method(name,markdown)).join('\n') + '}',
+  ))(environment, () => true);
   const renderer = Object.assign(new Renderer(), {recapReading: true});
   assert.equal(renderer.readingFont(17), '17vp');
   environment.fontScale = 2;
@@ -156,9 +156,18 @@ test('full recap Markdown grows past interface type, with the body-relative read
   assert.ok(intermediate > 23 && intermediate < 48);
   environment.fontScale = 3.2;
   assert.equal(renderer.readingFont(17), '48vp');
+  assert.equal(renderer.inlineSpacing(17,0.26),48*0.26);
   renderer.recapReading = false;
   assert.equal(renderer.readingFont(17), 17);
-  assert.match(markdown, /\.lineSpacing\(LengthMetrics\.vp\(this\.recapReading[^\n]+onlyBetweenLines: true/);
+  renderer.promptBodyVp = 33;
+  assert.equal(renderer.inlineSpacing(17,0.26),0);
+  assert.equal(renderer.inlineLineHeight(17,false,0.26,[],true),'47.85vp');
+  renderer.scaleAgentProse=true;
+  for(const [points,advance] of [[26,38],[31,45],[48,69+1/3]]) {
+    renderer.agentBodyVp=points;
+    assert.ok(Math.abs(parseFloat(renderer.inlineLineHeight(17,true,0.26,[]))-advance)<0.001);
+  }
+  assert.match(markdown, /\.lineSpacing\(LengthMetrics\.vp\(this\.inlineSpacing\(size, lineSpacingEm\)\), \{ onlyBetweenLines: true \}/);
 });
 
 test('a recap dismissal belongs to its hub and session and an older storage read cannot close a new recap', async () => {

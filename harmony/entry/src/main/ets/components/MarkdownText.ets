@@ -10,6 +10,7 @@ import { nativeEnvironment } from '../platform/NativeEnvironment';
 export struct MarkdownText {
   @Require @Param text: string;
   @Param fitContent: boolean = false;
+  @Param agentPrompt: boolean = false;
   @Param chatReply: boolean = false;
   @Param agentReply: boolean = false;
   @Param agentFontScale: number = 1;
@@ -34,8 +35,16 @@ export struct MarkdownText {
   @Computed get scaleAgentProse(): boolean { return Math.abs(this.agentFontScale - 1) > 0.001; }
   @Computed get agentBodyVp(): number { return agentReplyBodySize(this.agentFontScale); }
   @Computed get agentHanVp(): number { return agentReplyBodySize(this.agentFontScale, true); }
+  @Computed get promptBodyVp(): number { return Math.min(53, Math.max(14, Tokens.body * this.agentFontScale)); }
 
-  private inlineLineHeight(size: number, readingBody: boolean, spacingEm: number, nodes: MarkdownInline[]): string | undefined {
+  private inlineSpacing(size: number, lineSpacingEm: number): number {
+    if (this.recapReading) return this.readingPoints(size) * (this.dockPlan ? 0.37 : lineSpacingEm);
+    return 0;
+  }
+
+  private inlineLineHeight(size: number, readingBody: boolean, spacingEm: number, nodes: MarkdownInline[], promptBody: boolean = false): string | undefined {
+    // Theme.Level.body uses a 1.45-em advance. On ArkUI a fixed advance keeps its first and last lines at their intrinsic height.
+    if (promptBody) return String(this.promptBodyVp * 1.45) + 'vp';
     if (readingBody && this.agentBodyVp >= 17 && this.agentBodyVp <= 20) {
       // The system text face precedes the CJK Display crossover. Its two- and four-line replies
       // measure 44.7/93.3pt at standard type and 50.7/106pt at the next native category.
@@ -44,10 +53,17 @@ export struct MarkdownText {
       return String(advance) + 'vp';
     }
     if (readingBody && this.scaleAgentProse) {
-      // SwiftUI adds ReplyMetrics.lineSpacing to the system body's own line advance.
+      // SwiftUI adds ReplyMetrics.lineSpacing to the system body line advance.
       // The display CJK face advances 69.3pt per line of 48pt mixed prose in the native chat.
-      const naturalAdvance = this.agentBodyVp >= 20 && hasHanProse(nodes) ? 1.183 : 1.19;
-      return String(this.agentBodyVp * (naturalAdvance + spacingEm)) + 'vp';
+      const points = this.agentBodyVp;
+      if (points >= 20 && hasHanProse(nodes)) {
+        // The measured iPhone display sizes advance by 29, 38 and 45pt at 20, 26 and 31pt.
+        // its largest display face advances by 69⅓pt. Retain the requested leading between those native sizes.
+        const advance = points <= 26 ? 29 + (points-20)*1.5 :
+          points <= 31 ? 38 + (points-26)*1.4 : 45 + (points-31)*(73/3)/17;
+        return String(advance + points*(spacingEm-0.26)) + 'vp';
+      }
+      return String(points * (1.19 + spacingEm)) + 'vp';
     }
     return this.chatReply && !this.recapReading ? String(Math.ceil(size * 1.45)) + 'fp' : undefined;
   }
@@ -91,15 +107,17 @@ export struct MarkdownText {
   }
 
   @Builder inlineText(nodes: MarkdownInline[], lineSpacingEm: number, size: number = Tokens.body, weight: FontWeight = FontWeight.Normal,
-    alignment: TextAlign = TextAlign.Start, breakAll: boolean = false, quiet: boolean = false, readingBody: boolean = false) {
+    alignment: TextAlign = TextAlign.Start, breakAll: boolean = false, quiet: boolean = false, readingBody: boolean = false,
+    promptBody: boolean = false) {
     Text() {
       ForEach(nodes, (node: MarkdownInline) => this.inlineNode(node, weight, false, '', quiet, readingBody),
         (node: MarkdownInline, index: number) => String(index))
     }
-      .fontSize(readingBody && this.scaleAgentProse ? String(this.agentBodyVp) + 'vp' : this.readingFont(size))
+      .fontSize(promptBody ? String(this.promptBodyVp) + 'vp' :
+        readingBody && this.scaleAgentProse ? String(this.agentBodyVp) + 'vp' : this.readingFont(size))
       .fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight)
-      .lineHeight(this.inlineLineHeight(size, readingBody, lineSpacingEm, nodes))
-      .lineSpacing(LengthMetrics.vp(this.recapReading ? this.readingPoints(size) * (this.dockPlan ? 0.37 : lineSpacingEm) : 0), { onlyBetweenLines: true })
+      .lineHeight(this.inlineLineHeight(size, readingBody, lineSpacingEm, nodes, promptBody))
+      .lineSpacing(LengthMetrics.vp(this.inlineSpacing(size, lineSpacingEm)), { onlyBetweenLines: true })
       .textAlign(alignment).wordBreak(breakAll ? WordBreak.BREAK_ALL : WordBreak.BREAK_WORD)
       .copyOption(CopyOptions.LocalDevice).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start))
       .width(this.fitContent ? undefined : '100%')
@@ -232,6 +250,9 @@ export struct MarkdownText {
               TextAlign.Start, false, false, true)
           }.width('100%').alignItems(HorizontalAlign.Start)
             .padding({ top: index > 0 && this.blocks[index - 1]?.kind === 'paragraph' ? 10 - Tokens.gap : 0 })
+        } else if (this.agentPrompt && block.kind === 'paragraph') {
+          this.inlineText(block.inlines, this.paragraphLineSpacingEm, Tokens.body, FontWeight.Normal,
+            TextAlign.Start, false, false, false, true)
         } else {
           this.blockView(block, index === 0)
         }
