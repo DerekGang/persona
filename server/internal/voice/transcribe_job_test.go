@@ -563,15 +563,23 @@ func TestTranscriptionInstructionsLanguage(t *testing.T) {
 		{"ko-KR", "ja", "ja"},
 		{"", "en", "en"},
 	} {
-		var gate chan struct{}
-		release := func() {}
+		script := voicetest.Script{Sentences: trScript}
+		var waitForSecond chan struct{}
+		var release func()
 		if tt.tag == "ja-JP" {
-			gate = make(chan struct{})
-			var once sync.Once
-			release = func() { once.Do(func() { close(gate) }) }
+			waitForSecond = make(chan struct{})
+			gate := make(chan struct{})
+			arrived := sync.OnceFunc(func() { close(waitForSecond) })
+			script.BeforeSecondVerbatimStart = func() {
+				arrived()
+				<-gate
+			}
+			release = sync.OnceFunc(func() { close(gate) })
+		}
+		_, srv, _, live := trLive(t, script)
+		if release != nil {
 			t.Cleanup(release)
 		}
-		_, srv, _, live := trLive(t, voicetest.Script{Sentences: trScript, SecondVerbatimStartGate: gate})
 		asked := len(live.Starts())
 		if releasePrevious != nil {
 			releasePrevious()
@@ -584,6 +592,15 @@ func TestTranscriptionInstructionsLanguage(t *testing.T) {
 		}
 		tc.send(extwire.TranscriptionFrame{Type: extwire.TFStart, Mode: extwire.TranscriptionLive, Language: tt.tag, At: extwire.F(0.0)})
 		tc.next(extwire.TFReady)
+		if waitForSecond != nil {
+			// Ready only promises the caption stream and one verbatim stream. An empty recording can otherwise
+			// end before the second verbatim start reaches the provider, leaving nothing for the next case to release.
+			select {
+			case <-waitForSecond:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the second verbatim start did not reach the provider")
+			}
+		}
 		tc.send(extwire.TranscriptionFrame{Type: extwire.TFEnd})
 		tc.done()
 		starts := live.Starts()[asked:]
@@ -595,7 +612,7 @@ func TestTranscriptionInstructionsLanguage(t *testing.T) {
 				t.Errorf("%q (hub %s): instructions not in %s:\n%s", tt.tag, tt.hub, tt.want, ins)
 			}
 		}
-		if gate != nil {
+		if release != nil {
 			previous, releasePrevious = live, release
 		}
 	}
