@@ -372,12 +372,11 @@ final class DemoHub {
             modelBindings[id] = ["override": .object(binding), "revision": .number(Double((purpose["revision"]?.int ?? 0) + 1))]
             return try get(p, [:])
         }
-        if p == ["assistant"], method == "PUT" {
-            if let mode = body["default_permission_mode"]?.string {
-                var assistant = data["assistant"]?.object ?? [:]
-                assistant["default_permission_mode"] = .string(mode)
-                data["assistant"] = .object(assistant)
-            }
+        if p == ["assistant"], method == "PUT", body.object?.count == 1,
+           let mode = body["default_permission_mode"]?.string {
+            var assistant = data["assistant"]?.object ?? [:]
+            assistant["default_permission_mode"] = .string(mode)
+            data["assistant"] = .object(assistant)
             return try get(p, [:])
         }
         if let answer = try providers.change(method, p, body) { return answer }
