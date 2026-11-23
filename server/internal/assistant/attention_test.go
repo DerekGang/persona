@@ -232,3 +232,22 @@ func TestQuestionInFocus(t *testing.T) {
 		}
 	}
 }
+
+// A read that began before a write does not cache what it read: the write's mode stays cached.
+func TestAttentionStaleReadKeepsTheWrite(t *testing.T) {
+	var c attentionClock
+	c.mu.Lock()
+	gen := c.gen // a read begins
+	c.gen++      // putAttention writes quiet and caches it
+	written := assistantwire.Attention{Mode: assistantwire.AttentionQuiet}
+	c.cached, c.cachedAt = &written, time.Now()
+	c.mu.Unlock()
+	c.remember(gen, assistantwire.Attention{Mode: assistantwire.AttentionNormal}) // the read ends with the old value
+	if c.cached == nil || c.cached.Mode != assistantwire.AttentionQuiet {
+		t.Fatalf("cached %+v, want the write's quiet", c.cached)
+	}
+	c.remember(c.gen, assistantwire.Attention{Mode: assistantwire.AttentionFragment}) // a read with no write meanwhile
+	if c.cached.Mode != assistantwire.AttentionFragment {
+		t.Fatalf("cached %+v, want the fresh read", c.cached)
+	}
+}

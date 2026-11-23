@@ -177,3 +177,24 @@ func TestAttentionNormalChangesNothing(t *testing.T) {
 		t.Fatalf("normal: %d pushes, held %v", *attempts, heldReasons(h))
 	}
 }
+
+// Immersive focus trusts a push's track only from the assistant that reports the mode: another manager naming the
+// track in focus is held like any push that is not about it.
+func TestAttentionFocusTrackOnlyFromTheAssistant(t *testing.T) {
+	attn := assistantwire.Attention{Mode: assistantwire.AttentionImmersive, Until: time.Now().Add(time.Hour),
+		Focus: &assistantwire.AttentionFocus{Track: "qa-plain"}}
+	own := pushPolicy{manager: assistantwire.AssistantID, track: "qa-plain"}
+	if got := attentionPush(own, assistantwire.LevelP0).Track; got != "qa-plain" {
+		t.Fatalf("the assistant's track %q, want qa-plain", got)
+	}
+	if v := assistantwire.DecideAttention(attn, attentionPush(own, assistantwire.LevelP0)); v.Hold {
+		t.Fatalf("the assistant's P0 in focus was held: %+v", v)
+	}
+	other := pushPolicy{manager: "ext-other", track: "qa-plain"}
+	if got := attentionPush(other, assistantwire.LevelP0).Track; got != "" {
+		t.Fatalf("another manager's track %q, want none", got)
+	}
+	if v := assistantwire.DecideAttention(attn, attentionPush(other, assistantwire.LevelP0)); !v.Hold {
+		t.Fatalf("another manager's P0 naming the focus went: %+v", v)
+	}
+}

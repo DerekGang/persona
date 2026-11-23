@@ -44,9 +44,15 @@ func (p *Pusher) hushRule(rule quietRule) quietRule {
 	return rule
 }
 
-// attentionPush is what the attention filter knows of policy, at level.
+// attentionPush is what the attention filter knows of policy, at level. The track counts only from the manager that
+// reports the mode (the built-in assistant, whose tracks the focus names): another manager could name the track in
+// focus to slip a push past immersive mode, so its pushes carry none.
 func attentionPush(policy pushPolicy, level string) assistantwire.AttentionPush {
-	return assistantwire.AttentionPush{Level: level, Depth: policy.depth, Track: policy.track, MachineID: policy.machineID,
+	track := ""
+	if policy.manager == assistantwire.AssistantID {
+		track = policy.track
+	}
+	return assistantwire.AttentionPush{Level: level, Depth: policy.depth, Track: track, MachineID: policy.machineID,
 		SessionID: policy.sessionID, Done: policy.done, System: policy.system}
 }
 

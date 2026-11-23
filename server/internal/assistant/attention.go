@@ -35,7 +35,10 @@ type attentionClock struct {
 	mu       sync.Mutex
 	cached   *assistantwire.Attention
 	cachedAt time.Time
-	wake     chan struct{}
+	// gen counts putAttention's writes: a read that began before one does not cache what it read (it may be older
+	// than the write).
+	gen  uint64
+	wake chan struct{}
 	// now replaces time.Now (tests).
 	now func() time.Time
 }
@@ -72,6 +75,7 @@ func (s *Service) attentionStored(ctx context.Context) assistantwire.Attention {
 		c.mu.Unlock()
 		return a
 	}
+	gen := c.gen
 	c.mu.Unlock()
 	a := assistantwire.Attention{Mode: assistantwire.AttentionNormal}
 	if s.store == nil {
@@ -89,10 +93,18 @@ func (s *Service) attentionStored(ctx context.Context) assistantwire.Attention {
 	if found && assistantwire.KnownAttentionMode(stored.Mode) {
 		a = stored
 	}
-	c.mu.Lock()
-	c.cached, c.cachedAt = &a, time.Now()
-	c.mu.Unlock()
+	c.remember(gen, a)
 	return a
+}
+
+// remember caches a, read from the store when the write count was gen, unless putAttention wrote since: then what
+// was read may be older than the cache, which the write already refreshed.
+func (c *attentionClock) remember(gen uint64, a assistantwire.Attention) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen == gen {
+		c.cached, c.cachedAt = &a, time.Now()
+	}
 }
 
 // attentionNow is the mode in force now: normal once the stored one's time is over.
@@ -206,6 +218,7 @@ func (s *Service) putAttention(ctx context.Context, a assistantwire.Attention) e
 	}
 	c := &s.attention
 	c.mu.Lock()
+	c.gen++
 	c.cached, c.cachedAt = &a, time.Now()
 	c.mu.Unlock()
 	select {
