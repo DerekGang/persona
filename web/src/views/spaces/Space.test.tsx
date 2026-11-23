@@ -92,7 +92,7 @@ describe("a space's home", () => {
     act(() => root.render(<Space slug="money" fresh onToggleSidebar={() => {}} />));
     await flush();
     const about = host.querySelector('[data-testid="space-md"]')!;
-    expect(about.querySelector("h1")?.textContent).toBe("Money");
+    expect(about.querySelector("h1")).toBeNull(); // the title only repeats the space's name above it
     expect(about.querySelector("h2")?.textContent).toBe("Rules");
     expect(about.querySelector("li strong")?.textContent).toBe("Receipts");
     expect(about.textContent).not.toContain("#");

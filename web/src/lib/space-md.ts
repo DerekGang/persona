@@ -74,3 +74,11 @@ export function humanSpaceMd(content: string): string {
     .flatMap((p) => (p.kind === "human" && p.text.trim() ? [p.text.trim()] : []))
     .join("\n\n");
 }
+
+/** The user's part of SPACE.md without a leading `# <title>` that only repeats the space's title shown above it. */
+export function spaceMdBody(content: string, title: string): string {
+  const text = humanSpaceMd(content);
+  const m = /^#[ \t]+(.+?)[ \t]*#*[ \t]*(?:\n|$)/.exec(text);
+  if (!m || m[1].trim().toLowerCase() !== title.trim().toLowerCase()) return text;
+  return text.slice(m[0].length).trimStart();
+}

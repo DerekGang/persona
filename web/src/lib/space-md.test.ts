@@ -1,6 +1,6 @@
 // SPACE.md in the editor (#13500): the user's parts are fields, Persona's blocks go back byte for byte.
 import { describe, expect, it } from "vitest";
-import { assembleSpaceMd, editableParts, humanSpaceMd, joinSpaceMd, sameManagedBlocks, splitSpaceMd } from "./space-md";
+import { assembleSpaceMd, editableParts, humanSpaceMd, joinSpaceMd, sameManagedBlocks, spaceMdBody, splitSpaceMd } from "./space-md";
 
 const STATE = "<!-- persona:managed:state:begin -->\nTaxes filed; waiting for the refund.\n<!-- persona:managed:state:end -->";
 const FILE = `# Money\n\nWhat this space is for.\n\n${STATE}\n`;
@@ -52,5 +52,12 @@ describe("what the space's home shows", () => {
     expect(humanSpaceMd(FILE)).toBe("# Money\n\nWhat this space is for.");
     expect(humanSpaceMd(`${STATE}\n`)).toBe("");
     expect(humanSpaceMd(`Before\n\n${STATE}\n\nAfter\n`)).toBe("Before\n\nAfter");
+  });
+
+  it("drops a leading title that only repeats the space's name", () => {
+    expect(spaceMdBody("# Money\n\nWhat this space is for.\n", "money")).toBe("What this space is for.");
+    expect(spaceMdBody("# Bills\n\nWhat this space is for.\n", "Money")).toBe("# Bills\n\nWhat this space is for.");
+    expect(spaceMdBody("## Money\n\nText\n", "Money")).toBe("## Money\n\nText");
+    expect(spaceMdBody("# Money\n", "Money")).toBe("");
   });
 });

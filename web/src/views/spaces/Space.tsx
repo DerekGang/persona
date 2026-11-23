@@ -9,7 +9,7 @@ import { ago } from "../../lib/format";
 import { noteConversation } from "../../lib/manager-choice";
 import { noteSent } from "../../lib/outbox";
 import { plainMarkdown } from "../../lib/plain-markdown";
-import { humanSpaceMd } from "../../lib/space-md";
+import { spaceMdBody } from "../../lib/space-md";
 import { href, navigate, onLinkClick } from "../../lib/router";
 import { changeTrack, noteTrack, readSpaceMd, spaceIcon, startSpaceConversation, useTracks, type SpaceMd, type Track } from "../../lib/tracks";
 import type { Session } from "../../lib/types";
@@ -196,7 +196,7 @@ function SpaceHome({ track, onToggleSidebar }: { track: Track; onToggleSidebar: 
             )}
           </section>
 
-          <SpaceMdCard slug={slug} latest={saved} editable={!track.builtin} onEdit={() => setEditing(true)} />
+          <SpaceMdCard slug={slug} title={track.title || slug} latest={saved} editable={!track.builtin} onEdit={() => setEditing(true)} />
 
           <section className="mt-7 mb-4">
             <SectionTitle>{t("spaces.categories")}</SectionTitle>
@@ -234,7 +234,7 @@ function SpaceRow({ slug, s, icon }: { slug: string; s: Session; icon: IconName 
 
 /** What SPACE.md says: the parts the user wrote, drawn as formatted text and folded to a few lines with Show more,
  *  then where things stand (Persona's state block); Persona's other kept blocks stay in the editor. */
-function SpaceMdCard({ slug, latest, editable, onEdit }: { slug: string; latest: SpaceMd | null; editable: boolean; onEdit: () => void }) {
+function SpaceMdCard({ slug, title, latest, editable, onEdit }: { slug: string; title: string; latest: SpaceMd | null; editable: boolean; onEdit: () => void }) {
   const [read, setMd] = useState<SpaceMd | null>(null);
   const md = latest ?? read;
   const [failed, setFailed] = useState(false);
@@ -245,7 +245,7 @@ function SpaceMdCard({ slug, latest, editable, onEdit }: { slug: string; latest:
       live = false;
     };
   }, [slug]);
-  const written = useMemo(() => (md ? humanSpaceMd(md.content) : ""), [md]);
+  const written = useMemo(() => (md ? spaceMdBody(md.content, title) : ""), [md, title]);
   return (
     <section className="mt-7">
       <SectionTitle center right={editable && md ? <Button tone="quiet" size="sm" icon="pencil" onClick={onEdit}>{t("spaces.md_edit")}</Button> : undefined}>{t("spaces.md_section")}</SectionTitle>
