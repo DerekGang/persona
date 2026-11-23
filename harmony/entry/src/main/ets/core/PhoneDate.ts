@@ -1,5 +1,9 @@
+function local24HourTime(date: Date): string {
+  return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+}
+
 /** Fmt.relative on iPhone compares local calendar days after the minute range. */
-export function relativeActivityDate(at: number, now: number, locale: string, justNow: string, minutesAgo: string, yesterday: string): string {
+export function relativeActivityDate(at: number, now: number, locale: string, justNow: string, minutesAgo: string, yesterday: string, clockStyle: string = ''): string {
   if (!Number.isFinite(at) || at <= 946684800000) return '';
   const seconds = (now - at) / 1000;
   if (seconds < 45) return justNow;
@@ -7,7 +11,12 @@ export function relativeActivityDate(at: number, now: number, locale: string, ju
   const date = new Date(at);
   const localDay = (value: Date): number => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / 86400000;
   const days = localDay(new Date(now)) - localDay(date);
-  if (!days) return date.toLocaleTimeString(locale || undefined, {hour: 'numeric', minute: '2-digit'});
+  if (!days) {
+    // When no clock is selected, the iPhone's Simplified Chinese short time is 09:57. Native Intl defaults differ.
+    if (clockStyle === '24' || (clockStyle === 'locale' && /^zh(?:[-_](?:CN|SG|Hans)(?:[-_]|$)|$)/i.test(locale))) return local24HourTime(date);
+    if (clockStyle === '12') return date.toLocaleTimeString(locale || undefined, {hour: 'numeric', minute: '2-digit', hour12: true});
+    return date.toLocaleTimeString(locale || undefined, {hour: 'numeric', minute: '2-digit'});
+  }
   if (days === 1) return yesterday;
   if (seconds < 6 * 86400) return date.toLocaleDateString(locale || undefined, {weekday: 'long'});
   return date.toLocaleDateString(locale || undefined, {month: 'short', day: 'numeric'});
@@ -31,8 +40,7 @@ export function phoneTodoPlanDate(at: number, now: number, locale: string, timed
   const day = new Intl.DateTimeFormat(locale, {month: 'short', day: 'numeric',
     year: date.getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric'}).format(date);
   const weekday = new Intl.DateTimeFormat(locale, {weekday: 'short'}).format(date);
-  const clock = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
-  return day + ' ' + weekday + (timed ? ' ' + clock : '');
+  return day + ' ' + weekday + (timed ? ' ' + local24HourTime(date) : '');
 }
 
 /** Elapsed time for a live exchange, starting at its transcript input or wake. */

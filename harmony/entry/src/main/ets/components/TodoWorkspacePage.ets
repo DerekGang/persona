@@ -1,6 +1,7 @@
 import { phoneDueDate, phoneTodoPlanDate, relativeActivityDate } from '../core/PhoneDate';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { i18n } from '@kit.LocalizationKit';
+import settings from '@ohos.settings';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { Colors } from '../design/Colors';
@@ -68,6 +69,7 @@ export struct TodoWorkspacePage {
   private dragY:number = 0;
   private ignoreClickUntil:number = 0;
   @Local clock:number = Date.now();
+  @Local listClockStyle:string = 'locale';
   private clockTimer:number = -1;
   private weekStart:number = 1;
   @Local lineageRowBindings: BoundRow<ResourceRow>[] = [];
@@ -88,6 +90,7 @@ export struct TodoWorkspacePage {
 
   aboutToAppear(): void {
     this.pageAvailable = true;
+    this.readListClockStyle();
     try { this.weekStart = i18n.System.getFirstDayOfWeek() % 7; } catch (_) {}
     this.clock=Date.now(); this.clockTimer=setInterval(() => { if (this.visible) this.clock=Date.now(); },60000);
     this.lastVisible = this.visible;
@@ -135,6 +138,7 @@ export struct TodoWorkspacePage {
     if (becameVisible && this.pageAvailable) {
       this.publishTitle();
       this.refreshWhenReady();
+      this.readListClockStyle();
     }
   }
   @Monitor('model.sessions') sessionsChanged(): void { this.workspace.update(this.model); }
@@ -487,9 +491,18 @@ export struct TodoWorkspacePage {
         .fontColor(todo.priority === 'high' ? Colors.needs : Colors.secondary).padding({left:5,right:5,top:1,bottom:1}).backgroundColor(Colors.control).borderRadius(5)
     }.width('100%')
   }
+  private readListClockStyle():void {
+    if (!this.phoneList) return;
+    const context=this.getUIContext().getHostContext();
+    if (!context) return;
+    try {
+      const preference=settings.getValueSync(context,settings.date.TIME_FORMAT,'default');
+      this.listClockStyle=preference==='12' || preference==='24' ? preference : 'locale';
+    } catch (_) { this.listClockStyle='locale'; }
+  }
   private since(todo:TodoWorkspaceItem):string {
     return relativeActivityDate(Date.parse(todo.updatedAt || todo.createdAt), this.clock, this.dateLocale(),
-      tr('agent_time_just_now'), tr('kb_minutes_ago'), tr('kb_yesterday'));
+      tr('agent_time_just_now'), tr('kb_minutes_ago'), tr('kb_yesterday'), this.phoneList && !this.hubMode() ? this.listClockStyle : '');
   }
   private phoneMeasure(regular:number, largest:number):number {
     return PhoneStyle.formSize(regular,largest,nativeEnvironment.fontScale);

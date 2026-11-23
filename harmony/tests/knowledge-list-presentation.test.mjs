@@ -16,6 +16,16 @@ test('compact to-do plan dates retain localized weekdays, 24-hour Chinese times 
   assert.equal(phoneTodoPlanDate(at,at,'en-US',true),phoneDueDate(at,at,'en-US',true));
   assert.equal(phoneTodoPlanDate(Number.NaN,at,'zh-CN',true),'');
 });
+test('compact to-do timestamps honor an explicit clock and the iPhone Simplified Chinese default after the minute range',()=>{
+  const at=new Date(2026,10,23,9,57).getTime();
+  const say=(age,locale,style)=>relativeActivityDate(at,at+age*60000,locale,'now','{n} min','yesterday',style);
+  assert.equal(say(59,'zh-Hans','locale'),'59 min');
+  assert.equal(say(60,'zh-Hans','locale'),'09:57');
+  assert.equal(say(65,'zh-CN','24'),'09:57');
+  assert.equal(say(65,'en-US','12'),new Date(at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}));
+  assert.equal(say(65,'zh-TW','locale'),new Date(at).toLocaleTimeString('zh-TW',{hour:'numeric',minute:'2-digit'}));
+  assert.equal(say(1440,'zh-CN','locale'),'yesterday');
+});
 test('activity dates match the iPhone calendar-day, weekday, and relative-minute boundaries in the active locale',()=>{
   const now=new Date(2026,10,22,12,0).getTime(), local=(day,hour,minute=0)=>new Date(2026,10,day,hour,minute).toISOString();
   const say=(raw,locale='zh-CN')=>relativeActivityDate(Date.parse(raw),now,locale,'刚刚','{n} 分钟前','昨天');
