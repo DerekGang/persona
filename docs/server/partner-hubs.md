@@ -473,7 +473,10 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
 - **iOS and Android settings**: no Partner hubs page yet (pair, switches, unpair); use the web app or the command line.
   Messages from a partner already show on iOS and Android as a source message labeled with the hub's name. iOS still
   reads Persona's notes off an unmarked message's text itself (`apple/Shared/Injected.swift`, for older hubs) without
-  skipping a partner's: there a partner's words that begin exactly like one of the notes show as that note's line.
+  skipping a partner's: there a partner's words that begin exactly like a supervision message (its head and marker)
+  fold the turn, the assistant's reaction included, into one supervision line (`apple/Persona/Views/Chat/ChatLines.swift`),
+  and words that begin like a follow-up show only the follow-up's text. The fix, `Injected.of` returning nil for an
+  item whose source is `hub` as the web's `injectedOf` does, still needs an iOS build and test run.
 - **Binding approvals to the owner's own device**: the card accepts any answer `UserAllowed()` accepts ("Security
   boundaries"). Requiring the owner's own device (carrying it through the card's answer as the secret hand-off card
   does) would also stop approvals from the watch and from Lark: a product decision.
