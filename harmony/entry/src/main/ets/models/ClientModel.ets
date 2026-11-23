@@ -3,6 +3,7 @@ import type { ConversationRecapItem } from './Wire';
 import { AssistantViewModel } from './AssistantView';
 import { SshTunnel } from './SshTunnel';
 import type { SshProxyLease } from './SshTunnel';
+import type { PairingSshRoute } from './PairingSsh';
 import { KnowledgeRecording } from './KnowledgeRecording';
 import { deviceLook } from './DeviceLook';
 import { clientLocale, initializeClientLanguage, setClientLanguage } from '../core/ClientLocale';
@@ -534,7 +535,7 @@ export class ClientModel {
       }
     }
   }
-  async useEndpoint(config: EndpointConfig, name: string, admit?: () => boolean): Promise<void> {
+  async useEndpoint(config: EndpointConfig, name: string, admit?: () => boolean, route?: PairingSshRoute): Promise<void> {
     if (this.forgettingProfiles.has(config.hubId) || this.cleanupProfiles.has(config.hubId)) throw new Error('pending_action');
     if (!this.vault) throw new Error('storage_unavailable');
     if (this.pairingProfiles.size > 0) throw new Error('pending_action');
@@ -548,6 +549,7 @@ export class ClientModel {
     const current = (): boolean => epoch === (this.forgetEpochs.get(config.hubId) || 0) && !this.forgettingProfiles.has(config.hubId) && (!admit || admit());
     let previous: string | null = null, written = false;
     let previousAccess: HubAccess | undefined;
+    let settleRoute: ((committed: boolean) => Promise<void>) | undefined;
     const rollback = async (): Promise<void> => {
       let installedAccess: HubAccess | undefined;
       const installed = await vault.get(config.hubId, (value: HubAccess | undefined): void => { installedAccess = value; });
@@ -558,14 +560,30 @@ export class ClientModel {
     await this.credentialChange(config.hubId, async (): Promise<void> => {
       if (!current()) throw new Error('request_updated');
       previous = await vault.get(config.hubId, (value: HubAccess | undefined): void => { previousAccess = value; }); if (!current()) throw new Error('request_updated');
-      await vault.put(config.hubId, config.token, config.access); written = true;
-      if (!current()) { await rollback(); written = false; throw new Error('request_updated'); }
+      try {
+        if (route) {
+          this.local.allowHub(config.hubId);
+          const state = this.captureViewPath(this.sshViewKey(config.hubId));
+          settleRoute = await route.install(config.hubId, config.baseUrl, config.pin, state, current);
+        }
+        if (!current()) throw new Error('request_updated');
+        await vault.put(config.hubId, config.token, config.access); written = true;
+        if (!current()) throw new Error('request_updated');
+      } catch (error) {
+        try { if (written) await rollback(); } finally { if (settleRoute) await settleRoute(false); }
+        throw error as Error;
+      }
     });
-    if (!current()) { if (written) await this.credentialChange(config.hubId, rollback); throw new Error('request_updated'); }
+    if (!current()) {
+      try { if (written) await this.credentialChange(config.hubId, rollback); }
+      finally { if (settleRoute) await settleRoute(false); }
+      throw new Error('request_updated');
+    }
     this.retireHubConnections(config.hubId);
     const profile = new HubProfile(config.hubId, name, config.baseUrl);
     profile.addresses = config.alternateUrls?.slice() || []; profile.hubId = config.hubId; profile.pin = config.pin; profile.manager = config.managerId;
     this.profiles = this.profiles.filter((item: HubProfile) => item.id !== profile.id).concat([profile]);
+    if (settleRoute) await settleRoute(true);
     await this.selectProfile(profile);
     } finally {
       this.pairingProfiles.delete(config.hubId);
@@ -1399,9 +1417,12 @@ export class ClientModel {
     const epoch = this.forgetEpochs.get(target.hubId) || 0, generation = this.generation, scope = this.scope();
     const current = (): boolean => this.owns(generation, scope) && this.foreground && epoch === (this.forgetEpochs.get(target.hubId) || 0) && !this.forgettingProfiles.has(target.hubId) && (!admit || admit());
     if (!current()) throw new Error('request_updated');
-    const config = await pairing.redeem(target, tr('phone'), current);
-    if (!current()) throw new Error('request_updated');
-    await this.useEndpoint(config, target.name, current);
+    const route = pairing.sshRoute;
+    try {
+      const config = await pairing.redeem(target, tr('phone'), current);
+      if (!current()) throw new Error('request_updated');
+      await this.useEndpoint(config, target.name, current, route);
+    } finally { route?.close(); }
   }
   private capabilities(row: ResourceRow = this.sessionRow()): EffectiveSessionCapabilities {
     const data = row.data(), caps = Wire.object(data, 'capabilities');
@@ -1587,15 +1608,19 @@ export class ClientModel {
     await new ChatDraftStore(this.local).settle(scope, id, 'checked');
     if (this.owns(generation, scope)) { this.unresolvedWrites = repo.mutations?.blocked() || []; await this.restoreOutbox(generation, scope); }
   }
+  private sshViewKey(hub: string): string { return 'view:' + scopeKey({ groupId: hub, managerId: '' }) + ':ssh-tunnel'; }
   private viewKey(key: string): string {
     if (key === 'agent-hub-mode') return 'device:agent-hub-mode';
     if (key === 'usage.hiddenProviders') return 'device:usage.hiddenProviders';
-    return 'view:' + (key === 'ssh-tunnel' ? scopeKey({ groupId: this.profile.id, managerId: '' }) : this.scope()) + ':' + key;
+    return key === 'ssh-tunnel' ? this.sshViewKey(this.profile.id) : 'view:' + this.scope() + ':' + key;
   }
   viewRevision(key: string): number { return this.local.revision(this.viewKey(key)); }
   /** Outcome bookkeeping stays on the admitted scope, even after navigation; Forget retires the captured epoch. */
   captureView(key: string): ClientViewLease {
-    const path = this.viewKey(key), local = this.local, epoch = local.revision(path);
+    return this.captureViewPath(this.viewKey(key));
+  }
+  private captureViewPath(path: string): ClientViewLease {
+    const local = this.local, epoch = local.revision(path);
     const valid = (): boolean => local.accepts(path, epoch);
     return { epoch: epoch, valid: valid,
       read: async (): Promise<string> => {

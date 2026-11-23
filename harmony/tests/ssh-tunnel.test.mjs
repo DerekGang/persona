@@ -218,3 +218,26 @@ test('Hub-wide settings commit retires connections and excludes concurrent write
  await assert.rejects(second.disable(),/ssh_busy/);await assert.rejects(second.acquire(),/ssh_busy/);await assert.rejects(second.save(configuration(),KEY,'',true),/ssh_busy/);
  addGate.resolve();addGate=undefined;await replacing;assert.equal(client.retirements.length,2);await second.disable();assert.equal(client.retirements.length,3);tunnel.stop();second.stop();
 });
+
+test('a pre-pair key stays in memory until binding, with rollback preserving the previous Hub settings and key',async()=>{
+  reset();
+  const {SshSecrets}=await import('../entry/src/main/ets/platform/SshCredentialVault.ets');
+  const {client,tunnel}=await configured(),old=client.saved,previous=JSON.parse(old).keyRef;
+  const material=SshSecrets.fromText(KEY,'new passphrase');
+  const fresh=new SshTunnel();const proxy=await fresh.openPairing(client.profile.baseUrl,client.profile.pin,configuration(),material,()=>true);
+  assert.equal(proxy.isCurrent(),true);assert.equal(client.saved,old);
+  const view={valid:()=>true,read:async()=>client.saved,write:async raw=>{client.saved=raw;},clearIfUnchanged:async raw=>{if(raw===client.saved)client.saved='';}};
+  const undo=await SshTunnel.stagePairing(client.profile.id,configuration(),material,view,()=>true);
+  const latest=JSON.parse(client.saved).keyRef;assert.notEqual(latest,previous);
+  await undo(false);assert.equal(client.saved,old);assert.ok([...rows.values()].every(r=>Buffer.from(r.get(tag.DATA_LABEL_CRITICAL_3)).toString()!==latest));
+  const keep=await SshTunnel.stagePairing(client.profile.id,configuration(),material,view,()=>true);await keep(true);
+  assert.notEqual(JSON.parse(client.saved).keyRef,previous);assert.ok([...rows.values()].every(r=>Buffer.from(r.get(tag.DATA_LABEL_CRITICAL_3)).toString()!==previous));
+  fresh.stop();tunnel.stop();material.clear();assert.equal(proxy.isCurrent(),false);
+});
+
+test('the first caller can retire its start permission after a paired Hub owns the established lease',async()=>{
+  reset();const {tunnel}=await configured();let startAllowed=true;
+  const proxy=await tunnel.acquire(()=>startAllowed);startAllowed=false;
+  assert.equal(proxy.isCurrent(),true);
+  tunnel.stop();assert.equal(proxy.isCurrent(),false);
+});

@@ -1465,3 +1465,20 @@ test('cancelled pairing restores the prior complete credential and preserves a l
     assert.equal(current,superseded?newer:previous);
   }
 });
+
+test('a failed device-token write restores pending SSH metadata on the verified Hub only',async()=>{
+  const {model}=fixture();model.foreground=true;
+  // The existing selected Hub belongs to a different pairing context.
+  const base='https://new.synthetic.invalid/',id='verified-synthetic-ssh',pin='A'.repeat(43);
+  const previousScope=model.scope(),settled=[];
+  model.local.allowHub=()=>{};model.local.accepts=()=>true;
+  model.vault={async get(){return null;},async put(){throw Error('synthetic device is locked');}};
+  const route={async install(hub,address,spki,view){
+    assert.equal(hub,id);assert.equal(address,base);assert.equal(spki,pin);
+    await view.write('synthetic-pending-ssh');
+    return async committed=>{settled.push(committed);if(!committed)await view.clearIfUnchanged('synthetic-pending-ssh');};
+  }};
+  await assert.rejects(model.useEndpoint({hubId:id,baseUrl:base,pin,token:'synthetic-new-device'},'Synthetic',()=>true,route),/device is locked/);
+  assert.deepEqual(settled,[false]);assert.equal(model.scope(),previousScope);
+  assert.ok([...model.local.data.values()].every(value=>value!=='synthetic-pending-ssh'));
+});

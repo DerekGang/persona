@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "phone_pair_ssh_title",
+      "value": "SSH トンネル"
+    },
+    {
+      "name": "phone_pair_ssh_server",
+      "value": "SSH サーバー"
+    },
+    {
+      "name": "phone_pair_ssh_key_help",
+      "value": "SSH サーバーで許可した秘密鍵を入力してください。認証の前にサーバーの SHA-256 ホスト指紋を確認します。"
+    },
+    {
+      "name": "phone_pair_ssh_tls_pin",
+      "value": "Hub の TLS 指紋"
+    },
+    {
+      "name": "phone_pair_ssh_tls_help",
+      "value": "ペアリング画面で Hub の HTTPS アドレスを指定します。ペアリングリンクには Hub の TLS 公開鍵の指紋（SPKI）が含まれます。アドレスを手入力する場合は同じ Hub の43文字の指紋を入力してください。"
+    }
+  ]
+}

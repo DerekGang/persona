@@ -3,12 +3,17 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util, url } from '@kit.ArkTS';
 import nativeSsh from 'libpersona_ssh.so';
 import type { NativeSshConfig, NativeSshLease } from 'libpersona_ssh.so';
+import { Pairing } from '../../../main/ets/platform/Pairing';
+import { PairingSsh } from '../../../main/ets/models/PairingSsh';
+import { SshConfiguration } from '../../../main/ets/models/SshTunnel';
+import { ClientModel } from '../../../main/ets/models/ClientModel';
 import { SshCredentialVault } from '../../../main/ets/platform/SshCredentialVault';
 import { HubTransport, EndpointConfig, TransportProxy } from '../../../main/ets/platform/HubTransport';
 import { Wire } from '../../../main/ets/models/Wire';
 import { fixtureArgument } from './NativeTransport.test';
 import { nativeTestContext } from './NativeContext';
-import { connection } from '@kit.NetworkKit';
+import { connection, http } from '@kit.NetworkKit';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { asset } from '@kit.AssetStoreKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 
@@ -23,10 +28,34 @@ async function expectErased(profile: string): Promise<void> {
   expect(count).assertEqual(0);
 }
 
+let cachedFixture: Record<string, Object> | undefined;
+
+async function sshFixture(): Promise<Record<string, Object>> {
+  if (cachedFixture) return cachedFixture;
+  const name = fixtureArgument('sshFixtureFile');
+  if (!/^persona-ssh-[a-z0-9-]+\.json$/.test(name)) throw new Error('invalid_fixture');
+  const portText = fixtureArgument('sshFixturePort');
+  if (!portText) return Wire.parse(fileIo.readTextSync(nativeTestContext().filesDir + '/' + name));
+  // Release-configured test bundles have no HDC debug sandbox. Receive the ephemeral test key in this
+  // (separately installed) feature through its own local test listener, bound to the supplied digest.
+  const port = Number(portText), ticket = fixtureArgument('sshFixtureTicket'), expected = fixtureArgument('sshFixtureSHA256');
+  if (!/^\d{1,5}$/.test(portText) || port < 1 || port > 65535 || !/^[a-f0-9]{64}$/.test(ticket) || !/^[a-f0-9]{64}$/.test(expected)) throw new Error('invalid_fixture');
+  const input = http.createHttp();
+  try {
+    const answer = await input.request('http://127.0.0.1:' + port + '/fixture', {
+      method: http.RequestMethod.GET, header: { 'Authorization': 'Bearer ' + ticket }, connectTimeout: 5000, readTimeout: 5000,
+      usingCache: false
+    });
+    if (answer.responseCode !== 200 || typeof answer.result !== 'string' || answer.result.length > 48000) throw new Error('invalid_fixture');
+    const hash = cryptoFramework.createMd('SHA256'); hash.updateSync({data:new util.TextEncoder().encodeInto(answer.result)});
+    const actual = Array.from(hash.digestSync().data).map((byte: number): string => byte.toString(16).padStart(2,'0')).join('');
+    if (actual !== expected) throw new Error('invalid_fixture');
+    cachedFixture = Wire.parse(answer.result); return cachedFixture;
+  } finally { input.destroy(); }
+}
+
 async function configuration(wrongPin: boolean = false): Promise<NativeSshConfig> {
-  const path = fixtureArgument('sshFixtureFile');
-  if (!/^persona-ssh-[a-z0-9-]+\.json$/.test(path)) throw new Error('invalid_fixture');
-  const fixture = Wire.parse(fileIo.readTextSync(nativeTestContext().filesDir + '/' + path));
+  const fixture = await sshFixture();
   const targetHost = Wire.text(fixture, 'targetHost');
   const literal = targetHost.includes(':') || /^\d{1,3}(\.\d{1,3}){3}$/.test(targetHost);
   const resolvedHubIps: string[] = literal ? [] : (await connection.getAddressesByName(targetHost)).slice(0, 16).map((value: connection.NetAddress): string => value.address);
@@ -72,6 +101,52 @@ export default function nativeSshTests(): void {
       try { await nativeSsh.open(config); } catch (_) { rejected = true; }
       finally { config.privateKey.fill(0); await nativeSsh.close(config.id); }
       expect(rejected).assertTrue(); expect(nativeSsh.isOpen(config.id)).assertFalse();
+    });
+    it('first_pairing_uses_the_confirmed_ssh_route_and_clears_cancelled_credentials', 0, async (): Promise<void> => {
+      const fixture = await configuration(), targetAddress = fixtureArgument('fixtureAddress'), pin = fixtureArgument('fixturePin');
+      const setup = new PairingSsh(), configurationDraft = new SshConfiguration();
+      configurationDraft.sshHost = fixture.sshHost; configurationDraft.sshPort = fixture.sshPort;
+      configurationDraft.username = fixture.username; configurationDraft.hostKey = fixture.hostKey;
+      const key = util.TextDecoder.create('utf-8').decodeToString(fixture.privateKey); fixture.privateKey.fill(0);
+      const client = new ClientModel(); await client.initialize(nativeTestContext());
+      const rawPair = (): Pairing => Pairing.manual(targetAddress, 'synthetic-fixture-token');
+      const active = (): boolean => true;
+      let paired = '', setupRejected = false, cancelRejected = false, wrongHostRejected = false, wrongTlsRejected = false;
+      try {
+        try { setup.configure(configurationDraft, key, '', pin, false); } catch (_) { setupRejected = true; }
+        expect(setupRejected).assertTrue(); expect(setup.configured).assertFalse();
+        const wrong = configurationDraft.copy(); wrong.hostKey = 'SHA256:' + 'A'.repeat(43);
+        setup.configure(wrong, key, '', pin, true);
+        try { await setup.prepare(rawPair(), active).inspect(); } catch (_) { wrongHostRejected = true; }
+        expect(wrongHostRejected).assertTrue();
+        setup.configure(configurationDraft, key, '', 'A'.repeat(43), true);
+        try { await setup.prepare(rawPair(), active).inspect(); } catch (_) { wrongTlsRejected = true; }
+        expect(wrongTlsRejected).assertTrue();
+        setup.configure(configurationDraft, key, '', pin, true);
+        const cancelled = setup.prepare(rawPair(), active), first = await cancelled.inspect();
+        setup.cancelAttempt();
+        try { await cancelled.redeem(first); } catch (_) { cancelRejected = true; }
+        expect(cancelRejected).assertTrue(); await expectErased(first.hubId);
+        const pair = setup.prepare(rawPair(), active), target = await pair.inspect(); paired = target.hubId;
+        const proxy = await pair.sshRoute!.open(target.baseUrl, target.pin);
+        const witness = new HubTransport(new EndpointConfig(target.baseUrl, paired, 'synthetic-fixture-token', pin, '', [], proxy));
+        let before = 0;
+        try { before = Wire.number(Wire.parse(await witness.request('/api/v1/test/stats')), 'token_issues'); }
+        finally { witness.close(); }
+        await client.pair(pair, target, active);
+        expect(proxy.isCurrent()).assertFalse(); expect(client.profile.id).assertEqual(paired);
+        const rebound = await client.ssh.acquire(); expect(!!rebound && rebound.isCurrent()).assertTrue();
+        const record = SshConfiguration.from(await client.loadView('ssh-tunnel'));
+        expect(record.enabled).assertTrue(); expect(record.hostKey).assertEqual(configurationDraft.hostKey); expect(!!record.keyRef).assertTrue();
+        const after = new HubTransport(new EndpointConfig(target.baseUrl, paired, 'synthetic-fixture-token', pin, '', [], rebound));
+        try { expect(Wire.number(Wire.parse(await after.request('/api/v1/test/stats')), 'token_issues')).assertEqual(before + 1); }
+        finally { after.close(); }
+      } finally {
+        setup.clear();
+        if (paired && client.profiles.some(profile => profile.id === paired)) await client.forgetProfile(paired);
+        if (paired) await expectErased(paired);
+        await client.background();
+      }
     });
     it('native_authenticated_proxies_preserve_https_pinning_websocket_and_child_streams', 0, async (): Promise<void> => {
       const config = await configuration();

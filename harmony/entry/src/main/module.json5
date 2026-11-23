@@ -40,6 +40,10 @@
               {
                 "scheme": "persona",
                 "host": "pair"
+              },
+              {
+                "scheme": "persona",
+                "host": "password-login"
               }
             ]
           }

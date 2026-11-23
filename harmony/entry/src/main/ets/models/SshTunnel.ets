@@ -4,6 +4,7 @@ import { connection as netConnection } from '@kit.NetworkKit';
 import nativeSsh from 'libpersona_ssh.so';
 import type { NativeSshConfig, NativeSshLease } from 'libpersona_ssh.so';
 import { ClientModel } from './ClientModel';
+import type { ClientViewLease } from './ClientModel';
 import type { TransportProxy } from '../platform/HubTransport';
 import { Wire } from './Wire';
 import { SshCredentialVault, SshSecrets } from '../platform/SshCredentialVault';
@@ -93,20 +94,23 @@ export class SshTunnel {
       const saved = await client.loadView(STORAGE_KEY);
       if (!this.current(owner, attempt)) return;
       const config = SshConfiguration.from(saved);
-      if (config.enabled) { this.validate(config, owner); if (!config.keyRef) throw new Error('ssh_key_required'); }
+      if (config.enabled) { SshTunnel.validate(config, owner.baseUrl, owner.pin); if (!config.keyRef) throw new Error('ssh_key_required'); }
       this.configuration = config; this.loaded = true;
     } catch (error) { if (this.current(owner, attempt)) { this.phase = 'failed'; this.error = this.code(error as Error); } }
   }
   private current(owner: SshOwner, attempt: number): boolean { return this.owner === owner && this.attempt === attempt && owner.current(); }
   private code(error: Error): string { return ERROR_KEYS.includes(error.message) ? error.message : 'ssh_native_failed'; }
-  private validate(config: SshConfiguration, owner: SshOwner): void {
+  static validateServer(config: SshConfiguration): void {
     const validHost = (host: string): boolean => !!host && host.length <= 253 && /^[a-zA-Z0-9.:-]+$/.test(host) && !host.includes('..');
     if (!validHost(config.sshHost) || !Number.isInteger(config.sshPort) || config.sshPort < 1 || config.sshPort > 65535 ||
       !config.username || config.username.length > 128 || /[\u0000-\u0020\u007f]/.test(config.username) ||
       !/^SHA256:[A-Za-z0-9+/]{43}$/.test(config.hostKey)) throw new Error('ssh_invalid_config');
-    const target = url.URL.parseURL(owner.baseUrl);
-    if (target.protocol !== 'https:' || !target.hostname || target.username || target.password || !owner.pin) throw new Error('ssh_invalid_config');
     if (config.keyRef && !/^[a-fA-F0-9-]{36}$/.test(config.keyRef)) throw new Error('ssh_invalid_config');
+  }
+  static validate(config: SshConfiguration, baseUrl: string, pin: string): void {
+    SshTunnel.validateServer(config);
+    const target = url.URL.parseURL(baseUrl);
+    if (target.protocol !== 'https:' || !target.hostname || target.username || target.password || !pin) throw new Error('ssh_invalid_config');
   }
   async save(input: SshConfiguration, privateKey: string, passphrase: string, fingerprintConfirmed: boolean, admit: () => boolean = (): boolean => true): Promise<void> {
     const owner = this.owner, vault = this.vault;
@@ -114,7 +118,7 @@ export class SshTunnel {
     if (this.phase === 'saving') throw new Error('ssh_busy');
     if (SshTunnel.savingProfiles.has(owner.profile)) throw new Error('ssh_busy');
     const config = input.copy(); config.sshHost = config.sshHost.trim(); config.username = config.username.trim(); config.hostKey = config.hostKey.trim();
-    this.validate(config, owner);
+    SshTunnel.validate(config, owner.baseUrl, owner.pin);
     if (!fingerprintConfirmed) throw new Error('ssh_invalid_config');
     const oldRef = this.configuration.keyRef; config.keyRef = oldRef;
     if (!privateKey && passphrase) throw new Error('ssh_key_required');
@@ -138,6 +142,40 @@ export class SshTunnel {
       throw new Error(this.code(error as Error));
     } finally { SshTunnel.savingProfiles.delete(owner.profile); }
   }
+  /** The SSH route and the Hub's device credential become usable together. Retain the previous key until commit. */
+  static async stagePairing(profile: string, config: SshConfiguration, material: SshSecrets,
+    view: ClientViewLease, admit: () => boolean): Promise<(committed: boolean) => Promise<void>> {
+    if (!admit() || !view.valid()) throw new Error('ssh_cancelled');
+    if (SshTunnel.savingProfiles.has(profile)) throw new Error('ssh_busy');
+    SshTunnel.savingProfiles.add(profile);
+    const vault = new SshCredentialVault(), current = (): boolean => admit() && view.valid();
+    let previous = '', oldRef = '', created = '', next = '', finished = false;
+    const finish = async (committed: boolean): Promise<void> => {
+      if (finished) return;
+      finished = true;
+      try {
+        if (committed) {
+          if (oldRef && oldRef !== created) await vault.remove(profile, oldRef);
+          return;
+        }
+        if (next && view.valid() && await view.read() === next) {
+          if (previous) await view.write(previous); else await view.clearIfUnchanged(next);
+        }
+        if (created) await vault.remove(profile, created);
+      } finally { SshTunnel.savingProfiles.delete(profile); }
+    };
+    try {
+      previous = await view.read(); oldRef = SshConfiguration.from(previous).keyRef;
+      if (!current()) throw new Error('ssh_cancelled');
+      vault.allow(profile);
+      created = await vault.putSecrets(profile, material, current);
+      if (!current()) throw new Error('ssh_cancelled');
+      const stored = config.copy(); stored.keyRef = created; next = JSON.stringify(stored);
+      await view.write(next);
+      if (!current()) throw new Error('ssh_cancelled');
+      return finish;
+    } catch (error) { await finish(false); throw error as Error; }
+  }
   async disable(): Promise<void> {
     const owner = this.owner; if (!owner || !owner.current() || !this.loaded) throw new Error('ssh_cancelled');
     if (this.phase === 'saving') throw new Error('ssh_busy');
@@ -157,20 +195,28 @@ export class SshTunnel {
     if (!this.configuration.enabled) return undefined;
     if (this.lease?.isCurrent()) return this.lease;
     if (this.opening) return this.opening;
-    const config = this.configuration.copy(); this.validate(config, owner);
+    const config = this.configuration.copy(); SshTunnel.validate(config, owner.baseUrl, owner.pin);
     this.stop(); const attempt = this.attempt; this.phase = 'connecting'; this.error = '';
-    const task = this.start(owner, config, attempt, admitStart); this.opening = task;
+    const vault = this.vault; if (!vault) throw new Error('ssh_storage_failed');
+    const owns = (): boolean => this.current(owner, attempt);
+    const current = (): boolean => owns() && admitStart();
+    const task = this.start(owner.baseUrl, config, current, owns, (): Promise<SshSecrets> => vault.get(owner.profile, config.keyRef, current)); this.opening = task;
     try { return await task; } finally { if (this.opening === task) this.opening = undefined; }
   }
-  private async start(owner: SshOwner, config: SshConfiguration, attempt: number, admit: () => boolean): Promise<SshProxyLease> {
-    const vault = this.vault; if (!vault) throw new Error('ssh_storage_failed');
-    const current = (): boolean => this.current(owner, attempt) && admit();
+  async openPairing(baseUrl: string, pin: string, config: SshConfiguration, material: SshSecrets, admit: () => boolean): Promise<SshProxyLease> {
+    if (this.owner || !admit()) throw new Error('ssh_cancelled');
+    SshTunnel.validate(config, baseUrl, pin);
+    this.stop(); const attempt = this.attempt; this.phase = 'connecting';
+    const current = (): boolean => this.attempt === attempt && admit();
+    return this.start(baseUrl, config, current, current, async (): Promise<SshSecrets> => material.copy());
+  }
+  private async start(baseUrl: string, config: SshConfiguration, current: () => boolean, owns: () => boolean, readKey: () => Promise<SshSecrets>): Promise<SshProxyLease> {
     let secrets: SshSecrets | undefined; let id: string = '';
     try {
-      const target = url.URL.parseURL(owner.baseUrl), targetHost = target.hostname.replace(/^\[|\]$/g, '');
+      const target = url.URL.parseURL(baseUrl), targetHost = target.hostname.replace(/^\[|\]$/g, '');
       const resolvedHubIps = await this.resolveHubIps(targetHost, current);
       if (!current()) throw new Error('ssh_cancelled');
-      secrets = await vault.get(owner.profile, config.keyRef, current);
+      secrets = await readKey();
       if (!current()) throw new Error('ssh_cancelled');
       id = util.generateRandomUUID(); this.pendingId = id;
       const request: NativeSshConfig = { id: id, sshHost: config.sshHost, sshPort: config.sshPort, username: config.username,
@@ -182,11 +228,11 @@ export class SshTunnel {
       if (!current() || native.id !== id || native.host !== '127.0.0.1' || !Number.isInteger(native.port) || native.port < 1 || native.port > 65535 || !native.password) {
         await nativeSsh.close(id); throw new Error('ssh_cancelled');
       }
-      const lease = new SshProxyLease(native, (): boolean => this.current(owner, attempt) && this.lease?.id === id);
+      const lease = new SshProxyLease(native, (): boolean => owns() && this.lease?.id === id);
       this.pendingId = ''; this.lease = lease; this.phase = 'connected'; return lease;
     } catch (error) {
       if (id) await nativeSsh.close(id).catch(() => {});
-      if (this.current(owner, attempt)) { this.pendingId = ''; this.phase = 'failed'; this.error = this.code(error as Error); }
+      if (owns()) { this.pendingId = ''; this.phase = 'failed'; this.error = this.code(error as Error); }
       throw new Error(this.code(error as Error));
     } finally { secrets?.clear(); }
   }

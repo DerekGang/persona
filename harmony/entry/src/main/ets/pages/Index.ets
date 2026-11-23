@@ -12,6 +12,12 @@ import { PhoneAllChats } from '../components/PhoneAllChats';
 import { SessionSpaceTabs } from '../components/SessionSpaceTabs';
 import { PhoneSessionHeading } from '../components/PhoneSessionHeading';
 import { SessionSpace, SessionSpaceTab, sessionSpace, worktreeForSessionSpace } from '../models/SessionSpace';
+import { PhoneFirstRun } from '../components/PhoneFirstRun';
+import { PhonePairingForm } from '../components/PhonePairingForm';
+import { PairingSshForm } from '../components/PairingSshForm';
+import { PairingSsh } from '../models/PairingSsh';
+import { phonePasswordLogin } from '../platform/PhonePasswordLogin';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { MachineDirectory } from '../components/MachineDirectory';
 import { PhoneIconButton, PhoneStyle } from '../design/PhoneStyle';
 import { PhoneOutlineIcon } from '../design/PhoneOutlineIcon';
@@ -35,7 +41,7 @@ import { extensionIcon } from '../design/ExtensionIcons';
 import type { ExtensionUINavigationEffect } from '../models/ExtensionUI';
 import { ComputerScreenPage } from '../components/ComputerScreenPage';
 import { isPairingAddress } from '../core/WireCompatibility';
-import { scanBarcode, scanCore } from '@kit.ScanKit';
+import { detectBarcode, scanBarcode, scanCore } from '@kit.ScanKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { RemoteDocumentPage } from '../components/RemoteDocumentPage';
 import { TodoWorkspacePage } from '../components/TodoWorkspacePage';
@@ -158,9 +164,18 @@ struct Index {
   @Local showSheet: boolean = false;
   @Local address: string = '';
   @Local pairCode: string = '';
+  @Local pairManually: boolean = false;
+  @Local pairByPassword: boolean = false;
+  @Local passwordAuthorizing: boolean = false;
+  @Local pairAccessExpanded: boolean = false;
+  @Local pairAccessID: string = '';
+  @Local pairAccessSecret: string = '';
+  @Local pairSsh: PairingSsh = new PairingSsh();
+  @Local editingPairSsh: boolean = false;
   private pairingRevision: number = 0;
   @Local scanning: boolean = false;
   private scanRevision: number = 0;
+  private scanOnPresentation: boolean = false;
   @Local resourceKind: string = 'todo';
   @Local newTask: string = '';
   @Local creatingAgent: boolean = false;
@@ -791,12 +806,52 @@ struct Index {
   }
   private openReader(address: string): void { const safe = readerLink(address); if (safe) { this.readerAddress = safe; this.readerTitle = readerHost(safe); this.readerShown = true; } }
   @Builder readerContent() { LinkReader({ address: this.readerAddress, onHost: (host: string) => this.readerTitle = host }) }
-  private openSheet(kind: string): void { this.navigationIntent++; if (kind === 'connect') this.pairingRevision++; this.readerShown = false; if (kind === 'newagent') { this.prepareAgent(); return; } this.sheetKind = kind; this.showSheet = true; }
+  private openSheet(kind: string, connectionStart: string = 'password'): void {
+    this.navigationIntent++;
+    if (kind === 'connect') {
+      this.pairingRevision++;
+      this.scanRevision++;
+      this.clearPairTransport();
+      this.scanning = false;
+      this.pairManually = connectionStart === 'manual';
+      this.scanOnPresentation = connectionStart === 'scan';
+      this.pairByPassword = connectionStart === 'password';
+      this.passwordAuthorizing = false;
+      phonePasswordLogin.cancel();
+    }
+    this.readerShown = false;
+    if (kind === 'newagent') { this.prepareAgent(); return; }
+    this.sheetKind = kind;
+    this.showSheet = true;
+  }
+  private compactPairing(): boolean { return this.sheetKind === 'connect' && !this.wide(); }
   private sheetTitle(): string { return tr(this.sheetKind === 'hub' ? 'hub' : this.sheetKind === 'newagent' ? 'new_agent' : 'welcome'); }
   @Builder sheetContent() {
     if (this.sheetKind === 'hub') this.workspaceSheet()
     else if (this.sheetKind === 'newagent') this.newAgentForm()
-    else this.pairingForm()
+    else if (this.compactPairing() && this.editingPairSsh) {
+      PairingSshForm({ draft: this.pairSsh, onDone: () => { this.editingPairSsh = false; },
+        onClose: () => { this.editingPairSsh = false; } })
+    } else if (this.compactPairing()) {
+      PhonePairingForm({ password: this.pairByPassword, manual: this.pairManually, address: this.address,
+        code: this.pairCode, busy: this.model.busy || this.scanning || this.passwordAuthorizing, error: this.model.error ? trError(this.model.error) : '',
+        accessExpanded: this.pairAccessExpanded, accessID: this.pairAccessID,
+        accessSecret: this.pairAccessSecret, sshLabel: this.pairSsh.label,
+        onAccessExpanded: (value: boolean) => { this.pairAccessExpanded = value; },
+        onAccessID: (value: string) => { this.pairAccessID = value; this.pairSsh.cancelAttempt(); },
+        onAccessSecret: (value: string) => { this.pairAccessSecret = value; this.pairSsh.cancelAttempt(); },
+        onSsh: () => { this.pairSsh.cancelAttempt(); this.editingPairSsh = true; },
+        onAddress: (value: string) => { this.address = value; this.pairSsh.cancelAttempt(); }, onCode: (value: string) => { this.pairCode = value; },
+        onPassword: (value: boolean) => {
+          if (this.pairByPassword !== value) {
+            this.pairingRevision++; this.scanRevision++; phonePasswordLogin.cancel();
+            this.pairByPassword = value; this.pairSsh.cancelAttempt(); this.model.error = ''; this.passwordAuthorizing = false; this.scanning = false;
+          }
+        },
+        onManual: () => { this.pairManually = true; },
+        onPhoto: () => this.choosePairingPhoto(), onClose: () => { this.showSheet = false; },
+        onConnect: () => { if (this.pairByPassword) this.passwordConnect(); else this.connect(); } })
+    } else this.pairingForm()
   }
   private updateBreakpoint(): void {
     const old = this.breakpoint; this.breakpoint = this.getUIContext().getWindowWidthBreakpoint();
@@ -818,7 +873,7 @@ struct Index {
     this.bindDeviceOwner(this.model);
     this.applications.bind(this.model); this.applications.refresh();
   }
-  aboutToDisappear(): void { if (this.assistantStatusTimer !== -1) clearInterval(this.assistantStatusTimer); this.agentWorkspace.hide(); this.applications.dispose(); this.dismissChatActions(); }
+  aboutToDisappear(): void { this.clearPairTransport(); phonePasswordLogin.cancel(); if (this.assistantStatusTimer !== -1) clearInterval(this.assistantStatusTimer); this.agentWorkspace.hide(); this.applications.dispose(); this.dismissChatActions(); }
   @Monitor('model.profile', 'model.connected', 'model.features') applicationOwnerChanged(): void {
     this.applications.bind(this.model); this.applications.connectionChanged();
   }
@@ -876,7 +931,7 @@ struct Index {
     this.changeSection(row.kind === 'conversation' ? 0 : 1); this.openRow(row, false);
   }
   private consumePairingLink(): void {
-    if (!this.model.pairingLink) return; this.address = this.model.pairingLink; this.pairCode = ''; this.model.pairingLink = ''; this.openSheet('connect');
+    if (!this.model.pairingLink) return; this.address = this.model.pairingLink; this.pairCode = ''; this.model.pairingLink = ''; this.openSheet('connect', 'manual');
   }
   private savePath(): void {
     if (this.activeScope !== this.model.scope()) this.restoreScope();
@@ -1021,22 +1076,110 @@ struct Index {
     this.detailRoute = key; this.chatReady = true;
   }
   private settingsModel(param: Object): ClientModel { return NavigationContext.from('settings', param as string).scoped ? this.detailModel : this.model; }
+  private clearPairTransport(): void {
+    this.pairSsh.clear(); this.editingPairSsh = false;
+    this.pairAccessID = ''; this.pairAccessSecret = ''; this.pairAccessExpanded = false;
+  }
+
+  onPageHide(): void {
+    if (this.showSheet && this.sheetKind === 'connect') {
+      this.pairSsh.cancelAttempt();
+      if (!this.scanning && !this.passwordAuthorizing) {
+        this.pairingRevision++; this.clearPairTransport();
+      }
+    }
+  }
+
+  private reportPairFailure(error: Error): void {
+    const cause = error as Object as Record<string, Object>, raw = cause['code'];
+    const name = typeof raw === 'string' && raw ? raw : error.message;
+    this.model.diagnosticCode = name && /^[a-z_0-9]{1,64}$/.test(name) ? name :
+      typeof raw === 'number' ? String(raw) : 'pairing_failed';
+    hilog.error(0x0000, 'PersonaPair', '%{public}s', this.model.diagnosticCode);
+    if (['cloudflare_access_required','cloudflare_access_rejected','cloudflare_access_incomplete','cloudflare_access_invalid'].includes(name)) {
+      this.pairAccessExpanded = true;
+      this.model.error = name;
+    } else {
+      this.model.error = name && name.startsWith('ssh_') && tr(name) !== name ? name : 'connection_failed';
+    }
+  }
+
+  private async passwordConnect(): Promise<void> {
+    const host = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (!host || this.model.busy || this.passwordAuthorizing) return;
+    const address = this.address, revision = this.pairingRevision;
+    const generation = this.model.connectionGeneration(), scope = this.model.scope();
+    const active = (): boolean => this.showSheet && this.sheetKind === 'connect' && this.pairByPassword &&
+      this.address === address && revision === this.pairingRevision && this.model.owns(generation, scope);
+    this.passwordAuthorizing = true; this.model.error = '';
+    try {
+      const endpoint = await phonePasswordLogin.authorize(address, tr('phone'),
+        (page: string): Promise<void> => host.startAbility({ action: 'ohos.want.action.viewData', uri: page }), active);
+      if (!active()) return;
+      await this.model.useEndpoint(endpoint, endpoint.baseUrl, active);
+      if (this.model.profile.id === endpoint.hubId && revision === this.pairingRevision) {
+        this.showSheet = false; this.address = ''; this.pairCode = '';
+      }
+    } catch (err) {
+      const message = (err as Error).message;
+      if (active() && message !== 'request_updated') {
+        this.model.error = ['phone_password_address', 'phone_password_expired', 'phone_password_browser', 'pairing_response_invalid'].includes(message) ? message : 'connection_failed';
+      }
+    } finally { if (revision === this.pairingRevision) this.passwordAuthorizing = false; }
+  }
+
+  private connectionSheetPresented(): void {
+    if (!this.scanOnPresentation || !this.showSheet || !this.compactPairing()) return;
+    // Open the device scanner only after its return destination exists.
+    this.scanOnPresentation = false;
+    if (canIUse('SystemCapability.Multimedia.Scan.ScanBarcode') && scanCore.isDefaultScanSupported()) this.scanPairing();
+  }
+
+  private async choosePairingPhoto(): Promise<void> {
+    if (this.scanning || this.model.busy) return;
+    const revision = ++this.scanRevision, pairing = this.pairingRevision;
+    const generation = this.model.connectionGeneration(), scope = this.model.scope();
+    const active = (): boolean => revision === this.scanRevision && pairing === this.pairingRevision &&
+      this.showSheet && this.sheetKind === 'connect' && !this.pairByPassword && this.model.owns(generation, scope);
+    this.scanning = true; this.model.error = '';
+    try {
+      const options = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      const selected = await new photoAccessHelper.PhotoViewPicker().select(options);
+      if (!active() || !selected.photoUris.length) return;
+      const found = await detectBarcode.decode({ uri: selected.photoUris[0] }, { scanTypes: [scanCore.ScanType.QR_CODE] });
+      if (!active()) return;
+      const codes = Array.from(new Set<string>(found.map((item: scanBarcode.ScanResult) => item.originalValue)));
+      if (codes.length !== 1) throw new Error('phone_pair_photo_invalid');
+      Pairing.parse(codes[0]);
+      this.address = codes[0]; this.pairCode = ''; this.pairManually = true;
+      this.scanning = false;
+      await this.connect();
+    } catch (err) {
+      if (active() && (err as BusinessError).code !== 13900012) this.model.error = 'phone_pair_photo_invalid';
+    } finally { if (revision === this.scanRevision) this.scanning = false; }
+  }
+
   private async connect(): Promise<void> {
     const generation = this.model.connectionGeneration(), scope = this.model.scope(), address = this.address, code = this.pairCode, revision = this.pairingRevision;
-    const current = (): boolean => this.showSheet && this.sheetKind === 'connect' && revision === this.pairingRevision && this.model.owns(generation, scope) && this.address === address && this.pairCode === code;
+    const accessID = this.pairAccessID, accessSecret = this.pairAccessSecret;
+    const current = (): boolean => this.pairAccessID === accessID && this.pairAccessSecret === accessSecret && this.showSheet && this.sheetKind === 'connect' && revision === this.pairingRevision && this.model.owns(generation, scope) && this.address === address && this.pairCode === code;
     this.model.busy = true; this.model.error = '';
     try {
-      const pairing = isPairingAddress(this.address.trim()) ? Pairing.parse(this.address.trim()) : Pairing.manual(this.address.trim(), this.pairCode.trim());
-      const target = await pairing.inspect(); if (!current()) return; this.model.busy = false;
+      const input = isPairingAddress(address.trim()) ? Pairing.parse(address.trim()) : Pairing.manual(address.trim(), code.trim());
+      input.setCloudflareAccess(accessID, accessSecret);
+      const pairing = this.pairSsh.prepare(input, current);
+      const target = await pairing.inspect();
+      if (!current()) return;
+      this.model.busy = false;
       this.getUIContext().showAlertDialog({ title: tr('verify'), message: target.name + '\n' + target.baseUrl + '\n' + target.hubId,
-        primaryButton: { value: tr('cancel'), action: () => {} },
+        cancel: () => { if (current()) this.pairSsh.cancelAttempt(); },
+        primaryButton: { value: tr('cancel'), action: () => { if (current()) this.pairSsh.cancelAttempt(); } },
         secondaryButton: { value: tr('trust'), action: () => { if (current()) this.redeem(pairing, target, current); } } });
     } catch (error) {
       if (!current()) return;
-      const detail = error as Error as Object as Record<string, Object>; const code = detail['code'];
-      this.model.diagnosticCode = error instanceof Error && /^[a-z_0-9]{1,64}$/.test(error.message) ? error.message : typeof code === 'number' ? String(code) : 'pairing_failed';
-      hilog.error(0x0000, 'PersonaPair', '%{public}s', this.model.diagnosticCode);
-      this.model.error = 'connection_failed';
+      this.pairSsh.cancelAttempt(); this.reportPairFailure(error as Error);
     } finally { if (this.model.owns(generation, scope)) this.model.busy = false; }
   }
   private async redeem(pairing: Pairing, target: PairingTarget, admit: () => boolean): Promise<void> {
@@ -1044,7 +1187,7 @@ struct Index {
     try {
       await this.model.pair(pairing, target, admit);
       if (this.sheetKind === 'connect' && revision === this.pairingRevision && this.address === address && this.pairCode === code && this.model.profile.id === target.hubId) { this.pairCode = ''; this.address = ''; this.showSheet = false; }
-    } catch (_) { if (admit()) this.model.error = 'connection_failed'; }
+    } catch (error) { if (admit()) { this.pairSsh.cancelAttempt(); this.reportPairFailure(error as Error); } }
   }
   private menus(): NavigationMenuItem[] {
     if (this.rail()) return [];
@@ -1479,7 +1622,13 @@ struct Index {
     if (Math.abs(value - this.spacesInset) > 0.1) this.spacesInset = value;
   }
   @Monitor('environment.safeBottomPx') safeBottomChanged(): void { this.measureSpaces(); }
-  @Monitor('showSheet', 'spacesShown') modalChanged(): void { if (!this.showSheet && !this.spacesShown) this.ensureMainDestination(); }
+  @Monitor('showSheet', 'spacesShown') modalChanged(): void {
+    if (!this.showSheet && this.sheetKind === 'connect') {
+      this.pairingRevision++; this.scanRevision++; phonePasswordLogin.cancel();
+      this.scanning = false; this.scanOnPresentation = false; this.passwordAuthorizing = false; this.clearPairTransport();
+    }
+    if (!this.showSheet && !this.spacesShown) this.ensureMainDestination();
+  }
   private openHistory(): void { this.stack.pushPath({ name: 'history', param: JSON.stringify(this.detailModel.selected) }); this.savePath(); }
   private openTools(path: string = '', tab: number = 0): void { const data = Wire.record(JSON.parse(JSON.stringify(this.detailModel.selected)) as Object); if (path) data['open_file'] = path; if (tab) data['entry_tab'] = tab; this.stack.pushPath({ name: 'tools', param: JSON.stringify(data) }); this.savePath(); }
   private destinationMenuItems(name: string, param: Object): NavigationMenuItem[] {
@@ -1799,6 +1948,8 @@ struct Index {
       const result = await scanBarcode.startScanForResult(host, { scanTypes: [scanCore.ScanType.QR_CODE], enableAlbum: true, enableMultiMode: false });
       if (revision !== this.scanRevision || !this.showSheet || this.sheetKind !== 'connect' || !this.model.owns(generation, scope)) return;
       Pairing.parse(result.originalValue); this.address = result.originalValue; this.pairCode = ''; this.model.error = '';
+      this.pairManually = true;
+      if (this.compactPairing()) await this.connect();
     } catch (error) { if (revision === this.scanRevision && (error as BusinessError).code !== 1000500002) this.model.error = 'connection_failed'; }
     finally { if (revision === this.scanRevision) this.scanning = false; }
   }
@@ -2631,18 +2782,23 @@ struct Index {
       Stack({alignContent:Alignment.TopStart}) {
     Column() {
       if (!this.model.profile.id) {
-        Column({ space: 12 }) {
-          Image($r('app.media.foreground')).width(72).height(72).objectFit(ImageFit.Contain).borderRadius(18)
-          Text(tr('persona')).fontSize(34).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-          Text(tr('phone_welcome_intro')).fontSize(16).fontColor(Colors.secondary).textAlign(TextAlign.Center).margin({bottom:24})
-          if (this.model.error) Text(trError(this.model.error)).fontSize(14).fontColor(Colors.danger)
-          Button(tr('phone_connect_hub')).width('100%').height(48).fontSize(17).backgroundColor(Colors.action).fontColor(Colors.onAction)
-            .onClick(() => this.openSheet('connect')).id('welcome.connect')
-          Button(tr('phone_local_demo')).width('100%').height(46).fontSize(16).backgroundColor(Colors.surface).fontColor(Colors.link)
-            .onClick(() => this.model.useDemo()).id('welcome.demo')
-          if (this.model.pendingCleanupCount > 0) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry_cleanup')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry_cleanup', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry_cleanup')).bindTips(tr('retry_cleanup')).onClick(() => this.model.retryCleanup())
-        }.justifyContent(FlexAlign.Center).width('100%').height('100%').padding({left:32,right:32}).backgroundColor(Colors.grouped)
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+        Stack() {
+          if (!this.wide()) PhoneFirstRun({error:this.model.error ? trError(this.model.error) : '',pendingCleanup:this.model.pendingCleanupCount>0,
+            onScan:()=>this.openSheet('connect', 'scan'),
+            onManual:()=>this.openSheet('connect', 'manual'),onDemo:()=>this.model.useDemo(),onCleanup:()=>this.model.retryCleanup()})
+          else Column({ space: 12 }) {
+            Image($r('app.media.foreground')).width(72).height(72).objectFit(ImageFit.Contain).borderRadius(18)
+            Text(tr('persona')).fontSize(34).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+            Text(tr('phone_welcome_intro')).fontSize(16).fontColor(Colors.secondary).textAlign(TextAlign.Center).margin({bottom:24})
+            if (this.model.error) Text(trError(this.model.error)).fontSize(14).fontColor(Colors.danger)
+            Button(tr('phone_connect_hub')).width('100%').height(48).fontSize(17).backgroundColor(Colors.action).fontColor(Colors.onAction)
+              .onClick(() => this.openSheet('connect')).id('welcome.connect')
+            Button(tr('phone_local_demo')).width('100%').height(46).fontSize(16).backgroundColor(Colors.surface).fontColor(Colors.link)
+              .onClick(() => this.model.useDemo()).id('welcome.demo')
+            if (this.model.pendingCleanupCount > 0) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry_cleanup')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry_cleanup', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry_cleanup')).bindTips(tr('retry_cleanup')).onClick(() => this.model.retryCleanup())
+          }.justifyContent(FlexAlign.Center).width('100%').height('100%').padding({left:32,right:32}).backgroundColor(Colors.grouped)
+        }.width('100%').height('100%')
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' || this.compactPairing() ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' || this.compactPairing() ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent' && !this.compactPairing(), onAppear: () => this.connectionSheetPresented(), onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       } else {
         if (!this.wide() && !this.floatingProjectHeader && !this.floatingDraftHeader && (this.phoneTop || this.model.section!==1 || !this.agentSearching) && this.phoneTop !== 'project_tree' && (this.phoneTop || !this.projectPlace() || !this.projectSearching)) this.phoneHeader()
         Navigation(this.stack) { this.primaryContent() }.title({ builder: this.peerTitle, height: this.headerHeight() }, { systemMaterial: this.titleMaterial }).titleMode(NavigationTitleMode.Mini)
@@ -2654,7 +2810,7 @@ struct Index {
           .minContentWidth(Tokens.detailMin).enableDragBar(!this.rail()).navDestination(this.destination)
           .onAreaChange(() => this.updateBreakpoint()).width('100%').layoutWeight(1)
 
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent', onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' || this.compactPairing() ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' || this.compactPairing() ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent' && !this.compactPairing(), onAppear: () => this.connectionSheetPresented(), onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       }
     }.width('100%').height('100%').backgroundColor(Colors.canvas)
       .accessibilityLevel(this.chatSearchShown || this.spacesShown && !this.wide() ? 'no-hide-descendants' : 'auto')

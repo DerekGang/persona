@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "phone_pair_ssh_title",
+      "value": "SSH 隧道"
+    },
+    {
+      "name": "phone_pair_ssh_server",
+      "value": "SSH 服务器"
+    },
+    {
+      "name": "phone_pair_ssh_key_help",
+      "value": "输入 SSH 服务器已授权的私钥。连接时会先核对该服务器的 SHA-256 主机指纹。"
+    },
+    {
+      "name": "phone_pair_ssh_tls_pin",
+      "value": "Hub TLS 指纹"
+    },
+    {
+      "name": "phone_pair_ssh_tls_help",
+      "value": "在配对页输入 Hub 的 HTTPS 地址。配对链接中包含 Hub 的 TLS 公钥指纹（SPKI）。手动填写地址时，请输入同一 Hub 提供的 43 位指纹。"
+    }
+  ]
+}

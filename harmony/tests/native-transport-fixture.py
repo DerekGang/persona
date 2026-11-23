@@ -60,7 +60,7 @@ def main():
         if args.expected_host and name != args.expected_host:
             return ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
     context.set_servername_callback(server_name)
-    counters = {'forbidden': 0, 'ws': 0, 'data': 0, 'close': 0, 'anonymous_health': 0, 'authenticated_health': 0}
+    counters = {'forbidden': 0, 'ws': 0, 'data': 0, 'close': 0, 'anonymous_health': 0, 'authenticated_health': 0, 'token_issues': 0}
 
     client_hello = {}
     websocket_identities = []
@@ -127,6 +127,8 @@ def main():
             size = min(65536, max(0, int(self.headers.get('Content-Length', '0'))))
             self.rfile.read(size)
             if path == '/api/v1/auth/tokens':
+                with lock:
+                    counters['token_issues'] += 1
                 self.reply(200, {'id': 'fixture-device', 'token': TOKEN})
             elif path == '/api/v1/test/pending':
                 self.reply(202, {'state': 'pending'})

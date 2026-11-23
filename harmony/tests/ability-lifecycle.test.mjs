@@ -15,6 +15,7 @@ registerHooks({
  },
  load(url,context,next){
   if(url.startsWith('ability-test:'))return {format:'module',shortCircuit:true,source:`const s=globalThis.__personaAbilityTest;
+   export const phonePasswordLogin={receive(uri){if(!s.expectPasswordReturn || uri!==s.expectPasswordReturn)return false;s.receivedPasswordReturn=uri;return true;}};
    export const AbilityConstant={},ConfigurationConstant={ColorMode:{COLOR_MODE_LIGHT:1,COLOR_MODE_DARK:2,COLOR_MODE_NOT_SET:0}},Want={};
    export class UIAbility {context={resourceManager:{},getApplicationContext:()=>({setColorMode(){}})}}
    export const window={};export const Strings={bind(){},refresh(){}};
@@ -56,4 +57,19 @@ test('a meeting reminder opens the recording page intent without starting a micr
  assert.equal(state.meetingOpens,1);
  a.onNewWant({parameters:{personaMeetingType:'not-a-reminder',occurrence:'synthetic-2'}},{});
  assert.equal(state.meetingOpens,1);
+});
+
+test('a matching system-browser return reaches the running password flow before pairing or navigation', () => {
+ reset();
+ const ability = new EntryAbility();
+ const callback = 'persona://password-login?state=fixture';
+ state.expectPasswordReturn = callback;
+ try {
+  ability.onNewWant({uri: callback}, {});
+  assert.equal(state.receivedPasswordReturn, callback);
+  assert.notEqual(state.pairingLink, callback);
+ } finally {
+  delete state.expectPasswordReturn;
+  delete state.receivedPasswordReturn;
+ }
 });

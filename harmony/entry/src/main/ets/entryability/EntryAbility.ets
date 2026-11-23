@@ -1,4 +1,5 @@
 import { nativeMeetingServices } from '../platform/NativeMeetingServices';
+import { phonePasswordLogin } from '../platform/PhonePasswordLogin';
 import { isPairingLink } from '../core/WireCompatibility';
 import { deviceFeatures } from '../models/DeviceFeatures';
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
@@ -33,6 +34,7 @@ export default class EntryAbility extends UIAbility {
   private receiveWant(want: Want): void {
     nativeMeetingServices.receive(Wire.record(want.parameters));
     const uri = want.uri || '';
+    if (phonePasswordLogin.receive(uri)) return;
     if (uri.length <= 16384 && isPairingLink(uri)) client.pairingLink = uri;
     else if (!uri && want.action !== NOTIFICATION_ACTION && want.parameters?.['personaPage'] === 'projects') client.projectsRequested = true;
   }

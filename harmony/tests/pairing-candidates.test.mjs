@@ -36,3 +36,27 @@ test('pairing binds the service token to the entered origin across fallback and 
   assert.deepEqual(headers, expected);
   assert.ok(!JSON.stringify(endpoint.access).includes('example-secret'));
 });
+
+test('one confirmed SSH route carries both identity checks and the pairing exchange, preserving Cloudflare', async () => {
+  reset(); state.responses.set(primary,{ok:true,hub_id:'same-hub',hub_name:'Synthetic Hub'});
+  const pair=Pairing.parse(link()); pair.setCloudflareAccess('signed-access','test-secret');
+  const lease={isCurrent:()=>true}; const opens=[];
+  const route={async open(address,spki){opens.push([address,spki]);return lease;},close(){}};
+  pair.setSshRoute(route,''); const target=await pair.inspect(); await pair.redeem(target);
+  assert.deepEqual(opens,[[primary,pin]]);
+  assert.deepEqual(state.calls.map(row=>[row.path,row.config.baseUrl,row.config.proxy===lease,!!row.config.access,row.config.token]),[
+    ['/api/v1/health',primary,true,true,''],['/api/v1/health',primary,true,true,''],['/api/v1/auth/tokens',primary,true,true,'synthetic-pair-code']
+  ]);
+});
+test('neither a conflicting Hub pin, a failed SSH route, nor cancellation can spend the code on an alternate', async () => {
+  reset(); const first=Pairing.parse(link());let closed=false;
+  const fail={async open(){throw Error('ssh_host_key_mismatch');},close(){closed=true;}};
+  assert.throws(()=>first.setSshRoute(fail,'B'.repeat(43)),/invalid_pin/);
+  first.setSshRoute(fail,'');await assert.rejects(first.inspect(),/ssh_host_key_mismatch/);assert.equal(closed,true);
+  assert.equal(state.calls.length,0);
+  const second=Pairing.manual(primary,'synthetic-pair-code');let active=true;
+  second.setSshRoute({async open(){return {isCurrent:()=>active};},close(){active=false;}},pin);
+  state.responses.set(primary,{ok:true,hub_id:'same-hub',hub_name:'Synthetic Hub'});
+  const target=await second.inspect();active=false;await assert.rejects(second.redeem(target),/ssh_cancelled/);
+  assert.ok(state.calls.every(c=>c.config.token==='' && c.config.baseUrl===primary));
+});
