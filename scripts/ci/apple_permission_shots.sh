@@ -121,7 +121,7 @@ run_case() {
 for LOOK in light dark; do
   for SIZE in regular xxxl ax5; do
     case "$SIZE" in
-      regular) CONTENT_SIZE=medium ;;
+      regular) CONTENT_SIZE=large ;;
       xxxl) CONTENT_SIZE=extra-extra-extra-large ;;
       ax5) CONTENT_SIZE=accessibility-extra-extra-extra-large ;;
     esac
