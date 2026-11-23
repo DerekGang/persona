@@ -18,25 +18,28 @@ import (
 // of theirs passed a confirmation. Nothing here asks a model. The to-do's brief lists the entries carried (a memory
 // event), once the start went through.
 
-// handOffMemory is what task t, handed to machine, carries of the ledger: entries for any executor that apply on
-// machine, personal ones only on the owner's own computer, none on a work computer.
+// handOffMemory is what task t, handed to machine, carries of the ledger and the memory extension's entries: entries
+// for any executor that apply on machine, personal ones (every one of the extension's) only on the owner's own
+// computer, none on a work computer.
 func (s *Service) handOffMemory(ctx context.Context, t PlanTask, machine string) assembled {
-	if s.memoryEntrySrc() == nil || s.isWorkMachine(machine) {
+	if s.memoryEntrySrc() == nil && s.memoryExtension == nil || s.isWorkMachine(machine) {
 		return assembled{}
 	}
+	personal := machine != "" && machine == s.settings(ctx).MachineID
 	p := proto.AssistantEntriesParams{Scope: &proto.AssistantEntryScopeFilter{Executor: "any", Machine: []string{machine}}}
-	entries, err := s.memoryEntriesFor(ctx, p, machine != "" && machine == s.settings(ctx).MachineID)
+	entries, err := s.memoryEntriesFor(ctx, p, personal)
 	if err != nil {
 		s.logf("task %s: memory: %v", t.TodoID, err)
 	}
-	if len(entries) == 0 {
+	all, info := s.memorySources(ctx, entries, s.memoryExtensionEntries(ctx, personal))
+	if len(all) == 0 {
 		return assembled{}
 	}
 	f := assembleFor{Role: assembleHandOff, Query: strings.TrimSpace(t.Title + "\n" + t.Prompt)}
 	if t.OwnerStarted && t.Parent == "" && len(t.MemoryTopic) > 0 {
 		f.Topic, f.TopicKnown = t.MemoryTopic, true
 	}
-	return assembleEntries(entries, f, s.memoryEntryUses(ctx, entries))
+	return assembleEntries(all, f, info)
 }
 
 // handOffMemoryContext is the context block of the entries task t carries to machine, empty when none, and the

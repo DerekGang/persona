@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"strings"
 
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -131,5 +132,107 @@ func (s *Service) memoryEntryUses(ctx context.Context, entries []proto.Assistant
 		}
 		cats, _ = normalCategories(append(cats, f.cats...))
 		return infoUse{Categories: cats, Known: known, SourceTrack: track}
+	}
+}
+
+// The memory extension's entries are the assembler's second source, after the ledger's (#13532). The extension keeps
+// them in its own state; from its version 0.2.0-beta.41 each carries the space it was first said in (origin_space,
+// the slug, "" for the main space) and its categories (categories). Nothing on main hands them to the manager as
+// entries yet: the extension delivers rendered text (its instructions, project_context and inbox_context files, and
+// its own enkeep_recall tool), filtered by its own rules. memoryExtensionEntries is where a source plugs in, and
+// memoryExtensionUses the rules it is held to.
+
+// memoryExtensionIDPrefix starts the id of every entry of the memory extension as the assembler carries it, so a
+// to-do's brief tells them from the ledger's.
+const memoryExtensionIDPrefix = "memory-extension:"
+
+// memoryExtensionEntry is an entry of the memory extension as a source hands it over.
+type memoryExtensionEntry struct {
+	ID   string
+	Text string
+	// OriginSpace is origin_space: the slug of the space the entry was first said in, "" the main space.
+	OriginSpace string
+	// Categories are the names in categories (health, finance, relationships, emotion, legal_id); none: general.
+	Categories []string
+	Tags       []string
+}
+
+// memoryExtensionBatch is what a source hands over at once. Tagged says the extension that wrote the entries sets
+// origin_space and categories (0.2.0-beta.41 or later): both are left out when empty, so a missing field means the
+// main space or no category only then. From an older extension, or one whose version cannot be told, a missing
+// field means nothing is known.
+type memoryExtensionBatch struct {
+	Entries []memoryExtensionEntry
+	Tagged  bool
+}
+
+// memoryExtensionSource hands the assembler the memory extension's entries: personal says the receiver may see what
+// is about the owner (every one of them is).
+type memoryExtensionSource interface {
+	MemoryExtensionEntries(ctx context.Context, personal bool) (memoryExtensionBatch, error)
+}
+
+// memoryExtensionEntries is the memory extension's entries for an assembly: none while no source is set
+// (Service.memoryExtension, a test's until a source of the manager's lands) or when the receiver may not see
+// personal entries.
+func (s *Service) memoryExtensionEntries(ctx context.Context, personal bool) memoryExtensionBatch {
+	if s.memoryExtension == nil || !personal {
+		return memoryExtensionBatch{}
+	}
+	b, err := s.memoryExtension.MemoryExtensionEntries(ctx, personal)
+	if err != nil {
+		s.logf("memory: extension entries: %v", err)
+		return memoryExtensionBatch{}
+	}
+	return b
+}
+
+// assistantEntries are b's entries as the assembler carries them: personal, for any executor, ids prefixed.
+func (b memoryExtensionBatch) assistantEntries() []proto.AssistantEntry {
+	out := make([]proto.AssistantEntry, 0, len(b.Entries))
+	for _, e := range b.Entries {
+		out = append(out, proto.AssistantEntry{ID: memoryExtensionIDPrefix + e.ID, Text: e.Text, OriginSpace: e.OriginSpace,
+			Category: e.Categories, Tag: e.Tags, Scope: proto.AssistantEntryScope{Executor: "any", Personal: true}, Status: "active"})
+	}
+	return out
+}
+
+// memoryExtensionUses is how usage sees the memory extension's entries (assistantEntries), held to the ledger's
+// strict rules:
+//
+//   - From an extension that tags (tagged), an entry's track is the space it states, "" the main one: it names no
+//     conversation the manager could check it against, as a ledger entry naming none keeps what it states. Its
+//     categories are its own and its track's default categories, which the manager adds itself (an entry of a
+//     finance space the extension did not tag is finance all the same). A category or a track the manager does not
+//     know makes it not known.
+//   - From an extension that does not tag, where an entry was said cannot be told: it is in no track (entryTrackUnknown)
+//     and not known, so it is no conversation's own and is taken for sensitive everywhere. Its categories, when it
+//     names some, still count.
+func (s *Service) memoryExtensionUses(ctx context.Context, tagged bool) func(proto.AssistantEntry) infoUse {
+	return func(e proto.AssistantEntry) infoUse {
+		cats, ok := normalCategories(e.Category)
+		if !tagged {
+			return infoUse{Categories: cats, SourceTrack: entryTrackUnknown}
+		}
+		floor, floorOK := s.trackFloor(ctx, e.OriginSpace)
+		cats, _ = normalCategories(append(cats, floor...))
+		return infoUse{Categories: cats, Known: ok && floorOK, SourceTrack: e.OriginSpace}
+	}
+}
+
+// memorySources are the assembler's sources together, oldest first: the memory extension's entries, then the
+// ledger's, so a budget taken newest first goes to the ledger first. Each entry is seen by its own source's rules.
+func (s *Service) memorySources(ctx context.Context, ledger []proto.AssistantEntry, ext memoryExtensionBatch) ([]proto.AssistantEntry, func(proto.AssistantEntry) infoUse) {
+	extEntries := ext.assistantEntries()
+	if len(extEntries) == 0 {
+		return ledger, s.memoryEntryUses(ctx, ledger)
+	}
+	ledgerUse, extUse := s.memoryEntryUses(ctx, ledger), s.memoryExtensionUses(ctx, ext.Tagged)
+	all := append(extEntries, ledger...)
+	return all, func(e proto.AssistantEntry) infoUse {
+		if strings.HasPrefix(e.ID, memoryExtensionIDPrefix) {
+			return extUse(e)
+		}
+		return ledgerUse(e)
 	}
 }

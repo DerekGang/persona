@@ -132,6 +132,9 @@ type Service struct {
 	// memoryEntries is where the memory assembler reads the ledger in tests; nil reads the manager database
 	// (memory_assemble_entry.go).
 	memoryEntries memoryEntrySource
+	// memoryExtension hands the assembler the memory extension's entries, its second source; nil hands none
+	// (memory_assemble_entry.go).
+	memoryExtension memoryExtensionSource
 	// trustSrc is Options.Trust.
 	trustSrc MachineTrust
 	logf     func(format string, args ...any)

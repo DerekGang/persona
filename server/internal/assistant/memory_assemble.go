@@ -23,7 +23,8 @@ import (
 //   - the Inbox's helper and drafts for other people (assembleInbox): general entries the message bears on, never a
 //     sensitive one (scene 5).
 //
-// It reads no track's name or kind. The ledger's entries reach it through memoryEntryUses (memory_assemble_entry.go).
+// It reads no track's name or kind. The ledger's entries reach it through memoryEntryUses, and the memory extension's,
+// its second source, through memoryExtensionUses (memory_assemble_entry.go).
 
 // assembleRole is who an assembly is for.
 type assembleRole int
@@ -258,13 +259,14 @@ func (s *Service) memoryEntriesFor(ctx context.Context, p proto.AssistantEntries
 	return out, err
 }
 
-// assembleMemory is the entries p selects as f takes them.
+// assembleMemory is the entries p selects, and the memory extension's (memoryExtensionEntries), as f takes them.
 func (s *Service) assembleMemory(ctx context.Context, f assembleFor, p proto.AssistantEntriesParams, personal bool) (assembled, error) {
 	entries, err := s.memoryEntriesFor(ctx, p, personal)
-	if len(entries) == 0 {
+	all, info := s.memorySources(ctx, entries, s.memoryExtensionEntries(ctx, personal))
+	if len(all) == 0 {
 		return assembled{}, err
 	}
-	return assembleEntries(entries, f, s.memoryEntryUses(ctx, entries)), err
+	return assembleEntries(all, f, info), err
 }
 
 // assembleForConversation is where entries go for conversation sid in role r: its track, and its categories as the
