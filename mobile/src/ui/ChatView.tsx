@@ -4,7 +4,7 @@ import { useEffect, useMemo } from "react";
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { loadEarlier, openChat, retryMessage, sendMessage } from "../runtime/actions";
 import { chatKey, emptyChat, useStore } from "../runtime/store";
-import { transcriptRows, type Row } from "../domain/transcript";
+import { boldParts, transcriptRows, type Row } from "../domain/transcript";
 import { m } from "../i18n";
 import { font, radius, size, space, useTheme } from "../theme";
 import { Composer } from "./Composer";
@@ -75,7 +75,7 @@ function Bubble({ role, text, note, noteColor, onNote }: { role: "user" | "assis
     <View style={[styles.bubbleWrap, { alignItems: mine ? "flex-end" : "flex-start" }]}>
       <View style={[styles.bubble, { backgroundColor: mine ? p.accent : p.surface, borderColor: p.line, borderWidth: mine ? 0 : StyleSheet.hairlineWidth }]}>
         <Text selectable style={{ color: mine ? p.onAccent : p.ink, fontSize: font.body }}>
-          {text}
+          {boldParts(text).map((part, i) => (part.bold ? <Text key={i} style={styles.bold}>{part.text}</Text> : part.text))}
         </Text>
       </View>
       {note ? (
@@ -88,6 +88,7 @@ function Bubble({ role, text, note, noteColor, onNote }: { role: "user" | "assis
 }
 
 const styles = StyleSheet.create({
+  bold: { fontWeight: "700" },
   list: { padding: space.lg, gap: space.sm },
   bubbleWrap: { marginVertical: space.xs },
   bubble: { maxWidth: "86%", borderRadius: radius.lg, paddingHorizontal: space.md, paddingVertical: space.sm },

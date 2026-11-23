@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentRows, groupAgents } from "../src/domain/grouping";
-import { toolName, transcriptRows } from "../src/domain/transcript";
+import { boldParts, toolName, transcriptRows } from "../src/domain/transcript";
 import { resolutionBody } from "../src/runtime/actions";
 import { item, SESSIONS } from "./fixtures";
 
@@ -52,5 +52,16 @@ describe("resolutionBody", () => {
     expect(resolutionBody({ kind: "plan", approve: true })).toEqual({ approve: true });
     expect(resolutionBody({ kind: "plan", approve: false, feedback: "smaller" })).toEqual({ approve: false, feedback: "smaller" });
     expect(resolutionBody({ kind: "permission", allow: false })).toEqual({ allow: false });
+  });
+});
+
+describe("boldParts", () => {
+  it("splits **bold** runs and keeps the rest", () => {
+    expect(boldParts("a **b** c")).toEqual([
+      { text: "a ", bold: false },
+      { text: "b", bold: true },
+      { text: " c", bold: false },
+    ]);
+    expect(boldParts("plain")).toEqual([{ text: "plain", bold: false }]);
   });
 });

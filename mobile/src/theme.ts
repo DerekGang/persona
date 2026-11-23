@@ -64,7 +64,7 @@ export const dark: Palette = {
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
 export const radius = { sm: 8, md: 12, lg: 18, pill: 999 } as const;
 export const font = { caption: 12, small: 14, body: 16, title: 20, large: 28 } as const;
-export const size = { tap: 44, dot: 8, composer: 120, asks: 320, tabBar: 64 } as const;
+export const size = { tap: 44, dot: 8, composer: 120, asks: 460, tabBar: 64 } as const;
 
 export function useTheme(): Palette {
   return useColorScheme() === "dark" ? dark : light;

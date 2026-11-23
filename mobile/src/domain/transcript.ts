@@ -25,3 +25,11 @@ export function transcriptRows(items: readonly Item[]): Row[] {
   }
   return rows;
 }
+
+/** The demo's whole markdown: **bold** runs. The web renders full markdown; a real app would share that renderer. */
+export function boldParts(text: string): { text: string; bold: boolean }[] {
+  return text
+    .split(/\*\*(.+?)\*\*/g)
+    .map((part, i) => ({ text: part, bold: i % 2 === 1 }))
+    .filter((p) => p.text);
+}
