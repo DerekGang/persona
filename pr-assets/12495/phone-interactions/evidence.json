@@ -1,0 +1,484 @@
+{
+  "native_surfaces": {
+    "currentCapture": "33748351b8d22a1280694c6d40870806641bc8e3",
+    "previousCapture": "9464459adb8e0dd6d38b0128f20d6b2d6bec3e08",
+    "iPhone": "a21e4c50893c65a5e6816bfe1c2302f821b960c7",
+    "currentHAP": "4cfbe5e34198bb71583db8aaf2da0bba2eeccbaf580d5f6b8ba15ca921682c43",
+    "pages": {
+      "settings": {
+        "iphoneSHA256": "340c8f68165e561f1d35886b2fc0236b7975c83ffe3694ef43cf2ceea178819e",
+        "harmonySHA256": "d29f910c4aac48c3eda6a2171651c50a7ea6c2067f7623a4f4dd39240183e7ac",
+        "earlierHarmonySHA256": "0a96a7c528cd83c4ccba5ef4b28de4edaf1b5c2974593f3ef0eea21f3714fa27",
+        "nativeAXSHA256": "e6c1f3ce8c5b82b5c3c493d6293be029ff4a41cc59f117f0e1dd727eaa6c0e9f",
+        "surfaces": {
+          "baseToSheet": {
+            "iPhoneRGB": [
+              28,
+              28,
+              30
+            ],
+            "previousHarmonyRGB": [
+              0,
+              0,
+              0
+            ],
+            "previouslyDifferentSamples": 45309,
+            "newSamplesAtExactIPhoneRGB": 45309,
+            "fraction": 1.0
+          },
+          "sheetToCard": {
+            "iPhoneRGB": [
+              44,
+              44,
+              46
+            ],
+            "previousHarmonyRGB": [
+              28,
+              28,
+              30
+            ],
+            "previouslyDifferentSamples": 161775,
+            "newSamplesAtExactIPhoneRGB": 161775,
+            "fraction": 1.0
+          }
+        },
+        "boundsVp": [
+          20,
+          135,
+          382,
+          800
+        ],
+        "publicCodeBlobs": {
+          "harmony/entry/src/main/ets/components/SettingsDirectory.ets": "e1fe0ea0f37e42e58193be45f7ce9f54b80dd499"
+        }
+      },
+      "folder-browser": {
+        "iphoneSHA256": "2c3c90bb7a654510262b35699ea7f78fc06dc73565ba6bab851dad51a18bd027",
+        "harmonySHA256": "25511df611eadd6fb90d29f82a928dab435f35674adfae923f1b4c65c0824c3f",
+        "earlierHarmonySHA256": "b44058b222007387f39c711a52cb83df1bb05bb280af87b35d8a01c35482d46b",
+        "nativeAXSHA256": "b7e9663d599b088e207c2e647ec8f8d1be330716add860d196baa97a7c8a2ae6",
+        "surfaces": {
+          "baseToSheet": {
+            "iPhoneRGB": [
+              28,
+              28,
+              30
+            ],
+            "previousHarmonyRGB": [
+              0,
+              0,
+              0
+            ],
+            "previouslyDifferentSamples": 139405,
+            "newSamplesAtExactIPhoneRGB": 139405,
+            "fraction": 1.0
+          },
+          "sheetToCard": {
+            "iPhoneRGB": [
+              44,
+              44,
+              46
+            ],
+            "previousHarmonyRGB": [
+              28,
+              28,
+              30
+            ],
+            "previouslyDifferentSamples": 84354,
+            "newSamplesAtExactIPhoneRGB": 84354,
+            "fraction": 1.0
+          }
+        },
+        "boundsVp": [
+          20,
+          135,
+          382,
+          800
+        ],
+        "publicCodeBlobs": {
+          "harmony/entry/src/main/ets/components/AgentStartPicker.ets": "4772c9a7af1a1c4bb23b94458c66862387960405"
+        }
+      },
+      "git-commit": {
+        "iphoneSHA256": "aa79dc4ca5d006e5b30ab05d0487cc86e6a4557a9aa4be06bc4d2717f42781a7",
+        "harmonySHA256": "ec20a7308a09c0a25af0771effff8fee53bfd43bc97ebd535a9f169d44cd5c5a",
+        "earlierHarmonySHA256": "93128cf6584eb49300c1acb25bb5241ec15cd6443b7c6b757b15ed58bcfb8684",
+        "nativeAXSHA256": "b2ea30fdcb053f5170a37d624fa78343051bb63cb4664ac75a32e9d63329b4aa",
+        "surfaces": {
+          "baseToSheet": {
+            "iPhoneRGB": [
+              28,
+              28,
+              30
+            ],
+            "previousHarmonyRGB": [
+              0,
+              0,
+              0
+            ],
+            "previouslyDifferentSamples": 152232,
+            "newSamplesAtExactIPhoneRGB": 152232,
+            "fraction": 1.0
+          },
+          "sheetToCard": {
+            "iPhoneRGB": [
+              44,
+              44,
+              46
+            ],
+            "previousHarmonyRGB": [
+              28,
+              28,
+              30
+            ],
+            "previouslyDifferentSamples": 78613,
+            "newSamplesAtExactIPhoneRGB": 78564,
+            "fraction": 0.99938
+          }
+        },
+        "boundsVp": [
+          20,
+          135,
+          382,
+          800
+        ],
+        "publicCodeBlobs": {
+          "harmony/entry/src/main/ets/components/SessionTools.ets": "9dbe6e1a6f1d2ebdc51cc7bbe143fa4cb9818d7b"
+        }
+      },
+      "machine-detail": {
+        "iphoneSHA256": "462155be5ba6605583dde73544d3fd60da08e8938756f53fe08a7b1776096ad8",
+        "harmonySHA256": "ebffe2a6131aa6e3f39ea762ae97e70fe3bb8422da4bb466e182d2d942153376",
+        "earlierHarmonySHA256": "9c9353f9897adc5e48e5166caa780b8bd8b60de6bddc27e3cf6bf9119f45ef50",
+        "nativeAXSHA256": "c7b8153c294dfc521600d25b583195775464f1025f4c18b681ce42e66423a34d",
+        "surfaces": {
+          "baseToSheet": {
+            "iPhoneRGB": [
+              28,
+              28,
+              30
+            ],
+            "previousHarmonyRGB": [
+              0,
+              0,
+              0
+            ],
+            "previouslyDifferentSamples": 24502,
+            "newSamplesAtExactIPhoneRGB": 24502,
+            "fraction": 1.0
+          },
+          "sheetToCard": {
+            "iPhoneRGB": [
+              44,
+              44,
+              46
+            ],
+            "previousHarmonyRGB": [
+              28,
+              28,
+              30
+            ],
+            "previouslyDifferentSamples": 162709,
+            "newSamplesAtExactIPhoneRGB": 158324,
+            "fraction": 0.97305
+          }
+        },
+        "boundsVp": [
+          20,
+          135,
+          382,
+          800
+        ],
+        "publicCodeBlobs": {
+          "harmony/entry/src/main/ets/components/MachineDirectory.ets": "cbc74a2291ce39e5988f3974d0bb87d0c1d65447"
+        }
+      }
+    }
+  },
+  "welcome": {
+    "source": "39fe5619397bfb11489f23c4c7a87de5c7f8f5b1",
+    "iPhone": "a21e4c50893c65a5e6816bfe1c2302f821b960c7",
+    "boardSHA256": "497497079eb2be7357579fdf79c85d63e9d316f46009c0d89920e82ef6fb295f",
+    "bounds": {
+      "light": {
+        "connect": {
+          "iPhone": [
+            35.0,
+            452.0,
+            332.0,
+            62.0
+          ],
+          "harmony": [
+            35.0,
+            451.6666666666667,
+            332.0,
+            61.99999999999994
+          ],
+          "delta": [
+            0.0,
+            -0.3333333333333144,
+            0.0,
+            -5.684341886080802e-14
+          ]
+        },
+        "other": {
+          "iPhone": [
+            103.2,
+            538.0,
+            59.7,
+            65.8
+          ],
+          "harmony": [
+            103.0,
+            537.6666666666666,
+            60.33333333333334,
+            66.0
+          ],
+          "delta": [
+            -0.20000000000000284,
+            -0.33333333333337123,
+            0.63333333333334,
+            0.20000000000000284
+          ]
+        },
+        "help": {
+          "iPhone": [
+            187.0,
+            538.0,
+            44.0,
+            65.8
+          ],
+          "harmony": [
+            187.33333333333334,
+            537.6666666666666,
+            44.0,
+            66.0
+          ],
+          "delta": [
+            0.3333333333333428,
+            -0.33333333333337123,
+            0.0,
+            0.20000000000000284
+          ]
+        },
+        "demo": {
+          "iPhone": [
+            255.0,
+            538.0,
+            44.0,
+            65.8
+          ],
+          "harmony": [
+            255.33333333333334,
+            537.6666666666666,
+            43.99999999999997,
+            66.0
+          ],
+          "delta": [
+            0.3333333333333428,
+            -0.33333333333337123,
+            -2.842170943040401e-14,
+            0.20000000000000284
+          ]
+        }
+      },
+      "dark": {
+        "connect": {
+          "iPhone": [
+            35.0,
+            452.0,
+            332.0,
+            62.0
+          ],
+          "harmony": [
+            35.0,
+            451.6666666666667,
+            332.0,
+            61.99999999999994
+          ],
+          "delta": [
+            0.0,
+            -0.3333333333333144,
+            0.0,
+            -5.684341886080802e-14
+          ]
+        },
+        "other": {
+          "iPhone": [
+            103.2,
+            538.0,
+            59.7,
+            65.8
+          ],
+          "harmony": [
+            103.0,
+            537.6666666666666,
+            60.33333333333334,
+            66.0
+          ],
+          "delta": [
+            -0.20000000000000284,
+            -0.33333333333337123,
+            0.63333333333334,
+            0.20000000000000284
+          ]
+        },
+        "help": {
+          "iPhone": [
+            187.0,
+            538.0,
+            44.0,
+            65.8
+          ],
+          "harmony": [
+            187.33333333333334,
+            537.6666666666666,
+            44.0,
+            66.0
+          ],
+          "delta": [
+            0.3333333333333428,
+            -0.33333333333337123,
+            0.0,
+            0.20000000000000284
+          ]
+        },
+        "demo": {
+          "iPhone": [
+            255.0,
+            538.0,
+            44.0,
+            65.8
+          ],
+          "harmony": [
+            255.33333333333334,
+            537.6666666666666,
+            43.99999999999997,
+            66.0
+          ],
+          "delta": [
+            0.3333333333333428,
+            -0.33333333333337123,
+            -2.842170943040401e-14,
+            0.20000000000000284
+          ]
+        }
+      },
+      "large": {
+        "connect": {
+          "iPhone": [
+            35.0,
+            439.7,
+            332.0,
+            72.0
+          ],
+          "harmony": [
+            35.0,
+            439.3333333333333,
+            332.0,
+            72.0
+          ],
+          "delta": [
+            0.0,
+            -0.36666666666667425,
+            0.0,
+            0.0
+          ]
+        },
+        "other": {
+          "iPhone": [
+            79.0,
+            535.8,
+            80.3,
+            87.1
+          ],
+          "harmony": [
+            79.33333333333333,
+            535.3333333333334,
+            80.00000000000001,
+            87.0
+          ],
+          "delta": [
+            0.3333333333333286,
+            -0.4666666666665833,
+            -0.29999999999998295,
+            -0.09999999999999432
+          ]
+        },
+        "help": {
+          "iPhone": [
+            183.3,
+            535.7,
+            58.0,
+            87.3
+          ],
+          "harmony": [
+            183.33333333333334,
+            535.3333333333334,
+            57.66666666666666,
+            87.0
+          ],
+          "delta": [
+            0.03333333333333144,
+            -0.36666666666667425,
+            -0.3333333333333428,
+            -0.29999999999999716
+          ]
+        },
+        "demo": {
+          "iPhone": [
+            265.3,
+            535.8,
+            57.7,
+            87.1
+          ],
+          "harmony": [
+            265.0,
+            535.3333333333334,
+            57.666666666666686,
+            87.0
+          ],
+          "delta": [
+            -0.30000000000001137,
+            -0.4666666666665833,
+            -0.03333333333331723,
+            -0.09999999999999432
+          ]
+        }
+      }
+    },
+    "maximumDelta": 0.63
+  },
+  "subscriptions": {
+    "source": "64ccc8f90d082c8b4b219877bef69dbfd4a1492b",
+    "iPhone": "a21e4c50893c65a5e6816bfe1c2302f821b960c7",
+    "reviewManifestSHA256": "8b0d3dc96e6e6325a718b2fd8bae6744c3ba8c95c9694da25fec6cb3581211d2",
+    "darkRGB": {
+      "iPhone": [
+        10,
+        132,
+        255
+      ],
+      "HarmonyOS": [
+        11,
+        132,
+        255
+      ]
+    },
+    "heightPtVp": 8,
+    "size": [
+      960,
+      1100
+    ]
+  },
+  "selection": {
+    "source": "3c69d0f2e82f16b1c8f488d4ede96c6195735ae2",
+    "previous": "49adc1e907f33574e87bd5ea93682cbb76706413",
+    "iPhoneCapture": "870924d3be3207aa0f69bc9f8e66281abccca600",
+    "sameAppleChatTree": "83c96a19d4bcb6c05a97bd4fc44d4e15c91c4a89",
+    "iPhonePhotoSHA256": "78a886764700b5355d5a1667fb7519a6fec5405b5babf62eff5590857de2a14e",
+    "harmonyPhotoSHA256": "37cae7e3d8281d8b7f8645e16ed792ca539e5a1d00f06e461bd76048f6cc1144",
+    "harmonyAXSHA256": "0c374b728e7d77a561560ad3e21ce402c66c0264ca4ac6a0b98a6c908b46f628",
+    "coverageInsideVisibleText": 0.9477
+  }
+}
