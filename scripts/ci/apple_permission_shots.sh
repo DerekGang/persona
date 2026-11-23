@@ -73,7 +73,10 @@ XCODE=(xcodebuild -project "$PROJECT" -scheme Persona -configuration Debug
   -destination "platform=iOS Simulator,id=$SIM" -destination-timeout 120 -derivedDataPath "$DERIVED" -parallel-testing-enabled NO
   -clonedSourcePackagesDirPath "$SPM/SourcePackages"
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=)
-ci_run 'Resolve permission UI-test packages' 900 "${XCODE[@]}" -resolvePackageDependencies
+# Match apple.sh's minimal resolve invocation. Run 45128510285 crashed inside
+# IDESwiftPackageCore with the extra destination/signing arguments, before any test executed.
+ci_run 'Resolve permission UI-test packages' 900 xcodebuild -project "$PROJECT" -configuration Debug \
+  -clonedSourcePackagesDirPath "$SPM/SourcePackages" -scheme Persona -resolvePackageDependencies
 ci_run 'Build permission UI tests' 2400 "${XCODE[@]}" -disableAutomaticPackageResolution build-for-testing
 
 free_port() {
