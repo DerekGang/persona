@@ -1,0 +1,62 @@
+name: Meeting recap appearance verification
+on:
+  push:
+    branches: [verify/13510-meeting-title]
+permissions:
+  contents: read
+jobs:
+  recap:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run the meeting recap UI test in both appearances
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          xcodebuild -version
+          brew install xcodegen
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          xcodegen generate --spec apple/project.yml --project apple
+          mkdir -p "$RUNNER_TEMP/meeting-shots"
+          export TEST_RUNNER_PERSONA_SHOTS="$RUNNER_TEMP/meeting-shots"
+          export TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18760
+          PORT=18760 MOCK_RECORDING_MINUTES=pending python3 scripts/mock/mock_hub.py > "$RUNNER_TEMP/meeting-mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 \
+            "$TEST_RUNNER_PERSONA_MOCK_HUB/api/v1/health"
+          for appearance in light dark; do
+            export TEST_RUNNER_PERSONA_SHOTS_APPEARANCE="$appearance"
+            sim=$(scripts/app/sim-boot.sh --profile stock "Persona 13510 $appearance")
+            xcrun simctl ui "$sim" appearance "$appearance"
+            xcodebuild test -project apple/Persona.xcodeproj -scheme Persona \
+              -destination "id=$sim" -derivedDataPath "$RUNNER_TEMP/derived" \
+              -parallel-testing-enabled NO \
+              -only-testing:PersonaUITests/MeetingAfterUITests/testTheMinutesOnTheirWay \
+              -resultBundlePath "$RUNNER_TEMP/$appearance.xcresult" \
+              CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/$appearance.xcresult" |
+              python3 -c 'import json,sys; r=json.load(sys.stdin); print(r); sys.exit(not (r.get("passedTests")==1 and r.get("failedTests")==0 and r.get("skippedTests")==0))'
+            test -s "$TEST_RUNNER_PERSONA_SHOTS/after-$appearance-pending.png"
+            xcrun simctl shutdown "$sim"
+          done
+      - name: Save screenshots and mock log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-13510-appearance
+          path: |
+            ${{ runner.temp }}/meeting-shots/*.png
+            ${{ runner.temp }}/meeting-mock.log
+          if-no-files-found: warn
+          retention-days: 7
