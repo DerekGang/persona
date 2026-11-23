@@ -21,6 +21,7 @@ import (
 	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/remoteimage"
@@ -105,6 +106,8 @@ type Service struct {
 	mcpChanges mcpToolChanges
 	// ext is the extensions' tools in this process (extensions.go SetExtensions); nil: none (tests).
 	ext ExtensionTools
+	// extOwners keeps the extensions the user marked as their own for the profile (extension_trust.go).
+	extOwners extensionOwnerCache
 	// startDefaultsFor answers a task start's defaults from the extension layer (start_defaults.go); nil: no defaults.
 	startDefaultsFor func(ctx context.Context, facts StartFacts) (StartDefaults, bool, error)
 	// startCandidates lists the presets a start-defaults rule can pick on a machine (start_candidates.go); nil: the
@@ -382,6 +385,7 @@ func New(o Options) *Service {
 	s.agentArchiveRoutes()
 	s.agentNamingRoutes() // agent_naming_request.go
 	s.alwaysRoutes()
+	s.infoAccessRoutes()
 	s.undeliveredRoutes()
 	s.standingAuthorizationRoutes()
 	s.ruleSuggestionRoutes()
@@ -412,6 +416,7 @@ func New(o Options) *Service {
 	s.scheduleGrantRoutes()
 	s.placeRoutes()
 	saved.Register(saved.Host{Store: func() any { return s.store() }, Event: s.event, Handle: s.handle, Full: fullRole, BodyErr: writeBodyErr})
+	s.resourceRoutes()
 	s.repositoryRoutes()
 	s.taskRoutes()
 	s.viewActionRoutes()
@@ -459,7 +464,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		apierr.Call(w, err)
 		return
 	}
-	s.mux.ServeHTTP(w, r)
+	s.mux.ServeHTTP(w, s.extensionReaderRequest(r))
 }
 
 // fullRole: the request came from a device that may do everything (RoleHeader; none: a test's own request).
@@ -540,6 +545,13 @@ func (s *Service) call(ctx context.Context, device, method string, params, out a
 	if p, ok := params.(map[string]any); ok && (method == DeviceAssistantSend || method == DeviceAssistantWarm || sessionSend ||
 		method == assistantwire.DeviceAssistantAnswerAgain) {
 		id, _ := p["session_id"].(string)
+		if id != "" {
+			if _, trusted := p["model_source"].(modelhttp.Source); !trusted {
+				p["model_source"] = s.conversationModelSource(ctx, device, id)
+			}
+		} else if method == DeviceAssistantWarm {
+			p["model_source"] = modelhttp.Source{Role: "main"}
+		}
 		pctx, carry := withNotesCarry(ctx)
 		// Settled however this returns: a send refused before it left was not taken (direction_notes.go).
 		defer func() { s.notesSendOutcome(ctx, carry, taken) }()
@@ -803,6 +815,7 @@ func (s *Service) device(ctx context.Context, id string) (Device, bool) {
 
 // startParams are what a new conversation starts with.
 type startParams struct {
+	modelSource         modelhttp.Source
 	TaskModel           *ModelBinding
 	MachineID           string
 	Cwd                 string
