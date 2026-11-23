@@ -32,7 +32,16 @@ extension XCUIApplication {
     /// Merged sidebar (#4206), and the tests written for the tabs and the shell would find another app. `navigation:
     /// false` leaves the layout to the app (a test of the setting itself, which a launch argument would pin).
     func launchPinned(navigation: Bool = true) {
-        launchArguments = UITestStyle.bannerPinned(UITestStyle.pinned(launchArguments))
+        var arguments = UITestStyle.bannerPinned(UITestStyle.pinned(launchArguments))
+        let environment = ProcessInfo.processInfo.environment
+        // Hosted screenshot lanes boot through xcodebuild, so the look must be a launch argument rather than simctl ui.
+        if !arguments.contains("-ui.scheme"), let scheme = environment["PERSONA_UI_SCHEME"] {
+            arguments += ["-ui.scheme", scheme]
+        }
+        if !arguments.contains("-UIPreferredContentSizeCategoryName"), let size = environment["PERSONA_UI_CONTENT_SIZE"] {
+            arguments += ["-UIPreferredContentSizeCategoryName", size]
+        }
+        launchArguments = arguments
         launchPersona(navigation: navigation)
     }
 

@@ -10,6 +10,7 @@ case "$(xcodebuild -version)" in 'Xcode 26.0'*$'\n'*) ;; *) printf 'permission-s
 OUTPUT="${CI_APPLE_DIAGNOSTICS:?CI_APPLE_DIAGNOSTICS is required}"
 [ ! -e "$OUTPUT" ] || { printf 'permission-shots: FAIL output already exists: %s\n' "$OUTPUT" >&2; exit 2; }
 mkdir -p "$OUTPUT"/{logs,png,results}
+printf 'status=incomplete; the run did not reach its final verdict\n' > "$OUTPUT/summary.txt"
 WORK=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/persona-permission-shots.XXXXXX")
 SOURCE="$WORK/source"
 DERIVED="$WORK/DerivedData"
@@ -60,12 +61,16 @@ if ! RUNTIME=$(python3 "$CI_ROOT/scripts/ci/apple_runtime.py" "$RUNTIMES" --plat
   RUNTIME=$(python3 "$CI_ROOT/scripts/ci/apple_runtime.py" "$RUNTIMES" --platform iOS)
 fi
 printf 'permission-shots: runtime %s\n' "$RUNTIME"
-SIM=$(SIM_PROFILE=default SIM_DEVICE_TYPE='iPhone 17 Pro' SIM_RUNTIME="$RUNTIME" \
-  "$SOURCE/scripts/app/sim-boot.sh" "Persona Permission Shots ${GITHUB_RUN_ID:-local}")
+# On a hosted runner, xcodebuild owns the first boot. Directly waiting in sim-boot
+# hit its 15-minute bootstatus deadline in run 45123938855 (docs/lessons/testing.md).
+ci_run 'Create stock permission screenshot simulator' 100 bash -c \
+  '"$1" --create-only --profile stock --runtime "$3" --device-type "iPhone 17 Pro" "$2" > "$4"' \
+  -- "$SOURCE/scripts/app/sim-boot.sh" "Persona Permission Shots ${GITHUB_RUN_ID:-local}" "$RUNTIME" "$OUTPUT/simulator.log"
+SIM=$(python3 -I -c 'import re,sys; value=open(sys.argv[1]).read().strip(); assert re.fullmatch(r"[0-9A-Fa-f-]{36}", value), value; print(value)' "$OUTPUT/simulator.log")
 
 PROJECT="$SOURCE/apple/Persona.xcodeproj"
 XCODE=(xcodebuild -project "$PROJECT" -scheme Persona -configuration Debug
-  -destination "id=$SIM" -derivedDataPath "$DERIVED" -parallel-testing-enabled NO
+  -destination "platform=iOS Simulator,id=$SIM" -destination-timeout 120 -derivedDataPath "$DERIVED" -parallel-testing-enabled NO
   -clonedSourcePackagesDirPath "$SPM/SourcePackages"
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=)
 ci_run 'Resolve permission UI-test packages' 900 "${XCODE[@]}" -resolvePackageDependencies
@@ -94,7 +99,7 @@ done
 run_case() {
   local id="$1" selection="$2" expected="$3"; shift 3
   printf '\n===== %s =====\n' "$id"
-  if ci_run "$id" 600 env "$@" "${XCODE[@]}" -disableAutomaticPackageResolution \
+  if ci_run "$id" 900 env "$@" "${XCODE[@]}" -disableAutomaticPackageResolution -collect-test-diagnostics never \
       -resultBundlePath "$OUTPUT/results/$id.xcresult" -only-testing:"$selection" test-without-building \
       > "$OUTPUT/logs/$id.log" 2>&1; then
     if [ -s "$expected" ]; then
@@ -121,19 +126,19 @@ run_case() {
 for LOOK in light dark; do
   for SIZE in regular xxxl ax5; do
     case "$SIZE" in
-      regular) CONTENT_SIZE=large ;;
-      xxxl) CONTENT_SIZE=extra-extra-extra-large ;;
-      ax5) CONTENT_SIZE=accessibility-extra-extra-extra-large ;;
+      regular) CONTENT_SIZE=UICTContentSizeCategoryL ;;
+      xxxl) CONTENT_SIZE=UICTContentSizeCategoryXXXL ;;
+      ax5) CONTENT_SIZE=UICTContentSizeCategoryAccessibilityXXXL ;;
     esac
+    LOOK_ENV=(TEST_RUNNER_PERSONA_UI_SCHEME="$LOOK" TEST_RUNNER_PERSONA_UI_CONTENT_SIZE="$CONTENT_SIZE")
     ID="$LOOK-$SIZE"
     SHOTS="$OUTPUT/png/$ID"
     mkdir -p "$SHOTS"/{followup,direction,inbox}
-    xcrun simctl ui "$SIM" appearance "$LOOK"
-    xcrun simctl ui "$SIM" content_size "$CONTENT_SIZE"
 
     run_case "$ID-followup" \
       'PersonaUITests/AgentFollowUpUITests/testNewConversationPermissionFromAgentSettings' \
       "$SHOTS/followup/followup-iphone-$LOOK-$SIZE-default-permissions.png" \
+      "${LOOK_ENV[@]}" \
       TEST_RUNNER_PERSONA_MOCK_HUB="$GENERAL_HUB" \
       TEST_RUNNER_PERSONA_SHOTS="$SHOTS/followup" \
       TEST_RUNNER_PERSONA_SHOTS_APPEARANCE="$LOOK-$SIZE" \
@@ -142,6 +147,7 @@ for LOOK in light dark; do
     run_case "$ID-direction" \
       'PersonaUITests/DirectionScreensUITests/testDefaultPermissionsEntry' \
       "$SHOTS/direction/default-permissions-en-$LOOK-$SIZE.png" \
+      "${LOOK_ENV[@]}" \
       TEST_RUNNER_PERSONA_DIRECTION_SHOTS=1 \
       TEST_RUNNER_PERSONA_LEADERS_HUB="$GENERAL_HUB" \
       TEST_RUNNER_SHOT_DIR="$SHOTS/direction" \
@@ -152,6 +158,7 @@ for LOOK in light dark; do
     run_case "$ID-inbox" \
       "PersonaUITests/LarkAgentModelConfigurationTests/$INBOX_TEST" \
       "$SHOTS/inbox/$LOOK-twin-permission-full-access.png" \
+      "${LOOK_ENV[@]}" \
       TEST_RUNNER_PERSONA_MOCK_HUB="$MODEL_HUB" \
       TEST_RUNNER_PERSONA_MODEL_SHOTS="$SHOTS/inbox"
   done
