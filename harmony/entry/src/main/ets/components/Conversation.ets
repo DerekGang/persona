@@ -132,6 +132,13 @@ interface MeasuredReadingRow {
   tail?: ConversationLine;
 }
 
+interface ReadingFrameOrigin {
+  scale: number;
+  width: number;
+  epoch: number;
+  rows: Map<number, MeasuredReadingRow>;
+}
+
 class ConversationLine {
   id: string;
   readingId: string;
@@ -199,6 +206,8 @@ export struct Conversation {
   private measuredWidth: number = -1;
   private precedingRows: Map<number, MeasuredReadingRow> = new Map();
   private precedingScale: number = -1;
+  private lastReadingFrame: ReadingFrameOrigin | undefined;
+  private priorReadingFrame: ReadingFrameOrigin | undefined;
   private scrollingByHand: boolean = false;
   private lastManualAnchor: ReadingAnchor | undefined = undefined;
   private manuallyReading: boolean = false;
@@ -293,6 +302,7 @@ export struct Conversation {
     if (this.readingKey === key) return;
     this.manuallyReading = false; this.selectedReadingLine = ''; this.readingMenuLine = ''; this.tailPosition = undefined;
     this.measuredRows.clear(); this.precedingRows.clear();
+    this.lastReadingFrame = undefined; this.priorReadingFrame = undefined;
     this.saveReading(); this.lastManualAnchor = undefined; this.scrollingByHand = false; this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
     const epoch = ++this.readingEpoch, lease = this.model.captureView('reading:' + this.model.target());
     this.readingLease = lease; this.readingCursors.clear(); this.readingFetching = false; this.readingRestoring = true; this.readingAnchorReady = false; this.readingFailed = false;
@@ -483,30 +493,53 @@ export struct Conversation {
       }
     } catch (_) { /* A row may leave the measured native viewport before the callback. */ }
   }
-  private measuredDistanceFromNewest(scale: number): number | undefined {
-    if (this.measuredScale !== scale || this.measuredWidth !== this.availableWidth) return undefined;
+  private captureReadingFrame(scale: number, distance: number): void {
+    if (this.measuredScale !== scale || this.measuredWidth !== this.availableWidth) return;
+    const count = this.lines.length, prefix = this.readingPrefix(), rows = new Map<number,MeasuredReadingRow>();
+    const first = Math.max(0,this.firstVisibleIndex-prefix), last = Math.min(count-1,this.lastVisibleIndex-prefix);
+    try {
+      for (let index = first; index <= last; index++) {
+        const rect = this.scroller.getItemRect(prefix+index);
+        if (rect.height > 0) rows.set(index,{ line:this.lines[index], height:rect.height, count:count,
+          tail:this.lines[count-1], atNewest:rect.y-this.transcriptHeight-distance });
+      }
+    } catch (_) { return; }
+    if (!rows.size) return;
+    if (this.lastReadingFrame?.scale !== scale) this.priorReadingFrame = this.lastReadingFrame;
+    this.lastReadingFrame = { scale:scale,width:this.availableWidth,epoch:this.readingEpoch,rows:rows };
+  }
+  private readingFrameForSize(scale: number): ReadingFrameOrigin | undefined {
+    if (this.lastReadingFrame?.scale === scale) return this.lastReadingFrame;
+    return this.priorReadingFrame?.scale === scale ? this.priorReadingFrame : undefined;
+  }
+  private measuredDistanceFromNewest(scale: number, reference?: ReadingFrameOrigin): number | undefined {
+    if (reference ? reference.scale !== scale || reference.width !== this.availableWidth || reference.epoch !== this.readingEpoch :
+      this.measuredScale !== scale || this.measuredWidth !== this.availableWidth) return undefined;
     const count = this.lines.length, prefix = this.readingPrefix();
     const first = Math.max(0,this.firstVisibleIndex-prefix), last = Math.min(count-1,this.lastVisibleIndex-prefix);
+    const rows = reference ? reference.rows : this.measuredRows;
     let distance: number | undefined;
-    for (let index = first; index <= last; index++) {
-      const saved = this.measuredRows.get(index);
-      if (saved?.atNewest === undefined || saved.line !== this.lines[index] || saved.count !== count || saved.tail !== this.lines[count-1]) continue;
-      const rect = this.scroller.getItemRect(prefix+index);
-      if (rect.height <= 0 || Math.abs(rect.height-saved.height) >= 0.67) continue;
-      const measured = Math.max(0,rect.y-this.transcriptHeight-saved.atNewest);
-      if (distance !== undefined && Math.abs(measured-distance) > 0.67) return undefined;
-      distance = measured;
-    }
+    try {
+      for (let index = first; index <= last; index++) {
+        const saved = rows.get(index);
+        if (saved?.atNewest === undefined || saved.line !== this.lines[index] || saved.count !== count || saved.tail !== this.lines[count-1]) continue;
+        const rect = this.scroller.getItemRect(prefix+index);
+        if (rect.height <= 0 || Math.abs(rect.height-saved.height) >= 0.67) continue;
+        const measured = Math.max(0,rect.y-this.transcriptHeight-saved.atNewest);
+        if (distance !== undefined && Math.abs(measured-distance) > 0.67) return undefined;
+        distance = measured;
+      }
+    } catch (_) { return undefined; }
     return distance;
   }
-  private readingBoundary(scale: number, requested: number = -1): ReadingBoundary | undefined {
+  private readingBoundary(scale: number, requested: number = -1, reference?: ReadingFrameOrigin): ReadingBoundary | undefined {
     if (this.measuredScale !== scale || this.measuredWidth !== this.availableWidth) return undefined;
     const prefix = this.readingPrefix(), last = Math.min(this.lines.length-1,this.lastVisibleIndex-prefix);
     if (last < 0) return undefined;
     try {
-      const physical = this.measuredDistanceFromNewest(scale);
-      if (requested === this.lines.length && physical !== undefined) {
-        return { nextIndex: requested, fromBottom: physical-this.transcriptEndInset() };
+      if (requested === this.lines.length) {
+        const physical = (reference ? this.measuredDistanceFromNewest(scale,reference) : undefined) ?? this.measuredDistanceFromNewest(scale);
+        if (physical !== undefined) return { nextIndex: requested, fromBottom: physical-this.transcriptEndInset() };
       }
       if (requested >= 0 && requested < this.lines.length) {
         const destination = this.scroller.getItemRect(prefix+requested);
@@ -515,13 +548,11 @@ export struct Conversation {
       }
       const rect = this.scroller.getItemRect(prefix+last);
       if (rect.height <= 0) return undefined;
-      const range = measuredReadingBoundary(last,rect.y+rect.height,this.transcriptHeight,Tokens.gap,this.lines.length,
+      return measuredReadingBoundary(last,rect.y+rect.height,this.transcriptHeight,Tokens.gap,this.lines.length,
         (index: number): number => {
           const row = this.measuredRows.get(index);
           return row && row.line === this.lines[index] ? row.height : 0;
         },requested);
-      return range && range.nextIndex === this.lines.length && physical !== undefined ?
-        { nextIndex: range.nextIndex, fromBottom: physical-this.transcriptEndInset() } : range;
     } catch (_) { return undefined; }
   }
   private distanceFromTranscriptEnd(scale: number): number {
@@ -562,12 +593,12 @@ export struct Conversation {
         count:this.lines.length,lastId:this.lines[this.lines.length-1].readingId };
     } catch (_) { /* A row can leave the measured area before the scroll callback runs. */ }
   }
-  private settleReadingBoundary(index: number, expected: number, scale: number, current: () => boolean): void {
+  private settleReadingBoundary(index: number, expected: number, scale: number, current: () => boolean, reference?: ReadingFrameOrigin): void {
     let previous = NaN, stable = 0, frames = 0, corrections = 0;
     const inspect = (): void => {
       if (!current()) return;
       this.sampleVisibleReadingRows();
-      const measured = this.readingBoundary(scale,index);
+      const measured = this.readingBoundary(scale,index,reference);
       const position = measured ? measured.fromBottom : NaN;
       stable = Math.abs(position-previous) < 0.35 ? stable+1 : 0;
       previous = position; frames++;
@@ -591,9 +622,15 @@ export struct Conversation {
     const crossesClass = readingSizeClassChanges(before, next);
     const range = crossesClass ? undefined : this.readingBoundary(before);
     const boundary = range && range.nextIndex < this.lines.length ? range : undefined;
-    const distance = crossesClass || boundary ? 0 : range ?
-      Math.max(0,range.fromBottom+this.transcriptEndInset()) : this.distanceFromTranscriptEnd(before);
+    const oldFrame = this.readingFrameForSize(before);
+    const observed = !crossesClass && !boundary && oldFrame ? this.measuredDistanceFromNewest(before,oldFrame) : undefined;
+    const distance = crossesClass || boundary ? 0 : observed ??
+      (range ? Math.max(0,range.fromBottom+this.transcriptEndInset()) : this.distanceFromTranscriptEnd(before));
     if (distance < 0) return;
+    const reference = this.readingFrameForSize(next);
+    // Preserve the measured positions before the type change. After returning to a size, native estimates for
+    // off-screen row heights may still be stale even while these same visible rows are correctly placed.
+    if (observed !== undefined || range?.nextIndex === this.lines.length) this.captureReadingFrame(before,distance);
     const epoch = this.readingEpoch, motion = this.readingMotion, target = this.model.target();
     const generation = this.model.connectionGeneration(), scope = this.model.scope();
     const count = this.lines.length, last = this.lines[count-1];
@@ -626,7 +663,7 @@ export struct Conversation {
           this.scroller.scrollToIndex(this.readingPrefix()+count-1,false,ScrollAlign.END,{ extraOffset:LengthMetrics.vp(-distance) });
         }
         this.settleReadingBoundary(boundary ? boundary.nextIndex : count,
-          boundary ? boundary.fromBottom : distance-this.transcriptEndInset(),next,current);
+          boundary ? boundary.fromBottom : distance-this.transcriptEndInset(),next,current,reference);
       };
       this.getUIContext().postFrameCallback(new ConversationFrame(afterResize));
     };

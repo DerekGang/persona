@@ -41,6 +41,15 @@ test('unusable saved reading positions fall back to newest without admitting inv
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 const source=readFileSync(new URL('../entry/src/main/ets/components/Conversation.ets',import.meta.url),'utf8');
+test('initial type-change distance uses the actual measured tail and verification uses the observed endpoint',()=>{
+ const Geometry=new Function('measuredReadingBoundary','Tokens','return '+stripTypeScriptTypes('class Geometry {'+method('readingBoundary')+'}'))(measuredReadingBoundary,{gap:8});
+ const lines=[{},{}];
+ const v=Object.assign(new Geometry(),{lines,measuredScale:1,measuredWidth:402,availableWidth:402,transcriptHeight:626,lastVisibleIndex:0,
+   measuredRows:new Map([[1,{line:lines[1],height:101}]]),readingPrefix:()=>0,transcriptEndInset:()=>44,measuredDistanceFromNewest:()=>88,
+   scroller:{getItemRect:()=>({y:436,height:110})}});
+ assert.deepEqual(v.readingBoundary(1),{nextIndex:2,fromBottom:29});
+ assert.deepEqual(v.readingBoundary(1,2),{nextIndex:2,fromBottom:44});
+});
 test('overlapping native rows reconstruct the physical distance from newest only at the same size and content',()=>{
  const Geometry=new Function('return '+stripTypeScriptTypes('class Geometry {'+method('measuredDistanceFromNewest')+'}'))();
  const lines=[{}, {}, {}],rows=new Map([[0,{line:lines[0],height:52,atNewest:-672,count:3,tail:lines[2]}],[1,{line:lines[1],height:101,atNewest:-612,count:3,tail:lines[2]}]]);
@@ -52,6 +61,19 @@ test('overlapping native rows reconstruct the physical distance from newest only
  assert.equal(v.measuredDistanceFromNewest(1),undefined);
  rows.get(1).atNewest=-612;v.lines=[lines[0],lines[1],{}];
  assert.equal(v.measuredDistanceFromNewest(1),undefined);
+});
+test('returning to a measured type size uses the last reading frame before the layout changed',()=>{
+ const Geometry=new Function('return '+stripTypeScriptTypes('class Geometry {'+['captureReadingFrame','measuredDistanceFromNewest'].map(method).join('\n')+'}'))();
+ const lines=[{}, {}, {}], rects=[{y:-80,height:90},{y:18,height:160},{y:186,height:650}];
+ const v=Object.assign(new Geometry(),{lines,measuredRows:new Map(),measuredScale:1,measuredWidth:402,availableWidth:402,
+   readingEpoch:5,firstVisibleIndex:0,lastVisibleIndex:2,transcriptHeight:626,readingPrefix:()=>0,scroller:{getItemRect:i=>rects[i]}});
+ v.captureReadingFrame(1,547);const reference=v.lastReadingFrame;
+ for(const r of rects)r.y+=88;
+ assert.equal(v.measuredDistanceFromNewest(1,reference),635);
+ assert.equal(v.measuredDistanceFromNewest(1),undefined);
+ assert.equal(v.measuredDistanceFromNewest(19/17,reference),undefined);
+ v.readingEpoch++;assert.equal(v.measuredDistanceFromNewest(1,reference),undefined);
+ v.readingEpoch--;v.lines=[lines[0],lines[1],{}];assert.equal(v.measuredDistanceFromNewest(1,reference),undefined);
 });
 function method(name){
  const match=new RegExp(name==='feedContextChanged' ? 'feedContextChanged\\(\\): void' : '  private (?:async )?'+name+'\\(').exec(source);assert.ok(match,name);const start=match.index,body=source.indexOf('{',start);let depth=1,quote='',escape=false,i=body+1;
@@ -69,7 +91,7 @@ test('only a transition between standard and accessibility reading sizes changes
 
 test('reflow targets only an undisturbed manual reader in this foreground chat',()=>{
  const Reflow=new Function('readingSizeClassChanges','ConversationFrame','ScrollAlign','LengthMetrics','return '+stripTypeScriptTypes(
-   'class Reflow {'+['canReflowManualHistory','keepSelectedReadingVisible','transcriptEndInset','distanceFromTranscriptEnd','settleReadingBoundary','reflowReadingSize'].map(method).join('\n')+'}'))(
+   'class Reflow {'+['canReflowManualHistory','keepSelectedReadingVisible','readingFrameForSize','transcriptEndInset','distanceFromTranscriptEnd','settleReadingBoundary','reflowReadingSize'].map(method).join('\n')+'}'))(
      readingSizeClassChanges,Frame,{END:'end',START:'start'},{vp:value=>value});
  const frames=[],seen=[],posted=[],landings=[];
  const observer={on:(event,handler)=>{assert.equal(event,'didLayout');frames.push(handler);},
@@ -80,7 +102,7 @@ test('reflow targets only an undisturbed manual reader in this foreground chat',
    selectionStart:0,selectionEnd:0,attachments:{attachments:[]},chooser:{},environment:{fontScale:3.2,keyboardHeightPx:0},
    readingEpoch:1,readingMotion:2,typeChange:0,lines:[{readingId:'older'},{readingId:'tail'}],readingPrefix:()=>1,transcriptHeight:626,
    scroller:{getItemRect:()=>({y:0,height:0}),contentSize:()=>({height:1539}),currentOffset:()=>({yOffset:436}),scrollToIndex:(...args)=>landings.push(args)},
-   readingBoundary:()=>undefined,measuredDistanceFromNewest:()=>undefined,sampleVisibleReadingRows:()=>{},
+   readingBoundary:()=>undefined,measuredDistanceFromNewest:()=>undefined,sampleVisibleReadingRows:()=>{},captureReadingFrame:()=>{},
    visibleReadingAnchor:()=>({id:'read',offset:-4,atEnd:false}),rememberTailPosition:()=>{},
    getUIContext:()=>({getUIObserver:()=>observer,postFrameCallback:frame=>posted.push(frame)}),jumpToLatest:()=>seen.push(1)};
  const make=(override={})=>Object.assign(new Reflow(),base,override);
@@ -118,6 +140,13 @@ test('reflow targets only an undisturbed manual reader in this foreground chat',
  while(posted.length)posted.shift().onFrame();
  assert.deepEqual(landings.pop(),[2,false,'end',{extraOffset:-610}]);
  assert.deepEqual(shifts,[[0,88]]);
+ const held={scale:1},saved=[];
+ const revisit=make({environment:{fontScale:19/17,keyboardHeightPx:0},priorReadingFrame:held,
+   readingBoundary:(scale,index)=>scale===1?{nextIndex:2,fromBottom:578}:undefined,
+   measuredDistanceFromNewest:(scale,ref)=>ref===held?610:undefined,
+   captureReadingFrame:(scale,distance)=>saved.push([scale,distance])});
+ revisit.reflowReadingSize(1,19/17);frames[0]();while(posted.length)posted.shift().onFrame();
+ assert.deepEqual(saved,[[1,610]]);assert.deepEqual(landings.pop(),[2,false,'end',{extraOffset:-610}]);
  const changed=make({environment:{fontScale:19/17,keyboardHeightPx:0}});
  changed.reflowReadingSize(1,19/17);frames[0]();changed.readingMotion++;posted.shift().onFrame();
  assert.equal(landings.length,1);
