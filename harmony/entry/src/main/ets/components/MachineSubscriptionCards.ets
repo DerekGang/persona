@@ -4,6 +4,8 @@ import { Tokens } from '../design/Tokens';
 import { tr } from '../design/Strings';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { ClientModel } from '../models/ClientModel';
+import { deviceLook } from '../models/DeviceLook';
+import { deviceLookIconAccent } from '../core/DeviceLook';
 import { MachineSubscriptionUsage,SubscriptionAccount,SubscriptionProvider,SubscriptionWindow,
   subscriptionGroups,usageProviderTitle,usageTicks,usageTimelinePosition } from '../models/MachineSubscriptionUsage';
 
@@ -42,11 +44,16 @@ function resetLabel(at:number,now:number,locale:string):string {
 struct SubscriptionMeter {
   @Require @Param window:SubscriptionWindow;
   @Require @Param expected:number;
+  @Require @Param accent:ResourceColor;
+  private thickness():number {
+    if (Number.isFinite(this.window.protection)) return 12;
+    return Number.isFinite(this.expected) ? 8 : 4;
+  }
   @Local private span:number=0;
   private at(percent:number):number {return Math.max(0,Math.min(100,percent))/100*this.span;}
   private stripes():number[] {
     const width=this.span-this.at(this.window.protection);
-    return width>0 ? Array.from({length:Math.ceil(width/6)},(_:Object,index:number)=>index*6) : [];
+    return width>0 ? Array.from({length:Math.ceil((width+this.thickness())/4)},(_:Object,index:number)=>index*4-this.thickness()) : [];
   }
   build(){
     Column() {
@@ -55,17 +62,17 @@ struct SubscriptionMeter {
           .width(72).textAlign(TextAlign.Center).maxLines(1).position({x:Math.min(Math.max(48,this.at(this.window.protection)),this.span-24)-36,y:0})
       }.width('100%').height(14)
       Stack({alignContent:Alignment.Start}) {
-        Row().width('100%').height(4).borderRadius(2).backgroundColor(Colors.control)
-        Row().width(this.at(this.window.percent)).height(4).borderRadius(2).backgroundColor(this.window.percent>=80 ? Colors.workingMark : Colors.link)
-        if (Number.isFinite(this.window.protection)) {
+        Row().width('100%').height(this.thickness()).borderRadius(this.thickness()/2).backgroundColor(Colors.control)
+        Row().width(this.at(this.window.percent)).height(this.thickness()).borderRadius(this.thickness()/2).backgroundColor(this.window.percent>=80 ? Colors.workingMark : this.accent)
+        if (Number.isFinite(this.window.protection)) Stack({alignContent:Alignment.TopStart}) {
           ForEach(this.stripes(),(x:number)=>{
-            Line().width(5).height(4).startPoint([0,4]).endPoint([4,0]).stroke(Colors.workingMark).strokeWidth(0.7).opacity(0.65)
-              .position({x:this.at(this.window.protection)+x,y:0})
+            Line().width(this.thickness()).height(this.thickness()).startPoint([0,this.thickness()]).endPoint([this.thickness(),0]).stroke(Colors.workingMark).strokeWidth(0.7).opacity(0.65)
+              .position({x:x,y:0})
           },(x:number)=>String(x))
-        }
-        if (Number.isFinite(this.expected)) Row().width(2).height(4).backgroundColor(Colors.secondary).position({x:this.at(this.expected)-1,y:0})
-        if (Number.isFinite(this.window.protection)) Row().width(2).height(4).backgroundColor(Colors.workingMark).position({x:this.at(this.window.protection)-1,y:0})
-      }.height(4).width('100%').clip(true)
+        }.width(Math.max(0,this.span-this.at(this.window.protection))).height(this.thickness()).clip(true).position({x:this.at(this.window.protection),y:0})
+        if (Number.isFinite(this.expected)) Row().width(2).height(8).backgroundColor(Colors.secondary).position({x:this.at(this.expected)-1,y:0})
+        if (Number.isFinite(this.window.protection)) Row().width(2).height(12).backgroundColor(Colors.workingMark).position({x:this.at(this.window.protection)-1,y:0})
+      }.height(this.thickness()).width('100%').clip(true)
     }.width('100%').onAreaChange((_:Area,a:Area)=>{this.span=Number(a.width);}).accessibilityLevel('no')
   }
 }
@@ -76,6 +83,7 @@ struct SubscriptionTimeline {
   @Require @Param now:number;
   @Require @Param locale:string;
   @Local private plotWidth:number=0;
+  private weekColor():ResourceColor {return nativeEnvironment.dark ? '#5B9BFF' : '#2E6FD0';}
   private x(reset:number):number { return this.plotWidth*usageTimelinePosition((reset-this.now)/3600000); }
   private caption(h:number):string {return h===0 ? words('now') : h<24 ? words('axis_hours',String(h)) : words('axis_days',String(h/24));}
   @Builder lane(reset:number,color:ResourceColor,height:number) {
@@ -117,13 +125,13 @@ struct SubscriptionTimeline {
           Stack({alignContent:Alignment.Start}) {
             ForEach(usageTicks,(h:number)=>{Row().width(h===0 ? 1.5 : 0.5).height('100%').backgroundColor(h===0 ? Colors.ink : Colors.divider)
               .position({x:Math.min(Math.max(0,this.plotWidth-1),this.plotWidth*usageTimelinePosition(h)),y:0})},(h:number)=>String(h))
-            Column() {this.lane(a.planReset(300,this.now),Colors.teal,6);this.lane(a.planReset(10080,this.now),Colors.link,9)}.width('100%')
+            Column() {this.lane(a.planReset(300,this.now),Colors.teal,6);this.lane(a.planReset(10080,this.now),this.weekColor(),9)}.width('100%')
           }.layoutWeight(1).height(30)
         }.width('100%').height(30).backgroundColor(index%2===0 ? Colors.subtle : Color.Transparent).borderRadius(6)
           .accessibilityGroup(true).accessibilityText([a.name,Number.isFinite(a.planReset(300,this.now)) ? '5h '+resetLabel(a.planReset(300,this.now),this.now,this.locale) : '',
             Number.isFinite(a.planReset(10080,this.now)) ? '7d '+resetLabel(a.planReset(10080,this.now),this.now,this.locale) : ''].filter((s:string)=>!!s).join(', '))
       },(a:SubscriptionAccount)=>a.id)
-      Row({space:12}) {this.legend(words('legend_short'),Colors.teal);this.legend(words('legend_week'),Colors.link)}.accessibilityLevel('no')
+      Row({space:12}) {this.legend(words('legend_short'),Colors.teal);this.legend(words('legend_week'),this.weekColor())}.accessibilityLevel('no')
     }.width('100%').alignItems(HorizontalAlign.Start).id('machines.usage.timeline')
   }
 }
@@ -139,6 +147,10 @@ export struct MachineSubscriptionCards {
   aboutToDisappear():void {clearInterval(this.timer);}
   @Monitor('active') ticking():void {clearInterval(this.timer);if(this.active){this.now=Date.now();this.timer=setInterval(()=>{if(this.model.isAppInForeground())this.now=Date.now();},1000);}}
   @Computed get groups():SubscriptionProvider[] {return subscriptionGroups(this.source.accounts,this.now);}
+  private accent():ResourceColor {
+    const palette=deviceLook.palette(this.model.style),dark=nativeEnvironment.dark;
+    return deviceLookIconAccent(deviceLook.accentId,this.model.style,dark,dark ? palette.dark : palette.light);
+  }
   private locale():string {return !this.model.language || this.model.language==='default' ? i18n.System.getSystemLanguage() : this.model.language;}
   private state(w:SubscriptionWindow,a:SubscriptionAccount):string {
     const pace=w.pace(this.now,a.outdated(this.now));return !Number.isFinite(pace) ? '' : w.percent>pace+5 ? 'over' : w.percent<pace-5 ? 'under' : '';
@@ -167,7 +179,7 @@ export struct MachineSubscriptionCards {
         Blank().layoutWeight(1)
         this.small(resetLabel(w.reset,this.now,this.locale()),Colors.tertiary)
       }.width('100%')
-      SubscriptionMeter({window:w,expected:w.pace(this.now,a.outdated(this.now))})
+      SubscriptionMeter({window:w,expected:w.pace(this.now,a.outdated(this.now)),accent:this.accent()})
     }.alignItems(HorizontalAlign.Start).width('100%').accessibilityGroup(true)
       .accessibilityText([a.name,w.label,w.model,words('used',String(Math.round(w.percent))+'%'),Number.isFinite(w.protection) ? words('protect',String(Math.round(w.protection))) : '',
         this.state(w,a) ? words(this.state(w,a)) : '',resetLabel(w.reset,this.now,this.locale())].filter((v:string)=>!!v).join(', '))
@@ -201,10 +213,10 @@ export struct MachineSubscriptionCards {
   }
   @Builder filterIcon() {
     Stack() {
-      Circle().width('100%').height('100%').fill(this.source.hidden.length ? Colors.link : Color.Transparent).stroke(Colors.link).strokeWidth(1.6)
+      Circle().width('100%').height('100%').fill(this.source.hidden.length ? this.accent() : Color.Transparent).stroke(this.accent()).strokeWidth(1.6)
       Column({space:1.7}) {
         ForEach([10,7,3.5],(width:number)=>{
-          Row().width(width).height(1.4).borderRadius(1).backgroundColor(this.source.hidden.length ? Colors.onAction : Colors.link)
+          Row().width(width).height(1.4).borderRadius(1).backgroundColor(this.source.hidden.length ? Colors.onAction : this.accent())
         },(width:number)=>String(width))
       }
     }.width(Tokens.interfaceFontVp(20,nativeEnvironment.fontScale)).height(Tokens.interfaceFontVp(20,nativeEnvironment.fontScale)).accessibilityLevel('no')
