@@ -1,0 +1,99 @@
+name: Meeting recap dark appearance
+on:
+  push:
+    branches: [verify/13510-meeting-dark]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 65
+    env:
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and archive the iPhone simulator app
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          xcodebuild -version
+          brew install xcodegen
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          xcodegen generate --spec apple/project.yml --project apple
+          xcodebuild -quiet build -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/derived" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          ditto -c -k --keepParent "$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app" "$RUNNER_TEMP/persona-simulator.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: persona-13510-simulator-app
+          path: ${{ runner.temp }}/persona-simulator.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+  capture:
+    needs: build
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: persona-13510-simulator-app
+          path: ${{ runner.temp }}/build
+      - name: Open the pending meeting recap in dark mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          mkdir -p "$RUNNER_TEMP/meeting-shots"
+          mock_log="$RUNNER_TEMP/meeting-shots/mock.log"
+          PORT=18760 MOCK_RECORDING_MINUTES=pending python3 -u scripts/mock/mock_hub.py > "$mock_log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --connect-timeout 2 --fail --silent http://127.0.0.1:18760/api/v1/health; then break; fi
+            if ! kill -0 "$mock_pid" 2>/dev/null; then tail -25 "$mock_log"; exit 1; fi
+            sleep 2
+          done
+          curl --connect-timeout 2 --fail --silent --show-error http://127.0.0.1:18760/api/v1/health
+          curl --fail --silent --show-error -H 'Content-Type: application/json' --data '{"mode":"pending"}' http://127.0.0.1:18760/mock/recording_minutes
+          ditto -x -k "$RUNNER_TEMP/build/persona-simulator.zip" "$RUNNER_TEMP/build"
+          app="$RUNNER_TEMP/build/Persona.app"
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+          sim=$(scripts/app/sim-boot.sh --profile stock "Persona 13510 dark")
+          xcrun simctl ui "$sim" appearance dark
+          xcrun simctl install "$sim" "$app"
+          xcrun simctl launch "$sim" "$bundle_id" \
+            -AppleLanguages '(zh-Hans)' -AppleLocale zh_CN -app.navigation separate -ui.style glass \
+            -pairURL 'persona://pair?url=http%3A%2F%2F127.0.0.1%3A18760&token=mock' \
+            -tab assistant -openShellPage recordings -showMeetingSample after-pending
+          for attempt in {1..60}; do
+            grep -q 'GET /api/v1/kb/recordings/' "$mock_log" && break
+            sleep 2
+          done
+          grep 'GET /api/v1/kb/recordings/' "$mock_log"
+          sleep 5
+          xcrun simctl io "$sim" screenshot "$RUNNER_TEMP/meeting-shots/after-dark-pending.png"
+          test -s "$RUNNER_TEMP/meeting-shots/after-dark-pending.png"
+      - name: Save visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-13510-dark-appearance
+          path: ${{ runner.temp }}/meeting-shots
+          if-no-files-found: warn
+          retention-days: 7
