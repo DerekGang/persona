@@ -13,6 +13,8 @@ import { DashboardPoint, MachineAgent, MachineAlert, MachineReading, machineAgen
   dashboardLabelTicks, dashboardTickLeft, machineTrace, osFamily, percentOf } from '../models/MachineDashboard';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { MachineChart } from './MachineChart';
+import { MachineSubscriptionUsage,SubscriptionAccount } from '../models/MachineSubscriptionUsage';
+import { MachineSubscriptionCards } from './MachineSubscriptionCards';
 
 const MARKS: Record<string,Resource> = {
   'macos':$r('app.media.machine_os_macos'), 'ubuntu':$r('app.media.machine_os_ubuntu'), 'debian':$r('app.media.machine_os_debian'),
@@ -143,6 +145,7 @@ export struct MachineDirectory {
   @Event onDetails: (row: ResourceRow) => void = () => {};
   @Event onSession: (row: ResourceRow) => void = () => {};
   @Local private readings: Map<string,MachineReading> = new Map();
+  @Local private subscriptionUsage: MachineSubscriptionUsage = new MachineSubscriptionUsage();
   @Local private detailSample: MachineReading | undefined = undefined;
   @Local private chartEnd: number = Math.floor(Date.now()/1000);
   @Local private loading: boolean = false;
@@ -157,7 +160,7 @@ export struct MachineDirectory {
   private bound: string = '';
 
   aboutToAppear(): void { this.sync(true); }
-  aboutToDisappear(): void { this.stop(); }
+  aboutToDisappear(): void { this.stop(); this.subscriptionUsage.cancel(); }
   @Monitor('active','settingsScope','model.profile','model.connected')
   contextChanged(): void { this.sync(true); }
   @Monitor('selected') selectedChanged(): void {
@@ -171,6 +174,8 @@ export struct MachineDirectory {
   }
   private sync(roster:boolean):void {
     this.stop();
+    this.subscriptionUsage.retainOwners(this.model);
+    if (!this.active || this.selected) this.subscriptionUsage.cancel();
     const identity = JSON.stringify([this.model.scope(),this.selected?.key()]);
     if (this.bound !== identity) {
       this.bound = identity; this.readings = new Map(); this.detailSample = undefined; this.expanded = false;
@@ -187,6 +192,7 @@ export struct MachineDirectory {
         try { await root.refreshDirectory(); } catch (_) { /* The known roster can still be rendered. */ }
       }
       if (!live()) return;
+      if (!this.selected) this.subscriptionUsage.refresh(root,roster).catch(()=>{});
       if (this.selected) {
         const target = this.selected, owner = root.directoryOwnerFor(target), range = this.range;
         if (!owner?.connected) { this.failed = true; return; }
@@ -788,6 +794,9 @@ export struct MachineDirectory {
             },(group:string) => group)
           } else {
             ForEach(this.cards,(c:ComputerCard) => { ListItem() { this.summary(c,false) } },(c:ComputerCard) => c.stamp)
+          }
+          if (this.subscriptionUsage.accounts.some((a:SubscriptionAccount)=>a.visible(this.chartEnd*1000))) ListItem() {
+            MachineSubscriptionCards({source:this.subscriptionUsage,model:this.model,active:this.active})
           }
           if (!this.cards.length && !this.loading) ListItem() {
             Column({space:8}) {

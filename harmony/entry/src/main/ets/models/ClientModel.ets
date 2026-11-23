@@ -466,6 +466,7 @@ export class ClientModel {
   }
   owns(generation: number, scope: string): boolean { return !this.retired && generation === this.generation && scope === this.scope(); }
   isChat(): boolean { return this.selected.kind === 'conversation' || this.selected.kind === 'session'; }
+  isAppInForeground(): boolean { return !this.retired && this.foreground; }
   isForegroundChat(): boolean { return !this.retired && this.foreground && this.chatVisible && this.isChat(); }
   reportError(error: Error): void { this.failure(error); }
   operationBlocked(path: string): boolean { return this.unresolvedWrites.some((record: MutationRecord) => record.path === path); }
@@ -1579,6 +1580,7 @@ export class ClientModel {
   }
   private viewKey(key: string): string {
     if (key === 'agent-hub-mode') return 'device:agent-hub-mode';
+    if (key === 'usage.hiddenProviders') return 'device:usage.hiddenProviders';
     return 'view:' + (key === 'ssh-tunnel' ? scopeKey({ groupId: this.profile.id, managerId: '' }) : this.scope()) + ':' + key;
   }
   viewRevision(key: string): number { return this.local.revision(this.viewKey(key)); }

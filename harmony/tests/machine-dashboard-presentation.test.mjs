@@ -139,7 +139,7 @@ test('overview keeps a failed manager’s last sample while removing vanished or
   const owner=(group,answer)=>({connected:true,profile:{id:group,manager:'default'},scope:()=>group,connectionGeneration:()=>2,owns:()=>true,repo:()=>({call:answer})});
   const a=owner('home',async()=>({machines:[{machine_id:'mac',latest:{cpu:20}},{machine_id:'unlisted',latest:{cpu:80}}]}));
   const b=owner('travel',async()=>{throw Error('temporarily offline')});
-  Object.assign(d,{model:{scope:()=> 'global',connectionGeneration:()=>1,owns:()=>true,directoryOwners:()=>[a,b]},
+  Object.assign(d,{subscriptionUsage:{refresh:async()=>{}},model:{scope:()=> 'global',connectionGeneration:()=>1,owns:()=>true,directoryOwners:()=>[a,b]},
     visibleRows:[row('home','mac'),row('travel','mac')],active:true,revision:1,range:0,
     readings:new Map([[machineKey('travel','default','mac'),new MachineReading({latest:{cpu:13}})],
       [machineKey('gone','default','mac'),new MachineReading({latest:{cpu:88}})]])});
@@ -147,6 +147,18 @@ test('overview keeps a failed manager’s last sample while removing vanished or
   assert.deepEqual([...d.readings.keys()].sort(),[machineKey('home','default','mac'),machineKey('travel','default','mac')].sort());
   assert.equal(d.readings.get(machineKey('home','default','mac')).latest.cpu,20);
   assert.equal(d.readings.get(machineKey('travel','default','mac')).latest.cpu,13);
+});
+
+test('both Machines entry points load subscription windows with their authenticated client',async()=>{
+  const model={scope:()=> 'only',connectionGeneration:()=>1,owns:()=>true,directoryOwners:()=>[]};
+  const calls=[];
+  for (const settingsScope of [false,true]) {
+    const page=Object.assign(new Directory(),{model,settingsScope,active:true,revision:1,visibleRows:[],readings:new Map(),
+      subscriptionUsage:{refresh:async(client,force)=>calls.push([client,force])}});
+    await page.load(1,false);
+    assert.equal(page.failed,false);
+  }
+  assert.deepEqual(calls,[[model,false],[model,false]]);
 });
 
 const chartSource=readFileSync(new URL('../entry/src/main/ets/components/MachineChart.ets',import.meta.url),'utf8');
