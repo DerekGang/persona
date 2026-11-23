@@ -234,7 +234,7 @@ function readableBubble(fill: string, suppliedText: string | undefined): [string
 function styleColors(style: string, dark: boolean): DeviceLookColorSet {
   const brand = style === 'system' ? '#0071E3' : dark ? '#9BB4FF' : '#0055FF';
   const bubbles: Record<string, [string, string]> = {
-    system: ['#DCEAFF', '#233B57'],
+    system: ['#DCEAFF', '#1D3557'],
     glass: ['#E0EDFF', '#263E61'],
     brief: ['#F1EADB', '#403B2E'],
     board: ['#DCE8F4', '#283A4D']

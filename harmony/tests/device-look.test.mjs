@@ -103,3 +103,13 @@ test('mid-gray supplied bubble text reaches contrast through the better endpoint
  const pack=parseDeviceLookPackage(input),palette=deviceLookPalette('avatar','glass',pack.colors);
  assert.ok(contrastRatio(palette.light.userBubble,palette.light.userBubbleText)>=4.5);assert.ok(contrastRatio(palette.dark.userBubble,palette.dark.userBubbleText)>=4.5);
 });
+
+test('system chat uses the native Glass user bubble while explicit accents retain their own pair',()=>{
+ const system=deviceLookPalette('style','system',undefined);
+ assert.equal(system.light.userBubble,'#DCEAFF');
+ assert.equal(system.dark.userBubble,'#1D3557');
+ assert.equal(system.dark.userBubbleText,'#FFFFFF');
+ assert.ok(contrastRatio(system.dark.userBubble,system.dark.userBubbleText)>=4.5);
+ assert.notEqual(deviceLookPalette('style','board',undefined).dark.userBubble,system.dark.userBubble);
+ assert.equal(deviceLookPalette('coral','system',undefined).dark.userBubble,'#AF4C28');
+});

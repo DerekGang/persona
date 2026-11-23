@@ -1925,7 +1925,9 @@ export struct Conversation {
         else Column() { this.interactionContent() }.width('100%')
           .height(Math.max(1, Math.min(this.controlsHeight, this.maxControlsHeight())))
       }
-    }.width('100%').height('100%').backgroundColor(Colors.canvas).expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    }.width('100%').height('100%')
+      .backgroundColor(this.model.style === 'system' ? this.environment.dark ? Color.Black : Color.White : Colors.canvas)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .bindSheet($$this.attachmentSheet, this.attachmentContent(), { title: { title: tr(this.contextKind === 'knowledge' ? 'knowledge' : this.contextKind === 'todo' ? 'todos' : this.contextKind === 'inbox' ? 'inbox' : 'attach') }, height: SheetSize.LARGE, showClose: true, onAppear: () => { this.attachmentLayoutReady = true; this.measureAttachment(); }, onDisappear: () => this.attachmentLayoutReady = false })
       .onAreaChange((_before: Area, area: Area): void => {
       const height = Number(area.height);
