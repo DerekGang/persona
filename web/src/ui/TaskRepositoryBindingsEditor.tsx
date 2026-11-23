@@ -294,13 +294,29 @@ const isUnsupported = (error: unknown) => error instanceof ApiError && error.sta
 /** A to-do's own PR, as the page already parses it (the editor does not read the stage bar, a first-screen chunk). */
 type LegacyPR = { url: string; text: string };
 type TodoRepositoryBindingsProps = { manager: string; owner: string; todoId: string; legacyPRs?: LegacyPR[]; prStatus?: PRFacts; otherPRs?: PRFacts[]; version?: unknown };
+
+function hasNewPRLinkTitle(previous: Map<string, PRFacts>, current: Map<string, PRFacts>, saved?: TaskRepositorySet) {
+  if (previous === current) return false;
+  const changed = (url: string) => {
+    const title = current.get(url)?.title?.trim();
+    return !!title && title !== previous.get(url)?.title?.trim();
+  };
+  // While a read is in flight we don't yet know which links its answer will contain.
+  if (!saved) return [...current.keys()].some(changed);
+  return saved.repositories.some(({ links }) => links.some((link) => link.kind === "pull_request" && changed(normalizedPR(link.canonical_url))));
+}
+
 export function TodoRepositoryBindings(props: TodoRepositoryBindingsProps) {
   return <TodoRepositoryBindingsSession key={`${props.owner}:${props.manager}:${props.todoId}`} {...props} />;
 }
 function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [], prStatus, otherPRs, version }: TodoRepositoryBindingsProps) {
   const prByURL = useMemo(() => {
-    const facts = new Map(otherPRs?.map((pr) => [normalizedPR(pr.url), pr]));
+    const facts = new Map<string, PRFacts>();
     if (prStatus) facts.set(normalizedPR(prStatus.url), prStatus);
+    for (const pr of otherPRs ?? []) {
+      const url = normalizedPR(pr.url);
+      if (!facts.has(url)) facts.set(url, pr); // Earlier observations arrive newest first.
+    }
     return facts;
   }, [prStatus, otherPRs]);
   const context = useRequestContext(manager, owner);
@@ -321,8 +337,7 @@ function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [],
   const loads = useRef(0);
   const editingNow = useRef(editing);
   editingNow.current = editing;
-  const versionNow = useRef(version);
-  versionNow.current = version;
+  const versionNow = useRef(0);
   // A version change while the dialog is open or opening must not start a competing read: its answer could replace the
   // user's draft or the revision the dialog edits from. It is remembered and read after the dialog closes instead.
   const editorPending = useRef(false);
@@ -332,10 +347,10 @@ function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [],
   const busyOwner = useRef(0);
   const beginBusy = useCallback(() => { const token = ++busyOwner.current; setBusy(true); return token; }, []);
   const endBusy = useCallback((token: number) => { if (token === busyOwner.current) setBusy(false); }, []);
-  const inFlight = useRef<{ id: number; version: unknown; promise: Promise<TaskRepositorySet | undefined> } | undefined>(undefined);
+  const inFlight = useRef<{ id: number; version: number; promise: Promise<TaskRepositorySet | undefined> } | undefined>(undefined);
   // A read belongs to the version it began from. Reusing one that began before a version change would answer with the
   // state before the notification; the invalidated read returns undefined, so a fresh one is needed instead.
-  const startRead = useCallback((forVersion: unknown) => {
+  const startRead = useCallback((forVersion: number) => {
     const id = ++loads.current;
     const promise = loadTaskRepositories(context, todoId).then(
       (result) => id === loads.current && context.isCurrent() ? result : undefined,
@@ -349,10 +364,9 @@ function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [],
     if (editingNow.current || editorPending.current) { pendingRefresh.current = true; return; }
     setSaved(result); setDraft(repositoryDraft(result.repositories)); setUnsupported(false);
   }, [context]);
-  // Viewing reads the store: the Agent keeps it, so the detail is its newest word without opening an editor. StrictMode
-  // runs this effect twice (and the version re-runs it), so a second run adopts the read that is still current instead
-  // of starting a duplicate; one that did not would leave the section on its spinner for good.
+  // Viewing and editing share the same read generation so a late result cannot replace a newer repository revision.
   const [attempt, setAttempt] = useState(0);
+  const previousNotice = useRef<{ version: unknown; attempt: number; prByURL: Map<string, PRFacts> }>(undefined);
   const refresh = useCallback(async () => {
     if (!context.isCurrent()) return;
     const busy = beginBusy();
@@ -377,9 +391,15 @@ function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [],
   }, [context, beginBusy, endBusy, applyLoaded, startRead]);
   useEffect(() => {
     if (!context.isCurrent()) return;
+    const previous = previousNotice.current;
+    previousNotice.current = { version, attempt, prByURL };
+    // A manager title write advances the repository revision independently of the to-do's updated_at.
+    if (previous && Object.is(previous.version, version) && previous.attempt === attempt
+      && !hasNewPRLinkTitle(previous.prByURL, prByURL, inFlight.current ? undefined : saved)) return;
+    versionNow.current++;
     if (editingNow.current || editorPending.current) { pendingRefresh.current = true; return; }
     void refresh();
-  }, [context, todoId, version, attempt, refresh]);
+  }, [context, version, attempt, prByURL, saved, refresh]);
   // A completed close (save or cancel) fulfils the refresh that was held back while editing.
   useEffect(() => {
     if (editing || editorPending.current || !pendingRefresh.current || !context.isCurrent()) return;
