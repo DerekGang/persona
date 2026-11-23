@@ -7683,6 +7683,10 @@
     {
       "name": "phone_decision_shorter",
       "value": "Make card shorter"
+    },
+    {
+      "name": "phone_decision_full_text",
+      "value": "Show Full Text"
     }
   ]
 }

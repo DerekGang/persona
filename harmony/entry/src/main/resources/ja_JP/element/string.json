@@ -7683,6 +7683,10 @@
     {
       "name": "phone_decision_shorter",
       "value": "カードを低くする"
+    },
+    {
+      "name": "phone_decision_full_text",
+      "value": "全文を表示"
     }
   ]
 }

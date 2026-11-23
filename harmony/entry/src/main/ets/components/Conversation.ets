@@ -535,8 +535,8 @@ export struct Conversation {
   private maxControlsHeight(): number {
     // The shell already resizes this view to the top of the IME.
     if (this.environment.keyboardHeightPx > 0) return this.availableHeight;
-    if (!this.model.decision) return this.assistantDockVisible && this.model.selected.kind==='conversation' ?
-      this.availableHeight : this.availableHeight*0.8;
+    if (this.assistantDockVisible && this.model.selected.kind==='conversation') return this.availableHeight;
+    if (!this.model.decision) return this.availableHeight*0.8;
     if (this.model.selected.kind === 'session') return this.availableHeight;
     const half = this.availableHeight * Tokens.decisionFraction;
     return this.model.decision.kind === 'question' ? Math.max(half, this.availableHeight - 72) : half;

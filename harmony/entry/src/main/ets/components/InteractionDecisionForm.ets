@@ -31,6 +31,43 @@ export struct InteractionDecisionForm {
   @Param resizeDock: boolean = false;
   @Event onDockResize:(phase:string,delta:number)=>void = (_phase:string,_delta:number)=>{};
   @Local private dockTitleHeight: number = 0;
+  @Local private planNaturalHeight: number = 0;
+  @Computed get dockPlanPreview(): string {
+    return this.taskPlanSource().split('\n',31).slice(0,30).join('\n');
+  }
+  private dockPlanLines():number {
+    const scale=nativeEnvironment.fontScale;
+    const points=17*(scale<=1 ? scale : 1+(scale-1)*(48/17-1)/(3.2-1));
+    return Math.max(1,points*1.45);
+  }
+  private dockPlanShownHeight():number {
+    const full=this.planNaturalHeight;
+    if (!full) return 0;
+    const line=this.dockPlanLines(), cap=this.dockBodyLimit(), toggle=this.agentFontSize(13)*1.2+4;
+    const lines=Math.max(2,Math.min(8,Math.floor((cap-toggle+0.5)/line)));
+    const shown=Math.min(full,lines*line);
+    return this.dockPlanPreview.length===this.taskPlanSource().length && full-shown<2.5*line ? full : shown;
+  }
+  @Builder dockPlanWords() {
+    Column({space:4}) {
+      Scroll() {
+        Column() {
+          MarkdownText({text:this.dockPlanPreview,chatReply:true,recapReading:true,dockPlan:true,onLink:this.onLink})
+        }.width('100%').onAreaChange((_before:Area,area:Area):void => {
+          const h=Number(area.height);if (h>0 && Math.abs(h-this.planNaturalHeight)>0.5) this.planNaturalHeight=h;
+        })
+      }.width('100%').height(this.planNaturalHeight ? this.dockPlanShownHeight() : undefined)
+        .scrollBar(BarState.Off).enableScrollInteraction(false).align(Alignment.TopStart)
+      if (this.dockPlanPreview.length<this.taskPlanSource().length || this.planNaturalHeight>this.dockPlanShownHeight()+1) Button({type:ButtonType.Normal}) {
+        Row({space:4}) {
+          Text(tr('phone_decision_full_text')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontWeight(FontWeight.Medium).fontColor(Colors.link)
+          SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12,nativeEnvironment.fontScale)).fontColor([Colors.link])
+        }
+      }.padding(0).backgroundColor(Color.Transparent).height(this.agentFontSize(13)*1.2)
+        .responseRegion({x:0,y:-6,width:'100%',height:36}).accessibilityText(tr('phone_decision_full_text'))
+        .onClick(() => { if (this.admission()) this.fullPlan=true; }).id('interaction.task.plan.expand')
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
   @Param agentCard: boolean = false;
   @Param dockSource: string = '';
   @Event onDockFold: () => void = () => {};
@@ -982,7 +1019,7 @@ export struct InteractionDecisionForm {
       if (!this.cardFolded) Column({space:12}) {
         Scroll() {
           Column() {
-            if (this.taskQueue && this.request.kind==='plan') MarkdownText({text:this.taskPlanSource(),chatReply:true,recapReading:true,dockPlan:true,onLink:this.onLink})
+            if (this.taskQueue && this.request.kind==='plan') this.dockPlanWords()
             else this.formBody()
           }.width('100%').alignItems(HorizontalAlign.Start).onAreaChange((_before:Area,area:Area):void => {
             const h=Number(area.height);if (h>0 && Math.abs(h-this.inlineBodyHeight)>0.5) this.inlineBodyHeight=h;

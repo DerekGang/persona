@@ -7683,6 +7683,10 @@
     {
       "name": "phone_decision_shorter",
       "value": "缩短卡片"
+    },
+    {
+      "name": "phone_decision_full_text",
+      "value": "查看全文"
     }
   ]
 }
