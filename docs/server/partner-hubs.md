@@ -138,9 +138,13 @@ Hubs dial each other directly, through a proxy, or both:
 - `hub_send {hub, text, reply_to?}`: `hub` is a partner's hub_id or a name only one partner has; `text` is what the
   assistant wrote, at most 12,000 characters. Only that text is sent: never transcripts, files, the knowledge base or
   anything else automatically. Before anything is stored or shown, the characters nobody would see on the card are
-  removed (Unicode tag characters, bidirectional embeddings, overrides and isolates, zero-width space, word joiner,
-  byte order mark, soft hyphen, Mongolian vowel separator; the zero-width joiner and non-joiner stay, emoji and scripts
-  need them), so what goes is exactly what the card shows, and credentials are scrubbed
+  removed: every Unicode format character (tag characters, bidirectional embeddings, overrides and isolates, zero-width
+  space, word joiner, byte order mark, soft hyphen, the invisible operators) and every other default-ignorable one (the
+  fillers, the variation selectors that carry a byte each after any character). What emoji and scripts need stays, one
+  at a time: after each character, at most one emoji or Mongolian variation selector and then one zero-width joiner,
+  non-joiner or directional mark (as in 🏳️‍🌈); a longer run of them, which could spell out text of its own, loses the
+  rest. The marks that stand before Arabic and Syriac numbers show, and stay. So what goes is what the card shows, and
+  credentials are scrubbed
   (`transcript.SanitizeShareText`: private keys, Bearer tokens, `name=value` secrets, known token formats, credentials in
   URLs; plus Persona's own `jd_`, `jp_`, `jx_`, `jb_`, `jc_`, `jh_` and `pext_` tokens); the tool says how many of each
   it removed. At most 20 messages and replies go to one partner in 10 minutes; past that the tool refuses (the count and
@@ -313,11 +317,12 @@ Types in `server/internal/assistantwire/partners.go`.
   conversation). Like other permission cards, it does not check which device answered: an allow from an extension
   granted `agents.control`, or from a device using the hub's token, approves it too.
 - **A partner's text is bounded and cleaned**: names and refusal reasons from the other hub lose control and
-  bidirectional formatting characters (names at most 64 characters, reasons 300); envelope text is at most 64 KiB at the
+  bidirectional formatting characters (names at most 64 characters, reasons 300), and a name the manager quotes to the
+  model or shows in a card loses the invisible characters too ("Sending"); envelope text is at most 64 KiB at the
   hub and 12,000 characters at the manager, keeps no control characters but line breaks and tabs and none of the
   invisible characters a model reads and the chat does not show (tag characters, bidirectional overrides and the like,
   "Sending"), is scrubbed again, and goes into the conversation as the message's own words after Persona's framing
-  block, with the `<` of every tag in it (a `<`, spaces, a `/` or none, and a letter) written as `&lt;`
+  block, with the `<` of every tag in it (a `<`, spaces, slashes or backslashes or none, and a letter) written as `&lt;`
   (`prompts.PlainWords`), so it can neither open, close nor forge a context block, a file, a photo, a note the apps hide
   and the model takes for Persona's or the runtime's, another session's or a teammate's message, a task's notification
   or a command, whose tags the node's transcript reader would otherwise read as the whole message with another sender
@@ -437,7 +442,8 @@ Headless hubs can do the same from a shell on the hub machine: `personad hub par
 - **Manager** (`server/internal/assistant/partner_test.go`, a fake hub, Postgres): `TestGoldenPartnerPrompts`,
   `TestPartnerToolsOnlyWhilePaired`, `TestHubSendAsksAndSendsOnAllow`, `TestHubSendDeclinedOrExpiredIsTold`,
   `TestHubSendAlwaysStopsAsking`, `TestHubSendScrubs`, `TestPartnerHiddenCharactersGoNeitherWay` (the card's text is
-  what goes; nothing invisible either way), `TestHubSendReplyToAndHopLimit`, `TestHubSendRefusesHealthAndGuests`,
+  what goes; nothing invisible either way), `TestPartnerScrubLeavesNoInvisibleRun` (every spelling of nothing, no run
+  of the kept joiners and marks, emoji and scripts as written), `TestHubSendReplyToAndHopLimit`, `TestHubSendRefusesHealthAndGuests`,
   `TestHubSendRefusesOutwardJustMeAndWork`, `TestPartnerAnswerOnlyTheOwnersYes`, `TestPartnerReceiveDeliversOnceIntoMain`,
   `TestPartnerReceiveRefusals`, `TestPartnerReplyGoesToTheAskingConversation`, `TestPartnerStatusUpdatesTheMessage`,
   `TestPartnerOfflineThenOnline`, `TestPartnerRestartAsksAgain`, `TestPartnerQueueExpires`,

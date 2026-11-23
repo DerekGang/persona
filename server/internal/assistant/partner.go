@@ -405,9 +405,11 @@ func (s *Service) partnerList(ctx context.Context) (assistantwire.PartnerHubs, e
 }
 
 // partnerInline is s as a prompt quotes it outside a context block (a partner's name, how a message began): one line of
-// at most n characters, its angle brackets made look-alikes, so it can neither open nor close a block, and its quote
-// marks too, so it cannot end the quotes the prompts put it in and go on as their own words.
+// at most n characters, without the characters nobody would see (partnerVisible: a name spelling out hidden text to
+// the model), its angle brackets made look-alikes, so it can neither open nor close a block, and its quote marks too,
+// so it cannot end the quotes the prompts put it in and go on as their own words.
 func partnerInline(s string, n int) string {
+	s, _ = partnerVisible(s)
 	return partnerInlineMarks.Replace(clip(oneLine(s), n))
 }
 

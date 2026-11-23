@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -159,32 +160,67 @@ func (s *Service) partnerHubFor(ctx context.Context, hub string) (assistantwire.
 var partnerTokenRe = lazyre.New(`\b(?:(?:jd|jp|jx|jb|jc|jh)_[A-Za-z0-9_-]{16,}|pext_[A-Za-z0-9_-]{8,})`)
 
 // partnerHidden is a character nobody sees where it is shown but a model reads, or one that reorders what is shown
-// around it: Unicode tag characters (which spell out text of their own), bidirectional embeddings, overrides and
-// isolates, and the invisible format characters (zero-width space, word joiner, byte order mark, soft hyphen,
-// Mongolian vowel separator). Zero-width joiner and non-joiner stay: emoji and scripts need them.
+// around it: every Unicode format character (tag characters, which spell out text of their own; bidirectional
+// embeddings, overrides and isolates; zero-width space, word joiner, byte order mark, soft hyphen, the invisible
+// operators, the interlinear annotation marks...) and every other default-ignorable one (the fillers, the variation
+// selectors past the emoji's two, which carry a byte each after any character, the rest of the tag plane). What
+// scripts and emoji need stays, one at a time (partnerVisible): the zero-width joiner and non-joiner, the directional
+// marks right-to-left text uses, an emoji's or a Mongolian letter's variation selector; and the marks that stand
+// before Arabic and Syriac numbers, which show.
 func partnerHidden(r rune) bool {
 	switch {
-	case r >= 0xE0000 && r <= 0xE007F, r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
+	case partnerMark(r):
+		return false
+	case r >= 0xE0000 && r <= 0xE0FFF, r >= 0xFE00 && r <= 0xFE0D:
 		return true
+	case unicode.Is(unicode.Cf, r):
+		return !unicode.Is(unicode.Prepended_Concatenation_Mark, r)
 	}
+	return unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
+}
+
+// partnerMark is an invisible character scripts and emoji need between two that show: zero-width non-joiner and joiner,
+// and the left-to-right, right-to-left and Arabic letter marks.
+func partnerMark(r rune) bool {
 	switch r {
-	case 0x200B, 0x2060, 0xFEFF, 0x00AD, 0x180E:
+	case 0x200C, 0x200D, 0x200E, 0x200F, 0x061C:
 		return true
 	}
 	return false
 }
 
-// partnerVisible is text without its hidden characters (partnerHidden), and how many there were.
+// partnerVisible is text without its hidden characters (partnerHidden), and how many there were. The invisible ones it
+// keeps go one at a time: after each character that shows (or a space, or the start), at most a variation selector
+// and then at most a joiner or mark (as 🏳️‍🌈 has them); any more of them in a row is dropped too, so no run of them
+// spells out text of its own.
 func partnerVisible(text string) (string, int) {
 	n := 0
-	text = strings.Map(func(r rune) rune {
-		if partnerHidden(r) {
-			n++
-			return -1
+	var b strings.Builder
+	b.Grow(len(text))
+	selector, mark := false, false // what follows the last character that shows
+	for _, r := range text {
+		switch {
+		case partnerHidden(r):
+		case unicode.Is(unicode.Variation_Selector, r):
+			if !selector && !mark {
+				selector = true
+				b.WriteRune(r)
+				continue
+			}
+		case partnerMark(r):
+			if !mark {
+				mark = true
+				b.WriteRune(r)
+				continue
+			}
+		default:
+			selector, mark = false, false
+			b.WriteRune(r)
+			continue
 		}
-		return r
-	}, text)
-	return text, n
+		n++
+	}
+	return b.String(), n
 }
 
 // partnerScrub is text as it goes between this hub and a partner, both ways: without the characters nobody would see
