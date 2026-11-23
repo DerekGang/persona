@@ -2127,8 +2127,7 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		if n.isAssistantSession(p.SessionID) {
 			return ok(n.assistantInterrupt(p.SessionID))
 		}
-		a, live := n.agent(p.SessionID)
-		if !live {
+		if _, live := n.agent(p.SessionID); !live {
 			// A claude outside Persona's panes (the desktop app's, another terminal's): through its inbox (claudebg.go).
 			if handled, err := n.interruptOutside(ctx, p.SessionID); handled {
 				return ok(err)
@@ -2137,14 +2136,35 @@ func (n *Node) handleMethod(ctx context.Context, method string, params json.RawM
 		if err := n.switchingRefusal(p.SessionID); err != nil { // as keys says it, before the turn's state
 			return nil, err
 		}
-		if live && !escStops(a) {
-			// Esc on an idle Claude box quits claude (docs/lessons/agents.md, #10827): a stop that arrives after the
-			// turn ended (a stale "working", a second tap, a stop confirmed on the phone minutes later) presses nothing.
+		// Resolve once, then judge the agent on that actual route. paneFor may discover a host agent or an outside
+		// tmux Claude that the first lookup did not know; both need the same no-Esc-on-idle guard (#10827).
+		pane, err := n.paneFor(ctx, p.SessionID)
+		over := n.turnOver(p.SessionID) // before the key: the Escape itself may end a turn
+		background := over && n.backgroundRuns(p.SessionID)
+		settled := false
+		if err == nil {
+			if a, ok := n.agent(p.SessionID); ok {
+				settled = !n.escStops(ctx, p.SessionID, a)
+			} else if c, ok := n.outsideClaude(p.SessionID); ok && outsidePane(c) == pane {
+				settled = !n.outsideEscStops(ctx, pane, c)
+				// There is no host agent for turnOver here: Claude's own idle/shell status proves the foreground is over.
+				// Keep the background-specific result on this route too, instead of reporting plain not_running (#10828).
+				background = settled && n.backgroundRuns(p.SessionID)
+			}
+		}
+		if settled {
+			if background {
+				// No Escape goes into a finished turn's box (#10827), but a background command still running is not a
+				// successful interruption either: keep #10828's explicit outcome and terminal recovery instruction.
+				return ok(refusal(proto.CodeTurnOverBackground, i18n.T(i18n.From(ctx), "rpc-errors."+proto.CodeTurnOverBackground), nil))
+			}
 			return map[string]any{"ok": true, "settled": true, "not_running": true}, nil
 		}
-		over := n.turnOver(p.SessionID) // before the key: the Escape itself may end a turn
-		err := n.keys(ctx, p.SessionID, []string{"esc"}, "")
-		if err == nil && over && n.backgroundRuns(p.SessionID) {
+		n.dropSuggestion(p.SessionID)
+		if err == nil {
+			err = n.sendKeys(ctx, pane, "esc")
+		}
+		if err == nil && background {
 			// The turn was over before Esc and its background work goes on: said, not claimed as an interruption (#10828).
 			err = refusal(proto.CodeTurnOverBackground, i18n.T(i18n.From(ctx), "rpc-errors."+proto.CodeTurnOverBackground), nil)
 		}
