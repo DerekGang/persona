@@ -57,6 +57,7 @@ type remoteThread struct {
 	joined               bool
 	buffer               *strings.Builder
 	lastDelta            time.Time
+	created              time.Time // local thread/start completed while a loaded-list snapshot was in flight
 	revision             uint64
 	files                map[string][]string
 }
@@ -392,6 +393,7 @@ type remoteThreadData struct {
 }
 
 func (c *codexRemote) refresh() error {
+	snapshot := time.Now()
 	c.mu.Lock()
 	wait, budget := cmp.Or(c.readWait, codexReadWait), cmp.Or(c.refreshWait, codexRefreshWait)
 	c.mu.Unlock()
@@ -586,6 +588,11 @@ dispatch:
 			t.serviceTier, t.serviceTierRevision = old.serviceTier, old.serviceTierRevision
 			t.model, t.effort = old.model, old.effort // an effort just set (codex_effort.go) over a read from before it
 			t.path = old.path
+			next[raw] = t
+		}
+	}
+	for raw, t := range c.threads {
+		if t.created.After(snapshot) {
 			next[raw] = t
 		}
 	}
