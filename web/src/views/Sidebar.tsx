@@ -31,6 +31,7 @@ import { isBackgroundSupervisor } from "../lib/background-supervisor";
 import { setRecentMore, useRecentCount, useRecentMore } from "../lib/sidebar-recent";
 import { countsLabel, directionLabel, totalCounts, useDirectionNames, useLeaderCounts } from "../lib/direction-names";
 import { SidebarDirectionRow } from "./SidebarDirections";
+import { SidebarSpaces } from "./SidebarSpaces";
 import { conversationPage } from "../lib/conversation-page";
 import { href, navigate, onLinkClick, showsSession, type Route } from "../lib/router";
 import { useScrollMemory } from "../lib/scroll-memory";
@@ -384,6 +385,8 @@ export function Sidebar({ route, onSearch, onNewAgent, onNavigate, workspaceActi
         {sections
           .filter((g) => (g.id ? g.pages.length > 0 : !narrow))
           .map((g, i) => <PageGroup key={g.id || "pages"} group={g} more={g.id ? [] : more} first={i === 0 && !narrow} reg={reg} hover={hover} activeKey={activeKey} go={go} />)}
+        {/* the user's domain spaces (#13500), under the pages and their Health */}
+        {chats && <SidebarSpaces reg={reg} hover={hover} activeKey={activeKey} go={go} />}
 
         {chats && (
           <Section

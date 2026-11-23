@@ -162,5 +162,7 @@
   "leader_needs_you": "{count} need you",
   "codex_waiting": "Waiting for its first message",
   "direction_tasks_expand": "Expand the open tasks of {name}",
-  "direction_tasks_collapse": "Collapse the open tasks of {name}"
+  "direction_tasks_collapse": "Collapse the open tasks of {name}",
+  "spaces": "Spaces",
+  "new_space": "New space"
 }
