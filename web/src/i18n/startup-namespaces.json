@@ -289,7 +289,7 @@
   "herdr-notice",
   "hidden-agent-dirs.inspect",
   "home",
-  "hubs",
+  "hubs.switch",
   "lib-add-computer",
   "lib-agent-actions",
   "lib-agent-archives",
