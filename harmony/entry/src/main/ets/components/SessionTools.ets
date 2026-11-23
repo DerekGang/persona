@@ -1507,7 +1507,7 @@ export struct SessionTools {
           }
           if (this.workspace.gitHistoryBusy) ListItem() { LoadingProgress().width(25).height(25) }
           if (this.workspace.gitHistoryError) ListItem() { Text(tr('session_git_history_error')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(9) }
-        }.width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:this.gitMetric(31,41.7,nativeEnvironment.fontScale>=1.5 ? 10 : 27),bottom:12})
+        }.width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page,top:this.phoneSheetHeight !== SheetSize.LARGE ? 35 : (nativeEnvironment.fontScale>=1.5 ? 10 : 27),bottom:12})
         if (this.workspace.gitFiles.length > 0 && this.workspace.canWriteGit()) Row() { this.stagedCommitBar() }
           .width('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:2,bottom:this.gitMetric(14,14,8)})
       } else if (Object.keys(this.workspace.gitStatus).length) {
