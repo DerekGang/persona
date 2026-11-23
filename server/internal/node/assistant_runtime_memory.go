@@ -25,6 +25,34 @@ func isMemoryTool(name string) bool {
 	return name == toolMemoryRead || name == toolMemoryWrite
 }
 
+func (n *Node) recordedRuntimeSessionCwd(session string) string {
+	if n == nil || session == "" {
+		return ""
+	}
+	if n.state != nil {
+		if st, ok := n.state.get(session); ok && st.Cwd != "" {
+			return st.Cwd
+		}
+	}
+	if n.runtimes != nil {
+		if row, _, ok := n.runtimes.rowOf(session); ok && row.Cwd != "" {
+			return row.Cwd
+		}
+	}
+	return ""
+}
+
+func (n *Node) sessionAllowsMemoryTools(session string) (string, bool) {
+	if n == nil || session == "" || n.guestOf(session) != nil {
+		return "", false
+	}
+	cwd := n.recordedRuntimeSessionCwd(session)
+	if cwd == "" || !identity.IsAssistantDir(filepath.Clean(cwd)) {
+		return "", false
+	}
+	return cwd, true
+}
+
 func (n *Node) memoryTools() []proto.Tool {
 	return []proto.Tool{
 		{
@@ -47,9 +75,8 @@ func (n *Node) assistantMemoryTool(_ context.Context, tool, session string, raw 
 	if n.guestOf(session) != nil {
 		return proto.TextResult("Memory tools are not available in guest sessions", true)
 	}
-	st, _ := n.state.get(session)
-	cwd := n.runtimeAssistantCwd(session, st.Cwd, st)
-	if cwd == "" || !identity.IsAssistantDir(filepath.Clean(cwd)) {
+	cwd, ok := n.sessionAllowsMemoryTools(session)
+	if !ok {
 		return proto.TextResult("Memory tools are available only in the assistant workspace", true)
 	}
 
@@ -91,32 +118,14 @@ func (n *Node) assistantMemoryTool(_ context.Context, tool, session string, raw 
 	if dir == "" {
 		return proto.TextResult("Assistant memory directory is unavailable", true)
 	}
-	if err := rejectSymlink(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return proto.TextResult("Invalid memory directory: "+err.Error(), true)
-	}
-
-	target := filepath.Join(dir, args.Name)
-	if err := rejectSymlink(target); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return proto.TextResult("Invalid memory file: "+err.Error(), true)
-	}
-	if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
-		cleanTarget := filepath.Clean(filepath.Join(resolvedDir, args.Name))
-		rel, rerr := filepath.Rel(resolvedDir, cleanTarget)
-		if rerr != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) || rel == "." {
-			return proto.TextResult("Invalid memory file path", true)
-		}
-	}
 
 	if tool == toolMemoryRead {
-		info, err := os.Lstat(target)
+		_, target, err := resolveMemoryTarget(dir, args.Name, false)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return proto.TextResult("Memory file not found: "+args.Name, true)
 			}
 			return proto.TextResult("Cannot read memory file: "+err.Error(), true)
-		}
-		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-			return proto.TextResult("Invalid memory file target", true)
 		}
 		data, err := os.ReadFile(target)
 		if err != nil {
@@ -132,21 +141,12 @@ func (n *Node) assistantMemoryTool(_ context.Context, tool, session string, raw 
 		return proto.TextResult(string(data), false)
 	}
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return proto.TextResult("Cannot create memory directory: "+err.Error(), true)
-	}
-	if err := rejectSymlink(dir); err != nil {
-		return proto.TextResult("Invalid memory directory: "+err.Error(), true)
-	}
-	if info, err := os.Lstat(target); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-			return proto.TextResult("Invalid memory file target", true)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return proto.TextResult("Cannot inspect memory file: "+err.Error(), true)
+	resolvedDir, target, err := resolveMemoryTarget(dir, args.Name, true)
+	if err != nil {
+		return proto.TextResult("Cannot write memory file: "+err.Error(), true)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".mem-*.tmp")
+	tmp, err := os.CreateTemp(resolvedDir, ".mem-*.tmp")
 	if err != nil {
 		return proto.TextResult("Cannot stage memory file: "+err.Error(), true)
 	}
@@ -175,13 +175,37 @@ func (n *Node) assistantMemoryTool(_ context.Context, tool, session string, raw 
 	return proto.TextResult(fmt.Sprintf("Wrote %s (%d bytes).", args.Name, len(*args.Content)), false)
 }
 
-func rejectSymlink(path string) error {
-	info, err := os.Lstat(path)
+// resolveMemoryTarget resolves the memory directory through any user-configured symlink and ensures
+// the note file itself stays inside it without traversing a symlinked note target.
+func resolveMemoryTarget(dir, name string, create bool) (string, string, error) {
+	if create {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", "", err
+		}
+	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("symlinks are not allowed")
+	dinfo, err := os.Stat(resolvedDir)
+	if err != nil {
+		return "", "", err
 	}
-	return nil
+	if !dinfo.IsDir() {
+		return "", "", errors.New("memory directory path is not a directory")
+	}
+	target := filepath.Join(resolvedDir, name)
+	rel, err := filepath.Rel(resolvedDir, filepath.Clean(target))
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) || strings.ContainsRune(rel, filepath.Separator) {
+		return "", "", errors.New("invalid memory file path")
+	}
+	info, err := os.Lstat(target)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+			return "", "", errors.New("symlinks and directories are not allowed as memory note targets")
+		}
+	} else if !create || !errors.Is(err, os.ErrNotExist) {
+		return "", "", err
+	}
+	return resolvedDir, target, nil
 }

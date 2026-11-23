@@ -415,8 +415,12 @@ func (rh *RuntimeHost) request(ctx context.Context, h *runtimeConn, method strin
 		}
 		if assistant && !p.LeaderOnly {
 			res.Tools = append(res.Tools, n.gateTools()...)
-			if h.remoteAgent() && (p.SessionID == "" || n.guestOf(p.SessionID) == nil) {
-				res.Tools = append(res.Tools, n.memoryTools()...)
+			if h.remoteAgent() {
+				if p.SessionID == "" {
+					res.Tools = append(res.Tools, n.memoryTools()...)
+				} else if _, ok := n.sessionAllowsMemoryTools(p.SessionID); ok {
+					res.Tools = append(res.Tools, n.memoryTools()...)
+				}
 			}
 		}
 		if h.isDaemon() {
@@ -454,7 +458,10 @@ func (rh *RuntimeHost) request(ctx context.Context, h *runtimeConn, method strin
 		if g := n.gateTool(p.Name); assistant && g != nil {
 			return n.assistantGateTool(ctx, g, p.SessionID, p.Args), nil
 		}
-		if assistant && h.remoteAgent() && isMemoryTool(p.Name) {
+		if isMemoryTool(p.Name) {
+			if !h.remoteAgent() || !assistant {
+				return proto.TextResult("Memory tools require a remote assistant session", true), nil
+			}
 			return n.assistantMemoryTool(ctx, p.Name, p.SessionID, p.Args), nil
 		}
 		var res json.RawMessage

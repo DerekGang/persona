@@ -214,7 +214,8 @@ func (n *Node) assistantSendRuntime(ctx context.Context, h *runtimeConn, id, cwd
 			live, commit = n.turnContext(id, n.assistantContext(id))
 		}
 		if st.AwaitingFirstMessage {
-			live = strings.TrimSpace(n.runtimeInstructionsWithTools(cwd, memDir, h.remoteAgent()) + "\n" + live)
+			memoryTools := h.remoteAgent() && n.guestOf(id) == nil && cwd != "" && identity.IsAssistantDir(filepath.Clean(cwd))
+			live = strings.TrimSpace(n.runtimeInstructionsWithTools(cwd, memDir, memoryTools) + "\n" + live)
 		}
 	}
 	if len(selected) > 0 {

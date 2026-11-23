@@ -1111,3 +1111,132 @@ func TestRemoteAgentGateWriteRequiresConfirmEvenInBypass(t *testing.T) {
 		t.Fatalf("expected AlwaysKeys to be empty on remote confirm card, got %v", hub.asked[0].AlwaysKeys)
 	}
 }
+
+func TestRemoteAgentMemoryToolsSymlinkDirAndWorkspaceScoping(t *testing.T) {
+	n, hub := runtimeNode(t)
+	assistantHub(hub)
+
+	remoteHost := dialRuntime(t, n, map[string]any{
+		"runtime": "pac", "name": "PAC", "launcher": "pac",
+		"caps": map[string]any{"start": true, "send": true, "interrupt": true, "assistant": true, "remote_agent": true},
+	})
+
+	assistantDir := identity.AssistantDir(n.home)
+	nonAssistantDir := t.TempDir()
+
+	// 1. Symlinked memory directory (~/.claude/projects/<key>/memory -> dotfiles) works, while symlinked note targets are still rejected.
+	realMemDir := t.TempDir()
+	memLink := n.memoryDir(assistantDir)
+	if err := os.MkdirAll(filepath.Dir(memLink), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realMemDir, memLink); err == nil {
+		remoteHost.answer = func(method string, _ json.RawMessage) (any, error) {
+			if method == "session.start" {
+				return map[string]any{"session": map[string]any{"session_id": "pac-sym-1", "cwd": assistantDir, "status": "idle"}}, nil
+			}
+			return map[string]any{"ok": true}, nil
+		}
+		if _, err := nodeCall(t, n, "assistant.send", map[string]any{"launcher": "pac", "cwd": assistantDir, "text": "hello symlink"}); err != nil {
+			t.Fatal(err)
+		}
+		rawWrite, _ := json.Marshal(map[string]any{"name": "MEMORY.md", "content": "# Symlinked\nworks\n"})
+		var wRes proto.ToolResult
+		if err := remoteHost.peer.Call(context.Background(), "mcp.call", map[string]any{
+			"name": "memory_write", "args": json.RawMessage(rawWrite), "session_id": "pac-sym-1", "assistant": true,
+		}, &wRes); err != nil {
+			t.Fatal(err)
+		}
+		if wRes.IsError {
+			t.Fatalf("memory_write through symlinked memory dir failed: %+v", wRes)
+		}
+		rawRead, _ := json.Marshal(map[string]any{"name": "MEMORY.md"})
+		var rRes proto.ToolResult
+		if err := remoteHost.peer.Call(context.Background(), "mcp.call", map[string]any{
+			"name": "memory_read", "args": json.RawMessage(rawRead), "session_id": "pac-sym-1", "assistant": true,
+		}, &rRes); err != nil {
+			t.Fatal(err)
+		}
+		if rRes.IsError || len(rRes.Content) == 0 || rRes.Content[0].Text != "# Symlinked\nworks\n" {
+			t.Fatalf("memory_read through symlinked memory dir mismatch: %+v", rRes)
+		}
+		outside := filepath.Join(t.TempDir(), "outside.md")
+		_ = os.WriteFile(outside, []byte("secret"), 0o600)
+		if err := os.Symlink(outside, filepath.Join(realMemDir, "escape.md")); err == nil {
+			badArgs, _ := json.Marshal(map[string]any{"name": "escape.md", "content": "nope"})
+			var badWrite proto.ToolResult
+			if err := remoteHost.peer.Call(context.Background(), "mcp.call", map[string]any{
+				"name": "memory_write", "args": json.RawMessage(badArgs), "session_id": "pac-sym-1", "assistant": true,
+			}, &badWrite); err != nil {
+				t.Fatal(err)
+			}
+			if !badWrite.IsError {
+				t.Fatalf("expected symlinked note file write inside symlinked memory dir to fail: %+v", badWrite)
+			}
+		}
+	}
+
+	hasTool := func(tools []proto.Tool, name string) bool {
+		return slices.ContainsFunc(tools, func(tool proto.Tool) bool { return tool.Name == name })
+	}
+
+	// 2. Non-assistant workspace: neither instructions nor mcp.tools advertise memory tools, and mcp.call rejects them.
+	remoteHost.answer = func(method string, _ json.RawMessage) (any, error) {
+		if method == "session.start" {
+			return map[string]any{"session": map[string]any{"session_id": "pac-track-1", "cwd": nonAssistantDir, "status": "idle"}}, nil
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	beforeSends := len(remoteHost.got("session.send"))
+	if _, err := nodeCall(t, n, "assistant.send", map[string]any{"launcher": "pac", "cwd": nonAssistantDir, "text": "hello track"}); err != nil {
+		t.Fatal(err)
+	}
+	sends := remoteHost.got("session.send")
+	if len(sends) != beforeSends+1 {
+		t.Fatalf("expected new session.send, got %d", len(sends))
+	}
+	if strings.Contains(string(sends[len(sends)-1]), "memory_read") || strings.Contains(string(sends[len(sends)-1]), "memory_write") {
+		t.Fatalf("non-assistant session instructions unexpectedly mentioned memory tools: %s", sends[len(sends)-1])
+	}
+	var trackTools struct {
+		Tools []proto.Tool `json:"tools"`
+	}
+	if err := remoteHost.peer.Call(context.Background(), "mcp.tools", map[string]any{"assistant": true, "session_id": "pac-track-1"}, &trackTools); err != nil {
+		t.Fatal(err)
+	}
+	if hasTool(trackTools.Tools, "memory_read") || hasTool(trackTools.Tools, "memory_write") {
+		t.Fatalf("non-assistant session should not be advertised memory tools: %+v", trackTools.Tools)
+	}
+	rawRead, _ := json.Marshal(map[string]any{"name": "MEMORY.md"})
+	var trackCall proto.ToolResult
+	if err := remoteHost.peer.Call(context.Background(), "mcp.call", map[string]any{
+		"name": "memory_read", "args": json.RawMessage(rawRead), "session_id": "pac-track-1", "assistant": true,
+	}, &trackCall); err != nil {
+		t.Fatal(err)
+	}
+	if !trackCall.IsError {
+		t.Fatalf("expected non-assistant memory_read call to fail closed: %+v", trackCall)
+	}
+
+	// 3. Session with no recorded cwd fails closed instead of falling back to assistantDir.
+	if err := remoteHost.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "pac-empty-cwd", "status": "idle"}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "empty-cwd runtime session owned", func() bool {
+		_, _, ok := n.runtimes.rowOf("pac-empty-cwd")
+		return ok
+	})
+	var emptyTools struct {
+		Tools []proto.Tool `json:"tools"`
+	}
+	if err := remoteHost.peer.Call(context.Background(), "mcp.tools", map[string]any{"assistant": true, "session_id": "pac-empty-cwd"}, &emptyTools); err != nil {
+		t.Fatal(err)
+	}
+	if hasTool(emptyTools.Tools, "memory_read") || hasTool(emptyTools.Tools, "memory_write") {
+		t.Fatalf("session with empty cwd should not be advertised memory tools: %+v", emptyTools.Tools)
+	}
+	res := n.assistantMemoryTool(context.Background(), "memory_read", "pac-empty-cwd", rawRead)
+	if !res.IsError || len(res.Content) == 0 || !strings.Contains(res.Content[0].Text, "assistant workspace") {
+		t.Fatalf("expected empty cwd to fail closed without falling back to assistant dir, got: %+v", res)
+	}
+}
