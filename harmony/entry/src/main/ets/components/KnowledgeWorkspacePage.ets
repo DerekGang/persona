@@ -944,14 +944,14 @@ export struct KnowledgeWorkspacePage {
           .fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1).maxLines(2)
         Button({type:ButtonType.Capsule}) {
           if (this.workspace.busy) LoadingProgress().width(19).height(19).color(Colors.link)
-          else Text(tr('save')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600).fontColor(Colors.link)
+          else Text(tr('save')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600).fontColor(this.factsChanged() ? Colors.link : Colors.secondary)
         }.height(44).constraintSize({minWidth:50}).padding({left:9,right:9}).backgroundColor(Colors.control)
           .enabled(this.workspace.supportsExpectedPinned && !this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) && this.factsChanged())
           .onClick(() => this.facts.save(this.workspace)).id('knowledge.facts.save')
-      }.width('100%').constraintSize({minHeight:56}).padding({left:16,right:16,top:4,bottom:4})
+      }.width('100%').constraintSize({minHeight:74}).padding({left:16,right:16,top:4,bottom:4})
       Scroll() {
         Column({space:8}) {
-          TextArea({text:this.facts.text,placeholder:tr('phone_kb_confirmed')}).accessibilityText(tr('phone_kb_confirmed'))
+          TextArea({text:this.facts.text}).accessibilityText(tr('phone_kb_confirmed'))
             .width('100%').height(this.recordingMetric(170,214)).padding({left:20,right:20,top:15,bottom:15})
             .fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(25)
             .enabled(!this.workspace.busy).onChange((v:string) => this.facts.edit(v)).id('knowledge.facts.text').onAppear(() => this.focusEmptyFacts())
@@ -966,8 +966,8 @@ export struct KnowledgeWorkspacePage {
           if (this.facts.baseline) Button(tr('recording_facts_delete'),{type:ButtonType.Capsule})
             .width('100%').constraintSize({minHeight:52}).fontColor(Colors.danger).backgroundColor(Colors.surface)
             .enabled(!this.workspace.busy).onClick(() => { this.deleteFacts().catch(() => {}); }).id('knowledge.facts.delete')
-        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:22,bottom:32})
-      }.layoutWeight(1).width('100%')
+        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:30,bottom:32})
+      }.layoutWeight(1).width('100%').align(Alignment.TopStart)
     }.width('100%').height('100%').backgroundColor(Colors.grouped).id('knowledge.facts.sheet')
   }
 
