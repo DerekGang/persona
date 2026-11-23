@@ -29,7 +29,7 @@ it("shows the hub and the message once each", () => {
     summary: `把这条消息发给「家里」？\n\n${text}`, tool_input: { hub: "家里", hub_id: "hub-b", message_id: `pm_${"1".repeat(32)}`, text },
   } as Interaction;
   act(() => root.render(<PermissionBody ix={ix} />));
-  expect([...host.querySelectorAll("pre")].map((p) => p.textContent)).toEqual(["家里", text]);
+  expect([...host.querySelectorAll("pre")].map((p) => p.textContent)).toEqual(["家里 (hub-b)", text]);
   expect(host.textContent).toContain("协作 hub");
   expect(host.textContent).toContain("消息");
   expect(host.textContent).not.toContain("把这条消息发给");

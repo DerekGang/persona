@@ -194,9 +194,11 @@ export function permissionDetail(tool: string | undefined, input: Record<string,
       return { fields };
     }
     // the assistant's message to a partner hub (docs/server/partner-hubs.md): which hub, and the text exactly as it is
-    // sent; the manager's summary is the same question and text
+    // sent; the manager's summary is the same question and text. The hub is named with the start of its hub_id too: its
+    // name is the partner's own choice, so a look-alike name must not pass for another partner.
     case "hub_send": {
-      const hub = s(inp.hub) || s(inp.hub_id);
+      const id = s(inp.hub_id);
+      const hub = s(inp.hub) && id ? `${s(inp.hub)} (${id.slice(0, 8)})` : s(inp.hub) || id;
       const text = typeof inp.text === "string" ? inp.text : "";
       return hub && text.trim() ? { fields: [{ label: "hub", value: hub }, { label: "message", value: text }], whole: true } : null;
     }
