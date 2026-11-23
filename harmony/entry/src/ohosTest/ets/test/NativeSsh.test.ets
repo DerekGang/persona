@@ -170,6 +170,14 @@ export default function nativeSshTests(): void {
       const client = new ClientModel(), draft = new PairingSsh(); let hub = '';
       await client.initialize(nativeTestContext());
       try {
+        const observed = await draft.observeServer(config.sshHost, config.sshPort);
+        expect(observed.algorithm).assertEqual('ssh-ed25519'); expect(observed.fingerprint).assertEqual(config.hostKey);
+        const wrong = config.copy(); wrong.hostKey = 'SHA256:' + 'A'.repeat(43);
+        let mismatch = '';
+        try { await draft.testForward(wrong, '', '', true, endpoint.hostname, Number(endpoint.port)); }
+        catch (error) { mismatch = (error as Error).message; }
+        expect(mismatch).assertEqual('ssh_host_key_mismatch');
+        await draft.testForward(config, '', '', true, endpoint.hostname, Number(endpoint.port));
         draft.configure(config, '', '', pin, true, true);
         const pair = draft.prepare(Pairing.manual(base,'synthetic-fixture-token'), (): boolean => true), target = await pair.inspect();
         hub = target.hubId; await client.pair(pair,target); const stored = SshConfiguration.from(await client.loadView('ssh-tunnel'));

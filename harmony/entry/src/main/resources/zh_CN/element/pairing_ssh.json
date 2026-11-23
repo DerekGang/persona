@@ -47,6 +47,42 @@
     {
       "name": "phone_pair_ssh_copied",
       "value": "已复制"
+    },
+    {
+      "name": "phone_pair_ssh_saved_key",
+      "value": "已确认的服务器指纹"
+    },
+    {
+      "name": "phone_pair_ssh_presented_key",
+      "value": "本次服务器指纹"
+    },
+    {
+      "name": "phone_pair_ssh_key_changed",
+      "value": "SSH 服务器指纹已更改"
+    },
+    {
+      "name": "phone_pair_ssh_confirm_peer",
+      "value": "请先对照服务器的主机公钥核实指纹，再决定是否信任。"
+    },
+    {
+      "name": "phone_pair_ssh_trust_replacement",
+      "value": "信任新指纹"
+    },
+    {
+      "name": "phone_pair_ssh_trust",
+      "value": "信任并保存"
+    },
+    {
+      "name": "phone_pair_ssh_testing",
+      "value": "测试中…"
+    },
+    {
+      "name": "phone_pair_ssh_remove_title",
+      "value": "删除 SSH 隧道？"
+    },
+    {
+      "name": "phone_pair_ssh_remove_help",
+      "value": "删除后将清除此隧道的设置。如需撤销服务器上的权限，请另外移除对应的 authorized_keys 行。"
     }
   ]
 }

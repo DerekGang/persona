@@ -20,6 +20,7 @@ pub(crate) struct Config {
 }
 
 pub(crate) struct Lease { pub port: u16, pub username: String, pub password: String }
+pub(crate) struct HostIdentity { pub algorithm: String, pub fingerprint: String }
 
 struct Control {
     cancelled: CancellationToken,
@@ -76,19 +77,59 @@ pub(crate) fn abandon(id: &str) {
 pub(crate) fn alive(id: &str) -> bool {
     registry().lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some_and(|control| !control.cancelled.is_cancelled())
 }
-pub(crate) fn open(id: &str, config: Config) -> Result<Lease> {
+fn registered<T, F: Future<Output = Result<T>>>(id: &str, keep_lease: bool, start: impl FnOnce(Arc<Control>) -> F) -> Result<T> {
     let control = registry().lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned().ok_or("ssh_cancelled")?;
     let result = runtime().block_on(async {
         tokio::select! {
             biased;
             _ = control.cancelled.cancelled() => Err("ssh_cancelled"),
-            result = tokio::time::timeout(CONNECT_TIMEOUT, connect(id, config, control.clone())) => result.unwrap_or(Err("ssh_timeout")),
+            result = tokio::time::timeout(CONNECT_TIMEOUT, start(control.clone())) => result.unwrap_or(Err("ssh_timeout")),
         }
     });
     // Cancellation can wake the inner socket after select's first branch was polled.
     let result = if control.cancelled.is_cancelled() { Err("ssh_cancelled") } else { result };
-    if result.is_err() { control.cancelled.cancel(); retire(id, &control); }
+    if !keep_lease || result.is_err() { control.cancelled.cancel(); retire(id, &control); }
     result
+}
+pub(crate) fn open(id: &str, config: Config) -> Result<Lease> {
+    registered(id, true, |control| connect(id, config, control))
+}
+
+// A first-use observation ends at signed key exchange. It never accepts a key or requests user authentication.
+struct HostObserver(Arc<Mutex<Option<HostIdentity>>>);
+impl client::Handler for HostObserver {
+    type Error = russh::Error;
+    async fn check_server_key(&mut self, presented: &PublicKeyOrCertificate) -> std::result::Result<bool, Self::Error> {
+        if let PublicKeyOrCertificate::PublicKey { key, .. } = presented {
+            *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(HostIdentity {
+                algorithm: key.algorithm().as_str().into(), fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
+            });
+        }
+        Ok(false)
+    }
+}
+pub(crate) fn observe(id: &str, host: &str, port: u16) -> Result<HostIdentity> {
+    registered(id, false, |control| async move {
+        if !proxy::valid_host(host) || port == 0 { return Err("ssh_invalid_config"); }
+        let observed = Arc::new(Mutex::new(None));
+        match exchange(host, port, &control, HostObserver(observed.clone())).await {
+            Err(russh::Error::UnknownKey) => observed.lock().unwrap_or_else(|e| e.into_inner()).take().ok_or("ssh_host_key_mismatch"),
+            _ => Err("ssh_connect_failed"),
+        }
+    })
+}
+
+/// The approved settings must open exactly their target before the form can save them.
+pub(crate) fn verify_target(id: &str, config: Config) -> Result<()> {
+    registered(id, false, |control| async move {
+        validate(&config, false)?;
+        let ssh = authenticate(&config, &control).await?;
+        let channel = ssh.channel_open_direct_tcpip(&config.target_host, u32::from(config.target_port), "127.0.0.1", 0)
+            .await.map_err(|_| "ssh_proxy_failed")?;
+        let _ = channel.close().await;
+        let _ = ssh.disconnect(russh::Disconnect::ByApplication, "", "").await;
+        Ok(())
+    })
 }
 
 struct HostVerifier { pin: String, rejected: Arc<AtomicBool> }
@@ -101,12 +142,12 @@ impl client::Handler for HostVerifier {
     }
 }
 
-fn validate(config: &Config) -> Result<()> {
+fn validate(config: &Config, proxy_lease: bool) -> Result<()> {
     if !proxy::valid_host(&config.ssh_host) || !proxy::valid_host(&config.target_host) || config.ssh_port == 0 || config.target_port == 0 ||
         config.user.is_empty() || config.user.len() > 128 || config.user.chars().any(char::is_control) || !valid_pin(&config.host_key) ||
         config.resolved_hub_ips.len() > 16 ||
         (config.target_host.parse::<IpAddr>().is_ok() && !config.resolved_hub_ips.is_empty()) ||
-        (config.target_host.parse::<IpAddr>().is_err() && config.resolved_hub_ips.is_empty()) ||
+        (proxy_lease && config.target_host.parse::<IpAddr>().is_err() && config.resolved_hub_ips.is_empty()) ||
         config.private_key.is_empty() || config.private_key.len() > 32768 || config.passphrase.len() > 4096 {
         return Err("ssh_invalid_config");
     }
@@ -134,17 +175,20 @@ fn decode_key(text: &str, passphrase: &str) -> Result<russh::keys::PrivateKey> {
     Ok(key)
 }
 
-async fn connect(id: &str, config: Config, control: Arc<Control>) -> Result<Lease> {
-    validate(&config)?;
-    let rejected = Arc::new(AtomicBool::new(false));
+async fn exchange<H: client::Handler<Error = russh::Error> + Send + 'static>(host: &str, port: u16, control: &Control, handler: H)
+    -> std::result::Result<client::Handle<H>, russh::Error> {
     let client_config = client::Config {
         window_size: 256 * 1024, maximum_packet_size: 32768, channel_buffer_size: 4,
         inactivity_timeout: Some(IDLE_TIMEOUT), keepalive_interval: Some(Duration::from_secs(20)), keepalive_max: 2,
         nodelay: true, ..Default::default()
     };
-    let tcp = TcpStream::connect((config.ssh_host.as_str(), config.ssh_port)).await.map_err(|_| "ssh_connect_failed")?;
+    let tcp = TcpStream::connect((host, port)).await?;
     let socket = CancelableStream { inner: tcp, cancelled: Box::pin(control.cancelled.clone().cancelled_owned()) };
-    let mut ssh = client::connect_stream(Arc::new(client_config), socket,
+    client::connect_stream(Arc::new(client_config), socket, handler).await
+}
+async fn authenticate(config: &Config, control: &Control) -> Result<client::Handle<HostVerifier>> {
+    let rejected = Arc::new(AtomicBool::new(false));
+    let mut ssh = exchange(&config.ssh_host, config.ssh_port, control,
         HostVerifier { pin: config.host_key.clone(), rejected: rejected.clone() }).await
         .map_err(|_| if rejected.load(Ordering::SeqCst) { "ssh_host_key_mismatch" } else { "ssh_connect_failed" })?;
     if control.cancelled.is_cancelled() { return Err("ssh_cancelled"); }
@@ -161,6 +205,11 @@ async fn connect(id: &str, config: Config, control: Arc<Control>) -> Result<Leas
     let result = ssh.authenticate_publickey(&config.user, PrivateKeyWithHashAlg::new(Arc::new(key), hash)).await.map_err(|_| "ssh_auth_failed")?;
     if !result.success() { return Err("ssh_auth_failed"); }
     if control.cancelled.is_cancelled() { return Err("ssh_cancelled"); }
+    Ok(ssh)
+}
+async fn connect(id: &str, config: Config, control: Arc<Control>) -> Result<Lease> {
+    validate(&config, true)?;
+    let ssh = authenticate(&config, &control).await?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await.map_err(|_| "ssh_proxy_failed")?;
     let port = listener.local_addr().map_err(|_| "ssh_proxy_failed")?.port();
     let mut random = [0u8; 32]; getrandom::fill(&mut random).map_err(|_| "ssh_proxy_failed")?;
@@ -302,6 +351,38 @@ mod tests {
         Config { ssh_host: "127.0.0.1".into(), ssh_port: port, user: "fixture".into(), host_key: pin,
             target_host: "hub.test".into(), target_port: 443, resolved_hub_ips: vec!["192.0.2.10".parse().unwrap()],
             private_key: Zeroizing::new(key.to_openssh(Default::default()).unwrap().as_bytes().to_vec()), passphrase: Zeroizing::new(vec![]) }
+    }
+    #[tokio::test] async fn signed_host_observation_retires_without_any_authentication() {
+        let key = russh::keys::PrivateKey::random(&mut russh::keys::key::safe_rng(), russh::keys::Algorithm::Ed25519).unwrap();
+        let fingerprint = key.public_key().fingerprint(HashAlg::Sha256).to_string();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let port = listener.local_addr().unwrap().port();
+        let count = Arc::new(AtomicUsize::new(0)); let seen = count.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let config = russh::server::Config { keys: vec![key], ..Default::default() };
+            if let Ok(session) = russh::server::run_stream(Arc::new(config), stream, AuthCounter(seen)).await { let _ = session.await; }
+        });
+        let id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"; begin(id).unwrap();
+        let result = tokio::task::spawn_blocking(move || observe(id, "127.0.0.1", port)).await.unwrap().unwrap();
+        assert_eq!(result.fingerprint, fingerprint); assert_eq!(result.algorithm, "ssh-ed25519");
+        tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 0); assert!(!alive(id));
+    }
+    #[tokio::test] async fn approved_one_shot_opens_only_the_requested_target_and_retires() {
+        let key = russh::keys::PrivateKey::random(&mut russh::keys::key::safe_rng(), russh::keys::Algorithm::Ed25519).unwrap();
+        let fingerprint = key.public_key().fingerprint(HashAlg::Sha256).to_string();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let port = listener.local_addr().unwrap().port();
+        let target = Arc::new(Mutex::new(None)); let seen = target.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let config = russh::server::Config { keys: vec![key], auth_rejection_time: Duration::ZERO, ..Default::default() };
+            if let Ok(session) = russh::server::run_stream(Arc::new(config), stream, ChannelTarget(seen)).await { let _ = session.await; }
+        });
+        let id = "ffffffff-ffff-ffff-ffff-ffffffffffff"; begin(id).unwrap();
+        let mut config = fixture_config(port, fingerprint); config.resolved_hub_ips.clear();
+        tokio::task::spawn_blocking(move || verify_target(id, config)).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+        assert_eq!(*target.lock().unwrap(), Some(("hub.test".into(), 443))); assert!(!alive(id));
     }
     #[tokio::test] async fn wrong_pin_sends_zero_auth_requests_to_real_ssh_fixture() {
         let host_key = russh::keys::PrivateKey::random(&mut russh::keys::key::safe_rng(), russh::keys::Algorithm::Ed25519).unwrap();

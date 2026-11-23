@@ -47,6 +47,42 @@
     {
       "name": "phone_pair_ssh_copied",
       "value": "コピーしました"
+    },
+    {
+      "name": "phone_pair_ssh_saved_key",
+      "value": "確認済みのサーバーのフィンガープリント"
+    },
+    {
+      "name": "phone_pair_ssh_presented_key",
+      "value": "今回のフィンガープリント"
+    },
+    {
+      "name": "phone_pair_ssh_key_changed",
+      "value": "SSH サーバーのフィンガープリントが変わりました"
+    },
+    {
+      "name": "phone_pair_ssh_confirm_peer",
+      "value": "信頼する前に、サーバーのホスト公開鍵と照合してください。"
+    },
+    {
+      "name": "phone_pair_ssh_trust_replacement",
+      "value": "新しいフィンガープリントを信頼"
+    },
+    {
+      "name": "phone_pair_ssh_trust",
+      "value": "信頼して保存"
+    },
+    {
+      "name": "phone_pair_ssh_testing",
+      "value": "テスト中…"
+    },
+    {
+      "name": "phone_pair_ssh_remove_title",
+      "value": "SSH トンネルを削除しますか？"
+    },
+    {
+      "name": "phone_pair_ssh_remove_help",
+      "value": "トンネルの設定が削除されます。サーバーで権限も取り消す場合は、該当する authorized_keys の行を削除してください。"
     }
   ]
 }

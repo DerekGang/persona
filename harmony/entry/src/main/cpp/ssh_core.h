@@ -18,6 +18,8 @@ struct PersonaSshConfig {
   size_t passphrase_len;
 };
 bool persona_ssh_begin(const char* id);
+char* persona_ssh_observe(const char* id, const char* host, uint16_t port);
+char* persona_ssh_verify_target(const PersonaSshConfig* config);
 char* persona_ssh_open(const PersonaSshConfig* config);
 void persona_ssh_close(const char* id);
 void persona_ssh_cancel(const char* id);

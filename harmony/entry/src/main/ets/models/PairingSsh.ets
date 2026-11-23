@@ -1,4 +1,7 @@
 import type { Pairing } from '../platform/Pairing';
+import { util } from '@kit.ArkTS';
+import nativeSsh from 'libpersona_ssh.so';
+import type { NativeSshConfig, NativeSshHostIdentity } from 'libpersona_ssh.so';
 import type { TransportProxy } from '../platform/HubTransport';
 import { SshDeviceIdentity } from '../platform/SshDeviceIdentity';
 import { SshSecrets } from '../platform/SshCredentialVault';
@@ -20,6 +23,49 @@ export class PairingSsh {
   @Trace hubPin: string = '';
   private material: SshSecrets | undefined;
   private request: PairingSshRoute | undefined;
+  private checkId: string = '';
+  private checkVersion: number = 0;
+
+  serverRevision(): number { return this.checkVersion; }
+  cancelServerCheck(): void {
+    const id = this.checkId; this.checkId = ''; this.checkVersion++;
+    if (id) nativeSsh.close(id).catch(() => {});
+  }
+  private async serverCheck<T>(work: (id: string, current: () => boolean) => Promise<T>): Promise<T> {
+    this.cancelServerCheck();
+    const id = util.generateRandomUUID(), current = (): boolean => this.checkId === id;
+    this.checkId = id;
+    try {
+      const result = await work(id, current);
+      if (!current()) throw new Error('ssh_cancelled');
+      return result;
+    } finally { if (current()) this.checkId = ''; }
+  }
+  async observeServer(host: string, port: number): Promise<NativeSshHostIdentity> {
+    return this.serverCheck(async (id: string): Promise<NativeSshHostIdentity> => {
+      const identity = await nativeSsh.observeHost({ id: id, sshHost: host, sshPort: port });
+      if (identity.id !== id || !/^[a-zA-Z0-9@.+-]{1,96}$/.test(identity.algorithm) ||
+        !/^SHA256:[A-Za-z0-9+/]{43}$/.test(identity.fingerprint)) throw new Error('ssh_native_failed');
+      return identity;
+    });
+  }
+  async testForward(config: SshConfiguration, privateKey: string, passphrase: string, deviceKey: boolean,
+    targetHost: string, targetPort: number): Promise<void> {
+    SshTunnel.validateServer(config);
+    await this.serverCheck(async (id: string, current: () => boolean): Promise<void> => {
+      const secrets = deviceKey ? await SshDeviceIdentity.secrets(current) :
+        privateKey ? SshSecrets.fromText(privateKey, passphrase) : this.material?.copy();
+      if (!secrets) throw new Error('ssh_key_required');
+      try {
+        if (!current()) throw new Error('ssh_cancelled');
+        const request: NativeSshConfig = { id: id, sshHost: config.sshHost, sshPort: config.sshPort, username: config.username,
+          hostKey: config.hostKey, targetHost: targetHost, targetPort: targetPort, resolvedHubIps: [],
+          privateKey: secrets.privateKey, passphrase: secrets.passphrase };
+        const checking = nativeSsh.verifyTarget(request); secrets.clear();
+        if ((await checking).id !== id) throw new Error('ssh_native_failed');
+      } finally { secrets.clear(); }
+    });
+  }
 
   configure(config: SshConfiguration, privateKey: string, passphrase: string, hubPin: string, confirmed: boolean, useDeviceKey: boolean = false): void {
     const next = config.copy(); next.sshHost = next.sshHost.trim(); next.username = next.username.trim();
@@ -66,7 +112,7 @@ export class PairingSsh {
     return pairing;
   }
 
-  cancelAttempt(): void { this.request?.close(); this.request = undefined; }
+  cancelAttempt(): void { this.cancelServerCheck(); this.request?.close(); this.request = undefined; }
   clear(): void {
     this.cancelAttempt(); this.material?.clear(); this.material = undefined;
     this.configuration = new SshConfiguration(); this.hubPin = ''; this.label = ''; this.configured = false;

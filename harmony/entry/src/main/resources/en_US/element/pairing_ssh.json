@@ -47,6 +47,42 @@
     {
       "name": "phone_pair_ssh_copied",
       "value": "Copied"
+    },
+    {
+      "name": "phone_pair_ssh_saved_key",
+      "value": "Pinned server fingerprint"
+    },
+    {
+      "name": "phone_pair_ssh_presented_key",
+      "value": "Presented fingerprint"
+    },
+    {
+      "name": "phone_pair_ssh_key_changed",
+      "value": "SSH server fingerprint changed"
+    },
+    {
+      "name": "phone_pair_ssh_confirm_peer",
+      "value": "Check the fingerprint against the server’s host public key before trusting it."
+    },
+    {
+      "name": "phone_pair_ssh_trust_replacement",
+      "value": "Trust new fingerprint"
+    },
+    {
+      "name": "phone_pair_ssh_trust",
+      "value": "Trust and save"
+    },
+    {
+      "name": "phone_pair_ssh_testing",
+      "value": "Testing…"
+    },
+    {
+      "name": "phone_pair_ssh_remove_title",
+      "value": "Delete SSH tunnel?"
+    },
+    {
+      "name": "phone_pair_ssh_remove_help",
+      "value": "This removes the tunnel settings. Remove the authorized_keys line on the server separately if you want to revoke its permission."
     }
   ]
 }
