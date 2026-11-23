@@ -76,18 +76,12 @@ func planArgs(readonly bool) json.RawMessage {
 
 func waitFor(t testing.TB, what string, ok func() bool) {
 	t.Helper()
-	if !pollUntil(ok) {
-		t.Fatalf("timed out waiting for %s", what)
-	}
-}
-
-func pollUntil(ok func() bool) bool {
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if ok() {
-			return true
+			return
 		}
 	}
-	return false
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 func feedKinds(s *Service, conv string) string {
