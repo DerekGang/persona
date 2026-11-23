@@ -519,7 +519,7 @@ func (b *BusHub) httpHandler(s *Service) http.Handler {
 	return b.httpH
 }
 
-func (b *BusHub) request(ctx context.Context, method string, params json.RawMessage) (any, error) {
+func (b *BusHub) request(ctx context.Context, method string, params json.RawMessage) (reply any, requestErr error) {
 	b.waitHello(ctx)
 	s := b.service()
 	decode := func(v any) error {
@@ -724,6 +724,10 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 				if err := s.conversationParamsAvailable(ctx, d.Canonical(p.MachineID), p.Params); err != nil {
 					return nil, err
 				}
+			}
+			if devicewire.IsSessionStart(p.Method) {
+				finish := s.beginPlacementBind(ctx, d.Canonical(p.MachineID), p.Params)
+				defer func() { raw, _ := reply.(json.RawMessage); finish(raw) }()
 			}
 			if out, handled, err := s.logicalCall(context.WithValue(ctx, logicalTransportKey{}, p), d.Canonical(p.MachineID), p.Method, p.Params); handled {
 				return out, err

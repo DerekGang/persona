@@ -234,6 +234,9 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 				planOwners[wsKey] = Todo{ID: todo.ID, Title: todo.Title}
 			}
 		}
+		if t.Queue != nil {
+			t.Placement = queuedPlacement(*t, t.Queue)
+		}
 		s.briefStarted(ctx, p, t, todo) // what was asked, kept from now on (task_brief_plan.go)
 		// Its stage kind from that brief; how it is handed out is kept for every later look (task_stage_kind.go).
 		s.restage(ctx, todo.ID, func(st *todoStage) { st.Readonly = t.Readonly })
@@ -288,6 +291,9 @@ func (s *Service) startPlan(ctx context.Context, id string, edits []PlanTask, re
 	var queuedRecheck []workspaceTarget
 	for i := range p.Tasks {
 		if task := p.Tasks[i]; task.TodoID != "" && task.Error == "" {
+			if task.Queue != nil && task.Placement != nil {
+				s.savePlacement(ctx, task.Placement)
+			}
 			if task.Queue != nil && task.Queue.Key == workspaceQueueKey && task.Queue.Workspace != nil {
 				held := task.ReuseTodo
 				if held == "" && task.InboxItem != "" {
@@ -790,7 +796,7 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 		s.logf("task %s: queued launch eligibility unconfirmed: %v", t.TodoID, quotaState)
 		return
 	}
-	if t.Machine != placed || t.Why != placedWhy || t.Permission != placedPermission { // workspace admission already persisted the actual checkout
+	if t.Placement != nil || t.Machine != placed || t.Why != placedWhy || t.Permission != placedPermission { // workspace admission already persisted the actual checkout
 		s.updatePlanTask(ctx, planID, i, t)
 	}
 	launched := err == nil

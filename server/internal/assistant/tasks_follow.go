@@ -310,6 +310,9 @@ func (s *Service) rerouteOfTask(ctx context.Context, todoID, planID string) *Pla
 	}
 	for i := range p.Tasks {
 		if p.Tasks[i].TodoID == todoID {
+			if decision := p.Tasks[i].Placement; decision != nil {
+				return decision.Reroute
+			}
 			return p.Tasks[i].Reroute
 		}
 	}

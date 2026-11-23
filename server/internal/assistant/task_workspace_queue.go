@@ -228,6 +228,7 @@ func (s *Service) queueWorkspaceBusy(planID string, i int, t PlanTask, busy *wor
 		}
 		q := s.workspaceQueueEntry(ctx, busy.machine, busy.path, busy.ownerID, busy.ownerTitle, retry, pt.Queue)
 		pt.Queue = &q
+		pt.Placement = queuedPlacement(t, &q)
 		pt.Error, pt.ErrorCode, pt.ErrorArgs = "", "", nil
 	}); err != nil {
 		s.logf("task %s: workspace queue: persist: %v", t.TodoID, err)

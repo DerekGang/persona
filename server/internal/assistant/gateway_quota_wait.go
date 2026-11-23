@@ -136,6 +136,7 @@ func (s *Service) persistGatewayWait(ctx context.Context, task PlanTask, wait Ta
 	return s.patchPlanTask(pctx, task.planID, task.planIndex, func(current *PlanTask) {
 		if current.TodoID == task.TodoID && current.Queue == nil {
 			current.Queue = &wait
+			current.Placement = queuedPlacement(task, &wait)
 			current.Error, current.ErrorCode, current.ErrorArgs = "", "", nil
 		}
 	})

@@ -248,6 +248,11 @@ func (s *Service) dispatchStart(ctx context.Context, machine, session string, ar
 		note = fmt.Sprintf(" It runs in a new worktree on branch %s.", wt.Branch)
 	}
 	s.setPlanThen(ctx, am.ID, params)
+	decision := newPlacement(am.ID, "report")
+	if tracker != nil {
+		decision.TaskID = tracker.task.ID
+	}
+	sctx = context.WithValue(sctx, placementBindKey{}, decision)
 	attempted = true
 	if startErr = s.call(sctx, am.ID, DeviceSessionStart, params, &res); startErr != nil {
 		switch {
@@ -272,7 +277,10 @@ func (s *Service) dispatchStart(ctx context.Context, machine, session string, ar
 	}
 	s.logf("dispatch %s/%s -> %s/%s in %s", machine, short(session), am.ID, short(res.Session.SessionID), a.Cwd)
 	child := res.Session
-	s.superviseDispatched(ctx, am, child, a.Prompt, cmp.Or(from.From, short(session)), cmp.Or(from.FromMachine, machine))
+	if id := s.superviseDispatched(ctx, am, child, a.Prompt, cmp.Or(from.From, short(session)), cmp.Or(from.FromMachine, machine)); id != "" {
+		decision.TaskID = id
+		s.savePlacement(ctx, decision)
+	}
 	if tracker != nil {
 		return fmt.Sprintf("Started on %s in %s: session %s.%s A2A task %s. Questions and results will be delivered to this session. Read details with dispatch_read or a2a_get.",
 			am.Name, a.Cwd, res.Session.SessionID, note, tracker.task.ID), nil
@@ -450,19 +458,20 @@ func (s *Service) dispatchOverview(ctx context.Context, machine string, mine []d
 // and the supervision messages and task_review of any task the main conversation hands out. The calling agent still
 // reads the result with dispatch_read. Without a main conversation, or when the todo cannot be made, the task runs
 // untracked as before; the start itself has succeeded either way.
-func (s *Service) superviseDispatched(ctx context.Context, am Device, c proto.Session, prompt, from, fromMachine string) {
+func (s *Service) superviseDispatched(ctx context.Context, am Device, c proto.Session, prompt, from, fromMachine string) string {
 	main := s.settings(ctx).Main
 	if main == "" || c.SessionID == "" {
-		return
+		return ""
 	}
 	notes := i18n.T(s.lang(ctx), "assistant-tasks.dispatch_notes", i18n.Args{"from": from,
 		"from_machine": fromMachine, "machine": am.Name, "cwd": c.Cwd}) + "\n\n" + prompt
 	todo, made, err := s.adoptAgent(context.WithoutCancel(ctx), main, am, c, "", prompt, notes, nil, 0, false)
 	if err != nil {
 		s.logf("dispatch %s on %s: task: %v", short(c.SessionID), am.ID, err)
-		return
+		return ""
 	}
 	if made {
 		s.taskCard(ctx, main, todo.ID, "")
 	}
+	return todo.ID
 }

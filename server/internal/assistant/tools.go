@@ -714,9 +714,12 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		} else if mode, _ := run["permission_mode"].(string); mode != "" && own.permission == "" && !fit.supportsPermissionMode(mode) {
 			delete(run, "permission_mode")
 		}
+		decision := newPlacement(am.ID, "enforce")
+		ctx = context.WithValue(ctx, placementKey{}, decision)
 		// The admission gate refuses a too-busy computer before the user is asked to approve anything.
 		gated, _ := run["launcher"].(string)
 		if err := s.checkAgentStart(ctx, am.ID, s.startLauncher(ctx, gated)); err != nil {
+			s.savePlacement(ctx, decision)
 			return "", fmt.Errorf("%w; no agent was started", err)
 		}
 		branch := strings.TrimSpace(a.Worktree.Branch)
@@ -774,6 +777,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		picked, _ := params["launcher"].(string)
 		launcher := s.startLauncher(ctx, picked)
 		alt, note, moved := s.healthDetour(ctx, am, launcher)
+		decision.Reason = note
 		if moved {
 			a.Cwd = rehome(a.Cwd, am, alt)
 			params["cwd"], am = a.Cwd, alt
@@ -867,6 +871,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if !tracked {
 			return "", fmt.Errorf("the task could not be recorded; no agent was started")
 		}
+		decision.TaskID = task.ID
 		params["creation_id"], params["incarnation"] = task.ID, "start_"+randomHex(8)
 		failBeforeStart := func(reason string) {
 			// The card already exists: every definite no-start exit must close it as a failed start, not leave an
@@ -889,6 +894,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		final, _ := params["launcher"].(string)
 		release, err := s.admitAgentStart(sctx, am.ID, s.startLauncher(ctx, final))
 		if err != nil {
+			s.savePlacement(ctx, decision)
 			failBeforeStart(err.Error())
 			return "", fmt.Errorf("%w; no agent was started", err)
 		}
@@ -918,6 +924,7 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 			inputID = "wait_" + randomHex(16)
 			params["client_msg_id"] = inputID
 		}
+		sctx = context.WithValue(sctx, placementBindKey{}, decision)
 		err = s.call(sctx, am.ID, DeviceSessionStart, params, &res)
 		if reason, refused := s.ultracodeRefusal(ctx, err, params); refused {
 			delete(params, "ultracode")                                  // an extra the agent it landed on cannot have: it starts without it (#3596)

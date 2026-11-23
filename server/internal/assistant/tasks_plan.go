@@ -99,7 +99,7 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		t.Schedule, t.ScheduleTitle, t.ScheduleBasis = "", "", ""
 		// Reroute is hub-owned: drop any reroute a model passes in task_plan args, so healthyPlace seeds it only from a
 		// real health detour and its first-detour guard keeps the true original machine (#2271).
-		t.Reroute = nil
+		t.Reroute, t.Placement = nil, nil
 		t.Title, t.Prompt, t.Cwd = strings.TrimSpace(t.Title), strings.TrimSpace(t.Prompt), strings.TrimSpace(t.Cwd)
 		t.Model = strings.TrimSpace(t.Model)
 		t.Speed = strings.TrimSpace(t.Speed)
@@ -172,7 +172,11 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		if err := s.applyTaskTier(ctx, &preview); err != nil {
 			return "", fmt.Errorf("task %d: %w", i+1, err)
 		}
-		s.healthyPlace(ctx, &preview) // health follows the resolved launcher
+		previewPlacement := newPlacement(t.Machine, "enforce")
+		if s.healthyPlace(context.WithValue(ctx, placementKey{}, previewPlacement), &preview) {
+			previewPlacement.Choice, previewPlacement.Reason, previewPlacement.Reroute = preview.Machine, preview.Why, preview.Reroute
+			t.Placement = previewPlacement
+		}
 		t.Machine, t.Cwd, t.Why = preview.Machine, preview.Cwd, preview.Why
 		t.Reroute = preview.Reroute
 		// What it runs on the computer it lands on (#2640): a default that computer lacks is swapped now, so the card
@@ -443,7 +447,7 @@ func applyPlanEdit(t *PlanTask, e PlanTask) {
 			t.MachinePolicy = machineFixed
 			// The user's explicit retarget supersedes a plan-time health detour: drop the stale reroute so the receipt
 			// names the machine the task will actually run on, not the old landing (#2271).
-			t.Reroute = nil
+			t.Reroute, t.Placement = nil, nil
 		}
 		t.Machine = s
 	}
