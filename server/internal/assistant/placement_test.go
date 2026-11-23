@@ -45,10 +45,10 @@ func TestPlacementFixedAndFlexible(t *testing.T) {
 			task := admissionPlanTask("busy", policy)
 			machine, _, err := s.startTaskAgent(context.Background(), task, false)
 			if policy == machineFixed {
-				if !isAdmissionDenied(err) || len(taskStartMachines(f)) != 0 {
+				if !isAdmissionDenied(err) || len(taskStartMachines(f)) != 0 || task.Placement.Recommendation != "idle" {
 					t.Fatalf("fixed start: %v", err)
 				}
-				checkPlacementGolden(t, task.Placement, "v1 enforce busy ->  (assistant-tasks.admission_load) | busy assistant-tasks.admission_load")
+				checkPlacementGolden(t, task.Placement, "v1 enforce busy ->  (assistant-tasks.admission_load) | busy assistant-tasks.admission_load | idle load=0.0625 free=10737418240")
 				return
 			}
 			if err != nil || machine != "idle" {
@@ -74,8 +74,13 @@ func (d *placementBusDevices) Request(_ context.Context, method string, raw json
 }
 
 func TestPlacementReportsClientStartsAndResumes(t *testing.T) {
-	for _, method := range []string{DeviceSessionStart, devicewire.MethodStartWorkSession, devicewire.MethodStartBackendSession} {
-		t.Run(method, func(t *testing.T) {
+	for _, tc := range []struct{ name, method, params string }{
+		{"new", DeviceSessionStart, `{"cwd":"/work","launcher":"work"}`},
+		{"resume", DeviceSessionStart, `{"resume_session_id":"agent","launcher":"work"}`},
+		{"work", devicewire.MethodStartWorkSession, `{"launcher":"work","cwd":"/work"}`},
+		{"backend", devicewire.MethodStartBackendSession, `{"launcher":"work","backend_workspace":{"use_id":"launch"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			s, _, d := admissionHub(t)
 			busyOverloaded(d)
 			store := &memStore{}
@@ -84,8 +89,8 @@ func TestPlacementReportsClientStartsAndResumes(t *testing.T) {
 			b := NewBusHub(BusOptions{Devices: devices})
 			b.svc = s
 			close(b.helloed)
-			params := json.RawMessage(`{"resume_session_id":"agent","launcher":"work"}`)
-			request, _ := json.Marshal(devicewire.NodeCall{MachineID: "busy", Method: method, Params: params})
+			params := json.RawMessage(tc.params)
+			request, _ := json.Marshal(devicewire.NodeCall{MachineID: "busy", Method: tc.method, Params: params})
 			_, err := b.request(context.Background(), devicewire.MethodCall, request)
 			if err != nil || devices.got.MachineID != "busy" || string(devices.got.Params) != string(params) || s.admission.machineClaims["busy"] != 0 {
 				t.Fatalf("bind: %+v, %v", devices.got, err)

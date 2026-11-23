@@ -15,15 +15,9 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// The execution-agent admission gate. The hub machine once ran 40+ claude processes at load 160 and timed out, so an
-// execution Agent can no longer start on a computer just because a plan named it: before every session.start for an
-// execution Agent the hub checks the target's reported resources and how many Agents the task's direction already has
-// running. The assistant's own conversations (main, leaders, scheduled) start through assistant.send and never pass
-// this gate. Thresholds live in the assistant.admission setting; code defaults mirror the guard script the operators
-// ran by hand. Fail-closed applies to a machine the resource layer DOES retain whose metrics are missing or stale;
-// a computer it does not retain, or a hub without a devices manager, is skipped (nothing to read),
-// and a direction that cannot be resolved skips only the direction line. A fresh sample missing one optional reading
-// (a load average on Windows, a claude process count on an older node) skips just that condition, not the machine.
+// The built-in resource lines for Agent placement. Plan and tool starts enforce
+// them. Other pinned starts record the same readings without claiming a slot.
+// A retained machine needs fresh metrics. An absent optional reading skips its line.
 
 // admissionMessage builds an *i18n.Message; i18n.Err always returns one, so the gate can keep its typed reasons and
 // render them in the request's language without re-looking the key up.
@@ -513,9 +507,14 @@ func (s *Service) admissionRefused(ctx context.Context, machineID, direction str
 	}
 	recommend := ""
 	// Another computer frees no slot in a launcher group, so a group refusal names none.
-	if alt, ok := s.recommendMachine(context.WithValue(ctx, placementKey{}, (*placement)(nil)), machineID, nil); ok && (reason == nil || reason.Key != admissionGroupFullKey) {
-		recommend = i18n.T(s.lang(ctx), "assistant-tasks.admission_recommend", i18n.Args{
-			"machine": firstNonEmpty(alt.Name, alt.ID)})
+	if reason == nil || reason.Key != admissionGroupFullKey {
+		if alt, ok := s.recommendMachine(ctx, machineID, nil); ok {
+			if p := placementOf(ctx); p != nil {
+				p.Recommendation = alt.ID
+			}
+			recommend = i18n.T(s.lang(ctx), "assistant-tasks.admission_recommend", i18n.Args{
+				"machine": firstNonEmpty(alt.Name, alt.ID)})
+		}
 	}
 	return &admissionDeniedError{
 		msg: admissionMessage("assistant-tasks.admission_refused", i18n.Args{
@@ -533,8 +532,7 @@ func (s *Service) checkAgentStart(ctx context.Context, machineID, launcher strin
 }
 
 // admitAgentStart re-checks the (possibly rerouted) target and atomically reserves its machine slot. The release runs
-// once the session.start attempt ends: an agent_start tool call is not linked to a todo, so there is no later ledger
-// to carry the count. A full launcher group refuses it at once: a tool call cannot wait in the admission queue.
+// when the tool call ends, after the start attempt. A full launcher group refuses it at once: a tool call cannot wait in the admission queue.
 func (s *Service) admitAgentStart(ctx context.Context, machineID, launcher string) (func(), error) {
 	return s.placeStart(ctx, &PlanTask{Machine: machineID, Launcher: launcher}, placementReserve)
 }

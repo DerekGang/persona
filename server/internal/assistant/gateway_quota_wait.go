@@ -44,7 +44,7 @@ func (e *gatewayQuotaWaitError) Error() string { return e.queue.Reason }
 
 type gatewayQueueStore interface {
 	UnstartedQueuedTodo(context.Context, string, string, time.Time) (bool, error)
-	ClaimUnstartedTaskQueue(context.Context, string, int, string, time.Time, json.RawMessage, json.RawMessage, time.Time) (bool, error)
+	ClaimUnstartedTaskQueue(context.Context, string, int, string, time.Time, json.RawMessage, json.RawMessage, json.RawMessage, time.Time) (bool, error)
 }
 
 type gatewayQueueStateError struct{ cause error }

@@ -172,10 +172,8 @@ func (s *Service) taskPlanFrom(ctx context.Context, machine, sessionID string, a
 		if err := s.applyTaskTier(ctx, &preview); err != nil {
 			return "", fmt.Errorf("task %d: %w", i+1, err)
 		}
-		previewPlacement := newPlacement(t.Machine, "enforce")
-		if s.healthyPlace(context.WithValue(ctx, placementKey{}, previewPlacement), &preview) {
-			previewPlacement.Choice, previewPlacement.Reason, previewPlacement.Reroute = preview.Machine, preview.Why, preview.Reroute
-			t.Placement = previewPlacement
+		if s.previewHealthPlacement(ctx, &preview) {
+			t.Placement = preview.Placement
 		}
 		t.Machine, t.Cwd, t.Why = preview.Machine, preview.Cwd, preview.Why
 		t.Reroute = preview.Reroute

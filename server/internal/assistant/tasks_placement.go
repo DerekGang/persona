@@ -200,10 +200,7 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	if prev := t.Placement; prev != nil && prev.TaskID == "" && t.Reroute != nil {
 		// Start on the landing shown on the plan card and retain the preview's candidate evidence.
 		p.Requested, p.ReasonKey = prev.Requested, prev.ReasonKey
-		p.Candidates = slices.Clone(prev.Candidates)
-		for i := range p.Candidates {
-			p.Candidates[i].Hits = slices.Clone(p.Candidates[i].Hits)
-		}
+		p.Candidates = prev.cloneCandidates()
 	}
 	p.TaskID = t.TodoID
 	ctx = context.WithValue(ctx, placementKey{}, p)

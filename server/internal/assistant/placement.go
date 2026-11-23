@@ -15,19 +15,20 @@ import (
 // A placement is one logical start. A transport compatibility retry uses the
 // same decision. A later start (including a dequeue or resume) gets a new one.
 type placement struct {
-	ID            string               `json:"id"`
-	At            time.Time            `json:"at"`
-	PolicyVersion int                  `json:"policy_version"`
-	Mode          string               `json:"mode"`
-	Requested     string               `json:"requested"`
-	Candidates    []placementCandidate `json:"candidates"`
-	Choice        string               `json:"choice,omitempty"`
-	ReasonKey     string               `json:"reason_key"`
-	Reason        string               `json:"reason,omitempty"`
-	WaitAt        time.Time            `json:"wait_at,omitzero"`
-	Reroute       *PlanReroute         `json:"reroute,omitempty"`
-	TaskID        string               `json:"task_id,omitempty"`
-	SessionID     string               `json:"session_id,omitempty"`
+	ID             string               `json:"id"`
+	At             time.Time            `json:"at"`
+	PolicyVersion  int                  `json:"policy_version"`
+	Mode           string               `json:"mode"`
+	Requested      string               `json:"requested"`
+	Candidates     []placementCandidate `json:"candidates"`
+	Choice         string               `json:"choice,omitempty"`
+	Recommendation string               `json:"recommendation,omitempty"`
+	ReasonKey      string               `json:"reason_key"`
+	Reason         string               `json:"reason,omitempty"`
+	WaitAt         time.Time            `json:"wait_at,omitzero"`
+	Reroute        *PlanReroute         `json:"reroute,omitempty"`
+	TaskID         string               `json:"task_id,omitempty"`
+	SessionID      string               `json:"session_id,omitempty"`
 }
 
 type placementCandidate struct {
@@ -56,6 +57,15 @@ func newPlacement(machine, mode string) *placement {
 func placementOf(ctx context.Context) *placement {
 	p, _ := ctx.Value(placementKey{}).(*placement)
 	return p
+}
+
+// A stored plan can share its candidate slices with a card reader or a retry.
+func (p *placement) cloneCandidates() []placementCandidate {
+	candidates := slices.Clone(p.Candidates)
+	for i := range candidates {
+		candidates[i].Hits = slices.Clone(candidates[i].Hits)
+	}
+	return candidates
 }
 
 func (p *placement) candidate(id string) *placementCandidate {
@@ -182,6 +192,7 @@ func (s *Service) finishPlanPlacement(ctx context.Context, p *placement, t *Plan
 		p.hit(t.Machine, wait.queue.Key, nil)
 		p.Reason = wait.queue.Reason
 	case errors.As(err, &busy):
+		p.Reason = s.workspaceWaitReason(ctx, busy.machine, busy.path, busy.ownerID, busy.ownerTitle)
 		p.ReasonKey = workspaceQueueKey
 		p.hit(t.Machine, workspaceQueueKey, i18n.Args{"owner": busy.ownerID})
 	case errors.As(err, &denied):
@@ -195,8 +206,6 @@ func (s *Service) finishPlanPlacement(ctx context.Context, p *placement, t *Plan
 	s.savePlacement(ctx, p)
 }
 
-// placeStart applies the built-in group, machine and direction lines. Only a flexible
-// plan may score alternatives. Reports and approval previews never acquire a claim.
 type placementStage int
 
 const (
@@ -206,6 +215,8 @@ const (
 	placementPlan
 )
 
+// placeStart applies the built-in group, machine and direction lines. Only a flexible
+// plan may score alternatives. Reports and approval previews never acquire a claim.
 func (s *Service) placeStart(ctx context.Context, t *PlanTask, stage placementStage) (func(), error) {
 	if s.devs == nil || !s.admissionEnabled(ctx) {
 		return func() {}, nil
@@ -261,6 +272,7 @@ func queuedPlacement(task PlanTask, q *TaskQueue) *placement {
 		p.TaskID = task.TodoID
 	} else {
 		cp := *p
+		cp.Candidates = p.cloneCandidates()
 		p = &cp
 	}
 	p.ReasonKey = q.Key
@@ -270,10 +282,25 @@ func queuedPlacement(task PlanTask, q *TaskQueue) *placement {
 }
 
 func (t PlanTask) queueReason() string {
-	if p := t.Placement; p != nil && !t.Queue.Claimed && p.WaitAt.Equal(t.Queue.NextAt) {
+	if p := t.Placement; p != nil && p.ReasonKey == t.Queue.Key && p.WaitAt.Equal(t.Queue.NextAt) {
 		return p.Reason
 	}
 	return t.Queue.Reason
+}
+
+// A plan preview and a retry after a launcher failure can both pick the next
+// target before startTaskAgent. Carry that choice into its actual placement.
+func (s *Service) previewHealthPlacement(ctx context.Context, t *PlanTask) bool {
+	if t.MachinePolicy != machineFlexible {
+		return false
+	}
+	p := newPlacement(t.Machine, "enforce")
+	if !s.healthyPlace(context.WithValue(ctx, placementKey{}, p), t) {
+		return false
+	}
+	p.Choice, p.Reason, p.Reroute = t.Machine, t.Why, t.Reroute
+	t.Placement = p
+	return true
 }
 
 // placePlanStart runs after the owner's gate. A quota wait leaves before any

@@ -753,7 +753,7 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 		unknown := startResultUnknown(err)
 		shouldRetry := transientStartErr(err) && !unknown
 		if !shouldRetry && t.MachinePolicy == machineFlexible && !unknown {
-			shouldRetry = s.healthyPlace(ctx, &t)
+			shouldRetry = s.previewHealthPlacement(ctx, &t)
 		}
 		if shouldRetry && (errors.Is(err, errMachineOffline) || errors.Is(err, apierr.ErrOffline)) {
 			// Not sent: no connection to the machine. The retry waits a moment and then for the link to come back
@@ -796,8 +796,19 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 		s.logf("task %s: queued launch eligibility unconfirmed: %v", t.TodoID, quotaState)
 		return
 	}
-	if t.Placement != nil || t.Machine != placed || t.Why != placedWhy || t.Permission != placedPermission { // workspace admission already persisted the actual checkout
+	if t.Machine != placed || t.Why != placedWhy || t.Permission != placedPermission {
 		s.updatePlanTask(ctx, planID, i, t)
+	} else if t.Placement != nil {
+		// Recording the decision must not pin launch defaults or overwrite a workspace saved at admission.
+		write, stop := context.WithTimeout(context.WithoutCancel(ctx), taskFailTimeout)
+		if err := s.patchPlanTask(write, planID, i, func(pt *PlanTask) {
+			if pt.TodoID == t.TodoID {
+				pt.Placement = t.Placement
+			}
+		}); err != nil {
+			s.logf("task %s: save placement on plan: %v", t.TodoID, err)
+		}
+		stop()
 	}
 	launched := err == nil
 	if launched {

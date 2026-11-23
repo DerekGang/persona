@@ -684,8 +684,14 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if err := s.applyModel(ctx, "agent.new", run); err != nil {
 			return "", err
 		}
+		decision := newPlacement(am.ID, "enforce")
+		ctx = context.WithValue(ctx, placementKey{}, decision)
 		swapped, fit, err := s.fitNewLauncher(ctx, am, own, run)
 		if err != nil {
+			if len(decision.candidate(am.ID).Hits) > 0 {
+				decision.ReasonKey = "launcher_missing"
+				s.savePlacement(ctx, decision)
+			}
 			return "", fmt.Errorf("%w; no agent was started", err)
 		}
 		a.Speed, _ = run["speed"].(string)
@@ -714,8 +720,6 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		} else if mode, _ := run["permission_mode"].(string); mode != "" && own.permission == "" && !fit.supportsPermissionMode(mode) {
 			delete(run, "permission_mode")
 		}
-		decision := newPlacement(am.ID, "enforce")
-		ctx = context.WithValue(ctx, placementKey{}, decision)
 		// The admission gate refuses a too-busy computer before the user is asked to approve anything.
 		gated, _ := run["launcher"].(string)
 		if err := s.checkAgentStart(ctx, am.ID, s.startLauncher(ctx, gated)); err != nil {
