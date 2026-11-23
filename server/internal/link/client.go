@@ -1,5 +1,7 @@
 package link
 
+// (Probe for measuring the affected-only gate; this branch is not for merging.)
+
 import (
 	"cmp"
 	"context"
