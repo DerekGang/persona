@@ -114,32 +114,40 @@ export class Pairing {
     for (const value of alternates) { const address = normalizeBaseUrl(value); if (!address.startsWith('https://')) throw new Error('invalid_pairing'); values.add(address); }
     return Array.from(values);
   }
-  private static async verifyAddress(address: string, expectedHubId: string, pin: string, access?: HubAccess, proxy?: TransportProxy): Promise<PairingTarget> {
+  private static async verifyAddress(address: string, expectedHubId: string, pin: string, access?: HubAccess, proxy?: TransportProxy, deadline: number = 0): Promise<PairingTarget> {
     const anonymous = new HubTransport(new EndpointConfig(address, expectedHubId, '', pin, '', [], proxy, access));
+    let timer = -1;
     try {
-      const raw = await anonymous.request('/api/v1/health');
+      const request = anonymous.request('/api/v1/health');
+      const raw = deadline > 0 ? await Promise.race([request, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout((): void => { reject(new Error('hub_unavailable')); anonymous.close(); }, deadline);
+      })]) : await request;
       const data = JSON.parse(raw) as Record<string, Object>;
       if (data['ok'] !== true) throw new Error('hub_unavailable');
       const hubId = safeString(data, 'hub_id'), name = safeString(data, 'hub_name');
       if (!hubId || (expectedHubId && hubId !== expectedHubId)) throw new Error('hub_identity_mismatch');
       return new PairingTarget(address, hubId, name || 'Persona hub', pin);
-    } finally { anonymous.close(); }
+    } finally { if (timer !== -1) clearTimeout(timer); anonymous.close(); }
   }
-  static async reachable(primary: string, alternatives: string[], hubId: string, pin: string, admit: () => boolean = (): boolean => true, access?: HubAccess): Promise<string> {
+  static async reachable(primary: string, alternatives: string[], hubId: string, pin: string, admit: () => boolean = (): boolean => true, access?: HubAccess, requireCheck: boolean = false): Promise<string> {
     if (!admit()) throw new Error('request_updated');
     // Reconnection can transfer credentials only between advertised addresses of the same pinned Hub.
-    if (!hubId || !pin || !alternatives.length) return primary;
+    if (requireCheck && (!hubId || !pin)) throw new Error('invalid_pin');
+    if (!hubId || !pin || (!alternatives.length && !requireCheck)) return primary;
     let failure: Error = new Error('hub_unavailable');
     let accessFailure: Error | undefined;
     for (const address of Pairing.addresses(primary, alternatives)) {
       if (!admit()) throw new Error('request_updated');
-      try { const target = await Pairing.verifyAddress(address, hubId, pin, access); if (!admit()) throw new Error('request_updated'); return target.baseUrl; }
+      try { const target = await Pairing.verifyAddress(address, hubId, pin, access, undefined, requireCheck ? 3000 : 0); if (!admit()) throw new Error('request_updated'); return target.baseUrl; }
       catch (error) {
         failure = error as Error;
         if (failure.message === 'cloudflare_access_required' || failure.message === 'cloudflare_access_rejected') accessFailure = failure;
       }
     }
     throw accessFailure || failure;
+  }
+  private routeCurrent(): boolean {
+    return !this.route || (this.proxy ? this.proxy.isCurrent() : this.route.directCurrent?.(this.selectedUrl, this.pin) === true);
   }
   async inspect(): Promise<PairingTarget> {
     if (this.used) throw new Error('pairing_already_used');
@@ -151,9 +159,17 @@ export class Pairing {
     for (const address of addresses) {
       if (access !== this.access) throw new Error('pairing_target_changed');
       try {
-        const proxy = route ? await route.open(address, this.pin) : undefined;
-        const target = await Pairing.verifyAddress(address, this.expectedHubId, this.pin, access, proxy);
-        if (route && (!proxy?.isCurrent() || this.route !== route)) throw new Error('ssh_cancelled');
+        let target: PairingTarget | undefined, proxy: TransportProxy | undefined;
+        if (route?.admitDirect) {
+          try { target = await Pairing.verifyAddress(address,this.expectedHubId,this.pin,access,undefined,3000); }
+          catch (_) { /* The same pinned authority can also be reached through the configured SSH server. */ }
+          if (target) route.admitDirect(address,this.pin);
+        }
+        if (!target) {
+          proxy = route ? await route.open(address, this.pin) : undefined;
+          target = await Pairing.verifyAddress(address, this.expectedHubId, this.pin, access, proxy);
+        }
+        if (route && ((proxy && !proxy.isCurrent()) || this.route !== route)) throw new Error('ssh_cancelled');
         this.proxy = proxy;
         if (access !== this.access) throw new Error('pairing_target_changed');
         this.selectedUrl = address; this.inspectedKey = this.targetKey(target); return target;
@@ -168,7 +184,7 @@ export class Pairing {
   async redeem(target: PairingTarget, deviceName: string = 'HarmonyOS device', admit: () => boolean = (): boolean => true): Promise<EndpointConfig> {
     if (this.used || this.redeeming || !admit() || !this.inspectedKey || this.targetKey(target) !== this.inspectedKey)
       throw new Error('pairing_target_not_confirmed');
-    if (this.route && !this.proxy?.isCurrent()) throw new Error('ssh_cancelled');
+    if (!this.routeCurrent()) throw new Error('ssh_cancelled');
     const baseUrl = normalizeBaseUrl(target.baseUrl);
     if (baseUrl !== this.selectedUrl || target.pin !== this.pin || target.hubId !== this.expectedHubId && this.expectedHubId !== '')
       throw new Error('pairing_target_changed');
@@ -178,6 +194,7 @@ export class Pairing {
     // Recheck the exact endpoint and hub id after the user's confirmation, without sending the pairing token.
     const verified = await Pairing.verifyAddress(this.selectedUrl, target.hubId, this.pin, this.access, this.proxy);
     if (!admit()) throw new Error('request_updated');
+    if (!this.routeCurrent()) throw new Error('ssh_cancelled');
     if (this.targetKey(verified) !== this.inspectedKey) throw new Error('hub_identity_changed');
 
     const name = deviceName.trim().slice(0, 128) || 'HarmonyOS device';
@@ -189,7 +206,7 @@ export class Pairing {
       const deviceToken = safeString(result, 'token');
       const deviceId = safeString(result, 'id');
       if (!deviceToken || !deviceId) throw new Error('pairing_response_invalid');
-      if (!admit()) throw new Error('request_updated');
+      if (!admit() || !this.routeCurrent()) throw new Error('request_updated');
       return new EndpointConfig(target.baseUrl, target.hubId, deviceToken, target.pin, '', this.addresses.filter((address: string) => address !== target.baseUrl && address.startsWith('https://')), undefined, this.access);
     } finally { transport.close(); }
     } catch (error) { this.route?.close(); throw error as Error; }

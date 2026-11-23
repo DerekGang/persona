@@ -83,6 +83,58 @@
     {
       "name": "phone_pair_ssh_remove_help",
       "value": "删除后将清除此隧道的设置。如需撤销服务器上的权限，请另外移除对应的 authorized_keys 行。"
+    },
+    {
+      "name": "phone_pair_ssh_target",
+      "value": "隧道目标"
+    },
+    {
+      "name": "phone_pair_ssh_target_address",
+      "value": "地址"
+    },
+    {
+      "name": "phone_pair_ssh_target_help",
+      "value": "填写 SSH 服务器访问 Hub 所用的地址。两者在同一台机器上时一般为 127.0.0.1:18660。"
+    },
+    {
+      "name": "phone_pair_ssh_always",
+      "value": "总是走 SSH"
+    },
+    {
+      "name": "phone_pair_ssh_fallback_help",
+      "value": "关闭时先直连 Hub，连不上再通过 SSH 隧道连接。"
+    },
+    {
+      "name": "phone_pair_ssh_direct_active",
+      "value": "已直连 Hub"
+    },
+    {
+      "name": "phone_pair_ssh_fallback_parent",
+      "value": "先直连这个地址，连不上再经 SSH 隧道。"
+    },
+    {
+      "name": "phone_pair_ssh_always_parent",
+      "value": "总是经 SSH 隧道连接这台 hub。"
+    },
+    {
+      "name": "phone_pair_ssh_host",
+      "value": "主机"
+    },
+    {
+      "name": "phone_pair_ssh_port",
+      "value": "端口"
+    },
+    {
+      "name": "phone_pair_ssh_user",
+      "value": "用户名"
+    },
+    {
+      "name": "phone_pair_ssh_server_port",
+      "value": "SSH 服务器端口"
+    },
+    {
+      "name": "phone_pair_ssh_forward_port",
+      "value": "隧道目标端口"
     }
   ]
 }

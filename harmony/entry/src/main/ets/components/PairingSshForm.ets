@@ -1,6 +1,5 @@
 import { pasteboard } from '@kit.BasicServicesKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
-import { url } from '@kit.ArkTS';
 import { isPairingAddress } from '../core/WireCompatibility';
 import { Pairing } from '../platform/Pairing';
 import { normalizeBaseUrl } from '../platform/HubTransport';
@@ -10,6 +9,8 @@ import { tr } from '../design/Strings';
 import { Tokens } from '../design/Tokens';
 import { PairingSsh } from '../models/PairingSsh';
 import { SshConfiguration } from '../models/SshTunnel';
+import { SshRouteFields } from './SshRouteFields';
+import { SshEndpointRow } from './SshEndpointRow';
 
 interface SshForwardTarget { host: string; port: number; }
 
@@ -30,6 +31,9 @@ export struct PairingSshForm {
   @Local private identity: SshPublicIdentity | undefined = undefined;
   @Local private importing: boolean = false;
   @Local private checking: boolean = false;
+  @Local private targetHost: string = '';
+  @Local private targetPort: string = '';
+  @Local private always: boolean = false;
   private viewEpoch: number = 0;
   private visible: boolean = false;
 
@@ -39,6 +43,10 @@ export struct PairingSshForm {
     this.host = config.sshHost; this.port = String(config.sshPort); this.username = config.username;
     this.fingerprint = config.hostKey; this.pin = this.draft.hubPin;
     this.importing = this.draft.configured && !config.deviceIdentity;
+    if (this.draft.configured) {
+      const target = config.destination(this.previousAddress()); this.always = config.routePolicy !== 'fallback';
+      this.targetHost = target.host === '127.0.0.1' ? '' : target.host; this.targetPort = target.port === 18660 ? '' : String(target.port);
+    }
     const epoch = ++this.viewEpoch;
     SshDeviceIdentity.publicIdentity('persona-' + (deviceInfo.productModel || 'HarmonyOS')).then((identity: SshPublicIdentity) => {
       if (this.visible && this.viewEpoch === epoch) this.identity = identity;
@@ -52,6 +60,31 @@ export struct PairingSshForm {
     const old = this.draft.configuration;
     this.fingerprint = this.draft.configured && old.sshHost === this.host.trim() && old.sshPort === Number(this.port) ? old.hostKey : '';
     this.error = '';
+  }
+  private previousAddress(): string {
+    const raw = this.hubAddress.trim();
+    try { return raw ? isPairingAddress(raw) ? Pairing.parse(raw).initialAddress : normalizeBaseUrl(raw) : ''; }
+    catch (_) { return ''; }
+  }
+  private applyPolicy(config: SshConfiguration, target: SshForwardTarget): void {
+    const old = this.draft.configuration;
+    if (this.draft.configured && old.routePolicy === 'legacy' && this.always) {
+      const prior = old.destination(this.previousAddress());
+      if (prior.host === target.host && prior.port === target.port) return;
+    }
+    config.routePolicy = this.always ? 'always' : 'fallback';
+    config.forwardHost = target.host; config.forwardPort = target.port;
+  }
+  private alwaysChanged(value: boolean): void {
+    this.always = value;
+    const old = this.draft.configuration;
+    if (!this.draft.configured || old.sshHost !== this.host.trim() || old.sshPort !== Number(this.port) ||
+      old.username !== this.username.trim() || old.hostKey !== this.fingerprint.trim() || this.pin.trim() !== this.draft.hubPin ||
+      !!this.privateKeyText || !!this.phrase || this.importing === old.deviceIdentity) return;
+    const prior = old.destination(this.previousAddress()), target = this.forwardTarget();
+    if (prior.host !== target.host || prior.port !== target.port) return;
+    const next = old.copy(); this.applyPolicy(next,target);
+    if (next.routePolicy !== old.routePolicy) this.draft.configure(next,'','',this.pin,true,old.deviceIdentity);
   }
   private showProblem(error: Error): void {
     const codes = ['ssh_invalid_config','ssh_invalid_key','ssh_key_required','ssh_storage_failed','ssh_busy','ssh_timeout',
@@ -85,7 +118,8 @@ export struct PairingSshForm {
     const previous = this.fingerprint.trim();
     this.error = ''; this.checking = true;
     try {
-      const target = this.forwardTarget(), identity = await this.draft.observeServer(config.sshHost, config.sshPort);
+      const target = this.forwardTarget(); this.applyPolicy(config,target);
+      const identity = await this.draft.observeServer(config.sshHost, config.sshPort);
       if (!this.visible || epoch !== this.viewEpoch) return;
       const revision = this.draft.serverRevision();
       config.hostKey = identity.fingerprint;
@@ -110,14 +144,12 @@ export struct PairingSshForm {
   }
   private ready(): boolean {
     return !this.checking && !!this.host.trim() && !!this.username.trim() && /^\d{1,5}$/.test(this.port) && Number(this.port) > 0 && Number(this.port) <= 65535 &&
+      (!this.targetPort.trim() || /^\d{1,5}$/.test(this.targetPort) && Number(this.targetPort) > 0 && Number(this.targetPort) <= 65535) &&
       (!this.fingerprint.trim() || /^SHA256:[A-Za-z0-9+/]{43}$/.test(this.fingerprint.trim())) && (!this.pin.trim() || /^[A-Za-z0-9_-]{43}$/.test(this.pin.trim())) &&
       (this.importing ? !!this.privateKeyText || this.draft.configured && !this.draft.configuration.deviceIdentity && !this.phrase : !!this.identity);
   }
   private forwardTarget(): SshForwardTarget {
-    if (!this.hubAddress.trim()) return {host:'127.0.0.1',port:18660};
-    const raw = this.hubAddress.trim();
-    const endpoint = url.URL.parseURL(isPairingAddress(raw) ? Pairing.parse(raw).initialAddress : normalizeBaseUrl(raw));
-    return {host:endpoint.hostname.replace(/^\[|\]$/g, ''),port:endpoint.port ? Number(endpoint.port) : endpoint.protocol === 'https:' ? 443 : 80};
+    return {host:this.targetHost.trim().replace(/^\[|\]$/g,'') || '127.0.0.1',port:this.targetPort.trim() ? Number(this.targetPort) : 18660};
   }
   private async copy(restricted: boolean): Promise<void> {
     const identity = this.identity; if (!identity) return;
@@ -166,14 +198,22 @@ export struct PairingSshForm {
           this.devicePublicKey()
           this.subtitle(tr('phone_pair_ssh_server'))
           Column() {
-            this.field(tr('ssh_host'),this.host,'ssh.host',253,InputType.Normal,(v:string)=>{ this.host=v; this.serverChanged(); })
-            this.field(tr('ssh_port'),this.port,'ssh.port',5,InputType.Number,(v:string)=>{ this.port=v; this.serverChanged(); })
-            this.field(tr('ssh_username'),this.username,'ssh.user',128,InputType.Normal,(v:string)=>{ this.username=v; })
+            SshEndpointRow({label:tr('phone_pair_ssh_host'),value:this.host,prompt:'ssh.example.com',fieldId:'ssh.host',
+              onValue:(v:string):void=>{ this.host=v;this.serverChanged(); }})
+            Divider().color(Colors.divider).strokeWidth(0.5).margin({left:18})
+            SshEndpointRow({label:tr('phone_pair_ssh_port'),spokenLabel:tr('phone_pair_ssh_server_port'),value:this.port,prompt:'22',fieldId:'ssh.port',numeric:true,maxLength:5,
+              onValue:(v:string):void=>{ this.port=v;this.serverChanged(); }})
+            Divider().color(Colors.divider).strokeWidth(0.5).margin({left:18})
+            SshEndpointRow({label:tr('phone_pair_ssh_user'),value:this.username,prompt:'user',fieldId:'ssh.user',maxLength:128,
+              onValue:(v:string):void=>{ this.username=v; }})
             if (this.fingerprint && this.draft.configured) Column({space:3}) {
               Text(tr('phone_pair_ssh_saved_key')).fontSize(13).fontColor(Colors.secondary)
               Text(this.fingerprint).fontSize(13).fontFamily('monospace').fontColor(Colors.ink)
             }.width('100%').alignItems(HorizontalAlign.Start).padding(12).backgroundColor(Colors.surface).accessibilityGroup(true).id('ssh.hostKey')
-          }.borderRadius(14).clip(true)
+          }.width('100%').backgroundColor(Colors.surface).borderRadius(14).clip(true)
+          SshRouteFields({host:this.targetHost,port:this.targetPort,always:this.always,
+            onHost:(value: string): void => {this.targetHost=value;},onPort:(value: string): void => {this.targetPort=value;},
+            onAlways:(value: boolean): void => this.alwaysChanged(value)})
           Button(tr(this.importing ? 'phone_pair_ssh_use_device' : 'phone_pair_ssh_import'),{buttonStyle:ButtonStyleMode.TEXTUAL})
             .fontColor(Colors.link).onClick(()=>{this.importing=!this.importing;this.privateKeyText='';this.phrase='';}).id('ssh.chooseIdentity')
           if (this.importing) Column({space:6}) {

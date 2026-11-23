@@ -21,6 +21,10 @@ pub(crate) struct Config {
 
 pub(crate) struct Lease { pub port: u16, pub username: String, pub password: String }
 pub(crate) struct HostIdentity { pub algorithm: String, pub fingerprint: String }
+struct ForwardRoute {
+    authority: String, authority_port: u16, resolved_ips: Vec<IpAddr>,
+    destination: String, destination_port: u16,
+}
 
 struct Control {
     cancelled: CancellationToken,
@@ -92,7 +96,10 @@ fn registered<T, F: Future<Output = Result<T>>>(id: &str, keep_lease: bool, star
     result
 }
 pub(crate) fn open(id: &str, config: Config) -> Result<Lease> {
-    registered(id, true, |control| connect(id, config, control))
+    registered(id, true, |control| connect(id, config, None, control))
+}
+pub(crate) fn open_to(id: &str, config: Config, host: String, port: u16) -> Result<Lease> {
+    registered(id, true, |control| connect(id, config, Some((host, port)), control))
 }
 
 // A first-use observation ends at signed key exchange. It never accepts a key or requests user authentication.
@@ -207,26 +214,29 @@ async fn authenticate(config: &Config, control: &Control) -> Result<client::Hand
     if control.cancelled.is_cancelled() { return Err("ssh_cancelled"); }
     Ok(ssh)
 }
-async fn connect(id: &str, config: Config, control: Arc<Control>) -> Result<Lease> {
-    validate(&config, true)?;
+async fn connect(id: &str, config: Config, destination: Option<(String, u16)>, control: Arc<Control>) -> Result<Lease> {
+    validate(&config, destination.is_none())?;
+    let (host, port) = destination.unwrap_or_else(|| (config.target_host.clone(), config.target_port));
+    if !proxy::valid_host(&host) || port == 0 { return Err("ssh_invalid_config"); }
+    let route = Arc::new(ForwardRoute { authority: config.target_host.clone(), authority_port: config.target_port,
+        resolved_ips: config.resolved_hub_ips.clone(), destination: host, destination_port: port });
     let ssh = authenticate(&config, &control).await?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await.map_err(|_| "ssh_proxy_failed")?;
     let port = listener.local_addr().map_err(|_| "ssh_proxy_failed")?.port();
     let mut random = [0u8; 32]; getrandom::fill(&mut random).map_err(|_| "ssh_proxy_failed")?;
     let credentials = Credentials { username: "persona".into(), password: URL_SAFE_NO_PAD.encode(random) };
     let lease = Lease { port, username: credentials.username.clone(), password: credentials.password.clone() };
-    let host = config.target_host.clone(); let target_port = config.target_port; let resolved_hub_ips = config.resolved_hub_ips.clone();
     drop(config); // Key text and passphrase buffers are wiped before returning the local endpoint.
     let id = id.to_owned();
     runtime().spawn(async move {
-        serve(listener, Arc::new(ssh), host, target_port, resolved_hub_ips, credentials, control.clone()).await;
+        serve(listener, Arc::new(ssh), route, credentials, control.clone()).await;
         control.cancelled.cancel(); retire(&id, &control);
     });
     Ok(lease)
 }
 
-async fn serve(listener: TcpListener, ssh: Arc<client::Handle<HostVerifier>>, host: String, port: u16,
-    resolved_hub_ips: Vec<IpAddr>, credentials: Credentials, control: Arc<Control>) {
+async fn serve(listener: TcpListener, ssh: Arc<client::Handle<HostVerifier>>, route: Arc<ForwardRoute>,
+    credentials: Credentials, control: Arc<Control>) {
     let activity = Arc::new(Mutex::new(Instant::now()));
     let mut tasks = JoinSet::new(); let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
@@ -240,13 +250,13 @@ async fn serve(listener: TcpListener, ssh: Arc<client::Handle<HostVerifier>>, ho
             accepted = listener.accept() => {
                 let Ok((stream, peer)) = accepted else { break; };
                 if !peer.ip().is_loopback() || tasks.len() >= MAX_CHANNELS { drop(stream); continue; }
-                let ssh = ssh.clone(); let host = host.clone(); let resolved_hub_ips = resolved_hub_ips.clone(); let credentials = credentials.clone();
+                let ssh = ssh.clone(); let route = route.clone(); let credentials = credentials.clone();
                 let cancelled = control.cancelled.clone(); let activity = activity.clone();
                 tasks.spawn(async move {
                     tokio::select! {
                         biased;
                         _ = cancelled.cancelled() => {},
-                        _ = forward(stream, ssh, &host, port, &resolved_hub_ips, &credentials, activity) => {},
+                        _ = forward(stream, ssh, &route, &credentials, activity) => {},
                     }
                 });
             }
@@ -256,10 +266,10 @@ async fn serve(listener: TcpListener, ssh: Arc<client::Handle<HostVerifier>>, ho
     let _ = tokio::time::timeout(Duration::from_secs(1), ssh.disconnect(russh::Disconnect::ByApplication, "", "")).await;
 }
 
-async fn forward(mut stream: TcpStream, ssh: Arc<client::Handle<HostVerifier>>, host: &str, port: u16,
-    resolved_hub_ips: &[IpAddr], credentials: &Credentials, activity: Arc<Mutex<Instant>>) -> Result<()> {
-    let protocol = tokio::time::timeout(HANDSHAKE_TIMEOUT, proxy::handshake(&mut stream, host, port, resolved_hub_ips, credentials)).await.map_err(|_| "ssh_proxy_handshake")??;
-    let channel = tokio::time::timeout(HANDSHAKE_TIMEOUT, ssh.channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0))
+async fn forward(mut stream: TcpStream, ssh: Arc<client::Handle<HostVerifier>>, route: &ForwardRoute,
+    credentials: &Credentials, activity: Arc<Mutex<Instant>>) -> Result<()> {
+    let protocol = tokio::time::timeout(HANDSHAKE_TIMEOUT, proxy::handshake(&mut stream, &route.authority, route.authority_port, &route.resolved_ips, credentials)).await.map_err(|_| "ssh_proxy_handshake")??;
+    let channel = tokio::time::timeout(HANDSHAKE_TIMEOUT, ssh.channel_open_direct_tcpip(&route.destination, u32::from(route.destination_port), "127.0.0.1", 0))
         .await.map_err(|_| "ssh_proxy_failed")?.map_err(|_| "ssh_proxy_failed")?;
     proxy::accepted(&mut stream, protocol).await?;
     let local_activity = Arc::new(Mutex::new(Instant::now()));
@@ -400,7 +410,9 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 0); assert!(!alive(id));
     }
-    #[tokio::test] async fn captured_socks_ip_still_opens_the_original_logical_hub_channel() {
+    #[tokio::test] async fn captured_socks_ip_still_opens_the_original_logical_hub_channel() { check_socks_destination(false).await; }
+    #[tokio::test] async fn a_captured_logical_authority_opens_only_the_explicit_ssh_destination() { check_socks_destination(true).await; }
+    async fn check_socks_destination(explicit: bool) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let host_key = russh::keys::PrivateKey::random(&mut russh::keys::key::safe_rng(), russh::keys::Algorithm::Ed25519).unwrap();
         let pin = host_key.public_key().fingerprint(HashAlg::Sha256).to_string();
@@ -411,9 +423,9 @@ mod tests {
             let config = russh::server::Config { keys: vec![host_key], auth_rejection_time: Duration::ZERO, ..Default::default() };
             if let Ok(session) = russh::server::run_stream(Arc::new(config), stream, ChannelTarget(server_target)).await { let _ = session.await; }
         });
-        let id = "dddddddd-dddd-dddd-dddd-dddddddddddd"; begin(id).unwrap();
+        let id = if explicit { "44444444-4444-4444-4444-444444444444" } else { "dddddddd-dddd-dddd-dddd-dddddddddddd" }; begin(id).unwrap();
         let config = fixture_config(port, pin);
-        let lease = tokio::task::spawn_blocking(move || open(id, config)).await.unwrap().unwrap();
+        let lease = tokio::task::spawn_blocking(move || if explicit { open_to(id, config, "127.0.0.1".into(), 18660) } else { open(id, config) }).await.unwrap().unwrap();
         let mut proxy = TcpStream::connect(("127.0.0.1", lease.port)).await.unwrap();
         proxy.write_all(&[5, 1, 2]).await.unwrap(); let mut selection = [0; 2]; proxy.read_exact(&mut selection).await.unwrap();
         assert_eq!(selection, [5, 2]);
@@ -422,7 +434,8 @@ mod tests {
         let mut request = vec![5, 1, 0, 1, 192, 0, 2, 10]; request.extend(443u16.to_be_bytes());
         proxy.write_all(&request).await.unwrap(); let mut connect_reply = [0; 10]; proxy.read_exact(&mut connect_reply).await.unwrap();
         assert_eq!(connect_reply[0..2], [5, 0]);
-        assert_eq!(*target.lock().unwrap(), Some(("hub.test".into(), 443)));
+        let expected = if explicit { ("127.0.0.1".into(), 18660) } else { ("hub.test".into(), 443) };
+        assert_eq!(*target.lock().unwrap(), Some(expected));
         tokio::task::spawn_blocking(move || close(id)).await.unwrap();
         tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
     }

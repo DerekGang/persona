@@ -9,6 +9,8 @@ import { SshConfiguration, SshProxyLease, SshTunnel } from './SshTunnel';
 import type { ClientViewLease } from './ClientModel';
 
 export interface PairingSshRoute {
+  admitDirect?: (address: string, pin: string) => void;
+  directCurrent?: (address: string, pin: string) => boolean;
   open: (address: string, pin: string) => Promise<TransportProxy>;
   install: (hub: string, address: string, pin: string, view: ClientViewLease, admit: () => boolean) => Promise<(committed: boolean) => Promise<void>>;
   close: () => void;
@@ -87,12 +89,12 @@ export class PairingSsh {
     const material = this.material;
     if (!this.configured || (!material && !this.configuration.deviceIdentity)) return pairing;
     const config = this.configuration.copy(), tunnel = new SshTunnel();
-    let active = true, endpoint = '', pinned = '', lease: SshProxyLease | undefined;
+    let active = true, direct = false, endpoint = '', pinned = '', lease: SshProxyLease | undefined;
     const current = (): boolean => active && admit() && this.material === material;
     const route: PairingSshRoute = {
       open: async (address: string, pin: string): Promise<TransportProxy> => {
         if (!current() || (endpoint && (endpoint !== address || pin !== pinned))) throw new Error('ssh_cancelled');
-        endpoint = address; pinned = pin;
+        endpoint = address; pinned = pin; direct = false;
         if (lease?.isCurrent()) return lease;
         const selected = config.deviceIdentity ? await SshDeviceIdentity.secrets(current) : material?.copy();
         if (!selected) throw new Error('ssh_key_required');
@@ -102,12 +104,19 @@ export class PairingSsh {
         return lease;
       },
       install: async (hub: string, address: string, pin: string, view: ClientViewLease, owns: () => boolean): Promise<(committed: boolean) => Promise<void>> => {
-        const valid = (): boolean => current() && owns() && !!lease?.isCurrent() && endpoint === address && pinned === pin;
+        const valid = (): boolean => current() && owns() && (direct || !!lease?.isCurrent()) && endpoint === address && pinned === pin;
         if (!valid()) throw new Error('ssh_cancelled');
         return SshTunnel.stagePairing(hub, config, material, view, valid);
       },
       close: (): void => { active = false; tunnel.stop(); lease = undefined; }
     };
+    if (config.routePolicy === 'fallback') {
+      route.admitDirect = (address: string, pin: string): void => {
+        if (!current() || (endpoint && (endpoint !== address || pinned !== pin))) throw new Error('ssh_cancelled');
+        tunnel.stop(); lease = undefined; direct = true; endpoint = address; pinned = pin;
+      };
+      route.directCurrent = (address: string, pin: string): boolean => current() && direct && endpoint === address && pinned === pin;
+    }
     pairing.setSshRoute(route, this.hubPin); this.request = route;
     return pairing;
   }

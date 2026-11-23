@@ -192,6 +192,64 @@ export default function nativeSshTests(): void {
       const again = await SshDeviceIdentity.publicIdentity('persona-native-test');
       expect(again.fingerprint).assertEqual(key.fingerprint); expect(again.line).assertEqual(key.line);
     });
+    if (fixtureArgument('sshPolicyProbe') === '1') it('separate_forward_target_keeps_hub_identity_for_direct_fallback_and_always', 0, async (): Promise<void> => {
+      const fixture = await sshFixture(), pin = fixtureArgument('fixturePin'), port = Wire.number(fixture,'targetPort');
+      const reachable = fixtureArgument('sshDirectAddress'), unreachable = fixtureArgument('sshOfflineAddress');
+      const server = Wire.text(fixture,'hostKey'), key = Wire.text(fixture,'privateKey');
+      const gated = fixtureArgument('sshDirectGate') === '1';
+      const setDirect = async (available: boolean): Promise<void> => {
+        const probe = http.createHttp();
+        try {
+          const control = Number(fixtureArgument('sshFixturePort')), ticket = fixtureArgument('sshFixtureTicket');
+          if (!Number.isInteger(control) || control < 1 || control > 65535 || !/^[a-f0-9]{64}$/.test(ticket)) throw new Error('invalid_fixture');
+          const reply = await probe.request('http://127.0.0.1:' + control + '/direct-availability', {
+            method:http.RequestMethod.POST, header:{'Authorization':'Bearer ' + ticket,'Content-Type':'text/plain'},
+            extraData:available ? 'up' : 'down',connectTimeout:5000,readTimeout:5000,usingCache:false });
+          expect(reply.responseCode).assertEqual(204);
+        } finally { probe.destroy(); }
+      };
+      for (const scenario of ['direct','fallback','always']) {
+        const config = new SshConfiguration(); config.sshHost = '127.0.0.1'; config.sshPort = Wire.number(fixture,'sshPort');
+        config.username = Wire.text(fixture,'username'); config.hostKey = server;
+        config.routePolicy = scenario === 'always' ? 'always' : 'fallback'; config.forwardHost = '127.0.0.1'; config.forwardPort = port;
+        const base = !gated && scenario === 'fallback' ? unreachable : reachable;
+        expect(Number(url.URL.parseURL(base).port) !== port).assertTrue();
+        const client = new ClientModel(), setup = new PairingSsh(); let hub = '';
+        await client.initialize(nativeTestContext());
+        try {
+          if (gated) await setDirect(scenario !== 'fallback');
+          setup.configure(config,key,'',pin,true);
+          const pair = setup.prepare(Pairing.manual(base,'synthetic-fixture-token'),(): boolean => true), target = await pair.inspect();
+          hub = target.hubId; expect(target.baseUrl).assertEqual(base + '/');
+          expect(pair.sshRoute!.directCurrent?.(target.baseUrl,pin) === true).assertEqual(scenario === 'direct');
+          await client.pair(pair,target);
+          const kept = SshConfiguration.from(await client.loadView('ssh-tunnel'));
+          expect(kept.routePolicy).assertEqual(config.routePolicy); expect(kept.forwardPort).assertEqual(port);
+          expect(kept.forwardHost).assertEqual('127.0.0.1'); expect(kept.hostKey).assertEqual(server);
+          expect(client.ssh.phase).assertEqual(scenario === 'direct' ? 'direct' : 'connected');
+          if (gated && scenario === 'fallback' && fixtureArgument('sshRecheck') === '1') {
+            const generation = client.connectionGeneration(); await setDirect(true);
+            for (let second=0; second<138; second++) {
+              if (client.connectionGeneration() > generation && client.ssh.phase === 'direct') break;
+              await new Promise<void>((resolve: () => void) => {setTimeout(resolve,1000);});
+            }
+            expect(client.connectionGeneration() > generation && client.ssh.phase === 'direct').assertTrue();
+            expect(client.profile.hubId).assertEqual(hub);
+          }
+          if (gated && scenario === 'always') {
+            const broken = kept.copy(); broken.sshPort = Number(url.URL.parseURL(unreachable).port);
+            await client.ssh.save(broken,'','',true);
+            await client.selectProfile(client.profile,true);
+            expect(client.ssh.phase).assertEqual('direct'); expect(client.profile.hubId).assertEqual(hub);
+          }
+        } finally {
+          if (gated) await setDirect(true);
+          setup.clear(); if (hub && client.profiles.some(profile => profile.id === hub)) await client.forgetProfile(hub);
+          if (hub) await expectErased(hub);
+          await client.background();
+        }
+      }
+    });
     it('native_authenticated_proxies_preserve_https_pinning_websocket_and_child_streams', 0, async (): Promise<void> => {
       const config = await configuration();
       let main: HubTransport | undefined, child: HubTransport | undefined, bad: HubTransport | undefined;

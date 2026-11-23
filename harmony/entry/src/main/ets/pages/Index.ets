@@ -847,7 +847,7 @@ struct Index {
       PhonePairingForm({ password: this.pairByPassword, manual: this.pairManually, address: this.address,
         code: this.pairCode, busy: this.model.busy || this.scanning || this.confirmingScan || this.passwordAuthorizing, error: this.model.error ? trError(this.model.error) : '',
         accessExpanded: this.pairAccessExpanded, accessID: this.pairAccessID,
-        accessSecret: this.pairAccessSecret, sshLabel: this.pairSsh.label,
+        accessSecret: this.pairAccessSecret, sshLabel: this.pairSsh.label, sshPolicy: this.pairSsh.configuration.routePolicy,
         onAccessExpanded: (value: boolean) => { this.pairAccessExpanded = value; },
         onAccessID: (value: string) => { this.pairAccessID = value; this.pairSsh.cancelAttempt(); },
         onAccessSecret: (value: string) => { this.pairAccessSecret = value; this.pairSsh.cancelAttempt(); },

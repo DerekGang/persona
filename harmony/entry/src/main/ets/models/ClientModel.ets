@@ -618,9 +618,28 @@ export class ClientModel {
     try {
       await this.ssh.bind(this, (): boolean => this.foreground && !this.retired && !this.forgettingProfiles.has(profile.id));
       if (!this.owns(generation, scope) || !this.foreground) return;
-      proxy = await this.ssh.acquire();
-      const address = proxy ? profile.baseUrl : await Pairing.reachable(profile.baseUrl, profile.addresses, profile.hubId, profile.pin, (): boolean => this.owns(generation, scope) && this.foreground, access);
+      const current = (): boolean => this.owns(generation, scope) && this.foreground;
+      const direct = (required: boolean): Promise<string> => Pairing.reachable(profile.baseUrl, profile.addresses,
+        profile.hubId, profile.pin, current, access, required);
+      const config = this.ssh.configuration, policy = config?.enabled ? config.routePolicy : 'legacy';
+      let address = profile.baseUrl;
+      if (policy === 'fallback') {
+        try { address = await direct(true); }
+        catch (error) {
+          if (!current()) return;
+          proxy = await this.ssh.acquire(current);
+          if (!proxy) throw error as Error;
+          this.ssh.watchDirect((): Promise<string> => direct(true), (): void => {
+            if (current()) this.selectProfile(profile,true).catch((failure: Error) => this.failure(failure));
+          });
+        }
+      } else {
+        try { proxy = await this.ssh.acquire(); }
+        catch (error) { if (policy !== 'always' || !current()) throw error as Error; }
+        if (!proxy) address = await direct(policy === 'always');
+      }
       if (!this.owns(generation, scope) || !this.foreground) return;
+      if (!proxy && (policy === 'always' || policy === 'fallback')) this.ssh.usingDirectAddress();
       if (address !== profile.baseUrl) { profile.addresses = Array.from(new Set<string>([profile.baseUrl].concat(profile.addresses))).filter((value: string) => value !== address && value.startsWith('https://')); profile.baseUrl = address; await this.saveProfiles(); }
     } catch (error) { if (this.owns(generation, scope)) { this.failure(error as Error); this.scheduleReconnect(); } return; }
     if (!this.owns(generation, scope) || !this.foreground) return;

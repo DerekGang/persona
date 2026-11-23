@@ -83,6 +83,58 @@
     {
       "name": "phone_pair_ssh_remove_help",
       "value": "This removes the tunnel settings. Remove the authorized_keys line on the server separately if you want to revoke its permission."
+    },
+    {
+      "name": "phone_pair_ssh_target",
+      "value": "Tunnel Target"
+    },
+    {
+      "name": "phone_pair_ssh_target_address",
+      "value": "Address"
+    },
+    {
+      "name": "phone_pair_ssh_target_help",
+      "value": "Enter the Hub address as seen from the SSH server. Both services on the same machine normally use 127.0.0.1:18660."
+    },
+    {
+      "name": "phone_pair_ssh_always",
+      "value": "Always Use SSH"
+    },
+    {
+      "name": "phone_pair_ssh_fallback_help",
+      "value": "When off, this device tries the Hub directly and uses SSH if the Hub is unreachable."
+    },
+    {
+      "name": "phone_pair_ssh_direct_active",
+      "value": "Connected directly to the Hub"
+    },
+    {
+      "name": "phone_pair_ssh_fallback_parent",
+      "value": "Connect to this address directly first, and use the SSH tunnel if that fails."
+    },
+    {
+      "name": "phone_pair_ssh_always_parent",
+      "value": "Always connect to this hub through the SSH tunnel."
+    },
+    {
+      "name": "phone_pair_ssh_host",
+      "value": "Host"
+    },
+    {
+      "name": "phone_pair_ssh_port",
+      "value": "Port"
+    },
+    {
+      "name": "phone_pair_ssh_user",
+      "value": "Username"
+    },
+    {
+      "name": "phone_pair_ssh_server_port",
+      "value": "SSH server port"
+    },
+    {
+      "name": "phone_pair_ssh_forward_port",
+      "value": "Tunnel destination port"
     }
   ]
 }

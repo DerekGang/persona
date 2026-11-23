@@ -83,6 +83,58 @@
     {
       "name": "phone_pair_ssh_remove_help",
       "value": "トンネルの設定が削除されます。サーバーで権限も取り消す場合は、該当する authorized_keys の行を削除してください。"
+    },
+    {
+      "name": "phone_pair_ssh_target",
+      "value": "トンネルの接続先"
+    },
+    {
+      "name": "phone_pair_ssh_target_address",
+      "value": "アドレス"
+    },
+    {
+      "name": "phone_pair_ssh_target_help",
+      "value": "SSH サーバーから見た Hub のアドレスを入力します。同じマシンでは通常 127.0.0.1:18660 を使います。"
+    },
+    {
+      "name": "phone_pair_ssh_always",
+      "value": "常に SSH を使用"
+    },
+    {
+      "name": "phone_pair_ssh_fallback_help",
+      "value": "オフの場合はまず Hub に直接接続し、接続できないときに SSH トンネルを使います。"
+    },
+    {
+      "name": "phone_pair_ssh_direct_active",
+      "value": "Hub に直接接続中"
+    },
+    {
+      "name": "phone_pair_ssh_fallback_parent",
+      "value": "まずこのアドレスに直接接続し、接続できないときは SSH トンネルを使います。"
+    },
+    {
+      "name": "phone_pair_ssh_always_parent",
+      "value": "この Hub には常に SSH トンネル経由で接続します。"
+    },
+    {
+      "name": "phone_pair_ssh_host",
+      "value": "ホスト"
+    },
+    {
+      "name": "phone_pair_ssh_port",
+      "value": "ポート"
+    },
+    {
+      "name": "phone_pair_ssh_user",
+      "value": "ユーザー名"
+    },
+    {
+      "name": "phone_pair_ssh_server_port",
+      "value": "SSH サーバーのポート"
+    },
+    {
+      "name": "phone_pair_ssh_forward_port",
+      "value": "トンネルの接続先ポート"
     }
   ]
 }

@@ -18,6 +18,7 @@ export struct PhonePairingForm {
   @Param accessID: string = '';
   @Param accessSecret: string = '';
   @Param sshLabel: string = '';
+  @Param sshPolicy: string = '';
   @Event onAddress: (value: string) => void = () => {};
   @Event onCode: (value: string) => void = () => {};
   @Event onPassword: (value: boolean) => void = () => {};
@@ -180,7 +181,8 @@ export struct PhonePairingForm {
       Column() {
         this.settingsRow(tr('phone_pair_ssh'), $r('sys.symbol.key'), 'pair.ssh', this.sshLabel, false, () => this.onSsh())
       }.width('100%').borderRadius(20).clip(true).backgroundColor(Colors.sheetCard)
-      this.footer(tr(this.sshLabel ? 'phone_pair_ssh_configured' : 'phone_pair_ssh_info'))
+      this.footer(tr(!this.sshLabel ? 'phone_pair_ssh_info' : this.sshPolicy === 'fallback' ? 'phone_pair_ssh_fallback_parent' :
+        this.sshPolicy === 'always' ? 'phone_pair_ssh_always_parent' : 'phone_pair_ssh_configured'))
     }.margin({ top: 17.67 })
   }
 

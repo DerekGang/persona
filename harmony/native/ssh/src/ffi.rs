@@ -55,13 +55,18 @@ pub unsafe extern "C" fn persona_ssh_observe(id: *const c_char, host: *const c_c
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn persona_ssh_open(raw: *const SshConfig) -> *mut c_char {
-    unsafe { authenticated_request(raw, false) }
+    unsafe { authenticated_request(raw, false, std::ptr::null(), 0) }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn persona_ssh_open_to(raw: *const SshConfig, host: *const c_char, port: u16) -> *mut c_char {
+    if host.is_null() { return json_result(serde_json::json!({ "error":"ssh_invalid_config" })); }
+    unsafe { authenticated_request(raw, false, host, port) }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn persona_ssh_verify_target(raw: *const SshConfig) -> *mut c_char {
-    unsafe { authenticated_request(raw, true) }
+    unsafe { authenticated_request(raw, true, std::ptr::null(), 0) }
 }
-unsafe fn authenticated_request(raw: *const SshConfig, verify: bool) -> *mut c_char {
+unsafe fn authenticated_request(raw: *const SshConfig, verify: bool, destination: *const c_char, port: u16) -> *mut c_char {
     json_call(|| {
         if raw.is_null() { return Err("ssh_invalid_config"); }
         let raw = unsafe { &*raw }; let id = unsafe { text(raw.id, 36) }?;
@@ -75,7 +80,8 @@ unsafe fn authenticated_request(raw: *const SshConfig, verify: bool) -> *mut c_c
             tunnel::verify_target(&id, config)?;
             return Ok(serde_json::json!({ "id": id }));
         }
-        let lease = tunnel::open(&id, config)?;
+        let lease = if destination.is_null() { tunnel::open(&id, config) }
+            else { tunnel::open_to(&id, config, unsafe { text(destination, 253) }?, port) }?;
         Ok(serde_json::json!({ "id": id, "host": "127.0.0.1", "port": lease.port, "username": lease.username, "password": lease.password }))
     })
 }

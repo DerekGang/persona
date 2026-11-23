@@ -1254,6 +1254,27 @@ test('enabled SSH startup failures stop Hub discovery before any direct probe or
  finally{delete globalThis.clientSshAcquire;delete globalThis.clientPairingAddress;model.stopReconnect();}
 });
 
+test('explicit SSH policies select the verified route in the configured order on a paired Hub',async()=>{
+ for(const [policy,direct,ssh,expected] of [
+  ['fallback',true,false,['direct','using-direct']],
+  ['fallback',false,true,['direct','ssh','watch-direct']],
+  ['always',true,true,['ssh']],
+  ['always',true,false,['ssh','direct','using-direct']]
+ ]){
+  const model=new ClientModel(), profile=new HubProfile('policy-hub','','https://selected.invalid/');
+  profile.hubId=profile.id;profile.pin='B'.repeat(43);profile.manager='work';
+  model.profile=profile;model.profiles=[profile];model.foreground=true;model.vault={async get(){return 'synthetic';}};
+  const calls=[];
+  model.ssh.configuration={enabled:true,routePolicy:policy};model.ssh.watchDirect=()=>calls.push('watch-direct');
+  model.ssh.usingDirectAddress=()=>calls.push('using-direct');
+  globalThis.clientSshAcquire=async()=>{calls.push('ssh');if(!ssh)throw Error('ssh_connect_failed');return{isCurrent:()=>true};};
+  globalThis.clientPairingAddress=async(address,...params)=>{calls.push('direct');assert.equal(params.at(-1),true);if(!direct)throw Error('unavailable');return address;};
+  globalThis.clientTestRequest=async()=>{throw Error('end of routing probe');};
+  try{await model.selectProfile(profile,true);assert.deepEqual(calls,expected);}
+  finally{model.stopReconnect();delete globalThis.clientSshAcquire;delete globalThis.clientPairingAddress;delete globalThis.clientTestRequest;}
+ }
+});
+
 test('Hub connection retirement closes the active owner and every retained manager while preserving other Hubs',async()=>{
  const {model}=fixture(),row=new ResourceRow('secondary','','conversation');row.manager='work';model.profiles=[model.profile];let rootClosed=0,secondaryClosed=0,foreignClosed=0;model.repository={close(){rootClosed++;}};
  const select=ClientModel.prototype.selectProfile;ClientModel.prototype.selectProfile=async function(profile){this.profile=profile;this.connected=true;};

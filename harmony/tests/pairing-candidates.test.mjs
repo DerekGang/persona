@@ -67,3 +67,41 @@ test('neither a conflicting Hub pin, a failed SSH route, nor cancellation can sp
   const target=await second.inspect();active=false;await assert.rejects(second.redeem(target),/ssh_cancelled/);
   assert.ok(state.calls.every(c=>c.config.token==='' && c.config.baseUrl===primary));
 });
+
+test('direct-first pairing spends its code only on the verified route and closes the captured permission', async () => {
+  for (const direct of [true, false]) {
+    reset();
+    const lease = { isCurrent: () => true };
+    let accepted = false, opens = 0, active = true;
+    const route = {
+      open: async () => { opens++; return lease; },
+      close: () => { active = false; },
+      admitDirect: (address, actualPin) => { assert.equal(address, primary); assert.equal(actualPin, pin); accepted = true; },
+      directCurrent: () => accepted && active
+    };
+    state.responses.set(primary, config => {
+      assert.equal(config.pin, pin);
+      if (!direct && !config.proxy) throw Error('unreachable');
+      return JSON.stringify({ok:true,hub_id:'same-hub',hub_name:'Synthetic Hub'});
+    });
+    const pair = Pairing.parse(link()); pair.setSshRoute(route,'');
+    const selected = await pair.inspect();
+    assert.equal(accepted,direct); assert.equal(opens,direct ? 0 : 1);
+    await pair.redeem(selected);
+    const writes = state.calls.filter(item => item.path.endsWith('/auth/tokens'));
+    assert.equal(writes.length,1); assert.equal(writes[0].config.proxy,direct ? undefined : lease);
+    assert.ok(state.calls.every(item => item.config.baseUrl === primary));
+  }
+  reset();let live = true;
+  state.responses.set(primary,{ok:true,hub_id:'same-hub',hub_name:'Synthetic Hub'});
+  const pair = Pairing.parse(link());
+  pair.setSshRoute({open:async()=>{throw Error('unexpected SSH');},admitDirect:()=>{},directCurrent:()=>live,close:()=>{live=false;}},'');
+  const selected = await pair.inspect();live=false;
+  await assert.rejects(pair.redeem(selected),/ssh_cancelled/);
+  assert.equal(state.calls.filter(item=>item.config.token).length,0);
+});
+test('a stored fallback tunnel checks even a single direct address against the paired Hub', async () => {
+  reset();state.responses.set(primary,{ok:true,hub_id:'another-hub'});
+  await assert.rejects(Pairing.reachable(primary,[],'same-hub',pin,()=>true,undefined,true),/hub_identity_mismatch/);
+  assert.ok(state.calls.every(c=>!c.config.token && c.config.pin===pin));
+});

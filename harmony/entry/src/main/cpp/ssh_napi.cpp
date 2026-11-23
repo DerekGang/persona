@@ -17,8 +17,8 @@ struct Work {
   napi_async_work work = nullptr;
   napi_deferred deferred = nullptr;
   Operation op = Operation::Open;
-  std::string id, host, user, pin, target;
-  uint16_t port = 0, targetPort = 0;
+  std::string id, host, user, pin, target, forwardHost;
+  uint16_t port = 0, targetPort = 0, forwardPort = 0;
   std::vector<std::string> resolvedHubIps;
   std::vector<const char*> resolvedHubIpPointers;
   std::vector<uint8_t> key, passphrase;
@@ -82,7 +82,9 @@ void Execute(napi_env, void* data) {
   PersonaSshConfig config { work->id.c_str(), work->host.c_str(), work->port, work->user.c_str(), work->pin.c_str(),
     work->target.c_str(), work->targetPort, work->resolvedHubIpPointers.data(), work->resolvedHubIpPointers.size(),
     work->key.data(), work->key.size(), work->passphrase.data(), work->passphrase.size() };
-  work->result = work->op == Work::Operation::Verify ? persona_ssh_verify_target(&config) : persona_ssh_open(&config);
+  if (work->op == Work::Operation::Verify) work->result = persona_ssh_verify_target(&config);
+  else if (work->forwardPort) work->result = persona_ssh_open_to(&config, work->forwardHost.c_str(), work->forwardPort);
+  else work->result = persona_ssh_open(&config);
   Wipe(work->key); Wipe(work->passphrase);
 }
 void Complete(napi_env env, napi_status status, void* data) {
@@ -142,6 +144,13 @@ napi_value Request(napi_env env, napi_callback_info info, Work::Operation op) {
       !Port(env, args[0], "targetPort", work->targetPort) || !TextArray(env, args[0], "resolvedHubIps", work->resolvedHubIps, 16, 45) ||
       !Bytes(env, args[0], "privateKey", work->key, 32768) ||
       !Bytes(env, args[0], "passphrase", work->passphrase, 4096) || work->key.empty())) {
+    napi_throw_error(env, nullptr, "ssh_invalid_config"); return nullptr;
+  }
+  bool hasHost = false, hasPort = false;
+  if (napi_has_named_property(env, args[0], "forwardHost", &hasHost) != napi_ok ||
+      napi_has_named_property(env, args[0], "forwardPort", &hasPort) != napi_ok || hasHost != hasPort ||
+      (hasHost && (op != Work::Operation::Open || !Text(env, args[0], "forwardHost", work->forwardHost, 253) ||
+                   work->forwardHost.empty() || !Port(env, args[0], "forwardPort", work->forwardPort)))) {
     napi_throw_error(env, nullptr, "ssh_invalid_config"); return nullptr;
   }
   if (!persona_ssh_begin(work->id.c_str())) { napi_throw_error(env, nullptr, "ssh_busy"); return nullptr; }

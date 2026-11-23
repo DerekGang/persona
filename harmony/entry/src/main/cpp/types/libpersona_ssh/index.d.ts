@@ -6,6 +6,8 @@ export interface NativeSshConfig {
   hostKey: string;
   targetHost: string;
   targetPort: number;
+  forwardHost?: string;
+  forwardPort?: number;
   resolvedHubIps: string[];
   privateKey: Uint8Array;
   passphrase: Uint8Array;

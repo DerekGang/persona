@@ -97,6 +97,20 @@ function configuration() { const config = new SshConfiguration(); config.enabled
 async function fixture() { const client = owner(), tunnel = new SshTunnel(); tunnel.initialize({}); await tunnel.bind(client); return { client, tunnel }; }
 async function configured() { const value = await fixture(); await value.tunnel.save(configuration(), KEY, 'phrase', true); return value; }
 
+test('legacy bindings keep their logical Hub target while new routes preserve a separate SSH destination', async () => {
+  reset();
+  const legacy = SshConfiguration.from(JSON.stringify({enabled:true,sshHost:'ssh.test',sshPort:22,username:'fixture',hostKey:PIN}));
+  assert.equal(legacy.routePolicy,'legacy');assert.deepEqual(legacy.destination('https://hub.test:8443/'),{host:'hub.test',port:8443});
+  const {client,tunnel}=await fixture(), next=configuration();
+  next.routePolicy='fallback';next.forwardHost='127.0.0.1';next.forwardPort=18660;
+  await tunnel.save(next,KEY,'phrase',true);
+  const stored=SshConfiguration.from(client.saved);
+  assert.deepEqual(stored.destination('https://hub.test:8443/'),{host:'127.0.0.1',port:18660});
+  await tunnel.acquire();
+  assert.deepEqual([calls.open[0].targetHost,calls.open[0].targetPort,calls.open[0].forwardHost,calls.open[0].forwardPort],['hub.test',8443,'127.0.0.1',18660]);
+  tunnel.stop();
+});
+
 test('multiline SSH secrets use separate device-only aliases; DB retains metadata references only', async () => {
   reset(); const { client, tunnel } = await configured();
   assert.equal(calls.add.length, 3);
