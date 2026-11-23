@@ -423,6 +423,11 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	if decisions := s.todoHandoffDecisionsContext(ctx, t.TodoID); decisions != "" {
 		background = strings.TrimSpace(background + "\n\n" + decisions)
 	}
+	// The memory entries the task needs (memory_handoff.go, scene 3): general ones its words bear on, sensitive ones
+	// only when its text carries their categories; the brief notes which went.
+	if memory := s.handOffMemoryContext(ctx, *t, m.ID); memory != "" {
+		background = strings.TrimSpace(background + "\n\n" + memory)
+	}
 	if background != "" {
 		prompt += "\n\n" + background
 	}

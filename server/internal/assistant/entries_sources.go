@@ -80,6 +80,13 @@ func (s *Service) toolEntries(ctx context.Context, machine, session, name string
 		if err != nil {
 			return "", err
 		}
+		// A recall (scene 2, memory_assemble.go): what the conversation's track said, general entries from elsewhere,
+		// and sensitive ones from elsewhere only when the conversation carries their categories. Filtered after the
+		// page is read, so the cursor and has_more stay the ledger's.
+		out.Entries = s.recallMemory(ctx, session, out.Entries).Entries
+		if out.Entries == nil {
+			out.Entries = []proto.AssistantEntry{}
+		}
 		b, err := json.Marshal(out)
 		return string(b), err
 	}

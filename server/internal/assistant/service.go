@@ -129,6 +129,9 @@ type Service struct {
 	hub         Hub
 	store       func() Store
 	entriesDial func(context.Context, any) ([]byte, error)
+	// memoryEntries is where the memory assembler reads the ledger in tests; nil reads the manager database
+	// (memory_assemble_entry.go).
+	memoryEntries memoryEntrySource
 	// trustSrc is Options.Trust.
 	trustSrc MachineTrust
 	logf     func(format string, args ...any)

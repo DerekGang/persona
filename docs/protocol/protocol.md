@@ -1243,7 +1243,8 @@ Provider responses carry only the description and `has_key`, never secrets. Defa
                   "added":["…"],"dropped":["…"],"approval":{"text":"…","at":"...","conversation":"…","message_id":"…"}},   // approval: the owner's message that allowed a risky step
                  {"at":"...","kind":"completion","source":"report_to_supervisor|task_review|judge","todo_id":"todo_…","round_id":"plan_…/todo_…@...","actual_minutes":45},
                  {"at":"...","kind":"estimate_due","todo_id":"todo_…"},   // accepted delivery of the current estimate_due review cue
-                 {"at":"...","kind":"overdue","todo_id":"todo_…"}],
+                 {"at":"...","kind":"overdue","todo_id":"todo_…"},
+                 {"at":"...","kind":"memory","todo_id":"todo_…","entries":["entry_…"],"sensitive_entries":["entry_…"]}],   // the memory entries a start's first message carried (#13532)
           "criteria":["…"],"expect_minutes_now":90,     // done_when and expect_minutes as the scope changes left them
           "estimate_source_now":"override","estimate_clock_at":"...","estimate_due_at":"...","estimate_due_told_at":"...",
           // estimate_evidence_now is present when the current estimate has automatic evidence; an override clears it.
