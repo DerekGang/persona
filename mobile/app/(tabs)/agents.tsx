@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { stateCount } from "@web/lib/state-labels";
+import { stateCount, stateName } from "@web/lib/state-labels";
 import { loadAll, signOut } from "../../src/runtime/actions";
 import { useStore } from "../../src/runtime/store";
 import { stateCounts } from "../../src/domain/counts";
@@ -27,18 +27,18 @@ export default function Agents() {
     setRefreshing(false);
   };
   const strip = [
-    { n: counts.needs, label: stateCount("needs_you", counts.needs), color: p.needs },
-    { n: counts.working, label: stateCount("working", counts.working), color: p.working },
-    { n: counts.unread, label: stateCount("unread", counts.unread), color: p.unread },
+    { n: counts.needs, label: stateName("needs_you"), spoken: stateCount("needs_you", counts.needs), color: p.needs },
+    { n: counts.working, label: stateName("working"), spoken: stateCount("working", counts.working), color: p.working },
+    { n: counts.unread, label: stateName("unread"), spoken: stateCount("unread", counts.unread), color: p.unread },
   ];
   return (
     <View style={{ flex: 1, backgroundColor: p.page }}>
-      <View style={[styles.strip, { backgroundColor: p.surface, borderColor: p.line }]} accessibilityRole="summary">
+      <View style={[styles.strip, { backgroundColor: p.surface, borderColor: p.line }]} accessible accessibilityLabel={strip.map((c) => c.spoken).join(", ")}>
         {strip.map((c, i) => (
-          <View key={i} style={styles.stat} testID={`count-${i}`}>
+          <View key={i} style={styles.stat} testID={`count-${i}`} importantForAccessibility="no-hide-descendants">
             <Text style={{ color: c.n ? c.color : p.muted, fontSize: font.title, fontWeight: "700" }}>{c.n}</Text>
             <Text numberOfLines={1} style={{ color: p.ink2, fontSize: font.caption }}>
-              {c.label.replace(/^\d+\s*/, "")}
+              {c.label}
             </Text>
           </View>
         ))}
@@ -61,7 +61,7 @@ export default function Agents() {
         renderItem={({ item, section }) => (
           <AgentRow
             s={item}
-            machine={section.needsYou ? `${projectOf(item).name} · ${machineName(machines, item.machine_id)}` : machineName(machines, item.machine_id)}
+            machine={[section.needsYou ? projectOf(item).name : "", machineName(machines, item.machine_id)].filter(Boolean).join(" · ")}
             onPress={() => router.push(`/session/${encodeURIComponent(item.machine_id)}/${encodeURIComponent(item.session_id)}`)}
           />
         )}

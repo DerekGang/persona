@@ -19,6 +19,8 @@ export interface Palette {
   idle: string;
   offline: string;
   danger: string;
+  /** True for the dark palette. */
+  dark: boolean;
 }
 
 export const light: Palette = {
@@ -37,6 +39,7 @@ export const light: Palette = {
   idle: "#adb5bd",
   offline: "#ced4da",
   danger: "#c92a2a",
+  dark: false,
 };
 
 export const dark: Palette = {
@@ -55,12 +58,13 @@ export const dark: Palette = {
   idle: "#6c757d",
   offline: "#495057",
   danger: "#ff6b6b",
+  dark: true,
 };
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
 export const radius = { sm: 8, md: 12, lg: 18, pill: 999 } as const;
 export const font = { caption: 12, small: 14, body: 16, title: 20, large: 28 } as const;
-export const size = { tap: 44, dot: 8, composer: 120, tabBar: 64 } as const;
+export const size = { tap: 44, dot: 8, composer: 120, asks: 320, tabBar: 64 } as const;
 
 export function useTheme(): Palette {
   return useColorScheme() === "dark" ? dark : light;

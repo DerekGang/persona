@@ -11,7 +11,7 @@ export function AgentRow({ s, machine, onPress }: { s: Session; machine: string;
   const st = stateOf(s);
   const preview = sessionPreview(s);
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.row, { backgroundColor: pressed ? p.raised : p.surface, borderColor: p.line }]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={[sessionTitle(s), stateName(st), preview, machine].filter(Boolean).join(", ")} onPress={onPress} style={({ pressed }) => [styles.row, { backgroundColor: pressed ? p.raised : p.surface, borderColor: p.line }]}>
       <View style={styles.head}>
         <Text numberOfLines={1} style={[styles.title, { color: p.ink }]}>
           {sessionTitle(s)}
@@ -24,7 +24,7 @@ export function AgentRow({ s, machine, onPress }: { s: Session; machine: string;
           {preview}
         </Text>
       ) : null}
-      <Muted style={{ fontSize: font.caption }}>{machine}</Muted>
+      {machine ? <Muted style={{ fontSize: font.caption }}>{machine}</Muted> : null}
     </Pressable>
   );
 }

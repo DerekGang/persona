@@ -35,7 +35,6 @@
   "other_projects": "其他",
   "session_title": "会话",
   "session_missing": "这个会话已不存在。",
-  "reply_placeholder": "回复 Agent",
   "question_other": "其他回答",
   "question_other_placeholder": "输入你自己的回答",
   "answer_send": "发送回答",
@@ -46,7 +45,6 @@
   "permission_title": "请求权限",
   "permission_allow": "允许",
   "permission_deny": "拒绝",
-  "tool_line": "用了 {tool}",
-  "pending_count": "{count} 件事等你处理",
-  "no_text": "（无文字）"
+  "tool_line": "执行了 {count} 个步骤",
+  "chat_loading": "正在加载…"
 }

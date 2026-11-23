@@ -40,4 +40,5 @@ export function groupAgents(all: readonly Session[]): Section[] {
   return sections;
 }
 
-export const machineName = (machines: readonly Machine[], id: string): string => machines.find((m) => m.id === id)?.name ?? id;
+/** A computer's name, or "" until the list has loaded: a raw id never shows on a primary row. */
+export const machineName = (machines: readonly Machine[], id: string): string => machines.find((m) => m.id === id)?.name ?? "";

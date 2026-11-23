@@ -80,6 +80,12 @@ describe("request", () => {
 });
 
 describe("pair", () => {
+  it("adds https:// to an address typed without a scheme", async () => {
+    fake(reply(200, { machines: [] }));
+    const r = await run(pair("hub.test", "jd_mine", "p"));
+    expect(r).toEqual({ v: { base: "https://hub.test", token: "jd_mine" } });
+  });
+
   it("takes the token out of a pairing link, probes the hub and trades it for a device token", async () => {
     fake(reply(200, { machines: [] }), reply(200, { token: "jd_device", id: "t1" }));
     const r = await run(pair("http://hub.test/", "persona://pair?token=jp_abc", "My phone"));

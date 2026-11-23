@@ -26,7 +26,7 @@ export default function Root() {
   if (auth === "ready" && onConnect) return <Redirect href="/" />;
   return (
     <>
-      <StatusBar style={p.page === "#121211" ? "light" : "dark"} />
+      <StatusBar style={p.dark ? "light" : "dark"} />
       <Stack screenOptions={{ headerStyle: { backgroundColor: p.surface }, headerTintColor: p.ink, contentStyle: { backgroundColor: p.page } }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="connect" options={{ title: m("connect_title"), headerShown: false }} />

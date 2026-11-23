@@ -27,6 +27,8 @@ export interface State {
   sessionsLoaded: boolean;
   sessionsError?: string;
   interactions: Interaction[];
+  /** The current hello marked per-message send receipts (`message_send_state: 1`); a feature array alone is no proof. */
+  receipts: boolean;
   main: { mid: string; sid: string } | null;
   chats: Record<string, ChatState>;
 }
@@ -43,6 +45,7 @@ const initial = (): State => ({
   sessions: [],
   sessionsLoaded: false,
   interactions: [],
+  receipts: false,
   main: null,
   chats: {},
 });
@@ -92,8 +95,9 @@ export function applyItems(mid: string, sid: string, items: Item[], hasMore?: bo
   patchChat(mid, sid, (c) => {
     const sends = { ...c.sends };
     for (const i of items) if (i.client_msg_id && sends[i.client_msg_id] && !isLocal(i)) delete sends[i.client_msg_id];
-    const wroteText = items.some((i) => i.role === "assistant" && i.kind === "text");
-    return { items: mergeItems(c.items, items), loaded: true, hasMore: hasMore ?? c.hasMore, sends, live: wroteText ? "" : c.live, error: undefined };
+    // any assistant item ends the streamed reply: text replaces it, and a tools-only or failed turn must not leave it stuck
+    const wrote = items.some((i) => i.role === "assistant");
+    return { items: mergeItems(c.items, items), loaded: true, hasMore: hasMore ?? c.hasMore, sends, live: wrote ? "" : c.live, error: undefined };
   });
 }
 
@@ -104,7 +108,12 @@ export function applySessionDelta(list: Session[], upsert: Session[], remove: st
   return [...next.values()];
 }
 
+/** Counts every interaction change, so a GET /interactions snapshot that raced with one can be dropped (web: numbered snapshot). */
+let interactionVersion = 0;
+export const interactionsVersion = () => interactionVersion;
+
 export function changeInteraction(id: string, ix: Interaction | null) {
+  interactionVersion++;
   const rest = state.interactions.filter((i) => i.id !== id);
   set({ interactions: ix ? [...rest, ix] : rest });
 }
@@ -113,7 +122,11 @@ export function changeInteraction(id: string, ix: Interaction | null) {
 export function onFrame(f: Frame, refetchSessions: () => void) {
   switch (f.type) {
     case "hello":
-      set({ features: Array.isArray(f.features) ? (f.features as string[]) : [], hubName: typeof f.hub_name === "string" ? f.hub_name : state.hubName });
+      set({
+        features: Array.isArray(f.features) ? (f.features as string[]) : [],
+        hubName: typeof f.hub_name === "string" ? f.hub_name : state.hubName,
+        receipts: f.message_send_state === 1,
+      });
       break;
     case "machines":
       set({ machines: (f.machines as Machine[] | null) ?? [] });
@@ -152,11 +165,14 @@ export function onFrame(f: Frame, refetchSessions: () => void) {
       const sid = f.session_id as string;
       const id = f.client_msg_id as string;
       const st = f.state;
-      if (typeof id !== "string") break;
+      if (typeof id !== "string" || !state.receipts) break;
       patchChat(mid, sid, (c) => {
-        if (!(id in c.sends)) return {};
+        const cur = c.sends[id];
+        if (!cur) return {};
         const next: SendState | undefined = st === "failed" ? "failed" : st === "processing" ? "processing" : st === "delivered" ? "sent" : undefined;
-        return next ? { sends: { ...c.sends, [id]: next } } : {};
+        // a late "processing" never takes back a "sent"
+        if (!next || (cur === "sent" && next === "processing")) return {};
+        return { sends: { ...c.sends, [id]: next } };
       });
       break;
     }

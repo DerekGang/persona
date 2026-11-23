@@ -29,7 +29,7 @@ describe("shared web modules under the mobile shims", () => {
     for (const l of ["en", "zh-Hans", "ja"] as const) {
       setLanguage(l);
       expect(m("connect")).not.toBe("mobile.connect");
-      expect(m("pending_count", { count: 3 })).toContain("3");
+      expect(m("tool_line", { count: 3 })).toContain("3");
     }
     setLanguage("en");
     expect(resolveLanguage("zh-TW")).toBe("zh-Hans");

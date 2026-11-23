@@ -35,7 +35,6 @@
   "other_projects": "Other",
   "session_title": "Session",
   "session_missing": "This session is gone.",
-  "reply_placeholder": "Reply to the agent",
   "question_other": "Other answer",
   "question_other_placeholder": "Type your own answer",
   "answer_send": "Send answer",
@@ -46,7 +45,6 @@
   "permission_title": "Permission requested",
   "permission_allow": "Allow",
   "permission_deny": "Deny",
-  "tool_line": "Used {tool}",
-  "pending_count": "{count} waiting for you",
-  "no_text": "(no text)"
+  "tool_line": "Ran {count} steps",
+  "chat_loading": "Loading…"
 }

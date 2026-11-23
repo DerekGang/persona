@@ -12,6 +12,8 @@ export interface SocketHooks {
   onConn(c: Conn): void;
   /** After every hello; `resumed` means the hub replays what was missed, so nothing needs refetching. */
   onHello(resumed: boolean): void;
+  /** The connection keeps failing (every third try): the caller can probe over HTTP, which tells a revoked token (401) from a dead network. */
+  onStuck?(): void;
 }
 
 type Subscription = { mid: string; sid: string; since?: number };
@@ -52,6 +54,7 @@ export class HubSocket {
       if (this.closed) return;
       this.tries++;
       if (this.tries > 1) this.setConn("offline");
+      if (this.tries % 3 === 0) this.hooks.onStuck?.();
       this.timer = setTimeout(() => this.connect(), retryDelay(Math.max(0, this.tries - 1), false, 0, Math.random()));
     };
     ws.onerror = () => {};

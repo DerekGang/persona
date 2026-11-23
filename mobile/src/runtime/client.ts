@@ -121,7 +121,8 @@ export async function request<T = unknown>(path: string, opts: RequestOptions = 
  *  with ?token= is accepted (pairToken is the web's own function, imported in place); the hub's pairing token is traded
  *  for this phone's own device token unless it already is one (`jd_`). */
 export async function pair(baseInput: string, input: string, deviceName: string): Promise<Credentials> {
-  const base = baseInput.trim().replace(/\/+$/, "");
+  let base = baseInput.trim().replace(/\/+$/, "");
+  if (base && !/^https?:\/\//i.test(base)) base = `https://${base}`;
   const token = pairToken(input);
   await request("/machines", { base, token });
   let use = token;

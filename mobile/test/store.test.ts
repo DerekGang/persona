@@ -36,11 +36,24 @@ describe("frames", () => {
     expect(getState().chats[chatKey("m", "s")]!.live).toBe("Hello");
   });
 
-  it("message_send_state moves only a send it knows", () => {
+  it("message_send_state moves only a send it knows, only after a hello that marks receipts, and never back from sent", () => {
+    onFrame({ type: "hello", message_send_state: 1 }, noop);
     set({ chats: { [chatKey("m", "s")]: { items: [], loaded: true, hasMore: false, live: "", sends: { x: "sending" } } } });
     onFrame({ type: "message_send_state", machine_id: "m", session_id: "s", client_msg_id: "x", state: "processing" }, noop);
     onFrame({ type: "message_send_state", machine_id: "m", session_id: "s", client_msg_id: "other", state: "failed" }, noop);
     expect(getState().chats[chatKey("m", "s")]!.sends).toEqual({ x: "processing" });
+    onFrame({ type: "message_send_state", machine_id: "m", session_id: "s", client_msg_id: "x", state: "delivered" }, noop);
+    onFrame({ type: "message_send_state", machine_id: "m", session_id: "s", client_msg_id: "x", state: "processing" }, noop);
+    expect(getState().chats[chatKey("m", "s")]!.sends).toEqual({ x: "sent" });
+    onFrame({ type: "hello" }, noop); // a hub without receipts: frames are not trusted
+    onFrame({ type: "message_send_state", machine_id: "m", session_id: "s", client_msg_id: "x", state: "failed" }, noop);
+    expect(getState().chats[chatKey("m", "s")]!.sends).toEqual({ x: "sent" });
+  });
+
+  it("any assistant item ends the live reply, so a tools-only turn leaves no stuck bubble", () => {
+    onFrame({ type: "delta", machine_id: "m", session_id: "s", text: "par" }, noop);
+    onFrame({ type: "items", machine_id: "m", session_id: "s", items: [item({ id: "t", seq: 3, kind: "tool_use" })] }, noop);
+    expect(getState().chats[chatKey("m", "s")]!.live).toBe("");
   });
 
   it("interaction and interaction_resolved add and remove a card", () => {

@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { useStore } from "../../src/runtime/store";
 import { ChatView } from "../../src/ui/ChatView";
 import { m } from "../../src/i18n";
-import { font, space, useTheme } from "../../src/theme";
+import { font, size, space, useTheme } from "../../src/theme";
 
 /** The main chat: the assistant's conversation, found through the hub's /assistant (its `main` id). */
 export default function MainChat() {
@@ -16,12 +16,12 @@ export default function MainChat() {
         <View style={[styles.dot, { backgroundColor: tone }]} />
         <Text style={{ color: p.muted, fontSize: font.caption }}>{m(`conn_${conn}`)}</Text>
       </View>
-      {main ? <ChatView mid={main.mid} sid={main.sid} /> : <Text style={{ color: p.muted, padding: space.xl }}>{m("agents_loading")}</Text>}
+      {main ? <ChatView mid={main.mid} sid={main.sid} /> : <Text style={{ color: p.muted, padding: space.xl }}>{m("chat_loading")}</Text>}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   status: { flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.lg, paddingVertical: space.xs },
-  dot: { width: space.sm, height: space.sm, borderRadius: space.sm },
+  dot: { width: size.dot, height: size.dot, borderRadius: size.dot },
 });

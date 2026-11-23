@@ -3,7 +3,7 @@ import type { Interaction, Item, Machine, Session } from "@web/lib/types";
 import { pair, request, enc, ApiError, uuid, configure, credentials, onSignedOut } from "./client";
 import { loadSaved, save } from "./storage";
 import { HubSocket } from "./socket";
-import { applyItems, changeInteraction, chatKey, getState, isLocal, onFrame, patchChat, reset, set } from "./store";
+import { applyItems, changeInteraction, chatKey, getState, interactionsVersion, isLocal, onFrame, patchChat, reset, set } from "./store";
 
 export const sessionPath = (mid: string, sid: string) => `/sessions/${enc(mid)}/${enc(sid)}`;
 let socket: HubSocket | undefined;
@@ -11,6 +11,7 @@ export const hubSocket = () => socket;
 
 /** Reads what every screen needs: computers, agents, pending questions, and the main chat. */
 export async function loadAll(): Promise<void> {
+  const ixVersion = interactionsVersion();
   const [machines, sessions, interactions, assistant] = await Promise.allSettled([
     request<{ machines: Machine[] }>("/machines"),
     request<{ sessions: Session[] }>("/sessions"),
@@ -24,7 +25,8 @@ export async function loadAll(): Promise<void> {
     patch.sessionsLoaded = true;
     patch.sessionsError = undefined;
   } else patch.sessionsError = String(sessions.reason instanceof Error ? sessions.reason.message : sessions.reason);
-  if (interactions.status === "fulfilled") patch.interactions = interactions.value.interactions ?? [];
+  // a card that changed while the GET was in flight is newer than the snapshot: keep the live state
+  if (interactions.status === "fulfilled" && interactionsVersion() === ixVersion) patch.interactions = interactions.value.interactions ?? [];
   if (assistant.status === "fulfilled" && assistant.value.main && assistant.value.machine_id) patch.main = { mid: assistant.value.machine_id, sid: assistant.value.main };
   set(patch);
 }
@@ -43,8 +45,17 @@ function startSocket() {
   socket?.close();
   if (!c) return;
   socket = new HubSocket(c.base, c.token, {
-    onFrame: (f) => onFrame(f, () => void refetchSessions()),
+    onFrame: (f) => {
+      onFrame(f, () => void refetchSessions());
+      if (f.type === "items") {
+        // remember how far each conversation is read, so a reconnect resumes instead of replaying
+        const seq = Math.max(0, ...((f.items as Item[] | null) ?? []).map((i) => i.seq || 0));
+        if (seq) socket?.noteSeq(f.machine_id as string, f.session_id as string, seq);
+      }
+    },
     onConn: (conn) => set({ conn }),
+    // a revoked token only shows as a socket that never opens: this call's 401 signs the app out
+    onStuck: () => void request("/machines").catch(() => {}),
     onHello: (resumed) => {
       if (!resumed) void loadAll();
     },
@@ -127,7 +138,8 @@ export async function sendMessage(mid: string, sid: string, text: string, retryI
     await request(`${sessionPath(mid, sid)}/messages`, { method: "POST", opId: id, json: { text: body, client_msg_id: id } });
     patchChat(mid, sid, (c) => (c.sends[id] === "sending" ? { sends: { ...c.sends, [id]: "sent" } } : {}));
   } catch {
-    patchChat(mid, sid, (c) => ({ sends: { ...c.sends, [id]: "failed" } }));
+    // the hub may have taken the message and echoed it before the reply was lost: then the local row is gone, nothing failed
+    patchChat(mid, sid, (c) => (c.items.some((i) => isLocal(i) && i.client_msg_id === id) ? { sends: { ...c.sends, [id]: "failed" } } : {}));
   }
 }
 

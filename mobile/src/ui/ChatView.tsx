@@ -1,12 +1,12 @@
 // A conversation: bubbles, a live reply, pending requests over the composer, and the composer. Used by the main chat and
 // by an agent's session.
 import { useEffect, useMemo } from "react";
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { loadEarlier, openChat, retryMessage, sendMessage } from "../runtime/actions";
 import { chatKey, emptyChat, useStore } from "../runtime/store";
 import { transcriptRows, type Row } from "../domain/transcript";
 import { m } from "../i18n";
-import { font, radius, space, useTheme } from "../theme";
+import { font, radius, size, space, useTheme } from "../theme";
 import { Composer } from "./Composer";
 import { QuestionCard } from "./QuestionCard";
 import { Muted } from "./parts";
@@ -34,11 +34,11 @@ export function ChatView({ mid, sid }: { mid: string; sid: string }) {
         renderItem={({ item }) => <RowView row={item} state={item.kind === "message" && item.clientId ? chat.sends[item.clientId] : undefined} onRetry={(id) => retryMessage(mid, sid, id)} />}
       />
       {asks.length ? (
-        <View style={styles.asks}>
+        <ScrollView style={styles.asks} contentContainerStyle={styles.asksContent} keyboardShouldPersistTaps="handled">
           {asks.map((ix) => (
             <QuestionCard key={ix.id} ix={ix} />
           ))}
-        </View>
+        </ScrollView>
       ) : undefined}
       <Composer placeholder={mid && sid ? m("composer_placeholder") : ""} onSend={send} />
     </KeyboardAvoidingView>
@@ -57,8 +57,8 @@ function EarlierButton({ onPress }: { onPress: () => void }) {
 function RowView({ row, state, onRetry }: { row: Row; state?: string; onRetry: (id: string) => void }) {
   const p = useTheme();
   if (row.kind === "tools") {
-    const names = row.names.length > 2 ? `${row.names.slice(0, 2).join(", ")} +${row.names.length - 2}` : row.names.join(", ");
-    return <Muted style={styles.tools}>{m("tool_line", { tool: names })}</Muted>;
+    // plain wording: tool names are engineering detail and stay out of the main chat
+    return <Muted style={styles.tools}>{m("tool_line", { count: row.names.length })}</Muted>;
   }
   const note = state === "sending" ? m("sending") : state === "processing" ? m("processing") : state === "failed" ? m("failed_retry") : state === "sent" ? m("sent") : undefined;
   return (
@@ -93,6 +93,7 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: "86%", borderRadius: radius.lg, paddingHorizontal: space.md, paddingVertical: space.sm },
   tools: { marginVertical: space.xs },
   empty: { textAlign: "center", marginTop: space.xxl },
-  asks: { paddingHorizontal: space.lg, paddingBottom: space.sm, gap: space.sm },
+  asks: { maxHeight: size.asks, flexGrow: 0 },
+  asksContent: { paddingHorizontal: space.lg, paddingBottom: space.sm, gap: space.sm },
   earlier: { alignItems: "center", padding: space.md },
 });

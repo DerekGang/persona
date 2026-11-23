@@ -76,6 +76,12 @@ files in `src/shims/`. Any `.tsx` file or anything under `web/src/ui` or `web/sr
 `lib/sessions.ts` beside React hooks and the whole store). `parity/counts.parity.test.ts` runs the web's own `stateCounts`
 and the copy on the same sessions, so the two cannot drift silently.
 
+No source or assets from T3 Code or any other third-party app were copied; the only third-party code is the npm dependencies
+(Expo, React Native and friends, MIT / Apache-2.0 licensed), see `package-lock.json` for the full list.
+
+The counts copy follows the web's `stateCounts` with push grading off; with the hub's grading switch on the web may hold some
+asks out of the badge, which the demo does not.
+
 `src/theme.ts` is a demo-only mirror of a few web design tokens; the real app would generate it from one token source.
 
 ## Layout
