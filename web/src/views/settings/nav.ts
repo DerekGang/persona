@@ -5,14 +5,15 @@
 import { t } from "../../i18n";
 import { settingsTab } from "../../lib/channels";
 import type { IconName } from "../../ui/icons";
+import { settingsHref as baseSettingsHref, SUB } from "./href";
 
 export type Tab = "general" | "persona" | "prompts" | "notifications" | "models" | "agents" | "channels" | "connectors" | "sources" | "extensions" | "shortcuts" | "devices" | "hub" | "managers" | "knowledge" | "avatar" | "labs";
 export const TABS: Tab[] = ["general", "persona", "prompts", "notifications", "models", "agents", "channels", "connectors", "sources", "extensions", "shortcuts", "devices", "hub", "managers", "knowledge", "avatar", "labs"];
 export const AGENT_KINDS = ["claude", "codex", "agy", "omp", "grok"] as const;
 export type AgentTab = (typeof AGENT_KINDS)[number];
 export type SettingsSection = "providers" | "model-config" | "translation" | AgentTab;
-// The tab whose page opens one of its items, and the query parameter that names it.
-const SUB: Partial<Record<Tab, string>> = { models: "purpose", channels: "channel", extensions: "extension", connectors: "connector", hub: "page" };
+// Recovery is a page of the hub, kept off the lightweight generic Settings URL helper.
+const HUB_SUB = "page";
 /** A host-owned secondary page, not a connector ID. */
 export const SENT_SUB = "-sent";
 
@@ -79,7 +80,7 @@ export function settingsAt(search: string, hash = ""): { tab: Tab | null; sub: s
   const legacy = old ? LEGACY_TABS[old] : undefined;
   const t = (legacy?.tab ?? old) as Tab;
   if (!TABS.includes(t)) return { tab: null, sub: null, section: null };
-  const param = SUB[t];
+  const param = t === "hub" ? HUB_SUB : SUB[t];
   // ?tab=plugins&plugin=<id>: a link from before #1845
   const requested = old === "sent" ? SENT_SUB : param ? (q.get(param) ?? (t === "extensions" ? q.get("plugin") : null)) : null;
   const sub = t === "hub" && requested !== "recovery" ? null : requested;
@@ -89,13 +90,10 @@ export function settingsAt(search: string, hash = ""): { tab: Tab | null; sub: s
   return { tab: t, sub, section };
 }
 
-/** The URL of a category (and its open item). "General" is plain /settings on a wide screen, where that opens it; on a
- *  phone /settings is the list, so it is named. */
+/** The URL of a category (and its open item). Recovery is the hub's only host-owned secondary page. */
 export function settingsHref(tab: Tab, id: string | null, phone: boolean, manager?: string | null, section?: SettingsSection | null): string {
-  const param = SUB[tab];
-  const item = tab === "hub" && id !== "recovery" ? null : id;
-  const query = `/settings?tab=${tab}${item && param ? `&${param}=${encodeURIComponent(item)}` : ""}${manager ? `&manager=${encodeURIComponent(manager)}` : ""}`;
-  return `${tab === "general" && !phone ? "/settings" : query}${section ? `#settings-${section}` : ""}`;
+  if (tab !== "hub" || id !== "recovery") return baseSettingsHref(tab, id, phone, manager, section);
+  return `/settings?tab=hub&${HUB_SUB}=recovery${manager ? `&manager=${encodeURIComponent(manager)}` : ""}${section ? `#settings-${section}` : ""}`;
 }
 
 /** Replace a legacy category URL in place, retaining provider and manager parameters. */
