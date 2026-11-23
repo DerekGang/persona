@@ -10,6 +10,7 @@ import android.os.Process
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,7 +30,10 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -87,6 +91,8 @@ class AboutBuildHostInstrumentedTest {
                     JToastHost(rememberToastState())
                     CompositionLocalProvider(LocalAppFeedback provides feedback) {
                         Column {
+                            // A nearby Commit line containing Build text must not widen the exact-title row selection.
+                            Text("Commit Build $build")
                             AboutSettingsPage(commit, buildRow = if (generated) {
                                 { AboutBuildRow(snapshot.buildNumber, Modifier.testTag("generated-build")) }
                             } else {
@@ -105,8 +111,7 @@ class AboutBuildHostInstrumentedTest {
         assertHost(build, native = false)
         capture("generated-light", "English light; the same real package value through the generated Build slot")
         assertEquals("Switching only the test Build slot must not copy", emptyList<String>(), notices)
-        mergedBuildRow("Build", build).performClick()
-        geometryBuildRow("Build", build).performClick()
+        buildRow("Build", build).performClick()
         rule.waitForIdle()
         assertEquals("Read-only Build clicks must not copy", emptyList<String>(), notices)
 
@@ -151,6 +156,7 @@ class AboutBuildHostInstrumentedTest {
             CompositionLocalProvider(LocalContext provides language, LocalResources provides language.resources) {
                 PersonaTheme(darkTheme = dark, reduceMotion = true) {
                     Column {
+                        Text("Commit Build ${context.packageName}")
                         AboutSettingsPage(commit = null, buildRow = if (generated) {
                             { AboutBuildRow(null, Modifier.testTag("generated-build")) }
                         } else {
@@ -171,9 +177,9 @@ class AboutBuildHostInstrumentedTest {
                 rule.runOnIdle { generated = useGenerated }
                 rule.waitForIdle()
                 val expectedValue = if (useGenerated) fallback else realBuild
-                val row = mergedBuildRow(title, expectedValue)
+                val row = buildRow(title, expectedValue)
                 row.assertIsDisplayed().assertHasNoClickAction()
-                geometryBuildRow(title, expectedValue).assertMinimumTouchTarget("$tag generated=$useGenerated")
+                row.assertMinimumTouchTarget("$tag generated=$useGenerated")
                 val semantics = row.readRowSemantics()
                 assertEquals("$tag exact Build row title/value", listOf(title, expectedValue), semantics.text)
                 assertTrue("$tag read-only descriptions", semantics.descriptions.isEmpty())
@@ -189,10 +195,9 @@ class AboutBuildHostInstrumentedTest {
 
     private fun assertHost(build: String, native: Boolean) {
         rule.onAllNodesWithText("Build").assertCountEquals(1)
-        rule.onNodeWithText(build, useUnmergedTree = true).assertIsDisplayed()
-        val title = mergedBuildRow("Build", build)
-        title.assertHasNoClickAction()
-        geometryBuildRow("Build", build).assertMinimumTouchTarget(if (native) "handwritten" else "generated")
+        val title = buildRow("Build", build)
+        title.assertIsDisplayed().assertHasNoClickAction()
+        title.assertMinimumTouchTarget(if (native) "handwritten" else "generated")
         val semantics = title.readRowSemantics()
         assertEquals(listOf("Build", build), semantics.text)
         assertTrue(semantics.descriptions.isEmpty())
@@ -204,21 +209,23 @@ class AboutBuildHostInstrumentedTest {
             rule.onNodeWithTag("generated-build", useUnmergedTree = true).assertIsDisplayed()
         }
         rule.onNodeWithText("Commit").assertIsDisplayed()
+        rule.onNodeWithText("Commit Build $build", substring = false, useUnmergedTree = true)
+            .assertIsDisplayed()
     }
 
-    private fun buildRowMatcher(title: String, value: String) =
-        hasText(title, substring = false) and hasText(value, substring = false)
-
-    private fun mergedBuildRow(title: String, value: String) =
-        rule.onAllNodes(buildRowMatcher(title, value)).assertCountEquals(1).onFirst()
-
-    private fun geometryBuildRow(title: String, value: String) =
-        rule.onAllNodes(buildRowMatcher(title, value), useUnmergedTree = true).assertCountEquals(1).onFirst()
+    private fun buildRow(title: String, value: String): SemanticsNodeInteraction {
+        val titleText = hasText(title, substring = false)
+        val titleAncestor = hasAnyDescendant(titleText)
+        // JRow's title lives in an inner Column; its value is a separate Text on the same RowFrame.
+        val row = titleAncestor and hasAnyDescendant(
+            hasText(value, substring = false) and hasAnyAncestor(titleAncestor)
+        ) and !isRoot() and !hasAnyDescendant(titleAncestor)
+        return rule.onAllNodes(row, useUnmergedTree = true).assertCountEquals(1).onFirst()
+    }
 
     private fun assertRealClickLeavesBuildUnchanged(title: String, value: String) {
         val before = clipboardText()
-        mergedBuildRow(title, value).performClick()
-        geometryBuildRow(title, value).performClick()
+        buildRow(title, value).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("generated-build", useUnmergedTree = true).assertIsDisplayed()
         assertEquals("Read-only Build must not change the clipboard", before, clipboardText())
