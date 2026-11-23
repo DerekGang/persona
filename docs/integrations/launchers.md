@@ -815,7 +815,7 @@ Antigravity's Enterprise Gateway can send operator-configured headers on generat
 to the whole process. Persona's ACP companion shares one process across ordinary work Agents, so setting a task ID
 there would label other Agents' requests with the same ID. For a terminal Agent, an allowlist check would need
 the effective gateway destination because administrator settings can override the URL independently of the headers.
-See Google's [Enterprise Gateway configuration and precedence](https://docs.cloud.google.com/gemini/enterprise/docs/ai-developer-tools/deploy-enterprise-gateway#settings_precedence).
+See Google's [Enterprise Gateway configuration and precedence](https://docs.cloud.google.com/gemini/enterprise/docs/ai-developer-tools/deploy-enterprise-gateway#settings-precedence).
 
 Direct Messages, Responses and Chat Completions helpers use `background`, including helpers sent through a node.
 Cross-origin redirects strip all source fields, even when the next origin is also allowlisted. A gateway should also
