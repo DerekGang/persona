@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { stateCounts } from "../../lib/sessions";
 import type { Machine, Session } from "../../lib/types";
-import { flatThreads, groupByProject, sortThreads } from "./project-groups";
+import { flatThreads, folderName, groupByProject, sortThreads } from "./project-groups";
 
 const machines: Machine[] = [{ id: "mac", name: "MacBook", online: true }, { id: "box", name: "Linux box", online: true }];
 const row = (sid: string, cwd: string, extra: Partial<Session> = {}): Session => ({ machine_id: "mac", session_id: sid, title: `T ${sid}`, cwd, state: "idle", status: "idle", updated_at: "2026-11-01T10:00:00Z", ...extra });
@@ -83,5 +83,14 @@ describe("groupByProject", () => {
     ];
     expect(sortThreads(list).map((s) => s.session_id)).toEqual(["ask", "work", "idle-new", "idle-old"]);
     expect(flatThreads(group(list))).toEqual(flatThreads(group([...list].reverse())));
+  });
+});
+
+describe("folderName", () => {
+  it("keeps only the last folder of a Windows or POSIX path", () => {
+    expect(folderName("C:\\Users\\me\\code\\Weather")).toBe("Weather");
+    expect(folderName("D:\\work\\Notes\\")).toBe("Notes");
+    expect(folderName("/home/me/code/weather")).toBe("weather");
+    expect(folderName("weather")).toBe("weather");
   });
 });

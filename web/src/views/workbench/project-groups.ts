@@ -52,7 +52,7 @@ export function groupByProject(sessions: readonly Session[], machines: readonly 
     const key = r.repo ? `${s.machine_id}\n${r.repo}` : OTHER;
     let p = by.get(key);
     if (!p) {
-      p = { key, label: r.repo ? r.name : other, cwd: r.repo, machineId: r.repo ? s.machine_id : "", needs: 0, threads: [], updated: 0 };
+      p = { key, label: r.repo ? folderName(r.name) : other, cwd: r.repo, machineId: r.repo ? s.machine_id : "", needs: 0, threads: [], updated: 0 };
       by.set(key, p);
     }
     p.threads.push(s);
@@ -81,3 +81,9 @@ export function groupByProject(sessions: readonly Session[], machines: readonly 
 
 /** Every thread in the order the sidebar shows them: for next / previous. */
 export const flatThreads = (projects: readonly Project[]): Session[] => projects.flatMap((p) => p.threads);
+
+/** The last folder of a name, for paths in either separator (a Windows computer's repository arrives with backslashes). */
+export function folderName(name: string): string {
+  const parts = name.split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : name;
+}
