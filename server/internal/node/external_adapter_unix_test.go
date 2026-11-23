@@ -58,7 +58,11 @@ func TestExternalAdapterHelperProcess(t *testing.T) {
 	}
 	args := os.Args[3:]
 	if args[0] == "hold-child" {
-		externalAdapterHelperHold(state.BlockAddr)
+		ready := os.NewFile(3, "inventory-child-ready")
+		if ready == nil {
+			os.Exit(96)
+		}
+		externalAdapterHelperHold(state.BlockAddr, ready)
 		os.Exit(0)
 	}
 	input, err := io.ReadAll(os.Stdin)
@@ -83,13 +87,27 @@ func TestExternalAdapterHelperProcess(t *testing.T) {
 	}
 	switch state.Mode {
 	case "hold":
-		externalAdapterHelperHold(state.BlockAddr)
+		externalAdapterHelperHold(state.BlockAddr, nil)
 	case "child":
+		// Leave the running child holding the inventory pipes and test socket. If the
+		// parent exits straight after Start, the registry can reap the process group
+		// before a newly scheduled child has opened the socket the test observes.
+		ready, signal, err := os.Pipe()
+		if err != nil {
+			os.Exit(96)
+		}
 		child := exec.Command(os.Args[0], externalAdapterHelperFlag, os.Args[2], "hold-child")
 		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		child.ExtraFiles = []*os.File{signal}
 		if child.Start() != nil {
 			os.Exit(96)
 		}
+		_ = signal.Close()
+		var ack [1]byte
+		if _, err := io.ReadFull(ready, ack[:]); err != nil || ack[0] != 1 {
+			os.Exit(96)
+		}
+		_ = ready.Close()
 	case "secret-stderr":
 		_, _ = io.WriteString(os.Stderr, strings.Repeat("EXAMPLE_SECRET_NEVER_REPORT ", externalAdapterStderrLimit))
 		os.Exit(17)
@@ -105,12 +123,20 @@ func TestExternalAdapterHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func externalAdapterHelperHold(address string) {
+func externalAdapterHelperHold(address string, ready *os.File) {
 	c, err := net.DialTimeout("unix", address, 2*time.Second)
 	if err != nil {
 		os.Exit(97)
 	}
-	_, _ = io.WriteString(c, "ready\n")
+	if _, err := io.WriteString(c, "ready\n"); err != nil {
+		os.Exit(97)
+	}
+	if ready != nil {
+		if _, err := ready.Write([]byte{1}); err != nil {
+			os.Exit(97)
+		}
+		_ = ready.Close()
+	}
 	var release [1]byte
 	_, _ = c.Read(release[:])
 	_ = c.Close()
