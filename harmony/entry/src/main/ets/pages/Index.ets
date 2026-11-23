@@ -1631,7 +1631,7 @@ struct Index {
             .onClick(() => { if (!this.drawerAcceptsTap()) return; this.spacesShown = false; if (this.model.section !== 0) this.changeSection(0); this.newConversation(); }).id('spaces.new')
           Blank().layoutWeight(1)
           PhoneIconButton({symbol:Symbols.gear,label:tr('settings'),identity:'spaces.settings',controlDiameter:this.drawerMetric(46),action:() => { if (this.drawerAcceptsTap()) this.openSpace('settings'); }})
-            .bindSheet($$this.phoneSettingsShown, this.phoneSettings(), {height: this.compactFormHeight(),showClose:false,dragBar:false,backgroundColor:Colors.grouped,
+            .bindSheet($$this.phoneSettingsShown, this.phoneSettings(), {height: this.compactFormHeight(),showClose:false,dragBar:false,backgroundColor:Colors.sheetBackground,
               onWillDismiss:(dismiss:DismissSheetAction) => {
                 if (dismiss.reason === DismissReason.PRESS_BACK && this.phoneSettingsPage) this.phoneSettingsPage = '';
                 else dismiss.dismiss();
@@ -1893,13 +1893,13 @@ struct Index {
       } else if (this.phoneSettingsPage === 'phone_meeting_options') {
         PhoneMeetingSettings({model:this.model}).layoutWeight(1)
       } else if (this.phoneSettingsPage) {
-        PhoneSettingsOptions({model:this.model,page:this.phoneSettingsPage,label:(key:string):string => this.settingsLabel(key),
+        PhoneSettingsOptions({elevated:true,model:this.model,page:this.phoneSettingsPage,label:(key:string):string => this.settingsLabel(key),
           onOpen:(key:string) => this.openFromPhoneSettings(key)}).layoutWeight(1)
-      } else SettingsDirectory({model:this.model,ownerName:this.model.profile.name || tr('persona'),avatar:this.look.avatarUri,
+      } else SettingsDirectory({elevated:true,model:this.model,ownerName:this.model.profile.name || tr('persona'),avatar:this.look.avatarUri,
         initialQuery:this.phoneSettingsQuery,onQueryChange:(value:string) => this.phoneSettingsQuery = value,
         showDismissSearch:true,onDismissSearch:() => { this.phoneSettingsQuery = ''; this.phoneSettingsShown = false; },
         label:(key:string):string => this.settingsLabel(key),onOpen:(key:string) => this.openFromPhoneSettings(key)}).layoutWeight(1)
-    }.width('100%').height('100%').backgroundColor(Colors.grouped).id('settings.sheet')
+    }.width('100%').height('100%').backgroundColor(Colors.sheetBackground).id('settings.sheet')
   }
   @Builder settingsList() {
     SettingsDirectory({model:this.model,ownerName: this.model.profile.name || tr('persona'), avatar: this.look.avatarUri,
@@ -2302,7 +2302,7 @@ struct Index {
       Column() {
         Row() {
           Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('20vp').fontColor([Colors.ink]) }
-            .width(42).height(42).padding(0).backgroundColor(Colors.surface).border({width:0.5,color:Colors.divider,radius:21})
+            .width(42).height(42).padding(0).backgroundColor(Colors.sheetCard).border({width:0.5,color:Colors.divider,radius:21})
             .accessibilityText(tr('cancel')).onClick(() => this.showSheet = false).enabled(!this.creatingAgent).id('agent.cancel')
           Text(tr('phone_new_chat_title')).fontSize(17).maxFontScale(Tokens.chromeFontMaxScale).maxLines(2).fontWeight(600).fontColor(Colors.ink).textAlign(TextAlign.Center).layoutWeight(1)
           Blank().width(42)
@@ -2325,14 +2325,14 @@ struct Index {
                     SymbolGlyph(Symbols.check).fontSize('16vp').fontColor([Colors.link])
                 }.width('100%').padding({left:16,right:16,top:8,bottom:8}).constraintSize({minHeight:48})
                   .onClick(() => this.reuseSetup(r)).accessibilityGroup(true).id('agent.recent')
-              },(r:RecentAgentSetup) => r.key) }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
+              },(r:RecentAgentSetup) => r.key) }.width('100%').backgroundColor(Colors.sheetCard).borderRadius(14)
             }
             if (!this.agentWorktree) {
               this.agentSectionTitle('phone_machines',!this.agentTodo && this.recentSetups.length > 0)
               Scroll() { Row({space:12}) {
                 ForEach(this.agentMachines(),(m:ResourceRow) => this.machineChoice(m),(m:ResourceRow) => JSON.stringify([m.group,m.manager,m.id,m.title,m.state,this.machineChoiceDetail(m)]))
               } }.scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off).align(Alignment.Start).width('100%')
-                .padding({left:16,right:16,top:12,bottom:12}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+                .padding({left:16,right:16,top:12,bottom:12}).backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius)
             }
             if (this.agentWorktree || this.selectedAgentTree() || this.availableAgentTrees().some((t:ProjectWorktree) => t.boundStart)) {
               Column() {
@@ -2343,7 +2343,7 @@ struct Index {
                     Button(tr('tree_create'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).onClick(() => this.makeChildFromAgent()).id('agent.child')
                   }
                 }
-              }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius)
                 .margin({top:this.agentWorktree ? 0 : 35})
               if (this.selectedAgentTree()) {
                 Column() {
@@ -2365,7 +2365,7 @@ struct Index {
                       .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
                   }.width('100%')
                 },(row:LaunchChoice) => row.id)
-              }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              }.width('100%').backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius)
             }
             this.agentSectionTitle('flow_launcher_model_once',true)
             Column() {
@@ -2382,14 +2382,15 @@ struct Index {
                 this.launchDivider()
                 this.agentOptionRow('effort')
               }
-            }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
+            }.width('100%').backgroundColor(Colors.sheetCard).borderRadius(14)
             Text(this.agentModelHelp()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
               .width('100%').padding({left:12,right:12,top:6}).id('agent.model.help')
             this.agentSectionTitle('flow_first_message',true)
             TextArea({text:this.newTask,placeholder:tr(this.promptOptional() ? 'flow_draft_optional' : 'task')})
+              .keyboardAppearance(this.environment.dark ? KeyboardAppearance.DARK_IMMERSIVE : KeyboardAppearance.LIGHT_IMMERSIVE)
               .minLines(3).maxLines(10,{overflowMode:MaxLinesMode.SCROLL}).width('100%')
               .fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale)).placeholderFont({size:Tokens.interfaceFontVp(17,this.environment.fontScale)})
-              .padding({left:16,right:16,top:11,bottom:11}).fontColor(Colors.ink).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              .padding({left:16,right:16,top:11,bottom:11}).fontColor(Colors.ink).backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius)
               .onFocus(() => { this.agentMessageFocused = true; this.revealFocusedAgentDraft(); })
               .onBlur(() => { this.agentMessageFocused = false; })
               .onChange((v:string) => { this.newTask = v; this.saveAgentDraft(); }).id('agent.task')
@@ -2406,7 +2407,7 @@ struct Index {
             .fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontWeight(FontWeight.Medium)
             .enabled(this.canStartAgent()).onClick(() => this.createAgent()).id('agent.create')
         }.width('100%').padding({left:24,right:24,top:7,bottom:this.agentActionBottom()})
-      }.width('100%').height('100%').backgroundColor(Colors.grouped)
+      }.width('100%').height('100%').backgroundColor(Colors.sheetBackground)
     }
   }
   private async loadAgentLaunchers(): Promise<void> {

@@ -124,7 +124,7 @@ export struct ConversationRecap {
         }, (item: ConversationRecapItem) => item.id)
       }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.page)
     }.width('100%').layoutWeight(1).align(Alignment.TopStart)
-    }.width('100%').height('100%').backgroundColor(Colors.canvas).id('chat.recap.detail')
+    }.width('100%').height('100%').backgroundColor(Colors.surface).id('chat.recap.detail')
   }
   build() {
     Column({ space: Tokens.gap }) {

@@ -39,14 +39,6 @@ export struct PhonePairingForm {
     return nativeEnvironment.dark ? '#0A84FF' : '#007AFF';
   }
 
-  private cardColor(): ResourceColor {
-    return nativeEnvironment.dark ? '#2C2C2E' : Color.White;
-  }
-
-  private toolbarColor(): ResourceColor {
-    return nativeEnvironment.dark ? '#3A3A3C' : '#F3F3F8';
-  }
-
   private ready(): boolean {
     return !this.busy && !!this.address.trim() &&
       (this.password || !!this.code.trim() || isPairingAddress(this.address.trim()));
@@ -60,7 +52,7 @@ export struct PhonePairingForm {
       Row() {
         Button({ type: ButtonType.Circle }) {
           SymbolGlyph($r('sys.symbol.xmark')).fontSize(this.typeMetric(18, 22) + 'vp').fontColor([Colors.ink])
-        }.width(44).height(44).backgroundColor(this.toolbarColor())
+        }.width(44).height(44).backgroundColor(Colors.sheetControl)
           .border({ width: 0.5, color: nativeEnvironment.dark ? '#505053' : '#D4D4D7' }).accessibilityText(tr('close'))
           .onClick(() => this.onClose()).id('pair.close')
         Blank()
@@ -70,7 +62,7 @@ export struct PhonePairingForm {
             .fontColor(this.ready() ? Color.White : $r('app.color.project_card_secondary'))
             .backgroundColor(Color.Transparent).enabled(this.ready())
             .onClick(() => this.onConnect()).id('pair.verify')
-        }.borderRadius(22).backgroundColor(this.ready() ? this.tint() : this.toolbarColor())
+        }.borderRadius(22).backgroundColor(this.ready() ? this.tint() : Colors.sheetControl)
           .border({ width: 0.5, color: nativeEnvironment.dark ? '#505053' : '#D4D4D7' })
       }.width('100%')
     }.width('100%').height(76).padding({ left: 16, right: 16 })
@@ -94,7 +86,7 @@ export struct PhonePairingForm {
         this.segment(false)
       }.height(32).borderRadius(16).backgroundColor(nativeEnvironment.dark ? '#3D3D42' : '#EEEEEF')
     }.width('100%').padding({ left: 20, right: 20, top: 15, bottom: 14 })
-      .borderRadius(24).backgroundColor(this.cardColor())
+      .borderRadius(24).backgroundColor(Colors.sheetCard)
       .margin({ bottom: 18 })
   }
 
@@ -137,7 +129,7 @@ export struct PhonePairingForm {
         Text(title).fontSize(this.typeMetric(17, 22) + 'vp').fontColor(this.tint()).maxLines(2).layoutWeight(1)
       }.width('100%')
     }.width('100%').constraintSize({ minHeight: this.typeMetric(52.33, 59.33) }).padding({ left: 20, right: 20 })
-      .borderRadius(20).backgroundColor(this.cardColor()).enabled(!this.busy)
+      .borderRadius(20).backgroundColor(Colors.sheetCard).enabled(!this.busy)
       .accessibilityText(title).onClick(action).id(id)
   }
 
@@ -177,7 +169,7 @@ export struct PhonePairingForm {
             .height(this.typeMetric(52, 60)).padding({ left: 20, right: 20 }).backgroundColor(Color.Transparent)
             .onChange((value: string) => this.onAccessSecret(value)).id('pair.access.secret')
         }
-      }.width('100%').borderRadius(20).clip(true).backgroundColor(this.cardColor())
+      }.width('100%').borderRadius(20).clip(true).backgroundColor(Colors.sheetCard)
       this.footer(tr('phone_pair_access_info'))
     }.margin({ top: 17.67 })
   }
@@ -187,7 +179,7 @@ export struct PhonePairingForm {
     Column() {
       Column() {
         this.settingsRow(tr('phone_pair_ssh'), $r('sys.symbol.key'), 'pair.ssh', this.sshLabel, false, () => this.onSsh())
-      }.width('100%').borderRadius(20).clip(true).backgroundColor(this.cardColor())
+      }.width('100%').borderRadius(20).clip(true).backgroundColor(Colors.sheetCard)
       this.footer(tr(this.sshLabel ? 'phone_pair_ssh_configured' : 'phone_pair_ssh_info'))
     }.margin({ top: 17.67 })
   }
@@ -209,7 +201,7 @@ export struct PhonePairingForm {
             .height(this.typeMetric(52.16, 59.16)).padding(0).backgroundColor(Color.Transparent)
             .onChange((value: string) => this.onCode(value)).id('pair.code')
         }
-      }.padding({ left: 20, right: 20 }).width('100%').borderRadius(20).backgroundColor(this.cardColor())
+      }.padding({ left: 20, right: 20 }).width('100%').borderRadius(20).backgroundColor(Colors.sheetCard)
       if (this.password) { this.footer(tr('phone_pair_password_info')) }
     }.width('100%').margin({ bottom: this.password ? 0 : 17.67 })
   }
@@ -229,7 +221,7 @@ export struct PhonePairingForm {
                 Text('personad hub pair').fontSize(this.typeMetric(15, 19) + 'vp').fontFamily('monospace')
                   .textSelectable(TextSelectableMode.SELECTABLE_UNFOCUSABLE).fontColor(Colors.ink)
                   .padding({ left: 20, right: 20 }).width('100%').height(this.typeMetric(52.33, 59.33))
-                  .borderRadius(20).backgroundColor(this.cardColor()).id('pair.command')
+                  .borderRadius(20).backgroundColor(Colors.sheetCard).id('pair.command')
                 this.footer(tr('phone_pair_command_info'))
               }
             }
@@ -249,6 +241,6 @@ export struct PhonePairingForm {
           }
         }.width('100%').padding({ left: 16, right: 16, top: 29, bottom: 32 })
       }.width('100%').layoutWeight(1).align(Alignment.Top).scrollBar(BarState.Auto)
-    }.width('100%').height('100%').backgroundColor(nativeEnvironment.dark ? '#1C1C1E' : Colors.grouped)
+    }.width('100%').height('100%').backgroundColor(Colors.sheetBackground)
   }
 }

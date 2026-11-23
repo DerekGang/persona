@@ -775,7 +775,7 @@ export struct SessionTools {
       if (this.workspace.fileGitMark(binding.value)) Circle().width(7).height(7)
         .fill(this.gitMarkColor(this.workspace.fileGitMark(binding.value))).id('session.files.git_mark.'+binding.value.path)
       if (binding.value.directory) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-    }.width('100%').constraintSize({minHeight:54}).padding({top:15,bottom:15}).backgroundColor(Colors.canvas)
+    }.width('100%').constraintSize({minHeight:54}).padding({top:15,bottom:15}).backgroundColor(this.phoneSheetHeight !== SheetSize.LARGE ? Colors.listBackground : Colors.canvas)
   }
 
   @Builder pathMenu() {
@@ -870,7 +870,7 @@ export struct SessionTools {
                     .fontFamily('monospace').fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START)
                 }.layoutWeight(1).alignItems(HorizontalAlign.Start)
                 if (hit.directory) SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-              }.width('100%').constraintSize({minHeight:54}).padding({top:15,bottom:15}).backgroundColor(Colors.canvas)
+              }.width('100%').constraintSize({minHeight:54}).padding({top:15,bottom:15}).backgroundColor(this.phoneSheetHeight !== SheetSize.LARGE ? Colors.listBackground : Colors.canvas)
             }.onClick(() => this.findHit(hit)).id('session.find.'+hit.relative)
           },(hit:FileFindHit) => hit.relative)
           if (!this.workspace.findBusy && !this.findRows.length) ListItem() { Text(tr('no_results')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).padding(14) }
@@ -885,7 +885,7 @@ export struct SessionTools {
         }
       }.divider({strokeWidth:Tokens.divider,startMargin:35,color:Colors.divider}).width('100%').layoutWeight(1).padding({left:PhoneStyle.page,right:PhoneStyle.page})
         .bindSheet($$this.fileOpen,this.fileViewer(),{title:{title:this.workspace.selectedFileName || tr('file')},height:SheetSize.LARGE,showClose:true})
-    }.width('100%').height('100%').backgroundColor(Colors.canvas)
+    }.width('100%').height('100%').backgroundColor(this.phoneSheetHeight !== SheetSize.LARGE ? Colors.listBackground : Colors.canvas)
 
       .bindSheet($$this.fileEditSheetOpen, this.fileEditForm(), {
         title: { title: tr(this.fileEditMode === 'rename' ? 'session_tools_rename' : 'session_tools_move') }, height: SheetSize.MEDIUM, showClose: true
@@ -1440,7 +1440,7 @@ export struct SessionTools {
         else if (this.gitSheetMode==='pr_detail') this.prDetails(Wire.object(this.workspace.gitPrAnswer,'pr'))
         else this.gitSheet()
       }.width('100%').layoutWeight(1)
-    }.width('100%').height('100%').backgroundColor(this.gitSheetMode==='diff' || this.patchSubpage() ? (this.phoneGitReader ? Colors.codeCanvas : Colors.canvas) : Colors.grouped)
+    }.width('100%').height('100%').backgroundColor(this.gitSheetMode==='diff' || this.patchSubpage() ? (this.phoneGitReader ? Colors.codeCanvas : Colors.canvas) : Colors.listGroup(this.phoneGitReader))
   }
   @Builder stagedCommitBar() {
     Row({space:4}) {
@@ -1633,7 +1633,7 @@ export struct SessionTools {
       }.width('100%').height(this.hashTapHeight).margin({top:this.hashLineInset,bottom:this.hashLineInset}).padding(0).backgroundColor(Color.Transparent)
         .accessibilityText(tr('copy')+' '+this.workspace.gitCommitHash).onClick(() => this.copyPatch(this.workspace.gitCommitHash)).id('session.git.commit.copy')
     }.width('100%').padding(this.phoneGitReader ? {left:20,right:20,top:17,bottom:17} : 14)
-      .alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(Tokens.card)
+      .alignItems(HorizontalAlign.Start).backgroundColor(Colors.card(this.phoneGitReader)).borderRadius(Tokens.card)
       .bindContextMenu(this.gitSheetMenu,ResponseType.LongPress)
       .accessibilityCustomActions(Wire.text(this.workspace.gitShow,'diff') ?
         [{name:tr('session_git_patch'),onAction:() => { this.showCommitPatch=true; }}] : undefined)
@@ -1660,7 +1660,7 @@ export struct SessionTools {
     }.width('100%').constraintSize({minHeight:this.phoneGitReader ?
       (this.relativeParent(Wire.text(file,'path')) ? PhoneStyle.formSize(64.3,79,nativeEnvironment.fontScale) : PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)) : 46})
       .padding({left:this.phoneGitReader ? 20 : 12,right:this.phoneGitReader ? 20 : 12,top:5,bottom:5})
-      .backgroundColor(Colors.surface).accessibilityGroup(true).accessibilityText(Wire.text(file,'path'))
+      .backgroundColor(Colors.card(this.phoneGitReader)).accessibilityGroup(true).accessibilityText(Wire.text(file,'path'))
       .onClick(() => this.commitFilePath=Wire.text(file,'path')).id('session.git.commit.file.'+Wire.text(file,'path'))
   }
 
@@ -1690,7 +1690,7 @@ export struct SessionTools {
                 ListItem() { this.commitFile(file) }
               },(file:Record<string,Object>) => Wire.text(file,'path'))
             }.divider({strokeWidth:Tokens.divider,startMargin:44,endMargin:12,color:Colors.divider})
-              .backgroundColor(Colors.surface).borderRadius(Tokens.card).clip(true)
+              .backgroundColor(Colors.card(this.phoneGitReader)).borderRadius(Tokens.card).clip(true)
           }.width('100%').layoutWeight(1)
         }
         if (Wire.bool(this.workspace.gitShow,'truncated') && (!this.commitFilePath || this.selectedCommitPatch))

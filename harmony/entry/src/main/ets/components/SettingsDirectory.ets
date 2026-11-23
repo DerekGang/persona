@@ -109,6 +109,7 @@ const ALIASES:Record<string,string> = {
 
 @ComponentV2
 export struct SettingsDirectory {
+  @Param elevated: boolean = false;
   @Require @Param model: ClientModel;
   @Param ownerName: string = '';
   @Param avatar: string = '';
@@ -176,7 +177,7 @@ export struct SettingsDirectory {
         Text(this.account().slice(0,1)).fontSize('16vp').fontWeight(FontWeight.Bold).fontColor(Color.White)
           .width(32).height(32).textAlign(TextAlign.Center).backgroundColor(Colors.ai).borderRadius(16)
         Circle().width(9).height(9).fill(this.model.connected ? Colors.positive : Colors.secondary)
-          .stroke(Colors.grouped).strokeWidth(1.5)
+          .stroke(Colors.listGroup(this.elevated)).strokeWidth(1.5)
       }.width(32).height(32)
       Text(this.currentManager() ? tr('settings_assistant_named').replace('{name}',this.account()) : tr('phone_settings_assistant'))
         .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).layoutWeight(1)
@@ -191,11 +192,11 @@ export struct SettingsDirectory {
         if (title) PhoneSectionTitle({text:title})
         Column() {
           ForEach(entries ?? this.results,(id:string,ix:number) => {
-            PhoneSettingsRow({label:settingLabel(id,this.label),detail:this.subtitle(id),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.iconAccent,
+            PhoneSettingsRow({elevated:this.elevated,label:settingLabel(id,this.label),detail:this.subtitle(id),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.iconAccent,
               identity:'settings.'+id,last:ix+1===(entries ?? this.results).length,action:() => this.openEntry(id)})
           },(id:string,ix:number) => JSON.stringify([id,ix,this.subtitle(id),(entries ?? this.results).length]))
           if (!(entries ?? this.results).length) Text(tr('no_results')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.secondary).width('100%').padding(15).id('settings.no_results')
-        }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+        }.width('100%').clip(true).backgroundColor(Colors.card(this.elevated)).borderRadius(PhoneStyle.cardRadius)
       }.width('100%')
     }
   }
@@ -211,10 +212,10 @@ export struct SettingsDirectory {
             .layoutWeight(1).backgroundColor(Color.Transparent).cancelButton({style:CancelButtonStyle.INPUT})
             .enterKeyType(EnterKeyType.Search).onSubmit(() => this.field.stopEditing())
             .onChange((v:string) => { this.query = v; this.onQueryChange(v); }).id('settings.search')
-        }.padding({left:12,right:8}).layoutWeight(1).borderRadius(32).backgroundColor(Colors.control)
+        }.padding({left:12,right:8}).layoutWeight(1).borderRadius(32).backgroundColor(this.elevated ? Colors.sheetControl : Colors.control)
           if (this.showDismissSearch && this.query.trim()) Button({type:ButtonType.Circle}) {
             SymbolGlyph($r('sys.symbol.xmark')).fontSize('18vp').fontColor([Colors.ink])
-          }.width(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).height(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).padding(0).backgroundColor(Colors.surface).accessibilityText(tr('close'))
+          }.width(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).height(PhoneStyle.formSize(44,58,nativeEnvironment.fontScale)).padding(0).backgroundColor(Colors.card(this.elevated)).accessibilityText(tr('close'))
             .onClick(() => { this.field.stopEditing(); this.onDismissSearch(); }).id('settings.close')
         }.width('100%').margin({bottom:10})
       }
@@ -230,12 +231,13 @@ export struct SettingsDirectory {
         this.section(tr('phone_settings_device'),DEVICE_OPTIONS)
         this.section(tr('phone_settings_hub'),HUB_OPTIONS)
       }
-    }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:this.showDismissSearch && this.query.trim() ? 16 : 0,bottom:24}).backgroundColor(Colors.grouped)
+    }.width('100%').height('100%').padding({left:PhoneStyle.page,right:PhoneStyle.page,top:this.showDismissSearch && this.query.trim() ? 16 : 0,bottom:24}).backgroundColor(Colors.listGroup(this.elevated))
   }
 }
 
 @ComponentV2
 export struct PhoneSettingsOptions {
+  @Param elevated: boolean = false;
   @Local dictation: DictationPreference = dictationPreference;
   @Require @Param model:ClientModel;
   @Require @Param page:string;
@@ -279,10 +281,10 @@ export struct PhoneSettingsOptions {
         ListItem() {
         Column() {
           ForEach(AGENT_OPTIONS,(id:string,ix:number) => {
-            PhoneSettingsRow({label:settingLabel(id,this.label),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.iconAccent,
+            PhoneSettingsRow({elevated:this.elevated,label:settingLabel(id,this.label),symbol:settingIcon(id),artwork:settingArtwork(id),tint:Colors.iconAccent,
               identity:'settings.'+id,last:ix === AGENT_OPTIONS.length-1,action:() => this.onOpen(id)})
           },(id:string) => id)
-        }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+        }.width('100%').clip(true).backgroundColor(Colors.card(this.elevated)).borderRadius(PhoneStyle.cardRadius)
         }
         ListItem() { Text(tr('phone_agent_tools_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:7,right:7,top:7,bottom:10}) }
       } else {
@@ -298,7 +300,7 @@ export struct PhoneSettingsOptions {
               .onClick(() => this.choose(lang)).id('settings.language.'+lang)
             if (ix<LANGUAGES.length-1) Divider().strokeWidth(0.5).color(Colors.divider).margin({left:20})
           },(lang:string) => lang)
-        }.width('100%').clip(true).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+        }.width('100%').clip(true).backgroundColor(Colors.card(this.elevated)).borderRadius(PhoneStyle.cardRadius)
         }
         ListItem() { Text(tr('phone_language_system_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:20,right:20,top:7,bottom:20}) }
         ListItem() {
@@ -307,11 +309,11 @@ export struct PhoneSettingsOptions {
             Text(this.dictationLabel(this.dictation.choice)).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
           }.constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).width('100%').padding({left:20,right:20,top:7,bottom:7})
-            .backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
+            .backgroundColor(Colors.card(this.elevated)).borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true)
             .bindMenu(this.dictationMenu()).accessibilityRole(AccessibilityRoleType.BUTTON).id('settings.dictation.choice')
         }
         ListItem() { Text(tr('phone_dictation_automatic_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').padding({left:20,right:20,top:7,bottom:10}) }
       }
-    }.width('100%').height('100%').padding({left:16,right:16,top:35,bottom:24}).backgroundColor(Colors.grouped)
+    }.width('100%').height('100%').padding({left:16,right:16,top:35,bottom:24}).backgroundColor(Colors.listGroup(this.elevated))
   }
 }

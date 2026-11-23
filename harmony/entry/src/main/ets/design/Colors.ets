@@ -11,6 +11,12 @@ class NativeColors {
   readonly codeRemovedFill: ResourceColor = $r('app.color.persona_code_removed_fill');
   readonly canvas: ResourceColor = $r('app.color.persona_canvas');
   readonly grouped: ResourceColor = $r('app.color.persona_grouped');
+  readonly sheetBackground: ResourceColor = $r('app.color.persona_sheet_background');
+  readonly sheetCard: ResourceColor = $r('app.color.persona_sheet_card');
+  readonly sheetControl: ResourceColor = $r('app.color.persona_sheet_control');
+  readonly listBackground: ResourceColor = $r('app.color.persona_list_background');
+  card(elevated: boolean): ResourceColor { return elevated ? this.sheetCard : this.surface; }
+  listGroup(elevated: boolean): ResourceColor { return elevated ? this.sheetBackground : this.grouped; }
   readonly ink: ResourceColor = $r('app.color.persona_ink');
   readonly secondary: ResourceColor = $r('app.color.persona_secondary');
   readonly tertiary: ResourceColor = $r('app.color.project_card_tertiary');

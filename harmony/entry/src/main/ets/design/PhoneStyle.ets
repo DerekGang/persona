@@ -57,6 +57,7 @@ export struct PhoneSectionTitle {
 @ComponentV2
 export struct PhoneSettingsRow {
   @Require @Param label: string;
+  @Param elevated: boolean = false;
   @Require @Param symbol: Resource;
   @Param artwork:Resource|undefined=undefined;
   @Require @Param tint: ResourceColor;
@@ -84,7 +85,7 @@ export struct PhoneSettingsRow {
       }.width('100%').constraintSize({ minHeight: PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale) })
         .padding({ left: PhoneStyle.formSize(12,9,nativeEnvironment.fontScale), right: 14, top: 5, bottom: 5 })
       if (!this.last) Divider().color(Colors.divider).strokeWidth(0.5).margin({ left: PhoneStyle.formSize(60,68,nativeEnvironment.fontScale) })
-    }.width('100%').backgroundColor(Colors.surface).accessibilityGroup(true)
+    }.width('100%').backgroundColor(Colors.card(this.elevated)).accessibilityGroup(true)
       .accessibilityText(this.label + (this.detail ? ' · ' + this.detail : '')).onClick(() => this.action()).id(this.identity)
   }
 }

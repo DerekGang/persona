@@ -376,7 +376,7 @@ export struct MachineDirectory {
       if (Wire.bool(c.raw,'node_mismatch') || Wire.bool(c.raw,'deploying')) Text(tr(Wire.bool(c.raw,'deploying') ? 'admin_node_deploying' : 'machine_update_needed'))
         .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.working)
       if (!selected && c.online && c.sample && Object.keys(c.sample.latest).length) this.metrics(c.sample)
-    }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+    }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.card(this.selected !== undefined)).borderRadius(PhoneStyle.cardRadius)
       .border({width:c.alerts.length ? 0.7 : 0,color:c.alerts[0]?.severity === 2 ? Colors.danger : Colors.working,radius:PhoneStyle.cardRadius})
       .onClick(() => { if (selected) this.onDetails(c.row); else this.onMachine(c.row); })
       .accessibilityGroup(true).accessibilityText([c.row.title,this.status(c),this.hardware(c),c.online ? [c.needs+' '+tr('needs_you'),c.working+' '+tr('working'),c.idle+' '+tr('machine_agent_idle')].join(' · ') : this.reason(c),
@@ -481,7 +481,7 @@ export struct MachineDirectory {
           },(c:ComputerCard,i:number) => c.key+String(c.tokens)+String(i))
         }.width('100%')
       }
-    }.width('100%').alignItems(HorizontalAlign.Start).padding(14).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).id('machines.tokens')
+    }.width('100%').alignItems(HorizontalAlign.Start).padding(14).backgroundColor(Colors.card(this.selected !== undefined)).borderRadius(PhoneStyle.cardRadius).id('machines.tokens')
   }
   @Builder statusBadge(value:string,tint:ResourceColor,alert:boolean = false) {
     Row({space:4}) {
@@ -598,7 +598,7 @@ export struct MachineDirectory {
           .height(44).width('100%').fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.link).onClick(() => this.expanded = true).id('machines.show_all')
       }
       if (!c.agents.length) Text(tr(c.online ? 'machine_no_agents' : 'machine_offline_agents')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary).width('100%').padding(14)
-    }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
+    }.width('100%').backgroundColor(Colors.card(this.selected !== undefined)).borderRadius(PhoneStyle.cardRadius).clip(true)
   }
   // ArkUI keeps the view for each metric when a poll or range changes. Its reactive reads
   // belong inside that view, rather than in the ForEach creation callback.
@@ -663,7 +663,7 @@ export struct MachineDirectory {
         .width('100%').height(4).style({strokeWidth:4}).color(alert ? alert.severity === 2 ? Colors.danger : Colors.working : tile.tint)
         .backgroundColor(Colors.control).accessibilityLevel('no')
       else Blank().height(4)
-    }.width('100%').alignItems(HorizontalAlign.Start).padding(12).backgroundColor(Colors.surface)
+    }.width('100%').alignItems(HorizontalAlign.Start).padding(12).backgroundColor(Colors.card(this.selected !== undefined))
       .borderRadius(PhoneStyle.cardRadius).accessibilityGroup(true).id('machines.now.'+tile.key)
   }
   @Computed get liveTiles():LiveMetric[] {
@@ -717,7 +717,7 @@ export struct MachineDirectory {
         if (key === 'network') this.seriesValue(key,true)
       }.width('100%')
       this.historyPlot(key)
-    }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+    }.width('100%').padding(14).alignItems(HorizontalAlign.Start).backgroundColor(Colors.card(this.selected !== undefined)).borderRadius(PhoneStyle.cardRadius)
   }
   @Builder monitor() {
     Column({space:Tokens.inset}) {
@@ -768,7 +768,7 @@ export struct MachineDirectory {
         machineBytes(Wire.number(this.detailSample.latest,'disk_used',-1))+' / '+machineBytes(Wire.number(this.detailSample.latest,'disk_total')))
       Button(tr('phone_machine_manage'),{buttonStyle:ButtonStyleMode.TEXTUAL}).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link).width('100%')
         .onClick(() => this.onDetails(c.row)).id('machines.management')
-    }.width('100%').padding({left:14,right:14,top:4,bottom:4}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+    }.width('100%').padding({left:14,right:14,top:4,bottom:4}).backgroundColor(Colors.card(this.selected !== undefined)).borderRadius(PhoneStyle.cardRadius)
   }
   build() {
     Refresh({refreshing:$$this.refreshing}) {
@@ -813,6 +813,6 @@ export struct MachineDirectory {
         top:this.selected ? PhoneStyle.detailListTop : PhoneStyle.formSize(20,16,nativeEnvironment.fontScale),bottom:24}).id('machines.list')
     }.onRefreshing(() => {
       this.sync(true); this.refreshing=this.active && this.model.connected;
-    }).width('100%').height('100%').backgroundColor(Colors.grouped)
+    }).width('100%').height('100%').backgroundColor(Colors.listGroup(this.selected !== undefined))
   }
 }

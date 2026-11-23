@@ -167,6 +167,22 @@
     {
       "name": "persona_dock_secondary_surface",
       "value": "#3E3F40"
+    },
+    {
+      "name": "persona_sheet_background",
+      "value": "#1C1C1E"
+    },
+    {
+      "name": "persona_sheet_card",
+      "value": "#2C2C2E"
+    },
+    {
+      "name": "persona_sheet_control",
+      "value": "#3A3A3C"
+    },
+    {
+      "name": "persona_list_background",
+      "value": "#000000"
     }
   ]
 }

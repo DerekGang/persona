@@ -1676,6 +1676,7 @@ export struct Conversation {
           if (this.model.sourceContext) Text(this.model.contextTitle()).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.secondary)
             .maxLines(this.environment.keyboardHeightPx > 0 ? 1 : 2).textOverflow({overflow:TextOverflow.Ellipsis}).width('100%')
           TextArea({text:this.model.draft,placeholder:this.composerPlaceholder(),controller:this.pageField})
+            .keyboardAppearance(this.environment.dark ? KeyboardAppearance.DARK_IMMERSIVE : KeyboardAppearance.LIGHT_IMMERSIVE)
             .maxLength(Tokens.maxMessage).layoutWeight(1).width('100%').fontSize(String(this.readingSize.points)+'vp')
             .placeholderFont({size:String(this.readingSize.shellPoints)+'vp'}).fontColor(Colors.ink)
             .lineHeight(String(this.readingSize.advance)+'vp').letterSpacing(String(this.draftTracking)+'vp').wordBreak(WordBreak.BREAK_WORD).backgroundColor(Color.Transparent).caretColor(Colors.link)
@@ -1717,6 +1718,7 @@ export struct Conversation {
           Stack({alignContent:Alignment.TopEnd}) {
             Stack({alignContent:Alignment.Start}) {
               TextArea({ text: this.model.draft, controller:this.inlineField, placeholder:this.composerPlaceholder() })
+                .keyboardAppearance(this.environment.dark ? KeyboardAppearance.DARK_IMMERSIVE : KeyboardAppearance.LIGHT_IMMERSIVE)
                 .maxLength(Tokens.maxMessage).width('100%')
                 .fontSize(this.expandedComposer() ? String(this.readingSize.points) + 'vp' : Tokens.body)
                 .placeholderFont({size:String(this.restingSize.promptPoints) + 'vp'})

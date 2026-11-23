@@ -51,7 +51,7 @@ export struct AgentStartPicker {
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       if (!folder && o.id === this.selected) SymbolGlyph(Symbols.check).fontSize('18vp').fontColor([Colors.link])
     }.width('100%').constraintSize({minHeight:this.optionHeight(o,folder)}).padding({left:20,right:20,top:this.kind === 'model' ? 12 : 8,bottom:this.kind === 'model' ? 12 : 8})
-      .backgroundColor(Colors.surface).borderRadius(folder || this.kind === 'model' ? 0 : 10)
+      .backgroundColor(Colors.sheetCard).borderRadius(folder || this.kind === 'model' ? 0 : 10)
       .enabled(!o.disabled).opacity(o.disabled ? 0.65 : 1).onClick(() => { if (folder) this.browse(o.id); else this.choose(o.id); })
       .accessibilityGroup(true).accessibilitySelected(!folder && o.id === this.selected).id(folder ? 'agent.folder.item' : 'agent.option')
   }
@@ -82,7 +82,7 @@ export struct AgentStartPicker {
       }.width('100%').padding({left:14,right:14}).backgroundColor(Color.Transparent)
         .enabled(!this.choices.loading && !!this.choices.path && !this.choices.error)
         .onClick(() => this.choose(this.choices.path)).id('agent.folder.use')
-    }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
+    }.width('100%').backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius).clip(true)
   }
   private groupItems(group:string):LaunchChoice[] {
     if (group === 'folder') return this.choices.directories;
@@ -102,13 +102,13 @@ export struct AgentStartPicker {
         if (i) this.divider(folder ? 41 : 14)
         this.item(o,folder)
       },(o:LaunchChoice,i:number) => JSON.stringify([i,o.id,o.title,o.detail,o.description,o.disabled]))
-    }.width('100%').backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius).clip(true)
+    }.width('100%').backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius).clip(true)
   }
   build() {
     Column() {
       Row({space:9}) {
         Button({type:ButtonType.Circle}) { SymbolGlyph(Symbols.collapse).fontSize('20vp').fontColor([Colors.ink]) }
-          .width(42).height(42).padding(0).backgroundColor(Colors.surface).responseRegion({x:-4,y:-4,width:44,height:44}).accessibilityText(tr('back')).onClick(() => this.back()).id('agent.picker.back')
+          .width(42).height(42).padding(0).backgroundColor(Colors.sheetCard).responseRegion({x:-4,y:-4,width:44,height:44}).accessibilityText(tr('back')).onClick(() => this.back()).id('agent.picker.back')
         Text(this.kind === 'folder' && this.folderName() ? this.folderName() : this.heading).layoutWeight(1).textAlign(TextAlign.Center)
           .fontSize(18).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         Blank().width(42)
@@ -153,7 +153,7 @@ export struct AgentStartPicker {
               Row({space:10}) {
                 SymbolGlyph($r('sys.symbol.keyboard')).fontSize('18vp').fontColor([Colors.link])
                 Text(tr('flow_other_model')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link)
-              }.width('100%').constraintSize({minHeight:48}).padding({left:16,right:16}).backgroundColor(Colors.surface).borderRadius(PhoneStyle.cardRadius)
+              }.width('100%').constraintSize({minHeight:48}).padding({left:16,right:16}).backgroundColor(Colors.sheetCard).borderRadius(PhoneStyle.cardRadius)
                 .accessibilityGroup(true).onClick(() => this.getUIContext().getFocusController().requestFocus('agent.picker.search')).id('agent.model.other')
               Text(tr('flow_model_manual_hint')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding({left:16,right:16})
             }.width('100%').alignItems(HorizontalAlign.Start)
@@ -165,6 +165,6 @@ export struct AgentStartPicker {
         }
       }.width('100%').layoutWeight(1).padding({left:16,right:16,top:this.kind === 'model' || this.kind === 'folder' ? 35 : 7,bottom:10})
       if (this.kind === 'model' && (this.options.length > 5 || this.manual)) this.pickerSearch()
-    }.width('100%').height('100%').backgroundColor(Colors.grouped).id('agent.picker')
+    }.width('100%').height('100%').backgroundColor(Colors.sheetBackground).id('agent.picker')
   }
 }
