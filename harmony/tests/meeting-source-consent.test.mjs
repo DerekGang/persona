@@ -85,9 +85,25 @@ test('the picker, privacy statements and status labels resolve in all four shipp
       assert.ok(words.has('meeting_audio_'+phase),locale+' '+phase);
     for(const key of ['meeting_cloud_service','meeting_start_privacy_cloud','meeting_start_privacy_cloud_days'])
       assert.ok(words.get(key).includes('{service}'),locale+' '+key);
-    for(const key of ['meeting_start_privacy_cloud_days','meeting_start_privacy_local_days'])assert.ok(words.get(key).includes('{days}'));
+    for(const key of ['meeting_start_privacy_cloud_days','meeting_start_privacy_local_days','meeting_room_privacy_local_days'])assert.ok(words.get(key).includes('{days}'));
+    assert.ok(words.get('meeting_room_text_shared'));
     assert.ok(words.has('meeting_configured_service'));
   }
+});
+
+test('inviting Persona explains where the text goes and keeps the actual audio destination in the start confirmation',()=>{
+  const {page,dialogs}=fixture();
+  page.roomRole=()=>'listener';
+  assert.equal(page.modePrivacy(false),tr('meeting_room_privacy_local_days').replace('{days}','14'));
+  page.chooseMode(true);
+  page.requestRecordingStart();
+  const cloud=tr('meeting_start_privacy_cloud_days').replace('{service}','Isolated transcription').replace('{days}','14');
+  assert.equal(dialogs[0].message,cloud+' '+tr('meeting_room_text_shared'));
+  page.meetingSpeech.retentionDays=0;
+  assert.equal(page.modePrivacy(false),tr('phone_meeting_live_note'));
+  assert.equal(page.modePrivacy(true),tr('meeting_start_privacy_cloud').replace('{service}','Isolated transcription')+' '+tr('meeting_room_text_shared'));
+  page.roomRole=()=>'off';
+  assert.equal(page.modePrivacy(false),tr('phone_record_audio_local'));
 });
 
 test('the meeting shows one identified transcript, choosing the device or hub that actually produced each line',()=>{

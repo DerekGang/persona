@@ -340,16 +340,17 @@ export struct MachineDirectory {
       Row({space:Tokens.inset}) {
         this.osMark(c)
         Column({space:2}) {
-          if (!selected) Text(c.row.title || c.row.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
-          Text(this.hardware(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+          if (!selected) Text(c.row.title || c.row.id).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).lineHeight(this.overviewTextHeight(20.33,27.67)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1)
+          Text(this.hardware(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).lineHeight(selected ? undefined : this.overviewTextHeight(14.33,21.67)).fontColor(Colors.secondary).maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         Column({space:2}) {
           Row({space:4}) {
             if (c.online && !c.pending) Circle().width(6).height(6).fill(Colors.positive)
-            Text(this.status(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(FontWeight.Medium).fontColor(c.pending ? Colors.working : c.online ? Colors.positive : Colors.secondary)
+            Text(this.status(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).lineHeight(selected ? undefined : this.overviewTextHeight(14.33,21.67)).fontWeight(FontWeight.Medium).fontColor(c.pending ? Colors.working : c.online ? Colors.positive : Colors.secondary)
           }
           if (!c.online && this.ageLabel(Date.parse(Wire.text(c.raw,'last_seen')))) Text(this.ageLabel(Date.parse(Wire.text(c.raw,'last_seen'))))
-            .fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
+            .fontSize(selected ? 11 : 12).maxFontScale(Tokens.interfaceScaleFor(selected ? 11 : 12))
+            .lineHeight(selected ? undefined : this.overviewTextHeight(14.33,21.67)).fontColor(selected ? Colors.secondary : Colors.tertiary)
         }.alignItems(HorizontalAlign.End)
       }.width('100%')
       if (c.alerts.length > 0) Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(3)}}) {
@@ -360,10 +361,11 @@ export struct MachineDirectory {
         this.count(tr('working'),c.working,Colors.working,Colors.workingMark)
         this.count(tr('machine_agent_idle'),c.idle,Colors.ink,Colors.tertiary)
       }.width('100%').padding({left:12,right:12,top:8,bottom:8}).borderRadius(10).backgroundColor($r('app.color.machine_count_surface'))
-      else if (this.reason(c)) Column({space:4}) {
-        Text(this.reason(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
+      else if (this.reason(c)) Column({space:selected ? 4 : 2}) {
+        Text(this.reason(c)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).lineHeight(selected ? undefined : this.overviewTextHeight(14.33,21.67))
+          .lineSpacing(LengthMetrics.vp(selected ? 0 : 2),{onlyBetweenLines:true}).fontColor(Colors.secondary).maxLines(selected ? 6 : 3)
         if (Wire.text(c.raw,'error') && Wire.text(c.raw,'error') !== this.reason(c))
-          Text(Wire.text(c.raw,'error')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.tertiary).maxLines(selected ? 7 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
+          Text(Wire.text(c.raw,'error')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).lineHeight(selected ? undefined : this.overviewTextHeight(15.67,23)).fontColor(Colors.tertiary).maxLines(selected ? 7 : 1).textOverflow({overflow:TextOverflow.Ellipsis})
       }.width('100%').alignItems(HorizontalAlign.Start)
       if (Wire.bool(c.raw,'node_mismatch') || Wire.bool(c.raw,'deploying')) Text(tr(Wire.bool(c.raw,'deploying') ? 'admin_node_deploying' : 'machine_update_needed'))
         .fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.working)
@@ -440,15 +442,18 @@ export struct MachineDirectory {
     const read = this.totalFor('cache_read'), input = read+this.totalFor('cache_write')+this.totalFor('in');
     return input ? Math.round(100*read/input)+'%' : '—';
   }
+  private overviewTextHeight(regular: number, large: number): string {
+    return String(PhoneStyle.formSize(regular,large,nativeEnvironment.fontScale))+'vp';
+  }
   @Builder stat(key:string,value:string) {
-    Column({space:3}) {
-      Text(tr(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-      Text(value).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).minFontSize(12).maxFontSize(17)
+    Column({space:2}) {
+      Text(tr(key)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).lineHeight(this.overviewTextHeight(14.33,21.67)).fontColor(Colors.secondary)
+      Text(value).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).lineHeight(this.overviewTextHeight(20.33,27.67)).fontWeight(FontWeight.Bold).fontColor(Colors.ink).maxLines(1).minFontSize(12).maxFontSize(17)
     }.alignItems(HorizontalAlign.Start).layoutWeight(1)
   }
   @Builder tokensCard() {
     Column({space:Tokens.inset}) {
-      Text(tr('phone_today_tokens')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+      Text(tr('phone_today_tokens')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).lineHeight(this.overviewTextHeight(20.33,27.67)).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
       Row({space:8}) {
         this.stat('phone_total',machineTokens(this.total))
         this.stat('phone_rate',tr('machine_per_minute').replace('{value}',machineTokens(this.shares.reduce((s:number,c:ComputerCard) => s+Wire.number(c.sample!.usage,'per_minute'),0))))
@@ -463,9 +468,9 @@ export struct MachineDirectory {
         Flex({wrap:FlexWrap.Wrap,space:{main:LengthMetrics.vp(6),cross:LengthMetrics.vp(6)}}) {
           ForEach(this.shares.filter((c:ComputerCard) => c.tokens>0),(c:ComputerCard,i:number) => {
             Row({space:4}) {
-              Circle().width(6).height(6).fill(Colors.ink).opacity(NEUTRAL_SHADES[Math.min(i,4)])
-              Text(c.row.title).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.ink).maxLines(1)
-              Text(machineTokens(c.tokens)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary).maxLines(1)
+              Circle().width(PhoneStyle.sidebarMetric(7,nativeEnvironment.fontScale)).height(PhoneStyle.sidebarMetric(7,nativeEnvironment.fontScale)).fill(Colors.ink).opacity(NEUTRAL_SHADES[Math.min(i,4)])
+              Text(c.row.title).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).lineHeight(this.overviewTextHeight(14.33,21.67)).fontColor(Colors.ink).maxLines(1)
+              Text(machineTokens(c.tokens)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).lineHeight(this.overviewTextHeight(14.33,21.67)).fontColor(Colors.secondary).maxLines(1)
             }
           },(c:ComputerCard,i:number) => c.key+String(c.tokens)+String(i))
         }.width('100%')

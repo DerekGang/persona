@@ -76,11 +76,13 @@ export class WorktreeActions {
   @Trace automatic: boolean = false;
   @Trace supportsAutomatic: boolean = false;
   @Trace retrySupported: boolean = false;
+  @Trace cleanupRepreviewAvailable: boolean = false;
   @Trace legacy: boolean = false;
   @Trace releaseReady: boolean = false;
   @Trace renameCurrent: string = '';
   @Trace renameOriginal: string = '';
   private renameSnapshot: string = '';
+  private cleanupSnapshot: string = '';
   private renameReviewedRecord: MutationRecord | undefined;
   private reviewedRenameBase: string = '';
   private base: string = '';
@@ -110,6 +112,7 @@ export class WorktreeActions {
     this.view = undefined; this.requestId = ''; this.requestPath = ''; this.requestBody = ''; this.requestTime = 0;
     this.retrySupported = false; this.originalReceiptRoute = false; this.legacy = false; this.legacyId = ''; this.releaseReady = false;
     this.releaseTarget = ''; this.target = '';
+    this.cleanupSnapshot = ''; this.cleanupRepreviewAvailable = false;
     this.renameCurrent = ''; this.renameOriginal = ''; this.renameSnapshot = ''; this.renameReviewedRecord = undefined; this.reviewedRenameBase = '';
   }
   private current(revision: number): boolean {
@@ -172,7 +175,7 @@ export class WorktreeActions {
     this.unknown = true; this.error = 'result_unknown'; return true;
   }
   private async query(action: string, body: Record<string, Object>): Promise<Record<string, Object>> {
-    // prepare, preview and reconcile use POST on the wire but never dispatch a change.
+    // These requests never dispatch a worktree change. Surrendering an unused token is idempotent.
     const rev = this.revision, route = this.endpoint(action), owner = this.owner!, payload = JSON.stringify(body);
     return this.read(rev, async (): Promise<Record<string,Object>> => Wire.parse(await owner.repo().transport.request(route, 'POST', payload)));
   }
@@ -198,7 +201,7 @@ export class WorktreeActions {
     if (code.includes('stale') || code.includes('preview_required')) return 'tree_preview_changed';
     return code && code.length <= 180 ? code : 'failed';
   }
-  async open(model: ClientModel, tree: ProjectWorktree, action: string): Promise<void> {
+  async open(model: ClientModel, tree: ProjectWorktree, action: string, retiredToken: string = ''): Promise<void> {
     this.close();
     const revision = this.revision, scope = model.scope(), epoch = model.connectionGeneration();
     this.action = action; this.title = tree.title; this.locationTitle = tree.title; this.machine = tree.machineTitle;
@@ -223,6 +226,7 @@ export class WorktreeActions {
       this.requireCurrent(revision);
       if (this.restoreRequest(saved, route)) {
         if (action === 'rename') { this.renameSnapshot = snapshot; this.renameOriginal = Wire.text(saved,'originalName'); }
+        if (action === 'clean') this.cleanupSnapshot = snapshot;
         const verified = action === 'create' && this.originalReceiptRoute && await this.verifyCreateVersion();
         if (this.current(revision)) { this.retrySupported = verified; this.ready = true; }
         return;
@@ -248,7 +252,8 @@ export class WorktreeActions {
         this.requireCurrent(revision);
         const path = Wire.text(preview, 'path'), dirty = Wire.number(preview, 'dirty', -1);
         if (Wire.text(preview, 'workspace_id') !== tree.sourceId || Wire.text(preview, 'kind') !== tree.source ||
-          !path || dirty < 0 || !Wire.text(preview, 'preview_token') || Wire.bool(preview, 'close_only')) throw new Error('tree_preview_changed');
+          !path || dirty < 0 || !Wire.text(preview, 'preview_token') || Wire.text(preview,'preview_token') === retiredToken ||
+          Wire.bool(preview, 'close_only')) throw new Error('tree_preview_changed');
         this.token = Wire.text(preview, 'preview_token'); this.path = path; this.branch = Wire.text(preview, 'branch');
         this.dirty = dirty; this.folder = Wire.bool(preview, 'folder');
       }
@@ -320,13 +325,14 @@ export class WorktreeActions {
       this.requestPath = path; this.requestBody = JSON.stringify(body); this.requestTime = Date.now();
       snapshot = this.snapshot();
       if (action === 'rename') { this.renameSnapshot = snapshot; this.renameOriginal = this.title; }
+      if (action === 'clean') this.cleanupSnapshot = snapshot;
       await view.write(snapshot);
       if (!admit()) throw new Error('request_updated');
       const result = await owner.repo().call(path, 'POST', body, this.requestId, admit, false,
         (value: Record<string,Object>): boolean => operationAcknowledged(action,sourceId,body,value));
       if (!this.current(rev)) return undefined;
       const change = this.change(result); this.ready = false;
-      if (action === 'rename') await view.clearIfUnchanged(snapshot).catch(() => undefined);
+      if (action === 'rename' || action === 'clean') await view.clearIfUnchanged(snapshot).catch(() => undefined);
       else await view.write('').catch(() => undefined);
       return this.current(rev) ? change : undefined;
     } catch (error) {
@@ -343,7 +349,7 @@ export class WorktreeActions {
       if (this.unknown) {
         this.retrySupported = action === 'create' && this.originalReceiptRoute && !!this.exactRecord(this.requestId);
         this.error = error instanceof HttpFailure && error.resultPending ? 'pending' : 'result_unknown';
-      } else if (action === 'rename') {
+      } else if (action === 'rename' || action === 'clean') {
         if (snapshot) await view.clearIfUnchanged(snapshot).catch(() => undefined);
       } else if (view.valid()) await view.write('').catch(() => undefined);
       if (action === 'clean' && !this.unknown) this.ready = false;
@@ -371,6 +377,7 @@ export class WorktreeActions {
     await this.finishRecord(this.legacy ? this.legacyId : this.requestId, 'done');
     if (!this.current(rev)) return undefined;
     if (this.action === 'rename') await view.clearIfUnchanged(this.renameSnapshot).catch(() => undefined);
+    else if (this.action === 'clean') await view.clearIfUnchanged(this.cleanupSnapshot).catch(() => undefined);
     else if (!this.legacy) await view.write('').catch(() => undefined);
     if (!this.current(rev)) return undefined;
     this.unknown = false; this.ready = false; this.retrySupported = false; this.releaseReady = false; this.error = change ? '' : 'done';
@@ -573,6 +580,35 @@ export class WorktreeActions {
     return this.automatic === Wire.bool(body,'auto_name') && (this.automatic ||
       this.branch.trim() === Wire.text(body,'branch') && this.path.trim() === Wire.text(body,'path'));
   }
+  private ownsCleanupJournal(): boolean {
+    const journal = this.owner?.repo().mutations;
+    if (!journal) return false;
+    const record = journal.record(this.requestId);
+    return (!record || record.method === 'POST' && record.path === this.requestPath &&
+      (!record.payload || record.payload === this.requestBody) && ['pending','unknown','failed'].includes(record.state)) &&
+      !journal.blocked().some((item: MutationRecord) => item.method === 'POST' && item.path === this.requestPath && item !== record);
+  }
+  private async ownsCleanupSnapshot(rev: number, allowCleared: boolean = false): Promise<boolean> {
+    if (!this.current(rev) || !this.cleanupSnapshot || this.tree!.source !== 'herdr' || !this.tree!.permits('clean')) return false;
+    const saved = await this.view!.read();
+    return this.current(rev) && this.ownsCleanupJournal() && (saved === this.cleanupSnapshot ||
+      allowCleared && saved === '' && this.owner!.repo().mutations?.record(this.requestId)?.state === 'failed');
+  }
+  private async reopenRevokedCleanup(rev: number): Promise<void> {
+    if (!await this.ownsCleanupSnapshot(rev, true)) { if (this.current(rev)) this.error = 'request_updated'; return; }
+    const journal = this.owner!.repo().mutations!, id = this.requestId, record = journal.record(id);
+    const view = this.view!, snapshot = this.cleanupSnapshot, retired = this.token;
+    if (record && record.state !== 'failed') {
+      await journal.finish(record,'failed',() => this.current(rev) && journal.record(id) === record && this.ownsCleanupJournal());
+    }
+    if (!this.current(rev) || journal.record(id) !== record || record && record.state !== 'failed' || !this.ownsCleanupJournal()) return;
+    this.owner!.unresolvedWrites = journal.blocked();
+    await view.clearIfUnchanged(snapshot);
+    const saved = await view.read();
+    if (!this.current(rev)) return;
+    if (saved || !this.ownsCleanupJournal()) { this.error = saved === snapshot ? 'storage_unavailable' : 'request_updated'; return; }
+    await this.open(this.root!, this.tree!, 'clean', retired);
+  }
   async reconcile(replay: boolean = false): Promise<WorktreeChange | undefined> {
     if (!this.canCheck) return undefined;
     const rev = this.revision, lane = JSON.stringify([this.ownerScope,this.endpoint(this.action === 'clean' ? 'delete' : this.action)]);
@@ -582,14 +618,23 @@ export class WorktreeActions {
       if (this.action === 'create') return await this.recoverCreate(rev,replay);
       if (this.action === 'rename') return await this.recoverRename(rev,replay);
       const body = this.body(); body['preview_token'] = this.token; body['reconcile'] = true;
+      const surrender = replay && this.cleanupRepreviewAvailable;
+      this.cleanupRepreviewAvailable = false;
+      if (surrender) {
+        if (!await this.ownsCleanupSnapshot(rev)) { if (this.current(rev)) this.error = 'request_updated'; return undefined; }
+        body['revoke_preview'] = true;
+      }
       const result = await this.query('delete', body);
       if (!this.current(rev)) return undefined;
       if (this.removed(result)) return await this.completed(rev, result);
       this.error = 'result_unknown';
-      // Reconciliation observes the workspace. A still-present checkout does not settle the original request.
       if (Wire.text(result, 'workspace_id') === this.tree!.sourceId && result['removed'] === false) {
         const state = Wire.text(result, 'state');
-        if (state === 'present') this.error = 'tree_cleanup_present';
+        if (state === 'preview_revoked' && Wire.text(result, 'revoked_preview_token') === this.token) await this.reopenRevokedCleanup(rev);
+        if (state === 'present') {
+          const available = result['can_revoke_preview'] === true && await this.ownsCleanupSnapshot(rev);
+          if (this.current(rev)) { this.cleanupRepreviewAvailable = available; this.error = 'tree_cleanup_present'; }
+        }
         if (state === 'removing') this.error = 'tree_cleanup_removing';
       }
       return undefined;

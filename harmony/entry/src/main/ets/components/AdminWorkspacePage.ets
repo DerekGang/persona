@@ -20,6 +20,8 @@ export struct AdminWorkspacePage {
   @Param active: boolean = false;
   @Param refreshRevision: number = 0;
   @Param row: ResourceRow | undefined = undefined;
+  @Param installingManager: string = '';
+  private focusedInstallation: string = '';
   @Event onOpenResource: (row: ResourceRow) => void = (_row: ResourceRow) => {};
   @Event onOpenMachine: (row: ResourceRow) => void = (_row: ResourceRow) => {};
   @Local workspace: AdminWorkspace = new AdminWorkspace();
@@ -45,6 +47,11 @@ export struct AdminWorkspacePage {
     if (!this.activePage) { this.workspace.hide(); return; }
     this.workspace.open(this.model, this.page, true, this.row).then(() => {
       if (revision !== this.routeRevision || !this.activePage) return;
+      if (this.page === 'managers' && this.installingManager && this.focusedInstallation !== this.installingManager &&
+          this.workspace.managers.some((manager: AdminManager) => manager.id === this.installingManager && !!manager.installing)) {
+        this.workspace.selectManager(this.installingManager);
+        this.focusedInstallation = this.installingManager;
+      }
     }).catch(() => undefined);
   }
 

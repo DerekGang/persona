@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseReadingAnchor, readingAnchorIndex } from '../entry/src/main/ets/core/ConversationReading.ts';
+import { parseReadingAnchor, readingAnchorIndex, readingSizeClassChanges } from '../entry/src/main/ets/core/ConversationReading.ts';
 
 test('reading returns to the same message after older and newer messages are inserted',()=>{
  const anchor=parseReadingAnchor(JSON.stringify({id:'read-message',offset:-18,atEnd:false}));
@@ -37,6 +37,40 @@ function method(name){
  return source.slice(start,i);
 }
 class Frame {constructor(action){this.action=action;}onFrame(){this.action();}}
+
+test('only a transition between standard and accessibility reading sizes changes the history landing',()=>{
+ for(const [from,to,changed] of [[1,19/17,false],[1,23/17,false],[1,28/17,true],[1,3.2,true],
+   [28/17,33/17,false],[47/17,3.2,false],[3.2,1,true],[19/17,1,false],[NaN,1,false],[1,0,false]]) {
+   assert.equal(readingSizeClassChanges(from,to),changed);
+ }
+});
+
+test('reflow targets only an undisturbed manual reader in this foreground chat',()=>{
+ const Reflow=new Function('readingSizeClassChanges','return '+stripTypeScriptTypes(
+   'class Reflow {'+['canReflowManualHistory','reflowReadingSize'].map(method).join('\n')+'}'))(readingSizeClassChanges);
+ const frames=[],seen=[];
+ const observer={on:(event,handler)=>{assert.equal(event,'didLayout');frames.push(handler);},
+   off:(event,handler)=>{assert.equal(event,'didLayout');const i=frames.indexOf(handler);assert.notEqual(i,-1);frames.splice(i,1);}};
+ const model={selected:{kind:'session'},isForegroundChat:()=>true,target:()=> 'session',scope:()=> 'hub',connectionGeneration:()=>7,
+   owns:(gen,scope)=>gen===7 && scope==='hub',draft:'',draftLoading:false,sourceContext:''};
+ const base={mounted:true,active:true,model,admission:()=>true,manuallyReading:true,jumpAvailable:true,lastManualAnchor:{id:'any',atEnd:false,offset:12},
+   selectionStart:0,selectionEnd:0,attachments:{attachments:[]},chooser:{},environment:{fontScale:3.2,keyboardHeightPx:0},
+   readingEpoch:1,readingMotion:2,getUIContext:()=>({getUIObserver:()=>observer}),jumpToLatest:()=>seen.push(1)};
+ const make=(override={})=>Object.assign(new Reflow(),base,override);
+ for(const override of [{active:false},{mounted:false},{model:{...model,isForegroundChat:()=>false}},{model:{...model,selected:{kind:'conversation'}}},
+   {manuallyReading:false},{jumpAvailable:false},{scrollingByHand:true},{readingRestoring:true},{readingLoading:true},{atEnd:true},
+   {searchPresented:true},{searchHitId:'search'},{highlightedLine:'found'},{selectedReadingLine:'selected'},
+   {readingMenuLine:'menu'},{selectionEnd:3},{fieldFocused:true},{draftEditorOpen:true},{model:{...model,draft:'still editing'}},
+   {actionsVisible:true},{chooser:{session:'open'}},{environment:{fontScale:3.2,keyboardHeightPx:320}}]){
+   make(override).reflowReadingSize(1,3.2);assert.equal(frames.length,0);
+ }
+ make().reflowReadingSize(1,19/17);assert.equal(frames.length,0);
+ for(const change of [v=>v.readingMotion++,v=>v.readingEpoch++,v=>v.searchPresented=true,v=>v.selectedReadingLine='selected',
+   v=>v.model={...model,owns:()=>false},v=>v.model={...model,target:()=> 'other'},v=>v.model={...model,draft:'typed'}]){
+   const v=make();v.reflowReadingSize(1,3.2);assert.equal(frames.length,1);change(v);frames[0]();assert.equal(frames.length,0);assert.equal(seen.length,0);
+ }
+ make().reflowReadingSize(1,3.2);assert.equal(seen.length,0);frames[0]();assert.equal(frames.length,0);assert.equal(seen.length,1);
+});
 const Reading=new Function('parseReadingAnchor','readingAnchorIndex','ConversationFrame','Edge','ScrollAlign','LengthMetrics','return '+stripTypeScriptTypes('class Reading {'+['readingProgress','showWelcome','readingPrefix','saveReading','syncReading','scheduleReading','restoreReading','visibleReadingAnchor','loadEarlier','feedContextChanged'].map(method).join('\n')+'}'))(parseReadingAnchor,readingAnchorIndex,Frame,{Bottom:1},{START:1},{vp:v=>v});
 function fixture(){let resolve;const read=new Promise(r=>resolve=r),frames=[],scrolls=[],writes=[];const v=new Reading();Object.assign(v,{active:true,readingKey:'',readingEpoch:0,readingRestoring:true,readingAnchorReady:false,readingFetching:false,readingCursors:new Set(),readingFailed:false,anchor:{id:'',offset:0,atEnd:true},lines:[],feed:{error:'',nextCursor:''},feedKey:'',model:{selected:{kind:'session'},scope:()=> 'owner',target:()=> 'chat',hasMoreMessages:false,transcriptHistoryReady:false,transcriptItems:()=>v.lines,connected:true,captureView:()=>({read:()=>read,valid:()=>true,write:async s=>writes.push(s)})},scroller:{scrollEdge:()=>scrolls.push('bottom'),scrollToIndex:i=>scrolls.push(i)},getUIContext:()=>({postFrameCallback:f=>frames.push(f)})});return {v,resolve,scrolls,writes,flush:async()=>{while(frames.length)frames.shift().onFrame();await Promise.resolve();}};}
 

@@ -7,7 +7,15 @@ registerHooks({load(url,context,next){
   return next(url,context);
 }});
 const {knowledgePriorityTone,knowledgeRelevanceTone,knowledgeInk,knowledgeWash,KnowledgeLandingMenu}=await import('../entry/src/main/ets/models/KnowledgeListPresentation.ets');
-const {relativeActivityDate,phoneDueDate}=await import('../entry/src/main/ets/core/PhoneDate.ts');
+const {relativeActivityDate,phoneDueDate,phoneTodoPlanDate}=await import('../entry/src/main/ets/core/PhoneDate.ts');
+test('compact to-do plan dates retain localized weekdays, 24-hour Chinese times and all-day dates',()=>{
+  const at=new Date(2026,10,23,18,5).getTime();
+  assert.equal(phoneTodoPlanDate(at,at,'zh-CN',true),'11月23日 周一 18:05');
+  assert.equal(phoneTodoPlanDate(at,at,'zh-CN',false),'11月23日 周一');
+  assert.equal(phoneTodoPlanDate(at,new Date(2027,0,1).getTime(),'zh-CN',false),'2026年11月23日 周一');
+  assert.equal(phoneTodoPlanDate(at,at,'en-US',true),phoneDueDate(at,at,'en-US',true));
+  assert.equal(phoneTodoPlanDate(Number.NaN,at,'zh-CN',true),'');
+});
 test('activity dates match the iPhone calendar-day, weekday, and relative-minute boundaries in the active locale',()=>{
   const now=new Date(2026,10,22,12,0).getTime(), local=(day,hour,minute=0)=>new Date(2026,10,day,hour,minute).toISOString();
   const say=(raw,locale='zh-CN')=>relativeActivityDate(Date.parse(raw),now,locale,'刚刚','{n} 分钟前','昨天');

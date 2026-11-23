@@ -46,11 +46,9 @@ test('native phone search sizes the entered text and placeholder together and pr
   }
   assert.match(query[0],/phone_search_conversation_count[^]*?\.fontSize\(13\)\.maxFontScale\(Tokens\.interfaceScaleFor\(13\)\)[^]*?id\('phone_search.count'\)/);
   const shell=read('pages/Index');
-  for(const key of ['phone_new_assistant','phone_manage_assistants']) {
-    const start=shell.indexOf("MenuItem({ content: tr('"+key+"')");
-    assert.ok(start>=0);
-    assert.match(shell.slice(start,start+250),/contentFont\(\{size:Tokens\.interfaceFontVp\(16,this\.environment\.fontScale\)\}\)/);
-  }
+  const switcher=shell.slice(shell.indexOf('@Builder assistantMenuCommand'),shell.indexOf('@Builder drawerManagerMenu'));
+  assert.match(switcher,/Text\(tr\(create \? 'phone_new_assistant' : 'phone_manage_assistants'\) \+ \(create \? '' : '…'\)\)\.fontSize\(Tokens\.interfaceFontVp\(17,this\.environment\.fontScale\)\)/);
+  assert.match(switcher,/PhoneStyle\.sidebarMetric\(44,this\.environment\.fontScale\)/);
 });
 const {AgentLaunchChoices,providerStartModes,launchModelName,recentLaunchDirectories,LaunchChoice,RecentAgentSetup,rememberAgentSetup,loadAgentSetups}=await import('../entry/src/main/ets/models/AgentLaunchChoices.ets');
 const {ProjectWorktree}=await import('../entry/src/main/ets/models/ProjectCatalog.ets');
@@ -486,6 +484,29 @@ test('full-text requests are debounced, and clearing, switching scope or hiding 
   index.schedule(owner,'fresh',false);await new Promise(r=>setTimeout(r,230));owner.generation++;
   calls[1][1].resolve({results:[{machine_id:'m',session_id:'other'}]});await new Promise(r=>setTimeout(r,5));assert.deepEqual(index.matches,[]);
   index.close();index.schedule(owner,'agent',true);assert.equal(index.busy,false);index.close();
+});
+
+test('the assistant popover rechecks roster membership and opens an installation in its original hub without switching assistants', async () => {
+  const {NavigationContext}=await import('../entry/src/main/ets/models/NavigationContext.ets');
+  const Panel=new Function('NavigationContext','return '+stripTypeScriptTypes(
+    'class Panel {'+formMethods.get('assistantMenuAction')+'}'))(NavigationContext);
+  const calls=[], routes=[], normal=new ResourceRow('installed','Work','manager');
+  const installing=ResourceRow.from({id:'pending',name:'Installing',installing:'2030-02-03T01:00:00Z'},'manager');
+  const panel=new Panel();
+  Object.assign(panel,{assistantMenuScope:'owner',spacesShown:true,drawerAcceptsTap:()=>true,drawerManagers:[normal,installing],
+    model:{scope:()=> 'owner',selectListedManager:(id,scope)=>calls.push([id,scope])},
+    stack:{pushPath:value=>routes.push(value)},savePath:()=>{},openSettings:value=>calls.push(value)});
+  panel.assistantMenuAction('other','',normal);
+  assert.deepEqual(calls,[]);assert.equal(routes.length,0);
+  panel.assistantMenuAction('owner','',new ResourceRow('removed'));
+  assert.equal(routes.length,0);assert.deepEqual(calls,[]);
+  panel.assistantMenuScope='owner';panel.assistantMenuAction('owner','',new ResourceRow('pending'));
+  assert.deepEqual(calls,[]);assert.equal(routes.length,1);
+  assert.equal(NavigationContext.installingManagerFor(routes[0].param,'owner'),'pending');
+  assert.equal(NavigationContext.installingManagerFor(routes[0].param,'other'),'');
+  assert.equal(NavigationContext.installingManagerFor('managers','owner'),'');
+  panel.assistantMenuScope='owner';panel.assistantMenuAction('owner','',normal);
+  assert.deepEqual(calls,[['installed','owner']]);assert.equal(routes.length,1);
 });
 
 test('closing the compact drawer with a row under the finger keeps the current page', () => {

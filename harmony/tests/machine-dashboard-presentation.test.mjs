@@ -99,7 +99,10 @@ test('system identity and aggregates match the iOS OS-family and token wire form
   assert.equal(osFamily({},'darwin'),'macos');
   assert.equal(osFamily({},'unknown'),'');
   assert.equal(machineTokenTotal({in:100,out:50,cache_write:6,cache_read:40,req:4}),196);
-  assert.equal(machineTokens(10000),'10K');
+  for (const [raw,expected] of [[0,'0'],[1250,'1.25K'],[10000,'10K'],[106099,'106K'],[999500,'1M'],
+    [2960000,'2.96M'],[168347846,'168M'],[999500000,'1B'],[314159410,'314M'],[NaN,'—'],[-1,'—']]) {
+    assert.equal(machineTokens(raw),expected);
+  }
   assert.equal(machineBytes(48*2**30),'48.0 GB');
   assert.equal(machinePercent(4.48),'4.5%');
   assert.equal(machinePercent(-1),'—');

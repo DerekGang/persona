@@ -37,8 +37,8 @@ function fixture() {
       acknowledge: async (id,admit) => {
         const record=blocked.find(r=>r.id===id);
         if (record?.state==='unknown' && !record.requiresReceipt && !record.confirmedPending && (!admit || admit())) await repo.mutations.finish(record,'checked');
-      }, finish: async (record, state) => {
-      record.state=state;finished.push([record.id,state]);} },
+      }, finish: async (record, state, admit) => {
+      if (!admit || admit()) {record.state=state;finished.push([record.id,state]);}} },
     transport: { async request(path, method, json, id) {
       const body = JSON.parse(json);
       if (path.endsWith('/create')) {
@@ -551,6 +551,115 @@ test('read-only cleanup reconciliation reports the matching workspace state and 
   }
   assert.deepEqual(f.writes,[request]);
   assert.deepEqual(f.finished,[]);
+});
+
+async function unresolvedHerdrCleanup() {
+  const f=fixture();
+  f.behavior.dirty=1;
+  f.behavior.unknown=true;
+  await f.form.open(f.root,f.tree,'clean');
+  f.form.force=true;
+  f.form.deleteBranch=true;
+  await f.form.submit();
+  assert.equal(f.form.unknown,true);
+  Object.assign(f.cleanupResult,{workspace_id:'child',state:'present',removed:false,can_revoke_preview:true});
+  const request=f.owner.repo().transport.request;
+  f.owner.repo().transport.request=async (...args)=>{
+    const response=JSON.parse(await request(...args));
+    if(JSON.parse(args[2]).preview)response.preview_token=f.behavior.newToken??'new-preview';
+    return JSON.stringify(response);
+  };
+  return f;
+}
+
+test('a surrendered Herdr token opens a fresh dirty preview with both destructive options reset',async()=>{
+  for(const reopen of [false,true]) for(const missingJournal of [false,true]) {
+    const f=await unresolvedHerdrCleanup();
+    if(missingJournal)f.blocked.length=0; // The draft persisted before the mutation journal began.
+    if(reopen) { f.form.close();f.form=new WorktreeActions();await f.form.open(f.root,f.tree,'clean'); }
+    await f.form.reconcile();
+    assert.equal(f.form.cleanupRepreviewAvailable,true);
+    assert.equal(f.queries.at(-1).body.revoke_preview,undefined);
+    assert.equal(f.form.canSubmit,false);
+    Object.assign(f.cleanupResult,{state:'preview_revoked',revoked_preview_token:'this-preview'});
+    assert.equal(await f.form.reconcile(true),undefined);
+    assert.deepEqual(f.queries.at(-2).body,{kind:'herdr',workspace_id:'child',preview_token:'this-preview',reconcile:true,revoke_preview:true});
+    assert.deepEqual(f.queries.at(-1).body,{kind:'herdr',workspace_id:'child',preview:true});
+    assert.equal(f.views.size,0);assert.equal(f.form.unknown,false);
+    assert.equal(f.form.ready,true);assert.equal(f.form.dirty,1);assert.equal(f.form.force,false);assert.equal(f.form.deleteBranch,false);
+    assert.equal(f.form.canSubmit,false);assert.equal(f.writes.length,1);
+    assert.deepEqual(f.finished,missingJournal?[]:[[f.writes[0].id,'failed']]);
+    f.form.force=true;assert.equal(f.form.canSubmit,true);await f.form.submit();
+    assert.equal(f.writes[1].body.preview_token,'new-preview');assert.equal(f.writes[1].body.delete_branch,false);
+    assert.notEqual(f.writes[1].id,f.writes[0].id);
+  }
+});
+
+test('a dispatched, missing, mismatched or legacy observation never releases the original cleanup',async()=>{
+  for(const reply of [
+    {state:'present'}, {state:'removing'}, {state:'unknown'}, {state:'preview_revoked'},
+    {state:'preview_revoked',revoked_preview_token:'other'}, {workspace_id:'other',state:'preview_revoked',revoked_preview_token:'this-preview'},
+    {state:'preview_revoked',revoked_preview_token:'this-preview',removed:undefined}
+  ]) {
+    const f=await unresolvedHerdrCleanup();await f.form.reconcile();
+    Object.assign(f.cleanupResult,{can_revoke_preview:undefined},reply);
+    await f.form.reconcile(true);
+    assert.equal(f.queries.at(-1).body.revoke_preview,true);
+    assert.equal(f.form.cleanupRepreviewAvailable,false);assert.equal(f.form.unknown,true);assert.equal(f.form.canSubmit,false);
+    assert.equal(f.writes.length,1);assert.equal(f.finished.length,0);assert.equal(f.blocked[0].state,'unknown');
+  }
+});
+
+test('a lost revocation reply is recovered on a read-only check after reopening the original request',async()=>{
+  const f=await unresolvedHerdrCleanup();await f.form.reconcile();
+  const transport=f.owner.repo().transport,read=transport.request;
+  transport.request=async (...args)=>{
+    if(JSON.parse(args[2]).revoke_preview) {
+      Object.assign(f.cleanupResult,{state:'preview_revoked',revoked_preview_token:'this-preview'});
+      throw new HttpFailure(504,'lost_reply');
+    }
+    return read(...args);
+  };
+  await f.form.reconcile(true);
+  assert.equal(f.form.unknown,true);assert.equal(f.finished.length,0);assert.equal(f.views.size,1);
+  f.form.close();await f.form.open(f.root,f.tree,'clean');
+  assert.equal(f.form.cleanupRepreviewAvailable,false);
+  await f.form.reconcile();
+  assert.equal(f.queries.at(-2).body.revoke_preview,undefined);assert.equal(f.queries.at(-1).body.preview,true);
+  assert.equal(f.form.canCheck,false);assert.equal(f.form.force,false);assert.equal(f.writes.length,1);
+});
+
+test('repreview retains a replaced owner, journal or checkout snapshot and rejects a reused token',async()=>{
+  for(const fault of ['snapshot-before','journal-before','snapshot-after','reconnect','new-token','journal-write']) {
+    const f=await unresolvedHerdrCleanup();await f.form.reconcile();
+    const key=[...f.views.keys()][0], replacement='a newer view snapshot';
+    Object.assign(f.cleanupResult,{state:'preview_revoked',revoked_preview_token:'this-preview'});
+    if(fault==='snapshot-before')f.views.set(key,replacement);
+    if(fault==='journal-before')f.blocked.push({...f.blocked[0],id:'other-request'});
+    if(fault==='new-token')f.behavior.newToken='this-preview';
+    if(fault==='journal-write')f.owner.repo().mutations.finish=async()=>{throw new HttpFailure(0,'receipt_storage_failed',true)};
+    if(fault==='snapshot-after'||fault==='reconnect') {
+      const transport=f.owner.repo().transport,read=transport.request;
+      transport.request=async (...args)=>{
+        const result=await read(...args);
+        if(JSON.parse(args[2]).revoke_preview) {
+          if(fault==='snapshot-after')f.views.set(key,replacement);
+          else f.owner.epoch++;
+        }
+        return result;
+      };
+    }
+    await f.form.reconcile(true);
+    assert.equal(f.writes.length,1);assert.equal(f.form.canSubmit,false);
+    if(fault==='new-token') {
+      assert.equal(f.form.ready,false);assert.equal(f.form.error,'tree_preview_changed');
+      assert.deepEqual(f.finished,[[f.writes[0].id,'failed']]);
+    } else {
+      assert.equal(f.finished.length,0);assert.equal(f.form.unknown,true);assert.equal(f.views.size,1);
+      if(fault.startsWith('snapshot-'))assert.equal(f.views.get(key),replacement);
+      if(fault.endsWith('-before'))assert.equal(f.queries.at(-1).body.revoke_preview,undefined);
+    }
+  }
 });
 
 test('a verified Hub release or clean deploy names the first release with worktree receipts in its ancestry', async () => {

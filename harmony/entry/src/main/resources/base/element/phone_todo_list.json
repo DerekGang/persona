@@ -1,0 +1,56 @@
+{
+  "string": [
+    {
+      "name": "phone_todo_new",
+      "value": "New To-Do"
+    },
+    {
+      "name": "phone_todo_list_hidden",
+      "value": "{count} more waiting on you, not in {filter}"
+    },
+    {
+      "name": "phone_todo_show_all",
+      "value": "Show All"
+    },
+    {
+      "name": "phone_todo_was_due",
+      "value": "Was due {date}"
+    },
+    {
+      "name": "phone_todo_due_on",
+      "value": "Due {date}"
+    },
+    {
+      "name": "phone_todo_high_priority",
+      "value": "High priority"
+    },
+    {
+      "name": "phone_todo_remind_at",
+      "value": "Reminder at {date}"
+    },
+    {
+      "name": "phone_todo_related_count",
+      "value": "{count} related"
+    },
+    {
+      "name": "phone_todo_clear_filter",
+      "value": "Clear the {filter} filter"
+    },
+    {
+      "name": "phone_todo_filter_sort",
+      "value": "Filter and sort"
+    },
+    {
+      "name": "phone_todo_filter_count",
+      "value": "{count} to-dos"
+    },
+    {
+      "name": "phone_todo_show",
+      "value": "Show"
+    },
+    {
+      "name": "phone_todo_sort_by",
+      "value": "Sort By"
+    }
+  ]
+}

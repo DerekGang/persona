@@ -439,7 +439,7 @@ test('same-key Todo group bindings replace immutable values and deferred row act
   assert.equal(openedTitle, 'Renamed latest');
 
   const page = readFileSync(new URL('../entry/src/main/ets/components/TodoWorkspacePage.ets', import.meta.url), 'utf8');
-  assert.match(page, /ForEach\(section\.rows, \(binding: BoundRow<TodoWorkspaceGroup>\) => this\.todoRow\(binding\),\s*\(binding: BoundRow<TodoWorkspaceGroup>\) => binding\.key\)/);
+  assert.match(page, /ForEach\(section\.rows, \(binding: BoundRow<TodoWorkspaceGroup>\) => this\.todoRow\(binding,section\),\s*\(binding: BoundRow<TodoWorkspaceGroup>\) => binding\.key\)/);
   assert.match(page, /\.onClick\(\(\) => this\.onOpenResource\(this\.workspace\.todoResource\(binding\.value\.lead\)\)\)/);
   assert.match(page, /ForEach\(this\.lineageRowBindings/);
   assert.match(page, /ForEach\(this\.relatedTodoBindings/);
@@ -487,6 +487,13 @@ test('create, edit, done, reopen, existing-Agent link, project link, and delete 
   workspace.close();
 });
 
+test('calendar cells observe the current date and mode even when the native hour rows are reused',()=>{
+  const page=readFileSync(new URL('../entry/src/main/ets/components/TodoWorkspacePage.ets', import.meta.url),'utf8');
+  assert.match(page,/@Computed get calendarWeekDays\(\)[\s\S]*?todoCalendarDays\('week',this\.workspace\.calendarAnchor/);
+  assert.match(page,/@Computed get calendarPageDays\(\)[\s\S]*?todoCalendarDays\(this\.workspace\.calendarMode,this\.workspace\.calendarAnchor/);
+  assert.match(page,/calendarStrip\(month:boolean=false\)[\s\S]*?ForEach\(month \? this\.calendarPageDays : this\.calendarWeekDays/);
+  assert.match(page,/calendarTimeline\(\)[\s\S]*?ForEach\(this\.calendarPageDays,/);
+});
 test('calendar periods honor local month boundaries and the configured first weekday', () => {
   const today=new Date(2026, 1, 1, 12).getTime();
   const sunday=todoCalendarDays('month',today,0);

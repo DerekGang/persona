@@ -1,6 +1,22 @@
 {
   "color": [
     {
+      "name": "persona_switcher_surface",
+      "value": "#2C2C2E"
+    },
+    {
+      "name": "persona_switcher_ink",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "persona_switcher_avatar",
+      "value": "#9C94FF"
+    },
+    {
+      "name": "persona_switcher_online",
+      "value": "#30D158"
+    },
+    {
       "name": "project_card_secondary",
       "value": "#99EBEBF5"
     },

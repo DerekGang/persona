@@ -64,12 +64,19 @@ export function machineBytes(value: number): string {
 export function machinePercent(v: number): string {
   return v < 0 || !Number.isFinite(v) ? '—' : v.toFixed(v > 0 && v < 10 ? 1 : 0) + '%';
 }
-export function machineTokens(v: number): string {
-  if (v < 0 || !Number.isFinite(v)) return '—';
-  if (v >= 1000000000) return (v / 1000000000).toFixed(1).replace(/\.0$/,'') + 'B';
-  if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/,'') + 'M';
-  if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/,'') + 'K';
-  return String(Math.round(v));
+export function machineTokens(value: number): string {
+  if (value < 0 || !Number.isFinite(value)) return '—';
+  const count = Math.round(value);
+  if (count < 1000) return String(count);
+  const units = ['K','M','B'];
+  let unit = count >= 1e9 ? 2 : count >= 1e6 ? 1 : 0;
+  for (;;) {
+    const scaled = count / Math.pow(1000,unit+1);
+    const precision = scaled >= 100 ? 1 : scaled >= 10 ? 10 : 100;
+    const rounded = Math.round(scaled*precision)/precision;
+    if (rounded < 1000 || unit === units.length-1) return String(rounded)+units[unit];
+    unit++;
+  }
 }
 export function machineTokenTotal(day: Record<string,Object>): number {
   return Wire.number(day,'in') + Wire.number(day,'out') + Wire.number(day,'cache_write') + Wire.number(day,'cache_read');

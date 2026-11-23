@@ -22,6 +22,14 @@ export class NavigationContext {
     }
     return result;
   }
+  static installingManager(scope: string, id: string): string {
+    return JSON.stringify(Wire.payload(['page','roster_scope','installing_manager'],['managers',scope,id]));
+  }
+  static installingManagerFor(param: string, scope: string): string {
+    if (!param || !param.startsWith('{')) return '';
+    const data = Wire.parse(param);
+    return Wire.text(data,'page') === 'managers' && Wire.text(data,'roster_scope') === scope ? Wire.text(data,'installing_manager') : '';
+  }
   static settings(page: string, row?: ResourceRow): string {
     return row ? JSON.stringify(Wire.payload(['page', 'target'], [page, JSON.stringify(row)])) : page;
   }

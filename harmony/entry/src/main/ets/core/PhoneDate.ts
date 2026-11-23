@@ -23,6 +23,18 @@ export function phoneDueDate(at: number, now: number, locale: string, timed: boo
   return new Intl.DateTimeFormat(locale || undefined, options).format(date);
 }
 
+/** Match the compact plan line's calendar day, abbreviated weekday and the user's local time. */
+export function phoneTodoPlanDate(at: number, now: number, locale: string, timed: boolean): string {
+  if (!Number.isFinite(at)) return '';
+  if (!/^zh(?:-|_|$)/i.test(locale)) return phoneDueDate(at, now, locale, timed);
+  const date = new Date(at);
+  const day = new Intl.DateTimeFormat(locale, {month: 'short', day: 'numeric',
+    year: date.getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric'}).format(date);
+  const weekday = new Intl.DateTimeFormat(locale, {weekday: 'short'}).format(date);
+  const clock = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+  return day + ' ' + weekday + (timed ? ' ' + clock : '');
+}
+
 /** Elapsed time for a live exchange, starting at its transcript input or wake. */
 export function workingTurnLabel(start: number, now: number, translate: (key: string) => string): string {
   if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(now) || now < start) return translate('working');

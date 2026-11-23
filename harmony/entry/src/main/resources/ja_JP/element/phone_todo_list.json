@@ -1,0 +1,56 @@
+{
+  "string": [
+    {
+      "name": "phone_todo_new",
+      "value": "新しいToDo"
+    },
+    {
+      "name": "phone_todo_list_hidden",
+      "value": "ほかに {count} 件が対応待ち（「{filter}」の対象外）"
+    },
+    {
+      "name": "phone_todo_show_all",
+      "value": "すべて表示"
+    },
+    {
+      "name": "phone_todo_was_due",
+      "value": "期限切れ {date}"
+    },
+    {
+      "name": "phone_todo_due_on",
+      "value": "期限{date}"
+    },
+    {
+      "name": "phone_todo_high_priority",
+      "value": "優先度：高"
+    },
+    {
+      "name": "phone_todo_remind_at",
+      "value": "{date} にリマインド"
+    },
+    {
+      "name": "phone_todo_related_count",
+      "value": "関連 {count} 件"
+    },
+    {
+      "name": "phone_todo_clear_filter",
+      "value": "「{filter}」の絞り込みを解除"
+    },
+    {
+      "name": "phone_todo_filter_sort",
+      "value": "絞り込みと並べ替え"
+    },
+    {
+      "name": "phone_todo_filter_count",
+      "value": "{count} 件"
+    },
+    {
+      "name": "phone_todo_show",
+      "value": "表示"
+    },
+    {
+      "name": "phone_todo_sort_by",
+      "value": "並べ替え"
+    }
+  ]
+}

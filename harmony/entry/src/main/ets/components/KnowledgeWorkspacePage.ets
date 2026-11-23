@@ -15,6 +15,7 @@ import { ResourceRow, Wire } from '../models/Wire';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { MarkdownText } from './MarkdownText';
 import { Tokens } from '../design/Tokens';
+import { DeviceLook, deviceLook } from '../models/DeviceLook';
 import { tr } from '../design/Strings';
 import { common } from '@kit.AbilityKit';
 import { nativeMeetingServices } from '../platform/NativeMeetingServices';
@@ -24,7 +25,7 @@ import { KnowledgeRecording } from '../models/KnowledgeRecording';
 import { NativeRecording } from '../platform/NativeRecording';
 import { KnowledgeRecordingView } from './KnowledgeRecordingView';
 import { LengthMetrics, UIUtils } from '@kit.ArkUI';
-import { nativeEnvironment } from '../platform/NativeEnvironment';
+import { NativeEnvironment, nativeEnvironment } from '../platform/NativeEnvironment';
 import { PhoneMeetingOptions, meetingCaptureHeight, meetingDefaultTitle, meetingPlaceholderVp } from '../models/PhoneMeetingOptions';
 import { PhoneMeetingTranscription } from '../models/PhoneMeetingTranscription';
 import { MeetingHubChoice } from '../models/MeetingHubAudio';
@@ -115,8 +116,34 @@ struct KnowledgeLibraryRow {
   }
 }
 
+// Keep the selectable text mounted when only the native appearance changes.
+@ComponentV2
+struct RecordingProfileCard {
+  @BuilderParam content:()=>void;
+  @Local environment:NativeEnvironment=nativeEnvironment;
+  @Local measuredHeight:number=0;
+  build() {
+    Stack({alignContent:Alignment.TopStart}) {
+      if (this.environment.dark) {
+        Rect().width('100%').height(this.measuredHeight).radius(29).fill(0xff1c1c1e)
+          .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
+      } else {
+        Rect().width('100%').height(this.measuredHeight).radius(29).fill(Color.White)
+          .hitTestBehavior(HitTestMode.None).accessibilityLevel('no')
+      }
+      Column() { this.content() }.width('100%').alignItems(HorizontalAlign.Start)
+        .padding({left:20,right:20,top:21,bottom:21})
+        .onAreaChange((_:Area,next:Area)=>{
+          const height=Number(next.height);
+          if (Number.isFinite(height) && this.measuredHeight!==height) this.measuredHeight=height;
+        })
+    }.width('100%').id('knowledge.summary')
+  }
+}
+
 @ComponentV2
 export struct KnowledgeWorkspacePage {
+  @Local look: DeviceLook = deviceLook;
   @Local dispatchExpanded: boolean = false;
   @Local facts: RecordingFactsDraft = new RecordingFactsDraft();
   @Local removedFacts: string = '';
@@ -156,7 +183,7 @@ export struct KnowledgeWorkspacePage {
   @Local recordingPageHeight: number = 0;
   private placeholderSize():string {
     const ctx=this.getUIContext(),preferred=17*Math.min(nativeEnvironment.fontScale,Tokens.interfaceScaleFor(17));
-    const width=this.recordingTitleWidth || (nativeEnvironment.windowWidthPx ? ctx.px2vp(nativeEnvironment.windowWidthPx)-62 : 0);
+    const width=this.recordingTitleWidth || (nativeEnvironment.windowWidthPx ? ctx.px2vp(nativeEnvironment.windowWidthPx)-72 : 0);
     const label=this.defaultRecordingTitle(this.meetingKind);
     const measured=ctx.px2vp(ctx.getMeasureUtils().measureText({textContent:label,fontSize:String(preferred)+'vp',fontWeight:FontWeight.Medium}));
     return meetingPlaceholderVp(width,measured,preferred);
@@ -228,8 +255,11 @@ export struct KnowledgeWorkspacePage {
   }
   private modePrivacy(hub:boolean):string {
     const days=this.meetingSpeech.retentionDays;
-    return tr(hub ? (days ? 'meeting_start_privacy_cloud_days' : 'meeting_start_privacy_cloud') : (days ? 'meeting_start_privacy_local_days' : 'phone_record_audio_local'))
+    const invited=this.roomRole()!=='off';
+    if (invited && !hub) return tr(days ? 'meeting_room_privacy_local_days' : 'phone_meeting_live_note').replace('{days}',String(days));
+    const message=tr(hub ? (days ? 'meeting_start_privacy_cloud_days' : 'meeting_start_privacy_cloud') : (days ? 'meeting_start_privacy_local_days' : 'phone_record_audio_local'))
       .replace('{service}',this.meetingSpeech.serviceName() || tr('meeting_configured_service')).replace('{days}',String(days));
+    return invited ? message+' '+tr('meeting_room_text_shared') : message;
   }
 
   @Local meetingTitle: string = '';
@@ -653,19 +683,19 @@ export struct KnowledgeWorkspacePage {
       .bindSheet($$this.knowledgeMapOpen,this.landingMap(),{height:SheetSize.LARGE,showClose:false,dragBar:false})
   }
   @Builder transcriptionLine() {
-    Row({space:7}) {
-      if (this.pickedHub()) SymbolGlyph($r('sys.symbol.ellipsis_bubble')).fontSize('17vp').fontColor([Colors.secondary])
-      else Image($r('sys.media.ohos_ic_public_device_phone')).width(15).height(17)
+    Row({space:8}) {
+      if (this.pickedHub()) SymbolGlyph($r('sys.symbol.ellipsis_bubble')).fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale)).fontColor([Colors.secondary])
+      else Image($r('sys.media.ohos_ic_public_device_phone')).width(this.recordingMetric(15,21.3)).height(this.recordingMetric(17,23))
         .fillColor(this.hubUnavailable() ? Colors.working : Colors.secondary).accessibilityLevel('no')
-      Text(tr('meeting_transcription_label')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.secondary)
+      Text(tr('meeting_transcription_label')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
+        .fontColor(this.readyForHub() ? Colors.link : Colors.secondary).opacity(this.readyForHub() ? 0.5 : 1)
       Text(this.hubUnavailable() ? tr('meeting_hub_unavailable') : this.sourceName(this.pickedHub()))
         .fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium)
         .fontColor(this.hubUnavailable() ? Colors.working : Colors.ink).layoutWeight(1).textAlign(TextAlign.Start)
-      if (this.readyForHub()) Column() {
-        SymbolGlyph(Symbols.up).fontSize('8vp').fontColor([Colors.subtle])
-        SymbolGlyph(Symbols.down).fontSize('8vp').fontColor([Colors.subtle])
-      }
-    }.width('100%').constraintSize({minHeight:34})
+      if (this.readyForHub()) Row() {
+        PhoneOutlineIcon({name:'choices',iconScale:this.recordingMetric(1,1.33),color:Colors.link})
+      }.opacity(0.25)
+    }.width('100%').constraintSize({minHeight:PhoneStyle.groupedRowHeight(nativeEnvironment.fontScale)}).padding({left:20,right:20})
   }
   @Builder transcriptionMenu() {
     Menu() {
@@ -676,18 +706,64 @@ export struct KnowledgeWorkspacePage {
     }.width(250)
   }
 
+  @Builder meetingFormDivider() {
+    Divider().strokeWidth(1).color(Colors.divider).margin({left:20,right:20})
+  }
+
+  @Builder meetingInviteMenu() {
+    Menu() {
+      MenuItem({content:tr('phone_meeting_remove')}).contentFontColor(Colors.danger)
+        .onClick(() => { this.invitationOverride='off'; }).id('recordings.invite.remove')
+    }
+  }
+
+  @Builder meetingPeople() {
+    Row({space:16}) {
+      Column({space:4}) {
+        Text(tr('you').slice(0,1)).width(40).height(40).fontSize(Tokens.interfaceFontVp(17,nativeEnvironment.fontScale))
+          .fontWeight(FontWeight.Medium).textAlign(TextAlign.Center).backgroundColor(Colors.control).borderRadius(20).fontColor(Colors.ink)
+        Text(tr('you')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink)
+          .lineHeight(String(this.recordingMetric(15.7,23))+'vp')
+      }
+      if (this.roomRole()==='off') {
+        Button({type:ButtonType.Normal}) {
+          Column({space:4}) {
+            Stack() {
+              SymbolGlyph($r('sys.symbol.person_badge_plus')).fontSize(Tokens.interfaceFontVp(19,nativeEnvironment.fontScale)).fontColor([Colors.link])
+            }.width(40).height(40).border({width:1,radius:20,color:Colors.link,style:BorderStyle.Dashed})
+            Text(tr('phone_meeting_invite')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link)
+              .lineHeight(String(this.recordingMetric(15.7,23))+'vp')
+          }
+        }.padding(0).backgroundColor(Color.Transparent).accessibilityText(tr('phone_meeting_invite'))
+          .onClick(() => { this.invitationOverride='invite'; }).id('recordings.invite')
+      } else {
+        Button({type:ButtonType.Normal}) {
+          Column({space:4}) {
+            Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(20)
+            Text(tr('persona')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink)
+              .lineHeight(String(this.recordingMetric(15.7,23))+'vp')
+            Text(tr(meetingRoleLabel(this.roomRole()))).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
+              .lineHeight(String(this.recordingMetric(14.3,21.7))+'vp').id('recordings.invite.detail')
+          }
+        }.padding(0).backgroundColor(Color.Transparent).accessibilitySelected(true)
+          .accessibilityText(tr('persona')+' · '+tr(meetingRoleLabel(this.roomRole())))
+          .bindMenu(this.meetingInviteMenu).id('recordings.invite')
+      }
+    }.width('100%').alignItems(VerticalAlign.Top).padding({left:20,right:20,top:18.5,bottom:18.5})
+  }
+
   @Builder recordingHome() {
     Column({space:6}) {
-      List({space:10}) {
+      List() {
         ListItem() {
           Column() {
             Button({type:ButtonType.Normal}) {
-              Row({space:10}) {
-                SymbolGlyph(Symbols.calendar).fontSize('18vp').fontColor([Colors.link])
-                Text(tr('phone_meeting_calendar')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link).layoutWeight(1)
+              Row({space:12}) {
+                PhoneOutlineIcon({name:'calendarAgenda',iconScale:this.recordingMetric(1,1.33),color:Colors.link})
+                Text(tr('phone_meeting_calendar')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.link).layoutWeight(1)
                 if (this.calendarState==='loading') LoadingProgress().width(18).height(18)
               }.width('100%')
-            }.width('100%').constraintSize({minHeight:46}).padding({left:15,right:15,top:8,bottom:8})
+            }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding({left:20,right:20,top:8,bottom:8})
               .backgroundColor(Color.Transparent).onClick(() => this.readMeetingCalendar()).id('recordings.calendar')
             if (this.calendarState && !['loading','ready'].includes(this.calendarState))
               Text(tr(this.calendarState)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({left:15,right:15,bottom:9})
@@ -697,66 +773,61 @@ export struct KnowledgeWorkspacePage {
               }.width('100%').constraintSize({minHeight:44}).padding({left:15,right:15}).backgroundColor(Color.Transparent)
                 .onClick(() => { this.setMeetingKind('meeting'); this.meetingTitle=event.title; this.selectedCalendarEvent=event.id; this.calendarEvents=[]; this.calendarState=''; })
             },(event:MeetingOccurrence) => event.key())
-          }.width('100%').borderRadius(16).backgroundColor(Colors.surface)
+          }.width('100%').borderRadius(24).backgroundColor(Colors.surface)
         }
         ListItem() {
-          Column({space:12}) {
-            TextInput({text:this.meetingTitle,placeholder:this.defaultRecordingTitle(this.meetingKind)})
-              .placeholderFont({size:this.placeholderSize(),weight:FontWeight.Medium}).width('100%')
-              .onAreaChange((_:Area,next:Area)=>{this.recordingTitleWidth=Number(next.width);})
-              .height(this.meetingTitle ? Math.max(42,Math.ceil(24*nativeEnvironment.fontScale)+8) : 46).padding(0).borderRadius(0)
-              .backgroundColor(Color.Transparent).onChange((v:string) => { this.meetingTitle=v; this.selectedCalendarEvent=''; }).id('recordings.title')
-            Divider().strokeWidth(0.5).color(Colors.divider)
+          Column() {
             Row() {
-              ForEach(['meeting','note'],(kind:string) => {
-                Button({type:ButtonType.Capsule}) {
-                  Text(tr(kind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14))
-                    .fontWeight(this.meetingKind===kind ? FontWeight.Bold : FontWeight.Normal).fontColor(Colors.ink)
-                }.layoutWeight(1).constraintSize({minHeight:34}).padding({top:3,bottom:3})
-                  .backgroundColor(this.meetingKind===kind ? Colors.surface : Color.Transparent)
-                  .accessibilitySelected(this.meetingKind===kind).onClick(() => this.setMeetingKind(kind)).id('recordings.kind.'+kind)
-              },(kind:string) => kind)
-            }.width('100%').borderRadius(18).padding(2).backgroundColor(Colors.control)
+              TextInput({text:this.meetingTitle,placeholder:this.defaultRecordingTitle(this.meetingKind)})
+                .placeholderFont({size:this.placeholderSize(),weight:FontWeight.Medium}).placeholderColor(Colors.tertiary).width('100%')
+                .onAreaChange((_:Area,next:Area)=>{this.recordingTitleWidth=Number(next.width);})
+                .height(this.meetingTitle ? Math.max(44,Math.ceil(24*nativeEnvironment.fontScale)+8) : 44)
+                .padding(0).borderRadius(0).enterKeyType(EnterKeyType.Done)
+                .backgroundColor(Color.Transparent).onChange((v:string) => { this.meetingTitle=v; this.selectedCalendarEvent=''; }).id('recordings.title')
+            }.width('100%').padding({left:20,right:20}).constraintSize({minHeight:this.recordingMetric(51.3,58.3)})
+            this.meetingFormDivider()
+            Row() {
+              Row() {
+                ForEach(['meeting','note'],(kind:string) => {
+                  Button({type:ButtonType.Capsule}) {
+                    Text(tr(kind==='meeting' ? 'phone_record_meeting' : 'phone_record_note')).fontSize('13vp')
+                      .fontWeight(this.meetingKind===kind ? FontWeight.Bold : FontWeight.Normal).fontColor(Colors.ink)
+                      .width('100%').height(29).textAlign(TextAlign.Center).borderRadius(15)
+                      .backgroundColor(this.meetingKind===kind ? Colors.surface : Color.Transparent)
+                  }.layoutWeight(1).height(32).padding({left:1.5,right:1.5}).responseRegion({x:0,y:-6,width:'100%',height:44})
+                    .backgroundColor(Color.Transparent)
+                    .accessibilitySelected(this.meetingKind===kind).onClick(() => this.setMeetingKind(kind)).id('recordings.kind.'+kind)
+                },(kind:string) => kind)
+              }.width('100%').height(32).borderRadius(16).backgroundColor(Colors.control)
+            }.width('100%').constraintSize({minHeight:60}).padding({left:20,right:20})
             if (this.meetingKind==='meeting' && this.canInvite()) {
-              Divider().strokeWidth(0.5).color(Colors.divider)
-              Row({space:18}) {
-                Column({space:4}) {
-                  Text(tr('you').slice(0,1)).width(36).height(36).fontSize('16vp').textAlign(TextAlign.Center)
-                    .backgroundColor(Colors.control).borderRadius(18).fontColor(Colors.ink)
-                  Text(tr('you')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.ink)
-                }
-                Button({type:ButtonType.Normal}) {
-                  Column({space:4}) {
-                    SymbolGlyph(this.roomRole()==='off' ? Symbols.plus : Symbols.persona).fontSize('18vp').fontColor([Colors.link])
-                      .width(36).height(36).border({width:1,radius:18,color:Colors.link})
-                    Text(this.roomRole()==='off' ? tr('phone_meeting_invite') : tr('persona')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link)
-                    if (this.roomRole()!=='off') Text(tr(meetingRoleLabel(this.roomRole()))).fontSize(11).maxFontScale(Tokens.interfaceScaleFor(11)).fontColor(Colors.secondary)
-                  }
-                }.padding(3).backgroundColor(Color.Transparent).accessibilitySelected(this.roomRole()!=='off')
-                  .accessibilityText(tr(this.roomRole()==='off' ? 'phone_meeting_invite' : 'phone_meeting_remove'))
-                  .onClick(() => this.invitationOverride=this.roomRole()==='off' ? 'invite' : 'off').id('recordings.invite')
-                Blank().layoutWeight(1)
-              }.width('100%').alignItems(VerticalAlign.Top)
-              if (this.roomRole()!=='off') {
-                Text(tr('phone_meeting_live_note')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%').id('recordings.invite.detail')
-
-              }
+              this.meetingFormDivider()
+              this.meetingPeople()
             }
-            if (this.meetingKind==='note') Text(tr('meeting_note_without_minutes')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
-              .fontColor(Colors.secondary).width('100%').id('recordings.kind.detail')
-            Divider().strokeWidth(0.5).color(Colors.divider)
+            if (this.meetingKind==='note') {
+              this.meetingFormDivider()
+              Row() {
+                Text(tr('meeting_note_without_minutes')).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary)
+                  .layoutWeight(1)
+              }.width('100%').constraintSize({minHeight:this.recordingMetric(51.3,58.3)}).padding({left:20,right:20,top:7,bottom:7})
+                .accessibilityGroup(true).id('recordings.kind.detail')
+            }
+            this.meetingFormDivider()
               if (this.readyForHub()) {
                 Button({type:ButtonType.Normal}) { this.transcriptionLine() }
-                  .width('100%').padding(0).constraintSize({minHeight:38}).backgroundColor(Color.Transparent)
+                  .width('100%').padding(0).backgroundColor(Color.Transparent)
                   .accessibilityText(tr('meeting_transcription_label')+' · '+this.sourceName(this.pickedHub()))
                   .bindMenu(this.transcriptionMenu).id('recordings.transcription')
               } else Column() { this.transcriptionLine() }.width('100%').accessibilityGroup(true)
                 .accessibilityText(tr('meeting_transcription_label')+' · '+(this.hubUnavailable() ? tr('meeting_hub_unavailable') : this.sourceName(false)))
                 .id('recordings.transcription')
-          }.width('100%').alignItems(HorizontalAlign.Start).padding(15).borderRadius(16).backgroundColor(Colors.surface)
+          }.width('100%').alignItems(HorizontalAlign.Start).borderRadius(24).backgroundColor(Colors.surface)
+        }.margin({top:35})
+        ListItem() {
+          Text(this.modePrivacy(this.pickedHub())).id('recordings.privacy').width('100%').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
+            .lineHeight(String(this.recordingMetric(15.7,22.5))+'vp').fontColor(Colors.secondary).padding({left:20,right:20,top:7,bottom:7})
         }
-        ListItem() { Text(this.modePrivacy(this.pickedHub())).id('recordings.privacy').width('100%').fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).padding({left:14,right:12,bottom:6}) }
-        if (this.visibleLocal().length) ListItem() { PhoneSectionTitle({text:tr('phone_record_local'),trailing:String(this.visibleLocal().length)}) }
+        if (this.visibleLocal().length) ListItem() { PhoneSectionTitle({text:tr('phone_record_local'),trailing:String(this.visibleLocal().length)}) }.margin({top:18})
         ForEach(this.visibleLocal(), (entry:KnowledgeRecordingEntry) => {
           ListItem() {
             Row({space:10}) {
@@ -768,17 +839,17 @@ export struct KnowledgeWorkspacePage {
               SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
             }.width('100%').padding(13).borderRadius(12).backgroundColor(Colors.surface)
               .onClick(() => this.openRecording(entry.id)).id('recordings.local.' + entry.id)
-          }
+          }.margin({top:10})
         }, (entry:KnowledgeRecordingEntry) => JSON.stringify([entry.id,entry.title,entry.duration,entry.uploadState,entry.transcriptionState]))
         if (!this.workspace.query.trim()) ListItem() {
-          Row({space:10}) {
-            SymbolGlyph(Symbols.calendar).fontSize('19vp').fontColor([Colors.link])
-            Text(tr('phone_all_meetings')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink).layoutWeight(1)
+          Row({space:12}) {
+            PhoneOutlineIcon({name:'books',iconScale:this.recordingMetric(1,1.33),color:Colors.link})
+            Text(tr('phone_all_meetings')).fontSize(17).maxFontScale(Tokens.interfaceScaleFor(17)).fontColor(Colors.ink).layoutWeight(1)
             SymbolGlyph(Symbols.expand).fontSize('12vp').fontColor([Colors.secondary])
-          }.width('100%').padding({left:14,right:13,top:6,bottom:6}).constraintSize({minHeight:48}).backgroundColor(Colors.surface).borderRadius(13)
+          }.width('100%').padding({left:20,right:20,top:6,bottom:6}).constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).backgroundColor(Colors.surface).borderRadius(24)
             .onClick(() => this.onAllMeetings()).id('recordings.all')
-        }
-      }.width('100%').layoutWeight(1).id('recordings.list')
+        }.margin({top:18})
+      }.width('100%').contentStartOffset(35).layoutWeight(1).id('recordings.list')
       Row() {
         Button({type:ButtonType.Capsule}) {
           Row({space:8}) {
@@ -794,7 +865,7 @@ export struct KnowledgeWorkspacePage {
             else this.requestRecordingStart();
           }).id('recordings.capture')
       }.width('100%').padding({top:4,bottom:4}).id('knowledge.recording.open')
-    }.width('100%').height('100%').padding({left:16,right:16,top:18,bottom:12}).backgroundColor(Colors.grouped).id('recordings.home')
+    }.width('100%').height('100%').padding({left:16,right:16,top:4,bottom:14}).backgroundColor(Colors.grouped).id('recordings.home')
       .onAreaChange((_: Area, next: Area) => { const height = Number(next.height); if (height !== this.recordingPageHeight) this.recordingPageHeight = height; })
       .bindSheet($$this.recordingOpen,this.recordingSheet(),{title:{title:tr('knowledge_recording_open')},height:SheetSize.LARGE,showClose:true,
         onDisappear:() => { this.recording.stopForBackground().catch(() => undefined); }})
@@ -1063,8 +1134,9 @@ export struct KnowledgeWorkspacePage {
         this.recordingFootnote('phone_kb_fact_note')
         if (Wire.text(this.workspace.detail,'summary')) {
           this.recordingHeading('phone_kb_profile')
-          Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),recapReading:true,paragraphLineSpacingEm:0.45,onLink:(url:string) => this.openSafeLink(url)}) }
-            .width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20,top:21,bottom:21}).backgroundColor(Colors.surface).borderRadius(29).id('knowledge.summary')
+          RecordingProfileCard() {
+            MarkdownText({text:Wire.text(this.workspace.detail,'summary'),recapReading:true,paragraphLineSpacingEm:0.45,onLink:(url:string) => this.openSafeLink(url)})
+          }
         }
         if (Wire.text(this.workspace.detail,'path')) {
           if (Wire.text(this.workspace.detail,'summary')) Blank().height(17.3)

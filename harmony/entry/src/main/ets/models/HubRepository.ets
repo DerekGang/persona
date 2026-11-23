@@ -67,11 +67,12 @@ export class HubRepository {
       throw new HttpFailure(0, 'result_unknown', true);
     } finally { this.changed(); }
   }
-  async list(path: string, envelope: string, kind: string, merged: boolean = false): Promise<ResourceRow[]> {
+  async list(path: string, envelope: string, kind: string, merged: boolean = false, observe?: (source: Record<string,Object>) => void): Promise<ResourceRow[]> {
     const result = await this.call(path), rows = Wire.rows(result, envelope);
     // Only a complete session list can establish that a manager-held operation has disappeared.
     if (path === '/api/v1/sessions' && (!Array.isArray(result[envelope]) || Wire.bool(result, 'has_more') ||
       !rows.every(completeSessionRow))) throw new Error('incomplete_sessions');
+    if (observe) observe(result);
     return rows.map((item: Record<string, Object>) => { const row = ResourceRow.from(item, kind); if (!Wire.has(item, 'manager')) row.manager = merged ? this.defaultOwner : this.owner; return row; }).filter((row: ResourceRow) => !merged || row.manager === this.owner);
   }
   async sessions(): Promise<ResourceRow[]> { return this.list('/api/v1/sessions', 'sessions', 'session', true); }

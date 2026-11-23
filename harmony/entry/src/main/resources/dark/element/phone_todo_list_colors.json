@@ -1,0 +1,12 @@
+{
+  "color": [
+    {
+      "name": "todo_notice_mark",
+      "value": "#FF9F0A"
+    },
+    {
+      "name": "todo_notice_fill",
+      "value": "#202023"
+    }
+  ]
+}

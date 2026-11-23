@@ -170,6 +170,14 @@ export struct WorktreeSheet {
                 .enabled(this.form.canCheck).onClick(() => this.onReconcile(false)).id('tree.form.reconcile')
               if (this.form.canRetrySame) Button(tr('tree_retry_same_request'), { buttonStyle: ButtonStyleMode.TEXTUAL })
                 .onClick(() => this.onReconcile(true)).id('tree.form.retry_same')
+              if (this.form.cleanupRepreviewAvailable) {
+                Button({type:ButtonType.Normal,buttonStyle:ButtonStyleMode.TEXTUAL}) {
+                  Text(tr('tree_revoke_unused_preview')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
+                    .fontColor(Colors.link).textAlign(TextAlign.Center).wordBreak(WordBreak.BREAK_WORD)
+                }.width('100%').constraintSize({minHeight:48}).padding({left:12,right:12,top:8,bottom:8})
+                  .accessibilityText(tr('tree_revoke_unused_preview')).enabled(this.form.canCheck)
+                  .onClick(() => this.onReconcile(true)).id('tree.form.cleanup.repreview')
+              }
               if (this.form.action === 'rename' && this.form.renameCurrent) {
                 Button({type:ButtonType.Normal,buttonStyle:ButtonStyleMode.TEXTUAL}) {
                   Text(tr('tree_rename_keep_current')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.link).textAlign(TextAlign.Center).wordBreak(WordBreak.BREAK_WORD)

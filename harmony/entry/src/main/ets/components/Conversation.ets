@@ -44,7 +44,7 @@ import { ButtonStyles } from '../design/Controls';
 import { nativeSheetInset } from '../platform/NativeInsets';
 import { ContextPicker } from './ContextPicker';
 import type { ClientViewLease } from '../models/ClientModel';
-import { parseReadingAnchor, readingAnchorIndex } from '../core/ConversationReading';
+import { parseReadingAnchor, readingAnchorIndex, readingSizeClassChanges } from '../core/ConversationReading';
 import type { ReadingAnchor } from '../core/ConversationReading';
 import { workingTurnLabel } from '../core/PhoneDate';
 
@@ -127,6 +127,7 @@ export struct Conversation {
   @Require @Param model: ClientModel;
   @Param active: boolean = true;
   @Param searchHitId: string = '';
+  @Param searchPresented: boolean = false;
   @Param decisionTool: string | undefined = undefined;
   @Param showContextMenu: boolean = false;
   @Param actionItems: SheetInfo[] = [];
@@ -172,6 +173,9 @@ export struct Conversation {
   private readingMotion: number = 0;
   private scrollingByHand: boolean = false;
   private lastManualAnchor: ReadingAnchor | undefined = undefined;
+  private manuallyReading: boolean = false;
+  private selectedReadingLine: string = '';
+  private readingMenuLine: string = '';
   private readingCursors: Set<string> = new Set();
   @Local readingFailed: boolean = false;
   private firstVisibleIndex: number = 0;
@@ -259,6 +263,7 @@ export struct Conversation {
   private syncReading(): void {
     const key = JSON.stringify([this.model.scope(), this.model.target()]);
     if (this.readingKey === key) return;
+    this.manuallyReading = false; this.selectedReadingLine = ''; this.readingMenuLine = '';
     this.saveReading(); this.lastManualAnchor = undefined; this.scrollingByHand = false; this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
     const epoch = ++this.readingEpoch, lease = this.model.captureView('reading:' + this.model.target());
     this.readingLease = lease; this.readingCursors.clear(); this.readingFetching = false; this.readingRestoring = true; this.readingAnchorReady = false; this.readingFailed = false;
@@ -363,6 +368,36 @@ export struct Conversation {
     if (!this.active || this.readingRestoring) return;
     // The disappearing composer can resize the list during navigation. Persist the last position the reader chose.
     this.lastManualAnchor = this.scroller.isAtEnd() ? undefined : this.visibleReadingAnchor();
+    this.manuallyReading = this.lastManualAnchor !== undefined;
+  }
+  private selectReadingText(line: string, selected: boolean): void {
+    if (selected) this.selectedReadingLine = line;
+    else if (this.selectedReadingLine === line) this.selectedReadingLine = '';
+  }
+  private canReflowManualHistory(): boolean {
+    return this.mounted && this.active && this.admission() && this.model.selected.kind === 'session' && this.model.isForegroundChat() &&
+      this.manuallyReading && !!this.lastManualAnchor && this.jumpAvailable && !this.atEnd && !this.scrollingByHand && !this.readingRestoring && !this.readingLoading &&
+      !this.searchPresented && !this.searchHitId && !this.seekingHit && !this.highlightedLine && this.decisionTool === undefined &&
+      !this.selectedReadingLine && !this.readingMenuLine && !this.fieldFocused && !this.draftEditorOpen &&
+      this.selectionStart === this.selectionEnd && !this.environment.keyboardHeightPx && !this.model.draftLoading && !this.model.draft &&
+      !this.model.sourceContext && !this.attachments.attachments.length && !this.attachmentSheet && !this.chooser.session && !this.actionsVisible;
+  }
+  @Monitor('environment.fontScale') readingTextSizeChanged(change: IMonitor): void {
+    const size = change.value<number>('environment.fontScale');
+    if (size) this.reflowReadingSize(size.before, size.now);
+  }
+  private reflowReadingSize(before: number, next: number): void {
+    if (!readingSizeClassChanges(before, next) || !this.canReflowManualHistory()) return;
+    const epoch = this.readingEpoch, motion = this.readingMotion, target = this.model.target();
+    const generation = this.model.connectionGeneration(), scope = this.model.scope();
+    // Let the native List finish preserving its visible rows during text reflow before moving to the latest reply.
+    const observer = this.getUIContext().getUIObserver();
+    const afterLayout = (): void => {
+      observer.off('didLayout', afterLayout);
+      if (this.readingEpoch === epoch && this.readingMotion === motion && this.environment.fontScale === next &&
+        this.model.owns(generation,scope) && this.model.target() === target && this.canReflowManualHistory()) this.jumpToLatest();
+    };
+    observer.on('didLayout', afterLayout);
   }
   @Local atEnd: boolean = true;
   @Local jumpAvailable: boolean = false;
@@ -390,6 +425,7 @@ export struct Conversation {
     } catch (_) { /* The row can leave the viewport between the index and geometry callbacks. */ }
   }
   private jumpToLatest(): void {
+    this.manuallyReading = false;
     this.readingMotion++; this.scrollingByHand = false; this.lastManualAnchor = undefined;
     this.atEnd = true;
     this.anchor.atEnd = true;
@@ -770,7 +806,7 @@ export struct Conversation {
     this.timelinePositionChanged();
   }
   @Monitor('feed.items', 'feed.hasLoaded', 'feed.feedUnavailable') feedChanged(): void { this.syncTimeline(); this.timelinePositionChanged(); }
-  @Monitor('active', 'model.selected', 'model.connected') feedContextChanged(): void { if (!this.active) { this.readingMotion++; this.saveReading(); } else this.syncReading(); this.syncFeed(); this.syncAttachments(); this.syncRevision(); }
+  @Monitor('active', 'model.selected', 'model.connected') feedContextChanged(): void { if (!this.active) { this.manuallyReading = false; this.readingMotion++; this.saveReading(); } else this.syncReading(); this.syncFeed(); this.syncAttachments(); this.syncRevision(); }
   @Monitor('model.decision') decisionChanged(): void { this.measuredDecision = ''; this.refreshFeed(); this.scheduleReading(); }
   @Monitor('active', 'model.selected', 'model.profile', 'model.connected', 'model.personaQuestions')
   questionsContextChanged(): void { this.questions.sync(this.model, this.active); }
@@ -1104,6 +1140,14 @@ export struct Conversation {
     if (!this.active || this.sending || this.model.demo || image.target !== this.model.target() || this.attachmentKey !== image.target) return;
     void attachments.editReceivedImage(image.data, image.mime, image.target, image.scope, image.generation, image.hub);
   }
+  private messageBottomPad(entry: RepeatItem<ConversationLine>): number {
+    const message = entry.item.message!;
+    if (message.work) return 1;
+    const next = this.lines[entry.index + 1]?.message;
+    if (this.model.selected.kind === 'session' && message.role === 'assistant' && message.text &&
+      next?.role === 'recap' && next.terminalRecap) return Tokens.gap;
+    return Tokens.fine;
+  }
   @Builder message(entry: RepeatItem<ConversationLine>) {
     Column({ space: Tokens.gap }) {
       if (entry.item.message!.role === 'work' && entry.item.message!.running && !entry.item.message!.work) {
@@ -1128,7 +1172,8 @@ export struct Conversation {
           .id('chat.work.' + entry.item.message!.id)
         if (this.expanded.includes(entry.item.message!.id)) {
           Text(entry.item.message!.work).fontFamily('monospace').fontSize(14).fontColor(Colors.secondary).lineHeight(21)
-            .copyOption(CopyOptions.LocalDevice).padding(12).width('100%').backgroundColor(Colors.control).borderRadius(12)
+            .copyOption(CopyOptions.LocalDevice).onTextSelectionChange((start: number, end: number) => this.selectReadingText(entry.item.id, end > start))
+            .padding(12).width('100%').backgroundColor(Colors.control).borderRadius(12)
         }
       }
       if (entry.item.message!.localImageCount > 0) Text(tr('photos') + ' · ' + entry.item.message!.localImageCount).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('sys.color.font_secondary'))
@@ -1146,7 +1191,10 @@ export struct Conversation {
         WithTheme({ colorMode: this.environment.dark ? ThemeColorMode.DARK : ThemeColorMode.LIGHT, theme: nativeMessageTheme(this.look, this.model.style, entry.item.message!.role === 'user', this.environment.dark) }) {
         MessageSurface({ own: entry.item.message!.role === 'user', personaReply: this.model.selected.kind === 'conversation' && entry.item.message!.role === 'assistant', maximum: entry.item.message!.role === 'user' ? Math.max(Tokens.touch, Math.min(this.availableWidth, Tokens.readingMax) - Tokens.page * 2 - Tokens.touch) : Tokens.readingMax }) {
           if (entry.item.message!.role === 'assistant' && this.model.selected.kind === 'conversation') AssistantMessage({ model: this.model, feed: this.feed, message: entry.item.message!, active: this.active, onLink: (address: string) => this.onLink(address), onOpenResource: (row: ResourceRow) => this.onOpenResource(row) })
-          else MarkdownText({ text: entry.item.message!.text, chatReply: entry.item.message!.role === 'assistant', fitContent: entry.item.message!.role === 'user', onLink: (address: string) => this.onLink(address) })
+          else MarkdownText({ text: entry.item.message!.text, chatReply: entry.item.message!.role === 'assistant',
+            agentReply: this.model.selected.kind === 'session' && entry.item.message!.role === 'assistant',
+            agentFontScale: this.environment.fontScale, fitContent: entry.item.message!.role === 'user',
+            onSelectionChange: (selected: boolean) => this.selectReadingText(entry.item.id, selected), onLink: (address: string) => this.onLink(address) })
         }
         }
       }
@@ -1155,8 +1203,11 @@ export struct Conversation {
       if (entry.item.message!.failed) Text(tr('failed')).fontColor($r('app.color.persona_danger')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta))
       if (entry.item.message!.localOperation && this.model.canCheckLocalMessage(entry.item.message!.localOperation)) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('checked')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('checked', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('checked')).bindTips(tr('checked')).onClick(() => this.confirmChecked(entry.item.message!.localOperation))
       if (entry.item.message!.localOperation && this.model.canRestoreMessage(entry.item.message!.localOperation)) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('restore_draft', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('restore_draft')).bindTips(tr('restore_draft')).onClick(() => this.restoreDraft(entry.item.message!))
-    }.width('100%').alignItems(entry.item.message!.role === 'user' ? HorizontalAlign.End : HorizontalAlign.Start).padding({ left: Tokens.page, right: Tokens.page, top: 3, bottom: entry.item.message!.work ? 1 : 4 })
-      .bindContextMenu(this.messageMenuBuilder(entry), ResponseType.LongPress, { preview: MenuPreviewMode.IMAGE })
+    }.width('100%').alignItems(entry.item.message!.role === 'user' ? HorizontalAlign.End : HorizontalAlign.Start)
+      .padding({ left: Tokens.page, right: Tokens.page, top: 3, bottom: this.messageBottomPad(entry) })
+      .bindContextMenu(this.messageMenuBuilder(entry), ResponseType.LongPress, { preview: MenuPreviewMode.IMAGE,
+        onAppear: () => { this.readingMenuLine = entry.item.id; },
+        onDisappear: () => { if (this.readingMenuLine === entry.item.id) this.readingMenuLine = ''; } })
   }
   @Builder actionsMenu() {
     Menu() {

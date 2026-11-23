@@ -1,6 +1,6 @@
 import { AssistantChatStateMark, AssistantChatTitle } from '../components/AssistantChatMarks';
 import { assistantChatSource, assistantChatState, assistantSidebarChats, sidebarConversationLabel, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
-import { i18n } from '@kit.LocalizationKit';
+import { i18n, intl } from '@kit.LocalizationKit';
 import { nativeMeetingServices, NativeMeetingServices } from '../platform/NativeMeetingServices';
 import { AgentStartPicker } from '../components/AgentStartPicker';
 import { AgentLaunchChoices, providerStartModes, LaunchChoice, RecentAgentSetup, loadAgentSetups, rememberAgentSetup, recentLaunchDirectories } from '../models/AgentLaunchChoices';
@@ -106,6 +106,7 @@ struct Index {
   @Local recordingEditRevision: number = 0;
   @Local extensionTitle: string = '';
   @Local todoTitle: string = '';
+  @Local todoCreateRevision: number = 0;
   @Local extensionRefreshRevision: number = 0;
   @Local applications: ExtensionNavigation = new ExtensionNavigation();
   @Local shownName: string = '';
@@ -206,6 +207,10 @@ struct Index {
   @Local agentWorkspace: AgentWorkspace = new AgentWorkspace(undefined,'repo');
   @Local environment: NativeEnvironment = nativeEnvironment;
   @Local spacesShown: boolean = false;
+  @Local assistantMenuScope: string = '';
+  private assistantMenuEpoch: number = 0;
+  @Local assistantMenuNow: number = Date.now();
+  private assistantStatusTimer: number = -1;
   @Local phoneSettingsShown: boolean = false;
   @Local phoneSettingsPage: string = '';
   @Local phoneSettingsQuery: string = '';
@@ -400,6 +405,7 @@ struct Index {
   }
   private drawerWidth(): number { return Math.min(380, Math.max(1,this.phoneWidth * 0.82)); }
   @Monitor('spacesShown') drawerStateChanged(): void {
+    if (!this.spacesShown && !this.wide()) this.assistantMenuScope = '';
     if (this.wide()) { this.drawerFraction = 0; this.drawerMounted = false; return; }
     this.settlePhoneDrawer(this.spacesShown);
   }
@@ -682,6 +688,9 @@ struct Index {
           PhoneIconButton({symbol: this.phonePeer() || this.model.section === 0 ? Symbols.edit : Symbols.plus, label: tr(this.model.section === 0 ? 'new_chat' : 'new_agent'), identity:'shell.new', controlDiameter:this.phonePeer() ? this.peerActionSize() : PhoneStyle.bar, action:() => this.startFromPlace()})
         } else if (this.compactChatMenu(this.phoneTop) && !this.mainDestination(this.phoneTop,this.phoneParam)) {
           this.compactSessionMore()
+        } else if (this.phoneTop === 'resources' && this.phoneParam === 'todo') {
+          PhoneIconButton({symbol:Symbols.plus, label:tr('phone_todo_new'), tint:Colors.link, identity:'todos.add',
+            action:() => { if (this.activeChild===this.childKey('resources','todo')) this.todoCreateRevision++; }})
         } else if (this.rootModuleMenuKind()) {
           ForEach([this.rootModuleMenuKind()],(kind:string) => {
             this.phoneModuleMore(kind,this.menuOwner(kind))
@@ -809,7 +818,7 @@ struct Index {
     this.bindDeviceOwner(this.model);
     this.applications.bind(this.model); this.applications.refresh();
   }
-  aboutToDisappear(): void { this.agentWorkspace.hide(); this.applications.dispose(); this.dismissChatActions(); }
+  aboutToDisappear(): void { if (this.assistantStatusTimer !== -1) clearInterval(this.assistantStatusTimer); this.agentWorkspace.hide(); this.applications.dispose(); this.dismissChatActions(); }
   @Monitor('model.profile', 'model.connected', 'model.features') applicationOwnerChanged(): void {
     this.applications.bind(this.model); this.applications.connectionChanged();
   }
@@ -1175,72 +1184,162 @@ struct Index {
   @Computed get drawerManager(): ResourceRow | undefined {
     return this.drawerManagers.find((row: ResourceRow) => row.id === this.model.profile.manager && !row.isInstallingManager());
   }
-  private managerLine(row: ResourceRow): string {
-    if (row.isInstallingManager()) return tr('admin_manager_installing');
-    const data = row.data();
-    if (!Wire.has(data, 'online')) return '';
-    if (!Wire.bool(data, 'online')) return tr('offline');
-    const host = Wire.text(data, 'host');
-    return host ? tr('admin_manager_online') + ' · ' + host : tr('admin_manager_online');
+  @Computed get drawerHasMultipleInstalled(): boolean {
+    return this.drawerManagers.filter((row: ResourceRow) => !row.isInstallingManager()).length > 1;
   }
-  @Builder managerChoice(row: ResourceRow) {
-    Row({space:10}) {
-      Stack({alignContent:Alignment.BottomEnd}) {
-        Text(Array.from(row.title || row.id)[0]).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16))
-          .fontColor(Colors.onAction).textAlign(TextAlign.Center).width(32).height(32)
-          .backgroundColor(Colors.ai).borderRadius(16)
-        if (Wire.has(row.data(),'online')) Circle().width(9).height(9)
-          .fill(Wire.bool(row.data(),'online') ? Colors.positive : Colors.secondary).stroke(Colors.surface).strokeWidth(1.5)
-      }
-      Column({space:2}) {
-        Text(row.title || row.id).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
-        if (this.managerLine(row)) Text(this.managerLine(row)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.secondary)
-      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      if (row.id === this.model.profile.manager) SymbolGlyph(Symbols.check).fontSize('16vp').fontColor([Colors.link])
-    }.constraintSize({minHeight:44,minWidth:180}).padding({left:7,right:7,top:3,bottom:3})
+  @Monitor('assistantMenuScope') assistantStatusClock(): void {
+    if (this.assistantStatusTimer !== -1) clearInterval(this.assistantStatusTimer);
+    this.assistantStatusTimer = -1;
+    if (this.assistantMenuScope) {
+      this.assistantMenuNow = Date.now();
+      this.assistantStatusTimer = setInterval(() => { this.assistantMenuNow = Date.now(); },15000);
+    }
+  }
+  private managerLine(row: ResourceRow): string {
+    const data = row.data(), now = this.assistantMenuScope ? this.assistantMenuNow : Date.now();
+    if (row.isInstallingManager()) {
+      const expiry = Date.parse(Wire.text(data,'installing'));
+      if (!Number.isFinite(expiry)) return tr('admin_manager_installing');
+      return expiry <= now ? tr('phone_switcher_expired') : tr('phone_switcher_expiry').replace('{minutes}',String(Math.max(1,Math.round((expiry-now)/60000))));
+    }
+    if (!Wire.has(data,'online')) return '';
+    if (Wire.bool(data,'online')) {
+      const host = Wire.text(data,'host');
+      return host ? tr('admin_manager_online') + ' · ' + host : tr('admin_manager_online');
+    }
+    const seen = Date.parse(Wire.text(data,'last_seen'));
+    if (!Number.isFinite(seen)) return tr('offline');
+    const locale = this.model.language === 'default' ? i18n.System.getSystemLanguage() : this.model.language;
+    const seconds = (seen-now)/1000, elapsed = Math.abs(seconds);
+    const units: string[] = ['second','minute','hour','day','week','month','year'];
+    const sizes: number[] = [1,60,3600,86400,7*86400,30.44*86400,365.25*86400];
+    const next = sizes.findIndex((duration: number) => elapsed < duration);
+    const index = next < 0 ? sizes.length-1 : Math.max(0,next-1);
+    const relative = new intl.RelativeTimeFormat(locale,{numeric:'auto',style:'long'}).format(Math.round(seconds/sizes[index]),units[index]);
+    return tr('phone_switcher_synced').replace('{time}',relative);
+  }
+  private assistantMenuWidth(): number {
+    const available = this.phoneWidth || this.getUIContext().px2vp(this.environment.windowWidthPx);
+    return Math.min(PhoneStyle.sidebarMetric(300, this.environment.fontScale), Math.max(1, available - 20));
+  }
+  private assistantMenuTint(): ResourceColor {
+    return this.look.accentId === 'style' && this.model.style === 'system' ? $r('app.color.persona_needs_mark') : Colors.link;
+  }
+  private assistantWell(): number { return PhoneStyle.sidebarMetric(36, this.environment.fontScale); }
+  private assistantAvatarColor(row: ResourceRow): ResourceColor {
+    if (row.id === this.model.rosterDefaultId || !this.model.rosterDefaultId) return $r('app.color.persona_switcher_avatar');
+    const hues: ResourceColor[] = this.environment.dark ? ['#5B9BFF','#4CC38A','#FF9F0A','#FF6B8B','#5E5CE6'] :
+      ['#2E6FD0','#1D7A4C','#B35400','#D62E5C','#5856D6'];
+    const hue = new util.TextEncoder().encodeInto(row.id).reduce((sum: number, byte: number) => sum + byte, 0);
+    return hues[hue % hues.length];
+  }
+  private assistantMenuAction(scope: string, destination: string, row?: ResourceRow): void {
+    if (!scope || this.assistantMenuScope !== scope || this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
+    this.assistantMenuScope = '';
+    if (row) {
+      const target = this.drawerManagers.find((item: ResourceRow) => item.id === row.id);
+      if (!target) return;
+      if (!target.isInstallingManager()) { this.model.selectListedManager(target.id,scope); return; }
+      this.spacesShown = false;
+      this.settingsPage = 'managers';
+      this.stack.pushPath({name:'settings',param:NavigationContext.installingManager(scope,target.id)});
+      this.savePath(); return;
+    }
+    this.spacesShown = false;
+    this.openSettings(destination);
+  }
+  @Builder managerChoice(row: ResourceRow, scope: string) {
+    Button({type:ButtonType.Normal}) {
+      Row({space:12}) {
+        Stack({alignContent:Alignment.BottomEnd}) {
+          Text(Array.from(row.title || row.id)[0]).fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale)).fontWeight(600)
+            .maxLines(1).fontColor($r('app.color.persona_switcher_surface')).textAlign(TextAlign.Center).width(this.assistantWell()).height(this.assistantWell())
+            .backgroundColor(this.assistantAvatarColor(row)).borderRadius(this.assistantWell()/2)
+          if (row.isInstallingManager() || Wire.has(row.data(),'online')) Circle().width(10).height(10)
+            .fill(row.isInstallingManager() ? $r('app.color.persona_dock_warning') : Wire.bool(row.data(),'online') ? $r('app.color.persona_switcher_online') : this.environment.dark ? '#636366' : '#8E8E93').stroke($r('app.color.persona_switcher_surface')).strokeWidth(2)
+        }
+        Column({space:2}) {
+          Row({space:4}) {
+            Text(row.title || row.id).fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale)).fontWeight(600).fontColor($r('app.color.persona_switcher_ink'))
+              .lineHeight(String(PhoneStyle.formSize(20.33,27.67,this.environment.fontScale))+'vp').maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).flexShrink(1)
+            if (row.id === this.model.rosterDefaultId && this.drawerHasMultipleInstalled && !row.isInstallingManager())
+              Text(tr('admin_default')).fontSize(Tokens.interfaceFontVp(11,this.environment.fontScale)).fontColor(this.assistantMenuTint())
+                .maxLines(1).padding({left:4,right:4}).borderRadius(4).backgroundColor(Colors.control)
+          }
+          if (this.managerLine(row)) Text(this.managerLine(row)).fontSize(Tokens.interfaceFontVp(12,this.environment.fontScale)).fontColor(Colors.secondary)
+            .lineHeight(String(PhoneStyle.formSize(14.33,21.67,this.environment.fontScale))+'vp').maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis})
+        }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+        if (row.id === this.model.profile.manager) SymbolGlyph(Symbols.check).fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale))
+          .fontColor([this.assistantMenuTint()]).id('spaces.assistant_check')
+      }.width('100%').padding({left:8,right:8,top:4,bottom:4}).constraintSize({minHeight:PhoneStyle.sidebarMetric(44,this.environment.fontScale)})
+    }.width('100%').padding(0).backgroundColor(Color.Transparent)
+      .opacity(!row.isInstallingManager() && Wire.has(row.data(),'online') && !Wire.bool(row.data(),'online') ? 0.55 : 1)
+      .accessibilityText([row.title || row.id,this.managerLine(row)].filter((text:string) => !!text).join(' · '))
+      .accessibilitySelected(row.id === this.model.profile.manager)
+      .onClick(() => this.assistantMenuAction(scope,'',row)).id('spaces.assistant.' + row.id)
+  }
+  @Builder assistantMenuCommand(create: boolean, scope: string) {
+    Button({type:ButtonType.Normal}) {
+      Row({space:12}) {
+        Stack() {
+          Circle().width(this.assistantWell()).height(this.assistantWell()).fill(create ? this.assistantMenuTint() : $r('app.color.persona_switcher_ink')).opacity(0.15)
+          SymbolGlyph(create ? Symbols.plus : Symbols.gear).fontSize(Tokens.interfaceFontVp(create ? 17 : 19,this.environment.fontScale)).fontWeight(600)
+            .fontColor([create ? this.assistantMenuTint() : $r('app.color.persona_switcher_ink')])
+        }
+        Text(tr(create ? 'phone_new_assistant' : 'phone_manage_assistants') + (create ? '' : '…')).fontSize(Tokens.interfaceFontVp(17,this.environment.fontScale))
+          .fontWeight(create ? 600 : FontWeight.Normal).fontColor(create ? this.assistantMenuTint() : $r('app.color.persona_switcher_ink'))
+          .maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).layoutWeight(1)
+      }.width('100%').padding({left:8,right:8}).height(PhoneStyle.sidebarMetric(44,this.environment.fontScale))
+    }.width('100%').padding(0).backgroundColor(Color.Transparent)
+      .onClick(() => this.assistantMenuAction(scope,create ? 'phone_new_assistant' : 'managers'))
+      .id(create ? 'spaces.new_assistant' : 'spaces.manage_assistants')
   }
   @Builder drawerManagerMenu(scope: string) {
-    Menu() {
-      ForEach(this.drawerManagers, (row: ResourceRow) => {
-        MenuItem(() => { this.managerChoice(row); })
-          .accessibilityText([row.title || row.id,this.managerLine(row)].filter((text:string) => !!text).join(' · '))
-          .selected(row.id === this.model.profile.manager).selectIcon(false).accessibilitySelected(row.id === this.model.profile.manager).enabled(!row.isInstallingManager())
-          .onClick(() => { if (this.drawerAcceptsTap()) this.model.selectListedManager(row.id, scope); }).id('spaces.assistant.' + row.id)
-      }, (row: ResourceRow) => row.key())
-      MenuItem({ content: tr('phone_new_assistant'), symbolStartIcon: new SymbolGlyphModifier(Symbols.plus).fontColor([Colors.ink]) })
-        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).contentFontColor(Colors.ink).onClick(() => {
-        if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
-        this.spacesShown = false; this.openSettings('phone_new_assistant');
-      }).id('spaces.new_assistant')
-      MenuItem({ content: tr('phone_manage_assistants'), symbolStartIcon: new SymbolGlyphModifier(Symbols.gear).fontColor([Colors.ink]) })
-        .contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).contentFontColor(Colors.ink).onClick(() => {
-        if (this.model.scope() !== scope || !this.drawerAcceptsTap()) return;
-        this.spacesShown = false; this.openSettings('managers');
-      }).id('spaces.manage_assistants')
-    }.backgroundColor(Colors.surface)
+    Column() {
+      if (this.drawerManagers.length) {
+        Scroll() {
+          Column() {
+            ForEach(this.drawerManagers,(row:ResourceRow) => { this.managerChoice(row,scope); },(row:ResourceRow) => row.key())
+          }.width('100%')
+        }.width('100%').constraintSize({maxHeight:Math.max(this.assistantWell(),this.getUIContext().px2vp(this.environment.windowHeightPx)*0.52)})
+          .scrollBar(BarState.Auto).id('spaces.assistant_list')
+        Divider().color(Colors.divider).strokeWidth(0.33).margin({left:8,right:8,top:4,bottom:4})
+      }
+      this.assistantMenuCommand(true,scope)
+      this.assistantMenuCommand(false,scope)
+    }.width(this.assistantMenuWidth()).padding(8).backgroundColor($r('app.color.persona_switcher_surface')).id('spaces.assistant_panel')
+  }
+  private assistantMenuOptions(scope: string, epoch: number): CustomPopupOptions {
+    return { builder: (): void => this.drawerManagerMenu(scope), placement: Placement.Bottom, width: this.assistantMenuWidth(),
+      offset:{x:3,y:PhoneStyle.formSize(0,-1/3,this.environment.fontScale)}, enableArrow:true, arrowHeight:13, arrowWidth:26, targetSpace:0, radius:16, popupColor:$r('app.color.persona_switcher_surface'),
+      backgroundBlurStyle:BlurStyle.NONE, mask:true, autoCancel:true, focusable:true,
+      onStateChange:(state:PopupStateChangeParam):void => { if (!state.isVisible && epoch === this.assistantMenuEpoch) this.assistantMenuScope = ''; } };
   }
   @Builder assistantHeading(row: ResourceRow) {
-    Button({ type: ButtonType.Normal }) {
-      Row({ space: 10 }) {
-        Stack({ alignContent: Alignment.BottomEnd }) {
-          Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(20)
-          if (Wire.has(row.data(), 'online')) Circle().width(10).height(10)
-            .fill(Wire.bool(row.data(), 'online') ? Colors.positive : Colors.secondary)
-            .stroke(Colors.surface).strokeWidth(2)
-        }
-        Column({ space: 1 }) {
-          Row({ space: 5 }) {
-            Text(row.title || row.id).fontSize(22).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).flexShrink(1)
-            SymbolGlyph(Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
+    Row() {
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 10 }) {
+          Stack({ alignContent: Alignment.BottomEnd }) {
+            Image(this.look.avatarUri || $r('app.media.phone_persona_face')).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(20)
+            if (Wire.has(row.data(), 'online')) Circle().width(10).height(10)
+              .fill(Wire.bool(row.data(), 'online') ? Colors.positive : Colors.secondary)
+              .stroke(Colors.surface).strokeWidth(2)
           }
-          if (this.managerLine(row)) Text(this.managerLine(row)).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
-            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      }.width('100%').constraintSize({ minHeight: this.drawerMetric(44) })
-    }.padding(0).backgroundColor(Color.Transparent).layoutWeight(1)
-      .accessibilityText([tr('phone_switch_assistant'), row.title || row.id, this.managerLine(row)].filter((s: string) => !!s).join(' · '))
-      .bindMenu(this.drawerManagerMenu(this.model.scope()),{backgroundColor:Colors.surface,backgroundBlurStyle:BlurStyle.NONE}).id('spaces.assistant_switcher')
+          Column({ space: 1 }) {
+            Row({ space: 5 }) {
+              Text(row.title || row.id).fontSize(22).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Bold).fontColor(Colors.ink)
+                .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).flexShrink(1)
+              SymbolGlyph(Symbols.down).fontSize('12vp').fontColor([Colors.secondary])
+            }
+            if (this.managerLine(row)) Text(this.managerLine(row)).fontSize(13).maxFontScale(Tokens.navigationTextMaxScale).fontColor(Colors.secondary)
+              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          }.alignItems(HorizontalAlign.Start).flexShrink(1)
+        }.constraintSize({ minHeight: this.drawerMetric(44), maxWidth:'100%' })
+      }.padding(0).backgroundColor(Color.Transparent).constraintSize({maxWidth:'100%'})
+        .accessibilityText([tr('phone_switch_assistant'), row.title || row.id, this.managerLine(row)].filter((s: string) => !!s).join(' · '))
+        .onClick(() => { if (this.drawerAcceptsTap()) { this.assistantMenuEpoch++; this.assistantMenuScope = this.model.scope(); } })
+        .bindPopup(!!this.assistantMenuScope && this.assistantMenuScope === this.model.scope(),this.assistantMenuOptions(this.assistantMenuScope,this.assistantMenuEpoch)).id('spaces.assistant_switcher')
+    }.layoutWeight(1).justifyContent(FlexAlign.Start)
   }
   @Computed get drawerAgentRows():ResourceRow[] {
     if (!this.mergedPhone()) return [];
@@ -2413,7 +2512,7 @@ struct Index {
       if (['projects','project','project_tree','machine_projects'].includes(name)) {
         this.projectPage(name, param as string)
       } else if (name === 'session' || name === 'conversation') {
-        if (this.targetReady(name, param)) Conversation({ searchHitId:this.searchHitFor(param), decisionTool:this.decisionToolFor(param), model: this.detailModel, onPlace: (kind: string) => { if (this.activeChild === this.childKey(name, param)) this.openSpace(kind); }, admission: (): boolean => this.activeChild === this.childKey(name, param) && this.targetReady(name, param), onOpenFile: (path: string) => this.openTools(path), active: this.activeChild === this.childKey(name, param), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), showContextMenu: this.mainDestination(name, param) || this.hideChatTitle(name, param), onOpenCard: (itemId: string, kind: string) => { if (this.activeChild === this.childKey(name, param) && this.targetReady(name, param)) this.openAssistantCard(itemId, kind); }, onLongDraftHeader: (floating: boolean) => {
+        if (this.targetReady(name, param)) Conversation({ searchPresented:this.chatSearchShown, searchHitId:this.searchHitFor(param), decisionTool:this.decisionToolFor(param), model: this.detailModel, onPlace: (kind: string) => { if (this.activeChild === this.childKey(name, param)) this.openSpace(kind); }, admission: (): boolean => this.activeChild === this.childKey(name, param) && this.targetReady(name, param), onOpenFile: (path: string) => this.openTools(path), active: this.activeChild === this.childKey(name, param), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), showContextMenu: this.mainDestination(name, param) || this.hideChatTitle(name, param), onOpenCard: (itemId: string, kind: string) => { if (this.activeChild === this.childKey(name, param) && this.targetReady(name, param)) this.openAssistantCard(itemId, kind); }, onLongDraftHeader: (floating: boolean) => {
           const child = this.childKey(name, param);
           if (floating && this.activeChild === child && this.targetReady(name, param)) this.longDraftIdentity = child;
           else if (!floating && this.longDraftIdentity === child) this.longDraftIdentity = '';
@@ -2462,6 +2561,7 @@ struct Index {
         else this.targetLoading(name, param)
       } else if (name === 'todo' || name === 'resources' && param === 'todo') {
         if (name === 'resources' || this.targetReady(name, param)) TodoWorkspacePage({ model: name === 'resources' ? this.model : this.detailModel, row: name === 'todo' ? this.routeRow(param) : undefined, list: name === 'resources', visible: this.activeChild === this.childKey(name, param),
+          phoneList:!this.wide() && name==='resources' && param==='todo', createRevision:this.todoCreateRevision,
           onTitle: (title: string) => { if (name === 'todo' && this.activeChild === this.childKey(name, param)) this.todoTitle = title; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), onCreateAgent: (todo: ResourceRow) => this.createAgentFrom(name, param, todo) })
         else this.targetLoading(name, param)
       } else if (name === 'knowledge' || name === 'recordings' || name === 'knowledge_meetings' || name === 'resources' && param === 'knowledge') {
@@ -2491,7 +2591,7 @@ struct Index {
       } else if (name === 'settings' && ['phone_agent_folders', 'phone_claude_config', 'phone_codex_config', 'phone_agy_config', 'phone_agent_followup'].includes(this.settingsKind(param))) {
         PhoneAgentSettingsPage({model:this.settingsModel(param), page:this.settingsKind(param)})
       } else if (name === 'settings' && this.isAdminPage(this.settingsKind(param))) {
-        if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) AdminWorkspacePage({ model: this.settingsModel(param), page: this.settingsKind(param) === 'phone_new_assistant' ? 'managers' : this.settingsKind(param), createManagerOnly:this.settingsKind(param) === 'phone_new_assistant', row: NavigationContext.from(name, param as string).scoped ? NavigationContext.from(name, param as string).row : undefined, active: this.activeChild === this.childKey(name, param), refreshRevision: this.adminRefreshRevision,
+        if (!NavigationContext.from(name, param as string).scoped || this.targetReady(name, param)) AdminWorkspacePage({ model: this.settingsModel(param), page: this.settingsKind(param) === 'phone_new_assistant' ? 'managers' : this.settingsKind(param), createManagerOnly:this.settingsKind(param) === 'phone_new_assistant', installingManager:NavigationContext.installingManagerFor(param as string,this.model.scope()), row: NavigationContext.from(name, param as string).scoped ? NavigationContext.from(name, param as string).row : undefined, active: this.activeChild === this.childKey(name, param), refreshRevision: this.adminRefreshRevision,
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onOpenMachine: (row: ResourceRow) => { if (this.activeChild === this.childKey(name, param)) this.openSettingsDetail('machines', row); } })
         else this.targetLoading(name, param)
       } else if (name === 'settings' && this.settingsKind(param) === 'ssh') {

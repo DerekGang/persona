@@ -109,8 +109,10 @@ export class MutationStore {
       throw new HttpFailure(0, 'storage_unavailable', false);
     }
   }
-  async finish(record: MutationRecord, state: string): Promise<void> {
-    return this.transaction(() => this.settle(record, state));
+  async finish(record: MutationRecord, state: string, admit?: () => boolean): Promise<void> {
+    return this.transaction(async () => {
+      if (!admit || admit()) await this.settle(record, state);
+    });
   }
   private async settle(record: MutationRecord, state: string): Promise<void> {
     if (record.state === 'done') return;

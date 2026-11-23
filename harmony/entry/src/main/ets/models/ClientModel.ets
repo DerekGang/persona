@@ -89,6 +89,7 @@ export class ClientModel {
   @Trace profiles: HubProfile[] = [];
   @Trace profile: HubProfile = new HubProfile();
   @Trace managers: ResourceRow[] = [];
+  @Trace rosterDefaultId: string = '';
   @Trace features: string[] = [];
   private helloHub: string = '';
   private helloScope: string = '';
@@ -465,6 +466,7 @@ export class ClientModel {
   }
   owns(generation: number, scope: string): boolean { return !this.retired && generation === this.generation && scope === this.scope(); }
   isChat(): boolean { return this.selected.kind === 'conversation' || this.selected.kind === 'session'; }
+  isForegroundChat(): boolean { return !this.retired && this.foreground && this.chatVisible && this.isChat(); }
   reportError(error: Error): void { this.failure(error); }
   operationBlocked(path: string): boolean { return this.unresolvedWrites.some((record: MutationRecord) => record.path === path); }
   private failure(error: Error): void {
@@ -573,7 +575,7 @@ export class ClientModel {
     const generation = ++this.generation; this.selectionGeneration++; const selection = this.selected;
     this.profile = profile; const scope = this.scope(); this.connected = false;
     this.clearPendingDecisions();
-    this.unresolvedWrites = []; this.operationState = ''; this.mainId = ''; this.mainMachineId = ''; this.sidebarConfig = ''; this.features = []; this.managers = [];
+    this.unresolvedWrites = []; this.operationState = ''; this.mainId = ''; this.mainMachineId = ''; this.sidebarConfig = ''; this.features = []; this.managers = []; this.rosterDefaultId = '';
     this.demo = false; this.demoRepository = undefined; this.error = '';
     if (!keep) { this.sessionsReady = false; this.sessions = []; this.machines = []; this.conversations = []; this.todos = []; this.inbox = []; this.knowledge = []; this.messages = []; } this.selected = keep ? selection : new ResourceRow(); this.draftLoading = false;
     if (!keep && !this.detached) { this.directoryReady = false; this.directoryLoading = false; this.directoryUnavailable = 0; this.publishDirectory(); }
@@ -599,7 +601,7 @@ export class ClientModel {
     try {
       const roster = Wire.parse(await probe.request('/api/v1/managers'));
       if (!this.owns(generation, scope)) return;
-      defaultOwner = Wire.text(roster, 'default');
+      defaultOwner = Wire.text(roster, 'default'); this.rosterDefaultId = defaultOwner;
       const managerId = resolveManagerScope(profile.manager, defaultOwner, Wire.rows(roster, 'managers').map((item: Record<string, Object>) => Wire.text(item, 'id')));
       if (managerId !== profile.manager) {
         const canonical = new HubProfile(profile.id, profile.name, profile.baseUrl);
@@ -782,14 +784,15 @@ export class ClientModel {
       const sessions = await repo.sessions(), assistant = await repo.call('/api/v1/assistant');
       const machines = await repo.machines();
       let managers: ResourceRow[] = [];
+      let rosterDefault = this.rosterDefaultId;
       if (this.managers.length || this.features.includes('sessions_manager') || this.features.includes('managers')) {
-        try { managers = await repo.list('/api/v1/managers', 'managers', 'manager'); }
+        try { managers = await repo.list('/api/v1/managers', 'managers', 'manager', false, (roster: Record<string,Object>) => { rosterDefault = Wire.text(roster,'default'); }); }
         catch (error) { if (!(error instanceof HttpFailure) || ![404,501].includes(error.status)) throw error as Error; }
       }
       if (!this.owns(generation, scope)) return;
       if (heldRevision !== owner.heldRevision(scope)) { this.queueRefresh(); return; }
       sessions.forEach((row: ResourceRow) => row.group = this.profile.id); machines.forEach((row: ResourceRow) => row.group = this.profile.id);
-      this.sessions = sessions; this.sessionsReady = true; this.machines = machines; this.managers = managers;
+      this.sessions = sessions; this.sessionsReady = true; this.machines = machines; this.managers = managers; this.rosterDefaultId = rosterDefault;
       if (owner.heldReceipts.length) owner.heldReceipts = owner.heldReceipts.filter((receipt: HeldActionReceipt) => {
         if (receipt.scope !== scope) return true;
         const row = sessions.find((item: ResourceRow) => this.target(item) === receipt.target);

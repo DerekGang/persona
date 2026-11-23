@@ -1,6 +1,18 @@
 {
   "string": [
     {
+      "name": "phone_switcher_expiry",
+      "value": "安装中 · 码 {minutes} 分钟后过期"
+    },
+    {
+      "name": "phone_switcher_expired",
+      "value": "安装中 · 码已过期"
+    },
+    {
+      "name": "phone_switcher_synced",
+      "value": "离线 · 最后同步于 {time}"
+    },
+    {
       "name": "project_temporary_session",
       "value": "临时会话"
     },
@@ -5049,6 +5061,10 @@
       "value": "同时删除 Git 分支"
     },
     {
+      "name": "tree_revoke_unused_preview",
+      "value": "撤销未执行的确认并重新预览"
+    },
+    {
       "name": "tree_cleanup_present",
       "value": "上次检查时，工作树仍在。可以稍后再检查清理结果。"
     },
@@ -6494,11 +6510,11 @@
     },
     {
       "name": "phone_meeting_remove",
-      "value": "从会议中移除"
+      "value": "移出会议"
     },
     {
       "name": "phone_meeting_onscreen",
-      "value": "在屏幕上回答"
+      "value": "屏幕回答"
     },
     {
       "name": "phone_meeting_aloud",
@@ -6514,7 +6530,15 @@
     },
     {
       "name": "phone_meeting_live_note",
-      "value": "邀请 Persona 后，已转写的语句会同步到本次会议的对话。音频保留在本机。"
+      "value": "音频留在本机，转写文字同步到会议对话和知识库。"
+    },
+    {
+      "name": "meeting_room_privacy_local_days",
+      "value": "音频留在本机。文字同步到会议对话，知识库保留 {days} 天。"
+    },
+    {
+      "name": "meeting_room_text_shared",
+      "value": "转写文字也会同步到会议对话。"
     },
     {
       "name": "phone_meeting_live_ready",
@@ -7162,7 +7186,7 @@
     },
     {
       "name": "meeting_start_privacy_local_days",
-      "value": "音频保留在本机。同步到知识库的转写文本将保留 {days} 天。"
+      "value": "音频保留在本机，文字会同步到知识库，并保留 {days} 天。"
     },
     {
       "name": "meeting_start_confirm_title",
@@ -7286,7 +7310,7 @@
     },
     {
       "name": "meeting_note_without_minutes",
-      "value": "不生成纪要，Persona 不参加。"
+      "value": "不出纪要，Persona 也不参与。"
     },
     {
       "name": "decision_to_decide",

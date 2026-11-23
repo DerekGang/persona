@@ -1,6 +1,18 @@
 {
   "string": [
     {
+      "name": "phone_switcher_expiry",
+      "value": "Installing · code expires in {minutes} min"
+    },
+    {
+      "name": "phone_switcher_expired",
+      "value": "Installing · code expired"
+    },
+    {
+      "name": "phone_switcher_synced",
+      "value": "Offline · last synced {time}"
+    },
+    {
       "name": "project_temporary_session",
       "value": "Temporary Session"
     },
@@ -5049,6 +5061,10 @@
       "value": "Also delete the Git branch"
     },
     {
+      "name": "tree_revoke_unused_preview",
+      "value": "Discard the unused confirmation and preview again"
+    },
+    {
       "name": "tree_cleanup_present",
       "value": "The worktree was still present at the last check. Check again for the cleanup result."
     },
@@ -6498,7 +6514,7 @@
     },
     {
       "name": "phone_meeting_onscreen",
-      "value": "Answers on Screen"
+      "value": "Answers on screen"
     },
     {
       "name": "phone_meeting_aloud",
@@ -6514,7 +6530,15 @@
     },
     {
       "name": "phone_meeting_live_note",
-      "value": "Inviting Persona shares the finished transcript lines with this meeting’s conversation. Audio stays on this device."
+      "value": "Audio stays on this device. Text syncs to this meeting and Knowledge."
+    },
+    {
+      "name": "meeting_room_privacy_local_days",
+      "value": "Audio stays on this device. Text syncs to the meeting and is kept in Knowledge for {days} days."
+    },
+    {
+      "name": "meeting_room_text_shared",
+      "value": "Text also syncs to this meeting."
     },
     {
       "name": "phone_meeting_live_ready",
@@ -7162,7 +7186,7 @@
     },
     {
       "name": "meeting_start_privacy_local_days",
-      "value": "Audio stays on this device. Text synced to Knowledge is kept for {days} days."
+      "value": "Audio stays on this device. Its text syncs to Knowledge and is kept for {days} days."
     },
     {
       "name": "meeting_start_confirm_title",
