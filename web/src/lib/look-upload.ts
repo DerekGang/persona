@@ -2,14 +2,14 @@
 // square (with the circle the avatar shows), names it, and the hub makes a package of it (POST /looks/uploads), which
 // it then chooses. Uploaded looks can be deleted again (DELETE /looks/uploads/{id}). The crop's geometry, the export's
 // size and encoding and the requests are here; the dialog is views/assistant/LookUpload.tsx.
-import { ApiError, CLIENT_PLATFORM, CLIENT_VERSION, api, enc, errorText, getToken } from "./api";
+import { ApiError, CLIENT_PLATFORM, CLIENT_VERSION, getToken } from "./api";
 import { BASE } from "./base";
 import { CLIENT_HEADERS, compatibleEnvelope } from "./compatibility";
 import type { LookCurrent, LookView } from "./persona";
 import { currentLanguage } from "../i18n";
+import { currentOf } from "./look-delete";
 
-/** hello / health `features`: the hub makes avatars from uploaded images. Without it the picker offers no upload. */
-export const LOOK_UPLOADS_FEATURE = "look_uploads";
+export { deleteUploadedLook, LOOK_UPLOADS_FEATURE, refusalText } from "./look-delete";
 
 /** What the file picker takes: the formats the hub reads (the first frame of a GIF). */
 export const UPLOAD_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
@@ -186,12 +186,6 @@ export function canSend(name: string, subtitle: string): boolean {
   return n > 0 && n <= NAME_MAX && textLength(subtitle.trim()) <= SUBTITLE_MAX;
 }
 
-/** What to tell the user about a failed request: the hub's own words (already in their language) as they are. */
-export function refusalText(e: unknown): string {
-  if (e instanceof ApiError && e.isJson && typeof e.body.error === "string" && e.body.error.trim()) return e.body.error;
-  return errorText(e);
-}
-
 /** POST /looks/uploads's answer: the new look as GET /looks lists it, and the choice (asked for with choose). */
 export interface UploadAnswer {
   look: LookView;
@@ -249,10 +243,6 @@ export const xhrPost: ProgressPost = <T,>(path: string, json: unknown, opts: { o
   });
 
 /** The choice as the hub answered it, with its built-in ids the way this page names them. */
-function currentOf(cur: LookCurrent | undefined): LookCurrent | undefined {
-  return cur && typeof cur === "object" && typeof cur.effective === "string" ? compatibleEnvelope(cur) : undefined;
-}
-
 /** Makes a look of the cropped image and chooses it. */
 export async function uploadLook(
   body: UploadBody,
@@ -261,10 +251,4 @@ export async function uploadLook(
 ): Promise<UploadAnswer> {
   const r = await post<UploadAnswer>("/looks/uploads", body, opts);
   return { look: r.look, current: currentOf(r.current) };
-}
-
-/** Deletes an uploaded look; the answer is the choice after it (the default when it was the chosen one). */
-export async function deleteUploadedLook(id: string): Promise<LookCurrent | undefined> {
-  const r = await api<{ current?: LookCurrent }>(`/looks/uploads/${enc(id)}`, { method: "DELETE" });
-  return currentOf(r.current);
 }

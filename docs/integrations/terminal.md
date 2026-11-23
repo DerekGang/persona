@@ -359,7 +359,8 @@ Phone rendering (`dumpsys gfxinfo`) and real-session key/wheel round trips weren
 ## 18. Web clipboard: paste images/files, copy, OSC 52
 
 Web terminal clipboard works both inward (screenshots/files, like Moshi web) and outward (selected text, program OSC 52). Both share `lib/terminal-clipboard.ts` (pure logic) and
-`session/terminal/clipboard.ts` (browser side); hints use page toasts, upload status appears at the terminal top.
+`session/terminal/clipboard.ts` (browser side); hints use page toasts, upload status appears at the terminal top. `escapePastePath` and
+`dragHasFiles` live in the import-free `lib/paste-path.ts` (re-exported by `terminal-clipboard.ts`), because a composer's file drop on the first screen uses them too.
 
 ### Pasting images / files
 

@@ -12,7 +12,8 @@ import {
 } from "../../lib/persona";
 import { isResumed } from "../../lib/reconnect";
 import { hubHas, onHubEvent, useStore } from "../../lib/store";
-import { deleteUploadedLook, LOOK_UPLOADS_FEATURE, refusalText, type UploadAnswer } from "../../lib/look-upload";
+import { deleteUploadedLook, LOOK_UPLOADS_FEATURE, refusalText } from "../../lib/look-delete";
+import type { UploadAnswer } from "../../lib/look-upload";
 import { Button, cx, Dialog, IconButton } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { lazyDialog } from "../LazyOverlay";
