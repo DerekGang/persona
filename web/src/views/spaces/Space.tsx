@@ -3,17 +3,19 @@
 // home when it has none; `/tracks/<slug>/new` is its home (what it is, a box to start a conversation, its past
 // conversations, its SPACE.md, its default categories); `/tracks/<slug>/<id>` one of its conversations. The health space
 // keeps its own page (views/health/Health.tsx).
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { noteConversation } from "../../lib/manager-choice";
 import { noteSent } from "../../lib/outbox";
 import { plainMarkdown } from "../../lib/plain-markdown";
+import { humanSpaceMd } from "../../lib/space-md";
 import { href, navigate, onLinkClick } from "../../lib/router";
 import { changeTrack, noteTrack, readSpaceMd, spaceIcon, startSpaceConversation, useTracks, type SpaceMd, type Track } from "../../lib/tracks";
 import type { Session } from "../../lib/types";
 import { Button, Dialog, EASE, IconButton, Loading, Menu, toast, useMenu } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
+import { Markdown } from "../../ui/Markdown";
 import { ChatView } from "../chat/ChatView";
 import { Composer, type Outgoing } from "../chat/Composer";
 import { conversationTitle } from "../assistant/conversations";
@@ -230,7 +232,8 @@ function SpaceRow({ slug, s, icon }: { slug: string; s: Session; icon: IconName 
   );
 }
 
-/** What SPACE.md says, its human part folded to a few lines, with Edit. */
+/** What SPACE.md says: the parts the user wrote, drawn as formatted text and folded to a few lines with Show more,
+ *  then where things stand (Persona's state block); Persona's other kept blocks stay in the editor. */
 function SpaceMdCard({ slug, latest, editable, onEdit }: { slug: string; latest: SpaceMd | null; editable: boolean; onEdit: () => void }) {
   const [read, setMd] = useState<SpaceMd | null>(null);
   const md = latest ?? read;
@@ -242,13 +245,14 @@ function SpaceMdCard({ slug, latest, editable, onEdit }: { slug: string; latest:
       live = false;
     };
   }, [slug]);
+  const written = useMemo(() => (md ? humanSpaceMd(md.content) : ""), [md]);
   return (
     <section className="mt-7">
-      <SectionTitle right={editable && md ? <Button tone="quiet" size="sm" icon="pencil" onClick={onEdit}>{t("spaces.md_edit")}</Button> : undefined}>{t("spaces.md_section")}</SectionTitle>
+      <SectionTitle center right={editable && md ? <Button tone="quiet" size="sm" icon="pencil" onClick={onEdit}>{t("spaces.md_edit")}</Button> : undefined}>{t("spaces.md_section")}</SectionTitle>
       <div className="rounded-card bg-surface p-4 shadow-card">
         {md ? (
           <>
-            <p className="line-clamp-6 whitespace-pre-wrap break-words text-meta leading-relaxed text-ink-2">{md.content.replace(/<!-- persona:managed:[\s\S]*?:end -->/g, "").trim() || t("spaces.md_empty")}</p>
+            {written ? <FoldedMarkdown text={written} /> : <p className="text-meta text-ink-3">{t("spaces.md_empty")}</p>}
             {md.state.trim() && (
               <p className="mt-3 border-t border-line pt-3 text-label leading-relaxed text-ink-3">
                 <span className="font-medium">{t("spaces.md_state")}</span> {md.state.trim()}
@@ -260,6 +264,38 @@ function SpaceMdCard({ slug, latest, editable, onEdit }: { slug: string; latest:
         )}
       </div>
     </section>
+  );
+}
+
+/** Formatted text cut at a few lines with a fade, and Show more / Show less once it runs longer than that. */
+function FoldedMarkdown({ text }: { text: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [long, setLong] = useState(false);
+  const [open, setOpen] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || open) return;
+    const measure = () => setLong(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [text, open]);
+  const folded = !open;
+  return (
+    <div data-testid="space-md">
+      <div
+        ref={box}
+        className={folded ? `max-h-40 overflow-hidden ${long ? "[mask-image:linear-gradient(to_bottom,black_55%,transparent)]" : ""}` : undefined}
+      >
+        <Markdown text={text} small />
+      </div>
+      {(long || open) && (
+        <button type="button" onClick={() => setOpen((x) => !x)} aria-expanded={open} className="mt-1.5 text-label font-medium text-accent-ink hover:underline">
+          {open ? t("spaces.md_show_less") : t("spaces.md_show_more")}
+        </button>
+      )}
+    </div>
   );
 }
 

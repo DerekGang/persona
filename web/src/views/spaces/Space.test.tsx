@@ -17,7 +17,7 @@ vi.mock("../../lib/api", async (orig) => {
     slug, kind: "space", title, icon: "wallet", description: "Budget and taxes", default_categories: ["finance"], template: "space", builtin: false, archived: false, revision: 2,
     config: { schema: 1, template: "space", context: "track", default_categories: ["finance"], tag_focus: [], rhythms: [], attention: { push_cap: "P0", deep_default: "quick", enter_mode: "none" }, supervision: "none", usage: [], assembly: "track", capture_target: true, channels: [], sidebar: { group: "spaces" } },
   });
-  const content = "# Money\n\nWhat this space is for.\n\n<!-- persona:managed:state:begin -->\nTaxes filed.\n<!-- persona:managed:state:end -->\n";
+  const content = "# Money\n\nWhat this space is for.\n\n## Rules\n\n- **Receipts** go here\n\n<!-- persona:managed:state:begin -->\nTaxes filed.\n<!-- persona:managed:state:end -->\n";
   return {
     ...real,
     api: (path: string, init?: { method?: string; json?: unknown }) => {
@@ -86,6 +86,21 @@ describe("a space's home", () => {
     expect(host.textContent).toContain(t("spaces.category_finance"));
     expect(host.textContent).toContain("What this space is for.");
     expect(host.textContent).not.toContain("persona:managed");
+  });
+
+  it("draws SPACE.md as formatted text, without Markdown marks or Persona's kept blocks", async () => {
+    act(() => root.render(<Space slug="money" fresh onToggleSidebar={() => {}} />));
+    await flush();
+    const about = host.querySelector('[data-testid="space-md"]')!;
+    expect(about.querySelector("h1")?.textContent).toBe("Money");
+    expect(about.querySelector("h2")?.textContent).toBe("Rules");
+    expect(about.querySelector("li strong")?.textContent).toBe("Receipts");
+    expect(about.textContent).not.toContain("#");
+    expect(about.textContent).not.toContain("**");
+    expect(about.textContent).not.toContain("persona:managed");
+    expect(about.textContent).not.toContain("Taxes filed.");
+    // where things stand is said once, below, in words
+    expect(host.textContent).toContain(`${t("spaces.md_state")} Taxes filed.`);
   });
 
   it("says when the space is not there", async () => {

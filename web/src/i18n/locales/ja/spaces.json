@@ -48,6 +48,8 @@
   "md_managed_empty": "まだ何もありません",
   "md_empty": "まだ何も書かれていません。",
   "md_state": "現在の状況：",
+  "md_show_more": "すべて表示",
+  "md_show_less": "閉じる",
   "md_loading": "読み込み中…",
   "md_unavailable": "今は読み込めません。アシスタントのコンピュータがオフラインか、更新が必要かもしれません。",
   "md_saved": "保存しました",

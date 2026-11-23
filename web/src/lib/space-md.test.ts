@@ -1,6 +1,6 @@
 // SPACE.md in the editor (#13500): the user's parts are fields, Persona's blocks go back byte for byte.
 import { describe, expect, it } from "vitest";
-import { assembleSpaceMd, editableParts, joinSpaceMd, sameManagedBlocks, splitSpaceMd } from "./space-md";
+import { assembleSpaceMd, editableParts, humanSpaceMd, joinSpaceMd, sameManagedBlocks, splitSpaceMd } from "./space-md";
 
 const STATE = "<!-- persona:managed:state:begin -->\nTaxes filed; waiting for the refund.\n<!-- persona:managed:state:end -->";
 const FILE = `# Money\n\nWhat this space is for.\n\n${STATE}\n`;
@@ -44,5 +44,13 @@ describe("SPACE.md parts", () => {
     expect(sameManagedBlocks(FILE, FILE.replace("refund", "check"))).toBe(false);
     expect(sameManagedBlocks(FILE, `<!-- persona:managed:state:begin -->x<!-- persona:managed:state:end -->${FILE}`)).toBe(false);
     expect(sameManagedBlocks(FILE, FILE.replace(STATE, ""))).toBe(false);
+  });
+});
+
+describe("what the space's home shows", () => {
+  it("keeps only what the user wrote", () => {
+    expect(humanSpaceMd(FILE)).toBe("# Money\n\nWhat this space is for.");
+    expect(humanSpaceMd(`${STATE}\n`)).toBe("");
+    expect(humanSpaceMd(`Before\n\n${STATE}\n\nAfter\n`)).toBe("Before\n\nAfter");
   });
 });

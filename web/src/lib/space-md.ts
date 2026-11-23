@@ -66,3 +66,11 @@ export function sameManagedBlocks(before: string, after: string): boolean {
   const b = blocks(after);
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
+
+/** SPACE.md without the blocks Persona keeps (`<!-- persona:managed:… -->`): what the user wrote, as the
+ *  space's home shows it. */
+export function humanSpaceMd(content: string): string {
+  return splitSpaceMd(content)
+    .flatMap((p) => (p.kind === "human" && p.text.trim() ? [p.text.trim()] : []))
+    .join("\n\n");
+}

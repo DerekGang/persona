@@ -97,7 +97,7 @@ export function SpaceMdEditor({ open, slug, onClose, onSaved }: { open: boolean;
         rows={first ? 10 : 5}
         spellCheck
         placeholder={t("spaces.md_placeholder")}
-        className="w-full resize-y rounded-control bg-surface px-3 py-2.5 font-mono text-meta leading-relaxed text-ink shadow-hairline outline-none placeholder:text-ink-3 focus:shadow-btn"
+        className="w-full resize-y rounded-control bg-surface px-3 py-2.5 font-sans text-meta leading-relaxed text-ink shadow-hairline outline-none placeholder:text-ink-3 focus:shadow-btn"
       />
     );
   };

@@ -48,6 +48,8 @@
   "md_managed_empty": "Nothing yet",
   "md_empty": "Nothing written yet.",
   "md_state": "Where things stand:",
+  "md_show_more": "Show more",
+  "md_show_less": "Show less",
   "md_loading": "Loading…",
   "md_unavailable": "Can't be read right now. The assistant's computer may be offline or need an update.",
   "md_saved": "Saved",

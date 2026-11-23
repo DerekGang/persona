@@ -48,6 +48,8 @@
   "md_managed_empty": "暂时没有内容",
   "md_empty": "还没写什么。",
   "md_state": "目前进展：",
+  "md_show_more": "展开全部",
+  "md_show_less": "收起",
   "md_loading": "正在读取…",
   "md_unavailable": "现在读不到。助理的电脑可能不在线，或者需要更新。",
   "md_saved": "已保存",
