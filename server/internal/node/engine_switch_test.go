@@ -955,11 +955,11 @@ func TestCodexStartClaimsItsFile(t *testing.T) {
 func TestEngineSwitchToAnUnrecordedCodexThread(t *testing.T) {
 	const thread = "01a19a00-0000-7000-8000-00000000507a"
 	withShortCodexWaits(t, time.Second, time.Second)
-	// This branch resumes a *known* thread. Its deliberately missing host row
-	// expires the resume confirmation path, independently of the new-thread wait.
-	priorResumeWait := codexResumeWait
+	// The resumed thread never shows up in the fake herdr: the answer comes when the resume's wait runs out.
+	oldResume := codexResumeWait
 	codexResumeWait = time.Second
-	t.Cleanup(func() { codexResumeWait = priorResumeWait; codexResumes.Delete(thread) })
+	t.Cleanup(func() { codexResumeWait = oldResume })
+	t.Cleanup(func() { codexResumes.Delete(thread) })
 	n, f, home, cwd, _ := switchNode(t, proto.StatusIdle, longTurn)
 	until := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	writeThread(t, home, thread, cwd, "earlier, in Codex")
