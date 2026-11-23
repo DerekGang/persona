@@ -98,19 +98,21 @@ export function notePlace(panel: { mid: string; sid: string; cwd: string }, plac
  * panels App closed before), coming back to one opens what it kept. `pane` is the session the page shows, if any;
  * `chat` the Persona chat's sid (undefined: not a Persona chat). */
 export function useSessionPanels(at: string, pane: { mid: string; sid: string } | null | undefined, chat?: string) {
-  const was = useRef<{ key: string; pane: { mid: string; sid: string } | null } | null>(null);
+  const was = useRef<{ at: string; key: string | null; pane: { mid: string; sid: string } | null } | null>(null);
   useEffect(() => {
     const p = getPanel();
     const left = was.current;
     const key = pane ? sessionKey(pane) : chat !== undefined ? chatKey(chat) : null;
-    was.current = key ? { key, pane: pane ? { mid: pane.mid, sid: pane.sid } : null } : null;
+    was.current = { at, key, pane: pane ? { mid: pane.mid, sid: pane.sid } : null };
     let memory = load();
     let own: Panel | null = null;
-    if (left && left.key !== key) {
-      own = left.pane ? (belongsTo(p, left.pane) ? p : null) : p && p.kind !== "link" ? p : null;
-      memory = leaving(memory, left.key, own, own?.kind === "files" ? places.get(directoryPanelKey(own)) : undefined);
-      // Drop any back-stack entries from the session/chat being left, even if a persistent panel (e.g. link) stays open.
+    if (left && left.at !== at) {
+      // Drop any back-stack entries from the previous route, even when routes share a panel-memory key or have none.
       clearPanelHistory();
+      if (left.key && left.key !== key) {
+        own = left.pane ? (belongsTo(p, left.pane) ? p : null) : p && p.kind !== "link" ? p : null;
+        memory = leaving(memory, left.key, own, own?.kind === "files" ? places.get(directoryPanelKey(own)) : undefined);
+      }
     }
     // a session's terminal / files / Git belong to that conversation: moving to another page closes them (a link, a
     // task and an agent stay, unless a Persona chat being left owns them)

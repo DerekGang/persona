@@ -176,10 +176,12 @@ export function openPanel(p: Panel | null, options?: OpenPanelOptions) {
   } else if (options?.replace) {
     current = p;
   } else {
-    // Auto-push only during an active user interaction event inside the side panel; programmatic opens clear history
-    // by default unless the caller opts into push or replace.
+    // Auto-push only during an active user interaction event inside the side panel; programmatic and outside opens
+    // always clear history regardless of whether the requested panel shares the current target key.
     const shouldPush = options?.push ?? (Boolean(current) && trigger !== null && inSidePanel(trigger));
-    if (shouldPush && current) {
+    if (!shouldPush || !current) {
+      history = [];
+    } else {
       const curKey = panelTargetKey(current);
       if (curKey !== panelTargetKey(p)) {
         const top = history[history.length - 1];
@@ -187,8 +189,6 @@ export function openPanel(p: Panel | null, options?: OpenPanelOptions) {
           history = [...history, current].slice(-MAX_PANEL_HISTORY);
         }
       }
-    } else {
-      history = [];
     }
     current = p;
   }

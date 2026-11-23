@@ -252,6 +252,44 @@ describe("side panel navigation stack", () => {
     expect(getPanelHistory()).toHaveLength(2);
   });
 
+  it("updates target fields and clears history when reopening the same directory/changes panel from outside", () => {
+    // Task -> Review (history: [taskA])
+    openPanel(taskA);
+    openPanel(reviewPanel, { push: true });
+    expect(getPanelHistory()).toEqual([taskA]);
+
+    // External click (e.g. changed-files card in main chat) opens the same session's review at a new scope/file.
+    const nextReview: Panel = { kind: "review", mid: "m1", sid: "s1", cwd: "/work", scope: "uncommitted", at: { path: "src/app.ts", line: 12 } };
+    const openFromChat = document.createElement("button");
+    openFromChat.addEventListener("click", () => openPanel(nextReview));
+    document.body.append(openFromChat);
+    try {
+      openFromChat.click();
+      expect(getPanel()).toEqual(nextReview);
+      expect(canGoBack()).toBe(false);
+      expect(getPanelHistory()).toEqual([]);
+    } finally {
+      openFromChat.remove();
+    }
+
+    // Same for Files -> another folder and Changes -> another turn opened programmatically from outside.
+    openPanel(taskA);
+    openPanel(filesPanel, { push: true });
+    expect(getPanelHistory()).toEqual([taskA]);
+    const nextFiles: Panel = { ...filesPanel, path: "/work/src", highlight: "main.ts" };
+    openPanel(nextFiles);
+    expect(getPanel()).toEqual(nextFiles);
+    expect(getPanelHistory()).toEqual([]);
+
+    openPanel(taskA);
+    openPanel({ kind: "changes", mid: "m1", sid: "s1", turn: "t1" }, { push: true });
+    expect(getPanelHistory()).toEqual([taskA]);
+    const nextChanges: Panel = { kind: "changes", mid: "m1", sid: "s1", turn: "t2", at: { path: "b.ts" } };
+    openPanel(nextChanges);
+    expect(getPanel()).toEqual(nextChanges);
+    expect(getPanelHistory()).toEqual([]);
+  });
+
   it("pops panels in LIFO order and closes when the stack is empty", () => {
     openPanel(taskA);
     openPanel(zipFile, { push: true });

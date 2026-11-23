@@ -52,9 +52,26 @@ export function SidePanel() {
   const canGoBack = usePanelCanGoBack();
   // ⌘⇧↵ shows only the middle: the panel stays open (its terminal keeps running) but is not drawn, on a wide screen
   const maximized = useLayout().maximized;
-  // narrow, it covers the page: Back pops one level in the side-panel stack first, then closes the panel (staying on the conversation)
+  // narrow, it covers the page: Back closes any open inner menu/dialog without its own Back entry first, then pops
+  // one level in the side-panel stack, and finally closes the panel (staying on the conversation)
   const [backStep, setBackStep] = useState(0);
-  useCloseOnBack(Boolean(panel), () => { if (popPanel()) setBackStep((n) => n + 1); }, useMedia(NARROW), backStep);
+  useCloseOnBack(
+    Boolean(panel),
+    () => {
+      const overlays = [...document.querySelectorAll<HTMLElement>("[data-menu],[role=menu],[role=dialog]")].filter(
+        (el) => !el.closest("[data-closing],[inert]"),
+      );
+      const topOverlay = overlays[overlays.length - 1];
+      if (topOverlay) {
+        topOverlay.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        setBackStep((n) => n + 1);
+        return;
+      }
+      if (popPanel()) setBackStep((n) => n + 1);
+    },
+    useMedia(NARROW),
+    backStep,
+  );
   // the width asked for; what is drawn is `shown`, which also fits the room there is now (the window, the sidebar).
   // Until the room is measured (or with no page beside it), the old cap: 72% of the window.
   const [width, setWidth] = useState(() => Math.max(PANEL_MIN, Number(localStorage.getItem(WIDTH_KEY)) || DEFAULT_WIDTH));

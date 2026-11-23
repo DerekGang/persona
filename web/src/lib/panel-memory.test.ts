@@ -308,4 +308,36 @@ describe("moving between Persona chats", () => {
     expect(canGoBack()).toBe(false);
     expect(getPanelHistory()).toEqual([]);
   });
+
+  it("clears the back stack on same-key route changes and between non-session routes", () => {
+    const link: Panel = { kind: "link", url: "https://example.com" };
+    const RoutePage = ({ at, pane }: { at: string; pane: { mid: string; sid: string } | null }) => {
+      useSessionPanels(at, pane);
+      return null;
+    };
+    const renderRoute = (at: string, pane: { mid: string; sid: string } | null) =>
+      act(() => root.render(createElement(RoutePage, { at, pane })));
+
+    // Same session key (`m1/a`), different route (`at`: chat -> terminal): keep A's panel but clear stale back stack.
+    renderRoute("m1/a:chat", A);
+    act(() => openPanel(filesA));
+    act(() => openPanel(gitA, { push: true }));
+    expect(getPanelHistory()).toEqual([filesA]);
+
+    renderRoute("m1/a:terminal", A);
+    expect(getPanel()).toEqual(gitA);
+    expect(canGoBack()).toBe(false);
+    expect(getPanelHistory()).toEqual([]);
+
+    // Non-session route to another non-session route (both key === null): drop previous route's back stack.
+    renderRoute("inbox", null);
+    act(() => openPanel(task));
+    act(() => openPanel(link, { push: true }));
+    expect(getPanelHistory()).toEqual([task]);
+
+    renderRoute("todos", null);
+    expect(getPanel()).toEqual(link);
+    expect(canGoBack()).toBe(false);
+    expect(getPanelHistory()).toEqual([]);
+  });
 });

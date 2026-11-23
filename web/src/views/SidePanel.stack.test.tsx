@@ -3,11 +3,11 @@
 // single-level panels render zero extra chrome; drilling in from inside the side panel shows ← in PanelHeader (and
 // nested task/agent headers), clicking ← pops to the previous panel, × closes everything, and narrow-screen browser
 // Back pops one level at a time before closing the panel.
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PanelHeader } from "../ui/PanelHeader";
-import { IconButton, Menu, useMenu } from "../ui/atoms";
+import { Dialog, IconButton, Menu, useMenu } from "../ui/atoms";
 import { t } from "../i18n";
 import { closePanel, getPanel, getPanelHistory, openPanel, useSidePanelBack } from "../lib/panel";
 
@@ -98,11 +98,31 @@ vi.mock("./session/FilesPanel", () => ({
 }));
 
 vi.mock("./session/ReviewPanel", () => ({
-  ReviewPanel: ({ cwd, onClose }: { cwd: string; onClose: () => void }) => (
-    <div data-testid="review-panel">
-      <PanelHeader icon="pullRequest" title={t("sidepanel.review")} subtitle={cwd} onClose={onClose} />
-    </div>
-  ),
+  ReviewPanel: ({ cwd, onClose }: { cwd: string; onClose: () => void }) => {
+    const filesMenu = useMenu();
+    const [dialogOpen, setDialogOpen] = useState(false);
+    return (
+      <div data-testid="review-panel">
+        <PanelHeader icon="pullRequest" title={t("sidepanel.review")} subtitle={cwd} onClose={onClose} />
+        <button type="button" data-testid="open-review-menu" onClick={filesMenu.open}>
+          Review files
+        </button>
+        {filesMenu.anchor && (
+          <Menu
+            anchor={filesMenu.anchor}
+            onClose={filesMenu.close}
+            items={[{ key: "a", label: "src/a.ts", onSelect: () => {} }]}
+          />
+        )}
+        <button type="button" data-testid="open-review-dialog" onClick={() => setDialogOpen(true)}>
+          Open dialog
+        </button>
+        <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} title="Confirm">
+          <p>Dialog body</p>
+        </Dialog>
+      </div>
+    );
+  },
 }));
 
 vi.mock("./link/LinkPanel", () => ({
@@ -355,5 +375,80 @@ describe("narrow-screen browser Back pops stack before closing", () => {
     await until(() => host.querySelector("aside") === null);
     expect(getPanel()).toBeNull();
     expect(hist.length).toBe(1);
+  });
+
+  it("closes an open Menu above the drilled-in panel before popping the panel stack", async () => {
+    const hist = installNarrowAndFakeHistory();
+    act(() => openPanel({ kind: "task", todo: "todo-1" }));
+    act(() => root.render(<SidePanel />));
+    await until(() => Boolean(host.querySelector('[data-testid="task-panel"]')));
+
+    // Drill Task -> Agent -> Review
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-nested-agent"]')!.click());
+    await until(() => Boolean(host.querySelector('[data-testid="agent-panel"]')));
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-review"]')!.click());
+    await until(() => Boolean(host.querySelector('[data-testid="review-panel"]')));
+    expect(hist.length).toBe(2);
+
+    // Open a Menu inside ReviewPanel (pushes its own overlay Back entry on NARROW).
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-review-menu"]')!.click());
+    await until(() => Boolean(document.querySelector('[role="menu"]')));
+    expect(hist.length).toBe(3);
+
+    // 1st Back: closes only the Menu; ReviewPanel stays mounted with its back stack intact.
+    hist.back();
+    await until(() => document.querySelector('[role="menu"]') === null);
+    expect(host.querySelector('[data-testid="review-panel"]')).not.toBeNull();
+    expect(getPanel()?.kind).toBe("review");
+    expect(hist.length).toBe(2);
+
+    // 2nd Back: pops Review -> Agent.
+    hist.back();
+    await until(() => Boolean(host.querySelector('[data-testid="agent-panel"]')));
+    expect(getPanel()).toEqual({ kind: "agent", mid: "m1", sid: "s2" });
+    expect(hist.length).toBe(2);
+
+    // 3rd Back: pops Agent -> Task.
+    hist.back();
+    await until(() => Boolean(host.querySelector('[data-testid="task-panel"]')));
+    expect(getPanel()).toEqual({ kind: "task", todo: "todo-1" });
+    expect(hist.length).toBe(2);
+
+    // 4th Back: closes the panel cleanly.
+    hist.back();
+    await until(() => host.querySelector("aside") === null);
+    expect(getPanel()).toBeNull();
+    expect(hist.length).toBe(1);
+  });
+
+  it("dismisses an open Dialog without its own Back entry (tablet narrow width) before popping the panel stack", async () => {
+    const hist = installNarrowAndFakeHistory();
+    act(() => openPanel({ kind: "task", todo: "todo-1" }));
+    act(() => root.render(<SidePanel />));
+    await until(() => Boolean(host.querySelector('[data-testid="task-panel"]')));
+
+    // Drill Task -> Agent -> Review
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-nested-agent"]')!.click());
+    await until(() => Boolean(host.querySelector('[data-testid="agent-panel"]')));
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-review"]')!.click());
+    await until(() => Boolean(host.querySelector('[data-testid="review-panel"]')));
+
+    // Open a Dialog (installNarrowAndFakeHistory matches NARROW but not PHONE/SHEET_QUERY, so Dialog has no Back entry).
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-review-dialog"]')!.click());
+    await until(() => Boolean(document.querySelector('[role="dialog"]')));
+    expect(hist.length).toBe(2);
+
+    // 1st Back: dismisses the Dialog and re-arms SidePanel's Back entry without popping ReviewPanel.
+    hist.back();
+    await until(() => !document.querySelector('[role="dialog"]') || Boolean(document.querySelector('[data-closing] [role="dialog"]')));
+    expect(host.querySelector('[data-testid="review-panel"]')).not.toBeNull();
+    expect(getPanel()?.kind).toBe("review");
+    expect(hist.length).toBe(2);
+
+    // 2nd Back: now pops Review -> Agent.
+    hist.back();
+    await until(() => Boolean(host.querySelector('[data-testid="agent-panel"]')));
+    expect(getPanel()).toEqual({ kind: "agent", mid: "m1", sid: "s2" });
+    expect(hist.length).toBe(2);
   });
 });
