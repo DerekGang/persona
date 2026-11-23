@@ -13,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/lazyre"
+	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -178,6 +179,14 @@ func (s *Service) partnersPaired() bool {
 // and the last; a partner that came online gets what waits for it now; what waits for a pairing that ended (a hub no
 // longer listed, or paired again since) fails as unpaired (partnerSweep).
 func (s *Service) partnersChanged(p assistantwire.PartnerHubs) {
+	// A partner names itself: its name goes to the model (hub_list, hub_send's answers and errors, the framing) and to
+	// the cards only as partnerInline makes it, without hidden characters or marks that could end a quote.
+	hubs := make([]assistantwire.PartnerHub, len(p.Hubs))
+	for i, h := range p.Hubs {
+		h.Name = partnerInline(h.Name, 64)
+		hubs[i] = h
+	}
+	p.Hubs = hubs
 	b := &s.partners
 	b.mu.Lock()
 	before, old, knew := b.pairedLocked(), b.list, b.known
@@ -188,6 +197,9 @@ func (s *Service) partnersChanged(p assistantwire.PartnerHubs) {
 		s.partnerToolsChanged()
 	}
 	if !p.Enabled {
+		if !knew || old.Enabled {
+			go s.partnerSweep() // what partners sent and is not in a conversation yet stays out
+		}
 		return
 	}
 	if !knew || partnerPairingsEnded(old, p) {
@@ -243,7 +255,9 @@ func (s *Service) partnerListNow() (assistantwire.PartnerHubs, bool) {
 // hub refuses what goes when it goes.
 func partnerStaleIn(list assistantwire.PartnerHubs, m db.PartnerMessage) bool {
 	if !list.Enabled {
-		return false
+		// Partner hubs switched off (the emergency switch), or this manager no longer the hub's default: nothing a
+		// partner sent goes into a conversation; what goes out is refused by the hub when it goes.
+		return m.Direction == partnerIn
 	}
 	h, ok := partnerListed(list, m.PeerHub)
 	if !ok {
@@ -401,6 +415,7 @@ func (s *Service) partnerList(ctx context.Context) (assistantwire.PartnerHubs, e
 		return assistantwire.PartnerHubs{}, err
 	}
 	s.partnersChanged(list)
+	list, _ = s.partnerListNow() // as partnersChanged keeps it: the names made safe to quote
 	return list, nil
 }
 
@@ -452,4 +467,15 @@ func partnerMutate(ctx context.Context, st partnerStore, m db.PartnerMessage, ch
 		m = *cur
 	}
 	return m, false, errors.New("partner message: changed by another writer five times")
+}
+
+// partnerLine: it is a partner hub's message or reply as a user line (its source kind hub). A summary or a handoff that
+// carries the last messages on leaves it out: there every user line reads as the user's own words, without the framing
+// that said it was another hub's request (conversation_read still reads it).
+func partnerLine(it proto.Item) bool {
+	if it.Role != "user" {
+		return false
+	}
+	src := prompts.ItemSource(it)
+	return src != nil && src.Kind == proto.SourceHub
 }

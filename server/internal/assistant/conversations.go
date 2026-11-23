@@ -860,6 +860,11 @@ func (s *Service) queuedRelays() (map[string][]string, bool) {
 				out[id] = append(out[id], msg.FromTitle+"的新消息") // i18n-ignore: the queue's label, as the task notices'
 				continue
 			}
+			if msg.Tool == partnerMessageTool || msg.Tool == partnerReplyTool { // a partner hub's (partner_receive.go): its
+				// words stay out of the label, which no client reads as another chat's or parses for blocks
+				out[id] = append(out[id], "协作 hub「"+msg.FromTitle+"」的消息") // i18n-ignore: the queue's label, as the others'
+				continue
+			}
 			out[id] = append(out[id], "来自「"+msg.FromTitle+"」："+msg.Text)
 		}
 	}

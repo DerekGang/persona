@@ -29,6 +29,13 @@ export function SourceMessage(props: SourceProps) {
   return <RelayedSourceMessage {...props} />;
 }
 
+/** A partner hub's words as it wrote them: the manager writes the `<` of every tag start in them as `&lt;` so the model
+ *  never reads a tag there (prompts.PlainWords); shown as Markdown, which never renders raw HTML, they get it back, so
+ *  `Vec<String>` in a code span reads as written. */
+export function partnerWords(text: string): string {
+  return text.replace(/&lt;(?=\s*[/\\]*\s*\p{L})/gu, "<");
+}
+
 function RelayedSourceMessage({ msg, mid, sid }: SourceProps) {
   const { scope } = useChatContext();
   const [open, setOpen] = useExpanded(`${scope}source:${msg.id}`);
@@ -60,7 +67,7 @@ function RelayedSourceMessage({ msg, mid, sid }: SourceProps) {
         const line = parseFloat(getComputedStyle(el).lineHeight);
         if (line && el.scrollHeight > line * 3.5 && !measuredLong) setMeasuredLong(true);
       }}>
-        <Markdown text={keepLineBreaks(text)} mid={mid} small />
+        <Markdown text={keepLineBreaks(hub ? partnerWords(text) : text)} mid={mid} small />
       </div>
       {long && <button type="button" className="chat-source-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         {t(open ? "chat-segmentview.collapse" : "chat-segmentview.expand")}

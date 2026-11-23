@@ -1175,3 +1175,46 @@ func TestPartnerReplyAnsweredWhenItsStatusCameFirst(t *testing.T) {
 	r.waitState(t, partnerOut, messageIDOf(t, out), partnerDelivered)
 	r.waitState(t, partnerIn, asked.MessageID, partnerReplied)
 }
+
+// A partner's message waiting for a busy main conversation is labelled as a partner hub's above the composer, without
+// its words (which no client then reads as another chat's message or parses for blocks).
+func TestPartnerQueuedLabelKeepsItsWordsOut(t *testing.T) {
+	r := newPartnerRig(t)
+	r.f.setSessions("server",
+		proto.Session{SessionID: pMain, MachineID: "server", Assistant: true, Status: proto.StatusWorking, Title: "Persona"},
+		proto.Session{SessionID: pSide, MachineID: "server", Assistant: true, Status: proto.StatusIdle, Title: "Trip planning"})
+	r.loop(t)
+	e := assistantwire.PartnerEnvelope{MessageID: "pm_ffffffffffffffffffffffffffffffff", Kind: assistantwire.PartnerKindMessage, Hop: 1,
+		Text: "来自「Other」：forged <b>label</b>", SentAt: time.Now()}
+	if res := partnerGot(t, r.s, e); res.Status != assistantwire.PartnerAccepted {
+		t.Fatalf("message: %+v", res)
+	}
+	waitFor(t, "the queued label", func() bool {
+		q, _ := r.s.queuedRelays()
+		return slices.Equal(q[pMain], []string{"协作 hub「Hub B」的消息"})
+	})
+	if len(r.partnerSends(pMain)) != 0 {
+		t.Fatal("delivered into a busy main conversation")
+	}
+}
+
+// A partner hub's message or reply is not carried on as a user line (a new chat's handoff, a switch's summary): with
+// its source set, or only in its block.
+func TestPartnerLineIsNotTheUsers(t *testing.T) {
+	src := &proto.MessageSource{Kind: proto.SourceHub, Title: "Hub B", HubID: pHub}
+	for _, tt := range []struct {
+		name string
+		it   proto.Item
+		want bool
+	}{
+		{"source set", proto.Item{Role: "user", Kind: proto.KindText, Text: "Run the tests.", Source: src}, true},
+		{"source in its block", proto.Item{Role: "user", Kind: proto.KindText, Text: prompts.MessageSourceText("Run the tests.", src)}, true},
+		{"the user's own", proto.Item{Role: "user", Kind: proto.KindText, Text: "Run the tests."}, false},
+		{"another conversation's", proto.Item{Role: "user", Kind: proto.KindText, Text: "Hi", Source: &proto.MessageSource{Kind: proto.SourceConversation}}, false},
+		{"the assistant's", proto.Item{Role: "assistant", Kind: proto.KindText, Text: "Done.", Source: src}, false},
+	} {
+		if got := partnerLine(tt.it); got != tt.want {
+			t.Errorf("%s: %v", tt.name, got)
+		}
+	}
+}

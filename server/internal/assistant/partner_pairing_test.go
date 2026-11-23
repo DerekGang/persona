@@ -437,3 +437,48 @@ func TestPartnerLookalikeNames(t *testing.T) {
 		t.Fatalf("short id: %q", got)
 	}
 }
+
+// With partner hubs switched off (hub.json partners.enabled false, the emergency switch), what a partner sent and is
+// not in a conversation yet stays out: a message waiting in the main conversation's queue is dropped as it would go
+// in, one taken but not delivered fails; no status goes back (nothing goes out either).
+func TestPartnerNothingGoesInWhilePartnersAreOff(t *testing.T) {
+	r := newPartnerRig(t)
+	ctx := context.Background()
+	sessions := func(mainStatus string) []proto.Session {
+		return []proto.Session{
+			{SessionID: pMain, MachineID: "server", Assistant: true, Status: mainStatus, Title: "Persona"},
+			{SessionID: pSide, MachineID: "server", Assistant: true, Status: proto.StatusIdle, Title: "Trip planning"},
+		}
+	}
+	queued := func(messageID string) bool {
+		b := &r.s.relays
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return slices.ContainsFunc(b.st.Queue[pMain], func(m relayMsg) bool { return m.Partner == messageID })
+	}
+	r.f.setSessions("server", sessions(proto.StatusWorking)...)
+	waiting := assistantwire.PartnerEnvelope{MessageID: "pm_e0000000000000000000000000000001", Kind: assistantwire.PartnerKindMessage, Hop: 1,
+		Text: "Please send me the plan.", SentAt: time.Now()}
+	if res := partnerGot(t, r.s, waiting); res.Status != assistantwire.PartnerAccepted {
+		t.Fatalf("receive: %+v", res)
+	}
+	waitFor(t, "queued behind the main conversation's turn", func() bool { return queued(waiting.MessageID) })
+	later := time.Now().UTC().Add(time.Hour)
+	if _, _, err := r.db.InsertPartnerMessage(ctx, db.PartnerMessage{ID: "pr_e2", Direction: partnerIn, PeerHub: pHub, PeerName: "Hub B",
+		MessageID: "pm_e0000000000000000000000000000002", Kind: assistantwire.PartnerKindMessage, Hop: 1, Text: "And the budget.",
+		State: partnerReceived, NextTry: &later, PairedAt: partnerPairedAt}); err != nil {
+		t.Fatal(err)
+	}
+
+	r.pairAgain(assistantwire.PartnerHubs{Enabled: false})
+	if m := r.waitState(t, partnerIn, "pm_e0000000000000000000000000000002", partnerFailed); m.Code != assistantwire.PartnerCodeUnpaired {
+		t.Fatalf("received row: %+v", m)
+	}
+	r.f.setSessions("server", sessions(proto.StatusIdle)...)
+	r.s.drainRelays("server", sessions(proto.StatusIdle))
+	r.waitState(t, partnerIn, waiting.MessageID, partnerFailed)
+	waitFor(t, "dropped from the queue", func() bool { return !queued(waiting.MessageID) })
+	if got := r.partnerSends(pMain); len(got) != 0 {
+		t.Fatalf("went into the main conversation with partner hubs off: %+v", got)
+	}
+}

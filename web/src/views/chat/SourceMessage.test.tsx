@@ -79,6 +79,16 @@ describe("source messages in the actual transcript renderer", () => {
     expect(card.textContent).not.toContain("persona-context");
   });
 
+  it("shows a partner hub's code as it wrote it, not as the escape the model reads", () => {
+    const text = "Try `let v: Vec&lt;String> = load();` and\n\n```go\nif a&lt;b { return }\n```\n\n2 < 3";
+    const host = render([{ id: "1#0", seq: 1, role: "user", kind: "text", text, source: { kind: "hub", title: "家里", hub_id: "hub-b" } }]);
+    const card = host.querySelector('[data-message-source="hub"]')!;
+    expect(card.textContent).toContain("Vec<String>");
+    expect(card.textContent).toContain("if a<b");
+    expect(card.textContent).not.toContain("&lt;");
+    expect(card.querySelector("b, script")).toBeNull();
+  });
+
   it("names a partner hub without a name as a partner hub", () => {
     const host = render([{ id: "1#0", seq: 1, role: "user", kind: "text", text: "你好", source: { kind: "hub", hub_id: "hub-b" } }]);
     expect(host.querySelector(".chat-source-label")?.textContent).toBe("@协作 hub");

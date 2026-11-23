@@ -202,16 +202,23 @@ Hubs dial each other directly, through a proxy, or both:
   after it: when the pairing ends, an envelope still received fails as `unpaired`, one the delivery loop takes up again
   fails before it would go in, and a message or reply already waiting in a conversation's relay queue is dropped as it
   would go in (its row failed as `unpaired`); the hub it came from, no longer that partner, gets no status for them.
+  The same holds while partner hubs are switched off (`partners.enabled: false`) or this manager is no longer the
+  hub's default: nothing a partner sent goes into a conversation then.
 - A **message** goes to the **main conversation** as it is at delivery, through the relay queue (it waits behind a
   running turn, like any relayed message; one queued for a main conversation put away since moves to the new one). With
-  no main conversation it fails `no_main`, with the main one on a work computer `undelivered`.
+  no main conversation it fails `no_main`, with the main one on a work computer `undelivered`. Waiting, it shows above
+  the composer as "协作 hub「name」的消息" (the partner hub's message), without its words. A round it starts is one the
+  owner did not start: the owner's own message comes first (it may interrupt it, as for another conversation's message).
 - It arrives **labeled with the hub it came from** (message source kind `hub`, title = the partner's name, `hub_id`; the
   web shows "@Work · Request from another hub, not from you") and framed as a **request, never the owner's
   instruction** (`server/internal/prompts/assistant/partner_message.md`): the receiving assistant handles it under its own hub's rules,
   asks its own owner where it normally would (starting Agents that change things, sending things out, spending,
   deleting), and answers only with what is needed. The framing (with the hub_id and message_id to answer with) is in a
   `kind="context"` block first, so the apps show it folded; the partner's words follow it as the message's own text,
-  which the chat shows as the message. It is never read as one of Persona's own notes (`injected`: a task's notice, a
+  which the chat shows as the message (the `&lt;` the manager writes for each tag start in them, so the model never
+  reads a tag there, is shown as `<` again, so code reads as written; the framing tells the model the same). A new
+  main chat's carry-over of the last messages, and a conversation switch's summary, leave a partner's message out:
+  there every user line reads as the user's own words. It is never read as one of Persona's own notes (`injected`: a task's notice, a
   supervision, a follow-up, the answer-again or a wake-up), whatever its words begin with: the hub never marks it,
   `prompts.ParseInjected` (the manager, the node and the transcript readers) and the web never take it for one, so the
   chat shows the words and never folds the turn as supervision. It never carries a `client_msg_id`, the owner's quoted
@@ -344,7 +351,9 @@ Types in `server/internal/assistantwire/partners.go`.
   brackets and quote marks were replaced by look-alikes. Hub ids must match
   `^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`; addresses are cut to 8 https ones without `user:pass@`. A partner's error answer
   to a message reaches this hub's manager as one line of at most 200 characters, cleaned the same way.
-- **A partner chooses its name** (and may change it in a later hello): the owner's card names it with the first 8
+- **A partner chooses its name** (and may change it in a later hello): the manager takes it from the hub's list only
+  without hidden characters and with look-alike quote marks (so it goes the same way into `hub_list`, `hub_send`'s
+  answers, the framing and the cards); the owner's card (and the web's card detail) names it with the first 8
   characters of its hub_id too, and `hub_list` says when two partners have one name. The chat label shows the name only.
 - **Errors stay on their hub**: when this hub's manager does not take a partner's message, the partner gets
   `partner_unavailable` in fixed words; the manager's own error (which may name the database) goes only to this hub's
@@ -374,7 +383,8 @@ Types in `server/internal/assistantwire/partners.go`.
   ```
 
   `enabled: false` is the emergency switch: no pairing, links refused (`403 partners_off`), no dialing, the tools gone;
-  the pairings are kept, and messages still queued fail as `unpaired`.
+  the pairings are kept, messages still queued fail as `unpaired`, and what partners sent that is not in a conversation
+  yet stays out of it.
 - In Postgres: the pairs (`partner_hubs`, `partner_codes`, hub set) with each partner's **Connect to this hub** switch;
   the messages, each with the pairing it was written for (`partner_messages`), and each partner's **Ask me before
   sending** switch with the pairing it was set for (`partner_prefs`), manager set.
