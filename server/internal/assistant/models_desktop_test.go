@@ -3,12 +3,14 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -50,7 +52,7 @@ func chooseDesktopForAgents(t *testing.T, s *Service, extra string) *http.Respon
 // have it, and Agents saved on it runs on it. The Codex App is not offered anywhere; nor are the main chat, the API
 // uses, and the Inbox AI twin's and Lark /agent's own choices.
 func TestDesktopAppIsAgentsProviderOnly(t *testing.T) {
-	s, _ := desktopHub(t)
+	s, f := desktopHub(t)
 	l := s.requestCtxLang(context.Background())
 	agents := purposeOf(t, s, "agent.new")
 	if !slices.Contains(agents.ProviderIDs, "launcher.claude-desktop") {
@@ -81,6 +83,17 @@ func TestDesktopAppIsAgentsProviderOnly(t *testing.T) {
 		t.Fatalf("desktop provider: %+v", p)
 	}
 
+	// A node has no command for the app's launcher to check a model with: the save does not ask it.
+	f.answerNode(assistantwire.DeviceLaunchersModelCheck, func(_ string, raw json.RawMessage) (any, error) {
+		var args struct{ Name string }
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, err
+		}
+		if args.Name == claudeDesktopLauncher {
+			return nil, errors.New("launcher claude-desktop not found")
+		}
+		return map[string]any{"agent": launcherAgent(args.Name)}, nil
+	})
 	if r := chooseDesktopForAgents(t, s, `,"model":"opus","effort":"high"`); r.StatusCode != http.StatusOK {
 		t.Fatalf("save: %d", r.StatusCode)
 	}
@@ -192,6 +205,33 @@ func TestDesktopAppDefaultOnEachComputer(t *testing.T) {
 	params, err = s.AgentResumeParams(ctx, AgentResumeParams{MachineID: "mac", SessionID: "outside-1", Params: map[string]any{}})
 	if err != nil || params["launcher"] != "claude" {
 		t.Fatalf("resume: %v %v", params, err)
+	}
+}
+
+// A computer whose list can't be read is not second-guessed for a person's New Agent start, which opens in the app as
+// before; a start Persona makes there still never opens the app, though the last list the hub saw names it.
+func TestDesktopAppDefaultOnAnUnreadableList(t *testing.T) {
+	s, f := desktopHub(t)
+	ctx := context.Background()
+	setModel(t, s, "agent.new", ModelBinding{Provider: "launcher.claude-desktop", Model: "opus"})
+	f.mu.Lock()
+	delete(f.zshrc, "mac")
+	f.launcherList = nil // mac's live list can't be read
+	f.mu.Unlock()
+	s.models.zshrcMu.Lock()
+	s.models.zshrc = map[string][]proto.Launcher{"mac": {{Name: claudeDesktopLauncher, Source: proto.SourceClaudeDesktop, Agent: "claude"}}}
+	s.models.zshrcMu.Unlock()
+
+	params, err := s.AgentStartParams(ctx, AgentStartParams{MachineID: "mac", Params: map[string]any{"cwd": "", "launcher": ""}})
+	if err != nil || params["launcher"] != claudeDesktopLauncher {
+		t.Fatalf("New Agent: %v %v", params, err)
+	}
+	out, err := s.runTool(ctx, "server", "conv9", "agent_start", json.RawMessage(`{"machine":"mac","cwd":"/Users/me/code","prompt":"Reply with pong"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := startsOf(f)[0]; st["launcher"] != "claude" || st["model"] != nil || !strings.Contains(out, "claude-desktop") {
+		t.Fatalf("agent_start: %v\n%s", st, out)
 	}
 }
 
