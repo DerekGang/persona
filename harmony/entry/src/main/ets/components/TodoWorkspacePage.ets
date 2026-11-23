@@ -536,11 +536,12 @@ export struct TodoWorkspacePage {
     Column({space:4}) {
       Row({space:5}) {
         Text(group.lead.title).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600)
+          .letterSpacing(/[\u3400-\u9fff]/.test(group.lead.title) ? this.phoneMeasure(-0.35,-0.96)+'vp' : 0)
           .lineHeight(this.phoneMeasure(20.3,28.3)+'vp').fontColor(this.rowClosed(group.lead) ? Colors.secondary : Colors.ink)
           .decoration({type:this.rowClosed(group.lead) ? TextDecorationType.LineThrough : TextDecorationType.None})
           .layoutWeight(1).maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis})
         if (this.since(group.lead)) Text(this.since(group.lead)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12))
-          .lineHeight(this.phoneMeasure(14.3,21.7)+'vp').fontColor(Colors.secondary).margin({top:5}).maxLines(1)
+          .letterSpacing(this.phoneMeasure(0,-0.45)+'vp').lineHeight(this.phoneMeasure(14.3,21.7)+'vp').fontColor(Colors.secondary).margin({top:5}).maxLines(1)
       }.width('100%').alignItems(VerticalAlign.Top)
       Row({space:6}) {
         Circle().width(7).height(7).fill(group.phone.urgentState==='needs_you' ? Colors.needs : group.phone.urgentState==='working' ? Colors.link : Colors.secondary)
