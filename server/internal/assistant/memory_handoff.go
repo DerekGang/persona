@@ -11,18 +11,19 @@ import (
 )
 
 // A dispatched task's first message carries the memory entries the task needs (#13532, scene 3, docs/assistant/
-// health.md "Memory by scene"): general ones its words bear on, sensitive ones only when its own text was tagged with
-// every one of their categories. A text so tagged is itself confirmed on the phone before it goes (confirmOutbound),
-// so a sensitive entry never leaves without that. The to-do's brief lists the entries carried (a memory event).
+// health.md "Memory by scene"): general ones its words bear on, and sensitive ones only when the owner confirmed the
+// start. That is a plan whose words were tagged with every one of the entry's categories, which therefore waited for
+// the owner's "Start" on its card (task_plan, PlanTask.MemoryTopic), and the owner tapped it (OwnerStarted). A leader's
+// workers, a task_spawn, a plan the hub started without asking or one whose words were general carry none: no start
+// of theirs passed a confirmation. Nothing here asks a model. The to-do's brief lists the entries carried (a memory
+// event), once the start went through.
 
 // handOffMemory is what task t, handed to machine, carries of the ledger: entries for any executor that apply on
-// machine, personal ones only on the owner's own computer, none on a work computer. The task's text is tagged only
-// when a sensitive entry could go with it.
+// machine, personal ones only on the owner's own computer, none on a work computer.
 func (s *Service) handOffMemory(ctx context.Context, t PlanTask, machine string) assembled {
 	if s.memoryEntrySrc() == nil || s.isWorkMachine(machine) {
 		return assembled{}
 	}
-	text := strings.TrimSpace(t.Title + "\n" + t.Prompt)
 	p := proto.AssistantEntriesParams{Scope: &proto.AssistantEntryScopeFilter{Executor: "any", Machine: []string{machine}}}
 	entries, err := s.memoryEntriesFor(ctx, p, machine != "" && machine == s.settings(ctx).MachineID)
 	if err != nil {
@@ -31,29 +32,21 @@ func (s *Service) handOffMemory(ctx context.Context, t PlanTask, machine string)
 	if len(entries) == 0 {
 		return assembled{}
 	}
-	info := s.memoryEntryUses(ctx, entries)
-	f := assembleFor{Role: assembleHandOff, Query: text}
-	if slices.ContainsFunc(entries, func(e proto.AssistantEntry) bool { return info(e).sensitive() }) {
-		origin := ""
-		if todo, ok := s.todoNow(t.TodoID); ok {
-			origin = todo.Origin
-		}
-		space, _ := s.conversationSpace(ctx, origin)
-		u := s.exitUse(ctx, text, origin, space)
-		f.Topic, f.TopicKnown = u.Categories, u.Known
+	f := assembleFor{Role: assembleHandOff, Query: strings.TrimSpace(t.Title + "\n" + t.Prompt)}
+	if t.OwnerStarted && t.Parent == "" && len(t.MemoryTopic) > 0 {
+		f.Topic, f.TopicKnown = t.MemoryTopic, true
 	}
-	return assembleEntries(entries, f, info)
+	return assembleEntries(entries, f, s.memoryEntryUses(ctx, entries))
 }
 
-// handOffMemoryContext is the context block of the entries task t carries to machine, empty when none; the to-do's
-// brief notes which went.
-func (s *Service) handOffMemoryContext(ctx context.Context, t PlanTask, machine string) string {
+// handOffMemoryContext is the context block of the entries task t carries to machine, empty when none, and the
+// entries themselves: the caller notes them in the to-do's brief once the start went through (noteHandOffMemory).
+func (s *Service) handOffMemoryContext(ctx context.Context, t PlanTask, machine string) (string, assembled) {
 	a := s.handOffMemory(ctx, t, machine)
 	if len(a.Entries) == 0 {
-		return ""
+		return "", assembled{}
 	}
-	s.noteHandOffMemory(ctx, t.TodoID, a)
-	return s.renderMemoryEntries(ctx, a)
+	return s.renderMemoryEntries(ctx, a), a
 }
 
 // renderMemoryEntries is the context block of a's entries, in the answer language.
@@ -65,8 +58,8 @@ func (s *Service) renderMemoryEntries(ctx context.Context, a assembled) string {
 	return prompts.RenderMemoryEntries(d)
 }
 
-// noteHandOffMemory writes into to-do todoID's brief which entries its first message carried, once per set: a start
-// tried again with the same entries notes nothing more. A to-do with no brief yet keeps no note (logged).
+// noteHandOffMemory writes into to-do todoID's brief which entries its first message carried, once the start went
+// through, and once per set: a start tried again with the same entries notes nothing more. A to-do with no brief yet keeps no note (logged).
 func (s *Service) noteHandOffMemory(ctx context.Context, todoID string, a assembled) {
 	brief, ok := s.briefOfTodo(todoID)
 	if todoID == "" || !ok {

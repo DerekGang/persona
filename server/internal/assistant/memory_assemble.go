@@ -18,8 +18,8 @@ import (
 //     ones from elsewhere, and sensitive ones from elsewhere only when the conversation carries every one of their
 //     categories (scene 2);
 //   - a dispatched task's first message (assembleHandOff): general entries the task's words bear on, and sensitive
-//     ones only when the task's text was tagged with every one of their categories (scene 3); the to-do's brief lists
-//     what was carried (memory_handoff.go);
+//     ones only when the owner confirmed a plan whose words were tagged with every one of their categories (scene 3);
+//     the to-do's brief lists what was carried (memory_handoff.go);
 //   - the Inbox's helper and drafts for other people (assembleInbox): general entries the message bears on, never a
 //     sensitive one (scene 5).
 //
@@ -41,7 +41,8 @@ const (
 	memoryStandingSpaceMax    = 1536
 	memoryStandingPersonalMax = 1536
 	memoryHandOffMax          = 1536
-	// memoryAssemblePages bounds how many pages of the ledger an assembly reads (entries come oldest first).
+	// memoryAssemblePages bounds how many pages of the ledger an assembly reads, newest first: past them only older
+	// entries are left, which no budget would take before the newer ones.
 	memoryAssemblePages = 10
 	// memoryRelevantTerms is how many terms an entry shares with a task's or a message's text to bear on it.
 	memoryRelevantTerms = 2
@@ -55,7 +56,7 @@ type assembleFor struct {
 	Space      string
 	SpaceKnown bool
 	// Topic are the categories that make sensitive entries relevant (normalCategories): the conversation's for a
-	// recall, the task text's for a hand-off. TopicKnown: they could all be told.
+	// recall, the confirmed plan's for a hand-off (PlanTask.MemoryTopic). TopicKnown: they could all be told.
 	Topic      []string
 	TopicKnown bool
 	// Query is the text general entries must bear on for a hand-off or the Inbox (memoryRelevantTerms).
@@ -147,7 +148,7 @@ func entryCarried(e proto.AssistantEntry, info infoUse, f assembleFor) bool {
 		}
 	case usageMinimal: // sensitive, elsewhere: recalled when on topic, never standing
 		return f.Role == assembleRecall && onTopic(info, f)
-	case usageConfirm: // sensitive, handed out (the text carrying it was confirmed) or sent to others (never)
+	case usageConfirm: // sensitive, handed out (after the owner confirmed a plan on its topic) or sent to others (never)
 		return f.Role == assembleHandOff && onTopic(info, f)
 	}
 	return false
@@ -186,14 +187,26 @@ func entryRelevant(e proto.AssistantEntry, query string) bool {
 	return false
 }
 
-// memoryTerms are text's terms: its words of three letters or digits or more, lower-cased, and every two characters
-// in a row of Chinese or Japanese.
+// memoryStopwords are English words of three letters or more too common to tell what a text is about: two texts
+// sharing them share nothing (memoryTerms leaves them out).
+var memoryStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "are": true, "but": true, "not": true, "you": true, "all": true, "any": true,
+	"can": true, "has": true, "had": true, "was": true, "our": true, "out": true, "its": true, "may": true, "who": true,
+	"how": true, "did": true, "yes": true, "with": true, "this": true, "that": true, "from": true, "have": true,
+	"will": true, "your": true, "they": true, "them": true, "then": true, "than": true, "into": true, "what": true,
+	"when": true, "where": true, "which": true, "there": true, "their": true, "about": true, "been": true, "were": true,
+	"also": true, "only": true, "just": true, "some": true, "such": true, "each": true, "more": true, "most": true,
+	"very": true, "should": true, "would": true, "could": true, "please": true,
+}
+
+// memoryTerms are text's terms: its words of three letters or digits or more, lower-cased, but for memoryStopwords,
+// and every two characters in a row of Chinese or Japanese.
 func memoryTerms(text string) map[string]bool {
 	out := map[string]bool{}
 	var word, cjk []rune
 	flush := func() {
-		if len(word) >= 3 {
-			out[strings.ToLower(string(word))] = true
+		if w := strings.ToLower(string(word)); len(word) >= 3 && !memoryStopwords[w] {
+			out[w] = true
 		}
 		for i := 0; i+1 < len(cjk); i++ {
 			out[string(cjk[i:i+2])] = true
@@ -220,8 +233,8 @@ func memoryTerms(text string) map[string]bool {
 	return out
 }
 
-// memoryEntriesFor reads the active entries p selects (personal: the receiver may see personal ones), at most
-// memoryAssemblePages pages; none without a ledger.
+// memoryEntriesFor reads the active entries p selects (personal: the receiver may see personal ones), oldest first:
+// the newest memoryAssemblePages pages of them; none without a ledger.
 func (s *Service) memoryEntriesFor(ctx context.Context, p proto.AssistantEntriesParams, personal bool) ([]proto.AssistantEntry, error) {
 	src := s.memoryEntrySrc()
 	if src == nil {
@@ -229,10 +242,11 @@ func (s *Service) memoryEntriesFor(ctx context.Context, p proto.AssistantEntries
 	}
 	p.Status, p.Limit, p.After = "active", 200, ""
 	var out []proto.AssistantEntry
+	var err error
 	for range memoryAssemblePages {
-		res, err := src.ListAssistantEntries(ctx, p, personal)
-		if err != nil {
-			return out, err
+		var res proto.AssistantEntriesResult
+		if res, err = src.NewestAssistantEntries(ctx, p, personal); err != nil {
+			break
 		}
 		out = append(out, res.Entries...)
 		if !res.HasMore || res.After == "" {
@@ -240,7 +254,8 @@ func (s *Service) memoryEntriesFor(ctx context.Context, p proto.AssistantEntries
 		}
 		p.After = res.After
 	}
-	return out, nil
+	slices.Reverse(out)
+	return out, err
 }
 
 // assembleMemory is the entries p selects as f takes them.

@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,13 +14,13 @@ import (
 )
 
 // memEntrySource is a ledger in memory for the assembler (memoryEntrySource): the entries oldest first, filtered by
-// the personal boundary, executor and machine as the manager database does, paged by index.
+// the personal boundary, executor and machine as the manager database does, listed newest first and paged by index.
 type memEntrySource struct {
 	entries []proto.AssistantEntry
 	listed  int
 }
 
-func (m *memEntrySource) ListAssistantEntries(_ context.Context, p proto.AssistantEntriesParams, personal bool) (proto.AssistantEntriesResult, error) {
+func (m *memEntrySource) NewestAssistantEntries(_ context.Context, p proto.AssistantEntriesParams, personal bool) (proto.AssistantEntriesResult, error) {
 	m.listed++
 	var match []proto.AssistantEntry
 	for _, e := range m.entries {
@@ -36,6 +37,7 @@ func (m *memEntrySource) ListAssistantEntries(_ context.Context, p proto.Assista
 		}
 		match = append(match, e)
 	}
+	slices.Reverse(match)
 	from, _ := strconv.Atoi(p.After)
 	limit := p.Limit
 	if limit == 0 {
@@ -129,6 +131,47 @@ func TestMemoryEntryUses(t *testing.T) {
 	if u := info(entryQAHealth); !u.Known || strings.Join(u.Categories, ",") != "health" {
 		t.Errorf("health, no tagging: %+v, want health", u)
 	}
+	// The categories a conversation was tagged with before still count with no model now: an entry said in a
+	// conversation tagged finance stays finance, never general.
+	if err := s.tagConversation(ctx, "qa-plain-2", []string{categoryFinance}, infoTaggedByModel, ""); err != nil {
+		t.Fatal(err)
+	}
+	info = s.memoryEntryUses(ctx, src.entries)
+	if u := info(entryQAUntagged); strings.Join(u.Categories, ",") != "finance" || !u.sensitive() {
+		t.Errorf("said in a conversation tagged finance, no tagging: %+v, want finance", u)
+	}
+}
+
+// An entry's track is its conversation's: one that states none takes it, one that states another is not known, and
+// one whose conversation cannot be told is in no track and not known, whether or not anything is tagged.
+func TestMemoryEntryTrackIsItsConversations(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, _ := memoryAssembleService(t)
+	healthUnstated := proto.AssistantEntry{ID: "entry-qa-health-unstated", Category: []string{categoryHealth},
+		Source: proto.AssistantEntrySource{Machine: "qa-machine", Session: "qa-health-1"}}
+	lost := proto.AssistantEntry{ID: "entry-qa-lost", Category: []string{categoryFinance},
+		Source: proto.AssistantEntrySource{Machine: "qa-machine", Session: "qa-gone"}}
+	moved := proto.AssistantEntry{ID: "entry-qa-moved", OriginSpace: "qa-plain",
+		Source: proto.AssistantEntrySource{Machine: "qa-machine", Session: "qa-finance-1"}}
+	entries := []proto.AssistantEntry{healthUnstated, lost, moved}
+	for _, tagging := range []bool{true, false} {
+		s.noInfoTag = !tagging
+		info := s.memoryEntryUses(ctx, entries)
+		if u := info(healthUnstated); u.SourceTrack != SpaceHealth || !slices.Contains(u.Categories, categoryHealth) {
+			t.Errorf("tagging %v: an entry stating no track from the health space = %+v", tagging, u)
+		}
+		if u := info(lost); u.Known || u.SourceTrack != entryTrackUnknown {
+			t.Errorf("tagging %v: an entry whose conversation cannot be told = %+v, want no track, not known", tagging, u)
+		}
+		if u := info(moved); u.Known || u.SourceTrack != "qa-finance" {
+			t.Errorf("tagging %v: an entry stating qa-plain from qa-finance = %+v, want qa-finance, not known", tagging, u)
+		}
+		// None of them reaches a recall in the main conversation.
+		f := s.assembleForConversation(ctx, "qa-main", assembleRecall)
+		if got := entryIDs(assembleEntries(entries, f, info).Entries); got != "" {
+			t.Errorf("tagging %v: recall in main = %s", tagging, got)
+		}
+	}
 }
 
 // Acceptance (a): a sensitive entry from another track appears 0 times in the main conversation's standing channel,
@@ -202,8 +245,9 @@ func TestMemoryRecallFollowsTheConversationsCategories(t *testing.T) {
 	}
 }
 
-// Acceptance (c): a dispatched task's first message carries only the sensitive entries its text was tagged with, and
-// the to-do's brief lists them; general entries go when the task's words bear on them.
+// Acceptance (c): a dispatched task's first message carries sensitive entries only after the owner's Start on a plan
+// whose words were tagged with every one of their categories (PlanTask.MemoryTopic), and the to-do's brief lists them;
+// general entries go when the task's words bear on them. No hand-off asks a model.
 func TestMemoryHandOffCarriesOnlyWhatTheTaskMatches(t *testing.T) {
 	ctx := context.Background()
 	s, f, _, _ := memoryAssembleService(t)
@@ -212,46 +256,96 @@ func TestMemoryHandOffCarriesOnlyWhatTheTaskMatches(t *testing.T) {
 	}
 	f.mu.Lock()
 	f.infoTag = `{"categories":["finance"]}`
+	asked := len(f.infoTagAsked)
 	f.mu.Unlock()
-	task := PlanTask{TodoID: "todo-qa-1", Title: "qa: monthly report", Prompt: "qa: prepare the monthly budget totals report"}
-	text := s.handOffMemoryContext(ctx, task, "qa-machine")
+	task := PlanTask{TodoID: "todo-qa-1", Title: "qa: monthly report", Prompt: "qa: prepare the monthly budget totals report",
+		OwnerStarted: true, MemoryTopic: []string{categoryFinance}}
+	text, carried := s.handOffMemoryContext(ctx, task, "qa-machine")
 	if !strings.Contains(text, entryQAFinance.Text) || !strings.Contains(text, entryQAMain.Text) {
-		t.Errorf("hand-off tagged finance lacks the finance entry or the relevant general one:\n%s", text)
+		t.Errorf("hand-off confirmed for finance lacks the finance entry or the relevant general one:\n%s", text)
 	}
 	for _, e := range []proto.AssistantEntry{entryQAHealth, entryQAPlain, entryQAUntagged} {
 		if strings.Contains(text, e.Text) {
 			t.Errorf("hand-off carries %s:\n%s", e.ID, text)
 		}
 	}
+	// Assembling notes nothing: the start notes what it carried once it went through (startTaskAgent).
+	if n := memoryEvents(s, "todo-qa-1"); n != 0 {
+		t.Errorf("%d memory events before the start went through", n)
+	}
+	s.noteHandOffMemory(ctx, "todo-qa-1", carried)
 	ids, sensitive := handOffMemoryOf(s, "todo-qa-1")
 	if !slices.Equal(ids, []string{entryQAFinance.ID, entryQAMain.ID}) || !slices.Equal(sensitive, []string{entryQAFinance.ID}) {
 		t.Errorf("the brief lists %v (sensitive %v)", ids, sensitive)
 	}
 	// A start tried again with the same entries notes nothing more.
-	s.handOffMemoryContext(ctx, task, "qa-machine")
+	s.noteHandOffMemory(ctx, "todo-qa-1", carried)
 	if n := memoryEvents(s, "todo-qa-1"); n != 1 {
 		t.Errorf("%d memory events after a retry, want 1", n)
 	}
 
-	// A task tagged health carries no finance entry, and no unknown health one either.
-	f.mu.Lock()
-	f.infoTag = `{"categories":["health"]}`
-	f.mu.Unlock()
-	a := s.handOffMemory(ctx, PlanTask{Title: "qa: monthly report", Prompt: "qa: prepare the monthly report on sleep"}, "qa-machine")
-	if got := entryIDs(a.Entries); got != entryQAMain.ID || len(a.Sensitive) != 0 {
-		t.Errorf("hand-off tagged health = %s (sensitive %v)", got, a.Sensitive)
+	// No start that passed no confirmation carries a sensitive entry, whatever its text says: a plan the hub started
+	// without asking, a plan whose words were general, and a leader's worker.
+	unconfirmed := task
+	unconfirmed.OwnerStarted = false
+	general := task
+	general.MemoryTopic = nil
+	worker := task
+	worker.Parent = "qa-leader-task"
+	for name, tk := range map[string]PlanTask{"unconfirmed": unconfirmed, "general plan": general, "leader worker": worker} {
+		if a := s.handOffMemory(ctx, tk, "qa-machine"); entryIDs(a.Entries) != entryQAMain.ID || len(a.Sensitive) != 0 {
+			t.Errorf("%s hand-off = %s (sensitive %v), want only the general entry", name, entryIDs(a.Entries), a.Sensitive)
+		}
 	}
-	// Another computer gets no personal entry; a task whose words bear on nothing gets nothing, and asks no model.
-	f.mu.Lock()
-	f.infoTag = `{"categories":["finance"]}`
-	f.mu.Unlock()
+	// A plan confirmed for health carries no finance entry, and no unknown health one either.
+	health := task
+	health.MemoryTopic = []string{categoryHealth}
+	if a := s.handOffMemory(ctx, health, "qa-machine"); entryIDs(a.Entries) != entryQAMain.ID || len(a.Sensitive) != 0 {
+		t.Errorf("hand-off confirmed for health = %s (sensitive %v)", entryIDs(a.Entries), a.Sensitive)
+	}
+	// Another computer gets no personal entry; a task whose words bear on nothing (or only on common words) gets nothing.
 	if got := entryIDs(s.handOffMemory(ctx, task, "qa-other").Entries); got != entryQAMain.ID {
 		t.Errorf("hand-off to another computer = %s", got)
 	}
-	asked := len(f.infoTagAsked)
 	s.memoryEntries = &memEntrySource{entries: []proto.AssistantEntry{entryQAMain}}
-	if a := s.handOffMemory(ctx, PlanTask{Prompt: "qa: something unrelated"}, "qa-machine"); len(a.Entries) != 0 || len(f.infoTagAsked) != asked {
-		t.Errorf("unrelated hand-off = %+v after %d more tagging calls", a, len(f.infoTagAsked)-asked)
+	if a := s.handOffMemory(ctx, PlanTask{Prompt: "qa: something unrelated to the shared things"}, "qa-machine"); len(a.Entries) != 0 {
+		t.Errorf("unrelated hand-off = %+v", a)
+	}
+	f.mu.Lock()
+	n := len(f.infoTagAsked) - asked
+	f.mu.Unlock()
+	if n != 0 {
+		t.Errorf("hand-offs asked a model %d times", n)
+	}
+}
+
+// On a ledger larger than an assembly reads, the newest entries are the ones read, oldest first.
+func TestMemoryAssemblyReadsTheNewest(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, _ := memoryAssembleService(t)
+	var entries []proto.AssistantEntry
+	for i := range memoryAssemblePages*200 + 5 {
+		entries = append(entries, proto.AssistantEntry{ID: "entry-" + strconv.Itoa(i), Text: "qa: placeholder",
+			Scope: proto.AssistantEntryScope{Executor: "any"}, Status: "active"})
+	}
+	s.memoryEntries = &memEntrySource{entries: entries}
+	got, err := s.memoryEntriesFor(ctx, proto.AssistantEntriesParams{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != memoryAssemblePages*200 || got[0].ID != "entry-5" || got[len(got)-1].ID != entries[len(entries)-1].ID {
+		t.Fatalf("read %d entries; want the newest %d, oldest first", len(got), memoryAssemblePages*200)
+	}
+}
+
+// Common words make no text bear on an entry.
+func TestMemoryRelevanceSkipsCommonWords(t *testing.T) {
+	e := proto.AssistantEntry{Text: "qa: the release notes go out on Fridays"}
+	if entryRelevant(e, "qa: the plan for the week, notes and all") {
+		t.Error("one shared word and common ones made the entry relevant")
+	}
+	if !entryRelevant(e, "qa: draft the release notes") {
+		t.Error("two shared words did not make the entry relevant")
 	}
 }
 
@@ -272,17 +366,69 @@ func TestMemoryInboxCarriesNoSensitiveEntry(t *testing.T) {
 }
 
 // decisions_query is a recall: the finance decision from qa-finance reaches the main conversation only once it
-// carries finance (scene 2).
+// carries finance (scene 2), through the tool itself.
 func TestMemoryDecisionsQueryIsARecall(t *testing.T) {
 	ctx := context.Background()
-	s, _, _, _ := memoryAssembleService(t)
-	entries := []proto.AssistantEntry{entryQAFinance, entryQAMain}
-	if got := entryIDs(s.recallMemory(ctx, "qa-main", entries).Entries); got != entryQAMain.ID {
+	s, _, st, _ := memoryAssembleService(t)
+	finance, main := entryQAFinance, entryQAMain
+	finance.Type, main.Type = "decision", "decision"
+	ledger := &entriesMemStore{infoCategoryMemStore: st, entries: []proto.AssistantEntry{finance, main}}
+	s.store = func() Store { return ledger }
+	query := func() string {
+		t.Helper()
+		raw, err := s.toolEntries(ctx, "qa-machine", "qa-main", "decisions_query", json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out proto.AssistantEntriesResult
+		if err := json.Unmarshal([]byte(raw), &out); err != nil || out.Entries == nil {
+			t.Fatalf("decisions_query = %s (%v)", raw, err)
+		}
+		return entryIDs(out.Entries)
+	}
+	if got := query(); got != entryQAMain.ID {
 		t.Errorf("decisions in main = %s", got)
+	}
+	if err := s.tagConversation(ctx, "qa-main", []string{categoryFinance}, infoTaggedByModel, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := query(); got != entryQAFinance.ID+","+entryQAMain.ID {
+		t.Errorf("decisions in main tagged finance = %s", got)
 	}
 	if got := s.recallMemory(ctx, "qa-main", nil).Entries; got != nil {
 		t.Errorf("no entries = %v", got)
 	}
+}
+
+// entriesMemStore is the fake ledger as the manager database's entries (entriesStore) on the info categories' store,
+// for the tools that read it.
+type entriesMemStore struct {
+	*infoCategoryMemStore
+	entries []proto.AssistantEntry
+}
+
+func (m *entriesMemStore) ListAssistantEntries(_ context.Context, p proto.AssistantEntriesParams, personal bool) (proto.AssistantEntriesResult, error) {
+	out := proto.AssistantEntriesResult{Entries: []proto.AssistantEntry{}}
+	for _, e := range m.entries {
+		if (p.Type == "" || e.Type == p.Type) && (personal || !e.Scope.Personal) {
+			out.Entries = append(out.Entries, e)
+		}
+	}
+	return out, nil
+}
+
+func (m *entriesMemStore) AppendAssistantEntry(_ context.Context, e proto.AssistantEntry) (proto.AssistantEntry, error) {
+	m.entries = append(m.entries, e)
+	return e, nil
+}
+
+func (m *entriesMemStore) AssistantEntry(_ context.Context, id string) (proto.AssistantEntry, error) {
+	for _, e := range m.entries {
+		if e.ID == id {
+			return e, nil
+		}
+	}
+	return proto.AssistantEntry{}, db.ErrEntryNotFound
 }
 
 // The user's own extension (trust owner, such as their memory extension) reads every track's memory, qa-finance's
