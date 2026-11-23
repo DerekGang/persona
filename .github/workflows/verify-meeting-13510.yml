@@ -1,0 +1,81 @@
+name: Meeting recap appearance verification
+on:
+  push:
+    branches: [verify/13510-meeting-title-focused]
+permissions:
+  contents: read
+jobs:
+  recap:
+    runs-on: xcode-27
+    timeout-minutes: 48
+    env:
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare the iOS simulator build and its UI-only scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          xcodebuild -version
+          brew install xcodegen
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          xcodegen generate --spec apple/project.yml --project apple
+          python3 - <<'SCHEME'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          path = Path("apple/Persona.xcodeproj/xcshareddata/xcschemes/Persona.xcscheme")
+          tree = ET.parse(path)
+          for query in ("./BuildAction/BuildActionEntries", "./TestAction/Testables"):
+              parent = tree.find(query)
+              matches = [child for child in parent if child.find("./BuildableReference").get("BlueprintName") == "PersonaTests"]
+              if len(matches) != 1:
+                  raise ValueError(f"Expected one PersonaTests entry under {query}")
+              parent.remove(matches[0])
+          tree.write(path, encoding="UTF-8", xml_declaration=True)
+          SCHEME
+      - name: Run the focused UI test in both appearances
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/meeting-shots"
+          export TEST_RUNNER_PERSONA_SHOTS="$RUNNER_TEMP/meeting-shots"
+          export TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18760
+          PORT=18760 MOCK_RECORDING_MINUTES=pending python3 scripts/mock/mock_hub.py > "$RUNNER_TEMP/meeting-mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 \
+            "$TEST_RUNNER_PERSONA_MOCK_HUB/api/v1/health"
+          sim=$(scripts/app/sim-boot.sh --profile stock "Persona 13510 focused")
+          for appearance in light dark; do
+            export TEST_RUNNER_PERSONA_SHOTS_APPEARANCE="$appearance"
+            if [[ "$appearance" == dark ]]; then
+              xcrun simctl uninstall "$sim" org.example.persona.ci
+            fi
+            xcrun simctl ui "$sim" appearance "$appearance"
+            xcodebuild -quiet test -project apple/Persona.xcodeproj -scheme Persona \
+              -destination "id=$sim" -derivedDataPath "$RUNNER_TEMP/derived" \
+              -parallel-testing-enabled NO \
+              -only-testing:PersonaUITests/MeetingAfterUITests/testTheMinutesOnTheirWay \
+              -resultBundlePath "$RUNNER_TEMP/$appearance.xcresult" \
+              CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/$appearance.xcresult" |
+              python3 -c 'import json,sys; r=json.load(sys.stdin); print(r); sys.exit(not (r.get("passedTests")==1 and r.get("failedTests")==0 and r.get("skippedTests")==0))'
+            test -s "$TEST_RUNNER_PERSONA_SHOTS/after-$appearance-pending.png"
+          done
+      - name: Save screenshots and mock log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-13510-appearance
+          path: |
+            ${{ runner.temp }}/meeting-shots/*.png
+            ${{ runner.temp }}/meeting-mock.log
+          if-no-files-found: warn
+          retention-days: 7
