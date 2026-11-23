@@ -1034,7 +1034,7 @@ export struct KnowledgeWorkspacePage {
         this.recordingFootnote('phone_kb_fact_note')
         if (Wire.text(this.workspace.detail,'summary')) {
           this.recordingHeading('phone_kb_profile')
-          Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),recapReading:true,onLink:(url:string) => this.openSafeLink(url)}) }
+          Column() { MarkdownText({text:Wire.text(this.workspace.detail,'summary'),recapReading:true,paragraphLineSpacingEm:0.45,onLink:(url:string) => this.openSafeLink(url)}) }
             .width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20,top:21,bottom:21}).backgroundColor(Colors.surface).borderRadius(29).id('knowledge.summary')
         }
         if (Wire.text(this.workspace.detail,'path')) {

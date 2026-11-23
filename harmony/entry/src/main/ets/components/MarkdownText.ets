@@ -13,6 +13,7 @@ export struct MarkdownText {
   @Param chatReply: boolean = false;
   @Param recapReading: boolean = false;
   @Param dockPlan: boolean = false;
+  @Param paragraphLineSpacingEm: number = 0.26;
   @Event onLink: (url: string) => void = (_url: string) => {};
   @Local blocks: MarkdownBlock[] = [];
   @Local foreground: ResourceColor = $r('sys.color.font_primary');
@@ -65,7 +66,7 @@ export struct MarkdownText {
     return TextAlign.Start;
   }
 
-  @Builder inlineText(nodes: MarkdownInline[], size: number = Tokens.body, weight: FontWeight = FontWeight.Normal,
+  @Builder inlineText(nodes: MarkdownInline[], lineSpacingEm: number, size: number = Tokens.body, weight: FontWeight = FontWeight.Normal,
     alignment: TextAlign = TextAlign.Start, breakAll: boolean = false, quiet: boolean = false) {
     Text() {
       ForEach(nodes, (node: MarkdownInline) => this.inlineNode(node, weight, false, '', quiet),
@@ -73,7 +74,7 @@ export struct MarkdownText {
     }
       .fontSize(this.readingFont(size)).fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight)
       .lineHeight(this.chatReply && !this.recapReading ? String(Math.ceil(size * 1.45)) + 'fp' : undefined)
-      .lineSpacing(LengthMetrics.vp(this.recapReading ? this.readingPoints(size) * (this.dockPlan ? 0.37 : 0.26) : 0), { onlyBetweenLines: true })
+      .lineSpacing(LengthMetrics.vp(this.recapReading ? this.readingPoints(size) * (this.dockPlan ? 0.37 : lineSpacingEm) : 0), { onlyBetweenLines: true })
       .textAlign(alignment).wordBreak(breakAll ? WordBreak.BREAK_ALL : WordBreak.BREAK_WORD)
       .copyOption(CopyOptions.LocalDevice).width(this.fitContent ? undefined : '100%')
   }
@@ -103,10 +104,10 @@ export struct MarkdownText {
 
   @Builder blockView(block: MarkdownBlock, first: boolean = false) {
     if (block.kind === 'paragraph') {
-      this.inlineText(block.inlines)
+      this.inlineText(block.inlines, this.paragraphLineSpacingEm)
     } else if (block.kind === 'heading') {
       Column() {
-        this.inlineText(block.inlines, this.headingSize(block.level),
+        this.inlineText(block.inlines, 0.26, this.headingSize(block.level),
           this.chatReply && block.level > 1 ? FontWeight.Medium : FontWeight.Bold,
           TextAlign.Start, false, this.chatReply && block.level >= 4)
       }.alignItems(HorizontalAlign.Start).width(this.fitContent ? undefined : '100%')
@@ -184,7 +185,7 @@ export struct MarkdownText {
 
   @Builder tableCell(cell: MarkdownInline[], table: MarkdownBlock, index: number, header: boolean) {
     Column() {
-      this.inlineText(cell, Tokens.body, header ? FontWeight.Bold : FontWeight.Normal, this.tableTextAlign(table, index), true)
+      this.inlineText(cell, 0.26, Tokens.body, header ? FontWeight.Bold : FontWeight.Normal, this.tableTextAlign(table, index), true)
     }
       .width(Tokens.markdownTableCell).padding(Tokens.inset).alignItems(HorizontalAlign.Start)
       .border({ width: Tokens.hairline, color: this.secondary, radius: Tokens.fine })
