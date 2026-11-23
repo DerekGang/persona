@@ -59,3 +59,18 @@ test('the top bar uses only its actual visible library, validates choices, and r
   menu.clear(other);current=false;menu.choose('one');menu.map();assert.equal(opened,1);
   menu.clear(workspace);assert.deepEqual(menu.tags,[]);assert.deepEqual(menu.selected,'');menu.map();assert.equal(opened,1);
 });
+
+test('only an up-to-date menu may set a tag during an active global search',()=>{
+  const applied=[];
+  const workspace={tags:['first','second'],tag:'',query:'',setTag:tag=>applied.push(tag)};
+  const menu=new KnowledgeLandingMenu();
+  menu.bind(workspace,()=>true,()=>{});
+  workspace.query='weather';
+  menu.choose('first');
+  menu.bind(workspace,()=>true,()=>{});
+  menu.choose('second');
+  workspace.tags=['first','new'];
+  menu.choose('second');
+  menu.choose('new');
+  assert.deepEqual(applied,['second']);
+});

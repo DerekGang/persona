@@ -4857,6 +4857,10 @@
       "value": "Type"
     },
     {
+      "name": "knowledge_frequent_tags",
+      "value": "Frequent Tags"
+    },
+    {
       "name": "knowledge_filter_tag",
       "value": "Tags"
     },

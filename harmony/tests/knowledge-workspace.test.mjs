@@ -179,6 +179,32 @@ test('Knowledge list, tags and global search use the existing routes and retain 
   assert.ok(shared.calls.some((call) => call.path === '/api/v1/kb-search?q=calendar&results=1'));
   assert.equal(workspace.results[0].entry.manager, client.profile.manager);
   assert.deepEqual(workspace.results[0].hits, ['Found calendar', 'A second match']);
+
+  const beforeTag = shared.calls.length;
+  workspace.setTag('later');
+  assert.equal(workspace.tag, 'later');
+  assert.equal(workspace.query, 'calendar');
+  assert.equal(shared.calls.length, beforeTag);
+  assert.deepEqual(workspace.results[0].hits, ['Found calendar', 'A second match']);
+  workspace.query = '';
+  await workspace.refresh();
+  assert.equal(shared.calls.at(-1).path, '/api/v1/kb/projects?tag=later');
+});
+
+test('the pushed All Meetings list keeps its filter without rewriting the Knowledge landing preference', async () => {
+  const { workspace, client, shared } = await opened();
+  workspace.setTag('focus');
+  await workspace.refresh();
+  const original = new Map(shared.views);
+  const meetings = new KnowledgeWorkspace();
+  await meetings.open(client, undefined, [], 'meetings');
+  meetings.setTag('later');
+  await meetings.refresh();
+  assert.equal(meetings.tag, 'later');
+  assert.deepEqual(shared.views, original);
+  await workspace.open(client);
+  assert.equal(workspace.kind, 'projects');
+  assert.equal(workspace.tag, 'focus');
 });
 
 test('detail reads preserve owner, query matches, timeline, related entries and Moments route', async () => {

@@ -1,7 +1,6 @@
 import { relativeActivityDate } from '../core/PhoneDate';
 import { i18n } from '@kit.LocalizationKit';
 import { KnowledgeLandingMenu, knowledgeInk, knowledgePriorityTone, knowledgeRelevanceTone, knowledgeWash } from '../models/KnowledgeListPresentation';
-import { PhoneKnowledgeSelection } from './PhoneKnowledgeSelection';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { PhoneSectionTitle, PhoneStyle } from '../design/PhoneStyle';
@@ -157,7 +156,7 @@ export struct KnowledgeWorkspacePage {
   @Param rail: boolean = false;
   @Param initialKind: string = '';
   @Param landingMenu:KnowledgeLandingMenu|undefined=undefined;
-  @Local knowledgeMapOpen:boolean=false;
+  @Event onOpenMap:()=>void=()=>{};
   @Param editRevision: number = 0;
   @Local metadataSheet: boolean = false;
   @Local localMeetings: boolean = false;
@@ -299,20 +298,20 @@ export struct KnowledgeWorkspacePage {
   private openSerial: number = 0;
   private pageAvailable: boolean = false;
 
-  private menuCurrent():boolean { return this.pageAvailable && this.visible && !this.row && !this.initialKind; }
+  private menuCurrent():boolean { return this.pageAvailable && this.visible && !this.row && (!this.initialKind || this.initialKind === 'meetings'); }
   @Monitor('workspace.tags','workspace.tag','workspace.query','model.profile','model.connected','visible','row','landingMenu')
   syncLandingMenu():void {
     if (this.menuCurrent()) {
       const scope=this.model.scope(),generation=this.model.connectionGeneration();
-      this.landingMenu?.bind(this.workspace,()=>this.menuCurrent() && this.model.owns(generation,scope),()=>this.knowledgeMapOpen=true);
-    } else { this.landingMenu?.clear(this.workspace);this.knowledgeMapOpen=false; }
+      this.landingMenu?.bind(this.workspace,()=>this.menuCurrent() && this.model.owns(generation,scope),()=>this.onOpenMap());
+    } else this.landingMenu?.clear(this.workspace);
   }
   aboutToAppear(): void {
     this.pageAvailable = true; this.syncMeetingOptions();this.syncLandingMenu(); this.meetingFeaturesChanged(); this.lastVisible = this.visible; this.syncRowBindings(); this.openWorkspace();
     if (this.initialKind === 'recordings' && !this.row) this.loadRecordings().catch(() => undefined);
   }
   aboutToDisappear(): void {
-    this.landingMenu?.clear(this.workspace);this.knowledgeMapOpen=false;
+    this.landingMenu?.clear(this.workspace);
     this.pageAvailable=false;this.options().clear(this.recording);this.stopMeetingEvents?.();this.stopMeetingEvents=undefined;this.resetMeetingMode(); this.meetingSpeech.close(); this.meetingPreferences.close(); this.calendarRequest++; this.localOwner=''; this.localOpening=undefined; this.openSerial++; this.workspaceOpening=false; this.queuedRefresh=false;
     this.workspace.hide(); this.recording.dispose().catch(() => undefined);
   }
@@ -631,9 +630,6 @@ export struct KnowledgeWorkspacePage {
         .accessibilityText(tr('knowledge_filter_tag')).bindMenu(this.knowledgeFilters).id('knowledge.filters')
     }
   }
-  @Builder landingMap() {
-    PhoneKnowledgeSelection({model:this.model,mapOnly:true,onCloseMap:()=>this.knowledgeMapOpen=false})
-  }
   @Builder rootList() {
     Column({space:6}) {
       Row({space:4}) {
@@ -680,7 +676,6 @@ export struct KnowledgeWorkspacePage {
         this.workspace.refresh().finally(() => { this.refreshing=false; });
       }).layoutWeight(1).width('100%').id('knowledge.entries')
     }.width('100%').height('100%').padding({left:16,right:16,top:6,bottom:8}).backgroundColor(Colors.grouped)
-      .bindSheet($$this.knowledgeMapOpen,this.landingMap(),{height:SheetSize.LARGE,showClose:false,dragBar:false})
   }
   @Builder transcriptionLine() {
     Row({space:8}) {

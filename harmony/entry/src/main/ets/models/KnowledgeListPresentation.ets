@@ -17,20 +17,21 @@ export function knowledgeWash(tone:string,dark:boolean):string {
 export class KnowledgeLandingMenu {
   @Trace tags:string[]=[];
   @Trace selected:string='';
-  @Trace searching:boolean=false;
+  @Trace query:string='';
   private source:KnowledgeWorkspace|undefined;
   private valid:(()=>boolean)|undefined;
   private openMap:(()=>void)|undefined;
   bind(source:KnowledgeWorkspace,current:()=>boolean,map:()=>void):void {
     this.source=source;this.valid=current;this.openMap=map;
-    this.tags=source.tags.slice();this.selected=source.tag;this.searching=!!source.query.trim();
+    this.tags=source.tags.slice();this.selected=source.tag;this.query=source.query.trim();
   }
   clear(source:KnowledgeWorkspace):void {
     if (this.source!==source) return;
-    this.source=undefined;this.valid=undefined;this.openMap=undefined;this.tags=[];this.selected='';this.searching=false;
+    this.source=undefined;this.valid=undefined;this.openMap=undefined;this.tags=[];this.selected='';this.query='';
   }
   choose(tag:string):void {
-    if (this.source && this.valid?.() && !this.source.query.trim() && (!tag || this.source.tags.includes(tag))) this.source.setTag(tag);
+    if (this.source && this.valid?.() && this.source.query.trim()===this.query &&
+      (!tag || this.tags.includes(tag) && this.source.tags.includes(tag))) this.source.setTag(tag);
   }
   map():void { if (this.source && this.valid?.()) this.openMap?.(); }
 }

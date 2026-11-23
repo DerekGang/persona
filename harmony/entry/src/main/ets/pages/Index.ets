@@ -574,11 +574,13 @@ struct Index {
   }
   private rootModuleMenuKind():string {
     if (this.phoneTop==='recordings' && this.meetingOptions.available) return 'recordings';
+    if (this.phoneTop==='knowledge_meetings') return 'knowledge';
     if (this.phoneTop==='resources' && ['knowledge','inbox'].includes(this.phoneParam)) return this.phoneParam;
     return this.model.section===2 && !this.phoneTop ? 'inbox' : '';
   }
   private menuOwner(kind:string):string {
-    return JSON.stringify([kind,this.model.scope(),this.model.connectionGeneration(),this.model.section,this.phoneTop,this.phoneParam,this.navigationIntent]);
+    const query=kind==='knowledge' ? this.knowledgeMenu?.query || '' : '';
+    return JSON.stringify([kind,this.model.scope(),this.model.connectionGeneration(),this.model.section,this.phoneTop,this.phoneParam,this.navigationIntent,query]);
   }
   private inboxPermissionOwner():string { return JSON.stringify([this.model.scope(),this.model.connectionGeneration()]); }
   private canComposeFromMenu():boolean { return this.model.connected && this.inboxComposeAvailable && this.inboxComposeScope===this.inboxPermissionOwner(); }
@@ -588,15 +590,17 @@ struct Index {
   @Builder rootModuleMenu() {
     Menu() {
       if (this.moduleMenuKind==='knowledge') {
-        if (!this.knowledgeMenu.searching) MenuItemGroup({header:tr('knowledge_filter_tag')}) {
-          MenuItem({content:tr('knowledge_all_tags')}).selectIcon(true).selected(!this.knowledgeMenu.selected)
-            .onClick(()=>{if(this.menuCurrent('knowledge')) this.knowledgeMenu.choose('');}).id('knowledge.filter.all')
+        MenuItem({content:tr('all')}).selectIcon(true).selected(!this.knowledgeMenu.selected)
+          .accessibilitySelected(!this.knowledgeMenu.selected)
+          .onClick(()=>{if(this.menuCurrent('knowledge')) this.knowledgeMenu.choose('');}).id('knowledge.filter.all')
+        if (this.knowledgeMenu.tags.length) MenuItemGroup({header:tr('knowledge_frequent_tags')}) {
           ForEach(this.knowledgeMenu.tags,(tag:string)=>{
             MenuItem({content:'#'+tag}).selectIcon(true).selected(this.knowledgeMenu.selected===tag)
+              .accessibilitySelected(this.knowledgeMenu.selected===tag)
               .onClick(()=>{if(this.menuCurrent('knowledge')) this.knowledgeMenu.choose(tag);}).id('knowledge.filter.'+tag)
           },(tag:string)=>tag)
         }
-        MenuItem({content:tr('ks_map')}).onClick(()=>{if(this.menuCurrent('knowledge'))this.knowledgeMenu.map();}).id('knowledge.map')
+        MenuItem({content:tr('ks_map_title')}).onClick(()=>{if(this.menuCurrent('knowledge'))this.knowledgeMenu.map();}).id('knowledge.map')
       } else if (this.moduleMenuKind==='recordings') {
         if (this.meetingOptions.allowsPrivate) MenuItem({content:tr('phone_meeting_private')}).contentFont({size:Tokens.interfaceFontVp(16,this.environment.fontScale)}).selected(this.meetingOptions.marked).selectIcon(true).accessibilitySelected(this.meetingOptions.marked)
           .onClick(()=>{if(this.menuCurrent('recordings'))this.meetingOptions.togglePrivate();}).id('recordings.options.private')
@@ -636,8 +640,12 @@ struct Index {
   @Builder phoneModuleMore(kind:string,owner:string) {
     Button({type:ButtonType.Circle}) {
       Stack() {
-        Circle().width(20).height(20).stroke(Colors.link).strokeWidth(1.4).fill(Color.Transparent)
-        Image(Symbols.more).width(15).height(15).fillColor(Colors.link)
+        Circle().width(22).height(22).stroke(Colors.link).strokeWidth(1.7).fill(Color.Transparent)
+        Row({space:2}) {
+          Circle().width(2.9).height(2.9).fill(Colors.link)
+          Circle().width(2.9).height(2.9).fill(Colors.link)
+          Circle().width(2.9).height(2.9).fill(Colors.link)
+        }
       }
     }.width(44).height(44).padding(0).backgroundColor(Colors.surface)
       .border({width:0.5,color:Colors.divider,radius:22}).accessibilityText(tr(kind==='recordings' ? 'meeting_start_options' : 'more'))
@@ -2649,6 +2657,7 @@ struct Index {
     if (name === 'settings' && this.settingsKind(param) === 'machines') return tr('phone_machines');
     if (name === 'recordings') return tr('knowledge_kind_meetings');
     if (name === 'knowledge_meetings') return tr('knowledge');
+    if (name === 'knowledge_map') return tr('ks_map_title');
     if (name === 'knowledge' && this.routeRow(param).path === 'recordings') return tr('knowledge_kind_recordings');
     if (name === 'projects') return tr('projects');
     if (name === 'machine_projects') return this.projectCatalog.projects.find((row: PersonaProject) => row.hostKey === param)?.machine || tr('phone_machines');
@@ -2715,8 +2724,10 @@ struct Index {
           phoneList:!this.wide() && name==='resources' && param==='todo', createRevision:this.todoCreateRevision,
           onTitle: (title: string) => { if (name === 'todo' && this.activeChild === this.childKey(name, param)) this.todoTitle = title; }, onOpen: (row: ResourceRow) => this.openFrom(name, param, row), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), onCreateAgent: (todo: ResourceRow) => this.createAgentFrom(name, param, todo) })
         else this.targetLoading(name, param)
+      } else if (name === 'knowledge_map') {
+        if (param === this.model.scope()) PhoneKnowledgeSelection({ model:this.model, mapOnly:true })
       } else if (name === 'knowledge' || name === 'recordings' || name === 'knowledge_meetings' || name === 'resources' && param === 'knowledge') {
-        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ meetingMenu:name==='recordings' ? this.meetingOptions : undefined,landingMenu:!this.wide() && name==='resources' && param==='knowledge' ? this.knowledgeMenu : undefined, initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
+        if (name !== 'knowledge' || this.targetReady(name, param)) KnowledgeWorkspacePage({ meetingMenu:name==='recordings' ? this.meetingOptions : undefined,landingMenu:!this.wide() && (name==='knowledge_meetings' || name==='resources' && param==='knowledge') ? this.knowledgeMenu : undefined, initialKind: name === 'recordings' ? 'recordings' : name === 'knowledge_meetings' ? 'meetings' : '', editRevision:this.recordingEditRevision, onOpenMap:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_map',this.model.scope()); }, onAllMeetings:() => { if (this.activeChild === this.childKey(name,param)) this.pushPlace('knowledge_meetings',''); }, model: name !== 'knowledge' ? this.model : this.detailModel, row: name === 'knowledge' ? this.routeRow(param) : undefined, visible: this.activeChild === this.childKey(name, param),
           onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onChat: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address) })
         else this.targetLoading(name, param)
       } else if (name === 'resources' && param === 'health') {

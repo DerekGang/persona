@@ -667,7 +667,7 @@ test('the compact meeting, knowledge and inbox header replaces its native button
   Object.assign(n,{model:{section:0,scope:()=> 'fixture',connectionGeneration:()=>generation},meetingOptions:{available:true,prepare:()=>refreshes++},
     spacesShown:false,navigationIntent:1,phoneTop:'recordings',phoneParam:''});
   const old=n.menuOwner('recordings');n.openModuleMenu('recordings',old);assert.equal(refreshes,1);assert.ok(n.menuCurrent('recordings'));
-  for(const [top,param,kind] of [['resources','knowledge','knowledge'],['resources','inbox','inbox'],['resources','knowledge','knowledge'],['recordings','','recordings']]){
+  for(const [top,param,kind] of [['resources','knowledge','knowledge'],['knowledge_meetings','','knowledge'],['resources','inbox','inbox'],['resources','knowledge','knowledge'],['recordings','','recordings']]){
     const before=n.moduleMenuOwner;n.phoneTop=top;n.phoneParam=param;n.navigationIntent++;const active=n.menuOwner(kind);
     assert.notEqual(before,active);
     n.openModuleMenu('recordings',old);assert.notEqual(n.moduleMenuOwner,active);

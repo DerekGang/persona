@@ -4857,6 +4857,10 @@
       "value": "类型"
     },
     {
+      "name": "knowledge_frequent_tags",
+      "value": "常用标签"
+    },
+    {
       "name": "knowledge_filter_tag",
       "value": "标签"
     },

@@ -114,6 +114,7 @@ export class KnowledgeWorkspace {
   private readRevision: number = 0;
   private listRows: ResourceRow[] = [];
   private recordingPage: boolean = false;
+  private transientMeetingList: boolean = false;
   private searchTimer: number = -1;
   private draftWrite: Promise<void> = Promise.resolve();
   private momentTarget: string = '';
@@ -133,7 +134,9 @@ export class KnowledgeWorkspace {
     this.detailInitialized = false;
     this.detail = {}; this.supportsExpectedPinned=false; this.matches = []; this.agents = []; this.momentText = ''; this.momentTarget = ''; this.results = []; this.entries = [];
     this.agentDraft = ''; this.agentLauncher = ''; this.directoryTargets = []; this.targetMachines = []; this.selectedDirectory = 0;
+    this.tags = [];
     this.recordingPage = !row && initialKind === 'recordings';
+    this.transientMeetingList = !row && initialKind === 'meetings';
     this.listRows = seed.slice();
     if (row) {
       this.selected = this.copyRow(row);
@@ -201,7 +204,16 @@ export class KnowledgeWorkspace {
     this.invalidateListRead(); this.kind = kind; this.tag = ''; this.saveFilters(); this.refresh().catch(() => undefined);
   }
 
-  setTag(tag: string): void { this.invalidateListRead(); this.tag = tag; this.saveFilters(); this.refresh().catch(() => undefined); }
+  setTag(tag: string): void {
+    if (this.tag === tag) return;
+    this.tag = tag;
+    this.saveFilters();
+    // Search spans all kinds and tags. Keep its in-flight results while remembering the list filter.
+    if (!this.query.trim()) {
+      this.invalidateListRead();
+      this.refresh().catch(() => undefined);
+    }
+  }
 
   setQuery(query: string): void {
     this.invalidateListRead(); this.query = query;
@@ -569,7 +581,7 @@ export class KnowledgeWorkspace {
 
   private async saveFilters(): Promise<void> {
     const client = this.client, revision = this.revision;
-    if (!client) return;
+    if (!client || this.transientMeetingList) return;
     const scope = this.viewScope;
     try {
       await client.saveView(this.recordingPage ? 'knowledge-recordings' : 'knowledge-workspace', JSON.stringify(objectPayload(['kind', 'tag', 'query'], [this.kind, this.tag, this.query])));

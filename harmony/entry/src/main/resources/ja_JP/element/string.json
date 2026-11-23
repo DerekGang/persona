@@ -4857,6 +4857,10 @@
       "value": "種類"
     },
     {
+      "name": "knowledge_frequent_tags",
+      "value": "よく使うタグ"
+    },
+    {
       "name": "knowledge_filter_tag",
       "value": "タグ"
     },
