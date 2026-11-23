@@ -117,18 +117,19 @@ func approvalMirrorID(ix proto.Interaction) string {
 
 // assistantApprovalMirrorEligible is the boundary that persisted display intent
 // may never bypass: even an existing copy belongs only to an eligible Assistant
-// permission, never to an Agent, health, private, nested or server-owned exact
-// proposal card. Exact replies must target the authoritative owner-action book.
+// permission, never to an Agent, a space the main conversation may not read,
+// private, nested or server-owned exact proposal card. Exact replies must target
+// the authoritative owner-action book.
 func (s *Service) assistantApprovalMirrorEligible(ctx context.Context, ix proto.Interaction) bool {
 	return ix.Kind == proto.IxPermission && !ix.Private && !ix.OwnerProposal && ix.SessionID != "" && ix.MirrorOf == "" &&
-		!s.ixInHealth(ctx, ix) && s.ixInAssistant(ctx, ix)
+		!s.ixPolicy(ctx, ix).DenyMainRead && s.ixInAssistant(ctx, ix)
 }
 
 // nonMainAssistantPermission is the narrow routing boundary shared by the main
 // conversation copy and the bot's direct chat. Only owner-decision write tools
-// opt in. Agent sessions, private cards, health conversations, questions and
-// display copies themselves never opt in. Existing main copies bypass this
-// new-card filter until their authoritative operation ends.
+// opt in. Agent sessions, private cards, spaces the main conversation may not
+// read, questions and display copies themselves never opt in. Existing main
+// copies bypass this new-card filter until their authoritative operation ends.
 func (s *Service) nonMainAssistantPermission(ctx context.Context, ix proto.Interaction) bool {
 	if !s.assistantApprovalMirrorEligible(ctx, ix) || !s.approvalMirrorToolAllowed(ctx, ix) {
 		return false

@@ -761,6 +761,33 @@ func TestFeishuAssistantApprovalWithTopicRunUsesDirectChat(t *testing.T) {
 	}
 }
 
+func TestFeishuSensitiveAssistantApprovalDoesNotUseDirectChat(t *testing.T) {
+	ft := newMirrorFleetTest(t)
+	ft.f.fakeModel(t)
+	ft.f.answerApp(AppFeishu, FeishuStatusGet, func(json.RawMessage) (any, error) {
+		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_a", PairedAt: time.Unix(100, 0),
+			Features: FeishuFeatures{Main: true, Cards: true, AllCards: false}}, nil
+	})
+	ctx := context.Background()
+	ix := mirrorTestCard("ix_sensitive_direct")
+	ix.Summary = "Send the quarterly invoice for 100"
+	if !ft.s.nonMainAssistantPermission(ctx, ix) {
+		t.Fatal("the fixture is not an eligible direct write approval")
+	}
+	if !ft.s.infoTagConfigured(ctx) {
+		t.Fatal("the fixture has no information-tag model")
+	}
+	ft.f.mu.Lock()
+	ft.f.infoTag = `{"categories":["finance"]}`
+	ft.f.mu.Unlock()
+	if policy := ft.s.exitPolicy(ctx, interactionText(ix), ix.SessionID, ft.s.ixSpace(ctx, ix)); !policy.Redact {
+		t.Fatal("the fixture was not classified as sensitive")
+	}
+	if ft.s.feishuCardWanted(ctx, ix) {
+		t.Fatal("a sensitive direct write approval crossed the channel boundary")
+	}
+}
+
 func TestFeishuAssistantApprovalUsesDirectChatWithoutAllCards(t *testing.T) {
 	ft := newMirrorFleetTest(t)
 	setSettings(t, ft.s, func(v *Settings) { v.ApprovalMirrorMain = new(false) }) // bot routing has its own existing switch

@@ -239,7 +239,8 @@ func (l assistantLink) deviceCallFrom(ctx context.Context, from string, p assist
 		case assistantwire.DeviceInteractionsList:
 			list := []proto.Interaction{}
 			for _, ix := range h.pendingInteractions() {
-				if cmp.Or(ix.Manager, assistantwire.AssistantID) == from && h.cardAllowed(from, ix) {
+				// A manager reconnects authoritative operations; display copies belong only in app snapshots.
+				if ix.MirrorOf == "" && cmp.Or(ix.Manager, assistantwire.AssistantID) == from && h.cardAllowed(from, ix) {
 					list = append(list, ix)
 				}
 			}
@@ -263,7 +264,8 @@ func (l assistantLink) deviceCallFrom(ctx context.Context, from string, p assist
 		}
 		list := []proto.Interaction{}
 		for _, ix := range h.pendingInteractions() {
-			if (ix.MachineID == "" || ix.MachineID == m.cfg.ID) && cmp.Or(ix.Manager, assistantwire.AssistantID) == from && h.cardAllowed(from, ix) {
+			// A manager reconnects authoritative operations; display copies belong only in app snapshots.
+			if ix.MirrorOf == "" && (ix.MachineID == "" || ix.MachineID == m.cfg.ID) && cmp.Or(ix.Manager, assistantwire.AssistantID) == from && h.cardAllowed(from, ix) {
 				list = append(list, ix)
 			}
 		}
