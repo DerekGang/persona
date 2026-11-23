@@ -990,7 +990,8 @@ func (s *Service) reportToSupervisor(ctx context.Context, machine, session strin
 		step = min(step, steps)
 	}
 	// A task leader's worker has no owner briefing to wait for: its report goes to the leader at once, urgent or not.
-	notUrgent := a.Urgent != nil && !*a.Urgent && !s.agentSupervised(t)
+	// Immersive attention mode takes every question as one that can wait (attention.go).
+	notUrgent := (a.Urgent != nil && !*a.Urgent || a.Kind == upReportQuestion && s.attentionDefersQuestions(ctx)) && !s.agentSupervised(t)
 	if notUrgent && a.Kind == upReportQuestion {
 		answer, queued := s.reportLater(ctx, t, machine, session, text, evidence, now)
 		if queued {
