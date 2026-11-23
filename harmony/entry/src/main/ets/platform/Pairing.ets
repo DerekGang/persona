@@ -48,6 +48,8 @@ export class Pairing {
     this.pin = pin;
   }
 
+  get initialAddress(): string { return this.baseUrl; }
+
   private static validateCode(code: string): string {
     const value = code.trim();
     if (!value || value.length > 8192 || /[\r\n\u0000]/.test(value)) throw new Error('invalid_pairing');

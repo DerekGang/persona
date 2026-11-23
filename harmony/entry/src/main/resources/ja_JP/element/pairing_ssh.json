@@ -19,6 +19,34 @@
     {
       "name": "phone_pair_ssh_tls_help",
       "value": "ペアリング画面で Hub の HTTPS アドレスを指定します。ペアリングリンクには Hub の TLS 公開鍵の指紋（SPKI）が含まれます。アドレスを手入力する場合は同じ Hub の43文字の指紋を入力してください。"
+    },
+    {
+      "name": "phone_pair_ssh_this_key",
+      "value": "この端末の公開鍵"
+    },
+    {
+      "name": "phone_pair_ssh_copy_key",
+      "value": "公開鍵をコピー"
+    },
+    {
+      "name": "phone_pair_ssh_copy_restricted",
+      "value": "authorized_keys の行をコピー"
+    },
+    {
+      "name": "phone_pair_ssh_public_help",
+      "value": "制限付きの行を SSH サーバーの authorized_keys に追加すると、この Hub のみへ転送できます。秘密鍵はこの端末に保存されます。"
+    },
+    {
+      "name": "phone_pair_ssh_import",
+      "value": "既存の秘密鍵を使用"
+    },
+    {
+      "name": "phone_pair_ssh_use_device",
+      "value": "この端末の鍵を使用"
+    },
+    {
+      "name": "phone_pair_ssh_copied",
+      "value": "コピーしました"
     }
   ]
 }

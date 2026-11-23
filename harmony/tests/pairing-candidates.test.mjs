@@ -8,6 +8,13 @@ const {Pairing}=await import('../entry/src/main/ets/platform/Pairing.ets');
 const state=globalThis.pairingCandidateState,primary='https://primary.invalid:18662/',secondary='https://secondary.invalid:18662/',pin='A'.repeat(43);
 function reset(){state.calls=[];state.responses=new Map([[primary,new Error('offline')],[secondary,{ok:true,hub_id:'same-hub',hub_name:'Synthetic Hub'}]]);}
 function link(extra=[]){const query=new URLSearchParams({url:'http://primary.invalid:18660',token:'synthetic-pair-code',hub:'same-hub',fp:pin,tls:'18662'});query.append('alt',secondary);for(const value of extra)query.append('alt',value);return 'persona://pair?'+query;}
+
+test('previewing a scanned code shows its destination before contacting the hub', () => {
+  reset();
+  const parsed = Pairing.parse(link());
+  assert.equal(parsed.initialAddress, primary);
+  assert.deepEqual(state.calls, []);
+});
 test('alternate pairing probes are anonymous and only the confirmed verified endpoint receives the code',async()=>{reset();const pair=Pairing.parse(link()),target=await pair.inspect();assert.equal(target.baseUrl,secondary);assert.ok(state.calls.every(call=>call.config.token===''));await assert.rejects(pair.redeem({...target,baseUrl:primary}),/not_confirmed/);const config=await pair.redeem(target);assert.equal(config.token,'synthetic-device-token');assert.deepEqual(config.alternateUrls,[primary]);const secretCalls=state.calls.filter(call=>call.config.token);assert.equal(secretCalls.length,1);assert.equal(secretCalls[0].config.baseUrl,secondary);await assert.rejects(pair.redeem(target),/not_confirmed/);});
 test('reconnection alternatives must pass the same Hub identity and pin checks before returning an address',async()=>{reset();state.responses.set(primary,{ok:true,hub_id:'wrong-hub'});assert.equal(await Pairing.reachable(primary,[secondary],'same-hub',pin),secondary);assert.ok(state.calls.every(call=>call.config.token===''));state.responses.set(secondary,()=>{throw Error('pin_mismatch');});await assert.rejects(Pairing.reachable(primary,[secondary],'same-hub',pin),/pin_mismatch/);});
 test('untrusted alternatives, excess addresses, and stale reconnections fail before credential transfer',async()=>{reset();assert.throws(()=>Pairing.parse(link(['http://untrusted.invalid/'])),/invalid_pairing/);assert.throws(()=>Pairing.parse(link(Array.from({length:8},(_,i)=>`https://alt${i}.invalid/`))),/invalid_pairing/);await assert.rejects(Pairing.reachable(primary,[secondary],'same-hub',pin,()=>false),/request_updated/);assert.equal(state.calls.length,0);assert.equal(await Pairing.reachable(primary,[secondary],'same-hub',''),primary);assert.equal(state.calls.length,0);});

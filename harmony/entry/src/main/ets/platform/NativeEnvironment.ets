@@ -6,6 +6,7 @@ import { accessibility } from '@kit.AccessibilityKit';
 /** Native application configuration, shared by workspace and detached views. */
 @ObservedV2
 export class NativeEnvironment {
+  @Trace foreground: boolean = true;
   @Trace dark: boolean = false;
   @Trace fontScale: number = 1;
   @Trace safeBottomPx: number = 0;

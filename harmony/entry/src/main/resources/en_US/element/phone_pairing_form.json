@@ -95,6 +95,14 @@
     {
       "name": "phone_pair_ssh_configured",
       "value": "Connect to this hub through the configured SSH tunnel."
+    },
+    {
+      "name": "phone_pair_camera_reason",
+      "value": "Use the camera to scan a pairing QR code when connecting to a hub."
+    },
+    {
+      "name": "phone_pair_scan_info",
+      "value": "Scan the QR code shown when the hub was set up, or the one from Settings › Devices › Connect a new device on a connected device."
     }
   ]
 }

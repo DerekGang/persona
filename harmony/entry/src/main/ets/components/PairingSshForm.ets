@@ -1,3 +1,10 @@
+import { pasteboard } from '@kit.BasicServicesKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
+import { url } from '@kit.ArkTS';
+import { isPairingAddress } from '../core/WireCompatibility';
+import { Pairing } from '../platform/Pairing';
+import { normalizeBaseUrl } from '../platform/HubTransport';
+import { SshDeviceIdentity, SshPublicIdentity } from '../platform/SshDeviceIdentity';
 import { Colors } from '../design/Colors';
 import { tr } from '../design/Strings';
 import { Tokens } from '../design/Tokens';
@@ -7,6 +14,7 @@ import { SshConfiguration } from '../models/SshTunnel';
 @ComponentV2
 export struct PairingSshForm {
   @Require @Param draft: PairingSsh;
+  @Param hubAddress: string = '';
   @Event onDone: () => void = () => {};
   @Event onClose: () => void = () => {};
   @Local private host: string = '';
@@ -17,6 +25,9 @@ export struct PairingSshForm {
   @Local private privateKeyText: string = '';
   @Local private phrase: string = '';
   @Local private error: string = '';
+  @Local private identity: SshPublicIdentity | undefined = undefined;
+  @Local private importing: boolean = false;
+  private viewEpoch: number = 0;
   private visible: boolean = false;
 
   aboutToAppear(): void {
@@ -24,8 +35,13 @@ export struct PairingSshForm {
     const config = this.draft.configuration;
     this.host = config.sshHost; this.port = String(config.sshPort); this.username = config.username;
     this.fingerprint = config.hostKey; this.pin = this.draft.hubPin;
+    this.importing = this.draft.configured && !config.deviceIdentity;
+    const epoch = ++this.viewEpoch;
+    SshDeviceIdentity.publicIdentity('persona-' + (deviceInfo.productModel || 'HarmonyOS')).then((identity: SshPublicIdentity) => {
+      if (this.visible && this.viewEpoch === epoch) this.identity = identity;
+    }).catch(() => { if (this.visible && this.viewEpoch === epoch) this.error = 'ssh_storage_failed'; });
   }
-  aboutToDisappear(): void { this.visible = false; this.privateKeyText = ''; this.phrase = ''; }
+  aboutToDisappear(): void { this.visible = false; this.viewEpoch++; this.identity = undefined; this.privateKeyText = ''; this.phrase = ''; }
   private verify(): void {
     const config = new SshConfiguration();
     config.sshHost = this.host.trim(); config.sshPort = Number(this.port); config.username = this.username.trim();
@@ -36,7 +52,7 @@ export struct PairingSshForm {
       secondaryButton: { value: tr('ssh_verified_enable'), action: (): void => {
         if (!this.visible) return;
         try {
-          this.draft.configure(config, this.privateKeyText, this.phrase, this.pin, true);
+          this.draft.configure(config, this.importing ? this.privateKeyText : '', this.importing ? this.phrase : '', this.pin, true, !this.importing);
           this.privateKeyText = ''; this.phrase = ''; this.onDone();
         } catch (error) { this.error = (error as Error).message; }
       }}
@@ -45,7 +61,39 @@ export struct PairingSshForm {
   private ready(): boolean {
     return !!this.host.trim() && !!this.username.trim() && /^\d{1,5}$/.test(this.port) && Number(this.port) > 0 && Number(this.port) <= 65535 &&
       /^SHA256:[A-Za-z0-9+/]{43}$/.test(this.fingerprint.trim()) && (!this.pin.trim() || /^[A-Za-z0-9_-]{43}$/.test(this.pin.trim())) &&
-      (!!this.privateKeyText || this.draft.configured && !this.phrase);
+      (this.importing ? !!this.privateKeyText || this.draft.configured && !this.draft.configuration.deviceIdentity && !this.phrase : !!this.identity);
+  }
+  private authorizedLine(identity: SshPublicIdentity): string {
+    if (!this.hubAddress.trim()) return identity.restrictedLine('127.0.0.1', 18660);
+    const raw = this.hubAddress.trim();
+    const endpoint = url.URL.parseURL(isPairingAddress(raw) ? Pairing.parse(raw).initialAddress : normalizeBaseUrl(raw));
+    return identity.restrictedLine(endpoint.hostname, endpoint.port ? Number(endpoint.port) : endpoint.protocol === 'https:' ? 443 : 80);
+  }
+  private async copy(restricted: boolean): Promise<void> {
+    const identity = this.identity; if (!identity) return;
+    try {
+      const line = restricted ? this.authorizedLine(identity) : identity.line;
+      await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, line));
+      if (this.visible) this.getUIContext().getPromptAction().showToast({message: tr('phone_pair_ssh_copied')});
+    } catch (_) { if (this.visible) this.error = 'ssh_invalid_config'; }
+  }
+  @Builder devicePublicKey() {
+    this.subtitle(tr('phone_pair_ssh_this_key'))
+    if (this.identity) Column({space:0}) {
+      Column({space:3}) {
+        Text(this.identity.line).fontSize(13).fontFamily('monospace').maxFontScale(Tokens.interfaceScaleFor(13)).maxLines(1)
+          .textOverflow({overflow:TextOverflow.Ellipsis}).fontColor(Colors.ink)
+        Text(this.identity.fingerprint).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).maxLines(1)
+          .textOverflow({overflow:TextOverflow.Ellipsis}).fontColor(Colors.secondary)
+      }.width('100%').alignItems(HorizontalAlign.Start).padding(14).accessibilityGroup(true).id('ssh.publicKey')
+      Divider().color(Colors.divider).strokeWidth(0.5)
+      Button(tr('phone_pair_ssh_copy_key'),{buttonStyle:ButtonStyleMode.TEXTUAL}).width('100%').height(48)
+        .fontColor(Colors.link).onClick(()=>this.copy(false)).id('ssh.copyKey')
+      Divider().color(Colors.divider).strokeWidth(0.5)
+      Button(tr('phone_pair_ssh_copy_restricted'),{buttonStyle:ButtonStyleMode.TEXTUAL}).width('100%').height(48)
+        .fontColor(Colors.link).onClick(()=>this.copy(true)).id('ssh.copyAuthorizedKeys')
+    }.width('100%').backgroundColor(Colors.surface).borderRadius(14)
+    this.subtitle(tr('phone_pair_ssh_public_help'))
   }
   @Builder subtitle(text: string) {
     Text(text).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.secondary).width('100%')
@@ -64,6 +112,7 @@ export struct PairingSshForm {
       Scroll() {
         Column({space:12}) {
           if (this.error) Text(tr(this.error)).fontSize(14).fontColor(Colors.danger)
+          this.devicePublicKey()
           this.subtitle(tr('phone_pair_ssh_server'))
           Column() {
             this.field(tr('ssh_host'),this.host,'ssh.host',253,InputType.Normal,(v:string)=>{ this.host=v; })
@@ -71,8 +120,10 @@ export struct PairingSshForm {
             this.field(tr('ssh_username'),this.username,'ssh.user',128,InputType.Normal,(v:string)=>{ this.username=v; })
             this.field(tr('ssh_host_key'),this.fingerprint,'ssh.hostKey',50,InputType.Normal,(v:string)=>{ this.fingerprint=v; })
           }.borderRadius(14).clip(true)
-          this.subtitle(tr('phone_pair_ssh_key_help'))
-          Column() {
+          Button(tr(this.importing ? 'phone_pair_ssh_use_device' : 'phone_pair_ssh_import'),{buttonStyle:ButtonStyleMode.TEXTUAL})
+            .fontColor(Colors.link).onClick(()=>{this.importing=!this.importing;this.privateKeyText='';this.phrase='';}).id('ssh.chooseIdentity')
+          if (this.importing) Column({space:6}) {
+            this.subtitle(tr('phone_pair_ssh_key_help'))
             TextArea({text:this.privateKeyText,placeholder:tr(this.draft.configured ? 'ssh_replace_key' : 'ssh_private_key')})
               .maxLength(32768).height(100).fontSize(14).backgroundColor(Colors.surface).onChange((v:string)=>{this.privateKeyText=v;}).id('ssh.privateKey')
             this.field(tr('ssh_passphrase'),this.phrase,'ssh.passphrase',4096,InputType.Password,(v:string)=>{ this.phrase=v; })

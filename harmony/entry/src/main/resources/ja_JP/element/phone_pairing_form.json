@@ -95,6 +95,14 @@
     {
       "name": "phone_pair_ssh_configured",
       "value": "設定した SSH トンネルでこのハブに接続します。"
+    },
+    {
+      "name": "phone_pair_camera_reason",
+      "value": "ハブに接続するときにカメラでペアリング用の QR コードを読み取ります。"
+    },
+    {
+      "name": "phone_pair_scan_info",
+      "value": "ハブの設定時に表示された QR コード、または接続済み端末の「設定 › デバイス › 新しいデバイスを接続」の QR コードを読み取ります。"
     }
   ]
 }

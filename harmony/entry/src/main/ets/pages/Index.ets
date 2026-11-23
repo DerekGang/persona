@@ -175,7 +175,7 @@ struct Index {
   private pairingRevision: number = 0;
   @Local scanning: boolean = false;
   private scanRevision: number = 0;
-  private scanOnPresentation: boolean = false;
+  @Local confirmingScan: boolean = false;
   @Local resourceKind: string = 'todo';
   @Local newTask: string = '';
   @Local creatingAgent: boolean = false;
@@ -814,15 +814,17 @@ struct Index {
   }
   private openReader(address: string): void { const safe = readerLink(address); if (safe) { this.readerAddress = safe; this.readerTitle = readerHost(safe); this.readerShown = true; } }
   @Builder readerContent() { LinkReader({ address: this.readerAddress, onHost: (host: string) => this.readerTitle = host }) }
-  private openSheet(kind: string, connectionStart: string = 'password'): void {
+  private openSheet(kind: string, connectionStart: string = 'password', pairingAddress: string = ''): void {
     this.navigationIntent++;
     if (kind === 'connect') {
       this.pairingRevision++;
       this.scanRevision++;
       this.clearPairTransport();
       this.scanning = false;
+      this.address = pairingAddress;
+      this.pairCode = '';
+      this.model.error = '';
       this.pairManually = connectionStart === 'manual';
-      this.scanOnPresentation = connectionStart === 'scan';
       this.pairByPassword = connectionStart === 'password';
       this.passwordAuthorizing = false;
       phonePasswordLogin.cancel();
@@ -838,11 +840,11 @@ struct Index {
     if (this.sheetKind === 'hub') this.workspaceSheet()
     else if (this.sheetKind === 'newagent') this.newAgentForm()
     else if (this.compactPairing() && this.editingPairSsh) {
-      PairingSshForm({ draft: this.pairSsh, onDone: () => { this.editingPairSsh = false; },
+      PairingSshForm({ draft: this.pairSsh, hubAddress: this.address, onDone: () => { this.editingPairSsh = false; },
         onClose: () => { this.editingPairSsh = false; } })
     } else if (this.compactPairing()) {
       PhonePairingForm({ password: this.pairByPassword, manual: this.pairManually, address: this.address,
-        code: this.pairCode, busy: this.model.busy || this.scanning || this.passwordAuthorizing, error: this.model.error ? trError(this.model.error) : '',
+        code: this.pairCode, busy: this.model.busy || this.scanning || this.confirmingScan || this.passwordAuthorizing, error: this.model.error ? trError(this.model.error) : '',
         accessExpanded: this.pairAccessExpanded, accessID: this.pairAccessID,
         accessSecret: this.pairAccessSecret, sshLabel: this.pairSsh.label,
         onAccessExpanded: (value: boolean) => { this.pairAccessExpanded = value; },
@@ -853,11 +855,12 @@ struct Index {
         onPassword: (value: boolean) => {
           if (this.pairByPassword !== value) {
             this.pairingRevision++; this.scanRevision++; phonePasswordLogin.cancel();
-            this.pairByPassword = value; this.pairSsh.cancelAttempt(); this.model.error = ''; this.passwordAuthorizing = false; this.scanning = false;
+            this.pairByPassword = value; this.pairSsh.cancelAttempt(); this.model.error = ''; this.passwordAuthorizing = false; this.scanning = false; this.confirmingScan = false;
           }
         },
-        onManual: () => { this.pairManually = true; },
-        onPhoto: () => this.choosePairingPhoto(), onClose: () => { this.showSheet = false; },
+        onManual: () => { this.scanRevision++; this.confirmingScan = false; this.scanning = false; this.pairManually = true; },
+        onPhoto: () => this.choosePairingPhoto(), onScanned: (value: string) => this.confirmScannedPairing(value),
+        onClose: () => { this.showSheet = false; },
         onConnect: () => { if (this.pairByPassword) this.passwordConnect(); else this.connect(); } })
     } else this.pairingForm()
   }
@@ -939,7 +942,10 @@ struct Index {
     this.changeSection(row.kind === 'conversation' ? 0 : 1); this.openRow(row, false);
   }
   private consumePairingLink(): void {
-    if (!this.model.pairingLink) return; this.address = this.model.pairingLink; this.pairCode = ''; this.model.pairingLink = ''; this.openSheet('connect', 'manual');
+    const link = this.model.pairingLink;
+    if (!link) return;
+    this.model.pairingLink = '';
+    this.openSheet('connect', 'manual', link);
   }
   private savePath(): void {
     if (this.activeScope !== this.model.scope()) this.restoreScope();
@@ -1085,6 +1091,7 @@ struct Index {
   }
   private settingsModel(param: Object): ClientModel { return NavigationContext.from('settings', param as string).scoped ? this.detailModel : this.model; }
   private clearPairTransport(): void {
+    this.confirmingScan = false;
     this.pairSsh.clear(); this.editingPairSsh = false;
     this.pairAccessID = ''; this.pairAccessSecret = ''; this.pairAccessExpanded = false;
   }
@@ -1136,11 +1143,23 @@ struct Index {
     } finally { if (revision === this.pairingRevision) this.passwordAuthorizing = false; }
   }
 
-  private connectionSheetPresented(): void {
-    if (!this.scanOnPresentation || !this.showSheet || !this.compactPairing()) return;
-    // Open the device scanner only after its return destination exists.
-    this.scanOnPresentation = false;
-    if (canIUse('SystemCapability.Multimedia.Scan.ScanBarcode') && scanCore.isDefaultScanSupported()) this.scanPairing();
+  private confirmScannedPairing(value: string): void {
+    if (!this.showSheet || !this.compactPairing() || this.pairByPassword || this.pairManually || this.confirmingScan || this.model.busy) return;
+    const pairing = Pairing.parse(value);
+    const revision = ++this.scanRevision, sheet = this.pairingRevision;
+    const generation = this.model.connectionGeneration(), scope = this.model.scope();
+    const active = (): boolean => this.showSheet && this.compactPairing() && !this.pairByPassword && !this.pairManually &&
+      this.confirmingScan && this.scanRevision === revision && this.pairingRevision === sheet && this.model.owns(generation, scope);
+    const cancel = (): void => { if (active()) this.confirmingScan = false; };
+    this.confirmingScan = true;
+    this.getUIContext().showAlertDialog({ title: tr('phone_pair_title'), message: pairing.initialAddress,
+      cancel: cancel, primaryButton: { value: tr('cancel'), action: cancel },
+      secondaryButton: { value: tr('connect'), action: () => {
+        if (!active()) return;
+        this.confirmingScan = false;
+        this.address = value; this.pairCode = ''; this.model.error = '';
+        this.connect();
+      } } });
   }
 
   private async choosePairingPhoto(): Promise<void> {
@@ -1160,10 +1179,8 @@ struct Index {
       if (!active()) return;
       const codes = Array.from(new Set<string>(found.map((item: scanBarcode.ScanResult) => item.originalValue)));
       if (codes.length !== 1) throw new Error('phone_pair_photo_invalid');
-      Pairing.parse(codes[0]);
-      this.address = codes[0]; this.pairCode = ''; this.pairManually = true;
       this.scanning = false;
-      await this.connect();
+      this.confirmScannedPairing(codes[0]);
     } catch (err) {
       if (active() && (err as BusinessError).code !== 13900012) this.model.error = 'phone_pair_photo_invalid';
     } finally { if (revision === this.scanRevision) this.scanning = false; }
@@ -1633,7 +1650,7 @@ struct Index {
   @Monitor('showSheet', 'spacesShown') modalChanged(): void {
     if (!this.showSheet && this.sheetKind === 'connect') {
       this.pairingRevision++; this.scanRevision++; phonePasswordLogin.cancel();
-      this.scanning = false; this.scanOnPresentation = false; this.passwordAuthorizing = false; this.clearPairTransport();
+      this.scanning = false; this.passwordAuthorizing = false; this.clearPairTransport();
     }
     if (!this.showSheet && !this.spacesShown) this.ensureMainDestination();
   }
@@ -2809,7 +2826,7 @@ struct Index {
             if (this.model.pendingCleanupCount > 0) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('retry_cleanup')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('retry_cleanup', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('retry_cleanup')).bindTips(tr('retry_cleanup')).onClick(() => this.model.retryCleanup())
           }.justifyContent(FlexAlign.Center).width('100%').height('100%').padding({left:32,right:32}).backgroundColor(Colors.grouped)
         }.width('100%').height('100%')
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' || this.compactPairing() ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' || this.compactPairing() ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent' && !this.compactPairing(), onAppear: () => this.connectionSheetPresented(), onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' || this.compactPairing() ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' || this.compactPairing() ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent' && !this.compactPairing(), onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       } else {
         if (!this.wide() && !this.floatingProjectHeader && !this.floatingDraftHeader && (this.phoneTop || this.model.section!==1 || !this.agentSearching) && this.phoneTop !== 'project_tree' && (this.phoneTop || !this.projectPlace() || !this.projectSearching)) this.phoneHeader()
         Navigation(this.stack) { this.primaryContent() }.title({ builder: this.peerTitle, height: this.headerHeight() }, { systemMaterial: this.titleMaterial }).titleMode(NavigationTitleMode.Mini)
@@ -2821,7 +2838,7 @@ struct Index {
           .minContentWidth(Tokens.detailMin).enableDragBar(!this.rail()).navDestination(this.destination)
           .onAreaChange(() => this.updateBreakpoint()).width('100%').layoutWeight(1)
 
-          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' || this.compactPairing() ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' || this.compactPairing() ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent' && !this.compactPairing(), onAppear: () => this.connectionSheetPresented(), onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
+          .bindSheet($$this.showSheet, this.sheetContent(), { title: this.sheetKind === 'newagent' || this.compactPairing() ? undefined : {title:this.sheetTitle()}, height: this.sheetKind === 'newagent' || this.compactPairing() ? this.compactFormHeight() : SheetSize.LARGE, keyboardAvoidMode: this.sheetKind === 'newagent' ? SheetKeyboardAvoidMode.RESIZE_ONLY : undefined, showClose: this.sheetKind !== 'newagent' && !this.compactPairing(), onWillDismiss:(d:DismissSheetAction) => { if (this.sheetKind === 'newagent' && this.agentPanel) this.closeAgentPanel(); else if (!this.creatingAgent) d.dismiss(); } })
       }
     }.width('100%').height('100%').backgroundColor(Colors.canvas)
       .accessibilityLevel(this.chatSearchShown || this.spacesShown && !this.wide() ? 'no-hide-descendants' : 'auto')

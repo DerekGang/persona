@@ -95,6 +95,14 @@
     {
       "name": "phone_pair_ssh_configured",
       "value": "通过此 SSH 隧道连接这台 hub。"
+    },
+    {
+      "name": "phone_pair_camera_reason",
+      "value": "仅在连接 hub 时使用相机识别配对二维码。"
+    },
+    {
+      "name": "phone_pair_scan_info",
+      "value": "扫描设置 hub 时显示的二维码，或扫描已连接设备「设置 › 设备 › 连接新设备」中的二维码。"
     }
   ]
 }

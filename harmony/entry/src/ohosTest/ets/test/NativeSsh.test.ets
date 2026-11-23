@@ -4,6 +4,7 @@ import { util, url } from '@kit.ArkTS';
 import nativeSsh from 'libpersona_ssh.so';
 import type { NativeSshConfig, NativeSshLease } from 'libpersona_ssh.so';
 import { Pairing } from '../../../main/ets/platform/Pairing';
+import { SshDeviceIdentity } from '../../../main/ets/platform/SshDeviceIdentity';
 import { PairingSsh } from '../../../main/ets/models/PairingSsh';
 import { SshConfiguration } from '../../../main/ets/models/SshTunnel';
 import { ClientModel } from '../../../main/ets/models/ClientModel';
@@ -147,6 +148,41 @@ export default function nativeSshTests(): void {
         if (paired) await expectErased(paired);
         await client.background();
       }
+    });
+    if (fixtureArgument('sshGeneratedKeyProbe') === '1') it('native_device_generated_ed25519_authorizes_only_its_hub_and_survives_forget', 0, async (): Promise<void> => {
+      const fixture = await sshFixture(), base = fixtureArgument('fixtureAddress'), pin = fixtureArgument('fixturePin');
+      const key = await SshDeviceIdentity.publicIdentity('persona-native-test');
+      expect(key.line.startsWith('ssh-ed25519 ')).assertTrue(); expect(key.fingerprint.startsWith('SHA256:')).assertTrue();
+      const endpoint = url.URL.parseURL(base);
+      const restricted = key.restrictedLine(endpoint.hostname, Number(endpoint.port));
+      const ctrl = http.createHttp();
+      try {
+        const port = Number(fixtureArgument('sshFixturePort')), token = fixtureArgument('sshFixtureTicket');
+        if (!Number.isInteger(port) || port < 1 || port > 65535 || !/^[a-f0-9]{64}$/.test(token)) throw new Error('invalid_fixture');
+        const response = await ctrl.request('http://127.0.0.1:' + port + '/authorize-generated', {
+          method: http.RequestMethod.POST, header: {'Authorization':'Bearer ' + token, 'Content-Type':'text/plain; charset=utf-8'},
+          extraData:restricted, connectTimeout:5000, readTimeout:5000, usingCache:false
+        });
+        expect(response.responseCode).assertEqual(204);
+      } finally { ctrl.destroy(); }
+      const config = new SshConfiguration(); config.sshHost = '127.0.0.1'; config.sshPort = Wire.number(fixture, 'sshPort');
+      config.username = Wire.text(fixture,'username'); config.hostKey = Wire.text(fixture,'hostKey');
+      const client = new ClientModel(), draft = new PairingSsh(); let hub = '';
+      await client.initialize(nativeTestContext());
+      try {
+        draft.configure(config, '', '', pin, true, true);
+        const pair = draft.prepare(Pairing.manual(base,'synthetic-fixture-token'), (): boolean => true), target = await pair.inspect();
+        hub = target.hubId; await client.pair(pair,target); const stored = SshConfiguration.from(await client.loadView('ssh-tunnel'));
+        expect(stored.deviceIdentity).assertTrue(); expect(stored.keyRef).assertEqual('');
+        const lease = await client.ssh.acquire(); expect(!!lease && lease.isCurrent()).assertTrue();
+        await expectErased(hub);
+      } finally {
+        draft.clear();
+        if (hub && client.profiles.some(profile => profile.id === hub)) await client.forgetProfile(hub);
+        await client.background();
+      }
+      const again = await SshDeviceIdentity.publicIdentity('persona-native-test');
+      expect(again.fingerprint).assertEqual(key.fingerprint); expect(again.line).assertEqual(key.line);
     });
     it('native_authenticated_proxies_preserve_https_pinning_websocket_and_child_streams', 0, async (): Promise<void> => {
       const config = await configuration();

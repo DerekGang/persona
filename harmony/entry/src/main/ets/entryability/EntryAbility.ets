@@ -57,8 +57,9 @@ export default class EntryAbility extends UIAbility {
     stage.loadContent('pages/Index', (error) => { if (error.code) client.error = 'failed'; });
   }
   onWindowStageDestroy(): void { nativeEnvironment.unbindWindow(); }
-  onBackground(): void { NativeDictation.cancelActive(); this.visible = false; this.lifecycle++; deviceLook.bind(undefined).catch(() => {}); Promise.all([KnowledgeRecording.backgroundAll().then(() => nativeMeetingServices.setRecordingEvent('')), deviceFeatures.background(), client.background()]).catch(() => {}); }
+  onBackground(): void { nativeEnvironment.foreground = false; NativeDictation.cancelActive(); this.visible = false; this.lifecycle++; deviceLook.bind(undefined).catch(() => {}); Promise.all([KnowledgeRecording.backgroundAll().then(() => nativeMeetingServices.setRecordingEvent('')), deviceFeatures.background(), client.background()]).catch(() => {}); }
   onForeground(): void {
+    nativeEnvironment.foreground = true;
     nativeMeetingServices.initialize(this.context).catch(() => {});
     nativeEnvironment.update(this.context.config);
     const epoch = ++this.lifecycle; this.visible = true; client.activateForeground();
@@ -70,5 +71,5 @@ export default class EntryAbility extends UIAbility {
     }).catch(() => { if (this.visible && epoch === this.lifecycle) client.error = 'failed'; });
     deviceFeatures.foreground().catch(() => {});
   }
-  onDestroy(): void { NativeDictation.cancelActive(); nativeEnvironment.unbindWindow(); this.visible = false; this.lifecycle++; this.pendingNotification = undefined; deviceLook.bind(undefined).catch(() => {}); KnowledgeRecording.backgroundAll().catch(() => {}); deviceFeatures.background().catch(() => {}); client.shutdown().catch(() => {}); }
+  onDestroy(): void { nativeEnvironment.foreground = false; NativeDictation.cancelActive(); nativeEnvironment.unbindWindow(); this.visible = false; this.lifecycle++; this.pendingNotification = undefined; deviceLook.bind(undefined).catch(() => {}); KnowledgeRecording.backgroundAll().catch(() => {}); deviceFeatures.background().catch(() => {}); client.shutdown().catch(() => {}); }
 }

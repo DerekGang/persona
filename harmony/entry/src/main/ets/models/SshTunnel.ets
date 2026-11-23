@@ -7,6 +7,7 @@ import { ClientModel } from './ClientModel';
 import type { ClientViewLease } from './ClientModel';
 import type { TransportProxy } from '../platform/HubTransport';
 import { Wire } from './Wire';
+import { SshDeviceIdentity } from '../platform/SshDeviceIdentity';
 import { SshCredentialVault, SshSecrets } from '../platform/SshCredentialVault';
 
 const STORAGE_KEY: string = 'ssh-tunnel';
@@ -22,12 +23,13 @@ export class SshConfiguration {
   username: string = '';
   hostKey: string = '';
   keyRef: string = '';
+  deviceIdentity: boolean = false;
   static from(value: string): SshConfiguration {
     const data = Wire.parse(value), result = new SshConfiguration();
     if (value.trim() && typeof data['enabled'] !== 'boolean') throw new Error('ssh_invalid_config');
     result.enabled = Wire.bool(data, 'enabled'); result.sshHost = Wire.text(data, 'sshHost');
     result.sshPort = Wire.number(data, 'sshPort', 22); result.username = Wire.text(data, 'username');
-    result.hostKey = Wire.text(data, 'hostKey'); result.keyRef = Wire.text(data, 'keyRef'); return result;
+    result.hostKey = Wire.text(data, 'hostKey'); result.keyRef = Wire.text(data, 'keyRef'); result.deviceIdentity = Wire.bool(data, 'deviceIdentity'); return result;
   }
   copy(): SshConfiguration { return SshConfiguration.from(JSON.stringify(this)); }
 }
@@ -94,7 +96,7 @@ export class SshTunnel {
       const saved = await client.loadView(STORAGE_KEY);
       if (!this.current(owner, attempt)) return;
       const config = SshConfiguration.from(saved);
-      if (config.enabled) { SshTunnel.validate(config, owner.baseUrl, owner.pin); if (!config.keyRef) throw new Error('ssh_key_required'); }
+      if (config.enabled) { SshTunnel.validate(config, owner.baseUrl, owner.pin); if (!config.keyRef && !config.deviceIdentity) throw new Error('ssh_key_required'); }
       this.configuration = config; this.loaded = true;
     } catch (error) { if (this.current(owner, attempt)) { this.phase = 'failed'; this.error = this.code(error as Error); } }
   }
@@ -121,8 +123,9 @@ export class SshTunnel {
     SshTunnel.validate(config, owner.baseUrl, owner.pin);
     if (!fingerprintConfirmed) throw new Error('ssh_invalid_config');
     const oldRef = this.configuration.keyRef; config.keyRef = oldRef;
+    config.deviceIdentity = !privateKey && this.configuration.deviceIdentity;
     if (!privateKey && passphrase) throw new Error('ssh_key_required');
-    if (!privateKey && !oldRef) throw new Error('ssh_key_required');
+    if (!privateKey && !oldRef && !config.deviceIdentity) throw new Error('ssh_key_required');
     this.stop(); const attempt = this.attempt;
     const current = (): boolean => this.current(owner, attempt) && admit();
     this.phase = 'saving'; this.error = ''; let createdRef: string = ''; let committed: boolean = false;
@@ -143,7 +146,7 @@ export class SshTunnel {
     } finally { SshTunnel.savingProfiles.delete(owner.profile); }
   }
   /** The SSH route and the Hub's device credential become usable together. Retain the previous key until commit. */
-  static async stagePairing(profile: string, config: SshConfiguration, material: SshSecrets,
+  static async stagePairing(profile: string, config: SshConfiguration, material: SshSecrets | undefined,
     view: ClientViewLease, admit: () => boolean): Promise<(committed: boolean) => Promise<void>> {
     if (!admit() || !view.valid()) throw new Error('ssh_cancelled');
     if (SshTunnel.savingProfiles.has(profile)) throw new Error('ssh_busy');
@@ -167,8 +170,10 @@ export class SshTunnel {
     try {
       previous = await view.read(); oldRef = SshConfiguration.from(previous).keyRef;
       if (!current()) throw new Error('ssh_cancelled');
-      vault.allow(profile);
-      created = await vault.putSecrets(profile, material, current);
+      if (!config.deviceIdentity) {
+        if (!material) throw new Error('ssh_key_required');
+        vault.allow(profile); created = await vault.putSecrets(profile, material, current);
+      }
       if (!current()) throw new Error('ssh_cancelled');
       const stored = config.copy(); stored.keyRef = created; next = JSON.stringify(stored);
       await view.write(next);
@@ -200,7 +205,7 @@ export class SshTunnel {
     const vault = this.vault; if (!vault) throw new Error('ssh_storage_failed');
     const owns = (): boolean => this.current(owner, attempt);
     const current = (): boolean => owns() && admitStart();
-    const task = this.start(owner.baseUrl, config, current, owns, (): Promise<SshSecrets> => vault.get(owner.profile, config.keyRef, current)); this.opening = task;
+    const task = this.start(owner.baseUrl, config, current, owns, (): Promise<SshSecrets> => config.deviceIdentity ? SshDeviceIdentity.secrets(current) : vault.get(owner.profile, config.keyRef, current)); this.opening = task;
     try { return await task; } finally { if (this.opening === task) this.opening = undefined; }
   }
   async openPairing(baseUrl: string, pin: string, config: SshConfiguration, material: SshSecrets, admit: () => boolean): Promise<SshProxyLease> {
