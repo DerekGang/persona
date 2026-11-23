@@ -17,3 +17,25 @@ The native iPhone and revised HarmonyOS sheets use RGB 28, 28, 30 behind their c
 ## Subscription meters · 机器订阅用量
 
 The meter with a pacing indicator measured 8 pt/vp on each platform in all three appearances. The dark blue differs by one red-channel level. The hatched area starts at the verified protection threshold. The HarmonyOS capture used `64ccc8f9`. [Native screenshots](subscriptions.png)
+
+## Pairing, camera and QR photos · 配对、相机与照片
+
+These are the ordinary connection screens on the public `8572e8b8` build. Across light appearance, dark appearance and largest text, the largest measured difference among the listed controls was 1.033 pt/vp. In a separate camera-permitted run the system service started the inline 1280×720 stream in all three appearances. The stock photo picker returned the synthetic QR. Cancelling its decoded destination sent zero requests to it. [Six native pairing comparisons](pairing-sheets.jpg)
+
+## SSH fingerprint approval · SSH 指纹确认
+
+The ordinary iPhone and HarmonyOS forms displayed the first host fingerprint and a changed fingerprint. The first prompt sent zero authentication requests. Rotating the key again before tapping confirmation also sent zero. Confirming an unchanged, displayed key authorized the selected test destination. HarmonyOS source `c5ca42d9` and iPhone source `a21e4c50`. [Native first-use and changed-key screens](ssh-fingerprint-comparison.png)
+
+## Knowledge map · 知识导图
+
+Both clients read 5 topics, 27 points and 9 distinct sources. The native routes cover topic and project grouping, expanding and collapsing priorities, reading a point and returning to the original scope. The reference iPhone used `a21e4c50` and the HarmonyOS capture used `b8352dae`. The upper edge of the statistics card was within 0.37 pt/vp and the point reader’s close-button center was within 1.17 pt/vp in the three appearances.
+
+| Appearance | Topics | Projects | Point detail |
+| --- | --- | --- | --- |
+| Light | [topics](knowledge-light-topics.jpg) | [projects](knowledge-light-projects.jpg) | [point](knowledge-light-point.jpg) |
+| Dark | [topics](knowledge-dark-topics.jpg) | [projects](knowledge-dark-projects.jpg) | [point](knowledge-dark-point.jpg) |
+| Largest type | [topics](knowledge-large-topics.jpg) | [projects](knowledge-large-projects.jpg) | [point](knowledge-large-point.jpg) |
+
+## System keyboard · 系统输入法
+
+The same stock HarmonyOS input method was measured on the same device with the application held in dark appearance. Switching the operating system to dark moved its keyboard-region median from 225 to 70. The iPhone dark keyboard measured 68. The image preserves each platform's real keyboard and layout. The HarmonyOS capture used `33748351`. [Native keyboards in all three states](keyboard-appearance.jpg)
