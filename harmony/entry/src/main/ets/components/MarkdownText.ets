@@ -36,6 +36,13 @@ export struct MarkdownText {
   @Computed get agentHanVp(): number { return agentReplyBodySize(this.agentFontScale, true); }
 
   private inlineLineHeight(size: number, readingBody: boolean, spacingEm: number, nodes: MarkdownInline[]): string | undefined {
+    if (readingBody && this.agentBodyVp >= 17 && this.agentBodyVp <= 20) {
+      // The system text face precedes the CJK Display crossover. Its two- and four-line replies
+      // measure 44.7/93.3pt at standard type and 50.7/106pt at the next native category.
+      const points = this.agentBodyVp;
+      const advance = points <= 19 ? 73/3 + (points-17) * 11/6 : 28 + points-19;
+      return String(advance) + 'vp';
+    }
     if (readingBody && this.scaleAgentProse) {
       // SwiftUI adds ReplyMetrics.lineSpacing to the system body's own line advance.
       // The display CJK face advances 69.3pt per line of 48pt mixed prose in the native chat.

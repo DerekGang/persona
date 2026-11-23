@@ -111,6 +111,17 @@ struct RunningTurnLabel {
   }
 }
 
+interface ReadingTailPosition {
+  index: number;
+  id: string;
+  scale: number;
+  fromViewportBottom: number;
+  rowHeight: number;
+  distance: number;
+  count: number;
+  lastId: string;
+}
+
 class ConversationLine {
   id: string;
   readingId: string;
@@ -171,6 +182,8 @@ export struct Conversation {
   private readingFetching: boolean = false;
   @Local readingLoading: boolean = false;
   private readingMotion: number = 0;
+  private typeChange: number = 0;
+  private tailPosition: ReadingTailPosition | undefined;
   private scrollingByHand: boolean = false;
   private lastManualAnchor: ReadingAnchor | undefined = undefined;
   private manuallyReading: boolean = false;
@@ -263,7 +276,7 @@ export struct Conversation {
   private syncReading(): void {
     const key = JSON.stringify([this.model.scope(), this.model.target()]);
     if (this.readingKey === key) return;
-    this.manuallyReading = false; this.selectedReadingLine = ''; this.readingMenuLine = '';
+    this.manuallyReading = false; this.selectedReadingLine = ''; this.readingMenuLine = ''; this.tailPosition = undefined;
     this.saveReading(); this.lastManualAnchor = undefined; this.scrollingByHand = false; this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
     const epoch = ++this.readingEpoch, lease = this.model.captureView('reading:' + this.model.target());
     this.readingLease = lease; this.readingCursors.clear(); this.readingFetching = false; this.readingRestoring = true; this.readingAnchorReady = false; this.readingFailed = false;
@@ -386,16 +399,77 @@ export struct Conversation {
     const size = change.value<number>('environment.fontScale');
     if (size) this.reflowReadingSize(size.before, size.now);
   }
+  private transcriptEndInset(): number { return this.model.selected.kind === 'session' && this.lines.length > 0 ? 44 : 0; }
+  private distanceFromTranscriptEnd(scale: number): number {
+    if (this.transcriptHeight <= 0 || !this.lines.length) return -1;
+    try {
+      const prior = this.tailPosition;
+      if (prior && prior.scale === scale && prior.count === this.lines.length && this.lines[prior.count-1]?.readingId === prior.lastId &&
+        this.lines[prior.index]?.readingId === prior.id) {
+        const row = this.scroller.getItemRect(this.readingPrefix()+prior.index);
+        if (row.height > 0 && Math.abs(row.height-prior.rowHeight) < 0.5) {
+          return Math.max(0,prior.distance + row.y-this.transcriptHeight-prior.fromViewportBottom);
+        }
+      }
+      // contentSize excludes the content end inset. The offset and the native viewport are both in vp.
+      const distance = this.scroller.contentSize().height + this.transcriptEndInset() -
+        this.scroller.currentOffset().yOffset - this.transcriptHeight;
+      return Number.isFinite(distance) ? Math.max(0,distance) : -1;
+    } catch (_) { return -1; }
+  }
+  private rememberTailPosition(known: number = -1): void {
+    if (!this.active || this.readingRestoring || this.model.selected.kind !== 'session' || !this.lines.length ||
+      this.transcriptHeight <= 0 || known < 0 && !this.scrollingByHand && !this.atEnd) return;
+    try {
+      const scale = this.environment.fontScale;
+      const distance = known >= 0 ? known : this.atEnd ? 0 : this.distanceFromTranscriptEnd(scale);
+      if (distance < 0) return;
+      const prefix = this.readingPrefix(), index = Math.min(this.lines.length-1,Math.max(0,Math.floor((this.firstVisibleIndex+this.lastVisibleIndex)/2)-prefix));
+      const row = this.scroller.getItemRect(prefix+index);
+      if (row.height > 0) this.tailPosition = { index:index,id:this.lines[index].readingId,scale:scale,
+        fromViewportBottom:row.y-this.transcriptHeight,rowHeight:row.height,distance:distance,
+        count:this.lines.length,lastId:this.lines[this.lines.length-1].readingId };
+    } catch (_) { /* A row can leave the measured area before the scroll callback runs. */ }
+  }
   private reflowReadingSize(before: number, next: number): void {
-    if (!readingSizeClassChanges(before, next) || !this.canReflowManualHistory()) return;
+    const change = ++this.typeChange;
+    if (!this.canReflowManualHistory() || before === next) return;
+    const crossesClass = readingSizeClassChanges(before, next);
+    const distance = crossesClass ? 0 : this.distanceFromTranscriptEnd(before);
+    if (distance < 0) return;
     const epoch = this.readingEpoch, motion = this.readingMotion, target = this.model.target();
     const generation = this.model.connectionGeneration(), scope = this.model.scope();
-    // Let the native List finish preserving its visible rows during text reflow before moving to the latest reply.
+    const count = this.lines.length, last = this.lines[count-1]?.readingId;
+    const current = (): boolean => change === this.typeChange && this.readingEpoch === epoch &&
+      this.readingMotion === motion && this.environment.fontScale === next && this.model.owns(generation,scope) &&
+      this.model.target() === target && this.lines.length === count && this.lines[count-1]?.readingId === last &&
+      this.canReflowManualHistory();
     const observer = this.getUIContext().getUIObserver();
     const afterLayout = (): void => {
       observer.off('didLayout', afterLayout);
-      if (this.readingEpoch === epoch && this.readingMotion === motion && this.environment.fontScale === next &&
-        this.model.owns(generation,scope) && this.model.target() === target && this.canReflowManualHistory()) this.jumpToLatest();
+      if (!current()) return;
+      if (crossesClass) { this.jumpToLatest(); return; }
+      let previousExtent = -1, previousViewport = -1, stableFrames = 0, remaining = 12;
+      const afterResize = (): void => {
+        if (!current()) return;
+        const extent = this.scroller.contentSize().height, viewport = this.transcriptHeight;
+        stableFrames = Math.abs(extent-previousExtent) < 0.1 && Math.abs(viewport-previousViewport) < 0.1 ? stableFrames+1 : 0;
+        previousExtent = extent; previousViewport = viewport;
+        if (stableFrames < 2 && --remaining > 0) {
+          this.getUIContext().postFrameCallback(new ConversationFrame(afterResize));
+          return;
+        }
+        // The inverted iPhone transcript keeps the distance from its newest row within a size class.
+        // Native end alignment recalculates the off-screen tail without materializing an entire long history.
+        this.scroller.scrollToIndex(this.readingPrefix()+count-1,false,ScrollAlign.END,{ extraOffset:LengthMetrics.vp(-distance) });
+        this.getUIContext().postFrameCallback(new ConversationFrame(() => {
+          if (current()) {
+            this.lastManualAnchor = this.visibleReadingAnchor() || this.lastManualAnchor;
+            this.rememberTailPosition(distance);
+          }
+        }));
+      };
+      this.getUIContext().postFrameCallback(new ConversationFrame(afterResize));
     };
     observer.on('didLayout', afterLayout);
   }
@@ -426,6 +500,7 @@ export struct Conversation {
   }
   private jumpToLatest(): void {
     this.manuallyReading = false;
+    this.tailPosition = undefined;
     this.readingMotion++; this.scrollingByHand = false; this.lastManualAnchor = undefined;
     this.atEnd = true;
     this.anchor.atEnd = true;
@@ -1312,15 +1387,15 @@ export struct Conversation {
     }.stackFromEnd(!this.showWelcome())
       // The native Agent list leaves 48 points between its last text and the footer.
       // Four are already inside the message row. This space scrolls with its contents.
-      .contentEndOffset(this.model.selected.kind === 'session' && this.lines.length > 0 ? 44 : 0)
+      .contentEndOffset(this.transcriptEndInset())
       .height('100%').width('100%').id('chat.transcript')
       .onAreaChange((_old: Area, area: Area) => this.transcriptViewportChanged(Number(area.height)))
       .bindSheet(this.questions.shown, this.questionContent(), { title: { title: tr('interaction_question_reopen') }, height: SheetSize.LARGE, keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY, showClose: true, onWillAppear: () => this.presentedQuestion = this.questions.beginPresentation(), onAppear: () => { this.questionLayoutReady = true; this.measureQuestion(); }, onWillDismiss: (action: DismissSheetAction) => this.questions.dismiss(this.presentedQuestion, () => action.dismiss()), onDisappear: () => { this.questionLayoutReady = false; this.questions.endPresentation(this.presentedQuestion); this.presentedQuestion = undefined; } })
       .maintainVisibleContentPosition(true)
       .onWillScroll((offset: number, _state: ScrollState, source: ScrollSource) => this.trackScrollMotion(offset, source))
-      .onScrollStop(() => this.finishReadingMotion())
+      .onScrollStop(() => { this.rememberTailPosition(); this.finishReadingMotion(); })
       .onScrollIndex((start: number, end: number) => {
-        this.firstVisibleIndex = start; this.lastVisibleIndex = end; this.recordReading(start);
+        this.firstVisibleIndex = start; this.lastVisibleIndex = end; this.recordReading(start); this.rememberTailPosition();
       })
       .onDidScroll(() => this.recordReading(this.firstVisibleIndex))
       .onReachEnd(() => { if (this.active && !this.readingRestoring) { this.atEnd = true; this.anchor.atEnd = true; this.jumpAvailable = false; } })

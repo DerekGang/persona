@@ -46,16 +46,20 @@ test('only a transition between standard and accessibility reading sizes changes
 });
 
 test('reflow targets only an undisturbed manual reader in this foreground chat',()=>{
- const Reflow=new Function('readingSizeClassChanges','return '+stripTypeScriptTypes(
-   'class Reflow {'+['canReflowManualHistory','reflowReadingSize'].map(method).join('\n')+'}'))(readingSizeClassChanges);
- const frames=[],seen=[];
+ const Reflow=new Function('readingSizeClassChanges','ConversationFrame','ScrollAlign','LengthMetrics','return '+stripTypeScriptTypes(
+   'class Reflow {'+['canReflowManualHistory','transcriptEndInset','distanceFromTranscriptEnd','reflowReadingSize'].map(method).join('\n')+'}'))(
+     readingSizeClassChanges,Frame,{END:'end'},{vp:value=>value});
+ const frames=[],seen=[],posted=[],landings=[];
  const observer={on:(event,handler)=>{assert.equal(event,'didLayout');frames.push(handler);},
    off:(event,handler)=>{assert.equal(event,'didLayout');const i=frames.indexOf(handler);assert.notEqual(i,-1);frames.splice(i,1);}};
  const model={selected:{kind:'session'},isForegroundChat:()=>true,target:()=> 'session',scope:()=> 'hub',connectionGeneration:()=>7,
    owns:(gen,scope)=>gen===7 && scope==='hub',draft:'',draftLoading:false,sourceContext:''};
  const base={mounted:true,active:true,model,admission:()=>true,manuallyReading:true,jumpAvailable:true,lastManualAnchor:{id:'any',atEnd:false,offset:12},
    selectionStart:0,selectionEnd:0,attachments:{attachments:[]},chooser:{},environment:{fontScale:3.2,keyboardHeightPx:0},
-   readingEpoch:1,readingMotion:2,getUIContext:()=>({getUIObserver:()=>observer}),jumpToLatest:()=>seen.push(1)};
+   readingEpoch:1,readingMotion:2,typeChange:0,lines:[{readingId:'older'},{readingId:'tail'}],readingPrefix:()=>1,transcriptHeight:626,
+   scroller:{contentSize:()=>({height:1539}),currentOffset:()=>({yOffset:436}),scrollToIndex:(...args)=>landings.push(args)},
+   visibleReadingAnchor:()=>({id:'read',offset:-4,atEnd:false}),rememberTailPosition:()=>{},
+   getUIContext:()=>({getUIObserver:()=>observer,postFrameCallback:frame=>posted.push(frame)}),jumpToLatest:()=>seen.push(1)};
  const make=(override={})=>Object.assign(new Reflow(),base,override);
  for(const override of [{active:false},{mounted:false},{model:{...model,isForegroundChat:()=>false}},{model:{...model,selected:{kind:'conversation'}}},
    {manuallyReading:false},{jumpAvailable:false},{scrollingByHand:true},{readingRestoring:true},{readingLoading:true},{atEnd:true},
@@ -64,7 +68,15 @@ test('reflow targets only an undisturbed manual reader in this foreground chat',
    {actionsVisible:true},{chooser:{session:'open'}},{environment:{fontScale:3.2,keyboardHeightPx:320}}]){
    make(override).reflowReadingSize(1,3.2);assert.equal(frames.length,0);
  }
- make().reflowReadingSize(1,19/17);assert.equal(frames.length,0);
+ make({transcriptHeight:0}).reflowReadingSize(1,19/17);assert.equal(frames.length,0);
+ const sameClass=make({environment:{fontScale:19/17,keyboardHeightPx:0}});
+ sameClass.reflowReadingSize(1,19/17);frames[0]();assert.equal(posted.length,1);
+ while(posted.length)posted.shift().onFrame();
+ assert.deepEqual(landings,[[2,false,'end',{extraOffset:-521}]]);
+ assert.deepEqual(sameClass.lastManualAnchor,{id:'read',offset:-4,atEnd:false});
+ const changed=make({environment:{fontScale:19/17,keyboardHeightPx:0}});
+ changed.reflowReadingSize(1,19/17);frames[0]();changed.readingMotion++;posted.shift().onFrame();
+ assert.equal(landings.length,1);
  for(const change of [v=>v.readingMotion++,v=>v.readingEpoch++,v=>v.searchPresented=true,v=>v.selectedReadingLine='selected',
    v=>v.model={...model,owns:()=>false},v=>v.model={...model,target:()=> 'other'},v=>v.model={...model,draft:'typed'}]){
    const v=make();v.reflowReadingSize(1,3.2);assert.equal(frames.length,1);change(v);frames[0]();assert.equal(frames.length,0);assert.equal(seen.length,0);
