@@ -1479,6 +1479,51 @@ export interface SecretsResolveResult {
 }
 
 /**
+ * A public field name/type; never a value or source path.
+ */
+export interface SecretStoreField {
+  name: string;
+  type: string;
+}
+
+/**
+ * The canonical public target approved on the secret storage card.
+ */
+export interface SecretStoreTarget {
+  operation: string;
+  vault: string;
+  item?: string;
+  title?: string;
+  category?: string;
+  fields: SecretStoreField[];
+}
+
+/**
+ * secrets.store: describe metadata, prepare an expiring node HPKE key after explicit approval, commit one encrypted
+ * payload.
+ */
+export interface SecretStoreParams {
+  contribution?: string;
+  phase: string;
+  target: SecretStoreTarget;
+  machine: string;
+  session: string;
+  key_id?: string;
+  sealed?: string;
+}
+
+/**
+ * Metadata and a recipient key, or references of written fields. Never values.
+ */
+export interface SecretStoreResult {
+  target: SecretStoreTarget;
+  vault_name?: string;
+  key?: string;
+  key_id?: string;
+  references?: Record<string, string>;
+}
+
+/**
  * secrets.used (an event to the provider, no answer): a reference it resolved was used, for the usage record its own
  * page shows. Never the value.
  */
@@ -2192,7 +2237,10 @@ export const SCENE_SHAPE_KINDS = ["box", "cylinder", "prism"] as const;
 
 /**
  * A box (UI version 11): at yaw 0, size[0] along +x and size[1] along +y. round rounds its corners seen from above
- * (at most half the smaller size); the app bevels its upright edges no more than half its height.
+ * (at most half the smaller size); the app bevels its upright edges no more than half its height. wall says the box
+ * is a wall, for an app's cutaway (#13036): the outer walls between the camera and the rooms are drawn low (a wall
+ * with a floor on the camera's side, between two rooms, keeps its height), what stands in one is cut to that height,
+ * and what stands tall in front of one is drawn see-through; an app without a cutaway draws it as any box.
  */
 export interface SceneBox {
   kind: "box";
@@ -2204,6 +2252,7 @@ export interface SceneBox {
   top: number;
   color?: string;
   material?: SceneMaterial;
+  wall?: boolean;
 }
 
 /**
@@ -3904,6 +3953,18 @@ export interface ConnectorCallParams {
   contribution: string;
   name: string;
   args?: unknown;
+  /**
+   * The calling conversation's track (#13246): its slug, main for the main track; absent when the hub cannot tell.
+   */
+  track?: string;
+  /** The track's kind; absent when not known (the main track). */
+  track_kind?: string;
+  /**
+   * The calling conversation's information categories (health, finance, relationships, emotion, legal_id); empty is
+   * general. Absent means not known (an older hub, a turn not tagged yet): take it for sensitive. Whether the phone
+   * confirms a write stays the hub's decision.
+   */
+  categories?: string[];
 }
 
 /**
@@ -3968,6 +4029,18 @@ export interface ConnectorDoParams {
   name: string;
   args?: unknown;
   request_id: string;
+  /**
+   * The calling conversation's track (#13246): its slug, main for the main track; absent when the hub cannot tell.
+   */
+  track?: string;
+  /** The track's kind; absent when not known (the main track). */
+  track_kind?: string;
+  /**
+   * The calling conversation's information categories (health, finance, relationships, emotion, legal_id); empty is
+   * general. Absent means not known (an older hub, a turn not tagged yet): take it for sensitive. Whether the phone
+   * confirms a write stays the hub's decision.
+   */
+  categories?: string[];
 }
 
 /**
@@ -5903,9 +5976,10 @@ export interface ModelRefusal {
 
 /**
  * error.code of the assistant calls besides permission_denied (data {scope: "assistant.read"}, or
- * "assistant.memory.read" for assistant.memory): invalid_params; not_found (assistant.messages: no such conversation
- * in the assistant's own space); assistant_offline (the manager is away: try again); machine_offline (the assistant's
- * computer is not connected or not set up: try again).
+ * "assistant.memory.read" for assistant.memory, or "assistant.entries.read" for assistant.entries.list):
+ * invalid_params; not_found (assistant.messages: no such conversation in the assistant's own space);
+ * assistant_offline (the manager is away: try again); machine_offline (the assistant's computer is not connected or
+ * not set up: try again).
  */
 export type AssistantErrorCode = "invalid_params" | "not_found" | "assistant_offline" | "machine_offline" | (string & {});
 export const ASSISTANT_ERROR_CODES = ["invalid_params", "not_found", "assistant_offline", "machine_offline"] as const;
@@ -6001,6 +6075,11 @@ export interface AssistantMemoryEntry {
   content?: string;
   /** content was cut or left out for its size. */
   truncated?: boolean;
+  /**
+   * The track whose memory it is; absent for the main track's. Another track's is shown only to an extension that may
+   * read what comes from it: the user's own, or one granted every default category of the track.
+   */
+  track?: string;
 }
 
 /**
@@ -6016,6 +6095,91 @@ export interface AssistantMemoryResult {
 export interface AssistantMessagesResult {
   messages: AssistantMessage[];
   next_seq?: number;
+}
+
+/**
+ * An RFC 3339 expiry timestamp, or null when absent.
+ */
+export type AssistantEntryNullableTime = unknown;
+
+/**
+ * Whether the choice is reversible; null means unknown.
+ */
+export type AssistantEntryNullableBool = unknown;
+
+export interface AssistantEntrySource {
+  machine: string;
+  session: string;
+  msg_uuid?: string;
+  card_id?: string;
+  file?: string;
+  line?: number;
+}
+
+export interface AssistantEntryScope {
+  executor: string;
+  machine: string[];
+  project: string[];
+  personal: boolean;
+}
+
+export interface AssistantEntryScopeFilter {
+  executor?: string;
+  machine?: string[];
+  project?: string[];
+  personal?: boolean;
+}
+
+export interface AssistantEntryDecision {
+  options: string[];
+  selected: string[];
+  rejected: string[];
+  reason: string;
+  reversible: unknown;
+}
+
+export interface AssistantLedgerEntry {
+  id: string;
+  type: string;
+  text: string;
+  quote: string;
+  source: AssistantEntrySource;
+  relayed_via: string[];
+  scope: AssistantEntryScope;
+  at: string;
+  expires_at: unknown;
+  supersedes: string;
+  trust: string;
+  status: string;
+  by: string;
+  tag: string[];
+  decision?: AssistantEntryDecision;
+  ext_id?: string;
+  origin_space: string;
+  category: string[];
+}
+
+export interface AssistantEntriesParams {
+  after?: string;
+  limit?: number;
+  by?: string;
+  trust?: string;
+  status?: string;
+  scope?: AssistantEntryScopeFilter;
+  tag?: string;
+  type?: string;
+}
+
+export interface AssistantEntriesResult {
+  entries: AssistantLedgerEntry[];
+  after: string;
+  has_more: boolean;
+}
+
+export interface AssistantEntriesChangedEvent {
+  id: string;
+  record_id: string;
+  status: "wrong";
 }
 
 /**
@@ -6949,6 +7113,8 @@ export const CALLS: Record<string, Call> = {
   "assistant.conversations": { from: "program", params: "AssistantConversationsParams", result: "AssistantConversationsResult" },
   "assistant.messages": { from: "program", params: "AssistantMessagesParams", result: "AssistantMessagesResult" },
   "assistant.memory": { from: "program", params: "AssistantMemoryParams", result: "AssistantMemoryResult" },
+  "assistant.entries.list": { from: "program", params: "AssistantEntriesParams", result: "AssistantEntriesResult" },
+  "event.assistant.entries.changed": { from: "hub", params: "AssistantEntriesChangedEvent", event: true },
   "assistant.data_status": { from: "program", params: "AssistantDataStatusParams", result: "AssistantDataStatusResult" },
   "browser.machines": { from: "program", params: "BrowserMachinesParams", result: "BrowserMachinesResult" },
   "browser.run": { from: "program", params: "BrowserRunParams", result: "BrowserRunResult" },
