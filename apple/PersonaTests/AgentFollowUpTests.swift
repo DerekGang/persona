@@ -129,8 +129,7 @@ struct AgentFollowUpTests {
     @Test func defaultPermissionRollsBackWhenTheHubDoesNotConfirmIt() async throws {
         let hub = FakeHub()
         hub.on("GET", "/api/v1/assistant", json: Self.state)
-        hub.on("PUT", "/api/v1/assistant", json: Self.state.replacingOccurrences(of: #"     "default_permission_mode":"default",
-"#, with: ""))
+        hub.on("PUT", "/api/v1/assistant", json: Self.state.replacingOccurrences(of: "     \"default_permission_mode\":\"default\",\n", with: ""))
         let seen = Seen()
         let page = page(hub, seen: seen)
         await page.load()
@@ -138,6 +137,13 @@ struct AgentFollowUpTests {
         #expect(page.state?.defaultPermissionMode == "default")
         #expect(seen.toasts.map(\.style) == [.error] && seen.saved.isEmpty)
         #expect(page.saving.isEmpty)
+    }
+
+    @Test func defaultPermissionAloneDoesNotOfferAgentFollowUp() throws {
+        let json = #"{"machine_id":"box","launcher":"claude","cwd":"/a","conversations":[],"default_permission_mode":"default"}"#
+        let state = try JSON.decoder.decode(APIClient.AssistantState.self, from: Data(json.utf8))
+        #expect(state.defaultPermissionMode == "default")
+        #expect(!AgentFollowUpModel.offered(state), "Default Permissions lives in Settings › Agent and Direction, not on the Agent Follow-Up page")
     }
 
     @Test func anotherAssistantsPageNamesThatOne() async throws {
