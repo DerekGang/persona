@@ -870,7 +870,7 @@ function MenuPanel({
         ])}
       </div>
       {failure && (
-        <div role="alert" className="mx-1 mt-1 max-h-28 overflow-y-auto border-t border-line px-1 pt-1.5 pb-1 text-[11.5px] break-words whitespace-pre-wrap text-red">
+        <div role="alert" className="mx-1 mt-1 max-h-28 overflow-y-auto border-t border-line px-1 pt-1.5 pb-1 text-submeta break-words whitespace-pre-wrap text-red">
           {failure}
         </div>
       )}
