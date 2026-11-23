@@ -789,3 +789,22 @@ test('two active editors preparing the same overflow photo upload its original o
   await attachments.close();
   await other.close();
 });
+
+test('a photo whose overflow upload was refused goes inline once the edited draft fits', async () => {
+  const { HttpFailure } = await import('persona-test:transport');
+  const repo = repository(async () => { throw new HttpFailure(400, 'bad_request'); });
+  const { runtime, attachments, client, session } = await pickedPictures([[1], [2]], { perMessage: 1 }, repo);
+  runtime.imageWidth = 120;
+  runtime.imageHeight = 80;
+  await assert.rejects(attachments.prepareSend('First send'), /bad_request/);
+  assert.equal(attachments.attachments[1].status, 'failed');
+  await attachments.close();
+
+  await attachments.open(client, context(), session);
+  await attachments.remove(attachments.attachments[0].id);
+  const prepared = await attachments.prepareSend('Send the remaining photo');
+  assert.deepEqual(prepared.images.map(photo => photo.data), ['Ag==']);
+  assert.equal(prepared.overflowNoticeKey, '');
+  assert.equal(repo.uploads.length, 1);
+  await attachments.close();
+});

@@ -634,8 +634,9 @@ export class ChatAttachments {
         if (admit && !admit()) throw new Error('chat_attachment_target_unavailable');
         if (!this.connected(operation, repository)) throw new Error('scope_changed');
         if (item.kind === 'image') {
-          // Once uploaded, a photo keeps its acknowledged path across retries and new hello limits.
-          if (!item.overflowReason) {
+          // A confirmed upload keeps its path, and an uncertain result still blocks a retry.
+          // A refused upload can be reconsidered under the current selection and limits.
+          if (!item.overflowReason || item.status === 'failed') {
             if (imagePayloads.length >= limits.perMessage) item.overflowReason = 'count';
             else {
               const encoded = base64Room >= 4 ? await this.encodeImage(item, limits) : undefined;
