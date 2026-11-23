@@ -447,7 +447,15 @@ func planFromRow(row db.TaskPlanRow) *TaskPlan {
 }
 
 // movePlan moves p from state from to its State with its Tasks; false when someone else moved it first.
-func (s *Service) movePlan(ctx context.Context, p *TaskPlan, from string) (bool, error) {
+func (s *Service) movePlan(ctx context.Context, p *TaskPlan, from string) (moved bool, err error) {
+	if from == planOpen && p.State != planOpen {
+		// the card is decided (started, not started, withdrawn): its push leaves the phones it went to (planPushOver)
+		defer func() {
+			if moved && err == nil {
+				s.planPushOver(p.ID)
+			}
+		}()
+	}
 	p.UpdatedAt = time.Now().UTC()
 	st := s.store()
 	if st == nil {
