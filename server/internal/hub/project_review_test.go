@@ -404,17 +404,7 @@ func TestProjectReviewReceiptThroughBus(t *testing.T) {
 	}
 	const target = `{"machine_id":"server","session_id":"review"}`
 	var delivery db.ProjectReviewDelivery
-	until := func(message string, condition func() bool) {
-		t.Helper()
-		deadline := time.Now().Add(8 * time.Second)
-		for !condition() {
-			if time.Now().After(deadline) {
-				t.Fatal(message)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	until("real bus send did not leave a persistent pending receipt", func() bool {
+	eventually(t, 8*time.Second, "real bus send did not leave a persistent pending receipt", func() bool {
 		var ok bool
 		delivery, ok, err = manager.NextProjectReview(ctx, target)
 		if err != nil {
@@ -435,7 +425,7 @@ func TestProjectReviewReceiptThroughBus(t *testing.T) {
 	}
 	node.mu.Unlock()
 	start()
-	until("manager restart did not consume the original receipt", func() bool {
+	eventually(t, 8*time.Second, "manager restart did not consume the original receipt", func() bool {
 		_, ok, err := manager.NextProjectReview(ctx, target)
 		if err != nil {
 			t.Fatal(err)
