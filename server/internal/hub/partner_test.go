@@ -394,6 +394,189 @@ func TestPartnerPairingNeverReplacesAPartner(t *testing.T) {
 	if row, ok := b.h.partnerRow(hubC); !ok || row.FP != fpC {
 		t.Fatalf("B's pairing with C: %+v", row)
 	}
+	// C again with another key (reinstalled): B refuses with pin_changed in its own words, which name B as the hub to
+	// unpair on, not the pasting one (it has no pairing to remove).
+	certC2, _ := partnerCert(t)
+	c2 := startPartnerHub(t, hubC, "Lab", partnerHubOpts{cert: certC2})
+	code, _ = b.h.newPartnerCode(ctx)
+	_, err = c2.h.joinPartner(i18n.With(ctx, i18n.Ja), code.Code)
+	if partnerErrCode(err) != "pin_changed" || partnerErrStatus(err) != http.StatusConflict ||
+		!strings.Contains(i18n.Localize(err, i18n.Ja), i18n.T(i18n.Ja, "hub-partner_pair.pin_changed_here")) {
+		t.Fatalf("C with another key pairing again while B kept it: %v", err)
+	}
+	if row, ok := b.h.partnerRow(hubC); !ok || row.FP != fpC {
+		t.Fatalf("B's pairing with C: %+v", row)
+	}
+}
+
+// Which hub to unpair on, in every language: the pasting hub's own refusals (already_paired, pin_changed) name the
+// hub the owner is on; the code's hub's, which that owner reads after "The other hub refused:", name the code's hub.
+func TestPartnerPairingWordsSayWhereToUnpair(t *testing.T) {
+	for _, tc := range []struct {
+		lang       i18n.Lang
+		here, code string // where to unpair: this hub (the pasting one), the code's hub
+	}{
+		{i18n.En, "on this hub", "on that hub"},
+		{i18n.ZhHans, "在这台 hub 上", "在那台 hub 上"},
+		{i18n.Ja, "このハブで", "相手のハブで"},
+	} {
+		for _, err := range []error{errPartnerPaired, errPartnerPin} {
+			if got := i18n.Localize(err, tc.lang); !strings.Contains(got, tc.here) || strings.Contains(got, tc.code) {
+				t.Errorf("%s, the pasting hub's %v: %q", tc.lang, partnerErrCode(err), got)
+			}
+		}
+		for _, err := range []error{errPartnerPairedHere, errPartnerPinHere} {
+			if got := i18n.Localize(err, tc.lang); !strings.Contains(got, tc.code) || strings.Contains(got, tc.here) {
+				t.Errorf("%s, the code's hub's %v: %q", tc.lang, partnerErrCode(err), got)
+			}
+		}
+	}
+}
+
+func setPartnerJoinStep(mh *testHub, step func(string)) {
+	mh.h.partners.mu.Lock()
+	mh.h.partners.joinStep = step
+	mh.h.partners.mu.Unlock()
+}
+
+// partnerCreds is how many partner credentials mh issued that are not revoked.
+func partnerCreds(t *testing.T, mh *testHub) int {
+	t.Helper()
+	toks, _ := mh.store.DeviceTokens(context.Background())
+	n := 0
+	for _, tk := range toks {
+		if tk.Kind == rolePartner && !mh.store.isRevoked(tk.ID) {
+			n++
+		}
+	}
+	return n
+}
+
+// Two owners pasting each other's codes at the same moment: one pairing with a hub at a time on each side. B, joining
+// A, refuses A's request (pairing_in_progress, in A's owner's words; B's code kept); A's join revokes only the
+// credential it issued; B's goes through, and each hub holds a credential the other did not revoke, so the link comes
+// up. Before, each hub's redeem revoked the credential its own join was handing over, and both ended up holding ones
+// the other had revoked. A is held after issuing its credential until B has issued its own, and (were it answered)
+// until B's request was answered, the order in which the two requests cross.
+func TestPartnerPairingCrossed(t *testing.T) {
+	certA, _ := partnerCert(t)
+	certB, _ := partnerCert(t)
+	a := startPartnerHub(t, hubA, "家里", partnerHubOpts{cert: certA})
+	b := startPartnerHub(t, hubB, "Office", partnerHubOpts{cert: certB})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	codeA, err := a.h.newPartnerCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codeB, err := b.h.newPartnerCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait := func(ch <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			t.Fatalf("not within 20s: %s", what)
+		}
+	}
+	hold := func(reached, until chan struct{}) {
+		close(reached)
+		select {
+		case <-until:
+		case <-ctx.Done():
+		}
+	}
+	aIssued, goA, aAnswered := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	bIssued, goB, bAnswered := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	setPartnerJoinStep(a, func(step string) {
+		switch step {
+		case partnerJoinIssued:
+			hold(aIssued, goA)
+		case partnerJoinAnswered:
+			hold(aAnswered, bAnswered)
+		}
+	})
+	setPartnerJoinStep(b, func(step string) {
+		switch step {
+		case partnerJoinIssued:
+			hold(bIssued, goB)
+		case partnerJoinAnswered:
+			close(bAnswered)
+		}
+	})
+	type joined struct{ err error }
+	resA, resB := make(chan joined, 1), make(chan joined, 1)
+	go func() { _, err := a.h.joinPartner(i18n.With(ctx, i18n.En), codeB.Code); resA <- joined{err} }()
+	wait(aIssued, "A issued its credential")
+	go func() { _, err := b.h.joinPartner(ctx, codeA.Code); resB <- joined{err} }()
+	wait(bIssued, "B issued its credential")
+	close(goA) // A's request reaches B, which is pairing with A
+	var gotA joined
+	select {
+	case gotA = <-resA:
+	case <-aAnswered: // B paired with A meanwhile: A waits until B's request was answered too
+	case <-ctx.Done():
+		t.Fatal("A's request was not answered")
+	}
+	close(goB) // B's request reaches A
+	if gotA == (joined{}) {
+		select {
+		case gotA = <-resA:
+		case <-ctx.Done():
+			t.Fatal("A's join did not end")
+		}
+	}
+	var gotB joined
+	select {
+	case gotB = <-resB:
+	case <-ctx.Done():
+		t.Fatal("B's join did not end")
+	}
+	if partnerErrCode(gotA.err) != "pairing_in_progress" || partnerErrStatus(gotA.err) != http.StatusConflict ||
+		!strings.Contains(i18n.Localize(gotA.err, i18n.En), i18n.T(i18n.En, "hub-partner_pair.pairing_in_progress_here")) {
+		t.Fatalf("A's join: %v", gotA.err)
+	}
+	if gotB.err != nil {
+		t.Fatalf("B's join: %v", gotB.err)
+	}
+	setPartnerJoinStep(a, nil)
+	setPartnerJoinStep(b, nil)
+	parsedB, _ := parsePartnerCode(codeB.Code)
+	if ok, _ := b.store.PartnerCodeValid(ctx, hashToken(parsedB.secret)); !ok {
+		t.Fatal("B's refusal used its code up")
+	}
+	// Each hub holds a credential the other issued and did not revoke, and only the pairing's is left.
+	for _, side := range [][2]*testHub{{a, b}, {b, a}} {
+		mh, other := side[0], side[1]
+		_, held := partnerCredOf(t, mh, other)
+		row, _ := other.h.partnerRow(mh.id())
+		if tk, _ := other.store.DeviceTokenByHash(ctx, hashToken(held)); tk == nil || tk.ID != row.CredentialID {
+			t.Fatalf("%s holds a credential %s revoked or never paired with: %+v", mh.h.cfg.Name, other.h.cfg.Name, tk)
+		}
+		if n := partnerCreds(t, mh); n != 1 {
+			t.Fatalf("%s: %d live partner credentials", mh.h.cfg.Name, n)
+		}
+	}
+	waitPartnerLink(t, a, b)
+	// A pairing with a hub here (a request being answered) refuses another with it, before any credential is issued.
+	done, ok := a.h.pairingPartner(hubC)
+	if !ok {
+		t.Fatal("no pairing with C under way, yet it was refused")
+	}
+	c := startPartnerHub(t, hubC, "Lab", partnerHubOpts{})
+	codeC, _ := c.h.newPartnerCode(ctx)
+	if _, err := a.h.joinPartner(ctx, codeC.Code); partnerErrCode(err) != "pairing_in_progress" || partnerErrStatus(err) != http.StatusConflict {
+		t.Fatalf("A joining C while pairing with it: %v", err)
+	}
+	if n := partnerCreds(t, a); n != 1 {
+		t.Fatalf("a refused join issued a credential: %d", n)
+	}
+	done()
+	if _, err := a.h.joinPartner(ctx, codeC.Code); err != nil {
+		t.Fatalf("A joining C afterwards: %v", err)
+	}
 }
 
 // What another hub says about itself is bounded: a hub_id that is not one, a token or pin of any size, more addresses
