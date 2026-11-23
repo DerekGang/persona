@@ -33,7 +33,9 @@ Custom              pick each side: Status Counts / Tokens per Minute / Tokens T
 - Settings: **Settings › Notifications › Live Activities › Dynamic Island** (`IslandSettingsView`), topped by three previews: Normally / When an Agent Needs You / Shared with Other Apps; stored on the hub per device (`prefs.island`, `notify.go IslandPrefs`).
   When Machine Load is chosen you can pick which machine; if none is picked it's the busiest one. It shows that machine's load per core, as Machines does
   ("1.1" beside the CPU symbol; "Load 1.1 per core", or "<name> 1.1 per core" for a chosen machine, on the expanded island and the Lock Screen; `FleetText.perCore`, #12519):
-  it is not a CPU percentage and passes 1 when threads wait for a core (`docs/server/machines.md`, "What load counts").
+  it is not a CPU percentage and passes 1 when threads wait for a core (`docs/server/machines.md`, "What load counts"). VoiceOver reads the compact island's "1.1" as
+  "Load 1.1 per core" (`IslandPair.spoken`). The words are about twice as wide as the percent they replaced: where they don't fit whole beside a second number (the
+  expanded island's corner, about 125 pt), `FleetStatsLine` draws load as the CPU symbol and "1.1" instead (`ViewThatFits`; `IslandFitTests.statsLineFitsTheExpandedCorner`).
 
 ### Sharing the Dynamic Island with other apps
 
@@ -289,7 +291,7 @@ Each received push redraws both the Dynamic Island and the Lock Screen, so the h
   The node keeps nothing: restarting either side recomputes the same numbers from files. The manager also writes them to Postgres for the Machines page's week of charts.
 - The manager (`devices/metrics.go`) aggregates all machines: TPM = output tokens in the last 2–3 minutes (from the beginning of the minute two minutes ago to now) ÷ minutes elapsed; Tokens Today includes cache reads and writes,
   with "today" in the phone's time zone (reported in assistant settings); load = 1-minute load average ÷ core count (load per core, the figure Machines and the alerts use); machines silent for 2 minutes are excluded from load.
-- Before pushing to the Dynamic Island, round to two significant digits (12345 → 12000; load to 5% increments, `percent`), so small fluctuations don't create new content.
+- Before pushing to the Dynamic Island, round to two significant digits (12345 → 12000; load to the tenth of a core the apps print, `percent` in steps of 10, `loadPercent`), so small fluctuations don't create new content.
   The apps show that percent as load per core with one decimal (`FleetText.perCore`: 110 is "1.1", not "110%"), on the island, the Lock Screen and the Computers widget.
 
 ## Push budget

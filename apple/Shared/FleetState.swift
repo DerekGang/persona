@@ -38,8 +38,8 @@ nonisolated struct FleetState: Codable, Hashable, Sendable {
         nonisolated struct Load: Codable, Hashable, Sendable {
             var id: String
             var name = ""
-            /// The 1-minute load average over the cores × 100, rounded to 5 (hub fleetStats); shown per core
-            /// (`FleetText.perCore`), never as a percentage.
+            /// The 1-minute load average over the cores × 100, rounded to 10, the tenth of a core the apps print
+            /// (hub fleetStats; an older hub rounds to 5); shown per core (`FleetText.perCore`), never as a percentage.
             var percent = 0
         }
 
@@ -312,14 +312,19 @@ nonisolated enum FleetText {
         case let .requests(n): interfaceText(LocalizedStringResource("\(short(n)) reqs today", comment: "Requests today"))
         case let .assistant(on): on ? interfaceText("Assistant replying") : interfaceText("Assistant idle")
         // Load per core, as Machines writes it ("Load 1.4 per core"); a chosen machine's name stands for "Load".
-        case let .load(name, p): interfaceText(name.isEmpty ? "Load \(perCore(p)) per core" : "\(name) \(perCore(p)) per core")
+        case let .load(name, p): interfaceText(name.isEmpty ? "Load \(perCore(percent: p)) per core" : "\(name) \(perCore(percent: p)) per core")
         default: nil
         }
     }
 
     /// A machine's load per core from the island's percent (load ÷ cores × 100, the hub's fleetStats), one decimal as
-    /// on Machines and the web: 110 is "1.1". Not a CPU percentage, and not capped: past 1, threads wait for a core.
-    static func perCore(_ percent: Int) -> String { MetricFormat.perCore(Double(percent) / 100) }
+    /// on Machines and the web (`MetricFormat.perCore`): 110 is "1.1". In whole numbers, so an older hub's steps of 5
+    /// round one way (145 is "1.5"), not by how a Double stores 1.45. Not a CPU percentage, and not capped: past 1,
+    /// threads wait for a core.
+    static func perCore(percent: Int) -> String {
+        let tenths = (max(percent, 0) + 5) / 10
+        return "\(tenths / 10).\(tenths % 10)"
+    }
 }
 
 /// What one side of the compact Dynamic Island can show (hub notify.go, the same names).

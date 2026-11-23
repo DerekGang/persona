@@ -1036,7 +1036,7 @@ private struct HomeComputerRing: View {
 
     var body: some View {
         let state = computerState(machine)
-        let spoken = [machine.name, state.words, machine.online ? machine.load.map { interfaceText("Load \(FleetText.perCore($0)) per core") } : nil] // perf-ok: drawn once per timeline entry, in the widget extension
+        let spoken = [machine.name, state.words, machine.online ? machine.load.map { interfaceText("Load \(FleetText.perCore(percent: $0)) per core") } : nil] // perf-ok: drawn once per timeline entry, in the widget extension
             .compactMap { $0 }.joined(separator: ", ")
         VStack(spacing: HomeWidgetTokens.tight) {
             ZStack {
@@ -1075,10 +1075,11 @@ private struct HomeComputerLine: View {
                 }
                 .font(HomeWidgetTokens.caption).lineLimit(1)
                 if machine.online, let load = machine.load {
-                    // Load per core, as Machines writes it: "Load 110%" read as CPU use (#12519). The words are longer than
-                    // the percent were, so they shrink to fit half the large widget rather than end in "…".
-                    Text("Load \(FleetText.perCore(load)) per core").font(HomeWidgetTokens.caption).lineLimit(1)
-                        .minimumScaleFactor(HomeWidgetTokens.heroMinScale).homeInk(.tertiary)
+                    // Load per core, as Machines writes it: "Load 110%" read as CPU use (#12519). The ring beside it is the
+                    // load and VoiceOver says "Load 0.5 per core", so the line is the figure and its unit ("0.5 per core"):
+                    // with "Load" too, half a standard iPhone's large widget shrank it below 0.8 in Japanese.
+                    Text("\(FleetText.perCore(percent: load)) per core").font(HomeWidgetTokens.caption).lineLimit(1)
+                        .minimumScaleFactor(HomeWidgetTokens.nameMinScale).homeInk(.tertiary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

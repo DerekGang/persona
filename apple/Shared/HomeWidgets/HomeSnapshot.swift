@@ -213,7 +213,7 @@ nonisolated struct HomeSnapshot: Codable, Hashable, Sendable {
         var online: Bool
         var working = 0
         var needsYou = 0
-        /// The 1-minute load average ÷ cores × 100, rounded to 5 (the Live Activity's `FleetState.Stats.Load.percent`):
+        /// The 1-minute load average ÷ cores × 100, rounded to 10 (the Live Activity's `FleetState.Stats.Load.percent`):
         /// 100 is one thread per core, and it passes 100 when threads wait for a core, so it is shown per core
         /// (`FleetText.perCore`) and the ring stops full; nil when not reported.
         var load: Int?
