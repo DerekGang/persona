@@ -6,6 +6,7 @@ vi.hoisted(() => { window.matchMedia ??= ((query: string) => ({ matches: false, 
 import { initI18n } from "../i18n";
 import { credentialOwner, setToken } from "../lib/api";
 import { createTodoWithRepositories, repositoryRequestContext, type RepositoryCatalog, type TaskRepositorySet } from "../lib/task-repositories";
+import type { PRFacts } from "../lib/todos";
 import { NewTodoRepositoryBindings, TodoRepositoryBindings } from "./TaskRepositoryBindingsEditor";
 import { Toasts } from "./atoms";
 
@@ -90,6 +91,39 @@ it("shows the Agent's saved links without an editor, and the load rides on the d
   const dialog = document.querySelector('[role="dialog"]')!;
   expect(dialog.textContent).toContain("#7");
   expect(dialog.textContent).toContain("Pull request");
+});
+
+it("matches current and earlier PR facts to their own rows as observations change", async () => {
+  const base = identity.canonical_url + "/pull/";
+  const current: PRFacts = { url: base.toUpperCase() + "7/?view=1", state: "open", draft: false, conflicts: true,
+    title: "Observed title", review: "pending", checks: "none", checked_at: "2026-01-01T00:00:00Z" };
+  const earlier: PRFacts = { ...current, url: base + "8", title: "Earlier title", state: "merged", draft: true };
+  const show = (prStatus: PRFacts, otherPRs: PRFacts[]) => act(async () => root.render(
+    <TodoRepositoryBindings manager="assistant" owner={credentialOwner()} todoId="todo_example" prStatus={prStatus} otherPRs={otherPRs} />));
+  await show(current, [earlier]);
+  const [first, second] = twoLinks.repositories[0].links;
+  await answer(calls[0], { ...twoLinks, repositories: [{ ...twoLinks.repositories[0], links: [
+    { ...first, title: "Saved title" }, second, { ...second, kind: "issue", canonical_url: identity.canonical_url + "/issues/8" },
+  ] }] });
+  const [one, two, issue] = host.querySelectorAll("[data-repository-link]");
+  expect(one.querySelector("a")?.textContent).toContain("Saved title");
+  expect(one.textContent).not.toContain("Observed title");
+  expect(one.textContent).toContain("Open");
+  expect(one.textContent).toContain("Conflict");
+  expect(two.querySelector("a")?.textContent).toContain("Earlier title");
+  expect(two.textContent).toContain("Merged");
+  expect(two.textContent).not.toMatch(/Conflict|Draft/);
+  expect(issue.textContent).not.toMatch(/Earlier title|Merged/);
+
+  await show({ ...current, draft: true, conflicts: false }, [{ ...earlier, state: "closed", title: undefined }]);
+  expect(one.textContent).toContain("Draft");
+  expect(one.textContent).not.toMatch(/Conflict|Open/);
+  expect(two.querySelector("a")?.getAttribute("aria-label")).toContain("Pull request #8");
+  expect(two.textContent).toContain("Closed");
+  expect(two.textContent).not.toContain("Conflict");
+  await show(current, [{ ...earlier, url: other.canonical_url + "/pull/8" }]);
+  expect(two.textContent).not.toMatch(/Merged|Earlier title|Closed/);
+  expect(calls).toHaveLength(1);
 });
 
 it("adds a link by its URL, refuses another repository's, and saves the whole set with both revisions", async () => {

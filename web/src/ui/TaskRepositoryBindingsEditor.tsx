@@ -11,6 +11,8 @@ import {
   type CreateRepositoryBindings, type RepositoryCatalog, type RepositoryRequestContext, type RepositoryLinkInput, type RequestedRef,
   type RepositoryLinkLabel, type RepositoryLinkView, type TaskRepository, type TaskRepositoryInput, type TaskRepositoryLink, type TaskRepositorySet,
 } from "../lib/task-repositories";
+import { normalizedPR } from "../lib/todo-triage";
+import type { PRFacts } from "../lib/todos";
 import type { RepositoryIdentity } from "../lib/repository-identity";
 import { Group, Pill, Row, RowFailed, settingsInputClass } from "../views/settings/SettingsParts";
 import { Button, Collapse, Dialog, IconButton, Loading, Menu, toast, useMenu } from "./atoms";
@@ -59,7 +61,7 @@ function RepositoryRow({ identity, name, source, children }: { identity: Reposit
  * source may name the kinds its own way (`labels`, shown as given); a pasted address its source has not read yet is
  * the address itself, said to be checked on save.
  */
-function LinkRow({ identity, view, labels, onRemove, disabled }: { identity: RepositoryIdentity; view: RepositoryLinkView; labels?: readonly RepositoryLinkLabel[]; onRemove?: () => void; disabled?: boolean }) {
+function LinkRow({ identity, view, labels, pr, onRemove, disabled }: { identity: RepositoryIdentity; view: RepositoryLinkView; labels?: readonly RepositoryLinkLabel[]; pr?: PRFacts; onRemove?: () => void; disabled?: boolean }) {
   if (view.pending) {
     return <div className="flex items-start gap-2 py-2 pr-4 pl-10" data-repository-link data-link-pending>
       <span data-link-icon="link" className="mt-0.5 shrink-0 text-ink-3"><Icon name="link" size={14} /></span>
@@ -77,15 +79,21 @@ function LinkRow({ identity, view, labels, onRemove, disabled }: { identity: Rep
     ?? t(view.kind === "issue" ? "task-repositories.issue" : "task-repositories.pull_request");
   const icon = view.kind === "issue" ? "target" : identity.provider === "gitlab" ? "merge" : "pullRequest";
   const tag = linkTag(identity, view);
+  const title = view.title || pr?.title?.trim();
+  const state = pr?.state === "open" && pr.draft ? "draft" : pr?.state;
+  const tones = { open: "green", draft: undefined, merged: "accent", closed: "red" } as const;
   return <div className="flex items-start gap-2 py-2 pr-4 pl-10" data-repository-link>
     <span data-link-icon={icon} className="mt-0.5 shrink-0 text-ink-3"><Icon name={icon} size={14} /></span>
-    <a href={view.url} target="_blank" rel="noreferrer noopener" aria-label={`${kind} ${tag} · ${identity.path}${view.title ? ` · ${view.title}` : ""}`}
-      className="flex touch-hit min-w-0 flex-1 items-start gap-2 text-meta leading-snug text-ink-3 hover:underline">
-      {view.title
-        ? <><span className="min-w-0 break-words">{view.title}</span><span className="shrink-0 font-medium tabular-nums text-accent-ink">{tag}</span></>
-        : <><span className="shrink-0">{kind}</span><span className="shrink-0 font-medium tabular-nums text-accent-ink">{tag}</span></>}
-      <Icon name="external" size={11} className="mt-1 ml-auto shrink-0 text-ink-3" />
-    </a>
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+      <a href={view.url} target="_blank" rel="noreferrer noopener" aria-label={`${kind} ${tag} · ${identity.path}${title ? ` · ${title}` : ""}`}
+        className="flex touch-hit min-w-0 flex-auto items-start gap-2 text-meta leading-snug text-ink-3 hover:underline">
+        <span className="min-w-0 break-words">{title || kind}</span>
+        <span className="shrink-0 font-medium tabular-nums text-accent-ink">{tag}</span>
+        <Icon name="external" size={11} className="mt-1 ml-auto shrink-0 text-ink-3" />
+      </a>
+      {state && <Pill tone={tones[state]}>{t(`session-gitpr.state_${state}`)}</Pill>}
+      {pr?.state === "open" && pr.conflicts && <Pill tone="orange">{t("task-repositories.pr_conflict")}</Pill>}
+    </div>
     {onRemove && <IconButton icon="x" size={24} iconSize={12} className="-mt-0.5" label={t("task-repositories.remove_link", { link: tag })} onClick={onRemove} disabled={disabled} />}
   </div>;
 }
@@ -285,11 +293,16 @@ const isUnsupported = (error: unknown) => error instanceof ApiError && error.sta
 
 /** A to-do's own PR, as the page already parses it (the editor does not read the stage bar, a first-screen chunk). */
 type LegacyPR = { url: string; text: string };
-type TodoRepositoryBindingsProps = { manager: string; owner: string; todoId: string; legacyPRs?: LegacyPR[]; version?: unknown };
+type TodoRepositoryBindingsProps = { manager: string; owner: string; todoId: string; legacyPRs?: LegacyPR[]; prStatus?: PRFacts; otherPRs?: PRFacts[]; version?: unknown };
 export function TodoRepositoryBindings(props: TodoRepositoryBindingsProps) {
   return <TodoRepositoryBindingsSession key={`${props.owner}:${props.manager}:${props.todoId}`} {...props} />;
 }
-function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [], version }: TodoRepositoryBindingsProps) {
+function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [], prStatus, otherPRs, version }: TodoRepositoryBindingsProps) {
+  const prByURL = useMemo(() => {
+    const facts = new Map(otherPRs?.map((pr) => [normalizedPR(pr.url), pr]));
+    if (prStatus) facts.set(normalizedPR(prStatus.url), prStatus);
+    return facts;
+  }, [prStatus, otherPRs]);
   const context = useRequestContext(manager, owner);
   const [catalog, setCatalog] = useState<RepositoryCatalog>();
   const [saved, setSaved] = useState<TaskRepositorySet>();
@@ -464,7 +477,8 @@ function TodoRepositoryBindingsSession({ manager, owner, todoId, legacyPRs = [],
               </RepositoryRow>
               {repository.links.map((link) => {
                 const view = repositoryLinkView(repository.source_snapshot.identity, link);
-                return view ? <LinkRow key={`${link.kind}:${link.number}`} identity={repository.source_snapshot.identity} view={view} labels={repository.link_kinds} /> : null;
+                return view ? <LinkRow key={`${link.kind}:${link.number}`} identity={repository.source_snapshot.identity} view={view} labels={repository.link_kinds}
+                  pr={link.kind === "pull_request" ? prByURL.get(normalizedPR(link.canonical_url)) : undefined} /> : null;
               })}
               {source?.unavailable && <SourceNote name={source.name} />}
               {!!repository.catalog_state && repository.catalog_state !== "current" && <p role="status" data-repository-note className="py-2 pr-4 pl-10 text-submeta leading-snug text-ink-3">

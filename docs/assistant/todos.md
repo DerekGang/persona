@@ -1404,8 +1404,10 @@ work** group. The detail is read-only by default: it draws the saved
 repositories as rows with their issues and pull requests as links, so the
 associations the agent maintains are visible without opening an editor. Each
 repository row carries its provider's own mark and its project address on one
-line; a link shows its retained full title as the hyperlink, falling back to the
-localized type and number when no title is known. A provider extension's
+line. A link shows its saved title, then the title from a matching PR observation,
+then its localized type and number. The Web matches the current and earlier PR
+observations by URL and shows Open, Draft, Merged or Closed beside the link.
+An open PR with merge conflicts also shows a Conflict warning. A provider extension's
 repository has the extension mark and its source's name after the address (the
 `provider_name` saved with it, else "Another source", never the `ext:` id); its
 links open at their stored addresses, numbered `#N`, with the extension's own
@@ -1465,7 +1467,9 @@ their `maxLength` is only a character ceiling, not a UTF-8 byte validator.
 A nonempty title updates a retained link and increments
 the association revision. Omitted or empty titles in URL-only reports or older
 editors preserve known titles; removing a link removes its title. Agents obtain
-titles from the related work and maintain them through the same tool. The app
+titles from the related work and maintain them through the same tool. The existing
+GitHub status poll also reads the PR title and refreshes a matching saved link.
+Only a changed, nonempty title advances the association revision. The app
 shows a localized type and number until a title is available; it never guesses
 titles or performs a remote metadata request when opening a to-do.
 It preserves source snapshots, aliases and requested refs. Assistant conversations
