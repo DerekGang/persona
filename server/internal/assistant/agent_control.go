@@ -120,13 +120,17 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 	if err := s.exitAllowed(ctx, self, am, c, then, 0); err != nil {
 		return "", err
 	}
-	// Only a turn under way is stopped: an agent still starting has none yet (then is queued for it, as agent_send does).
+	// Only a positively finished row skips the stop RPC. A blocked or unknown refresh is not proof of rest: let the node
+	// apply its own dialog/transcript guard rather than suppressing the stop here. An agent still starting has no turn yet
+	// (then is queued for it, as agent_send does).
 	working := c.Status == proto.StatusWorking
+	stop := working || c.Status == proto.StatusBlocked || c.Status == proto.StatusUnknown
 	stopped := false // its turn is known to have ended
-	// over: the node found its turn already ended, only its background work keeping it Working (#10828): nothing was
-	// interrupted and that work goes on, so it is not said to have been stopped.
-	over := false
-	if working {
+	// over: the refreshed row's foreground turn already ended while background work remains, or the node reports that
+	// state (#10828). Nothing is interrupted and that work goes on, so it is not said to have been stopped. Checking it
+	// before the working branch matters: the phone wait can turn a previously working row idle while its command runs.
+	over := (c.Status == proto.StatusIdle || c.Status == proto.StatusDone) && backgroundRunning(c)
+	if stop {
 		var res struct {
 			Settled    bool `json:"settled"`
 			NotRunning bool `json:"not_running"` // the node saw no turn running and pressed nothing (#10827)
@@ -144,11 +148,11 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 	const overSaid = "%s on %s had already ended its turn: nothing was interrupted, and its background work is still running " +
 		"(it can be stopped in the terminal on that computer). Do not tell the user it stopped."
 	if then == "" {
-		if !working {
-			return fmt.Sprintf("%s on %s was not working: nothing to stop.", agentLabel(c), am.Name), nil
-		}
 		if over {
 			return fmt.Sprintf(overSaid, agentLabel(c), am.Name), nil
+		}
+		if !working {
+			return fmt.Sprintf("%s on %s was not working: nothing to stop.", agentLabel(c), am.Name), nil
 		}
 		if !stopped {
 			return fmt.Sprintf("Asked %s on %s to stop, but its turn has not ended yet: it still reads as working after %s. "+
@@ -183,15 +187,15 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 			s.logf("task %s: routed feed: %v", t.ID, err)
 		}
 	}
-	if !working {
-		return fmt.Sprintf("%s on %s was not working: sent the new instruction.", agentLabel(c), am.Name), nil
-	}
 	if over {
 		said := fmt.Sprintf(overSaid, agentLabel(c), am.Name)
 		if sent.Queued {
 			return said + " The new instruction is queued behind what it is doing now and is read when that ends.", nil
 		}
 		return said + " The new instruction was sent.", nil
+	}
+	if !working {
+		return fmt.Sprintf("%s on %s was not working: sent the new instruction.", agentLabel(c), am.Name), nil
 	}
 	if !stopped {
 		return fmt.Sprintf("Asked %s on %s to stop, but its turn has not ended yet (it still reads as working after %s): the new "+
