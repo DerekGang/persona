@@ -106,6 +106,8 @@ type Service struct {
 	mcpChanges mcpToolChanges
 	// ext is the extensions' tools in this process (extensions.go SetExtensions); nil: none (tests).
 	ext ExtensionTools
+	// extOwners keeps the extensions the user marked as their own for the profile (extension_trust.go).
+	extOwners extensionOwnerCache
 	// startDefaultsFor answers a task start's defaults from the extension layer (start_defaults.go); nil: no defaults.
 	startDefaultsFor func(ctx context.Context, facts StartFacts) (StartDefaults, bool, error)
 	// startCandidates lists the presets a start-defaults rule can pick on a machine (start_candidates.go); nil: the
@@ -382,6 +384,7 @@ func New(o Options) *Service {
 	s.agentNamingRoutes() // agent_naming_request.go
 	s.alwaysRoutes()
 	s.infoAccessRoutes()
+	s.trackRoutes()
 	s.undeliveredRoutes()
 	s.standingAuthorizationRoutes()
 	s.ruleSuggestionRoutes()
@@ -412,6 +415,7 @@ func New(o Options) *Service {
 	s.scheduleGrantRoutes()
 	s.placeRoutes()
 	saved.Register(saved.Host{Store: func() any { return s.store() }, Event: s.event, Handle: s.handle, Full: fullRole, BodyErr: writeBodyErr})
+	s.resourceRoutes()
 	s.repositoryRoutes()
 	s.repoMirrorRoutes()
 	s.taskRoutes()
