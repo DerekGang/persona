@@ -166,7 +166,7 @@ test('the recording detail keeps its actual path explanation and its minutes ent
 test('the recording facts sheet returns to its own entry and permits an explicit dirty close without a write',()=>{
   const body=source.slice(source.indexOf('  @Builder recordingFactsEditor()'),source.indexOf('  private recordingMetric('));
   assert.match(body,/onClick\(\(\) => this\.facts\.close\(\)\)\.id\('knowledge\.facts\.cancel'\)/);
-  assert.match(body,/onClick\(\(\) => this\.facts\.save\(this\.workspace\)\)\.id\('knowledge\.facts\.save'\)/);
+  assert.match(body,/onClick\(\(\) => this\.submitFacts\(\)\)\.id\('knowledge\.facts\.save'\)/);
   assert.match(source,/\.bindSheet\(this\.facts\.open,this\.recordingFactsEditor\(\)/);
   assert.match(source,/onWillDismiss:\(action:DismissSheetAction\) => \{ if \(!this\.workspace\.busy && !this\.factsChanged\(\)\)/);
 });
@@ -183,8 +183,8 @@ test('deleting a confirmed recording fact dismisses immediately and only its own
   }};
   const first=actions.deleteFacts();assert.equal(actions.facts.open,false);
   owner='meeting B';finish(true);await first;assert.equal(actions.removedFacts,undefined);
-  actions.facts.open=true;owner='meeting A';
-  const second=actions.deleteFacts();finish(true);await second;
+  actions.facts.open=true;actions.facts.text='   ';owner='meeting A';
+  const second=actions.submitFacts();finish(true);await second;
   assert.equal(actions.removedFacts,'initial fact');
   owner='meeting B';await actions.undoFacts();assert.equal(writes.length,2);
   owner='meeting A';const undo=actions.undoFacts();finish(true);await undo;

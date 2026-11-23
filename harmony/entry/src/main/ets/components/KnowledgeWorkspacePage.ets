@@ -933,6 +933,10 @@ export struct KnowledgeWorkspacePage {
     if (!value || this.removedFactsOwner!==owner || this.workspace.busy) return;
     if (await this.workspace.saveFacts(value,'') && this.factsOwner()===owner) this.removedFacts='';
   }
+  private async submitFacts():Promise<void> {
+    if (this.facts.baseline && !this.facts.text.trim()) await this.deleteFacts();
+    else await this.facts.save(this.workspace);
+  }
 
   @Builder recordingFactsEditor() {
     Column() {
@@ -947,7 +951,7 @@ export struct KnowledgeWorkspacePage {
           else Text(tr('save')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontWeight(600).fontColor(this.factsChanged() ? Colors.link : Colors.secondary)
         }.height(44).constraintSize({minWidth:50}).padding({left:9,right:9}).backgroundColor(Colors.control)
           .enabled(this.workspace.supportsExpectedPinned && !this.workspace.busy && !['pending','unknown'].includes(this.workspace.writeState) && this.factsChanged())
-          .onClick(() => this.facts.save(this.workspace)).id('knowledge.facts.save')
+          .onClick(() => this.submitFacts()).id('knowledge.facts.save')
       }.width('100%').constraintSize({minHeight:74}).padding({left:16,right:16,top:4,bottom:4})
       Scroll() {
         Column({space:8}) {
@@ -1010,13 +1014,13 @@ export struct KnowledgeWorkspacePage {
         this.recordingHeading('phone_kb_confirmed')
         Column({space:6}) {
           if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
-            .fontSize(16).fontColor(Colors.ink).width('100%').padding({left:20,right:20})
+            .fontSize(17).fontColor(Colors.ink).width('100%').padding({left:20,right:20,top:4,bottom:4}).copyOption(CopyOptions.LocalDevice).id('knowledge.facts.value')
           if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
             .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({left:20,right:20,top:8,bottom:8}).id('knowledge.facts.read_only')
           if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
             Row({space:12}) {
               SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
-              Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link)
+              Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'recording_facts_edit' : 'phone_kb_add_fact')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link)
             }.width('100%')
           }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding({left:20,right:20}).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
         }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(29)
