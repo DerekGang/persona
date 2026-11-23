@@ -98,7 +98,25 @@ def main():
             if prefix and not self.path.startswith(prefix + '/'):
                 self.reply(404, {'code': 'wrong_prefix'})
                 return None
-            return self.path[len(prefix):].split('?', 1)[0]
+            path = self.path[len(prefix):].split('?', 1)[0]
+            if path.startswith('/edge/'):
+                identity = self.headers.get('CF-Access-Client-Id', '')
+                secret = self.headers.get('CF-Access-Client-Secret', '')
+                if (identity, secret) != ('test-id.access', 'synthetic-edge-secret'):
+                    data = b'<html><form action="/cdn-cgi/access/"></form></html>'
+                    self.send_response(403 if identity or secret else 302)
+                    if not identity and not secret:
+                        self.send_header('Location', 'https://synthetic-team.cloudflareaccess.com/cdn-cgi/access/login/')
+                    self.send_header('CF-RAY', 'fixture')
+                    self.send_header('Content-Type', 'text/html')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Connection', 'close')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    self.close_connection = True
+                    return None
+                return path[len('/edge'):]
+            return path
 
         def do_POST(self):
             path = self.route()
@@ -138,6 +156,9 @@ def main():
 
         def do_GET(self):
             path = self.route()
+            if path == '/api/v1/test/access-headers':
+                self.reply(200, {'sent': bool(self.headers.get('CF-Access-Client-Id') or self.headers.get('CF-Access-Client-Secret'))})
+                return
             if path is None:
                 return
             if path == '/api/v1/health':

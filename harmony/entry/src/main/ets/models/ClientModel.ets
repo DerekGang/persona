@@ -1,3 +1,4 @@
+import type { HubAccess } from '../core/HubAccess';
 import type { ConversationRecapItem } from './Wire';
 import { AssistantViewModel } from './AssistantView';
 import { SshTunnel } from './SshTunnel';
@@ -335,6 +336,7 @@ export class ClientModel {
   private reconnectAttempt: number = 0;
   private stopReconnect(): void { if (this.reconnectTimer !== -1) clearTimeout(this.reconnectTimer); this.reconnectTimer = -1; }
   private scheduleReconnect(): void {
+    if (this.error === 'cloudflare_access_required' || this.error === 'cloudflare_access_rejected') return;
     if (!this.foreground || this.demo || !this.profile.id || this.cleanupProfiles.has(this.profile.id) || this.reconnectTimer !== -1 || this.pairingProfiles.size > 0) return;
     const generation = this.generation, scope = this.scope(), delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, this.reconnectAttempt++)));
     this.reconnectTimer = setTimeout(() => { this.reconnectTimer = -1;
@@ -472,6 +474,9 @@ export class ClientModel {
   operationBlocked(path: string): boolean { return this.unresolvedWrites.some((record: MutationRecord) => record.path === path); }
   private failure(error: Error): void {
     if (error instanceof HttpFailure) {
+      if (error.code === 'cloudflare_access_required' || error.code === 'cloudflare_access_rejected') {
+        this.stopReconnect(); this.error = error.resultUnknown ? 'result_unknown' : error.code; return;
+      }
       if (error.status === 401 || error.status === 403) this.stopReconnect();
       this.error = error.resultPending ? 'pending' : error.resultUnknown ? 'result_unknown' : error.status === 401 ? 'welcome' :
         error.status === 403 ? 'permission_denied' : error.status === 409 || error.status === 410 ? 'request_updated' : 'failed';
@@ -542,15 +547,18 @@ export class ClientModel {
     const epoch = this.forgetEpochs.get(config.hubId) || 0, vault = this.vault;
     const current = (): boolean => epoch === (this.forgetEpochs.get(config.hubId) || 0) && !this.forgettingProfiles.has(config.hubId) && (!admit || admit());
     let previous: string | null = null, written = false;
+    let previousAccess: HubAccess | undefined;
     const rollback = async (): Promise<void> => {
-      if (await vault.get(config.hubId) !== config.token) return;
-      if (previous && epoch === (this.forgetEpochs.get(config.hubId) || 0) && !this.forgettingProfiles.has(config.hubId)) await vault.put(config.hubId, previous);
+      let installedAccess: HubAccess | undefined;
+      const installed = await vault.get(config.hubId, (value: HubAccess | undefined): void => { installedAccess = value; });
+      if (installed !== config.token || (config.access ? !config.access.equals(installedAccess) : !!installedAccess)) return;
+      if (previous && epoch === (this.forgetEpochs.get(config.hubId) || 0) && !this.forgettingProfiles.has(config.hubId)) await vault.put(config.hubId, previous, previousAccess);
       else await vault.remove(config.hubId);
     };
     await this.credentialChange(config.hubId, async (): Promise<void> => {
       if (!current()) throw new Error('request_updated');
-      previous = await vault.get(config.hubId); if (!current()) throw new Error('request_updated');
-      await vault.put(config.hubId, config.token); written = true;
+      previous = await vault.get(config.hubId, (value: HubAccess | undefined): void => { previousAccess = value; }); if (!current()) throw new Error('request_updated');
+      await vault.put(config.hubId, config.token, config.access); written = true;
       if (!current()) { await rollback(); written = false; throw new Error('request_updated'); }
     });
     if (!current()) { if (written) await this.credentialChange(config.hubId, rollback); throw new Error('request_updated'); }
@@ -583,7 +591,8 @@ export class ClientModel {
     if (!keep) { this.draft = ''; this.sourceContext = ''; this.draftRevision = ''; this.localMessages = []; this.renderedMessages = []; this.echoedMessages.clear(); }
     await saved; if (!this.owns(generation, scope)) return;
     await this.saveProfiles(); if (!this.owns(generation, scope) || !this.foreground) return;
-    const token = await this.vault?.get(profile.id);
+    let access: HubAccess | undefined;
+    const token = await this.vault?.get(profile.id, (value: HubAccess | undefined): void => { access = value; });
     if (!this.owns(generation, scope)) return;
     if (!token) { this.error = 'welcome'; return; }
     if (profile.manager) await this.restoreSnapshot(generation, scope);
@@ -592,13 +601,13 @@ export class ClientModel {
       await this.ssh.bind(this, (): boolean => this.foreground && !this.retired && !this.forgettingProfiles.has(profile.id));
       if (!this.owns(generation, scope) || !this.foreground) return;
       proxy = await this.ssh.acquire();
-      const address = proxy ? profile.baseUrl : await Pairing.reachable(profile.baseUrl, profile.addresses, profile.hubId, profile.pin, (): boolean => this.owns(generation, scope) && this.foreground);
+      const address = proxy ? profile.baseUrl : await Pairing.reachable(profile.baseUrl, profile.addresses, profile.hubId, profile.pin, (): boolean => this.owns(generation, scope) && this.foreground, access);
       if (!this.owns(generation, scope) || !this.foreground) return;
       if (address !== profile.baseUrl) { profile.addresses = Array.from(new Set<string>([profile.baseUrl].concat(profile.addresses))).filter((value: string) => value !== address && value.startsWith('https://')); profile.baseUrl = address; await this.saveProfiles(); }
     } catch (error) { if (this.owns(generation, scope)) { this.failure(error as Error); this.scheduleReconnect(); } return; }
     if (!this.owns(generation, scope) || !this.foreground) return;
     let defaultOwner = '';
-    const probe = new HubTransport(new EndpointConfig(profile.baseUrl, profile.hubId, token, profile.pin, '', [], proxy));
+    const probe = new HubTransport(new EndpointConfig(profile.baseUrl, profile.hubId, token, profile.pin, '', [], proxy, access));
     try {
       const roster = Wire.parse(await probe.request('/api/v1/managers'));
       if (!this.owns(generation, scope)) return;
@@ -618,7 +627,7 @@ export class ClientModel {
     } finally { probe.close(); }
     if (!profile.manager) await this.restoreSnapshot(generation, scope);
     if (!this.owns(generation, scope) || !this.foreground) return;
-    const config = new EndpointConfig(profile.baseUrl, profile.hubId, token, profile.pin, profile.manager, [], proxy);
+    const config = new EndpointConfig(profile.baseUrl, profile.hubId, token, profile.pin, profile.manager, [], proxy, access);
     this.repository = new HubRepository(config, this.local, () => { if (this.owns(generation, scope)) this.unresolvedWrites = this.repository?.mutations?.blocked() || []; }, defaultOwner);
     await this.repository.mutations?.load(); if (!this.owns(generation, scope) || !this.foreground) return; this.unresolvedWrites = this.repository.mutations?.blocked() || [];
     await this.repository.transport.connect((payload: string) => {

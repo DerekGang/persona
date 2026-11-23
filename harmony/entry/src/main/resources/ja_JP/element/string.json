@@ -1,6 +1,22 @@
 {
   "string": [
     {
+      "name": "cloudflare_access_required",
+      "value": "この Hub は Cloudflare Access で保護されています。サービストークンが必要です"
+    },
+    {
+      "name": "cloudflare_access_rejected",
+      "value": "Cloudflare Access がサービストークンを拒否しました"
+    },
+    {
+      "name": "cloudflare_access_incomplete",
+      "value": "クライアント ID とクライアントシークレットの両方を入力してください"
+    },
+    {
+      "name": "cloudflare_access_invalid",
+      "value": "Cloudflare Access のサービストークンを確認してください"
+    },
+    {
       "name": "phone_switcher_expiry",
       "value": "インストール中 · コードはあと {minutes} 分で期限切れ"
     },

@@ -1438,3 +1438,30 @@ test('assistant selection rechecks the source scope and installed, visible roste
   await model.selectListedManager('ready', source);
   assert.deepEqual(calls, ['ready']);
 });
+
+test('cancelled pairing restores the prior complete credential and preserves a later replacement with the same device token', async () => {
+  const {HubAccess} = await import('../entry/src/main/ets/core/HubAccess.ts');
+  const origin='https://hub.invalid:443';
+  for (const superseded of [false, true]) {
+    const {model}=fixture(), profile=model.profile, wait=deferred(), entered=deferred();
+    const previous=HubAccess.fromInput(origin,'client','previous');
+    const candidate=HubAccess.fromInput(origin,'client','candidate');
+    const newer=HubAccess.fromInput(origin,'client','newer');
+    let current=previous, allowed=true;
+    model.profiles=[profile]; model.repository.close=()=>{};
+    model.vault={
+      async get(_id,receive){receive?.(current);return 'same-device-token';},
+      async put(_id,token,edge){
+        assert.equal(token,'same-device-token'); current=edge;
+        if(edge===candidate){entered.resolve();await wait.promise;}
+      },
+      async remove(){assert.fail('an active earlier pairing must remain stored');}
+    };
+    const changing=model.useEndpoint({hubId:profile.id,baseUrl:origin,token:'same-device-token',pin:'',managerId:'',access:candidate},'Hub',()=>allowed);
+    await entered.promise;
+    if(superseded)current=newer;
+    allowed=false;wait.resolve();
+    await assert.rejects(changing,/request_updated/);
+    assert.equal(current,superseded?newer:previous);
+  }
+});

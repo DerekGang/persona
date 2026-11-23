@@ -1,6 +1,7 @@
+import { HubAccess } from '../core/HubAccess';
 import { isPairingScheme } from '../core/WireCompatibility';
 import { url } from '@kit.ArkTS';
-import { EndpointConfig, HubTransport, normalizeBaseUrl } from './HubTransport';
+import { EndpointConfig, HubTransport, hubCredentialOrigin, normalizeBaseUrl } from './HubTransport';
 
 export class PairingTarget {
   readonly baseUrl: string;
@@ -31,6 +32,7 @@ export class Pairing {
   private readonly expectedHubId: string;
   private readonly pin: string;
   private inspectedKey: string = '';
+  private access: HubAccess | undefined;
   private used: boolean = false;
   private redeeming: boolean = false;
 
@@ -83,6 +85,11 @@ export class Pairing {
     return new Pairing(baseUrl, code, hubId, pin, params.getAll('alt'));
   }
 
+  setCloudflareAccess(clientID: string, clientSecret: string): void {
+    if (this.used || this.redeeming || this.inspectedKey) throw new Error('pairing_target_changed');
+    this.access = HubAccess.fromInput(hubCredentialOrigin(this.baseUrl), clientID, clientSecret);
+  }
+
   private targetKey(target: PairingTarget): string {
     return JSON.stringify([target.baseUrl, target.hubId, target.name, target.pin]);
   }
@@ -93,8 +100,8 @@ export class Pairing {
     for (const value of alternates) { const address = normalizeBaseUrl(value); if (!address.startsWith('https://')) throw new Error('invalid_pairing'); values.add(address); }
     return Array.from(values);
   }
-  private static async verifyAddress(address: string, expectedHubId: string, pin: string): Promise<PairingTarget> {
-    const anonymous = new HubTransport(new EndpointConfig(address, expectedHubId, '', pin));
+  private static async verifyAddress(address: string, expectedHubId: string, pin: string, access?: HubAccess): Promise<PairingTarget> {
+    const anonymous = new HubTransport(new EndpointConfig(address, expectedHubId, '', pin, '', [], undefined, access));
     try {
       const raw = await anonymous.request('/api/v1/health');
       const data = JSON.parse(raw) as Record<string, Object>;
@@ -104,28 +111,39 @@ export class Pairing {
       return new PairingTarget(address, hubId, name || 'Persona hub', pin);
     } finally { anonymous.close(); }
   }
-  static async reachable(primary: string, alternatives: string[], hubId: string, pin: string, admit: () => boolean = (): boolean => true): Promise<string> {
+  static async reachable(primary: string, alternatives: string[], hubId: string, pin: string, admit: () => boolean = (): boolean => true, access?: HubAccess): Promise<string> {
     if (!admit()) throw new Error('request_updated');
     // Reconnection can transfer credentials only between advertised addresses of the same pinned Hub.
     if (!hubId || !pin || !alternatives.length) return primary;
     let failure: Error = new Error('hub_unavailable');
+    let accessFailure: Error | undefined;
     for (const address of Pairing.addresses(primary, alternatives)) {
       if (!admit()) throw new Error('request_updated');
-      try { const target = await Pairing.verifyAddress(address, hubId, pin); if (!admit()) throw new Error('request_updated'); return target.baseUrl; }
-      catch (error) { failure = error as Error; }
+      try { const target = await Pairing.verifyAddress(address, hubId, pin, access); if (!admit()) throw new Error('request_updated'); return target.baseUrl; }
+      catch (error) {
+        failure = error as Error;
+        if (failure.message === 'cloudflare_access_required' || failure.message === 'cloudflare_access_rejected') accessFailure = failure;
+      }
     }
-    throw failure;
+    throw accessFailure || failure;
   }
   async inspect(): Promise<PairingTarget> {
     if (this.used) throw new Error('pairing_already_used');
     let failure: Error = new Error('hub_unavailable');
+    let accessFailure: Error | undefined;
+    const access = this.access;
     for (const address of this.addresses) {
+      if (access !== this.access) throw new Error('pairing_target_changed');
       try {
-        const target = await Pairing.verifyAddress(address, this.expectedHubId, this.pin);
+        const target = await Pairing.verifyAddress(address, this.expectedHubId, this.pin, access);
+        if (access !== this.access) throw new Error('pairing_target_changed');
         this.selectedUrl = address; this.inspectedKey = this.targetKey(target); return target;
-      } catch (error) { failure = error as Error; }
+      } catch (error) {
+        failure = error as Error;
+        if (failure.message === 'cloudflare_access_required' || failure.message === 'cloudflare_access_rejected') accessFailure = failure;
+      }
     }
-    throw failure;
+    throw accessFailure || failure;
   }
 
   async redeem(target: PairingTarget, deviceName: string = 'HarmonyOS device', admit: () => boolean = (): boolean => true): Promise<EndpointConfig> {
@@ -138,12 +156,12 @@ export class Pairing {
     this.redeeming = true;
     try {
     // Recheck the exact endpoint and hub id after the user's confirmation, without sending the pairing token.
-    const verified = await Pairing.verifyAddress(this.selectedUrl, target.hubId, this.pin);
+    const verified = await Pairing.verifyAddress(this.selectedUrl, target.hubId, this.pin, this.access);
     if (!admit()) throw new Error('request_updated');
     if (this.targetKey(verified) !== this.inspectedKey) throw new Error('hub_identity_changed');
 
     const name = deviceName.trim().slice(0, 128) || 'HarmonyOS device';
-    const transport = new HubTransport(new EndpointConfig(target.baseUrl, target.hubId, this.pairingCode, target.pin));
+    const transport = new HubTransport(new EndpointConfig(target.baseUrl, target.hubId, this.pairingCode, target.pin, '', [], undefined, this.access));
     this.used = true;
     try {
       const raw = await transport.request('/api/v1/auth/tokens', 'POST', JSON.stringify({ name: name, kind: 'phone' }));
@@ -152,7 +170,7 @@ export class Pairing {
       const deviceId = safeString(result, 'id');
       if (!deviceToken || !deviceId) throw new Error('pairing_response_invalid');
       if (!admit()) throw new Error('request_updated');
-      return new EndpointConfig(target.baseUrl, target.hubId, deviceToken, target.pin, '', this.addresses.filter((address: string) => address !== target.baseUrl && address.startsWith('https://')));
+      return new EndpointConfig(target.baseUrl, target.hubId, deviceToken, target.pin, '', this.addresses.filter((address: string) => address !== target.baseUrl && address.startsWith('https://')), undefined, this.access);
     } finally { transport.close(); }
     } finally { this.redeeming = false; }
   }

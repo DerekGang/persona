@@ -1,3 +1,4 @@
+import type { HubAccess } from '../core/HubAccess';
 import { legacyClientHeader, legacyOperationHeader } from '../core/WireCompatibility';
 import { clientLocale } from '../core/ClientLocale';
 import { bundleManager } from '@kit.AbilityKit';
@@ -41,13 +42,14 @@ export class EndpointConfig {
   readonly managerId: string;
   readonly alternateUrls: string[];
   readonly proxy: TransportProxy | undefined;
-  constructor(baseUrl: string, hubId: string, token: string, pin: string, managerId: string = '', alternateUrls: string[] = [], proxy?: TransportProxy) {
+  readonly access: HubAccess | undefined;
+  constructor(baseUrl: string, hubId: string, token: string, pin: string, managerId: string = '', alternateUrls: string[] = [], proxy?: TransportProxy, access?: HubAccess) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.hubId = hubId;
     this.token = token;
     this.pin = normalizePin(pin);
     this.managerId = managerId;
-    this.proxy = proxy;
+    this.proxy = proxy; this.access = access;
     if (alternateUrls.length > 8) throw new Error('invalid_endpoint');
     this.alternateUrls = Array.from(new Set<string>(alternateUrls.map((value: string) => { const normalized = normalizeBaseUrl(value); if (!normalized.startsWith('https://')) throw new Error('invalid_endpoint'); return normalized; }))).filter((value: string) => value !== this.baseUrl);
   }
@@ -134,6 +136,12 @@ function endpointParts(baseUrl: string): ParsedEndpoint {
     scheme: scheme,
     hostHeader: parsed.host
   };
+}
+
+export function hubCredentialOrigin(baseUrl: string): string {
+  const endpoint = endpointParts(normalizeBaseUrl(baseUrl));
+  const host = endpoint.hostname.toLowerCase();
+  return endpoint.scheme + '://' + (host.includes(':') ? '[' + host + ']' : host) + ':' + endpoint.port;
 }
 
 function routePath(base: ParsedEndpoint, path: string): string {
@@ -273,8 +281,12 @@ export class HubTransport {
   private fragmentSize: number = 0;
   private sendQueue: Promise<void> = Promise.resolve();
 
+  private readonly access: HubAccess | undefined;
+  private readonly credentialOrigin: string;
+
   constructor(config: EndpointConfig, streamPath: string = '/api/v1/ws') {
     this.endpoint = endpointParts(config.baseUrl);
+    this.access = config.access; this.credentialOrigin = hubCredentialOrigin(config.baseUrl);
     this.hubId = config.hubId;
     this.token = config.token;
     this.pin = config.pin;
@@ -301,7 +313,7 @@ export class HubTransport {
   stream(path: string, network?:StreamNetworkRule): HubTransport {
     this.assertLive(this.generation); this.children = this.children.filter((child: HubTransport) => !child.closed);
     if (this.children.length >= 4) throw new Error('stream_limit');
-    const config = new EndpointConfig(this.endpoint.origin + this.endpoint.basePath, this.hubId, this.token, this.pin, this.managerId, [], this.proxy);
+    const config = new EndpointConfig(this.endpoint.origin + this.endpoint.basePath, this.hubId, this.token, this.pin, this.managerId, [], this.proxy, this.access);
     if (network && (!network.current() || this.proxy && network.directOnly)) throw new Error('audio_network_unverified');
     const child = new HubTransport(config, path); child.streamNetwork=network; this.children.push(child); return child;
   }
@@ -333,9 +345,31 @@ export class HubTransport {
   }
   private authHeaders(): Record<string, string> {
     const headers = this.clientHeaders();
+    this.access?.apply(this.credentialOrigin, headers);
     if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
     if (this.managerId) headers['X-Persona-Manager'] = this.managerId;
     return headers;
+  }
+
+  private accessDenial(status: number, header: (name: string) => string, body?: Uint8Array): HttpFailure | undefined {
+    let blocked = false;
+    const location = header('location');
+    if (status >= 300 && status < 400 && location) {
+      try {
+        const host = url.URL.parseURL(location, this.endpoint.origin).hostname.toLowerCase();
+        blocked = host === 'cloudflareaccess.com' || host.endsWith('.cloudflareaccess.com');
+      } catch (_) {}
+    }
+    if (!blocked && header('content-type').toLowerCase().includes('html')) {
+      if (body && body.length) {
+        const text = utf8String(body.subarray(0, 64 * 1024), false).toLowerCase();
+        blocked = text.includes('cloudflareaccess.com') || text.includes('/cdn-cgi/access/');
+      } else {
+        blocked = (status === 401 || status === 403) && (!!header('cf-ray') || header('server').toLowerCase().includes('cloudflare'));
+      }
+    }
+    if (!blocked) return undefined;
+    return new HttpFailure(status, this.access?.origin === this.credentialOrigin ? 'cloudflare_access_rejected' : 'cloudflare_access_required');
   }
 
   private async validateContextPin(context: rcp.ValidationContext): Promise<boolean> {
@@ -387,8 +421,16 @@ export class HubTransport {
       if(this.streamNetwork && (!this.streamNetwork.current() || this.streamNetwork.directOnly))throw new HttpFailure(0,'audio_network_unverified');
       this.assertLive(generation); dispatched = true; const response = await session.fetch(request); this.assertLive(generation);
       if (overLimit) throw new HttpFailure(0, 'response_too_large');
+      const bytes = concatArrays(chunks);
+      const header = (name: string): string => {
+        const key = Object.keys(response.headers).find((k: string) => k.toLowerCase() === name);
+        const value = key ? response.headers[key] : undefined;
+        return typeof value === 'string' ? value : Array.isArray(value) ? value.join(', ') : '';
+      };
+      const denied = this.accessDenial(response.statusCode, header, bytes);
+      if (denied) throw new HttpFailure(denied.status, denied.code, !['GET','HEAD'].includes(verb) && denied.status >= 200 && denied.status < 300);
       if (response.statusCode >= 300 && response.statusCode < 400) throw new HttpFailure(response.statusCode, 'redirect_refused');
-      const bytes = concatArrays(chunks), text = response.statusCode < 200 || response.statusCode >= 300 ? utf8String(bytes, false) : '';
+      const text = response.statusCode < 200 || response.statusCode >= 300 ? utf8String(bytes, false) : '';
       if (response.statusCode === 202 && !['GET', 'HEAD'].includes(verb) && !acceptTransfer) {
         const state = messagePost ? heldReceipt202(utf8String(bytes, false), opId) : 'pending';
         if (state !== 'held') throw new HttpFailure(202, state === 'unknown' ? 'result_unknown' : 'pending', true, state === 'pending');
@@ -665,9 +707,6 @@ export class HubTransport {
     let header: string;
     try { header = utf8String(this.rx.slice(0, end), true); } catch (_) { this.failSocket(new Error('invalid_upgrade')); return; }
     const lines = header.split('\r\n');
-    if (!/^HTTP\/1\.[01] 101(?: |$)/.test(lines[0])) {
-      const status = Number((lines[0].split(' ')[1] || '0')); this.failSocket(new HttpFailure(status, 'upgrade_rejected') as Error); return;
-    }
     const parsed: Map<string, string> = new Map();
     for (const line of lines.slice(1)) {
       const colon = line.indexOf(':');
@@ -675,6 +714,11 @@ export class HubTransport {
       const name = line.slice(0, colon).trim().toLowerCase();
       const value = line.slice(colon + 1).trim();
       parsed.set(name, (parsed.get(name) || '') + (parsed.has(name) ? ', ' : '') + value);
+    }
+    if (!/^HTTP\/1\.[01] 101(?: |$)/.test(lines[0])) {
+      const status = Number(lines[0].split(' ')[1] || '0');
+      const denied = this.accessDenial(status, (name: string): string => parsed.get(name) || '');
+      this.failSocket((denied || new HttpFailure(status, 'upgrade_rejected')) as Error); return;
     }
     const upgrade = (parsed.get('upgrade') || '').toLowerCase().split(',').map((v: string) => v.trim());
     const connection = (parsed.get('connection') || '').toLowerCase().split(',').map((v: string) => v.trim());

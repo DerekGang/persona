@@ -1,6 +1,22 @@
 {
   "string": [
     {
+      "name": "cloudflare_access_required",
+      "value": "此 Hub 受 Cloudflare Access 保护，需要服务令牌"
+    },
+    {
+      "name": "cloudflare_access_rejected",
+      "value": "Cloudflare Access 拒绝了此服务令牌"
+    },
+    {
+      "name": "cloudflare_access_incomplete",
+      "value": "请同时填写客户端 ID 和客户端密钥"
+    },
+    {
+      "name": "cloudflare_access_invalid",
+      "value": "请检查 Cloudflare Access 服务令牌"
+    },
+    {
       "name": "phone_switcher_expiry",
       "value": "安装中 · 码 {minutes} 分钟后过期"
     },

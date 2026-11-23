@@ -1,6 +1,22 @@
 {
   "string": [
     {
+      "name": "cloudflare_access_required",
+      "value": "This hub is behind Cloudflare Access and needs a service token"
+    },
+    {
+      "name": "cloudflare_access_rejected",
+      "value": "Cloudflare Access rejected the service token"
+    },
+    {
+      "name": "cloudflare_access_incomplete",
+      "value": "Enter both the client ID and client secret"
+    },
+    {
+      "name": "cloudflare_access_invalid",
+      "value": "Check the Cloudflare Access service token"
+    },
+    {
       "name": "phone_switcher_expiry",
       "value": "Installing · code expires in {minutes} min"
     },
