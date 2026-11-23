@@ -243,20 +243,16 @@ func (h *stopWatcherHub) DeviceCall(ctx context.Context, p DeviceCall) (json.Raw
 // ordering: the unregistered card cannot interrupt; after registration the same current card acts once. Production's
 // progress tick already requires the watcher, so this preserves its ownership guard rather than adding a bypass.
 func TestFeishuStopBeforeTheRunWatcher(t *testing.T) {
-	e := newThreadEnv(t, nil)
-	h := &stopWatcherHub{fakeHub: e.f, watching: make(chan struct{}), release: make(chan struct{})}
-	setHub(e.s, h)
+	f := newFakeHub().withMachine()
+	h := &stopWatcherHub{fakeHub: f, watching: make(chan struct{}), release: make(chan struct{})}
+	s := withSettings(t, f, New(Options{Hub: h, Logf: testLogf(t)}))
+	e := withFeishuThread(&todoEnv{t: t, s: s, f: f})
 	e.topicTodo("发版")
 	delivered := make(chan struct{})
 	go func() {
 		defer close(delivered)
 		e.deliver(topicEvent("om_watched", "开始"))
 	}()
-	select {
-	case <-h.watching:
-	case <-time.After(5 * time.Second):
-		t.Fatal("run watcher did not start its initial devices.list")
-	}
 	defer func() {
 		select {
 		case <-h.release:
@@ -269,6 +265,11 @@ func TestFeishuStopBeforeTheRunWatcher(t *testing.T) {
 			t.Error("topic delivery did not finish after the watcher was released")
 		}
 	}()
+	select {
+	case <-h.watching:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run watcher did not start its initial devices.list")
+	}
 	ctx := context.Background()
 	runs := e.s.channelRuns(channel.Feishu)
 	if len(runs) != 1 {
