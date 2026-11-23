@@ -539,8 +539,10 @@ test('pull reports a refused dirty checkout and cannot apply an in-flight reply 
     }
   }});
   workspace.selectTab(1);await waitForTurn();assert.equal(await workspace.pullGit(),false);assert.equal(workspace.gitWriteState,'failed');
+  assert.equal(workspace.hasGitPullIssue(),true);
   const attempt=workspace.pullGit();await waitForTurn();assert.equal(workspace.gitPullState,'pulling');
   assert.equal(await workspace.pullGit(),false);
+  assert.equal(workspace.gitPullState,'pulling');
   workspace.gitStatus={...tracked,branch:'other',upstream:'origin/other'};
   pending({status:tracked,updated:true});await attempt;
   assert.equal(workspace.gitStatus.branch,'other');assert.equal(workspace.gitPullState,'');
@@ -556,9 +558,38 @@ test('pull rechecks dirty files on the original checkout before dispatching a wr
   }});
   workspace.selectTab(1);await waitForTurn();
   assert.equal(await workspace.pullGit(),false);
+  assert.equal(workspace.gitPullState,'failed');
   assert.equal(workspace.gitWriteError,'session_git_pull_uncommitted_changes');
   assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,0);
   files=[];assert.equal(await workspace.pullGit(),true);
   assert.equal(workspace.gitPullState,'current');
+  assert.equal(workspace.hasGitPullIssue(),false);
   assert.equal(state.calls.filter(c=>c.path.endsWith('/git/pull')).length,1);
+});
+
+test('branch feedback distinguishes a definite refusal from an unconfirmed pull',async()=>{
+  let branch='main';
+  const status=()=>({is_repo:true,root:'/repo',branch,upstream:'origin/'+branch,files:[],commits:[]});
+  let denied=true;
+  const {workspace,state}=fixture({handle:call=>{
+    if (call.path.includes('/git/status')) return status();
+    if (call.path.endsWith('/git/pull')) {
+      if (denied) throw new HttpFailure(409,'not_fast_forward');
+      throw new HttpFailure(0,'result_unknown',true);
+    }
+  }});
+  workspace.selectTab(1);await waitForTurn();
+  assert.equal(await workspace.pullGit(),false);
+  assert.equal(workspace.gitPullState,'failed');
+  assert.equal(workspace.gitWriteError,'session_git_pull_not_fast_forward');
+  assert.equal(workspace.canPullGit(),true);
+  branch='release';await workspace.loadGit();
+  assert.equal(workspace.gitPullState,'');
+  assert.equal(workspace.gitWriteError,'');
+  denied=false;assert.equal(await workspace.pullGit(),false);
+  assert.equal(workspace.gitPullState,'unknown');
+  assert.equal(workspace.gitWriteState,'unknown');
+  assert.equal(workspace.canPullGit(),false);
+  assert.equal(await workspace.pullGit(),false);
+  assert.equal(state.calls.filter(call=>call.path.endsWith('/git/pull')).length,2);
 });

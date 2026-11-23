@@ -397,6 +397,10 @@ export class SessionWorkspace {
       !!Wire.text(this.gitStatus,'upstream') && !Wire.bool(this.gitStatus,'gone');
   }
 
+  hasGitPullIssue(): boolean {
+    return this.gitPullState==='failed' || this.gitPullState==='pending' || this.gitPullState==='unknown';
+  }
+
   canUsePreview(): boolean {
     return this.current() && this.visible && this.tab === 4 && this.feature('preview') && this.machineTrustedOnline();
   }
@@ -898,7 +902,11 @@ export class SessionWorkspace {
 
   private applyGitStatus(result:Record<string,Object>, forcePr:boolean):void {
     if (Wire.text(this.gitStatus,'branch')!==Wire.text(result,'branch') ||
-        Wire.text(this.gitStatus,'upstream')!==Wire.text(result,'upstream')) this.gitPullState='';
+        Wire.text(this.gitStatus,'root')!==Wire.text(result,'root') ||
+        Wire.text(this.gitStatus,'upstream')!==Wire.text(result,'upstream') || Wire.bool(result,'gone')) {
+      if (this.gitPullState==='failed') this.gitWriteError='';
+      this.gitPullState='';
+    }
     const first=Wire.rows(result,'commits'), head=Wire.text(Wire.object(result,'head'),'hash') || (first.length ? Wire.text(first[0],'hash') : '');
     const identity=JSON.stringify([Wire.text(result,'branch'),head,first.map((c:Record<string,Object>) => Wire.text(c,'hash'))]);
     if (identity !== this.gitFirst) {
@@ -1036,7 +1044,12 @@ export class SessionWorkspace {
         branch.hash = Wire.text(item, 'hash'); branch.subject = Wire.text(item, 'subject'); branch.date = Wire.text(item, 'date');
         return branch;
       });
-    } catch (error) { if (revision === this.revision && this.current()) this.gitWriteError = this.message(error as Error); }
+    } catch (error) {
+      if (revision === this.revision && this.current()) {
+        if (this.hasGitPullIssue()) this.gitPullState='';
+        this.gitWriteError = this.message(error as Error);
+      }
+    }
   }
 
   private async gitMutation(operation: string, body: Record<string, Object>): Promise<boolean> {
@@ -1061,7 +1074,7 @@ export class SessionWorkspace {
           this.applyGitStatus(status,false);
           if (!samePullTarget()) throw new Error('request_updated');
           if (this.gitFiles.length>0) {
-            this.gitPullState=''; this.gitWriteState='failed'; this.gitWriteError='session_git_pull_uncommitted_changes';
+            this.gitPullState='failed'; this.gitWriteState='failed'; this.gitWriteError='session_git_pull_uncommitted_changes';
             return false;
           }
         }
@@ -1101,6 +1114,10 @@ export class SessionWorkspace {
         const code=failure instanceof HttpFailure ? failure.code : '';
         const refusal=operation==='pull' && ['no_directory','not_a_repository','detached_head','no_upstream','uncommitted_changes','not_fast_forward'].includes(code);
         this.gitWriteError=refusal ? 'session_git_pull_'+code : this.message(error as Error);
+        if (operation==='pull') {
+          if (this.activeRevision(revision,target,1) && samePullTarget()) this.gitPullState=this.gitWriteState;
+          else if (this.gitWriteState==='failed') this.gitWriteError='';
+        }
       }
       return false;
     } finally {

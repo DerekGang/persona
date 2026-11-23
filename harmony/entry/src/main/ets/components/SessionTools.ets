@@ -1116,6 +1116,13 @@ export struct SessionTools {
     return home && (path===home || path.startsWith(home+'/') || path.startsWith(home+'\\')) ? '~'+path.slice(home.length) : path;
   }
 
+  private gitPullMessage():string {
+    const state=this.workspace.gitPullState;
+    if (state==='failed') return trError(this.workspace.gitWriteError);
+    if (state==='pending' || state==='unknown') return tr('session_tools_write_'+state);
+    return tr(state==='updated' ? 'session_git_pulled' : 'session_git_up_to_date');
+  }
+
   @Builder gitBranchCard() {
     Column() {
       Column({space:this.gitMetric(6,8,4)}) {
@@ -1156,9 +1163,15 @@ export struct SessionTools {
         }.width('100%')
         Text(this.homeRelative(Wire.text(this.workspace.gitStatus,'root') || this.workspace.cwd)).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontColor(Colors.tertiary)
           .fontFamily('monospace').maxLines(1).textOverflow({overflow:TextOverflow.Ellipsis}).ellipsisMode(EllipsisMode.START).copyOption(CopyOptions.LocalDevice)
-        if (this.workspace.gitPullState==='updated' || this.workspace.gitPullState==='current')
-          Text(tr(this.workspace.gitPullState==='updated' ? 'session_git_pulled' : 'session_git_up_to_date'))
-            .fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontColor(Colors.positive).id('session.git.pull.result')
+        if (this.workspace.gitPullState && this.workspace.gitPullState!=='pulling') {
+          Row({space:8}) {
+            SymbolGlyph(this.workspace.hasGitPullIssue() ? $r('sys.symbol.exclamationmark_triangle') : $r('sys.symbol.checkmark_circle'))
+              .fontSize(Tokens.interfaceFontVp(16,nativeEnvironment.fontScale)).width(this.gitMetric(20,24,20))
+              .fontColor([this.workspace.hasGitPullIssue() ? Colors.danger : Colors.positive]).accessibilityLevel('no')
+            Text(this.gitPullMessage()).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15))
+              .fontColor(this.workspace.hasGitPullIssue() ? Colors.danger : Colors.positive).layoutWeight(1)
+          }.width('100%').accessibilityGroup(true).accessibilityText(this.gitPullMessage()).id('session.git.pull.result')
+        }
       }.width('100%').constraintSize({minHeight:this.gitMetric(113.7,135.7,0)}).justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Start).padding({left:this.gitMetric(20,20,16),right:this.gitMetric(20,20,16),top:10,bottom:12})
       if (this.model.features.includes('git_write')) {
@@ -1380,7 +1393,7 @@ export struct SessionTools {
           Text(tr('session_git_pr_draft')).fontSize(16).maxFontScale(Tokens.interfaceScaleFor(16)).fontColor(Colors.ink).layoutWeight(1)
           Toggle({type:ToggleType.Switch,isOn:this.gitPrDraft}).accessibilityText(tr('session_git_pr_draft')).onChange((v:boolean) => this.gitPrDraft=v)
         }.width('100%')
-        if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger)
+        if (this.workspace.gitWriteError && !this.workspace.hasGitPullIssue()) Text(trError(this.workspace.gitWriteError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger)
         Button(tr('session_git_create_pr')).enabled(this.workspace.canWriteGit() && this.workspace.branchPushedForPr() && !!this.gitPrTitle.trim())
           .onClick(() => this.confirmCreatePr()).id('session.git.pr.confirm')
       }.padding(PhoneStyle.page).width('100%')
@@ -1454,8 +1467,8 @@ export struct SessionTools {
         Text(trError(this.workspace.gitError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).layoutWeight(1)
         Button(tr('retry'),{buttonStyle:ButtonStyleMode.TEXTUAL}).onClick(() => this.workspace.loadGit())
       }.width('100%').padding(10)
-      if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
-      if (this.workspace.gitWriteState==='pending' || this.workspace.gitWriteState==='unknown')
+      if (this.workspace.gitWriteError && !this.workspace.hasGitPullIssue()) Text(trError(this.workspace.gitWriteError)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
+      if (!this.workspace.hasGitPullIssue() && (this.workspace.gitWriteState==='pending' || this.workspace.gitWriteState==='unknown'))
         Text(tr('session_tools_write_'+this.workspace.gitWriteState)).fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.danger).padding(8)
       if (Object.keys(this.workspace.gitStatus).length && Wire.bool(this.workspace.gitStatus,'is_repo')) {
         List() {
@@ -1533,9 +1546,9 @@ export struct SessionTools {
         }.width('100%')
         Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('session_tools_stash_save')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('session_tools_stash_save', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('session_tools_stash_save')).bindTips(tr('session_tools_stash_save')).enabled(this.workspace.canWriteGit() && !this.workspace.gitWriteBusy).onClick(() => this.confirmGitWrite('stash_push')).id('session.git.stash_save')
       }
-      if (this.workspace.gitWriteState === 'pending' || this.workspace.gitWriteState === 'unknown')
+      if (!this.workspace.hasGitPullIssue() && (this.workspace.gitWriteState === 'pending' || this.workspace.gitWriteState === 'unknown'))
         Text(tr('session_tools_write_' + this.workspace.gitWriteState)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
-      if (this.workspace.gitWriteError) Text(trError(this.workspace.gitWriteError)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
+      if (this.workspace.gitWriteError && !this.workspace.hasGitPullIssue()) Text(trError(this.workspace.gitWriteError)).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor($r('app.color.persona_danger'))
       if (this.workspace.gitWriteBusy) LoadingProgress().height(Tokens.touch).width(Tokens.touch)
       Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('cancel')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('cancel', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('cancel')).bindTips(tr('cancel')).onClick(() => this.gitSheetOpen = false)
     }.alignItems(HorizontalAlign.Start).padding(Tokens.page).width('100%')
