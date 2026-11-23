@@ -215,10 +215,13 @@ func (t *tracker) notSent(r *voiceRun, f sendFail) {
 	c := t.c
 	r.Code, r.Message, r.Draft, r.Clearable = f.code, f.reason, f.draft, f.clearable
 	r.resendable = f.resendable
-	t.set(r, f.state)
-	c.tell(r, plainWords(prompts.RenderVoiceRefused(prompts.VoiceRefused{Lang: string(c.language()), Code: f.prompt, Task: r.task,
-		Reason: f.reason, Plan: f.plan, To: c.target.to(), Resend: f.resendable})), true, false)
+	notify := func() {
+		t.set(r, f.state)
+		c.tell(r, plainWords(prompts.RenderVoiceRefused(prompts.VoiceRefused{Lang: string(c.language()), Code: f.prompt, Task: r.task,
+			Reason: f.reason, Plan: f.plan, To: c.target.to(), Resend: f.resendable})), true, false)
+	}
 	if !f.resendable {
+		notify()
 		return
 	}
 	select {
@@ -230,6 +233,9 @@ func (t *tracker) notSent(r *voiceRun, f sendFail) {
 			}
 		}
 		t.refused[r.ID] = r
+		// A tap can arrive as soon as the refusal is visible. Publish it on the same
+		// queue that owns the run so resend cannot overtake registration or delivery.
+		notify()
 	}:
 	case <-c.ctx.Done():
 	}

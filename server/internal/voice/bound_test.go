@@ -316,6 +316,43 @@ func TestUnpromptedRunCanBeSentAnyway(t *testing.T) {
 	}
 }
 
+func TestResendableRefusalIsRegisteredBeforeItsFrame(t *testing.T) {
+	c := &conversation{ctx: t.Context(), version: 2, lang: i18n.En, out: make(chan outFrame, 1)}
+	tracker := newTracker(c, nil)
+	r := &voiceRun{task: "check the tests"}
+	r.ID = "voice-refusal"
+	tracker.notSent(r, sendFail{state: runRefused, code: "unprompted", prompt: "unprompted", resendable: true})
+
+	// Hold the tracker queue as if it were handling another event. The phone can
+	// act on its frame immediately, so showing it already would lose a quick tap.
+	select {
+	case <-c.out:
+		t.Fatal("phone offered resend before the tracker could accept it")
+	default:
+	}
+	select {
+	case register := <-tracker.ops:
+		register()
+	default:
+		t.Fatal("missing refused-run registration")
+	}
+	select {
+	case frame := <-c.out:
+		var state struct {
+			ID, State  string
+			Resendable bool
+		}
+		if err := json.Unmarshal(frame.text, &state); err != nil {
+			t.Fatal(err)
+		}
+		if state.ID != r.ID || state.State != runRefused || !state.Resendable || tracker.refused[r.ID] != r {
+			t.Fatalf("unregistered refusal: %+v", state)
+		}
+	default:
+		t.Fatal("registered run did not notify the phone")
+	}
+}
+
 // #5904 review: an app from before Send Anyway (its start says nothing of speech_gate, as every older one) has no such
 // button: what the gate held back is not kept for a resend, and the model does not tell the user to tap it.
 func TestUnpromptedRunToAnAppWithoutSendAnyway(t *testing.T) {
