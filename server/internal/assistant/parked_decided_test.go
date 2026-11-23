@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -302,6 +303,11 @@ func TestDecisionStoredWhileTheLedgerFailsStillEndsTheParking(t *testing.T) {
 func TestDecisionReachesTheSupervisorThatParkedAgainBeforeItWasTold(t *testing.T) {
 	s, f, todo := newSupervisedServiceOn(t, todoTestDB(t))
 	ctx := context.Background()
+	// A decision can bypass the spacing after the last message. Hold actual delivery while the
+	// supervisor parks again and we reload the untold ledger, then run the real digest below.
+	s.supervise.digestMu.Lock()
+	allowDelivery := sync.OnceFunc(s.supervise.digestMu.Unlock)
+	t.Cleanup(allowDelivery)
 	parkFor(t, s, todo.ID, "Whether this goes ahead of the billing work", "owner_priority", "3d")
 	holdDigest(s)
 	writeDecision(t, s, todo.ID, "Do this now or after the billing work?", "After the billing work")
@@ -325,6 +331,7 @@ func TestDecisionReachesTheSupervisorThatParkedAgainBeforeItWasTold(t *testing.T
 
 	before := len(f.notices())
 	releaseDigest(s)
+	allowDelivery()
 	waitFor(t, "the supervisor's message", func() bool { return len(f.notices()) > before })
 	n := f.notices()[before]
 	for _, want := range []string{"搁置期间用户在任务上记下了新的决定", "这条消息到之前你又搁置了它", "The billing work lands first",

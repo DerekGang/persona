@@ -181,7 +181,11 @@ func TestRequestPrerequisitesMissingCancelledAndLegacy(t *testing.T) {
 }
 
 func TestRequestPrerequisitesUnconfirmedStartNeverReplays(t *testing.T) {
+	// The fake loses the reply after receiving session.start. Queue preparation and its database reads
+	// need the normal dispatch budget so the test actually reaches the fake before observing the claim.
+	dispatchBudget := taskStartTimeout
 	shortTaskStartReconcile(t)
+	taskStartTimeout = dispatchBudget
 	database := todoTestDB(t)
 	env := newTodoEnv(t, database)
 	ctx := context.Background()

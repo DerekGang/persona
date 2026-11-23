@@ -92,7 +92,11 @@ func TestAgentWaitTimeoutCancellationAndUnavailable(t *testing.T) {
 			if state == "unavailable" {
 				f.itemsFail = 1
 			}
-			got := s.waitAgentReply(ctx, "Queued receipt.", "mine", time.Millisecond, fixedWaitTarget("box", "s1"))
+			wait := time.Second
+			if state == "timeout" {
+				wait = time.Millisecond
+			}
+			got := s.waitAgentReply(ctx, "Queued receipt.", "mine", wait, fixedWaitTarget("box", "s1"))
 			if !strings.HasPrefix(got, "Queued receipt.") || !strings.Contains(got, `"state":"`+state+`"`) || strings.Contains(got, "old answer") {
 				t.Fatal(got)
 			}
