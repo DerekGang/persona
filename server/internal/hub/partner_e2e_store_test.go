@@ -73,6 +73,9 @@ func (s *meshStore) InsertPartnerMessage(_ context.Context, m db.PartnerMessage)
 		m.CreatedAt = time.Now()
 	}
 	m.CreatedAt = m.CreatedAt.UTC()
+	if !m.PairedAt.IsZero() {
+		m.PairedAt = m.PairedAt.UTC().Truncate(time.Microsecond) // as Postgres keeps it (paired_at)
+	}
 	m.UpdatedAt, m.Revision = m.CreatedAt, 1
 	m = partnerCopy(m)
 	p.rows = append(p.rows, m)

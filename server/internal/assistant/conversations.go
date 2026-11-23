@@ -1133,6 +1133,9 @@ func (s *Service) drainRelays(machine string, list []proto.Session) {
 			// be reached is not an answer, so its notice stays queued for a later drain.
 			stale, keep := msg.Withdrawn, false
 			var hold time.Duration
+			if !stale && s.partnerRelayStale(ctx, msg) {
+				stale = true // a partner hub's envelope of a pairing that ended goes in nowhere (partner_receive.go)
+			}
 			if !stale && msg.Tool == partnerMessageTool {
 				// A partner hub's message goes to the main conversation as it is now, not one put away since it queued
 				// (partner_receive.go).
