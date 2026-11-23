@@ -108,6 +108,8 @@ type Service struct {
 	mcpChanges mcpToolChanges
 	// ext is the extensions' tools in this process (extensions.go SetExtensions); nil: none (tests).
 	ext ExtensionTools
+	// extOwners keeps the extensions the user marked as their own for the profile (extension_trust.go).
+	extOwners extensionOwnerCache
 	// startDefaultsFor answers a task start's defaults from the extension layer (start_defaults.go); nil: no defaults.
 	startDefaultsFor func(ctx context.Context, facts StartFacts) (StartDefaults, bool, error)
 	// startCandidates lists the presets a start-defaults rule can pick on a machine (start_candidates.go); nil: the
@@ -383,6 +385,7 @@ func New(o Options) *Service {
 	s.agentNamingRoutes() // agent_naming_request.go
 	s.alwaysRoutes()
 	s.infoAccessRoutes()
+	s.trackRoutes()
 	s.undeliveredRoutes()
 	s.standingAuthorizationRoutes()
 	s.ruleSuggestionRoutes()
@@ -390,6 +393,7 @@ func New(o Options) *Service {
 	s.urgentCallRoutes() // urgent_call.go
 	s.reporterRoutes()
 	s.directionRoutes()
+	s.directionOutsideRoutes()
 	s.dispatchPolicyRoutes() // dispatch_policy_routes.go
 	s.dispatchGuardRoutes()  // dispatch_guard.go
 	s.startPresetRoutes()
@@ -842,6 +846,8 @@ func (s *Service) push(ctx context.Context, n Notification) {
 // alerting the phone (notify_user shows that to the model).
 func (s *Service) pushResult(ctx context.Context, n Notification) (NotifyResult, error) {
 	n.ID, n.Kind = "ntf_"+randomHex(8), NotifyPush
+	// A track's push_cap holds the level (track_attention.go).
+	s.capTrackPush(ctx, &n)
 	if n.Asked { // the conversation pushed what matters itself: its own finished push is left out (fleet_push.go)
 		s.noteAsked(n.SessionID)
 	}
@@ -944,6 +950,9 @@ func (s *Service) snapshot(ctx context.Context) Snapshot {
 		// identity on every client. Keep its stored ordinary title for when it ends.
 		names := s.directionSessionNames(ctx, cfg, titles)
 		for id, name := range names {
+			if d := s.directionOf(id); d != nil && d.Outside != nil {
+				continue // this is a direction, not a conversation to decorate
+			}
 			if name != "" {
 				view(id, leadersAt).Title = name
 			}
@@ -1077,6 +1086,7 @@ func (s *Service) turnEnded(ctx context.Context, r SessionRef, meeting bool) {
 		s.afterSettle(context.WithoutCancel(ctx), s.infoTagTurnSettled, r.MachineID, r.SessionID)
 	}
 	if !meeting {
+		s.spawnPinAfterTurn(ctx, r.MachineID, r.SessionID)
 		s.titleAfterTurn(ctx, r.MachineID, r.SessionID)
 	}
 }
