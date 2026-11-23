@@ -45,6 +45,7 @@ export struct SessionHeaderPermissionChip {
   private pick(id:string): void {
     const stamp=this.owner;
     if (!this.current(stamp) || !this.allows() || !this.permission.permits(id)) return;
+    this.opened=false;
     const perform=():void => {
       if (this.current(stamp) && this.allows() && this.permission.permits(id)) {
         this.command.change(this.model,'header_permission',id,():boolean => this.current(stamp) && this.allows()).catch(() => {});
