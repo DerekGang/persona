@@ -1758,7 +1758,17 @@ and **Hub**. With several installed assistants its first heading reuses `Assista
 and a one-line Switch label); with one it retains the chosen Persona face and name, without a roster switcher.
 A caption explains that only the current assistant's settings are shown. Device and Hub captions explain their shared scope.
 
-Common model choices open **Models**, with providers and keys under **Advanced**. Runtime configuration and session triage
+Settings home shows only its core rows, at most ten, from one registry (#13395; `SettingsCatalog` in
+`apple/Persona/Views/Settings/SettingsNavigation.swift`, its `core` and `advanced` lists): Models, Assistant Profile, Channels,
+Connectors, Inbox Sources, Extensions and Machines for the current assistant; Notifications and About for This Device; Hub
+Connection for Hub. One **Advanced** row after them opens Settings › Advanced, every other row under the same three scopes, in
+the order the home had them: Knowledge Selection, Meetings and Agent; Appearance & Display, Language & Dictation, Live Screen,
+Translation, Storage, Health, Alarms and Timers and This iPhone; Hub Version, Assistants, Avatar and Devices & Pairing. While a
+hub update is out or under way, the Advanced row's value says so, as the Hub Version row under it does. Each row has one home: a
+new row goes into one of the registry's two lists, never into the page, and `SettingsRegistryTests` fails on a home row outside
+the registry and on more than ten core rows. A row keeps its accessibility identifier wherever it moves.
+
+Common model choices open **Models**, with providers and keys under Models' own **Advanced**. Runtime configuration and session triage
 open through **Agent**. Appearance and display have a device-owned page; the shared avatar belongs to Hub. Diagnostics
 (build commit and the last new-chat check) are folded inside About. Watch sync and disconnection belong to Devices & Pairing.
 Existing settings route values remain valid; changing assistants returns the settings navigation to its list and retires old drafts.
@@ -1767,7 +1777,9 @@ Search reuses the system searchable field and SettingsRow navigation. It searche
 including developer terms, and opens the existing destination directly. Results have stable catalog identities; a query changes
 only navigation, never a setting. Pairing and storage use the `Theme.Icon.pairing` and `Theme.Icon.storage` vocabulary tokens.
 Why this arrangement: the earlier unscoped list mixed shared configuration with device preferences and exposed expert controls
-before common choices. It introduces no visual style, color palette, model default, or primary navigation destination.
+before common choices. It introduces no visual style, color palette, model default, or primary navigation destination. The home's
+core rows (#13395) are what an everyday user comes to Settings for; everything else is one tap further, under Advanced, and search
+still opens it directly (principle 2).
 
 ### 4.2 Gestures
 
