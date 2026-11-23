@@ -10,6 +10,7 @@ import { AssistantBriefCard } from './AssistantBriefCard';
 import { assistantCardResource } from '../models/AssistantCardLinks';
 import { ComposeListItemV2, ContentItemV2, OperateItemV2, OperateCheckV2, LengthMetrics } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
+import { deviceFeatures } from '../models/DeviceFeatures';
 import { AssistantFeedModel, PlanEditTask } from '../models/AssistantFeed';
 import { NavigationContext } from '../models/NavigationContext';
 import { DecisionPager, orderedDecisions } from '../models/DecisionPager';
@@ -516,6 +517,7 @@ export struct AssistantCards {
     const free=Math.max(44,this.dockRoom-rest-Tokens.gap-1);
     const fallback=this.environment.keyboardHeightPx>0 ? free : Math.min(free,Math.max(this.dockRoom/2,free-72));
     if (this.environment.keyboardHeightPx>0) return fallback;
+    if (deviceFeatures.boundTo(this.model) && deviceFeatures.voiceActive) return Math.min(free,Math.max(44,this.dockRoom/2));
     const tallest=this.tallestDock(), shortest=Math.min(150,tallest);
     if (this.dragCard===this.shownDecisions[0]?.id && this.dragHeight>=0) return Math.max(shortest,Math.min(tallest,this.dragHeight));
     const share=this.model.questionCardHeightShare;
@@ -581,7 +583,7 @@ export struct AssistantCards {
     Column() {
       InteractionDecisionForm({model:this.model,request:request,taskAgent:row?.agent,taskCard:row?.card,taskQueue:row ? this.requests : undefined,
         docked:true, dockSource:row?.title || '', draft:this.decisionPager?.draft(request), draftSession:this.trayScope(),
-        resizeDock:this.environment.keyboardHeightPx===0 && this.dockRoom>0, onDockResize:(phase:string,delta:number):void => this.resizeCard(request,phase,delta),
+        resizeDock:this.environment.keyboardHeightPx===0 && this.dockRoom>0 && !(deviceFeatures.boundTo(this.model) && deviceFeatures.voiceActive), onDockResize:(phase:string,delta:number):void => this.resizeCard(request,phase,delta),
         heightLimit:this.dockCardLimit,admission:this.decisionAdmission(request),
         onDockFold:() => this.decisionPager?.fold(this.decisionIds), onLater:() => this.decisionPager?.fold(this.decisionIds),
         onViewTask:() => { if (row) this.openQuestionSource(row,scope); },

@@ -644,7 +644,7 @@ export struct InteractionDecisionForm {
     Row({space:this.docked ? 6 : 5}) {
       Button({type:ButtonType.Normal}) {
         Row({space:this.docked ? 6 : 5}) {
-          SymbolGlyph(this.request.kind==='plan' ? Symbols.document : this.request.kind==='question' ? $r('sys.symbol.ellipsis_bubble') : $r('sys.symbol.hand_raised_fingers_spread'))
+          SymbolGlyph(this.request.kind==='plan' ? this.docked ? $r('sys.symbol.text_clipboard_fill') : Symbols.document : this.request.kind==='question' ? $r('sys.symbol.ellipsis_bubble') : $r('sys.symbol.hand_raised_fingers_spread'))
             .fontSize(this.agentCard ? Tokens.interfaceFontVp(13,nativeEnvironment.fontScale) : '13vp').fontColor([Colors.link])
           Text(this.cardHeading()).fontSize(12).maxFontScale(Tokens.interfaceScaleFor(12)).fontWeight(600).fontColor(Colors.link).maxLines(1)
           if (this.cardFolded && this.foldPreview()) Text(this.foldPreview()).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13))
@@ -654,7 +654,7 @@ export struct InteractionDecisionForm {
         .onClick(() => this.toggleCard()).accessibilityText(this.cardHeading()).accessibilityDescription(tr(this.cardFolded ? 'control_collapsed' : 'control_expanded'))
       if (this.docked && this.taskAgent) Button(tr('decision_view_in_chat'),{type:ButtonType.Normal})
         .height(this.headerControlSide()).padding({left:8,right:8}).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.link)
-        .responseRegion({x:0,y:-5,width:'100%',height:Math.max(44,this.headerControlSide())}).backgroundColor(Colors.subtle).borderRadius(20)
+        .responseRegion({x:0,y:-5,width:'100%',height:Math.max(44,this.headerControlSide())}).backgroundColor(Color.Transparent)
         .onClick(() => { if (this.admission()) this.onViewTask(); }).id('interaction.task.source')
       if (this.docked && interactionSkipReason(this.request)) Button(tr('decision_skip'),{type:ButtonType.Normal})
         .height(this.headerControlSide()).padding({left:5,right:5}).fontSize(13).maxFontScale(Tokens.interfaceScaleFor(13)).fontColor(Colors.tertiary)
@@ -689,8 +689,8 @@ export struct InteractionDecisionForm {
 
   // System control sizes track the control font independently of the uncapped plan body.
   private dockActionSize(primary:boolean):number {
-    const body=17*Math.max(1,Math.min(nativeEnvironment.fontScale,primary ? 21/17 : 19/17));
-    return (primary ? 30 : 14)+body*1.2;
+    const growth=(Math.max(17,this.agentFontSize(17))-17)/6;
+    return 17*1.2+(primary ? 30+growth*4 : 14+growth*2);
   }
   private dockActionInk(): ResourceColor {
     return this.model.style==='system' ? Colors.ink : Colors.onAction;
@@ -980,6 +980,7 @@ export struct InteractionDecisionForm {
 
   // The grip moves with the card: a local y coordinate would reset part of each
   // drag as layout follows the finger. Read the stable window coordinates instead.
+  @Local private gripWidth:number = 0;
   private gripWindowY:number = 0;
   private gripWindowX:number = 0;
   private gripDistance:number = 0;
@@ -1013,7 +1014,9 @@ export struct InteractionDecisionForm {
           .backgroundColor(Colors.tertiary).borderRadius(4)
       }.width('100%').height(16).justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Center)
     }.width('100%').height(16).padding(0).backgroundColor(Color.Transparent)
-      .responseRegion({x:-8,y:-8,width:'calc(100% + 16vp)',height:32}).accessibilityText(tr('phone_decision_height'))
+       .onAreaChange((_before:Area,area:Area):void => {
+        const w=Number(area.width);if (w>0 && Math.abs(w-this.gripWidth)>0.5) this.gripWidth=w;
+      }).responseRegion({x:-8,y:-8,width:this.gripWidth>0 ? this.gripWidth+16 : '100%',height:32}).accessibilityText(tr('phone_decision_height'))
       .accessibilityDescription(tr('phone_decision_height_hint')).accessibilityCustomActions([
         {name:tr('phone_decision_taller'),onAction:() => this.onDockResize('up',0)},
         {name:tr('phone_decision_shorter'),onAction:() => this.onDockResize('down',0)}])
