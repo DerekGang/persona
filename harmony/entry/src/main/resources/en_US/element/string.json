@@ -6461,6 +6461,22 @@
       "value": "Written {time}"
     },
     {
+      "name": "chat_recap_group_title",
+      "value": "While You Were Away · {count}"
+    },
+    {
+      "name": "chat_recap_latest_written",
+      "value": "Latest · Written {time}"
+    },
+    {
+      "name": "chat_recap_open_one",
+      "value": "Recap while you were away, tap to view"
+    },
+    {
+      "name": "chat_recap_open_group",
+      "value": "{count} recaps while you were away, tap to view"
+    },
+    {
       "name": "session_git_partly_staged",
       "value": "Partly staged"
     },

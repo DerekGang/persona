@@ -3,6 +3,7 @@
 class NativeColors {
   readonly surface: ResourceColor = $r('app.color.persona_surface');
   readonly codeCanvas: ResourceColor = $r('app.color.persona_code_canvas');
+  readonly inlineCodeInk: ResourceColor = $r('app.color.persona_inline_code_ink');
   readonly codeHunk: ResourceColor = $r('app.color.persona_code_hunk');
   readonly diffAdded: ResourceColor = $r('app.color.persona_diff_added');
   readonly diffRemoved: ResourceColor = $r('app.color.persona_diff_removed');

@@ -1,9 +1,11 @@
+import { pasteboard } from '@kit.BasicServicesKit';
 import { ClientModel, ClientViewLease } from '../models/ClientModel';
 import { ChatMessage, ConversationRecapItem } from '../models/Wire';
 import { Colors } from '../design/Colors';
 import { IconActions } from '../design/IconActions';
 import { Symbols } from '../design/Symbols';
 import { Tokens } from '../design/Tokens';
+import { PhoneStyle } from '../design/PhoneStyle';
 import { tr } from '../design/Strings';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 import { markdownVisibleText, parseMarkdown } from '../core/Markdown';
@@ -60,6 +62,33 @@ export struct ConversationRecap {
     if (!this.current()) return;
     this.sheetItems = items.slice().reverse(); this.shown = true;
   }
+  private sheetTitle(): string {
+    if (this.sheetItems.length < 2) return tr('chat_away_recap');
+    return tr('chat_recap_group_title').replace('{count}', String(this.sheetItems.length));
+  }
+  private written(at: number, index: number): string {
+    const time = this.relative(at);
+    if (!time) return '';
+    const latest = index === 0 && this.sheetItems.length > 1;
+    return tr(latest ? 'chat_recap_latest_written' : 'chat_recap_written').replace('{time}', time);
+  }
+  private historyLabel(count: number): string {
+    return count > 1 ? tr('chat_recap_open_group').replace('{count}', String(count)) : tr('chat_recap_open_one');
+  }
+  private async copyHistory(items: ConversationRecapItem[]): Promise<void> {
+    if (!this.current() || !items.length) return;
+    const text = items[items.length - 1].text;
+    try {
+      await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text));
+    } catch (_) {
+      this.getUIContext().getPromptAction().showToast({ message: tr('failed') });
+    }
+  }
+  @Builder historyMenu(items: ConversationRecapItem[]) {
+    Menu() {
+      MenuItem({ content: tr('copy') }).onClick(() => this.copyHistory(items)).id('chat.recap.copy')
+    }
+  }
   private relative(at: number): string {
     if (!at || !Number.isFinite(at)) return '';
     const minutes = Math.floor((Date.now() - at) / 60000);
@@ -81,7 +110,8 @@ export struct ConversationRecap {
         SymbolGlyph(Symbols.expand).fontSize(Tokens.interfaceFontVp(12, nativeEnvironment.fontScale)).fontColor([Colors.secondary])
       }.constraintSize({ minHeight: 36 })
     }.backgroundColor(Colors.control).borderRadius(12).padding({left: 10, right: 10})
-      .accessibilityText(tr('chat_away_recap') + ' · ' + tr('expand'))
+      .accessibilityText(this.historyLabel(items.length))
+      .bindContextMenu(this.historyMenu(items), ResponseType.LongPress, { preview: MenuPreviewMode.IMAGE })
       .id('chat.recap.history').onClick(() => this.showItems(items))
   }
   @Builder strip(item: ConversationRecapItem) {
@@ -107,24 +137,28 @@ export struct ConversationRecap {
   @Builder details() {
     Column() {
       Stack({alignContent:Alignment.Center}) {
-        Text(tr('chat_away_recap')).fontSize(16).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
+        Text(this.sheetTitle()).fontSize(16).maxFontScale(Tokens.navigationTextMaxScale).fontWeight(FontWeight.Medium).fontColor(Colors.ink)
           .maxLines(2).textAlign(TextAlign.Center).width('100%').padding({left:54,right:54})
         Row() {
           Button({type:ButtonType.Circle}) { SymbolGlyph($r('sys.symbol.xmark')).fontSize('18vp').fontColor([Colors.ink]) }
             .width(40).height(40).padding(0).backgroundColor(Colors.surface).border({width:Tokens.divider,color:Colors.divider,radius:20})
             .responseRegion({x:-2,y:-2,width:44,height:44}).accessibilityText(tr('close')).onClick(() => this.shown=false).id('chat.recap.close')
         }.width('100%').padding({left:Tokens.page})
-      }.width('100%').height(56)
+      }.width('100%').height(PhoneStyle.recapBarHeight)
       Scroll() {
       Column({ space: 16 }) {
         ForEach(this.sheetItems, (item: ConversationRecapItem, index: number) => {
           if (index > 0) Divider().strokeWidth(Tokens.divider).color(Colors.divider)
-          if (this.relative(item.at)) Text(tr('chat_recap_written').replace('{time}',this.relative(item.at))).fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary)
-          MarkdownText({ text: item.text, chatReply: true, recapReading: true, onLink: (url: string) => { if (this.current()) this.onLink(url); } })
+          Column({ space: Tokens.inset }) {
+            if (this.written(item.at, index)) Text(this.written(item.at, index)).fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary)
+            MarkdownText({ text: item.text, chatReply: true, recapReading: true, agentFontScale: nativeEnvironment.fontScale,
+              onLink: (url: string) => { if (this.current()) this.onLink(url); } })
+          }.width('100%').alignItems(HorizontalAlign.Start)
         }, (item: ConversationRecapItem) => item.id)
       }.width('100%').alignItems(HorizontalAlign.Start).padding(Tokens.page)
     }.width('100%').layoutWeight(1).align(Alignment.TopStart)
-    }.width('100%').height('100%').backgroundColor(Colors.surface).id('chat.recap.detail')
+    }.width('100%').height(PhoneStyle.recapSheetSurfaceHeight).padding({ top: Tokens.gap })
+      .backgroundColor(Colors.surface).borderRadius(PhoneStyle.recapSheetRadius).clip(true).id('chat.recap.detail')
   }
   build() {
     Column({ space: Tokens.gap }) {
@@ -137,7 +171,8 @@ export struct ConversationRecap {
         }
       }
     }.width('100%').alignItems(HorizontalAlign.Start).padding({left: Tokens.page, right: Tokens.page})
-      .bindSheet($$this.shown, this.details(), { backgroundColor:Colors.canvas,
-        width: '96%', height: '56%', detents: ['56%', SheetSize.LARGE], showClose: false })
+      .bindSheet($$this.shown, this.details(), { backgroundColor: Color.Transparent, blurStyle: BlurStyle.NONE,
+        width: PhoneStyle.recapSheetWidth, height: PhoneStyle.recapSheetHeight,
+        detents: [PhoneStyle.recapSheetHeight, SheetSize.LARGE], enableFloatingDragBar: true, showClose: false })
   }
 }

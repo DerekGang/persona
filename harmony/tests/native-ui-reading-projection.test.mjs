@@ -157,6 +157,10 @@ test('full recap Markdown grows past interface type, with the body-relative read
   environment.fontScale = 3.2;
   assert.equal(renderer.readingFont(17), '48vp');
   assert.equal(renderer.inlineSpacing(17,0.26),48*0.26);
+  renderer.recapProse = true;
+  assert.equal(renderer.inlineSpacing(17,0.26),0);
+  assert.equal(parseFloat(renderer.inlineLineHeight(17,true,0.26,[])),66.48);
+  renderer.recapProse = false;
   renderer.recapReading = false;
   assert.equal(renderer.readingFont(17), 17);
   renderer.promptBodyVp = 33;
@@ -168,6 +172,26 @@ test('full recap Markdown grows past interface type, with the body-relative read
     assert.ok(Math.abs(parseFloat(renderer.inlineLineHeight(17,true,0.26,[]))-advance)<0.001);
   }
   assert.match(markdown, /\.lineSpacing\(LengthMetrics\.vp\(this\.inlineSpacing\(size, lineSpacingEm\)\), \{ onlyBetweenLines: true \}/);
+});
+
+test('recap history announces its count and identifies the newest entry only in a group', () => {
+  const file = readFileSync(new URL('../entry/src/main/ets/components/ConversationRecap.ets', import.meta.url), 'utf8');
+  const strings = JSON.parse(readFileSync(new URL('../entry/src/main/resources/en_US/element/string.json', import.meta.url), 'utf8'));
+  const labels = new Map(strings.string.map(row => [row.name, row.value]));
+  const methods = ['sheetTitle', 'written', 'historyLabel'].map(name => method(name, file)).join('\n');
+  const Recap = new Function('tr', 'return ' + stripTypeScriptTypes('class Recap {' + methods + '}'))(key => labels.get(key));
+  const recap = new Recap();
+  recap.relative = date => date ? '10m ago' : '';
+  recap.sheetItems = [{ id: 'newest' }];
+  assert.equal(recap.sheetTitle(), 'While You Were Away');
+  assert.equal(recap.historyLabel(1), 'Recap while you were away, tap to view');
+  assert.equal(recap.written(1, 0), 'Written 10m ago');
+  recap.sheetItems.push({ id: 'earlier' });
+  assert.equal(recap.sheetTitle(), 'While You Were Away · 2');
+  assert.equal(recap.historyLabel(2), '2 recaps while you were away, tap to view');
+  assert.equal(recap.written(1, 0), 'Latest · Written 10m ago');
+  assert.equal(recap.written(1, 1), 'Written 10m ago');
+  assert.equal(recap.written(0, 0), '');
 });
 
 test('a recap dismissal belongs to its hub and session and an older storage read cannot close a new recap', async () => {

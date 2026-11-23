@@ -1,6 +1,10 @@
 {
   "color": [
     {
+      "name": "persona_inline_code_ink",
+      "value": "#C7C7CC"
+    },
+    {
       "name": "persona_switcher_surface",
       "value": "#2C2C2E"
     },

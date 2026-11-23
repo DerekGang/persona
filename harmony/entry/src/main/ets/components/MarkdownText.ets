@@ -4,6 +4,7 @@ import { tr } from '../design/Strings';
 import { IconActions } from '../design/IconActions';
 import { MarkdownBlock, MarkdownInline, MarkdownProseRun, MarkdownTableRow, agentReplyBodySize, hasHanProse, markdownProseRuns, parseMarkdown } from '../core/Markdown';
 import { Tokens } from '../design/Tokens';
+import { Colors } from '../design/Colors';
 import { nativeEnvironment } from '../platform/NativeEnvironment';
 
 @ComponentV2
@@ -33,11 +34,13 @@ export struct MarkdownText {
   @Monitor('text') textChanged(): void { this.blocks = parseMarkdown(this.text); }
 
   @Computed get scaleAgentProse(): boolean { return Math.abs(this.agentFontScale - 1) > 0.001; }
+  @Computed get recapProse(): boolean { return this.recapReading && this.chatReply && !this.dockPlan; }
   @Computed get agentBodyVp(): number { return agentReplyBodySize(this.agentFontScale); }
   @Computed get agentHanVp(): number { return agentReplyBodySize(this.agentFontScale, true); }
   @Computed get promptBodyVp(): number { return Math.min(53, Math.max(14, Tokens.body * this.agentFontScale)); }
 
   private inlineSpacing(size: number, lineSpacingEm: number): number {
+    if (this.recapProse) return 0;
     if (this.recapReading) return this.readingPoints(size) * (this.dockPlan ? 0.37 : lineSpacingEm);
     return 0;
   }
@@ -45,6 +48,8 @@ export struct MarkdownText {
   private inlineLineHeight(size: number, readingBody: boolean, spacingEm: number, nodes: MarkdownInline[], promptBody: boolean = false): string | undefined {
     // Theme.Level.body uses a 1.45-em advance. On ArkUI a fixed advance keeps its first and last lines at their intrinsic height.
     if (promptBody) return String(this.promptBodyVp * 1.45) + 'vp';
+    // The native recap advances 23.5 pt at standard type and 66.5 pt at the largest reading size.
+    if (readingBody && this.recapProse) return String(this.readingPoints(size) * (1.125 + spacingEm)) + 'vp';
     if (readingBody && this.agentBodyVp >= 17 && this.agentBodyVp <= 20) {
       // The system text face precedes the CJK Display crossover. Its two- and four-line replies
       // measure 44.7/93.3pt at standard type and 50.7/106pt at the next native category.
@@ -138,11 +143,11 @@ export struct MarkdownText {
     } else if (node.kind === 'code') {
       Span(node.text).fontFamily('monospace').fontSize(this.readingFont(this.chatReply ? 16 : Tokens.meta))
         .fontWeight(weight).fontStyle(italic ? FontStyle.Italic : FontStyle.Normal)
-        .fontColor(this.chatReply ? this.foreground : this.secondary)
+        .fontColor(this.recapProse ? Colors.inlineCodeInk : this.chatReply ? this.foreground : this.secondary)
         .textBackgroundStyle({ color: this.chatReply ? Color.Transparent : this.codeFill, radius: Tokens.fine })
-    } else if (readingBody && this.scaleAgentProse) {
+    } else if (readingBody && (this.scaleAgentProse || this.recapProse)) {
       ForEach(markdownProseRuns(node.text), (run: MarkdownProseRun) => {
-        Span(run.text).fontSize(run.han && this.scaleAgentProse ? String(this.agentHanVp) + 'vp' : undefined)
+        Span(run.text).fontSize(run.han ? String(this.agentHanVp) + 'vp' : undefined)
           .fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight).fontStyle(italic ? FontStyle.Italic : FontStyle.Normal)
       }, (run: MarkdownProseRun, index: number) => String(index))
     } else {
@@ -153,7 +158,8 @@ export struct MarkdownText {
 
   @Builder blockView(block: MarkdownBlock, first: boolean = false) {
     if (block.kind === 'paragraph') {
-      this.inlineText(block.inlines, this.paragraphLineSpacingEm)
+      this.inlineText(block.inlines, this.paragraphLineSpacingEm, Tokens.body, FontWeight.Normal,
+        TextAlign.Start, this.recapProse && hasHanProse(block.inlines), false, this.recapProse)
     } else if (block.kind === 'heading') {
       Column() {
         this.inlineText(block.inlines, 0.26, this.headingSize(block.level),

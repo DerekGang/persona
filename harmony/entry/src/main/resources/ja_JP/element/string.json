@@ -6461,6 +6461,22 @@
       "value": "{time}に作成"
     },
     {
+      "name": "chat_recap_group_title",
+      "value": "不在中のまとめ・{count}回"
+    },
+    {
+      "name": "chat_recap_latest_written",
+      "value": "最新・{time}に作成"
+    },
+    {
+      "name": "chat_recap_open_one",
+      "value": "不在中のまとめ、タップして表示"
+    },
+    {
+      "name": "chat_recap_open_group",
+      "value": "不在中のまとめ{count}件、タップして表示"
+    },
+    {
       "name": "session_git_partly_staged",
       "value": "一部をステージ済み"
     },

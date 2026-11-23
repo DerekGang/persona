@@ -6461,6 +6461,22 @@
       "value": "写于 {time}"
     },
     {
+      "name": "chat_recap_group_title",
+      "value": "离开期间回顾 · {count} 次"
+    },
+    {
+      "name": "chat_recap_latest_written",
+      "value": "最新 · 写于 {time}"
+    },
+    {
+      "name": "chat_recap_open_one",
+      "value": "离开期间回顾，点击查看"
+    },
+    {
+      "name": "chat_recap_open_group",
+      "value": "{count} 次离开期间回顾，点击查看"
+    },
+    {
       "name": "session_git_partly_staged",
       "value": "部分已暂存"
     },

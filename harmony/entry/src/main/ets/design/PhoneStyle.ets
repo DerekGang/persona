@@ -11,6 +11,11 @@ export class PhoneStyle {
   static readonly rowHeight: number = 48;
   static readonly bar: number = 44;
   static readonly title: number = 34;
+  static readonly recapSheetWidth: Dimension = '96%';
+  static readonly recapSheetHeight: string = '55%';
+  static readonly recapSheetSurfaceHeight: string = 'calc(100% - 8vp)';
+  static readonly recapSheetRadius: number = 44;
+  static readonly recapBarHeight: number = 58;
 
   // Grouped form controls follow the capped interface text, including their vertical padding.
   static formSize(regular: number, largest: number, scale: number): number {
