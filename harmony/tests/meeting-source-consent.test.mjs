@@ -170,3 +170,24 @@ test('the recording facts sheet returns to its own entry and permits an explicit
   assert.match(source,/\.bindSheet\(this\.facts\.open,this\.recordingFactsEditor\(\)/);
   assert.match(source,/onWillDismiss:\(action:DismissSheetAction\) => \{ if \(!this\.workspace\.busy && !this\.factsChanged\(\)\)/);
 });
+
+test('deleting a confirmed recording fact dismisses immediately and only its owner can undo the successful write',async()=>{
+  const body=source.slice(source.indexOf('  private async deleteFacts()'),source.indexOf('  @Builder recordingFactsEditor()'));
+  const Actions=new Function(stripTypeScriptTypes('class RecordingActions { '+body+' }')+'; return RecordingActions;')();
+  const actions=new Actions(),writes=[];
+  let owner='meeting A',finish;
+  actions.factsOwner=()=>owner;
+  actions.facts={baseline:'initial fact',open:true,close(){this.open=false;}};
+  actions.workspace={busy:false,saveFacts:(value,expected)=>{
+    writes.push([value,expected]);return new Promise(resolve=>{finish=resolve;});
+  }};
+  const first=actions.deleteFacts();assert.equal(actions.facts.open,false);
+  owner='meeting B';finish(true);await first;assert.equal(actions.removedFacts,undefined);
+  actions.facts.open=true;owner='meeting A';
+  const second=actions.deleteFacts();finish(true);await second;
+  assert.equal(actions.removedFacts,'initial fact');
+  owner='meeting B';await actions.undoFacts();assert.equal(writes.length,2);
+  owner='meeting A';const undo=actions.undoFacts();finish(true);await undo;
+  assert.deepEqual(writes,[['','initial fact'],['','initial fact'],['initial fact','']]);
+  assert.equal(actions.removedFacts,'');
+});

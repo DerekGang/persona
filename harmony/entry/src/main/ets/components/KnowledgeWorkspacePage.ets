@@ -923,9 +923,9 @@ export struct KnowledgeWorkspacePage {
   private async deleteFacts():Promise<void> {
     const owner=this.factsOwner(), previous=this.facts.baseline;
     if (!previous || this.workspace.busy) return;
-    this.facts.edit(''); await this.facts.save(this.workspace);
-    if (owner===this.factsOwner() && !this.facts.open && !this.workspace.error) {
-      this.removedFacts=previous; this.removedFactsOwner=owner;
+    this.facts.close();
+    if (await this.workspace.saveFacts('',previous) && owner===this.factsOwner()) {
+      this.removedFactsOwner=owner; this.removedFacts=previous;
     }
   }
   private async undoFacts():Promise<void> {
@@ -1010,18 +1010,19 @@ export struct KnowledgeWorkspacePage {
         this.recordingHeading('phone_kb_confirmed')
         Column({space:6}) {
           if (Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) Text(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned'))
-            .fontSize(16).fontColor(Colors.ink).width('100%')
+            .fontSize(16).fontColor(Colors.ink).width('100%').padding({left:20,right:20})
           if (!this.workspace.loading && !this.workspace.error && Object.keys(this.workspace.detail).length>0 && !this.workspace.supportsExpectedPinned) Text(tr('phone_conditional_read_only'))
-            .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({top:8,bottom:8}).id('knowledge.facts.read_only')
+            .fontSize(14).maxFontScale(Tokens.interfaceScaleFor(14)).fontColor(Colors.secondary).width('100%').padding({left:20,right:20,top:8,bottom:8}).id('knowledge.facts.read_only')
           if (this.workspace.supportsExpectedPinned) Button({type:ButtonType.Normal}) {
             Row({space:12}) {
               SymbolGlyph(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? Symbols.edit : Symbols.plus).fontSize('17vp').fontColor([Colors.link])
               Text(tr(Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned') ? 'edit' : 'phone_kb_add_fact')).fontSize(17).maxFontScale(Tokens.interfaceFontMaxScale).fontColor(Colors.link)
             }.width('100%')
-          }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding(0).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
-        }.width('100%').alignItems(HorizontalAlign.Start).padding({left:20,right:20}).backgroundColor(Colors.surface).borderRadius(29)
+          }.width('100%').constraintSize({minHeight:this.recordingMetric(52.3,59.3)}).padding({left:20,right:20}).backgroundColor(Color.Transparent).onClick(() => this.openFacts()).id('knowledge.facts.open')
+        }.width('100%').alignItems(HorizontalAlign.Start).backgroundColor(Colors.surface).borderRadius(29)
           .bindSheet(this.facts.open,this.recordingFactsEditor(),{height:this.facts.baseline ? SheetSize.MEDIUM : SheetSize.LARGE,
-            detents:[SheetSize.MEDIUM,SheetSize.LARGE],dragBar:true,showClose:false,backgroundColor:Colors.grouped,keyboardAvoidMode:SheetKeyboardAvoidMode.RESIZE_ONLY,
+            detents:this.facts.baseline ? [SheetSize.MEDIUM,SheetSize.LARGE] : [SheetSize.LARGE,SheetSize.MEDIUM],
+            dragBar:true,showClose:false,backgroundColor:Colors.grouped,keyboardAvoidMode:SheetKeyboardAvoidMode.TRANSLATE_AND_RESIZE,
             onWillDismiss:(action:DismissSheetAction) => { if (!this.workspace.busy && !this.factsChanged()) { this.facts.close(); action.dismiss(); } }})
         if (this.removedFacts && this.removedFactsOwner===this.factsOwner() && !Wire.text(Wire.object(this.workspace.detail,'meta'),'pinned')) {
           Button(tr('ks_undo'),{buttonStyle:ButtonStyleMode.TEXTUAL}).fontColor(Colors.link).onClick(() => { this.undoFacts().catch(() => {}); }).id('knowledge.facts.undo')
