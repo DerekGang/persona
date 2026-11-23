@@ -403,6 +403,42 @@ export struct Conversation {
     if (selected) this.selectedReadingLine = line;
     else if (this.selectedReadingLine === line) this.selectedReadingLine = '';
   }
+  private keepSelectedReadingVisible(next: number, change: number): boolean {
+    const selected = this.selectedReadingLine, owner = this.model;
+    if (!selected || !this.active || !this.mounted || !this.admission() || owner.selected.kind !== 'session' ||
+      !owner.isForegroundChat() || this.readingRestoring || this.fieldFocused || this.draftEditorOpen || this.searchPresented ||
+      this.actionsVisible || this.environment.keyboardHeightPx || this.transcriptHeight <= 0) return false;
+    const index = this.lines.findIndex((line: ConversationLine): boolean => line.id === selected);
+    if (index < 0) return false;
+    const listIndex = this.readingPrefix()+index, before = this.scroller.getItemRect(listIndex);
+    const top = Math.max(0,before.y), bottom = Math.min(this.transcriptHeight,before.y+before.height);
+    if (before.height <= 0 || bottom <= top) return false;
+    const focus = (top+bottom)/2, fraction = (focus-before.y)/before.height;
+    const generation = owner.connectionGeneration(), scope = owner.scope(), target = owner.target(), motion = this.readingMotion;
+    const valid = (): boolean => this.active && this.mounted && this.admission() && this.typeChange === change && this.readingMotion === motion &&
+      this.environment.fontScale === next && this.model === owner && owner.owns(generation,scope) && owner.target() === target &&
+      this.lines[index]?.id === selected && (!this.selectedReadingLine || this.selectedReadingLine === selected) &&
+      !this.fieldFocused && !this.draftEditorOpen && !this.searchPresented && !this.actionsVisible && !this.environment.keyboardHeightPx;
+    const context = this.getUIContext(), observer = context.getUIObserver();
+    const afterLayout = (): void => {
+      observer.off('didLayout',afterLayout);
+      if (!valid()) return;
+      const realign = (): void => {
+        if (!valid()) return;
+        const row = this.scroller.getItemRect(this.readingPrefix()+index);
+        if (row.height <= 0) return;
+        const point = row.y+fraction*row.height;
+        if (point < 0 || point > this.transcriptHeight) this.scroller.scrollBy(0,point-Math.min(focus,this.transcriptHeight));
+      };
+      const row = this.scroller.getItemRect(this.readingPrefix()+index);
+      if (row.height <= 0) {
+        this.scroller.scrollToIndex(this.readingPrefix()+index,false,ScrollAlign.START,{ extraOffset:LengthMetrics.vp(-top) });
+      }
+      context.postFrameCallback(new ConversationFrame(realign));
+    };
+    observer.on('didLayout',afterLayout);
+    return true;
+  }
   private canReflowManualHistory(): boolean {
     return this.mounted && this.active && this.admission() && this.model.selected.kind === 'session' && this.model.isForegroundChat() &&
       this.manuallyReading && !!this.lastManualAnchor && this.jumpAvailable && !this.atEnd && !this.scrollingByHand && !this.readingRestoring && !this.readingLoading &&
@@ -551,7 +587,7 @@ export struct Conversation {
   }
   private reflowReadingSize(before: number, next: number): void {
     const change = ++this.typeChange;
-    if (!this.canReflowManualHistory() || before === next) return;
+    if (before === next || this.keepSelectedReadingVisible(next,change) || !this.canReflowManualHistory()) return;
     const crossesClass = readingSizeClassChanges(before, next);
     const range = crossesClass ? undefined : this.readingBoundary(before);
     const boundary = range && range.nextIndex < this.lines.length ? range : undefined;

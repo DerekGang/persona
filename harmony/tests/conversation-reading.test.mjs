@@ -69,7 +69,7 @@ test('only a transition between standard and accessibility reading sizes changes
 
 test('reflow targets only an undisturbed manual reader in this foreground chat',()=>{
  const Reflow=new Function('readingSizeClassChanges','ConversationFrame','ScrollAlign','LengthMetrics','return '+stripTypeScriptTypes(
-   'class Reflow {'+['canReflowManualHistory','transcriptEndInset','distanceFromTranscriptEnd','settleReadingBoundary','reflowReadingSize'].map(method).join('\n')+'}'))(
+   'class Reflow {'+['canReflowManualHistory','keepSelectedReadingVisible','transcriptEndInset','distanceFromTranscriptEnd','settleReadingBoundary','reflowReadingSize'].map(method).join('\n')+'}'))(
      readingSizeClassChanges,Frame,{END:'end',START:'start'},{vp:value=>value});
  const frames=[],seen=[],posted=[],landings=[];
  const observer={on:(event,handler)=>{assert.equal(event,'didLayout');frames.push(handler);},
@@ -92,6 +92,13 @@ test('reflow targets only an undisturbed manual reader in this foreground chat',
    make(override).reflowReadingSize(1,3.2);assert.equal(frames.length,0);
  }
  make({transcriptHeight:0}).reflowReadingSize(1,19/17);assert.equal(frames.length,0);
+ const rects=[{y:230,height:90},{y:0,height:0},{y:230,height:900}];
+ const selected={id:'selected',readingId:'selected'};
+ const selectedScroll=[];
+ const selection=make({selectedReadingLine:'selected',lines:[selected],scroller:{getItemRect:()=>rects.shift(),
+   scrollToIndex:(...args)=>selectedScroll.push(args),scrollBy:(x,y)=>selectedScroll.push([x,y])}});
+ selection.reflowReadingSize(1,3.2);frames[0]();while(posted.length)posted.shift().onFrame();
+ assert.deepEqual(selectedScroll,[[1,false,'start',{extraOffset:-230}],[0,405]]);
  const sameClass=make({environment:{fontScale:19/17,keyboardHeightPx:0}});
  sameClass.reflowReadingSize(1,19/17);frames[0]();assert.equal(posted.length,1);
  while(posted.length)posted.shift().onFrame();
