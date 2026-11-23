@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const hub = vi.hoisted(() => ({
   calls: [] as { path: string; method: string; json?: unknown }[],
   mdWrite: "ok" as "ok" | "stale",
+  kinds: [] as { slug: string; title: string; disabled?: string }[],
 }));
 vi.mock("../../lib/api", async (orig) => {
   const real = await orig<typeof import("../../lib/api")>();
@@ -24,7 +25,7 @@ vi.mock("../../lib/api", async (orig) => {
       hub.calls.push({ path, method, json: init?.json });
       if (path === "/assistant/tracks" && method === "GET") return Promise.resolve({ tracks: [track("money", "Money")] });
       if (path === "/assistant/tracks" && method === "POST") return Promise.resolve(track((init!.json as { slug: string }).slug, "Family"));
-      if (path === "/assistant/track-kinds") return Promise.resolve({ kinds: [] });
+      if (path === "/assistant/track-kinds") return Promise.resolve({ kinds: hub.kinds });
       if (path.startsWith("/assistant?space=money")) return Promise.resolve({ machine_id: "mac", conversations: [{ machine_id: "mac", session_id: "c1", title: "Tax questions", space: "money", updated_at: "2026-11-20T08:00:00Z" }] });
       if (path === "/assistant/tracks/money/space-md" && method === "GET") return Promise.resolve({ content, digest: "d1", state: "Taxes filed." });
       if (path === "/assistant/tracks/money/space-md" && method === "PUT") {
@@ -60,6 +61,7 @@ const button = (text: string) => [...document.querySelectorAll("button")].find((
 beforeEach(() => {
   hub.calls.length = 0;
   hub.mdWrite = "ok";
+  hub.kinds = [];
   resetTracksForTest();
   history.replaceState(null, "", "/");
   host = document.createElement("div");
@@ -132,5 +134,16 @@ describe("New space", () => {
     const post = hub.calls.find((c) => c.method === "POST" && c.path === "/assistant/tracks");
     expect(post?.json).toMatchObject({ slug: "family", kind: "space", title: "Family", icon: "layers", default_categories: [] });
     expect(location.pathname).toBe("/tracks/family/new");
+  });
+
+  it("starts on the first kind the assistant offers when the default kind is not among them", async () => {
+    hub.kinds = [{ slug: "space", title: "Space", disabled: "schema" }, { slug: "orchestration", title: "Main chat" }, { slug: "project", title: "Project" }];
+    act(() => root.render(<NewSpace onToggleSidebar={() => {}} />));
+    await flush();
+    await typeInto(host.querySelector("input")!, "Family");
+    await act(async () => button(t("spaces.create")).click());
+    await flush();
+    const post = hub.calls.find((c) => c.method === "POST" && c.path === "/assistant/tracks");
+    expect(post?.json).toMatchObject({ slug: "family", kind: "project" });
   });
 });

@@ -34,7 +34,13 @@ export function NewSpace({ onToggleSidebar }: { onToggleSidebar: () => void }) {
 
   useEffect(() => {
     let live = true;
-    listTrackKinds().then((k) => live && setKinds(spaceKinds(k)), () => {});
+    listTrackKinds().then((k) => {
+      if (!live) return;
+      const loaded = spaceKinds(k);
+      setKinds(loaded);
+      // the default kind may be off or missing on this assistant: start on one it offers
+      setKind((cur) => (loaded.length && !loaded.some((x) => x.slug === cur) ? loaded[0]!.slug : cur));
+    }, () => {});
     return () => {
       live = false;
     };
