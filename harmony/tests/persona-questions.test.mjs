@@ -5,6 +5,8 @@ import { readFileSync, existsSync } from 'node:fs';
 
 registerHooks({
   resolve(specifier, context, next) {
+    if (context.parentURL?.endsWith('/ClientModel.ets') && specifier === '../core/Markdown')
+      return {url:new URL('../core/Markdown.ts',context.parentURL).href,shortCircuit:true};
     if (specifier === '@kit.ArkTS') return { url: 'persona-question-test:arkts', shortCircuit: true };
     if (context.parentURL?.endsWith('/ClientModel.ets')) {
       if (['../core/DictationLanguage', './Wire', './AgentAttention', './InteractionDecision', './ChatDraftStore', '../core/Domain'].includes(specifier)) {

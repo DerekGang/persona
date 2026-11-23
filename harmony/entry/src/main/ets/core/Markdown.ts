@@ -637,3 +637,16 @@ export function markdownVisibleText(blocks: MarkdownBlock[]): string {
   }
   return pieces.join('\n');
 }
+
+/** The selectable words of a lifted chat message. A table copies as its original Markdown. */
+export function liftedMessageWords(source: string, plain: boolean): string {
+  if (plain) return source;
+  function words(block: MarkdownBlock): string {
+    if (block.kind === 'table') return block.source;
+    if (block.kind === 'list') return block.items.map((item: MarkdownBlock) =>
+      (block.ordered ? item.marker : '•') + ' ' + item.children.map(words).join('\n')).join('\n');
+    if (block.kind === 'quote') return block.children.map(words).join('\n');
+    return markdownVisibleText([block]);
+  }
+  return parseMarkdown(source).map(words).filter((text: string) => text.length > 0).join('\n\n');
+}

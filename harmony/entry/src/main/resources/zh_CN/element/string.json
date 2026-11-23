@@ -3049,6 +3049,30 @@
       "value": "创建分支对话"
     },
     {
+      "name": "chat_lift_select",
+      "value": "选择文本"
+    },
+    {
+      "name": "chat_lift_me",
+      "value": "我"
+    },
+    {
+      "name": "chat_lift_quote_part",
+      "value": "引用选中的文字 · {author}"
+    },
+    {
+      "name": "chat_lift_quote_whole",
+      "value": "引用 · {author}"
+    },
+    {
+      "name": "chat_lift_remove_quote",
+      "value": "取消引用"
+    },
+    {
+      "name": "chat_lift_quote",
+      "value": "引用"
+    },
+    {
       "name": "use_as_context",
       "value": "用作上下文"
     },

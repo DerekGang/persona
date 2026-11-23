@@ -11,6 +11,8 @@ import { nativeEnvironment } from '../platform/NativeEnvironment';
 export struct MarkdownText {
   @Require @Param text: string;
   @Param fitContent: boolean = false;
+  @Param nativeTextSelection: boolean = true;
+  @Param fixedType: boolean = false;
   @Param agentPrompt: boolean = false;
   @Param chatReply: boolean = false;
   @Param agentReply: boolean = false;
@@ -119,12 +121,12 @@ export struct MarkdownText {
         (node: MarkdownInline, index: number) => String(index))
     }
       .fontSize(promptBody ? String(this.promptBodyVp) + 'vp' :
-        readingBody && this.scaleAgentProse ? String(this.agentBodyVp) + 'vp' : this.readingFont(size))
+        readingBody && (this.scaleAgentProse || this.fixedType) ? String(this.agentBodyVp) + 'vp' : this.readingFont(size))
       .fontColor(quiet ? this.secondary : this.foreground).fontWeight(weight)
       .lineHeight(this.inlineLineHeight(size, readingBody, lineSpacingEm, nodes, promptBody))
       .lineSpacing(LengthMetrics.vp(this.inlineSpacing(size, lineSpacingEm)), { onlyBetweenLines: true })
       .textAlign(alignment).wordBreak(breakAll ? WordBreak.BREAK_ALL : WordBreak.BREAK_WORD)
-      .copyOption(CopyOptions.LocalDevice).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start))
+      .copyOption(this.nativeTextSelection ? CopyOptions.LocalDevice : CopyOptions.None).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start))
       .width(this.fitContent ? undefined : '100%')
   }
 
@@ -184,7 +186,7 @@ export struct MarkdownText {
         } else if (block.language) Text(block.language).fontSize(Tokens.meta).fontColor(this.secondary)
         Scroll() {
           Text(block.text).fontFamily('monospace').fontSize(Tokens.meta).lineHeight(this.chatReply ? '21fp' : undefined).wordBreak(WordBreak.BREAK_ALL)
-            .copyOption(CopyOptions.LocalDevice).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start)).fontColor(this.foreground)
+            .copyOption(this.nativeTextSelection ? CopyOptions.LocalDevice : CopyOptions.None).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start)).fontColor(this.foreground)
         }.scrollable(ScrollDirection.Horizontal).align(Alignment.TopStart).scrollBar(BarState.Auto).width('100%')
       }
         .padding(Tokens.inset).width('100%').alignItems(HorizontalAlign.Start)
@@ -193,7 +195,7 @@ export struct MarkdownText {
         .borderRadius(this.chatReply ? Tokens.inset : Tokens.fine)
     } else if (block.kind === 'raw') {
       Text(block.text).fontSize(Tokens.body).fontColor(this.foreground).wordBreak(WordBreak.BREAK_WORD)
-        .copyOption(CopyOptions.LocalDevice).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start)).width('100%')
+        .copyOption(this.nativeTextSelection ? CopyOptions.LocalDevice : CopyOptions.None).onTextSelectionChange((start: number, end: number) => this.onSelectionChange(end > start)).width('100%')
     } else if (block.kind === 'rule') {
       Divider().strokeWidth(Tokens.hairline).color(this.secondary).width('100%')
         .margin({ top: Tokens.gap, bottom: Tokens.gap })

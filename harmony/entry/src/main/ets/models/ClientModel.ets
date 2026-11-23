@@ -1,4 +1,5 @@
 import type { HubAccess } from '../core/HubAccess';
+import { liftedMessageWords } from '../core/Markdown';
 import type { ConversationRecapItem } from './Wire';
 import { AssistantViewModel } from './AssistantView';
 import { SshTunnel } from './SshTunnel';
@@ -1284,6 +1285,29 @@ export class ClientModel {
     this.draftRevision = util.generateRandomUUID();
     try { await this.persistDraft(); } catch (_) { if (this.owns(generation, scope) && this.target() === target) this.error = 'cache_unavailable'; }
   }
+  async quoteMessageContext(message: ChatMessage, author: string, selection?: string): Promise<boolean> {
+    const target=this.target(),generation=this.generation,scope=this.scope();
+    if (this.draftLoading || !message.text || message.ownerTarget!==target ||
+      !this.messages.some((item:ChatMessage) => item.id===message.id && item.text===message.text)) return false;
+    const text=selection===undefined ? message.text : selection.trim();
+    if (!text || selection!==undefined && !liftedMessageWords(message.text,message.role==='user').includes(text)) return false;
+    const previous=this.sourceContext,previousRevision=this.draftRevision,refs=this.draftContexts(previous);
+    const id=message.itemId || message.id,part=selection===undefined ? '' : 'selection';
+    if (id && refs.some((ref:Record<string,Object>) => Wire.text(ref,'kind')==='quote' && Wire.text(ref,'msg')===id &&
+      Wire.text(ref,'part')===part && (!part || Wire.text(ref,'text')===text))) return true;
+    const ref=Wire.payload(['kind','title','url','msg','text'],['quote',author,'',id,text]);
+    if (part) ref['part']=part;
+    refs.push(ref);
+    const next=this.serializeDraftContexts(refs);
+    if (utf8Bytes(next)>100000) { this.error='chat_attachment_text_too_large'; return false; }
+    const revision=util.generateRandomUUID(); this.sourceContext=next; this.draftRevision=revision;
+    const current=():boolean => this.owns(generation,scope) && this.target()===target && this.draftRevision===revision;
+    try { await this.persistDraft(); return current(); }
+    catch (_) {
+      if (current()) { this.sourceContext=previous; this.draftRevision=previousRevision; this.error='cache_unavailable'; }
+      return false;
+    }
+  }
   @Trace interruptPendingKey: string = '';
   private interruptIdentity(): string { return JSON.stringify([this.generation, this.target()]); }
   private turnWorking(): boolean {
@@ -1577,6 +1601,33 @@ export class ClientModel {
       !!session && this.capabilities(session).canApprove;
   }
   canInterrupt(): boolean { return this.connected && this.capabilities().canInterrupt; }
+  private serializeDraftContexts(refs: Record<string,Object>[]): string {
+    if (!refs.length) return '';
+    return JSON.stringify(refs.length===1 ? refs[0] : Wire.payload(['contexts'],[refs]));
+  }
+  draftMessageQuotes(): Record<string,Object>[] {
+    if (!this.sourceContext) return [];
+    return this.draftContexts(this.sourceContext).filter((ref:Record<string,Object>) => ['message','quote'].includes(Wire.text(ref,'kind')));
+  }
+  otherContextTitle(): string {
+    if (!this.sourceContext) return '';
+    return this.draftContexts(this.sourceContext).filter((ref:Record<string,Object>) => !['message','quote'].includes(Wire.text(ref,'kind')))
+      .map((ref:Record<string,Object>) => Wire.text(ref,'title')).filter((title:string) => !!title).join(' · ');
+  }
+  removeMessageQuote(ref: Record<string,Object>): void {
+    const before=this.draftContexts(this.sourceContext),key=JSON.stringify(ref);
+    const index=before.findIndex((candidate:Record<string,Object>) => JSON.stringify(candidate)===key &&
+      ['message','quote'].includes(Wire.text(candidate,'kind')));
+    if (index<0) return;
+    before.splice(index,1); this.sourceContext=this.serializeDraftContexts(before);
+    this.draftRevision=util.generateRandomUUID(); void this.persistDraft().catch(() => this.error='cache_unavailable');
+  }
+  removeOtherContexts(): void {
+    const quotes=this.draftMessageQuotes();
+    if (!quotes.length) { this.removeContext(); return; }
+    this.sourceContext=this.serializeDraftContexts(quotes); this.draftRevision=util.generateRandomUUID();
+    void this.persistDraft().catch(() => this.error='cache_unavailable');
+  }
   contextTitle(): string {
     if (!this.sourceContext) return ''; const data = Wire.parse(this.sourceContext);
     return Wire.rows(data, 'contexts').map((item: Record<string, Object>) => Wire.text(item, 'title')).join(' · ') || Wire.text(data, 'title');

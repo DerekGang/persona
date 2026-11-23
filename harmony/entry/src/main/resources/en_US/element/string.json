@@ -3049,6 +3049,30 @@
       "value": "Branch chat"
     },
     {
+      "name": "chat_lift_select",
+      "value": "Select Text"
+    },
+    {
+      "name": "chat_lift_me",
+      "value": "Me"
+    },
+    {
+      "name": "chat_lift_quote_part",
+      "value": "Quoted Selection · {author}"
+    },
+    {
+      "name": "chat_lift_quote_whole",
+      "value": "Quote · {author}"
+    },
+    {
+      "name": "chat_lift_remove_quote",
+      "value": "Remove Quote"
+    },
+    {
+      "name": "chat_lift_quote",
+      "value": "Quote"
+    },
+    {
       "name": "use_as_context",
       "value": "Use as context"
     },

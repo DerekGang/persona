@@ -3049,6 +3049,30 @@
       "value": "会話を分岐"
     },
     {
+      "name": "chat_lift_select",
+      "value": "テキストを選択"
+    },
+    {
+      "name": "chat_lift_me",
+      "value": "自分"
+    },
+    {
+      "name": "chat_lift_quote_part",
+      "value": "選択したテキストを引用 · {author}"
+    },
+    {
+      "name": "chat_lift_quote_whole",
+      "value": "引用 · {author}"
+    },
+    {
+      "name": "chat_lift_remove_quote",
+      "value": "引用を取り消す"
+    },
+    {
+      "name": "chat_lift_quote",
+      "value": "引用"
+    },
+    {
       "name": "use_as_context",
       "value": "コンテキストに追加"
     },

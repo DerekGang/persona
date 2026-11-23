@@ -1,5 +1,7 @@
 import { SessionComposerModeChip } from './SessionComposerModeChip';
 import { ComposerSize, restingComposerSize, ComposerReadingSize, composerReadingSize, composerTypeSample, CompactDraftRoom, compactDraftRoom } from '../core/ComposerSize';
+import { PhoneMessageLift, PhoneMessageLiftHost, PhoneLiftPresentation } from './PhoneMessageLift';
+import { MessageLiftFrame } from '../core/MessageLift';
 import { PhoneDictationControl } from './PhoneDictationControl';
 import { ConversationRecap } from './ConversationRecap';
 import { AssistantWelcome } from './AssistantWelcome';
@@ -78,6 +80,7 @@ struct MessageSurface {
   @Param agentPrompt: boolean = false;
   @Param personaReply: boolean = false;
   @Param maximum: number = Tokens.readingMax;
+  @Param sourceId: string = '';
   @BuilderParam content: () => void;
   @Local fill: ResourceColor = Color.Transparent;
   onWillApplyTheme(theme: Theme): void { this.fill = theme.colors.compBackgroundPrimary; }
@@ -86,7 +89,7 @@ struct MessageSurface {
       .padding(this.agentPrompt ? { left: Tokens.page, right: Tokens.page, top: Tokens.inset, bottom: Tokens.inset } :
         this.own || this.personaReply ? {left:14,right:14,top:9,bottom:9} : 0)
       .backgroundColor(this.own ? this.fill : this.personaReply ? Colors.control : Color.Transparent)
-      .borderRadius(this.own || this.personaReply ? Tokens.bubble : 0)
+      .borderRadius(this.own || this.personaReply ? Tokens.bubble : 0).id(this.sourceId)
   }
 }
 
@@ -153,6 +156,7 @@ class ConversationLine {
 @ComponentV2
 export struct Conversation {
   @Require @Param model: ClientModel;
+  @Param liftHost: PhoneMessageLiftHost = new PhoneMessageLiftHost();
   @Param active: boolean = true;
   @Param searchHitId: string = '';
   @Param searchPresented: boolean = false;
@@ -213,6 +217,13 @@ export struct Conversation {
   private manuallyReading: boolean = false;
   private selectedReadingLine: string = '';
   private readingMenuLine: string = '';
+  private ownedLift: PhoneLiftPresentation | undefined;
+  @Local liftOpen: boolean = false;
+  @Local liftMessage: ChatMessage | undefined;
+  @Local liftFrame: MessageLiftFrame | undefined;
+  @Local liftSelectOnOpen: boolean = false;
+  private liftGeneration: number = -1;
+  private liftScope: string = '';
   private readingCursors: Set<string> = new Set();
   @Local readingFailed: boolean = false;
   private firstVisibleIndex: number = 0;
@@ -302,7 +313,7 @@ export struct Conversation {
     if (this.readingKey === key) return;
     this.manuallyReading = false; this.selectedReadingLine = ''; this.readingMenuLine = ''; this.tailPosition = undefined;
     this.measuredRows.clear(); this.precedingRows.clear();
-    this.lastReadingFrame = undefined; this.priorReadingFrame = undefined;
+    this.lastReadingFrame = undefined; this.priorReadingFrame = undefined; if (this.ownedLift) this.closeOwnedLift();
     this.saveReading(); this.lastManualAnchor = undefined; this.scrollingByHand = false; this.jumpAvailable = false; this.lastVisibleIndex = -1; this.readingKey = key; this.searchedHit = ''; this.seekingHit = ''; if (this.highlightedLine) this.clearSearchHighlight();
     const epoch = ++this.readingEpoch, lease = this.model.captureView('reading:' + this.model.target());
     this.readingLease = lease; this.readingCursors.clear(); this.readingFetching = false; this.readingRestoring = true; this.readingAnchorReady = false; this.readingFailed = false;
@@ -1080,7 +1091,7 @@ export struct Conversation {
   @Monitor('active', 'model.selected', 'model.connected') feedContextChanged(): void { if (!this.active) { this.manuallyReading = false; this.readingMotion++; this.saveReading(); } else this.syncReading(); this.syncFeed(); this.syncAttachments(); this.syncRevision(); }
   @Monitor('model.decision') decisionChanged(): void { this.measuredDecision = ''; this.refreshFeed(); this.scheduleReading(); }
   @Monitor('active', 'model.selected', 'model.profile', 'model.connected', 'model.personaQuestions')
-  questionsContextChanged(): void { this.questions.sync(this.model, this.active); }
+  questionsContextChanged(): void { if (this.liftOpen && !this.currentLift()) this.closeOwnedLift(); this.questions.sync(this.model, this.active); }
   @Monitor('model.personaQuestions') personaQuestionsChanged(): void {
     this.syncTimeline(); this.refreshFeed();
     this.timelinePositionChanged();
@@ -1333,10 +1344,10 @@ export struct Conversation {
     if (this.revisionOwnerCurrent(lease, message)) await this.restoreRevisionDraft(outcome, lease, message);
     if (this.revisionOwnerCurrent(lease, message)) this.model.loadChat(this.model.selected).catch(() => {});
   }
-  private async copyMessage(message: ChatMessage): Promise<void> {
+  private async copyMessage(message: ChatMessage, text: string = message.text): Promise<void> {
     if (message.ownerTarget !== this.model.target()) return;
     const generation = this.model.connectionGeneration(), scope = this.model.scope(), target = this.model.target();
-    try { await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, message.text)); }
+    try { await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text)); }
     catch (_) { if (this.model.owns(generation, scope) && this.model.target() === target) this.model.error = 'failed'; }
   }
   private messageMenuBuilder(entry: RepeatItem<ConversationLine>): CustomBuilder {
@@ -1378,6 +1389,7 @@ export struct Conversation {
     });
   }
   aboutToDisappear(): void {
+    this.closeOwnedLift();
     this.seekingHit = ''; this.clearSearchHighlight();
     this.mounted = false;
     this.questions.retire(); this.actionIntent = undefined; this.chooser.retire();
@@ -1425,7 +1437,80 @@ export struct Conversation {
     }
     return Tokens.fine;
   }
+  private canLiftMessage(message: ChatMessage): boolean {
+    return this.availableWidth>0 && this.availableWidth<600 && !this.useNativeHover && this.model.selected.kind==='session' &&
+      (message.role==='user' || message.role==='assistant') && !!message.text.trim() && !message.held && !message.failed &&
+      (!message.localOperation || message.deliveryState==='done');
+  }
+  private showLift(entry: RepeatItem<ConversationLine>, point?: number, select: boolean = false, touchArea?: Area): void {
+    const message=entry.item.message, ui=this.getUIContext();
+    if (this.liftOpen || !message || !this.active || !this.admission() || !this.canLiftMessage(message) ||
+      message.ownerTarget!==this.model.target() || !this.model.isForegroundChat()) return;
+    const surface=ui.getFrameNodeById('chat.lift.source.'+entry.item.id);
+    const pos=surface?.getPositionToScreenWithTransform(), size=surface?.getMeasuredSize();
+    const width=size ? ui.px2vp(size.width) : Number(touchArea?.width)-Tokens.page*2;
+    const height=size ? ui.px2vp(size.height) : Number(touchArea?.height)-this.messageBottomPad(entry)-3;
+    const x=pos ? pos.x : Number(touchArea?.globalPosition.x)+Tokens.page;
+    const y=pos ? pos.y : Number(touchArea?.globalPosition.y)+3;
+    if (!(width>0 && height>0 && Number.isFinite(x) && Number.isFinite(y))) return;
+    const left=Math.max(4,x-8),top=y-12;
+    this.liftFrame={left:left,top:top,width:Math.min(width+16,this.availableWidth-left-4),height:height+24,
+      press:Math.max(0,(point ?? y+height/2)-top),fontScale:this.environment.fontScale};
+    this.liftMessage=message; this.liftSelectOnOpen=select; this.liftGeneration=this.model.connectionGeneration();
+    this.liftScope=this.model.scope();
+    const presentation: PhoneLiftPresentation={content:():void => this.liftedContent(),didDismiss:():void => {
+      this.liftOpen=false; this.liftMessage=undefined; this.liftFrame=undefined; this.ownedLift=undefined;
+    }};
+    this.liftHost.present(presentation); this.ownedLift=presentation; this.liftOpen=true;
+  }
+  private closeOwnedLift(): void {
+    if (this.ownedLift && this.liftHost.current===this.ownedLift) this.liftHost.dismiss();
+  }
+  private currentLift(): ChatMessage | undefined {
+    const message=this.liftMessage;
+    return this.liftOpen && this.active && this.admission() && message && this.model.owns(this.liftGeneration,this.liftScope) &&
+      this.model.target()===message.ownerTarget && this.model.messages.some((row:ChatMessage) => row.id===message.id && row.text===message.text) ?
+      message : undefined;
+  }
+  private quoteLiftedText(text?: string): void {
+    const message=this.currentLift(), model=this.model, generation=this.liftGeneration, scope=this.liftScope;
+    if (!message) return;
+    model.quoteMessageContext(message,message.role==='user' ? tr('chat_lift_me') : this.composerAgentName(),text).then((stored:boolean): void => {
+      if (!stored || !this.active || this.model!==model || !model.owns(generation,scope) || model.target()!==message.ownerTarget || !model.sourceContext) return;
+      this.getUIContext().postFrameCallback(new ConversationFrame((): void => {
+        if (this.active && this.admission() && model.owns(generation,scope) && model.target()===message.ownerTarget)
+          this.getUIContext().getFocusController().requestFocus('chat.input');
+      }));
+    });
+  }
+  @Builder liftMore() {
+    if (this.liftMessage) this.messageMenu(this.liftMessage!)
+  }
+  @Builder liftedContent() {
+    if (this.liftMessage && this.liftFrame) {
+      PhoneMessageLift({text:this.liftMessage!.text,own:this.liftMessage!.role==='user',frame:this.liftFrame!,
+        selectOnOpen:this.liftSelectOnOpen,hasMore:!!this.liftMessage!.itemId &&
+          (this.revisions.canFork(this.liftMessage!.itemId) || this.revisions.canRewind(this.liftMessage!.itemId)),
+        moreMenu:():void => this.liftMore(),onClose:():void => { this.closeOwnedLift(); },
+        onCopyText:(text:string):void => { const message=this.currentLift(); if (message) void this.copyMessage(message,text); },
+        onQuoteText:(text?:string):void => this.quoteLiftedText(text)})
+    }
+  }
   @Builder message(entry: RepeatItem<ConversationLine>) {
+    if (this.canLiftMessage(entry.item.message!)) {
+      Column() { this.messageBody(entry) }.width('100%')
+        .priorityGesture(LongPressGesture({repeat:false}).onActionEnd((event:GestureEvent) => {
+          this.showLift(entry,event.fingerList[0]?.globalY,false,event.target.area);
+        }))
+        .accessibilityCustomActions([{name:tr('chat_lift_select'),onAction:():void => this.showLift(entry,undefined,true)}])
+    } else {
+      Column() { this.messageBody(entry) }.width('100%')
+        .bindContextMenu(this.messageMenuBuilder(entry), ResponseType.LongPress, {preview:MenuPreviewMode.IMAGE,
+          onAppear:() => { this.readingMenuLine=entry.item.id; },
+          onDisappear:() => { if (this.readingMenuLine===entry.item.id) this.readingMenuLine=''; }})
+    }
+  }
+  @Builder messageBody(entry: RepeatItem<ConversationLine>) {
     Column({ space: Tokens.gap }) {
       if (entry.item.message!.role === 'work' && entry.item.message!.running && !entry.item.message!.work) {
         Row({ space: 5 }) {
@@ -1466,13 +1551,13 @@ export struct Conversation {
         galleryIndex: this.imageIndex(entry.item.message!, 'item', entry.item.message!.imageId), onEdit: (image: LoadedMessageImage) => this.editReceivedImage(image) })
       if (entry.item.message!.text) {
         WithTheme({ colorMode: this.environment.dark ? ThemeColorMode.DARK : ThemeColorMode.LIGHT, theme: nativeMessageTheme(this.look, this.model.style, entry.item.message!.role === 'user', this.environment.dark) }) {
-        MessageSurface({ own: entry.item.message!.role === 'user', agentPrompt: this.model.selected.kind === 'session' && entry.item.message!.role === 'user',
+        MessageSurface({ sourceId: 'chat.lift.source.'+entry.item.id, own: entry.item.message!.role === 'user', agentPrompt: this.model.selected.kind === 'session' && entry.item.message!.role === 'user',
           personaReply: this.model.selected.kind === 'conversation' && entry.item.message!.role === 'assistant', maximum: entry.item.message!.role === 'user' ? Math.max(Tokens.touch, Math.min(this.availableWidth, Tokens.readingMax) - Tokens.page * 2 - Tokens.touch) : Tokens.readingMax }) {
           if (entry.item.message!.role === 'assistant' && this.model.selected.kind === 'conversation') AssistantMessage({ model: this.model, feed: this.feed, message: entry.item.message!, active: this.active, onLink: (address: string) => this.onLink(address), onOpenResource: (row: ResourceRow) => this.onOpenResource(row) })
           else MarkdownText({ text: entry.item.message!.text, chatReply: entry.item.message!.role === 'assistant',
             agentReply: this.model.selected.kind === 'session' && entry.item.message!.role === 'assistant',
             agentPrompt: this.model.selected.kind === 'session' && entry.item.message!.role === 'user',
-            agentFontScale: this.environment.fontScale, fitContent: entry.item.message!.role === 'user',
+            agentFontScale: this.environment.fontScale, nativeTextSelection: !this.canLiftMessage(entry.item.message!), fitContent: entry.item.message!.role === 'user',
             onSelectionChange: (selected: boolean) => this.selectReadingText(entry.item.id, selected), onLink: (address: string) => this.onLink(address) })
         }
         }
@@ -1484,9 +1569,7 @@ export struct Conversation {
       if (entry.item.message!.localOperation && this.model.canRestoreMessage(entry.item.message!.localOperation)) Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('restore_draft')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('restore_draft', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('restore_draft')).bindTips(tr('restore_draft')).onClick(() => this.restoreDraft(entry.item.message!))
     }.width('100%').alignItems(entry.item.message!.role === 'user' ? HorizontalAlign.End : HorizontalAlign.Start)
       .padding({ left: Tokens.page, right: Tokens.page, top: 3, bottom: this.messageBottomPad(entry) })
-      .bindContextMenu(this.messageMenuBuilder(entry), ResponseType.LongPress, { preview: MenuPreviewMode.IMAGE,
-        onAppear: () => { this.readingMenuLine = entry.item.id; },
-        onDisappear: () => { if (this.readingMenuLine === entry.item.id) this.readingMenuLine = ''; } })
+
   }
   @Builder actionsMenu() {
     Menu() {
@@ -1691,10 +1774,13 @@ export struct Conversation {
     if (this.model.agentInputNotice()==='agent_computer_holds') return this.agentNotice();
     if (this.model.selected.kind==='conversation') return tr('chat_ask_persona');
     if (this.model.agentQueuesMessages()) return tr('chat_queued_followup');
+    return tr('session_message_to_agent').replace('{agent}',this.composerAgentName());
+  }
+  private composerAgentName():string {
     const data=this.model.selected.data(), raw=Wire.text(data,'agent_label') || Wire.text(data,'launcher') || Wire.text(data,'agent') || Wire.text(data,'agent_type');
     const agent=raw.toLowerCase();
     const label=agent==='codex' ? 'Codex' : !agent || ['claude','claude-code','claude code'].includes(agent) ? 'Claude' : raw;
-    return tr('session_message_to_agent').replace('{agent}',label);
+    return label;
   }
 
   @Builder draftPage() {
@@ -1746,9 +1832,25 @@ export struct Conversation {
     Column({ space: Tokens.gap }) {
       AttachmentStrip({ attachments: this.attachments.attachments, errorKey: this.attachments.errorKey, actionsEnabled: !this.sending && !this.attachments.busy,
           onRemove: (id: string) => this.attachments.remove(id), onEdit: (id: string) => this.attachments.editPhoto(id), onPreview: (item: ChatAttachment) => this.preview(item) })
-      if (this.model.sourceContext) Row({ space: Tokens.gap }) {
-        Text(this.model.contextTitle()).fontSize(Tokens.meta).fontColor(Colors.ink).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
-        Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('remove')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('remove', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('remove')).bindTips(tr('remove')).enabled(!this.sending).onClick(() => this.model.removeContext())
+      ForEach(this.model.draftMessageQuotes(),(ref:Record<string,Object>) => {
+        Row({space:Tokens.gap}) {
+          Rect().width(3).height(28).fill(Colors.ai).borderRadius(2)
+          Column({space:2}) {
+            Text(tr(Wire.text(ref,'part')==='selection' ? 'chat_lift_quote_part' : 'chat_lift_quote_whole').replace('{author}',Wire.text(ref,'title')))
+              .fontSize(Tokens.caption).maxFontScale(Tokens.interfaceScaleFor(Tokens.caption)).fontColor(Colors.secondary).maxLines(1)
+            Text(Wire.text(ref,'text')).fontSize(Tokens.meta).maxFontScale(Tokens.interfaceScaleFor(Tokens.meta)).fontColor(Colors.ink)
+              .maxLines(2).textOverflow({overflow:TextOverflow.Ellipsis}).id('chat.context.quote.text')
+          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+          Button({type:ButtonType.Circle}) {
+            SymbolGlyph(IconActions.symbol('remove')).fontSize(Tokens.symbolFont).fontColor([Colors.secondary])
+          }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('chat_lift_remove_quote')).enabled(!this.sending)
+            .id('chat.context.quote.remove').onClick(() => this.model.removeMessageQuote(ref))
+        }.width('100%').padding({left:Tokens.inset,right:Tokens.fine,top:3,bottom:3}).backgroundColor(Colors.control)
+          .borderRadius(Tokens.inset).id('chat.context.quote')
+      },(ref:Record<string,Object>, index:number) => Wire.text(ref,'msg',Wire.text(ref,'item_id'))+':'+String(index))
+      if (this.model.otherContextTitle()) Row({ space: Tokens.gap }) {
+        Text(this.model.otherContextTitle()).fontSize(Tokens.meta).fontColor(Colors.ink).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
+        Button({ type: ButtonType.Circle }) { SymbolGlyph(IconActions.symbol('remove')).fontSize(Tokens.symbolFont).fontColor([IconActions.color('remove', false)]) }.attributeModifier(ButtonStyles.icon).accessibilityText(tr('remove')).bindTips(tr('remove')).enabled(!this.sending).onClick(() => this.model.removeOtherContexts())
       }.width('100%')
       GridRow({ columns: this.composerColumns(), gutter: { x: 0, y: 0 } }) {
         GridCol({ span: this.expandedComposer() ? this.composerColumns() : this.composerColumns() - this.leftColumns() - this.sendColumns(), order: this.expandedComposer() ? 0 : 1 }) {

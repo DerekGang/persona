@@ -1,3 +1,4 @@
+import { PhoneMessageLiftHost, PhoneMessageLiftHostLayer } from '../components/PhoneMessageLift';
 import { AssistantChatStateMark, AssistantChatTitle } from '../components/AssistantChatMarks';
 import { assistantChatSource, assistantChatState, assistantSidebarChats, sidebarConversationLabel, sidebarConversationTitle, SidebarTaskHistory } from '../models/AssistantRecentChats';
 import { i18n, intl } from '@kit.LocalizationKit';
@@ -115,6 +116,7 @@ struct Index {
   @Local todoTitle: string = '';
   @Local todoCreateRevision: number = 0;
   @Local extensionRefreshRevision: number = 0;
+  @Local messageLift: PhoneMessageLiftHost = new PhoneMessageLiftHost();
   @Local applications: ExtensionNavigation = new ExtensionNavigation();
   @Local shownName: string = '';
   @Local phonePath: string[] = [];
@@ -2691,7 +2693,7 @@ struct Index {
       if (['projects','project','project_tree','machine_projects'].includes(name)) {
         this.projectPage(name, param as string)
       } else if (name === 'session' || name === 'conversation') {
-        if (this.targetReady(name, param)) Conversation({ searchPresented:this.chatSearchShown, searchHitId:this.searchHitFor(param), decisionTool:this.decisionToolFor(param), model: this.detailModel, onPlace: (kind: string) => { if (this.activeChild === this.childKey(name, param)) this.openSpace(kind); }, admission: (): boolean => this.activeChild === this.childKey(name, param) && this.targetReady(name, param), onOpenFile: (path: string) => this.openTools(path), active: this.activeChild === this.childKey(name, param), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), showContextMenu: this.mainDestination(name, param) || this.hideChatTitle(name, param), onOpenCard: (itemId: string, kind: string) => { if (this.activeChild === this.childKey(name, param) && this.targetReady(name, param)) this.openAssistantCard(itemId, kind); }, onLongDraftHeader: (floating: boolean) => {
+        if (this.targetReady(name, param)) Conversation({ liftHost:this.messageLift, searchPresented:this.chatSearchShown, searchHitId:this.searchHitFor(param), decisionTool:this.decisionToolFor(param), model: this.detailModel, onPlace: (kind: string) => { if (this.activeChild === this.childKey(name, param)) this.openSpace(kind); }, admission: (): boolean => this.activeChild === this.childKey(name, param) && this.targetReady(name, param), onOpenFile: (path: string) => this.openTools(path), active: this.activeChild === this.childKey(name, param), onOpenResource: (row: ResourceRow) => this.openFrom(name, param, row), onLink: (address: string) => this.openReader(address), showContextMenu: this.mainDestination(name, param) || this.hideChatTitle(name, param), onOpenCard: (itemId: string, kind: string) => { if (this.activeChild === this.childKey(name, param) && this.targetReady(name, param)) this.openAssistantCard(itemId, kind); }, onLongDraftHeader: (floating: boolean) => {
           const child = this.childKey(name, param);
           if (floating && this.activeChild === child && this.targetReady(name, param)) this.longDraftIdentity = child;
           else if (!floating && this.longDraftIdentity === child) this.longDraftIdentity = '';
@@ -2789,9 +2791,10 @@ struct Index {
       .menus(this.navigationMenus(name, param))
       .onShown(() => this.routeShown(name, param))
       .onHidden(() => { if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; if (this.activeChild === this.childKey(name, param)) { this.activeChild = ''; this.dismissChatActions(); } if ((name === 'session' || name === 'conversation') && this.routeRow(param).key() === this.detailModel.selected.key()) this.detailModel.hideConversation(false); if (name === 'assistant') this.detailModel.watchDecisions(false); if (name === 'tools') this.detailModel.releaseTerminal(); })
-      .onBackPressed((): boolean => { if (!this.spacesShown && this.returnToPhoneSettings()) return true; if (this.spacesShown) { this.spacesShown = false; return true; } if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; this.phoneBack(); return true; })
+      .onBackPressed((): boolean => { if (this.messageLift.dismiss()) return true; if (!this.spacesShown && this.returnToPhoneSettings()) return true; if (this.spacesShown) { this.spacesShown = false; return true; } if (this.pendingInboxHandoff === this.childKey(name, param)) this.pendingInboxHandoff = ''; this.phoneBack(); return true; })
   }
   onBackPress(): boolean {
+    if (this.messageLift.dismiss()) return true;
     if (this.chatSearchShown) { this.chatSearchShown = false; return true; }
     if (this.phoneSettingsShown) {
       if (this.phoneSettingsPage) this.phoneSettingsPage = '';
@@ -2865,6 +2868,8 @@ struct Index {
           onWillDismiss:(dismiss:DismissSheetAction) => { this.chatSearchShown=false; dismiss.dismiss(); }
         })
     }.width('100%').height('100%').padding({top:this.compactNavigationInset()}).clip(true)
+      .blur(this.messageLift.current ? this.getUIContext().vp2px(3) : 0)
+      .accessibilityLevel(this.messageLift.current ? 'no-hide-descendants' : 'auto')
       .onAreaChange((_old:Area,now:Area) => { this.phoneWidth = Number(now.width); this.phoneHeight = Number(now.height); })
       .parallelGesture(PanGesture({fingers:1,direction:PanDirection.Horizontal,distance:12}).tag('phone.shell.pan')
         .onActionStart((event:GestureEvent) => this.startPhonePan(event))
@@ -2876,6 +2881,11 @@ struct Index {
       .bindSheet(this.wide() && this.spacesShown, this.spacesContent(), { title: { title: tr('conversation_spaces') }, height: SheetSize.LARGE, showClose: true,
         onAppear: () => { this.spacesLayoutReady = true; this.measureSpaces(); }, onDisappear: () => { this.spacesLayoutReady = false; if (this.wide()) this.spacesShown = false; } })
     }
+    }
+    if (this.messageLift.current) {
+      WithTheme({theme:nativeLookTheme(this.look,this.model.style,this.environment.dark),colorMode:this.environment.dark ? ThemeColorMode.DARK : ThemeColorMode.LIGHT}) {
+        PhoneMessageLiftHostLayer({content:this.messageLift.current!.content})
+      }
     }
     }.width('100%').height('100%').backgroundColor(Colors.canvas)
       .bindSheet($$this.readerShown, this.readerContent(), { title: { title: this.readerTitle }, height: Tokens.readerFull, width: Tokens.readerFull, preferType: SheetType.BOTTOM,

@@ -5,6 +5,8 @@ import { readFileSync, existsSync } from 'node:fs';
 
 registerHooks({
   resolve(specifier, context, next) {
+    if (context.parentURL?.endsWith('/ClientModel.ets') && specifier === '../core/Markdown')
+      return {url:new URL('../core/Markdown.ts',context.parentURL).href,shortCircuit:true};
     if (specifier === '@kit.ArkTS') return {url:'client-boundary:'+specifier,shortCircuit:true};
     if (context.parentURL?.endsWith('/ClientModel.ets')) {
       if (['../core/DictationLanguage', './Wire', './AgentAttention', './AssistantView', './DemoRepository', './NavigationContext', './ChatDraftStore', './HubRepository', './MutationStore', './Compatibility', './InteractionDecision', '../core/ClientLocale', '../core/ClientLocale', '../core/Domain', '../core/ScopePolicy', '../core/StorageOwnership', '../core/MessageContent', '../core/TranscriptCache'].includes(specifier)) {
@@ -62,7 +64,7 @@ const {isHubStateKey}=await import('../entry/src/main/ets/core/StorageOwnership.
 const contextReference=JSON.stringify({kind:'todo',id:'source',title:'Source'});
 globalThis.clientTestUUID=0;
 const { ClientModel } = await import('../entry/src/main/ets/models/ClientModel.ets');
-const { HubProfile, ResourceRow, Decision } = await import('../entry/src/main/ets/models/Wire.ets');
+const { HubProfile, ResourceRow, Decision, ChatMessage } = await import('../entry/src/main/ets/models/Wire.ets');
 const { HttpFailure } = await import('client-boundary:../platform/HubTransport');
 const { InboxWorkspace } = await import('../entry/src/main/ets/models/InboxWorkspace.ets');
 const { TodoWorkspace } = await import('../entry/src/main/ets/models/TodoWorkspace.ets');
@@ -81,6 +83,28 @@ function fixture() {
   model.loadChat=async()=>{};
   return {model,writes};
 }
+
+test('whole and partial quotes retain their source and other draft references across the chat wire',async()=>{
+  const {model}=fixture();model.features=['persona_contracts_v1'];
+  const message=new ChatMessage('visible-answer','assistant','Use **the cache** and `max-age`.');
+  message.itemId='answer-source';message.ownerTarget=model.target();model.messages=[message];model.draft='Existing words';
+  const original={kind:'todo',id:'task',title:'Existing task'};model.sourceContext=JSON.stringify(original);
+  let writes=0;model.persistDraft=async()=>{writes++;};
+  assert.equal(await model.quoteMessageContext(message,'Claude','the cache and max-age'),true);
+  const refs=JSON.parse(model.sourceContext).contexts;
+  assert.deepEqual(refs[0],original);assert.deepEqual(refs[1],{kind:'quote',title:'Claude',url:'',msg:'answer-source',text:'the cache and max-age',part:'selection'});
+  assert.deepEqual(model.draftMessageQuotes(),[refs[1]]);assert.equal(model.otherContextTitle(),'Existing task');
+  assert.equal(model.draft,'Existing words');assert.equal(writes,1);
+  assert.ok(model.prepareMessageText().includes('<persona-context kind="quote" title="Claude" url="" msg="answer-source" part="selection">\nthe cache and max-age\n</persona-context>'));
+  for(const sample of ['the cache and max-age','other words'])await model.quoteMessageContext(message,'Claude',sample);
+  assert.equal(writes,1);
+  await model.quoteMessageContext(message,'Claude');assert.equal(writes,2);assert.equal(model.draftMessageQuotes().length,2);
+  await model.quoteMessageContext(message,'Claude','max-age');assert.equal(writes,3);assert.equal(model.draftMessageQuotes().length,3);
+  model.removeMessageQuote(refs[1]);assert.equal(model.draftMessageQuotes().length,2);assert.equal(model.otherContextTitle(),'Existing task');
+  const after=writes;model.messages=[];await model.quoteMessageContext(message,'Claude','cache');assert.equal(writes,after);
+  model.messages=[message];message.ownerTarget='another chat';await model.quoteMessageContext(message,'Claude','cache');assert.equal(writes,after);
+});
+
 
 test('only an identity-matched hello on the current live scope and connection generation supplies a feature version',()=>{
  const {model}=fixture();
