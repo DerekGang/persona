@@ -279,10 +279,10 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		if s.exitPolicy(ctx, a.Title+"\n"+a.Body, self, space).Redact {
 			a.Title, a.Body = s.redactedNotice(ctx, s.lang(ctx), space)
 		}
-		// Asked for explicitly: every device, the Feishu bot too, and no separate push when this turn ends. A track's
-		// kind may cap how urgent it is (attention.go trackPushLevel), and the track tells immersive mode where it is from.
+		// Asked for explicitly: every device, the Feishu bot too, and no separate push when this turn ends. pushResult holds
+		// it to its track's push_cap (track_attention.go), and the track tells immersive mode where it is from.
 		res, err := s.pushResult(ctx, Notification{Subtitle: "Persona", DeviceID: machine, SessionID: self, Title: a.Title, Body: a.Body,
-			Asked: true, Level: s.trackPushLevel(ctx, space, a.PushLevel), RelatedKey: clip(strings.TrimSpace(a.RelatedKey), 200), Track: space})
+			Asked: true, Level: a.PushLevel, RelatedKey: clip(strings.TrimSpace(a.RelatedKey), 200), Track: space})
 		if err != nil {
 			return "", err
 		}

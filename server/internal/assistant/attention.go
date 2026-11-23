@@ -17,9 +17,9 @@ import (
 // keeps the mode (assistant.attention) and reports it to the hub in its profile (assistantwire.Profile.Attention); the
 // hub's push filter reads it there (hub/push_attention.go, assistantwire.DecideAttention). Here, a mode other than
 // normal counts as the low-distraction switch being on (push_quiet.go quietModeOn), immersive mode takes every
-// question an agent reports to its supervisor as one that can wait (agent_control.go), and a track's kind caps the
-// level of what its conversations push (trackPushLevel). The mode never touches hub.ln_mode, so when it ends the
-// switch is what it was.
+// question an agent reports to its supervisor as one that can wait (agent_control.go). A track's push_cap is not the
+// mode's business: track_attention.go holds every push to it, once, in pushResult and deliver. The mode never touches
+// hub.ln_mode, so when it ends the switch is what it was.
 
 const attentionSettingsKey = "assistant.attention"
 
@@ -268,34 +268,6 @@ func (s *Service) attentionDue(ctx context.Context) time.Time {
 		s.logf("assistant: attention: back to normal: %v", err)
 	}
 	return time.Time{}
-}
-
-// trackPushLevel is the level a push of track space's conversation goes at: level ("" lets the hub decide), no more
-// urgent than the track's kind allows (assistantwire.TrackAttention.PushCap). The main space and a track whose cap is
-// P0 (every built-in kind's, the health space's) leave it as it is.
-func (s *Service) trackPushLevel(ctx context.Context, space, level string) string {
-	if space == "" {
-		return level
-	}
-	e, ok := s.trackEntryOf(ctx, space)
-	if !ok {
-		return level
-	}
-	return cappedLevel(level, e.Config.Attention.PushCap)
-}
-
-// cappedLevel is level made no more urgent than limit (P0 is the most urgent). An empty level takes the cap unless the
-// cap is P0 or none, so the hub's own choice is kept where nothing limits it.
-func cappedLevel(level, limit string) string {
-	rank := map[string]int{assistantwire.LevelP0: 0, assistantwire.LevelP1: 1, assistantwire.LevelP2: 2}
-	c, ok := rank[limit]
-	if !ok || c == 0 {
-		return level
-	}
-	if l, ok := rank[level]; ok && l >= c {
-		return level
-	}
-	return limit
 }
 
 // ---- the apps' routes ----

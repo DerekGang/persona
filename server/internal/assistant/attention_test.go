@@ -90,40 +90,6 @@ func TestNewAttentionValidates(t *testing.T) {
 	}
 }
 
-func TestCappedLevel(t *testing.T) {
-	for _, c := range []struct{ level, limit, want string }{
-		{"", "", ""},
-		{"", "P0", ""},
-		{"P0", "P0", "P0"},
-		{"P1", "P0", "P1"},
-		{"", "P1", "P1"},
-		{"P0", "P1", "P1"},
-		{"P1", "P1", "P1"},
-		{"P0", "P2", "P2"},
-		{"P1", "P2", "P2"},
-		{"", "P2", "P2"},
-		{"P0", "bogus", "P0"},
-	} {
-		if got := cappedLevel(c.level, c.limit); got != c.want {
-			t.Errorf("cappedLevel(%q, %q) = %q, want %q", c.level, c.limit, got, c.want)
-		}
-	}
-}
-
-// Every built-in track's cap is P0, so the health space's notify_user level is what it was.
-func TestTrackPushLevelLeavesHealthAlone(t *testing.T) {
-	ft := newFleetTest(t)
-	ctx := context.Background()
-	for _, level := range []string{"", "P0", "P1"} {
-		if got := ft.s.trackPushLevel(ctx, "health", level); got != level {
-			t.Errorf("health %q -> %q", level, got)
-		}
-		if got := ft.s.trackPushLevel(ctx, "", level); got != level {
-			t.Errorf("main %q -> %q", level, got)
-		}
-	}
-}
-
 func TestAttentionRoutes(t *testing.T) {
 	ft := newFleetTest(t)
 	s := ft.s
