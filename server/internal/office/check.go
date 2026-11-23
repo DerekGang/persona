@@ -1,5 +1,7 @@
 package office
 
+// (Probe for measuring the affected-only gate; this branch is not for merging.)
+
 import (
 	"archive/zip"
 	"encoding/xml"
