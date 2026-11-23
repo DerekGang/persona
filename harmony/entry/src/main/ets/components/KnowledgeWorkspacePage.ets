@@ -957,7 +957,7 @@ export struct KnowledgeWorkspacePage {
           Text(tr('ks_undo')).fontSize(15).maxFontScale(Tokens.interfaceScaleFor(15)).fontWeight(FontWeight.Medium).fontColor(Colors.link)
         }.height(32).padding(0).backgroundColor(Color.Transparent).enabled(!this.workspace.busy)
           .accessibilityText(tr('ks_undo')).onClick(() => { this.undoFacts().catch(() => {}); }).id('knowledge.facts.undo')
-      }.constraintSize({maxWidth:'94%',minHeight:44}).padding({left:16,right:16,top:4,bottom:4})
+      }.constraintSize({maxWidth:'94%',minHeight:44}).margin({top:8}).padding({left:16,right:16,top:4,bottom:4})
         .backgroundColor(Colors.surface).borderRadius(28).border({width:0.5,color:Colors.divider})
         .shadow({radius:6,color:Colors.subtle,offsetY:2}).hitTestBehavior(HitTestMode.Transparent).id('knowledge.facts.undo_notice')
     }
@@ -1015,6 +1015,13 @@ export struct KnowledgeWorkspacePage {
   }
 
   @Builder recordingDetail() {
+    Stack({alignContent:Alignment.Top}) {
+      this.recordingDetailScroll()
+      this.recordingUndoNotice()
+    }.width('100%').height('100%')
+  }
+
+  @Builder recordingDetailScroll() {
     Scroll() {
       Column() {
         Column() {
@@ -1087,7 +1094,6 @@ export struct KnowledgeWorkspacePage {
         }
       }.width('100%').alignItems(HorizontalAlign.Start).padding({left:16,right:16,top:31,bottom:24})
     }.width('100%').height('100%').align(Alignment.TopStart).backgroundColor(Colors.grouped).id('knowledge.recording.detail')
-      .overlay(this.recordingUndoNotice(),{align:Alignment.Top,offset:{x:0,y:8}})
       .bindSheet($$this.metadataSheet,this.metadataForm(),{title:{title:tr('knowledge_edit_metadata')},height:SheetSize.LARGE,showClose:true,
         onDisappear:() => { this.workspace.editOpen=false; }})
   }

@@ -194,5 +194,5 @@ test('deleting a confirmed recording fact dismisses immediately and only its own
   assert.deepEqual(timers.map(timer=>timer.duration),[5000,5000]);
   timers[0].fn();assert.equal(actions.removedFacts,'initial fact');
   timers[1].fn();assert.equal(actions.removedFacts,'');assert.equal(writes.length,4);
-  assert.match(source,/\.overlay\(this\.recordingUndoNotice\(\),\{align:Alignment\.Top/);
+  assert.match(source,/Stack\(\{alignContent:Alignment\.Top\}\) \{\s*this\.recordingDetailScroll\(\)\s*this\.recordingUndoNotice\(\)/);
 });
