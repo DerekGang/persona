@@ -58,7 +58,7 @@ func mergedAt(t *testing.T, u *usageWindowsHub, at time.Time) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no merged answer built at %v", at)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // sleep-ok: the background poll signals nothing when it lands; wait for its merged answer
 	}
 }
 
@@ -157,7 +157,7 @@ func TestUsageWindowsRouteAnswersAKeptAnswer(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("no refresh behind the kept answer")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // sleep-ok: the refresh behind the kept answer signals nothing when it lands; wait for its result
 	}
 	if body := get(); strings.Contains(body, "Kept seat") {
 		t.Errorf("the refreshed answer (no machines, no gateways) still has the kept seat: %s", body)
