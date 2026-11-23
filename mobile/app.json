@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Persona Demo",
+    "slug": "persona-mobile-demo",
+    "scheme": "persona-demo",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "bundleIdentifier": "dev.example.personademo", "supportsTablet": false },
+    "android": { "package": "dev.example.personademo" },
+    "web": { "bundler": "metro", "output": "single" },
+    "plugins": ["expo-router", "expo-secure-store", "expo-localization"],
+    "experiments": { "typedRoutes": false }
+  }
+}

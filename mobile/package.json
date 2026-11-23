@@ -1,0 +1,44 @@
+{
+  "name": "persona-mobile-demo",
+  "version": "0.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "export:web": "expo export --platform web",
+    "serve": "node scripts/serve-demo.mjs",
+    "catalog": "node scripts/build-catalog.mjs",
+    "pretypecheck": "npm run catalog",
+    "typecheck": "node scripts/typecheck.mjs",
+    "pretest": "npm run catalog",
+    "preexport:web": "npm run catalog",
+    "test": "vitest run && npm run test:parity",
+    "test:parity": "cd ../web && npx vitest run --config ../mobile/parity/vitest.config.mts"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~58.0.17",
+    "@expo/vector-icons": "^15.0.2",
+    "@types/node": "^26.6.6",
+    "expo": "~58.0.0",
+    "expo-constants": "~58.0.16",
+    "expo-linking": "~58.0.17",
+    "expo-localization": "~58.0.5",
+    "expo-router": "~58.0.32",
+    "expo-secure-store": "~58.0.3",
+    "expo-status-bar": "~58.0.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-gesture-handler": "~3.3.0",
+    "react-native-safe-area-context": "~5.11.1",
+    "react-native-screens": "~4.30.1",
+    "react-native-web": "^0.21.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "babel-preset-expo": "^58.0.26",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

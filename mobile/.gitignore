@@ -1,0 +1,7 @@
+src/i18n/generated/
+dist/
+android/
+ios/
+.expo/
+node_modules/
+shots/
