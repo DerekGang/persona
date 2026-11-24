@@ -1386,6 +1386,40 @@ An extension's sidebar entries and its full page are drawn from what this browse
 
 To see it in a browser: `web/e2e/extension-first-paint.mjs` (`web/e2e/README.md`) against the mock hub with `MOCK_EXTENSIONS=1 MOCK_EXTENSION_COLUMNS=1`, the relayed requests delayed.
 
+### Dashboards (#15017)
+
+Pages the assistant keeps up to date are drawn as the default manager's extension pages under the reserved id `-pages`
+(the index `index`, each page `pg_` and 16 hex), at the extensions' own path (`POST /api/v1/extensions/-pages/-/ui/<id>`),
+so the sidebar entry, the full page (`/extension/-pages/<id>`), the deep link, the sidebar ordering key
+(`p:-pages/<id>`) and the first-paint caches above work as for any extension page. What is particular to them:
+
+- **HTTP only**: an id that starts with `-` is a manager's own and never opens the native UI stream, nor waits for the
+  hello to decide (`lib/extension-ui.ts` `httpOnlyUI`, `views/settings/ExtensionView.tsx`); the subscription and health
+  pages were already drawn that way through `RESERVED_UI_PATHS`, which `-pages` is not in.
+- **Places**: the hub lists the index while a page is kept or one waits in Recently removed, then each pinned page (at most
+  three), after the extensions' places; `assistant_pages` (a page kept, pinned, unpinned, renamed, removed or restored, or
+  the switch turned) asks for the list again (`lib/extension-slots.ts`). A page's content change is the ordinary
+  `extension_ui {extension: "-pages", id, invalidate: true}`.
+- **Sidebar**: the index and pinned pages are extension pages in `useNavPages`. The hub puts their keys in the navigation
+  record's `shown` on the first Keep and on a pin, so `EXTENSION_CAP` never sends them under More: they count toward the
+  cap first, and with three extension nav pages installed the extensions' pages past it wait there instead (two of the
+  three beside the index and one pinned page).
+- **Top bar** (`views/extensions/ExtensionSlots.tsx`): titled by the drawn View's `title` (the page's title, written by the
+  hub), then the place's, then **Dashboards**, never the `pg_…` id, so an unpinned page opened by a deep link reads right.
+  Every page but the index has the ownership line under its title at every width (`docs/design/DESIGN_SYSTEM.md`
+  "Ownership line (#15017)"); the extension's name is not written beside it. A row of the index that pushes a page opens it
+  as a page of its own (its address, title and line), not on the index's stack; a push within a page (Rename) stays on its stack.
+- **Settings › Assistant**: **Let Persona make dashboards**, off by default, shown only when the hello lists
+  `assistant_pages` and only for the default manager; it reads and writes `dashboards` of `/api/v1/assistant` and shows
+  the value the hub confirmed.
+- With the switch off, or on with nothing kept, nothing on the sidebar, the phone's page grid or Overview changes.
+
+To see it: the mock hub with `MOCK_DASHBOARDS=1` (`scripts/mock/dashboards_mock.py`; `off`, `empty`, `removed` and `pinned`
+for the other states) and `npx vite`. `node web/e2e/dashboards.mjs` (its header says how to start both) checks all of the
+above in light and dark at 1280 and 390 wide in each language, compares the sidebar with the switch off and on with
+nothing kept against a build of `origin/main` pixel by pixel (`--before`), and, with `--extensions`, that Dashboards stays
+in the list beside three extension nav pages.
+
 ### Message sources (#2125)
 
 Relayed conversations, scheduled patrols, follow-ups and supervision use the optional `Item.source` contract in
@@ -2588,7 +2622,7 @@ On a Mac, Windows or Linux computer, the hub-hosted web UI is Persona's interfac
   Safari on a Mac adds it with **File › Add to Dock**. Either way it opens in its own window with Persona's icon ("Install as an App" below).
 - **Needs-you signals** (tab count, icon badge, alert sound, system notifications) work while a Persona page is open in some tab or window ("Attention signals" below). Once every Persona page is closed, only a browser that turned on **Settings › Notifications › When Persona is closed** still hears of cards, finished turns and alerts ("Web Push" below); on a computer where Persona Link or the desktop app already notifies, leave it off.
 - **Opening the web app alone does not activate the phone's Phone Muted**: a plain browser does not register as a desktop client (`register_desktop`). In the Electron desktop app, an authenticated connection registers only while the desktop is active and system notifications are on. Locking, becoming idle or turning system notifications off sends `unregister_desktop`, so the phone gets alerts again without losing the chat connection. On a hub without the `desktop_unregister` capability, withdrawal closes the socket instead; becoming active or re-enabling notifications reconnects it so the next authenticated hello can register again. On a Mac running the Persona Link menu bar App in active mode while you are at it, **Phone Muted** holds back the "Needs you" cards whose notifications that App handed to Notification Center; other pushes still reach the phone ([link.md](../operations/link.md), "Presence").
-- **Persona Link**, on a computer whose Agents the hub should reach, connects it to the hub and does what a browser cannot ([link.md](../operations/link.md), "On computers: the web app and Persona Link"). A computer you only browse from does not need it.
+- **Persona Link**, on a computer whose Agents the hub should reach, connects it to the hub and does what a browser cannot ([link.md](../operations/link.md), "On computers: Persona Link and its tray"). A computer you only browse from does not need it.
 
 ## Install as an App (PWA, #1772)
 
@@ -3187,7 +3221,7 @@ When you aren't watching the web app, you still need to know an Agent is waiting
   - **Allow / Deny on permission notifications** (#4464, like iOS `NotificationActions`: only permission cards have buttons, no "Always allow"; questions, plans and terminal dialogs still open the chat): when the browser supports buttons (`Notification.maxActions` ≥ 2: Chrome, Edge and Firefox from 152; not Safari), a service worker controls the page, and a fine pointer is available (a computer; phone / tablet lock-screen buttons can be pressed without unlocking, while the app requires unlocking before approval, which the web cannot enforce, so mobile gets no buttons), the service worker shows the permission notification with two buttons and the card id; otherwise behavior is unchanged.
     The hub token never enters the service worker: a button press makes `sw.ts` send the action and card id to the open page through `postMessage` (with a `MessageChannel` port). The page (`src/lib/notification-answer.ts`) answers through the card's own `answerCard` (`src/lib/card-answer.ts`: the same endpoint, op-id deduplication and session-permission checks), without opening or navigating the page.
     If no page accepts within 0.8 seconds (no open page, card no longer present, not a permission card, already being answered, or a message arriving over 0.4 seconds late), the service worker opens the chat as before. A failed answer shows a toast if the page is in front, otherwise a "Couldn't allow / Couldn't deny" notification with the reason, opening the chat when clicked; already answered elsewhere (`already`) gets no extra notice (like iOS). Permission cards requiring fields (`fields`) have no buttons, matching hub pushes and overview quick answers. Clicking the notification itself still brings the window forward and opens the chat.
-  A plain browser doesn't send `register_desktop`, so it doesn't make the phone's **Phone Muted** take effect by itself (a Persona Link menu bar App or the active Electron desktop can, "On computers" above); The assistant's own conversations are not among the sessions the page follows (`useAgentSessions` excludes assistant chats): what they ask comes from the hub instead, below.
+  A plain browser doesn't send `register_desktop`, so it doesn't make the phone's **Phone Muted** take effect by itself (the active Electron desktop can; Persona Link's menu bar App and tray never do, "On computers" above); The assistant's own conversations are not among the sessions the page follows (`useAgentSessions` excludes assistant chats): what they ask comes from the hub instead, below.
 - **The assistant's alerts** (#8145, `src/lib/hub-notify.ts`): the page follows only its Agents' states, so a new `ask_user` card in the main chat, a leader's or a scheduled task's conversation, the assistant's `notify_user`, a decision waiting on the user and a `personad notify` alert have nothing for it to read. While the alert sound or system notifications are on, the page declares `ws_notify` in its `client_hello` (said again on the open socket when the switches change, `setHelloExtras` / `sayHello` in `src/lib/store.ts`), and the hub sends it the `notify` events it decides for a phone ([protocol.md](../protocol/protocol.md) "Notifications over the persistent connection (ws_notify)"). With both off it declares nothing, so the hub does not count this page as a device that hears them.
   The page takes from them only what it does not announce itself (`hubNotice`): `interaction` and `reply` for a conversation it does not follow (an Agent's card is its own "Needs you", a card of no session too), `assistant` (`notify_user`, the assistant's pushes, a decision) and `alert`; never `done`. Each plays the "Needs you" sound and posts a system notification under the rules above (rate limit, not while a Persona tab is in front unless "Always show", once across tabs, silent for the conversation on screen while the window is in front, the main chat included), in the hub's words for a phone: its title, then the conversation over what it asks. This browser's own Settings › Notifications decide it as the hub decides a phone's: a card, a reminder, a decision and an alert are under "When something needs you"; `notify_user` and the assistant's pushes come to every device as on the phone; inside quiet hours a card, a reminder and a decision come without a sound; a manager turned off says nothing. Tags are the service worker's for the same event (`server/<conversation>#needs`, `todo:<id>`, `alert:<id>`; a `notify_user` has none from the hub and gets one of its text), so a card's notification goes once it is answered (`answeredTags`).
   The hub keeps what it selected for a browser while it had no page asking and sends it right after the hello that asks again (hub `notifyring.go`); the events of the first 3 seconds after the hello that starts asking are taken as those and not announced, as opening the page announces no state it finds. A reconnect's are announced. Check: `node web/e2e/assistant-alerts.mjs <web URL> --hub <mock hub URL>` against a mock with `MOCK_LEADERS=1` (`/mock/assistant_ask` and `/mock/notify_user` push as the hub does).
