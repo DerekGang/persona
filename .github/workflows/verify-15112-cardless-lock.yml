@@ -11,6 +11,7 @@ jobs:
     env:
       PERSONA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       GOMAXPROCS: "6"
+      BASELINE_SHA: "5c9793adc949fac99d88ccb9c15d4070a6377e02"
     services:
       postgres:
         image: postgres:18
@@ -39,12 +40,12 @@ jobs:
           out="$RUNNER_TEMP/cardless-15112"
           mkdir -p "$out"
           python3 -B - "$out" <<'PY'
-          import json, subprocess, sys
+          import json, os, subprocess, sys
           from pathlib import Path
           out = Path(sys.argv[1])
           path = Path("internal/assistant/supervise_cardless_recovery_test.go").resolve()
           original = subprocess.check_output(
-              ["git", "show", "HEAD~2:server/internal/assistant/supervise_cardless_recovery_test.go"], text=True)
+              ["git", "show", os.environ["BASELINE_SHA"] + ":server/internal/assistant/supervise_cardless_recovery_test.go"], text=True)
           for name, body in (("baseline", original), ("candidate", path.read_text())):
               bounds = body.index("\n\ts.restoreSupervisePending(context.Background())", body.index("func restartCardlessClaim("))
               end = body.index("\n\treturn s, f", bounds)
@@ -56,7 +57,7 @@ jobs:
             printf '%s\n' 'The baseline control completed.'
           else
             cat "$out/baseline.log"
-            rg -q 'waiting for its test-held mutex' "$out/baseline.log"
+            grep -Fq 'waiting for its test-held mutex' "$out/baseline.log"
           fi
           go test -overlay "$out/candidate.json" ./internal/assistant -run '^TestCardlessClaimRecoveryRechecksRoundUnderWriteLock$' -count=10 | tee "$out/candidate.log"
       - name: Repeat the held-lock race and related durable recovery
