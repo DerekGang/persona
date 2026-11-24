@@ -169,7 +169,8 @@ func (d *DB) EditStartedPlanTask(ctx context.Context, id string, index int, edit
 const compareTaskQueueSQL = `UPDATE task_plans SET tasks = jsonb_set(tasks, ARRAY[$2::integer::text],
 	(tasks->$2::integer) || jsonb_build_object('queue', $5::jsonb) ||
 	CASE WHEN $7::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('placement',$7::jsonb) END), updated_at = $6
-	WHERE id = $1 AND state = 'started' AND tasks->$2::integer->>'todo_id' = $3 AND tasks->$2::integer->'queue' = $4::jsonb`
+	WHERE id = $1 AND state = 'started' AND tasks->$2::integer->>'todo_id' = $3
+		AND COALESCE(tasks->$2::integer->'queue', 'null'::jsonb) = $4::jsonb`
 
 // CompareTaskQueue changes one authorized start's queue only if it is still the entry the dispatcher read.
 func (d *DB) CompareTaskQueue(ctx context.Context, id string, index int, todoID string, before, after, placement json.RawMessage, at time.Time) (bool, error) {

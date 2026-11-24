@@ -321,7 +321,7 @@ func TestGatewayQuotaWaitKeepsUnconfirmedClaimAcrossRestart(t *testing.T) {
 	task.planID, task.planIndex = plan.ID, 0
 	claimed := *task.Queue
 	claimed.Claimed, claimed.NextAt = true, time.Now().Add(-time.Second)
-	if !before.replaceTaskQueue(ctx, task, &claimed, queueQuotaStart) {
+	if !before.replaceTaskQueue(ctx, task, &claimed, queueUnstartedTask) {
 		t.Fatal("fixture must persist the release claim before stopping")
 	}
 	restarted, f1, d1 := admissionHubOn(t, database)
@@ -363,7 +363,7 @@ func TestGatewayQuotaWaitChecksPeerCancellationAndLink(t *testing.T) {
 				task.planID, task.planIndex = p.ID, 0
 				claim := *task.Queue
 				claim.Claimed = true
-				if phase == "before dispatch" && !peer.replaceTaskQueue(ctx, task, &claim, queueQuotaStart) {
+				if phase == "before dispatch" && !peer.replaceTaskQueue(ctx, task, &claim, queueUnstartedTask) {
 					t.Fatal("fixture must claim the task before peer change")
 				}
 				now := time.Now().UTC()
@@ -378,7 +378,7 @@ func TestGatewayQuotaWaitChecksPeerCancellationAndLink(t *testing.T) {
 					t.Fatal("fixture must retain the now-obsolete peer cache")
 				}
 				if phase == "before claim" {
-					if peer.replaceTaskQueue(ctx, task, &claim, queueQuotaStart) {
+					if peer.replaceTaskQueue(ctx, task, &claim, queueUnstartedTask) {
 						t.Fatal("the atomic claim took a task already handled by another service")
 					}
 					peer.retryGatewayWait(ctx, p, 0, task, now)

@@ -751,6 +751,13 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 	}
 	t.Permission = strings.TrimSpace(t.Permission)
 	mid, sid, err := s.startTaskAgent(ctx, &t, retry)
+	if errors.Is(err, errOfflineTaskHandled) {
+		s.replaceTaskQueue(ctx, t, nil, queueCAS)
+		return
+	}
+	if s.holdOfflineTask(ctx, t, retry, err) {
+		return
+	}
 	var lost startLinkLost
 	var quota *gatewayQuotaWaitError
 	var wsWait *workspaceBusyQueueError
@@ -806,6 +813,9 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 			return
 		}
 	}
+	if s.holdOfflineTask(ctx, t, retry, err) {
+		return
+	}
 	if errors.Is(err, errGatewayTaskHandled) {
 		s.replaceTaskQueue(ctx, t, nil, queueCAS)
 		return
@@ -841,6 +851,7 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 		// (#6540) reaches here after taskStartTimeout, and a database write on that context fails at once, which
 		// would fail the task although its agent is running. The link gets its own time, like the bookkeeping below.
 		linkCtx, linkCancel := context.WithTimeout(context.WithoutCancel(ctx), taskFailTimeout)
+		s.rememberOfflineTaskSession(linkCtx, &t, mid, sid)
 		if t.TerminalTarget.Machine != "" {
 			if saveErr := s.patchPlanTask(linkCtx, planID, i, func(pt *PlanTask) {
 				if pt.TodoID == t.TodoID && pt.CloseTabOnAccept && pt.TerminalCleanup == "" && pt.TerminalTarget.Machine == "" {
@@ -864,7 +875,9 @@ func (s *Service) runPlanTaskStart(planID, conversation string, i int, t PlanTas
 		}
 	}
 	if err == nil {
-		if t.Queue != nil { // a queued retry made it through the gate and linked: its waiting record is done
+		if t.claimedOfflineStart() {
+			s.replaceTaskQueue(ctx, t, nil, queueCAS)
+		} else if t.Queue != nil { // a queued retry made it through the gate and linked: its waiting record is done
 			s.clearAdmissionQueue(context.WithoutCancel(ctx), planID, i, t.TodoID)
 		}
 		s.remedyStarted(context.WithoutCancel(ctx), planID, conversation, i, t) // after an assistant's retry (start_remedy.go)
@@ -1095,8 +1108,8 @@ func (s *Service) currentPlanAssignmentIn(ctx context.Context, todo Todo, histor
 // retryTask starts again the agent of a task that did not start (#1396): the same task as its plan has it (machine,
 // directory, prompt, launcher, model, permission, title), in the same todo — reopened, its error and the plan's
 // cleared — so the task shows as starting where it was, not as a second one. A task already
-// starting again, or started since, is answered as it is: a double tap starts one agent. A machine that is offline is
-// refused before anything changes. A task that is open is not started again: one whose agent the model service cut
+// starting again, or started since, is answered as it is: a double tap starts one agent. An ordinary offline retry
+// waits for the computer, but answering a kept terminal prompt still requires it to be online. A task that is open is not started again: one whose agent the model service cut
 // off is told to go on (continueTask).
 // The todo it answers is as the apps get it.
 func (s *Service) retryTask(ctx context.Context, todoID string) (json.RawMessage, error) {
@@ -1194,7 +1207,7 @@ func (s *Service) retryTaskStart(ctx context.Context, todoID string, with retryW
 	if err := s.leaderOnWorkMachine(&t, m); err != nil { // a retry of a leader plan saved on a computer that is work-trust now
 		return nil, false, fmt.Errorf("%w; nothing was started", err)
 	}
-	if !m.Reachable {
+	if !m.Reachable && with.answer != "" {
 		return nil, false, machineOffline(m.Name)
 	}
 	launcher, model, from := t.Launcher, t.Model, s.ranLauncher(ctx, t)

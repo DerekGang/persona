@@ -42,7 +42,7 @@ type gatewayQuotaWaitError struct {
 
 func (e *gatewayQuotaWaitError) Error() string { return e.queue.Reason }
 
-type gatewayQueueStore interface {
+type unstartedTaskQueueStore interface {
 	UnstartedQueuedTodo(context.Context, string, string, time.Time) (bool, error)
 	ClaimUnstartedTaskQueue(context.Context, string, int, string, time.Time, json.RawMessage, json.RawMessage, json.RawMessage, time.Time) (bool, error)
 }
@@ -58,7 +58,7 @@ func (t PlanTask) claimedGatewayStart() bool {
 }
 
 func (t PlanTask) startWithoutReplay() bool {
-	return t.RequestGate != "" || t.claimedGatewayStart()
+	return t.RequestGate != "" || t.claimedGatewayStart() || t.claimedOfflineStart()
 }
 
 func (s *Service) gatewayPool(ctx context.Context, launcher string) (GatewayQuotaPool, bool) {
@@ -91,7 +91,7 @@ func (s *Service) deferGatewayStart(ctx context.Context, task *PlanTask, m Devic
 	if recovery.IsZero() {
 		return nil
 	}
-	if ready, err := s.gatewayTaskReadyAt(ctx, *task, wait.Since); err != nil || !ready {
+	if ready, err := s.queuedTaskReadyAt(ctx, *task, wait.Since); err != nil || !ready {
 		return nil
 	}
 	candidate := *task
@@ -151,7 +151,7 @@ func (s *Service) retryGatewayWait(ctx context.Context, plan *TaskPlan, i int, t
 	if queue.Gateway == nil {
 		return
 	}
-	ready, err := s.gatewayTaskReadyAt(ctx, task, queue.Gateway.Since)
+	ready, err := s.queuedTaskReadyAt(ctx, task, queue.Gateway.Since)
 	if err != nil {
 		s.logf("task %s: check queued quota launch: %v", task.TodoID, err)
 		return
@@ -172,13 +172,13 @@ func (s *Service) retryGatewayWait(ctx context.Context, plan *TaskPlan, i int, t
 	}
 	queue.Claimed, queue.NextAt = true, now
 	queue.Reason = i18n.T(s.lang(ctx), "assistant-tasks.request_unconfirmed")
-	if !s.replaceTaskQueue(ctx, task, &queue, queueQuotaStart) {
+	if !s.replaceTaskQueue(ctx, task, &queue, queueUnstartedTask) {
 		return
 	}
 	original := task.Queue
 	task.Queue = &queue
 	if queueExpired(original, now) {
-		if ready, err := s.gatewayTaskReadyAt(ctx, task, queue.Gateway.Since); err == nil && ready {
+		if ready, err := s.queuedTaskReadyAt(ctx, task, queue.Gateway.Since); err == nil && ready {
 			s.failQueuedStart(ctx, plan, i, task, original)
 		}
 		return
@@ -186,9 +186,9 @@ func (s *Service) retryGatewayWait(ctx context.Context, plan *TaskPlan, i int, t
 	s.startPlanTaskAsync(plan.ID, plan.Conversation, i, task, queue.Retry, nil)
 }
 
-func (s *Service) gatewayTaskReadyAt(ctx context.Context, task PlanTask, since time.Time) (bool, error) {
+func (s *Service) queuedTaskReadyAt(ctx context.Context, task PlanTask, since time.Time) (bool, error) {
 	if st := s.store(); st != nil {
-		if store, ok := st.(gatewayQueueStore); ok {
+		if store, ok := st.(unstartedTaskQueueStore); ok {
 			return store.UnstartedQueuedTodo(ctx, task.TodoID, task.planID, since)
 		}
 		return false, errors.New("task store cannot verify the queued start")
@@ -202,7 +202,7 @@ func (s *Service) checkClaimedGatewayStart(ctx context.Context, task PlanTask) e
 	if !task.claimedGatewayStart() {
 		return nil
 	}
-	ready, err := s.gatewayTaskReadyAt(ctx, task, task.Queue.Gateway.Since)
+	ready, err := s.queuedTaskReadyAt(ctx, task, task.Queue.Gateway.Since)
 	if err != nil {
 		return &gatewayQueueStateError{cause: err}
 	}

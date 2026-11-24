@@ -674,6 +674,10 @@ func (s *Service) feedPlans(ctx context.Context, items []FeedItem) map[string]*T
 			ids = append(ids, it.Ref)
 		}
 	}
+	return s.plansByID(ctx, ids)
+}
+
+func (s *Service) plansByID(ctx context.Context, ids []string) map[string]*TaskPlan {
 	plans := make(map[string]*TaskPlan, len(ids))
 	st := s.store()
 	if st == nil {
@@ -689,7 +693,7 @@ func (s *Service) feedPlans(ctx context.Context, items []FeedItem) map[string]*T
 	}
 	rows, err := st.TaskPlansByID(ctx, ids)
 	if err != nil {
-		s.logf("feed: read %d plans: %v", len(ids), err)
+		s.logf("read %d task plans: %v", len(ids), err)
 		return plans
 	}
 	for _, row := range rows {
@@ -978,6 +982,7 @@ func (s *Service) taskRoutes() {
 		}
 	})
 	s.handle("POST /api/v1/todos/{id}/start/answer", s.postTaskStartAnswer) // the startup question its start stopped on (start_answer.go)
+	s.handle("POST /api/v1/todos/{id}/start/cancel", s.postOfflineTaskCancel)
 	s.handle("GET /api/v1/assistant/conversations/{id}/feed", func(w http.ResponseWriter, r *http.Request) {
 		var since time.Time
 		if s := r.URL.Query().Get("since"); s != "" {

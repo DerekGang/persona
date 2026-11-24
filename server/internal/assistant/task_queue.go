@@ -49,6 +49,7 @@ type TaskQueue struct {
 	Blockers  []string           `json:"blockers,omitempty"`
 	Gateway   *taskGatewayWait   `json:"gateway_wait,omitempty"`
 	Workspace *taskWorkspaceWait `json:"workspace_wait,omitempty"`
+	Offline   *taskOfflineWait   `json:"offline_wait,omitempty"`
 }
 
 // queueAdmissionRefusal parks a task the admission gate refused instead of failing it. The claim held by the start
@@ -70,7 +71,7 @@ func (s *Service) queueAdmissionRefusal(planID string, i int, t PlanTask, err er
 		// A peer can finish the task and clear this claim during the start's
 		// preflight. Only the exact claim may become an ordinary resource wait.
 		q := admissionQueueEntry(now, reason, key, retry, t.Queue)
-		if s.replaceTaskQueue(ctx, t, &q, queueQuotaStart) {
+		if s.replaceTaskQueue(ctx, t, &q, queueUnstartedTask) {
 			s.logf("task %s: admission queued (attempt %d): %s", t.TodoID, q.Attempt, reason)
 		}
 		return
@@ -143,6 +144,10 @@ func (s *Service) sweepAdmissionQueue(ctx context.Context) {
 			if q.Key == workspaceQueueKey {
 				continue
 			}
+			if q.Offline != nil {
+				s.retryOfflineTask(cctx, p, i, pt, now)
+				continue
+			}
 			if q.Gateway != nil {
 				s.retryGatewayWait(cctx, p, i, pt, now)
 				continue
@@ -173,7 +178,7 @@ func (s *Service) sweepAdmissionQueue(ctx context.Context) {
 
 // queueBounded says the generic attempt and time bounds apply. Group, prerequisite, quota and workspace waits manage their own.
 func queueBounded(q *TaskQueue) bool {
-	return q.Key != admissionGroupFullKey && q.Key != requestGateKey && q.Key != gatewayQuotaWaitKey && q.Key != workspaceQueueKey
+	return q.Offline == nil && q.Key != admissionGroupFullKey && q.Key != requestGateKey && q.Key != gatewayQuotaWaitKey && q.Key != workspaceQueueKey
 }
 
 func queueExpired(q *TaskQueue, now time.Time) bool {
@@ -216,9 +221,15 @@ func (s *Service) clearAdmissionQueue(ctx context.Context, planID string, i int,
 func (s *Service) failQueuedStart(ctx context.Context, p *TaskPlan, i int, pt PlanTask, q *TaskQueue) {
 	reason := i18n.T(s.lang(ctx), "assistant-tasks.admission_queue_timeout", i18n.Args{
 		"limit": admissionQueueMaxWait.Round(time.Minute).String(), "reason": q.Reason})
+	if q.Offline != nil {
+		reason = s.startFailureText(ctx, pt.Machine, machineOffline(pt.Machine))
+	}
 	remedied := pt.Start != nil && pt.Start.State == remedying
 	if err := s.failTodo(ctx, pt.TodoID, reason); err != nil {
 		s.logf("task %s: admission queue: fail: %v", pt.TodoID, err)
+		if q.Offline != nil {
+			return
+		}
 	}
 	if err := s.patchPlanTask(ctx, p.ID, i, func(t *PlanTask) {
 		t.Queue = nil

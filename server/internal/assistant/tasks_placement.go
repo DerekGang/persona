@@ -214,6 +214,9 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	if err := s.checkClaimedGatewayStart(ctx, *t); err != nil {
 		return "", "", err
 	}
+	if err := s.checkClaimedOfflineStart(ctx, *t); err != nil {
+		return "", "", err
+	}
 	if err := s.checkRequestStart(ctx, *t); err != nil {
 		return "", "", err
 	}
@@ -287,6 +290,9 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 	}()
 	if err != nil {
 		return "", "", err
+	}
+	if t.claimedOfflineStart() && m.ID != t.Queue.Offline.MachineID {
+		return "", "", machineOffline(t.Machine)
 	}
 	// On the computer it landed on (a flexible task may have moved): a default it lacks gives way to one it has, a
 	// launcher the plan named that it lacks is refused before any tab opens (#2640). Before the health check below,
@@ -575,6 +581,12 @@ func (s *Service) startTaskAgent(ctx context.Context, t *PlanTask, retry bool) (
 		}
 		if err := s.checkClaimedGatewayStart(ctx, *t); err != nil {
 			return err
+		}
+		if err := s.checkClaimedOfflineStart(ctx, *t); err != nil {
+			return err
+		}
+		if t.claimedOfflineStart() {
+			params["op_id"] = t.Queue.Offline.OpID
 		}
 		bindCtx := context.WithValue(ctx, placementBindKey{}, p)
 		if !t.backendWorkspace() {
