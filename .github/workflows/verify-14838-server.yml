@@ -1,0 +1,36 @@
+name: Verify provider recovery deadlines
+on:
+  push:
+    branches: ['verify/14838-server-*']
+permissions:
+  contents: read
+jobs:
+  assistant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: persona
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: persona_test
+        options: --health-cmd "pg_isready -U persona -d persona_test" --health-interval 5s --health-timeout 3s --health-retries 12
+        ports:
+          - 5432/tcp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            sdk/go/go.sum
+      - name: Verify provider recovery deadlines
+        env:
+          PERSONA_TEST_DATABASE_URL: postgres://persona:ci-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/persona_test?sslmode=disable
+        run: |
+          go -C server test -race -count=1 -timeout=6m ./internal/transcript -v
+          go -C server test -race -count=1 -timeout=8m ./internal/assistant -run 'TestScheduledProvider|TestProviderRecovery' -v
