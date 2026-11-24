@@ -1,5 +1,6 @@
 name: iPhone search match verification
 on:
+  workflow_dispatch:
   push:
     branches: [verify/14320-search-intel]
 permissions:
