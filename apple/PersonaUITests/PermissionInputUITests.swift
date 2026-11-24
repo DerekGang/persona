@@ -33,14 +33,13 @@ final class PermissionInputUITests: XCTestCase {
         let needsYou = app.buttons["agents.filter.needsYou"]
         XCTAssertTrue(needsYou.waitForExistence(timeout: 20))
         needsYou.tap()
-        let preview = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign in to the cloud CLI")).firstMatch
-        for _ in 0..<4 where !preview.isHittable { app.swipeUp(velocity: .slow) }
-        if preview.isHittable {
-            preview.tap()
-        } else {
-            // The transition is also reachable from the chat link once the app has connected.
-            app.open(URL(string: "persona://open?machine=macbook&session=c0de0000-0000-4000-8000-000000014527")!)
+        let open = app.buttons["Open to Fill In"]
+        guard open.waitForExistence(timeout: 20) else {
+            XCTFail(app.debugDescription)
+            return
         }
+        reveal(open)
+        open.tap()
         if largest, !field.exists, form.exists {
             for _ in 0..<3 where !field.exists { form.swipeUp(velocity: .slow) }
         }
