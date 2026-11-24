@@ -137,6 +137,12 @@ class App:
         an alert over a bubble is not in it). Rows scrolled out of sight count: the chat's list keeps them."""
         els = self.c.call("tree", containers=True)["elements"]
         marks = sorted((e for e in els if e.get("container") and e["id"].startswith(prefix)), key=lambda e: e["frame"][1])
+        start, sent = "chat.outbox.sending.start", "chat.outbox.sent."
+        if self.chat.get("new") and any(m["id"] == start for m in marks) and any(m["id"].startswith(sent) for m in marks):
+            # The start page and the chat briefly coexist. An on-screen mark covered by the other page is outside the
+            # visible chat. Scrolled-out rows and any two visible bubbles still count.
+            marks = [m for m in marks if not (m["onScreen"] and not m["visible"]
+                                            and (m["id"] == start or m["id"].startswith(sent)))]
         return [(m, [e for e in els if not e.get("container") and e.get("in") == m["id"]]) for m in marks]
 
     def look(self):
