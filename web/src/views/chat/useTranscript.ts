@@ -77,6 +77,8 @@ export interface Transcript {
   streaming: string;
   /** The stream ended while its final transcript item is still on the way. */
   streamEnded?: boolean;
+  /** Transcript cursor when the reply preview arrived. A newer user echo belongs to a different turn. */
+  streamEndedThrough?: number;
   /** The stream keeps losing items (the page got them by asking): say so, with a reload. */
   notLive: boolean;
   reload: () => void;
@@ -123,7 +125,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
   const [earlierPage, setEarlierPage] = useState<symbol>();
   const [replaceEpoch, setReplaceEpoch] = useState(0);
   const [streaming, setStreaming] = useState("");
-  const [streamEnded, setStreamEnded] = useState(false);
+  const [streamEndedThrough, setStreamEndedThrough] = useState<number>();
   const reread = useRef<() => void>(() => {});
   const replacing = useRef(false);
   const [notLive, setNotLive] = useState(false);
@@ -237,7 +239,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
     setError("");
     historyMissing.current = false;
     updateHasMore(cached?.hasMore ?? false);
-    setStreamEnded(false);
+    setStreamEndedThrough(undefined);
     deltas.current.flush("");
     liveRaw.current = liveShown.current = "";
     covered.current = 0;
@@ -349,7 +351,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       handoffTimer = undefined;
       liveRaw.current = liveShown.current = "";
       deltas.current.flush("");
-      setStreamEnded(false);
+      setStreamEndedThrough(undefined);
     };
     const showLive = (batch?: Item[]) => {
       if (liveRaw.current && liveThrough && batch?.some((i) => i.role === "user" && i.kind === "text" && !i.queued && i.seq > liveThrough)) return endLive();
@@ -375,14 +377,14 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       if (!text) {
         if (!liveRaw.current || handoffTimer !== undefined) return;
         // The end marker and saved words travel separately. If a run ended without an item, release its preview.
-        setStreamEnded(true);
+        setStreamEndedThrough(liveThrough);
         deltas.current.flush(liveShown.current);
         handoffTimer = window.setTimeout(endLive, READ_TIMEOUT_MS);
         return;
       }
       clearTimeout(handoffTimer);
       handoffTimer = undefined;
-      setStreamEnded(false);
+      setStreamEndedThrough(undefined);
       liveThrough = covered.current;
       liveRaw.current = text;
       if (assistant) {
@@ -735,5 +737,6 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
     [mid, sid, apply],
   );
 
-  return { items, history: history.current, replaceEpoch, loading, firstRead, error, hasMore, loadingEarlier, earlierPage, loadEarlier, expandFold, streaming, streamEnded, notLive, reload: () => reread.current() };
+  return { items, history: history.current, replaceEpoch, loading, firstRead, error, hasMore, loadingEarlier, earlierPage,
+    loadEarlier, expandFold, streaming, streamEnded: streamEndedThrough !== undefined, streamEndedThrough, notLive, reload: () => reread.current() };
 }

@@ -90,8 +90,10 @@ describe("an agent's live text", () => {
     await delta("");
     expect(tr.streaming).toBe("Closing words.");
     expect(tr.streamEnded).toBe(true);
+    expect(tr.streamEndedThrough).toBe(5);
     items([said(6, "Closing words.")], 5);
     expect(tr.streaming).toBe("");
+    expect(tr.streamEndedThrough).toBeUndefined();
     expect(tr.items.at(-1)?.text).toBe("Closing words.");
   });
 

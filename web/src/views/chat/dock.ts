@@ -95,13 +95,15 @@ export function awaitingTurn(
   if (state !== "idle" && state !== "unread" && state !== "unknown") return false;
   const at = last.user.ts ? Date.parse(last.user.ts) : NaN;
   if (Number.isNaN(at) || now - at >= AWAIT_MS) return false;
-  if (last.steps.length && stateSince && Date.parse(stateSince) >= at) return false;
+  // A newer idle/unread state can settle a turn even if this client never saw it working.
+  const since = stateSince ? Date.parse(stateSince) : NaN;
+  if (since > at || (last.steps.length > 0 && since === at)) return false;
   // the turn failed before writing anything: its FailureNote says so, nothing is worked on (#3935). A failure
   // without a time, or from before the message (the hub clears it once a message goes in), is taken as this one's
   // only when it is not older.
   if (failure) {
-    const since = failure.since ? Date.parse(failure.since) : NaN;
-    if (Number.isNaN(since) || since >= at) return false;
+    const failedAt = failure.since ? Date.parse(failure.since) : NaN;
+    if (Number.isNaN(failedAt) || failedAt >= at) return false;
   }
   return true;
 }
