@@ -16,6 +16,25 @@ class AppNavigatorTest {
     private var selected = AppTab.Agents
     private val navigator = AppNavigator(stacks, { selected }, { selected = it })
 
+    @Test fun toDecideSourceOpensOverTheAssistantAndLeavesTheAgentsStackInPlace() {
+        selected = AppTab.Persona
+        val assistant = ChatRoute("machine", "assistant", ConversationKind.Assistant)
+        val agent = ChatRoute("machine", "task", ConversationKind.Agent)
+        val source = agent.copy(subagentDetail = true, decisionSource = DecisionSource("asking-call"))
+        stacks.getValue(AppTab.Persona).add(assistant)
+        stacks.getValue(AppTab.Agents).add(agent)
+
+        navigator.navigate(source)
+        navigator.navigate(source)
+        assertEquals(AppTab.Persona, selected)
+        assertEquals(listOf(AssistantRoute, assistant, source), stacks.getValue(AppTab.Persona))
+        assertEquals(listOf(AgentsRoute, agent), stacks.getValue(AppTab.Agents))
+
+        navigator.back()
+        assertEquals(AppTab.Persona, selected)
+        assertEquals(listOf(AssistantRoute, assistant), stacks.getValue(AppTab.Persona))
+    }
+
     @Test fun secondarySettingsPagesReturnToTheOriginalTabAndPage() {
         val origin = ChatRoute("machine", "session")
         val settingsPages = listOf(SettingsRoute, SettingsPageRoute(SettingsPage.About), PairingRoute, ConnectionSettingsRoute)
