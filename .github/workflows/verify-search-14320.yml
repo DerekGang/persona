@@ -1,0 +1,87 @@
+name: Verify iPhone search in light appearance
+on:
+  push:
+    branches: [verify/14320-search-light]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  search:
+    runs-on: macos-15-intel
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45310869424
+          name: persona-search-products
+          path: ${{ runner.temp }}/app
+      - name: Restore the prebuilt iPhone app and test bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/derived/Build"
+          ditto -x -k "$RUNNER_TEMP/app/persona-search-products.zip" "$RUNNER_TEMP/derived/Build"
+          test -d "$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app"
+      - name: Run the two search tests in light appearance
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          out="$RUNNER_TEMP/search-evidence"
+          mkdir -p "$out"
+          export TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18760
+          PORT=18760 MOCK_CHAT_SEARCH=1 python3 -u scripts/mock/mock_hub.py > "$out/mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 45 --retry-connrefused --retry-delay 2 "$TEST_RUNNER_PERSONA_MOCK_HUB/api/v1/health"
+          sim=$(scripts/app/sim-boot.sh --profile stock "Persona 14320 Search")
+          plan=$(find "$RUNNER_TEMP/derived/Build/Products" -maxdepth 1 -name '*.xctestrun' | head -1)
+          test -n "$plan"
+          verify() {
+            local key=$1
+            shift
+            local bundle="$RUNNER_TEMP/$key.xcresult"
+            local result=0
+            xcodebuild -quiet test-without-building -xctestrun "$plan" -destination "id=$sim" \
+              -parallel-testing-enabled NO -resultBundlePath "$bundle" "$@" > "$out/$key.log" 2>&1 || result=$?
+            tail -45 "$out/$key.log"
+            if [[ -d "$bundle" ]]; then
+              xcrun xcresulttool get test-results summary --path "$bundle" > "$out/$key-results.json" || true
+              xcrun xcresulttool export attachments --path "$bundle" --output-path "$out/$key" || true
+            fi
+            return "$result"
+          }
+          xcrun simctl ui "$sim" appearance light
+          app="$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app"
+          xcrun simctl install "$sim" "$app"
+          xcrun simctl launch "$sim" org.example.persona.ci \
+            -pairURL 'persona://pair?url=http%3A%2F%2F127.0.0.1%3A18760&token=mock' \
+            -tab assistant -app.navigation separate -ui.screenshotBanner NO
+          for check in {1..60}; do
+            if grep -qE 'GET /api/v1/(assistant|managers)' "$out/mock.log"; then break; fi
+            sleep 2
+          done
+          grep -Eq 'GET /api/v1/(assistant|managers)' "$out/mock.log"
+          xcrun simctl terminate "$sim" org.example.persona.ci
+          tests=(-only-testing:PersonaUITests/AssistantChatSearchUITests/testFindsAChatByTheUsersWordsAndOpensItThere
+                 -only-testing:PersonaUITests/KnowledgeSearchTests/testAHitOpensAtTheMatchAndBackKeepsTheResults)
+          if verify light "${tests[@]}"; then exit 0; fi
+          grep -Eq 'test runner failed to initialize|AX loaded notification|unable to connect.*test' "$out/light.log"
+          verify light-retry "${tests[@]}"
+      - name: Save iPhone screenshots and results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-14320-search-evidence
+          path: ${{ runner.temp }}/search-evidence
+          if-no-files-found: warn
+          retention-days: 7
