@@ -447,6 +447,7 @@ internal fun StandaloneItem(item: ExtensionViewItem, state: ExtensionViewState, 
         "carousel" -> ExtensionCarousel(item, state, handle, top)
         // UI version 10: a card or an in-place reply block shows the same still preview as an overview card.
         "graph" -> ExtensionGraph(item, state, handle, top, compact = LocalExtensionCard.current || LocalExtensionGraphCompact.current)
+        "scene" -> ExtensionScene(item, state, handle, top, compact = LocalExtensionCard.current || LocalExtensionGraphCompact.current)
     }
 }
 
@@ -590,6 +591,7 @@ private fun CardItem(item: ExtensionViewItem, state: ExtensionViewState, handle:
         "carousel" -> ExtensionCarousel(item, state, handle, limit = 6, compact = true)
         // UI version 10: a still preview; only its whole surface opens the full-screen canvas.
         "graph" -> ExtensionGraph(item, state, handle, compact = true)
+        "scene" -> ExtensionScene(item, state, handle, compact = true)
     }
 }
 
