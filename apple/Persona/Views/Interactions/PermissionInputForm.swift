@@ -1,5 +1,106 @@
 import SwiftUI
 
+nonisolated struct CommandInputDetails {
+    var command: String
+    var output: String
+    var prompt: String
+    var masked: Bool
+}
+
+extension Interaction {
+    var commandInput: CommandInputDetails? {
+        guard kind == .permission, toolName == "command_input", let payload = toolInput?.object else { return nil }
+        return CommandInputDetails(command: payload["command"]?.string ?? "", output: payload["output"]?.string ?? "",
+                                   prompt: payload["prompt"]?.string ?? fields?.first(where: { $0.key == "input" })?.label ?? "",
+                                   masked: payload["masked"].map { $0.bool ?? true } ?? false)
+    }
+}
+
+struct CommandInputForm: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openLink) private var openLink
+    @Environment(\.dynamicTypeSize) private var dynamicType
+    @Environment(\.scenePhase) private var scenePhase
+    var interaction: Interaction
+    var details: CommandInputDetails
+    var collapsed: Bool
+    @State private var line = ""
+    @State private var typing = false
+    @State private var sending = false
+    @State private var refusal: String?
+    @State private var link: LinkTarget?
+
+    private var prompt: String { details.prompt.isEmpty ? String(localized: "Input") : details.prompt }
+    private var canSend: Bool { !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            if !details.command.isEmpty {
+                Text(details.command).font(Theme.Font.label.monospaced())
+            }
+            if !details.output.isEmpty {
+                Text(ExchangeText.linkWebAddresses(AttributedString(details.output)))
+                    .font(Theme.Font.label.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                Text(prompt).font(Theme.Font.labelStrong)
+                SecretField(prompt, text: $line, identifier: "interaction.field.input", startsHidden: details.masked)
+                    .onFocusChange { typing = $0 }
+                    .id(collapsed)
+                    .interactionField()
+            }
+            if sending { Text("Sending…").font(Theme.Font.label).foregroundStyle(.secondary) }
+            if let refusal {
+                Text(refusal).font(Theme.Font.label).foregroundStyle(Theme.cautionText)
+                    .accessibilityIdentifier("interaction.commandInput.refusal")
+            }
+            let layout = dynamicType.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: Theme.Space.s))
+                : AnyLayout(HStackLayout(spacing: Theme.Space.m))
+            layout { replyButtons }
+        }
+        .disabled(sending)
+        .preference(key: CardFormKeepsEnd.self, value: typing && !collapsed)
+        .environment(\.openURL, OpenURLAction { url in
+            guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return .discarded }
+            if let openLink { openLink(url) }
+            else { link = LinkTarget(url: url, manager: interaction.manager) }
+            return .handled
+        })
+        .sheet(item: $link) { target in LinkSheet(target: target, key: interaction.isSessionless ? nil : interaction.sessionKey) }
+        .onChange(of: collapsed) { _, hidden in
+            if hidden {
+                line = ""
+                typing = false
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in if phase == .background { line = "" } }
+        .onDisappear { line = "" }
+    }
+
+    @ViewBuilder private var replyButtons: some View {
+        Button("Not now") { submit(allow: false) }
+            .themedButton()
+            .accessibilityIdentifier("interaction.commandInput.defer")
+        Button("Send") { submit(allow: true) }
+            .themedButton(prominent: true)
+            .disabled(!canSend)
+            .accessibilityIdentifier("interaction.commandInput.send")
+    }
+
+    private func submit(allow: Bool) {
+        guard !sending, !allow || canSend else { return }
+        sending = true
+        refusal = nil
+        let resolution = Resolution(allow: allow, values: allow ? ["input": line] : nil)
+        line = ""
+        Task {
+            await model.resolve(interaction, resolution, onCardFailure: { refusal = $0 })
+            sending = false
+        }
+    }
+}
+
 struct PermissionInputForm: View {
     @Environment(AppModel.self) private var model
     var interaction: Interaction

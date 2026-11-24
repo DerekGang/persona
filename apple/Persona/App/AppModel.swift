@@ -3562,10 +3562,13 @@ final class AppModel {
 
     /// `handoffCard`: the hand-off card's own buttons answer; an approval of one from anywhere else is refused here, as
     /// the hub would refuse it (`SecretHandoff`).
-    func resolve(_ ix: Interaction, _ r: Resolution, handoffCard: Bool = false) async {
+    func resolve(_ ix: Interaction, _ r: Resolution, handoffCard: Bool = false, onCardFailure: ((String) -> Void)? = nil) async {
         // To the hub of the interaction's own group (docs/protocol/multi-hub.md「Connections and routing」).
         // A stopped Agent's work card still takes the answers that send it nothing: put off, or dismissed (#6839).
-        guard canAnswer(ix) || ix.isLocalResolution(r), let api = api(ix.group) else { return }
+        guard canAnswer(ix) || ix.isLocalResolution(r), let api = api(ix.group) else {
+            onCardFailure?(String(localized: "This request can no longer be answered."))
+            return
+        }
         if let phrase = r.ownerApprovalPhrase {
             guard ix.ownerApprovalPhrase == phrase else { return }
         }
@@ -3575,10 +3578,14 @@ final class AppModel {
             return
         }
         // No network: the card stays as it is (taking it away and bringing it back a moment later read as "done").
-        guard connection.networkUp else { notDone(); return }
+        guard connection.networkUp else {
+            if let onCardFailure { onCardFailure(String(localized: "Can't reach the hub. That action didn't go through.")) }
+            else { notDone() }
+            return
+        }
         // A question's card stays where it is, greyed and marked "Sending…", until the hub has the answer: its picks and
         // text stay for a retry (#6279). Every other card goes at once and comes back if its answer fails.
-        let keepsCard = ix.kind == .question || r.ownerApprovalPhrase != nil
+        let keepsCard = ix.kind == .question || r.ownerApprovalPhrase != nil || onCardFailure != nil
         guard let op = answerAttempts.begin(ix.uid, r) else { return } // its answer is on the way: a second tap sends nothing
         if !keepsCard {
             interactions[ix.uid] = nil
@@ -3605,7 +3612,12 @@ final class AppModel {
                 Haptics.success()
                 return
             }
-            let res = try await OpRetry.untilDelivered { try await api.resolve(ix.id, r, opID: op, handoffCard: handoff) }
+            let res: ResolveResult
+            if onCardFailure != nil {
+                res = try await api.resolve(ix.id, r, opID: op, handoffCard: handoff)
+            } else {
+                res = try await OpRetry.untilDelivered { try await api.resolve(ix.id, r, opID: op, handoffCard: handoff) }
+            }
             if res.already == true, let existing = res.resolution, existing.answeredBy == AssistantAnswer.assistant, ix.kind == .question {
                 // The assistant answered first: its answer shows in the chat, where the user may change it.
                 keepDelegated(ix, AssistantAnswer(answers: existing.answers ?? [:], reason: existing.reason ?? ""))
@@ -3624,16 +3636,37 @@ final class AppModel {
         } catch let e as APIError where e.code == "prompt_changed" {
             // Nothing pressed: the terminal's dialog changed. The hub has ended a screen card and sends one for what is
             // there now; a Codex card it keeps open goes back.
-            answerAttempts.finish(ix.uid)
-            putBack(ix)
+            if onCardFailure != nil {
+                over()
+            } else {
+                answerAttempts.finish(ix.uid)
+                putBack(ix)
+            }
             Haptics.attention()
-            toast = Toast(String(localized: "The dialog in the terminal changed, so no keys were pressed. Check the new one and answer again."), style: .error)
+            let message = String(localized: "The dialog in the terminal changed, so no keys were pressed. Check the new one and answer again.")
+            toast = Toast(message, style: .error)
         } catch let e as APIError where e.status == 410 {
             let reason = Answered.endedText(e.fields["status"])
             over()
             toast = Toast(reason, style: .error)
         } catch {
-            if keepsCard, answering.putsBack(ix.uid), interactions[ix.uid] != nil, !error.isOffline, !error.isQuiet {
+            if let onCardFailure {
+                answerAttempts.finish(ix.uid)
+                putBack(ix)
+                if !error.isCancellation {
+                    let message: String
+                    if let response = error as? APIError, response.status == 502, response.code == "internal", !response.message.isEmpty {
+                        // Older command-input hubs put their localized refusal in a plain 502 response.
+                        message = response.message
+                    } else if error.isQuiet {
+                        message = String(localized: "Delivery not confirmed. Check the command before sending again.")
+                    } else {
+                        message = error.localizedDescription
+                    }
+                    onCardFailure(message)
+                    Haptics.error()
+                }
+            } else if keepsCard, answering.putsBack(ix.uid), interactions[ix.uid] != nil, !error.isOffline, !error.isQuiet {
                 // The card shows the error and Retry itself.
                 answerAttempts.fail(ix.uid, error.localizedDescription)
                 Haptics.error()

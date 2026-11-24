@@ -35,6 +35,7 @@ extension Interaction {
     func title(session: Session?) -> String {
         if toolName == "ask_user" { return String(localized: "Persona Has a Question") }
         if isSecretRun { return secretRunTitle }
+        if commandInput != nil { return String(localized: "Waiting for your input") }
         if kind == .elicitation {
             return elicitation?.isURL == true ? String(localized: "MCP Link Needs You") : String(localized: "MCP Form Needs You")
         }
@@ -425,7 +426,7 @@ struct InteractionPanel: View {
     private var ownsScroll: Bool {
         switch interaction.kind {
         case .question, .plan: true
-        case .permission: !interaction.requiresInput
+        case .permission: !interaction.requiresInput && interaction.commandInput == nil
         case .screen: !AppStyle.current.usesBeautifulUI && interaction.screenDialog != nil
         case .elicitation: false
         }
@@ -459,6 +460,7 @@ struct InteractionPanel: View {
                         form.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { formHeight = $0 }
                     }
                     .scrollBounceBehavior(.basedOnSize)
+                    .accessibilityIdentifier("interaction.form-scroll")
                     // A field taking the keyboard brings the form's end into view, and while the keyboard takes the room the
                     // area gives it up at the top, so the field and its Run stay above the keyboard (#1581). An area shorter
                     // than the field and its Run shows Run whole and the field cut at the top.
@@ -508,7 +510,8 @@ struct InteractionPanel: View {
                 ThemedIcon(interaction.symbol)
                     .font(Theme.Font.labelStrong)
                     .foregroundStyle(StatusPalette.needsYou.dot)
-                Text(panelTitle).font(Theme.Font.labelStrong).foregroundStyle(StatusPalette.needsYou.text)
+                Text(interaction.commandInput == nil ? panelTitle : String(localized: "Command input"))
+                    .font(Theme.Font.labelStrong).foregroundStyle(StatusPalette.needsYou.text)
                     .lineLimit(1)
                 VoiceAskMark(interaction: interaction) // Asking by Voice (docs/assistant/voice.md 1.2 H)
                 if collapsed {
@@ -596,6 +599,9 @@ struct InteractionPanel: View {
                 .accessibilityLabel(collapsed ? Text("Expand [Question Card]") : Text("Collapse [Question Card]"))
                 .accessibilityIdentifier(dock == nil ? "interaction-fold" : "question-dock.collapse")
             }
+            if !collapsed && interaction.commandInput != nil {
+                Text(panelTitle).font(Theme.Font.heading).accessibilityAddTraits(.isHeader)
+            }
             // A side session's card in its parent's chat says whose it is: "From Side Session · <title>" (#7944).
             if let from {
                 Text(from).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -660,7 +666,13 @@ struct InteractionPanel: View {
         case .question: QuestionForm(interaction: interaction)
         case .plan: PlanForm(interaction: interaction, showFull: $showFullPlan)
         case .permission:
-            if interaction.agentName != nil { AgentPermissionForm(interaction: interaction) } else { PermissionForm(interaction: interaction) }
+            if let details = interaction.commandInput {
+                CommandInputForm(interaction: interaction, details: details, collapsed: collapsed).id(interaction.id)
+            } else if interaction.agentName != nil {
+                AgentPermissionForm(interaction: interaction)
+            } else {
+                PermissionForm(interaction: interaction)
+            }
         case .screen: ScreenForm(interaction: interaction)
         // One view per card, as the password card: another card in its place starts empty.
         case .elicitation: ElicitationForm(interaction: interaction).id(interaction.uid)
