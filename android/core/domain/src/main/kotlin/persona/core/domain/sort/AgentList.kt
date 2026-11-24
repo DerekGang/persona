@@ -48,13 +48,13 @@ data class AgentListSettings(
     val pendingFoldedTabs: Set<String>? = null,
 ) {
     private val nativePinnedWorkspaces by lazy {
-        workspaces.filter { it.source == "paseo" && it.nativePinTime != null }
-            .mapTo(mutableSetOf()) { it.machineId to it.sourceId }
+        workspaces.filter { it.inRepositoryCatalog && it.nativePinTime != null }
+            .mapTo(mutableSetOf()) { it.repoWorkspaceKey }
     }
 
-    /** A closed, unarchived chat still belongs to the workspace its user pinned in Paseo. */
+    /** A closed, unarchived chat still belongs to the workspace its user pinned on the host. */
     fun nativePinned(s: persona.core.contracts.Session): Boolean = grouping == AgentGrouping.Repo &&
-        !s.archived && s.paseoWorkspaceKey() in nativePinnedWorkspaces
+        !s.archived && s.repoWorkspaceKey() in nativePinnedWorkspaces
 }
 
 /**
@@ -341,7 +341,8 @@ fun buildFlatAgentList(
             fun section(id: String, title: CoreText, members: List<AgentSession>, level: RepoLevel, under: String?, machineFolded: Boolean,
                         tree: AgentWorktree? = null, online: Boolean = true): AgentListGroup {
                 val nativePinned = tree?.pinnedAt != null
-                val isQuiet = !nativePinned && quiet(members)
+                val carriesWorkspace = level == RepoLevel.Repository && tree?.workspace?.source == "herdr"
+                val isQuiet = !nativePinned && !carriesWorkspace && quiet(members)
                 val rows = ordered(members)
                 val folded = if (isQuiet) id !in settings.expandedQuiet && settings.query.isEmpty() else id in settings.folded
                 val visible = when {
@@ -356,10 +357,12 @@ fun buildFlatAgentList(
                     idleFold = idle.takeIf { it.isNotEmpty() }?.let { IdleFold(it, open = id in settings.expandedIdle) },
                     waitingInBackground = waiting(rows))
             }
+            val shownWorkspaces = live.mapNotNull { it.session.repoWorkspaceKey() }.toSet()
             val catalog = settings.workspaces.filter { w ->
-                w.source == "paseo" && (settings.machineFilter.isEmpty() || w.machineId == settings.machineFilter) &&
-                    ((!quick && settings.query.isEmpty()) || live.any { it.session.paseoWorkspaceKey() == (w.machineId to w.sourceId) })
+                w.inRepositoryCatalog && (settings.machineFilter.isEmpty() || w.machineId == settings.machineFilter) &&
+                    ((!quick && settings.query.isEmpty()) || w.repoWorkspaceKey in shownWorkspaces)
             }
+            val knownRows = base.groupBy { it.session.machineId }
             val known = machines + (live.map { it.session.machineId } + catalog.map { it.machineId }).distinct()
                 .filter { id -> machines.none { it.id == id } }.map { Machine(it, "") }
             val machineGroups = known.sortedBy { !it.online }.mapNotNull { machine ->
@@ -368,7 +371,7 @@ fun buildFlatAgentList(
                 if (members.isEmpty() && workspaces.isEmpty()) return@mapNotNull null
                 val machineFolded = "machine/${machine.id}" in settings.folded
                 // "Recently updated": the busy repositories by their latest agent (iOS `RepoTree` under `AgentSort.updated`).
-                val repos = agentRepos(members, workspaces).let { all ->
+                val repos = agentRepos(members, workspaces, mapOf(machine.id to machine.home), knownRows[machine.id].orEmpty()).let { all ->
                     if (latest) all.sortedWith(compareByDescending<AgentRepo> { it.pinnedAt }.thenBy { quiet(it.members) }
                         .thenByDescending { repo -> repo.members.mapNotNull { it.sortDate }.maxOrNull() }.thenBy { it.id })
                     else all.sortedWith(compareByDescending<AgentRepo> { it.pinnedAt }.thenBy { quiet(it.members) })
@@ -378,8 +381,13 @@ fun buildFlatAgentList(
                     // A quiet repository opens to all its sessions in one list, as iOS's "Idle repositories" does. A repository with only
                     // its main checkout is drawn as one level but keeps the checkout's id, so a session opened under a quick
                     // filter stays in the same group when a second working tree appears or goes (retainOpenedRows).
-                    if (repo.flat) listOf(section(repo.worktrees[0].id, repoTitle(repo.name), repo.members, RepoLevel.Repository, null, machineFolded))
-                    else if (repo.pinnedAt == null && quiet(repo.members)) listOf(section(repo.id, repoTitle(repo.name), repo.members, RepoLevel.Repository, null, machineFolded))
+                    if (repo.flat) {
+                        val tree = repo.worktrees.single()
+                        listOf(section(tree.id, repoTitle(repo.name), repo.members, RepoLevel.Repository, null, machineFolded,
+                            tree = tree.takeIf { it.workspace?.source == "herdr" }, online = machine.online))
+                    } else if (repo.pinnedAt == null && repo.worktrees.none { it.workspace?.source == "herdr" } && quiet(repo.members)) {
+                        listOf(section(repo.id, repoTitle(repo.name), repo.members, RepoLevel.Repository, null, machineFolded))
+                    }
                     else listOf(AgentListGroup(repo.id, repoTitle(repo.name), emptyList(), emptyList(), repo.id in settings.folded,
                         stateCounts = stateCounts(repo.members), repo = RepoLevel.Repository, waitingInBackground = waiting(repo.members))) +
                         repo.worktrees.map { tree ->

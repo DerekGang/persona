@@ -800,7 +800,10 @@ internal fun AgentsScreen(
                             var sheet by remember { mutableStateOf(false) }
                             AgentRepoHeader(groupTitle, group.folded, { model.fold(group) }, Modifier.repoCard(slot.first, slot.last),
                                 onLongClick = if (actions.isEmpty()) null else ({ sheet = true }),
-                                actionsLabel = stringResource(R.string.agents_repo_actions))
+                                actionsLabel = stringResource(R.string.agents_repo_actions),
+                                main = group.worktree?.main == true,
+                                offline = group.worktree?.offline == true,
+                                pinned = group.worktree?.pinned == true)
                             if (sheet) JActionSheet(actions, { sheet = false }, title = groupTitle)
                         } else if (slot != null && group.repo != null) {
                             val line = group.worktree
@@ -816,6 +819,12 @@ internal fun AgentsScreen(
                             quiet = entry.quiet, sessions = group.totalCount ?: group.rows.size, counts = group.headingCounts,
                             waiting = group.waitingInBackground, flags = buildList {
                                 if (group.worktree?.pinned == true) add(RowFlag(stringResource(R.string.agents_row_pinned), PersonaIcons.pinned))
+                                if (group.repo == RepoLevel.Repository && group.worktree?.main == true) {
+                                    add(RowFlag(stringResource(persona.core.designsystem.R.string.designsystem_worktree_primary), PhIcons.House))
+                                }
+                                if (group.repo == RepoLevel.Repository && group.worktree?.offline == true) {
+                                    add(RowFlag(stringResource(persona.core.designsystem.R.string.designsystem_worktree_offline), PersonaIcons.offline))
+                                }
                                 if (space != null && space.preferenceKey in page.preferences.pins.spaces) add(RowFlag(stringResource(R.string.agents_flag_space_pinned), PhIcons.PushPin))
                                 if (space != null && space.preferenceKey in page.preferences.mutes.spaces) add(RowFlag(stringResource(R.string.agents_flag_space_muted), PhIcons.Prohibit))
                                 // iOS TodoSpaceTag: the project is on a to-do.

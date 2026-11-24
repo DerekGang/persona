@@ -30,6 +30,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import persona.core.contracts.Machine
 import persona.core.contracts.Session
+import persona.core.contracts.api.AgentWorkspace
 import persona.core.designsystem.*
 import persona.core.domain.sort.*
 import java.io.File
@@ -93,6 +94,56 @@ class AgentRepoTreeShotsTest {
             for (y in 0 until bitmap.height step 7) for (x in 0 until bitmap.width step 7) if (bitmap.getPixel(x, y) != background) drawn++
             assertTrue("the tree must draw", drawn > 100)
             File(out(), "repo-tree-${nextStyle.name.lowercase()}-${if (nextDark) "dark" else "light"}.png").outputStream().use {
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+        }
+    }
+
+    @Test fun drawsHerdrWorkspaceMarksOnTheRepositoryHeading() {
+        val machine = Machine("mac", "MacBook", online = true, home = "/Users/me")
+        val workspace = AgentWorkspace(
+            machineId = machine.id, source = "herdr", sourceId = "notes", title = "notes-fixture",
+            cwd = "/Users/me/code/notes-fixture", pinnedAt = "2026-11-16T10:00:00Z", available = false,
+        )
+        val notes = at("notes", "Notes agent", workspace.cwd, "working").let {
+            it.copy(session = it.session.copy(spaceKind = "herdr", spaceId = workspace.sourceId))
+        }
+        val projected = buildAgentList(
+            listOf(notes, at("main", "Main checkout agent", "/Users/me/code/repo-fixture", "working"),
+                at("removed", "Removed tree agent", "/Users/me/.herdr/worktrees/repo-fixture/removed", "working")),
+            listOf(machine), settings = AgentListSettings(grouping = AgentGrouping.Repo, workspaces = listOf(workspace)),
+        )
+        val heading = projected.groups.single { it.rows.any { row -> row.id == notes.id } }
+        assertTrue(heading.repo == RepoLevel.Repository && heading.worktree?.pinned == true && heading.worktree?.offline == true)
+        assertTrue(projected.machines.single().repoCount == 2)
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(style = AppStyle.Glass, darkTheme = dark, reduceMotion = true) {
+                Column(Modifier.testTag("herdr").width(400.dp).background(PersonaTheme.palette.background).padding(Tokens.Space.l)) {
+                    projected.groups.forEach { group ->
+                        val title = group.title.text()
+                        val line = group.worktree
+                        if (group.repo == RepoLevel.Repository) {
+                            AgentRepoHeader(title, group.folded, {}, main = line?.main == true,
+                                offline = line?.offline == true, pinned = line?.pinned == true)
+                        } else {
+                            AgentWorktreeLine(title, group.repo == RepoLevel.MainCheckout, group.folded, {}, offline = line?.offline == true)
+                        }
+                        group.visibleRows.forEach { row ->
+                            AgentRow(row.session.displayTitle, row.state.designStatus, {}, depth = 1)
+                        }
+                    }
+                }
+            }
+        }
+        for (appearance in listOf(false, true)) {
+            rule.runOnIdle { dark = appearance }
+            rule.onAllNodesWithText("notes-fixture").assertCountEquals(1)
+            rule.onAllNodesWithText("repo-fixture").assertCountEquals(1)
+            rule.onNodeWithText("Removed tree agent").assertIsDisplayed()
+            val bitmap = rule.onNodeWithTag("herdr").captureToImage().asAndroidBitmap()
+            val suffix = if (appearance) "dark" else "light"
+            File(out(), "herdr-repo-tree-$suffix.png").outputStream().use {
                 assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
             }
         }

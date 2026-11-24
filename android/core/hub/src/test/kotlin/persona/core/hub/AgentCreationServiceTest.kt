@@ -242,6 +242,10 @@ class AgentCreationServiceTest {
                 server.enqueue(MockResponse().setBody("""{"workspaces":[],"errors":[$error]}"""))
                 assertTrue(service.workspaceCatalog("computer").complete)
             }
+            server.enqueue(MockResponse().setBody("""{"workspaces":[],"errors":[{"machine_id":"computer","source":"herdr","error":"Offline"}]}"""))
+            val herdrPartial = service.workspaceCatalog("computer")
+            assertTrue(herdrPartial.complete)
+            assertEquals(setOf("herdr"), herdrPartial.failedSources)
         }
     }
 
