@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { t } from "../../i18n";
 import { decisionKey, decisionPosition, type DecisionCard } from "../../lib/decision-pager";
-import { cx } from "../../ui/atoms";
-import { Icon } from "../../ui/icons";
 import type { QuestionDraft } from "../chat/decision-card";
 
 export function useDecisionPager(cards: readonly DecisionCard[]) {
@@ -42,18 +39,3 @@ export function useDecisionPager(cards: readonly DecisionCard[]) {
 }
 
 export type Pager = ReturnType<typeof useDecisionPager>;
-
-export function DecisionEntry({ pager, expanded, controls, capsule, onToggle }: {
-  pager: Pager; expanded: boolean; controls: string; capsule: string; onToggle: () => void;
-}) {
-  if (!pager.count) return null;
-  return (
-    <button type="button" data-decision-entry aria-expanded={expanded} aria-controls={expanded ? controls : undefined} onClick={onToggle}
-      className={cx(capsule, "gap-2 font-medium", expanded ? "bg-ink text-surface" : "bg-field text-ink hover:bg-hover")}>
-      <Icon name="hand" size={14} className={expanded ? "text-surface" : "text-attention"} />
-      <span>{t("assistant-tasks.to_decide")}</span>
-      <span className="tabular-nums">{pager.count}</span>
-      {pager.arrived > 0 && <span className="tabular-nums">+{pager.arrived}</span>}
-    </button>
-  );
-}

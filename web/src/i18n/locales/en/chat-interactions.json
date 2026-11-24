@@ -1,6 +1,6 @@
 {
   "decision_view_source": "View in Chat",
-  "decision_skip": "Skip",
+  "decision_skip_label": "Skip",
   "decision_collapse": "Collapse",
   "decision_skip_terminal": "Answer this question on the computer.",
   "decision_skip_terminal_chat": "Use Reply in Chat Instead for this terminal question.",

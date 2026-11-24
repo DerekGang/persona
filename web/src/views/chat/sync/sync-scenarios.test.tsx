@@ -40,7 +40,7 @@ vi.mock("../../assistant/Tasks", async () => {
   // Keep the actual cards and their first slot. The trays and their unrelated requests are outside the sync fixture.
   function AssistantActionBar({ turnAsks = [] }: { turnAsks?: readonly Interaction[] }) {
     const pager = useDecisionPager(turnAsks.map((interaction) => ({ interaction })));
-    return <DecisionPager pager={pager} id="sync-decisions" openSource={() => {}} hasSource={() => false} />;
+    return <DecisionPager pager={pager} id="sync-decisions" openSource={() => {}} />;
   }
   return { DayLine: () => null, FeedLineView: () => null, QuickResultCard: () => null, RouteChip: () => null,
     AssistantActionBar, TaskDock: () => null };

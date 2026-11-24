@@ -97,6 +97,13 @@ try {
 
     const draft = card(own.id).locator("input").first();
     await draft.fill("Keep the off-site copy");
+    const needsYou = page.locator('[data-tray-entry="needs"]');
+    await needsYou.click();
+    await page.locator("[data-tray-list]").waitFor();
+    await pager.waitFor({ state: "hidden" });
+    await needsYou.click();
+    await card(own.id).waitFor();
+    assert.equal(await draft.inputValue(), "Keep the off-site copy");
     if (mobile) {
       await pager.evaluate((target) => {
         const touch = (clientX) => new Touch({ identifier: 1, target, clientX, clientY: 400 });

@@ -42,7 +42,7 @@ import { ErrorNotice } from "../../ui/ErrorNotice";
 import { reportBoundary } from "../../lib/error-reports";
 import { isChunkError } from "../PageBoundary";
 import { useChatCardTapGuard, useChatTapGuardView } from "./card-tap-guard";
-import { blockedDecisionSkip, decisionKey } from "../../lib/decision-pager";
+import { decisionKey } from "../../lib/decision-pager";
 import { DecisionCardContext } from "./decision-card";
 
 /** Answers a card: the chat's cards and the overview's quick answers (Home, #4090) send through this. */
@@ -158,7 +158,7 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
   };
   const queue = useContext(QueueSlot);
   const decision = useContext(DecisionCardContext);
-  const noSkip = decision && blockedDecisionSkip(decision.interaction);
+  const noSkip = decision?.skipHint;
   return (
     <div {...(cardKeys?.root ?? { tabIndex: -1 })} ref={tapGuard ? mergeRefs(tapGuard.ref, cardKeys?.root?.ref) : cardKeys?.root?.ref} data-pending-card aria-label={title} className="shrink-0 overflow-clip rounded-card bg-surface shadow-card outline-none focus-visible:ring-2 focus-visible:ring-accent" style={{ animation: `fade-up 350ms ${EASE} both` }}>
       <div className="px-3.5 pt-3 pb-2.5">
@@ -197,8 +197,8 @@ export function Card({ title, titleContent, kicker, onDismiss, skip, busy, child
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-label text-ink-2" data-decision-actions>
             {decision.navigation}
             {(skip || noSkip) && <button type="button" data-card-answer disabled={busy || Boolean(noSkip)}
-              onClick={skip?.run} className="touch-hit enabled:hover:text-ink disabled:opacity-45">{t(skip?.error ? "assistant-tasks.retry" : "chat-interactions.decision_skip")}</button>}
-            {noSkip && <span className="basis-full text-ink-3">{t(`chat-interactions.decision_skip_${noSkip}`)}</span>}
+              onClick={skip?.run} className="touch-hit enabled:hover:text-ink disabled:opacity-45">{t(skip?.error ? "assistant-tasks.retry" : "chat-interactions.decision_skip_label")}</button>}
+            {noSkip && <span className="basis-full text-ink-3">{noSkip}</span>}
             {skip?.error && <span role="alert" className="basis-full text-attention">{skip.error}</span>}
           </div>
         )}

@@ -1,19 +1,26 @@
 import { useRef } from "react";
 import { t } from "../../i18n";
+import { blockedDecisionSkip, decisionSource } from "../../lib/decision-details";
 import { decisionDots, type DecisionCard } from "../../lib/decision-pager";
+import type { Item } from "../../lib/types";
 import { cx, IconButton } from "../../ui/atoms";
+import { Icon } from "../../ui/icons";
 import { InteractionCard } from "../chat/Interactions";
 import { DecisionCardContext } from "../chat/decision-card";
 import type { Pager } from "./decision-dock";
 
-export function DecisionPager({ pager, id, openSource, hasSource, inCall = false }: {
-  pager: Pager; id: string; inCall?: boolean; openSource: (card: DecisionCard) => void; hasSource: (card: DecisionCard) => boolean;
+export function DecisionPager({ pager, id, openSource, items = [], inCall = false }: {
+  pager: Pager; id: string; inCall?: boolean; items?: readonly Item[]; openSource: (card: DecisionCard, target?: string) => void;
 }) {
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
   const card = pager.card;
   if (!card) return null;
+  const task = card.taskTitle !== undefined;
+  const target = task ? undefined : decisionSource(card.interaction, items, false);
+  const blocked = blockedDecisionSkip(card.interaction);
+  const skipHint = blocked && t(`chat-interactions.decision_skip_${blocked}`);
   const navigation = <>
-    {hasSource(card) && <button type="button" onClick={() => openSource(card)} className="touch-hit hover:text-ink">{t("chat-interactions.decision_view_source")}</button>}
+    {(task || target) && <button type="button" onClick={() => openSource(card, target)} className="touch-hit hover:text-ink">{t("chat-interactions.decision_view_source")}</button>}
     {!inCall && <button type="button" onClick={pager.collapse} className="touch-hit hover:text-ink">{t("chat-interactions.decision_collapse")}</button>}
   </>;
   return (
@@ -51,10 +58,25 @@ export function DecisionPager({ pager, id, openSource, hasSource, inCall = false
       )}
       {card.taskTitle && <p className="shrink-0 truncate px-1 text-label text-ink-3">{card.taskTitle}</p>}
       <div className="min-h-0 shrink overflow-y-auto overscroll-contain p-1" data-scroll-box>
-        <DecisionCardContext.Provider key={pager.key} value={{ interaction: card.interaction, task: card.taskTitle !== undefined, drafts: pager.drafts, navigation }}>
+        <DecisionCardContext.Provider key={pager.key} value={{ interaction: card.interaction, task, drafts: pager.drafts, navigation, skipHint }}>
           <InteractionCard ix={card.interaction} />
         </DecisionCardContext.Provider>
       </div>
     </section>
+  );
+}
+
+export function DecisionEntry({ pager, expanded, controls, capsule, onToggle }: {
+  pager: Pager; expanded: boolean; controls: string; capsule: string; onToggle: () => void;
+}) {
+  if (!pager.count) return null;
+  return (
+    <button type="button" data-decision-entry aria-expanded={expanded} aria-controls={expanded ? controls : undefined} onClick={onToggle}
+      className={cx(capsule, "gap-2 font-medium", expanded ? "bg-ink text-surface" : "bg-field text-ink hover:bg-hover")}>
+      <Icon name="hand" size={14} className={expanded ? "text-surface" : "text-attention"} />
+      <span>{t("assistant-tasks.to_decide")}</span>
+      <span className="tabular-nums">{pager.count}</span>
+      {pager.arrived > 0 && <span className="tabular-nums">+{pager.arrived}</span>}
+    </button>
   );
 }

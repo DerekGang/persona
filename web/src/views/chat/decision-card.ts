@@ -9,4 +9,5 @@ export const DecisionCardContext = createContext<{
   task: boolean;
   drafts: Map<string, QuestionDraft>;
   navigation?: ReactNode;
+  skipHint?: string;
 } | null>(null);

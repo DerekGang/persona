@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blockedDecisionSkip, decisionCards, decisionDots, decisionKey, decisionPosition, decisionSource, taskDecisionCards } from "./decision-pager";
+import { decisionCards, decisionDots, decisionKey, decisionPosition, taskDecisionCards } from "./decision-pager";
+import { blockedDecisionSkip, decisionSource } from "./decision-details";
 import type { Interaction, Item } from "./types";
 
 function question(id: string, extra: Partial<Interaction> = {}): Interaction {

@@ -1,6 +1,6 @@
 {
   "decision_view_source": "チャットで表示",
-  "decision_skip": "スキップ",
+  "decision_skip_label": "スキップ",
   "decision_collapse": "折りたたむ",
   "decision_skip_terminal": "この質問にはコンピューターで回答してください。",
   "decision_skip_terminal_chat": "この端末の質問には「チャットで返信」を使ってください。",

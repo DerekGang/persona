@@ -1,6 +1,5 @@
 [
-  "assistant-tasks.to_decide",
-  "chat-interactions.decision_",
+  "chat-interactions.decision_skip_label",
   "starred.count",
   "starred.title",
   "agent-goal.plan_",

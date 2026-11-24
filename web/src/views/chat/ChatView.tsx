@@ -153,7 +153,7 @@ import { CardConversation } from "../../ui/AssistantCard";
 import { SessionMark, sessionMarkName } from "../../ui/AgentMark";
 import { sessionAgentName } from "../../lib/agent-kind";
 import { AssistantActionBar, DayLine, FeedLineView, QuickResultCard, RouteChip } from "../assistant/Tasks";
-import { decisionKey, decisionSource, taskDecisionCards, type DecisionCard } from "../../lib/decision-pager";
+import { decisionKey, taskDecisionCards, type DecisionCard } from "../../lib/decision-pager";
 import { t } from "../../i18n";
 import { lazyDialog, lazyOverlay } from "../LazyOverlay";
 
@@ -163,6 +163,7 @@ import { lazyDialog, lazyOverlay } from "../LazyOverlay";
 const loadTerminal = () => import("../session/TerminalPanel");
 // Sharing settings load on their first open, outside the first screen (docs/web/web.md "First screen").
 const ChatSearch = lazyDialog(() => import("./ChatSearch").then((m) => m.ChatSearch));
+const DecisionSourceDialog = lazyDialog(() => import("./DecisionSourceDialog").then((m) => m.DecisionSourceDialog));
 const LinkTodoDialog = lazyDialog(() => import("../LinkTodoDialog").then((m) => m.LinkTodoDialog));
 const SharingDialog = lazyOverlay(() => import("../../sharing/SharingDialog").then((m) => m.default));
 const TerminalPanel = lazy(() => loadTerminal().then((m) => ({ default: m.TerminalPanel })));
@@ -326,7 +327,7 @@ export function ChatView(props: Parameters<typeof ActiveChatView>[0]) {
   return <ActiveChatView {...props} />;
 }
 
-function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSidebar, topCenter, inPage, embedded, panel: chrome, terminalAvailable, banner, offline, mainCache, refreshError, onRefresh, headerActions, landAt: requestedAt, sourceCard, placeholder: askPlaceholder }: {
+function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSidebar, topCenter, inPage, embedded, panel: chrome, terminalAvailable, banner, offline, mainCache, refreshError, onRefresh, headerActions, landAt: requestedAt, findSource, placeholder: askPlaceholder }: {
   mid: string;
   sid: string;
   assistant?: boolean;
@@ -356,8 +357,8 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   headerActions?: React.ReactNode;
   /** A message to open the chat at (`?at=`, a search hit's, #6283): landed on once it is in, paging back for it. */
   landAt?: string;
-  /** A task's card opened from the assistant's decision pager. Its message is resolved in this transcript. */
-  sourceCard?: Interaction;
+  /** Locates a drill-down's source as more of this transcript is read. */
+  findSource?: (items: readonly Item[]) => string | undefined;
   /** What an idle Persona chat's box asks, in place of the main chat's: a space's own (Health's, docs/assistant/health.md).
    *  The box's other states (offline, queued, unavailable…) say theirs as before. */
   placeholder?: string;
@@ -2116,8 +2117,8 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
     return key ? t(key) : null;
   }, [loadWithScrollAnchor]);
   useEffect(() => {
-    if (!sourceCard || sourceTarget !== undefined || !tr.firstRead || tr.loading || tr.loadingEarlier) return;
-    const found = decisionSource(sourceCard, tr.items, true);
+    if (!findSource || sourceTarget !== undefined || !tr.firstRead || tr.loading || tr.loadingEarlier) return;
+    const found = findSource(tr.items);
     if (found || !tr.hasMore || tr.items.length >= 400 || sourcePages.current >= 8) {
       setSourceTarget(found ?? null);
       return;
@@ -2128,13 +2129,12 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
       if (!page) setSourceTarget(null);
       return page;
     });
-  }, [sourceCard, sourceTarget, tr.firstRead, tr.loading, tr.loadingEarlier, tr.items, tr.hasMore, tr.loadEarlier, loadWithScrollAnchor]);
-  const openDecisionSource = useCallback((card: DecisionCard) => {
+  }, [findSource, sourceTarget, tr.firstRead, tr.loading, tr.loadingEarlier, tr.items, tr.hasMore, tr.loadEarlier, loadWithScrollAnchor]);
+  const openDecisionSource = useCallback((card: DecisionCard, target?: string) => {
     if (card.taskTitle !== undefined) {
       setDecisionDrill(card.interaction);
       return;
     }
-    const target = decisionSource(card.interaction, trNow.current.items, false);
     if (!target) return;
     const current = beginNavigation();
     void import("./land-message").then(({ landMessage }) => landMessage({
@@ -2417,9 +2417,6 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
   const taskDecisions = useMemo(() => allTaskDecisions.filter(({ interaction }) => !elsewhere(interaction)), [allTaskDecisions, elsewhere]);
   const taskDecisionKeys = useMemo(() => new Set(taskDecisions.map(({ interaction }) => decisionKey(interaction))), [taskDecisions]);
   const stacked = useMemo(() => turnSplit.rest.filter((ix) => !taskDecisionKeys.has(decisionKey(ix))), [turnSplit.rest, taskDecisionKeys]);
-  const ownDecisionSources = useMemo(() => turnSplit.turn.length ? new Set(turnSplit.turn
-    .filter((ix) => decisionSource(ix, tr.items, false) !== undefined).map(decisionKey)) : undefined, [turnSplit.turn, tr.items]);
-  const hasDecisionSource = useCallback((card: DecisionCard) => card.taskTitle !== undefined || ownDecisionSources?.has(decisionKey(card.interaction)) === true, [ownDecisionSources]);
   const trayAsks = useMemo(() => (assistant ? splitTurnAsks(interactions, mid, sid).rest : interactions), [assistant, interactions, mid, sid]);
   const actionBarAsks = useMemo(() => (isMain ? docked : trayAsks).filter((ix) => !taskDecisionKeys.has(decisionKey(ix))), [isMain, docked, trayAsks, taskDecisionKeys]);
   const commandInSlot = stacked.some((request) => request.id === commandReveal?.id);
@@ -2815,7 +2812,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
           <>
             <AssistantActionBar key={sid} conversation={sid} ownAsks={actionBarAsks} turnAsks={turnSplit.turn} taskDecisions={taskDecisions}
               focusDecision={commandReveal?.pending ? commandReveal.id : undefined}
-              inCall={takeover} hasDecisionSource={hasDecisionSource} openDecisionSource={openDecisionSource} sourceOpen={decisionDrill !== null} />
+              inCall={takeover} turnItems={turnSplit.turn.length ? tr.items : undefined} openDecisionSource={openDecisionSource} sourceOpen={decisionDrill !== null} />
             {!takeover && <RouteChip conversation={sid} />}
             {/* items handed to this conversation that are still open: "Wrap up" asks it for the final write-back (#5932) */}
             {!takeover && isMain && <Suspense fallback={null}><LazyWrapUpChips conversation={sid} /></Suspense>}
@@ -2969,16 +2966,7 @@ function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSide
       )}
       </div>
       {decisionDrill && (
-        <Dialog open closeOnBack width={960} onClose={() => setDecisionDrill(null)} title={
-          <span className="flex items-center gap-2">
-            <IconButton icon="arrowLeft" label={t("sidepanel.back")} onClick={() => setDecisionDrill(null)} />
-            <span>{decisionDrill.session_title || t("chat-interactions.decision_view_source")}</span>
-          </span>
-        }>
-          <div className="flex h-[min(65dvh,640px)] min-h-0 flex-col" data-decision-source-chat>
-            <ChatView key={decisionKey(decisionDrill)} mid={decisionDrill.machine_id} sid={decisionDrill.session_id} embedded sourceCard={decisionDrill} />
-          </div>
-        </Dialog>
+        <DecisionSourceDialog key={decisionKey(decisionDrill)} open card={decisionDrill} onClose={() => setDecisionDrill(null)} />
       )}
       {session && overview?.open && (
         <PageBoundary page={`overview:${mid}/${sid}`}>
