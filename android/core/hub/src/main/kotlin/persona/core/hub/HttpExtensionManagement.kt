@@ -484,7 +484,7 @@ class HttpExtensionManagement internal constructor(
          * link and rows side by side (#9158); 9 gauge rings on grid and carousel tiles (#9337); 10 native graph canvases
          * (#9727). The native stream sends the same version, but its components still exclude graphs and receive rows.
          */
-        const val UI_VERSION = 10
+        const val UI_VERSION = 11
         /** Exceeds the hub's 20 s uiTimeout (server/internal/extmgr/extension_ui.go) and matches iOS APIClient / ExtensionUIStreamController (30 s). */
         internal const val UI_READ_TIMEOUT_SECONDS = 30L
 

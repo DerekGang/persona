@@ -418,8 +418,8 @@ class HttpExtensionManagementTest {
     @Test fun theDeviceContextIsThePhones() {
         val context = HttpExtensionManagement.deviceContext()
         assertEquals("android", (context.platform).zhAny())
-        // UI versions 9 and 10 (#9337, #9727): gauge rings and native graph canvases are drawn.
-        assertEquals(10, context.uiVersion)
+        // Android draws version 11 scenes in addition to the gauge and graph components.
+        assertEquals(11, context.uiVersion)
         assertEquals(java.util.TimeZone.getDefault().id, context.tz)
         assertFalse(context.locale.isNullOrEmpty())
     }
