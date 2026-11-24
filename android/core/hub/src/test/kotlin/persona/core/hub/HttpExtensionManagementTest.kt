@@ -453,8 +453,9 @@ class HttpExtensionManagementTest {
     @Test fun theDeviceContextIsThePhones() {
         val context = HttpExtensionManagement.deviceContext()
         assertEquals("android", (context.platform).zhAny())
-        // UI versions 9 and 10 (#9337, #9727): gauge rings and native graph canvases are drawn.
-        assertEquals(10, context.uiVersion)
+        // Android renders the version 12 map. It still requests the hub's fallback for a scene.
+        assertEquals(12, context.uiVersion)
+        assertEquals(listOf("scene"), context.unsupported)
         assertEquals(java.util.TimeZone.getDefault().id, context.tz)
         assertFalse(context.locale.isNullOrEmpty())
     }
