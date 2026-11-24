@@ -1,0 +1,125 @@
+name: iPhone search match verification
+on:
+  push:
+    branches: [verify/14320-search-arm]
+permissions:
+  contents: read
+jobs:
+  search:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare the focused iOS test project and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          :
+          xcodebuild -version
+          brew install xcodegen
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          pins=apple/Packages/PersonaSSH/Package.resolved
+          cp "$pins" "$RUNNER_TEMP/checked-in-pins.json"
+          python3 scripts/ci/apple_resolved.py --tracked "$RUNNER_TEMP/checked-in-pins.json" --staged "$pins" --meta NO --evidence "$RUNNER_TEMP/pins-report.txt"
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          project = Path("apple/project.yml")
+          spec = project.read_text()
+          def only(target, files, text):
+              marker = rf"(\n  {target}:\n    type:.+?\n    platform: iOS\n    sources:\n).*?(\n    dependencies:\n)"
+              files = "\n".join("      - path: " + path for path in files)
+              result, count = re.subn(marker, lambda m: m[1] + files + m[2], text, count=1, flags=re.S)
+              assert count == 1, target
+              return result
+          spec = only("PersonaTests", ["PersonaTests/AssistantChatSearchTests.swift", "PersonaTests/KnowledgeTests.swift"], spec)
+          spec = only("PersonaUITests", ["PersonaUITests/AssistantChatSearchUITests.swift", "PersonaUITests/KnowledgeSearchTests.swift", "PersonaUITests/UITestStyle.swift"], spec)
+          project.write_text(spec)
+          knowledge = Path("apple/PersonaUITests/KnowledgeSearchTests.swift")
+          source = knowledge.read_text()
+          marker = '        try? app.screenshot().pngRepresentation.write('
+          line = next(line for line in source.splitlines() if line.startswith(marker))
+          knowledge.write_text(source.replace(line, """        let attachment = XCTAttachment(screenshot: app.screenshot())
+                  attachment.name = name
+                  attachment.lifetime = .keepAlways
+                  add(attachment)"""))
+          PY
+          xcodegen generate --spec apple/project.yml --project apple
+          workspace_pins=apple/Persona.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          mkdir -p "$(dirname "$workspace_pins")"
+          cp "$pins" "$workspace_pins"
+          xcodebuild -quiet -project apple/Persona.xcodeproj -scheme Persona -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" -resolvePackageDependencies
+      - name: Build the app and search test bundles once
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -quiet build-for-testing -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/derived" \
+            -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= "ARCHS=$(uname -m)" ONLY_ACTIVE_ARCH=YES
+          ditto -c -k --keepParent "$RUNNER_TEMP/derived/Build/Products" "$RUNNER_TEMP/persona-search-products.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: persona-search-products
+          path: ${{ runner.temp }}/persona-search-products.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Check the two search screens in light and dark
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          out="$RUNNER_TEMP/search-evidence"
+          mkdir -p "$out"
+          export TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18760
+          PORT=18760 MOCK_CHAT_SEARCH=1 python3 -u scripts/mock/mock_hub.py > "$out/mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 45 --retry-connrefused --retry-delay 2 "$TEST_RUNNER_PERSONA_MOCK_HUB/api/v1/health"
+          sim=$(scripts/app/sim-boot.sh --profile stock "Persona 14320 Search")
+          xcrun simctl status_bar "$sim" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState unplugged --batteryLevel 100
+          plan=$(find "$RUNNER_TEMP/derived/Build/Products" -maxdepth 1 -name '*.xctestrun' | head -1)
+          test -n "$plan"
+          verify() {
+            local key=$1
+            shift
+            local bundle="$RUNNER_TEMP/$key.xcresult"
+            local result=0
+            xcodebuild -quiet test-without-building -xctestrun "$plan" -destination "id=$sim" \
+              -parallel-testing-enabled NO -resultBundlePath "$bundle" "$@" > "$out/$key.log" 2>&1 || result=$?
+            tail -45 "$out/$key.log"
+            if [[ -d "$bundle" ]]; then
+              xcrun xcresulttool get test-results summary --path "$bundle" > "$out/$key-results.json" || true
+              xcrun xcresulttool export attachments --path "$bundle" --output-path "$out/$key" || true
+            fi
+            return "$result"
+          }
+          result=0
+          verify unit -only-testing:PersonaTests/AssistantChatSearchTests -only-testing:PersonaTests/KnowledgeTests || result=1
+          for appearance in light dark; do
+            xcrun simctl ui "$sim" appearance "$appearance"
+            verify "$appearance" -only-testing:PersonaUITests/AssistantChatSearchUITests/testFindsAChatByTheUsersWordsAndOpensItThere \
+              -only-testing:PersonaUITests/KnowledgeSearchTests/testAHitOpensAtTheMatchAndBackKeepsTheResults || result=1
+          done
+          exit "$result"
+      - name: Save iPhone screenshots and results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-14320-search-evidence
+          path: ${{ runner.temp }}/search-evidence
+          if-no-files-found: warn
+          retention-days: 7
