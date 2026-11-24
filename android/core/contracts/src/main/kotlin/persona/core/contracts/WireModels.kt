@@ -6,6 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.json.*
+import persona.core.contracts.api.ExtensionView
 
 @KeepGeneratedSerializer
 @Serializable(with = MachineSystemSerializer::class)
@@ -66,6 +67,8 @@ data class Fold(
     val images: List<FoldImage> = emptyList(),
     /** What the folded items used (#5426). Omitted when none of them carried usage, and from older nodes. */
     val usage: List<TokenUsage> = emptyList(),
+    /** Out-of-band views belonging to folded tool results. */
+    @SerialName("tool_views") val toolViews: List<ExtensionView> = emptyList(),
 )
 
 /**
