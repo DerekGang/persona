@@ -49,6 +49,8 @@ import persona.core.designsystem.JTopBar
 import persona.core.designsystem.PersonaTheme
 import persona.core.designsystem.Tokens
 import persona.core.designsystem.Tone
+import persona.core.designsystem.hue
+import persona.core.designsystem.tone
 import java.net.URI
 import kotlin.math.abs
 
@@ -103,11 +105,12 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
     val title = item.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.settings_ext_map)
     val description = item.alt?.takeIf { it.isNotBlank() } ?: title
     var expanded by remember(item.key) { mutableStateOf(false) }
-    var routeID by remember(item.key, routes.map { it.id }) { mutableStateOf(routes.firstOrNull { it.selected == true }?.id ?: routes.firstOrNull()?.id) }
+    var chosenRouteID by remember(item.key) { mutableStateOf<String?>(null) }
     var stopID by remember(item.key) { mutableStateOf<String?>(null) }
     var scale by remember(item.key) { mutableStateOf(1f) }
     var pan by remember(item.key) { mutableStateOf(Offset.Zero) }
-    val selectedRoute = routes.firstOrNull { it.id == routeID }
+    val selectedRoute = routes.firstOrNull { it.id == chosenRouteID } ?: routes.firstOrNull { it.selected == true } ?: routes.firstOrNull()
+    val routeID = selectedRoute?.id
     val markerColors = markers.map { marker ->
         ExtensionViewText.hue(marker.color)?.let(palette::hue)?.dot
             ?: ExtensionViewText.tone(marker.tone).takeIf { it != Tone.Neutral }?.let(palette::tone)?.dot
@@ -118,24 +121,29 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
                 else -> palette.accent
             }
     }
-    val routeColor = ExtensionViewText.hue(selectedRoute?.color)?.let(palette::hue)?.dot
-        ?: ExtensionViewText.tone(selectedRoute?.tone).takeIf { it != Tone.Neutral }?.let(palette::tone)?.dot
-        ?: palette.accent
+    val routeColors = routes.map { route ->
+        ExtensionViewText.hue(route.color)?.let(palette::hue)?.dot
+            ?: ExtensionViewText.tone(route.tone).takeIf { it != Tone.Neutral }?.let(palette::tone)?.dot
+            ?: palette.accent
+    }
     val openLabel = stringResource(R.string.settings_ext_map_expand)
     val close = { expanded = false }
 
     Column(modifier.fillMaxWidth().testTag("extension-map"), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
         item.title?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.callout, color = palette.ink) }
         if (frame == null) Text(description, style = type.body, color = palette.ink2)
-        else MapCanvas(frame, selectedRoute, markers, markerColors, routeColor, stopID, description,
+        else MapCanvas(frame, routes, routeColors, routeID, markers, markerColors, stopID, description,
             Modifier.fillMaxWidth().aspectRatio(mapAspect(item.aspect)).then(if (staticMap) Modifier else Modifier.clickable(
                 role = Role.Button, onClickLabel = openLabel,
             ) { expanded = true }))
         selectedRoute?.let { Text(routeWords(it), style = type.caption, color = palette.ink2) }
         item.caption?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink3) }
         if (item.showList == true || item.showList == null && !compact && (routes.size > 1 || markers.size > 1)) {
-            MapList(item, routes, markers, routeID, stopID, state, handle, staticMap, { routeID = it }, { stopID = it })
-        } else MapLinks(item, handle)
+            val limit = if (compact && !staticMap) 3 else Int.MAX_VALUE
+            MapRoutes(routes.take(limit), routeID, staticMap) { chosenRouteID = it }
+            MapStops(item, markers.take(limit), stopID, state, handle, staticMap) { stopID = it }
+        }
+        MapLinks(item, handle)
     }
 
     if (expanded && !staticMap && frame != null) JFullScreen(onDismiss = close) {
@@ -148,7 +156,7 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
                     pan += movement
                 }
                 val hit = with(LocalDensity.current) { Tokens.Space.l.toPx() }
-                MapCanvas(frame, selectedRoute, markers, markerColors, routeColor, stopID, description,
+                MapCanvas(frame, routes, routeColors, routeID, markers, markerColors, stopID, description,
                     Modifier.fillMaxWidth().aspectRatio(mapAspect(item.aspect)).transformable(transform)
                         .pointerInput(frame, markers, scale, pan) {
                             detectTapGestures { touch ->
@@ -164,16 +172,21 @@ internal fun ExtensionMap(item: ExtensionViewItem, state: ExtensionViewState, ha
                         kind = JButtonKind.Secondary, enabled = scale > 1f)
                     JButton(stringResource(R.string.settings_ext_map_reset), { scale = 1f; pan = Offset.Zero }, kind = JButtonKind.Secondary)
                 }
-                if (item.showList != false) MapList(item, routes, markers, routeID, stopID, state, handle, false, { routeID = it }, { stopID = it })
-                else MapLinks(item, handle)
+                if (routes.size > 1 || item.showList != false) {
+                    MapRoutes(routes, routeID, staticMap = false) { chosenRouteID = it }
+                }
+                val stops = if (item.showList == false) markers.filter { it.id == stopID } else markers
+                MapStops(item, stops, stopID, state, handle, staticMap = false) { stopID = it }
+                MapLinks(item, handle)
             }
         }
     }
 }
 
 @Composable
-private fun MapCanvas(frame: MapFrame, route: ExtensionMapRoute?, markers: List<ExtensionMapMarker>, markerColors: List<Color>,
-                      strokeColor: Color, stopID: String?, description: String, modifier: Modifier, zoom: Float = 1f, pan: Offset = Offset.Zero) {
+private fun MapCanvas(frame: MapFrame, routes: List<ExtensionMapRoute>, routeColors: List<Color>, routeID: String?,
+                      markers: List<ExtensionMapMarker>, markerColors: List<Color>, stopID: String?, description: String,
+                      modifier: Modifier, zoom: Float = 1f, pan: Offset = Offset.Zero) {
     val palette = PersonaTheme.palette
     val pin = Tokens.Space.xs
     val ring = Tokens.Space.xxs
@@ -186,16 +199,22 @@ private fun MapCanvas(frame: MapFrame, route: ExtensionMapRoute?, markers: List<
             drawLine(palette.line, Offset(x, 0f), Offset(x, size.height))
             drawLine(palette.line, Offset(0f, y), Offset(size.width, y))
         }
-        route?.points?.takeIf { it.size > 1 }?.let { points ->
+        fun drawRoute(route: ExtensionMapRoute, color: Color, active: Boolean) {
+            val points = route.points
+            if (points.size < 2) return
             val path = Path()
             val first = project(points.first())
             path.moveTo(first.x, first.y)
-            for (point in points.drop(1)) {
-                val pos = project(point)
+            for (index in 1 until points.size) {
+                val pos = project(points[index])
                 path.lineTo(pos.x, pos.y)
             }
-            drawPath(path, strokeColor, style = Stroke(width = pin.toPx()))
+            drawPath(path, if (active) color else color.copy(alpha = 0.55f),
+                style = Stroke(width = if (active) pin.toPx() else ring.toPx()))
         }
+        val selected = routes.indexOfFirst { it.id == routeID }
+        routes.forEachIndexed { index, route -> if (index != selected) drawRoute(route, routeColors[index], false) }
+        if (selected >= 0) drawRoute(routes[selected], routeColors[selected], true)
         markers.forEachIndexed { index, marker ->
             val pos = project(marker.point())
             val radius = if (marker.id == stopID) pin.toPx() + ring.toPx() else pin.toPx()
@@ -215,15 +234,18 @@ private fun routeWords(route: ExtensionMapRoute): String = route.summary?.takeIf
 ).joinToString(" · ")
 
 @Composable
-private fun MapList(item: ExtensionViewItem, routes: List<ExtensionMapRoute>, markers: List<ExtensionMapMarker>,
-                    routeID: String?, stopID: String?, state: ExtensionViewState, handle: ExtensionViewHandle, staticMap: Boolean,
-                    selectRoute: (String) -> Unit, selectStop: (String) -> Unit) {
+private fun MapRoutes(routes: List<ExtensionMapRoute>, routeID: String?, staticMap: Boolean, selectRoute: (String) -> Unit) {
     routes.forEachIndexed { position, route ->
         JRow(route.label?.takeIf { it.isNotBlank() } ?: stringResource(R.string.settings_ext_map_route, position + 1),
             modifier = Modifier.testTag("extension-map-route-${route.id}").semantics { selected = route.id == routeID },
             subtitle = routeWords(route).takeIf { it.isNotBlank() }, selected = route.id == routeID,
             onClick = if (staticMap) null else ({ selectRoute(route.id) }))
     }
+}
+
+@Composable
+private fun MapStops(item: ExtensionViewItem, markers: List<ExtensionMapMarker>, stopID: String?, state: ExtensionViewState,
+                     handle: ExtensionViewHandle, staticMap: Boolean, selectStop: (String) -> Unit) {
     for (marker in markers) {
         val action = marker.action?.toViewAction()
         JRow(marker.label, subtitle = if (marker.id == stopID) marker.detail ?: marker.subtitle else marker.subtitle,
@@ -231,7 +253,6 @@ private fun MapList(item: ExtensionViewItem, routes: List<ExtensionMapRoute>, ma
             selected = marker.id == stopID, enabled = !state.busy,
             onClick = if (staticMap) null else ({ selectStop(marker.id); action?.let { handle.press(item, it) } }))
     }
-    MapLinks(item, handle)
 }
 
 @Composable

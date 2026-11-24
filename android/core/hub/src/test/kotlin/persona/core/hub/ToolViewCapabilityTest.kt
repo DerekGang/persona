@@ -27,5 +27,4 @@ class ToolViewCapabilityTest {
         assertEquals("Backup route", transport.fullItem(key, "result").toolViews.single().title)
         assertEquals(listOf("tool_views", "tool_views"), capabilities)
     }
-
 }

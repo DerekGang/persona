@@ -3,7 +3,7 @@ package persona.core.domain.lines
 import persona.core.contracts.Item
 import persona.core.contracts.api.ExtensionView
 
-private fun Item.views(): List<ExtensionView> = toolViews + fold?.toolViews.orEmpty()
+private fun Item.views(): List<ExtensionView> = toolViews + fold?.toolViews.orEmpty().mapNotNull { it.view }
 
 private fun WorkItem.views(): List<ExtensionView> = when (this) {
     is WorkItem.Tool -> call.use.item.views() + call.results.flatMap { it.item.views() }
