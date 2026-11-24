@@ -17,15 +17,13 @@ func TestSocketDirectorySupportsTheUnixPathLimit(t *testing.T) {
 	} else if runtime.GOOS != "darwin" {
 		t.Skip("Unix socket path limit is platform-specific")
 	}
-	base, err := os.MkdirTemp(os.TempDir(), "pc-")
+	// The boundary fixture needs a short base even when TMPDIR is deep.
+	base, err := os.MkdirTemp("/tmp", "pc-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(base) })
 	count := limit - len(filepath.Join(base, ".persona", "node-attach.sock")) - 1
-	if count < 1 {
-		t.Skip("temporary directory is already longer than the Unix socket limit")
-	}
 	home := filepath.Join(base, strings.Repeat("h", count))
 	if _, err := PrepareHome(home); err != nil {
 		t.Fatal(err)
