@@ -11029,6 +11029,8 @@ if os.environ.get("MOCK_CLAUDE_DESKTOP_ASK") == "1":
 
 
 def mock_interactions():
+    if os.environ.get("MOCK_PROJECT_HEADINGS") == "1":
+        return []
     # INTERACTIONS is the list the churn and bump switches change; MOCK_INTERACTIONS adds the expanded inbox. Both served.
     with REQUEST_LOCK:
         seen = {x["id"] for x in INTERACTIONS}

@@ -75,11 +75,11 @@ final class AgentsFilterCapsuleUITests: XCTestCase {
         }
         let desktop = projectButton("site · ~/Desktop")
         let code = projectButton("site · ~/code")
-        XCTAssertTrue(desktop.waitForExistence(timeout: 30), app.debugDescription)
-        for _ in 0..<4 where !code.isHittable { app.swipeUp(velocity: .slow) }
+        app.bringAboveTabBar(desktop)
+        app.bringAboveTabBar(code)
         XCTAssertTrue(code.isHittable, app.debugDescription)
         XCTAssertFalse(projectButton("No project").exists)
-        for _ in 0..<4 where !desktop.isHittable { app.swipeDown(velocity: .slow) }
+        for _ in 0..<8 where !desktop.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(desktop.isHittable, app.debugDescription)
         shot("project-headings-\(appearance)")
         desktop.tap()
