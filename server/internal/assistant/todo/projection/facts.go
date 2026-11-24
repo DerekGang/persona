@@ -84,6 +84,10 @@ type Facts struct {
 	Loc *time.Location `json:"-"`
 	// TodosV2 gates experimental New To-dos & Tasks projection rules (#14620); false preserves legacy behavior identically.
 	TodosV2 bool `json:"-"`
+	// An authorized start held before its computer reconnects.
+	DispatchWait   string    `json:"-"`
+	DispatchSince  time.Time `json:"-"`
+	DispatchCancel bool      `json:"-"`
 }
 
 // Agent is one of the to-do's runs (an Agent session) as the list links it (agents[]).

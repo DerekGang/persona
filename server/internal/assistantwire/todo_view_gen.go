@@ -290,6 +290,10 @@ type TodoSummary struct {
 	Inactive time.Time `json:"inactive,omitzero"`
 	// In Can wait: it needs the owner but can wait, and is not counted. Written only when true.
 	CanWait bool `json:"can_wait,omitempty"`
+	// The manager's explanation while this to-do waits for its computer or a start receipt.
+	DispatchWait string `json:"dispatch_wait,omitempty"`
+	// The owner can cancel this pending start through POST /api/v1/todos/{id}/start/cancel. Written only when true.
+	DispatchCancel bool `json:"dispatch_cancel,omitempty"`
 	// The asks that hold the row in Needs you or Can wait, the most urgent first; absent when none does.
 	Asks []OwnerAsk `json:"asks,omitempty"`
 	// Its steps; absent when it has none.
