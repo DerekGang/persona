@@ -68,12 +68,19 @@ final class AgentsFilterCapsuleUITests: XCTestCase {
                                "-openAgentsFresh", "YES", "-dev.grouping", "space", "-ui.scheme", appearance,
                                "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchPinned()
-        let add = app.buttons.matching(identifier: "agents.project.new")
-        let desktop = add.matching(NSPredicate(format: "label CONTAINS %@", "site · ~/Desktop")).firstMatch
-        let code = add.matching(NSPredicate(format: "label CONTAINS %@", "site · ~/code")).firstMatch
-        XCTAssertTrue(desktop.waitForExistence(timeout: 30))
-        XCTAssertTrue(code.exists)
-        XCTAssertFalse(add.matching(NSPredicate(format: "label CONTAINS %@", "No project")).firstMatch.exists)
+        XCTAssertTrue(filter("all").waitForExistence(timeout: 25))
+        func projectButton(_ heading: String) -> XCUIElement {
+            let predicate = NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "agents.project.new", heading)
+            return app.descendants(matching: .any).matching(predicate).firstMatch
+        }
+        let desktop = projectButton("site · ~/Desktop")
+        let code = projectButton("site · ~/code")
+        XCTAssertTrue(desktop.waitForExistence(timeout: 30), app.debugDescription)
+        for _ in 0..<4 where !code.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(code.isHittable, app.debugDescription)
+        XCTAssertFalse(projectButton("No project").exists)
+        for _ in 0..<4 where !desktop.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(desktop.isHittable, app.debugDescription)
         shot("project-headings-\(appearance)")
         desktop.tap()
         let directory = app.buttons["newChat.directory"].firstMatch
