@@ -435,7 +435,7 @@ internal fun AgentsScreen(
     // to-do; agents in several spaces, Mark all as read.
     val repoActions: @Composable (AgentListGroup) -> List<JAction> = { repo ->
         val space = page.spacesById[repo.id]
-        if (space != null) {
+        val actions = if (space != null) {
             val session = space.members.first().session
             val unread = space.members.filter { it.unseen }
             val todoSpace = session.todoSpaceName?.takeIf { model.tasks?.spacesSupported == true }
@@ -457,6 +457,7 @@ internal fun AgentsScreen(
             listOfNotNull(JAction(stringResource(R.string.agents_mark_all_read), PhIcons.Check, onClick = { confirmRead = unread })
                 .takeIf { unread.isNotEmpty() })
         }
+        actions + listOfNotNull(workspaceCopyPathAction(repo.workspace))
     }
     // "By machine" shows a herdr tab's agents as a group (#2320), as the web's sidebar; the other groupings list one agent a row
     val tabs = page.preferences.grouping == AgentGrouping.MachineSpace
@@ -800,7 +801,10 @@ internal fun AgentsScreen(
                             var sheet by remember { mutableStateOf(false) }
                             AgentRepoHeader(groupTitle, group.folded, { model.fold(group) }, Modifier.repoCard(slot.first, slot.last),
                                 onLongClick = if (actions.isEmpty()) null else ({ sheet = true }),
-                                actionsLabel = stringResource(R.string.agents_repo_actions))
+                                actionsLabel = stringResource(R.string.agents_repo_actions),
+                                main = group.worktree?.main == true,
+                                offline = group.worktree?.offline == true,
+                                pinned = group.worktree?.pinned == true)
                             if (sheet) JActionSheet(actions, { sheet = false }, title = groupTitle)
                         } else if (slot != null && group.repo != null) {
                             val line = group.worktree
@@ -816,12 +820,27 @@ internal fun AgentsScreen(
                             quiet = entry.quiet, sessions = group.totalCount ?: group.rows.size, counts = group.headingCounts,
                             waiting = group.waitingInBackground, flags = buildList {
                                 if (group.worktree?.pinned == true) add(RowFlag(stringResource(R.string.agents_row_pinned), PersonaIcons.pinned))
+                                if (group.repo == RepoLevel.Repository && group.worktree?.main == true) {
+                                    add(RowFlag(stringResource(persona.core.designsystem.R.string.designsystem_worktree_primary), PhIcons.House))
+                                }
+                                if (group.repo == RepoLevel.Repository && group.worktree?.offline == true) {
+                                    add(RowFlag(stringResource(persona.core.designsystem.R.string.designsystem_worktree_offline), PersonaIcons.offline))
+                                }
                                 if (space != null && space.preferenceKey in page.preferences.pins.spaces) add(RowFlag(stringResource(R.string.agents_flag_space_pinned), PhIcons.PushPin))
                                 if (space != null && space.preferenceKey in page.preferences.mutes.spaces) add(RowFlag(stringResource(R.string.agents_flag_space_muted), PhIcons.Prohibit))
                                 // iOS TodoSpaceTag: the project is on a to-do.
                                 space?.members?.first()?.session?.let { s -> s.todoSpaceName?.let { name -> todos.forSpace(s.machineId, name) } }
                                     ?.let { todo -> add(RowFlag(stringResource(R.string.agents_flag_space_todo, todo.title), PhIcons.ListChecks)) }
-                            }, menu = space?.let { { spaceMenu(it, true) } }, icon = group.repo?.icon,
+                            }, menu = if (group.workspace != null) {
+                                {
+                                    val actions = repoActions(group)
+                                    var sheet by remember { mutableStateOf(false) }
+                                    if (actions.isNotEmpty()) {
+                                        HeadingAction(PersonaIcons.moreMenu, stringResource(R.string.agents_repo_actions), { sheet = true })
+                                        if (sheet) JActionSheet(actions, { sheet = false }, title = groupTitle)
+                                    }
+                                }
+                            } else space?.let { { spaceMenu(it, true) } }, icon = group.repo?.icon,
                             kind = group.repo?.kind ?: stringResource(R.string.agents_kind_space))
                         else if (group.id.startsWith("todo/") && group.id != TodoNoneGroup && group.id != TodoManualGroup) {
                             // "By to-do" as iOS (#4338 A5): the to-do's title, its agents' count in the to-do's state, and
