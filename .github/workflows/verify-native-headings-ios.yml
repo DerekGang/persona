@@ -1,7 +1,7 @@
-name: Verify native headings and command input on iOS
+name: Verify native repository and project headings on iOS
 on:
   push:
-    branches: ['verify/13505-apple-combined-*']
+    branches: ['verify/13505-13558-native-rerun']
 permissions:
   contents: read
 jobs:
@@ -118,7 +118,7 @@ jobs:
             xcodebuild test-without-building -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
               -destination "id=$PERSONA_SIM" -derivedDataPath "$RUNNER_TEMP/derived" -parallel-testing-enabled NO \
               -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
-              -testLanguage en -testRegion US -resultBundlePath "$out/$appearance.xcresult" "${selection[@]}" \
+              -testLanguage zh-Hans -testRegion CN -resultBundlePath "$out/$appearance.xcresult" "${selection[@]}" \
               2>&1 | tee "$out/$appearance.log" || status=1
             for name in project-headings project-new-agent; do
               if [[ ! -s "$out/$name-$appearance.png" ]]; then
@@ -133,56 +133,5 @@ jobs:
         with:
           name: persona-13558-ios
           path: ${{ runner.temp }}/persona-13558-ios
-          if-no-files-found: warn
-          retention-days: 2
-      - name: Test command input and capture both appearances
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/persona-14567-ios"
-          mkdir -p "$out"
-          test_status=0
-          port=18770
-          for fixture in light-standard dark-standard light-largest dark-largest light-decline light-refuse light-fold; do
-            appearance="${fixture%%-*}"
-            size="${fixture#*-}"
-            mode=send
-            largest=0
-            unmasked=0
-            refuse=0
-            case "$size" in
-              largest) largest=1 ;;
-              decline) mode=decline; unmasked=1 ;;
-              refuse) mode=refuse; refuse=1 ;;
-              fold) mode=fold ;;
-            esac
-            port=$((port + 1))
-            hub="http://127.0.0.1:$port"
-            PORT="$port" MOCK_MANAGERS=1 MOCK_SESSIONS_LIST=1 MOCK_COMMAND_INPUT=1 MOCK_COMMAND_INPUT_UNMASKED="$unmasked" \
-              MOCK_COMMAND_INPUT_REFUSAL="$refuse" python3 -Bu scripts/mock/mock_hub.py > "$out/mock-$fixture.log" 2>&1 &
-            fixture_pid=$!
-            trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
-            curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 "$hub/api/v1/health"
-            xcrun simctl ui "$PERSONA_SIM" appearance "$appearance"
-            export TEST_RUNNER_PERSONA_MOCK_HUB="$hub" TEST_RUNNER_PERSONA_STYLE="$appearance" TEST_RUNNER_PERSONA_SHOTS="$out"
-            export TEST_RUNNER_PERSONA_COMMAND_INPUT_MODE="$mode" TEST_RUNNER_PERSONA_COMMAND_INPUT_LARGE="$largest"
-            xcodebuild test-without-building -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
-              -destination "id=$PERSONA_SIM" -derivedDataPath "$RUNNER_TEMP/derived" -parallel-testing-enabled NO \
-              -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
-              -testLanguage en -testRegion US -resultBundlePath "$out/$fixture.xcresult" \
-              -only-testing:PersonaUITests/PermissionInputUITests/testCommandInputUsesOneExplicitReply \
-              2>&1 | tee "$out/$fixture.log" || test_status=1
-            if [[ "$mode" = send && ! -s "$out/command-input-$appearance-$size.png" ]]; then test_status=1; fi
-            kill "$fixture_pid" 2>/dev/null || true
-            wait "$fixture_pid" 2>/dev/null || true
-            trap - EXIT
-          done
-          exit "$test_status"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: persona-14567-ios
-          path: ${{ runner.temp }}/persona-14567-ios
           if-no-files-found: warn
           retention-days: 2
