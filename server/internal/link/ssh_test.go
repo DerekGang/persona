@@ -585,7 +585,7 @@ func testSSHReconnectLifecycle(t *testing.T, beforeInitialWrites func(*sshHarnes
 	}()
 	t.Cleanup(func() { cancel(); <-done })
 
-	st1 := waitForSSHReady(t, ch, func(s Status) bool { return s.State == "connected" && s.Kind == KindSSH })
+	st1 := waitForLinkReady(t, ch, func(s Status) bool { return s.State == "connected" && s.Kind == KindSSH })
 	runs1 := ssh.runs()
 	if len(runs1) != 1 {
 		t.Fatalf("expected 1 ssh process, got %d", len(runs1))
@@ -596,7 +596,7 @@ func testSSHReconnectLifecycle(t *testing.T, beforeInitialWrites func(*sshHarnes
 	if err := osproc.Kill(pid1); err != nil {
 		t.Fatal(err)
 	}
-	st2 := waitForSSHReady(t, ch, func(s Status) bool { return s.State == "connected" && s.Kind == KindSSH && s.Conn > st1.Conn })
+	st2 := waitForLinkReady(t, ch, func(s Status) bool { return s.State == "connected" && s.Kind == KindSSH && s.Conn > st1.Conn })
 	runs2 := ssh.runs()
 	if len(runs2) < 2 {
 		t.Fatalf("expected a new ssh process after kill, got %d", len(runs2))
@@ -617,7 +617,7 @@ func testSSHReconnectLifecycle(t *testing.T, beforeInitialWrites func(*sshHarnes
 	if _, err := SetMode(path, ModeActive, ""); err != nil {
 		t.Fatal(err)
 	}
-	waitForSSHReady(t, ch, func(s Status) bool {
+	waitForLinkReady(t, ch, func(s Status) bool {
 		return s.Mode == ModeActive && s.State == "connected" && s.Kind == KindSSH && s.Conn > st2.Conn
 	})
 	runs3 := ssh.runs()

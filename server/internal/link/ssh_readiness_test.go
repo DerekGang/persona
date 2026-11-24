@@ -10,17 +10,17 @@ import (
 	"github.com/nwverse/persona/server/internal/osproc"
 )
 
-// sshReady also requires the ordered endpoints and node messages, so lifecycle actions cannot close the socket while
+// linkReady also requires the ordered endpoints and node messages, so lifecycle actions cannot close the socket while
 // those initial writes are still pending.
-func sshReady(s Status, connected func(Status) bool) bool {
+func linkReady(s Status, connected func(Status) bool) bool {
 	return connected(s) && s.HubName == "home" && s.Node == "online"
 }
 
-// waitForSSHReady is the shared readiness gate for SSH lifecycle actions. The
+// waitForLinkReady is the shared readiness gate for link lifecycle actions. The
 // connected match keeps each lifecycle step's connection and mode requirements.
-func waitForSSHReady(t *testing.T, ch chan Status, connected func(Status) bool) Status {
+func waitForLinkReady(t *testing.T, ch chan Status, connected func(Status) bool) Status {
 	t.Helper()
-	return waitFor(t, ch, func(s Status) bool { return sshReady(s, connected) })
+	return waitFor(t, ch, func(s Status) bool { return linkReady(s, connected) })
 }
 
 func TestSSHLifecycleReadinessObservesInitialHubMessages(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSSHLifecycleReadinessObservesInitialHubMessages(t *testing.T) {
 		ch <- Status{State: "connected", Kind: KindSSH, Conn: 1, HubName: "home", Node: "unknown"}
 		ch <- Status{State: "connected", Kind: KindSSH, Conn: 1, HubName: "home", Node: "online"}
 
-		st := waitForSSHReady(t, ch, connected)
+		st := waitForLinkReady(t, ch, connected)
 		if st.HubName != "home" || st.Node != "online" {
 			t.Fatalf("SSH lifecycle became ready before the hub's initial endpoints and node messages were observed: %+v", st)
 		}
@@ -45,7 +45,7 @@ func TestSSHLifecycleReadinessObservesInitialHubMessages(t *testing.T) {
 		want := Status{State: "connected", Kind: KindSSH, Conn: 1, HubName: "home", Node: "online"}
 		ch <- want
 
-		if got := waitForSSHReady(t, ch, connected); !reflect.DeepEqual(got, want) {
+		if got := waitForLinkReady(t, ch, connected); !reflect.DeepEqual(got, want) {
 			t.Fatalf("ready SSH status = %+v, want %+v", got, want)
 		}
 	})
@@ -79,7 +79,7 @@ func TestSSHReconnectInitialWriteBoundary(t *testing.T) {
 		connected := func(s Status) bool {
 			return s.State == "connected" && s.Kind == KindSSH && s.Conn > firstConn.Load()
 		}
-		if sshReady(st, connected) {
+		if linkReady(st, connected) {
 			pid := runs[len(runs)-1].PID
 			if err := osproc.Kill(pid); err != nil {
 				t.Errorf("kill premature-ready reconnect: %v", err)
