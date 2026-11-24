@@ -343,11 +343,10 @@ nonisolated struct AgentListProjection: Sendable {
         let plan = AgentSearchPlan.compile(query: settings.query, settings: settings)
         result.searchPlan = plan
         let parsed = plan.parsed
-        let nativePins = Set(input.workspaces.filter { $0.source == "paseo" && $0.pinnedAt != nil }.map(\.key))
+        let nativePins = Set(input.workspaces.filter { ($0.source == "paseo" || $0.source == "herdr") && $0.pinnedAt != nil }.map(\.key))
         let inPinnedWorkspace: (Session) -> Bool = { session in
-            guard settings.grouping == "repo", session.archived != true, session.spaceKind == "paseo",
-                  let id = session.workspaceID else { return false }
-            return nativePins.contains(session.machineRef.path + "/paseo:" + id)
+            guard settings.grouping == "repo", session.archived != true, let key = RepoTree.catalogKey(session) else { return false }
+            return nativePins.contains(key)
         }
         // A side session lives in its parent's chat (#7944): a paged window's rows fold here, once per revision (the
         // model's own list is folded already, and folding it again changes nothing). Then the folded children are not
@@ -454,10 +453,13 @@ nonisolated struct AgentListProjection: Sendable {
                 if !machine.online { workspace.online = false }
                 return workspace
             }
+            let known = forest.roots.filter { !$0.assistant && $0.archived != true &&
+                ($0.hiddenByDirectory != true || settings.listQuery.includeHidden) }
             result.tree = RepoTree.build(result.unpinned.filter { $0.archived != true && ($0.state.isLive || inPinnedWorkspace($0)) }, machines: input.machines.map(\.ref),
                                          workspaces: catalog, includeEmpty: settings.filter == .all,
                                          showEmptyWorkspaces: settings.showEmptyWorkspaces, search: settings.query,
-                                         navigationSessions: result.pinnedAgents.filter { $0.archived != true })
+                                         navigationSessions: result.pinnedAgents.filter { $0.archived != true },
+                                         homes: result.machinesByRef.compactMapValues(\.home), knownSessions: known)
             result.byHost = settings.machine.isEmpty && result.tree.count > 1
             for host in result.tree {
                 for repo in host.repos {

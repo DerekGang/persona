@@ -343,6 +343,17 @@ if RESUME_TERMINAL:
 # ---------- workspaces (GET /api/v1/workspaces, docs/web/workspace-board.md) ----------
 # A few host spaces and session folders on the mock machines: what the assistant's @ menu lists (#5594). Placeholders.
 def mock_workspaces():
+    if os.environ.get("MOCK_HERDR_REPOSITORIES"):
+        return [
+            {"id": "repo-main", "machine_id": "macbook", "source": "herdr", "source_id": "w81",
+             "title": "Main checkout", "cwd": "/Users/me/code/repo-fixture", "online": True, "available": True},
+            {"id": "repo-linked", "machine_id": "macbook", "source": "herdr", "source_id": "w82",
+             "title": "Active tree", "cwd": "/Users/me/.herdr/worktrees/repo-fixture/active",
+             "branch": "feature/active", "online": True, "available": True},
+            {"id": "repo-notes", "machine_id": "macbook", "source": "herdr", "source_id": "w84",
+             "title": "notes-fixture", "cwd": "/Users/me/code/notes-fixture",
+             "online": True, "available": False, "pinned_at": "2026-11-16T10:00:00Z"},
+        ]
     rows = [("server", "herdr", "persona", "/home/me/code/persona", "master"), ("macbook", "herdr", "weather-app", "/Users/me/code/weather-app", "main"),
             ("macbook", "session", "notes", "/Users/me/notes", ""), ("studio", "herdr", "site", "/Users/me/code/site", "redesign")]
     result = [{"id": f"{m}:{src}:{i}", "machine_id": m, "source": src, "source_id": str(i), "title": t, "cwd": cwd,
@@ -1158,6 +1169,23 @@ if os.environ.get("MOCK_WORKTREES") == "1":
              "idle", "idle", "weather", 1, "crash", 6, 180, "横屏时小组件不再崩溃，补了一条快照测试。", seen_at=ago(minutes=170)),
         sess("macbook", "a1f3c2d4-0000-4000-8000-0000000000c3", "整理读书笔记", "/Users/me/code/notes",
              "idle", "idle", "notes", 4, "1", 1, 60 * 48, "按主题整理好了，每本书一页。", seen_at=ago(days=2)),
+    ]
+
+# MOCK_HERDR_REPOSITORIES=1 (#13505): an active and a removed linked tree, plus a pinned unavailable folder workspace.
+if os.environ.get("MOCK_HERDR_REPOSITORIES"):
+    _root = "/Users/me/code/repo-fixture"
+    _trees = "/Users/me/.herdr/worktrees/repo-fixture"
+    SESSIONS[:] = [
+        sess("macbook", "a1f3c2d4-0000-4000-8000-000000013501", "Main checkout agent", _root,
+             "working", "working", "Main checkout", 81, "main", 1, 1, "Reviewing the main checkout.",
+             repo_root=_root, worktree=_root),
+        sess("macbook", "a1f3c2d4-0000-4000-8000-000000013502", "Active tree agent", _trees + "/active",
+             "working", "working", "Active tree", 82, "active", 1, 2, "Reviewing an active worktree.",
+             repo_root=_root, worktree=_trees + "/active", branch="feature/active"),
+        sess("macbook", "a1f3c2d4-0000-4000-8000-000000013503", "Removed tree agent", _trees + "/removed",
+             "done", "unread", "Removed tree", 83, "removed", 1, 3, "This worktree's changes were merged."),
+        sess("macbook", "a1f3c2d4-0000-4000-8000-000000013504", "Notes agent", "/Users/me/code/notes-fixture",
+             "working", "working", "notes-fixture", 84, "notes", 1, 4, "Organizing example notes."),
     ]
 
 # MOCK_SHARED_FOLDER=1 (#5715): one folder two repositories claim, on Mac Studio. Three Claude desktop chats (one finished
