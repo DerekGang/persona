@@ -37,6 +37,7 @@ import persona.core.contracts.api.MessageSender
 import persona.core.contracts.api.OutboxMessage
 import persona.core.contracts.api.SessionsRepository
 import persona.core.domain.sort.AgentGrouping
+import persona.core.domain.sort.AgentSeenRows
 import persona.core.domain.sort.AgentSession
 
 /**
@@ -65,6 +66,7 @@ class AgentsJustFinishedTest {
     }
 
     @Test fun openingItHoldsItsPlaceDrawnSeenUntilTheChatIsLeft() = runBlocking {
+        preferences.setSeenRows(AgentSeenRows.Leave)
         model = model()
         awaitSection("state/just_finished", "machine/finished")
         assertTrue(row("machine/finished").showsJustFinished)
@@ -93,10 +95,51 @@ class AgentsJustFinishedTest {
         awaitSection("state/just_finished", "machine/finished")
         val unseen = model!!.page.value.spaces.flatMap { it.members }.filter { it.unseen }
         assertEquals(listOf("machine/finished"), unseen.map { it.id })
-        model!!.markRead(unseen)
+        model!!.markRead(unseen, clear = true)
         // Before the hub answers: the hub's list still has the flag.
         awaitIdle("machine/finished", "machine/seen")
         assertTrue(sessions.value.first().work!!.justFinished)
+    }
+
+    @Test fun fiveRowsStayInUnreadAfterTheyAreReadUntilRefresh() = runBlocking {
+        val unread = (1..5).map { session("unread-$it", "unread") }
+        val keys = unread.map { it.key.path }
+        sessions.value += unread
+        model = model()
+        awaitSection("state/unread", *keys.toTypedArray())
+
+        for (session in unread) {
+            visible.value = session.key
+            preferences.markSeen(listOf(session))
+            visible.value = null
+            withTimeout(10_000) {
+                model!!.page.first { page -> page.list.groups.singleOrNull { it.id == "state/unread" }?.heldSeen?.contains(session.key.path) == true }
+            }
+        }
+        val section = model!!.page.value.list.groups.single { it.id == "state/unread" }
+        assertEquals(keys, section.heldSeen)
+        assertEquals(0, section.sectionCount)
+
+        model!!.refresh()
+        withTimeout(10_000) {
+            model!!.page.first { page ->
+                page.list.groups.none { it.id == "state/unread" } &&
+                    page.list.groups.singleOrNull { it.id == "state/idle" }?.rows?.map { it.id }?.containsAll(keys) == true
+            }
+        }
+    }
+
+    @Test fun clearerLeavesOnlyUnseenRowsInTheSelectedSection() = runBlocking {
+        val unread = listOf(session("unread-one", "unread"), session("unread-two", "unread"))
+        sessions.value += unread
+        model = model()
+        awaitSection("state/unread", *unread.map { it.key.path }.toTypedArray())
+        preferences.markSeen(listOf(unread.first()))
+        val heldSection = withTimeout(10_000) {
+            model!!.page.first { it.list.groups.any { group -> group.heldSeen.contains(unread.first().key.path) } }
+        }.list.groups.single { it.id == "state/unread" }
+        model!!.clearSeen(heldSection.heldSeen.toSet())
+        awaitSection("state/unread", unread.last().key.path)
     }
 
     @Test fun aSeenChatHoldsNothingAndLeavesJustFinishedAsItIs() = runBlocking {

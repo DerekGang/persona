@@ -351,7 +351,7 @@ internal val AgentListGroup.stateSectionCounts: List<Pair<Status, Int>>?
             "muted", "idle" -> Status.Idle
             else -> return null
         }
-        return listOf(status to (totalCount ?: rows.count { !it.isNestedSubtask }))
+        return listOf(status to (totalCount ?: rows.count { !it.isNestedSubtask && it.seenPlace == null }))
     }
 
 /** "By to-do"'s "Opened by hand" and "No to-do": one count of their agents, as iOS's sections without a to-do. */

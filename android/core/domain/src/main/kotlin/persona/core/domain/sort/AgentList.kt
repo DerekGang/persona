@@ -46,6 +46,8 @@ data class AgentListSettings(
      * Null: use the saved set.
      */
     val pendingFoldedTabs: Set<String>? = null,
+    /** Where rows seen during this visit stay until the next list refresh. */
+    val heldSeen: Map<String, AgentSeenPlace> = emptyMap(),
 ) {
     private val nativePinnedWorkspaces by lazy {
         workspaces.filter { it.source == "paseo" && it.nativePinTime != null }
@@ -158,7 +160,10 @@ data class AgentListGroup(
      * apart from Working, with a clock, as iOS's `StateCounts` does.
      */
     val waitingInBackground: Int = 0,
-)
+) {
+    val heldSeen: List<String> get() = rows.mapNotNull { row -> row.id.takeIf { row.seenPlace != null } }
+    val sectionCount: Int get() = totalCount ?: rows.count { it.seenPlace == null }
+}
 
 data class AgentListResult(
     val counts: Map<AgentQuickFilter, Int>,
@@ -282,7 +287,10 @@ fun buildFlatAgentList(
             base.count { row -> !row.isNestedSubtask && filter.matches(row) &&
                 (filter != AgentQuickFilter.Feishu || settings.grouping == AgentGrouping.Recent || settings.draws(row, pins)) }
         }
-    val filtered = base.filter { settings.quick.matches(it) || it.id in settings.kept }
+    val filtered = base.map { it.placingSeenRow(settings.heldSeen[it.id], mutes) }.filter {
+        settings.quick.matches(it) || it.id in settings.kept ||
+            settings.quick == AgentQuickFilter.Unread && it.seenPlace == AgentSeenPlace.Unread
+    }
     val pinned = filtered.filter { it.id in pins.sessions }.sortedBy { pins.sessions.indexOf(it.id) }
     val live = filtered.filter { it.id !in pins.sessions && settings.draws(it, pins) }
     val quick = settings.quick != AgentQuickFilter.All
@@ -305,7 +313,9 @@ fun buildFlatAgentList(
         group("pinned", CoreText.of(Key.AgentsPinned), pinned, pinned)
         else AgentListGroup("pinned", CoreText.of(Key.AgentsPinned), pinned, pinned, waitingInBackground = waiting(pinned))
     var quietTitle: CoreText? = null
-    fun stateCounts(rows: List<AgentSession>) = AgentState.entries.associateWith { state -> rows.count { !it.isNestedSubtask && it.state == state } }
+    fun stateCounts(rows: List<AgentSession>) = AgentState.entries.associateWith { state ->
+        rows.count { !it.isNestedSubtask && it.state == state }
+    }
     // "By direction"'s parts (#4352): a heading holds no rows itself (the to-dos under it do).
     fun leaf(id: String, title: CoreText, members: List<AgentSession>, under: String) {
         val rows = ordered(members)
@@ -411,7 +421,7 @@ fun buildFlatAgentList(
                 }
                 val spaces = agentSpaces(members)
                 AgentMachineGroup(machine, nested.groups.filterNot { it.id == "pinned" }.map { it.id }, members.count { !it.isNestedSubtask }, spaces.size,
-                    AgentState.entries.associateWith { state -> members.count { !it.isNestedSubtask && it.state == state } },
+                    stateCounts(members),
                     machineFolded, waitingInBackground = members.count { !it.isNestedSubtask && it.waitsInBackground })
             }
             return AgentListResult(counts, result, filtered.filter { it.state == AgentState.Unread }.map { it.id },
@@ -579,7 +589,7 @@ fun buildFlatAgentList(
                     else -> rows.filter(::stays)
                 }
                 val states = listOf(AgentState.NeedsYou, AgentState.Working, AgentState.Unread, AgentState.Idle, AgentState.Unknown)
-                val stateCounts = states.associateWith { state -> rows.count { !it.isNestedSubtask && it.state == state } }
+                val stateCounts = stateCounts(rows).filterKeys { it in states }
                 val labels = listOf(AgentState.NeedsYou to Key.CountNeedsYou, AgentState.Working to Key.CountWorking, AgentState.Unread to Key.CountUnread)
                 val spoken = labels.mapNotNull { (state, label) -> stateCounts.getValue(state).takeIf { it > 0 }?.let { CoreText.of(label, it) } } +
                     (stateCounts.getValue(AgentState.Idle) + stateCounts.getValue(AgentState.Unknown))

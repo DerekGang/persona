@@ -171,6 +171,9 @@ internal fun AgentsScreen(
     val requestHistory by model.requestHistory.collectAsStateWithLifecycle()
     val refreshing by model.refreshing.collectAsStateWithLifecycle()
     val notice by model.notice.collectAsStateWithLifecycle()
+    val explainSeenRows = !page.preferences.seenRowsNoticed &&
+        page.list.groups.any { group -> group.visibleRows.any { it.seenPlace != null } }
+    LaunchedEffect(explainSeenRows) { if (explainSeenRows) model.showSeenRowsNotice() }
     val hubNotice by model.hubNotice.collectAsStateWithLifecycle()
     val herdrStates by (model.herdr?.states ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyMap<String, HerdrState>()) }).collectAsStateWithLifecycle()
     val startingHerdr by (model.herdr?.starting ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptySet<String>()) }).collectAsStateWithLifecycle()
@@ -813,7 +816,7 @@ internal fun AgentsScreen(
                                     }
                                 }, quiet = entry.quiet, offline = line?.offline == true, pinned = line?.pinned == true)
                         } else if (entry.space) AgentSpaceHeader(groupTitle, group.folded, { model.fold(group) }, depth = entry.depth, first = entry.first,
-                            quiet = entry.quiet, sessions = group.totalCount ?: group.rows.size, counts = group.headingCounts,
+                            quiet = entry.quiet, sessions = group.sectionCount, counts = group.headingCounts,
                             waiting = group.waitingInBackground, flags = buildList {
                                 if (group.worktree?.pinned == true) add(RowFlag(stringResource(R.string.agents_row_pinned), PersonaIcons.pinned))
                                 if (space != null && space.preferenceKey in page.preferences.pins.spaces) add(RowFlag(stringResource(R.string.agents_flag_space_pinned), PhIcons.PushPin))
@@ -855,7 +858,7 @@ internal fun AgentsScreen(
                             } else null
                             AgentAppProjectRow(
                                 title = groupTitle,
-                                count = group.totalCount ?: group.rows.size,
+                                count = group.sectionCount,
                                 folded = group.folded,
                                 onToggle = { model.fold(group) },
                                 other = group.id.endsWith("/project/other#"),
@@ -871,14 +874,24 @@ internal fun AgentsScreen(
                             AgentTreeHeader(groupTitle, group.folded, { model.fold(group) }, first = entry.first,
                                 icon = host?.deviceIcon ?: PersonaIcons.machine, online = host?.online,
                                 counts = machineHeadingCounts(group), waiting = group.waitingInBackground)
-                        } else AgentTreeHeader(groupTitle, group.folded, { model.fold(group) }, first = entry.first,
-                            icon = PhIcons.PushPin.takeIf { group.id == "pinned" }
-                                ?: PersonaIcons.backgroundWaiting.takeIf { group.id == "state/background" }
-                                ?: PersonaIcons.recent.takeIf { group.id == RecentGroup }
-                                ?: PersonaIcons.byApp.takeIf { group.id.startsWith("app/") },
-                            counts = group.stateSectionCounts ?: group.todoLooseCounts ?: group.sectionCounts, waitsInBackground = group.id == "state/background",
-                            // Pinned's counts are the states', so a clock counts the agents that only wait in the background apart.
-                            waiting = if (group.stateSectionCounts == null && group.todoLooseCounts == null) group.waitingInBackground else 0)
+                        } else {
+                            val stateCounts = group.stateSectionCounts
+                            val seen = if (stateCounts != null) group.heldSeen else emptyList()
+                            AgentTreeHeader(groupTitle, group.folded, { model.fold(group) }, first = entry.first,
+                                icon = PhIcons.PushPin.takeIf { group.id == "pinned" }
+                                    ?: PersonaIcons.backgroundWaiting.takeIf { group.id == "state/background" }
+                                    ?: PersonaIcons.recent.takeIf { group.id == RecentGroup }
+                                    ?: PersonaIcons.byApp.takeIf { group.id.startsWith("app/") },
+                                counts = stateCounts ?: group.todoLooseCounts ?: group.sectionCounts,
+                                waitsInBackground = group.id == "state/background",
+                                // Pinned counts agents that only wait in the background separately.
+                                waiting = if (stateCounts == null && group.todoLooseCounts == null) group.waitingInBackground else 0,
+                                onAction = if (seen.isEmpty()) null else ({ model.clearSeen(seen.toSet()) }),
+                                actionText = if (seen.isEmpty()) null else {
+                                    pluralStringResource(R.plurals.agents_clear_seen, seen.size, seen.size)
+                                },
+                            )
+                        }
                     }
                     is TreeRowEntry -> item(entry.key, contentType = "session") {
                         val row = entry.row
@@ -1218,7 +1231,7 @@ internal fun AgentsScreen(
         )
     }
     confirmRead?.let { rows ->
-        MarkAllReadDialog(rows.size, onDismiss = { confirmRead = null }) { model.markRead(rows) }
+        MarkAllReadDialog(rows.size, onDismiss = { confirmRead = null }) { model.markRead(rows, clear = true) }
     }
     if (newAgent) {
         if (creationModel != null) NewAgentDialog(creationModel, page.machines, connection == ConnectionState.Online,
