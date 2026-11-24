@@ -1,0 +1,129 @@
+name: Verify the first send and resend on iOS
+on:
+  push:
+    branches:
+      - verify/12238-new-chat-main
+      - verify/12238-new-chat-preflight*
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  sync:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    env:
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Select and identify the simulator toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version
+          xcrun simctl list runtimes available
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-ci.json"
+          echo "PERSONA_CONFIG=$PERSONA_CONFIG" >> "$GITHUB_ENV"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+      - name: Restore the earlier diagnostic app for the harness preflight
+        if: startsWith(github.ref_name, 'verify/12238-new-chat-preflight')
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45310869424
+          name: persona-search-products
+          path: ${{ runner.temp }}/previous-app
+      - name: Extract the earlier diagnostic app
+        if: startsWith(github.ref_name, 'verify/12238-new-chat-preflight')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/derived/Build"
+          ditto -x -k "$RUNNER_TEMP/previous-app/persona-search-products.zip" "$RUNNER_TEMP/derived/Build"
+      - name: Build the current Persona app for the iPhone simulator
+        if: ${{ !startsWith(github.ref_name, 'verify/12238-new-chat-preflight') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          pins=apple/Packages/PersonaSSH/Package.resolved
+          cp "$pins" "$RUNNER_TEMP/checked-in-pins.json"
+          python3 scripts/ci/apple_resolved.py --tracked "$RUNNER_TEMP/checked-in-pins.json" --staged "$pins" --meta NO --evidence "$RUNNER_TEMP/pins-report.txt"
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          xcodegen generate --spec apple/project.yml --project apple
+          workspace_pins=apple/Persona.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          mkdir -p "$(dirname "$workspace_pins")"
+          cp "$pins" "$workspace_pins"
+          xcodebuild -quiet -project apple/Persona.xcodeproj -scheme Persona -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" -resolvePackageDependencies
+          xcodebuild -quiet build -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/derived" \
+            -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= "ARCHS=$(uname -m)" ONLY_ACTIVE_ARCH=YES
+          ditto -c -k --keepParent "$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app" "$RUNNER_TEMP/persona-app.zip"
+      - name: Save the currently built app for repeat runs
+        if: ${{ !startsWith(github.ref_name, 'verify/12238-new-chat-preflight') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: persona-12238-app
+          path: ${{ runner.temp }}/persona-app.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Replay both new-conversation scenarios with the real iOS UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/derived/Build/Products/Debug-iphonesimulator/Persona.app"
+          out="$RUNNER_TEMP/new-chat-evidence"
+          mkdir -p "$out"
+          git log -2 --format='%h %s' > "$out/source.txt"
+          xcodebuild -version | tee "$out/toolchain.txt"
+          sim=$(scripts/app/sim-boot.sh --profile stock --runtime 'iOS 26.2' "Persona 12238 New Chat")
+          xcrun simctl install "$sim" "$app"
+          export PERSONACTL_BUNDLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+          export PERSONACTL_UDID="$sim" HUB=http://127.0.0.1:18760
+          PERSONACTL_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+          export PERSONACTL_PORT
+          export SYNC_CASE_TRACE=1 CLITEST_OUT="$out/screens"
+          PORT=18760 MOCK_SYNC_CASE='sends.json#send_tied_by_echo' python3 -u scripts/mock/mock_hub.py > "$out/mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 45 --retry-connrefused --retry-delay 2 "$HUB/api/v1/health"
+          result=0
+          python3 -u - <<'PYTHON' | tee "$out/scenarios.txt" || result=$?
+          import sys
+          sys.path.insert(0, "scripts/app/cli-tests")
+          import sync_cases
+
+          class HostedCtl(sync_cases.Ctl):
+              def launch(self, hub=None, extra=(), wait=180, pair="mock"):
+                  return super().launch(hub, extra, wait, pair)
+
+          sync_cases.Ctl = HostedCtl
+          sys.exit(sync_cases.main(["start_answer_cut_then_receipt", "start_refused_then_resent_new_op"]))
+          PYTHON
+          if [[ "$result" != 0 ]]; then
+            xcrun simctl io "$sim" screenshot "$out/simulator.png" || true
+            lsof -nP -iTCP:"$PERSONACTL_PORT" -sTCP:LISTEN > "$out/cli-listener.txt" || true
+            pid=$(pgrep -x Persona | head -1 || true)
+            if [[ -n "$pid" ]]; then sample "$pid" 3 -file "$out/persona-sample.txt" || true; fi
+            exit "$result"
+          fi
+          grep -F 'SUMMARY sync cases on screen: 2 passed, 0 known, 0 failed of 2 runs' "$out/scenarios.txt"
+      - name: Save the simulated scenario results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persona-12238-sync-evidence
+          path: ${{ runner.temp }}/new-chat-evidence
+          if-no-files-found: warn
+          retention-days: 7
