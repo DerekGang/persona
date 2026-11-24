@@ -255,7 +255,6 @@ final class PersonaFaceMotionView: UIView {
     private let bodyCanvas = PersonaPieceHost(.body)
     let workingBodies: [PersonaPieceHost]
     let workingEyes: [PersonaPieceHost]
-    private let eyeContainers: [UIView]
     var eyes: PersonaPieceHost { workingEyes[0] }
     let dots = (0..<3).map { PersonaPieceHost(.dot($0)) }
     let grayDots = (0..<3).map { PersonaPieceHost(.grayDot($0)) }
@@ -282,7 +281,6 @@ final class PersonaFaceMotionView: UIView {
             container.addSubview(eye)
         }
         workingEyes = eyes
-        eyeContainers = containers
         workingBodies = (0..<3).map { PersonaPieceHost(.workingBody($0), eyeView: containers[$0]) }
         super.init(frame: frame)
         let initial = PersonaMotionContent(size: 0, state: .idle, time: 0, scheme: .light, displayScale: 1,
@@ -367,19 +365,21 @@ final class PersonaFaceMotionView: UIView {
 
     private func layoutPieces() {
         host.view.frame = bounds
-        if let content { host.view.contentScaleFactor = content.displayScale }
+        guard let content else { return }
+        host.view.contentScaleFactor = content.displayScale
         host.view.layoutIfNeeded()
-        if let content {
-            host.view.contentScaleFactor = content.displayScale
-            host.view.layer.contentsScale = content.displayScale
-            for piece in allHosts { piece.updateScale(content.displayScale) }
-        }
-        setFullFrame(arc, in: arcContainer.bounds)
-        let anchor = content?.state == .needsYou ? Mochi.pivot : CGPoint(x: 0.5, y: 0.5)
-        setFullFrame(body, in: bodyContainer.bounds, anchor: anchor)
-        for host in [bodyCanvas] + workingBodies { setFullFrame(host, in: body.bounds) }
+        host.view.contentScaleFactor = content.displayScale
+        host.view.layer.contentsScale = content.displayScale
+        for piece in allHosts { piece.updateScale(content.displayScale) }
+        // Each of these wrappers has the fixed face size. SwiftUI can apply its UIView bounds
+        // after this outer layout pass, so size the animated children from their known square.
+        let square = CGRect(x: 0, y: 0, width: content.size, height: content.size)
+        setFullFrame(arc, in: square)
+        let anchor = content.state == .needsYou ? Mochi.pivot : CGPoint(x: 0.5, y: 0.5)
+        setFullFrame(body, in: square, anchor: anchor)
+        for host in [bodyCanvas] + workingBodies { setFullFrame(host, in: square) }
         for phase in workingBodies { phase.layoutIfNeeded() }
-        for (eye, container) in zip(workingEyes, eyeContainers) { setFullFrame(eye, in: container.bounds) }
+        for eye in workingEyes { setFullFrame(eye, in: square) }
     }
 
     private func setFullFrame(_ view: UIView, in rect: CGRect, anchor: CGPoint = CGPoint(x: 0.5, y: 0.5)) {
