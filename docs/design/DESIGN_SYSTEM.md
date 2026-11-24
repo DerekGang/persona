@@ -2325,7 +2325,7 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   On the web, a card the conversation's own turn waits on (its own session's request, not one of a worker or side
   session folded under it: `lib/turn-asks.ts`, #11794) is never folded: each stands open above the Needs you / In
   progress capsules, all of them at once, and Needs you neither counts nor lists it again. The cards of sessions folded
-  under the conversation keep the stack and the tray as above. iOS and Android keep the stack for both until they follow.
+  under the conversation keep the stack and the tray as above.
   The stack holds the conversation's own cards alone, as one slot on the web: its first card with "2 / 6" (where it stands in the run), the next taking its place when it is answered, and what was just answered one line over it that goes 3 seconds after the last answer (details with the interaction cards in `docs/web/web.md`).
   **To Decide** (iOS and iPadOS, #12831): in an assistant conversation the conversation's own cards and its tasks'
   questions and approvals are one pager over the composer (`QuestionDock`), opened from a **To Decide** entry (zh-Hans
@@ -2345,6 +2345,10 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   are To Decide (the pager's cards), Needs you (its rows) and, in an Agent's chat, "N pending". An Agent's chat keeps the
   stack; the wrap-up chips stay chips after the entries. The two paragraphs below are the web and Android, and iOS
   before #12831.
+  **Android** (#12858) uses the same pager order, collapsed selection, and Skip rules with `AssistantTrayEntry`,
+  `DecisionDock`, and `RequestEditor`. Its task source opens over the Assistant tab, where Back restores the pager.
+  The existing message jump highlights the source. A card from a terminal without a tool ID goes to the latest question
+  in its source chat when available. Agent conversations use their existing pending stack.
   What the conversation's tasks ask is a card of its own above the entries (iOS `TaskQuestions` until #12831, #4339 C10): the oldest
   question of their Agents, under its task's name with the ask mark in the needs-you tone and, at the end of that line,
   "N more" for the tasks' other questions; it is answered there, and the next comes up once it is. The three numbers
