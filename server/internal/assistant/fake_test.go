@@ -122,18 +122,19 @@ type fakeHub struct {
 	sessionsContextCheck bool // sessions.list rejects an expired caller context, as a real RPC does
 
 	// Agents a task starts (session.start a1, a2…) and what was sent to them; a machine offline, a node refusing.
-	starts       []map[string]any
-	agentSent    []map[string]any
-	agents       int
-	offline      map[string]bool
-	failStart    error
-	refuseUltra  error            // session.start's answer to a start that asks for ultracode (a node refusing it, #3596)
-	refuseGoal   error            // session.start's answer to a start that carries a goal (a node too old for it)
-	refuseHost   map[string]error // session.start's answer to a start naming that host (a node whose Antigravity companion went away)
-	startFailed  string           // the StartError of the sessions session.start answers (the launcher failed in its new tab)
-	worktrees    []map[string]any // worktree.prepare / worktree.create params, {"method": …} added
-	failWorktree error            // worktree.create's answer when set
-	slowStart    bool             // session.start blocks until the call's context ends, then answers with its error (a node that builds the session before answering late)
+	starts        []map[string]any
+	agentSent     []map[string]any
+	agents        int
+	offline       map[string]bool
+	failStart     error
+	refuseUltra   error            // session.start's answer to a start that asks for ultracode (a node refusing it, #3596)
+	refuseGoal    error            // session.start's answer to a start that carries a goal (a node too old for it)
+	refuseHost    map[string]error // session.start's answer to a start naming that host (a node whose Antigravity companion went away)
+	startFailed   string           // the StartError of the sessions session.start answers (the launcher failed in its new tab)
+	startStatuses map[string]proto.StartStatus
+	worktrees     []map[string]any // worktree.prepare / worktree.create params, {"method": …} added
+	failWorktree  error            // worktree.create's answer when set
+	slowStart     bool             // session.start blocks until the call's context ends, then answers with its error (a node that builds the session before answering late)
 	// startReply shapes session.start's answer: what the session runs with, and what the engine ran in place of what
 	// was asked (#8140).
 	startReply   func(params map[string]any, s *proto.Session) *proto.StartInstead
@@ -708,6 +709,12 @@ func (f *fakeHub) deviceCall(ctx context.Context, p DeviceCall) (json.RawMessage
 			return nil, f.failWorktree
 		}
 		return json.Marshal(proto.WorktreeCreateResult{WorkspaceID: "ws-new", Path: a["path"].(string), Branch: a["branch"].(string)})
+	case proto.MethodStartStatus:
+		op, _ := a["op_id"].(string)
+		if status, ok := f.startStatuses[op]; ok {
+			return json.Marshal(status)
+		}
+		return json.Marshal(proto.StartStatus{State: proto.StartStatusUnknown})
 	case DeviceSessionStart:
 		if f.offline[p.Device] {
 			return nil, fmt.Errorf("%s: %w", p.Device, apierr.ErrOffline)

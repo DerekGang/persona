@@ -705,6 +705,12 @@ class TasksStore(
         reloadTodos()
     }
 
+    fun cancelQueuedTaskStart(todo: Todo, onError: (Throwable) -> Unit) = act(retryKey(todo.id), onError) {
+        val t = withManager(todo.manager) { api.cancelQueuedTaskStart(todo.id) }
+        _todos.update { list -> list.map { if (it.id == t.id) t else it } }
+        reloadTodos()
+    }
+
     /** The current plan/feature-backed launcher suggestion, including a taken-over to-do without `plan_id`. */
     fun launcherForRetry(todo: Todo): String? =
         persona.core.domain.tasks.retryLauncher(planTaskOf(todo, plans.value), features?.value.orEmpty())

@@ -144,7 +144,7 @@ import { UltraMark } from "./chat/Ultracode";
 import { boundThread, threadLine, threadName, todoThreadsOn, unbindTodoThread } from "../lib/todo-thread";
 import { setTodoSeen, todoSeenOn } from "../lib/todo-seen";
 import { seenCanFile } from "../lib/todo-details";
-import { retryKey, retryTask, useFeed } from "../lib/feed";
+import { cancelQueuedTaskStart, retryKey, retryTask, useFeed } from "../lib/feed";
 import { planTaskOf, retryLauncher, retryOnLauncher } from "../lib/start-retry";
 import { dueOn, duePatch, todoRowMenu } from "./todo-row-menu";
 import { PageBoundary } from "./PageBoundary";
@@ -2208,7 +2208,7 @@ function agentRowView(todo: Todo, lookup: SessionLookup, interactions: Interacti
   const status = todoStatus(todo, lookup);
   const urgent = mostUrgentAgent(todo, lookup);
   const activeCount = (todo.agents ?? []).filter((a) => !a.released_at).length;
-  const view: TodoRowView = { status, dotState: DOT_STATE[shownStatus(todo, status)], age: lastMoved(todo, lookup), activeCount, urgentLine: false, urgentLead: "", urgentText: "", orphaned: false, ultracode: todoUltracode(todo, lookup), wait: waitOf(todo, status, lookup) };
+  const view: TodoRowView = { status, dotState: todo.view?.dispatch_wait ? "idle" : DOT_STATE[shownStatus(todo, status)], age: lastMoved(todo, lookup), activeCount, urgentLine: false, urgentLead: "", urgentText: "", orphaned: false, ultracode: todoUltracode(todo, lookup), wait: waitOf(todo, status, lookup) };
   if (todo.done_at || !urgent?.session) return view;
   const limit = status === "usage_limit" ? usageLimitLabel(urgent.session) : undefined;
   if (limit) {
@@ -2313,7 +2313,7 @@ const TodoListItem = memo(function TodoListItem({
 }) {
   const { status, dotState, activeCount } = view;
   const effectiveSection = section ?? view.section;
-  const showWait = effectiveSection === "parked";
+  const showWait = !todo.view?.dispatch_wait && effectiveSection === "parked";
   // the PR it waits on: its current one, or an earlier one still open (#7935)
   const openPR = effectiveSection === "parked" ? openMergePRs(todo, Date.now())[0] : undefined;
   // its state word and tone; a waiting one's say what it waits on, attention only on the owner (#11090)
@@ -2808,7 +2808,7 @@ const TodoListItem = memo(function TodoListItem({
             {/* its steps were handed out: what is next once they are all closed, else nothing about handing it over */}
             {!todo.done_at && activeCount === 0 && (steps?.tail !== undefined ? (
               steps.tail && <span className="truncate text-ink-3" data-testid="todo-steps-next">· {steps.tail}</span>
-            ) : !responsible ? (
+            ) : !responsible && !todo.view?.dispatch_wait ? (
               <span className="truncate text-ink-3">· {t("todos.not_handed")}</span>
             ) : null)}
             {(section ?? view.section) === "just_done" && seenCanFile(todo) && onSeen ? (
@@ -3495,7 +3495,9 @@ function TodoDetail({
 
   const shown = shownStatus(todo, status);
   const dotState =
-    shown === "needs_you" || shown === "interrupted"
+    todo.view?.dispatch_wait
+      ? "idle"
+      : shown === "needs_you" || shown === "interrupted"
       ? "needs_you"
       : shown === "usage_limit"
         ? "idle"
@@ -3697,6 +3699,16 @@ function TodoDetail({
         <p className="mt-2 text-meta leading-[1.6] text-red" data-testid="todo-detail-start-failed">
           {t("todos.start_failed", { error: todo.start_error ?? "" })}
         </p>
+      )}
+      {open && todo.view?.dispatch_cancel && (
+        <Button
+          className="mt-2 w-fit"
+          tone="secondary"
+          busy={retrying}
+          onClick={() => void cancelQueuedTaskStart(todo).catch((error) => toast(t("todos.action_failed", { error: errorText(error) }), "error"))}
+        >
+          {t("todos.cancel_queued_start")}
+        </Button>
       )}
       {failedTask?.error_code === "shell_waiting" && <Suspense fallback={null}><ShellQuestion todo={todo} task={failedTask} className="mt-3" /></Suspense>}
       {isAutoDone(todo) && (

@@ -317,6 +317,8 @@ fun TodoDetailScreen(
                                 }
                             } else if (failedStart) {
                                 JTag(TaskState.Failed.label.text())
+                            } else if (todo.view?.dispatchWait != null) {
+                                JTag(stringResource(persona.core.designsystem.R.string.designsystem_status_waiting))
                             } else if (todo.acceptedAtRest(sessionLookup)) {
                                 // accepted, then reopened by the hub with more work: still Accepted until a new review (#3156)
                                 JTag(stringResource(R.string.agents_todo_state_accepted), Tone.Positive)
@@ -452,6 +454,23 @@ fun TodoDetailScreen(
                 }
             }
 
+            todo.view?.dispatchWait?.takeIf { open }?.let { reason ->
+                item(key = "queued-start") {
+                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                        Text(reason, style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+                        if (todo.view?.dispatchCancel == true && tasks != null) {
+                            JButton(
+                                text = stringResource(R.string.agents_todo_cancel_queued_start),
+                                kind = JButtonKind.Secondary,
+                                loading = retrying,
+                                enabled = !retrying,
+                                modifier = Modifier.testTag("todo-cancel-queued-start"),
+                                onClick = { tasks.cancelQueuedTaskStart(todo) { onError(operationFeedback(it).text.resolve(res)) } },
+                            )
+                        }
+                    }
+                }
+            }
             if (failedStart) {
                 item(key = "start-failure") {
                     Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {

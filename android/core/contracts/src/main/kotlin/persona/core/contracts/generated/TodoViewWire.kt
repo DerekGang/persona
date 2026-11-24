@@ -363,6 +363,14 @@ data class TodoSummary(
      */
     @SerialName("can_wait") val canWait: Boolean? = null,
     /**
+     * The manager's explanation while this to-do waits for its computer or a start receipt.
+     */
+    @SerialName("dispatch_wait") val dispatchWait: String? = null,
+    /**
+     * The owner can cancel this pending start through POST /api/v1/todos/{id}/start/cancel. Written only when true.
+     */
+    @SerialName("dispatch_cancel") val dispatchCancel: Boolean? = null,
+    /**
      * The asks that hold the row in Needs you or Can wait, the most urgent first; absent when none does.
      */
     val asks: List<OwnerAsk>? = null,

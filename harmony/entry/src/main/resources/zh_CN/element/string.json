@@ -2097,6 +2097,14 @@
       "value": "标记为已完成"
     },
     {
+      "name": "todo_state_waiting",
+      "value": "等待中"
+    },
+    {
+      "name": "todo_cancel_queued_start",
+      "value": "取消排队启动"
+    },
+    {
       "name": "todo_filter_status",
       "value": "按状态筛选"
     },

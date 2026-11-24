@@ -74,6 +74,7 @@ func (s *Service) todoFactsOf(ctx context.Context, list []listedTodo) []projecti
 		}
 	}
 	cards := s.todoRunCards(want)
+	dispatch := s.offlineDispatches(ctx, list)
 	loc := s.location(ctx)
 	todosV2 := s.settings(ctx).todosV2On()
 	facts := make([]projection.Facts, len(list))
@@ -82,6 +83,11 @@ func (s *Service) todoFactsOf(ctx context.Context, list []listedTodo) []projecti
 		linked := hasParkInteractionLink(t.Supervision)
 		facts[i] = projectionFacts(*t, sessions, loc)
 		facts[i].TodosV2 = todosV2
+		if wait, ok := dispatch[t.ID]; ok && wait.Offline != nil {
+			facts[i].DispatchWait = wait.Reason
+			facts[i].DispatchSince = wait.QueuedAt
+			facts[i].DispatchCancel = !wait.Claimed && !wait.Offline.Cancelled
+		}
 		if t.DoneAt != nil && t.StartError == "" {
 			continue
 		}
@@ -96,6 +102,36 @@ func (s *Service) todoFactsOf(ctx context.Context, list []listedTodo) []projecti
 		}
 	}
 	return facts
+}
+
+// Read the relevant plans in one batch. A task may have moved since the queue was written.
+func (s *Service) offlineDispatches(ctx context.Context, list []listedTodo) map[string]TaskQueue {
+	plans := map[string]string{}
+	var ids []string
+	seen := map[string]bool{}
+	for i := range list {
+		t := &list[i]
+		if t.DoneAt != nil || t.PlanID == "" || len(t.Agents) != 0 {
+			continue
+		}
+		plans[t.ID] = t.PlanID
+		if !seen[t.PlanID] {
+			ids = append(ids, t.PlanID)
+			seen[t.PlanID] = true
+		}
+	}
+	waiting := make(map[string]TaskQueue)
+	for id, p := range s.plansByID(ctx, ids) {
+		if p.State != planStarted {
+			continue
+		}
+		for _, pt := range p.Tasks {
+			if plans[pt.TodoID] == id && pt.Queue != nil && pt.Queue.Offline != nil {
+				waiting[pt.TodoID] = *pt.Queue
+			}
+		}
+	}
+	return waiting
 }
 
 // todoRunCards are the pending cards of the sessions in want (by computer, the session ids), by computer and

@@ -2,6 +2,7 @@
   "reopened": "ToDoを再開しました",
   "completed": "ToDoを完了しました",
   "action_failed": "操作できませんでした：{error}",
+  "cancel_queued_start": "待機中の開始をキャンセル",
   "deleted": "ToDoを削除しました",
   "delete_failed": "削除できませんでした：{error}",
   "title": "ToDo",

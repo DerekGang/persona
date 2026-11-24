@@ -110,6 +110,9 @@ export function slimSecondaryCue(
   }
 
   if (options.effectiveSection === "parked") {
+    if (todo.view?.dispatch_wait) {
+      return { tone: "muted", text: todo.view.dispatch_wait, testId: "todo-slim-cue" };
+    }
     const parked = parkedLine(todo);
     if (parked) {
       return { tone: "muted", text: parked, testId: "todo-slim-cue" };

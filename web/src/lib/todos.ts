@@ -496,6 +496,7 @@ export function makeSessionLookup(sessions: Session[] | Record<string, Session[]
 export function todoStatus(todo: Todo, lookup?: SessionLookup): TodoStatus {
   if (todo.start_error) return "failed";
   if (todo.done_at) return "done";
+  if (todo.view?.dispatch_wait) return "waiting";
   const linkedID = parkInteractionID(todo);
   const ownerAsk = linkedParkOwnerAsk(todo);
   const viewKeepsPark = linkedID && todo.view && !ownerAsk && todo.view.section !== "needs_you" && todo.view.section !== "can_wait";

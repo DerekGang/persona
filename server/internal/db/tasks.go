@@ -106,7 +106,7 @@ func (d *DB) TaskPlansMadeSince(ctx context.Context, since time.Time) ([]TaskPla
 func (d *DB) TaskPlansQueued(ctx context.Context, since time.Time) ([]TaskPlanRow, error) {
 	rows, err := d.pool.Query(ctx, `SELECT id, conversation, tasks, state, created_at, updated_at FROM task_plans
 		WHERE state IN ('started', 'dismissed')
-		AND (updated_at >= $1 OR jsonb_path_exists(tasks, '$[*].queue')) ORDER BY updated_at, id`, since)
+		AND (updated_at >= $1 OR jsonb_path_exists(tasks, '$[*].queue ? (@ != null)')) ORDER BY updated_at, id`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -167,9 +167,11 @@ func (d *DB) EditStartedPlanTask(ctx context.Context, id string, index int, edit
 }
 
 const compareTaskQueueSQL = `UPDATE task_plans SET tasks = jsonb_set(tasks, ARRAY[$2::integer::text],
-	(tasks->$2::integer) || jsonb_build_object('queue', $5::jsonb) ||
+	((tasks->$2::integer) - 'queue') ||
+	CASE WHEN $5::jsonb = 'null'::jsonb THEN '{}'::jsonb ELSE jsonb_build_object('queue', $5::jsonb) END ||
 	CASE WHEN $7::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('placement',$7::jsonb) END), updated_at = $6
-	WHERE id = $1 AND state = 'started' AND tasks->$2::integer->>'todo_id' = $3 AND tasks->$2::integer->'queue' = $4::jsonb`
+	WHERE id = $1 AND state = 'started' AND tasks->$2::integer->>'todo_id' = $3
+		AND COALESCE(tasks->$2::integer->'queue', 'null'::jsonb) = $4::jsonb`
 
 // CompareTaskQueue changes one authorized start's queue only if it is still the entry the dispatcher read.
 func (d *DB) CompareTaskQueue(ctx context.Context, id string, index int, todoID string, before, after, placement json.RawMessage, at time.Time) (bool, error) {

@@ -2097,6 +2097,14 @@
       "value": "Mark done"
     },
     {
+      "name": "todo_state_waiting",
+      "value": "Waiting"
+    },
+    {
+      "name": "todo_cancel_queued_start",
+      "value": "Cancel queued start"
+    },
+    {
       "name": "todo_filter_status",
       "value": "Filter by status"
     },

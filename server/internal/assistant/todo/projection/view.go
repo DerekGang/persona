@@ -66,9 +66,10 @@ func (r *reading) own() placement {
 		return r.failedStart()
 	}
 	for _, row := range []func() (placement, bool){
-		r.runAsks,        // row 2
-		r.ownerDecides,   // row 3
-		r.canWait,        // row 4
+		r.runAsks,      // row 2
+		r.ownerDecides, // row 3
+		r.canWait,      // row 4
+		r.dispatchWait,
 		r.working,        // row 5
 		r.parked,         // row 8
 		r.finishedRecent, // row 9
@@ -81,6 +82,16 @@ func (r *reading) own() placement {
 		}
 	}
 	return r.rest() // rows 13, 14
+}
+
+func (r *reading) dispatchWait() (placement, bool) {
+	if r.f.DispatchWait == "" {
+		return placement{}, false
+	}
+	p := r.at(assistantwire.TodoPhaseWaiting, assistantwire.TodoListSectionWaiting, assistantwire.TodoReasonQueued)
+	p.DispatchWait, p.DispatchCancel = r.f.DispatchWait, r.f.DispatchCancel
+	p.Since = utc(r.f.DispatchSince)
+	return p, true
 }
 
 // at is a placement in phase, section and reason, seen when the owner looked at it since its last activity (the

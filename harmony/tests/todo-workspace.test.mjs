@@ -140,6 +140,26 @@ async function opened(options = {}) {
 
 function pathOnly(path) { return path.split('?')[0]; }
 
+test('offline dispatch is waiting and cancels the owning manager’s queued start', async () => {
+  const waiting = todo('queued', { view: { dispatch_wait: 'Will start when Example box is back', dispatch_cancel: true } });
+  const cancelled = todo('queued', { done_at: '2026-11-11T09:00:00Z', done_by: 'cancelled' });
+  const { workspace, state } = await opened({ todos: [waiting], request: ({ path, method }) => {
+    if (pathOnly(path) === '/api/v1/todos' && method === 'GET') return { todos: [waiting] };
+    if (pathOnly(path) === '/api/v1/todos/queued/start/cancel' && method === 'POST') return { todo: cancelled };
+    return {};
+  } });
+  const item = workspace.items[0];
+  assert.equal(workspace.state(item), 'waiting');
+  assert.equal(item.dispatchWait, waiting.view.dispatch_wait);
+  await workspace.openRow(item);
+  assert.equal(await workspace.cancelQueuedStart(workspace.selected), true);
+  assert.equal(workspace.state(workspace.items[0]), 'done');
+  assert.equal(workspace.items[0].dispatchCancel, false);
+  const sent = state.calls.filter(({ method }) => method === 'POST');
+  assert.equal(sent.length, 1);
+  assert.equal(new URL(sent[0].path, 'https://example.test').searchParams.get('manager'), 'work');
+});
+
 test('projects server lifecycle fields into the six native states with SOP priority', () => {
   const linked = [{ machine_id: 'm1', session_id: 's1' }];
   const state = (fields, sessionRows = []) => todoWorkspaceStatus(new TodoWorkspaceItem(todo('t', { agents: linked, ...fields }), 'work'), sessionRows);

@@ -307,6 +307,15 @@ final class TodoStore {
     /// (docs/protocol/protocol.md "Per-manager routing"); none for the default's, or one the list doesn't have.
     func named(_ id: String) -> String? { managers.naming(byID[id]?.manager) }
 
+    func cancelQueuedTaskStart(id: String, api injected: APIClient? = nil) async throws {
+        guard let api = client(for: id, injected) else { throw APIError(status: 0, message: String(localized: "Not connected to a hub [Todo Store 04f822]")) }
+        let targetGeneration = generation
+        let res = try await stamped(api.cancelQueuedTaskStart(id: id), as: byID[id]?.manager)
+        guard generation == targetGeneration else { return }
+        replace(res)
+        await confirmWrite(api: api)
+    }
+
     /// The client a change to to-do `id` goes through: the one given (tests) or the hub's, naming the to-do's manager.
     private func client(for id: String, _ injected: APIClient?) -> APIClient? {
         (injected ?? AppModel.shared.api)?.manager(named(id))

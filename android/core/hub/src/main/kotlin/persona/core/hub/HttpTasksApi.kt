@@ -219,6 +219,10 @@ class HttpTasksApi internal constructor(
         stamped(JsonCodec.decodeFromJsonElement(call(path("todos", todoId, "retry"), "POST", JsonObject(emptyMap()))["todo"]
             ?: error("no todo in the answer")))
 
+    override suspend fun cancelQueuedTaskStart(todoId: String): Todo =
+        stamped(JsonCodec.decodeFromJsonElement(call(path("todos", todoId, "start", "cancel"), "POST", JsonObject(emptyMap()))["todo"]
+            ?: error("no todo in the answer")))
+
     override suspend fun retryTaskOnLauncher(todoId: String, launcher: String): Todo =
         stamped(JsonCodec.decodeFromJsonElement(call(path("todos", todoId, "retry"), "POST", buildJsonObject {
             put("launcher", launcher)

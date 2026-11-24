@@ -186,6 +186,7 @@ export function triage(todo: Todo, lookup: SessionLookup | undefined, now: numbe
   // a decision the owner chose Don't handle on no longer waits on them (decisionDismissed)
   if (!decisionDismissed(todo) && waitsForOwner(todo)) return at("waiting", "owner_decides");
   if (heldDelivery(todo)?.unblock === "user") return at("waiting", "delivery_ok");
+  if (!todo.done_at && todo.view?.dispatch_wait) return at("parked", "parked");
   // rule 8's signals, read here so rule 9 yields to them: a turn or review still awaiting acceptance stays Just finished
   const finished = status === "unread" || review === "pending_review" || (ask && !ask.outcome) || ask?.outcome === "done";
   const acceptanceRequired = review === "pending_review" || Boolean(todo.supervision?.supervisor);

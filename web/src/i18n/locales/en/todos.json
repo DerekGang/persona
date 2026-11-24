@@ -2,6 +2,7 @@
   "reopened": "To-do reopened",
   "completed": "To-do completed",
   "action_failed": "Something went wrong: {error}",
+  "cancel_queued_start": "Cancel queued start",
   "deleted": "To-do deleted",
   "delete_failed": "Couldn't delete: {error}",
   "title": "To-dos",

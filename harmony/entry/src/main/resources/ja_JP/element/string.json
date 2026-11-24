@@ -2097,6 +2097,14 @@
       "value": "完了にする"
     },
     {
+      "name": "todo_state_waiting",
+      "value": "待機中"
+    },
+    {
+      "name": "todo_cancel_queued_start",
+      "value": "待機中の開始をキャンセル"
+    },
+    {
       "name": "todo_filter_status",
       "value": "状態で絞り込む"
     },

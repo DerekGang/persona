@@ -717,6 +717,8 @@ private fun TodoTriageRow(
                         modifier = Modifier.weight(1f),
                     )
                     when {
+                        !finished && todo.view?.dispatchWait != null ->
+                            JTag(stringResource(persona.core.designsystem.R.string.designsystem_status_waiting))
                         // an accepted task the hub reopened with more work reads Accepted, not Follow up (#3156)
                         accepted && state != TodoState.Working && state != TodoState.NeedsYou ->
                             JTag(stringResource(R.string.agents_todo_state_accepted), Tone.Positive)
@@ -935,7 +937,7 @@ private fun TodoActivityLine(todo: Todo, urgent: TodoMostUrgent?, card: Interact
     // Nobody is working on it (#3618): ahead of its agents' last words, which are from before they went; not ahead
     // of a failed start or an agent that waits for the user.
     val orphaned = todo.orphanedLine?.takeIf { reason == null && startFailed == null && !waiting }?.text()
-    val text = reason ?: orphaned ?: summary ?: notes ?: stringResource(R.string.agents_todo_not_handed)
+    val text = todo.view?.dispatchWait ?: reason ?: orphaned ?: summary ?: notes ?: stringResource(R.string.agents_todo_not_handed)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs),

@@ -4,7 +4,7 @@ import { Colors } from '../design/Colors';
 import { ButtonStyles, SelectStyles } from '../design/Controls';
 import { ComposeListItemV2, ContentItemV2 } from '@kit.ArkUI';
 import { ClientModel } from '../models/ClientModel';
-import { TodoWorkspace, TodoWorkspaceAgent, TodoWorkspaceGroup, TodoWorkspaceItem, TodoWorkspaceSection,
+import { TODO_STATES, TodoWorkspace, TodoWorkspaceAgent, TodoWorkspaceGroup, TodoWorkspaceItem, TodoWorkspaceSection,
   TodoWorkspaceSpace, TodoWorkspaceSpaceChoice } from '../models/TodoWorkspace';
 import { BoundRow, reconcileBoundRows } from '../models/RowBinding';
 import { ResourceRow, Wire } from '../models/Wire';
@@ -187,11 +187,11 @@ export struct TodoWorkspacePage {
 
   private statusOptions(): SelectOption[] {
     const options: SelectOption[] = [{ value: tr('all') }];
-    ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'].forEach((state: string) => options.push({ value: tr('todo_state_' + state) }));
+    TODO_STATES.forEach((state: string) => options.push({ value: tr('todo_state_' + state) }));
     return options;
   }
   private statusIndex(): number {
-    const states: string[] = ['all', 'needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
+    const states: string[] = ['all'].concat(TODO_STATES);
     const index = states.indexOf(this.workspace.statusFilter);
     return index < 0 ? 0 : index;
   }
@@ -229,7 +229,7 @@ export struct TodoWorkspacePage {
     const state = tr('todo_state_' + group.state);
     const visibleState = includeState || this.workspace.groupBy !== 'status' ? state : '';
     const related = relatedCount > 0 ? tr('todo_related') + ' ' + String(relatedCount) : '';
-    return [visibleState, related].filter((value: string) => !!value).join(' · ');
+    return [group.lead.dispatchWait || visibleState, related].filter((value: string) => !!value).join(' · ');
   }
   private sectionTitle(section: TodoWorkspaceSection): string {
     if (this.workspace.groupBy === 'status' || section.title === 'todo_unsorted' || section.title === 'todo_no_thread')
@@ -381,7 +381,7 @@ export struct TodoWorkspacePage {
       MenuItemGroup({ header: tr('todo_filter_status') }) {
         ForEach(this.statusOptions(), (option: SelectOption, index: number) => {
           MenuItem({ content: option.value }).selected(this.statusIndex() === index).selectIcon(true)
-            .onClick(() => this.workspace.setStatusFilter(['all', 'needs_you', 'checking', 'working', 'followup', 'not_started', 'done'][index]))
+            .onClick(() => this.workspace.setStatusFilter(['all'].concat(TODO_STATES)[index]))
         }, (option: SelectOption) => JSON.stringify(option.value))
       }
       MenuItemGroup({ header: tr('todo_group_by') }) {
@@ -465,6 +465,14 @@ export struct TodoWorkspacePage {
           Text(tr(this.workspace.stateLabelKey(this.workspace.selected))).fontSize(Tokens.meta).width('100%')
             .bindContextMenu(this.todoMenu(this.workspace.selected), ResponseType.LongPress)
           if (this.workspace.selected.startError) Text(this.workspace.selected.startError).fontColor($r('app.color.persona_danger')).width('100%')
+          if (this.workspace.selected.dispatchWait && !this.workspace.selected.isDone()) {
+            Text(this.workspace.selected.dispatchWait).fontSize(Tokens.meta).width('100%')
+            if (this.workspace.selected.dispatchCancel) {
+              Button(tr('todo_cancel_queued_start')).attributeModifier(ButtonStyles.primary)
+                .enabled(!this.workspace.saving && !this.workspace.targetGone)
+                .onClick(() => this.workspace.cancelQueuedStart(this.workspace.selected).catch(() => undefined))
+            }
+          }
           if (this.workspace.selected.doneReason) Text(this.workspace.selected.doneReason).fontSize(Tokens.meta).width('100%')
           if (this.workspace.selected.notes) MarkdownText({ text: this.workspace.selected.notes, onLink: (address: string) => this.onLink(address) })
 

@@ -2,6 +2,7 @@
   "reopened": "已重新打开待办",
   "completed": "已完成待办",
   "action_failed": "操作失败：{error}",
+  "cancel_queued_start": "取消排队启动",
   "deleted": "已删除待办",
   "delete_failed": "删除失败：{error}",
   "title": "待办",

@@ -3,8 +3,7 @@ import { HubRepository, segment } from './HubRepository';
 import { HttpFailure } from '../platform/HubTransport';
 import { ResourceRow, Wire } from './Wire';
 
-const TODO_STATES: string[] = ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
-const TODO_STATUS_ORDER: string[] = ['needs_you', 'checking', 'working', 'followup', 'not_started', 'done'];
+export const TODO_STATES: string[] = ['needs_you', 'checking', 'working', 'waiting', 'followup', 'not_started', 'done'];
 
 interface TodoOwnerSnapshot {
   root: ClientModel;
@@ -84,6 +83,8 @@ export class TodoWorkspaceItem {
   stage: string = '';
   prUrl: string = '';
   kind: string = '';
+  dispatchWait: string = '';
+  dispatchCancel: boolean = false;
   agents: TodoWorkspaceAgent[] = [];
   spaces: TodoWorkspaceSpace[] = [];
   ask: Record<string, Object> = {};
@@ -115,6 +116,9 @@ export class TodoWorkspaceItem {
     this.stage = Wire.text(data, 'stage');
     this.prUrl = Wire.text(data, 'pr_url');
     this.kind = Wire.text(data, 'kind');
+    const view = Wire.object(data, 'view');
+    this.dispatchWait = Wire.text(view, 'dispatch_wait');
+    this.dispatchCancel = Wire.bool(view, 'dispatch_cancel');
     this.agents = Wire.rows(data, 'agents').map((item: Record<string, Object>) => new TodoWorkspaceAgent(item));
     this.spaces = Wire.rows(data, 'spaces').map((item: Record<string, Object>) => new TodoWorkspaceSpace(item));
     this.ask = Wire.object(data, 'ask');
@@ -189,12 +193,13 @@ function acceptanceStands(todo: TodoWorkspaceItem): boolean {
   return !!reviews.length && Wire.text(reviews[reviews.length - 1], 'verdict') === 'accepted';
 }
 
-/** The native six-state view, projected from the server's todo and live session fields. */
+/** The native view, projected from the server's todo and live session fields. */
 export function todoWorkspaceStatus(todo: TodoWorkspaceItem, sessions: ResourceRow[]): string {
   // A failed task start is stored as done_at + start_error. It still needs the owner's
   // attention until they retry or close it explicitly, so inspect this before done_at.
   if (todo.startError) return 'needs_you';
   if (todo.isDone()) return 'done';
+  if (todo.dispatchWait) return 'waiting';
 
   const askOutcome = Wire.text(todo.ask, 'outcome');
   const active = todo.activeAgents();
@@ -283,8 +288,8 @@ function compareTodoRecent(left: TodoWorkspaceItem, right: TodoWorkspaceItem): n
 }
 
 function statusRank(value: string): number {
-  const index = TODO_STATUS_ORDER.indexOf(value);
-  return index < 0 ? TODO_STATUS_ORDER.length : index;
+  const index = TODO_STATES.indexOf(value);
+  return index < 0 ? TODO_STATES.length : index;
 }
 
 function groupLead(items: TodoWorkspaceItem[], sessions: ResourceRow[]): TodoWorkspaceItem[] {
@@ -777,6 +782,20 @@ export class TodoWorkspace {
     const data = Wire.object(result, 'todo');
     if (!Wire.text(data, 'id')) { this.error = 'failed'; return false; }
     this.upsert(data, todo.manager || this.managerId);
+    return true;
+  }
+
+  async cancelQueuedStart(todo: TodoWorkspaceItem): Promise<boolean> {
+    if (this.rejectGoneTarget(todo) || !todo.dispatchCancel) return false;
+    const owner = this.capture(todo);
+    if (!owner) { this.error = 'offline'; return false; }
+    const manager = todo.manager || this.managerId;
+    const path = '/api/v1/todos/' + pathPart(todo.id) + '/start/cancel' + managerQuery(manager);
+    const result = await this.write(path, 'POST', Wire.payload([], []), todo);
+    if (!result || !this.owns(owner)) return false;
+    const data = Wire.object(result, 'todo');
+    if (!Wire.text(data, 'id')) { this.error = 'failed'; return false; }
+    this.upsert(data, manager);
     return true;
   }
 

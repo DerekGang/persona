@@ -96,6 +96,32 @@ const show = async (id: string) => {
 const row = (id: string) => host.querySelector<HTMLElement>(`[data-testid=todo-triage-row][data-id=${id}]`);
 
 describe("a to-do whose agent never started", () => {
+  it("shows an offline wait outside Needs you and cancels the queued start once", async () => {
+    const queued: Todo = {
+      id: "queued", title: "Generate the inventory", origin: "conv", plan_id: "p3", agents: [],
+      created_at: iso(60_000), updated_at: iso(60_000),
+      view: { phase: "waiting", section: "waiting", reason: "queued", rank: 0,
+        dispatch_wait: "Will start when Example box is back", dispatch_cancel: true },
+    };
+    const cancelled: Todo = { ...queued, view: undefined, done_at: iso(0), done_by: "cancelled" };
+    seed({ todos: [queued] });
+    api.mockImplementation(async (path) => {
+      if (path === "/todos/queued/start/cancel") return { todo: cancelled };
+      if (path.startsWith("/todos?") || path === "/todos") return { todos: [cancelled] };
+      return defaultReply(path);
+    });
+    await show("queued");
+    expect(section("waiting")?.querySelector("[data-id=queued]")).toBeFalsy();
+    expect(section("parked")?.querySelector("[data-id=queued]")).toBeTruthy();
+    expect(row("queued")?.textContent).not.toContain(t("todos.not_handed"));
+    expect(host.textContent).toContain(queued.view?.dispatch_wait);
+    const cancel = button(t("todos.cancel_queued_start"))!;
+    await act(async () => { cancel.click(); cancel.click(); });
+    await flush();
+    expect(calls("POST", "/todos/queued/start/cancel")).toHaveLength(1);
+    expect(button(t("todos.cancel_queued_start"))).toBeUndefined();
+  });
+
   it("waits in Needs you reading open, says why in red, and ticking it closes it", async () => {
     const waits = row("waits")!;
     expect(section("waiting")?.contains(waits)).toBe(true);

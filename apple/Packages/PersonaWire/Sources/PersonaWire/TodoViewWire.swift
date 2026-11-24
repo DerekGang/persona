@@ -384,12 +384,16 @@ public nonisolated struct TodoSummary: Codable, Hashable, Sendable {
     public var inactive: String?
     /// In Can wait: it needs the owner but can wait, and is not counted. Written only when true.
     public var canWait: Bool?
+    /// The manager's explanation while this to-do waits for its computer or a start receipt.
+    public var dispatchWait: String?
+    /// The owner can cancel this pending start through POST /api/v1/todos/{id}/start/cancel. Written only when true.
+    public var dispatchCancel: Bool?
     /// The asks that hold the row in Needs you or Can wait, the most urgent first; absent when none does.
     public var asks: [OwnerAsk]?
     /// Its steps; absent when it has none.
     public var steps: TodoStepCount?
 
-    public init(phase: String = "", section: String = "", reason: String = "", line: TodoLine? = nil, since: String? = nil, nextChangeAt: String? = nil, rank: Int = 0, seen: Bool? = nil, inactive: String? = nil, canWait: Bool? = nil, asks: [OwnerAsk]? = nil, steps: TodoStepCount? = nil) {
+    public init(phase: String = "", section: String = "", reason: String = "", line: TodoLine? = nil, since: String? = nil, nextChangeAt: String? = nil, rank: Int = 0, seen: Bool? = nil, inactive: String? = nil, canWait: Bool? = nil, dispatchWait: String? = nil, dispatchCancel: Bool? = nil, asks: [OwnerAsk]? = nil, steps: TodoStepCount? = nil) {
         self.phase = phase
         self.section = section
         self.reason = reason
@@ -400,6 +404,8 @@ public nonisolated struct TodoSummary: Codable, Hashable, Sendable {
         self.seen = seen
         self.inactive = inactive
         self.canWait = canWait
+        self.dispatchWait = dispatchWait
+        self.dispatchCancel = dispatchCancel
         self.asks = asks
         self.steps = steps
     }
@@ -415,6 +421,8 @@ public nonisolated struct TodoSummary: Codable, Hashable, Sendable {
         case seen
         case inactive
         case canWait = "can_wait"
+        case dispatchWait = "dispatch_wait"
+        case dispatchCancel = "dispatch_cancel"
         case asks
         case steps
     }
@@ -431,6 +439,8 @@ public nonisolated struct TodoSummary: Codable, Hashable, Sendable {
         self.seen = try? c.decodeIfPresent(Bool.self, forKey: .seen)
         self.inactive = try? c.decodeIfPresent(String.self, forKey: .inactive)
         self.canWait = try? c.decodeIfPresent(Bool.self, forKey: .canWait)
+        self.dispatchWait = try? c.decodeIfPresent(String.self, forKey: .dispatchWait)
+        self.dispatchCancel = try? c.decodeIfPresent(Bool.self, forKey: .dispatchCancel)
         self.asks = try? c.decodeIfPresent([OwnerAsk].self, forKey: .asks)
         self.steps = try? c.decodeIfPresent(TodoStepCount.self, forKey: .steps)
     }

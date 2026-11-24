@@ -409,8 +409,12 @@ nonisolated enum TodoRowContentLogic {
         c.unseen = filed.section == TodoListSection.justFinished && view?.seen != true
         c.mark = mark(filed, view: view)
         if let view {
-            c.said = TodoLineText.said(view.line, since: since, closedReason: item.doneReason.flatMap(firstLine), now: now,
-                                       words: words, calendar: calendar)
+            if !filed.closed, let wait = view.dispatchWait {
+                c.said = TodoLineText.Said(rest: wait)
+            } else {
+                c.said = TodoLineText.said(view.line, since: since, closedReason: item.doneReason.flatMap(firstLine), now: now,
+                                           words: words, calendar: calendar)
+            }
             c.asks = view.asks?.count ?? 0
         }
         // A row filed by the app's own rules (an older manager's), and one whose line this build cannot say (a newer

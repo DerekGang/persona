@@ -15,7 +15,7 @@ import type { RuleSuggestion } from "./rule-suggestion";
 import { deleteTodo, type Todo, type TodoAsk } from "./todos";
 import { getInbox, itemPath } from "./inbox";
 import { closePanel, getPanel } from "./panel";
-import { BUILTIN_MANAGER, conversationManager, defaultManager, itemHeaders, MANAGER_HEADER, managerHeaderFor, noteConversation, routedConversationManager } from "./manager-choice";
+import { BUILTIN_MANAGER, conversationManager, defaultManager, itemHeaders, MANAGER_HEADER, managerHeaderFor, noteConversation, routedConversationManager, stampedHeaders } from "./manager-choice";
 import type { ChatLine } from "./turns";
 import type { Item } from "./types";
 import { upsertTaskCards, type TaskCardMetadata } from "./task-cards";
@@ -739,6 +739,19 @@ export async function dismissPlan(plan: TaskPlan) {
 
 /** The busy key of a task's "Retry" (busy is keyed by plan id otherwise). */
 export const retryKey = (todoId: string) => `retry:${todoId}`;
+
+export async function cancelQueuedTaskStart(todo: Todo) {
+  const key = retryKey(todo.id);
+  if (st.busy[key]) return;
+  set({ busy: { ...st.busy, [key]: true } });
+  try {
+    const res = await api<{ todo: Todo }>(`/todos/${enc(todo.id)}/start/cancel`, { method: "POST", headers: stampedHeaders(todo.manager) });
+    if (res.todo) putTodo({ ...res.todo, view: res.todo.view });
+    void refreshTodos();
+  } finally {
+    set({ busy: { ...st.busy, [key]: false } });
+  }
+}
 
 /**
  * "Retry" on a task whose agent did not start (#1396): the hub starts the same task again (its plan's machine, directory,

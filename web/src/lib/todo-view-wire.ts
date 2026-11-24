@@ -206,6 +206,12 @@ export interface TodoSummary {
   inactive?: string;
   /** In Can wait: it needs the owner but can wait, and is not counted. Written only when true. */
   can_wait?: boolean;
+  /** The manager's explanation while this to-do waits for its computer or a start receipt. */
+  dispatch_wait?: string;
+  /**
+   * The owner can cancel this pending start through POST /api/v1/todos/{id}/start/cancel. Written only when true.
+   */
+  dispatch_cancel?: boolean;
   /** The asks that hold the row in Needs you or Can wait, the most urgent first; absent when none does. */
   asks?: OwnerAsk[];
   /** Its steps; absent when it has none. */

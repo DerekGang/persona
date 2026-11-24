@@ -55,6 +55,7 @@ import persona.core.contracts.api.ConnectionState
 import persona.core.contracts.api.HubConnection
 import persona.core.contracts.api.RequestManager
 import persona.core.contracts.api.TasksApi
+import persona.core.contracts.generated.TodoSummary
 import persona.core.designsystem.AppStyle
 import persona.core.designsystem.PersonaTheme
 import persona.core.domain.tasks.TASK_RETRY_LAUNCHER_FEATURE
@@ -94,6 +95,7 @@ class TodoStartRemediesShotsTest {
         val retries = mutableListOf<String>()
         val launcherRetries = mutableListOf<RemedyCall>()
         val answers = mutableListOf<RemedyCall>()
+        val cancelledStarts = mutableListOf<Pair<String, String?>>()
         val patches = mutableListOf<PatchCall>()
         var retryGate: CompletableDeferred<Unit>? = null
 
@@ -106,6 +108,13 @@ class TodoStartRemediesShotsTest {
             retries += todoId
             retryGate?.await()
             return reopened(todoId)
+        }
+
+        override suspend fun cancelQueuedTaskStart(todoId: String): Todo {
+            cancelledStarts += todoId to currentCoroutineContext()[RequestManager]?.id
+            val updated = rows.single { it.id == todoId }.copy(doneAt = "2026-11-20T12:01:00Z", doneBy = "cancelled", view = null)
+            rows = rows.map { if (it.id == todoId) updated else it }
+            return updated
         }
 
         override suspend fun retryTaskOnLauncher(todoId: String, launcher: String): Todo {
@@ -402,6 +411,33 @@ class TodoStartRemediesShotsTest {
     }
 
     @Test fun failedStartScreenshotsDefaultText() = screenshotMatrix(largeText = false)
+
+    @Test fun offlineQueuedStartShowsWaitAndCancelsOnTheTodoManager() {
+        val explanation = "Will start when Example box is back"
+        val queued = failedTodo().copy(
+            planId = "owned-plan", doneAt = null, startError = null, notes = "Draft the inventory from the project files.",
+            view = TodoSummary(phase = "waiting", section = "waiting", reason = "queued", dispatchWait = explanation, dispatchCancel = true),
+        )
+        var appearance by mutableStateOf(AppStyle.Glass to false)
+        val api = Api(listOf(queued), emptySet())
+        open(api, appearance = { appearance })
+        val shots = File(System.getProperty("persona.shots") ?: "build/todo-start-remedies-shots").also { it.mkdirs() }
+        val cancel = rule.onNodeWithTag("todo-cancel-queued-start")
+        for (dark in listOf(false, true)) {
+            rule.runOnIdle { appearance = AppStyle.Glass to dark }
+            rule.onNodeWithText(explanation).assertIsDisplayed()
+            cancel.assertIsDisplayed()
+            val image = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+            File(shots, "todo-offline-start-${if (dark) "dark" else "light"}.png").outputStream().use {
+                assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+        }
+        cancel.performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(queued.id to queued.manager), api.cancelledStarts)
+        cancel.assertDoesNotExist()
+        assertTrue(errors.isEmpty())
+    }
 
     @Test fun failedStartScreenshotsLargeText() = screenshotMatrix(largeText = true)
 

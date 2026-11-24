@@ -253,6 +253,14 @@
           "type": "boolean",
           "description": "In Can wait: it needs the owner but can wait, and is not counted. Written only when true."
         },
+        "dispatch_wait": {
+          "type": "string",
+          "description": "The manager's explanation while this to-do waits for its computer or a start receipt."
+        },
+        "dispatch_cancel": {
+          "type": "boolean",
+          "description": "The owner can cancel this pending start through POST /api/v1/todos/{id}/start/cancel. Written only when true."
+        },
         "asks": {
           "type": "array",
           "items": {"$ref": "#/$defs/OwnerAsk"},

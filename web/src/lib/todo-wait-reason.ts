@@ -107,7 +107,7 @@ export function waitTone(r: WaitReason): TodoTone {
  *  (`wait`, from waitOf; none reads as unknown), every other status's are todoStatusLabel's and the tone of `toneOf`'s
  *  TODO_STATUS_INFO, as each list took it before: shownStatus (the To-dos page), or the status itself (the overview). */
 export function todoLook(todo: Todo, status: TodoStatus, wait?: WaitReason, toneOf: TodoStatus = shownStatus(todo, status)): { label: string; tone: TodoTone } {
-  if (status === "waiting") return { label: waitName(wait ?? "unknown"), tone: waitTone(wait ?? "unknown") };
+  if (status === "waiting") return { label: todo.view?.dispatch_wait ?? waitName(wait ?? "unknown"), tone: waitTone(wait ?? "unknown") };
   return { label: todoStatusLabel(todo, status), tone: TODO_STATUS_INFO[toneOf].tone };
 }
 

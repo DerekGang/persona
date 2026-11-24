@@ -436,6 +436,7 @@
     <string name="agents_todo_actions">To-do actions</string>
     <string name="agents_todo_more">More</string>
     <string name="agents_todo_reopen">Reopen</string>
+    <string name="agents_todo_cancel_queued_start">Cancel queued start</string>
     <string name="agents_todo_complete">Complete</string>
     <string name="agents_todo_state_failed">Couldn\'t update the state: %1$s</string>
     <string name="agents_todo_hand_to_agent">Hand to agent</string>
