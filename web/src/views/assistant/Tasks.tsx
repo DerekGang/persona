@@ -93,6 +93,9 @@ import type { TaskWorkspace } from "../../lib/feed";
 import { machineStartBlocked, ULTRACODE_FEATURE } from "../../lib/ultracode";
 import { UltracodeChip } from "../chat/Ultracode";
 import { byTime } from "../../lib/times";
+import { useStoreRows } from "../../lib/store-rows";
+import { decisionCards, decisionKey, type DecisionCard } from "../../lib/decision-pager";
+import { DecisionEntry, useDecisionPager } from "./decision-dock";
 import { requestHome, requestHomeMachine } from "../../lib/child-sessions";
 import { stateName, type WaitReason } from "../../lib/state-labels";
 import { statusWord, waitOf } from "../../lib/todo-wait-reason";
@@ -129,25 +132,6 @@ type TaskNow = { status: TodoStatus; lead?: Session; wait?: WaitReason };
 export function useTaskNow(todo: Todo | undefined): TaskNow | undefined {
   const plans = useFeed((s) => s.plans);
   return useStore((s) => (todo ? taskNowIn(s, todo, plans) : undefined));
-}
-
-/** Two rows with the same fields, each the same value or object. */
-function sameRow(a: object, b: object): boolean {
-  const ka = Object.keys(a), kb = Object.keys(b);
-  return ka.length === kb.length && ka.every((k) => Object.is((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
-}
-
-/** useStore for a list of rows a selector builds: useStore compares one level down only, and rows made anew always
- *  differ, so the last list stands while every row has the same fields as before. */
-function useStoreRows<T extends object>(select: (s: State) => T[]): T[] {
-  const last = useRef<T[] | null>(null);
-  return useStore((s) => {
-    const rows = select(s);
-    const prev = last.current;
-    if (prev && prev.length === rows.length && rows.every((r, i) => sameRow(r, prev[i]))) return prev;
-    last.current = rows;
-    return rows;
-  });
 }
 
 export function useTodo(id: string | undefined): Todo | undefined {
@@ -1140,6 +1124,8 @@ function RunningAgentRow({ session, activity }: { session: Session; activity?: B
  *  running that does not; each thing in one of them only (lib/assistant-entries). What finished in the last 24 hours is
  *  under Finished (#10922), everything finished on the board (All). */
 const NO_ASKS: Interaction[] = [];
+const NO_DECISIONS: readonly DecisionCard[] = [];
+const LazyDecisionPager = lazy(() => import("./DecisionPager").then((module) => ({ default: module.DecisionPager })));
 
 /** One of the conversation's own cards in Needs you (#4883): the card itself is in the chat above the composer, as on
  *  iOS (ActionTrayContent's asks); its row says what it waits for and closes the tray onto it. */
@@ -1153,7 +1139,11 @@ function OwnAskRow({ ix, onOpen }: { ix: Interaction; onOpen: () => void }) {
   );
 }
 
-export const AssistantActionBar = memo(function AssistantActionBar({ conversation, ownAsks = NO_ASKS }: { conversation: string; ownAsks?: Interaction[] }) {
+export const AssistantActionBar = memo(function AssistantActionBar({ conversation, ownAsks = NO_ASKS, turnAsks = NO_ASKS,
+  taskDecisions = NO_DECISIONS, focusDecision, inCall = false, openDecisionSource = () => {}, hasDecisionSource = () => false, sourceOpen = false }: {
+  conversation: string; ownAsks?: Interaction[]; turnAsks?: readonly Interaction[]; taskDecisions?: readonly DecisionCard[]; focusDecision?: string; inCall?: boolean;
+  openDecisionSource?: (card: DecisionCard) => void; hasDecisionSource?: (card: DecisionCard) => boolean; sourceOpen?: boolean;
+}) {
   const [tray, setTrayNow] = useState<AssistantTray | null>(null);
   // the open tray filling the chat column (#4656), for going through many cards; closing or switching trays undoes it
   const [expanded, setExpanded] = useState(false);
@@ -1175,6 +1165,26 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   const [board, setBoard] = useState(false);
   const [showShelved, setShowShelved] = useState(false);
   const trayId = useId();
+  const decisionId = useId();
+  const cards = useMemo(() => decisionCards(turnAsks, taskDecisions), [turnAsks, taskDecisions]);
+  const pager = useDecisionPager(cards);
+  const focusedDecision = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focusDecision) focusedDecision.current = undefined;
+    else if (focusedDecision.current !== focusDecision && pager.reveal(focusDecision)) {
+      focusedDecision.current = focusDecision;
+      setTrayNow(null);
+    }
+  }, [focusDecision, pager]);
+  const showPager = !sourceOpen && pager.count > 0 && (inCall || !tray && !pager.collapsed);
+  const decisionPanel = showPager && (
+    <Suspense fallback={<div className="flex h-11 shrink-0 items-center justify-center"><Loading /></div>}>
+      <LazyDecisionPager pager={pager} id={decisionId} openSource={(card) => {
+        if (card.taskTitle === undefined && !inCall) pager.collapse();
+        openDecisionSource(card);
+      }} hasSource={hasDecisionSource} inCall={inCall} />
+    </Suspense>
+  );
   const manager = useShownManager();
   const plans = useFeed((s) => s.plans);
   const feed = useFeed((s) => s.feeds[conversation] ?? EMPTY_FEED);
@@ -1201,6 +1211,10 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   const directWaiting = main === conversation;
   const waiting = useMemo(() => directWaiting ? directUserWaiting(entries.needsYou, deferred) : entries.needsYou, [directWaiting, entries.needsYou, deferred]);
   const countedOwnAsks = useMemo(() => directWaiting ? ownAsks.filter(directUserInteraction) : ownAsks, [directWaiting, ownAsks]);
+  const stackedAsks = useMemo(() => {
+    const paged = new Set(cards.map(({ interaction }) => decisionKey(interaction)));
+    return countedOwnAsks.filter((ix) => !paged.has(decisionKey(ix)));
+  }, [cards, countedOwnAsks]);
   const isAsking = (item: NeedsYouItem) => (item.kind === "task" || item.kind === "agent") && item.asks.length > 0;
   // While background rounds fold, rows other conversations supervise are grouped under them (#4314); with the
   // switch off, or every row this conversation's, the tray is as it was.
@@ -1236,6 +1250,7 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
   };
   const openOwn = (id: string, keepBar = false) => {
     setTray(null);
+    if (pager.reveal(id)) return;
     requestAnimationFrame(() => {
       if (scrollOwn(id, keepBar)) return;
       const dock = bar.current?.closest("[data-chat-dock]");
@@ -1252,9 +1267,9 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
     });
   };
   const openNextOwn = () => {
-    if (!countedOwnAsks.length) return;
-    const previous = countedOwnAsks.findIndex((ix) => ix.id === lastOwn.current);
-    const next = countedOwnAsks[(previous + 1) % countedOwnAsks.length];
+    if (!stackedAsks.length) return;
+    const previous = stackedAsks.findIndex((ix) => ix.id === lastOwn.current);
+    const next = stackedAsks[(previous + 1) % stackedAsks.length];
     lastOwn.current = next.id;
     openOwn(next.id, true);
   };
@@ -1293,11 +1308,13 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
     setTray(null);
     entry?.focus();
   };
+  if (inCall) return decisionPanel;
   return (
     // shrinks with the dock (ChatView's DOCK_MAX): an open tray gives up its height and scrolls inside, instead of
     // standing taller than the dock and leaving its bottom (a card's answer row) and the entries under the composer;
     // closed it is the capsules alone, which never give way to the cards over them (#10347, #11794)
-    <div ref={bar} className={cx("flex min-h-0 flex-col gap-2", !tray ? "shrink-0" : "shrink")} data-assistant-actionbar onKeyDownCapture={onTrayKey}>
+    <div ref={bar} className={cx("flex min-h-0 flex-col gap-2", !tray && !showPager ? "shrink-0" : "shrink")} data-assistant-actionbar onKeyDownCapture={onTrayKey}>
+      {decisionPanel}
       {tray && (
         // its height follows what is visible (styles.css: an open tray lets the dock take most of it); the header stays
         // and the list scrolls under it, so a plan card's Start (sticky to the list's bottom) is never under the header
@@ -1347,10 +1364,14 @@ export const AssistantActionBar = memo(function AssistantActionBar({ conversatio
           open tray is the selected capsule. The scroller pads by the focus ring's width and takes it back, as the
           dock's did, so a large font scrolls sideways instead of clipping the ring. */}
       <div className="scrollbar-none -my-1 flex min-w-0 shrink-0 items-center gap-2 overflow-x-auto py-1">
-        {countedOwnAsks.length > 0 && (
+        <DecisionEntry pager={pager} expanded={showPager} controls={decisionId} capsule={DOCK_CAPSULE} onToggle={() => {
+          if (showPager) pager.collapse();
+          else { setTray(null); pager.open(); }
+        }} />
+        {stackedAsks.length > 0 && (
           <button type="button" data-next-own-ask onClick={openNextOwn} className={cx(DOCK_CAPSULE, "gap-2 bg-field font-medium text-ink hover:bg-hover")}>
             <span className="whitespace-nowrap">{t("assistant-tasks.next_unanswered")}</span>
-            <span className="tabular-nums text-ink-2">{countedOwnAsks.length}</span>
+            <span className="tabular-nums text-ink-2">{stackedAsks.length}</span>
           </button>
         )}
         {entryKeys.map((key) => {

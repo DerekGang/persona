@@ -1,4 +1,6 @@
 [
+  "assistant-tasks.to_decide",
+  "chat-interactions.decision_",
   "starred.count",
   "starred.title",
   "agent-goal.plan_",
@@ -93,6 +95,7 @@
   "assistant-tasks.report_done",
   "assistant-tasks.report_question",
   "assistant-tasks.report_step",
+  "assistant-tasks.retry",
   "assistant-tasks.retry_",
   "assistant-tasks.review",
   "assistant-tasks.said_",
