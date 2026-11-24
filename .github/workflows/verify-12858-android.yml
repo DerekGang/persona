@@ -1,0 +1,71 @@
+name: Verify the Android To Decide pager
+on:
+  push:
+    branches: ['verify/12858-android-*']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      JAVA_TOOL_OPTIONS: '-Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the repository's Android toolchain
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add --toolchain 1.98.0 aarch64-linux-android x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Download the verified Gradle distribution
+        working-directory: android
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            "https://downloads.gradle.org/distributions/gradle-9.8.2-bin.zip?persona_ci=$GITHUB_RUN_ID" \
+            -o "$RUNNER_TEMP/persona-gradle.zip"
+          printf '%s  %s\n' '21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607' "$RUNNER_TEMP/persona-gradle.zip" | sha256sum --check
+          sed -i "s|^distributionUrl=.*|distributionUrl=file://$RUNNER_TEMP/persona-gradle.zip|" gradle/wrapper/gradle-wrapper.properties
+      - name: Prefetch the signed-off Robolectric API 35 inputs from the Central mirror
+        run: |
+          set -euo pipefail
+          version=15-robolectric-13954326-i7
+          artifact="org/robolectric/android-all-instrumented/$version"
+          remote="https://maven-central.storage-download.googleapis.com/maven2/$artifact"
+          local_maven="$HOME/.m2/repository/$artifact"
+          mkdir -p "$local_maven"
+          jar="android-all-instrumented-$version.jar"
+          curl --fail --silent --show-error --retry 4 --retry-all-errors "$remote/$jar" -o "$local_maven/$jar.tmp"
+          curl --fail --silent --show-error --retry 4 --retry-all-errors "$remote/$jar.sha512" -o "$RUNNER_TEMP/robolectric.sha512"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/robolectric.sha512")" "$local_maven/$jar.tmp" | sha512sum --check
+          mv "$local_maven/$jar.tmp" "$local_maven/$jar"
+      - name: Test pager state, native UI and app navigation
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --max-workers=4 :feature:chat:testDebugUnitTest \
+            --tests '*ToDecideTest' --tests '*ToDecideShotsTest' --tests '*PendingStackTest' --tests '*ChatMessageJumpTest'
+          ./gradlew --no-daemon --max-workers=4 :app:testDebugUnitTest --tests '*AppNavigatorTest'
+          ./gradlew --no-daemon --max-workers=4 :app:compileDebugKotlin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-12858-android
+          path: |
+            android/feature/chat/build/test-results/testDebugUnitTest
+            android/feature/chat/build/to-decide-shots
+            android/app/build/test-results/testDebugUnitTest
+          if-no-files-found: warn
+          retention-days: 2
