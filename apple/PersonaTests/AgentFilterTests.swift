@@ -44,7 +44,7 @@ import PersonaWire
             row.workspaceCWD = physical
             return row
         }
-        let mac = try JSON.decoder.decode(Machine.self, from: Data(#"{"id":"mac","name":"Laptop","online":true,"home":"/Users/sample"}"#.utf8))
+        let mac = try JSON.decoder.decode(Machine.self, from: Data(#"{"id":"mac","name":"Laptop","kind":"local","online":true,"home":"/Users/sample"}"#.utf8))
         let rows = [
             row("a", "mac", "desk", "site", "/tmp/site", physical: "/Users/sample/Desktop/site"),
             row("b", "mac", "desk", "site", "/Users/sample/Desktop/site"),
