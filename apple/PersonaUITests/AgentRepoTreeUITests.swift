@@ -69,12 +69,12 @@ final class AgentRepoTreeUITests: XCTestCase {
         XCTAssertTrue(all.waitForExistence(timeout: 20))
         let heading = app.buttons.matching(identifier: "agents.project")
             .matching(NSPredicate(format: "label BEGINSWITH %@", "notes-fixture")).firstMatch
-        bringUp(heading, in: app, columnX: all.frame.midX)
+        app.bringAboveTabBar(heading)
         XCTAssertTrue(heading.isHittable)
         XCTAssertTrue(heading.label.contains("Pinned"))
         XCTAssertTrue(heading.label.contains("offline"))
         shot(app, "herdr-lone-workspace")
-        heading.press(forDuration: 1.2)
+        heading.coordinate(withNormalizedOffset: CGVector(dx: 0.24, dy: 0.5)).press(forDuration: 1.2)
         let copyPath = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "worktree.copyPath", "Copy Path")).firstMatch
         XCTAssertTrue(copyPath.waitForExistence(timeout: 5))
         shot(app, "herdr-workspace-actions")
