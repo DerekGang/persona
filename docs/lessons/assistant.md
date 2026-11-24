@@ -1142,3 +1142,15 @@ restart in place for a new binary), `run()` closed the store, but both loops wen
 for days, and each restart left another pair. Take the cancellation off only the one-time reads; a loop gets the
 run's context. Test it by finding the loop's goroutine in the stacks, ending the run, and waiting until it is gone
 (`server/internal/assistant/fleet_loops_run_test.go`).
+
+## A start path of its own skips what the shared start decides (#14887)
+
+`a2a_send`'s new Agent and `dispatch_start` built their own `session.start`, so they never got two things `agent_start`
+and `task_plan` decide before a start goes out: the start host (an agy launcher on the computer's Antigravity companion,
+`companionStartHost`, #13447) and the read-only refusal (`readonlyLauncherRefusal`, #8316). An agy launch, in `plan` by
+default, went to a pane, where the node refused it after its A2A task was recorded. The failed task then said "Persona
+could not confirm the Agent started.", the words for an unknown outcome, about a definite refusal with a reason. A path
+that starts an Agent readies its start with the same steps as the others (`agentStartedHost`,
+`server/internal/assistant/start_host.go`), refuses what it can before anything is recorded, and keeps a definite
+refusal's reason; only an outcome that is really unknown says it is unknown.
+
