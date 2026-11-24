@@ -158,6 +158,8 @@ data class AgentListGroup(
      * apart from Working, with a clock, as iOS's `StateCounts` does.
      */
     val waitingInBackground: Int = 0,
+    /** The local folder for a heading in By project, when its session rows identify one. */
+    val projectFolder: AgentProjectFolder? = null,
 )
 
 data class AgentListResult(
@@ -402,7 +404,7 @@ fun buildFlatAgentList(
             val machineGroups = known.sortedBy { !it.online }.mapNotNull { machine ->
                 val members = treeRows.filter { it.session.machineId == machine.id }
                 if (members.isEmpty()) return@mapNotNull null
-                val nested = buildFlatAgentList(members, pins = pins, mutes = mutes,
+                val nested = buildFlatAgentList(members, machines = listOf(machine), pins = pins, mutes = mutes,
                     settings = settings.copy(grouping = AgentGrouping.Space))
                 val machineFolded = "machine/${machine.id}" in settings.folded
                 result += nested.groups.filterNot { it.id == "pinned" }.map { group ->
@@ -554,7 +556,8 @@ fun buildFlatAgentList(
             }
         }
         AgentGrouping.Space -> {
-            val spaces = agentSpaces(live)
+            val spaces = agentSpaces(live, byProject = true)
+            val projectFolders = projectFolders(spaces, machines)
             fun pinnedSpace(space: AgentSpace) = space.preferenceKey in pins.spaces
             fun mutedSpace(space: AgentSpace) = space.preferenceKey in mutes.spaces
             fun leading(space: AgentSpace) = pinnedSpace(space) && !mutedSpace(space)
@@ -589,7 +592,7 @@ fun buildFlatAgentList(
                 return AgentListGroup(space.id, CoreText.plain(space.name), rows, visible, folded,
                     if (isQuiet) "quiet" else null, stateCounts, CoreText.joined(CoreText.of(Key.ListSeparator), spoken),
                     idleFold = idle.takeIf { it.isNotEmpty() }?.let { IdleFold(it, open = space.id in settings.expandedIdle) },
-                    waitingInBackground = waiting(rows))
+                    waitingInBackground = waiting(rows), projectFolder = projectFolders[space.id])
             }
             result += active.map { spaceGroup(it, false) }
             result += quiet.map { spaceGroup(it, true) }

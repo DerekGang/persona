@@ -365,7 +365,10 @@ internal fun AgentsScreen(
         sidebar.onSearchPicked()
         openRow(picked.listSession(page.preferences))
     }
-    fun newSession(space: AgentSpacePreset? = null) { creationModel?.startIn(space); newAgent = true }
+    fun newSession(space: AgentSpacePreset? = null, project: AgentProjectFolder? = null) {
+        creationModel?.startIn(space, project)
+        newAgent = true
+    }
     // Built with the page off the main thread (AgentsViewModel).
     val spaces = page.spaces
     // The list rows and the space page share one session menu and one space menu; [nested] rows sit under "Subtasks (N)".
@@ -781,6 +784,7 @@ internal fun AgentsScreen(
                             model.countGroup(group)
                         }
                         val space = spacesById[group.id]
+                        val project = group.projectFolder.takeIf { page.pagination.loaded && !page.pagination.paged }
                         // A history group of a session without a directory has no title of its own (AgentHistory.kt).
                         val groupTitle = group.title.text().ifBlank { stringResource(R.string.agents_history_unknown_folder) }
                         val slot = repoSlots[entry.key]
@@ -821,8 +825,16 @@ internal fun AgentsScreen(
                                 // iOS TodoSpaceTag: the project is on a to-do.
                                 space?.members?.first()?.session?.let { s -> s.todoSpaceName?.let { name -> todos.forSpace(s.machineId, name) } }
                                     ?.let { todo -> add(RowFlag(stringResource(R.string.agents_flag_space_todo, todo.title), PhIcons.ListChecks)) }
-                            }, menu = space?.let { { spaceMenu(it, true) } }, icon = group.repo?.icon,
-                            kind = group.repo?.kind ?: stringResource(R.string.agents_kind_space))
+                            }, menu = {
+                                if (project != null && creationModel != null && connection == ConnectionState.Online &&
+                                    page.machines.any { it.id == project.machineId && it.online }) {
+                                    val projectLabel = listOfNotNull(groupTitle, project.qualifier).joinToString(" · ")
+                                    HeadingAction(PersonaIcons.add, stringResource(R.string.agents_new_agent_in_project, projectLabel),
+                                        onClick = { newSession(project = project) })
+                                }
+                                if (space != null) spaceMenu(space, true)
+                            }, icon = group.repo?.icon, kind = group.repo?.kind ?: stringResource(R.string.agents_kind_space),
+                            qualifier = project?.qualifier)
                         else if (group.id.startsWith("todo/") && group.id != TodoNoneGroup && group.id != TodoManualGroup) {
                             // "By to-do" as iOS (#4338 A5): the to-do's title, its agents' count in the to-do's state, and
                             // the arrow to the to-do.

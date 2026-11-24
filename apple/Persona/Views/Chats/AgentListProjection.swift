@@ -324,7 +324,8 @@ nonisolated struct AgentListProjection: Sendable {
 
     /// The hub's paged totals for the same immutable space, with manager routing and hub scoping preserved.
     static func aggregateScope(_ space: SpaceGroup, settings: Settings) -> RuntimeSessionLists.Scope {
-        settings.scope(machine: space.machineID, hub: space.group, space: space.spaceID == "-" ? "" : space.spaceID)
+        settings.scope(machine: space.machineID, hub: space.group,
+                       space: space.workspaceGroupID ?? (space.spaceID == "-" ? "" : space.spaceID))
     }
 
     static func scopeKey(_ scope: RuntimeSessionLists.Scope) -> String {
@@ -427,7 +428,7 @@ nonisolated struct AgentListProjection: Sendable {
 
         // A selected grouping builds its own structure, not every alternative on each body evaluation.
         if settings.grouping == "space" {
-            let groups = SpaceGroup.build(result.unpinned).map { group in
+            let groups = SpaceGroup.withProjectFolders(SpaceGroup.build(result.unpinned, byProject: true), machines: result.machinesByRef).map { group in
                 var group = group
                 let scope = aggregateScope(group, settings: settings)
                 result.scopes[group.id] = scope
