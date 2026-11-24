@@ -60,6 +60,7 @@ internal class ChatInteractionController(
     private val submittedContexts: MutableState<List<ChatLinkContext>>,
 ) {
     val notice = mutableStateOf<String?>(null)
+    val commandInputErrors = androidx.compose.runtime.mutableStateMapOf<String, String>()
     val sending = mutableStateOf(false)
     val sendingId = mutableStateOf<String?>(null)
     val submittedDraft = mutableStateOf<Pair<String, ChatComposerDraft>?>(null)
@@ -99,6 +100,7 @@ internal class ChatInteractionController(
 
     fun answer(interaction: Interaction, resolution: Resolution) {
         if (!taps.value.canTap(interaction, interactions.pending.value, java.time.Instant.now())) return
+        commandInputErrors.remove(interaction.id)
         taps.value = taps.value.tapped(interaction.id)
         scope.launch {
             try {
@@ -110,7 +112,13 @@ internal class ChatInteractionController(
                     interactionFeedback.value = result.notice(resources, interaction, resolution)
                     if (result.offersNext(resolution)) answeredHere.value++
                 }
-                notice.value = if (result.withdraw) null else result.notice(resources, interaction, resolution)
+                val failure = if (result.withdraw) null else result.notice(resources, interaction, resolution)
+                if (failure != null && interaction.commandInput != null) {
+                    commandInputErrors[interaction.id] = failure
+                    notice.value = null
+                } else {
+                    notice.value = failure
+                }
                 if (result.submission == InteractionSubmission.PromptChanged || !result.withdraw) {
                     try {
                         interactions.refresh()
