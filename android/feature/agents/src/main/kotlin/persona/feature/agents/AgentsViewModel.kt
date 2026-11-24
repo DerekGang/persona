@@ -181,6 +181,8 @@ internal class AgentsViewModel(
     private var previousContext: List<Any?>? = null
     private val _delivery = MutableStateFlow<Map<String, RequestDelivery>>(emptyMap())
     val delivery = _delivery.asStateFlow()
+    private val _commandInputErrors = MutableStateFlow<Map<String, persona.feature.chat.InteractionReply>>(emptyMap())
+    val commandInputErrors = _commandInputErrors.asStateFlow()
     private val _requestHistory = MutableStateFlow<List<Interaction>>(emptyList())
     val requestHistory = _requestHistory.asStateFlow()
     private val _refreshing = MutableStateFlow(false)
@@ -508,6 +510,8 @@ internal class AgentsViewModel(
                 }
                 previous = pending
                 _delivery.update { RequestDeliveries.prune(it, pending) }
+                val pendingIds = pending.mapTo(mutableSetOf()) { it.id }
+                _commandInputErrors.update { errors -> errors.filterKeys { it in pendingIds } }
             }
         }
         if (operations != null) {
@@ -1012,6 +1016,7 @@ internal class AgentsViewModel(
         }
         val result = AnswerBuilder.build(latest, action, draft, AnswerContext(fullPlanRead = fullPlanRead))
         val resolution = result.resolution ?: return
+        _commandInputErrors.update { it - latest.id }
         _delivery.update { it + (interaction.id to RequestDelivery.Sending) }
         viewModelScope.launch {
             try {
@@ -1030,6 +1035,17 @@ internal class AgentsViewModel(
                 _delivery.update { it + (interaction.id to RequestDelivery.Unknown) }
                 throw e
             } catch (e: Exception) {
+                if (latest.kind == "permission" && latest.toolName == "command_input") {
+                    val problem = persona.feature.chat.classifyInteractionFailure(e, keepUnconfirmedReason = true)
+                    if (!problem.withdraw) {
+                        _commandInputErrors.update { it + (latest.id to problem) }
+                        if (problem.submission == persona.feature.chat.InteractionSubmission.Refused) {
+                            _delivery.update { it + (latest.id to RequestDelivery.Retry) }
+                            problem.submission.haptic?.let(_haptics::tryEmit)
+                            return@launch
+                        }
+                    }
+                }
                 // A lost acknowledgement must never cause an automatic duplicate approval.
                 _delivery.update { it + (interaction.id to RequestDelivery.Unknown) }
                 answerFailureHaptic(e)?.let(_haptics::tryEmit)

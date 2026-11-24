@@ -72,6 +72,7 @@ internal fun InteractionPanel(
     resize: CardResize? = null,
     /** Drawn under a card that is not folded: the rule a question a supervisor passed up suggests (#4929); null: nothing. */
     suggestion: (@Composable (Interaction) -> Unit)? = null,
+    commandInputErrors: Map<String, String> = emptyMap(),
 ) {
     // The card open on its full page, by its id: cards come and go around it (answered on another device, expired).
     var full by rememberSaveable { mutableStateOf<String?>(null) }
@@ -90,7 +91,7 @@ internal fun InteractionPanel(
         key(request.id, request.dialog?.rev, complete) {
             RequestEditor(request, machine, busyId != null, request.id in uncertainIds, complete,
                 onTerminal = onTerminal, onExpand = { full = request.id }, linkVisible = linkVisible, blockedReason = blockFor(request),
-                terminalHelp = terminalHelp) { action, value, planRead ->
+                terminalHelp = terminalHelp, refusal = commandInputErrors[request.id]) { action, value, planRead ->
                 AnswerBuilder.build(request, action, value, AnswerContext(fullPlanRead = planRead)).resolution?.let {
                     onResolve(request, it)
                 }
@@ -194,6 +195,7 @@ internal fun InteractionForm(
     blockedReason: String? = null,
     /** False for a session without a terminal: no "handle in terminal" note (there is no terminal to go to). */
     showTerminalHelp: Boolean = true,
+    refusal: String? = null,
 ) {
     val scroll = rememberScrollState()
     var planRead by rememberSaveable(interaction.id, interaction.plan) { mutableStateOf(false) }
@@ -205,6 +207,7 @@ internal fun InteractionForm(
         }
     }
     val secret = interaction.secret == true
+    val command = interaction.commandInput
     // Secrets (a terminal's password, a password card's) live only in this visible form, never in saved state or request drafts.
     var terminalHelp by remember { mutableStateOf(false) }
     val now by produceState(Instant.now(), interaction.expiresAt) {
@@ -272,6 +275,13 @@ internal fun InteractionForm(
             else if (interaction.isSecretHandoff) SecretHandoffActions(interaction,
                 canDeny = enabled(AnswerAction.Deny), canAllow = enabled(AnswerAction.Allow), canAlways = enabled(AnswerAction.Always),
                 onDeny = { act(AnswerAction.Deny) }, onAllow = { act(AnswerAction.Allow) }, onAlways = { act(AnswerAction.Always) },
+                modifier = Modifier.padding(top = Tokens.Space.s))
+            else if (command != null) CommandInputActions(command, fieldValues["input"].orEmpty(), { fieldValues = mapOf("input" to it) },
+                editable, canDecline = enabled(AnswerAction.Deny),
+                canSend = fieldValues["input"].orEmpty().isNotBlank() &&
+                    AnswerBuilder.build(interaction, AnswerAction.Allow, draft.copy(values = fieldValues), context).allowed,
+                onDecline = { act(AnswerAction.Deny) },
+                onSend = { act(AnswerAction.Allow, draft.copy(values = fieldValues)) },
                 modifier = Modifier.padding(top = Tokens.Space.s))
             // A card with fields (#4641): its form, Deny and Fill In & Allow, no Always.
             else if (interaction.hasFieldsForm) PermissionFieldsActions(interaction.fields.orEmpty(), fieldValues, { fieldValues = it }, editable,
@@ -395,6 +405,7 @@ internal fun InteractionForm(
             if (uncertain) PendingBadge(PendingStatus.Unconfirmed)
             if (!readOnly && (uncertain || busy)) Text(stringResource(if (uncertain) R.string.chat_request_uncertain else R.string.chat_request_busy),
                 style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink2)
+            if (refusal != null) Text(refusal, style = PersonaTheme.type.callout, color = PersonaTheme.palette.cautionText)
         }
         if (readOnly || (full && !uncertain && !busy)) Text(
             if (readOnly) stringResource(R.string.chat_request_read_only)
@@ -403,6 +414,7 @@ internal fun InteractionForm(
         Spacer(Modifier.height(Tokens.Space.s))
         when (interaction.kind) {
             "permission" -> if (interaction.isSecretRun) SecretRunSummary(interaction)
+            else if (command != null) CommandInputSummary(command)
             else if (interaction.isSecretHandoff) SecretHandoffSummary(interaction) else {
                 // Another agent's card says why it asks, in its own words.
                 interaction.reason?.takeIf { interaction.fromOtherAgent && it.isNotBlank() }?.let {

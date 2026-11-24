@@ -1,0 +1,120 @@
+package persona.feature.chat
+
+import android.graphics.Bitmap
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performTextInput
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import persona.core.contracts.Interaction
+import persona.core.contracts.JsonCodec
+import persona.core.contracts.Resolution
+import persona.core.designsystem.AppStyle
+import persona.core.designsystem.PersonaTheme
+import persona.core.domain.answer.AnswerBuilder
+import persona.core.domain.answer.AnswerContext
+import persona.core.domain.answer.AnswerDraft
+import java.io.File
+
+@RunWith(AndroidJUnit4::class)
+@Config(sdk = [35], qualifiers = "en-w400dp-h900dp-xhdpi")
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class CommandInputCardUiTest {
+    @get:Rule val rule = createComposeRule()
+    private var style by mutableStateOf(AppStyle.Glass)
+    private var dark by mutableStateOf(false)
+    private var refusal by mutableStateOf<String?>(null)
+    private val replies = mutableListOf<Resolution>()
+
+    private fun line() = rule.onNode(
+        hasSetTextAction() and (hasTestTag("interaction.field.input") or hasAnyAncestor(hasTestTag("interaction.field.input"))),
+        useUnmergedTree = true,
+    )
+
+    private fun show(masked: Boolean = true) {
+        val maskField = if (masked) ""","masked":true""" else ""
+        val card = JsonCodec.decodeFromString<Interaction>(
+            """{"id":"fixture-command-input","machine_id":"example","session_id":"sample","kind":"permission",
+              "tool_name":"command_input","tool_title":"Command input",
+              "tool_input":{"command":"example-cli login","prompt":"Enter a test code","output":"Open https://example.com/device"$maskField},
+              "fields":[{"key":"input","label":"Enter a test code","secret":true}]}""",
+        )
+        rule.setContent {
+            PersonaTheme(style = style, darkTheme = dark, reduceMotion = true) {
+                InteractionForm(card, null, AnswerDraft(), {}, busy = false, uncertain = false, full = false,
+                    onAnswer = { action, draft, read ->
+                        AnswerBuilder.build(card, action, draft, AnswerContext(fullPlanRead = read)).resolution?.let(replies::add)
+                    }, onTerminal = null, onExpand = {}, refusal = refusal)
+            }
+        }
+    }
+
+    @Test fun explicitSendSendsOnceAndRefusalLeavesAnEmptyCard() {
+        show()
+        val line = line()
+        val password = SemanticsMatcher.keyIsDefined(SemanticsProperties.Password)
+        line.assert(password)
+        rule.onNodeWithText("Show").performClick()
+        line.assert(!password)
+        rule.onNodeWithText("Hide").performClick()
+        line.assert(password)
+        val send = rule.onNodeWithText("Send")
+        send.assertIsNotEnabled()
+        line.performClick()
+        line.performTextInput("example-code")
+        line.performImeAction()
+        assertEquals(emptyList<Resolution>(), replies)
+        send.performClick()
+        assertEquals(listOf(Resolution(allow = true, values = mapOf("input" to "example-code"))), replies)
+        send.assertIsNotEnabled()
+        rule.runOnIdle { refusal = "The command refused the test line." }
+        rule.onNodeWithText("The command refused the test line.", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun unmaskedPromptStartsVisibleAndDecliningTypesNothing() {
+        show(masked = false)
+        val line = line()
+        line.assert(!SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
+        line.performTextInput("example-response")
+        rule.onNodeWithText("Not now").performClick()
+        assertEquals(listOf(Resolution(allow = false)), replies)
+        rule.onNodeWithText("Send").assertIsNotEnabled()
+    }
+
+    @Test fun capturesAllThreeStylesInBothAppearances() {
+        show()
+        val destination = File(System.getProperty("persona.shots") ?: "build/command-input-shots").also { it.mkdirs() }
+        for (appearance in listOf(false, true)) for (current in AppStyle.entries) {
+            rule.runOnIdle { style = current; dark = appearance }
+            rule.onNodeWithText("example-cli login", useUnmergedTree = true).assertIsDisplayed()
+            rule.onNodeWithText("Open https://example.com/device", useUnmergedTree = true).assertIsDisplayed()
+            val suffix = if (appearance) "dark" else "light"
+            val styleName = current.name.lowercase()
+            val bitmap = rule.onRoot().captureToImage().asAndroidBitmap()
+            File(destination, "command-input-$styleName-$suffix.png").outputStream().use {
+                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+        }
+    }
+}

@@ -180,6 +180,7 @@ internal fun RequestDetail(
     blockedReason: String? = null,
     /** False for a session without a terminal: no "handle in terminal" note in the request. */
     terminalHelp: Boolean = true,
+    refusal: String? = null,
 ) {
     var linkVisible by remember(request) { mutableStateOf(false) }
     val feedback = LocalAppFeedback.current
@@ -199,7 +200,7 @@ internal fun RequestDetail(
                     Box(Modifier.weight(1f)) {
                         persona.feature.chat.RequestEditor(request, machine, busy = RequestDeliveries.locks(delivery), uncertain = delivery == RequestDelivery.Unknown,
                             online = online, readOnly = readOnly, onTerminal = onTerminal, linkVisible = linkVisible,
-                            blockedReason = blockedReason, terminalHelp = terminalHelp,
+                            blockedReason = blockedReason, terminalHelp = terminalHelp, refusal = refusal,
                             onAnswer = { action, draft, read -> if (!readOnly) onAnswer(request, action, draft, read) })
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp.dense)) {
