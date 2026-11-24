@@ -175,7 +175,14 @@ class App:
 
     def nth(self, e, **filters):
         """`e`'s index among the elements `filters` match (what `activate` takes as `index`)."""
-        for i, x in enumerate(self.c.call("tree", **filters)["elements"]):
+        nodes = self.c.call("tree", containers=True, **filters)["elements"]
+        elements = [x for x in nodes if not x.get("container")]
+        # Match the same bubble or card even if its frame moved since we read it. The index excludes containers,
+        # as the following activation does.
+        siblings = [(i, x) for i, x in enumerate(elements) if x.get("in") == e.get("in")]
+        if len(siblings) == 1:
+            return siblings[0][0]
+        for i, x in siblings:
             if x["frame"] == e["frame"]:
                 return i
         raise CtlError("%s is gone" % json.dumps(filters, ensure_ascii=False))
