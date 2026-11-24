@@ -1,0 +1,53 @@
+name: Verify Android Agents seen rows
+on:
+  push:
+    branches: ['verify/12584-android-*']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      JAVA_TOOL_OPTIONS: '-Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the repository's Android toolchain
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add --toolchain 1.98.0 aarch64-linux-android x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Prefetch the Robolectric API 35 runtime from the Central mirror
+        run: |
+          set -euo pipefail
+          version=15-robolectric-13954326-i7
+          artifact="org/robolectric/android-all-instrumented/$version"
+          remote="https://maven-central.storage-download.googleapis.com/maven2/$artifact"
+          local_maven="$HOME/.m2/repository/$artifact"
+          mkdir -p "$local_maven"
+          jar="android-all-instrumented-$version.jar"
+          curl --fail --silent --show-error --retry 4 --retry-all-errors "$remote/$jar" -o "$local_maven/$jar.tmp"
+          curl --fail --silent --show-error --retry 4 --retry-all-errors "$remote/$jar.sha512" -o "$RUNNER_TEMP/robolectric.sha512"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/robolectric.sha512")" "$local_maven/$jar.tmp" | sha512sum --check
+          mv "$local_maven/$jar.tmp" "$local_maven/$jar"
+      - name: Reproduce the offline list check on untouched source
+        working-directory: android
+        run: ./gradlew --no-daemon --max-workers=4 :feature:agents:testDebugUnitTest --tests '*AgentsVisibilityTest'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-12584-baseline
+          path: android/feature/agents/build/test-results/testDebugUnitTest
+          if-no-files-found: warn
