@@ -121,7 +121,16 @@ fun AgentSession.stateWord(muted: Boolean): CoreText = when {
  * Waiting in the background, Working (Background), Not running and Unknown included); none for a Seen one or a muted one.
  */
 fun AgentSession.cardStateWord(muted: Boolean): CoreText? =
-    if (muted || state == AgentState.Idle && !asksYou && !showsJustFinished) null else stateWord(muted)
+    if (seenPlace != null) CoreText.of(CoreText.Key.StateIdle)
+    else if (muted || state == AgentState.Idle && !asksYou && !showsJustFinished) null else stateWord(muted)
+
+enum class AgentSeenRows {
+    Stay, Leave;
+
+    companion object {
+        fun fromPreference(value: String?): AgentSeenRows = entries.firstOrNull { it.name == value } ?: Stay
+    }
+}
 
 /**
  * Where the list's display is kept (iOS `AgentListDisplayChoice`): the Agents page's ⋯ › Display and Settings › Interface
@@ -130,4 +139,6 @@ fun AgentSession.cardStateWord(muted: Boolean): CoreText? =
 interface AgentListDisplaySettings {
     val display: Flow<AgentListDisplay>
     suspend fun setDisplay(value: AgentListDisplay)
+    val seenRows: Flow<AgentSeenRows>
+    suspend fun setSeenRows(value: AgentSeenRows)
 }
