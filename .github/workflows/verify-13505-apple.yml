@@ -1,0 +1,93 @@
+name: Verify native repository grouping on iOS
+on:
+  push:
+    branches: ['verify/13505-apple-*']
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 95
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PERSONA_META_WEARABLES: "NO"
+      PERSONA_LEAN_DEV_BUILD: "YES"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build the Persona app and native test bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+          sudo env DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -runFirstLaunch
+          xcodebuild -version
+          brew install xcodegen
+          export PERSONA_CONFIG="$RUNNER_TEMP/persona-13505.json"
+          printf '%s\n' '{"app":{"bundle_id":"org.example.persona.ci","team_id":""}}' > "$PERSONA_CONFIG"
+          pins=apple/Packages/PersonaSSH/Package.resolved
+          cp "$pins" "$RUNNER_TEMP/checked-in-pins.json"
+          python3 scripts/ci/apple_resolved.py --tracked "$RUNNER_TEMP/checked-in-pins.json" --staged "$pins" --meta NO --evidence "$RUNNER_TEMP/pins.txt"
+          native/app-core/scripts/build-apple.sh --simulator
+          python3 scripts/persona_config.py xcconfig
+          xcodegen generate --spec apple/project.yml --project apple
+          workspace_pins=apple/Persona.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          mkdir -p "$(dirname "$workspace_pins")"
+          cp "$pins" "$workspace_pins"
+          xcodebuild -quiet -project apple/Persona.xcodeproj -scheme Persona \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" -resolvePackageDependencies
+          xcrun simctl list runtimes available
+          sim=$(scripts/app/sim-boot.sh --profile stock --runtime 'iOS 26.2' 'Persona 13505 Repositories')
+          printf 'PERSONA_SIM=%s\nPERSONA_CONFIG=%s\n' "$sim" "$PERSONA_CONFIG" >> "$GITHUB_ENV"
+          xcodebuild build-for-testing -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
+            -destination "id=$sim" -derivedDataPath "$RUNNER_TEMP/derived" -parallel-testing-enabled NO \
+            -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= "ARCHS=$(uname -m)" ONLY_ACTIVE_ARCH=YES
+      - name: Test repository grouping and capture both appearances
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/persona-13505-ios"
+          mkdir -p "$out"
+          port=18761
+          PORT="$port" MOCK_HERDR_REPOSITORIES=1 python3 -Bu scripts/mock/mock_hub.py > "$out/mock.log" 2>&1 &
+          mock_pid=$!
+          trap 'kill "$mock_pid" 2>/dev/null || true' EXIT
+          hub="http://127.0.0.1:$port"
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 "$hub/api/v1/health"
+          export TEST_RUNNER_PERSONA_WORKTREE_HUB="$hub" TEST_RUNNER_PERSONA_HERDR_REPOSITORIES=1 TEST_RUNNER_PERSONA_SHOTS="$out"
+          git log -2 --format='%h %s' > "$out/source.txt"
+          status=0
+          for appearance in light dark; do
+            xcrun simctl ui "$PERSONA_SIM" appearance "$appearance"
+            export TEST_RUNNER_PERSONA_STYLE="$appearance"
+            selection=(
+              -only-testing:PersonaUITests/AgentRepoTreeUITests/testHerdrRemovedTreeFollowsTheRepositoryFold
+              -only-testing:PersonaUITests/AgentRepoTreeUITests/testHerdrLoneWorkspaceKeepsItsMarksAndActions
+            )
+            if [[ "$appearance" == light ]]; then selection+=(-only-testing:PersonaTests/AgentRepoTreeTests); fi
+            xcodebuild test-without-building -project apple/Persona.xcodeproj -scheme Persona -configuration Debug \
+              -destination "id=$PERSONA_SIM" -derivedDataPath "$RUNNER_TEMP/derived" -parallel-testing-enabled NO \
+              -disableAutomaticPackageResolution -clonedSourcePackagesDirPath "$RUNNER_TEMP/packages" \
+              -testLanguage en -testRegion US -resultBundlePath "$out/$appearance.xcresult" "${selection[@]}" \
+              2>&1 | tee "$out/$appearance.log" || status=1
+            for name in herdr-repository-tree herdr-lone-workspace herdr-workspace-actions; do
+              if [[ ! -s "$out/$name-$appearance.png" ]]; then
+                printf 'Missing evidence for %s in %s appearance\n' "$name" "$appearance"
+                status=1
+              fi
+            done
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-13505-ios
+          path: ${{ runner.temp }}/persona-13505-ios
+          if-no-files-found: warn
+          retention-days: 2
