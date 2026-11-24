@@ -2446,6 +2446,28 @@
         }
       }
     },
+    "Not now" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今はしない"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂不输入"
+          }
+        }
+      }
+    },
     "Not Now [Location Always]" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -52251,6 +52273,28 @@
         }
       }
     },
+    "Command input" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Command input"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンド入力"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令输入"
+          }
+        }
+      }
+    },
     "Command line" : {
       "localizations" : {
         "en" : {
@@ -68647,6 +68691,28 @@
         }
       },
       "extractionState" : "manual"
+    },
+    "Delivery not confirmed. Check the command before sending again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delivery not confirmed. Check the command before sending again."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "入力が届いたか確認できません。再送する前にコマンドを確認してください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未确认输入是否送达。请先检查命令，再决定是否重发。"
+          }
+        }
+      }
     },
     "Delivery status unknown" : {
       "extractionState" : "manual",
@@ -92297,6 +92363,28 @@
         }
       },
       "extractionState" : "manual"
+    },
+    "Input" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Input"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "入力"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入"
+          }
+        }
+      }
     },
     "Input Field" : {
       "localizations" : {
@@ -193337,6 +193425,28 @@
         }
       }
     },
+    "This request can no longer be answered." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This request can no longer be answered."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このリクエストは現在応答できません。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这条请求已无法回答。"
+          }
+        }
+      }
+    },
     "This request came from the internet. Only allow a browser you are signing in to yourself, right now." : {
       "localizations" : {
         "en" : {
@@ -209119,6 +209229,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等你拿主意"
+          }
+        }
+      }
+    },
+    "Waiting for your input" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for your input"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "入力を待っています"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待你的输入"
           }
         }
       }

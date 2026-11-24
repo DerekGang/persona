@@ -2342,6 +2342,10 @@ Kinds: questions, plan approvals, tool approvals, secret entry, MCP forms, and w
   progress capsules, all of them at once, and Needs you neither counts nor lists it again. The cards of sessions folded
   under the conversation keep the stack and the tray as above. iOS and Android keep the stack for both until they follow.
   The stack holds the conversation's own cards alone, as one slot on the web: its first card with "2 / 6" (where it stands in the run), the next taking its place when it is answered, and what was just answered one line over it that goes 3 seconds after the last answer (details with the interaction cards in `docs/web/web.md`).
+  Apple command-input requests (#14567) show the command, the output with links to the in-app viewer and the command's
+  prompt on the pending card. The field follows the request's initial masking, offers Show / Hide, and clears on an
+  explicit reply, fold or departure. Return dismisses the keyboard. Send passes one line, and Not now passes none.
+  The card displays progress and keeps a refusal where the reply was attempted while the request still waits.
   **To Decide** (iOS and iPadOS, #12831): in an assistant conversation the conversation's own cards and its tasks'
   questions and approvals are one pager over the composer (`QuestionDock`), opened from a **To Decide** entry (zh-Hans
   待选择, `QuestionDockEntry`) first in the row of entries, drawn as they are (`DockCapsule`, the needs-you tone; the
