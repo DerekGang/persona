@@ -20,7 +20,7 @@ import (
 // assistant.limit_fallbacks that can take it, and comes back once the limit resets. Both moves are conversation-switch
 // batches (conversations_switch.go) like any other: durable before-image, epoch fence, busy queue and the logical
 // segment switch with its summary of what went before. What this adds is when they start, that they are FirstTurn
-// batches (the summary always travels with the target's first input, never dropped by an idle acceptance), the one
+// batches (each switch is done only when the target took its first input, which carries the summary), the one
 // message it sends (the hub's own continuation, the auto-continue source, queued behind the forward switch) and the
 // restore at the reset. Nothing here interrupts a turn, and a switch made in between is never overwritten: the
 // restore's fence leaves a conversation someone changed alone.
@@ -380,6 +380,11 @@ func (s *Service) limitFallbackRestore(ctx context.Context, state *conversationS
 		return true
 	}
 	if actionableConversationSwitchItems(items) == 0 {
+		// While the node is away its session row may also be missing from the plan.
+		if s.limitRestoreNodeOffline(ctx, item.Machine) {
+			fb.RestoreAt = now.Add(limitFallbackRecheck).UTC()
+			return true
+		}
 		fb.Done = true
 		reason := ""
 		if len(items) > 0 {
@@ -398,6 +403,12 @@ func (s *Service) limitFallbackRestore(ctx context.Context, state *conversationS
 	state.Batches = append(state.Batches, restore) // b and fb are not used past here: the append may move the slice
 	s.logf("limit fallback %s/%s: back to %s (batch %s)", item.Machine, short(item.ConversationID), item.Before.Launcher, restore.ID)
 	return true
+}
+
+// A registered but unreachable node can come back. A removed machine is a permanent refusal.
+func (s *Service) limitRestoreNodeOffline(ctx context.Context, machine string) bool {
+	d, found := s.device(ctx, machine)
+	return found && !d.Reachable
 }
 
 // pruneLimitFallbacks forgets finished fallbacks older than limitFallbackKeep, with their restores once those
