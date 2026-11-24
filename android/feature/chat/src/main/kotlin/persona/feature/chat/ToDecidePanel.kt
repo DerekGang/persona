@@ -52,7 +52,7 @@ import persona.core.designsystem.JSheet
 import persona.core.designsystem.JTextButton
 import persona.core.designsystem.PersonaTheme
 import persona.core.designsystem.Tokens
-import persona.core.designsystem.icons.PhIcons
+import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.text
 import java.time.Instant
 
@@ -167,7 +167,7 @@ internal fun ToDecidePanel(
 private fun ToDecidePosition(count: Int, index: Int, select: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically) {
-        JIconButton(PhIcons.CaretLeft, stringResource(R.string.chat_to_decide_previous), { select(-1) }, enabled = index > 0)
+        JIconButton(PersonaIcons.back, stringResource(R.string.chat_to_decide_previous), { select(-1) }, enabled = index > 0)
         Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xxs), verticalAlignment = Alignment.CenterVertically) {
             for (dot in toDecideDots(count, index)) Box(Modifier.size(Tokens.Space.xs).background(
                 if (dot == index) PersonaTheme.palette.accent else PersonaTheme.palette.ink3, CircleShape,
@@ -175,6 +175,6 @@ private fun ToDecidePosition(count: Int, index: Int, select: (Int) -> Unit) {
         }
         Text(stringResource(R.string.chat_to_decide_position, index + 1, count), color = PersonaTheme.palette.ink2,
             style = PersonaTheme.type.caption, maxLines = 1)
-        JIconButton(PhIcons.CaretRight, stringResource(R.string.chat_to_decide_next), { select(1) }, enabled = index + 1 < count)
+        JIconButton(PersonaIcons.forward, stringResource(R.string.chat_to_decide_next), { select(1) }, enabled = index + 1 < count)
     }
 }
