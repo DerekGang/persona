@@ -11,11 +11,9 @@ final class PermissionInputUITests: XCTestCase {
         let unmasked = mode == "decline"
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        app.launchArguments = ["-pairURL", pair]
-        app.launchPinned()
-        app.terminate()
         app.launchArguments = ["-pairURL", pair, "-tab", "dev", "-app.tab", "chats", "-ui.style", "glass", "-ui.scheme", style,
-                               "-openSession", "macbook/c0de0000-0000-4000-8000-000000014527", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+                               "-dev.openChat", "", "-openAgentsFresh", "YES", "-openChatsFresh", "YES",
+                               "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         if largest { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         app.launchPinned()
         let field = unmasked ? app.textFields["interaction.field.input"] : app.secureTextFields["interaction.field.input"]
@@ -32,9 +30,25 @@ final class PermissionInputUITests: XCTestCase {
             XCTAssertTrue(control.isHittable, app.debugDescription)
         }
 
-        XCTAssertTrue(field.waitForExistence(timeout: 30), app.debugDescription)
+        let needsYou = app.buttons["agents.filter.needsYou"]
+        XCTAssertTrue(needsYou.waitForExistence(timeout: 20))
+        needsYou.tap()
+        let preview = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign in to the cloud CLI")).firstMatch
+        for _ in 0..<4 where !preview.isHittable { app.swipeUp(velocity: .slow) }
+        if preview.isHittable {
+            preview.tap()
+        } else {
+            // The transition is also reachable from the chat link once the app has connected.
+            app.open(URL(string: "persona://open?machine=macbook&session=c0de0000-0000-4000-8000-000000014527")!)
+        }
+        if largest, !field.exists, form.exists {
+            for _ in 0..<3 where !field.exists { form.swipeUp(velocity: .slow) }
+        }
+        guard field.waitForExistence(timeout: 20), send.exists else {
+            XCTFail(app.debugDescription)
+            return
+        }
         XCTAssertTrue(app.staticTexts["Waiting for your input"].exists)
-        XCTAssertTrue(send.exists)
         XCTAssertFalse(send.isEnabled)
         if mode == "send", let directory = env["PERSONA_SHOTS"] {
             let size = largest ? "largest" : "standard"
