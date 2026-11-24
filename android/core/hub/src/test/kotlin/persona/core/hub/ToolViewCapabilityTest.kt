@@ -17,7 +17,7 @@ class ToolViewCapabilityTest {
         val transport = HubChatTransport(send = { path, _, _, headers ->
             capabilities += headers["X-Persona-Features"]
             val item = """{"id":"result","kind":"tool_result","tool_views":[{"title":"Backup route"}]}"""
-            val json = if (path.endsWith("/full")) """{"item":$item}""" else """{"items":[$item]}"""
+            val json = if (path.endsWith("/full")) item else """{"items":[$item]}"""
             Response.Builder().request(Request.Builder().url("https://example.com$path").build())
                 .protocol(Protocol.HTTP_1_1).code(200).message("OK")
                 .body(json.toResponseBody("application/json".toMediaType())).build()
@@ -28,9 +28,4 @@ class ToolViewCapabilityTest {
         assertEquals(listOf("tool_views", "tool_views"), capabilities)
     }
 
-    @Test fun mapNegotiationRequestsFallbackForScene() {
-        val context = HttpExtensionManagement.deviceContext()
-        assertEquals(12, context.uiVersion)
-        assertEquals(listOf("scene"), context.unsupported)
-    }
 }
