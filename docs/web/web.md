@@ -682,7 +682,7 @@ use it only on the intranet / VPN, and put an HTTPS reverse proxy in front befor
       The run's progress bar has parts for done, running, failed (`agents_failed`, when the hub sends it) and stopped, each moved by `transform: translateX() scaleX()` (never `width`), with a legend and the tool-call count.
     - **Motion** (`ui/motion.ts`, the durations are set there): only when a value changes, never on the first draw, and not at all with `prefers-reduced-motion`: counts and times roll (`Rolling`), the lit phase moves to the next block and the ✓ of the one before fades in, a new agent fades in in place (opacity only), a finished run's chip changes color and its words fade in. No looping animation is added.
     - **A run's detail** (`WorkflowCard` in the Background tasks panel): always open. Head: mark, name, status chip, count, elapsed; below it "Now <phase>: <agent>" while it runs, its summary (and a failed run's error) once it ended; then the progress bar and the phase blocks, with "Show in chat" bringing the launching call into view (#2719's jump; on a narrow screen the panel closes first, since it covers the chat).
-    - **The running bar**: once the hub says the turn is over, the last exchange is drawn finished and background work takes over in this order: workflow, background subagents, commands that only wait, then a working background command or Monitor. The workflow line says "Background workflow · <phase> · 169/185+" ("· 1 more" with other runs), timed from the workflow's `started_at`; on a narrow bar the words before the count give way first and the count stays whole. The status lines use neutral text, an accent icon and tabular time where available. A working command uses the active, working presentation instead: **Background task**, then the first shell / Monitor's description or its command on one line. A scheduled command uses the first line of its prompt. The description is followed with **N more** for the rest, timed from that command's `started_at` and with no time when it has none. It never uses the turn's clock, tokens or speed; with only the flag and no listed work the label stands alone, while a payload listing only background agents or workflows keeps its previous rendering. Streaming, an outgoing message or an awaiting answer makes the turn live again, and a foreground turn or older hub without `background_working` is unchanged.
+    - **The running bar**: once the hub says the turn is over, the last exchange is drawn finished and background work takes over in this order: workflow, background subagents, commands that only wait, then a working background command or Monitor. The workflow line says "Background workflow · <phase> · 169/185+" ("· 1 more" with other runs), timed from the workflow's `started_at`; on a narrow bar the words before the count give way first and the count stays whole. The status lines use neutral text, an accent icon and tabular time where available. A working command uses the active, working presentation instead: **Background task**, then the first shell / Monitor's description or its command on one line. A scheduled command uses the first line of its prompt. The description is followed by **N more** for the rest. The clock starts at the command's `started_at` and appears when that time is available. It never uses the turn's clock, tokens or speed; with only the flag and no listed work the label stands alone, while a payload listing only background agents or workflows keeps its previous rendering. Streaming, an outgoing message or an awaiting answer makes the turn live again, and a foreground turn or older hub without `background_working` is unchanged.
       A Persona foreground turn keeps the existing in-stream Processing feedback while its transcript reloads, including on the generic session route. Once the live work line returns, the fallback goes away; the dock never repeats that foreground state. An explicit send's receipt state still wins, and background-only work keeps its dock bar without this Processing fallback.
       A hub from before #3127 sends no `background_working` (a current one leaves it out only when it is false, and sends each run's `tool_use_id` and each agent's `status`): there the bar says the same only while a workflow runs and no turn of the agent's own shows: no status line, no call it still waits on (a subagent launched in the foreground, whose call the bar names instead), and not the chat's ticking "Working…".
     Old hubs have no `workflows` field: the row and to-do card just say **Running in the background**, and runs are listed as ordinary background tasks. Screenshots and checks: the mock hub with `MOCK_WORKFLOWS=1|legacy MOCK_TASKS=1` + `scripts/test/web_workflows_e2e.py` (the Background tasks panel, the row and the task card),
@@ -2302,6 +2302,15 @@ request; switching it off restores the standard experience with zero data migrat
 not expose boolean `todos_v2` degrade gracefully to a read-only row with an update hint. Graduation (making the new
 experience the default for at least one release with rollback kept) or removal is tracked in #14538.
 
+**Unified Integrations & Extensions** (#14802, #14805, `web/src/lib/labs-integrations-v2.ts`). This single assistant-scoped
+switch applies to the selected Assistant across devices and defaults to off (`integrations_v2` on `GET`/`PUT /api/v1/assistant`,
+guarded by `expected_integrations_v2` optimistic locking and explicit manager targeting). It provides one opt-in entry point
+for experimental Integrations & Extensions capabilities (unified settings views and channel group/topic routing) without flag
+sprawl. Changes take effect immediately on the next view or request; switching it off restores the standard Connectors,
+Channels, and Extensions tabs and legacy routing with zero data migration or data loss. Older hubs that do not expose boolean
+`integrations_v2` degrade gracefully to a read-only row with an update hint. Graduation (making the new experience the default
+for at least one release with rollback kept) or removal is tracked in #14802.
+
 **Terminal renderer** (`web/src/lib/labs-terminal.ts` over `web/src/lib/labs.ts`). Single pane terminals
 (`views/session/terminal/feed.ts`) draw with xterm's DOM renderer (Standard, the default) or WebGL (`@xterm/addon-webgl`,
 its own chunk, loaded only when chosen). Full view always uses the DOM renderer and is not affected. It is kept by this
@@ -3001,8 +3010,9 @@ and Android follow in #5117.
   before never lands on the one picked since.
 - **What the pill says**: what this start runs: the mark of the Agent the launcher runs, the model (the one picked; else Model
   settings' model on their launcher; else the model the launcher's default entry stands for, by its list's name; a
-  launcher that fixes its own `--model`, that model) and, for Claude Code and Antigravity, the effort
-  (the one picked, else Model settings'). Codex shows no effort: a start doesn't set it. The workflow mark while ultracode
+  launcher that fixes its own `--model`, that model) and the effort: for Claude Code and Antigravity, the one picked
+  (else Model settings'); for Codex, only an explicit level reported by the selected model (unset follows Codex's
+  configured default, keeping existing launch settings; #13764). The workflow mark while ultracode
   is on.
 - **Providers** (`lib/new-agent-panel.ts`): the chosen computer's launchers in the hub's order (`GET
   /machines/{mid}/launchers`), by display name, the startup ID small and monospace beside the group's name and in the
@@ -3582,3 +3592,9 @@ in herdr appears at the next inventory refresh. The **Rename** dialog offers
 one **Name** field, which updates the tab and the CLI title where supported.
 Even with the setting off, an empty or shell-prompt title falls back to the
 herdr tab name. Sessions without a named herdr tab use their session title.
+
+### Model profiles
+
+Settings › Model configuration › **Model profiles** shows each saved profile's Agent presets, purpose bindings, launcher model overrides, and any fields that differ from the current live configuration (`changes`). Both the profile detail dialog and interactive editor expose **Update from current configuration**, backed by `PUT /api/v1/model-profiles/{id}` with `capture: true` (preserving the profile's name, description, and existing Agent presets, and refreshing the catalog on completion).
+
+When applying a profile with no drift (`changes` empty and no unsaved drift on the active profile), **Apply profile** applies immediately. When drift exists, **Apply profile** opens an inline confirmation step listing each affected purpose or launcher field and offering **Capture current into `<active>` first** (which captures the active profile via `capture: true` before applying the target), **Apply directly**, or **Cancel**. Editor saves omit empty optional fields and default (`standard`) tier speed for cross-version hub compatibility, and pin validation and save errors directly beside the Save button.
