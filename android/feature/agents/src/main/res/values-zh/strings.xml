@@ -413,6 +413,7 @@
     <string name="agents_todo_actions">待办操作</string>
     <string name="agents_todo_more">更多</string>
     <string name="agents_todo_reopen">重新打开</string>
+    <string name="agents_todo_cancel_queued_start">取消排队启动</string>
     <string name="agents_todo_complete">完成待办</string>
     <string name="agents_todo_state_failed">更新状态失败：%1$s</string>
     <string name="agents_todo_hand_to_agent">交给 Agent</string>

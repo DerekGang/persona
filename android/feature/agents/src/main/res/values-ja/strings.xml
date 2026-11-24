@@ -413,6 +413,7 @@
     <string name="agents_todo_actions">ToDoの操作</string>
     <string name="agents_todo_more">その他</string>
     <string name="agents_todo_reopen">再開</string>
+    <string name="agents_todo_cancel_queued_start">待機中の開始をキャンセル</string>
     <string name="agents_todo_complete">ToDoを完了</string>
     <string name="agents_todo_state_failed">状態を更新できませんでした：%1$s</string>
     <string name="agents_todo_hand_to_agent">エージェントに任せる</string>

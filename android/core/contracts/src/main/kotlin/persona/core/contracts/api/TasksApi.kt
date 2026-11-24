@@ -58,9 +58,11 @@ interface TasksApi {
     suspend fun dismissPlan(id: String): TaskPlan
     /**
      * "Retry" on a task whose agent did not start (#1396): the hub starts the same task again in the same todo and answers
-     * it reopened, without its error. Refused (409) when the machine is offline or the task did not fail to start.
+     * it reopened, without its error. If its computer is offline, the manager holds an eligible start.
      */
     suspend fun retryTask(todoId: String): Todo
+    /** Cancel a start that is still waiting for its computer. */
+    suspend fun cancelQueuedTaskStart(todoId: String): Todo = error("Queued start cancellation unavailable")
     /** Retry on the first suggested launcher (feature `task_retry_launcher`); never silently falls back to plain Retry. */
     suspend fun retryTaskOnLauncher(todoId: String, launcher: String): Todo =
         throw LauncherRetryUnsupportedException()
