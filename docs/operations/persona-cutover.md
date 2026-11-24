@@ -1,10 +1,12 @@
 # Persona-only cutover (#277)
 
+> **Historical plan.** For an existing installation, use the [in-place upgrade checklist](upgrade.md#in-place-upgrade-for-existing-installs) and the [rolling-upgrade compatibility matrix](../protocol/rolling-upgrade-compatibility.md). The production restrictions on this page are for the coordinated replacement described below.
+
 ## Authorization and release boundary
 
-This is a **one-time, coordinated maintenance operation**, not runtime compatibility. The final installation has only Persona names: no previous command aliases, environment fallbacks, dual writes, directory aliases, or parallel old/new services. It supersedes the compatibility approach in [rename.md](rename.md) for this cutover. The historical document is not permission to run its compatibility commands.
+The original plan was a **one-time, coordinated maintenance operation**. It targeted an installation with only Persona names and with every peer converted together. The later [naming contract](rename.md) records the decision to support rolling upgrades for existing installations.
 
-**Production operations are currently prohibited.** The authorized work is source text and sandbox rehearsals only; Apple work is text-only at this stage. A successful Linux rehearsal, a merged change, or an `--approve` flag does not lift that restriction. Mac verification must finish, then the user must explicitly approve the production maintenance window. No deployment, service restart, live database connection, client release, or TestFlight upload is authorized by this document.
+The original approval covered source changes and isolated rehearsals, with Apple work limited to source changes. Applying this historical procedure to production requires completed Mac verification and a maintenance window explicitly approved by the installation owner. Treat `--approve` as a tool argument and obtain operational approval separately.
 
 Freeze one commit and a complete artifact set for the hub, every manager, every node/link/runtime, relay, web, iOS, watch, Mac, Android, and extensions before scheduling the window. Do not use a blue-green switch: its old and new processes overlap. Do not bring an unconverted machine or old client back into the fleet. An unreachable computer/device delays acceptance; it is not silently left on the old release.
 
