@@ -57,6 +57,34 @@ final class AgentsFilterCapsuleUITests: XCTestCase {
     }
 
     private func filter(_ id: String) -> XCUIElement { app.buttons["agents.filter." + id].firstMatch }
+
+    @MainActor func testProjectHeadingOpensNewAgentInTheExactFolder() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["PERSONA_PROJECT_HEADINGS"] == "1" else { throw XCTSkip("needs the project heading fixture") }
+        let appearance = environment["PERSONA_STYLE"] ?? "light"
+        app = XCUIApplication()
+        let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
+        app.launchArguments = ["-pairURL", pair, "-app.tab", "chats", "-tab", "dev", "-dev.openChat", "",
+                               "-openAgentsFresh", "YES", "-dev.grouping", "space", "-ui.scheme", appearance,
+                               "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchPinned()
+        let add = app.buttons.matching(identifier: "agents.project.new")
+        let desktop = add.matching(NSPredicate(format: "label CONTAINS %@", "site · ~/Desktop")).firstMatch
+        let code = add.matching(NSPredicate(format: "label CONTAINS %@", "site · ~/code")).firstMatch
+        XCTAssertTrue(desktop.waitForExistence(timeout: 30))
+        XCTAssertTrue(code.exists)
+        XCTAssertFalse(add.matching(NSPredicate(format: "label CONTAINS %@", "No project")).firstMatch.exists)
+        shot("project-headings-\(appearance)")
+        desktop.tap()
+        let directory = app.buttons["newChat.directory"].firstMatch
+        XCTAssertTrue(directory.waitForExistence(timeout: 20))
+        let folderKnown = expectation(for: NSPredicate { _, _ in
+            directory.label.contains("~/Desktop/site") || self.app.staticTexts["~/Desktop/site"].exists
+        }, evaluatedWith: directory)
+        XCTAssertEqual(XCTWaiter.wait(for: [folderKnown], timeout: 15), .completed)
+        shot("project-new-agent-\(appearance)")
+    }
+
     private var menu: XCUIElement { app.buttons["agents.grouping"].firstMatch }
     private var strip: XCUIElement { app.scrollViews["agents.filters.scroll"].firstMatch }
     /// The filters this list has, in the strip's order.

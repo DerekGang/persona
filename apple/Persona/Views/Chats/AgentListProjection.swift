@@ -427,7 +427,7 @@ nonisolated struct AgentListProjection: Sendable {
 
         // A selected grouping builds its own structure, not every alternative on each body evaluation.
         if settings.grouping == "space" {
-            let groups = SpaceGroup.build(result.unpinned).map { group in
+            let groups = SpaceGroup.withProjectFolders(SpaceGroup.build(result.unpinned), machines: result.machinesByRef).map { group in
                 var group = group
                 let scope = aggregateScope(group, settings: settings)
                 result.scopes[group.id] = scope
