@@ -1,0 +1,50 @@
+name: Verify native repository grouping on Android
+on:
+  push:
+    branches: ['verify/13505-android-*']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the repository's Android toolchain
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add --toolchain 1.98.0 aarch64-linux-android x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Run native grouping, catalog and screenshot tests
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --max-workers=4 \
+            :core:domain:test --tests '*AgentReposTest' --tests '*PaseoWorkspacePinsTest' --tests '*AgentListFixtureTest' \
+            :core:hub:test --tests '*AgentCreationServiceTest' \
+            :feature:agents:testDebugUnitTest --tests '*AgentRepoTreeShotsTest' --tests '*AgentsWorkspaceCatalogTest'
+          test -s feature/agents/build/repo-tree-shots/herdr-repo-tree-light.png
+          test -s feature/agents/build/repo-tree-shots/herdr-repo-tree-dark.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-13505-android
+          path: |
+            android/core/domain/build/test-results/test
+            android/core/hub/build/test-results/test
+            android/feature/agents/build/test-results/testDebugUnitTest
+            android/feature/agents/build/repo-tree-shots
+          if-no-files-found: warn
+          retention-days: 2
