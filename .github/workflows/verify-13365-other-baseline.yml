@@ -1,0 +1,55 @@
+name: Persona iOS 18.6 unrelated-suite baseline
+on:
+  push:
+    branches: ['verify/13365-full-other-suite-baseline']
+permissions:
+  contents: read
+jobs:
+  ios18-baseline:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      CI_SPM_CACHE: ${{ github.workspace }}/.ci-cache/spm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Select the compatibility toolchain and install project generation tools
+        run: |
+          source scripts/ci/common.sh
+          ci_run 'Select system Xcode 26.3' 60 sudo xcode-select --switch "$DEVELOPER_DIR"
+          ci_run 'Initialize Xcode 26.3 platform services' 900 sudo env DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild -runFirstLaunch
+          brew install xcodegen
+      - name: Compare the additional failing suites on unmodified Persona source
+        env:
+          CI_APPLE_DIAGNOSTICS: ${{ runner.temp }}/persona-ios18-baseline-diagnostics
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          script = Path('scripts/ci/apple.sh')
+          source = script.read_text()
+          start = '  test_batch ios-unit '
+          end = '    -resultBundlePath "$OUTPUT/ios-unit.xcresult" test-without-building\n'
+          assert source.count(start) == source.count(end) == 1
+          source = source.replace(start, '''  IOS_UNIT_SELECTION=(
+              -only-testing:PersonaTests/AgentListProjectionTests
+              -only-testing:PersonaTests/HealthRecordsTests
+              -only-testing:PersonaTests/StoppedWorkCardTests
+            )
+          ''' + start, 1)
+          script.write_text(source.replace(end, end + '  exit "$IOS_FAILED"\n', 1))
+          PY
+          bash -n scripts/ci/apple.sh
+          scripts/ci/apple.sh ios18
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unmodified-ios18-baseline-evidence
+          path: ${{ runner.temp }}/persona-ios18-baseline-diagnostics
+          if-no-files-found: warn
+          retention-days: 3
