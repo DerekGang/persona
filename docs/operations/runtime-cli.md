@@ -303,6 +303,7 @@ PERSONACTL_UDID=<udid> HUB=http://127.0.0.1:18760 scripts/app/cli-tests/sync_cas
 - `start_refused_then_resent_new_op` checks that the refused first message remains as a failed bubble and that Resend starts the conversation with a fresh operation ID.
 
 The summary for this run should read `2 passed, 0 known, 0 failed of 2 runs`.
+For a slow simulator launch, set `SYNC_CASE_LAUNCH_WAIT=180` to give the Runtime CLI up to 180 seconds to answer.
 
 ## Protocol and security
 

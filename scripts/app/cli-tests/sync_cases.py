@@ -40,6 +40,7 @@ from test_sync_case_mock import Device  # noqa: E402
 
 SPEC = os.path.join(ROOT, "spec", "fixtures", "sync")
 TRACE = os.environ.get("SYNC_CASE_TRACE") == "1"  # every step's view, as read from the screen
+LAUNCH_WAIT = int(os.environ.get("SYNC_CASE_LAUNCH_WAIT", "20"))
 
 # Cases that fail for a bug of their own, until it is fixed: "<case>" or "<case>@<device>" -> the issue, and what the
 # failure must say (another failure is still a failure).
@@ -106,12 +107,12 @@ class App:
 
     def launch(self):
         self.forget()
-        self.c.launch(self.hub, extra=self.args(fresh=True), pair="mock-" + self.device)
+        self.c.launch(self.hub, extra=self.args(fresh=True), wait=LAUNCH_WAIT, pair="mock-" + self.device)
         self.in_front()
 
     def relaunch(self):
         """Killed and started again from what it stored, paired as it was."""
-        self.c.launch(self.hub, extra=self.args(fresh=False), pair="")
+        self.c.launch(self.hub, extra=self.args(fresh=False), wait=LAUNCH_WAIT, pair="")
         self.in_front()
 
     def in_front(self):
