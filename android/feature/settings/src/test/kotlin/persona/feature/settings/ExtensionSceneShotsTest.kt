@@ -24,6 +24,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pinch
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -93,6 +94,11 @@ class ExtensionSceneShotsTest {
         }
         rule.onNodeWithTag("scene-reset").assertIsEnabled()
         rule.runOnIdle { item = item.copy(caption = "The lights changed") }
+        rule.onNodeWithTag("scene-reset").assertIsEnabled().performClick().assertIsNotEnabled()
+        rule.onNodeWithTag("extension-scene").performTouchInput {
+            val y = height * 0.3f
+            pinch(Offset(width * 0.4f, y), Offset(width * 0.2f, y), Offset(width * 0.6f, y), Offset(width * 0.8f, y))
+        }
         rule.onNodeWithTag("scene-reset").assertIsEnabled().performClick().assertIsNotEnabled()
         rule.onNodeWithTag("scene-zoom-in").performClick()
         rule.onNodeWithTag("scene-reset").assertIsEnabled()
