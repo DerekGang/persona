@@ -4,6 +4,7 @@ import androidx.lifecycle.viewModelScope
 import persona.core.contracts.Machine
 import persona.core.contracts.Session
 import persona.core.contracts.api.*
+import persona.core.domain.sort.AgentProjectFolder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,6 +15,32 @@ import java.io.IOException
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class NewAgentViewModelTest {
+    @Test fun projectHeadingStartsTheOrdinaryFormInItsFolderWithTheDefaultLauncher() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = MemoryStore().apply { saved["second"] = AgentDefaults("/last-used", "codex") }
+        val service = FakeService().apply { available = listOf(AgentLauncher("claude"), AgentLauncher("codex")) }
+        val machines = MutableStateFlow(listOf(Machine("first", online = true), Machine("second", online = true)))
+        val model = NewAgentViewModel(service, store, machines)
+        try {
+            advanceUntilIdle()
+            model.startIn(null, AgentProjectFolder("second", "/Users/sample/Desktop/site"))
+            advanceUntilIdle()
+            assertEquals("second", model.state.value.machineId)
+            assertEquals("/Users/sample/Desktop/site", model.state.value.selection.cwd)
+            assertEquals("codex", model.state.value.selection.launcher)
+            assertNull(model.state.value.space)
+            model.prompt("Check the example")
+            model.submit()
+            advanceUntilIdle()
+            assertEquals("second", service.request?.machineId)
+            assertEquals("/Users/sample/Desktop/site", service.request?.cwd)
+            assertEquals("codex", service.request?.launcher)
+        } finally {
+            model.viewModelScope.cancel()
+            Dispatchers.resetMain()
+        }
+    }
+
     @Test fun historyResumePersistsBeforePostingAndReopeningOnlyQueriesItsReceipt() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val store = MemoryStore()
