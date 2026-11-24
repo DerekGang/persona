@@ -470,47 +470,12 @@ SHOTS_PY
       fi
       [ -s "$OUTPUT/$theme-$name.png" ] || { echo "截图失败：$name" >&2; exit 1; }
     }
+    session=macbook/c0de0000-0000-4000-8000-000000014527
     for theme in light dark; do
-      for tab in Persona Agents Inbox Settings; do capture "$theme" "$tab" --es debug.openTab "$tab"; done
-      while IFS=$'\t' read -r page target detail <&3; do
-        case "$page" in
-          chat) capture "$theme" chat --es debug.openSession "$target" --es debug.conversationKind agent ;;
-          assistant-chat) capture "$theme" "$page" --es debug.openSession "$target" --es debug.conversationKind assistant ;;
-          external-lark|external-extension) capture "$theme" "$page" --wait-for-text "$detail" --es debug.openSession "$target" --es debug.conversationKind assistant ;;
-          request) capture "$theme" request --es debug.openRequest "$target" --es debug.session "$detail" --es debug.conversationKind agent ;;
-          # adb shell hands the command line to the device shell, so links with & are quoted again for it.
-          terminal|lark|mail) capture "$theme" "$page" --es debug.openLink "'$target'" ;;
-        esac
-      done 3<"$OUTPUT/fixture.tsv"
-      capture "$theme" pairing --es debug.openPairing true
-      capture "$theme" diagnostics --es debug.openDiagnostics true
-      for page in notifications readiness; do capture "$theme" "settings-$page" --es debug.openLink "'persona://open?target=settings&page=$page'"; done
-      for page in machines terminals knowledge phone catalog; do capture "$theme" "$page" --es debug.openPage "$page"; done
-      # Settings › Managers (docs/assistant/managers.md): the mock's roster, a manager on another computer and the hub's own (Delete off).
-      # The install code sheet is drawn by ManagersShotsTest (feature/settings, build/managers-shots/).
-      capture "$theme" settings-managers --es debug.openPage managers
-      for id in m-3fa21c assistant; do capture "$theme" "manager-$id" --es debug.openPage "manager:$id"; done
-      # Settings › Model configuration and Add model provider, typed in and from a plugin's preset (the mock offers two example presets).
-      capture "$theme" settings-modelconfig --es debug.openLink "'persona://open?target=settings&page=modelconfig'"
-      for mode in manual preset; do
-        capture "$theme" "new-provider-$mode" --es debug.openLink "'persona://open?target=settings&page=modelconfig'" --es debug.newProvider "$mode"
-      done
-      if [ -n "$PLUGINS_MODE" ]; then
-        # Settings › Plugins and three of the mock's plugins: one to set up (every kind of field), hub.json's, a broken one.
-        capture "$theme" settings-plugins --es debug.openLink "'persona://open?target=settings&page=plugins'"
-        for id in example-notes voice example-weather example-gateway; do capture "$theme" "plugin-$id" --es debug.openPage "plugin:$id"; done
-        # A page a plugin draws (every kind of item), the plugin market (the catalog, an upgradable plugin, one this hub cannot
-        # install, the markets) and a launcher's page with a plugin's section (#1329).
-        capture "$theme" plugin-ui --es debug.openPage "plugin-ui:example-gateway:home"
-        capture "$theme" plugin-market --es debug.openPage market
-        capture "$theme" plugin-market-upgrade --es debug.openPage "market-plugin:3f2a9c1d0b:example-gateway"
-        capture "$theme" plugin-market-unavailable --es debug.openPage "market-plugin:8e01b7c4a2:team-windows"
-        capture "$theme" plugin-markets --es debug.openPage markets
-        capture "$theme" launcher --es debug.openPage "launcher:macbook:claude"
-        # UI slots (#1451): the settings home with the plugins' card and nav pages, and a nav page (charts, number grid).
-        capture "$theme" settings-plugin-slots --es debug.openTab Settings
-        capture "$theme" plugin-nav-page --es debug.openPage "plugin-ui:example-gateway:usage"
-      fi
+      capture "$theme" command-input-chat --wait-for-text 'Enter the authorization code:' \
+        --es debug.openSession "$session" --es debug.conversationKind agent
+      capture "$theme" command-input-detail --wait-for-text 'Enter the authorization code:' \
+        --es debug.openRequest ci_0c14527a5e1f2b3c --es debug.session "$session" --es debug.conversationKind agent
     done
     echo "截图已输出到：$OUTPUT"
     ;;
