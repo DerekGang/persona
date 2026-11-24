@@ -1,0 +1,66 @@
+name: Verify Android command input on the emulator
+on:
+  push:
+    branches: ['verify/14568-android-shots*']
+permissions:
+  contents: read
+jobs:
+  android-shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the Android toolchain and boot the fixture device
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo chown "$USER" /dev/kvm
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865' emulator 'system-images;android-35;google_apis;x86_64'
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add --toolchain 1.98.0 aarch64-linux-android x86_64-linux-android
+          printf 'no\n' | avdmanager create avd --force -n persona-shots -k 'system-images;android-35;google_apis;x86_64'
+          nohup "$ANDROID_HOME/emulator/emulator" @persona-shots -port 5554 -no-window -no-audio -no-boot-anim \
+            -no-snapshot -gpu swiftshader -memory 2048 < /dev/null > "$RUNNER_TEMP/persona-emulator.log" 2>&1 &
+          timeout 240s adb -s emulator-5554 wait-for-device
+          for attempt in {1..150}; do
+            if [[ "$(adb -s emulator-5554 shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]; then
+              adb -s emulator-5554 shell wm dismiss-keyguard
+              exit 0
+            fi
+            sleep 2
+          done
+          tail -80 "$RUNNER_TEMP/persona-emulator.log"
+          exit 1
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Capture the chat and request detail in both appearances
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/persona-command-input-device"
+          for style in glass brief board; do
+            SHOTS_STYLE="$style" SHOTS_SETTLE=3 MOCK_MANAGERS=1 MOCK_COMMAND_INPUT=1 \
+              bash scripts/app/android.sh shots -s emulator-5554 --out "$results/$style"
+            for appearance in light dark; do
+              test -s "$results/$style/$appearance-command-input-chat.png"
+              test -s "$results/$style/$appearance-command-input-detail.png"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: persona-14568-android-device
+          path: |
+            ${{ runner.temp }}/persona-command-input-device
+            ${{ runner.temp }}/persona-emulator.log
+          if-no-files-found: warn
+          retention-days: 2
