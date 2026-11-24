@@ -1,5 +1,6 @@
 package persona.core.domain.sort
 
+import persona.core.contracts.Machine
 import persona.core.contracts.Session
 import org.junit.Assert.*
 import org.junit.Test
@@ -8,6 +9,33 @@ import org.junit.Test
 private val MachineSpaceTree = AgentListSettings(grouping = AgentGrouping.MachineSpace)
 
 class AgentSpaceTest {
+    @Test fun projectHeadingsUseTheMostCommonFolderAndQualifyNamesOnTheSameComputer() {
+        fun row(id: String, machine: String, space: String?, name: String, cwd: String, physical: String? = null) =
+            AgentSession(Session(machineId = machine, sessionId = id, state = "working", spaceId = space,
+                spaceName = name, cwd = cwd, workspaceCwd = physical))
+
+        val mac = Machine("mac", online = true, home = "/Users/sample")
+        val pc = Machine("pc", online = true, home = "C:\\Users\\Sample")
+        val rows = listOf(
+            row("a", mac.id, "desk", "site", "/tmp/site", "/Users/sample/Desktop/site"),
+            row("b", mac.id, "desk", "site", "/Users/sample/Desktop/site"),
+            row("c", mac.id, "desk", "site", "/Users/sample/other/site"),
+            row("d", mac.id, "code", "SITE", "/Users/sample/code/site"),
+            row("e", pc.id, "remote", "site", "C:\\Users\\Sample\\code\\site"),
+            row("f", pc.id, "other", "work", "C:\\Users\\Sample\\work\\docs"),
+            row("g", pc.id, "more", "Work", "C:\\Users\\Sample\\tmp\\docs"),
+            row("h", mac.id, null, "No project", "/Users/sample/tmp"),
+            AgentSession(row("i", mac.id, null, "Workspace", "/Users/sample/fixtures/workspace").session.copy(workspaceId = "workspace")),
+        )
+        val groups = buildAgentList(rows, listOf(mac, pc), settings = MachineSpaceTree).groups.associateBy { it.id }
+        assertEquals(AgentProjectFolder(mac.id, "/Users/sample/Desktop/site", "~/Desktop"), groups["mac/desk"]?.projectFolder)
+        assertEquals("~/code", groups["mac/code"]?.projectFolder?.qualifier)
+        assertNull(groups.getValue("pc/remote").projectFolder?.qualifier)
+        assertEquals("~\\work", groups.getValue("pc/other").projectFolder?.qualifier)
+        assertNull(groups.getValue("mac/-").projectFolder)
+        assertEquals("/Users/sample/fixtures/workspace", groups.getValue("mac/workspace").projectFolder?.path)
+    }
+
     @Test fun detailKeepsTabOrderAndMuteExceptionsOverrideSpace() {
         val idle = AgentSession(Session(machineId = "machine", sessionId = "idle", state = "idle", spaceId = "workspace", spaceName = "项目", slotIndex = 1))
         val active = AgentSession(idle.session.copy(sessionId = "active", state = "working", slotIndex = 2))
