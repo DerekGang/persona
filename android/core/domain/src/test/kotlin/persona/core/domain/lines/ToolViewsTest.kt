@@ -14,11 +14,12 @@ class ToolViewsTest {
         val folded = JsonCodec.decodeFromString(Item.serializer(), """
             {"id":"fold","seq":3,"kind":"fold","fold":{"tools":1,"tool_views":[{"title":"Weekend route"}]}}
         """.trimIndent())
-        val tool = WorkItem.Tool(ToolCall(Item("use", kind = "tool_use").asLineItem(), first.asLineItem(), emptyList()))
-        val fold = WorkItem.Folded(folded.asLineItem())
+        val tool = WorkItem.Tool(ToolCall(LineItem(Item("use", kind = "tool_use")), LineItem(first), emptyList()))
+        val fold = WorkItem.Folded(LineItem(folded))
         val work = ChatLine.Work("work", listOf(tool, fold), live = false, start = null, end = null, open = false)
         assertEquals(listOf(ExtensionView(title = "Weekday route"), ExtensionView(title = "Weekend route")), work.toolViews())
         assertEquals(listOf(ExtensionView(title = "Weekend route")), ChatLine.Step(work.id, fold, false).toolViews())
-        assertEquals(emptyList<ExtensionView>(), ChatLine.Row(ChatRow("reply", Item("reply", kind = "text").asLineItem())).toolViews())
+        val reply = ChatLine.Row(ChatRow("reply", LineItem(Item("reply", kind = "text"))))
+        assertEquals(emptyList<ExtensionView>(), reply.toolViews())
     }
 }
