@@ -14,7 +14,8 @@ import { Button, cx, IconButton, Loading } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { StatusMark } from "../../ui/StatusMark";
 import { cardLine } from "../chat/dock";
-import { BackgroundWorkDetail, FinishedTasks, NeedsYouBody, ParkedTasks, ProgressTaskRow, type AssistantTray } from "./Tasks";
+import { TaskActivityDetail } from "./TaskActivityDetail";
+import { FinishedTasks, NeedsYouBody, ParkedTasks, ProgressTaskRow, type AssistantTray } from "./Tasks";
 import { conversationTitle } from "./conversations";
 
 /** What a Needs you row says folded (#5569): its mark, the title and, under it, what it waits for, with the kind at the
@@ -124,7 +125,7 @@ function RunningAgentRow({ session, activity }: { session: Session; activity?: B
       <span className="flex w-4 shrink-0 justify-center"><StatusMark state="working" /></span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold">{sessionTitle(session)}</div>
-        {detail && <BackgroundWorkDetail activity={activity} detail={detail} />}
+        {detail && <TaskActivityDetail activity={activity} detail={detail} />}
       </div>
       <span className="max-w-[40%] shrink-0 truncate text-right text-xs text-ink-2">{stateName("working")}</span>
       <span className="flex w-4 shrink-0 justify-center"><Icon name="chevronRight" className="text-ink-3" /></span>
