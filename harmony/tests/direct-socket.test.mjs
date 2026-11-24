@@ -113,6 +113,13 @@ test('chat sends and photo uploads use their own outgoing limits and keep the no
   await assert.rejects(client.request(message, 'POST', large, 'message', 4 * mib + 2), /request_too_large/);
   await assert.rejects(client.request('/api/v1/todos', 'POST', large, 'todo', 32 * mib), /request_too_large/);
 
+  const sessions = '/api/v1/sessions?limit=50';
+  await client.request(sessions, 'GET');
+  assert.deepEqual(calls.pop(), {path: sessions, responseLimit: 64 * mib});
+  const todos = '/api/v1/todos';
+  await client.request(todos, 'GET');
+  assert.deepEqual(calls.pop(), {path: todos, responseLimit: 4 * mib});
+
   const original = new ArrayBuffer(64 * mib);
   await client.requestBytes(upload, 'POST', original, 'application/octet-stream', 'photo', 64 * mib);
   assert.deepEqual(calls.pop(), {path: upload, responseLimit: 32 * mib});
